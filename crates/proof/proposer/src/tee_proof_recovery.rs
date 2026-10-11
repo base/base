@@ -21,7 +21,10 @@ use crate::{IntervalResolver, Metrics, ProofTarget, ProposerError, ProposerProof
 #[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait TeeSignerRegistry: Send + Sync {
-    /// Returns a fresh registration snapshot. Callers must not cache it across sweeps.
+    /// Returns a fresh registration snapshot from the currently active registry.
+    ///
+    /// Cached membership may only preserve proofs; destructive callers must refresh
+    /// an absent signer's registration before deleting its proofs.
     async fn registered_signers(&self) -> Result<Vec<Address>, ProposerError>;
 }
 
@@ -72,8 +75,10 @@ impl TeeSignerRegistry for OnchainTeeSignerRegistry {
 /// Scans dispatched, unproposed ranges independently of ordered proof submission.
 ///
 /// Only completed TEE proofs with an unregistered, nonzero signer are batch-deleted.
-/// The prover service's signer deletion API preserves queued/running jobs. A fresh
-/// registration snapshot is used each tick, so re-registration is observed too.
+/// The prover service's signer deletion API preserves queued/running jobs. Registered
+/// membership may be cached within a tick, but absence is confirmed with a fresh
+/// snapshot immediately before deletion to observe registrations and registry upgrades
+/// during the sweep. The L1 read and deletion RPC are not atomic.
 pub struct TeeProofRecovery {
     requester: Arc<dyn ProofRequesterProvider>,
     rollup: Arc<dyn RollupProvider>,
@@ -154,7 +159,7 @@ impl TeeProofRecovery {
         let mut starting_block = scan_cursor
             .filter(|block| *block >= recovered_block && *block < dispatched_through)
             .unwrap_or(recovered_block);
-        let mut registered_signers = None;
+        let mut registered_signers = HashSet::new();
         let mut checked_signers = HashSet::new();
 
         for _ in 0..Self::MAX_TARGETS_PER_TICK {
@@ -200,13 +205,13 @@ impl TeeProofRecovery {
             {
                 continue;
             }
-            let registered = match &registered_signers {
-                Some(signers) => signers,
-                None => registered_signers.insert(
-                    self.registry.registered_signers().await?.into_iter().collect::<HashSet<_>>(),
-                ),
-            };
-            if registered.contains(&proof.tee_signer) {
+            if registered_signers.contains(&proof.tee_signer) {
+                continue;
+            }
+            // Proof lookups yield while registration can change. Only reuse positive
+            // membership; never authorize deletion from a cached absence.
+            registered_signers = self.registry.registered_signers().await?.into_iter().collect();
+            if registered_signers.contains(&proof.tee_signer) {
                 continue;
             }
 
@@ -512,7 +517,7 @@ mod tests {
                 .returning(|_| Ok(7));
         }
         let mut registry = MockTeeSignerRegistry::new();
-        registry.expect_registered_signers().times(1).returning(move || Ok(vec![healthy]));
+        registry.expect_registered_signers().times(2).returning(move || Ok(vec![healthy]));
 
         assert!(recovery(requester, registry, 1000).tick(0, 1000, &mut None).await);
     }
@@ -544,6 +549,144 @@ mod tests {
             .returning(|| Err(ProposerError::Contract("L1 unavailable".into())));
 
         assert!(!recovery(requester, registry, 100).tick(0, 100, &mut None).await);
+    }
+
+    #[tokio::test]
+    async fn registration_during_sweep_preserves_new_signer_proofs() {
+        let healthy = Address::repeat_byte(0x11);
+        let replacement = Address::repeat_byte(0x22);
+        let factory = Address::repeat_byte(0xf0);
+        let implementation = Address::repeat_byte(0xa1);
+        let verifier = Address::repeat_byte(0xb1);
+        let registry_address = Address::repeat_byte(0xc1);
+        let replacement_registered = Arc::new(AtomicBool::new(false));
+        let deletion_attempts = Arc::new(Mutex::new(Vec::new()));
+        let server = ServerBuilder::default().build("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}", server.local_addr().unwrap());
+        let provider = RootProvider::new_http(endpoint.parse().unwrap());
+        let mut module = RpcModule::new(());
+        let registration = Arc::clone(&replacement_registered);
+        module
+            .register_method("eth_call", move |params, _, _| {
+                let params = params.parse::<Vec<Value>>()?;
+                let to = params[0]["to"].as_str().unwrap().parse::<Address>().unwrap();
+                let input =
+                    params[0]["input"].as_str().or_else(|| params[0]["data"].as_str()).unwrap();
+                let output = if to == factory {
+                    assert!(input.starts_with("0x1b685b9e"), "gameImpls(uint32) ABI");
+                    implementation.abi_encode()
+                } else if to == implementation {
+                    assert_eq!(input, "0x1f837574", "TEE_VERIFIER() ABI");
+                    verifier.abi_encode()
+                } else if to == verifier {
+                    assert_eq!(input, "0x18efb9c2", "TEE_PROVER_REGISTRY() ABI");
+                    registry_address.abi_encode()
+                } else if to == registry_address {
+                    assert_eq!(input, "0x94b2822f", "getRegisteredSigners() ABI");
+                    if registration.load(Ordering::SeqCst) {
+                        vec![healthy, replacement].abi_encode()
+                    } else {
+                        vec![healthy].abi_encode()
+                    }
+                } else {
+                    panic!("unexpected contract read: {to}");
+                };
+                Ok::<_, ErrorObjectOwned>(format!("0x{}", hex::encode(output)))
+            })
+            .unwrap();
+        let registration = Arc::clone(&replacement_registered);
+        module
+            .register_method("prover_getProof", move |params, _, _| {
+                let request: GetProofRequest = params.one()?;
+                let proof = if request.session_id == session(100) {
+                    succeeded(100, healthy)
+                } else {
+                    // Registration completes after the first snapshot, before a later
+                    // proof response arrives. Repeated proofs share the new signer.
+                    registration.store(true, Ordering::SeqCst);
+                    let block = if request.session_id == session(200) { 200 } else { 300 };
+                    succeeded(block, replacement)
+                };
+                Ok::<_, ErrorObjectOwned>(proof)
+            })
+            .unwrap();
+        let attempted = Arc::clone(&deletion_attempts);
+        module
+            .register_method("prover_deleteProofsByTeeSigner", move |params, _, _| {
+                let request: DeleteProofsByTeeSignerRequest = params.one()?;
+                attempted.lock().unwrap().push(request.tee_signer);
+                Ok::<_, ErrorObjectOwned>(1_u64)
+            })
+            .unwrap();
+        let handle = server.start(module);
+        let requester =
+            ProofRequesterClient::connect(&ProverServiceClientConfig::new(endpoint)).unwrap();
+        let registry = OnchainTeeSignerRegistry::new(
+            Arc::new(DisputeGameFactoryContractClient::new(factory, provider.clone())),
+            Arc::new(AggregateVerifierContractClient::new(provider)),
+            0,
+        );
+        let recovery = TeeProofRecovery::new(
+            Arc::new(requester),
+            rollup(300),
+            test_fixed_interval_resolver(100, 100),
+            Arc::new(registry),
+            Duration::from_secs(1),
+        );
+        let restart = recovery.tick(0, 300, &mut None).await;
+        handle.stop().unwrap();
+        tokio::time::timeout(Duration::from_secs(1), handle.stopped()).await.unwrap();
+
+        assert!(replacement_registered.load(Ordering::SeqCst));
+        assert!(
+            deletion_attempts.lock().unwrap().is_empty(),
+            "freshly registered signer proofs must not be deleted using an earlier snapshot"
+        );
+        assert!(!restart, "new registration must not cause an unnecessary cleanup restart");
+    }
+
+    #[tokio::test]
+    async fn registration_refresh_failure_preserves_proofs_and_prior_cleanup() {
+        for (deleted_count, ambiguous, restart_expected) in
+            [(0, false, false), (1, false, true), (0, true, true)]
+        {
+            let first = Address::repeat_byte(0x11);
+            let second = Address::repeat_byte(0x22);
+            let mut requester =
+                requester([(100, succeeded(100, first)), (200, succeeded(200, second))]);
+            requester
+                .expect_delete_proofs_by_tee_signer()
+                .withf(move |request| request.tee_signer == first)
+                .times(1)
+                .returning(move |_| {
+                    if ambiguous {
+                        Err(JsonRpcClientError::RequestTimeout.into())
+                    } else {
+                        Ok(deleted_count)
+                    }
+                });
+            requester
+                .expect_delete_proofs_by_tee_signer()
+                .withf(move |request| request.tee_signer == second)
+                .never();
+            let mut registry = MockTeeSignerRegistry::new();
+            let mut sequence = Sequence::new();
+            registry
+                .expect_registered_signers()
+                .times(1)
+                .in_sequence(&mut sequence)
+                .returning(|| Ok(vec![]));
+            registry
+                .expect_registered_signers()
+                .times(1)
+                .in_sequence(&mut sequence)
+                .returning(|| Err(ProposerError::Contract("L1 unavailable during refresh".into())));
+
+            assert_eq!(
+                recovery(requester, registry, 200).tick(0, 200, &mut None).await,
+                restart_expected
+            );
+        }
     }
 
     #[tokio::test]
@@ -587,7 +730,7 @@ mod tests {
             .times(1)
             .returning(|_| Ok(7));
         let mut registry = MockTeeSignerRegistry::new();
-        registry.expect_registered_signers().times(1).returning(|| Ok(vec![]));
+        registry.expect_registered_signers().times(2).returning(|| Ok(vec![]));
 
         assert!(recovery(requester, registry, 200).tick(0, 200, &mut None).await);
     }
