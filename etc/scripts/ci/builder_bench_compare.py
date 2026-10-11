@@ -135,8 +135,27 @@ class BuilderBenchCompare:
                 changes.append(f"{name} {before:,} → {after:,}")
         return "<br>".join(changes)
 
+    @staticmethod
+    def short(sha: str) -> str:
+        return f"`{sha[:12]}`"
+
+    def compared_commits(self, base_sha: str, head_sha: str, pr_head_sha: str) -> str:
+        """The commits this run measured, or an empty string when none were given."""
+        if not base_sha or not head_sha:
+            return ""
+        head = f"head {self.short(head_sha)}"
+        if pr_head_sha and pr_head_sha != head_sha:
+            head += f" (test merge of PR head {self.short(pr_head_sha)})"
+        return f"Compared base {self.short(base_sha)} against {head}."
+
     def render(
-        self, base: dict[str, Measurement], head: dict[str, Measurement], run_url: str
+        self,
+        base: dict[str, Measurement],
+        head: dict[str, Measurement],
+        run_url: str,
+        base_sha: str = "",
+        head_sha: str = "",
+        pr_head_sha: str = "",
     ) -> str:
         """Render the comment body."""
         # Builders in `BENCH_PREFIXES` order, scenarios in the order the bench ran them.
@@ -152,17 +171,21 @@ class BuilderBenchCompare:
             ),
         )
         rows = [Row(key, base.get(key, Measurement()), head.get(key, Measurement())) for key in keys]
-        lines: list[str] = []
+        # Event counts are comparable only if the base run produced event lines at all.
+        base_has_events = any(row.base.has_events for row in rows)
         header = [
             "| Builder | Scenario | Base | Head | Change | Per deferral (base → head) | Event counts |",
             "| --- | --- | ---: | ---: | ---: | ---: | --- |",
         ]
         table: list[str] = []
-        changed: list[str] = []
-        # Keys whose base measurement has no head counterpart, for example because the head
-        # benchmark or event-test case failed. Both head steps are continue-on-error, so this is
-        # how a head that breaks one scenario shows up in the comment.
-        missing: list[str] = []
+        flagged_lines: list[str] = []
+        # Both head steps are continue-on-error, so a head benchmark or event-test case that fails
+        # shows up as a base measurement with no head counterpart.
+        missing = 0
+        # Scenarios measured on head only, which have nothing to be compared against.
+        new = 0
+        # Scenarios measured on both sides whose instructions, per-deferral cost or events moved.
+        moved = 0
         for row in rows:
             base_ref = base.get(f"{row.builder}/{REFERENCE_SCENARIO}")
             head_ref = head.get(f"{row.builder}/{REFERENCE_SCENARIO}")
@@ -173,16 +196,20 @@ class BuilderBenchCompare:
             events = self.event_changes(row.base, row.head)
             missing_instructions = row.base.instructions is not None and row.head.instructions is None
             missing_events = row.base.has_events and not row.head.has_events
-            if missing_events:
-                events = "<br>".join(filter(None, [events, "**head event test failed**"]))
-            if missing_instructions or missing_events:
-                missing.append(row.key)
-            flagged = (
+            new_instructions = row.base.instructions is None and row.head.instructions is not None
+            new_events = base_has_events and row.head.has_events and not row.base.has_events
+            is_moved = (
                 (change is not None and abs(change) > self.threshold_pct)
                 or (marginal_change is not None and abs(marginal_change) > self.threshold_pct)
                 or bool(events)
-                or missing_instructions
             )
+            is_missing = missing_instructions or missing_events
+            is_new = new_instructions or new_events
+            moved += is_moved
+            missing += is_missing
+            new += is_new
+            if missing_events:
+                events = "<br>".join(filter(None, [events, "**head event test failed**"]))
             marginal_cell = ""
             if head_marginal is not None:
                 marginal_cell = (
@@ -196,7 +223,12 @@ class BuilderBenchCompare:
             )
             if missing_instructions:
                 head_cell = f"**{head_cell}**"
-            change_cell = "missing" if missing_instructions else self.fmt_pct(change)
+                change_cell = "missing"
+            elif new_instructions:
+                change_cell = "new"
+            else:
+                change_cell = self.fmt_pct(change)
+            flagged = is_moved or is_missing or is_new
             if flagged:
                 change_cell = f"**{change_cell or 'changed'}**"
             line = (
@@ -205,47 +237,52 @@ class BuilderBenchCompare:
             )
             table.append(line)
             if flagged:
-                changed.append(line)
+                flagged_lines.append(line)
 
-        lines.append(MARKER)
-        lines.append("")
+        no_events = "Event counts could not be compared because the base run produced no event lines."
         if not any(row.head.instructions is not None for row in rows):
-            lines.append("**Builder benchmarks:** no head results were produced. See the run log.")
+            headline = "no head results were produced. See the run log."
         elif not any(row.base.instructions is not None for row in rows):
-            lines.append(
-                "**Builder benchmarks:** the base commit has no results (the benchmarks are new "
-                "or failed to build there), so this run only reports head counts."
+            headline = (
+                "the base commit has no results (the benchmarks are new or failed to build there), "
+                "so this run only reports head counts."
             )
-        elif changed:
+        elif moved or missing or new:
             sentences = []
             if missing:
                 sentences.append(
-                    f"{len(missing)} scenario(s) have base results but no head results; see the "
-                    "run log."
+                    f"{missing} scenario(s) have base results but no head results; see the run log."
                 )
-            moved = len(changed) - len(missing)
             if moved:
                 sentences.append(
                     f"{moved} scenario(s) changed by more than {self.threshold_pct:g}% or changed "
                     "event counts."
                 )
-            lines.append(
-                "**Builder benchmarks:** " + " ".join(sentences) + " Advisory; does not block merge."
+            if new:
+                sentences.append(f"{new} scenario(s) are new on the head commit.")
+            if not base_has_events:
+                sentences.append(no_events)
+            headline = " ".join(sentences) + " Advisory; does not block merge."
+        elif base_has_events:
+            headline = (
+                f"every scenario is within {self.threshold_pct:g}% of the base commit, with "
+                "unchanged event counts."
             )
         else:
-            lines.append(
-                f"**Builder benchmarks:** every scenario is within {self.threshold_pct:g}% of the "
-                "base commit, with unchanged event counts."
-            )
-        lines.append("")
-        lines.append(
+            headline = f"every scenario is within {self.threshold_pct:g}% of the base commit. {no_events}"
+
+        lines = [MARKER, "", f"**Builder benchmarks:** {headline}", ""]
+        commits = self.compared_commits(base_sha, head_sha, pr_head_sha)
+        if commits:
+            lines += [commits, ""]
+        lines += [
             "Instruction counts of one block build under Callgrind, base commit against head. "
             "Per deferral is the instructions per deferred candidate above the same builder's "
-            "`transfers` scenario."
-        )
-        lines.append("")
-        if changed:
-            lines += [*header, *changed, ""]
+            "`transfers` scenario.",
+            "",
+        ]
+        if flagged_lines:
+            lines += [*header, *flagged_lines, ""]
         lines += ["<details><summary>All scenarios</summary>", "", *header, *table, "", "</details>"]
         if self.unknown:
             lines += [
@@ -266,6 +303,11 @@ def main() -> int:
     parser.add_argument("--head-events", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--run-url", default="")
+    parser.add_argument("--base-sha", default="", help="commit the base results came from")
+    parser.add_argument("--head-sha", default="", help="commit the head results came from")
+    parser.add_argument(
+        "--pr-head-sha", default="", help="PR head commit, when head is its test merge commit"
+    )
     parser.add_argument("--threshold-pct", type=float, default=2.0)
     args = parser.parse_args()
 
@@ -275,7 +317,9 @@ def main() -> int:
     compare = BuilderBenchCompare(args.threshold_pct)
     base = compare.load(read(args.base_iai), read(args.base_events))
     head = compare.load(read(args.head_iai), read(args.head_events))
-    args.output.write_text(compare.render(base, head, args.run_url))
+    args.output.write_text(
+        compare.render(base, head, args.run_url, args.base_sha, args.head_sha, args.pr_head_sha)
+    )
     return 0
 
 

@@ -66,7 +66,13 @@ Each run builds the base commit and then the head commit, and measures two thing
 - The cost per deferral for backlog scenarios: `(instructions(scenario) - instructions(transfers)) / deferrals`, against the same builder's `transfers` on the same commit. It is the cost of one deferred candidate, the unit a resting backlog multiplies, and it ignores changes that shift every scenario equally.
 - Every event type whose count changed.
 
-A scenario is flagged when its instruction count or per-deferral cost moves by more than 2%, any event count changes, or the base commit has an instruction count or event line that the head lacks, which is how a head benchmark or event-test case that fails shows up. When nothing is flagged, the table is collapsed. Benchmarks that do not exist on the base commit are reported as new.
+The comment names the compared commits: the base commit (the base branch tip on PRs) and the head commit (the PR's test merge commit, with the PR head it merges). A scenario is flagged when:
+
+- Its instruction count or per-deferral cost moves by more than 2%, or any event count changes.
+- The base commit has an instruction count or event line that the head lacks, which is how a head benchmark or event-test case that fails shows up.
+- It is new on the head commit, so it has nothing to be compared against.
+
+The headline counts each kind separately, and says the scenarios are within 2% only when every scenario was measured on both commits. When the base run produced no event lines, the headline says event counts could not be compared. When nothing is flagged, the table is collapsed. `etc/scripts/ci/test_builder_bench_compare.py` tests these cases and runs in the workflow before the comment is rendered.
 
 Instruction counts are deterministic for a fixed toolchain, dependency set, target, and Valgrind version, so base and head measured in the same job are directly comparable on shared runners. Wall-clock measurement on shared runners is too noisy for per-PR comparison, which is why `bench-pr.yml` is manual only. Wall-clock control flow inside the loop would make counts nondeterministic under Valgrind, so the fixture disables the predicate evaluation cutoff (`predicate_eval_hard_cutoff = Duration::MAX`) and sizes the event writer's lossy queue so it never drops.
 
@@ -84,7 +90,7 @@ A new scenario needs an entry in `FlashblockWorkload::MATRIX`, a case in the eve
 
 ## CI wiring
 
-The workflow runs on `pull_request` and `workflow_dispatch`. On PRs, the measurement steps run only when `etc/scripts/local/affected-crates.py` reports `base-builder-core` as affected (a change to `base-execution-payload-builder` or another dependency affects it too), or a benchmark input changes (`Cargo.toml`, `Cargo.lock`, `.cargo/`, `rust-toolchain.toml`, the compare and comment scripts, the setup action, or the workflow). Otherwise the job succeeds with a skip note and posts no comment. Comments are skipped on PRs from forks, whose `GITHUB_TOKEN` cannot write. The comment is identified by the `<!-- builder-bench-results -->` marker and updated in place on each push.
+The workflow runs on `pull_request` and `workflow_dispatch`. On PRs, the measurement steps run only when `etc/scripts/local/affected-crates.py` reports `base-builder-core` as affected (a change to `base-execution-payload-builder` or another dependency affects it too), or a benchmark input changes (`Cargo.toml`, `Cargo.lock`, `.cargo/`, `rust-toolchain.toml`, the compare and comment scripts and their tests, the setup action, or the workflow). Otherwise the job succeeds with a skip note and posts no comment. Comments are skipped on PRs from forks, whose `GITHUB_TOKEN` cannot write. The comment is identified by the `<!-- builder-bench-results -->` marker and updated in place on each push.
 
 The job fails only when the run itself fails, for example when the head commit does not build; the comment then points at the run log. A failure on the base commit is reported in the comment as missing base results.
 

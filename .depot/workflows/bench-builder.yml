@@ -42,6 +42,7 @@ jobs:
       # For workflow_dispatch the base is the `base_ref` input, or the tip of main.
       HEAD_SHA: ${{ github.sha }}
       BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
+      PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || '' }}
       BASE_REF: ${{ inputs.base_ref || 'main' }}
       MARKER: "<!-- builder-bench-results -->"
       # Comments are skipped on forks: their pull_request workflows cannot write with GITHUB_TOKEN.
@@ -71,6 +72,7 @@ jobs:
               - '.cargo/**'
               - 'rust-toolchain.toml'
               - 'etc/scripts/ci/builder_bench_compare.py'
+              - 'etc/scripts/ci/test_builder_bench_compare.py'
               - 'etc/scripts/ci/iai_compare.py'
               - 'etc/scripts/ci/post_pr_comment.sh'
               - '.depot/actions/setup/**'
@@ -192,6 +194,11 @@ jobs:
         shell: bash
         run: cargo bench -p base-builder-core --bench flashblock_build_iai 2>&1 | tee "$RUNNER_TEMP/head-iai.txt"
 
+      - name: Test comparison script
+        if: steps.affected.outputs.run == 'true'
+        shell: bash
+        run: python3 etc/scripts/ci/test_builder_bench_compare.py
+
       - name: Render comparison
         if: steps.affected.outputs.run == 'true'
         shell: bash
@@ -206,12 +213,11 @@ jobs:
             --head-events "$RUNNER_TEMP/head-events.txt" \
             --output "$RUNNER_TEMP/comment.md" \
             --run-url "$WORKFLOW_RUN_URL" \
+            --base-sha "$BASE_SHA" \
+            --head-sha "$HEAD_SHA" \
+            --pr-head-sha "$PR_HEAD_SHA" \
             --threshold-pct 2
-          {
-            echo "Base: \`$BASE_SHA\`, head: \`$HEAD_SHA\`"
-            echo
-            cat "$RUNNER_TEMP/comment.md"
-          } | tee -a "$GITHUB_STEP_SUMMARY"
+          tee -a "$GITHUB_STEP_SUMMARY" < "$RUNNER_TEMP/comment.md"
 
       - name: Post results comment
         if: steps.affected.outputs.run == 'true' && env.COMMENT == 'true'
