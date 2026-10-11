@@ -2,19 +2,19 @@
 
 use alloc::vec::Vec;
 
-use alloy_consensus::{Block, Transaction};
+use alloy_consensus::{Block, Transaction, Typed2718};
 use alloy_eips::{BlockNumHash, eip2718::Eip2718Error, eip7685::EMPTY_REQUESTS_HASH};
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::{CancunPayloadFields, PraguePayloadFields};
 use alloy_rpc_types_eth::Block as RpcBlock;
 use base_common_consensus::{BaseBlock, BaseTxEnvelope};
-use base_common_genesis::ChainGenesis;
+use base_common_genesis::{ChainGenesis, RollupConfig, SystemConfig};
 use base_common_rpc_types_engine::{
     BaseExecutionPayload, BaseExecutionPayloadSidecar, BasePayloadError,
 };
 use derive_more::Display;
 
-use crate::{DecodeError, L1BlockInfoTx};
+use crate::{BaseBlockConversionError, DecodeError, L1BlockInfoTx, to_system_config};
 
 /// Block Header Info
 #[derive(Debug, Clone, Display, Copy, Eq, Hash, PartialEq, Default)]
@@ -252,16 +252,57 @@ impl L2BlockInfo {
     }
 }
 
+/// Metadata decoded from an L2 block's L1-info deposit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct L2BlockMetadata {
+    /// L2 block identity, L1 origin, and sequence number.
+    pub l2_block_info: L2BlockInfo,
+    /// L1-info deposit decoded from transaction zero.
+    pub l1_info: L1BlockInfoTx,
+    /// Effective system configuration at the block.
+    pub system_config: SystemConfig,
+}
+
+impl L2BlockMetadata {
+    /// Decodes metadata from a block whose body starts with its L1-info deposit.
+    ///
+    /// Unlike [`L2BlockInfo::from_block_and_genesis`], this never substitutes genesis metadata,
+    /// so the genesis block and blocks with missing bodies are rejected.
+    pub fn from_block(
+        block: &BaseBlock,
+        rollup_config: &RollupConfig,
+    ) -> Result<Self, BaseBlockConversionError> {
+        let block_info = BlockInfo::from(block);
+        let first_tx = block
+            .body
+            .transactions
+            .first()
+            .ok_or(BaseBlockConversionError::EmptyTransactions(block_info.hash))?;
+        let deposit = first_tx
+            .as_deposit()
+            .ok_or_else(|| BaseBlockConversionError::InvalidTxType(first_tx.ty()))?;
+        let l1_info = L1BlockInfoTx::decode_calldata(deposit.input().as_ref())?;
+        let system_config = to_system_config(block, rollup_config)?;
+        Ok(Self {
+            l2_block_info: L2BlockInfo::new(block_info, l1_info.id(), l1_info.sequence_number()),
+            l1_info,
+            system_config,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use alloc::{string::ToString, vec};
 
-    use alloy_consensus::{Header, TxEnvelope};
-    use alloy_primitives::b256;
-    use base_common_consensus::BaseBlock;
+    use alloy_consensus::{BlockBody, Header, TxEnvelope};
+    use alloy_primitives::{Sealed, address, b256, bytes};
+    use base_common_consensus::TxDeposit;
+    use base_common_genesis::{BaseUpgradeConfig, UpgradeConfig};
+    use rstest::rstest;
 
     use super::*;
-    use crate::test_utils::RAW_BEDROCK_INFO_TX;
+    use crate::{BaseTimeUpdateTx, L1BlockInfoJovian, test_utils::RAW_BEDROCK_INFO_TX};
 
     #[test]
     fn test_rpc_block_into_info() {
@@ -554,6 +595,93 @@ mod tests {
 
         let deserialized: L2BlockInfo = serde_json::from_str(json).unwrap();
         assert_eq!(deserialized, l2_block_info);
+    }
+
+    #[rstest]
+    #[case::pre_denim(None)]
+    #[case::post_denim(Some(0))]
+    fn test_l2_block_metadata_from_block(#[case] denim: Option<u64>) {
+        let l1_info = L1BlockInfoJovian::new(
+            18,
+            20,
+            3,
+            B256::from([4; 32]),
+            7,
+            address!("6887246668a3b87f54deb3b94ba47a6f63f32985"),
+            5,
+            6,
+            8,
+            9,
+            10,
+            11,
+        );
+        let mut transactions = vec![BaseTxEnvelope::Deposit(Sealed::new(TxDeposit {
+            input: l1_info.encode_calldata(),
+            ..Default::default()
+        }))];
+        if denim.is_some() {
+            transactions.push(BaseTxEnvelope::Deposit(
+                BaseTimeUpdateTx::new(200).unwrap().into_deposit_tx(12),
+            ));
+        }
+        let block = BaseBlock {
+            header: Header {
+                number: 12,
+                timestamp: 24,
+                extra_data: bytes!("010000beef0000babe0000000000000123"),
+                ..Default::default()
+            },
+            body: BlockBody { transactions, ..Default::default() },
+        };
+        let rollup_config = RollupConfig {
+            upgrades: UpgradeConfig {
+                isthmus_time: Some(0),
+                jovian_time: Some(0),
+                base: BaseUpgradeConfig { denim, ..Default::default() },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let metadata = L2BlockMetadata::from_block(&block, &rollup_config).unwrap();
+
+        assert_eq!(
+            metadata.l2_block_info,
+            L2BlockInfo::new(
+                BlockInfo::from(&block),
+                BlockNumHash { number: 18, hash: B256::from([4; 32]) },
+                7,
+            )
+        );
+        assert_eq!(metadata.l1_info, L1BlockInfoTx::Jovian(l1_info));
+        assert_eq!(
+            metadata.system_config.batcher_address,
+            address!("6887246668a3b87f54deb3b94ba47a6f63f32985")
+        );
+        assert_eq!(metadata.system_config.min_base_fee, Some(0x123));
+        assert_eq!(metadata.system_config.da_footprint_gas_scalar, Some(11));
+    }
+
+    #[rstest]
+    #[case::genesis(0)]
+    #[case::pruned(12)]
+    fn test_l2_block_metadata_requires_l1_info_deposit(#[case] number: u64) {
+        let block =
+            BaseBlock { header: Header { number, ..Default::default() }, body: Default::default() };
+        let hash = block.header.hash_slow();
+        let rollup_config = RollupConfig {
+            genesis: ChainGenesis {
+                l2: BlockNumHash { number: 0, hash },
+                system_config: Some(SystemConfig::default()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        assert_eq!(
+            L2BlockMetadata::from_block(&block, &rollup_config).unwrap_err(),
+            BaseBlockConversionError::EmptyTransactions(hash)
+        );
     }
 
     #[test]
