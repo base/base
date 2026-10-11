@@ -194,7 +194,7 @@ impl RollupNode {
     async fn create_pipeline(
         &self,
         l1_head_number: base_consensus_providers::L1HeadNumber,
-    ) -> OnlinePipeline {
+    ) -> Result<OnlinePipeline, String> {
         // Create the caching L1/L2 EL providers for derivation.
         let l1_derivation_provider = AlloyChainProvider::new_with_trust(
             self.l1_config.engine_provider.clone(),
@@ -208,16 +208,20 @@ impl RollupNode {
             self.l2_trust_rpc,
         );
 
-        OnlinePipeline::new_polled_with_da_batcher_sender_override(
+        let blob_provider = OnlineBlobProvider::init(self.l1_config.beacon_client.clone())
+            .await
+            .map_err(|e| format!("failed to initialize blob provider: {e}"))?;
+
+        Ok(OnlinePipeline::new_polled_with_da_batcher_sender_override(
             Arc::clone(&self.config),
             Arc::clone(&self.l1_config.chain_config),
-            OnlineBlobProvider::init(self.l1_config.beacon_client.clone()).await,
+            blob_provider,
             l1_derivation_provider,
             l2_derivation_provider,
             l1_head_number,
             self.l1_config.verifier_l1_confs,
             self.l1_config.da_batcher_sender_override,
-        )
+        ))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -308,7 +312,7 @@ impl RollupNode {
         cancellation: CancellationToken,
     ) -> Result<(), String> {
         let l1_head_number: base_consensus_providers::L1HeadNumber = Arc::new(AtomicU64::new(0));
-        let pipeline = self.create_pipeline(Arc::clone(&l1_head_number)).await;
+        let pipeline = self.create_pipeline(Arc::clone(&l1_head_number)).await?;
         let engine_client =
             Arc::new(self.engine_config().build_engine_client().await.map_err(|e| e.to_string())?);
         self.start_inner(engine_client, pipeline, l1_head_number, cancellation).await
@@ -347,7 +351,7 @@ impl RollupNode {
         engine_client: Arc<E>,
     ) -> Result<(), String> {
         let l1_head_number: base_consensus_providers::L1HeadNumber = Arc::new(AtomicU64::new(0));
-        let pipeline = self.create_pipeline(Arc::clone(&l1_head_number)).await;
+        let pipeline = self.create_pipeline(Arc::clone(&l1_head_number)).await?;
         self.start_inner(engine_client, pipeline, l1_head_number, CancellationToken::new()).await
     }
 
