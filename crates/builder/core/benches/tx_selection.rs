@@ -450,6 +450,7 @@ fn resting_builder_context() -> BasePayloadBuilderCtx {
         Arc::new(BaseChainSpec::from(chain_spec)),
         Arc::new(SealedHeader::seal_slow(parent)),
     )
+    .expect("valid test builder context")
 }
 
 /// Runs every flashblock of one block through the build loop and returns the number of

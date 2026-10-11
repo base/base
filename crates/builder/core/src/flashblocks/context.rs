@@ -341,16 +341,20 @@ impl BasePayloadBuilderCtx {
     /// This will return the cumulative DA bytes * scalar after Jovian
     /// after Ecotone, this will always return Some(0) as blobs aren't supported
     /// pre Ecotone, these fields aren't used.
-    pub fn blob_fields(&self, info: &ExecutionInfo) -> (Option<u64>, Option<u64>) {
+    pub fn blob_fields(
+        &self,
+        info: &ExecutionInfo,
+    ) -> Result<(Option<u64>, Option<u64>), PayloadBuilderError> {
         if self.is_jovian_active() {
-            let scalar =
-                info.da_footprint_scalar.expect("Scalar must be defined for Jovian blocks");
+            let scalar = info.da_footprint_scalar.ok_or_else(|| {
+                PayloadBuilderError::other(BasePayloadBuilderError::DaFootprintScalarMissing)
+            })?;
             let result = info.cumulative_da_bytes_used * scalar as u64;
-            (Some(0), Some(result))
+            Ok((Some(0), Some(result)))
         } else if self.is_ecotone_active() {
-            (Some(0), Some(0))
+            Ok((Some(0), Some(0)))
         } else {
-            (None, None)
+            Ok((None, None))
         }
     }
 
@@ -611,10 +615,9 @@ impl BasePayloadBuilderCtx {
         let da_footprint_gas_scalar = self
             .chain_spec
             .is_jovian_active_at_timestamp(self.attributes().timestamp())
-            .then(|| {
-                L1BlockInfo::fetch_da_footprint_gas_scalar(evm.db_mut())
-                    .expect("DA footprint should always be available from the database post jovian")
-            });
+            .then(|| L1BlockInfo::fetch_da_footprint_gas_scalar(evm.db_mut()))
+            .transpose()
+            .map_err(PayloadBuilderError::other)?;
 
         info.da_footprint_scalar = da_footprint_gas_scalar;
 
@@ -924,19 +927,32 @@ impl BasePayloadBuilderCtx {
                 } else {
                     // State mismatch: retry at a later position or flashblock. Passed nonce
                     // bounds also stay parked until the required block-number expiry.
-                    let (_, blocker_index) = blocking_predicate
-                        .expect("unsatisfied, non-terminal predicate implies a blocking key");
-                    self.defer_current(
-                        best_txs,
-                        &mut diag,
-                        deferrals,
-                        &cx,
-                        tx_hash,
-                        ordering_position,
-                    );
-                    let predicate = tx.validity_predicates()[blocker_index].clone();
-                    best_txs.rest(tx_hash, &predicate);
-                    predicate_index.park(tx_hash, tx, predicate);
+                    match blocking_predicate {
+                        Some((_, blocker_index)) => {
+                            self.defer_current(
+                                best_txs,
+                                &mut diag,
+                                deferrals,
+                                &cx,
+                                tx_hash,
+                                ordering_position,
+                            );
+                            let predicate = tx.validity_predicates()[blocker_index].clone();
+                            best_txs.rest(tx_hash, &predicate);
+                            predicate_index.park(tx_hash, tx, predicate);
+                        }
+                        // Unreachable: this scan is only entered with a blocker present and not
+                        // expired. Reject defensively — with events and diagnostics — rather
+                        // than panicking, mirroring the read-failure branch.
+                        None => {
+                            warn!(
+                                target: "payload_builder",
+                                tx_hash = ?tx_hash,
+                                "unsatisfied non-expired validity predicate without a blocking key"
+                            );
+                            self.reject_current(best_txs, &mut diag, &cx, &tx, ordering_position);
+                        }
+                    }
                 }
                 validity_handling +=
                     validity_handling_start.map_or_else(Duration::default, |start| start.elapsed());
@@ -1498,7 +1514,15 @@ impl BasePayloadBuilderCtx {
             // update add to total fees
             let miner_fee = tx
                 .effective_tip_per_gas(base_fee)
-                .expect("fee is always valid; execution succeeded");
+                // executed txs always have a defined tip; treat a missing one as zero
+                .unwrap_or_else(|| {
+                    warn!(
+                        target: "payload_builder",
+                        tx_hash = ?tx_hash,
+                        "missing effective tip for successfully executed transaction, treating as zero"
+                    );
+                    0
+                });
             info.total_fees += U256::from(miner_fee) * U256::from(gas_used);
             info.inclusion.record(
                 has_validity_predicates,
@@ -1626,7 +1650,10 @@ impl BasePayloadBuilderCtx {
     ///
     /// Derives the EVM environment from the given chain spec and parent header,
     /// using default builder attributes and a no-op cancellation token.
-    pub fn for_test(chain_spec: Arc<BaseChainSpec>, parent: Arc<SealedHeader>) -> Self {
+    pub fn for_test(
+        chain_spec: Arc<BaseChainSpec>,
+        parent: Arc<SealedHeader>,
+    ) -> Result<Self, PayloadBuilderError> {
         let evm_config = BaseEvmConfig::base(Arc::clone(&chain_spec));
         let timestamp = parent.timestamp + 2;
 
@@ -1653,12 +1680,12 @@ impl BasePayloadBuilderCtx {
 
         let evm_env = evm_config
             .next_evm_env(&parent, &block_env_attributes)
-            .expect("failed to create test evm env");
+            .map_err(PayloadBuilderError::other)?;
 
         let payload_id = attributes.payload_id(&parent.hash());
         let config = PayloadConfig::new(parent, attributes, payload_id);
 
-        Self {
+        Ok(Self {
             evm_config,
             chain_spec,
             config,
@@ -1667,7 +1694,7 @@ impl BasePayloadBuilderCtx {
             cancel: CancellationToken::new(),
             extra: FlashblocksExtraCtx::default(),
             builder_config: crate::BuilderConfig::default(),
-        }
+        })
     }
 }
 
@@ -1703,7 +1730,7 @@ mod tests {
         let chain_spec = Arc::new(BaseChainSpec::from(inner));
         let parent_header = Header { gas_limit: 30_000_000, timestamp: 0, ..Default::default() };
         let parent = Arc::new(SealedHeader::seal_slow(parent_header));
-        BasePayloadBuilderCtx::for_test(chain_spec, parent)
+        BasePayloadBuilderCtx::for_test(chain_spec, parent).expect("valid test builder context")
     }
 
     fn pooled_test_transaction() -> BasePooledTransaction {
