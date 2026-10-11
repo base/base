@@ -2244,10 +2244,10 @@ mod tests {
                     BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default())
                         .require_l1_data_gas_fee(false);
                 validator.update_l1_block_info::<_, TxEip1559>(
-                    &alloy_consensus::Header {
+                    &reth_primitives_traits::SealedHeader::seal_slow(alloy_consensus::Header {
                         timestamp: INTEGRATION_POOL_NOW_SECS,
                         ..Default::default()
-                    },
+                    }),
                     None,
                 );
                 validator

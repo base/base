@@ -9,7 +9,7 @@ use std::{
     time::Instant,
 };
 
-use alloy_consensus::{BlockHeader, Transaction, constants::KECCAK_EMPTY};
+use alloy_consensus::{BlockHeader, Sealable, Transaction, constants::KECCAK_EMPTY};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, LogData, U256, map::AddressSet};
 use base_common_chains::{BaseUpgrade, Upgrades};
@@ -33,11 +33,12 @@ use parking_lot::RwLock;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_evm::ConfigureEvm;
 use reth_primitives_traits::{
-    Block, BlockBody, BlockTy, GotExpected, SealedBlock, constants::MAX_TX_GAS_LIMIT_OSAKA,
-    transaction::error::InvalidTransactionError,
+    Block, BlockBody, BlockTy, GotExpected, SealedBlock, SealedHeader,
+    constants::MAX_TX_GAS_LIMIT_OSAKA, transaction::error::InvalidTransactionError,
 };
 use reth_storage_api::{
-    AccountInfoReader, AccountReader, BlockReaderIdExt, StateProvider, StateProviderFactory,
+    AccountReader, BlockReaderIdExt, StateProvider, StateProviderBox, StateProviderFactory,
+    errors::ProviderResult,
 };
 use reth_transaction_pool::{
     EthPoolTransaction, EthTransactionValidator, TransactionOrigin, TransactionValidationOutcome,
@@ -670,19 +671,25 @@ impl PoolTransactionError for BaseTxPoolError {
     }
 }
 
-/// Tracks additional infos for the current block.
-#[derive(Debug, Default)]
+/// Head-block snapshot that one admission validates against.
+///
+/// Replaced as a whole on each new head so one admission reads account state, the L2 timestamp,
+/// and L1 fee parameters from the same block.
+#[derive(Debug, Default, Clone)]
 pub struct BaseL1BlockInfo {
-    /// The current L1 block info.
-    l1_block_info: RwLock<L1BlockInfo>,
-    /// Current block timestamp.
-    timestamp: AtomicU64,
+    /// The L1 block info extracted from the head block.
+    l1_block_info: L1BlockInfo,
+    /// The head block timestamp.
+    timestamp: u64,
+    /// The head block hash, or `None` before a head is observed, in which case state is read at
+    /// the latest block.
+    block_hash: Option<B256>,
 }
 
 impl BaseL1BlockInfo {
-    /// Returns the most recent timestamp
-    pub fn timestamp(&self) -> u64 {
-        self.timestamp.load(Ordering::Relaxed)
+    /// Returns the head block timestamp.
+    pub const fn timestamp(&self) -> u64 {
+        self.timestamp
     }
 }
 
@@ -691,8 +698,8 @@ impl BaseL1BlockInfo {
 pub struct BaseTransactionValidator<Client, Tx, Evm> {
     /// The type that performs the actual validation.
     inner: Arc<EthTransactionValidator<Client, Tx, Evm>>,
-    /// Additional block info required for validation.
-    block_info: Arc<BaseL1BlockInfo>,
+    /// Head snapshot each admission validates against.
+    block_info: Arc<RwLock<Arc<BaseL1BlockInfo>>>,
     /// If true, ensure that the transaction's sender has enough balance to cover the L1 gas fee
     /// derived from the tracked L1 block info that is extracted from the first transaction in the
     /// L2 block.
@@ -726,9 +733,9 @@ impl<Client, Tx, Evm> BaseTransactionValidator<Client, Tx, Evm> {
         self.inner.client()
     }
 
-    /// Returns the current block timestamp.
-    fn block_timestamp(&self) -> u64 {
-        self.block_info.timestamp.load(Ordering::Relaxed)
+    /// Returns the head snapshot new admissions validate against.
+    pub fn head(&self) -> Arc<BaseL1BlockInfo> {
+        Arc::clone(&self.block_info.read())
     }
 
     /// Whether to ensure that the transaction's sender has enough balance to also cover the L1 gas
@@ -858,11 +865,8 @@ where
         {
             // genesis block has no txs, so we can't extract L1 info, we set the block info to empty
             // so that we will accept txs into the pool before the first block
-            if block.header().number() == 0 {
-                this.block_info.timestamp.store(block.header().timestamp(), Ordering::Relaxed);
-            } else {
-                this.update_l1_block_info(block.header(), block.body().transactions().first());
-            }
+            let tx = block.body().transactions().first().filter(|_| block.header().number() != 0);
+            this.update_l1_block_info(&SealedHeader::seal_slow(block.header().clone()), tx);
         }
 
         this
@@ -878,7 +882,7 @@ where
             Self::trusted_proxy_code_hashes(&trusted_delegation_targets);
         Self {
             inner: Arc::new(inner),
-            block_info: Arc::new(block_info),
+            block_info: Arc::new(RwLock::new(Arc::new(block_info))),
             require_l1_data_gas_fee: true,
             trusted_delegation_targets: Arc::new(trusted_delegation_targets),
             trusted_proxy_code_hashes: Arc::new(trusted_proxy_code_hashes),
@@ -891,64 +895,58 @@ where
     /// Update the L1 block info for the given header and system transaction, if any.
     ///
     /// Note: this supports optional system transaction, in case this is used in a dev setup
-    pub fn update_l1_block_info<H, T>(&self, header: &H, tx: Option<&T>)
+    pub fn update_l1_block_info<H, T>(&self, header: &SealedHeader<H>, tx: Option<&T>)
     where
-        H: BlockHeader,
+        H: BlockHeader + Sealable,
         T: Transaction,
     {
-        self.block_info.timestamp.store(header.timestamp(), Ordering::Relaxed);
-
-        if let Some(Ok(l1_block_info)) = tx.map(base_execution_evm::extract_l1_info_from_tx) {
-            *self.block_info.l1_block_info.write() = l1_block_info;
+        let l1_block_info = tx.and_then(|tx| base_execution_evm::extract_l1_info_from_tx(tx).ok());
+        let mut head = self.block_info.write();
+        let head = Arc::make_mut(&mut head);
+        head.timestamp = header.timestamp();
+        head.block_hash = Some(header.hash());
+        if let Some(l1_block_info) = l1_block_info {
+            head.l1_block_info = l1_block_info;
         }
     }
 
-    /// Validates a single transaction.
-    ///
-    /// See also [`TransactionValidator::validate_transaction`]
-    ///
-    /// This behaves the same as [`BaseTransactionValidator::validate_one_with_state`], but creates
-    /// a new state provider internally.
-    pub async fn validate_one(
-        &self,
-        origin: TransactionOrigin,
-        transaction: Tx,
-    ) -> TransactionValidationOutcome<Tx> {
-        self.validate_one_with_state(origin, transaction, &mut None).await
+    /// Opens account state at `head`'s block, so balances match its fee parameters.
+    fn head_state(&self, head: &BaseL1BlockInfo) -> ProviderResult<StateProviderBox> {
+        head.block_hash
+            .map_or_else(|| self.client().latest(), |hash| self.client().state_by_block_hash(hash))
     }
 
-    /// Validates a single transaction with a provided state provider.
-    ///
-    /// This allows reusing the same state provider across multiple transaction validations.
+    /// Validates a single transaction against the current head snapshot.
     ///
     /// See also [`TransactionValidator::validate_transaction`]
     ///
-    /// This behaves the same as [`EthTransactionValidator::validate_one_with_state`], but in
-    /// addition applies Base-specific validity checks:
+    /// This behaves the same as [`EthTransactionValidator::validate_one`], but in addition applies
+    /// Base-specific validity checks:
     /// - ensures tx is not eip4844
     /// - for eip8130 (account abstraction): rejects submissions before the Everest upgrade is
     ///   active, runs structural checks, then runs EIP-8130-specific stateful validation for
     ///   actor authorization, nonce/replay state, intrinsic gas, create/delegation safety, and
     ///   payer funding instead of using the inner Eth validator
     /// - ensures that the account has enough balance to cover the L1 gas cost
-    pub async fn validate_one_with_state(
+    ///
+    /// Account state is always opened at the snapshot's block, so balances and fees come from the
+    /// same head.
+    pub async fn validate_one(
         &self,
         origin: TransactionOrigin,
         transaction: Tx,
-        state: &mut Option<Box<dyn AccountInfoReader + Send>>,
     ) -> TransactionValidationOutcome<Tx> {
         let kind = if transaction.as_eip8130().is_some() { "eip8130" } else { "standard" };
         let start = Instant::now();
-        let outcome = self.validate_one_with_state_inner(origin, transaction, state);
+        let outcome = self.validate_one_inner(origin, transaction);
         ValidatorMetrics::validate_seconds(kind).record(start.elapsed().as_secs_f64());
         outcome
     }
 
-    fn validate_one_with_state_inner(
+    fn validate_one_inner(
         &self,
         origin: TransactionOrigin,
         transaction: Tx,
-        state: &mut Option<Box<dyn AccountInfoReader + Send>>,
     ) -> TransactionValidationOutcome<Tx> {
         if transaction.is_eip4844() {
             return TransactionValidationOutcome::Invalid(
@@ -957,11 +955,12 @@ where
             );
         }
 
+        let head = self.head();
         if transaction.as_eip8130().is_some() {
             let validation = {
                 let signed = transaction.as_eip8130().expect("checked above");
-                self.validate_eip8130_structural(signed)
-                    .and_then(|()| self.validate_eip8130_full(signed))
+                self.validate_eip8130_structural(signed, &head)
+                    .and_then(|()| self.validate_eip8130_full(signed, &head))
             };
             let state = match validation {
                 Ok(state) => state,
@@ -993,10 +992,21 @@ where
                 bytecode_hash: state.sender_bytecode_hash,
                 authorities: (state.payer != state.sender).then_some(vec![state.payer]),
             };
-            return self.apply_base_checks(outcome, state.payer_auth);
+            return self.apply_base_checks(outcome, state.payer_auth, &head);
         }
-        let outcome = self.inner.validate_one_with_state(origin, transaction, state);
-        self.apply_base_checks(outcome, 0)
+        // Mirrors `EthTransactionValidator::validate_one`, but opens state at the snapshot's block
+        // instead of latest.
+        if let Err(err) = self.inner.validate_stateless(origin, &transaction) {
+            return TransactionValidationOutcome::Invalid(transaction, err);
+        }
+        let state = match self.head_state(&head) {
+            Ok(state) => state,
+            Err(err) => {
+                return TransactionValidationOutcome::Error(*transaction.hash(), Box::new(err));
+            }
+        };
+        let outcome = self.inner.validate_stateful(origin, transaction, state);
+        self.apply_base_checks(outcome, 0, &head)
     }
 
     /// Returns a low-cardinality sender authenticator label for metrics.
@@ -1037,21 +1047,20 @@ where
     /// EIP-8130 because configured senders may be smart contracts and sponsored
     /// transactions charge a payer instead of the sender.
     ///
-    /// The `validate_one_with_state` snapshot is only an `AccountInfoReader`; EIP-8130 needs
-    /// storage/code reads for account config, nonce channels, and delegation checks, so this path
-    /// takes its own full state snapshot.
+    /// State is read at `head`'s block, the same head that supplies the timestamp and L1 fees.
     fn validate_eip8130_full(
         &self,
         signed: &Eip8130Signed,
+        head: &BaseL1BlockInfo,
     ) -> Result<Eip8130ValidationState, InvalidPoolTransactionError> {
         let classification_generation = self.limit_class_cache_generation();
         let local_chain_id = self.inner.chain_spec().chain().id();
-        let now = self.block_timestamp();
+        let now = head.timestamp;
         // Before Zenith there is no Keystore: authorization, lock state, and the
         // high-rate payer classification never read `AccountConfiguration`.
         let keystore =
             BaseSpecId::from_timestamp(self.chain_spec(), now).is_enabled_in(BaseUpgrade::Zenith);
-        let state = self.client().latest().map_err(|error| Self::provider_unavailable(error))?;
+        let state = self.head_state(head).map_err(|error| Self::provider_unavailable(error))?;
 
         // Authorize *and apply* the account changes against a writable overlay so
         // the sender/payer and every config change are validated against the same
@@ -1314,7 +1323,7 @@ where
             signed.tx().max_fee_per_gas,
         );
         let additional_fee = if self.requires_l1_data_gas_fee() {
-            let mut info = self.block_info.l1_block_info.read().clone();
+            let mut info = head.l1_block_info.clone();
             let spec_id = BaseSpecId::from_timestamp(self.chain_spec(), now);
             info.tx_cost(
                 &encoded,
@@ -1789,6 +1798,7 @@ where
     fn validate_eip8130_structural(
         &self,
         signed: &Eip8130Signed,
+        head: &BaseL1BlockInfo,
     ) -> Result<(), InvalidPoolTransactionError> {
         let size = signed.encode_2718_len();
         let limit = self.inner.max_tx_input_bytes();
@@ -1798,10 +1808,7 @@ where
         // Cheap shape checks run before the fork gate and signature recovery.
         Eip8130Structure::validate(signed).map_err(Self::map_structural_error)?;
 
-        // Single read of the head-block timestamp so the fork gate and the
-        // expiry check see the same value even when `on_new_head_block` updates
-        // the atomic concurrently.
-        let now = self.block_timestamp();
+        let now = head.timestamp;
         // Fork gate: EIP-8130 (account abstraction) transactions are only
         // admissible to the pool once the Everest upgrade is active.
         if !self.chain_spec().is_everest_active_at_timestamp(now) {
@@ -1871,6 +1878,7 @@ where
         &self,
         outcome: TransactionValidationOutcome<Tx>,
         operator_fee_gas_addition: u64,
+        head: &BaseL1BlockInfo,
     ) -> TransactionValidationOutcome<Tx> {
         if !self.requires_l1_data_gas_fee() {
             // no need to check L1 gas fee
@@ -1886,10 +1894,10 @@ where
             authorities,
         } = outcome
         {
-            let mut l1_block_info = self.block_info.l1_block_info.read().clone();
+            let mut l1_block_info = head.l1_block_info.clone();
 
             // Check to ensure tx doesn't exceed the DA footprint limit
-            if self.chain_spec().is_jovian_active_at_timestamp(self.block_timestamp()) {
+            if self.chain_spec().is_jovian_active_at_timestamp(head.timestamp) {
                 let da_footprint = valid_tx.transaction().estimated_da_size().saturating_mul(
                     l1_block_info
                         .da_footprint_gas_scalar
@@ -1914,7 +1922,7 @@ where
 
             // Must mirror the execution-side cost in `BaseHandler` (L1 data fee + operator fee
             // post-Isthmus); otherwise operator-fee-underfunded txs get admitted but never execute.
-            let spec_id = BaseSpecId::from_timestamp(self.chain_spec(), self.block_timestamp());
+            let spec_id = BaseSpecId::from_timestamp(self.chain_spec(), head.timestamp);
             let cost_addition = l1_block_info.tx_cost(
                 &encoded,
                 U256::from(
@@ -1968,7 +1976,7 @@ where
     fn on_new_head_block(&self, new_tip_block: &SealedBlock<Self::Block>) {
         self.inner.on_new_head_block(new_tip_block);
         self.update_l1_block_info(
-            new_tip_block.header(),
+            new_tip_block.sealed_header(),
             new_tip_block.body().transactions().first(),
         );
     }
@@ -2183,13 +2191,13 @@ mod tests {
             Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
         let funded = ExtendedAccount::new(0, U256::from(1_000_000_000_000u64));
 
-        let ordinary = build_test_validator_with_account(sender, funded.clone())
-            .validate_eip8130_full(&signed)
-            .unwrap();
+        let ordinary_validator = build_test_validator_with_account(sender, funded.clone());
+        let ordinary =
+            ordinary_validator.validate_eip8130_full(&signed, &ordinary_validator.head()).unwrap();
         assert!(!ordinary.payer_allowlisted);
         let validator =
             build_test_validator_with_account(sender, funded).with_allowlisted_payers([sender]);
-        let allowlisted = validator.validate_eip8130_full(&signed).unwrap();
+        let allowlisted = validator.validate_eip8130_full(&signed, &validator.head()).unwrap();
         assert!(allowlisted.payer_allowlisted, "the self-paying sender is its own payer");
         assert!(
             validator.limit_class_cache.write().take_allowlisted_validation(sender),
@@ -2447,7 +2455,7 @@ mod tests {
     fn accepts_eip8130_with_minimum_valid_eoa_shape() {
         let validator = build_test_validator();
         let signed = sign_eoa_eip8130(minimal_valid_eoa_tx());
-        assert!(validator.validate_eip8130_structural(&signed).is_ok());
+        assert!(validator.validate_eip8130_structural(&signed, &validator.head()).is_ok());
     }
 
     #[test]
@@ -2455,7 +2463,7 @@ mod tests {
         let signed = sign_eoa_eip8130(minimal_valid_eoa_tx());
         let validator = build_test_validator_with_max_tx_input_bytes(signed.encode_2718_len());
 
-        assert!(validator.validate_eip8130_structural(&signed).is_ok());
+        assert!(validator.validate_eip8130_structural(&signed, &validator.head()).is_ok());
     }
 
     #[test]
@@ -2466,7 +2474,7 @@ mod tests {
         let validator = build_test_validator_with_max_tx_input_bytes(limit);
 
         assert!(matches!(
-            validator.validate_eip8130_structural(&signed),
+            validator.validate_eip8130_structural(&signed, &validator.head()),
             Err(InvalidPoolTransactionError::OversizedData {
                 size: rejected_size,
                 limit: rejected_limit,
@@ -2484,7 +2492,7 @@ mod tests {
         let signed = sign_eoa_eip8130(tx);
 
         assert_structural_reason(
-            validator.validate_eip8130_structural(&signed),
+            validator.validate_eip8130_structural(&signed, &validator.head()),
             "call phase count exceeds maximum",
         );
     }
@@ -2504,7 +2512,7 @@ mod tests {
             [build_test_validator(), build_test_validator_with_spec(Arc::new(pre_everest))]
         {
             assert_structural_reason(
-                validator.validate_eip8130_structural(&unrecoverable),
+                validator.validate_eip8130_structural(&unrecoverable, &validator.head()),
                 "call phase count exceeds maximum",
             );
         }
@@ -2516,14 +2524,14 @@ mod tests {
         let chain_spec = BaseChainSpecBuilder::base_mainnet().cobalt_activated().build();
         let validator = build_test_validator_with_spec(Arc::new(chain_spec));
         let signed = sign_eoa_eip8130(minimal_valid_eoa_tx());
-        assert_unsupported(validator.validate_eip8130_structural(&signed));
+        assert_unsupported(validator.validate_eip8130_structural(&signed, &validator.head()));
     }
 
     #[test]
     fn structural_eip8130_validation_is_origin_independent() {
         let validator = build_test_validator();
         let signed = sign_eoa_eip8130(minimal_valid_eoa_tx());
-        assert!(validator.validate_eip8130_structural(&signed).is_ok());
+        assert!(validator.validate_eip8130_structural(&signed, &validator.head()).is_ok());
     }
 
     #[test]
@@ -2531,7 +2539,7 @@ mod tests {
         let validator = build_test_validator();
         let tx = TxEip8130 { chain_id: test_chain_id() + 1, ..minimal_valid_eoa_tx() };
         let signed = sign_eoa_eip8130(tx);
-        assert_chain_id_mismatch(validator.validate_eip8130_structural(&signed));
+        assert_chain_id_mismatch(validator.validate_eip8130_structural(&signed, &validator.head()));
     }
 
     #[test]
@@ -2543,7 +2551,7 @@ mod tests {
             ..minimal_valid_eoa_tx()
         };
         let signed = sign_eoa_eip8130(tx);
-        assert_tip_above_fee_cap(validator.validate_eip8130_structural(&signed));
+        assert_tip_above_fee_cap(validator.validate_eip8130_structural(&signed, &validator.head()));
     }
 
     #[test]
@@ -2551,7 +2559,7 @@ mod tests {
         let validator = build_test_validator();
         let tx = TxEip8130 { gas_limit: 0, ..minimal_valid_eoa_tx() };
         let signed = sign_eoa_eip8130(tx);
-        assert_unsupported(validator.validate_eip8130_structural(&signed));
+        assert_unsupported(validator.validate_eip8130_structural(&signed, &validator.head()));
     }
 
     #[test]
@@ -2559,7 +2567,7 @@ mod tests {
         let validator = build_test_validator();
         let tx = TxEip8130 { max_fee_per_gas: 0, ..minimal_valid_eoa_tx() };
         let signed = sign_eoa_eip8130(tx);
-        assert_unsupported(validator.validate_eip8130_structural(&signed));
+        assert_unsupported(validator.validate_eip8130_structural(&signed, &validator.head()));
     }
 
     #[test]
@@ -2573,7 +2581,7 @@ mod tests {
         };
         let signed = sign_eoa_eip8130(tx);
         assert_structural_reason(
-            validator.validate_eip8130_structural(&signed),
+            validator.validate_eip8130_structural(&signed, &validator.head()),
             "nonce-free transaction must set a non-zero valid_before and a zero nonce sequence",
         );
     }
@@ -2589,7 +2597,7 @@ mod tests {
         };
         let signed = sign_eoa_eip8130(tx);
         assert_structural_reason(
-            validator.validate_eip8130_structural(&signed),
+            validator.validate_eip8130_structural(&signed, &validator.head()),
             "nonce-free transaction must set a non-zero valid_before and a zero nonce sequence",
         );
     }
@@ -2603,7 +2611,7 @@ mod tests {
         // the raw expiry comparison.
         let validator = build_test_validator();
         let header = alloy_consensus::Header { timestamp: 1_700_000_100, ..Default::default() };
-        validator.update_l1_block_info::<_, TxEip1559>(&header, None);
+        validator.update_l1_block_info::<_, TxEip1559>(&SealedHeader::seal_slow(header), None);
         let tx = TxEip8130 {
             nonce_key: Eip8130Constants::NONCE_KEY_MAX,
             nonce_sequence: 0,
@@ -2612,7 +2620,7 @@ mod tests {
         };
         let signed = sign_eoa_eip8130(tx);
         assert_structural_reason(
-            validator.validate_eip8130_structural(&signed),
+            validator.validate_eip8130_structural(&signed, &validator.head()),
             "nonce-free transaction validity window has elapsed",
         );
     }
@@ -2625,7 +2633,7 @@ mod tests {
         // the expiry checks (which `validate_timestamp` evaluates afterward).
         let validator = build_test_validator();
         let header = alloy_consensus::Header { timestamp: 1_700_000_000, ..Default::default() };
-        validator.update_l1_block_info::<_, TxEip1559>(&header, None);
+        validator.update_l1_block_info::<_, TxEip1559>(&SealedHeader::seal_slow(header), None);
         let now_ms = 1_700_000_000_000;
         let tx = TxEip8130 {
             nonce_key: Eip8130Constants::NONCE_KEY_MAX,
@@ -2636,7 +2644,7 @@ mod tests {
         };
         let signed = sign_eoa_eip8130(tx);
         assert_structural_reason(
-            validator.validate_eip8130_structural(&signed),
+            validator.validate_eip8130_structural(&signed, &validator.head()),
             "transaction is not yet valid",
         );
     }
@@ -2649,12 +2657,12 @@ mod tests {
         // `NotYetValid`.
         let validator = build_test_validator();
         let header = alloy_consensus::Header { timestamp: 1_700_000_000, ..Default::default() };
-        validator.update_l1_block_info::<_, TxEip1559>(&header, None);
+        validator.update_l1_block_info::<_, TxEip1559>(&SealedHeader::seal_slow(header), None);
         let now_ms = 1_700_000_000_000;
         let tx = TxEip8130 { valid_after: now_ms + 50_000, ..minimal_valid_eoa_tx() };
         let signed = sign_eoa_eip8130(tx);
         assert_structural_reason(
-            validator.validate_eip8130_structural(&signed),
+            validator.validate_eip8130_structural(&signed, &validator.head()),
             "transaction is not yet valid",
         );
     }
@@ -2668,7 +2676,7 @@ mod tests {
         // the mirror of `accepts_eip8130_nonce_free_at_expiry_window_edge`.
         let validator = build_test_validator();
         let header = alloy_consensus::Header { timestamp: 1_700_000_000, ..Default::default() };
-        validator.update_l1_block_info::<_, TxEip1559>(&header, None);
+        validator.update_l1_block_info::<_, TxEip1559>(&SealedHeader::seal_slow(header), None);
         let now_ms = 1_700_000_000_000;
         let tx = TxEip8130 {
             nonce_key: Eip8130Constants::NONCE_KEY_MAX,
@@ -2678,7 +2686,7 @@ mod tests {
         };
         let signed = sign_eoa_eip8130(tx);
         assert_structural_reason(
-            validator.validate_eip8130_structural(&signed),
+            validator.validate_eip8130_structural(&signed, &validator.head()),
             "nonce-free transaction validity window exceeds the admission window",
         );
     }
@@ -2691,7 +2699,7 @@ mod tests {
         // this checks the inclusive edge in true milliseconds.
         let validator = build_test_validator();
         let header = alloy_consensus::Header { timestamp: 1_700_000_000, ..Default::default() };
-        validator.update_l1_block_info::<_, TxEip1559>(&header, None);
+        validator.update_l1_block_info::<_, TxEip1559>(&SealedHeader::seal_slow(header), None);
         let now_ms = 1_700_000_000_000;
         let tx = TxEip8130 {
             nonce_key: Eip8130Constants::NONCE_KEY_MAX,
@@ -2700,7 +2708,7 @@ mod tests {
             ..minimal_valid_eoa_tx()
         };
         let signed = sign_eoa_eip8130(tx);
-        assert!(validator.validate_eip8130_structural(&signed).is_ok());
+        assert!(validator.validate_eip8130_structural(&signed, &validator.head()).is_ok());
     }
 
     /// The mempool pre-filter window must never exceed the authoritative,
@@ -2790,10 +2798,13 @@ mod tests {
         auth.extend_from_slice(&[0u8; 64]);
         let signed = Eip8130Signed::new(tx, Bytes::from(auth), Bytes::new());
 
-        assert_unsupported(build_test_validator().validate_eip8130_structural(&signed));
+        assert_unsupported(
+            build_test_validator()
+                .validate_eip8130_structural(&signed, &BaseL1BlockInfo::default()),
+        );
         let zenith = build_test_validator_with_spec(zenith_chain_spec());
         assert!(!matches!(
-            zenith.validate_eip8130_structural(&signed),
+            zenith.validate_eip8130_structural(&signed, &zenith.head()),
             Err(InvalidPoolTransactionError::Consensus(
                 InvalidTransactionError::TxTypeNotSupported
             ))
@@ -3443,7 +3454,7 @@ mod tests {
             input: isthmus_data.into(),
         }
         .into();
-        validator.update_l1_block_info(&header, Some(&l1_info_tx));
+        validator.update_l1_block_info(&SealedHeader::seal_slow(header), Some(&l1_info_tx));
 
         let pooled_tx: BasePooledTransaction =
             BasePooledTransaction::new(recovered_tx, envelope.encode_2718_len());
@@ -3509,9 +3520,11 @@ mod tests {
             input: isthmus_data.clone().into(),
         }
         .into();
-        validator.update_l1_block_info(&header, Some(&l1_info_tx));
+        validator.update_l1_block_info(&SealedHeader::seal_slow(header), Some(&l1_info_tx));
 
-        let state = validator.validate_eip8130_full(&signed).expect("valid funded EIP-8130 tx");
+        let state = validator
+            .validate_eip8130_full(&signed, &validator.head())
+            .expect("valid funded EIP-8130 tx");
         let encoded = validator.eip8130_encoded(&signed);
         let max_gas = FeeCheck::max_chargeable_gas(signed.tx().gas_limit, state.payer_auth);
         let gas_charge = FeeCheck::max_fee_charge(
@@ -3549,7 +3562,7 @@ mod tests {
         };
 
         let everest = build_test_validator_with_account(sender, funded())
-            .validate_eip8130_full(&signed)
+            .validate_eip8130_full(&signed, &BaseL1BlockInfo::default())
             .expect("EOA transaction is admitted before Zenith");
         assert!(everest.manifest.has_no_config_slots());
         assert!(!watches_keystore(&everest));
@@ -3560,7 +3573,7 @@ mod tests {
 
         let zenith =
             build_test_validator_with_account_and_spec(sender, funded(), zenith_chain_spec())
-                .validate_eip8130_full(&signed)
+                .validate_eip8130_full(&signed, &BaseL1BlockInfo::default())
                 .expect("EOA transaction is admitted at Zenith");
         assert!(!zenith.manifest.has_no_config_slots());
         assert!(watches_keystore(&zenith));
@@ -3589,10 +3602,13 @@ mod tests {
             build_test_validator_with_account(sender, ExtendedAccount::new(0, U256::from(BALANCE)));
 
         let without_value = validator
-            .validate_eip8130_full(&signed_with_value(U256::ZERO))
+            .validate_eip8130_full(&signed_with_value(U256::ZERO), &validator.head())
             .expect("fees are affordable");
         let with_value = validator
-            .validate_eip8130_full(&signed_with_value(U256::from(BALANCE) * U256::from(10)))
+            .validate_eip8130_full(
+                &signed_with_value(U256::from(BALANCE) * U256::from(10)),
+                &validator.head(),
+            )
             .expect("call value beyond the balance does not block admission");
         assert_eq!(with_value.payer_max_cost, without_value.payer_max_cost);
         assert_eq!(with_value.manifest.payer_max_cost(), with_value.payer_max_cost);
@@ -3615,10 +3631,10 @@ mod tests {
         );
 
         validator
-            .validate_eip8130_full(&signed_with_gas(MAX_TX_GAS_LIMIT_OSAKA))
+            .validate_eip8130_full(&signed_with_gas(MAX_TX_GAS_LIMIT_OSAKA), &validator.head())
             .expect("gas at the cap is admitted");
         let err = validator
-            .validate_eip8130_full(&signed_with_gas(MAX_TX_GAS_LIMIT_OSAKA + 1))
+            .validate_eip8130_full(&signed_with_gas(MAX_TX_GAS_LIMIT_OSAKA + 1), &validator.head())
             .expect_err("gas above the cap is rejected");
         assert!(
             matches!(
@@ -3666,9 +3682,11 @@ mod tests {
         let validator: TestValidator =
             BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default());
         let header = alloy_consensus::Header { timestamp: now, ..Default::default() };
-        validator.update_l1_block_info::<_, TxEip1559>(&header, None);
+        validator.update_l1_block_info::<_, TxEip1559>(&SealedHeader::seal_slow(header), None);
 
-        let state = validator.validate_eip8130_full(&signed).expect("valid nonce-free tx");
+        let state = validator
+            .validate_eip8130_full(&signed, &validator.head())
+            .expect("valid nonce-free tx");
         assert_eq!(state.manifest.effective_expiry(), (valid_before - 1) / 1000);
     }
 
@@ -3802,7 +3820,7 @@ mod tests {
         );
 
         let state = validator
-            .validate_eip8130_full(&signed)
+            .validate_eip8130_full(&signed, &validator.head())
             .expect("create + config change must be admitted via the overlay");
         assert_eq!(state.sender, derived);
         assert_eq!(state.payer, derived, "self-paid create");
@@ -3832,7 +3850,7 @@ mod tests {
         assert_eq!(sender, signer.address());
 
         assert_eip8130_validation_reason(
-            validator.validate_eip8130_full(&signed),
+            validator.validate_eip8130_full(&signed, &validator.head()),
             "delegation sender has non-delegation code",
         );
     }
@@ -3844,7 +3862,7 @@ mod tests {
         assert_eq!(sender, signer.address());
 
         let state = validator
-            .validate_eip8130_full(&signed)
+            .validate_eip8130_full(&signed, &validator.head())
             .expect("empty sender code must accept delegation");
         assert_eq!(state.sender, sender);
         assert_eq!(state.payer, sender);
@@ -3862,11 +3880,44 @@ mod tests {
         assert_eq!(sender, signer.address());
 
         let state = validator
-            .validate_eip8130_full(&signed)
+            .validate_eip8130_full(&signed, &validator.head())
             .expect("existing delegation indicator must accept a target update");
         assert_eq!(state.sender, sender);
         assert_eq!(state.payer, sender);
         assert_eq!(state.sender_bytecode_hash, Some(expected_hash));
         assert!(state.watch_set.iter().any(|key| *key == InvalidationKey::CodeHash(sender)));
+    }
+
+    /// A new head can land between the account read and the fee check, so admission must read the
+    /// account at the head its fee parameters come from rather than whatever `latest` is by then.
+    #[tokio::test]
+    async fn reads_account_state_at_the_fee_snapshot_head() {
+        let signer = Account::Alice.signer();
+        let validator = build_test_validator_with_account(
+            signer.address(),
+            ExtendedAccount::new(0, U256::from(u64::MAX)),
+        );
+        validator.update_l1_block_info::<_, TxEip1559>(
+            &SealedHeader::seal_slow(alloy_consensus::Header::default()),
+            None,
+        );
+        let tx = TxEip1559 {
+            chain_id: test_chain_id(),
+            gas_limit: 50_000,
+            max_fee_per_gas: 1_000,
+            to: TxKind::Call(Address::random()),
+            ..Default::default()
+        };
+        let signature = signer.sign_hash_sync(&tx.signature_hash()).unwrap();
+        let envelope = BaseTxEnvelope::Eip1559(tx.into_signed(signature));
+        let pooled = BasePooledTransaction::new(
+            envelope.clone().try_into_recovered().unwrap(),
+            envelope.encode_2718_len(),
+        );
+
+        // `MockEthProvider` fails only `latest()`; state at an explicit block hash still loads.
+        validator.client().set_snap_state_reads_fail(true);
+        let outcome = validator.validate_one(TransactionOrigin::External, pooled).await;
+        assert!(outcome.is_valid(), "account must be read at the snapshot head, got {outcome:?}");
     }
 }
