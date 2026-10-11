@@ -9,8 +9,9 @@ use reth_cli_runner::CliRunner;
 
 use crate::{
     commands::{
-        bootnode::BootnodeCommand, follow::FollowCommand, reth::RethCommand, rpc::RpcCommand,
-        sequencer::SequencerCommand, snapshot::SnapshotCommand, update::UpdateCommand,
+        bootnode::BootnodeCommand, dev::DevCommand, follow::FollowCommand, reth::RethCommand,
+        rpc::RpcCommand, sequencer::SequencerCommand, snapshot::SnapshotCommand,
+        update::UpdateCommand,
     },
     config::ChainResolver,
 };
@@ -34,6 +35,9 @@ pub(crate) enum BaseCommand {
     /// Run integrated execution, builder, and consensus services in sequencer mode.
     #[command(name = "sequencer")]
     Sequencer(Box<SequencerCommand>),
+    /// Run an L1-free development chain on an existing snapshot datadir.
+    #[command(name = "dev")]
+    Dev(Box<DevCommand>),
     /// Update the base binary to the latest release.
     #[command(name = "update")]
     Update(Box<UpdateCommand>),
@@ -63,6 +67,7 @@ impl BaseCommand {
             Self::Rpc(rpc) => (*rpc).run(chain_resolver.resolve()?),
             Self::Follow(follow) => (*follow).run(chain_resolver.resolve()?),
             Self::Sequencer(sequencer) => (*sequencer).run(chain_resolver.resolve()?),
+            Self::Dev(dev) => (*dev).run(chain_resolver.resolve()?),
             Self::Update(update) => (*update).run(),
             Self::Reth(reth) => {
                 chain_resolver.reject_for_reth_command("base reth")?;

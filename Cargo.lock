@@ -2892,6 +2892,7 @@ name = "base"
 version = "0.0.0"
 dependencies = [
  "alloy-chains",
+ "alloy-rpc-types-engine",
  "axum 0.8.9",
  "base-batcher-cli",
  "base-builder-cli",
@@ -2902,6 +2903,7 @@ dependencies = [
  "base-common-chains",
  "base-common-genesis",
  "base-consensus-cli",
+ "base-consensus-node",
  "base-execution-chainspec",
  "base-execution-cli",
  "base-execution-consensus",

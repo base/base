@@ -28,6 +28,7 @@ base-common-chains.workspace = true
 base-consensus-cli.workspace = true
 base-execution-cli.workspace = true
 base-execution-evm.workspace = true
+base-consensus-node.workspace = true
 base-upgrade-signal.workspace = true
 base-builder-metering.workspace = true
 base-builder-multiplex.workspace = true
@@ -38,6 +39,7 @@ base-cli-utils = { workspace = true, features = ["otlp"] }
 
 # alloy
 alloy-chains = { workspace = true, features = ["std"] }
+alloy-rpc-types-engine = { workspace = true, features = ["jwt"] }
 
 # reth
 reth-node-core.workspace = true
