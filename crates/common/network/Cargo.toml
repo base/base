@@ -44,7 +44,7 @@ std = [
 	"base-common-consensus/std",
 	"base-common-rpc-types-engine/std",
 	"base-common-rpc-types/std",
-	"thiserror/std"
+	"thiserror/std",
 ]
 serde = [
 	"alloy-consensus/serde",
