@@ -59,9 +59,7 @@ where
 
     fn account_trie_cursor(&self) -> Result<Self::AccountTrieCursor<'_>, DatabaseError> {
         Ok(BaseProofsTrieCursor::new(
-            self.storage
-                .account_trie_cursor_with_tx(self.tx, self.block_number)
-                .map_err(Into::<DatabaseError>::into)?,
+            self.storage.account_trie_cursor_with_tx(self.tx, self.block_number)?,
         ))
     }
 
@@ -69,11 +67,11 @@ where
         &self,
         hashed_address: B256,
     ) -> Result<Self::StorageTrieCursor<'_>, DatabaseError> {
-        Ok(BaseProofsTrieCursor::new(
-            self.storage
-                .storage_trie_cursor_with_tx(self.tx, hashed_address, self.block_number)
-                .map_err(Into::<DatabaseError>::into)?,
-        ))
+        Ok(BaseProofsTrieCursor::new(self.storage.storage_trie_cursor_with_tx(
+            self.tx,
+            hashed_address,
+            self.block_number,
+        )?))
     }
 }
 
@@ -167,22 +165,14 @@ where
         Self: 'a;
 
     fn account_trie_cursor(&self) -> Result<Self::AccountTrieCursor<'_>, DatabaseError> {
-        Ok(RawTrieCursor::new(
-            self.session
-                .account_trie_cursor(self.block_number)
-                .map_err(Into::<DatabaseError>::into)?,
-        ))
+        Ok(RawTrieCursor::new(self.session.account_trie_cursor(self.block_number)?))
     }
 
     fn storage_trie_cursor(
         &self,
         hashed_address: B256,
     ) -> Result<Self::StorageTrieCursor<'_>, DatabaseError> {
-        Ok(RawTrieCursor::new(
-            self.session
-                .storage_trie_cursor(hashed_address, self.block_number)
-                .map_err(Into::<DatabaseError>::into)?,
-        ))
+        Ok(RawTrieCursor::new(self.session.storage_trie_cursor(hashed_address, self.block_number)?))
     }
 }
 
