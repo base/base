@@ -437,6 +437,7 @@ mod tests {
         transaction::{DbTx, DbTxMut},
     };
     use reth_trie::{BranchNodeCompact, Nibbles, StoredNibbles};
+    use rstest::rstest;
     use tempfile::TempDir;
 
     use super::*;
@@ -548,16 +549,193 @@ mod tests {
         MdbxAccountCursor::new(c, max_block)
     }
 
-    // Assert helper: ensure the chosen VersionedValue has the expected block and deletion flag.
-    fn assert_block(
-        got: Option<(StoredNibbles, VersionedValue<BranchNodeCompact>)>,
-        expected_block: u64,
-        expect_deleted: bool,
+    #[derive(Clone, Copy, Debug)]
+    enum VersionedCursorOp {
+        LatestVersion,
+        SeekExact,
+        Seek,
+        Next,
+        TrieSeekExact,
+    }
+
+    fn resolve_version(
+        tx: &<DatabaseEnv as Database>::TX,
+        max_block: u64,
+        op: VersionedCursorOp,
+        start: u8,
+    ) -> Option<(StoredNibbles, Option<(u64, bool)>)> {
+        match op {
+            VersionedCursorOp::LatestVersion => {
+                let key = stored(Nibbles::from_nibbles([start]));
+                let mut cursor = version_cursor(tx, max_block);
+                cursor.latest_version_for_key(key).expect("ok").map(|(key, value)| {
+                    (key, Some((value.block_number, matches!(value.value, MaybeDeleted(None)))))
+                })
+            }
+            VersionedCursorOp::SeekExact => {
+                let key = stored(Nibbles::from_nibbles([start]));
+                let mut cursor = version_cursor(tx, max_block);
+                cursor.seek_exact(key).expect("ok").map(|(key, _)| (key, None))
+            }
+            VersionedCursorOp::Seek => {
+                let key = stored(Nibbles::from_nibbles([start]));
+                let mut cursor = version_cursor(tx, max_block);
+                cursor.seek(key).expect("ok").map(|(key, _)| (key, None))
+            }
+            VersionedCursorOp::Next => {
+                let mut cursor = version_cursor(tx, max_block);
+                cursor.next().expect("ok").map(|(key, _)| (key, None))
+            }
+            VersionedCursorOp::TrieSeekExact => {
+                let key = stored(Nibbles::from_nibbles([start]));
+                let mut cursor = account_trie_cursor(tx, max_block);
+                TrieCursor::seek_exact(&mut cursor, key.0)
+                    .expect("ok")
+                    .map(|(path, _)| (stored(path), None))
+            }
+        }
+    }
+
+    #[rstest]
+    #[case::latest_at_max(
+        VersionedCursorOp::LatestVersion,
+        &[(0x0A, 10, false), (0x0A, 50, false)],
+        50,
+        0x0A,
+        Some((0x0A, Some((50, false))))
+    )]
+    #[case::latest_below_max_with_next_above(
+        VersionedCursorOp::LatestVersion,
+        &[(0x0A, 10, false), (0x0A, 30, false), (0x0A, 70, false)],
+        50,
+        0x0A,
+        Some((0x0A, Some((30, false))))
+    )]
+    #[case::latest_last_below_max(
+        VersionedCursorOp::LatestVersion,
+        &[(0x0A, 10, false), (0x0A, 40, false)],
+        100,
+        0x0A,
+        Some((0x0A, Some((40, false))))
+    )]
+    #[case::latest_none_when_all_above_max(
+        VersionedCursorOp::LatestVersion,
+        &[(0x0A, 60, false), (0x0A, 70, false), (0x0B, 40, false)],
+        50,
+        0x0A,
+        None
+    )]
+    #[case::latest_single_below_max(
+        VersionedCursorOp::LatestVersion,
+        &[(0x0A, 25, false)],
+        50,
+        0x0A,
+        Some((0x0A, Some((25, false))))
+    )]
+    #[case::latest_single_at_max(
+        VersionedCursorOp::LatestVersion,
+        &[(0x0A, 50, false)],
+        50,
+        0x0A,
+        Some((0x0A, Some((50, false))))
+    )]
+    #[case::latest_returns_tombstone(
+        VersionedCursorOp::LatestVersion,
+        &[(0x0A, 10, false), (0x0A, 90, true)],
+        100,
+        0x0A,
+        Some((0x0A, Some((90, true))))
+    )]
+    #[case::seek_exact_filters_tombstone(
+        VersionedCursorOp::SeekExact,
+        &[(0x0A, 10, false), (0x0A, 90, true)],
+        100,
+        0x0A,
+        None
+    )]
+    #[case::seek_at_live_key(
+        VersionedCursorOp::Seek,
+        &[(0x0A, 10, false), (0x0A, 20, false)],
+        50,
+        0x0A,
+        Some((0x0A, None))
+    )]
+    #[case::seek_skips_tombstoned_key(
+        VersionedCursorOp::Seek,
+        &[(0x0A, 10, false), (0x0A, 20, true), (0x0B, 5, false)],
+        50,
+        0x0A,
+        Some((0x0B, None))
+    )]
+    #[case::seek_between_keys(
+        VersionedCursorOp::Seek,
+        &[(0x0A, 10, false), (0x0C, 10, false)],
+        100,
+        0x0B,
+        Some((0x0C, None))
+    )]
+    #[case::seek_skips_keys_above_max(
+        VersionedCursorOp::Seek,
+        &[(0x0A, 60, false), (0x0B, 40, false)],
+        50,
+        0x0A,
+        Some((0x0B, None))
+    )]
+    #[case::seek_mixed_versions_tombstone(
+        VersionedCursorOp::Seek,
+        &[(0x0A, 10, false), (0x0A, 30, true), (0x0B, 5, false)],
+        30,
+        0x0A,
+        Some((0x0B, None))
+    )]
+    #[case::next_first_live(
+        VersionedCursorOp::Next,
+        &[(0x0A, 10, false), (0x0B, 10, false)],
+        100,
+        0x00,
+        Some((0x0A, None))
+    )]
+    #[case::next_skips_keys_above_max(
+        VersionedCursorOp::Next,
+        &[(0x0A, 60, false), (0x0B, 40, false)],
+        50,
+        0x00,
+        Some((0x0B, None))
+    )]
+    #[case::account_seek_exact_filters_tombstone(
+        VersionedCursorOp::TrieSeekExact,
+        &[(0x0B, 5, false), (0x0B, 9, true)],
+        10,
+        0x0B,
+        None
+    )]
+    fn versioned_cursor_resolves_latest_visible_version(
+        #[case] op: VersionedCursorOp,
+        #[case] entries: &[(u8, u64, bool)],
+        #[case] max_block: u64,
+        #[case] start: u8,
+        #[case] expected: Option<(u8, Option<(u64, bool)>)>,
     ) {
-        let (_, vv) = got.expect("expected Some(..)");
-        assert_eq!(vv.block_number, expected_block, "wrong block chosen");
-        let is_deleted = matches!(vv.value, MaybeDeleted(None));
-        assert_eq!(is_deleted, expect_deleted, "tombstone mismatch");
+        let db = setup_db();
+        {
+            let wtx = db.tx_mut().expect("rw tx");
+            for &(nibble, block, deleted) in entries {
+                append_account_trie(
+                    &wtx,
+                    stored(Nibbles::from_nibbles([nibble])),
+                    block,
+                    (!deleted).then(node),
+                );
+            }
+            wtx.commit().expect("commit");
+        }
+
+        let tx = db.tx().expect("ro tx");
+        let got = resolve_version(&tx, max_block, op, start);
+        let expected =
+            expected.map(|(nibble, version)| (stored(Nibbles::from_nibbles([nibble])), version));
+
+        assert_eq!(got, expected);
     }
 
     /// No entry for key → None.
@@ -573,160 +751,6 @@ mod tests {
         assert!(out.is_none(), "absent key must return None");
     }
 
-    /// Exact match at max (live) → pick it.
-    #[test]
-    fn latest_version_for_key_picks_value_at_max_if_present() {
-        let db = setup_db();
-        let k = stored(Nibbles::from_nibbles([0x0A]));
-        {
-            let wtx = db.tx_mut().expect("rw tx");
-            append_account_trie(&wtx, k.clone(), 10, Some(node()));
-            append_account_trie(&wtx, k.clone(), 50, Some(node())); // == max
-            wtx.commit().expect("commit");
-        }
-
-        let tx = db.tx().expect("ro tx");
-        let mut core = version_cursor(&tx, 50);
-
-        let out = core.latest_version_for_key(k).expect("ok");
-        assert_block(out, 50, false);
-    }
-
-    /// When `seek_by_key_subkey` points to the subkey > max - fallback to the prev.
-    #[test]
-    fn latest_version_for_key_picks_latest_below_max_when_next_is_above() {
-        let db = setup_db();
-        let k = stored(Nibbles::from_nibbles([0x0A]));
-        {
-            let wtx = db.tx_mut().expect("rw tx");
-            append_account_trie(&wtx, k.clone(), 10, Some(node()));
-            append_account_trie(&wtx, k.clone(), 30, Some(node())); // expected
-            append_account_trie(&wtx, k.clone(), 70, Some(node())); // > max
-            wtx.commit().expect("commit");
-        }
-
-        let tx = db.tx().expect("ro tx");
-        let mut core = version_cursor(&tx, 50);
-
-        let out = core.latest_version_for_key(k).expect("ok");
-        assert_block(out, 30, false);
-    }
-
-    /// No ≥ max but key exists → use last < max.
-    #[test]
-    fn latest_version_for_key_picks_last_below_max_when_none_at_or_above() {
-        let db = setup_db();
-        let k = stored(Nibbles::from_nibbles([0x0A]));
-        {
-            let wtx = db.tx_mut().expect("rw tx");
-            append_account_trie(&wtx, k.clone(), 10, Some(node()));
-            append_account_trie(&wtx, k.clone(), 40, Some(node())); // expected (max=100)
-            wtx.commit().expect("commit");
-        }
-
-        let tx = db.tx().expect("ro tx");
-        let mut core = version_cursor(&tx, 100);
-
-        let out = core.latest_version_for_key(k).expect("ok");
-        assert_block(out, 40, false);
-    }
-
-    /// All entries are > max → None.
-    #[test]
-    fn latest_version_for_key_none_when_everything_is_above_max() {
-        let db = setup_db();
-        let k1 = stored(Nibbles::from_nibbles([0x0A]));
-        let k2 = stored(Nibbles::from_nibbles([0x0B]));
-
-        {
-            let wtx = db.tx_mut().expect("rw tx");
-            append_account_trie(&wtx, k1.clone(), 60, Some(node()));
-            append_account_trie(&wtx, k1.clone(), 70, Some(node()));
-            append_account_trie(&wtx, k2, 40, Some(node()));
-            wtx.commit().expect("commit");
-        }
-
-        let tx = db.tx().expect("ro tx");
-        let mut core = version_cursor(&tx, 50);
-
-        let out = core.latest_version_for_key(k1).expect("ok");
-        assert!(out.is_none(), "no dup ≤ max ⇒ None");
-    }
-
-    /// Single dup < max → pick it.
-    #[test]
-    fn latest_version_for_key_picks_single_below_max() {
-        let db = setup_db();
-        let k = stored(Nibbles::from_nibbles([0x0A]));
-        {
-            let wtx = db.tx_mut().expect("rw tx");
-            append_account_trie(&wtx, k.clone(), 25, Some(node())); // < max
-            wtx.commit().expect("commit");
-        }
-
-        let tx = db.tx().expect("ro tx");
-        let mut core = version_cursor(&tx, 50);
-
-        let out = core.latest_version_for_key(k).expect("ok");
-        assert_block(out, 25, false);
-    }
-
-    /// Single dup == max → pick it.
-    #[test]
-    fn latest_version_for_key_picks_single_at_max() {
-        let db = setup_db();
-        let k = stored(Nibbles::from_nibbles([0x0A]));
-        {
-            let wtx = db.tx_mut().expect("rw tx");
-            append_account_trie(&wtx, k.clone(), 50, Some(node())); // == max
-            wtx.commit().expect("commit");
-        }
-
-        let tx = db.tx().expect("ro tx");
-        let mut core = version_cursor(&tx, 50);
-
-        let out = core.latest_version_for_key(k).expect("ok");
-        assert_block(out, 50, false);
-    }
-
-    /// Latest ≤ max is a tombstone → return it (this API doesn't filter).
-    #[test]
-    fn latest_version_for_key_returns_tombstone_if_latest_is_deleted() {
-        let db = setup_db();
-        let k = stored(Nibbles::from_nibbles([0x0A]));
-        {
-            let wtx = db.tx_mut().expect("rw tx");
-            append_account_trie(&wtx, k.clone(), 10, Some(node()));
-            append_account_trie(&wtx, k.clone(), 90, None); // latest ≤ max, but deleted
-            wtx.commit().expect("commit");
-        }
-
-        let tx = db.tx().expect("ro tx");
-        let mut core = version_cursor(&tx, 100);
-
-        let out = core.latest_version_for_key(k).expect("ok");
-        assert_block(out, 90, true);
-    }
-
-    /// Should skip tombstones and return None when the latest ≤ max is deleted.
-    #[test]
-    fn seek_exact_skips_tombstone_returns_none() {
-        let db = setup_db();
-        let k = stored(Nibbles::from_nibbles([0x0A]));
-        {
-            let wtx = db.tx_mut().expect("rw tx");
-            append_account_trie(&wtx, k.clone(), 10, Some(node()));
-            append_account_trie(&wtx, k.clone(), 90, None); // latest ≤ max is tombstoned
-            wtx.commit().expect("commit");
-        }
-
-        let tx = db.tx().expect("ro tx");
-        let mut core = version_cursor(&tx, 100);
-
-        let out = core.seek_exact(k).expect("ok");
-        assert!(out.is_none(), "seek_exact must filter out deleted latest value");
-    }
-
     /// Empty table → None.
     #[test]
     fn seek_empty_returns_none() {
@@ -736,71 +760,6 @@ mod tests {
 
         let out = cur.seek(stored(Nibbles::from_nibbles([0x0A]))).expect("ok");
         assert!(out.is_none());
-    }
-
-    /// Start at an existing key whose latest ≤ max is live → returns that key.
-    #[test]
-    fn seek_at_live_key_returns_it() {
-        let db = setup_db();
-        let k = stored(Nibbles::from_nibbles([0x0A]));
-        {
-            let wtx = db.tx_mut().expect("rw tx");
-            append_account_trie(&wtx, k.clone(), 10, Some(node()));
-            append_account_trie(&wtx, k.clone(), 20, Some(node())); // latest ≤ max
-            wtx.commit().expect("commit");
-        }
-        let tx = db.tx().expect("ro tx");
-        let mut cur = version_cursor(&tx, 50);
-
-        let out = cur.seek(k.clone()).expect("ok").expect("some");
-        assert_eq!(out.0, k);
-    }
-
-    /// Start at an existing key whose latest ≤ max is tombstoned → skip to next key with live
-    /// value.
-    #[test]
-    fn seek_skips_tombstoned_key_to_next_live_key() {
-        let db = setup_db();
-        let k1 = stored(Nibbles::from_nibbles([0x0A]));
-        let k2 = stored(Nibbles::from_nibbles([0x0B]));
-
-        {
-            let wtx = db.tx_mut().expect("rw tx");
-            // Key 0x10 latest ≤ max is deleted
-            append_account_trie(&wtx, k1.clone(), 10, Some(node()));
-            append_account_trie(&wtx, k1.clone(), 20, None); // tombstone at latest ≤ max
-            // Next key has live
-            append_account_trie(&wtx, k2.clone(), 5, Some(node()));
-            wtx.commit().expect("commit");
-        }
-        let tx = db.tx().expect("ro tx");
-        let mut cur = version_cursor(&tx, 50);
-
-        let out = cur.seek(k1).expect("ok").expect("some");
-        assert_eq!(out.0, k2);
-    }
-
-    /// Start between keys → returns the next key’s live latest ≤ max.
-    #[test]
-    fn seek_between_keys_returns_next_key() {
-        let db = setup_db();
-        let k1 = stored(Nibbles::from_nibbles([0x0A]));
-        let k2 = stored(Nibbles::from_nibbles([0x0C]));
-        let k3 = stored(Nibbles::from_nibbles([0x0B]));
-
-        {
-            let wtx = db.tx_mut().expect("rw tx");
-            append_account_trie(&wtx, k1, 10, Some(node()));
-            append_account_trie(&wtx, k2.clone(), 10, Some(node()));
-            wtx.commit().expect("commit");
-        }
-        let tx = db.tx().expect("ro tx");
-        let mut cur = version_cursor(&tx, 100);
-
-        // Start at 0x15 (between 0x10 and 0x20)
-
-        let out = cur.seek(k3).expect("ok").expect("some");
-        assert_eq!(out.0, k2);
     }
 
     /// Start after the last key → None.
@@ -822,70 +781,6 @@ mod tests {
 
         let out = cur.seek(k3).expect("ok");
         assert!(out.is_none());
-    }
-
-    /// If the first key at-or-after has only versions > max, it is effectively not visible → skip
-    /// to next.
-    #[test]
-    fn seek_skips_keys_with_only_versions_above_max() {
-        let db = setup_db();
-        let k1 = stored(Nibbles::from_nibbles([0x0A]));
-        let k2 = stored(Nibbles::from_nibbles([0x0B]));
-
-        {
-            let wtx = db.tx_mut().expect("rw tx");
-            append_account_trie(&wtx, k1.clone(), 60, Some(node()));
-            append_account_trie(&wtx, k2.clone(), 40, Some(node()));
-            wtx.commit().expect("commit");
-        }
-        let tx = db.tx().expect("ro tx");
-        let mut cur = version_cursor(&tx, 50);
-
-        let out = cur.seek(k1).expect("ok").expect("some");
-        assert_eq!(out.0, k2);
-    }
-
-    /// Start at a key with mixed versions; latest ≤ max is tombstone → skip to next key with live.
-    #[test]
-    fn seek_mixed_versions_tombstone_latest_skips_to_next_key() {
-        let db = setup_db();
-        let k1 = stored(Nibbles::from_nibbles([0x0A]));
-        let k2 = stored(Nibbles::from_nibbles([0x0B]));
-
-        {
-            let wtx = db.tx_mut().expect("rw tx");
-            append_account_trie(&wtx, k1.clone(), 10, Some(node()));
-            append_account_trie(&wtx, k1.clone(), 30, None);
-            append_account_trie(&wtx, k2.clone(), 5, Some(node()));
-            wtx.commit().expect("commit");
-        }
-        let tx = db.tx().expect("ro tx");
-        let mut cur = version_cursor(&tx, 30);
-
-        let out = cur.seek(k1).expect("ok").expect("some");
-        assert_eq!(out.0, k2);
-    }
-
-    /// When not positioned should start from default key and return the first live key.
-    #[test]
-    fn next_unpositioned_starts_from_default_returns_first_live() {
-        let db = setup_db();
-        let k1 = stored(Nibbles::from_nibbles([0x0A]));
-        let k2 = stored(Nibbles::from_nibbles([0x0B]));
-
-        {
-            let wtx = db.tx_mut().expect("rw tx");
-            append_account_trie(&wtx, k1.clone(), 10, Some(node())); // first live
-            append_account_trie(&wtx, k2, 10, Some(node()));
-            wtx.commit().expect("commit");
-        }
-
-        let tx = db.tx().expect("ro tx");
-        // Unpositioned cursor
-        let mut cur = version_cursor(&tx, 100);
-
-        let out = cur.next().expect("ok").expect("some");
-        assert_eq!(out.0, k1);
     }
 
     /// After positioning on a live key via `seek()`, `next()` should advance to the next live key.
@@ -966,31 +861,6 @@ mod tests {
         assert!(out.is_none());
     }
 
-    /// If the first key has only versions > max, `next()` should skip it and return the next live
-    /// key.
-    #[test]
-    fn next_skips_keys_with_only_versions_above_max() {
-        let db = setup_db();
-        let k1 = stored(Nibbles::from_nibbles([0x0A])); // only > max
-        let k2 = stored(Nibbles::from_nibbles([0x0B])); // ≤ max live
-
-        {
-            let wtx = db.tx_mut().expect("rw tx");
-            // k1 only above max (max=50)
-            append_account_trie(&wtx, k1, 60, Some(node()));
-            // k2 within max
-            append_account_trie(&wtx, k2.clone(), 40, Some(node()));
-            wtx.commit().expect("commit");
-        }
-
-        let tx = db.tx().expect("ro tx");
-        // Unpositioned; `next()` will start from default and walk
-        let mut cur = version_cursor(&tx, 50);
-
-        let out = cur.next().expect("ok").expect("some");
-        assert_eq!(out.0, k2);
-    }
-
     /// Empty table: `next()` should return None.
     #[test]
     fn next_on_empty_returns_none() {
@@ -1023,25 +893,6 @@ mod tests {
         // Wrapper should return (Nibbles, BranchNodeCompact)
         let out = TrieCursor::seek_exact(&mut cur, k).expect("ok").expect("some");
         assert_eq!(out.0, k);
-    }
-
-    #[test]
-    fn account_seek_exact_filters_tombstone() {
-        let db = setup_db();
-        let k = Nibbles::from_nibbles([0x0B]);
-
-        {
-            let wtx = db.tx_mut().expect("rw tx");
-            append_account_trie(&wtx, StoredNibbles(k), 5, Some(node()));
-            append_account_trie(&wtx, StoredNibbles(k), 9, None); // latest ≤ max tombstone
-            wtx.commit().expect("commit");
-        }
-
-        let tx = db.tx().expect("ro tx");
-        let mut cur = account_trie_cursor(&tx, 10);
-
-        let out = TrieCursor::seek_exact(&mut cur, k).expect("ok");
-        assert!(out.is_none(), "account seek_exact must filter tombstone");
     }
 
     #[test]
