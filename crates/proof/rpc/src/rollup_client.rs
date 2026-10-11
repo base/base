@@ -130,9 +130,7 @@ impl RollupClient {
             self.provider
                 .optimism_output_at_block(BlockNumberOrTag::Number(block_number))
                 .await
-                .map_err(|e| {
-                    RpcError::InvalidResponse(format!("Failed to get output at block: {e}"))
-                })
+                .map_err(RpcError::from)
         })
         .retry(backoff)
         .when(|e| e.is_retryable())
@@ -153,7 +151,7 @@ impl RollupProvider for RollupClient {
                 .provider
                 .optimism_rollup_config()
                 .await
-                .map_err(|e| RpcError::InvalidResponse(format!("Failed to get rollup config: {e}")))?;
+                .map_err(RpcError::from)?;
 
             tracing::debug!(raw_response = %raw_response, "Received raw optimism_rollupConfig response");
 
@@ -172,18 +170,13 @@ impl RollupProvider for RollupClient {
     async fn sync_status(&self) -> RpcResult<SyncStatus> {
         let backoff = self.retry_config.to_backoff_builder();
 
-        (|| async {
-            self.provider
-                .optimism_sync_status()
-                .await
-                .map_err(|e| RpcError::InvalidResponse(format!("Failed to get sync status: {e}")))
-        })
-        .retry(backoff)
-        .when(|e| e.is_retryable())
-        .notify(|err, dur| {
-            tracing::debug!(error = %err, delay = ?dur, "Retrying RollupClient::sync_status");
-        })
-        .await
+        (|| async { self.provider.optimism_sync_status().await.map_err(RpcError::from) })
+            .retry(backoff)
+            .when(|e| e.is_retryable())
+            .notify(|err, dur| {
+                tracing::debug!(error = %err, delay = ?dur, "Retrying RollupClient::sync_status");
+            })
+            .await
     }
 
     async fn output_at_block(&self, block_number: u64) -> RpcResult<OutputAtBlock> {
@@ -207,7 +200,80 @@ impl RollupProvider for RollupClient {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::TcpListener,
+    };
+
     use super::*;
+
+    const RETRIES: u32 = 2;
+
+    /// Serves `response` to every HTTP request and returns the endpoint and request counter.
+    async fn serve(response: &'static str) -> (Url, Arc<AtomicUsize>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = Url::parse(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
+        let requests = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&requests);
+        tokio::spawn(async move {
+            loop {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut request = Vec::new();
+                let mut buf = [0u8; 4096];
+                while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                    let n = stream.read(&mut buf).await.unwrap();
+                    request.extend_from_slice(&buf[..n]);
+                }
+                counter.fetch_add(1, Ordering::SeqCst);
+                stream.write_all(response.as_bytes()).await.unwrap();
+                stream.shutdown().await.unwrap();
+            }
+        });
+        (endpoint, requests)
+    }
+
+    fn client(endpoint: Url) -> RollupClient {
+        let retry = RetryConfig::new(RETRIES, Duration::from_millis(1), Duration::from_millis(1));
+        RollupClient::new(RollupClientConfig::new(endpoint).with_retry_config(retry)).unwrap()
+    }
+
+    #[tokio::test]
+    async fn transport_failures_are_retried() {
+        let (endpoint, requests) = serve(
+            "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        )
+        .await;
+        let client = client(endpoint);
+
+        let rollup_config = client.rollup_config().await.unwrap_err();
+        let sync_status = client.sync_status().await.unwrap_err();
+        let output = client.fresh_output_at_block(1).await.unwrap_err();
+
+        for err in [rollup_config, sync_status, output] {
+            assert!(matches!(err, RpcError::Transport(_)), "unexpected error: {err}");
+        }
+        assert_eq!(requests.load(Ordering::SeqCst), 3 * (RETRIES as usize + 1));
+    }
+
+    #[tokio::test]
+    async fn rpc_error_responses_are_not_retried() {
+        let (endpoint, requests) = serve(concat!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 67\r\n",
+            "Connection: close\r\n\r\n",
+            r#"{"jsonrpc":"2.0","id":0,"error":{"code":-32601,"message":"nope!!"}}"#,
+        ))
+        .await;
+
+        let err = client(endpoint).sync_status().await.unwrap_err();
+
+        assert!(matches!(err, RpcError::InvalidResponse(_)), "unexpected error: {err}");
+        assert_eq!(requests.load(Ordering::SeqCst), 1);
+    }
 
     #[test]
     fn test_rollup_client_config_defaults() {
