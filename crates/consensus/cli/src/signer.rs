@@ -122,9 +122,7 @@ impl SignerArgs {
         match (sequencer_key, self.config_remote()?) {
             (Some(_), Some(_)) => Err(SignerArgsParseError::LocalAndRemoteSigner),
             (Some(key), None) => Ok(Some(
-                PrivateKeySigner::from_bytes(&key)?
-                    .with_chain_id(Some(l2_chain_id))
-                    .into(),
+                PrivateKeySigner::from_bytes(&key)?.with_chain_id(Some(l2_chain_id)).into(),
             )),
             (None, Some(signer)) => Ok(Some(signer.into())),
             (None, None) => Ok(None),
