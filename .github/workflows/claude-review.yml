@@ -129,6 +129,10 @@ jobs:
             Leave an inline Critical finding for any unmitigated change that can introduce, widen, or obscure a block-production halt/stall trigger described in the guide or an analogous trigger you identify.
             A Critical finding must explain the triggering input/state/config, affected code path, propagated error or panic, why block production or validator progression can halt/stall, and the missing mitigation or test.
 
+            HOT-PATH PERFORMANCE FINDINGS:
+            A diff rarely shows how often changed code runs. If the PR touches code reachable from a path listed in the hot-path registry of `docs/guides/HOT_PATH_PERFORMANCE_REVIEW.md` (per-candidate transaction selection, pool admission, flashblock building and publishing, block execution), run `git show HEAD:docs/guides/HOT_PATH_PERFORMANCE_REVIEW.md` and apply it.
+            Cost added per-unit work at its production frequency. Evaluate default-off features on their enabled branch, because production enables features that tests, benchmarks, and devnet leave off.
+
             COMMENT MANAGEMENT:
             If you have findings, post one summary using `gh pr comment ${{ github.event.pull_request.number }} --body ...`.
             Start the body with the exact marker `<!-- CLAUDE_REVIEW_SUMMARY -->`, followed by a blank line and your summary.
