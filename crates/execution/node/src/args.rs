@@ -3,11 +3,13 @@
 //! clap [Args](clap::Args) for Base rollup configuration
 
 use std::{
-    path::{Path, PathBuf},
+    num::NonZeroUsize,
+    path::{Component, Path, PathBuf},
     time::Duration,
 };
 
 use alloy_primitives::Address;
+use base_execution_rpc::WitnessCacheConfig;
 use base_execution_trie::{MdbxProofsStorageOptions, RocksdbProofsStorageOptions};
 use base_execution_txpool::{
     DEFAULT_ALLOWLISTED_PAYMENT_LIMIT, DEFAULT_PAYMENT_LIMIT, DEFAULT_SIGNATURE_LIMIT,
@@ -331,6 +333,143 @@ fn mib_to_usize(size_mib: u64) -> usize {
     usize::try_from(size_mib.saturating_mul(MIB)).unwrap_or(usize::MAX)
 }
 
+/// Default witness cache retention: 2 hours of blocks at 200ms block time.
+pub const DEFAULT_WITNESS_CACHE_RETENTION_BLOCKS: u64 = 36_000;
+
+/// Default number of witnesses the witness cache builds concurrently.
+pub const DEFAULT_WITNESS_CACHE_BUILDER_CONCURRENCY: NonZeroUsize = NonZeroUsize::new(4).unwrap();
+
+/// Suffix of the directory next to the proofs history storage path used when no witness cache
+/// path is set. The cache is kept out of the storage directory, which the proofs database owns.
+pub const DEFAULT_WITNESS_CACHE_SUFFIX: &str = "-witness-cache";
+
+/// Options for the prebuilt `debug_executePayload` witness cache of proofs history.
+#[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
+pub struct ProofsHistoryWitnessCacheArgs {
+    /// Prebuild `debug_executePayload` witnesses for canonical blocks into an on-disk cache.
+    ///
+    /// Requires proofs history with `--proofs-history.storage-path`.
+    #[arg(
+        id = "proofs_history_witness_cache",
+        long = "proofs-history.witness-cache",
+        visible_alias = "proofs.witness-cache",
+        value_name = "PROOFS_HISTORY_WITNESS_CACHE",
+        requires = "proofs_history_storage_path"
+    )]
+    pub enabled: bool,
+
+    /// Witness cache directory. Defaults to `<proofs history storage path>-witness-cache`.
+    #[arg(
+        id = "proofs_history_witness_cache_path",
+        long = "proofs-history.witness-cache.path",
+        visible_alias = "proofs.witness-cache.path",
+        value_name = "PROOFS_HISTORY_WITNESS_CACHE_PATH"
+    )]
+    pub path: Option<PathBuf>,
+
+    /// Number of blocks behind the proofs history tip to keep cached witnesses for.
+    #[arg(
+        id = "proofs_history_witness_cache_retention",
+        long = "proofs-history.witness-cache.retention",
+        visible_alias = "proofs.witness-cache.retention",
+        value_name = "PROOFS_HISTORY_WITNESS_CACHE_RETENTION",
+        default_value_t = DEFAULT_WITNESS_CACHE_RETENTION_BLOCKS,
+        value_parser = clap::value_parser!(u64).range(1..)
+    )]
+    pub retention_blocks: u64,
+
+    /// Minimum number of blocks behind the proofs history tip before a block's witness is built.
+    #[arg(
+        id = "proofs_history_witness_cache_build_lag",
+        long = "proofs-history.witness-cache.build-lag",
+        visible_alias = "proofs.witness-cache.build-lag",
+        value_name = "PROOFS_HISTORY_WITNESS_CACHE_BUILD_LAG",
+        default_value_t = 0
+    )]
+    pub build_lag: u64,
+
+    /// Maximum number of witnesses built concurrently in the background.
+    #[arg(
+        id = "proofs_history_witness_cache_builder_concurrency",
+        long = "proofs-history.witness-cache.builder-concurrency",
+        visible_alias = "proofs.witness-cache.builder-concurrency",
+        value_name = "PROOFS_HISTORY_WITNESS_CACHE_BUILDER_CONCURRENCY",
+        default_value_t = DEFAULT_WITNESS_CACHE_BUILDER_CONCURRENCY
+    )]
+    pub builder_concurrency: NonZeroUsize,
+}
+
+impl Default for ProofsHistoryWitnessCacheArgs {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            path: None,
+            retention_blocks: DEFAULT_WITNESS_CACHE_RETENTION_BLOCKS,
+            build_lag: 0,
+            builder_concurrency: DEFAULT_WITNESS_CACHE_BUILDER_CONCURRENCY,
+        }
+    }
+}
+
+impl ProofsHistoryWitnessCacheArgs {
+    /// Returns the witness cache configuration if enabled, resolving the default path next to
+    /// `storage_path`.
+    ///
+    /// Errors if the build lag does not leave any blocks to retain, or if the cache and proofs
+    /// history storage directories overlap: the proofs database owns its directory.
+    pub fn config(&self, storage_path: &Path) -> eyre::Result<Option<WitnessCacheConfig>> {
+        if !self.enabled {
+            return Ok(None);
+        }
+        if self.build_lag >= self.retention_blocks {
+            return Err(eyre::eyre!(
+                "--proofs-history.witness-cache.build-lag ({}) must be less than \
+                 --proofs-history.witness-cache.retention ({})",
+                self.build_lag,
+                self.retention_blocks
+            ));
+        }
+
+        let path = self.path.clone().unwrap_or_else(|| {
+            let mut name = storage_path.file_name().unwrap_or_default().to_os_string();
+            name.push(DEFAULT_WITNESS_CACHE_SUFFIX);
+            storage_path.with_file_name(name)
+        });
+        let cache_dir = Self::normalize(&path)?;
+        let storage_dir = Self::normalize(storage_path)?;
+        if cache_dir.starts_with(&storage_dir) || storage_dir.starts_with(&cache_dir) {
+            return Err(eyre::eyre!(
+                "--proofs-history.witness-cache.path ({}) must not overlap \
+                 --proofs-history.storage-path ({})",
+                path.display(),
+                storage_path.display()
+            ));
+        }
+
+        Ok(Some(WitnessCacheConfig {
+            path,
+            retention_blocks: self.retention_blocks,
+            build_lag: self.build_lag,
+            builder_concurrency: self.builder_concurrency,
+        }))
+    }
+
+    /// Returns `path` as an absolute path with `.` and `..` components resolved lexically.
+    fn normalize(path: &Path) -> std::io::Result<PathBuf> {
+        let mut normalized = PathBuf::new();
+        for component in std::path::absolute(path)?.components() {
+            match component {
+                Component::ParentDir => {
+                    normalized.pop();
+                }
+                Component::CurDir => {}
+                component => normalized.push(component),
+            }
+        }
+        Ok(normalized)
+    }
+}
+
 /// Provides access to shared rollup arguments.
 pub trait HasRollupArgs {
     /// Returns the shared rollup arguments.
@@ -497,6 +636,10 @@ pub struct RollupArgs {
     )]
     pub proofs_history_verification_interval: u64,
 
+    /// Prebuilt `debug_executePayload` witness cache options.
+    #[command(flatten)]
+    pub proofs_history_witness_cache: ProofsHistoryWitnessCacheArgs,
+
     /// L1 upgrade signal observer arguments.
     #[command(flatten)]
     pub upgrade_signal: UpgradeSignalArgs,
@@ -534,6 +677,7 @@ impl Default for RollupArgs {
             proofs_history_window: DEFAULT_PROOFS_HISTORY_WINDOW_BLOCKS,
             proofs_history_prune_interval: Duration::from_secs(15),
             proofs_history_verification_interval: 0,
+            proofs_history_witness_cache: ProofsHistoryWitnessCacheArgs::default(),
             upgrade_signal: UpgradeSignalArgs::default(),
             upgrade_signal_l1_rpc: UpgradeSignalL1RpcArgs::default(),
         }
@@ -895,6 +1039,107 @@ mod tests {
         let args =
             CommandParser::<RollupArgs>::parse_from(["reth", "--proofs-history.window", "1"]).args;
         assert_eq!(args.proofs_history_window, 1);
+    }
+
+    #[test]
+    fn test_parse_proofs_history_witness_cache_defaults_to_disabled() {
+        let args = CommandParser::<RollupArgs>::parse_from(["reth"]).args;
+        assert_eq!(args.proofs_history_witness_cache.config(Path::new("/proofs")).unwrap(), None);
+    }
+
+    #[test]
+    fn test_parse_proofs_history_witness_cache_defaults() {
+        let args = CommandParser::<RollupArgs>::parse_from([
+            "reth",
+            "--proofs-history.storage-path",
+            "/proofs",
+            "--proofs-history.witness-cache",
+        ])
+        .args;
+        assert_eq!(
+            args.proofs_history_witness_cache.config(Path::new("/proofs")).unwrap(),
+            Some(WitnessCacheConfig {
+                path: PathBuf::from("/proofs-witness-cache"),
+                retention_blocks: 36_000,
+                build_lag: 0,
+                builder_concurrency: NonZeroUsize::new(4).unwrap(),
+            })
+        );
+    }
+
+    #[test]
+    fn test_parse_proofs_history_witness_cache_overrides() {
+        let args = CommandParser::<RollupArgs>::parse_from([
+            "reth",
+            "--proofs",
+            "--proofs.storage-path",
+            "/proofs",
+            "--proofs.witness-cache",
+            "--proofs-history.witness-cache.path",
+            "/cache",
+            "--proofs-history.witness-cache.retention",
+            "100",
+            "--proofs-history.witness-cache.build-lag",
+            "5",
+            "--proofs-history.witness-cache.builder-concurrency",
+            "4",
+        ])
+        .args;
+        assert_eq!(
+            args.proofs_history_witness_cache.config(Path::new("/proofs")).unwrap(),
+            Some(WitnessCacheConfig {
+                path: PathBuf::from("/cache"),
+                retention_blocks: 100,
+                build_lag: 5,
+                builder_concurrency: NonZeroUsize::new(4).unwrap(),
+            })
+        );
+    }
+
+    #[test]
+    fn test_parse_proofs_history_witness_cache_requires_proofs_history_storage() {
+        for args in [
+            &["reth", "--proofs-history.witness-cache"][..],
+            &["reth", "--proofs-history", "--proofs-history.witness-cache"],
+        ] {
+            assert!(CommandParser::<RollupArgs>::try_parse_from(args).is_err());
+        }
+    }
+
+    #[test]
+    fn test_proofs_history_witness_cache_rejects_build_lag_not_below_retention() {
+        let cache = |build_lag| ProofsHistoryWitnessCacheArgs {
+            enabled: true,
+            retention_blocks: 10,
+            build_lag,
+            ..Default::default()
+        };
+        assert!(cache(9).config(Path::new("/proofs")).is_ok());
+        assert!(cache(10).config(Path::new("/proofs")).is_err());
+        assert!(cache(11).config(Path::new("/proofs")).is_err());
+    }
+
+    #[test]
+    fn test_proofs_history_witness_cache_rejects_path_overlapping_storage() {
+        let cache = |path: &str| ProofsHistoryWitnessCacheArgs {
+            enabled: true,
+            path: Some(PathBuf::from(path)),
+            ..Default::default()
+        };
+        for path in ["/data/proofs", "/data/proofs/cache", "/data", "/data/other/../proofs"] {
+            assert!(cache(path).config(Path::new("/data/proofs")).is_err(), "{path}");
+        }
+        assert!(cache("/data/proofs-cache").config(Path::new("/data/proofs")).is_ok());
+    }
+
+    #[test]
+    fn test_parse_proofs_history_witness_cache_rejects_zero_limits() {
+        for flag in [
+            "--proofs-history.witness-cache.retention",
+            "--proofs-history.witness-cache.builder-concurrency",
+        ] {
+            assert!(CommandParser::<RollupArgs>::try_parse_from(["reth", flag, "0"]).is_err());
+        }
     }
 
     #[test]
