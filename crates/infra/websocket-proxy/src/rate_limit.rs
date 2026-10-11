@@ -109,9 +109,7 @@ impl RateLimit for InMemoryRateLimit {
             });
         }
 
-        let new_count = current_count + 1;
-
-        inner.active_connections.insert(addr, new_count);
+        inner.active_connections.insert(addr, current_count + 1);
 
         let rate_limiter: Arc<dyn RateLimit> = Arc::clone(&self) as Arc<dyn RateLimit>;
         Ok(Ticket { addr, _permit: permit, rate_limiter })
