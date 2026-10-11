@@ -572,16 +572,17 @@ mod tests {
     }
 
     #[test]
-    fn test_state_gas_propagated_to_parent_on_ok() {
+    fn test_returned_reservoir_reconciles_state_gas_spill_on_ok() {
         let ctx = Context::base()
             .with_tx(BaseTransaction::builder().base(TxEnv::builder().gas_limit(100)).build_fill())
             .with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Regolith)));
 
         let gas = call_last_frame_return(ctx, InstructionResult::Stop, eip8037_child_gas());
         assert_eq!(gas.state_gas_spent(), 20);
-        assert_eq!(gas.state_gas_spilled(), 10);
-        assert_eq!(gas.reservoir(), 30);
-        assert_eq!(gas.remaining(), 50);
+        // Returned reservoir first repays spilled regular gas; only the excess remains reserved.
+        assert_eq!(gas.state_gas_spilled(), 0);
+        assert_eq!(gas.reservoir(), 20);
+        assert_eq!(gas.remaining(), 60);
     }
 
     #[test]

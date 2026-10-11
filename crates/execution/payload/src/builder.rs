@@ -42,11 +42,9 @@ use reth_payload_util::{NoopPayloadTransactions, PayloadTransactions};
 use reth_primitives_traits::{
     HeaderTy, NodePrimitives, SealedHeader, SealedHeaderFor, SignedTransaction, TxTy,
 };
-use reth_revm::{
-    cancelled::CancelOnDrop, database::StateProviderDatabase, db::State,
-    witness::ExecutionWitnessRecord,
-};
+use reth_revm::{database::StateProviderDatabase, db::State, witness::ExecutionWitnessRecord};
 use reth_storage_api::{BlockReader, StateProvider, StateProviderFactory, errors::ProviderError};
+use reth_tasks::CancelOnDrop;
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction, TransactionPool};
 use reth_trie_common::ExecutionWitnessMode;
 use reth_trie_parallel::state_root_task::PayloadStateRootHandle;
@@ -215,14 +213,16 @@ where
             self.config.state_provider_metrics,
         );
         let state = StateProviderDatabase::new(state_provider.provider());
+        // Execution decorators expose EVM reads; retain a full parent-state view for proofs.
+        let proof_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
 
         if ctx.attributes().no_tx_pool() {
-            builder.build(state, state_provider.provider(), state_root_handle, ctx)
+            builder.build(state, proof_provider.as_ref(), state_root_handle, ctx)
         } else {
             // sequencer mode we can reuse cachedreads from previous runs
             builder.build(
                 cached_reads.as_db_mut(state),
-                state_provider.provider(),
+                proof_provider.as_ref(),
                 state_root_handle,
                 ctx,
             )
@@ -529,7 +529,7 @@ impl<Txs> Builder<'_, Txs> {
         }
 
         let mut db = State::builder()
-            .with_database(StateProviderDatabase::new(&state_provider))
+            .with_database(StateProviderDatabase::new((&state_provider).into_evm_state_provider()))
             .with_bundle_update()
             .build();
         let mut builder = ctx.block_builder(&mut db)?;
@@ -552,7 +552,7 @@ impl<Txs> Builder<'_, Txs> {
 
         let mode = ExecutionWitnessMode::default();
         let witness = ExecutionWitnessRecord::new(&db).into_execution_witness(
-            &db.database.0,
+            &state_provider,
             &header_provider,
             block_number,
             mode,
@@ -1564,10 +1564,9 @@ mod tests {
     use reth_payload_util::{NoopPayloadTransactions, PayloadTransactions};
     use reth_primitives_traits::{Account, SealedHeader, SignedTransaction, WithEncoded};
     use reth_provider::noop::NoopProvider;
-    use reth_revm::{
-        cancelled::CancelOnDrop, database::StateProviderDatabase, db::State,
-        test_utils::StateProviderTest,
-    };
+    use reth_revm::{database::StateProviderDatabase, db::State, test_utils::StateProviderTest};
+    use reth_storage_api::StateProvider;
+    use reth_tasks::CancelOnDrop;
     use reth_transaction_pool::PoolTransaction;
     use reth_trie_common::{HashedPostState, updates::TrieUpdates};
     use reth_trie_parallel::{
@@ -1642,7 +1641,12 @@ mod tests {
         let provider = NoopProvider::default();
         let builder = Builder::new(|_| NoopPayloadTransactions::<BasePooledTransaction>::default());
         let outcome = builder
-            .build(StateProviderDatabase::new(&provider), &provider, Some(state_root_handle), ctx)
+            .build(
+                StateProviderDatabase::new((&provider).into_evm_state_provider()),
+                &provider,
+                Some(state_root_handle),
+                ctx,
+            )
             .expect("empty payload must build");
         let BuildOutcomeKind::Freeze(payload) = outcome else {
             panic!("no-tx-pool payload must freeze")
@@ -1745,7 +1749,12 @@ mod tests {
             );
         }
         Builder::new(|_| transactions)
-            .build(StateProviderDatabase::new(&provider), &provider, Some(state_root_handle()), ctx)
+            .build(
+                StateProviderDatabase::new((&provider).into_evm_state_provider()),
+                &provider,
+                Some(state_root_handle()),
+                ctx,
+            )
             .expect("payload must build")
     }
 
@@ -1792,7 +1801,12 @@ mod tests {
         }
         Builder::new(|_| transactions)
             .with_permanent_eviction(evict)
-            .build(StateProviderDatabase::new(&provider), &provider, Some(state_root_handle()), ctx)
+            .build(
+                StateProviderDatabase::new((&provider).into_evm_state_provider()),
+                &provider,
+                Some(state_root_handle()),
+                ctx,
+            )
             .expect("payload must build")
     }
 
@@ -2755,7 +2769,7 @@ mod tests {
         );
         let provider = test_state_provider();
         let mut db = State::builder()
-            .with_database(StateProviderDatabase::new(&provider))
+            .with_database(StateProviderDatabase::new((&provider).into_evm_state_provider()))
             .with_bundle_update()
             .build();
         db.load_cache_account(Predeploys::L1_BLOCK_INFO).expect("L1 block info must load");
@@ -2853,7 +2867,7 @@ mod tests {
         let instrumented = crate::BuilderStateProvider::new(provider, Some(cache), true);
         let stats = Arc::clone(instrumented.stats().expect("instrumentation enabled"));
 
-        let hit = reth_storage_api::AccountReader::basic_account(
+        let hit = reth_storage_api::EvmStateProvider::basic_account(
             instrumented.provider(),
             &cached_address,
         )
@@ -2865,7 +2879,7 @@ mod tests {
             "read should have been served by the cache, not the provider underneath"
         );
 
-        let miss = reth_storage_api::AccountReader::basic_account(
+        let miss = reth_storage_api::EvmStateProvider::basic_account(
             instrumented.provider(),
             &uncached_address,
         )

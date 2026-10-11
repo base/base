@@ -31,7 +31,8 @@ use reth_provider::{
     noop::NoopProvider,
 };
 use reth_trie_common::{
-    ExecutionWitnessMode, HashedPostState, HashedStorage, MultiProofTargets, TrieInput,
+    ExecutionWitnessMode, HashedPostState, HashedStorage, MultiProofTargets, MultiProofTargetsV2,
+    TrieInput,
 };
 use tempfile::TempDir;
 
@@ -171,6 +172,29 @@ fn multiproof_acquires_one_tx_per_call() {
     assert_tx_acquisitions(&storage, 1, "multiproof", || {
         provider.multiproof(TrieInput::default(), full_targets()).expect("multiproof");
     });
+}
+
+#[test]
+fn multiproof_v2_uses_one_snapshot_and_matches_account_proofs() {
+    let (_dir, storage) = setup();
+    let provider = BaseProofsStateProviderRef::new(Box::<NoopProvider>::default(), &storage, 0);
+    let mut targets = MultiProofTargetsV2::default();
+    for (address, slots) in seed_layout() {
+        let hashed_address = keccak256(address);
+        targets.account_targets.push(hashed_address.into());
+        targets
+            .storage_targets
+            .insert(hashed_address, slots.iter().map(|slot| keccak256(slot).into()).collect());
+    }
+    let mut proof = None;
+    assert_tx_acquisitions(&storage, 1, "multiproof_v2", || {
+        proof = Some(provider.multiproof_v2(TrieInput::default(), targets).expect("multiproof_v2"));
+    });
+    let proof = proof.unwrap();
+    for (address, slots) in seed_layout() {
+        let expected = provider.proof(TrieInput::default(), address, &slots).unwrap();
+        assert_eq!(proof.account_proof(address, &slots).unwrap(), expected);
+    }
 }
 
 #[test]

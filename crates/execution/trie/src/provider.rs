@@ -15,17 +15,19 @@ use reth_revm::{
 };
 use reth_trie::{
     StateRoot, StorageRoot,
+    hashed_cursor::zero_destroyed_account_storage,
     proof::{self, Proof},
     witness::TrieWitness,
 };
 use reth_trie_common::{
-    AccountProof, ExecutionWitnessMode, HashedPostState, HashedStorage, KeccakKeyHasher,
-    MultiProof, MultiProofTargets, StorageMultiProof, StorageProof, TrieInput,
-    updates::TrieUpdates,
+    AccountProof, DecodedMultiProofV2, ExecutionWitnessMode, HashedPostState, HashedStorage,
+    KeccakKeyHasher, MultiProof, MultiProofTargets, MultiProofTargetsV2, StorageMultiProof,
+    StorageProof, TrieInput, updates::TrieUpdates,
 };
 
 use crate::{
-    BaseProofsStorage, BaseProofsStorageError, BaseProofsStore,
+    BaseProofsHashedAccountCursorFactory, BaseProofsStorage, BaseProofsStorageError,
+    BaseProofsStore,
     metrics::{StateMetrics, StateSeekKind},
     proof::{
         DatabaseProof, DatabaseStateRoot, DatabaseStorageProof, DatabaseStorageRoot,
@@ -227,13 +229,30 @@ impl<'a, Storage: BaseProofsStore + Clone> StateProofProvider
             .map_err(ProviderError::from)
             .map(|hm| hm.into_values().collect())
     }
+
+    fn multiproof_v2(
+        &self,
+        input: TrieInput,
+        targets: MultiProofTargetsV2,
+    ) -> ProviderResult<DecodedMultiProofV2> {
+        Proof::overlay_multiproof_v2(self.storage, self.block_number, input, targets)
+            .map_err(ProviderError::from)
+    }
 }
 
 impl<'a, Storage: BaseProofsStore> HashedPostStateProvider
     for BaseProofsStateProviderRef<'a, Storage>
 {
     fn hashed_post_state(&self, bundle_state: &BundleState) -> ProviderResult<HashedPostState> {
-        Ok(HashedPostState::from_bundle_state::<KeccakKeyHasher>(bundle_state.state()))
+        let mut hashed_state =
+            HashedPostState::from_bundle_state::<KeccakKeyHasher>(bundle_state.state());
+        let tx = self.ensure_tx()?;
+        zero_destroyed_account_storage(
+            &BaseProofsHashedAccountCursorFactory::new(self.storage, &tx, self.block_number),
+            bundle_state.state(),
+            &mut hashed_state,
+        )?;
+        Ok(hashed_state)
     }
 }
 

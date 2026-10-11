@@ -39,7 +39,7 @@ use reth_payload_primitives::PayloadAttributes;
 use reth_primitives_traits::RecoveredBlock;
 use reth_provider::{
     BlockExecutionOutput, BlockExecutionResult, HashedPostStateProvider, ProviderError,
-    StateRootProvider, StorageRootProvider,
+    StateProviderBox, StateRootProvider, StorageRootProvider,
 };
 use reth_revm::{
     State, database::StateProviderDatabase, db::states::bundle_state::BundleRetention,
@@ -289,6 +289,8 @@ where
         )
         .into_provider();
         let db = StateProviderDatabase::new(state_provider);
+        // Keep a full parent-state view for proofs; execution decorators only expose EVM reads.
+        let mut proof_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
 
         // 1. execute the pre steps and seal an early block with that
         let sequencer_tx_start_time = Instant::now();
@@ -309,6 +311,7 @@ where
         let prev_flashblock_id = self.previous_flashblock_id();
         let (payload, fb_payload, state_diff) = build_block(
             &mut state,
+            &proof_provider,
             &ctx,
             &mut info,
             prev_flashblock_id,
@@ -490,12 +493,13 @@ where
                     &span,
                     "Payload building complete, target flashblock count reached",
                 );
-                return self.finalize_payload(&mut state, &ctx, &mut info);
+                return self.finalize_payload(&mut state, &proof_provider, &ctx, &mut info);
             }
 
             // build first flashblock immediately
             let next_flashblocks_ctx = match self
                 .build_next_flashblock(
+                    &mut proof_provider,
                     &ctx,
                     &mut info,
                     &mut deferrals,
@@ -517,7 +521,7 @@ where
                         &span,
                         "Payload building complete, job cancelled or target flashblock count reached",
                     );
-                    return self.finalize_payload(&mut state, &ctx, &mut info);
+                    return self.finalize_payload(&mut state, &proof_provider, &ctx, &mut info);
                 }
                 Err(err) => {
                     error!(
@@ -543,7 +547,7 @@ where
                         &span,
                         "Payload building complete, channel closed or job cancelled",
                     );
-                    return self.finalize_payload(&mut state, &ctx, &mut info);
+                    return self.finalize_payload(&mut state, &proof_provider, &ctx, &mut info);
                 }
             }
         }
@@ -551,10 +555,10 @@ where
 
     #[allow(clippy::too_many_arguments)]
     async fn build_next_flashblock<
-        DB: Database<Error = ProviderError> + std::fmt::Debug + AsRef<P> + revm::Database,
-        P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
+        DB: Database<Error = ProviderError> + std::fmt::Debug + revm::Database,
     >(
         &self,
+        proof_provider: &mut StateProviderBox,
         ctx: &BasePayloadBuilderCtx,
         info: &mut ExecutionInfo,
         deferrals: &mut BlockDeferrals,
@@ -704,8 +708,15 @@ where
 
         let total_block_built_duration = Instant::now();
         let prev_flashblock_id = self.previous_flashblock_id();
-        let build_result =
-            build_block(state, ctx, info, prev_flashblock_id, ctx.attributes().no_tx_pool);
+        let build_result = build_block(
+            state,
+            // An exclusive borrow keeps this future Send for providers that are not Sync.
+            proof_provider.as_mut(),
+            ctx,
+            info,
+            prev_flashblock_id,
+            ctx.attributes().no_tx_pool,
+        );
         let total_block_built_duration = total_block_built_duration.elapsed();
         BuilderMetrics::total_block_built_duration().record(total_block_built_duration);
         BuilderMetrics::total_block_built_gauge().set(total_block_built_duration);
@@ -953,20 +964,21 @@ where
     }
 
     /// Finalize the payload by computing the state root.
-    fn finalize_payload<DB, P>(
+    fn finalize_payload<DB>(
         &self,
         state: &mut State<DB>,
+        proof_provider: &StateProviderBox,
         ctx: &BasePayloadBuilderCtx,
         info: &mut ExecutionInfo,
     ) -> Result<BaseBuiltPayload, PayloadBuilderError>
     where
-        DB: Database<Error = ProviderError> + AsRef<P>,
-        P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
+        DB: Database<Error = ProviderError>,
     {
         let start_time = Instant::now();
 
         // Build the final block WITH state root computed
-        let (final_payload, _, _) = build_block(state, ctx, info, FlashblockId::default(), true)?;
+        let (final_payload, _, _) =
+            build_block(state, proof_provider, ctx, info, FlashblockId::default(), true)?;
 
         self.emit_final_inclusion_events(ctx, &final_payload);
 
@@ -1130,14 +1142,15 @@ where
 
 pub(crate) fn build_block<DB, P>(
     state: &mut State<DB>,
+    state_provider: &P,
     ctx: &BasePayloadBuilderCtx,
     info: &mut ExecutionInfo,
     prev_flashblock_id: FlashblockId,
     calculate_state_root: bool,
 ) -> Result<(BaseBuiltPayload, FlashblocksPayloadV1, Vec<AccountStateDiff>), PayloadBuilderError>
 where
-    DB: Database<Error = ProviderError> + AsRef<P> + revm::Database,
-    P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
+    DB: Database<Error = ProviderError> + revm::Database,
+    P: StateRootProvider + HashedPostStateProvider + StorageRootProvider + ?Sized,
 {
     // We use it to preserve state, so we run merge_transitions on transition state at most once
     let untouched_transition_state = state.transition_state.clone();
@@ -1183,7 +1196,6 @@ where
         );
         let _state_root_span_guard = state_root_span.enter();
 
-        let state_provider = state.database.as_ref();
         hashed_state = state_provider.hashed_post_state(&state.bundle_state)?;
         (state_root, trie_output) =
             state_provider.state_root_with_updates(hashed_state.clone()).inspect_err(|err| {
@@ -1207,7 +1219,7 @@ where
             // withdrawals root field in block header is used for storage root of L2 predeploy
             // `l2tol1-message-passer`
             Some(
-                isthmus::withdrawals_root(&state.bundle_state, state.database.as_ref())
+                isthmus::withdrawals_root(&state.bundle_state, state_provider)
                     .map_err(PayloadBuilderError::other)?,
             )
         } else if ctx.chain_spec.is_canyon_active_at_timestamp(ctx.attributes().timestamp()) {
@@ -1390,7 +1402,7 @@ mod tests {
     use reth_chainspec::ChainSpec;
     use reth_execution_cache::{CachedStateProvider, CachedStatus, ExecutionCache, SavedCache};
     use reth_primitives_traits::SealedHeader;
-    use reth_provider::{StateProviderBox, noop::NoopProvider};
+    use reth_provider::{EvmStateProviderBox, StateProvider, noop::NoopProvider};
     use reth_revm::{State, database::StateProviderDatabase};
 
     use super::{FlashblocksMetadata, build_block};
@@ -1434,10 +1446,10 @@ mod tests {
 
         {
             let state_provider = Box::new(CachedStateProvider::new(
-                Box::new(NoopProvider::default()) as StateProviderBox,
+                NoopProvider::default().into_evm_state_provider(),
                 cache.cache().clone(),
                 None,
-            )) as StateProviderBox;
+            )) as EvmStateProviderBox;
 
             assert!(!cache.is_available(), "provider must hold the shared cache while in use");
             assert_eq!(state_provider.storage(address, cached_key).unwrap(), Some(cached_value));
@@ -1469,12 +1481,13 @@ mod tests {
         let parent = genesis_header();
         let ctx = BasePayloadBuilderCtx::for_test(chain_spec, Arc::clone(&parent));
 
-        let db = StateProviderDatabase::new(NoopProvider::default());
+        let db = StateProviderDatabase::new(NoopProvider::default().into_evm_state_provider());
         let mut state = State::builder().with_database(db).with_bundle_update().build();
         let mut info = ExecutionInfo::default();
 
         let (payload, fb_payload, state_diff) = build_block::<_, NoopProvider>(
             &mut state,
+            &NoopProvider::default(),
             &ctx,
             &mut info,
             FlashblockId::default(),
@@ -1507,12 +1520,13 @@ mod tests {
         let parent = genesis_header();
         let ctx = BasePayloadBuilderCtx::for_test(chain_spec, Arc::clone(&parent));
 
-        let db = StateProviderDatabase::new(NoopProvider::default());
+        let db = StateProviderDatabase::new(NoopProvider::default().into_evm_state_provider());
         let mut state = State::builder().with_database(db).with_bundle_update().build();
         let mut info = ExecutionInfo::default();
 
         let (payload, _fb_payload, state_diff) = build_block::<_, NoopProvider>(
             &mut state,
+            &NoopProvider::default(),
             &ctx,
             &mut info,
             FlashblockId::default(),
@@ -1550,12 +1564,13 @@ mod tests {
         // Setting it to 99 should trigger the mismatch guard.
         ctx.evm_env.block_env.number = U256::from(99);
 
-        let db = StateProviderDatabase::new(NoopProvider::default());
+        let db = StateProviderDatabase::new(NoopProvider::default().into_evm_state_provider());
         let mut state = State::builder().with_database(db).with_bundle_update().build();
         let mut info = ExecutionInfo::default();
 
         let err = build_block::<_, NoopProvider>(
             &mut state,
+            &NoopProvider::default(),
             &ctx,
             &mut info,
             FlashblockId::default(),
@@ -1585,12 +1600,13 @@ mod tests {
         // Clear the parent beacon block root that for_test() sets.
         ctx.config.attributes.payload_attributes.parent_beacon_block_root = None;
 
-        let db = StateProviderDatabase::new(NoopProvider::default());
+        let db = StateProviderDatabase::new(NoopProvider::default().into_evm_state_provider());
         let mut state = State::builder().with_database(db).with_bundle_update().build();
         let mut info = ExecutionInfo::default();
 
         let err = build_block::<_, NoopProvider>(
             &mut state,
+            &NoopProvider::default(),
             &ctx,
             &mut info,
             FlashblockId::default(),

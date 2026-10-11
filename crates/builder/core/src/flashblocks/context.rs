@@ -1683,7 +1683,7 @@ mod tests {
     use reth_chainspec::ChainSpec;
     use reth_payload_util::PayloadTransactions;
     use reth_primitives_traits::{Recovered, SealedHeader, WithEncoded};
-    use reth_provider::noop::NoopProvider;
+    use reth_provider::{StateProvider, noop::NoopProvider};
     use reth_revm::{State, database::StateProviderDatabase};
 
     use super::*;
@@ -1857,7 +1857,7 @@ mod tests {
     fn cancellation_is_checked_after_each_limit_rejection() {
         let ctx = test_builder_context();
         let mut best_txs = LimitRejectionTransactions::new(0, 2, ctx.cancel.clone());
-        let db = StateProviderDatabase::new(NoopProvider::default());
+        let db = StateProviderDatabase::new(NoopProvider::default().into_evm_state_provider());
         let mut state = State::builder().with_database(db).with_bundle_update().build();
         let mut info = ExecutionInfo::default();
         let limits = ResourceLimits { block_gas_limit: 0, ..Default::default() };
@@ -1886,7 +1886,7 @@ mod tests {
         let ctx = test_builder_context();
         let mut best_txs =
             LimitRejectionTransactions::new(WITHIN_LIMIT, OVER_LIMIT, ctx.cancel.clone());
-        let db = StateProviderDatabase::new(NoopProvider::default());
+        let db = StateProviderDatabase::new(NoopProvider::default().into_evm_state_provider());
         let mut state = State::builder().with_database(db).with_bundle_update().build();
         let mut info = ExecutionInfo::default();
         let limits = ResourceLimits { block_gas_limit: 0, ..Default::default() };
@@ -2063,7 +2063,7 @@ mod tests {
         ctx.config.attributes.no_tx_pool = true;
         ctx.config.attributes.transactions = vec![with_encoded];
 
-        let db = StateProviderDatabase::new(NoopProvider::default());
+        let db = StateProviderDatabase::new(NoopProvider::default().into_evm_state_provider());
         let mut state = State::builder().with_database(db).with_bundle_update().build();
         let err = ctx
             .execute_sequencer_transactions(&mut state)
@@ -2077,7 +2077,7 @@ mod tests {
         // input now succeeds with zero gas consumed and no receipt — this guards against
         // accidentally tightening the legacy code path along with the strict one.
         ctx.config.attributes.no_tx_pool = false;
-        let db = StateProviderDatabase::new(NoopProvider::default());
+        let db = StateProviderDatabase::new(NoopProvider::default().into_evm_state_provider());
         let mut state = State::builder().with_database(db).with_bundle_update().build();
         let info = ctx
             .execute_sequencer_transactions(&mut state)

@@ -16,6 +16,7 @@ use reth_chainspec::{ForkCondition, MIN_TRANSACTION_GAS};
 use reth_evm::execute::{BasicBlockExecutor, Executor};
 use reth_primitives_traits::{Account, RecoveredBlock};
 use reth_revm::{database::StateProviderDatabase, test_utils::StateProviderTest};
+use reth_storage_api::StateProvider;
 
 const BASE_TIME_READER: Address = address!("0x1000000000000000000000000000000000000000");
 const USER: Address = address!("0x1000000000000000000000000000000000000001");
@@ -120,18 +121,21 @@ fn execute_same_block_base_time_read(getter_selector: [u8; 4]) -> U256 {
         parent_beacon_block_root: Some(Default::default()),
         ..Default::default()
     };
-    let output = BasicBlockExecutor::new(evm_config(chain_spec), StateProviderDatabase::new(&db))
-        .execute(&RecoveredBlock::new_unhashed(
-            Block {
-                header,
-                body: BlockBody {
-                    transactions: vec![l1_info_tx, base_time_tx, user_tx],
-                    ..Default::default()
-                },
+    let output = BasicBlockExecutor::new(
+        evm_config(chain_spec),
+        StateProviderDatabase::new((&db).into_evm_state_provider()),
+    )
+    .execute(&RecoveredBlock::new_unhashed(
+        Block {
+            header,
+            body: BlockBody {
+                transactions: vec![l1_info_tx, base_time_tx, user_tx],
+                ..Default::default()
             },
-            vec![SystemAddresses::DEPOSITOR_ACCOUNT, SystemAddresses::DEPOSITOR_ACCOUNT, USER],
-        ))
-        .expect("BaseTime metadata and user reads should execute in order");
+        },
+        vec![SystemAddresses::DEPOSITOR_ACCOUNT, SystemAddresses::DEPOSITOR_ACCOUNT, USER],
+    ))
+    .expect("BaseTime metadata and user reads should execute in order");
 
     assert_eq!(output.receipts.len(), 3);
     assert_eq!(
@@ -195,7 +199,10 @@ fn base_deposit_fields_pre_canyon() {
     .into();
 
     let provider = evm_config(chain_spec);
-    let mut executor = BasicBlockExecutor::new(provider, StateProviderDatabase::new(&db));
+    let mut executor = BasicBlockExecutor::new(
+        provider,
+        StateProviderDatabase::new((&db).into_evm_state_provider()),
+    );
 
     executor.with_state_mut(|state| {
         state.load_cache_account(Predeploys::L1_BLOCK_INFO).unwrap();
@@ -259,7 +266,10 @@ fn base_deposit_fields_post_canyon() {
     .into();
 
     let provider = evm_config(chain_spec);
-    let mut executor = BasicBlockExecutor::new(provider, StateProviderDatabase::new(&db));
+    let mut executor = BasicBlockExecutor::new(
+        provider,
+        StateProviderDatabase::new((&db).into_evm_state_provider()),
+    );
 
     executor.with_state_mut(|state| {
         state.load_cache_account(Predeploys::L1_BLOCK_INFO).unwrap();

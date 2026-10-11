@@ -4,10 +4,15 @@
 use std::sync::Arc;
 
 use alloy_eips::{NumHash, eip1898::BlockWithParent};
-use alloy_primitives::{B256, U256};
+use alloy_primitives::{Address, B256, U256, keccak256};
 use base_execution_trie::{
-    BaseProofsBatchSession, BaseProofsBatchStore, BaseProofsStore, BlockStateDiff,
-    MdbxProofsStorage,
+    BaseProofsBatchSession, BaseProofsBatchStateProviderRef, BaseProofsBatchStore, BaseProofsStore,
+    BlockStateDiff, MdbxProofsStorage,
+};
+use reth_provider::{HashedPostStateProvider, noop::NoopProvider};
+use reth_revm::{
+    db::{AccountStatus, BundleAccount, BundleState},
+    state::AccountInfo,
 };
 use reth_trie::{
     BranchNodeCompact, HashedPostState, HashedStorage, Nibbles,
@@ -87,15 +92,13 @@ fn batch_session_reads_see_uncommitted_writes() {
     assert_eq!(latest, 2);
 }
 
-/// Regression: when a wipe block sits inside a batch session and its parent (also inside the
-/// same batch) staged new storage slots, the wipe lookback must enumerate the parent's staged
-/// slots so they get tombstoned at the wipe block. A fresh RO tx misses those staged writes and
-/// silently produces incomplete tombstones.
+/// Explicit slot deletions must hide writes staged by an earlier block in the same batch.
 #[test]
 fn batch_session_wipe_sees_uncommitted_parent_storage_slots() {
     let (_dir, store) = setup();
 
-    let addr = B256::repeat_byte(0xAB);
+    let address = Address::with_last_byte(0xAB);
+    let addr = keccak256(address);
     let s1 = B256::repeat_byte(0x01);
     let s2 = B256::repeat_byte(0x02);
     let v1 = U256::from(111u64);
@@ -116,8 +119,22 @@ fn batch_session_wipe_sees_uncommitted_parent_storage_slots() {
                 },
             )?;
 
-            let mut wipe_state = HashedPostState::default();
-            wipe_state.storages.insert(addr, HashedStorage::new(true));
+            let mut bundle = BundleState::default();
+            bundle.state.insert(
+                address,
+                BundleAccount::new(
+                    Some(AccountInfo::default()),
+                    None,
+                    Default::default(),
+                    AccountStatus::Destroyed,
+                ),
+            );
+            let provider =
+                BaseProofsBatchStateProviderRef::new(Box::<NoopProvider>::default(), session, 1);
+            let wipe_state = provider.hashed_post_state(&bundle).expect("destroyed storage");
+            assert_eq!(wipe_state.storages[&addr].storage[&s1], U256::ZERO);
+            assert_eq!(wipe_state.storages[&addr].storage[&s2], U256::ZERO);
+            drop(provider);
             session.store_trie_updates(
                 block(2),
                 BlockStateDiff {
@@ -145,9 +162,7 @@ fn batch_session_wipe_sees_uncommitted_parent_storage_slots() {
     );
 }
 
-/// Regression mirror of the hashed-storage case for the storage-trie path: `is_deleted = true`
-/// on a block whose parent staged trie nodes for the same address inside the same batch must
-/// enumerate those staged paths during the wipe lookback.
+/// Explicit trie-node removals must hide nodes staged by an earlier block in the same batch.
 #[test]
 fn batch_session_wipe_sees_uncommitted_parent_storage_trie_nodes() {
     let (_dir, store) = setup();
@@ -173,7 +188,7 @@ fn batch_session_wipe_sees_uncommitted_parent_storage_trie_nodes() {
 
             let mut wipe = TrieUpdates::default();
             let mut deleted = StorageTrieUpdates::default();
-            deleted.set_deleted(true);
+            deleted.removed_nodes.extend([p1, p2]);
             wipe.storage_tries.insert(addr, deleted);
             session.store_trie_updates(
                 block(2),
@@ -193,7 +208,7 @@ fn batch_session_wipe_sees_uncommitted_parent_storage_trie_nodes() {
     }
     assert!(
         leaked.is_empty(),
-        "is_deleted at block 2 must tombstone trie paths staged at block 1 inside the same batch; \
+        "removals at block 2 must tombstone trie paths staged at block 1 inside the same batch; \
          leaked: {leaked:?}",
     );
 }

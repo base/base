@@ -147,7 +147,6 @@ pub fn encode_register_signer_calldata(
 
 #[cfg(test)]
 mod tests {
-    use alloy_sol_types::SolCall as _;
 
     use super::*;
 

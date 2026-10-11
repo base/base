@@ -24,16 +24,13 @@ use reth_payload_util::NoopPayloadTransactions;
 use reth_primitives_traits::{SealedHeader, TxTy};
 use reth_provider::{
     BlockReaderIdExt, ChainSpecProvider, HeaderProvider, NodePrimitivesProvider, ProviderError,
-    ProviderResult, StateProviderFactory,
+    ProviderResult, StateProvider, StateProviderFactory,
 };
-use reth_revm::{
-    State, cancelled::CancelOnDrop, database::StateProviderDatabase,
-    witness::ExecutionWitnessRecord,
-};
+use reth_revm::{State, database::StateProviderDatabase, witness::ExecutionWitnessRecord};
 use reth_rpc_api::eth::helpers::FullEthApi;
 use reth_rpc_eth_types::EthApiError;
 use reth_rpc_server_types::{ToRpcResult, result::internal_rpc_err};
-use reth_tasks::Runtime;
+use reth_tasks::{CancelOnDrop, Runtime};
 use reth_trie_common::ExecutionWitnessMode;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Semaphore, oneshot};
@@ -270,7 +267,7 @@ where
                 .state_provider(Some(BlockId::Number(block.parent_num_hash().number.into())))
                 .await
                 .map_err(EthApiError::from)?;
-            let db = StateProviderDatabase::new(&state_provider);
+            let db = StateProviderDatabase::new((&state_provider).into_evm_state_provider());
             let block_executor = this.eth_api.evm_config().executor(db);
 
             let mut witness = None;
@@ -279,7 +276,7 @@ where
             let _ = block_executor
                 .execute_with_state_closure(&block, |statedb: &State<_>| {
                     witness = Some(ExecutionWitnessRecord::new(statedb).into_execution_witness(
-                        &statedb.database.0,
+                        &state_provider,
                         self.inner.eth_api.provider(),
                         block_number,
                         mode,

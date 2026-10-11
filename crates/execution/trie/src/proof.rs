@@ -16,9 +16,9 @@ use reth_trie::{
     witness::TrieWitness,
 };
 use reth_trie_common::{
-    AccountProof, ExecutionWitnessMode, HashedPostState, HashedPostStateSorted, HashedStorage,
-    MultiProof, MultiProofTargets, MultiProofTargetsV2, StorageMultiProof, StorageProof, TrieInput,
-    updates::TrieUpdates,
+    AccountProof, DecodedMultiProofV2, ExecutionWitnessMode, HashedPostState,
+    HashedPostStateSorted, HashedStorage, MultiProof, MultiProofTargets, MultiProofTargetsV2,
+    StorageMultiProof, StorageProof, TrieInput, updates::TrieUpdates,
 };
 
 use crate::{
@@ -61,6 +61,14 @@ pub trait DatabaseProof<'tx, S: BaseProofsStore + 'tx> {
         input: TrieInput,
         targets: MultiProofTargets,
     ) -> Result<MultiProof, StateProofError>;
+
+    /// Generates a decoded V2 multiproof for hashed account and storage targets.
+    fn overlay_multiproof_v2(
+        storage: &'tx BaseProofsStorage<S>,
+        block_number: u64,
+        input: TrieInput,
+        targets: MultiProofTargetsV2,
+    ) -> Result<DecodedMultiProofV2, StateProofError>;
 }
 
 impl<'tx, S> DatabaseProof<'tx, S>
@@ -110,6 +118,26 @@ where
             ))
             .with_prefix_sets_mut(input.prefix_sets)
             .multiproof(targets)
+    }
+
+    fn overlay_multiproof_v2(
+        storage: &'tx BaseProofsStorage<S>,
+        block_number: u64,
+        input: TrieInput,
+        targets: MultiProofTargetsV2,
+    ) -> Result<DecodedMultiProofV2, StateProofError> {
+        let nodes_sorted = input.nodes.into_sorted();
+        let state_sorted = input.state.into_sorted();
+        let tx = storage.ro_tx().map_err(Into::<DatabaseError>::into)?;
+        let (trie_factory, hashed_factory) = from_tx(storage, &tx, block_number);
+        Proof::new(trie_factory.clone(), hashed_factory.clone())
+            .with_trie_cursor_factory(InMemoryTrieCursorFactory::new(trie_factory, &nodes_sorted))
+            .with_hashed_cursor_factory(HashedPostStateCursorFactory::new(
+                hashed_factory,
+                &state_sorted,
+            ))
+            .with_prefix_sets_mut(input.prefix_sets)
+            .multiproof_v2(targets)
     }
 }
 

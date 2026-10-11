@@ -57,7 +57,7 @@ where
             .get_block_and_receipts(latest.hash())
             .await
             .map_err(Self::Error::from_eth_err)?
-            .map(|(block, receipts)| BlockAndReceipts { block, receipts });
+            .map(|(block, receipts)| BlockAndReceipts { block, receipts: receipts.into() });
         Ok(latest)
     }
 }

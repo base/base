@@ -4,9 +4,9 @@ use std::{collections::HashMap, fmt, sync::Arc};
 
 use alloy_eips::{
     eip4844::{BlobAndProofV1, BlobAndProofV2, BlobCellsAndProofsV1},
-    eip7594::BlobTransactionSidecarVariant,
+    eip7594::{BlobCellMask, BlobTransactionSidecarVariant},
 };
-use alloy_primitives::{Address, B128, B256, TxHash, U256, map::AddressSet};
+use alloy_primitives::{Address, B256, TxHash, U256, map::AddressSet};
 use futures::StreamExt;
 use parking_lot::{Mutex, RwLock};
 use reth_eth_wire_types::HandleMempoolData;
@@ -1294,6 +1294,17 @@ where
         hashes
     }
 
+    fn all_transactions_by_sender(
+        &self,
+        sender: Address,
+    ) -> AllPoolTransactions<Self::Transaction> {
+        let mut transactions = self.protocol_pool.all_transactions_by_sender(sender);
+        let nonce_pool = self.nonce_pool.read();
+        transactions.pending.extend(nonce_pool.pending_transactions_by_sender(sender));
+        transactions.queued.extend(nonce_pool.queued_transactions_by_sender(sender));
+        transactions
+    }
+
     fn remove_transactions(
         &self,
         hashes: Vec<TxHash>,
@@ -1547,9 +1558,9 @@ where
     fn get_blobs_for_versioned_hashes_v4(
         &self,
         versioned_hashes: &[B256],
-        indices_bitarray: B128,
+        cell_mask: BlobCellMask,
     ) -> Result<Vec<Option<BlobCellsAndProofsV1>>, BlobStoreError> {
-        self.protocol_pool.get_blobs_for_versioned_hashes_v4(versioned_hashes, indices_bitarray)
+        self.protocol_pool.get_blobs_for_versioned_hashes_v4(versioned_hashes, cell_mask)
     }
 
     fn has_blobs_for_versioned_hashes(
@@ -2294,6 +2305,44 @@ mod tests {
         max_fee_per_gas: u128,
     ) -> BasePooledTransaction {
         signed_8130(signer, nonce_key, nonce_sequence, expiry, max_fee_per_gas, 1_000_000)
+    }
+
+    #[tokio::test]
+    async fn sender_snapshot_includes_both_nonce_lanes_and_filters_other_senders() {
+        let (pool, client) = build_integration_pool();
+        let sender = signer();
+        let other = signer();
+        fund(&client, sender.address());
+        fund(&client, other.address());
+
+        let protocol_pending = signed_1559(&sender, 0);
+        let protocol_queued = signed_1559(&sender, 2);
+        let sidecar_pending = signed_channel_tx(&sender, U256::from(1), 0, 1_000);
+        let sidecar_queued = signed_channel_tx(&sender, U256::from(1), 2, 1_000);
+        let mut expected_pending = vec![*protocol_pending.hash(), *sidecar_pending.hash()];
+        let mut expected_queued = vec![*protocol_queued.hash(), *sidecar_queued.hash()];
+
+        for transaction in [
+            protocol_pending,
+            protocol_queued,
+            sidecar_pending,
+            sidecar_queued,
+            signed_1559(&other, 0),
+        ] {
+            pool.add_transaction(TransactionOrigin::External, transaction).await.unwrap();
+        }
+
+        let snapshot = pool.all_transactions_by_sender(sender.address());
+        let mut pending =
+            snapshot.pending.iter().map(|transaction| *transaction.hash()).collect::<Vec<_>>();
+        let mut queued =
+            snapshot.queued.iter().map(|transaction| *transaction.hash()).collect::<Vec<_>>();
+        pending.sort_unstable();
+        queued.sort_unstable();
+        expected_pending.sort_unstable();
+        expected_queued.sort_unstable();
+        assert_eq!(pending, expected_pending);
+        assert_eq!(queued, expected_queued);
     }
 
     #[tokio::test]

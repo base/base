@@ -24,7 +24,7 @@ use base_execution_trie::{
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use rand_08::{RngCore, SeedableRng, rngs::StdRng};
 use reth_primitives_traits::Account;
-use reth_provider::{AccountReader, noop::NoopProvider};
+use reth_provider::{AccountReader, StateProvider, noop::NoopProvider};
 use reth_revm::{Database, State, database::StateProviderDatabase};
 use reth_trie_common::{HashedPostState, updates::TrieUpdates};
 use tempfile::TempDir;
@@ -181,7 +181,7 @@ fn read_accounts_at_block(fixture: &DeepHistoryFixture, max_block: u64) -> usize
         max_block,
     );
     let mut state = State::builder()
-        .with_database(StateProviderDatabase::new(&provider))
+        .with_database(StateProviderDatabase::new((&provider).into_evm_state_provider()))
         .with_bundle_update()
         .build();
 

@@ -25,10 +25,10 @@ base-common-consensus = { workspace = true, features = ["std"] }
 futures.workspace = true
 tracing = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
+derive_more = { workspace = true, features = ["debug"] }
 serde = { workspace = true, features = ["derive", "std"] }
 alloy-primitives = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["sync", "macros", "rt"] }
-derive_more = { workspace = true, features = ["debug"] }
 clap = { workspace = true, features = ["derive"], optional = true }
 
 # optional — activated by the `test-utils` feature
@@ -42,8 +42,8 @@ async-trait.workspace = true
 alloy-consensus = { workspace = true, features = ["std"] }
 base-runtime = { workspace = true, features = ["test-utils"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
-base-batcher-source = { workspace = true, features = ["test-utils"] }
 tokio = { workspace = true, features = ["macros", "rt", "time"] }
+base-batcher-source = { workspace = true, features = ["test-utils"] }
 
 [[test]]
 name = "reorg"
@@ -74,4 +74,6 @@ test-utils = [
 	"dep:alloy-consensus",
 	"dep:alloy-rpc-types-eth",
 	"dep:async-trait",
+	"base-batcher-encoder/test-utils",
+	"base-batcher-source/test-utils"
 ]

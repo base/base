@@ -12,7 +12,7 @@ use reth_engine_tree::tree::instrumented_state::{InstrumentedStateProvider, Stat
 use reth_execution_cache::{
     CachedStateMetrics, CachedStateMetricsSource, CachedStateProvider, ExecutionCache,
 };
-use reth_storage_api::{StateProvider, StateProviderBox};
+use reth_storage_api::{EvmStateProvider, EvmStateProviderBox, StateProvider};
 use revm::state::EvmState;
 use tracing::{debug, warn};
 
@@ -440,7 +440,7 @@ impl GasLimitConfig {
 /// Both Base payload builders compose the same stack, so it is constructed here to keep them
 /// from drifting apart.
 pub struct BuilderStateProvider {
-    provider: StateProviderBox,
+    provider: EvmStateProviderBox,
     stats: Option<Arc<StateProviderStats>>,
 }
 
@@ -462,7 +462,7 @@ impl BuilderStateProvider {
     where
         S: StateProvider + Send + 'static,
     {
-        let mut provider: StateProviderBox = Box::new(state_provider);
+        let mut provider: EvmStateProviderBox = Box::new(state_provider.into_evm_state_provider());
         if let Some(cache) = execution_cache {
             provider = Box::new(CachedStateProvider::new(
                 provider,
@@ -489,12 +489,12 @@ impl BuilderStateProvider {
     }
 
     /// Borrows the composed provider.
-    pub fn provider(&self) -> &dyn StateProvider {
+    pub fn provider(&self) -> &dyn EvmStateProvider {
         self.provider.as_ref()
     }
 
     /// Consumes the wrapper, yielding the composed provider.
-    pub fn into_provider(self) -> StateProviderBox {
+    pub fn into_provider(self) -> EvmStateProviderBox {
         self.provider
     }
 }
