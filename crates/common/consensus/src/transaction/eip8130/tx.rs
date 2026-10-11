@@ -138,7 +138,7 @@ impl TxEip8130 {
 
     /// Encodes an `Option<Address>` as the AA wire format: zero-length byte
     /// string when `None`, 20-byte string when `Some`.
-    fn encode_address_opt(addr: &Option<Address>, out: &mut dyn BufMut) {
+    pub fn encode_address_opt(addr: &Option<Address>, out: &mut dyn BufMut) {
         match addr {
             None => Bytes::new().encode(out),
             Some(a) => Bytes::copy_from_slice(a.as_slice()).encode(out),
@@ -146,7 +146,7 @@ impl TxEip8130 {
     }
 
     /// Length contribution of an `Option<Address>` under [`Self::encode_address_opt`].
-    const fn address_opt_encoded_length(addr: &Option<Address>) -> usize {
+    pub const fn address_opt_encoded_length(addr: &Option<Address>) -> usize {
         match addr {
             None => 1,
             Some(_) => 21,
@@ -154,7 +154,7 @@ impl TxEip8130 {
     }
 
     /// Decodes the [`Self::encode_address_opt`] wire format.
-    fn decode_address_opt(buf: &mut &[u8]) -> alloy_rlp::Result<Option<Address>> {
+    pub fn decode_address_opt(buf: &mut &[u8]) -> alloy_rlp::Result<Option<Address>> {
         let raw = Bytes::decode(buf)?;
         match raw.len() {
             0 => Ok(None),
@@ -852,6 +852,7 @@ mod tests {
         let mut buf = Vec::new();
         TxEip8130::encode_address_opt(&None, &mut buf);
         assert_eq!(buf, vec![0x80]);
+        assert_eq!(buf.len(), TxEip8130::address_opt_encoded_length(&None));
         let decoded = TxEip8130::decode_address_opt(&mut buf.as_slice()).unwrap();
         assert_eq!(decoded, None);
     }
@@ -861,6 +862,9 @@ mod tests {
         let addr = address!("0x00000000000000000000000000000000000000ff");
         let mut buf = Vec::new();
         TxEip8130::encode_address_opt(&Some(addr), &mut buf);
+        assert_eq!(buf[0], 0x94);
+        assert_eq!(&buf[1..], addr.as_slice());
+        assert_eq!(buf.len(), TxEip8130::address_opt_encoded_length(&Some(addr)));
         let decoded = TxEip8130::decode_address_opt(&mut buf.as_slice()).unwrap();
         assert_eq!(decoded, Some(addr));
     }
