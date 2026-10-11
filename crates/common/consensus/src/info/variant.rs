@@ -586,16 +586,90 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_l1_block_info_sequence_number() {
-        let bedrock = L1BlockInfoTx::Bedrock(L1BlockInfoBedrock::new_from_sequence_number(123));
-        assert_eq!(bedrock.sequence_number(), 123);
+    #[derive(Clone, Copy, Debug)]
+    enum Getter {
+        SequenceNumber,
+        OperatorFeeConstant,
+        OperatorFeeScalar,
+        L1BaseFee,
+        L1FeeScalar,
+        BlobBaseFee,
+        BlobBaseFeeScalar,
+    }
 
-        let ecotone = L1BlockInfoTx::Ecotone(L1BlockInfoEcotone::new_from_sequence_number(456));
-        assert_eq!(ecotone.sequence_number(), 456);
+    #[derive(Clone, Copy, Debug)]
+    enum Fork {
+        Bedrock,
+        Ecotone,
+        Isthmus,
+    }
 
-        let isthmus = L1BlockInfoTx::Isthmus(L1BlockInfoIsthmus::new_from_sequence_number(101112));
-        assert_eq!(isthmus.sequence_number(), 101112);
+    impl Getter {
+        fn build(self, fork: Fork, value: u64) -> L1BlockInfoTx {
+            match fork {
+                Fork::Bedrock => L1BlockInfoTx::Bedrock(match self {
+                    Self::SequenceNumber => L1BlockInfoBedrock::new_from_sequence_number(value),
+                    Self::L1BaseFee => L1BlockInfoBedrock::new_from_base_fee(value),
+                    Self::L1FeeScalar => {
+                        L1BlockInfoBedrock::new_from_l1_fee_scalar(U256::from(value))
+                    }
+                    _ => L1BlockInfoBedrock::default(),
+                }),
+                Fork::Ecotone => L1BlockInfoTx::Ecotone(match self {
+                    Self::SequenceNumber => L1BlockInfoEcotone::new_from_sequence_number(value),
+                    Self::L1BaseFee => L1BlockInfoEcotone::new_from_base_fee(value),
+                    Self::L1FeeScalar => L1BlockInfoEcotone::new_from_base_fee_scalar(value as u32),
+                    Self::BlobBaseFee => L1BlockInfoEcotone::new_from_blob_base_fee(value as u128),
+                    Self::BlobBaseFeeScalar => {
+                        L1BlockInfoEcotone::new_from_blob_base_fee_scalar(value as u32)
+                    }
+                    _ => L1BlockInfoEcotone::default(),
+                }),
+                Fork::Isthmus => L1BlockInfoTx::Isthmus(match self {
+                    Self::SequenceNumber => L1BlockInfoIsthmus::new_from_sequence_number(value),
+                    Self::OperatorFeeConstant => {
+                        L1BlockInfoIsthmus::new_from_operator_fee_constant(value)
+                    }
+                    Self::OperatorFeeScalar => {
+                        L1BlockInfoIsthmus::new_from_operator_fee_scalar(value as u32)
+                    }
+                    Self::L1BaseFee => L1BlockInfoIsthmus::new_from_base_fee(value),
+                    Self::L1FeeScalar => L1BlockInfoIsthmus::new_from_base_fee_scalar(value as u32),
+                    Self::BlobBaseFee => L1BlockInfoIsthmus::new_from_blob_base_fee(value as u128),
+                    Self::BlobBaseFeeScalar => {
+                        L1BlockInfoIsthmus::new_from_blob_base_fee_scalar(value as u32)
+                    }
+                }),
+            }
+        }
+
+        fn get(self, tx: &L1BlockInfoTx) -> U256 {
+            match self {
+                Self::SequenceNumber => U256::from(tx.sequence_number()),
+                Self::OperatorFeeConstant => U256::from(tx.operator_fee_constant()),
+                Self::OperatorFeeScalar => U256::from(tx.operator_fee_scalar()),
+                Self::L1BaseFee => tx.l1_base_fee(),
+                Self::L1FeeScalar => tx.l1_fee_scalar(),
+                Self::BlobBaseFee => tx.blob_base_fee(),
+                Self::BlobBaseFeeScalar => tx.blob_base_fee_scalar(),
+            }
+        }
+    }
+
+    #[rstest]
+    #[case::sequence_number(Getter::SequenceNumber, [123, 456, 101112])]
+    #[case::operator_fee_constant(Getter::OperatorFeeConstant, [0, 0, 123])]
+    #[case::operator_fee_scalar(Getter::OperatorFeeScalar, [0, 0, 123])]
+    #[case::l1_base_fee(Getter::L1BaseFee, [123, 456, 101112])]
+    #[case::l1_fee_scalar(Getter::L1FeeScalar, [123, 456, 101112])]
+    #[case::blob_base_fee(Getter::BlobBaseFee, [0, 456, 101112])]
+    #[case::blob_base_fee_scalar(Getter::BlobBaseFeeScalar, [0, 456, 101112])]
+    fn test_l1_block_info_getters(#[case] getter: Getter, #[case] expected: [u64; 3]) {
+        for (fork, expected) in
+            [Fork::Bedrock, Fork::Ecotone, Fork::Isthmus].into_iter().zip(expected)
+        {
+            assert_eq!(getter.get(&getter.build(fork, expected)), U256::from(expected));
+        }
     }
 
     #[test]
@@ -631,43 +705,6 @@ mod tests {
     }
 
     #[test]
-    fn test_operator_fee_constant() {
-        let bedrock = L1BlockInfoTx::Bedrock(L1BlockInfoBedrock::default());
-        assert_eq!(bedrock.operator_fee_constant(), 0);
-
-        let ecotone = L1BlockInfoTx::Ecotone(L1BlockInfoEcotone::default());
-        assert_eq!(ecotone.operator_fee_constant(), 0);
-
-        let isthmus =
-            L1BlockInfoTx::Isthmus(L1BlockInfoIsthmus::new_from_operator_fee_constant(123));
-        assert_eq!(isthmus.operator_fee_constant(), 123);
-    }
-
-    #[test]
-    fn test_operator_fee_scalar() {
-        let bedrock = L1BlockInfoTx::Bedrock(L1BlockInfoBedrock::default());
-        assert_eq!(bedrock.operator_fee_scalar(), 0);
-
-        let ecotone = L1BlockInfoTx::Ecotone(L1BlockInfoEcotone::default());
-        assert_eq!(ecotone.operator_fee_scalar(), 0);
-
-        let isthmus = L1BlockInfoTx::Isthmus(L1BlockInfoIsthmus::new_from_operator_fee_scalar(123));
-        assert_eq!(isthmus.operator_fee_scalar(), 123);
-    }
-
-    #[test]
-    fn test_l1_base_fee() {
-        let bedrock = L1BlockInfoTx::Bedrock(L1BlockInfoBedrock::new_from_base_fee(123));
-        assert_eq!(bedrock.l1_base_fee(), U256::from(123));
-
-        let ecotone = L1BlockInfoTx::Ecotone(L1BlockInfoEcotone::new_from_base_fee(456));
-        assert_eq!(ecotone.l1_base_fee(), U256::from(456));
-
-        let isthmus = L1BlockInfoTx::Isthmus(L1BlockInfoIsthmus::new_from_base_fee(101112));
-        assert_eq!(isthmus.l1_base_fee(), U256::from(101112));
-    }
-
-    #[test]
     fn test_l1_fee_overhead() {
         let bedrock =
             L1BlockInfoTx::Bedrock(L1BlockInfoBedrock::new_from_l1_fee_overhead(U256::from(123)));
@@ -697,45 +734,6 @@ mod tests {
             address!("6887246668a3b87f54deb3b94ba47a6f63f32985"),
         ));
         assert_eq!(isthmus.batcher_address(), address!("6887246668a3b87f54deb3b94ba47a6f63f32985"));
-    }
-
-    #[test]
-    fn test_l1_fee_scalar() {
-        let bedrock =
-            L1BlockInfoTx::Bedrock(L1BlockInfoBedrock::new_from_l1_fee_scalar(U256::from(123)));
-        assert_eq!(bedrock.l1_fee_scalar(), U256::from(123));
-
-        let ecotone = L1BlockInfoTx::Ecotone(L1BlockInfoEcotone::new_from_base_fee_scalar(456));
-        assert_eq!(ecotone.l1_fee_scalar(), U256::from(456));
-
-        let isthmus = L1BlockInfoTx::Isthmus(L1BlockInfoIsthmus::new_from_base_fee_scalar(101112));
-        assert_eq!(isthmus.l1_fee_scalar(), U256::from(101112));
-    }
-
-    #[test]
-    fn test_blob_base_fee() {
-        let bedrock = L1BlockInfoTx::Bedrock(Default::default());
-        assert_eq!(bedrock.blob_base_fee(), U256::ZERO);
-
-        let ecotone = L1BlockInfoTx::Ecotone(L1BlockInfoEcotone::new_from_blob_base_fee(456));
-        assert_eq!(ecotone.blob_base_fee(), U256::from(456));
-
-        let isthmus = L1BlockInfoTx::Isthmus(L1BlockInfoIsthmus::new_from_blob_base_fee(101112));
-        assert_eq!(isthmus.blob_base_fee(), U256::from(101112));
-    }
-
-    #[test]
-    fn test_blob_base_fee_scalar() {
-        let bedrock = L1BlockInfoTx::Bedrock(L1BlockInfoBedrock::default());
-        assert_eq!(bedrock.blob_base_fee_scalar(), U256::ZERO);
-
-        let ecotone =
-            L1BlockInfoTx::Ecotone(L1BlockInfoEcotone::new_from_blob_base_fee_scalar(456));
-        assert_eq!(ecotone.blob_base_fee_scalar(), U256::from(456));
-
-        let isthmus =
-            L1BlockInfoTx::Isthmus(L1BlockInfoIsthmus::new_from_blob_base_fee_scalar(101112));
-        assert_eq!(isthmus.blob_base_fee_scalar(), U256::from(101112));
     }
 
     #[test]
