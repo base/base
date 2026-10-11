@@ -38,6 +38,7 @@ revm.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+rstest.workspace = true
 base-precompile-storage = { workspace = true, features = ["test-utils"] }
 
 [features]

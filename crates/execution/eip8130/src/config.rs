@@ -187,6 +187,7 @@ mod tests {
     use base_common_consensus::{AccountChangeChannel, ChangeType, Eip8130Constants, SignedChange};
     use base_precompile_storage::{Handler, HashMapStorageProvider, StorageCtx};
     use k256::ecdsa::SigningKey as K256SigningKey;
+    use rstest::rstest;
 
     use super::*;
 
@@ -307,16 +308,39 @@ mod tests {
         StorageCtx::enter(&mut storage, |ctx| body(&mut AccountConfigurationStorage::new(ctx)))
     }
 
-    #[test]
-    fn implicit_eoa_owner_authorizes_config_change() {
+    #[rstest]
+    #[case(AccountChangeChannel::Multichain, 0, None, None)]
+    #[case(
+        AccountChangeChannel::Multichain,
+        0,
+        Some(pack_state(0, 0, Eip8130Constants::FLAG_LOCKED, 0)),
+        None
+    )]
+    #[case(
+        AccountChangeChannel::Multichain,
+        5,
+        None,
+        Some(TxAuthError::BadSequence { expected: 0, got: 5 })
+    )]
+    #[case(AccountChangeChannel::Local, 3, Some(pack_state(0, 3, 0, 0)), None)]
+    fn authorizes_config_change_by_channel_sequence_and_lock(
+        #[case] channel: AccountChangeChannel,
+        #[case] sequence: u64,
+        #[case] state: Option<U256>,
+        #[case] expected: Option<TxAuthError>,
+    ) {
         let k = key(0x11);
         let account = addr(&k);
-        let change =
-            signed_change(account, K1, &k, AccountChangeChannel::Multichain, 0, vec![revoke(0xab)]);
+        let change = signed_change(account, K1, &k, channel, sequence, vec![revoke(0x01)]);
         with_storage(|acc| {
-            let resolved =
-                ConfigChangeAuthorizer::authorize(acc, account, LOCAL, &change, NOW).unwrap();
-            assert!(resolved.is_admin());
+            if let Some(state) = state {
+                acc.account_state.at_mut(&account).write(state).unwrap();
+            }
+            let result = ConfigChangeAuthorizer::authorize(acc, account, LOCAL, &change, NOW);
+            match expected {
+                Some(error) => assert_eq!(result, Err(error)),
+                None => assert!(result.unwrap().is_admin()),
+            }
         });
     }
 
@@ -364,24 +388,6 @@ mod tests {
     }
 
     #[test]
-    fn locked_account_batch_still_authorizes_signature() {
-        let k = key(0x11);
-        let account = addr(&k);
-        let change =
-            signed_change(account, K1, &k, AccountChangeChannel::Multichain, 0, vec![revoke(0x01)]);
-        with_storage(|acc| {
-            // Hard-locked (FLAG_LOCKED, no unlock initiated): frozen regardless of `now`.
-            acc.account_state
-                .at_mut(&account)
-                .write(pack_state(0, 0, Eip8130Constants::FLAG_LOCKED, 0))
-                .unwrap();
-            let resolved =
-                ConfigChangeAuthorizer::authorize(acc, account, LOCAL, &change, NOW).unwrap();
-            assert!(resolved.is_admin());
-        });
-    }
-
-    #[test]
     fn stale_local_epoch_is_rejected() {
         let k = key(0x11);
         let account = addr(&k);
@@ -394,36 +400,6 @@ mod tests {
                 ConfigChangeAuthorizer::authorize(acc, account, LOCAL, &change, NOW),
                 Err(TxAuthError::StaleEpoch { expected: 2, got: 0 }),
             );
-        });
-    }
-
-    #[test]
-    fn stale_sequence_is_rejected() {
-        let k = key(0x11);
-        let account = addr(&k);
-        // Multichain channel sequence in state is 0; the batch claims 5.
-        let change =
-            signed_change(account, K1, &k, AccountChangeChannel::Multichain, 5, vec![revoke(0x01)]);
-        with_storage(|acc| {
-            assert_eq!(
-                ConfigChangeAuthorizer::authorize(acc, account, LOCAL, &change, NOW),
-                Err(TxAuthError::BadSequence { expected: 0, got: 5 }),
-            );
-        });
-    }
-
-    #[test]
-    fn local_channel_uses_local_sequence() {
-        let k = key(0x11);
-        let account = addr(&k);
-        // Local channel: the batch's low-half sequence must match local_sequence.
-        let change =
-            signed_change(account, K1, &k, AccountChangeChannel::Local, 3, vec![revoke(0x01)]);
-        with_storage(|acc| {
-            acc.account_state.at_mut(&account).write(pack_state(0, 3, 0, 0)).unwrap();
-            let resolved =
-                ConfigChangeAuthorizer::authorize(acc, account, LOCAL, &change, NOW).unwrap();
-            assert!(resolved.is_admin());
         });
     }
 
