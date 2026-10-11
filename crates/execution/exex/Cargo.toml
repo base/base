@@ -29,7 +29,7 @@ alloy-consensus.workspace = true
 
 # misc
 eyre.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["time"] }
 tracing.workspace = true
 futures.workspace = true
 
