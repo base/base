@@ -408,26 +408,18 @@ mod tests {
     }
 
     #[test]
-    fn test_format_mwei_whole() {
-        // 5 Mwei = 5_000_000 wei
-        assert_eq!(format_mwei(Some(5_000_000)), "5.00");
-        // 10 Mwei = 10_000_000 wei
-        assert_eq!(format_mwei(Some(10_000_000)), "10.00");
-    }
+    fn test_format_mwei_values() {
+        let cases = [
+            (5_000_000, "5.00"),
+            (10_000_000, "10.00"),
+            (2_570_000, "2.57"),
+            (500_000, "0.50"),
+            (1, "0.00"),
+            (100_000, "0.10"),
+        ];
 
-    #[test]
-    fn test_format_mwei_fractional() {
-        // 2.57 Mwei = 2_570_000 wei
-        assert_eq!(format_mwei(Some(2_570_000)), "2.57");
-        // 0.50 Mwei = 500_000 wei
-        assert_eq!(format_mwei(Some(500_000)), "0.50");
-    }
-
-    #[test]
-    fn test_format_mwei_sub_mwei() {
-        // 1 wei → 0.00 Mwei
-        assert_eq!(format_mwei(Some(1)), "0.00");
-        // 100_000 wei → 0.10 Mwei
-        assert_eq!(format_mwei(Some(100_000)), "0.10");
+        for (wei, expected) in cases {
+            assert_eq!(format_mwei(Some(wei)), expected, "wei: {wei}");
+        }
     }
 }
