@@ -159,6 +159,10 @@ class BuilderBenchCompare:
         ]
         table: list[str] = []
         changed: list[str] = []
+        # Keys whose base measurement has no head counterpart, for example because the head
+        # benchmark or event-test case failed. Both head steps are continue-on-error, so this is
+        # how a head that breaks one scenario shows up in the comment.
+        missing: list[str] = []
         for row in rows:
             base_ref = base.get(f"{row.builder}/{REFERENCE_SCENARIO}")
             head_ref = head.get(f"{row.builder}/{REFERENCE_SCENARIO}")
@@ -167,10 +171,17 @@ class BuilderBenchCompare:
             head_marginal = self.per_deferral(row.head, head_ref)
             marginal_change = self.pct(base_marginal, head_marginal)
             events = self.event_changes(row.base, row.head)
+            missing_instructions = row.base.instructions is not None and row.head.instructions is None
+            missing_events = row.base.has_events and not row.head.has_events
+            if missing_events:
+                events = "<br>".join(filter(None, [events, "**head event test failed**"]))
+            if missing_instructions or missing_events:
+                missing.append(row.key)
             flagged = (
                 (change is not None and abs(change) > self.threshold_pct)
                 or (marginal_change is not None and abs(marginal_change) > self.threshold_pct)
                 or bool(events)
+                or missing_instructions
             )
             marginal_cell = ""
             if head_marginal is not None:
@@ -183,7 +194,9 @@ class BuilderBenchCompare:
             head_cell = (
                 f"{row.head.instructions:,}" if row.head.instructions is not None else "missing"
             )
-            change_cell = self.fmt_pct(change)
+            if missing_instructions:
+                head_cell = f"**{head_cell}**"
+            change_cell = "missing" if missing_instructions else self.fmt_pct(change)
             if flagged:
                 change_cell = f"**{change_cell or 'changed'}**"
             line = (
@@ -204,9 +217,20 @@ class BuilderBenchCompare:
                 "or failed to build there), so this run only reports head counts."
             )
         elif changed:
+            sentences = []
+            if missing:
+                sentences.append(
+                    f"{len(missing)} scenario(s) have base results but no head results; see the "
+                    "run log."
+                )
+            moved = len(changed) - len(missing)
+            if moved:
+                sentences.append(
+                    f"{moved} scenario(s) changed by more than {self.threshold_pct:g}% or changed "
+                    "event counts."
+                )
             lines.append(
-                f"**Builder benchmarks:** {len(changed)} scenario(s) changed by more than "
-                f"{self.threshold_pct:g}% or changed event counts. Advisory; does not block merge."
+                "**Builder benchmarks:** " + " ".join(sentences) + " Advisory; does not block merge."
             )
         else:
             lines.append(

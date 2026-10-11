@@ -66,7 +66,7 @@ Each run builds the base commit and then the head commit, and measures two thing
 - The cost per deferral for backlog scenarios: `(instructions(scenario) - instructions(transfers)) / deferrals`, against the same builder's `transfers` on the same commit. It is the cost of one deferred candidate, the unit a resting backlog multiplies, and it ignores changes that shift every scenario equally.
 - Every event type whose count changed.
 
-A scenario is flagged when its instruction count or per-deferral cost moves by more than 2%, or any event count changes. When nothing is flagged, the table is collapsed. Benchmarks that do not exist on the base commit are reported as new.
+A scenario is flagged when its instruction count or per-deferral cost moves by more than 2%, any event count changes, or the base commit has an instruction count or event line that the head lacks, which is how a head benchmark or event-test case that fails shows up. When nothing is flagged, the table is collapsed. Benchmarks that do not exist on the base commit are reported as new.
 
 Instruction counts are deterministic for a fixed toolchain, dependency set, target, and Valgrind version, so base and head measured in the same job are directly comparable on shared runners. Wall-clock measurement on shared runners is too noisy for per-PR comparison, which is why `bench-pr.yml` is manual only. Wall-clock control flow inside the loop would make counts nondeterministic under Valgrind, so the fixture disables the predicate evaluation cutoff (`predicate_eval_hard_cutoff = Duration::MAX`) and sizes the event writer's lossy queue so it never drops.
 
