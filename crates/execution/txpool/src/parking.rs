@@ -102,10 +102,10 @@ where
     inner: I,
     ordering: O,
     base_fee: u64,
-    source_head: Option<Arc<ValidPoolTransaction<T>>>,
+    source_head: Option<(Arc<ValidPoolTransaction<T>>, Option<BestTransactionLane>)>,
     lanes: HashMap<BestTransactionLane, BestTransactionLaneState<T>>,
-    parked: HashMap<TxHash, Arc<ValidPoolTransaction<T>>>,
-    ready: HashMap<TxHash, Arc<ValidPoolTransaction<T>>>,
+    parked: HashMap<TxHash, (Arc<ValidPoolTransaction<T>>, Option<BestTransactionLane>)>,
+    ready: HashMap<TxHash, (Arc<ValidPoolTransaction<T>>, Option<BestTransactionLane>)>,
     ready_heap: BinaryHeap<(BestTransactionPriority<O::PriorityValue>, TxHash)>,
 }
 
@@ -152,14 +152,18 @@ where
         BestTransactionPriority::new(&self.ordering, transaction, self.base_fee)
     }
 
-    /// Adds a transaction to the priority-ordered ready set.
-    pub fn push_ready(&mut self, transaction: Arc<ValidPoolTransaction<T>>) {
+    /// Adds a transaction and its sequential lane to the priority-ordered ready set.
+    pub fn push_ready(
+        &mut self,
+        transaction: Arc<ValidPoolTransaction<T>>,
+        lane: Option<BestTransactionLane>,
+    ) {
         let hash = *transaction.hash();
         if self.ready.contains_key(&hash) {
             return;
         }
         let priority = self.priority(&transaction);
-        self.ready.insert(hash, transaction);
+        self.ready.insert(hash, (transaction, lane));
         self.ready_heap.push((priority, hash));
     }
 
@@ -179,7 +183,7 @@ where
             Entry::Vacant(_) => return,
         };
         if let Some(next) = next {
-            self.push_ready(next);
+            self.push_ready(next, Some(lane));
         }
     }
 
@@ -189,20 +193,11 @@ where
     /// head notifies `inner`, whose lane bookkeeping excludes its remaining descendants.
     pub fn invalidate_lane(&mut self, lane: BestTransactionLane) {
         self.lanes.insert(lane, BestTransactionLaneState::Invalid);
-        if self
-            .source_head
-            .as_ref()
-            .and_then(BestTransactionLane::for_transaction)
-            .is_some_and(|head_lane| head_lane == lane)
-        {
+        if self.source_head.as_ref().is_some_and(|(_, head_lane)| *head_lane == Some(lane)) {
             self.source_head = None;
         }
-        self.parked.retain(|_, transaction| {
-            BestTransactionLane::for_transaction(transaction) != Some(lane)
-        });
-        self.ready.retain(|_, transaction| {
-            BestTransactionLane::for_transaction(transaction) != Some(lane)
-        });
+        self.parked.retain(|_, (_, parked_lane)| *parked_lane != Some(lane));
+        self.ready.retain(|_, (_, ready_lane)| *ready_lane != Some(lane));
         self.ready_heap.retain(|(_, hash)| self.ready.contains_key(hash));
     }
 
@@ -218,7 +213,7 @@ where
                 return;
             };
             let Some(lane) = BestTransactionLane::for_transaction(&transaction) else {
-                self.source_head = Some(transaction);
+                self.source_head = Some((transaction, None));
                 return;
             };
             match self.lanes.get_mut(&lane) {
@@ -229,7 +224,7 @@ where
                 }
                 None => {}
             }
-            self.source_head = Some(transaction);
+            self.source_head = Some((transaction, Some(lane)));
         }
     }
 
@@ -241,12 +236,14 @@ where
         self.ready_heap.peek().map(|(priority, _)| priority)
     }
 
-    /// Pops the highest-priority non-stale ready transaction.
-    pub fn pop_ready(&mut self) -> Option<Arc<ValidPoolTransaction<T>>> {
+    /// Pops the highest-priority non-stale ready transaction and its sequential lane.
+    pub fn pop_ready(
+        &mut self,
+    ) -> Option<(Arc<ValidPoolTransaction<T>>, Option<BestTransactionLane>)> {
         loop {
             let (_, hash) = self.ready_heap.pop()?;
-            if let Some(transaction) = self.ready.remove(&hash) {
-                return Some(transaction);
+            if let Some(entry) = self.ready.remove(&hash) {
+                return Some(entry);
             }
         }
     }
@@ -255,8 +252,9 @@ where
     pub fn record_yielded(
         &mut self,
         transaction: Arc<ValidPoolTransaction<T>>,
+        lane: Option<BestTransactionLane>,
     ) -> Arc<ValidPoolTransaction<T>> {
-        if let Some(lane) = BestTransactionLane::for_transaction(&transaction) {
+        if let Some(lane) = lane {
             self.lanes
                 .entry(lane)
                 .or_insert_with(|| BestTransactionLaneState::Occupied(VecDeque::new()));
@@ -277,7 +275,7 @@ where
         self.fill_source_head();
 
         let ready_priority = self.ready_priority().cloned();
-        let source_priority = self.source_head.as_ref().map(|source| self.priority(source));
+        let source_priority = self.source_head.as_ref().map(|(source, _)| self.priority(source));
         let take_ready = match (source_priority, ready_priority) {
             (Some(source), Some(ready)) => ready >= source,
             (None, Some(_)) => true,
@@ -285,12 +283,12 @@ where
             (None, None) => return None,
         };
 
-        let transaction = if take_ready {
+        let (transaction, lane) = if take_ready {
             self.pop_ready().expect("ready priority requires a ready transaction")
         } else {
             self.source_head.take().expect("source priority requires a source transaction")
         };
-        Some(self.record_yielded(transaction))
+        Some(self.record_yielded(transaction, lane))
     }
 }
 
@@ -323,15 +321,15 @@ where
     O: TransactionOrdering<Transaction = T>,
 {
     fn park(&mut self, transaction: &Arc<ValidPoolTransaction<T>>) {
-        let hash = *transaction.hash();
-        self.parked.insert(hash, Arc::clone(transaction));
+        let lane = BestTransactionLane::for_transaction(transaction);
+        self.parked.insert(*transaction.hash(), (Arc::clone(transaction), lane));
     }
 
     fn promote(&mut self, transaction_hash: TxHash) -> bool {
-        let Some(transaction) = self.parked.remove(&transaction_hash) else {
+        let Some((transaction, lane)) = self.parked.remove(&transaction_hash) else {
             return false;
         };
-        self.push_ready(transaction);
+        self.push_ready(transaction, lane);
         true
     }
 
@@ -340,10 +338,10 @@ where
         transaction_hash: TxHash,
         kind: InvalidPoolTransactionError,
     ) -> bool {
-        let Some(transaction) = self.parked.remove(&transaction_hash) else {
+        let Some((transaction, lane)) = self.parked.remove(&transaction_hash) else {
             return false;
         };
-        if let Some(lane) = BestTransactionLane::for_transaction(&transaction) {
+        if let Some(lane) = lane {
             self.invalidate_lane(lane);
         }
         self.inner.mark_invalid(&transaction, kind);
@@ -553,10 +551,35 @@ mod tests {
         let inner = StaticBestTransactions::new(Vec::new());
         let mut best = ParkedBestTransactions::new(inner, BaseOrdering::coinbase_tip(), 0);
 
-        best.push_ready(transaction);
+        best.push_ready(transaction, Some(lane));
         best.invalidate_lane(lane);
 
         assert!(best.ready.is_empty());
         assert!(best.ready_heap.is_empty());
+    }
+
+    #[test]
+    fn invalidating_lane_discards_only_its_parked_transactions() {
+        let invalid_signer = PrivateKeySigner::random();
+        let other_signer = PrivateKeySigner::random();
+        let invalid_parked = transaction(&invalid_signer, U256::from(1), 0, 100);
+        let other_parked = transaction(&other_signer, U256::ZERO, 0, 90);
+        let invalid_lane = BestTransactionLane::for_transaction(&invalid_parked).unwrap();
+        let inner = StaticBestTransactions::new(vec![
+            Arc::clone(&invalid_parked),
+            Arc::clone(&other_parked),
+        ]);
+        let mut best = ParkedBestTransactions::new(inner, BaseOrdering::coinbase_tip(), 0);
+
+        let first = best.next().unwrap();
+        best.park(&first);
+        let second = best.next().unwrap();
+        best.park(&second);
+        best.invalidate_lane(invalid_lane);
+
+        assert!(!best.promote(*invalid_parked.hash()));
+        assert!(best.promote(*other_parked.hash()));
+        assert_eq!(best.next().unwrap().hash(), other_parked.hash());
+        assert!(best.next().is_none());
     }
 }
