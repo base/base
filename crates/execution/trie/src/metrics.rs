@@ -2,12 +2,11 @@
 
 use std::{
     fmt::Debug,
-    future::Future,
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
     },
-    time::{Duration, Instant},
+    time::Instant,
 };
 
 use alloy_eips::{BlockNumHash, eip1898::BlockWithParent};
@@ -89,6 +88,27 @@ impl StorageOperation {
             Self::HashedCursorSeekExact => "hashed_cursor_seek_exact",
             Self::HashedCursorNext => "hashed_cursor_next",
         }
+    }
+
+    /// Times `f` and records its duration under this operation.
+    pub fn record<R>(self, f: impl FnOnce() -> R) -> R {
+        base_metrics::time!(OperationMetrics::duration_seconds(self.as_str()), { f() })
+    }
+
+    /// Times `f`, a batch write of `count` items, and records the average duration once per
+    /// item. Records nothing for an empty batch.
+    pub fn record_per_item<R>(self, count: usize, f: impl FnOnce() -> R) -> R {
+        let start = Instant::now();
+        let result = f();
+        let duration = start.elapsed();
+
+        if count > 0
+            && let Ok(count_u32) = u32::try_from(count)
+        {
+            OperationMetrics::duration_seconds(self.as_str())
+                .record_many(duration / count_u32, count);
+        }
+        result
     }
 }
 
@@ -200,50 +220,10 @@ impl BlockMetrics {
     }
 }
 
-/// Metrics for storage operations.
-#[derive(Debug, Default, Clone)]
-pub struct StorageMetrics;
-
-impl StorageMetrics {
-    /// Record a storage operation with timing.
-    pub fn record_operation<R>(&self, operation: StorageOperation, f: impl FnOnce() -> R) -> R {
-        base_metrics::time!(OperationMetrics::duration_seconds(operation.as_str()), { f() })
-    }
-
-    /// Record a storage operation with timing (async version).
-    pub async fn record_operation_async<F, R>(&self, operation: StorageOperation, f: F) -> R
-    where
-        F: Future<Output = R>,
-    {
-        base_metrics::time!(OperationMetrics::duration_seconds(operation.as_str()), { f.await })
-    }
-
-    /// Record a pre-measured duration for an operation.
-    pub fn record_duration(&self, operation: StorageOperation, duration: Duration) {
-        OperationMetrics::duration_seconds(operation.as_str()).record(duration);
-    }
-
-    /// Record multiple items with the same duration.
-    pub fn record_duration_per_item(
-        &self,
-        operation: StorageOperation,
-        duration: Duration,
-        count: usize,
-    ) {
-        if count > 0
-            && let Some(count_u32) = u32::try_from(count).ok()
-        {
-            OperationMetrics::duration_seconds(operation.as_str())
-                .record_many(duration / count_u32, count);
-        }
-    }
-}
-
 /// Wrapper for [`TrieCursor`] that records metrics.
 #[derive(Debug, Constructor, Clone)]
 pub struct BaseProofsTrieCursorWithMetrics<C> {
     cursor: C,
-    metrics: Arc<StorageMetrics>,
 }
 
 impl<C: TrieCursor> TrieCursor for BaseProofsTrieCursorWithMetrics<C> {
@@ -252,9 +232,7 @@ impl<C: TrieCursor> TrieCursor for BaseProofsTrieCursorWithMetrics<C> {
         &mut self,
         path: Nibbles,
     ) -> Result<Option<(Nibbles, BranchNodeCompact)>, DatabaseError> {
-        self.metrics.record_operation(StorageOperation::TrieCursorSeekExact, || {
-            self.cursor.seek_exact(path)
-        })
+        StorageOperation::TrieCursorSeekExact.record(|| self.cursor.seek_exact(path))
     }
 
     #[inline]
@@ -262,17 +240,17 @@ impl<C: TrieCursor> TrieCursor for BaseProofsTrieCursorWithMetrics<C> {
         &mut self,
         path: Nibbles,
     ) -> Result<Option<(Nibbles, BranchNodeCompact)>, DatabaseError> {
-        self.metrics.record_operation(StorageOperation::TrieCursorSeek, || self.cursor.seek(path))
+        StorageOperation::TrieCursorSeek.record(|| self.cursor.seek(path))
     }
 
     #[inline]
     fn next(&mut self) -> Result<Option<(Nibbles, BranchNodeCompact)>, DatabaseError> {
-        self.metrics.record_operation(StorageOperation::TrieCursorNext, || self.cursor.next())
+        StorageOperation::TrieCursorNext.record(|| self.cursor.next())
     }
 
     #[inline]
     fn current(&mut self) -> Result<Option<Nibbles>, DatabaseError> {
-        self.metrics.record_operation(StorageOperation::TrieCursorCurrent, || self.cursor.current())
+        StorageOperation::TrieCursorCurrent.record(|| self.cursor.current())
     }
 
     #[inline]
@@ -283,8 +261,8 @@ impl<C: TrieCursor> TrieCursor for BaseProofsTrieCursorWithMetrics<C> {
 
 impl<C: TrieStorageCursor> TrieStorageCursor for BaseProofsTrieCursorWithMetrics<C> {
     #[inline]
-    fn set_hashed_address(&mut self, _hashed_address: B256) {
-        self.cursor.set_hashed_address(_hashed_address)
+    fn set_hashed_address(&mut self, hashed_address: B256) {
+        self.cursor.set_hashed_address(hashed_address)
     }
 }
 
@@ -292,7 +270,6 @@ impl<C: TrieStorageCursor> TrieStorageCursor for BaseProofsTrieCursorWithMetrics
 #[derive(Debug, Constructor, Clone)]
 pub struct BaseProofsHashedCursorWithMetrics<C> {
     cursor: C,
-    metrics: Arc<StorageMetrics>,
 }
 
 impl<C: HashedCursor> HashedCursor for BaseProofsHashedCursorWithMetrics<C> {
@@ -300,12 +277,12 @@ impl<C: HashedCursor> HashedCursor for BaseProofsHashedCursorWithMetrics<C> {
 
     #[inline]
     fn seek(&mut self, key: B256) -> Result<Option<(B256, Self::Value)>, DatabaseError> {
-        self.metrics.record_operation(StorageOperation::HashedCursorSeek, || self.cursor.seek(key))
+        StorageOperation::HashedCursorSeek.record(|| self.cursor.seek(key))
     }
 
     #[inline]
     fn next(&mut self) -> Result<Option<(B256, Self::Value)>, DatabaseError> {
-        self.metrics.record_operation(StorageOperation::HashedCursorNext, || self.cursor.next())
+        StorageOperation::HashedCursorNext.record(|| self.cursor.next())
     }
 
     #[inline]
@@ -321,8 +298,8 @@ impl<C: HashedStorageCursor> HashedStorageCursor for BaseProofsHashedCursorWithM
     }
 
     #[inline]
-    fn set_hashed_address(&mut self, _hashed_address: B256) {
-        self.cursor.set_hashed_address(_hashed_address)
+    fn set_hashed_address(&mut self, hashed_address: B256) {
+        self.cursor.set_hashed_address(hashed_address)
     }
 }
 
@@ -330,28 +307,18 @@ impl<C: HashedStorageCursor> HashedStorageCursor for BaseProofsHashedCursorWithM
 #[derive(Debug, Clone)]
 pub struct BaseProofsStorageWithMetrics<S> {
     storage: S,
-    metrics: Arc<StorageMetrics>,
     tx_acquisitions: Arc<AtomicU64>,
 }
 
 impl<S> BaseProofsStorageWithMetrics<S> {
-    /// Initializes new [`StorageMetrics`] and wraps given storage instance.
+    /// Wraps the given storage instance.
     pub fn new(storage: S) -> Self {
-        Self {
-            storage,
-            metrics: Arc::new(StorageMetrics),
-            tx_acquisitions: Arc::new(AtomicU64::new(0)),
-        }
+        Self { storage, tx_acquisitions: Arc::new(AtomicU64::new(0)) }
     }
 
     /// Get the underlying storage.
     pub const fn inner(&self) -> &S {
         &self.storage
-    }
-
-    /// Get the metrics.
-    pub const fn metrics(&self) -> &Arc<StorageMetrics> {
-        &self.metrics
     }
 
     /// Read-only transactions acquired since this wrapper was created. Used by
@@ -403,7 +370,7 @@ where
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::StorageTrieCursor<'tx>> {
         let cursor = self.storage.storage_trie_cursor(hashed_address, max_block_number)?;
-        Ok(BaseProofsTrieCursorWithMetrics::new(cursor, Arc::clone(&self.metrics)))
+        Ok(BaseProofsTrieCursorWithMetrics::new(cursor))
     }
 
     #[inline]
@@ -412,7 +379,7 @@ where
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::AccountTrieCursor<'tx>> {
         let cursor = self.storage.account_trie_cursor(max_block_number)?;
-        Ok(BaseProofsTrieCursorWithMetrics::new(cursor, Arc::clone(&self.metrics)))
+        Ok(BaseProofsTrieCursorWithMetrics::new(cursor))
     }
 
     #[inline]
@@ -422,7 +389,7 @@ where
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::StorageCursor<'tx>> {
         let cursor = self.storage.storage_hashed_cursor(hashed_address, max_block_number)?;
-        Ok(BaseProofsHashedCursorWithMetrics::new(cursor, Arc::clone(&self.metrics)))
+        Ok(BaseProofsHashedCursorWithMetrics::new(cursor))
     }
 
     #[inline]
@@ -431,7 +398,7 @@ where
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::AccountHashedCursor<'tx>> {
         let cursor = self.storage.account_hashed_cursor(max_block_number)?;
-        Ok(BaseProofsHashedCursorWithMetrics::new(cursor, Arc::clone(&self.metrics)))
+        Ok(BaseProofsHashedCursorWithMetrics::new(cursor))
     }
 
     #[inline]
@@ -454,7 +421,7 @@ where
     {
         let cursor =
             self.storage.storage_trie_cursor_with_tx(tx, hashed_address, max_block_number)?;
-        Ok(BaseProofsTrieCursorWithMetrics::new(cursor, Arc::clone(&self.metrics)))
+        Ok(BaseProofsTrieCursorWithMetrics::new(cursor))
     }
 
     #[inline]
@@ -468,7 +435,7 @@ where
         'db: 'tx,
     {
         let cursor = self.storage.account_trie_cursor_with_tx(tx, max_block_number)?;
-        Ok(BaseProofsTrieCursorWithMetrics::new(cursor, Arc::clone(&self.metrics)))
+        Ok(BaseProofsTrieCursorWithMetrics::new(cursor))
     }
 
     #[inline]
@@ -484,7 +451,7 @@ where
     {
         let cursor =
             self.storage.storage_hashed_cursor_with_tx(tx, hashed_address, max_block_number)?;
-        Ok(BaseProofsHashedCursorWithMetrics::new(cursor, Arc::clone(&self.metrics)))
+        Ok(BaseProofsHashedCursorWithMetrics::new(cursor))
     }
 
     #[inline]
@@ -498,7 +465,7 @@ where
         'db: 'tx,
     {
         let cursor = self.storage.account_hashed_cursor_with_tx(tx, max_block_number)?;
-        Ok(BaseProofsHashedCursorWithMetrics::new(cursor, Arc::clone(&self.metrics)))
+        Ok(BaseProofsHashedCursorWithMetrics::new(cursor))
     }
 
     #[inline]
@@ -511,9 +478,8 @@ where
     where
         Self: 'db,
     {
-        self.metrics.record_operation(StorageOperation::HashedCursorSeekExact, || {
-            self.storage.hashed_account_with_tx(tx, hashed_address, max_block_number)
-        })
+        StorageOperation::HashedCursorSeekExact
+            .record(|| self.storage.hashed_account_with_tx(tx, hashed_address, max_block_number))
     }
 
     #[inline]
@@ -527,7 +493,7 @@ where
     where
         Self: 'db,
     {
-        self.metrics.record_operation(StorageOperation::HashedCursorSeekExact, || {
+        StorageOperation::HashedCursorSeekExact.record(|| {
             self.storage.hashed_storage_with_tx(tx, hashed_address, hashed_slot, max_block_number)
         })
     }
@@ -620,19 +586,8 @@ where
         account_nodes: Vec<(Nibbles, Option<BranchNodeCompact>)>,
     ) -> BaseProofsStorageResult<()> {
         let count = account_nodes.len();
-        let start = Instant::now();
-        let result = self.storage.store_account_branches(account_nodes);
-        let duration = start.elapsed();
-
-        if count > 0 {
-            self.metrics.record_duration_per_item(
-                StorageOperation::StoreAccountBranch,
-                duration,
-                count,
-            );
-        }
-
-        result
+        StorageOperation::StoreAccountBranch
+            .record_per_item(count, || self.storage.store_account_branches(account_nodes))
     }
 
     #[inline]
@@ -642,19 +597,9 @@ where
         storage_nodes: Vec<(Nibbles, Option<BranchNodeCompact>)>,
     ) -> BaseProofsStorageResult<()> {
         let count = storage_nodes.len();
-        let start = Instant::now();
-        let result = self.storage.store_storage_branches(hashed_address, storage_nodes);
-        let duration = start.elapsed();
-
-        if count > 0 {
-            self.metrics.record_duration_per_item(
-                StorageOperation::StoreStorageBranch,
-                duration,
-                count,
-            );
-        }
-
-        result
+        StorageOperation::StoreStorageBranch.record_per_item(count, || {
+            self.storage.store_storage_branches(hashed_address, storage_nodes)
+        })
     }
 
     #[inline]
@@ -663,19 +608,8 @@ where
         entries: Vec<(B256, Vec<(Nibbles, Option<BranchNodeCompact>)>)>,
     ) -> BaseProofsStorageResult<()> {
         let count: usize = entries.iter().map(|(_, v)| v.len()).sum();
-        let start = Instant::now();
-        let result = self.storage.store_storage_branches_bulk(entries);
-        let duration = start.elapsed();
-
-        if count > 0 {
-            self.metrics.record_duration_per_item(
-                StorageOperation::StoreStorageBranch,
-                duration,
-                count,
-            );
-        }
-
-        result
+        StorageOperation::StoreStorageBranch
+            .record_per_item(count, || self.storage.store_storage_branches_bulk(entries))
     }
 
     #[inline]
@@ -684,19 +618,8 @@ where
         accounts: Vec<(B256, Option<Account>)>,
     ) -> BaseProofsStorageResult<()> {
         let count = accounts.len();
-        let start = Instant::now();
-        let result = self.storage.store_hashed_accounts(accounts);
-        let duration = start.elapsed();
-
-        if count > 0 {
-            self.metrics.record_duration_per_item(
-                StorageOperation::StoreHashedAccount,
-                duration,
-                count,
-            );
-        }
-
-        result
+        StorageOperation::StoreHashedAccount
+            .record_per_item(count, || self.storage.store_hashed_accounts(accounts))
     }
 
     #[inline]
@@ -706,19 +629,8 @@ where
         storages: Vec<(B256, U256)>,
     ) -> BaseProofsStorageResult<()> {
         let count = storages.len();
-        let start = Instant::now();
-        let result = self.storage.store_hashed_storages(hashed_address, storages);
-        let duration = start.elapsed();
-
-        if count > 0 {
-            self.metrics.record_duration_per_item(
-                StorageOperation::StoreHashedStorage,
-                duration,
-                count,
-            );
-        }
-
-        result
+        StorageOperation::StoreHashedStorage
+            .record_per_item(count, || self.storage.store_hashed_storages(hashed_address, storages))
     }
 
     #[inline]
@@ -727,19 +639,8 @@ where
         entries: Vec<(B256, Vec<(B256, U256)>)>,
     ) -> BaseProofsStorageResult<()> {
         let count: usize = entries.iter().map(|(_, v)| v.len()).sum();
-        let start = Instant::now();
-        let result = self.storage.store_hashed_storages_bulk(entries);
-        let duration = start.elapsed();
-
-        if count > 0 {
-            self.metrics.record_duration_per_item(
-                StorageOperation::StoreHashedStorage,
-                duration,
-                count,
-            );
-        }
-
-        result
+        StorageOperation::StoreHashedStorage
+            .record_per_item(count, || self.storage.store_hashed_storages_bulk(entries))
     }
 
     #[inline]
