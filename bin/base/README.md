@@ -112,6 +112,32 @@ base --chain sepolia dev --dir <datadir> --http.port 9545 --ws.port 9546
 just devnet snapshot run --dir <datadir>
 ```
 
+### `dev_impersonateTransaction`
+
+Only `base dev` serves this method on its HTTP and WS RPC. It executes a call as any account
+without its key, so it can fund accounts and make privileged calls:
+
+```text
+dev_impersonateTransaction({from, to?, input?, value?, gas, mint?}) -> txHash
+```
+
+`from` and `gas` are required. `input` defaults to empty, and `value` and `mint` to zero. `mint` wei
+is credited to `from` before the call. Omitting `to` creates a contract. The request becomes a
+deposit transaction, not a signed one: it skips signature, nonce, and fee checks, and pays no fees.
+Use signed transactions to test admission and fees.
+
+A returned hash means the request is queued, not mined. Requests are added in order after the
+system deposits of the next block with enough gas, alongside ordinary pool transactions. Poll
+`eth_getTransactionReceipt` for the hash. A call that reverts or runs out of gas is still included,
+with status `0`; minted ETH is kept even then. Each request is a distinct transaction, so repeating
+it runs it again.
+
+Requests that fail validation return error `-32602`: gas below the intrinsic or calldata floor cost,
+gas above the block gas limit minus 2,000,000 for system deposits, calldata over 131,072 bytes, or
+init code over 49,152 bytes. Error `-32000` means retry later: the chain has not started sequencing,
+or 256 requests are already pending. Pending requests are held in memory and are lost if the process stops before
+they are included.
+
 ## `base update`
 
 `base update` updates the installed `base` binary by running `baseup --bin base` against the same

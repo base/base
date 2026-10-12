@@ -24,6 +24,12 @@ pub use standalone::{
     StandaloneOriginSelector, StandalonePrefund, StandaloneScheduleError, StandaloneSequencerNode,
 };
 
+mod standalone_impersonation;
+pub use standalone_impersonation::{
+    ImpersonationError, ImpersonationRequest, StandaloneImpersonationQueue,
+    StandaloneImpersonationState,
+};
+
 mod standalone_dev;
 pub use standalone_dev::{StandaloneDevChain, StandaloneDevError, StandaloneDevState};
 

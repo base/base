@@ -21,7 +21,7 @@ use crate::{
     ConductorClient, DerivationClientResult, EngineActor, EngineDerivationClient, EngineProcessor,
     L1OriginSelectorError, NodeActor, NodeOperatingMode, OriginSelector, PayloadBuilder,
     QueuedSequencerEngineClient, QueuedUnsafePayloadGossipClient, RecoveryModeGuard,
-    SequencerActor, SequencerEngineRequestCoordinator,
+    SequencerActor, SequencerEngineRequestCoordinator, StandaloneImpersonationQueue,
 };
 
 /// Builds payload attributes by extending the L1 epoch captured in an L2 snapshot.
@@ -36,6 +36,8 @@ pub struct StandaloneAttributesBuilder {
     system_config: SystemConfig,
     prefund: Option<StandalonePrefund>,
     boundary_sequence_number: u64,
+    /// Queue whose deposits follow the system deposits in each block.
+    pub impersonation: Option<StandaloneImpersonationQueue>,
 }
 
 /// One-time account funding applied to the first descendant of a snapshot boundary.
@@ -61,12 +63,19 @@ impl StandaloneAttributesBuilder {
             system_config,
             prefund,
             boundary_sequence_number: l1_info.sequence_number(),
+            impersonation: None,
         }
     }
 }
 
 #[async_trait]
 impl AttributesBuilder for StandaloneAttributesBuilder {
+    fn acknowledge_inserted_transactions(&mut self, transactions: &[Bytes]) {
+        if let Some(queue) = &self.impersonation {
+            queue.retire(transactions);
+        }
+    }
+
     async fn prepare_payload_attributes(
         &mut self,
         l2_parent: L2BlockInfo,
@@ -88,6 +97,7 @@ impl AttributesBuilder for StandaloneAttributesBuilder {
         l1_info_deposit.encode_2718(&mut encoded_l1_info);
 
         let mut transactions = vec![Bytes::from(encoded_l1_info)];
+        let mut gas = self.system_config.gas_limit.saturating_sub(l1_info_deposit.gas_limit);
         // Sub-second progression is conveyed solely by a `BaseTimeUpdateTx` deposit in the
         // transactions list (the payload attributes no longer carry a millis field). Denim is the
         // upgrade that activates the native sub-second block cadence, matching the production
@@ -98,6 +108,7 @@ impl AttributesBuilder for StandaloneAttributesBuilder {
                     PipelineError::AttributesBuilder(BuilderError::BaseTimeUpdate(error)).crit()
                 })?;
             let deposit = base_time.into_deposit_tx(next_l2_block_number);
+            gas = gas.saturating_sub(deposit.gas_limit);
             let mut encoded = Vec::new();
             deposit.encode_2718(&mut encoded);
             transactions.push(encoded.into());
@@ -116,9 +127,13 @@ impl AttributesBuilder for StandaloneAttributesBuilder {
                 is_system_transaction: false,
                 input: Bytes::new(),
             };
+            gas = gas.saturating_sub(deposit.gas_limit);
             let mut encoded = Vec::new();
             deposit.encode_2718(&mut encoded);
             transactions.push(encoded.into());
+        }
+        if let Some(queue) = &self.impersonation {
+            transactions.extend(queue.select(gas));
         }
 
         Ok(BasePayloadAttributes {

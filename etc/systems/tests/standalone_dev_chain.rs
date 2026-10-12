@@ -1,7 +1,10 @@
 //! Real-stack coverage for persisting and restoring a standalone development chain.
 
 use std::{
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -10,12 +13,14 @@ use alloy_eips::{
     BlockNumHash, BlockNumberOrTag,
     eip2718::{Decodable2718, Encodable2718},
 };
+use alloy_genesis::GenesisAccount;
 use alloy_network::{ReceiptResponse, TransactionBuilder};
 use alloy_primitives::{Address, B256, Bytes, U256};
-use alloy_provider::{Provider, RootProvider};
+use alloy_provider::{Network, Provider, RootProvider, transport::TransportResult};
 use alloy_rpc_types_engine::{ForkchoiceState, JwtSecret};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
+use axum::{Router, http::HeaderMap};
 use base_common_consensus::{BaseBlock, BaseTxEnvelope};
 use base_common_genesis::{
     ChainGenesis, RollupConfig, RuntimeUpgradeRegistry, SystemConfig, UpgradeConfig,
@@ -25,11 +30,14 @@ use base_common_rpc_types::BaseTransactionRequest;
 use base_consensus_derive::AttributesBuilder;
 use base_consensus_node::{
     EngineConfig, NodeOperatingMode, StandaloneAttributesBuilder, StandaloneDevChain,
-    StandaloneDevError, StandaloneDevState,
+    StandaloneDevError, StandaloneDevState, StandaloneImpersonationQueue,
 };
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_txpool::ValiditySignatureMode;
-use base_node_runner::test_utils::{L1_BLOCK_INFO_DEPOSIT_TX, load_chain_spec};
+use base_node_runner::{
+    BaseNodeExtension, NodeHooks,
+    test_utils::{L1_BLOCK_INFO_DEPOSIT_TX, load_chain_spec},
+};
 use base_protocol::{BaseTimeUpdateTx, BlockInfo, L1BlockInfoTx, L2BlockInfo};
 use base_system_tests::{
     ANVIL_ACCOUNT_1, InProcessBuilder, InProcessBuilderConfig, InProcessNodeRuntime,
@@ -38,6 +46,7 @@ use eyre::{OptionExt, Result};
 use reth_provider::{
     HeaderProvider, StaticFileProviderFactory, StaticFileSegment, StaticFileWriter,
 };
+use serde_json::{Value, json};
 use tokio::{task::JoinHandle, time::timeout};
 use tokio_util::sync::CancellationToken;
 use url::Url;
@@ -45,17 +54,46 @@ use url::Url;
 const SNAPSHOT_AGE: Duration = Duration::from_secs(3 * 24 * 60 * 60);
 const LEGACY_BLOCK_TIME: u64 = 2;
 const BOUNDARY_NUMBER: u64 = 8;
+/// Contract that stores its first calldata word in slot 0 only when called by [`OWNER`].
+const GUARDED: Address = Address::repeat_byte(0xc0);
+/// Owner of [`GUARDED`], whose private key is unknown.
+const OWNER: Address = Address::repeat_byte(0x0a);
 
-/// Persists the schedule chosen for a pre-Denim head and restores it after restarts.
+#[derive(Debug)]
+struct ImpersonationRpcExtension(StandaloneImpersonationQueue);
+
+impl BaseNodeExtension for ImpersonationRpcExtension {
+    fn apply(self: Box<Self>, hooks: NodeHooks) -> NodeHooks {
+        hooks.add_rpc_module(move |ctx| {
+            ctx.modules.merge_configured(self.0.into_rpc())?;
+            Ok(())
+        })
+    }
+}
+
+/// Persists the schedule chosen for a pre-Denim head, restores it after restarts, and sequences
+/// impersonated deposits beside signed transactions.
 #[tokio::test]
 async fn standalone_dev_chain_persists_and_restores_schedule() -> Result<()> {
     base_node_runner::test_utils::init_silenced_tracing();
     let genesis_time = (SystemTime::now() - SNAPSHOT_AGE).duration_since(UNIX_EPOCH)?.as_secs();
     let mut genesis = load_chain_spec().inner.genesis.clone();
     genesis.timestamp = genesis_time;
+    // CALLER == OWNER ? sstore(0, calldataload(0)) : revert(0, 0)
+    let guarded_code = [
+        &[0x33, 0x73][..],
+        OWNER.as_slice(),
+        &[
+            0x14, 0x60, 0x1e, 0x57, 0x60, 0x00, 0x80, 0xfd, 0x5b, 0x60, 0x00, 0x35, 0x60, 0x00,
+            0x55, 0x00,
+        ],
+    ]
+    .concat();
+    genesis.alloc.insert(GUARDED, GenesisAccount::default().with_code(Some(guarded_code.into())));
     let chain_spec = Arc::new(BaseChainSpec::from_genesis(genesis));
     let chain_id = chain_spec.inner.chain.id();
     let jwt_secret = JwtSecret::random();
+    let queue = StandaloneImpersonationQueue::default();
     let builder = InProcessBuilder::start(InProcessBuilderConfig {
         runtime: InProcessNodeRuntime::Host,
         chain_spec: Arc::clone(&chain_spec),
@@ -69,7 +107,7 @@ async fn standalone_dev_chain_persists_and_restores_schedule() -> Result<()> {
         metrics_port: None,
         payload_builder_cutover: true,
         validity_signature_mode: ValiditySignatureMode::Off,
-        extra_extensions: Vec::new(),
+        extra_extensions: vec![Box::new(ImpersonationRpcExtension(queue.clone()))],
         block_time: Duration::from_millis(200),
         persistence_threshold: Some(0),
         persistence_backpressure_threshold: None,
@@ -80,6 +118,16 @@ async fn standalone_dev_chain_persists_and_restores_schedule() -> Result<()> {
     .await?;
     let provider = RootProvider::<Base>::new_http(builder.rpc_url()?);
     let engine_url = builder.engine_url()?;
+    let fund = |address: Address| {
+        json!({
+            "from": address,
+            "to": address,
+            "gas": "0x5208",
+            "mint": "0x64",
+        })
+    };
+    let not_ready = impersonate(&provider, fund(OWNER)).await.unwrap_err();
+    assert_eq!(not_ready.as_error_resp().map(|error| error.code), Some(-32000));
 
     let l1_info_deposit = BaseTxEnvelope::decode_2718(&mut L1_BLOCK_INFO_DEPOSIT_TX.as_ref())?;
     let l1_info = L1BlockInfoTx::decode_calldata(
@@ -181,6 +229,68 @@ async fn standalone_dev_chain_persists_and_restores_schedule() -> Result<()> {
     assert_eq!(static_files.earliest_history_height(), 1);
     assert!(provider.get_block_by_number(0.into()).full().await.is_err());
 
+    // Fail one seal with pending deposits, then lose an acknowledgment after canonical minting.
+    let funded = Address::repeat_byte(0xf2);
+    let lost_ack = Arc::new(AtomicBool::new(false));
+    let fault = Arc::clone(&lost_ack);
+    let failed_build = Arc::new(AtomicBool::new(false));
+    let build_fault = Arc::clone(&failed_build);
+    let client = reqwest::Client::builder().timeout(Duration::from_secs(10)).build()?;
+    let reader = provider.clone();
+    let app = Router::new().fallback(move |headers: HeaderMap, body: String| {
+        let (client, target, reader, fault) =
+            (client.clone(), engine_url.clone(), reader.clone(), Arc::clone(&fault));
+        let build_fault = Arc::clone(&build_fault);
+        async move {
+            let request: Value = serde_json::from_str(&body).unwrap();
+            let mut response: Value = client
+                .post(target)
+                .headers(headers)
+                .json(&request)
+                .send()
+                .await
+                .unwrap()
+                .json()
+                .await
+                .unwrap();
+            if request["method"] == "engine_getPayloadV4"
+                && response["result"]["executionPayload"]["transactions"].as_array().is_some_and(
+                    |transactions| {
+                        transactions.iter().any(|transaction| {
+                            let encoded: Bytes =
+                                serde_json::from_value(transaction.clone()).unwrap();
+                            BaseTxEnvelope::decode_2718(&mut encoded.as_ref())
+                                .unwrap()
+                                .as_deposit()
+                                .is_some_and(|deposit| deposit.from == funded)
+                        })
+                    },
+                )
+                && !build_fault.swap(true, Ordering::SeqCst)
+            {
+                response = json!({
+                    "jsonrpc": "2.0", "id": request["id"],
+                    "error": {"code": -38001, "message": "injected lost payload"}
+                });
+            } else if request["method"] == "engine_forkchoiceUpdatedV3"
+                && request["params"][1].is_null()
+                && response["result"]["payloadStatus"]["status"] == "VALID"
+                && !fault.load(Ordering::SeqCst)
+                && reader.get_balance(funded).await.unwrap() > U256::ZERO
+                && !fault.swap(true, Ordering::SeqCst)
+            {
+                response = json!({
+                    "jsonrpc": "2.0", "id": request["id"],
+                    "error": {"code": -38002, "message": "injected lost insertion acknowledgment"}
+                });
+            }
+            ([("Content-Type", "application/json")], response.to_string())
+        }
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let engine_url = Url::parse(&format!("http://{}", listener.local_addr()?))?;
+    let proxy = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
     let datadir = builder.datadir().to_path_buf();
     let state_path = datadir.join(StandaloneDevChain::STATE_FILE);
     let start = |token: CancellationToken| -> Result<JoinHandle<_>> {
@@ -192,6 +302,7 @@ async fn standalone_dev_chain_persists_and_restores_schedule() -> Result<()> {
             engine_url.clone(),
             jwt_secret,
             move |number| headers.header_by_number(number),
+            queue.clone(),
             token,
         )))
     };
@@ -221,6 +332,61 @@ async fn standalone_dev_chain_persists_and_restores_schedule() -> Result<()> {
     let token = CancellationToken::new();
     let first = start(token.clone())?;
     let included = send_transaction(&provider, chain_id).await?;
+    // Requests execute in submission order after the system deposits.
+    let call = |from: Address, word: u8, gas: &str| {
+        json!({
+            "from": from,
+            "to": GUARDED,
+            "input": B256::with_last_byte(word),
+            "gas": gas,
+        })
+    };
+    let mints =
+        [impersonate(&provider, fund(funded)).await?, impersonate(&provider, fund(funded)).await?];
+    assert_ne!(mints[0], mints[1]);
+    let authorized = impersonate(&provider, call(OWNER, 42, "0x186a0")).await?;
+    let unauthorized =
+        impersonate(&provider, call(Address::repeat_byte(0x0b), 7, "0x186a0")).await?;
+    // Covers intrinsic gas but halts before SSTORE.
+    let halted = impersonate(&provider, call(OWNER, 9, "0x55f0")).await?;
+    // Init code returning the one-byte runtime code 0xff.
+    let deployer = Address::repeat_byte(0xd0);
+    let created = impersonate(
+        &provider,
+        json!({ "from": deployer, "input": "0x60ff60005360016000f3", "gas": "0x186a0" }),
+    )
+    .await?;
+    for (hash, success) in [
+        (mints[0], true),
+        (mints[1], true),
+        (authorized, true),
+        (unauthorized, false),
+        (halted, false),
+        (created, true),
+    ] {
+        assert_eq!(receipt(&provider, hash).await?.status(), success);
+    }
+    wait_for_block(&provider, provider.get_block_number().await? + 2).await?;
+    assert!(failed_build.load(Ordering::SeqCst), "build did not fail with pending deposits");
+    assert!(lost_ack.load(Ordering::SeqCst), "insertion acknowledgment was not lost");
+    assert!(queue.select(u64::MAX).is_empty());
+    assert_eq!(provider.get_balance(funded).await?, U256::from(0xc8));
+    assert_eq!(provider.get_storage_at(GUARDED, U256::ZERO).await?, U256::from(42));
+    assert_eq!(provider.get_code_at(deployer.create(0)).await?, Bytes::from_static(&[0xff]));
+    let max_gas = system_config.gas_limit / 10 - 2_000_000;
+    for request in [
+        json!({ "from": OWNER, "to": GUARDED, "gas": format!("{:#x}", max_gas + 1) }),
+        json!({ "from": OWNER, "to": GUARDED, "gas": "0x4e20" }),
+        json!({
+            "from": OWNER,
+            "to": GUARDED,
+            "gas": format!("{max_gas:#x}"),
+            "input": Bytes::from(vec![1; StandaloneImpersonationQueue::MAX_INPUT_BYTES + 1]),
+        }),
+    ] {
+        let error = impersonate(&provider, request).await.unwrap_err();
+        assert_eq!(error.as_error_resp().map(|error| error.code), Some(-32602), "{error}");
+    }
     token.cancel();
     first.await??;
     let state: StandaloneDevState = serde_json::from_slice(&std::fs::read(&state_path)?)?;
@@ -256,6 +422,7 @@ async fn standalone_dev_chain_persists_and_restores_schedule() -> Result<()> {
     let error = start(CancellationToken::new())?.await?.unwrap_err();
     assert!(matches!(error, StandaloneDevError::MissingState { .. }), "{error}");
 
+    proxy.abort();
     builder.shutdown().await
 }
 
@@ -281,11 +448,23 @@ async fn send_transaction(provider: &RootProvider<Base>, chain_id: u64) -> Resul
     let signature = signer.sign_hash_sync(&transaction.signature_hash())?;
     let raw: Bytes = transaction.into_signed(signature).encoded_2718().into();
     let hash = *provider.send_raw_transaction(&raw).await?.tx_hash();
+    let receipt = receipt(provider, hash).await?;
+    assert!(receipt.status());
+    receipt.block_number().ok_or_eyre("receipt missing block number")
+}
+
+async fn impersonate(provider: &RootProvider<Base>, request: Value) -> TransportResult<B256> {
+    provider.raw_request(StandaloneImpersonationQueue::METHOD.into(), (request,)).await
+}
+
+async fn receipt(
+    provider: &RootProvider<Base>,
+    hash: B256,
+) -> Result<<Base as Network>::ReceiptResponse> {
     timeout(Duration::from_secs(20), async {
         loop {
             if let Some(receipt) = provider.get_transaction_receipt(hash).await? {
-                assert!(receipt.status());
-                return receipt.inner.block_number.ok_or_eyre("receipt missing block number");
+                return Ok(receipt);
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
         }

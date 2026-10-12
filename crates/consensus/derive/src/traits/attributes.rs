@@ -4,6 +4,7 @@ use alloc::boxed::Box;
 use core::fmt::Debug;
 
 use alloy_eips::BlockNumHash;
+use alloy_primitives::Bytes;
 use async_trait::async_trait;
 use base_common_genesis::SystemConfig;
 use base_common_rpc_types_engine::BasePayloadAttributes;
@@ -42,6 +43,9 @@ pub trait AttributesBuilder: Debug + Send {
     ///
     /// Implementations may use this to avoid fetching config already known by the caller.
     fn seed_parent_system_config(&mut self, _parent: L2BlockInfo, _config: SystemConfig) {}
+
+    /// Receives the transactions of a payload the engine acknowledged as the canonical head.
+    fn acknowledge_inserted_transactions(&mut self, _transactions: &[Bytes]) {}
 
     /// Prepares a template [`BasePayloadAttributes`] that is ready to be used to build an L2
     /// block. The block will contain deposits only, on top of the given L2 parent, with the L1

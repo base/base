@@ -4,10 +4,10 @@ use std::sync::mpsc;
 
 use alloy_rpc_types_engine::JwtSecret;
 use base_common_chains::ChainConfig;
-use base_consensus_node::StandaloneDevChain;
+use base_consensus_node::{StandaloneDevChain, StandaloneImpersonationQueue};
 use base_execution_cli::ExecutionNodeConfigArgs;
 use base_node_core::args::RollupArgs;
-use base_node_runner::BaseNodeRunner;
+use base_node_runner::{BaseNodeExtension, BaseNodeRunner, FromExtensionConfig, NodeHooks};
 use clap::Args;
 use eyre::OptionExt;
 use reth_cli_runner::CliRunner;
@@ -72,12 +72,15 @@ impl DevCommand {
         // Graceful shutdown completes the runner before the command future returns, so a
         // consensus failure that triggers it is reported here.
         let (consensus_failure_tx, consensus_failure) = mpsc::channel();
+        let impersonation = StandaloneImpersonationQueue::default();
 
         CliRunner::try_default_runtime()?.run_command_until_exit(|ctx| async move {
             let task_executor = ctx.task_executor.clone();
             info!(target: "base::dev", "starting execution node; database checks can take a while");
             let builder = execution.into_default_node_builder(ctx)?;
-            let handle = BaseNodeRunner::new(RollupArgs::default()).launch(builder).await?.handle;
+            let mut runner = BaseNodeRunner::new(RollupArgs::default());
+            runner.install_ext::<ImpersonationRpcExtension>(impersonation.clone());
+            let handle = runner.launch(builder).await?.handle;
             let rpc = handle.node.rpc_server_handle();
             info!(
                 target: "base::dev",
@@ -96,6 +99,7 @@ impl DevCommand {
                 engine_url,
                 JwtSecret::random(),
                 move |number| provider.header_by_number(number),
+                impersonation,
                 consensus_cancellation.clone(),
             );
             tokio::pin!(execution_exit);
@@ -125,6 +129,27 @@ impl DevCommand {
             result
         })?;
         consensus_failure.try_recv().map_or(Ok(()), |error| Err(error.into()))
+    }
+}
+
+/// Serves `dev_impersonateTransaction` on the user RPC endpoints.
+#[derive(Debug)]
+pub(crate) struct ImpersonationRpcExtension(StandaloneImpersonationQueue);
+
+impl BaseNodeExtension for ImpersonationRpcExtension {
+    fn apply(self: Box<Self>, hooks: NodeHooks) -> NodeHooks {
+        hooks.add_rpc_module(move |ctx| {
+            ctx.modules.merge_configured(self.0.into_rpc())?;
+            Ok(())
+        })
+    }
+}
+
+impl FromExtensionConfig for ImpersonationRpcExtension {
+    type Config = StandaloneImpersonationQueue;
+
+    fn from_config(queue: Self::Config) -> Self {
+        Self(queue)
     }
 }
 

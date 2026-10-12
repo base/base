@@ -3,6 +3,7 @@
 use alloc::{boxed::Box, vec::Vec};
 
 use alloy_eips::BlockNumHash;
+use alloy_primitives::Bytes;
 use async_trait::async_trait;
 use base_common_genesis::SystemConfig;
 use base_common_rpc_types_engine::BasePayloadAttributes;
@@ -21,12 +22,18 @@ pub struct TestAttributesBuilder {
     pub attributes: Vec<Result<BasePayloadAttributes, PipelineErrorKind>>,
     /// Parent system configs seeded by callers.
     pub parent_system_configs: Vec<(L2BlockInfo, SystemConfig)>,
+    /// Transactions of acknowledged payloads.
+    pub inserted_transactions: Vec<Vec<Bytes>>,
 }
 
 #[async_trait]
 impl AttributesBuilder for TestAttributesBuilder {
     fn seed_parent_system_config(&mut self, parent: L2BlockInfo, config: SystemConfig) {
         self.parent_system_configs.push((parent, config));
+    }
+
+    fn acknowledge_inserted_transactions(&mut self, transactions: &[Bytes]) {
+        self.inserted_transactions.push(transactions.to_vec());
     }
 
     /// Prepares the [`BasePayloadAttributes`] for the next payload.
