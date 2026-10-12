@@ -158,10 +158,17 @@ the [snapshot benchmark harness](../../etc/systems/README.md) for benchmarks.
 
 `download` uses `--minimal`: full current state and headers with only recent transactions, receipts,
 and account/storage history, rounded outward to archive chunk boundaries. It stops after downloading;
-it does not create a validator copy, start nodes or configure a fork. Transaction and history indices
-rebuild on node startup. Fresh downloads generate `reth.toml` with the minimal preset's pruning
-settings; an existing `reth.toml` is not overwritten. The recipe allows up to 16 simultaneous HTTP
-downloads (`--download-concurrency 16`).
+it does not create a validator copy, start nodes or configure a fork. The recipe allows up to 16
+simultaneous HTTP downloads (`--download-concurrency 16`).
+
+Fresh downloads generate `reth.toml` with receipts at pruning distance 64 and block bodies and
+account/storage history at distance 10,064. Pruning follows persisted blocks and static-file
+boundaries, not an exact wall-clock expiry. An existing `reth.toml` is not overwritten.
+
+The minimal preset disables the persisted transaction-hash index; only retained account/storage
+history indices rebuild on startup. Hash-based transaction and receipt lookups can return `null`
+after a block leaves memory, even while its receipts remain on disk. Poll promptly in the examples
+below; `eth_getBlockReceipts` can retrieve receipts for a known block while they are retained.
 
 Pin a manifest when resuming an interrupted download. Verified, unchanged archive outputs are
 reused; an interrupted large archive may restart from the beginning. Do not rerun download over a
@@ -191,9 +198,9 @@ Use signed transactions to test admission and fees.
 
 A returned hash means the request is queued, not mined. Requests are added in order after the
 system deposits of the next block with enough gas, alongside ordinary pool transactions. Poll
-`eth_getTransactionReceipt` for the hash. A call that reverts or runs out of gas is still included,
-with status `0`; minted ETH is kept even then. Each request is a distinct transaction, so repeating
-it runs it again.
+`eth_getTransactionReceipt` promptly for the hash; the minimal-pruning limits above apply. A call
+that reverts or runs out of gas is still included, with status `0`; minted ETH is kept even then.
+Each request is a distinct transaction, so repeating it runs it again.
 
 Requests that fail validation return error `-32602`: gas below the intrinsic or calldata floor cost,
 gas above the block gas limit minus 2,000,000 for system deposits, calldata over 131,072 bytes, or
