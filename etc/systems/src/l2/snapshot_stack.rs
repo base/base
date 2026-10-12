@@ -195,6 +195,7 @@ impl SnapshotL2Stack {
                 l1_info: boundary.l1_info,
                 system_config,
                 prefund,
+                schedule_delay: Duration::ZERO,
             })
             .await
             .wrap_err("failed to start snapshot standalone consensus")?;
