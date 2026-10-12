@@ -436,10 +436,10 @@ where
 
     /// Discards a rejected TEE proof and purges other currently unregistered signers.
     ///
-    /// Call only after the current submission has returned. A fresh registry read fails
-    /// closed. A successful bulk delete that leaves the rejected session protected falls
-    /// back to deleting that terminal session alone. Unknown destructive outcomes back
-    /// off for the normal poll interval before recovery; definite RPC rejections idle.
+    /// Call only after the current submission has returned. Missing registry snapshots
+    /// forbid bulk deletion. Registry read failures, definite bulk rejections, and
+    /// successful purges that leave the rejected session protected use terminal-session
+    /// deletion alone. Unknown destructive outcomes back off before recovery.
     pub async fn discard_invalid_signer_proof(
         &self,
         session_id: &str,
@@ -451,7 +451,7 @@ where
             Err(error) => {
                 Metrics::errors_total(error.metric_label()).increment(1);
                 warn!(target_block, error = %error, "Failed to read TEE signer registry for cleanup");
-                return false;
+                return self.delete_proof_request(session_id, target_block).await;
             }
         };
         let rejected_signer_is_registered = registered_signers.contains(&reported_signer);
@@ -484,8 +484,12 @@ where
                     || call.code() == ErrorCode::InvalidParams.code() =>
             {
                 Metrics::errors_total("prover").increment(1);
-                warn!(target_block, error = %call, "TEE signer cleanup rejected without deletion");
-                false
+                warn!(
+                    target_block,
+                    error = %call,
+                    "Bulk TEE signer cleanup rejected; re-proving only the rejected session"
+                );
+                self.delete_proof_request(session_id, target_block).await
             }
             Err(error) => {
                 Metrics::errors_total("prover").increment(1);
@@ -939,7 +943,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn registry_failure_preserves_proofs_without_authorizing_bulk_deletion() {
+    async fn registry_failure_reproves_only_the_rejected_session_without_bulk_deletion() {
         let requester = Arc::new(MockProofRequester::default());
         let mut registry = MockTeeSignerRegistry::new();
         registry
@@ -950,12 +954,79 @@ mod tests {
             invalid_signer_collector(Arc::clone(&requester), Arc::new(registry)).await;
         let mut current = recovered(100);
 
-        assert!(!collector.tick(&mut current, 300, 300, &CancellationToken::new()).await);
-        let requests = requester.requests.lock().unwrap();
-        assert!(sessions.iter().all(|session| requests.contains_key(session)));
+        assert!(collector.tick(&mut current, 300, 300, &CancellationToken::new()).await);
+        assert!(
+            requester
+                .get_proof(GetProofRequest { session_id: sessions[0].clone() })
+                .await
+                .unwrap_err()
+                .is_not_found()
+        );
+        assert_eq!(
+            requester
+                .get_proof(GetProofRequest { session_id: sessions[1].clone() })
+                .await
+                .unwrap()
+                .status,
+            ProofStatus::Succeeded
+        );
         assert!(requester.deleted_tee_signer_allowlists.lock().unwrap().is_empty());
         assert!(requester.deleted_tee_signers.lock().unwrap().is_empty());
         assert_eq!(current.l2_block_number, 100);
+    }
+
+    #[tokio::test]
+    async fn registry_failure_idles_when_rejected_session_deletion_fails() {
+        let requester =
+            Arc::new(MockProofRequester { reject_session_delete: true, ..Default::default() });
+        let mut registry = MockTeeSignerRegistry::new();
+        registry
+            .expect_registered_signers()
+            .times(1)
+            .return_once(|| Err(ProposerError::Contract("registry RPC unavailable".into())));
+        let (collector, sessions) =
+            invalid_signer_collector(Arc::clone(&requester), Arc::new(registry)).await;
+        let mut current = recovered(100);
+
+        assert!(!collector.tick(&mut current, 300, 300, &CancellationToken::new()).await);
+        for session_id in sessions {
+            assert_eq!(
+                requester.get_proof(GetProofRequest { session_id }).await.unwrap().status,
+                ProofStatus::Succeeded
+            );
+        }
+        assert!(requester.deleted_tee_signer_allowlists.lock().unwrap().is_empty());
+        assert!(requester.deleted_tee_signers.lock().unwrap().is_empty());
+        assert_eq!(current.l2_block_number, 100);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn standard_bulk_rejections_idle_when_rejected_session_deletion_fails() {
+        for code in [ErrorCode::MethodNotFound.code(), ErrorCode::InvalidParams.code()] {
+            let requester = Arc::new(MockProofRequester {
+                bulk_delete_error_code: Some(code),
+                reject_session_delete: true,
+                ..Default::default()
+            });
+            let mut registry = MockTeeSignerRegistry::new();
+            registry.expect_registered_signers().times(1).return_once(|| Ok(Vec::new()));
+            let (collector, sessions) =
+                invalid_signer_collector(Arc::clone(&requester), Arc::new(registry)).await;
+            let mut current = recovered(100);
+            let started = tokio::time::Instant::now();
+
+            assert!(!collector.tick(&mut current, 300, 300, &CancellationToken::new()).await);
+            assert!(started.elapsed() < CLEANUP_RETRY_DELAY);
+            for session_id in sessions {
+                assert_eq!(
+                    requester.get_proof(GetProofRequest { session_id }).await.unwrap().status,
+                    ProofStatus::Succeeded
+                );
+            }
+            assert_eq!(requester.deleted_tee_signer_allowlists.lock().unwrap().len(), 1);
+            assert!(requester.deleted_tee_signers.lock().unwrap().is_empty());
+            assert_eq!(current.l2_block_number, 100);
+        }
     }
 
     #[tokio::test]
@@ -1157,7 +1228,7 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn standard_bulk_rejections_idle_without_destructive_restart_backoff() {
+    async fn standard_bulk_rejections_reprove_only_the_rejected_session_without_backoff() {
         for code in [ErrorCode::MethodNotFound.code(), ErrorCode::InvalidParams.code()] {
             let requester = Arc::new(MockProofRequester {
                 bulk_delete_error_code: Some(code),
@@ -1170,10 +1241,23 @@ mod tests {
             let mut current = recovered(100);
             let started = tokio::time::Instant::now();
 
-            assert!(!collector.tick(&mut current, 300, 300, &CancellationToken::new()).await);
+            assert!(collector.tick(&mut current, 300, 300, &CancellationToken::new()).await);
             assert!(started.elapsed() < CLEANUP_RETRY_DELAY);
-            let requests = requester.requests.lock().unwrap();
-            assert!(sessions.iter().all(|session| requests.contains_key(session)));
+            assert!(
+                requester
+                    .get_proof(GetProofRequest { session_id: sessions[0].clone() })
+                    .await
+                    .unwrap_err()
+                    .is_not_found()
+            );
+            assert_eq!(
+                requester
+                    .get_proof(GetProofRequest { session_id: sessions[1].clone() })
+                    .await
+                    .unwrap()
+                    .status,
+                ProofStatus::Succeeded
+            );
             assert_eq!(requester.deleted_tee_signer_allowlists.lock().unwrap().len(), 1);
         }
     }

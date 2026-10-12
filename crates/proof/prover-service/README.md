@@ -38,5 +38,8 @@ session prefix would not establish a safe deletion boundary.
 The bulk operation preserves registered signers, non-TEE proofs, unfinished or
 failed requests, and null/zero signer metadata. After an `InvalidSigner` result,
 the proposer may additionally delete only the rejected terminal session when
-the bulk operation leaves that session protected; other registered proofs are
-preserved. Deploy the service's bulk RPC before enabling it in the proposer.
+the registry read fails, the bulk RPC definitely rejects the request, or the
+bulk operation leaves that session protected; other registered proofs are
+preserved. A failed registry read never authorizes bulk deletion. Unknown bulk
+outcomes retain bounded backoff before recovery. Deploy the service's bulk RPC
+before enabling it in the proposer.
