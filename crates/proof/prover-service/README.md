@@ -41,5 +41,7 @@ the proposer may additionally delete only the rejected terminal session when
 the registry read fails, the bulk RPC definitely rejects the request, or the
 bulk operation leaves that session protected; other registered proofs are
 preserved. A failed registry read never authorizes bulk deletion. Unknown bulk
-outcomes retain bounded backoff before recovery. Deploy the service's bulk RPC
+outcomes retain bounded backoff, then attempt rejected-session deletion before
+recovery. Recovery is still requested if that fallback fails, because cohort
+deletion may have committed. Deploy the service's bulk RPC
 before enabling it in the proposer.

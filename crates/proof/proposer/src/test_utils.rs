@@ -474,6 +474,8 @@ pub struct MockProofRequester {
     pub tee_signers: HashMap<String, Address>,
     /// Return this JSON-RPC rejection before attempting registry-based bulk deletion.
     pub bulk_delete_error_code: Option<i32>,
+    /// Time out only bulk deletion before any rows are deleted.
+    pub reject_bulk_delete: bool,
     /// Commit bulk deletion but return a timeout instead of its row count.
     pub lose_bulk_delete_response: bool,
     /// Fresh registry allowlists supplied to deployment-wide bulk cleanup.
@@ -623,7 +625,7 @@ impl ProofRequesterProvider for MockProofRequester {
             ))
             .into());
         }
-        if self.reject_delete {
+        if self.reject_delete || self.reject_bulk_delete {
             return Err(ProverServiceClientError::Timeout("simulated delete failure".into()));
         }
         let failed_sessions = self.failed_sessions.lock().unwrap();
