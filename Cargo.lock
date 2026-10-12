@@ -5282,7 +5282,6 @@ dependencies = [
 name = "base-openvm-dump"
 version = "0.0.0"
 dependencies = [
- "alloy-eips 2.4.1",
  "alloy-provider",
  "base-common-network",
  "base-optimism-rpc",
