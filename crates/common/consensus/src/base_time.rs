@@ -2,6 +2,7 @@
 
 use alloc::vec::Vec;
 
+use alloy_consensus::Transaction;
 use alloy_primitives::{Bytes, Sealable, Sealed, TxKind, U256};
 use base_common_genesis::{DenimTimestampSchedule, RollupConfig};
 
@@ -115,6 +116,21 @@ impl BaseTimeUpdateTx {
     ) -> Result<u64, BaseTimeMetadataError> {
         let base_time = Self::extract_from_transactions(transactions, block_number)?;
         Ok(timestamp.wrapping_mul(1_000).wrapping_add(u64::from(base_time.timestamp_millis_part())))
+    }
+
+    /// Decodes a block's timestamp in milliseconds from the `BaseTime` update
+    /// calldata at `tx[1]`, for callers that hold only generic transactions.
+    ///
+    /// Unlike [`Self::extract_timestamp_ms`], this does not check that `tx[1]` is
+    /// the system deposit, so only pass blocks consensus has already accepted as
+    /// Denim blocks. Returns `None` when `tx[1]` is not a `BaseTime` update.
+    pub fn decode_timestamp_ms<T: Transaction>(transactions: &[T], timestamp: u64) -> Option<u64> {
+        let update = Self::decode_calldata(transactions.get(1)?.input()).ok()?;
+        Some(
+            timestamp
+                .saturating_mul(1_000)
+                .saturating_add(u64::from(update.timestamp_millis_part())),
+        )
     }
 
     /// Validates a Denim block's timestamp against the absolute rollup schedule.
@@ -416,6 +432,20 @@ mod tests {
         ];
 
         assert_eq!(BaseTimeUpdateTx::extract_timestamp_ms(&transactions, 9, 42), Ok(42_600));
+    }
+
+    #[test]
+    fn decodes_timestamp_ms_from_the_base_time_update_calldata() {
+        let denim: Vec<BaseTransactionSigned> = vec![
+            TxDeposit::default().seal_slow().into(),
+            base_time_deposit(9, 600).seal_slow().into(),
+        ];
+        let pre_denim: Vec<BaseTransactionSigned> =
+            vec![TxDeposit::default().seal_slow().into(), user_transaction()];
+
+        assert_eq!(BaseTimeUpdateTx::decode_timestamp_ms(&denim, 42), Some(42_600));
+        assert_eq!(BaseTimeUpdateTx::decode_timestamp_ms(&pre_denim, 42), None);
+        assert_eq!(BaseTimeUpdateTx::decode_timestamp_ms(&denim[..1], 42), None);
     }
 
     #[test]

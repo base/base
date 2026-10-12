@@ -14,8 +14,8 @@ use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, LogData, U256, map::AddressSet};
 use base_common_chains::{BaseUpgrade, Upgrades};
 use base_common_consensus::{
-    Eip8130Constants, Eip8130Contracts, Eip8130Signed, Eip8130StructuralError, Eip8130Structure,
-    Eip8130TimestampError,
+    BaseTimeUpdateTx, Eip8130Constants, Eip8130Contracts, Eip8130Signed, Eip8130StructuralError,
+    Eip8130Structure, Eip8130TimestampError,
 };
 use base_common_evm::{BaseSpecId, L1BlockInfo};
 use base_common_genesis::DaFootprintGasScalarUpdate;
@@ -677,6 +677,8 @@ pub struct BaseL1BlockInfo {
     l1_block_info: RwLock<L1BlockInfo>,
     /// Current block timestamp.
     timestamp: AtomicU64,
+    /// Current block timestamp in milliseconds.
+    timestamp_ms: AtomicU64,
 }
 
 impl BaseL1BlockInfo {
@@ -729,6 +731,12 @@ impl<Client, Tx, Evm> BaseTransactionValidator<Client, Tx, Evm> {
     /// Returns the current block timestamp.
     fn block_timestamp(&self) -> u64 {
         self.block_info.timestamp.load(Ordering::Relaxed)
+    }
+
+    /// Returns the current block timestamp in milliseconds, the clock EIP-8130
+    /// validity windows and the nonce-free replay ring are evaluated against.
+    pub fn block_timestamp_ms(&self) -> u64 {
+        self.block_info.timestamp_ms.load(Ordering::Relaxed)
     }
 
     /// Whether to ensure that the transaction's sender has enough balance to also cover the L1 gas
@@ -859,9 +867,13 @@ where
             // genesis block has no txs, so we can't extract L1 info, we set the block info to empty
             // so that we will accept txs into the pool before the first block
             if block.header().number() == 0 {
-                this.block_info.timestamp.store(block.header().timestamp(), Ordering::Relaxed);
+                let timestamp = block.header().timestamp();
+                this.block_info.timestamp.store(timestamp, Ordering::Relaxed);
+                this.block_info
+                    .timestamp_ms
+                    .store(timestamp.saturating_mul(1_000), Ordering::Relaxed);
             } else {
-                this.update_l1_block_info(block.header(), block.body().transactions().first());
+                this.update_l1_block_info(block.header(), block.body().transactions());
             }
         }
 
@@ -888,17 +900,32 @@ where
         }
     }
 
-    /// Update the L1 block info for the given header and system transaction, if any.
+    /// Update the block clock and L1 block info from the given header and its
+    /// transactions.
     ///
-    /// Note: this supports optional system transaction, in case this is used in a dev setup
-    pub fn update_l1_block_info<H, T>(&self, header: &H, tx: Option<&T>)
+    /// The L1 block info is read from the first (system) transaction. From
+    /// Denim, the millisecond timestamp is decoded from the `BaseTime` update at
+    /// `tx[1]`; before Denim, or without one, it is the whole second.
+    ///
+    /// Note: the system transactions are optional, in case this is used in a dev setup
+    pub fn update_l1_block_info<H, T>(&self, header: &H, transactions: &[T])
     where
         H: BlockHeader,
         T: Transaction,
     {
-        self.block_info.timestamp.store(header.timestamp(), Ordering::Relaxed);
+        let timestamp = header.timestamp();
+        let timestamp_ms = self
+            .chain_spec()
+            .is_denim_active_at_timestamp(timestamp)
+            .then(|| BaseTimeUpdateTx::decode_timestamp_ms(transactions, timestamp))
+            .flatten()
+            .unwrap_or_else(|| timestamp.saturating_mul(1_000));
+        self.block_info.timestamp.store(timestamp, Ordering::Relaxed);
+        self.block_info.timestamp_ms.store(timestamp_ms, Ordering::Relaxed);
 
-        if let Some(Ok(l1_block_info)) = tx.map(base_execution_evm::extract_l1_info_from_tx) {
+        if let Some(Ok(l1_block_info)) =
+            transactions.first().map(base_execution_evm::extract_l1_info_from_tx)
+        {
             *self.block_info.l1_block_info.write() = l1_block_info;
         }
     }
@@ -1047,6 +1074,7 @@ where
         let classification_generation = self.limit_class_cache_generation();
         let local_chain_id = self.inner.chain_spec().chain().id();
         let now = self.block_timestamp();
+        let now_ms = self.block_timestamp_ms();
         // Before Zenith there is no Keystore: authorization, lock state, and the
         // high-rate payer classification never read `AccountConfiguration`.
         let keystore =
@@ -1121,12 +1149,8 @@ where
         // of this transaction and cannot satisfy its own admission nonce.
         let mut storage = StateProviderPrecompileStorage::new(&*state, local_chain_id, now);
         // `NonceValidator::validate` compares the nonce-free replay ring's stored
-        // `valid_before` (Unix milliseconds) against `now`, so it must be passed in
-        // milliseconds (`block.timestamp * 1000`) — the storage overlay above keeps
-        // `now` in seconds for `block.timestamp`. Passing raw seconds here would
-        // make every replay entry look unexpired ~1000x too long and reject valid
-        // nonce-free re-submissions.
-        let now_ms = now.saturating_mul(1_000);
+        // `valid_before` (Unix milliseconds) against `now_ms`; the storage overlay
+        // above keeps `now` in seconds for `block.timestamp`.
         StorageCtx::enter(&mut storage, |ctx| {
             let nonce_storage = NonceManagerStorage::new(ctx);
             NonceValidator::validate(
@@ -1798,10 +1822,10 @@ where
         // Cheap shape checks run before the fork gate and signature recovery.
         Eip8130Structure::validate(signed).map_err(Self::map_structural_error)?;
 
-        // Single read of the head-block timestamp so the fork gate and the
-        // expiry check see the same value even when `on_new_head_block` updates
-        // the atomic concurrently.
+        // Read the head-block clock up front so a concurrent `on_new_head_block`
+        // cannot move it between the fork gate and the expiry check.
         let now = self.block_timestamp();
+        let now_ms = self.block_timestamp_ms();
         // Fork gate: EIP-8130 (account abstraction) transactions are only
         // admissible to the pool once the Everest upgrade is active.
         if !self.chain_spec().is_everest_active_at_timestamp(now) {
@@ -1816,9 +1840,8 @@ where
         }
         let local_chain_id = self.inner.chain_spec().chain().id();
         signed.validate_static(local_chain_id).map_err(InvalidPoolTransactionError::from)?;
-        // The validity window is evaluated in milliseconds against
-        // `block.timestamp * 1000`; the fork gate above uses seconds.
-        let now_ms = now.saturating_mul(1_000);
+        // The validity window is evaluated against the head block's millisecond
+        // timestamp; the fork gate above uses seconds.
         signed
             .validate_timestamp(now_ms)
             .map_err(|error| Self::map_timestamp_error(error, signed, now_ms))?;
@@ -1967,10 +1990,7 @@ where
 
     fn on_new_head_block(&self, new_tip_block: &SealedBlock<Self::Block>) {
         self.inner.on_new_head_block(new_tip_block);
-        self.update_l1_block_info(
-            new_tip_block.header(),
-            new_tip_block.body().transactions().first(),
-        );
+        self.update_l1_block_info(new_tip_block.header(), new_tip_block.body().transactions());
     }
 }
 
@@ -2603,7 +2623,7 @@ mod tests {
         // the raw expiry comparison.
         let validator = build_test_validator();
         let header = alloy_consensus::Header { timestamp: 1_700_000_100, ..Default::default() };
-        validator.update_l1_block_info::<_, TxEip1559>(&header, None);
+        validator.update_l1_block_info::<_, TxEip1559>(&header, &[]);
         let tx = TxEip8130 {
             nonce_key: Eip8130Constants::NONCE_KEY_MAX,
             nonce_sequence: 0,
@@ -2618,6 +2638,40 @@ mod tests {
     }
 
     #[test]
+    fn eip8130_window_uses_the_head_block_millisecond_clock() {
+        // The head block is 400 ms past its whole second, so a `valid_before`
+        // 100 ms past that second has already elapsed.
+        let timestamp = 1_700_000_000;
+        let header = alloy_consensus::Header { timestamp, ..Default::default() };
+        let block_transactions: [BaseTransactionSigned; 2] = [
+            TxDeposit::default().into(),
+            BaseTimeUpdateTx::new(400).unwrap().into_deposit_tx(1).into_inner().into(),
+        ];
+        let tx = TxEip8130 {
+            nonce_key: Eip8130Constants::NONCE_KEY_MAX,
+            nonce_sequence: 0,
+            valid_before: timestamp * 1_000 + 100,
+            ..minimal_valid_eoa_tx()
+        };
+        let signed = sign_eoa_eip8130(tx);
+
+        let validator = build_test_validator();
+        validator.update_l1_block_info(&header, &block_transactions);
+        assert_eq!(validator.block_timestamp_ms(), timestamp * 1_000 + 400);
+        assert_structural_reason(
+            validator.validate_eip8130_structural(&signed),
+            "nonce-free transaction validity window has elapsed",
+        );
+
+        // Before Denim there is no `BaseTime` update, so the clock stays on the
+        // whole second.
+        let pre_denim = BaseChainSpecBuilder::base_mainnet().cobalt_activated().build();
+        let validator = build_test_validator_with_spec(Arc::new(pre_denim));
+        validator.update_l1_block_info(&header, &block_transactions);
+        assert_eq!(validator.block_timestamp_ms(), timestamp * 1_000);
+    }
+
+    #[test]
     fn rejects_eip8130_nonce_free_not_yet_valid() {
         // Realistic millisecond clock (both bounds >= TIMESTAMP_MS_THRESHOLD, so
         // normalization is a no-op). A future `valid_after` opens the window
@@ -2625,7 +2679,7 @@ mod tests {
         // the expiry checks (which `validate_timestamp` evaluates afterward).
         let validator = build_test_validator();
         let header = alloy_consensus::Header { timestamp: 1_700_000_000, ..Default::default() };
-        validator.update_l1_block_info::<_, TxEip1559>(&header, None);
+        validator.update_l1_block_info::<_, TxEip1559>(&header, &[]);
         let now_ms = 1_700_000_000_000;
         let tx = TxEip8130 {
             nonce_key: Eip8130Constants::NONCE_KEY_MAX,
@@ -2649,7 +2703,7 @@ mod tests {
         // `NotYetValid`.
         let validator = build_test_validator();
         let header = alloy_consensus::Header { timestamp: 1_700_000_000, ..Default::default() };
-        validator.update_l1_block_info::<_, TxEip1559>(&header, None);
+        validator.update_l1_block_info::<_, TxEip1559>(&header, &[]);
         let now_ms = 1_700_000_000_000;
         let tx = TxEip8130 { valid_after: now_ms + 50_000, ..minimal_valid_eoa_tx() };
         let signed = sign_eoa_eip8130(tx);
@@ -2668,7 +2722,7 @@ mod tests {
         // the mirror of `accepts_eip8130_nonce_free_at_expiry_window_edge`.
         let validator = build_test_validator();
         let header = alloy_consensus::Header { timestamp: 1_700_000_000, ..Default::default() };
-        validator.update_l1_block_info::<_, TxEip1559>(&header, None);
+        validator.update_l1_block_info::<_, TxEip1559>(&header, &[]);
         let now_ms = 1_700_000_000_000;
         let tx = TxEip8130 {
             nonce_key: Eip8130Constants::NONCE_KEY_MAX,
@@ -2691,7 +2745,7 @@ mod tests {
         // this checks the inclusive edge in true milliseconds.
         let validator = build_test_validator();
         let header = alloy_consensus::Header { timestamp: 1_700_000_000, ..Default::default() };
-        validator.update_l1_block_info::<_, TxEip1559>(&header, None);
+        validator.update_l1_block_info::<_, TxEip1559>(&header, &[]);
         let now_ms = 1_700_000_000_000;
         let tx = TxEip8130 {
             nonce_key: Eip8130Constants::NONCE_KEY_MAX,
@@ -3443,7 +3497,7 @@ mod tests {
             input: isthmus_data.into(),
         }
         .into();
-        validator.update_l1_block_info(&header, Some(&l1_info_tx));
+        validator.update_l1_block_info(&header, &[l1_info_tx]);
 
         let pooled_tx: BasePooledTransaction =
             BasePooledTransaction::new(recovered_tx, envelope.encode_2718_len());
@@ -3509,7 +3563,7 @@ mod tests {
             input: isthmus_data.clone().into(),
         }
         .into();
-        validator.update_l1_block_info(&header, Some(&l1_info_tx));
+        validator.update_l1_block_info(&header, &[l1_info_tx]);
 
         let state = validator.validate_eip8130_full(&signed).expect("valid funded EIP-8130 tx");
         let encoded = validator.eip8130_encoded(&signed);
@@ -3666,7 +3720,7 @@ mod tests {
         let validator: TestValidator =
             BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default());
         let header = alloy_consensus::Header { timestamp: now, ..Default::default() };
-        validator.update_l1_block_info::<_, TxEip1559>(&header, None);
+        validator.update_l1_block_info::<_, TxEip1559>(&header, &[]);
 
         let state = validator.validate_eip8130_full(&signed).expect("valid nonce-free tx");
         assert_eq!(state.manifest.effective_expiry(), (valid_before - 1) / 1000);
