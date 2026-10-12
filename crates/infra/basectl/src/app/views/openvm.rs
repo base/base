@@ -12,7 +12,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     prelude::*,
-    widgets::{Block, Borders, Paragraph, Sparkline},
+    widgets::{Block, Borders, LineGauge, Paragraph},
 };
 use tokio::{
     io::{AsyncBufReadExt, AsyncRead, BufReader},
@@ -36,10 +36,6 @@ const KEYBINDINGS: &[Keybinding] = &[
 ];
 
 const LOG_CAP: usize = 200;
-const HEARTBEAT: Duration = Duration::from_secs(10);
-/// Derivation logs one WARN per historical batch; a live block emits millions.
-const DUMP_RUST_LOG: &str = "info,batch_validator=off,batch_queue=off";
-const BAR_BLOCKS: [char; 8] = ['▏', '▎', '▍', '▌', '▋', '▊', '▉', '█'];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Stage {
@@ -278,9 +274,9 @@ impl LiveProve {
                 .get(stage as usize)
                 .copied()
                 .flatten()
-                .map_or_else(String::new, |took| format!("took {}", format_duration(took))),
+                .map_or_else(String::new, |took| format!("took {}", Format::duration(took))),
             CardState::Running => {
-                format!("elapsed {}", format_duration(self.stage_started_at.elapsed()))
+                format!("elapsed {}", Format::duration(self.stage_started_at.elapsed()))
             }
             CardState::Failed => "failed".to_string(),
             CardState::Queued => "queued".to_string(),
@@ -384,13 +380,13 @@ impl View for OpenVmView {
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(6),
-                Constraint::Length(8),
+                Constraint::Length(4),
                 Constraint::Min(5),
                 Constraint::Length(1),
             ])
             .split(inner);
         render_pipeline(frame, chunks[0], live);
-        render_details(frame, chunks[1], live);
+        render_values(frame, chunks[1], live);
         render_log(frame, chunks[2], live);
         render_footer(frame, chunks[3], live);
     }
@@ -430,7 +426,7 @@ async fn run_pipeline_steps(rpcs: LiveRpcs, tx: &mpsc::Sender<LiveEvent>) -> Res
         .arg("--out-dir")
         .arg(&elf)
         .current_dir(workspace_root())
-        .env("RUST_LOG", DUMP_RUST_LOG);
+        .env_remove("RUST_LOG");
     run_logged(dump, tx, Stage::Witness).await?;
 
     let _ = tx.send(LiveEvent::Stage(Stage::Execute)).await;
@@ -482,21 +478,7 @@ async fn run_logged(
     let out_task = child.stdout.take().map(|out| tokio::spawn(pump_lines(out, tx.clone())));
     let err_task = child.stderr.take().map(|err| tokio::spawn(pump_lines(err, tx.clone())));
 
-    let started = Instant::now();
-    let mut beat = tokio::time::interval(HEARTBEAT);
-    beat.tick().await;
-    let wait = child.wait();
-    tokio::pin!(wait);
-    let status = loop {
-        tokio::select! {
-            status = &mut wait => break status,
-            _ = beat.tick() => {
-                let line = format!("{}  {}", stage.label(), format_duration(started.elapsed()));
-                let _ = tx.send(LiveEvent::Log(line)).await;
-            }
-        }
-    };
-    let status = status.map_err(|error| format!("command failed: {error}"))?;
+    let status = child.wait().await.map_err(|error| format!("command failed: {error}"))?;
     for task in [out_task, err_task].into_iter().flatten() {
         let _ = task.await;
     }
@@ -597,18 +579,16 @@ fn render_stage_card(
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let mut text = vec![fill_bar(ratio, inner.width.saturating_sub(1) as usize, color)];
-    text.extend(lines.map(|line| Line::from(line).fg(Color::Gray)));
-    frame.render_widget(Paragraph::new(text), inner);
-}
-
-fn render_details(frame: &mut Frame<'_>, area: Rect, live: &LiveProve) {
-    let cols = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(58), Constraint::Percentage(42)])
-        .split(area);
-    render_values(frame, cols[0], live);
-    render_wave(frame, cols[1], live);
+    let [bar, text] = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(inner);
+    let gauge = LineGauge::default()
+        .ratio(ratio)
+        .label("")
+        .filled_style(Style::default().fg(color))
+        .unfilled_style(Style::default().fg(Color::DarkGray));
+    frame.render_widget(gauge, bar);
+    let lines: Vec<Line<'_>> =
+        lines.into_iter().map(|line| Line::from(line).fg(Color::Gray)).collect();
+    frame.render_widget(Paragraph::new(lines), text);
 }
 
 fn render_values(frame: &mut Frame<'_>, area: Rect, live: &LiveProve) {
@@ -616,70 +596,17 @@ fn render_values(frame: &mut Frame<'_>, area: Rect, live: &LiveProve) {
         .title(" Public values ")
         .borders(Borders::ALL)
         .border_style(Style::default().fg(COLOR_BASE_BLUE));
-    let value = |value: Option<String>, pending: &str, color: Color| {
-        value.map_or_else(
-            || Span::styled(pending.to_string(), Style::default().fg(Color::DarkGray)),
+    let value = |value: &Option<String>, pending: &'static str, color: Color| {
+        value.clone().map_or_else(
+            || Span::styled(pending, Style::default().fg(Color::DarkGray)),
             |value| Span::styled(value, Style::default().fg(color)),
         )
     };
     let text = vec![
-        kv_line(
-            "boot digest",
-            value(live.digest.clone(), "keccak256(abi.encode(boot)) …", Color::Cyan),
-        ),
-        kv_line("exe commit", value(live.exe_commit.clone(), "…", Color::Gray)),
-        kv_line(
-            "app proof",
-            value(
-                live.proof_bytes
-                    .map(|bytes| format!("{}  elf/range.app.proof", Format::bytes(bytes))),
-                "…",
-                COLOR_BURN,
-            ),
-        ),
-        kv_line(
-            "witness",
-            value(
-                live.witness_bytes
-                    .map(|bytes| format!("{}  0x01-framed rkyv", Format::bytes(bytes))),
-                "…",
-                Color::Gray,
-            ),
-        ),
-        kv_line("guest", value(Some("elf/range.vmexe".to_string()), "", Color::Gray)),
+        kv_line("boot digest", value(&live.digest, "keccak256(abi.encode(boot)) …", Color::Cyan)),
+        kv_line("exe commit", value(&live.exe_commit, "…", Color::Gray)),
     ];
     frame.render_widget(Paragraph::new(text).block(block), area);
-}
-
-fn render_wave(frame: &mut Frame<'_>, area: Rect, live: &LiveProve) {
-    let (color, fill) = match live.card_state(live.stage) {
-        CardState::Running => (COLOR_ACTIVE_BORDER, 1.0),
-        CardState::Failed => (Color::DarkGray, 0.4),
-        CardState::Ok | CardState::Queued => (COLOR_BURN, 1.0),
-    };
-    let block = Block::default()
-        .title(format!(" {}  {} ", live.stage.label(), format_duration(live.elapsed())))
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(color));
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-
-    // ponytail: a decorative waveform scrolled off the wall clock so the panel
-    // visibly moves during the silent prove; it freezes when the prove ends.
-    let width = inner.width as usize;
-    let phase = live.elapsed().as_secs_f64() * 2.4;
-    let len = (fill * width as f64) as usize;
-    let data: Vec<u64> = (0..len)
-        .map(|i| {
-            let x = i as f64 * 0.37 + phase;
-            (24.0 + 14.0 * x.sin() + 7.0 * (x * 0.29).cos() + 3.0 * (i as f64 * 0.91 + phase).sin())
-                as u64
-        })
-        .collect();
-    frame.render_widget(
-        Sparkline::default().data(&data).max(50).style(Style::default().fg(color)),
-        inner,
-    );
 }
 
 fn render_log(frame: &mut Frame<'_>, area: Rect, live: &LiveProve) {
@@ -701,10 +628,10 @@ fn render_footer(frame: &mut Frame<'_>, area: Rect, live: &LiveProve) {
     let hint = match (&live.error, live.running()) {
         (Some(error), _) => format!("  p retry   Esc back    {error}"),
         (None, true) => {
-            format!("  p restart   Esc abort    elapsed {}", format_duration(live.elapsed()))
+            format!("  p restart   Esc abort    elapsed {}", Format::duration(live.elapsed()))
         }
         (None, false) => {
-            format!("  p prove again   Esc back    took {}", format_duration(live.elapsed()))
+            format!("  p prove again   Esc back    took {}", Format::duration(live.elapsed()))
         }
     };
     frame.render_widget(Paragraph::new(hint).fg(Color::DarkGray), area);
@@ -717,34 +644,10 @@ fn kv_line<'a>(key: &'a str, value: Span<'a>) -> Line<'a> {
     ])
 }
 
-fn fill_bar(ratio: f64, width: usize, color: Color) -> Line<'static> {
-    let width = width.max(1);
-    let filled = (ratio.clamp(0.0, 1.0) * (width * 8) as f64).round() as usize;
-    let spans: Vec<Span<'static>> = (0..width)
-        .map(|i| match filled.saturating_sub(i * 8).min(8) {
-            0 => Span::styled("░", Style::default().fg(Color::DarkGray)),
-            8 => Span::styled("█", Style::default().fg(color)),
-            sub => Span::styled(BAR_BLOCKS[sub - 1].to_string(), Style::default().fg(color)),
-        })
-        .collect();
-    Line::from(spans)
-}
-
 fn short_hex(hex: &str) -> String {
     match (hex.get(..6), hex.get(hex.len().saturating_sub(4)..)) {
         (Some(head), Some(tail)) if hex.len() > 12 => format!("{head}…{tail}"),
         _ => hex.to_string(),
-    }
-}
-
-fn format_duration(d: Duration) -> String {
-    let secs = d.as_secs();
-    if secs >= 60 {
-        format!("{}m{:02}s", secs / 60, secs % 60)
-    } else if secs >= 10 {
-        format!("{secs}s")
-    } else {
-        format!("{:.1}s", d.as_secs_f64())
     }
 }
 
