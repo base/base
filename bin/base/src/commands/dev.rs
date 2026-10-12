@@ -27,8 +27,8 @@ use crate::{commands::rpc::engine_ipc_url, config::ResolvedChainConfig};
     mut_arg("addr", |arg| arg.default_value("127.0.0.1")),
     mut_arg("port", |arg| arg.default_value("0")),
     mut_arg("ipcdisable", |arg| arg.default_value("true")),
-    mut_arg("http_api", |arg| arg.default_value("eth,net,web3,debug,trace")),
-    mut_arg("ws_api", |arg| arg.default_value("eth,net,web3,debug,trace"))
+    mut_arg("http_api", |arg| arg.default_value("all")),
+    mut_arg("ws_api", |arg| arg.default_value("all"))
 )]
 pub(crate) struct DevCommand {
     /// Execution node arguments.
@@ -170,10 +170,27 @@ mod tests {
         assert_eq!(dev.execution.network.addr, Ipv4Addr::LOCALHOST);
         assert_eq!(dev.execution.network.port, 0);
         assert!(dev.execution.rpc.ipcdisable);
-        assert_eq!(dev.execution.rpc.http_api, Some("eth,net,web3,debug,trace".parse().unwrap()));
+        assert_eq!(dev.execution.rpc.http_api, Some("all".parse().unwrap()));
         assert_eq!(dev.execution.rpc.ws_api, dev.execution.rpc.http_api);
 
         let error = BaseCli::try_parse_from(["base", "dev"]).unwrap_err();
         assert_eq!(error.kind(), clap::error::ErrorKind::MissingRequiredArgument);
+
+        let cli = BaseCli::try_parse_from([
+            "base",
+            "dev",
+            "--dir",
+            "/tmp/dev data",
+            "--http.api",
+            "eth",
+            "--ws.api",
+            "net,web3",
+        ])
+        .unwrap();
+        let BaseCommand::Dev(dev) = cli.command else {
+            panic!("expected dev command");
+        };
+        assert_eq!(dev.execution.rpc.http_api, Some("eth".parse().unwrap()));
+        assert_eq!(dev.execution.rpc.ws_api, Some("net,web3".parse().unwrap()));
     }
 }
