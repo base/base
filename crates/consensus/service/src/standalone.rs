@@ -1,6 +1,6 @@
 //! L1-free sequencing components for extending an existing L2 snapshot.
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use alloy_eips::{BlockNumHash, eip2718::Encodable2718};
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, keccak256};
@@ -20,8 +20,8 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     ConductorClient, DerivationClientResult, EngineActor, EngineDerivationClient, EngineProcessor,
     L1OriginSelectorError, NodeActor, NodeOperatingMode, OriginSelector, PayloadBuilder,
-    QueuedSequencerEngineClient, RecoveryModeGuard, SequencerActor,
-    SequencerEngineRequestCoordinator, UnsafePayloadGossipClient, UnsafePayloadGossipClientError,
+    QueuedSequencerEngineClient, QueuedUnsafePayloadGossipClient, RecoveryModeGuard,
+    SequencerActor, SequencerEngineRequestCoordinator,
 };
 
 /// Builds payload attributes by extending the L1 epoch captured in an L2 snapshot.
@@ -209,20 +209,6 @@ impl EngineDerivationClient for StandaloneDerivationClient {
     }
 }
 
-/// Discards unsafe payload gossip after the payload has been built locally.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct StandaloneUnsafePayloadGossipClient;
-
-#[async_trait]
-impl UnsafePayloadGossipClient for StandaloneUnsafePayloadGossipClient {
-    async fn schedule_execution_payload_gossip(
-        &self,
-        _payload: base_common_rpc_types_engine::BaseExecutionPayloadEnvelope,
-    ) -> Result<(), UnsafePayloadGossipClientError> {
-        Ok(())
-    }
-}
-
 /// An L1-free sequencer that extends the unsafe chain of an existing L2 snapshot.
 ///
 /// This node runs the production engine and sequencer actors, but intentionally omits derivation,
@@ -238,6 +224,11 @@ pub struct StandaloneSequencerNode<E: EngineClient> {
     pub attributes_builder: StandaloneAttributesBuilder,
     /// The fixed-origin selector seeded from the snapshot boundary.
     pub origin_selector: StandaloneOriginSelector,
+    /// Delay added to chain timestamps to obtain local scheduling deadlines.
+    ///
+    /// Zero follows absolute chain time. To pace historical state, callers supply the age of
+    /// their validated head's scheduled millisecond timestamp at startup.
+    pub schedule_delay: Duration,
 }
 
 impl<E: EngineClient + 'static> StandaloneSequencerNode<E> {
@@ -259,6 +250,7 @@ impl<E: EngineClient + 'static> StandaloneSequencerNode<E> {
             origin_selector: StandaloneOriginSelector::new(l1_info),
             rollup_config,
             engine_client,
+            schedule_delay: Duration::ZERO,
         }
     }
 
@@ -283,6 +275,7 @@ impl<E: EngineClient + 'static> StandaloneSequencerNode<E> {
             StandaloneDerivationClient,
             engine,
         );
+        // Standalone startup has no canonical input stream to complete follower catch-up.
         let coordinator = SequencerEngineRequestCoordinator::new(
             processor,
             NodeOperatingMode::Sequencer,
@@ -313,14 +306,15 @@ impl<E: EngineClient + 'static> StandaloneSequencerNode<E> {
             conductor: None,
             engine_client: sequencer_engine_client,
             is_active: true,
-            mode: NodeOperatingMode::Sequencer,
+            mode: NodeOperatingMode::IsolatedSequencer,
             shadow_funding: None,
             recovery_mode,
             rollup_config: Arc::clone(&self.rollup_config),
-            unsafe_payload_gossip_client: StandaloneUnsafePayloadGossipClient,
+            unsafe_payload_gossip_client: QueuedUnsafePayloadGossipClient::private(),
             sealer: None,
             pending_stop: None,
             seal_offset: base_protocol::DEFAULT_SEAL_OFFSET,
+            schedule_delay: self.schedule_delay,
         };
 
         crate::service::spawn_and_wait!(

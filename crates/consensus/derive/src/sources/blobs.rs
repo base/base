@@ -80,20 +80,10 @@ where
                 continue;
             }
             if !calldata.is_empty() {
-                let hash = match &tx {
-                    TxEnvelope::Legacy(tx) => Some(tx.hash()),
-                    TxEnvelope::Eip2930(tx) => Some(tx.hash()),
-                    TxEnvelope::Eip1559(tx) => Some(tx.hash()),
-                    TxEnvelope::Eip4844(blob_tx_wrapper) => Some(blob_tx_wrapper.hash()),
-                    _ => None,
-                };
+                let hash = Some(tx.tx_hash());
                 warn!(target: "blob_source", hash = ?hash, "Blob tx has calldata, which will be ignored");
             }
-            let blob_hashes = if let Some(b) = blob_hashes {
-                b
-            } else {
-                continue;
-            };
+            let Some(blob_hashes) = blob_hashes else { continue };
             for hash in blob_hashes {
                 hashes.push(hash);
                 data.push(BlobData::default());

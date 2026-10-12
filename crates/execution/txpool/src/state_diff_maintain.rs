@@ -114,7 +114,7 @@ impl AccountStateDiff {
 
             let new_nonce = account.info.as_ref().map(|info| info.nonce);
             let old_nonce = account.original_info.as_ref().map(|info| info.nonce);
-            let nonce_changed = new_nonce != old_nonce;
+            let nonce = (new_nonce != old_nonce).then(|| new_nonce.unwrap_or_default());
 
             let new_code_hash = account.info.as_ref().map(|info| info.code_hash);
             let old_code_hash = account.original_info.as_ref().map(|info| info.code_hash);
@@ -124,17 +124,11 @@ impl AccountStateDiff {
                 .storage
                 .iter()
                 .filter(|(_, slot)| slot.is_changed())
-                .map(|(key, _)| B256::from(*key))
+                .map(|(key, slot)| (B256::from(*key), slot.present_value))
                 .collect::<Vec<_>>();
 
-            if balance.is_some() || nonce_changed || code_changed || !changed_slots.is_empty() {
-                diffs.push(Self {
-                    address: *address,
-                    balance,
-                    nonce_changed,
-                    code_changed,
-                    changed_slots,
-                });
+            if balance.is_some() || nonce.is_some() || code_changed || !changed_slots.is_empty() {
+                diffs.push(Self { address: *address, balance, nonce, code_changed, changed_slots });
             }
         }
         diffs
@@ -146,14 +140,15 @@ impl AccountStateDiff {
     /// already pruned each included transaction, promoting the valid successor
     /// in that pool lane. Treating an included transaction's nonce advance as
     /// external invalidation would immediately evict that successor. This is a
-    /// deliberately coarse intra-block filter: canonical invalidation remains
-    /// conservative for unrelated protocol-nonce or nonce-manager writes.
+    /// deliberately coarse intra-block filter: canonical invalidation treats
+    /// protocol-nonce and nonce-manager writes as nonce advances and drops the
+    /// transactions they leave behind.
     #[must_use]
     pub fn collect_for_intra_block(bundle: &BundleState) -> Vec<Self> {
         Self::collect(bundle)
             .into_iter()
             .filter_map(|mut diff| {
-                diff.nonce_changed = false;
+                diff.nonce = None;
                 if diff.address == NonceManagerStorage::ADDRESS {
                     diff.changed_slots.clear();
                 }
@@ -227,9 +222,9 @@ mod tests {
         let diffs = AccountStateDiff::collect(&bundle);
         assert_eq!(diffs.len(), 1);
         assert_eq!(diffs[0].balance, Some(U256::from(50)));
-        assert!(diffs[0].nonce_changed);
+        assert_eq!(diffs[0].nonce, Some(2));
         assert!(diffs[0].code_changed);
-        assert_eq!(diffs[0].changed_slots, vec![B256::from(U256::from(4))]);
+        assert_eq!(diffs[0].changed_slots, vec![(B256::from(U256::from(4)), U256::from(1))]);
     }
 
     #[test]
@@ -289,7 +284,7 @@ mod tests {
             .find(|diff| diff.address == account_address)
             .expect("balance diff retained");
         assert_eq!(account_diff.balance, Some(U256::from(50)));
-        assert!(!account_diff.nonce_changed);
+        assert_eq!(account_diff.nonce, None);
 
         let nonce_manager_diff = diffs
             .iter()
@@ -300,6 +295,6 @@ mod tests {
 
         let contract_diff =
             diffs.iter().find(|diff| diff.address == contract).expect("contract slot retained");
-        assert_eq!(contract_diff.changed_slots, vec![B256::from(contract_slot)]);
+        assert_eq!(contract_diff.changed_slots, vec![(B256::from(contract_slot), U256::from(1))]);
     }
 }

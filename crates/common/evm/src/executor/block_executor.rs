@@ -103,13 +103,16 @@ where
     /// on-chain scope. Reserving a ceiling can only over-reserve (never admit an
     /// over-limit block), and the same bound is used by block building and
     /// validation, keeping them consistent.
+    ///
+    /// A transaction whose payer authentication cannot be priced is invalid, so
+    /// the failure is a validation error rather than an internal one.
     #[cfg(feature = "std")]
     fn reserved_block_gas(tx_env: &E::Tx, gas_limit: u64) -> Result<u64, BlockExecutionError> {
         let Some(signed) = tx_env.eip8130_signed() else {
             return Ok(gas_limit);
         };
-        let payer_auth =
-            IntrinsicGas::max_payer_auth_cost(signed).map_err(BlockExecutionError::other)?;
+        let payer_auth = IntrinsicGas::max_payer_auth_cost(signed)
+            .map_err(|error| BlockExecutionError::Validation(BlockValidationError::other(error)))?;
         Ok(gas_limit.saturating_add(payer_auth))
     }
 
@@ -724,6 +727,50 @@ mod tests {
             }
             other => panic!("expected TransactionGasLimitMoreThanAvailableBlockGas, got {other:?}"),
         }
+    }
+
+    /// A sponsored transaction whose payer authentication cannot be priced is
+    /// invalid: the block is rejected through a validation error, never an
+    /// internal (node-fatal) one.
+    #[test]
+    fn unpriceable_payer_auth_is_a_validation_error() {
+        const GAS_LIMIT: u64 = 100_000;
+        const JOVIAN_TIMESTAMP: u64 = 1746806402;
+
+        let tx = TxEip8130 {
+            gas_limit: GAS_LIMIT,
+            payer: Some(Address::with_last_byte(0x11)),
+            ..Default::default()
+        };
+        let mut unscheduled_payer_auth = Address::repeat_byte(0xee).to_vec();
+        unscheduled_payer_auth.extend_from_slice(&[0u8; 65]);
+        let signed = Eip8130Signed::new(tx, Bytes::new(), Bytes::from(unscheduled_payer_auth));
+        assert!(IntrinsicGas::max_payer_auth_cost(&signed).is_err());
+
+        let mut db = prepare_jovian_db(0);
+        let base_chain_upgrades = ChainUpgrades::new(
+            BaseUpgrade::mainnet()
+                .into_iter()
+                .chain(vec![(BaseUpgrade::Jovian, ForkCondition::Timestamp(JOVIAN_TIMESTAMP))]),
+        );
+        let receipt_builder = AlloyReceiptBuilder::default();
+        let mut executor = build_executor(
+            &mut db,
+            &receipt_builder,
+            &base_chain_upgrades,
+            GAS_LIMIT,
+            JOVIAN_TIMESTAMP,
+        );
+
+        let tx = Recovered::new_unchecked(
+            BaseTxEnvelope::Eip8130(signed),
+            Address::with_last_byte(0x22),
+        );
+        let err = executor.execute_transaction(&tx).expect_err("unpriceable payer auth");
+        assert!(
+            matches!(err, BlockExecutionError::Validation(BlockValidationError::Other(_))),
+            "expected a validation error, got {err:?}",
+        );
     }
 
     /// A self-paying EIP-8130 transaction meters no `payer_auth`, so its

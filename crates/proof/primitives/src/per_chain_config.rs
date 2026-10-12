@@ -24,7 +24,7 @@ const VERSION_0: u64 = 0;
 pub const MARSHAL_BINARY_SIZE: usize = 212;
 
 /// A block identifier containing both hash and number.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub struct BlockId {
@@ -32,12 +32,6 @@ pub struct BlockId {
     pub hash: B256,
     /// The block number.
     pub number: u64,
-}
-
-impl Default for BlockId {
-    fn default() -> Self {
-        Self { hash: B256::ZERO, number: 0 }
-    }
 }
 
 /// System configuration at genesis.
