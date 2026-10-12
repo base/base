@@ -75,7 +75,7 @@ pub struct BuilderApiExtension {
 impl BaseNodeExtension for BuilderApiExtension {
     fn apply(self: Box<Self>, builder: NodeHooks) -> NodeHooks {
         let config = self.config;
-        let metering_cache: Arc<dyn InsertMetering> = Arc::<Self>::from(self);
+        let metering_provider = self.metering_provider;
         builder.add_rpc_module(move |ctx: &mut BaseRpcContext<'_>| {
             let api = BuilderApiImpl::<_, TransactionValidity>::with_extensions(
                 ctx.pool().clone(),
@@ -83,7 +83,7 @@ impl BaseNodeExtension for BuilderApiExtension {
                 config.max_validity_predicates,
             )
             .with_validity_signature_mode(config.validity_signature_mode)
-            .with_metering_cache(Arc::clone(&metering_cache));
+            .with_metering_cache(Arc::new(InsertMeteringAdapter(Arc::clone(&metering_provider))));
             ctx.modules.merge_configured(api.into_rpc())?;
             Ok(())
         })
@@ -98,8 +98,12 @@ impl FromExtensionConfig for BuilderApiExtension {
     }
 }
 
-impl InsertMetering for BuilderApiExtension {
+/// Adapts [`SharedMeteringProvider`] to the insert-path metering sink.
+#[derive(Debug, Clone)]
+pub struct InsertMeteringAdapter(pub SharedMeteringProvider);
+
+impl InsertMetering for InsertMeteringAdapter {
     fn insert_metering(&self, tx_hash: TxHash, metering: MeterBundleResponse) {
-        self.metering_provider.insert(tx_hash, metering);
+        self.0.insert(tx_hash, metering);
     }
 }
