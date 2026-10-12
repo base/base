@@ -83,9 +83,8 @@ impl NonceManagerStorage<'_> {
     ///
     /// A consensus chain parameter (not a per-node choice), sized together with
     /// [`Self::REPLAY_BUFFER_CAPACITY`]. A transaction's `valid_before` (Unix
-    /// milliseconds) must fall in `(now, now + this]`, where `now` is
-    /// `block.timestamp * 1000`. 30,000 ms == 30 s, so the buffer sizing below is
-    /// unchanged by the seconds→milliseconds move.
+    /// milliseconds) must fall in `(now_ms, now_ms + this]`, where `now_ms` is the
+    /// including block's millisecond timestamp.
     pub const NONCE_FREE_EXPIRY_WINDOW: u64 = 30_000;
 
     /// Nonce key reserved for the protocol nonce, which is held in account state.
@@ -159,8 +158,8 @@ impl NonceManagerStorage<'_> {
     ///
     /// Intended for transaction-pool replay checks. `now` is a caller-supplied
     /// timestamp (in milliseconds) because the mempool has no block context and
-    /// uses wall-clock time, whereas [`Self::check_and_mark_expiring_nonce`] reads
-    /// the block timestamp internally at inclusion. The two clocks can disagree
+    /// uses wall-clock time, whereas [`Self::check_and_mark_expiring_nonce`] is
+    /// given the including block's timestamp. The two clocks can disagree
     /// near an entry's expiry boundary; this getter is an advisory pre-filter and
     /// the block-timestamp check at inclusion is authoritative.
     pub fn is_expiring_nonce_seen(&self, hash: B256, now: u64) -> Result<bool> {
@@ -179,9 +178,9 @@ impl NonceManagerStorage<'_> {
     /// The hash is recorded in a circular buffer that reclaims expired slots as
     /// the write pointer advances.
     ///
-    /// `valid_before` and the internal `now` are both Unix **milliseconds**;
-    /// `now` is `block.timestamp * 1000`, so this is the authoritative
-    /// inclusion-time replay check (cf. the advisory, wall-clock-based
+    /// `valid_before` and `now_ms` are both Unix **milliseconds**. `now_ms` must
+    /// be the including block's millisecond timestamp, so this is the
+    /// authoritative inclusion-time replay check (cf. the advisory
     /// [`Self::is_expiring_nonce_seen`] used by the mempool).
     ///
     /// Intended for the EIP-8130 execution layer; not reachable through ABI
@@ -189,7 +188,7 @@ impl NonceManagerStorage<'_> {
     ///
     /// # Errors
     /// - [`INonceManager::InvalidExpiringNonceExpiry`] — `valid_before` is not in
-    ///   `(now, now + NONCE_FREE_EXPIRY_WINDOW]`.
+    ///   `(now_ms, now_ms + NONCE_FREE_EXPIRY_WINDOW]`.
     /// - [`INonceManager::ExpiringNonceReplay`] — the hash is already recorded and unexpired.
     /// - [`INonceManager::ExpiringNonceSetFull`] — the ring slot holds an unexpired entry
     ///   that cannot be reclaimed.
@@ -197,20 +196,18 @@ impl NonceManagerStorage<'_> {
         &mut self,
         expiring_nonce_hash: B256,
         valid_before: u64,
+        now_ms: u64,
     ) -> Result<()> {
-        // Both `valid_before` and this `now` are Unix milliseconds; the EIP
-        // evaluates the window against `block.timestamp * 1000`.
-        let now: u64 = self.storage.timestamp().saturating_to::<u64>().saturating_mul(1_000);
-
-        // 1. Validate the expiry window: must be in (now, now + MAX_EXPIRY_MS].
-        if valid_before <= now || valid_before > now.saturating_add(Self::NONCE_FREE_EXPIRY_WINDOW)
+        // 1. Validate the expiry window: must be in (now_ms, now_ms + MAX_EXPIRY_MS].
+        if valid_before <= now_ms
+            || valid_before > now_ms.saturating_add(Self::NONCE_FREE_EXPIRY_WINDOW)
         {
             return Err(BasePrecompileError::revert(INonceManager::InvalidExpiringNonceExpiry {}));
         }
 
         // 2. Replay check: reject if the hash is already seen and not yet expired.
         let seen_expiry = self.expiring_nonce_seen.at(&expiring_nonce_hash).read()?;
-        if seen_expiry != 0 && seen_expiry > now {
+        if seen_expiry != 0 && seen_expiry > now_ms {
             return Err(BasePrecompileError::revert(INonceManager::ExpiringNonceReplay {}));
         }
 
@@ -234,7 +231,7 @@ impl NonceManagerStorage<'_> {
         // pointer wraps, but verify in case throughput exceeds expectations.
         if old_hash != B256::ZERO {
             let old_expiry = self.expiring_nonce_seen.at(&old_hash).read()?;
-            if old_expiry != 0 && old_expiry > now {
+            if old_expiry != 0 && old_expiry > now_ms {
                 return Err(BasePrecompileError::revert(INonceManager::ExpiringNonceSetFull {}));
             }
             self.expiring_nonce_seen.at_mut(&old_hash).write(0)?;
@@ -362,7 +359,7 @@ mod tests {
             mgr.expiring_nonce_seen.at_mut(&occupant).write(now_ms + 20_000).unwrap();
 
             let err = mgr
-                .check_and_mark_expiring_nonce(B256::repeat_byte(0xCD), now_ms + 20_000)
+                .check_and_mark_expiring_nonce(B256::repeat_byte(0xCD), now_ms + 20_000, now_ms)
                 .unwrap_err();
             assert_eq!(err, BasePrecompileError::revert(INonceManager::ExpiringNonceSetFull {}));
         });
@@ -397,8 +394,8 @@ mod tests {
         StorageCtx::enter(&mut storage, |ctx| {
             let mut mgr = NonceManagerStorage::new(ctx);
             let hash = B256::repeat_byte(0x11);
-            mgr.check_and_mark_expiring_nonce(hash, now_ms + 20_000).unwrap();
-            let err = mgr.check_and_mark_expiring_nonce(hash, now_ms + 20_000).unwrap_err();
+            mgr.check_and_mark_expiring_nonce(hash, now_ms + 20_000, now_ms).unwrap();
+            let err = mgr.check_and_mark_expiring_nonce(hash, now_ms + 20_000, now_ms).unwrap_err();
             assert_eq!(err, BasePrecompileError::revert(INonceManager::ExpiringNonceReplay {}));
         });
     }
@@ -408,21 +405,28 @@ mod tests {
         let mut storage = HashMapStorageProvider::new(1);
         let now = 1_000u64;
         storage.set_timestamp(U256::from(now));
-        // The inclusion-time check compares `valid_before` (ms) against
-        // `block.timestamp * 1000`, so build the window relative to `now_ms`.
-        let now_ms = now * 1_000;
+        // The window is evaluated against the caller's millisecond clock, which
+        // carries sub-second precision the seconds-based block timestamp lacks.
+        let now_ms = now * 1_000 + 400;
         StorageCtx::enter(&mut storage, |ctx| {
             let mut mgr = NonceManagerStorage::new(ctx);
             let hash = B256::repeat_byte(0x22);
             let invalid = BasePrecompileError::revert(INonceManager::InvalidExpiringNonceExpiry {});
 
             // In the past, exactly now, and beyond the max window all fail.
-            assert_eq!(mgr.check_and_mark_expiring_nonce(hash, now_ms - 1).unwrap_err(), invalid);
-            assert_eq!(mgr.check_and_mark_expiring_nonce(hash, now_ms).unwrap_err(), invalid);
+            assert_eq!(
+                mgr.check_and_mark_expiring_nonce(hash, now_ms - 1, now_ms).unwrap_err(),
+                invalid
+            );
+            assert_eq!(
+                mgr.check_and_mark_expiring_nonce(hash, now_ms, now_ms).unwrap_err(),
+                invalid
+            );
             assert_eq!(
                 mgr.check_and_mark_expiring_nonce(
                     hash,
-                    now_ms + NonceManagerStorage::NONCE_FREE_EXPIRY_WINDOW + 1
+                    now_ms + NonceManagerStorage::NONCE_FREE_EXPIRY_WINDOW + 1,
+                    now_ms
                 )
                 .unwrap_err(),
                 invalid
@@ -432,6 +436,7 @@ mod tests {
             mgr.check_and_mark_expiring_nonce(
                 hash,
                 now_ms + NonceManagerStorage::NONCE_FREE_EXPIRY_WINDOW,
+                now_ms,
             )
             .unwrap();
         });
@@ -447,7 +452,7 @@ mod tests {
         StorageCtx::enter(&mut storage, |ctx| {
             let mut mgr = NonceManagerStorage::new(ctx);
             let hash = B256::repeat_byte(0x33);
-            mgr.check_and_mark_expiring_nonce(hash, valid_before).unwrap();
+            mgr.check_and_mark_expiring_nonce(hash, valid_before, now_ms).unwrap();
             assert!(mgr.is_expiring_nonce_seen(hash, now_ms).unwrap());
             assert!(!mgr.is_expiring_nonce_seen(hash, valid_before + 1).unwrap());
         });
@@ -457,7 +462,8 @@ mod tests {
     fn expiring_nonce_ring_pointer_wraps_at_capacity() {
         let mut storage = HashMapStorageProvider::new(1);
         let now = 1_000u64;
-        let valid_before = now * 1_000 + 20_000;
+        let now_ms = now * 1_000;
+        let valid_before = now_ms + 20_000;
         storage.set_timestamp(U256::from(now));
         StorageCtx::enter(&mut storage, |ctx| {
             let mut mgr = NonceManagerStorage::new(ctx);
@@ -466,10 +472,12 @@ mod tests {
                 .write(NonceManagerStorage::REPLAY_BUFFER_CAPACITY - 1)
                 .unwrap();
 
-            mgr.check_and_mark_expiring_nonce(B256::repeat_byte(0x77), valid_before).unwrap();
+            mgr.check_and_mark_expiring_nonce(B256::repeat_byte(0x77), valid_before, now_ms)
+                .unwrap();
             assert_eq!(mgr.expiring_nonce_ring_ptr.read().unwrap(), 0);
 
-            mgr.check_and_mark_expiring_nonce(B256::repeat_byte(0x88), valid_before).unwrap();
+            mgr.check_and_mark_expiring_nonce(B256::repeat_byte(0x88), valid_before, now_ms)
+                .unwrap();
             assert_eq!(mgr.expiring_nonce_ring_ptr.read().unwrap(), 1);
         });
     }

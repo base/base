@@ -201,6 +201,10 @@ pub struct BootInfo {
 }
 
 impl BootInfo {
+    /// Whether this build's EVM executes EIP-8130 transactions. Both features enable
+    /// `base-common-evm/std`, which carries the EIP-8130 pipeline.
+    pub const EXECUTES_EIP8130: bool = cfg!(any(feature = "std", feature = "evm-std"));
+
     /// Read an optional local preimage by key.
     ///
     /// Returns `Ok(None)` only when the oracle reports the key as absent, which callers may safely
@@ -469,6 +473,15 @@ impl BootInfo {
             None => {}
         }
 
+        // Without `base-common-evm/std` the EVM cannot execute EIP-8130 transactions, and the
+        // resulting validation error would make the driver re-execute the block as deposits only,
+        // diverging from the node. Refuse to prove any range in which Everest is active.
+        if !Self::EXECUTES_EIP8130
+            && rollup_config.upgrades.base.everest.is_some_and(|time| time <= l2_claim_timestamp)
+        {
+            return Err(OracleProviderError::UnsupportedEverestUpgrade);
+        }
+
         let schedule_id = ScheduleId::pin(&mut rollup_config, l2_schedule_timestamp);
 
         // Only a pinned Beryl schedule requires its trusted built-in admin.
@@ -505,6 +518,7 @@ mod tests {
         PreimageKey, PreimageOracleClient,
         errors::{PreimageOracleError, PreimageOracleResult},
     };
+    use rstest::rstest;
 
     use super::*;
 
@@ -881,6 +895,33 @@ mod tests {
 
             let err = BootInfo::load(&oracle).await.expect_err("active Zenith upgrade should fail");
             assert!(matches!(err, OracleProviderError::UncommittedZenithUpgrade));
+        }
+    }
+
+    #[rstest]
+    #[case::active_at_genesis(0, true)]
+    #[case::active_before_claim(1_000, true)]
+    #[case::after_claim(u64::MAX, false)]
+    #[tokio::test]
+    async fn everest_requires_eip8130_execution(
+        #[case] everest_timestamp: u64,
+        #[case] everest_active: bool,
+    ) {
+        let mut rollup_config = BaseChainConfig::MAINNET.rollup_config();
+        rollup_config.upgrades.base.everest = Some(everest_timestamp);
+
+        let mut oracle = MockOracle::new();
+        oracle.insert(L1_HEAD_KEY, B256::repeat_byte(0x11).to_vec());
+        oracle.insert(L2_OUTPUT_ROOT_KEY, B256::repeat_byte(0x22).to_vec());
+        oracle.insert(L2_CLAIM_KEY, B256::repeat_byte(0x33).to_vec());
+        oracle.insert(L2_CLAIM_BLOCK_NUMBER_KEY, 100u64.to_be_bytes().to_vec());
+        oracle.insert_rollup_config(DEVNET_CHAIN_ID, &rollup_config);
+
+        let result = BootInfo::load(&oracle).await;
+        if everest_active && !BootInfo::EXECUTES_EIP8130 {
+            assert!(matches!(result, Err(OracleProviderError::UnsupportedEverestUpgrade)));
+        } else {
+            result.expect("boot info should load");
         }
     }
 

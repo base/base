@@ -140,49 +140,32 @@ impl BaseTransactionRequest {
                     .ok_or(Eip8130SimulationRequestError::SenderAuthTooLarge)?;
                 (prefixed.then_some(account), blob.clone())
             }
-            None if sender_declared => (
-                Some(account),
-                Self::stub_prefixed_auth(
-                    Eip8130AuthScheme::Secp256k1,
-                    Eip8130AuthScheme::Secp256k1.default_data_len(),
-                ),
-            ),
+            None if sender_declared => (Some(account), Self::default_prefixed_auth()),
             None => (None, Self::default_bare_auth()),
         };
 
         let (payer, payer_auth) = match aa.payer {
             None => (None, Bytes::new()),
-            Some(Eip8130Constants::OPEN_PAYER) => {
-                // The sender estimates before any payer has signed, so an absent
-                // `payer_auth` is priced as a 65-byte signature. The stub never
-                // recovers, leaving the payer unknown rather than a random
-                // address or the sender.
-                let blob = match &aa.payer_auth {
-                    Some(blob) => {
-                        Self::check_auth_len(blob, false)
-                            .ok_or(Eip8130SimulationRequestError::PayerAuthTooLarge)?;
-                        blob.clone()
-                    }
-                    None => Self::default_bare_auth(),
-                };
-                (Some(Eip8130Constants::OPEN_PAYER), blob)
-            }
             Some(payer) => {
+                let named = payer != Eip8130Constants::OPEN_PAYER;
                 let blob = match &aa.payer_auth {
                     Some(blob) => {
-                        if !Self::is_prefixed_auth(blob) {
+                        if named && !Self::is_prefixed_auth(blob) {
                             return Err(
                                 Eip8130SimulationRequestError::UnrecognizedPayerAuthenticator,
                             );
                         }
-                        Self::check_auth_len(blob, true)
+                        Self::check_auth_len(blob, named)
                             .ok_or(Eip8130SimulationRequestError::PayerAuthTooLarge)?;
                         blob.clone()
                     }
-                    None => Self::stub_prefixed_auth(
-                        Eip8130AuthScheme::Secp256k1,
-                        Eip8130AuthScheme::Secp256k1.default_data_len(),
-                    ),
+                    None if named => Self::default_prefixed_auth(),
+                    // The sender estimates before any payer has signed, so an
+                    // absent `payer_auth` for the open payer is priced as a
+                    // 65-byte signature. This bare stub never recovers, leaving
+                    // the payer unknown rather than a random address or the
+                    // sender.
+                    None => Self::default_bare_auth(),
                 };
                 (Some(payer), blob)
             }
@@ -278,9 +261,11 @@ impl BaseTransactionRequest {
         })
     }
 
-    fn stub_prefixed_auth(scheme: Eip8130AuthScheme, data_len: usize) -> Bytes {
-        let mut blob = scheme.authenticator().to_vec();
-        blob.resize(blob.len() + data_len, STUB_AUTH_FILL);
+    /// A canonical k1 authenticator selector followed by k1-signature-sized
+    /// filler, standing in for auth the request does not carry.
+    fn default_prefixed_auth() -> Bytes {
+        let mut blob = Eip8130AuthScheme::Secp256k1.authenticator().to_vec();
+        blob.resize(blob.len() + Eip8130AuthScheme::Secp256k1.default_data_len(), STUB_AUTH_FILL);
         Bytes::from(blob)
     }
 }

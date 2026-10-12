@@ -105,6 +105,18 @@ impl ProverServiceClientError {
         call.code() == Self::ERROR_NOT_FOUND && call.message() == PROOF_REQUEST_NOT_FOUND_MESSAGE
     }
 
+    /// Returns `true` when the service rejected a proof request because its retry budget
+    /// is exhausted. This is terminal for replay; recovery requires deleting the failed
+    /// request before submitting it again, not retrying the same RPC indefinitely.
+    #[must_use]
+    pub fn is_retry_exhausted(&self) -> bool {
+        matches!(
+            self,
+            Self::RpcTransport(JsonRpcClientError::Call(call))
+                if call.code() == Self::ERROR_RESOURCE_EXHAUSTED
+        )
+    }
+
     /// Returns `true` when prover-service rejected a replay because the same
     /// session id is already bound to a request with a different L1 head.
     #[must_use]
@@ -223,6 +235,26 @@ mod tests {
         #[case] expected_retryable: bool,
     ) {
         assert_eq!(error.is_retryable(), expected_retryable);
+    }
+
+    #[test]
+    fn is_retry_exhausted_matches_only_resource_exhausted_rpc_calls() {
+        let exhausted = rpc_call_error(
+            ProverServiceClientError::ERROR_RESOURCE_EXHAUSTED,
+            "proof request retry budget exhausted",
+        );
+        assert!(exhausted.is_retry_exhausted());
+        assert!(!exhausted.is_retryable());
+
+        for error in [
+            rpc_call_error(ProverServiceClientError::ERROR_FAILED_PRECONDITION, "cancelled"),
+            rpc_call_error(ProverServiceClientError::ERROR_UNAVAILABLE, "down"),
+            ProverServiceClientError::from(JsonRpcClientError::RequestTimeout),
+            ProverServiceClientError::ProofCancelled,
+            ProverServiceClientError::ProofFailure { message: "failed".into() },
+        ] {
+            assert!(!error.is_retry_exhausted());
+        }
     }
 
     #[test]
