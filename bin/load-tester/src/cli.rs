@@ -97,25 +97,6 @@ struct LoadArgs {
     config: PathBuf,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum LoadMode {
-    Run,
-    DrainOnly,
-    RecoverRealTokens,
-}
-
-impl LoadMode {
-    const fn from_args(args: &LoadArgs) -> Self {
-        if args.drain_only {
-            Self::DrainOnly
-        } else if args.recover_real_tokens {
-            Self::RecoverRealTokens
-        } else {
-            Self::Run
-        }
-    }
-}
-
 /// Load tester subcommands.
 #[derive(Subcommand, Clone, Debug)]
 enum Command {
@@ -125,7 +106,6 @@ enum Command {
 
 async fn run_load_test(args: LoadArgs) -> Result<()> {
     let multi_progress = LoadTestDisplay::init_tracing()?;
-    let mode = LoadMode::from_args(&args);
     let config_path = args.config;
 
     if !config_path.exists() {
@@ -153,62 +133,56 @@ async fn run_load_test(args: LoadArgs) -> Result<()> {
 
     let funding_key = TestConfig::funder_key()?;
 
-    match mode {
-        LoadMode::DrainOnly => {
-            println!("=== Drain-Only Mode ===");
-            println!(
-                "Re-deriving {} accounts from config and draining to funder...",
-                load_config.account_count
-            );
-            if skip_drain {
-                println!("Skipping drain due to --skip-drain.");
-                return Ok(());
+    if args.drain_only {
+        println!("=== Drain-Only Mode ===");
+        println!(
+            "Re-deriving {} accounts from config and draining to funder...",
+            load_config.account_count
+        );
+        if skip_drain {
+            println!("Skipping drain due to --skip-drain.");
+            return Ok(());
+        }
+        let runner = LoadRunner::new(load_config)?;
+        match runner.drain_accounts(funding_key).await {
+            Ok(drained) => println!("Drained {} ETH back to funder.", format_ether(drained)),
+            Err(e) => bail!("drain failed: {e}"),
+        }
+        return Ok(());
+    }
+    if args.recover_real_tokens {
+        let real_token_setup = test_config.parse_real_token_setup(load_config.chain_id)?;
+        let Some(real_token_setup) = real_token_setup.as_ref() else {
+            bail!("--recover-real-tokens requires real_token_setup in {}", config_path.display());
+        };
+
+        println!("=== Real-Token Recovery Mode ===");
+        println!(
+            "Re-deriving {} accounts from config and recovering real-token balances to funder...",
+            load_config.account_count
+        );
+        let runner = LoadRunner::new(load_config)?;
+        match runner.recover_real_tokens(real_token_setup).await {
+            Ok(summary) => {
+                println!(
+                    "Recovered {} pair-token raw units and unwrapped {} WETH.",
+                    summary.pair_token_swapped,
+                    format_ether(summary.weth_unwrapped)
+                );
             }
-            let runner = LoadRunner::new(load_config)?;
+            Err(e) => bail!("real-token recovery failed: {e}"),
+        }
+        if skip_drain {
+            println!("Skipping drain due to --skip-drain.");
+        } else {
             match runner.drain_accounts(funding_key).await {
-                Ok(drained) => println!("Drained {} ETH back to funder.", format_ether(drained)),
+                Ok(drained) => {
+                    println!("Drained {} ETH back to funder.", format_ether(drained))
+                }
                 Err(e) => bail!("drain failed: {e}"),
             }
-            return Ok(());
         }
-        LoadMode::RecoverRealTokens => {
-            let real_token_setup = test_config.parse_real_token_setup(load_config.chain_id)?;
-            let Some(real_token_setup) = real_token_setup.as_ref() else {
-                bail!(
-                    "--recover-real-tokens requires real_token_setup in {}",
-                    config_path.display()
-                );
-            };
-
-            println!("=== Real-Token Recovery Mode ===");
-            println!(
-                "Re-deriving {} accounts from config and recovering real-token balances to funder...",
-                load_config.account_count
-            );
-            let runner = LoadRunner::new(load_config)?;
-            match runner.recover_real_tokens(real_token_setup).await {
-                Ok(summary) => {
-                    println!(
-                        "Recovered {} pair-token raw units and unwrapped {} WETH.",
-                        summary.pair_token_swapped,
-                        format_ether(summary.weth_unwrapped)
-                    );
-                }
-                Err(e) => bail!("real-token recovery failed: {e}"),
-            }
-            if skip_drain {
-                println!("Skipping drain due to --skip-drain.");
-            } else {
-                match runner.drain_accounts(funding_key).await {
-                    Ok(drained) => {
-                        println!("Drained {} ETH back to funder.", format_ether(drained))
-                    }
-                    Err(e) => bail!("drain failed: {e}"),
-                }
-            }
-            return Ok(());
-        }
-        LoadMode::Run => {}
+        return Ok(());
     }
 
     println!("=== Base Load Test Runner ===");
