@@ -21,7 +21,7 @@ pub use follow::{FollowError, RemoteClient, RemoteL2Client, RemoteL2ClientError}
 mod standalone;
 pub use standalone::{
     StandaloneAttributesBuilder, StandaloneDerivationClient, StandaloneOriginSelector,
-    StandalonePrefund, StandaloneSequencerNode, StandaloneUnsafePayloadGossipClient,
+    StandalonePrefund, StandaloneSequencerNode,
 };
 
 mod actors;

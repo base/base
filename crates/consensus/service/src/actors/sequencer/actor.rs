@@ -83,10 +83,10 @@ pub struct SequencerActor<
     ///
     /// [`SequencerConfig::seal_offset`]: crate::SequencerConfig::seal_offset
     pub seal_offset: Duration,
-    /// Delay added to every scheduled block timestamp to get its local deadline.
+    /// Delay added to scheduled block timestamps only in isolated sequencer mode.
     ///
-    /// Zero follows absolute chain time. A sequencer extending historical state sets the head's
-    /// age so blocks keep their chain timestamps but are paced instead of produced back to back.
+    /// Other modes ignore this value and follow absolute chain time. An isolated sequencer
+    /// extending historical state sets the head's age to pace blocks without changing timestamps.
     pub schedule_delay: Duration,
     /// A client to asynchronously sign and gossip built payloads to the network actor.
     pub unsafe_payload_gossip_client: UnsafePayloadGossipClient_,
@@ -372,8 +372,14 @@ where
 
     /// Local wall-clock time of `block_number`'s scheduled timestamp.
     fn block_deadline(&self, block_number: u64) -> SystemTime {
+        let delay = match self.mode {
+            NodeOperatingMode::IsolatedSequencer => self.schedule_delay,
+            NodeOperatingMode::Validator
+            | NodeOperatingMode::Sequencer
+            | NodeOperatingMode::ShadowSequencer { .. } => Duration::ZERO,
+        };
         UNIX_EPOCH
-            + self.schedule_delay
+            + delay
             + Duration::from_millis(self.rollup_config.l2_block_timestamp_millis(block_number))
     }
 

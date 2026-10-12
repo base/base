@@ -365,8 +365,11 @@ async fn test_early_insert_defers_child_build_until_parent_timestamp() {
     actor_task.await.unwrap().unwrap();
 }
 
+#[rstest]
+#[case::production(NodeOperatingMode::Sequencer)]
+#[case::isolated(NodeOperatingMode::IsolatedSequencer)]
 #[tokio::test(start_paused = true)]
-async fn schedule_delay_paces_historical_seal_and_child_build() {
+async fn schedule_delay_only_paces_isolated_seal_and_child_build(#[case] mode: NodeOperatingMode) {
     let genesis_time =
         SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() - 3 * 24 * 60 * 60;
     let rollup_config = Arc::new(RollupConfig {
@@ -387,6 +390,9 @@ async fn schedule_delay_paces_historical_seal_and_child_build() {
     };
     let (initial_head, inserted_head) = (head_at_number(10), head_at_number(11));
 
+    let mut actor = test_actor();
+    actor.mode = mode;
+    let cancellation_token = actor.cancellation_token.clone();
     let (build_tx, mut build_rx) = mpsc::unbounded_channel();
     let (seal_tx, mut seal_rx) = mpsc::unbounded_channel();
     let mut client = MockSequencerEngineClient::new();
@@ -394,6 +400,9 @@ async fn schedule_delay_paces_historical_seal_and_child_build() {
     client.expect_get_unsafe_head().times(2).returning(move || Ok(initial_head));
     client.expect_start_build_block().times(2).returning(move |attributes| {
         build_tx.send(attributes.parent().block_info.number).unwrap();
+        if attributes.parent().block_info.number == inserted_head.block_info.number {
+            cancellation_token.cancel();
+        }
         Ok(Default::default())
     });
     client.expect_get_sealed_payload().times(1).return_once(move |_, _| {
@@ -404,10 +413,11 @@ async fn schedule_delay_paces_historical_seal_and_child_build() {
     let mut origin_selector = MockOriginSelector::new();
     origin_selector.expect_next_l1_origin().times(2).returning(|_| Ok(BlockInfo::default()));
     let mut gossip = MockUnsafePayloadGossipClient::new();
-    gossip.expect_schedule_execution_payload_gossip().times(1).return_once(|_| Ok(()));
+    if !mode.is_isolated() {
+        gossip.expect_schedule_execution_payload_gossip().times(1).return_once(|_| Ok(()));
+    }
     let engine_client = Arc::new(client);
 
-    let mut actor = test_actor();
     actor.builder.attributes_builder = TestAttributesBuilder {
         attributes: vec![
             Ok(attributes_at(rollup_config.l2_block_timestamp(12))),
@@ -429,23 +439,30 @@ async fn schedule_delay_paces_historical_seal_and_child_build() {
         + Duration::from_secs(2);
     actor.rollup_config = rollup_config;
 
-    let cancellation_token = actor.cancellation_token.clone();
     let actor_task = tokio::spawn(actor.start(()));
     assert_eq!(build_rx.recv().await.unwrap(), initial_head.block_info.number);
 
-    tokio::time::advance(Duration::from_secs(1)).await;
-    tokio::task::yield_now().await;
-    assert!(seal_rx.try_recv().is_err(), "sealed before the delayed seal target");
+    if mode.is_isolated() {
+        tokio::time::advance(Duration::from_secs(1)).await;
+        tokio::task::yield_now().await;
+        assert!(seal_rx.try_recv().is_err(), "sealed before the delayed seal target");
 
-    tokio::time::advance(Duration::from_millis(1_200)).await;
-    seal_rx.recv().await.unwrap();
-    tokio::task::yield_now().await;
-    assert!(build_rx.try_recv().is_err(), "child built before its parent's delayed deadline");
+        tokio::time::advance(Duration::from_millis(1_200)).await;
+        seal_rx.recv().await.unwrap();
+        tokio::task::yield_now().await;
+        assert!(build_rx.try_recv().is_err(), "child built before its parent's delayed deadline");
 
-    tokio::time::advance(Duration::from_millis(2_300)).await;
-    assert_eq!(build_rx.recv().await.unwrap(), inserted_head.block_info.number);
+        tokio::time::advance(Duration::from_millis(2_300)).await;
+        assert_eq!(build_rx.recv().await.unwrap(), inserted_head.block_info.number);
+    } else {
+        tokio::time::timeout(Duration::from_millis(100), async {
+            seal_rx.recv().await.unwrap();
+            assert_eq!(build_rx.recv().await.unwrap(), inserted_head.block_info.number);
+        })
+        .await
+        .expect("production seal and child build must ignore the scheduling delay");
+    }
 
-    cancellation_token.cancel();
     actor_task.await.unwrap().unwrap();
 }
 
