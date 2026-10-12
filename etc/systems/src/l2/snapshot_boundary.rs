@@ -2,12 +2,11 @@
 
 use std::sync::Arc;
 
-use alloy_consensus::Transaction as _;
 use alloy_eips::BlockNumberOrTag;
 use alloy_provider::{Provider, RootProvider};
 use base_common_genesis::{RollupConfig, SystemConfig};
 use base_common_network::Base;
-use base_protocol::{L1BlockInfoTx, L2BlockInfo, to_system_config};
+use base_protocol::{L1BlockInfoTx, L2BlockInfo, L2BlockMetadata};
 use eyre::{OptionExt, Result, WrapErr, ensure};
 use url::Url;
 
@@ -63,23 +62,14 @@ impl SnapshotBoundary {
             );
         }
 
-        let l2_block_info = L2BlockInfo::from_block_and_genesis(&block, &rollup_config.genesis)
-            .wrap_err("failed to derive L2 block info from snapshot head")?;
-        let first_transaction = block
-            .body
-            .transactions
-            .first()
-            .and_then(|transaction| transaction.as_deposit())
-            .ok_or_eyre("snapshot head transaction zero is not an L1-info deposit")?;
-        let l1_info = L1BlockInfoTx::decode_calldata(first_transaction.input().as_ref())
-            .wrap_err("failed to decode snapshot head L1-info transaction")?;
-        ensure!(
-            l2_block_info.seq_num == l1_info.sequence_number(),
-            "snapshot sequence number changed while extracting boundary metadata"
-        );
-        let system_config = to_system_config(&block, &rollup_config)
-            .wrap_err("failed to recover system config from snapshot head")?;
+        let metadata = L2BlockMetadata::from_block(&block, &rollup_config)
+            .wrap_err("failed to decode snapshot head metadata")?;
 
-        Ok(Self { head, l2_block_info, l1_info, system_config })
+        Ok(Self {
+            head,
+            l2_block_info: metadata.l2_block_info,
+            l1_info: metadata.l1_info,
+            system_config: metadata.system_config,
+        })
     }
 }
