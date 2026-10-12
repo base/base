@@ -248,8 +248,10 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     /// capacity, returning them so callers can release their guard slots.
     ///
     /// Only lane tails and nonce-free transactions are candidates, so eviction
-    /// never opens a nonce gap. Non-local transactions go first, then the lowest
-    /// fee cap, then the most recently received.
+    /// never opens a nonce gap. Queued tails (behind a nonce gap) go first: they
+    /// cannot execute and cost nothing to hold, so ranking them by fee alone
+    /// would let gapped spam push out pending transactions. Then non-local
+    /// transactions, then the lowest fee cap, then the most recently received.
     pub(crate) fn evict_over_capacity(&mut self) -> Vec<Arc<ValidPoolTransaction<T>>> {
         let mut evicted = Vec::new();
         while self.limits.capacity.is_exceeded(self.hashes.len(), self.usage.size)
@@ -265,11 +267,14 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         self.lanes
             .values()
             .filter_map(|lane| {
-                lane.transactions.last_key_value().map(|(_, transaction)| transaction)
+                lane.transactions.last_key_value().map(|(_, transaction)| {
+                    (transaction, lane.queued_transactions().next().is_none())
+                })
             })
-            .chain(self.nonce_free.values())
-            .min_by_key(|transaction| {
+            .chain(self.nonce_free.values().map(|transaction| (transaction, true)))
+            .min_by_key(|(transaction, pending)| {
                 (
+                    *pending,
                     self.limits
                         .local_transactions
                         .is_local(transaction.origin, &transaction.sender()),
@@ -277,7 +282,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
                     Reverse(transaction.timestamp),
                 )
             })
-            .map(|transaction| *transaction.hash())
+            .map(|(transaction, _)| *transaction.hash())
     }
 
     /// Returns true if the sidecar already contains the hash.
@@ -1822,5 +1827,37 @@ mod tests {
         assert!(pool.contains(&cheap_head_hash));
         assert!(pool.contains(&rich_tail_hash));
         assert!(pool.evict_over_capacity().is_empty());
+    }
+
+    #[test]
+    fn full_sidecar_of_queued_spam_still_admits_a_cheaper_pending_head() {
+        let mut pool = TwoDNoncePool::new(PriceBumpConfig::default()).with_limits(SidecarLimits {
+            capacity: SubPoolLimit::new(2, usize::MAX),
+            ..SidecarLimits::unlimited()
+        });
+        let spam: Vec<_> = (0..2)
+            .map(|_| {
+                let gapped = valid_pool_transaction(signed_channel_tx(
+                    &signer(),
+                    U256::from(1),
+                    1,
+                    1_000_000,
+                ));
+                let hash = *gapped.hash();
+                pool.insert_validated(gapped, 0).unwrap();
+                hash
+            })
+            .collect();
+        assert_eq!(pool.pending_and_queued_txn_count(), (0, 2));
+        let honest = valid_pool_transaction(signed_channel_tx(&signer(), U256::from(1), 0, 100));
+        let honest_hash = *honest.hash();
+        pool.insert_validated(honest, 0).unwrap();
+
+        let evicted: Vec<_> =
+            pool.evict_over_capacity().iter().map(|transaction| *transaction.hash()).collect();
+
+        assert_eq!(evicted.len(), 1);
+        assert!(spam.contains(&evicted[0]), "a queued transaction is evicted first");
+        assert!(pool.contains(&honest_hash), "the pending head survives");
     }
 }
