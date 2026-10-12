@@ -510,7 +510,7 @@ impl SnapshotUploader {
                     .key(key)
                     .send()
                     .await
-                    .map_err(|error| UploadAttemptError::retry(error.into()))
+                    .map_err(|error| UploadAttemptError::Retry(error.into()))
             },
             |attempt, error| {
                 warn!(
@@ -676,12 +676,12 @@ impl SnapshotUploader {
                     .body(ByteStream::from(bytes.clone()))
                     .send()
                     .await
-                    .map_err(|error| UploadAttemptError::retry(error.into()))?;
+                    .map_err(|error| UploadAttemptError::Retry(error.into()))?;
 
                 let e_tag = upload_resp
                     .e_tag()
                     .ok_or_else(|| anyhow::anyhow!("no ETag for streamed part {part_number} of {key}"))
-                    .map_err(UploadAttemptError::fatal)?
+                    .map_err(UploadAttemptError::Fatal)?
                     .to_owned();
                 Ok(CompletedPart::builder().part_number(part_number).e_tag(e_tag).build())
             },
@@ -728,7 +728,7 @@ impl SnapshotUploader {
                     Ok(_) => Ok(()),
                     Err(error) => {
                         let error = anyhow::Error::from(error);
-                        if self.remote_object_size(key).await.map_err(UploadAttemptError::fatal)?
+                        if self.remote_object_size(key).await.map_err(UploadAttemptError::Fatal)?
                             == Some(size)
                         {
                             warn!(
@@ -741,7 +741,7 @@ impl SnapshotUploader {
                             );
                             Ok(())
                         } else {
-                            Err(UploadAttemptError::retry(error))
+                            Err(UploadAttemptError::Retry(error))
                         }
                     }
                 }
@@ -1112,7 +1112,7 @@ impl SnapshotUploader {
                     .send()
                     .await
                     .map(|_| ())
-                    .map_err(|error| UploadAttemptError::retry(error.into()))
+                    .map_err(|error| UploadAttemptError::Retry(error.into()))
             },
             |attempt, error| {
                 warn!(
@@ -1359,7 +1359,7 @@ impl SnapshotUploader {
                 let body = ByteStream::from_path(file_path)
                     .await
                     .with_context(|| format!("failed to read {}", file_path.display()))
-                    .map_err(UploadAttemptError::fatal)?;
+                    .map_err(UploadAttemptError::Fatal)?;
 
                 self.client
                     .put_object()
@@ -1369,7 +1369,7 @@ impl SnapshotUploader {
                     .send()
                     .await
                     .map(|_| ())
-                    .map_err(|error| UploadAttemptError::retry(error.into()))
+                    .map_err(|error| UploadAttemptError::Retry(error.into()))
             },
             |attempt, error| {
                 warn!(
@@ -1462,7 +1462,7 @@ impl SnapshotUploader {
                     .key(key)
                     .send()
                     .await
-                    .map_err(|error| UploadAttemptError::retry(error.into()))
+                    .map_err(|error| UploadAttemptError::Retry(error.into()))
             },
             |attempt, error| {
                 warn!(
@@ -1507,7 +1507,7 @@ impl SnapshotUploader {
                     Ok(_) => Ok(()),
                     Err(error) => {
                         let error = anyhow::Error::from(error);
-                        if self.remote_object_size(key).await.map_err(UploadAttemptError::fatal)?
+                        if self.remote_object_size(key).await.map_err(UploadAttemptError::Fatal)?
                             == Some(file_size)
                         {
                             warn!(
@@ -1520,7 +1520,7 @@ impl SnapshotUploader {
                             );
                             Ok(())
                         } else {
-                            Err(UploadAttemptError::retry(error))
+                            Err(UploadAttemptError::Retry(error))
                         }
                     }
                 }
@@ -1603,7 +1603,7 @@ impl SnapshotUploader {
                     .multipart_part_permits
                     .acquire()
                     .await
-                    .map_err(|error| UploadAttemptError::fatal(error.into()))?;
+                    .map_err(|error| UploadAttemptError::Fatal(error.into()))?;
                 let body = ByteStream::read_from()
                     .path(file_path)
                     .offset(offset)
@@ -1613,7 +1613,7 @@ impl SnapshotUploader {
                     .with_context(|| {
                         format!("failed to read part {part_number} of {}", file_path.display())
                     })
-                    .map_err(UploadAttemptError::fatal)?;
+                    .map_err(UploadAttemptError::Fatal)?;
 
                 let upload_resp = self
                     .client
@@ -1625,12 +1625,12 @@ impl SnapshotUploader {
                     .body(body)
                     .send()
                     .await
-                    .map_err(|error| UploadAttemptError::retry(error.into()))?;
+                    .map_err(|error| UploadAttemptError::Retry(error.into()))?;
 
                 let e_tag = upload_resp
                     .e_tag()
                     .ok_or_else(|| anyhow::anyhow!("no ETag for part {part_number} of {key}"))
-                    .map_err(UploadAttemptError::fatal)?
+                    .map_err(UploadAttemptError::Fatal)?
                     .to_string();
 
                 Ok(CompletedPart::builder().part_number(part_number).e_tag(e_tag).build())
@@ -1682,7 +1682,7 @@ impl SnapshotUploader {
                     .send()
                     .await
                     .map(|_| ())
-                    .map_err(|error| UploadAttemptError::retry(error.into()))
+                    .map_err(|error| UploadAttemptError::Retry(error.into()))
             },
             |attempt, error| {
                 warn!(
@@ -1711,16 +1711,6 @@ impl SnapshotUploader {
 enum UploadAttemptError {
     Retry(anyhow::Error),
     Fatal(anyhow::Error),
-}
-
-impl UploadAttemptError {
-    const fn retry(error: anyhow::Error) -> Self {
-        Self::Retry(error)
-    }
-
-    const fn fatal(error: anyhow::Error) -> Self {
-        Self::Fatal(error)
-    }
 }
 
 async fn retry_upload<T, F, Fut, OnRetry, OnSuccess>(
