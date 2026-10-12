@@ -8,8 +8,8 @@ use std::{
 };
 
 use alloy_consensus::BlockHeader;
-use alloy_primitives::{Address, B64, B256, Bytes, bytes::BytesMut, map::AddressSet};
-use alloy_rlp::Encodable;
+use alloy_primitives::{Address, B64, B256, Bytes, map::AddressSet};
+use alloy_rlp::encode;
 use base_common_chains::Upgrades;
 use base_common_consensus::{BasePrimitives, BaseTransaction, BaseTxEnvelope};
 use base_common_rpc_types_engine::{BasePayloadAttributes, ExecutionData};
@@ -1329,18 +1329,8 @@ impl BaseDiscoveryConfig {
     /// Encodes the NAT-discovered external IP as an ENR key-value pair.
     pub fn enr_ip_kv_pair(external_addr: Option<IpAddr>) -> Option<(&'static [u8], Bytes)> {
         match external_addr {
-            Some(IpAddr::V4(addr)) => {
-                let addr = addr.octets();
-                let mut out = BytesMut::with_capacity(addr.length());
-                addr.encode(&mut out);
-                Some((IP_ENR_KEY, Bytes::from(out.freeze())))
-            }
-            Some(IpAddr::V6(addr)) => {
-                let addr = addr.octets();
-                let mut out = BytesMut::with_capacity(addr.length());
-                addr.encode(&mut out);
-                Some((IP6_ENR_KEY, Bytes::from(out.freeze())))
-            }
+            Some(IpAddr::V4(addr)) => Some((IP_ENR_KEY, Bytes::from(encode(addr.octets())))),
+            Some(IpAddr::V6(addr)) => Some((IP6_ENR_KEY, Bytes::from(encode(addr.octets())))),
             None => None,
         }
     }
