@@ -1088,9 +1088,9 @@ where
         let nonce_pool = self.nonce_pool.read();
         let (pending, queued) = nonce_pool.pending_and_queued_txn_count();
         let pending_size: usize =
-            nonce_pool.pending_transactions().iter().map(|tx| tx.encoded_length()).sum();
+            nonce_pool.pending_transactions().iter().map(|tx| tx.transaction.size()).sum();
         let queued_size: usize =
-            nonce_pool.queued_transactions().iter().map(|tx| tx.encoded_length()).sum();
+            nonce_pool.queued_transactions().iter().map(|tx| tx.transaction.size()).sum();
         size.pending += pending;
         size.pending_size += pending_size;
         size.queued += queued;
@@ -2083,7 +2083,7 @@ mod tests {
     use base_execution_evm::BaseEvmConfig;
     use base_test_utils::build_test_genesis_everest;
     use futures::{FutureExt, StreamExt, future::join_all};
-    use reth_primitives_traits::SealedBlock;
+    use reth_primitives_traits::{InMemorySize, SealedBlock};
     use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
     use reth_tasks::Runtime;
     use reth_transaction_pool::{
@@ -2784,6 +2784,22 @@ mod tests {
         assert!(pool.get(&incumbent_hash).is_none());
         assert!(!pool.guard.read().contains(&incumbent_hash));
         assert!(matches!(incumbent_events.next().await, Some(TransactionEvent::Discarded)));
+    }
+
+    #[tokio::test]
+    async fn sidecar_pool_size_reports_in_memory_size() {
+        let (pool, client) = build_integration_pool();
+        let signer = signer();
+        fund(&client, signer.address());
+        let transaction = self_paid_eoa_8130(&signer, U256::from(1), 0, 0, 1_000);
+        let hash = *transaction.hash();
+        pool.add_transaction(TransactionOrigin::External, transaction).await.unwrap();
+        let pooled = pool.get(&hash).expect("sidecar holds the transaction");
+
+        let reported = pool.pool_size();
+        assert_eq!(reported.pending, 1);
+        assert_eq!(reported.pending_size, pooled.transaction.size());
+        assert_ne!(reported.pending_size, pooled.encoded_length());
     }
 
     #[tokio::test]
