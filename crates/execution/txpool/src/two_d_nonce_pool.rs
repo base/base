@@ -21,7 +21,8 @@ use reth_transaction_pool::{
 
 use crate::{BasePooledTx, BestTransactionPriority};
 
-type LaneId = (Address, U256);
+/// A finite channel: `(sender, nonce_key)`.
+pub(crate) type LaneId = (Address, U256);
 
 #[derive(Debug)]
 struct NonceLane<T: BasePooledTx> {
@@ -62,11 +63,41 @@ impl<T: BasePooledTx> NonceLane<T> {
     }
 }
 
+/// Transactions whose lane state changed when a lane cursor moved.
+#[derive(Debug)]
+pub(crate) struct LaneUpdate<T: BasePooledTx> {
+    /// Removed because their nonce is below the new cursor and can never execute.
+    pub discarded: Vec<Arc<ValidPoolTransaction<T>>>,
+    /// Joined the lane's consecutive pending run.
+    pub promoted: Vec<Arc<ValidPoolTransaction<T>>>,
+    /// Left the lane's consecutive pending run because the cursor moved back
+    /// behind a gap.
+    pub queued: Vec<Arc<ValidPoolTransaction<T>>>,
+}
+
+impl<T: BasePooledTx> Default for LaneUpdate<T> {
+    fn default() -> Self {
+        Self { discarded: Vec::new(), promoted: Vec::new(), queued: Vec::new() }
+    }
+}
+
+impl<T: BasePooledTx> LaneUpdate<T> {
+    pub(crate) fn extend(&mut self, other: Self) {
+        self.discarded.extend(other.discarded);
+        self.promoted.extend(other.promoted);
+        self.queued.extend(other.queued);
+    }
+}
+
 /// Outcome returned after inserting into the 2D nonce sidecar.
 #[derive(Debug)]
 pub(crate) struct InsertOutcome<T: BasePooledTx> {
     pub outcome: AddedTransactionOutcome,
     pub replaced: Option<Arc<ValidPoolTransaction<T>>>,
+    /// Lane changes from anchoring the cursor to the validation state. These
+    /// stand even if the insertion is rolled back.
+    pub anchor: LaneUpdate<T>,
+    /// Queued successors the inserted transaction made pending.
     pub promoted: Vec<Arc<ValidPoolTransaction<T>>>,
 }
 
@@ -74,6 +105,8 @@ pub(crate) struct InsertOutcome<T: BasePooledTx> {
 #[derive(Debug)]
 pub(crate) struct PruneMinedOutcome<T: BasePooledTx> {
     pub removed: Vec<Arc<ValidPoolTransaction<T>>>,
+    /// Lane changes caused by advancing cursors past the mined nonces.
+    pub lanes: LaneUpdate<T>,
 }
 
 /// EIP-8130 sidecar for finite non-zero nonce channels and nonce-free transactions.
@@ -269,6 +302,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             return Ok(InsertOutcome {
                 outcome: AddedTransactionOutcome { hash, state: AddedTransactionState::Pending },
                 replaced,
+                anchor: LaneUpdate::default(),
                 promoted: Vec::new(),
             });
         }
@@ -283,40 +317,37 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         let nonce = transaction.nonce();
         transaction.transaction_id = TransactionId::new(sender_id, nonce);
         let transaction = Arc::new(transaction);
-        let lane = self.lanes.entry(lane_id).or_insert_with(|| NonceLane {
-            next_nonce: state_nonce,
-            transactions: BTreeMap::new(),
-        });
+        if nonce < state_nonce {
+            return Err(PoolError::new(
+                hash,
+                PoolErrorKind::InvalidTransaction(InvalidPoolTransactionError::Consensus(
+                    InvalidTransactionError::NonceNotConsistent { tx: nonce, state: state_nonce },
+                )),
+            ));
+        }
+        let replaced = self
+            .lanes
+            .get(&lane_id)
+            .and_then(|lane| lane.transactions.get(&nonce))
+            .map(|existing| {
+                if existing.is_replacement_underpriced(&transaction, &self.price_bump_config) {
+                    Err(PoolError::new(hash, PoolErrorKind::ReplacementUnderpriced))
+                } else {
+                    Ok(Arc::clone(existing))
+                }
+            })
+            .transpose()?;
+
         // Keep the lane anchored to the state view used by validation. This may
         // move backward after a reorg lowers the on-chain channel nonce, allowing
         // now-valid transactions to be accepted instead of treating them as
         // already executed under the pre-reorg lane cursor.
-        if state_nonce != lane.next_nonce {
-            lane.next_nonce = state_nonce;
-        }
+        let anchor = self.set_lane_nonce(lane_id, state_nonce);
+        let lane = self.lanes.entry(lane_id).or_insert_with(|| NonceLane {
+            next_nonce: state_nonce,
+            transactions: BTreeMap::new(),
+        });
         let pending_len_before = lane.consecutive_pending_len();
-
-        if nonce < lane.next_nonce {
-            return Err(PoolError::new(
-                hash,
-                PoolErrorKind::InvalidTransaction(InvalidPoolTransactionError::Consensus(
-                    InvalidTransactionError::NonceNotConsistent {
-                        tx: nonce,
-                        state: lane.next_nonce,
-                    },
-                )),
-            ));
-        }
-
-        let replaced: Option<Arc<ValidPoolTransaction<T>>> =
-            if let Some(existing) = lane.transactions.get(&nonce) {
-                if existing.is_replacement_underpriced(&transaction, &self.price_bump_config) {
-                    return Err(PoolError::new(hash, PoolErrorKind::ReplacementUnderpriced));
-                }
-                Some(Arc::clone(existing))
-            } else {
-                None
-            };
 
         lane.transactions.insert(nonce, Arc::clone(&transaction));
         self.hashes.insert(hash, Arc::clone(&transaction));
@@ -347,7 +378,72 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             Vec::new()
         };
 
-        Ok(InsertOutcome { outcome: AddedTransactionOutcome { hash, state }, replaced, promoted })
+        Ok(InsertOutcome {
+            outcome: AddedTransactionOutcome { hash, state },
+            replaced,
+            anchor,
+            promoted,
+        })
+    }
+
+    /// Moves a lane's cursor forward to `nonce`, leaving it alone when the
+    /// cursor is already there or past it.
+    ///
+    /// Canonical maintenance runs independently of validation, so a late update
+    /// for an older block can report a nonce an insert has already anchored
+    /// past. Only validation anchoring may move a cursor backward (on a reorg).
+    pub(crate) fn advance_lane_nonce(&mut self, lane_id: LaneId, nonce: u64) -> LaneUpdate<T> {
+        if self.lanes.get(&lane_id).is_some_and(|lane| lane.next_nonce < nonce) {
+            self.set_lane_nonce(lane_id, nonce)
+        } else {
+            LaneUpdate::default()
+        }
+    }
+
+    /// Moves a finite channel's cursor to its canonical `nonce`, as validation
+    /// or a canonical state change observed it.
+    ///
+    /// Transactions below the new cursor can never execute, so they are
+    /// removed. The returned update also lists the transactions that joined the
+    /// consecutive pending run and those that left it because the cursor moved
+    /// back behind a gap, so listeners can follow the lane's state.
+    pub(crate) fn set_lane_nonce(&mut self, lane_id: LaneId, nonce: u64) -> LaneUpdate<T> {
+        let mut update = LaneUpdate::default();
+        let Some(lane) = self.lanes.get_mut(&lane_id) else {
+            return update;
+        };
+        if lane.next_nonce == nonce {
+            return update;
+        }
+        let pending_before: HashSet<TxHash> = lane
+            .consecutive_pending_transactions()
+            .map(|transaction| *transaction.hash())
+            .collect();
+
+        let retained = lane.transactions.split_off(&nonce);
+        let stale = std::mem::replace(&mut lane.transactions, retained);
+        lane.next_nonce = nonce;
+        for transaction in stale.into_values() {
+            self.hashes.remove(transaction.hash());
+            update.discarded.push(transaction);
+        }
+
+        let pending_after: HashSet<TxHash> = lane
+            .consecutive_pending_transactions()
+            .map(|transaction| *transaction.hash())
+            .collect();
+        for transaction in lane.live_transactions() {
+            let hash = transaction.hash();
+            match (pending_before.contains(hash), pending_after.contains(hash)) {
+                (false, true) => update.promoted.push(Arc::clone(transaction)),
+                (true, false) => update.queued.push(Arc::clone(transaction)),
+                _ => {}
+            }
+        }
+        if lane.transactions.is_empty() {
+            self.lanes.remove(&lane_id);
+        }
+        update
     }
 
     /// Removes the exact transactions by hash without advancing lane state.
@@ -357,7 +453,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     ) -> Vec<Arc<ValidPoolTransaction<T>>> {
         let mut removed = Vec::new();
         for hash in hashes {
-            if let Some(transaction) = self.remove_hash(*hash, false) {
+            if let Some(transaction) = self.remove_hash(*hash) {
                 removed.push(transaction);
             }
         }
@@ -376,7 +472,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
                 .get(hash)
                 .is_some_and(|transaction| transaction.transaction.eip8130_replay_id().is_some())
             {
-                if let Some(transaction) = self.remove_hash(*hash, false) {
+                if let Some(transaction) = self.remove_hash(*hash) {
                     removed.push(transaction);
                 }
                 continue;
@@ -411,7 +507,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
                 .hashes
                 .get(hash)
                 .is_some_and(|transaction| transaction.transaction.eip8130_replay_id().is_some())
-                && let Some(transaction) = self.remove_hash(*hash, false)
+                && let Some(transaction) = self.remove_hash(*hash)
             {
                 removed.push(transaction);
             }
@@ -426,13 +522,35 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             .collect();
         ordered_hashes.sort_unstable();
 
-        for (_, _, _, hash) in ordered_hashes {
-            if let Some(transaction) = self.remove_hash(hash, true) {
+        // Mined nonces are consecutive per channel even where this pool holds
+        // none of the intermediate hashes, so each lane resumes after its
+        // highest mined nonce.
+        let mut mined_heads: HashMap<LaneId, u64> = HashMap::default();
+        for (sender, nonce_key, nonce, _) in &ordered_hashes {
+            mined_heads.insert((*sender, *nonce_key), *nonce);
+        }
+        let mined: HashSet<TxHash> = ordered_hashes.iter().map(|(.., hash)| *hash).collect();
+        let mut lanes = LaneUpdate::default();
+        for (lane_id, nonce) in mined_heads {
+            if let Some(next_nonce) = nonce.checked_add(1) {
+                let mut update = self.advance_lane_nonce(lane_id, next_nonce);
+                let (lane_mined, discarded) = update
+                    .discarded
+                    .into_iter()
+                    .partition(|transaction| mined.contains(transaction.hash()));
+                update.discarded = discarded;
+                removed.extend::<Vec<_>>(lane_mined);
+                lanes.extend(update);
+            }
+        }
+        // Mined hashes at or past an already-advanced cursor.
+        for (.., hash) in ordered_hashes {
+            if let Some(transaction) = self.remove_hash(hash) {
                 removed.push(transaction);
             }
         }
 
-        PruneMinedOutcome { removed }
+        PruneMinedOutcome { removed, lanes }
     }
 
     /// Removes nonce-free transactions whose validity window has elapsed at
@@ -480,11 +598,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         BestTwoDTransactions::new(&self.lanes, &self.nonce_free, ordering, base_fee)
     }
 
-    fn remove_hash(
-        &mut self,
-        hash: TxHash,
-        advance_lane: bool,
-    ) -> Option<Arc<ValidPoolTransaction<T>>> {
+    fn remove_hash(&mut self, hash: TxHash) -> Option<Arc<ValidPoolTransaction<T>>> {
         if let Some(transaction) = self.hashes.get(&hash)
             && let Some(replay_id) = transaction.transaction.eip8130_replay_id()
         {
@@ -496,17 +610,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         let nonce_key = transaction.transaction.eip8130_nonce_channel_key()?;
         let lane_id = (transaction.sender(), nonce_key);
         let nonce = transaction.nonce();
-        let transaction = {
-            let lane = self.lanes.get_mut(&lane_id)?;
-            let transaction = lane.transactions.remove(&nonce)?;
-            if advance_lane
-                && nonce == lane.next_nonce
-                && let Some(next_nonce) = lane.next_nonce.checked_add(1)
-            {
-                lane.next_nonce = next_nonce;
-            }
-            transaction
-        };
+        let transaction = self.lanes.get_mut(&lane_id)?.transactions.remove(&nonce)?;
 
         if self.lanes.get(&lane_id).is_some_and(|lane| lane.transactions.is_empty()) {
             self.lanes.remove(&lane_id);
@@ -1059,6 +1163,108 @@ mod tests {
             pool.pending_transactions().into_iter().map(|tx| *tx.hash()).collect::<Vec<_>>(),
             vec![queued_hash]
         );
+    }
+
+    fn hashes(transactions: &[Arc<ValidPoolTransaction<BasePooledTransaction>>]) -> Vec<TxHash> {
+        transactions.iter().map(|transaction| *transaction.hash()).collect()
+    }
+
+    #[test]
+    fn higher_state_nonce_discards_transactions_below_the_cursor() {
+        let mut pool = TwoDNoncePool::new(PriceBumpConfig::default());
+        let signer = signer();
+        let key = U256::from(4);
+        let stale: Vec<_> = (0..2)
+            .map(|nonce| valid_pool_transaction(signed_channel_tx(&signer, key, nonce, 1_000)))
+            .collect();
+        let stale_hashes: Vec<_> = stale.iter().map(|transaction| *transaction.hash()).collect();
+        for transaction in stale {
+            pool.insert_validated(transaction, 0).unwrap();
+        }
+
+        let next = valid_pool_transaction(signed_channel_tx(&signer, key, 2, 1_000));
+        let outcome = pool.insert_validated(next, 2).unwrap();
+
+        assert_eq!(hashes(&outcome.anchor.discarded), stale_hashes);
+        assert!(stale_hashes.iter().all(|hash| !pool.contains(hash)));
+        assert_eq!(pool.all_hashes(), vec![outcome.outcome.hash]);
+    }
+
+    #[test]
+    fn rejected_insert_leaves_the_lane_cursor_unchanged() {
+        let mut pool = TwoDNoncePool::new(PriceBumpConfig::default());
+        let signer = signer();
+        let key = U256::from(4);
+        let head = valid_pool_transaction(signed_channel_tx(&signer, key, 0, 1_000));
+        let head_hash = *head.hash();
+        pool.insert_validated(head, 0).unwrap();
+
+        let too_low = valid_pool_transaction(signed_channel_tx(&signer, key, 1, 1_000));
+        assert!(pool.insert_validated(too_low, 2).is_err());
+        assert!(pool.contains(&head_hash));
+    }
+
+    #[test]
+    fn mined_nonce_past_a_gap_advances_the_cursor() {
+        let mut pool = TwoDNoncePool::new(PriceBumpConfig::default());
+        let signer = signer();
+        let key = U256::from(5);
+        let [head, mined, next] = [0, 2, 3]
+            .map(|nonce| valid_pool_transaction(signed_channel_tx(&signer, key, nonce, 1_000)));
+        let (head_hash, mined_hash, next_hash) = (*head.hash(), *mined.hash(), *next.hash());
+        for transaction in [head, mined, next] {
+            pool.insert_validated(transaction, 0).unwrap();
+        }
+
+        // The block also mines nonce 1, whose hash this pool never held.
+        let outcome = pool.prune_mined(&[head_hash, TxHash::repeat_byte(0x11), mined_hash]);
+
+        assert_eq!(hashes(&outcome.removed), vec![head_hash, mined_hash]);
+        assert_eq!(hashes(&outcome.lanes.promoted), vec![next_hash]);
+        assert_eq!(hashes(&pool.pending_transactions()), vec![next_hash]);
+    }
+
+    #[test]
+    fn mined_nonce_discards_a_different_hash_at_that_nonce() {
+        let mut pool = TwoDNoncePool::new(PriceBumpConfig::default());
+        let signer = signer();
+        let key = U256::from(6);
+        let [mined, other, next, successor] = [0, 1, 2, 3]
+            .map(|nonce| valid_pool_transaction(signed_channel_tx(&signer, key, nonce, 1_000)));
+        let (mined_hash, other_hash, next_hash) = (*mined.hash(), *other.hash(), *next.hash());
+        for transaction in [mined, other, next, successor] {
+            pool.insert_validated(transaction, 0).unwrap();
+        }
+
+        // The block mines nonces 0 to 2, nonce 1 under a hash this pool does not hold.
+        let outcome = pool.prune_mined(&[mined_hash, next_hash]);
+
+        assert_eq!(hashes(&outcome.removed), vec![mined_hash, next_hash]);
+        assert_eq!(hashes(&outcome.lanes.discarded), vec![other_hash]);
+        assert!(!pool.contains(&other_hash));
+    }
+
+    #[test]
+    fn lower_state_nonce_reports_transactions_left_behind_a_gap_as_queued() {
+        let mut pool = TwoDNoncePool::new(PriceBumpConfig::default());
+        let signer = signer();
+        let key = U256::from(7);
+        let pending: Vec<_> = (2..4)
+            .map(|nonce| valid_pool_transaction(signed_channel_tx(&signer, key, nonce, 1_000)))
+            .collect();
+        let pending_hashes: Vec<_> =
+            pending.iter().map(|transaction| *transaction.hash()).collect();
+        for transaction in pending {
+            pool.insert_validated(transaction, 2).unwrap();
+        }
+
+        // A reorg rewinds the channel to 1; nonce 1 is not pooled.
+        let later = valid_pool_transaction(signed_channel_tx(&signer, key, 5, 1_000));
+        let outcome = pool.insert_validated(later, 1).unwrap();
+
+        assert_eq!(hashes(&outcome.anchor.queued), pending_hashes);
+        assert!(outcome.anchor.discarded.is_empty());
+        assert!(pool.pending_transactions().is_empty());
     }
 
     #[test]
