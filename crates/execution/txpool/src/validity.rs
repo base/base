@@ -88,6 +88,9 @@ pub enum ValidityPredicateError {
         /// Number of the block currently being built.
         current_block: u64,
     },
+    /// The submission requests fill-immediately-or-kill without any predicates.
+    #[error("fill_immediately_or_kill requires non-empty validity predicates")]
+    FillImmediatelyOrKillWithoutPredicates,
     /// The submission has no block-number upper bound, so it does not have a bounded lifetime.
     #[error("validity transactions require a block-number predicate with an upper bound")]
     MissingBlockExpiry,
@@ -642,11 +645,32 @@ pub struct TransactionValidity {
     /// EIP-712 authorization by the transaction sender, required when enforcement is enabled.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub validity_signature: Option<Signature>,
+    /// Whether the transaction must fill at the first block position where its predicates hold.
+    ///
+    /// Once a builder finds the predicates satisfied, the transaction must be the next one
+    /// committed to the block. If any other transaction commits first, it is dropped instead of
+    /// included, even when its predicates still hold.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub fill_immediately_or_kill: bool,
+}
+
+impl TransactionValidity {
+    /// Returns an error when [`Self::fill_immediately_or_kill`] is set without predicates.
+    ///
+    /// The flag only constrains when predicates become satisfied, so it is meaningless alone.
+    pub const fn validate_fill_immediately_or_kill(&self) -> Result<(), ValidityPredicateError> {
+        if self.fill_immediately_or_kill && self.validity.is_empty() {
+            return Err(ValidityPredicateError::FillImmediatelyOrKillWithoutPredicates);
+        }
+        Ok(())
+    }
 }
 
 impl ValidatedTransactionExtensions<BasePooledTransaction> for TransactionValidity {
     fn is_empty(&self) -> bool {
-        self.validity.is_empty() && self.validity_signature.is_none()
+        self.validity.is_empty()
+            && self.validity_signature.is_none()
+            && !self.fill_immediately_or_kill
     }
 
     fn validate(&self, max_items: usize) -> Result<(), ExtensionError> {
@@ -663,6 +687,7 @@ impl ValidatedTransactionExtensions<BasePooledTransaction> for TransactionValidi
         Self {
             validity: tx.transaction.validity_predicates().to_vec(),
             validity_signature: tx.transaction.validity_signature(),
+            fill_immediately_or_kill: tx.transaction.fill_immediately_or_kill(),
         }
     }
 
@@ -675,6 +700,7 @@ impl ValidatedTransactionExtensions<BasePooledTransaction> for TransactionValidi
     /// ingress, an empty predicate set is not rejected: the builder legitimately
     /// receives ordinary transactions that carry no predicates.
     fn apply(self, tx: BasePooledTransaction) -> Result<BasePooledTransaction, ExtensionError> {
+        self.validate_fill_immediately_or_kill().map_err(|e| ExtensionError(e.to_string()))?;
         for (index, predicate) in self.validity.iter().enumerate() {
             predicate.validate_params(index).map_err(|e| ExtensionError(e.to_string()))?;
         }
@@ -1027,8 +1053,11 @@ mod tests {
             op: ValidityOperator::Equal,
             value: U256::from(2),
         }];
-        let extension =
-            TransactionValidity { validity: expected.clone(), validity_signature: None };
+        let extension = TransactionValidity {
+            validity: expected.clone(),
+            validity_signature: None,
+            fill_immediately_or_kill: false,
+        };
 
         let transaction = extension.apply(transaction).unwrap();
 
@@ -1104,6 +1133,7 @@ mod tests {
         let extension = TransactionValidity {
             validity: vec![state_predicate.clone(), timing_predicate.clone()],
             validity_signature: None,
+            fill_immediately_or_kill: false,
         };
 
         let transaction = extension.apply(transaction).unwrap();
@@ -1118,8 +1148,11 @@ mod tests {
             op: ValidityOperator::Equal,
             value: U256::ZERO,
         };
-        let extension =
-            TransactionValidity { validity: vec![predicate; 3], validity_signature: None };
+        let extension = TransactionValidity {
+            validity: vec![predicate; 3],
+            validity_signature: None,
+            fill_immediately_or_kill: false,
+        };
 
         let error = extension.validate(2).unwrap_err();
 
@@ -1266,6 +1299,7 @@ mod tests {
                 value: U256::from(0x100),
             }],
             validity_signature: None,
+            fill_immediately_or_kill: false,
         };
 
         let error = extension.apply(transaction).unwrap_err();
@@ -1297,11 +1331,72 @@ mod tests {
                 value: U256::ZERO,
             }],
             validity_signature: None,
+            fill_immediately_or_kill: false,
         };
 
         let error = extension.apply(transaction).unwrap_err();
 
         assert!(error.to_string().contains("can never be satisfied"));
+    }
+
+    fn deposit_transaction() -> BasePooledTransaction {
+        let signed: BaseTransactionSigned = TxDeposit {
+            source_hash: Default::default(),
+            from: Address::ZERO,
+            to: TxKind::Create,
+            mint: 0,
+            value: U256::ZERO,
+            gas_limit: 21_000,
+            is_system_transaction: false,
+            input: Default::default(),
+        }
+        .into();
+        let encoded_length = signed.encode_2718_len();
+        BasePooledTransaction::new(Recovered::new_unchecked(signed, Address::ZERO), encoded_length)
+    }
+
+    #[test]
+    fn fill_immediately_or_kill_is_omitted_on_the_wire_unless_set() {
+        let predicate =
+            ValidityPredicate::BlockNumber { op: ValidityOperator::LessThan, value: U256::ONE };
+        let unset = TransactionValidity { validity: vec![predicate], ..Default::default() };
+        assert!(serde_json::to_value(&unset).unwrap().get("fill_immediately_or_kill").is_none());
+
+        let set = TransactionValidity { fill_immediately_or_kill: true, ..unset };
+        let wire = serde_json::to_value(&set).unwrap();
+        assert_eq!(wire["fill_immediately_or_kill"], json!(true));
+        assert_eq!(serde_json::from_value::<TransactionValidity>(wire).unwrap(), set);
+    }
+
+    #[test]
+    fn apply_carries_fill_immediately_or_kill_to_the_pooled_transaction() {
+        let extension = TransactionValidity {
+            validity: vec![ValidityPredicate::BlockNumber {
+                op: ValidityOperator::LessThan,
+                value: U256::ONE,
+            }],
+            validity_signature: None,
+            fill_immediately_or_kill: true,
+        };
+
+        let transaction = extension.apply(deposit_transaction()).unwrap();
+
+        assert!(transaction.fill_immediately_or_kill());
+        // Replacing predicates through the unsigned API drops the flag with the authorization.
+        assert!(!transaction.with_validity_predicates(Vec::new()).fill_immediately_or_kill());
+    }
+
+    #[test]
+    fn apply_rejects_fill_immediately_or_kill_without_predicates() {
+        let extension =
+            TransactionValidity { fill_immediately_or_kill: true, ..Default::default() };
+
+        assert!(!extension.is_empty());
+        let error = extension.apply(deposit_transaction()).unwrap_err();
+        assert!(
+            error.to_string().contains("fill_immediately_or_kill requires non-empty"),
+            "unexpected error: {error}"
+        );
     }
 
     #[test]

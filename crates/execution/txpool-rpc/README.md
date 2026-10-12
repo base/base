@@ -26,7 +26,9 @@ and each builder's raw ingress to run `required`, builders to require signatures
 insert, and the insert endpoint to be restricted to trusted forwarders. A `required`
 builder receiving from an `off` forwarder still accepts invalid supplied signatures.
 Predicates are enforced during block construction; an unsatisfied transaction is deferred
-and an expired one is evicted. Regular RPC nodes with a configured sequencer URL proxy
+and an expired one is evicted. The optional `fill_immediately_or_kill` flag also evicts a
+transaction whose predicate state was already claimed in the block; see
+[fill-immediately-or-kill](../txpool/README.md#fill-immediately-or-kill). Regular RPC nodes with a configured sequencer URL proxy
 the complete sidecar and upstream error response instead of admitting it locally.
 See the [wallet signing contract](../txpool/README.md#signed-validity-predicates) for
 EIP-712 types, signature encoding, rollout requirements, and security limitations.

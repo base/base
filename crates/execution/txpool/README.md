@@ -46,6 +46,21 @@ modules.merge_configured(api.into_rpc())?;
 Extension payloads must serialize as a JSON map (a braced struct, not a unit struct) and must avoid
 `u128`/`i128` fields, which `serde_json` cannot represent through `#[serde(flatten)]`.
 
+### Fill-immediately-or-kill
+
+Set `fill_immediately_or_kill: true` alongside `validity` to drop a transaction once its
+opportunity has been captured, instead of including it and paying gas. It requires non-empty
+predicates and defaults to `false`.
+
+Builders track the balance, nonce, and storage locations read by the predicates of every
+validity transaction committed in the block being built. When a flagged transaction's
+predicates hold but any of those locations was already claimed by an earlier validity
+transaction in the same block, the builder expires and evicts it rather than including it.
+Block-number and flashblock-index predicates never claim a location. Matching is by location
+only, so two searchers conditioning on the same slot exclude each other whatever values
+they compare. The check needs no execution or rollback; it is not revert protection, and it
+does not react to ordinary transactions that change the same state.
+
 ### Signed validity predicates
 
 `TransactionValidity` carries off-chain predicates separately from the signed Ethereum
@@ -91,10 +106,12 @@ The domain is `{ name: "Base Transaction Validity", version: "1", chainId }`;
 
 ```text
 ValidityPredicate(uint8 kind,uint8 operator,address account,uint256 slot,uint256 mask,uint256 value)
-ValidityAuthorization(bytes32 transactionHash,ValidityPredicate[] validity)
+ValidityAuthorization(bytes32 transactionHash,ValidityPredicate[] validity,bool fillImmediatelyOrKill)
 ```
 
 `transactionHash` hashes the complete signed EIP-2718 transaction envelope.
+`fillImmediatelyOrKill` must match the submitted `fill_immediately_or_kill` flag (`false` when
+omitted), so an intermediary can neither strip nor add it.
 `kind` is balance = 0, storage = 1, block number = 2, flashblock index = 3, nonce = 4.
 `operator` is `<` = 0, `<=` = 1, `=` = 2, `!=` = 3, `>` = 4, `>=` = 5.
 Balance and nonce predicates use `account`; storage uses `account`, `slot`, and `mask`.

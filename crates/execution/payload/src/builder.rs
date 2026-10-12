@@ -54,7 +54,7 @@ use revm::context::{Block, BlockEnv};
 use tracing::{debug, debug_span, info, instrument, trace, warn};
 
 use crate::{
-    Attributes, BasePayloadBuilderAttributes, BlockDeferrals, BuilderMetrics,
+    Attributes, BasePayloadBuilderAttributes, BlockDeferrals, BuilderMetrics, ClaimedPredicateKeys,
     CoinbaseTipAffordability, InclusionTracker, MeteringProvider, ParkableBestPayloadTransactions,
     ParkablePayloadTransactions, ParkedPredicateIndex, PayloadPrimitives, PredicateLoadTracker,
     PredicateReadRecorder, RejectionCacheMetrics, StateChangeEffects, ValidityMetrics,
@@ -919,6 +919,7 @@ where
         // the payload is built once, so this covers the whole block; pre-Denim rebuilds start a
         // fresh scan and report deferrals again.
         let mut deferrals = BlockDeferrals::default();
+        let mut claimed_predicate_keys = ClaimedPredicateKeys::default();
         let mut validity_candidates_evaluated = 0_u64;
         let mut validity_candidates_deferred = 0_u64;
         let mut predicate_eval_cutoff_hit = false;
@@ -1032,6 +1033,38 @@ where
                 *predicate_eval_duration.get_or_insert(Duration::ZERO) +=
                     evaluation_start.elapsed();
                 match evaluation {
+                    Ok(ValidityPredicateEvaluation::Matched)
+                        if tx.fill_immediately_or_kill()
+                            && claimed_predicate_keys.contended(tx.validity_predicates()) =>
+                    {
+                        ValidityMetrics::validity_predicate_evaluations_total(
+                            "fill_immediately_or_kill_contended",
+                        )
+                        .increment(1);
+                        emit_native_validity_event!(
+                            self,
+                            TransactionEventType::BuilderExpired,
+                            tx_hash,
+                            validity_consideration_index,
+                            {
+                                "expire_reason" => "fill_immediately_or_kill_contended",
+                                "expire_detail" => "a validity transaction conditioned on the same state already committed in this block",
+                            }
+                        );
+                        trace!(
+                            target: "payload_builder",
+                            tx_hash = ?tx_hash,
+                            "dropping fill-immediately-or-kill transaction whose predicate state was already claimed"
+                        );
+                        info.permanently_rejected_txs.push(tx_hash);
+                        Self::skip_current(
+                            &mut best_txs,
+                            tx.sender(),
+                            tx.nonce(),
+                            replay_independent,
+                        );
+                        continue;
+                    }
                     Ok(ValidityPredicateEvaluation::Matched) => {
                         ValidityMetrics::validity_predicate_evaluations_total("matched")
                             .increment(1);
@@ -1235,6 +1268,8 @@ where
                 continue;
             }
 
+            // Kept past consensus conversion so a commit can claim the state it conditioned on.
+            let committed_predicates = tx.validity_predicates().to_vec();
             let tx = tx.into_consensus();
 
             let da_footprint_gas_scalar = self
@@ -1394,6 +1429,7 @@ where
             }
 
             best_txs.mark_current_committed();
+            claimed_predicate_keys.claim(&committed_predicates);
             let predicates_need_rescan = !state_change_effects.affected_transactions.is_empty();
             let predicate_rescan_start = Instant::now();
             for (rescanned, parked_hash) in
@@ -1554,7 +1590,9 @@ mod tests {
     use base_common_evm::BaseTime;
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_execution_evm::BaseEvmConfig;
-    use base_execution_txpool::{BasePooledTransaction, ValidityOperator, ValidityPredicate};
+    use base_execution_txpool::{
+        BasePooledTransaction, TransactionValidity, ValidityOperator, ValidityPredicate,
+    };
     use base_observability_events::{TransactionEventCapture, TransactionEventType};
     use reth_basic_payload_builder::{BuildOutcomeKind, PayloadConfig};
     use reth_chainspec::ChainSpec;
@@ -2188,6 +2226,60 @@ mod tests {
             .map(|transaction| *transaction.tx_hash())
             .collect::<Vec<_>>();
         assert_eq!(included_hashes, vec![trigger_hash, gated_hash]);
+    }
+
+    /// Builds a competitor and a lower-priority searcher whose predicates read `searcher_slot`, and
+    /// returns whether the searcher was included after the competitor.
+    fn native_searcher_included_after_competitor(
+        searcher_slot: u64,
+        fill_immediately_or_kill: bool,
+    ) -> bool {
+        let untouched_slot = |slot: u64| ValidityPredicate::Storage {
+            address: Address::repeat_byte(0x44),
+            slot: U256::from(slot),
+            mask: U256::MAX,
+            op: ValidityOperator::Equal,
+            value: U256::ZERO,
+        };
+        let competitor = pool_transaction_to(0, Address::repeat_byte(0x55), U256::ZERO)
+            .with_validity_predicates(vec![untouched_slot(1)]);
+        let searcher = pool_transaction_to(0, Address::repeat_byte(0x66), U256::ZERO)
+            .with_validity(TransactionValidity {
+                validity: vec![untouched_slot(searcher_slot)],
+                validity_signature: None,
+                fill_immediately_or_kill,
+            });
+        let funded_senders = [competitor.sender(), searcher.sender()];
+        let competitor_hash = *competitor.hash();
+        let searcher_hash = *searcher.hash();
+
+        let BuildOutcomeKind::Freeze(payload) = build_parkable_pool_payload(
+            pool_payload_context(DENIM_TIMESTAMP),
+            TestParkableTransactions::new(vec![competitor, searcher]),
+            &funded_senders,
+        ) else {
+            panic!("Denim payload must freeze")
+        };
+        let included = payload
+            .block()
+            .body()
+            .transactions
+            .iter()
+            .map(|transaction| *transaction.tx_hash())
+            .collect::<Vec<_>>();
+        assert_eq!(included[0], competitor_hash, "the winning bid must land first");
+        included.contains(&searcher_hash)
+    }
+
+    #[test]
+    fn native_builder_drops_fill_immediately_or_kill_after_competitor_claims_its_state() {
+        assert!(native_searcher_included_after_competitor(1, false));
+        assert!(!native_searcher_included_after_competitor(1, true));
+    }
+
+    #[test]
+    fn native_builder_keeps_fill_immediately_or_kill_after_unrelated_validity_commit() {
+        assert!(native_searcher_included_after_competitor(2, true));
     }
 
     #[test]

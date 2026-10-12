@@ -71,6 +71,11 @@ pub struct SendRawTransactionValidityOptions {
     /// EIP-712 signature authorizing these predicates for the signed transaction hash.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub validity_signature: Option<Signature>,
+    /// Drops the transaction unless it fills at the first position where its predicates hold.
+    ///
+    /// See [`TransactionValidity::fill_immediately_or_kill`].
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub fill_immediately_or_kill: bool,
 }
 
 /// RPC API for transaction status
@@ -359,6 +364,7 @@ where
             TransactionValidity {
                 validity: options.validity,
                 validity_signature: options.validity_signature,
+                fill_immediately_or_kill: options.fill_immediately_or_kill,
             },
             self.validity_signature_mode,
         )
@@ -381,6 +387,7 @@ where
             data: {
                 "rpc_method" => "base_sendRawTransactionValidity",
                 "validity_predicates" => &validity.validity,
+                "fill_immediately_or_kill" => validity.fill_immediately_or_kill,
             },
         );
 
@@ -476,6 +483,7 @@ mod tests {
                     8453,
                     *tx.hash(),
                     &options.validity,
+                    options.fill_immediately_or_kill,
                 ))
                 .unwrap(),
         );
@@ -532,6 +540,7 @@ mod tests {
                         8453,
                         *tx.hash(),
                         &options.validity,
+                        options.fill_immediately_or_kill,
                     ))
                     .unwrap(),
             );
@@ -589,6 +598,41 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn signed_fill_immediately_or_kill_is_admitted_and_cannot_be_stripped() {
+        let signer = PrivateKeySigner::random();
+        let raw = signed_eip1559(&signer, 0, 1);
+        let tx: BasePooledTransaction =
+            BasePooledTransaction::recover_raw_transaction(&raw).unwrap();
+        let (_, mut options) = validity_request(raw.clone());
+        options.fill_immediately_or_kill = true;
+        options.validity_signature = Some(
+            signer
+                .sign_hash_sync(&ValidityAuthorization::signing_hash(
+                    8453,
+                    *tx.hash(),
+                    &options.validity,
+                    true,
+                ))
+                .unwrap(),
+        );
+        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+        let rpc = SendRawTransactionValidityApiImpl::new(everest_provider(), sender)
+            .with_validity_signature_mode(ValiditySignatureMode::Required);
+
+        let mut stripped = options.clone();
+        stripped.fill_immediately_or_kill = false;
+        let error = rpc.send_raw_transaction_validity(raw.clone(), stripped).await.unwrap_err();
+        assert_eq!(serde_json::from_str::<String>(error.data().unwrap().get()).unwrap(), "invalid");
+
+        let response = rpc.send_raw_transaction_validity(raw, options);
+        tokio::pin!(response);
+        tokio::select! {
+            result = &mut response => panic!("signed sidecar failed before pool submission: {result:?}"),
+            request = receiver.recv() => drop(request.expect("signed sidecar should be submitted to the pool")),
+        };
+    }
+
+    #[tokio::test]
     async fn signed_validity_ingress_accepts_eoa_authenticated_eip8130() {
         let signer = PrivateKeySigner::random();
         let raw = signed_eip8130(&signer);
@@ -601,6 +645,7 @@ mod tests {
                     8453,
                     *tx.hash(),
                     &options.validity,
+                    options.fill_immediately_or_kill,
                 ))
                 .unwrap(),
         );
@@ -701,6 +746,7 @@ mod tests {
                     },
                 ],
                 validity_signature: None,
+                fill_immediately_or_kill: false,
             },
         )
     }
@@ -847,6 +893,22 @@ mod tests {
     }
 
     #[test]
+    fn options_fill_immediately_or_kill_defaults_off_and_round_trips() {
+        let json = json!({"validity": [{"type": "block_number", "params": {"op": "<=", "value": "0x1f"}}]});
+        let options: SendRawTransactionValidityOptions =
+            serde_json::from_value(json.clone()).unwrap();
+        assert!(!options.fill_immediately_or_kill);
+        assert_eq!(serde_json::to_value(&options).unwrap(), json);
+
+        let mut flagged = json;
+        flagged["fill_immediately_or_kill"] = json!(true);
+        let options: SendRawTransactionValidityOptions =
+            serde_json::from_value(flagged.clone()).unwrap();
+        assert!(options.fill_immediately_or_kill);
+        assert_eq!(serde_json::to_value(&options).unwrap(), flagged);
+    }
+
+    #[test]
     fn send_raw_transaction_validity_options_accept_known_fields() {
         let json = r#"{"validity":[{"type":"balance","params":{"address":"0x1111111111111111111111111111111111111111","op":">=","value":"0x1"}}]}"#;
 
@@ -938,6 +1000,7 @@ mod tests {
         let options = SendRawTransactionValidityOptions {
             validity: all_predicate_variants(),
             validity_signature: None,
+            fill_immediately_or_kill: false,
         };
 
         // Captures are shared across parallel tests; identify this transaction from its
@@ -969,6 +1032,7 @@ mod tests {
         let options = SendRawTransactionValidityOptions {
             validity: all_predicate_variants(),
             validity_signature: None,
+            fill_immediately_or_kill: false,
         };
         let expected_hash = TxHash::repeat_byte(0x42);
         let mock = sequencer.mock(|when, then| {
@@ -999,8 +1063,11 @@ mod tests {
     async fn proxy_preserves_sequencer_rejection() {
         let sequencer = MockServer::start();
         let raw = Bytes::from_static(&[0x02]);
-        let options =
-            SendRawTransactionValidityOptions { validity: vec![], validity_signature: None };
+        let options = SendRawTransactionValidityOptions {
+            validity: vec![],
+            validity_signature: None,
+            fill_immediately_or_kill: false,
+        };
         let mock = sequencer.mock(|when, then| {
             when.method(POST).path("/").json_body(json!({
                 "jsonrpc": "2.0", "id": 0, "method": "base_sendRawTransactionValidity",
@@ -1044,6 +1111,7 @@ mod tests {
         let options = SendRawTransactionValidityOptions {
             validity: all_predicate_variants(),
             validity_signature: None,
+            fill_immediately_or_kill: false,
         };
 
         let error = rpc
@@ -1067,6 +1135,7 @@ mod tests {
         let options = SendRawTransactionValidityOptions {
             validity: all_predicate_variants(),
             validity_signature: None,
+            fill_immediately_or_kill: false,
         };
 
         let error = rpc
@@ -1363,8 +1432,11 @@ mod tests {
             },
         );
         let rpc = validity_rpc(provider);
-        let mut options =
-            SendRawTransactionValidityOptions { validity: vec![], validity_signature: None };
+        let mut options = SendRawTransactionValidityOptions {
+            validity: vec![],
+            validity_signature: None,
+            fill_immediately_or_kill: false,
+        };
         options.validity = vec![ValidityPredicate::BlockNumber {
             op: base_execution_txpool::ValidityOperator::Equal,
             value: U256::from(101),

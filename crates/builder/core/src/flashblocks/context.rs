@@ -942,6 +942,32 @@ impl BasePayloadBuilderCtx {
                     validity_handling_start.map_or_else(Duration::default, |start| start.elapsed());
                 continue;
             }
+            // Checked only once the predicates hold: until then the transaction stays parked, and a
+            // later commit may still leave its state unclaimed.
+            if tx.fill_immediately_or_kill()
+                && info.claimed_predicate_keys.contended(tx.validity_predicates())
+            {
+                let cx = DecisionContext {
+                    payload_id: &payload_id,
+                    info,
+                    limits,
+                    reason: "fill_immediately_or_kill_contended",
+                    detail: "a validity transaction conditioned on the same state already committed in this block",
+                };
+                trace!(
+                    target: "payload_builder",
+                    tx_hash = ?tx_hash,
+                    "dropping fill-immediately-or-kill transaction whose predicate state was already claimed"
+                );
+                ValidityMetrics::validity_predicate_evaluations_total(
+                    "fill_immediately_or_kill_contended",
+                )
+                .increment(1);
+                self.expire_current(best_txs, &mut diag, &cx, &tx, ordering_position);
+                validity_handling +=
+                    validity_handling_start.map_or_else(Duration::default, |start| start.elapsed());
+                continue;
+            }
             validity_handling +=
                 validity_handling_start.map_or_else(Duration::default, |start| start.elapsed());
 
@@ -1030,6 +1056,8 @@ impl BasePayloadBuilderCtx {
                 continue;
             }
 
+            // Kept past consensus conversion so a commit can claim the state it conditioned on.
+            let committed_predicates = tx.validity_predicates().to_vec();
             let tx = tx.into_consensus();
             let tx_hash = tx.tx_hash();
             let tx_uncompressed_size = tx.encode_2718_len() as u64;
@@ -1406,6 +1434,7 @@ impl BasePayloadBuilderCtx {
             };
             predicate_bucket_wakeups += state_change_effects.woken_buckets as u64;
             best_txs.record_committed_state(&state);
+            info.claimed_predicate_keys.claim(&committed_predicates);
 
             // commit changes
             evm.db_mut().commit(state);

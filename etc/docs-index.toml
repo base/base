@@ -411,8 +411,8 @@ summary = "base-tx-forwarding: forwards mempool txs to builder RPCs via per-dest
 digest = "b72a1536e1"
 
 ["crates/execution/txpool-rpc/README.md"]
-summary = "Txpool RPC admin/status APIs and validity submissions; shared staged signature modes, signature rejection metrics, predicate forwarding and sequencer proxy behavior."
-digest = "adef27d8c3"
+summary = "Txpool RPC admin/status APIs and validity submissions; staged signature modes, fill-immediately-or-kill flag, signature metrics, predicate forwarding and sequencer proxy."
+digest = "d937f520fd"
 
 ["crates/execution/txpool-tracing/README.md"]
 summary = "Txpool tracing extension: tracks mempool lifecycle events, txpool_transactionStatus RPC, enabling CLI flags, and reth_transaction_tracing_tx_event histogram. Use to debug tx latency or drops."
@@ -423,8 +423,8 @@ summary = "Plan to forward mempool txs to builders via base_insertValidatedTrans
 digest = "2e785bfe9d"
 
 ["crates/execution/txpool/README.md"]
-summary = "Base txpool validation/ordering, builder wire extensions, staged EIP-712 predicate authorization, wallet signing contract, rejection metrics, and rollout/security limits."
-digest = "f8413da3b9"
+summary = "Base txpool validation/ordering, builder wire extensions, fill-immediately-or-kill eviction, staged EIP-712 predicate authorization, wallet signing contract, and rollout/security limits."
+digest = "6e2d72aac2"
 
 ["crates/infra/audit/README.md"]
 summary = "audit-archiver-lib: ingests Vector transaction-event/v1 batches into Postgres idempotently and serves JSON-RPC queries; covers the migrations and schema snapshot regeneration."

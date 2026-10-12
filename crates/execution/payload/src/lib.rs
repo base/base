@@ -43,6 +43,9 @@ pub use metrics::{BuilderMetrics, ValidityMetrics};
 mod deferrals;
 pub use deferrals::BlockDeferrals;
 
+mod claimed_predicate_keys;
+pub use claimed_predicate_keys::ClaimedPredicateKeys;
+
 mod inclusion;
 pub use inclusion::{FLOW_STANDARD, FLOW_VALIDITY, InclusionFlow, InclusionTracker};
 

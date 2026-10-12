@@ -303,7 +303,8 @@ impl<T> ParkedPredicateIndex<T> {
 }
 
 impl ValidityPredicateKey {
-    const fn is_state(self) -> bool {
+    /// Returns whether this key reads account or contract state rather than the build position.
+    pub const fn is_state(self) -> bool {
         matches!(self, Self::Balance(_) | Self::Nonce(_) | Self::Storage(_, _))
     }
 }

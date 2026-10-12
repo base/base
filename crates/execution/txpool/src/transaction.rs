@@ -64,6 +64,9 @@ pub struct BasePooledTransaction<
     validity_predicates: Vec<crate::ValidityPredicate>,
     /// Sender authorization retained for builder forwarding.
     validity_signature: Option<Signature>,
+    /// Whether a builder must drop this transaction instead of including it at a later position
+    /// than the first one where its predicates hold.
+    fill_immediately_or_kill: bool,
     /// The set of on-chain state surfaces whose change invalidates this
     /// transaction, computed once during validation and consumed by the pool's
     /// invalidation index. Empty until set; see [`crate::WatchSet`].
@@ -110,6 +113,7 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
             received_at,
             validity_predicates: Vec::new(),
             validity_signature: None,
+            fill_immediately_or_kill: false,
             watch_set: OnceLock::new(),
             limit_class: OnceLock::new(),
             sender_policy_target: OnceLock::new(),
@@ -143,6 +147,7 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
         crate::ValidityPredicate::sort_batch(&mut validity_predicates);
         self.validity_predicates = validity_predicates;
         self.validity_signature = None;
+        self.fill_immediately_or_kill = false;
         self
     }
 
@@ -158,12 +163,18 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
     pub fn with_validity(mut self, validity: crate::TransactionValidity) -> Self {
         self = self.with_validity_predicates(validity.validity);
         self.validity_signature = validity.validity_signature;
+        self.fill_immediately_or_kill = validity.fill_immediately_or_kill;
         self
     }
 
     /// Returns the sender's validity-sidecar signature, if any.
     pub const fn validity_signature(&self) -> Option<Signature> {
         self.validity_signature
+    }
+
+    /// Returns whether this transaction must fill at the first position where its predicates hold.
+    pub const fn fill_immediately_or_kill(&self) -> bool {
+        self.fill_immediately_or_kill
     }
 
     /// Returns the estimated compressed size of a transaction in bytes.
@@ -422,6 +433,13 @@ pub trait BasePooledTx: PoolTransaction + DataAvailabilitySized {
         &[]
     }
 
+    /// Returns whether this transaction must fill at the first position where its predicates hold.
+    ///
+    /// See [`crate::TransactionValidity::fill_immediately_or_kill`].
+    fn fill_immediately_or_kill(&self) -> bool {
+        false
+    }
+
     /// Returns the signed EIP-8130 payload when this transaction carries one.
     ///
     /// Required for the mempool validator's structural admission checks; the
@@ -523,6 +541,10 @@ where
 
     fn validity_predicates(&self) -> &[crate::ValidityPredicate] {
         &self.validity_predicates
+    }
+
+    fn fill_immediately_or_kill(&self) -> bool {
+        self.fill_immediately_or_kill
     }
 
     fn as_eip8130(&self) -> Option<&Eip8130Signed> {

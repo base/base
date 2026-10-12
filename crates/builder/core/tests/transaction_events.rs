@@ -55,6 +55,7 @@ async fn recoverable_predicate_emits_builder_deferred() -> eyre::Result<()> {
                         value: U256::from_limbs([1, 0, 0, 0]),
                     }],
                     validity_signature: None,
+                    fill_immediately_or_kill: false,
                 },
             },),
         )
@@ -144,6 +145,7 @@ async fn blocked_transaction_emits_one_builder_deferred_per_block() -> eyre::Res
                         value: U256::from(1),
                     }],
                     validity_signature: None,
+                    fill_immediately_or_kill: false,
                 },
             },),
         )
@@ -206,6 +208,7 @@ async fn expired_position_predicate_emits_builder_expired() -> eyre::Result<()> 
                         value: U256::from(latest.header.number),
                     }],
                     validity_signature: None,
+                    fill_immediately_or_kill: false,
                 },
             },),
         )
@@ -296,6 +299,7 @@ async fn expired_flashblock_predicate_releases_same_nonce_before_block_seals() -
                         },
                     ],
                     validity_signature: None,
+                    fill_immediately_or_kill: false,
                 },
             },),
         )

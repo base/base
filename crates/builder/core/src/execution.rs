@@ -11,7 +11,7 @@ use base_common_evm::BaseTransactionError;
 use derive_more::Display;
 use thiserror::Error;
 
-use crate::{InclusionTracker, PredicateLoadTracker};
+use crate::{ClaimedPredicateKeys, InclusionTracker, PredicateLoadTracker};
 
 /// Resource limits configuration for transaction and block constraints.
 ///
@@ -226,6 +226,8 @@ pub struct ExecutionInfo {
     pub da_footprint_scalar: Option<u16>,
     /// Validity-predicate state loads accumulated across the block's flashblock builds.
     pub predicate_loads: PredicateLoadTracker,
+    /// State locations claimed by validity transactions committed across the block's flashblocks.
+    pub claimed_predicate_keys: ClaimedPredicateKeys,
     /// Validity inclusion and EIP-1559 fee revenue accumulated across the block.
     pub inclusion: InclusionTracker,
 }
@@ -244,6 +246,7 @@ impl ExecutionInfo {
             extra: Default::default(),
             da_footprint_scalar: None,
             predicate_loads: PredicateLoadTracker::default(),
+            claimed_predicate_keys: ClaimedPredicateKeys::default(),
             inclusion: InclusionTracker::default(),
         }
     }

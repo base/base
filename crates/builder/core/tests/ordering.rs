@@ -3,12 +3,13 @@
 use alloy_consensus::Transaction;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_network::TransactionResponse;
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, TxHash, U256};
 use alloy_provider::Provider;
+use alloy_signer_local::PrivateKeySigner;
 use base_builder_core::{
     BuilderApiExtension, BuilderApiExtensionConfig, BuilderConfig, DEFAULT_MAX_VALIDITY_PREDICATES,
     MAX_SHADOW_VALIDITY_SAMPLE_RATE_BPS, RestingPredicateMode, ShadowValidityConfig,
-    test_utils::{ChainDriverExt, LocalInstanceBuilder, ONE_ETH, setup_test_instance},
+    test_utils::{ChainDriver, ChainDriverExt, LocalInstanceBuilder, ONE_ETH, setup_test_instance},
 };
 use base_execution_txpool::{
     TransactionValidity, ValidatedTransaction, ValidityOperator, ValidityPredicate,
@@ -124,6 +125,7 @@ async fn predicates_delay_priority_without_blocking_nonce_descendants() -> eyre:
                 value: U256::from_limbs([1, 0, 0, 0]),
             }],
             validity_signature: None,
+            fill_immediately_or_kill: false,
         },
     };
     driver
@@ -208,6 +210,7 @@ async fn nonce_predicate_promotes_after_watched_sender_executes() -> eyre::Resul
                 value: U256::from(watched_nonce + 1),
             }],
             validity_signature: None,
+            fill_immediately_or_kill: false,
         },
     };
     driver
@@ -278,6 +281,7 @@ async fn predicate_eval_hard_cutoff_defers_without_evaluating() -> eyre::Result<
                 extensions: TransactionValidity {
                     validity: always_satisfied.clone(),
                     validity_signature: None,
+                    fill_immediately_or_kill: false,
                 },
             },),
         )
@@ -303,6 +307,7 @@ async fn predicate_eval_hard_cutoff_defers_without_evaluating() -> eyre::Result<
                 extensions: TransactionValidity {
                     validity: always_satisfied,
                     validity_signature: None,
+                    fill_immediately_or_kill: false,
                 },
             },),
         )
@@ -437,6 +442,7 @@ async fn resting_transaction_is_included_once_its_blocking_state_changes() -> ey
                         value: U256::from(1),
                     }],
                     validity_signature: None,
+                    fill_immediately_or_kill: false,
                 },
             },),
         )
@@ -466,5 +472,156 @@ async fn resting_transaction_is_included_once_its_blocking_state_changes() -> ey
         .collect::<Vec<_>>();
     assert_eq!(actual, tracked);
 
+    Ok(())
+}
+
+/// Inserts a transaction from `signer` conditioned on `validity` through the builder API.
+async fn insert_validity_transaction(
+    driver: &ChainDriver,
+    signer: &PrivateKeySigner,
+    priority_fee: u128,
+    validity: Vec<ValidityPredicate>,
+    fill_immediately_or_kill: bool,
+) -> eyre::Result<TxHash> {
+    let tx = driver
+        .create_transaction()
+        .with_signer(signer)
+        .with_to(Address::random())
+        .with_max_priority_fee_per_gas(priority_fee)
+        .build()
+        .await;
+    let hash = tx.tx_hash();
+    driver
+        .provider()
+        .raw_request::<_, ()>(
+            "base_insertValidatedTransaction".into(),
+            (ValidatedTransaction {
+                sender: signer.address(),
+                raw: tx.encoded_2718().into(),
+                metering: None,
+                extensions: TransactionValidity {
+                    validity,
+                    validity_signature: None,
+                    fill_immediately_or_kill,
+                },
+            },),
+        )
+        .await?;
+    Ok(hash)
+}
+
+/// A storage predicate that holds for any unwritten slot, standing in for a shared opportunity.
+fn untouched_slot(address: Address, slot: u64) -> ValidityPredicate {
+    ValidityPredicate::Storage {
+        address,
+        slot: U256::from(slot),
+        mask: U256::MAX,
+        op: ValidityOperator::Equal,
+        value: U256::ZERO,
+    }
+}
+
+/// Builds one block containing a higher-priority validity transaction and a lower-priority one
+/// whose predicates read `searcher_slot`, and returns whether the lower-priority one landed.
+async fn searcher_included_after_competitor(
+    searcher_slot: u64,
+    fill_immediately_or_kill: bool,
+) -> eyre::Result<bool> {
+    let instance = LocalInstanceBuilder::new(BuilderConfig::for_tests())
+        .install_ext::<BuilderApiExtension>(
+            BuilderApiExtensionConfig::new(DEFAULT_MAX_VALIDITY_PREDICATES).with_noop_metering(),
+        )
+        .build()
+        .await?;
+    let driver = instance.driver().await?;
+    let accounts = driver.fund_accounts(2, ONE_ETH).await?;
+    let pool = Address::random();
+
+    let competitor = insert_validity_transaction(
+        &driver,
+        &accounts[0],
+        100,
+        vec![untouched_slot(pool, 1)],
+        false,
+    )
+    .await?;
+    let searcher = insert_validity_transaction(
+        &driver,
+        &accounts[1],
+        50,
+        vec![untouched_slot(pool, searcher_slot)],
+        fill_immediately_or_kill,
+    )
+    .await?;
+
+    let block = driver.build_new_block().await?;
+    let included = block.transactions.hashes().collect::<Vec<_>>();
+    assert!(included.contains(&competitor), "the winning bid must land");
+    Ok(included.contains(&searcher))
+}
+
+/// A fill-immediately-or-kill transaction is dropped once a validity transaction conditioned on
+/// the same state commits ahead of it, even though its own predicates still hold. Without the
+/// flag the same transaction lands and pays gas for an opportunity that was already taken.
+#[tokio::test]
+async fn fill_immediately_or_kill_is_dropped_after_competitor_claims_its_state() -> eyre::Result<()>
+{
+    assert!(searcher_included_after_competitor(1, false).await?);
+    assert!(!searcher_included_after_competitor(1, true).await?);
+    Ok(())
+}
+
+/// Another validity transaction only kills a fill-immediately-or-kill transaction when their
+/// predicates read the same state.
+#[tokio::test]
+async fn fill_immediately_or_kill_survives_unrelated_validity_commit() -> eyre::Result<()> {
+    assert!(searcher_included_after_competitor(2, true).await?);
+    Ok(())
+}
+
+/// With no competing claim, a fill-immediately-or-kill transaction parked on unmet state is still
+/// included once a commit satisfies it.
+#[tokio::test]
+async fn fill_immediately_or_kill_fills_when_woken_without_competition() -> eyre::Result<()> {
+    let instance = LocalInstanceBuilder::new(BuilderConfig::for_tests())
+        .install_ext::<BuilderApiExtension>(
+            BuilderApiExtensionConfig::new(DEFAULT_MAX_VALIDITY_PREDICATES).with_noop_metering(),
+        )
+        .build()
+        .await?;
+    let driver = instance.driver().await?;
+    let accounts = driver.fund_accounts(2, ONE_ETH).await?;
+    let watched = Address::random();
+
+    let gated = insert_validity_transaction(
+        &driver,
+        &accounts[0],
+        100,
+        vec![ValidityPredicate::Balance {
+            address: watched,
+            op: ValidityOperator::Equal,
+            value: U256::from(1),
+        }],
+        true,
+    )
+    .await?;
+    let trigger = *driver
+        .create_transaction()
+        .with_signer(&accounts[1])
+        .with_to(watched)
+        .with_value(1)
+        .with_max_priority_fee_per_gas(50)
+        .send()
+        .await?
+        .tx_hash();
+
+    let block = driver.build_new_block().await?;
+    let tracked = [trigger, gated];
+    let actual = block
+        .transactions
+        .into_transactions()
+        .filter_map(|tx| tracked.contains(&tx.tx_hash()).then(|| tx.tx_hash()))
+        .collect::<Vec<_>>();
+    assert_eq!(actual, tracked);
     Ok(())
 }

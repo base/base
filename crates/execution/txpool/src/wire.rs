@@ -184,6 +184,7 @@ mod tests {
             extensions: TransactionValidity {
                 validity: vec![predicate.clone()],
                 validity_signature: None,
+                fill_immediately_or_kill: false,
             },
         };
 

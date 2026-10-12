@@ -59,7 +59,12 @@ impl ValidityAuthorization {
             if signature.normalize_s().is_some() {
                 return Err(ValidityAuthorizationError::InvalidSignature);
             }
-            let digest = Self::signing_hash(chain_id, *tx.hash(), &sidecar.validity);
+            let digest = Self::signing_hash(
+                chain_id,
+                *tx.hash(),
+                &sidecar.validity,
+                sidecar.fill_immediately_or_kill,
+            );
             let signer = signature
                 .recover_address_from_prehash(&digest)
                 .map_err(|_| ValidityAuthorizationError::InvalidSignature)?;
@@ -73,17 +78,19 @@ impl ValidityAuthorization {
     /// Returns the EIP-712 digest a sender must sign to authorize these predicates.
     ///
     /// The domain is `Base Transaction Validity`, version `1`, with the transaction's
-    /// chain ID. The message binds the complete signed transaction hash and all
-    /// predicate fields. Sorting by EIP-712 struct hash makes conjunction order
+    /// chain ID. The message binds the complete signed transaction hash, all
+    /// predicate fields, and the fill-immediately-or-kill flag. Sorting by EIP-712 struct hash makes conjunction order
     /// irrelevant, while retaining duplicates and normalizing omitted storage masks.
     pub fn signing_hash(
         chain_id: u64,
         transaction_hash: B256,
         predicates: &[ValidityPredicate],
+        fill_immediately_or_kill: bool,
     ) -> B256 {
         let message = Eip712ValidityAuthorization {
             transactionHash: transaction_hash,
             validity: Self::canonical_predicates(predicates),
+            fillImmediatelyOrKill: fill_immediately_or_kill,
         };
         message.eip712_signing_hash(&eip712_domain! {
             name: "Base Transaction Validity",
@@ -154,6 +161,7 @@ mod tests {
             TransactionValidity {
                 validity: predicates.to_vec(),
                 validity_signature: signature.copied(),
+                fill_immediately_or_kill: false,
             },
             ValiditySignatureMode::Required,
         )
@@ -211,6 +219,7 @@ mod tests {
                 tx.chain_id().unwrap(),
                 *tx.hash(),
                 predicates,
+                false,
             ))
             .unwrap()
     }
@@ -219,12 +228,20 @@ mod tests {
     fn eip712_digest_matches_independently_encoded_vector() {
         // Independently encoded with Keccak-256 and the documented EIP-712 types:
         // chain 8453, hash 0x44...44, balance/storage/block/flashblock predicates in canonical order.
-        let expected: B256 =
-            "0xccc8fc76b39e370a65b7e6c377ad2f7a00d309b80f5e100cf119b03f41de294d".parse().unwrap();
-        assert_eq!(
-            ValidityAuthorization::signing_hash(8453, B256::repeat_byte(0x44), &predicates()),
-            expected,
-        );
+        for (fill_immediately_or_kill, expected) in [
+            (false, "0xd84dabf4757de255627c9909e666e9ebde000d119f75127ae6a42075f256c465"),
+            (true, "0xc88c475e16a3ebba340445984ef738a2e50403fcff8cc17252d8e8e28a07f721"),
+        ] {
+            assert_eq!(
+                ValidityAuthorization::signing_hash(
+                    8453,
+                    B256::repeat_byte(0x44),
+                    &predicates(),
+                    fill_immediately_or_kill,
+                ),
+                expected.parse::<B256>().unwrap(),
+            );
+        }
     }
 
     #[test]
@@ -236,9 +253,9 @@ mod tests {
         };
         // Independent Keccak-256 encoding: nonce kind 4, operator 2, zero slot/mask.
         let expected: B256 =
-            "0x021385c3ddaed95323b4f834b255046fb76b8a315ea935efaec986ae00d2ffec".parse().unwrap();
+            "0xa515cc8d02405a976e0f26181ce259fa0bed84ea7093d5a20659bb7b129ddb04".parse().unwrap();
         assert_eq!(
-            ValidityAuthorization::signing_hash(8453, B256::repeat_byte(0x44), &[predicate]),
+            ValidityAuthorization::signing_hash(8453, B256::repeat_byte(0x44), &[predicate], false),
             expected,
         );
     }
@@ -256,8 +273,8 @@ mod tests {
             value: U256::from(1),
         };
         assert_eq!(
-            ValidityAuthorization::signing_hash(8453, B256::repeat_byte(0x44), &[omitted]),
-            ValidityAuthorization::signing_hash(8453, B256::repeat_byte(0x44), &[explicit]),
+            ValidityAuthorization::signing_hash(8453, B256::repeat_byte(0x44), &[omitted], false),
+            ValidityAuthorization::signing_hash(8453, B256::repeat_byte(0x44), &[explicit], false),
         );
     }
 
@@ -276,7 +293,11 @@ mod tests {
         assert!(
             ValidityAuthorization::validate_recovered(
                 &tx,
-                TransactionValidity { validity: predicates(), validity_signature: Some(signature) },
+                TransactionValidity {
+                    validity: predicates(),
+                    validity_signature: Some(signature),
+                    fill_immediately_or_kill: false,
+                },
                 ValiditySignatureMode::Off,
             )
             .is_ok()
@@ -297,7 +318,11 @@ mod tests {
         assert_eq!(verify(&tx, &validity, Some(&signature)), Ok(()));
         let validity = ValidityAuthorization::validate_recovered(
             &tx,
-            TransactionValidity { validity, validity_signature: Some(signature) },
+            TransactionValidity {
+                validity,
+                validity_signature: Some(signature),
+                fill_immediately_or_kill: false,
+            },
             ValiditySignatureMode::Required,
         )
         .unwrap();
@@ -454,12 +479,48 @@ mod tests {
             );
         }
         let wrong_domain = signer
-            .sign_hash_sync(&ValidityAuthorization::signing_hash(84532, *tx.hash(), &predicates))
+            .sign_hash_sync(&ValidityAuthorization::signing_hash(
+                84532,
+                *tx.hash(),
+                &predicates,
+                false,
+            ))
             .unwrap();
         assert_eq!(
             verify(&tx, &predicates, Some(&wrong_domain)),
             Err(ValidityAuthorizationError::InvalidSignature)
         );
+    }
+
+    #[test]
+    fn signature_binds_the_fill_immediately_or_kill_flag() {
+        let signer = PrivateKeySigner::random();
+        let tx = transaction(&signer, 8453, 0);
+        let predicates = predicates();
+        let validate = |fill_immediately_or_kill, signed_flag| {
+            let signature = signer
+                .sign_hash_sync(&ValidityAuthorization::signing_hash(
+                    8453,
+                    *tx.hash(),
+                    &predicates,
+                    signed_flag,
+                ))
+                .unwrap();
+            ValidityAuthorization::validate_recovered(
+                &tx,
+                TransactionValidity {
+                    validity: predicates.clone(),
+                    validity_signature: Some(signature),
+                    fill_immediately_or_kill,
+                },
+                ValiditySignatureMode::Required,
+            )
+            .map(|validity| validity.fill_immediately_or_kill)
+        };
+        assert_eq!(validate(true, true), Ok(true));
+        // A relay can neither strip nor add the flag under the sender's signature.
+        assert_eq!(validate(false, true), Err(ValidityAuthorizationError::InvalidSignature));
+        assert_eq!(validate(true, false), Err(ValidityAuthorizationError::InvalidSignature));
     }
 
     #[rstest::rstest]
@@ -484,7 +545,11 @@ mod tests {
         let signature = signed.then(|| sign(&signer, &tx, &predicates));
         let result = ValidityAuthorization::validate_recovered(
             &tx,
-            TransactionValidity { validity: predicates, validity_signature: signature },
+            TransactionValidity {
+                validity: predicates,
+                validity_signature: signature,
+                fill_immediately_or_kill: false,
+            },
             mode,
         )
         .map(|_| ());
@@ -508,6 +573,7 @@ mod tests {
             let sidecar = TransactionValidity {
                 validity: predicates.clone(),
                 validity_signature: Some(signature),
+                fill_immediately_or_kill: false,
             };
             let validity =
                 ValidityAuthorization::validate_recovered(&tx, sidecar, ValiditySignatureMode::Off)
@@ -529,7 +595,11 @@ mod tests {
         assert_eq!(
             ValidityAuthorization::validate_recovered(
                 &tx,
-                TransactionValidity { validity: predicates, validity_signature: Some(signature) },
+                TransactionValidity {
+                    validity: predicates,
+                    validity_signature: Some(signature),
+                    fill_immediately_or_kill: false,
+                },
                 mode
             )
             .map(|_| ()),

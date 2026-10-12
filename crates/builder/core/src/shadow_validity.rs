@@ -6,7 +6,8 @@ use alloy_primitives::{TxHash, U256};
 use base_bundles::MeterBundleResponse;
 use base_execution_txpool::{
     BasePooledTransaction, BuilderApiImpl, BuilderApiServer, InsertMetering, TransactionValidity,
-    ValidatedTransaction, ValidityOperator, ValidityPredicate, ValiditySignatureMode,
+    ValidatedTransaction, ValidatedTransactionExtensions, ValidityOperator, ValidityPredicate,
+    ValiditySignatureMode,
 };
 use jsonrpsee::core::RpcResult;
 use reth_transaction_pool::TransactionPool;
@@ -65,7 +66,7 @@ impl ShadowValidityConfig {
         if !self.enabled {
             return InjectionOutcome::Disabled;
         }
-        if !tx.extensions.validity.is_empty() || tx.extensions.validity_signature.is_some() {
+        if !tx.extensions.is_empty() {
             return InjectionOutcome::ExistingValidity;
         }
         // EIP-1559 transactions use the 0x02 EIP-2718 type byte. The inner RPC handler performs
@@ -251,6 +252,16 @@ mod tests {
         let mut tx = transaction(Bytes::from_static(&[0x02, 0x01]));
         tx.extensions.validity_signature =
             Some(Signature::new(U256::from(1), U256::from(1), false));
+        let original = tx.clone();
+        assert_eq!(config.inject(&mut tx), InjectionOutcome::ExistingValidity);
+        assert_eq!(tx.extensions, original.extensions);
+    }
+
+    #[test]
+    fn flag_only_sidecars_are_not_modified_by_shadow_injection() {
+        let config = ShadowValidityConfig::enabled(MAX_SHADOW_VALIDITY_SAMPLE_RATE_BPS).unwrap();
+        let mut tx = transaction(Bytes::from_static(&[0x02, 0x01]));
+        tx.extensions.fill_immediately_or_kill = true;
         let original = tx.clone();
         assert_eq!(config.inject(&mut tx), InjectionOutcome::ExistingValidity);
         assert_eq!(tx.extensions, original.extensions);
