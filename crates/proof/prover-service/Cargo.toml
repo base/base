@@ -32,6 +32,7 @@ tracing.workspace = true
 [dev-dependencies]
 rstest.workspace = true
 chrono.workspace = true
+base-proof-primitives.workspace = true
 jsonrpsee = { workspace = true, features = ["http-client"] }
 metrics-util = { workspace = true, features = ["debugging"] }
 base-prover-service-protocol = { workspace = true, features = ["rpc-client"] }

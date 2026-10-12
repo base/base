@@ -3,9 +3,10 @@
 use async_trait::async_trait;
 use backon::Retryable;
 use base_prover_service_protocol::{
-    CancelProofRequest, DeleteProofRequest, DeleteProofsByTeeSignerRequest, GetProofRequest,
-    GetProofResponse, ListProofsRequest, ListProofsResponse, ProveBlockRangeRequest,
-    ProveBlockRangeResponse, ProverRequesterApiClient,
+    CancelProofRequest, DeleteProofRequest, DeleteProofsByTeeSignerRequest,
+    DeleteProofsByUnregisteredTeeSignersRequest, GetProofRequest, GetProofResponse,
+    ListProofsRequest, ListProofsResponse, ProveBlockRangeRequest, ProveBlockRangeResponse,
+    ProverRequesterApiClient,
 };
 use base_retry::RetryConfig;
 use jsonrpsee::http_client::HttpClient;
@@ -40,13 +41,18 @@ pub trait ProofRequesterProvider: Send + Sync {
     ) -> Result<(), ProverServiceClientError>;
 
     /// Delete completed TEE proof requests produced by one signer.
-    ///
-    /// A call must make at most one destructive RPC attempt. Return ambiguous failures
-    /// to the caller rather than retrying: a later zero-row response or standard rejection
-    /// cannot establish that an earlier attempt did not delete proofs.
     async fn delete_proofs_by_tee_signer(
         &self,
         request: DeleteProofsByTeeSignerRequest,
+    ) -> Result<u64, ProverServiceClientError>;
+
+    /// Delete succeeded TEE proofs whose signer is absent from a fresh registry snapshot.
+    ///
+    /// Make at most one destructive RPC attempt so a lost reply remains visible to the
+    /// caller, rather than being hidden by a retry that returns zero rows.
+    async fn delete_proofs_by_unregistered_tee_signers(
+        &self,
+        request: DeleteProofsByUnregisteredTeeSignersRequest,
     ) -> Result<u64, ProverServiceClientError>;
 
     /// List submitted proof requests.
@@ -58,10 +64,9 @@ pub trait ProofRequesterProvider: Send + Sync {
 
 /// JSON-RPC client for proof requester methods.
 ///
-/// Requester operations use exponential backoff for transient JSON-RPC failures (per
-/// [`ProverServiceClientError::is_retryable`]), except signer batch deletion, which issues
-/// one attempt so callers can reconcile ambiguous destructive outcomes. Retry behavior
-/// for the other operations is controlled by [`RetryConfig`], defaulting to [`RetryConfig::default`].
+/// Transient failures use exponential backoff, except unregistered-signer cleanup, which
+/// makes one attempt so the collector can reconcile an ambiguous destructive outcome.
+/// Retry behavior for other operations is controlled by [`RetryConfig`].
 #[derive(Clone, Debug)]
 pub struct ProofRequesterClient {
     inner: HttpClient,
@@ -204,16 +209,40 @@ impl ProofRequesterClient {
     }
 
     /// Delete completed TEE proof requests produced by one signer.
-    ///
-    /// Intentionally makes one attempt, regardless of retry configuration. A lost response
-    /// may hide a committed deletion; transparently retrying could return zero rows or a
-    /// definite rejection and erase that ambiguity. The caller must reconcile before retrying.
     pub async fn delete_proofs_by_tee_signer(
         &self,
         request: DeleteProofsByTeeSignerRequest,
     ) -> Result<u64, ProverServiceClientError> {
         debug!(tee_signer = %request.tee_signer, "deleting proofs by TEE signer");
-        Ok(self.inner.delete_proofs_by_tee_signer(request).await?)
+        // `request` is `Copy`, so each retry attempt gets its own copy via `async move`
+        // while the outer binding stays available for the `notify` closure below.
+        (|| async move { Ok(self.inner.delete_proofs_by_tee_signer(request).await?) })
+            .retry(self.retry.to_backoff_builder())
+            .when(ProverServiceClientError::is_retryable)
+            .notify(|error, delay| {
+                warn!(
+                    tee_signer = %request.tee_signer,
+                    backoff_ms = delay.as_millis(),
+                    error_kind = error.kind(),
+                    "delete proofs by TEE signer failed; retrying"
+                );
+            })
+            .await
+    }
+
+    /// Delete succeeded TEE proofs whose signer is absent from a fresh registry snapshot.
+    ///
+    /// Deliberately makes one attempt: a retry returning zero rows cannot establish that
+    /// the first call did not commit. The collector must reconcile a lost response.
+    pub async fn delete_proofs_by_unregistered_tee_signers(
+        &self,
+        request: DeleteProofsByUnregisteredTeeSignersRequest,
+    ) -> Result<u64, ProverServiceClientError> {
+        debug!(
+            registered_signer_count = request.registered_signers.len(),
+            "deleting proofs from unregistered TEE signers"
+        );
+        Ok(self.inner.delete_proofs_by_unregistered_tee_signers(request).await?)
     }
 
     /// List submitted proof requests.
@@ -274,6 +303,13 @@ impl ProofRequesterProvider for ProofRequesterClient {
         Self::delete_proofs_by_tee_signer(self, request).await
     }
 
+    async fn delete_proofs_by_unregistered_tee_signers(
+        &self,
+        request: DeleteProofsByUnregisteredTeeSignersRequest,
+    ) -> Result<u64, ProverServiceClientError> {
+        Self::delete_proofs_by_unregistered_tee_signers(self, request).await
+    }
+
     async fn list_proofs(
         &self,
         request: ListProofsRequest,
@@ -296,11 +332,11 @@ mod tests {
 
     use async_trait::async_trait;
     use base_prover_service_protocol::{
-        CancelProofRequest, DeleteProofRequest, DeleteProofsByTeeSignerRequest, GetProofRequest,
-        GetProofResponse, ListProofsRequest, ListProofsResponse, ProofRequest, ProofRequestKind,
-        ProofResult, ProofStatus, ProofSummary, ProofType, ProveBlockRangeRequest,
-        ProveBlockRangeResponse, ProverRequesterApiServer, ZkBackend, ZkProofRequest,
-        ZkProofResult, ZkVm,
+        CancelProofRequest, DeleteProofRequest, DeleteProofsByTeeSignerRequest,
+        DeleteProofsByUnregisteredTeeSignersRequest, GetProofRequest, GetProofResponse,
+        ListProofsRequest, ListProofsResponse, ProofRequest, ProofRequestKind, ProofResult,
+        ProofStatus, ProofSummary, ProofType, ProveBlockRangeRequest, ProveBlockRangeResponse,
+        ProverRequesterApiServer, ZkBackend, ZkProofRequest, ZkProofResult, ZkVm,
     };
     use base_retry::RetryConfig;
     use chrono::Utc;
@@ -342,6 +378,9 @@ mod tests {
         cancel_request: Option<CancelProofRequest>,
         delete_request: Option<DeleteProofRequest>,
         batch_delete_request: Option<DeleteProofsByTeeSignerRequest>,
+        unregistered_delete_request: Option<DeleteProofsByUnregisteredTeeSignersRequest>,
+        unregistered_delete_results: VecDeque<RpcResult<u64>>,
+        unregistered_delete_calls: u32,
         list_request: Option<ListProofsRequest>,
     }
 
@@ -521,6 +560,16 @@ mod tests {
             Ok(2)
         }
 
+        async fn delete_proofs_by_unregistered_tee_signers(
+            &self,
+            request: DeleteProofsByUnregisteredTeeSignersRequest,
+        ) -> RpcResult<u64> {
+            let mut state = self.state.lock().expect("state lock should not be poisoned");
+            state.unregistered_delete_request = Some(request);
+            state.unregistered_delete_calls += 1;
+            state.unregistered_delete_results.pop_front().unwrap_or(Ok(2))
+        }
+
         async fn list_proofs(&self, request: ListProofsRequest) -> RpcResult<ListProofsResponse> {
             self.state.lock().expect("state lock should not be poisoned").list_request =
                 Some(request);
@@ -605,6 +654,20 @@ mod tests {
             .expect("delete_proofs_by_tee_signer should succeed");
         assert_eq!(batch_delete_response, 2);
 
+        let unregistered_delete_request = DeleteProofsByUnregisteredTeeSignersRequest {
+            registered_signers: vec![
+                "0x2222222222222222222222222222222222222222".parse().unwrap(),
+                "0x3333333333333333333333333333333333333333".parse().unwrap(),
+            ],
+        };
+        assert_eq!(
+            provider
+                .delete_proofs_by_unregistered_tee_signers(unregistered_delete_request.clone())
+                .await
+                .unwrap(),
+            2
+        );
+
         let list_request =
             ListProofsRequest { offset: 7, limit: 25, status_filter: Some(ProofStatus::Succeeded) };
         let list_response =
@@ -620,6 +683,11 @@ mod tests {
             assert_eq!(state.cancel_request.as_ref(), Some(&cancel_request));
             assert_eq!(state.delete_request.as_ref(), Some(&delete_request));
             assert_eq!(state.batch_delete_request, Some(batch_delete_request));
+            assert_eq!(
+                state.unregistered_delete_request.as_ref(),
+                Some(&unregistered_delete_request)
+            );
+            assert_eq!(state.unregistered_delete_calls, 1);
             assert_eq!(state.list_request, Some(list_request));
         }
 
@@ -734,5 +802,43 @@ mod tests {
         assert_eq!(api_clone.delete_calls(), 2);
 
         server.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn bulk_cleanup_exposes_lost_reply_without_retrying_into_a_different_outcome() {
+        for retry_outcome in [
+            Ok(0),
+            Err(ErrorObjectOwned::owned(
+                ErrorCode::MethodNotFound.code(),
+                "missing method",
+                None::<()>,
+            )),
+            Err(invalid_params_error("invalid snapshot")),
+        ] {
+            let api = MockRequesterApi::new();
+            api.state
+                .lock()
+                .unwrap()
+                .unregistered_delete_results
+                .extend([Err(unavailable_error("bulk deletion reply lost")), retry_outcome]);
+            let server =
+                RunningRequesterServer::spawn_with_retry(api.clone(), fast_retry_config()).await;
+            let request =
+                DeleteProofsByUnregisteredTeeSignersRequest { registered_signers: Vec::new() };
+
+            let error = server
+                .client
+                .delete_proofs_by_unregistered_tee_signers(request.clone())
+                .await
+                .expect_err("unknown deletion outcome must be exposed to the collector");
+            assert!(error.is_retryable());
+            {
+                let state = api.state.lock().unwrap();
+                assert_eq!(state.unregistered_delete_calls, 1);
+                assert_eq!(state.unregistered_delete_request.as_ref(), Some(&request));
+                assert_eq!(state.unregistered_delete_results.len(), 1);
+            }
+            server.shutdown().await;
+        }
     }
 }

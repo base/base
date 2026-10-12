@@ -40,7 +40,7 @@ use crate::{
     proof_recovery::{ProofRecovery, ProofRecoveryConfig},
     proof_submitter::ProofSubmitter,
     proposal_intervals::IntervalResolver,
-    tee_proof_recovery::{OnchainTeeSignerRegistry, TeeProofRecovery},
+    tee_signer_registry::OnchainTeeSignerRegistry,
 };
 
 const SUBMIT_TIMEOUT_SLACK: Duration = Duration::from_mins(2);
@@ -139,6 +139,7 @@ impl ProposerService {
             Arc::clone(&factory_client),
             Arc::clone(&verifier_client),
             config.game_type,
+            config.rpc_timeout,
         ));
         let verifier_client: Arc<dyn AggregateVerifierClient> = verifier_client;
 
@@ -260,18 +261,11 @@ impl ProposerService {
             Arc::clone(&rollup_client),
             proof_submitter,
             Arc::clone(&intervals),
-            driver_config.submit_timeout,
-        );
-        let tee_proof_recovery = TeeProofRecovery::new(
-            Arc::clone(&proof_requester),
-            Arc::<RollupClient>::clone(&rollup_client),
-            intervals,
             tee_signer_registry,
-            config.rpc_timeout,
+            &driver_config,
         );
         let pipeline =
-            ProvingPipeline::new(driver_config, proof_dispatcher, proof_recovery, proof_collector)
-                .with_tee_proof_recovery(tee_proof_recovery);
+            ProvingPipeline::new(driver_config, proof_dispatcher, proof_recovery, proof_collector);
         info!("Proving pipeline initialized");
         let driver_handle: Arc<dyn ProposerDriverControl> =
             Arc::new(PipelineHandle::new(pipeline, cancel.clone()));

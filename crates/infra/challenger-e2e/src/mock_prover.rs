@@ -206,6 +206,14 @@ impl ProverRequesterApiServer for MockProverRpc {
         Ok(0)
     }
 
+    async fn delete_proofs_by_unregistered_tee_signers(
+        &self,
+        _request: base_prover_service_protocol::DeleteProofsByUnregisteredTeeSignersRequest,
+    ) -> RpcResult<u64> {
+        // This fixture stores only ZK proofs.
+        Ok(0)
+    }
+
     async fn list_proofs(&self, _request: ListProofsRequest) -> RpcResult<ListProofsResponse> {
         Err(MockProverService::unsupported("listProofs"))
     }

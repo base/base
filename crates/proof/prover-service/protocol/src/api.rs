@@ -4,11 +4,12 @@ use jsonrpsee::proc_macros::rpc;
 
 use crate::{
     AbandonProofRequest, AbandonProofResponse, CancelProofRequest, DeleteProofRequest,
-    DeleteProofsByTeeSignerRequest, GetNextProofRequest, GetNextProofResponse, GetProofRequest,
-    GetProofResponse, GetProofSessionRequest, GetProofSessionResponse, HeartbeatRequest,
-    HeartbeatResponse, ListProofsRequest, ListProofsResponse, ProveBlockRangeRequest,
-    ProveBlockRangeResponse, RecordProofSessionRequest, RecordProofSessionResponse,
-    WorkerSubmitProofRequest, WorkerSubmitProofResponse,
+    DeleteProofsByTeeSignerRequest, DeleteProofsByUnregisteredTeeSignersRequest,
+    GetNextProofRequest, GetNextProofResponse, GetProofRequest, GetProofResponse,
+    GetProofSessionRequest, GetProofSessionResponse, HeartbeatRequest, HeartbeatResponse,
+    ListProofsRequest, ListProofsResponse, ProveBlockRangeRequest, ProveBlockRangeResponse,
+    RecordProofSessionRequest, RecordProofSessionResponse, WorkerSubmitProofRequest,
+    WorkerSubmitProofResponse,
 };
 
 #[cfg_attr(
@@ -61,6 +62,16 @@ pub trait ProverRequesterApi {
     async fn delete_proofs_by_tee_signer(
         &self,
         request: DeleteProofsByTeeSignerRequest,
+    ) -> jsonrpsee::core::RpcResult<u64>;
+
+    /// Delete succeeded TEE proofs whose nonzero signer is absent from a fresh registry snapshot.
+    ///
+    /// The caller supplies the complete registered-signer allowlist for this deployment.
+    /// Queued/running jobs, non-TEE proofs, and unknown signer metadata are preserved.
+    #[method(name = "deleteProofsByUnregisteredTeeSigners")]
+    async fn delete_proofs_by_unregistered_tee_signers(
+        &self,
+        request: DeleteProofsByUnregisteredTeeSignersRequest,
     ) -> jsonrpsee::core::RpcResult<u64>;
 
     /// List submitted proof requests.

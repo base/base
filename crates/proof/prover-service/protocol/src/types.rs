@@ -172,6 +172,16 @@ pub struct DeleteProofsByTeeSignerRequest {
     pub tee_signer: Address,
 }
 
+/// Request to delete succeeded TEE proofs from signers absent from a fresh registry snapshot.
+///
+/// The snapshot must cover the registry used by this prover-service deployment. Empty
+/// snapshots are explicit and valid; a failed registry read must never become an empty list.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeleteProofsByUnregisteredTeeSignersRequest {
+    /// Fresh, complete allowlist of currently registered TEE signer addresses.
+    pub registered_signers: Vec<Address>,
+}
+
 /// Submitted proof request.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProofRequest {
@@ -610,6 +620,48 @@ mod tests {
                 "retry_failed": true
             })
         );
+    }
+
+    #[test]
+    fn bulk_signer_cleanup_round_trips_an_explicit_registration_snapshot() {
+        let request = DeleteProofsByUnregisteredTeeSignersRequest {
+            registered_signers: vec![Address::repeat_byte(0x11), Address::repeat_byte(0x22)],
+        };
+        let value = serde_json::to_value(&request).unwrap();
+        assert_eq!(
+            value,
+            json!({"registered_signers": [
+                "0x1111111111111111111111111111111111111111",
+                "0x2222222222222222222222222222222222222222"
+            ]})
+        );
+        assert_eq!(
+            serde_json::from_value::<DeleteProofsByUnregisteredTeeSignersRequest>(value).unwrap(),
+            request
+        );
+    }
+
+    #[test]
+    fn bulk_signer_cleanup_requires_the_snapshot_instead_of_defaulting_to_empty() {
+        assert!(
+            serde_json::from_value::<DeleteProofsByUnregisteredTeeSignersRequest>(json!({}))
+                .is_err()
+        );
+        assert!(
+            serde_json::from_value::<DeleteProofsByUnregisteredTeeSignersRequest>(
+                json!({"registered_signers": ["invalid-address"]})
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn bulk_signer_cleanup_accepts_an_explicit_empty_snapshot() {
+        let request = serde_json::from_value::<DeleteProofsByUnregisteredTeeSignersRequest>(
+            json!({"registered_signers": []}),
+        )
+        .unwrap();
+        assert!(request.registered_signers.is_empty());
     }
 
     #[test]

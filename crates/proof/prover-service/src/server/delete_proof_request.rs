@@ -1,5 +1,7 @@
 use base_prover_service_db::{DeleteProofRequestOutcome, canonical_session_id};
-use base_prover_service_protocol::{DeleteProofRequest, DeleteProofsByTeeSignerRequest};
+use base_prover_service_protocol::{
+    DeleteProofRequest, DeleteProofsByTeeSignerRequest, DeleteProofsByUnregisteredTeeSignersRequest,
+};
 use jsonrpsee::core::RpcResult;
 use tracing::info;
 
@@ -62,5 +64,33 @@ impl ProverServiceServer {
             .map_err(|error| internal(format!("Database error: {error}")))?;
         info!(tee_signer = %request.tee_signer, deleted_count, "Deleted TEE proofs by signer");
         Ok(deleted_count)
+    }
+
+    /// Deletes succeeded TEE proofs whose nonzero signer is absent from a fresh allowlist.
+    pub async fn delete_proofs_by_unregistered_tee_signers_impl(
+        &self,
+        request: DeleteProofsByUnregisteredTeeSignersRequest,
+    ) -> RpcResult<u64> {
+        let start = std::time::Instant::now();
+        let result = async {
+            if request.registered_signers.iter().any(|signer| signer.is_zero()) {
+                return Err(invalid_argument(
+                    "registered_signers must not contain the zero address",
+                ));
+            }
+            let deleted_count = self
+                .repo
+                .delete_proof_requests_by_unregistered_tee_signers(&request.registered_signers)
+                .await
+                .map_err(|error| internal(format!("Database error: {error}")))?;
+            info!(
+                registered_signer_count = request.registered_signers.len(),
+                deleted_count, "Deleted proofs from unregistered TEE signers"
+            );
+            Ok(deleted_count)
+        }
+        .await;
+        record_rpc_result("DeleteProofsByUnregisteredTeeSigners", start, &result);
+        result
     }
 }

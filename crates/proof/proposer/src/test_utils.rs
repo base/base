@@ -22,7 +22,8 @@ use base_proof_rpc::{
 };
 use base_prover_service_client::{ProofRequesterProvider, ProverServiceClientError};
 use base_prover_service_protocol::{
-    DeleteProofRequest, DeleteProofsByTeeSignerRequest, GetProofRequest, GetProofResponse,
+    DeleteProofRequest, DeleteProofsByTeeSignerRequest,
+    DeleteProofsByUnregisteredTeeSignersRequest, GetProofRequest, GetProofResponse,
     ListProofsRequest, ListProofsResponse, PROOF_REQUEST_NOT_FOUND_MESSAGE,
     ProofRequestIdCollisionMessage, ProofRequestKind as ApiProofRequestKind,
     ProofResult as ApiProofResult, ProofStatus, ProveBlockRangeRequest, ProveBlockRangeResponse,
@@ -458,6 +459,9 @@ pub fn test_proposal(block_number: u64) -> Proposal {
 }
 
 /// Mock prover-service requester for pipeline tests.
+///
+/// Responses depend on prior dispatch/delete calls and concurrent pipeline polling,
+/// so this stateful fixture models session lifetimes rather than independent mock returns.
 #[derive(Debug, Default)]
 pub struct MockProofRequester {
     /// Requests accepted through `prove_block_range`.
@@ -466,6 +470,14 @@ pub struct MockProofRequester {
     pub failed_sessions: Mutex<HashMap<String, String>>,
     /// TEE signers passed to batch deletion.
     pub deleted_tee_signers: Mutex<Vec<Address>>,
+    /// Per-session signer metadata, overriding the fixture's default signer.
+    pub tee_signers: HashMap<String, Address>,
+    /// Return this JSON-RPC rejection before attempting registry-based bulk deletion.
+    pub bulk_delete_error_code: Option<i32>,
+    /// Commit bulk deletion but return a timeout instead of its row count.
+    pub lose_bulk_delete_response: bool,
+    /// Fresh registry allowlists supplied to deployment-wide bulk cleanup.
+    pub deleted_tee_signer_allowlists: Mutex<Vec<Vec<Address>>>,
     /// Reject every `prove_block_range` call with an L1 head conflict.
     pub reject_l1_head_conflict: bool,
     /// Return a mismatched session id from `prove_block_range`.
@@ -551,7 +563,11 @@ impl ProofRequesterProvider for MockProofRequester {
                 aggregate_proposal,
                 proposals,
                 tee_kind: TeeKind::AwsNitro,
-                tee_signer: Address::repeat_byte(0x11),
+                tee_signer: self
+                    .tee_signers
+                    .get(&request.proof.session_id)
+                    .copied()
+                    .unwrap_or(Address::repeat_byte(0x11)),
             })),
         })
     }
@@ -578,8 +594,52 @@ impl ProofRequesterProvider for MockProofRequester {
         }
 
         self.deleted_tee_signers.lock().unwrap().push(request.tee_signer);
-        let deleted_count = self.requests.lock().unwrap().drain().count() as u64;
+        let failed_sessions = self.failed_sessions.lock().unwrap();
+        let mut requests = self.requests.lock().unwrap();
+        let before = requests.len();
+        requests.retain(|session_id, proof_request| {
+            let signer =
+                self.tee_signers.get(session_id).copied().unwrap_or(Address::repeat_byte(0x11));
+            failed_sessions.contains_key(session_id)
+                || !matches!(proof_request.proof.request, ApiProofRequestKind::Tee(_))
+                || signer != request.tee_signer
+        });
+        let deleted_count = (before - requests.len()) as u64;
         Ok(deleted_count)
+    }
+
+    async fn delete_proofs_by_unregistered_tee_signers(
+        &self,
+        request: DeleteProofsByUnregisteredTeeSignersRequest,
+    ) -> Result<u64, ProverServiceClientError> {
+        self.deleted_tee_signer_allowlists.lock().unwrap().push(request.registered_signers.clone());
+        if let Some(code) = self.bulk_delete_error_code {
+            return Err(JsonRpcClientError::Call(ErrorObjectOwned::owned(
+                code,
+                "simulated bulk cleanup rejection",
+                None::<()>,
+            ))
+            .into());
+        }
+        if self.reject_delete {
+            return Err(ProverServiceClientError::Timeout("simulated delete failure".into()));
+        }
+        let failed_sessions = self.failed_sessions.lock().unwrap();
+        let mut requests = self.requests.lock().unwrap();
+        let before = requests.len();
+        requests.retain(|session_id, proof_request| {
+            let signer =
+                self.tee_signers.get(session_id).copied().unwrap_or(Address::repeat_byte(0x11));
+            failed_sessions.contains_key(session_id)
+                || !matches!(proof_request.proof.request, ApiProofRequestKind::Tee(_))
+                || signer.is_zero()
+                || request.registered_signers.contains(&signer)
+        });
+        let deleted = (before - requests.len()) as u64;
+        if self.lose_bulk_delete_response {
+            return Err(ProverServiceClientError::Timeout("bulk deletion reply lost".into()));
+        }
+        Ok(deleted)
     }
 
     async fn list_proofs(

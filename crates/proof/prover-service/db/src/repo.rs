@@ -1,3 +1,4 @@
+use alloy_primitives::Address;
 use base_prover_service_protocol::{
     PROOF_REQUEST_CANCELLED_MESSAGE, ProofResult as ProtocolProofResult, ZkBackend,
 };
@@ -405,6 +406,44 @@ impl ProofRequestRepo {
             .await?
             .rows_affected();
 
+        tx.commit().await?;
+        Ok(deleted)
+    }
+
+    /// Delete succeeded TEE requests whose recorded signer is absent from a fresh allowlist.
+    ///
+    /// This deployment-wide operation preserves other proof types, unfinished jobs, and
+    /// null/zero signer metadata. The allowlist must cover the registry for this deployment.
+    /// Selection, outbox cleanup, and request deletion commit atomically.
+    pub async fn delete_proof_requests_by_unregistered_tee_signers(
+        &self,
+        registered_signers: &[Address],
+    ) -> Result<u64> {
+        let registered_signers =
+            registered_signers.iter().map(|signer| format!("{signer:#x}")).collect::<Vec<_>>();
+        let mut tx = self.pool.begin().await?;
+        let ids = sqlx::query_scalar::<_, Uuid>(
+            "SELECT id FROM proof_requests \
+             WHERE api_proof_type = $1 AND status = $2 \
+             AND tee_signer IS NOT NULL AND tee_signer <> $3 \
+             AND NOT (tee_signer = ANY($4)) FOR UPDATE",
+        )
+        .bind(ApiProofType::Tee.as_str())
+        .bind(ProofStatus::Succeeded.as_str())
+        .bind(format!("{:#x}", Address::ZERO))
+        .bind(&registered_signers)
+        .fetch_all(&mut *tx)
+        .await?;
+
+        sqlx::query("DELETE FROM proof_request_outbox WHERE proof_request_id = ANY($1)")
+            .bind(&ids)
+            .execute(&mut *tx)
+            .await?;
+        let deleted = sqlx::query("DELETE FROM proof_requests WHERE id = ANY($1)")
+            .bind(&ids)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
         tx.commit().await?;
         Ok(deleted)
     }

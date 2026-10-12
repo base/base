@@ -5,17 +5,18 @@ use std::{sync::Arc, time::Duration};
 use alloy_primitives::Address;
 use base_proof_rpc::RollupProvider;
 use base_proof_submission::ProofSubmissionError;
-use base_prover_service_client::ProofRequesterProvider;
+use base_prover_service_client::{ProofRequesterProvider, ProverServiceClientError};
 use base_prover_service_protocol::{
-    DeleteProofRequest, DeleteProofsByTeeSignerRequest, GetProofRequest, ProofStatus,
+    DeleteProofRequest, DeleteProofsByUnregisteredTeeSignersRequest, GetProofRequest, ProofStatus,
     TeeProofResult,
 };
+use jsonrpsee::{core::client::Error as JsonRpcClientError, types::ErrorCode};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use crate::{
-    IntervalResolver, Metrics, ProofSubmitter, ProofTarget, ProposerError, ProposerProofAdapter,
-    RecoveredState, SubmitAction,
+    DriverConfig, IntervalResolver, Metrics, ProofSubmitter, ProofTarget, ProposerError,
+    ProposerProofAdapter, RecoveredState, SubmitAction, TeeSignerRegistry,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,6 +35,8 @@ where
     rollup_client: Arc<R>,
     submitter: ProofSubmitter,
     intervals: Arc<IntervalResolver>,
+    tee_signer_registry: Arc<dyn TeeSignerRegistry>,
+    cleanup_retry_delay: Duration,
     submit_timeout: Option<Duration>,
 }
 
@@ -44,6 +47,7 @@ where
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ProofCollector")
             .field("submit_timeout", &self.submit_timeout)
+            .field("cleanup_retry_delay", &self.cleanup_retry_delay)
             .finish_non_exhaustive()
     }
 }
@@ -58,9 +62,18 @@ where
         rollup_client: Arc<R>,
         submitter: ProofSubmitter,
         intervals: Arc<IntervalResolver>,
-        submit_timeout: Option<Duration>,
+        tee_signer_registry: Arc<dyn TeeSignerRegistry>,
+        config: &DriverConfig,
     ) -> Self {
-        Self { proof_requester, rollup_client, submitter, intervals, submit_timeout }
+        Self {
+            proof_requester,
+            rollup_client,
+            submitter,
+            intervals,
+            tee_signer_registry,
+            cleanup_retry_delay: config.poll_interval,
+            submit_timeout: config.submit_timeout,
+        }
     }
 
     /// Runs one collector tick.
@@ -77,29 +90,6 @@ where
         dispatched_through: u64,
         cancel: &CancellationToken,
     ) -> bool {
-        self.tick_with_restart(
-            current,
-            finalized_head,
-            dispatched_through,
-            cancel,
-            &CancellationToken::new(),
-        )
-        .await
-    }
-
-    /// Collects proofs until idle or recovery is required, honoring deferred cleanup restarts.
-    ///
-    /// Unlike shutdown cancellation, `restart` never interrupts a submission. It is checked
-    /// before starting each submission and after the current submission returns, allowing the
-    /// transaction manager to finish nonce cleanup and manage any pending L1 transaction.
-    pub async fn tick_with_restart(
-        &self,
-        current: &mut RecoveredState,
-        finalized_head: u64,
-        dispatched_through: u64,
-        cancel: &CancellationToken,
-        restart: &CancellationToken,
-    ) -> bool {
         if cancel.is_cancelled() {
             return false;
         }
@@ -107,9 +97,6 @@ where
         loop {
             if cancel.is_cancelled() {
                 return false;
-            }
-            if restart.is_cancelled() {
-                return true;
             }
 
             // Resolved per target: the interval changes at the Denim activation
@@ -169,12 +156,6 @@ where
                     return self.delete_proof_request(&session_id, target_block).await;
                 }
             };
-
-            // A cleanup may have completed while the proof was being polled. Do not
-            // start a new transaction, but never use this token to cancel an existing one.
-            if restart.is_cancelled() {
-                return true;
-            }
 
             match self
                 .submit_proof(
@@ -329,10 +310,6 @@ where
     ) -> SubmitOutcome {
         info!(target_block, parent_address = %parent_address, "Submitting proof");
 
-        // Bind up front (the field is `Copy`) so the later discard-path match does
-        // not read `proof` after it has been borrowed for submission below.
-        let tee_signer = proof.tee_signer;
-
         let mut submit_timer = base_metrics::timed!(Metrics::proposal_total_duration_seconds());
         let result = match cancel
             .run_until_cancelled(async {
@@ -410,7 +387,7 @@ where
                             error,
                             ProposerError::Submission(ProofSubmissionError::InvalidSigner)
                         ) {
-                            self.delete_proofs_by_tee_signer(tee_signer, target_block).await
+                            self.delete_proofs_by_unregistered_tee_signers(target_block).await
                         } else {
                             self.delete_proof_request(session_id, target_block).await
                         }
@@ -452,33 +429,51 @@ where
         }
     }
 
-    async fn delete_proofs_by_tee_signer(&self, tee_signer: Address, target_block: u64) -> bool {
+    /// Purges succeeded proofs from all currently unregistered signers after `InvalidSigner`.
+    ///
+    /// Call only after the current submission has returned. A fresh registry read fails
+    /// closed. Unknown destructive outcomes back off for the normal poll interval before
+    /// requesting recovery; known rejections and zero-row deletes idle without spinning.
+    pub async fn delete_proofs_by_unregistered_tee_signers(&self, target_block: u64) -> bool {
+        let registered_signers = match self.tee_signer_registry.registered_signers().await {
+            Ok(signers) => signers,
+            Err(error) => {
+                Metrics::errors_total(error.metric_label()).increment(1);
+                warn!(target_block, error = %error, "Failed to read TEE signer registry for cleanup");
+                return false;
+            }
+        };
         match self
             .proof_requester
-            .delete_proofs_by_tee_signer(DeleteProofsByTeeSignerRequest { tee_signer })
+            .delete_proofs_by_unregistered_tee_signers(
+                DeleteProofsByUnregisteredTeeSignersRequest { registered_signers },
+            )
             .await
         {
             Ok(deleted_count) => {
                 info!(
                     target_block,
-                    tee_signer = %tee_signer,
-                    deleted_count,
-                    "Deleted invalid TEE signer proof requests"
+                    deleted_count, "Deleted unregistered TEE signer proof requests"
                 );
-                // A zero-row delete means the just-submitted proof was not matched
-                // (e.g. its recorded signer diverged from the reported one). Treat it
-                // as "not deleted" so the caller idles and backs off instead of
-                // immediately re-polling the same still-present proof in a tight loop.
                 deleted_count > 0
             }
+            Err(ProverServiceClientError::RpcTransport(JsonRpcClientError::Call(ref call)))
+                if call.code() == ErrorCode::MethodNotFound.code()
+                    || call.code() == ErrorCode::InvalidParams.code() =>
+            {
+                Metrics::errors_total("prover").increment(1);
+                warn!(target_block, error = %call, "TEE signer cleanup rejected without deletion");
+                false
+            }
             Err(error) => {
+                Metrics::errors_total("prover").increment(1);
                 warn!(
                     target_block,
-                    tee_signer = %tee_signer,
                     error = %error,
-                    "Failed to delete proof requests by TEE signer"
+                    "TEE signer cleanup outcome unknown, backing off before recovery"
                 );
-                false
+                tokio::time::sleep(self.cleanup_retry_delay).await;
+                true
             }
         }
     }
@@ -495,11 +490,13 @@ mod tests {
     use base_proof_primitives::ProofRequest;
     use base_proof_submission::ProofSubmissionError;
     use base_prover_service_protocol::TeeKind;
+    use futures::FutureExt;
     use tokio_util::sync::CancellationToken;
 
     use super::*;
     use crate::{
         DriverConfig, OutputProposer,
+        tee_signer_registry::MockTeeSignerRegistry,
         test_utils::{
             MockAggregateVerifier, MockDisputeGameFactory, MockOutputProposer, MockProofRequester,
             MockRollupClient, test_fixed_interval_resolver, test_proposal, test_sync_status,
@@ -507,6 +504,7 @@ mod tests {
     };
 
     const BLOCK_INTERVAL: u64 = 100;
+    const CLEANUP_RETRY_DELAY: Duration = Duration::from_millis(10);
     fn recovered(block: u64) -> RecoveredState {
         RecoveredState {
             parent_address: Address::ZERO,
@@ -528,12 +526,15 @@ mod tests {
         rollup_client: Arc<MockRollupClient>,
         output_proposer: Arc<dyn OutputProposer>,
     ) -> ProofCollector<MockRollupClient> {
+        let mut registry = MockTeeSignerRegistry::new();
+        registry.expect_registered_signers().returning(|| Ok(Vec::new()));
         make_collector_with_contracts(
             proof_requester,
             rollup_client,
             output_proposer,
             Arc::new(MockDisputeGameFactory::default()),
             Arc::new(MockAggregateVerifier::default()),
+            Arc::new(registry),
         )
     }
 
@@ -543,6 +544,7 @@ mod tests {
         output_proposer: Arc<dyn OutputProposer>,
         factory_client: Arc<dyn DisputeGameFactoryClient>,
         verifier_client: Arc<dyn AggregateVerifierClient>,
+        registry: Arc<dyn TeeSignerRegistry>,
     ) -> ProofCollector<MockRollupClient> {
         let intervals = test_fixed_interval_resolver(BLOCK_INTERVAL, BLOCK_INTERVAL);
         let submitter = ProofSubmitter::new(
@@ -559,7 +561,12 @@ mod tests {
             rollup_client,
             submitter,
             intervals,
-            Some(std::time::Duration::from_secs(60)),
+            registry,
+            &DriverConfig {
+                poll_interval: CLEANUP_RETRY_DELAY,
+                submit_timeout: Some(Duration::from_secs(60)),
+                ..Default::default()
+            },
         )
     }
 
@@ -613,10 +620,13 @@ mod tests {
             .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(proof_request))
             .await
             .expect("test setup should dispatch root session");
-        let collector = make_collector(
-            requester,
+        let collector = make_collector_with_contracts(
+            Arc::<MockProofRequester>::clone(&requester),
             rollup_client(target_block, Some(claimed_root)),
             Arc::new(MockOutputProposer::default()),
+            Arc::new(MockDisputeGameFactory::default()),
+            Arc::new(MockAggregateVerifier::default()),
+            Arc::new(MockTeeSignerRegistry::new()),
         );
 
         let mut current = recovered(100);
@@ -625,6 +635,7 @@ mod tests {
             .await;
 
         assert!(restart);
+        assert!(requester.deleted_tee_signer_allowlists.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -687,6 +698,7 @@ mod tests {
             Arc::new(MockOutputProposer::default()),
             Arc::new(factory),
             Arc::new(MockAggregateVerifier::default()),
+            Arc::new(MockTeeSignerRegistry::new()),
         );
         let mut current = recovered(100);
 
@@ -698,56 +710,76 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tick_batch_deletes_proofs_from_invalid_signer() {
-        let requester = Arc::new(MockProofRequester::default());
-        let target_block = 200;
-        let claimed_root = B256::repeat_byte(target_block as u8);
-        let session_id = ProposerProofAdapter::tee_session_id_for_root(claimed_root);
-        let proof_request = ProofRequest {
-            claimed_l2_output_root: claimed_root,
-            claimed_l2_block_number: target_block,
-            l1_head_number: 1000,
+    async fn tick_bulk_deletes_all_unregistered_signers_on_first_invalid_signer() {
+        let first = Address::repeat_byte(0x11);
+        let second = Address::repeat_byte(0x22);
+        let registered = Address::repeat_byte(0x33);
+        let targets = [
+            (200, B256::repeat_byte(0xc8), first),
+            (300, B256::repeat_byte(0x30), second),
+            (400, B256::repeat_byte(0x40), registered),
+        ];
+        let requester = Arc::new(MockProofRequester {
+            tee_signers: targets
+                .iter()
+                .map(|(_, root, signer)| {
+                    (ProposerProofAdapter::tee_session_id_for_root(*root), *signer)
+                })
+                .collect(),
             ..Default::default()
-        };
-        requester
-            .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(proof_request))
-            .await
-            .expect("test setup should dispatch root session");
-        let later_root = B256::repeat_byte(0xcc);
-        let later_session_id = ProposerProofAdapter::tee_session_id_for_root(later_root);
-        requester
-            .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(ProofRequest {
-                claimed_l2_output_root: later_root,
-                claimed_l2_block_number: target_block + BLOCK_INTERVAL,
-                l1_head_number: 1000,
-                ..Default::default()
-            }))
-            .await
-            .expect("test setup should dispatch later root session");
-        let collector = make_collector(
-            Arc::clone(&requester) as Arc<dyn ProofRequesterProvider>,
-            rollup_client(target_block, Some(claimed_root)),
-            Arc::new(MockOutputProposer::with_create_error(ProposerError::Submission(
-                ProofSubmissionError::InvalidSigner,
-            ))),
+        });
+        for (block, root, _) in targets {
+            requester
+                .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(
+                    ProofRequest {
+                        claimed_l2_output_root: root,
+                        claimed_l2_block_number: block,
+                        l1_head_number: 1000,
+                        ..Default::default()
+                    },
+                ))
+                .await
+                .unwrap();
+        }
+        let mut registry = MockTeeSignerRegistry::new();
+        registry.expect_registered_signers().times(1).return_once(move || Ok(vec![registered]));
+        let output = Arc::new(MockOutputProposer::with_create_error(ProposerError::Submission(
+            ProofSubmissionError::InvalidSigner,
+        )));
+        let collector = make_collector_with_contracts(
+            Arc::<MockProofRequester>::clone(&requester),
+            rollup_client(200, Some(targets[0].1)),
+            Arc::<MockOutputProposer>::clone(&output),
+            Arc::new(MockDisputeGameFactory::default()),
+            Arc::new(MockAggregateVerifier::default()),
+            Arc::new(registry),
         );
-
         let mut current = recovered(100);
-        let restart = collector
-            .tick(&mut current, target_block, target_block, &CancellationToken::new())
-            .await;
 
-        assert!(restart);
-        assert!(!requester.requests.lock().unwrap().contains_key(&session_id));
-        assert!(!requester.requests.lock().unwrap().contains_key(&later_session_id));
-        assert_eq!(
-            *requester.deleted_tee_signers.lock().unwrap(),
-            vec![Address::repeat_byte(0x11)]
+        assert!(collector.tick(&mut current, 400, 400, &CancellationToken::new()).await);
+
+        let requests = requester.requests.lock().unwrap();
+        assert!(
+            !requests.contains_key(&ProposerProofAdapter::tee_session_id_for_root(targets[0].1))
         );
+        assert!(
+            !requests.contains_key(&ProposerProofAdapter::tee_session_id_for_root(targets[1].1))
+        );
+        assert!(
+            requests.contains_key(&ProposerProofAdapter::tee_session_id_for_root(targets[2].1))
+        );
+        assert_eq!(requests.len(), 1);
+        assert_eq!(
+            *requester.deleted_tee_signer_allowlists.lock().unwrap(),
+            vec![vec![registered]]
+        );
+        assert!(requester.deleted_tee_signers.lock().unwrap().is_empty());
+        assert_eq!(*output.created.lock().unwrap(), 1);
+        assert_eq!(current.l2_block_number, 100);
     }
 
-    #[tokio::test]
-    async fn tick_waits_when_delete_after_discard_fails() {
+    #[tokio::test(start_paused = true)]
+    async fn tick_backs_off_and_restarts_when_cleanup_outcome_is_unknown() {
         let requester = Arc::new(MockProofRequester { reject_delete: true, ..Default::default() });
         let target_block = 200;
         let claimed_root = B256::repeat_byte(target_block as u8);
@@ -771,11 +803,13 @@ mod tests {
         );
 
         let mut current = recovered(100);
+        let started = tokio::time::Instant::now();
         let restart = collector
             .tick(&mut current, target_block, target_block, &CancellationToken::new())
             .await;
 
-        assert!(!restart);
+        assert!(restart);
+        assert!(started.elapsed() >= CLEANUP_RETRY_DELAY);
         assert!(requester.requests.lock().unwrap().contains_key(&session_id));
     }
 
@@ -848,5 +882,198 @@ mod tests {
 
         assert!(restart);
         assert!(!requester.failed_sessions.lock().unwrap().contains_key(&session_id));
+    }
+
+    async fn invalid_signer_collector(
+        requester: Arc<MockProofRequester>,
+        registry: Arc<dyn TeeSignerRegistry>,
+    ) -> (ProofCollector<MockRollupClient>, [String; 2]) {
+        let targets = [(200, B256::repeat_byte(0xc8)), (300, B256::repeat_byte(0x2c))];
+        let sessions = targets.map(|(_, root)| ProposerProofAdapter::tee_session_id_for_root(root));
+        for (block, root) in targets {
+            requester
+                .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(
+                    ProofRequest {
+                        claimed_l2_output_root: root,
+                        claimed_l2_block_number: block,
+                        l1_head_number: 1000,
+                        ..Default::default()
+                    },
+                ))
+                .await
+                .unwrap();
+        }
+        let collector = make_collector_with_contracts(
+            requester,
+            rollup_client(200, Some(targets[0].1)),
+            Arc::new(MockOutputProposer::with_create_error(ProposerError::Submission(
+                ProofSubmissionError::InvalidSigner,
+            ))),
+            Arc::new(MockDisputeGameFactory::default()),
+            Arc::new(MockAggregateVerifier::default()),
+            registry,
+        );
+        (collector, sessions)
+    }
+
+    #[tokio::test]
+    async fn registry_failure_preserves_proofs_without_authorizing_bulk_deletion() {
+        let requester = Arc::new(MockProofRequester::default());
+        let mut registry = MockTeeSignerRegistry::new();
+        registry
+            .expect_registered_signers()
+            .times(1)
+            .return_once(|| Err(ProposerError::Contract("registry RPC unavailable".into())));
+        let (collector, sessions) =
+            invalid_signer_collector(Arc::clone(&requester), Arc::new(registry)).await;
+        let mut current = recovered(100);
+
+        assert!(!collector.tick(&mut current, 300, 300, &CancellationToken::new()).await);
+        let requests = requester.requests.lock().unwrap();
+        assert!(sessions.iter().all(|session| requests.contains_key(session)));
+        assert!(requester.deleted_tee_signer_allowlists.lock().unwrap().is_empty());
+        assert!(requester.deleted_tee_signers.lock().unwrap().is_empty());
+        assert_eq!(current.l2_block_number, 100);
+    }
+
+    #[tokio::test]
+    async fn fresh_registration_preserves_the_head_and_purges_another_stale_signer() {
+        let registered = Address::repeat_byte(0x11);
+        let stale = Address::repeat_byte(0x22);
+        let later = ProposerProofAdapter::tee_session_id_for_root(B256::repeat_byte(0x2c));
+        let requester = Arc::new(MockProofRequester {
+            tee_signers: [(later, stale)].into_iter().collect(),
+            ..Default::default()
+        });
+        let mut registry = MockTeeSignerRegistry::new();
+        registry.expect_registered_signers().times(1).return_once(move || Ok(vec![registered]));
+        let (collector, sessions) =
+            invalid_signer_collector(Arc::clone(&requester), Arc::new(registry)).await;
+        let mut current = recovered(100);
+
+        assert!(collector.tick(&mut current, 300, 300, &CancellationToken::new()).await);
+        let requests = requester.requests.lock().unwrap();
+        assert!(requests.contains_key(&sessions[0]));
+        assert!(!requests.contains_key(&sessions[1]));
+        assert_eq!(
+            *requester.deleted_tee_signer_allowlists.lock().unwrap(),
+            vec![vec![registered]]
+        );
+    }
+
+    #[tokio::test]
+    async fn zero_row_bulk_cleanup_idles_without_resetting_or_removing_the_head() {
+        let requester = Arc::new(MockProofRequester::default());
+        let registered = Address::repeat_byte(0x11);
+        let mut registry = MockTeeSignerRegistry::new();
+        registry.expect_registered_signers().times(1).return_once(move || Ok(vec![registered]));
+        let (collector, sessions) =
+            invalid_signer_collector(Arc::clone(&requester), Arc::new(registry)).await;
+        let mut current = recovered(100);
+
+        assert!(!collector.tick(&mut current, 300, 300, &CancellationToken::new()).await);
+        let requests = requester.requests.lock().unwrap();
+        assert!(sessions.iter().all(|session| requests.contains_key(session)));
+        assert_eq!(requester.deleted_tee_signer_allowlists.lock().unwrap().len(), 1);
+        assert_eq!(current.l2_block_number, 100);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn every_bulk_cleanup_attempt_reads_a_fresh_registration_snapshot() {
+        let requester = Arc::new(MockProofRequester { reject_delete: true, ..Default::default() });
+        let first = Address::repeat_byte(0x11);
+        let second = Address::repeat_byte(0x22);
+        let mut registry = MockTeeSignerRegistry::new();
+        let mut sequence = mockall::Sequence::new();
+        registry
+            .expect_registered_signers()
+            .times(1)
+            .in_sequence(&mut sequence)
+            .return_once(move || Ok(vec![first]));
+        registry
+            .expect_registered_signers()
+            .times(1)
+            .in_sequence(&mut sequence)
+            .return_once(move || Ok(vec![second]));
+        let (collector, _) =
+            invalid_signer_collector(Arc::clone(&requester), Arc::new(registry)).await;
+
+        for _ in 0..2 {
+            assert!(collector.delete_proofs_by_unregistered_tee_signers(200).await);
+        }
+        assert_eq!(
+            *requester.deleted_tee_signer_allowlists.lock().unwrap(),
+            vec![vec![first], vec![second]]
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn standard_bulk_rejections_idle_without_destructive_restart_backoff() {
+        for code in [ErrorCode::MethodNotFound.code(), ErrorCode::InvalidParams.code()] {
+            let requester = Arc::new(MockProofRequester {
+                bulk_delete_error_code: Some(code),
+                ..Default::default()
+            });
+            let mut registry = MockTeeSignerRegistry::new();
+            registry.expect_registered_signers().times(1).return_once(|| Ok(Vec::new()));
+            let (collector, sessions) =
+                invalid_signer_collector(Arc::clone(&requester), Arc::new(registry)).await;
+            let mut current = recovered(100);
+            let started = tokio::time::Instant::now();
+
+            assert!(!collector.tick(&mut current, 300, 300, &CancellationToken::new()).await);
+            assert!(started.elapsed() < CLEANUP_RETRY_DELAY);
+            let requests = requester.requests.lock().unwrap();
+            assert!(sessions.iter().all(|session| requests.contains_key(session)));
+            assert_eq!(requester.deleted_tee_signer_allowlists.lock().unwrap().len(), 1);
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn lost_bulk_reply_still_requests_recovery_after_deleting_all_stale_signers() {
+        let later = ProposerProofAdapter::tee_session_id_for_root(B256::repeat_byte(0x2c));
+        let requester = Arc::new(MockProofRequester {
+            tee_signers: [(later, Address::repeat_byte(0x22))].into_iter().collect(),
+            lose_bulk_delete_response: true,
+            ..Default::default()
+        });
+        let mut registry = MockTeeSignerRegistry::new();
+        registry.expect_registered_signers().times(1).return_once(|| Ok(Vec::new()));
+        let (collector, sessions) =
+            invalid_signer_collector(Arc::clone(&requester), Arc::new(registry)).await;
+        let mut current = recovered(100);
+        let started = tokio::time::Instant::now();
+
+        assert!(collector.tick(&mut current, 300, 300, &CancellationToken::new()).await);
+        assert!(started.elapsed() >= CLEANUP_RETRY_DELAY);
+        let requests = requester.requests.lock().unwrap();
+        assert!(sessions.iter().all(|session| !requests.contains_key(session)));
+        assert_eq!(requester.deleted_tee_signer_allowlists.lock().unwrap().len(), 1);
+        assert_eq!(current.l2_block_number, 100);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn shutdown_cancels_unknown_cleanup_backoff_without_requesting_a_restart() {
+        let requester = Arc::new(MockProofRequester { reject_delete: true, ..Default::default() });
+        let mut registry = MockTeeSignerRegistry::new();
+        registry.expect_registered_signers().times(1).return_once(|| Ok(Vec::new()));
+        let (collector, sessions) =
+            invalid_signer_collector(Arc::clone(&requester), Arc::new(registry)).await;
+        let mut current = recovered(100);
+        let cancel = CancellationToken::new();
+
+        let restart = {
+            let tick = collector.tick(&mut current, 300, 300, &cancel);
+            tokio::pin!(tick);
+            assert!(tick.as_mut().now_or_never().is_none());
+            assert_eq!(requester.deleted_tee_signer_allowlists.lock().unwrap().len(), 1);
+            cancel.cancel();
+            tick.await
+        };
+
+        assert!(!restart);
+        let requests = requester.requests.lock().unwrap();
+        assert!(sessions.iter().all(|session| requests.contains_key(session)));
+        assert_eq!(current.l2_block_number, 100);
     }
 }
