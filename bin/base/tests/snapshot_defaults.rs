@@ -147,7 +147,7 @@ async fn snapshot_plan_fetches_only_manifest(
                 })]).collect::<Vec<_>>(),
             });
         }
-        args = vec!["--minimal"];
+        args = vec!["--minimal", "--download-concurrency", "16"];
     }
     let requests = Arc::new(Mutex::new(Vec::new()));
     let request_log = Arc::clone(&requests);

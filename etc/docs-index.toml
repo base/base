@@ -56,7 +56,7 @@ digest = "6d0de36199"
 
 ["bin/base/README.md"]
 summary = "Unified base commands, tracing and chain selection; native snapshot download/run, history retention, dev impersonation and signed RPC examples, restart and timing limits, and container usage."
-digest = "7222b3f453"
+digest = "d8912356f4"
 
 ["bin/basectl/README.md"]
 summary = "basectl operator console reference: global options, TUI and scriptable commands (block, sync-status, p2p, txpool, conductor, sequencer, batcher, doctor, proofs), JSON output and examples."

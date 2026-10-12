@@ -160,7 +160,8 @@ the [snapshot benchmark harness](../../etc/systems/README.md) for benchmarks.
 and account/storage history, rounded outward to archive chunk boundaries. It stops after downloading;
 it does not create a validator copy, start nodes or configure a fork. Transaction and history indices
 rebuild on node startup. Fresh downloads generate `reth.toml` with the minimal preset's pruning
-settings; an existing `reth.toml` is not overwritten.
+settings; an existing `reth.toml` is not overwritten. The recipe allows up to 16 simultaneous HTTP
+downloads (`--download-concurrency 16`).
 
 Pin a manifest when resuming an interrupted download. Verified, unchanged archive outputs are
 reused; an interrupted large archive may restart from the beginning. Do not rerun download over a
@@ -171,7 +172,7 @@ datadir that has already produced development blocks; resume it with `run` inste
 just devnet snapshot download --dir "$HOME/data/my-devnet" --print-plan-json
 # Add --manifest-url <published-manifest-url> to pin a particular snapshot for download/resume.
 # Equivalent direct binary download:
-target/release/base snapshot download --minimal --dir "$HOME/data/my-devnet"
+target/release/base snapshot download --minimal --download-concurrency 16 --dir "$HOME/data/my-devnet"
 ```
 
 ### `dev_impersonateTransaction`
