@@ -4,11 +4,14 @@ use metrics_exporter_prometheus::{BuildError, Matcher, PrometheusBuilder};
 
 const COMPRESSION_RATIO_BUCKETS: &[f64] =
     &[0.1, 0.2, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95];
-const BLOB_FILL_RATIO_BUCKETS: &[f64] = &[0.1, 0.25, 0.5, 0.75, 0.85, 0.9, 0.95, 0.99, 1.0];
+/// Low bounds resolve the partial blobs sent when a channel closes on its duration limit.
+const BLOB_FILL_RATIO_BUCKETS: &[f64] =
+    &[0.02, 0.05, 0.1, 0.25, 0.5, 0.75, 0.85, 0.9, 0.95, 0.99, 1.0];
 const CHANNEL_DURATION_BUCKETS: &[f64] = &[1.0, 2.0, 5.0, 10.0, 20.0, 30.0, 40.0, 50.0];
 const L2_BLOCKS_PER_CHANNEL_BUCKETS: &[f64] =
     &[1.0, 2.0, 5.0, 10.0, 25.0, 50.0, 100.0, 200.0, 500.0, 1_000.0, 2_000.0];
-const BLOBS_PER_TX_BUCKETS: &[f64] = &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+/// Bounds between the integer counts, so each blob count has a bucket of its own.
+const BLOBS_PER_TX_BUCKETS: &[f64] = &[0.5, 1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
 
 const HISTOGRAM_BUCKETS: &[(&str, &[f64])] = &[
     ("batcher.channel_compression_ratio", COMPRESSION_RATIO_BUCKETS),
@@ -54,5 +57,19 @@ mod tests {
             assert!(rendered.contains(&format!("{metric}_bucket")));
             assert!(!rendered.contains(&format!("{metric}{{quantile=")));
         }
+    }
+
+    /// A one-blob transaction falls in a bucket above zero, so quantiles derived from the
+    /// buckets do not report it as zero blobs.
+    #[test]
+    fn one_blob_has_a_bucket_of_its_own() {
+        let recorder = configure_prometheus(PrometheusBuilder::new()).unwrap().build_recorder();
+        let handle = recorder.handle();
+
+        with_local_recorder(&recorder, || BatcherMetrics::blobs_per_tx().record(1.0));
+
+        let rendered = handle.render();
+        assert!(rendered.contains("batcher_blobs_per_tx_bucket{le=\"0.5\"} 0"));
+        assert!(rendered.contains("batcher_blobs_per_tx_bucket{le=\"1.5\"} 1"));
     }
 }
