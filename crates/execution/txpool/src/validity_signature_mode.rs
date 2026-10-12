@@ -31,18 +31,10 @@ impl ValiditySignatureMode {
         predicates: &[ValidityPredicate],
         signature: Option<&Signature>,
     ) -> Result<(), ValidityAuthorizationError> {
-        if matches!(self, Self::Off) {
-            return Ok(());
-        }
-        if predicates.is_empty() {
-            return if signature.is_some() {
-                Err(ValidityAuthorizationError::UnexpectedSignature)
-            } else {
-                Ok(())
-            };
-        }
-        match (self, signature.is_some()) {
-            (Self::Required, false) => Err(ValidityAuthorizationError::MissingSignature),
+        match (self, predicates.is_empty(), signature.is_some()) {
+            (Self::Off, _, _) => Ok(()),
+            (_, true, true) => Err(ValidityAuthorizationError::UnexpectedSignature),
+            (Self::Required, false, false) => Err(ValidityAuthorizationError::MissingSignature),
             _ => Ok(()),
         }
     }

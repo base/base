@@ -32,14 +32,8 @@ impl KeyValueStore for BootKeyValueStore {
                 Some(self.cfg.request.claimed_l2_block_number.to_be_bytes().to_vec())
             }
             L2_CHAIN_ID_KEY => Some(self.cfg.prover.l2_chain_id.to_be_bytes().to_vec()),
-            L2_ROLLUP_CONFIG_KEY => {
-                let serialized = serde_json::to_vec(&self.cfg.prover.rollup_config).ok()?;
-                Some(serialized)
-            }
-            L1_CONFIG_KEY => {
-                let serialized = serde_json::to_vec(&self.cfg.prover.l1_config).ok()?;
-                Some(serialized)
-            }
+            L2_ROLLUP_CONFIG_KEY => serde_json::to_vec(&self.cfg.prover.rollup_config).ok(),
+            L1_CONFIG_KEY => serde_json::to_vec(&self.cfg.prover.l1_config).ok(),
             PROPOSER_KEY => Some(self.cfg.request.proposer.to_vec()),
             INTERMEDIATE_BLOCK_INTERVAL_KEY => {
                 Some(INTERMEDIATE_BLOCK_INTERVAL.to_be_bytes().to_vec())

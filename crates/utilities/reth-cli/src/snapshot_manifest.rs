@@ -129,18 +129,9 @@ pub trait SnapshotManifestExt {
 
 impl SnapshotManifestExt for SnapshotManifest {
     fn chunk_hashes_for_file(&self, filename: &str) -> Option<Vec<String>> {
-        let (component, start, _end) = ChunkFilename::parse(filename)?;
-        let ComponentManifest::Chunked(meta) = self.components.get(&component)? else {
-            return None;
-        };
-        let chunk_index = usize::try_from(start / meta.blocks_per_file).ok()?;
-        let entries = meta.chunk_output_files.get(chunk_index)?;
-        if entries.is_empty() {
-            return None;
-        }
-        let mut sorted = entries.clone();
-        sorted.sort_unstable_by(|a, b| a.path.cmp(&b.path));
-        Some(sorted.into_iter().map(|e| e.blake3).collect())
+        let mut entries = self.chunk_output_files_for_file(filename)?;
+        entries.sort_unstable_by(|a, b| a.path.cmp(&b.path));
+        Some(entries.into_iter().map(|e| e.blake3).collect())
     }
 
     fn chunk_output_files_for_file(&self, filename: &str) -> Option<Vec<OutputFileChecksum>> {

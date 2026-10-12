@@ -63,22 +63,17 @@ impl FilterType {
         topics: Vec<String>,
         match_mode: MatchMode,
     ) -> Self {
-        if addresses.is_empty() && topics.is_empty() {
-            Self::None
-        } else if addresses.is_empty() {
-            Self::new_topics(topics)
-        } else if topics.is_empty() {
-            Self::new_addresses(addresses)
-        } else {
-            let normalized_addresses: HashSet<String> =
-                addresses.into_iter().map(|addr| addr.to_lowercase()).collect();
-            let normalized_topics: HashSet<String> =
-                topics.into_iter().map(|topic| topic.to_lowercase()).collect();
-            Self::Combined {
-                addresses: normalized_addresses,
-                topics: normalized_topics,
-                match_mode,
-            }
+        if addresses.is_empty() {
+            return Self::new_topics(topics);
+        }
+        if topics.is_empty() {
+            return Self::new_addresses(addresses);
+        }
+
+        Self::Combined {
+            addresses: addresses.into_iter().map(|addr| addr.to_lowercase()).collect(),
+            topics: topics.into_iter().map(|topic| topic.to_lowercase()).collect(),
+            match_mode,
         }
     }
 
