@@ -2346,6 +2346,23 @@ mod tests {
         assert!(sender_acc.info.balance < initial_balance);
     }
 
+    /// A protocol nonce at `u64::MAX` cannot be bumped, so a key-0 transaction
+    /// carrying that sequence would stay includable forever. Inclusion rejects it.
+    #[test]
+    fn saturated_protocol_nonce_is_rejected() {
+        let key = signing_key(0x21);
+        let sender = eoa_address(&key);
+        let signed = eoa_signed(TxEip8130 { nonce_sequence: u64::MAX, ..base_tx() }, &key);
+        let mut evm = evm_with(U256::from(10u64).pow(U256::from(18u64)), sender);
+        let db = evm.ctx_mut().journal_mut().db_mut();
+        let mut info = db.basic(sender).expect("account").unwrap_or_default();
+        info.nonce = u64::MAX;
+        db.insert_account_info(sender, info);
+
+        let err = evm.transact_raw(into_base_tx(&signed)).unwrap_err();
+        assert!(err.to_string().contains("u64::MAX"), "got {err}");
+    }
+
     #[test]
     fn two_dimensional_nonce_is_incremented() {
         let key = signing_key(0x2a);

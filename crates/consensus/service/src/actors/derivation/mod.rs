@@ -1,12 +1,7 @@
-//! Derivation actors including direct, delegated, and L2-delegate variants.
+//! The derivation actor, its engine client, finalizer, requests and state machine.
 
 mod actor;
 pub use actor::{DerivationActor, DerivationError};
-
-mod delegated;
-pub use delegated::{
-    DelegateDerivationActor, DerivationDelegateClient, DerivationDelegateClientError,
-};
 
 mod engine_client;
 pub use engine_client::{DerivationEngineClient, QueuedDerivationEngineClient};

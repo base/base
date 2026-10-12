@@ -89,7 +89,8 @@ impl BatcherMetrics {
     /// A parent-hash mismatch surfaced while adding a block to the pipeline.
     pub const RESET_INGEST_REORG: &'static str = "ingest_reorg";
 
-    /// The derivation status reported a safe head that moved back or changed hash.
+    /// The derivation status reported a safe head that went back, from a rollup node that has
+    /// read L1 past the block the last safe head was reported at.
     pub const RESET_SAFE_HEAD_REORG: &'static str = "safe_head_reorg";
 
     /// The derived safe head does not match the buffered chain.

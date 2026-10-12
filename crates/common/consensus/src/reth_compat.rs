@@ -490,9 +490,19 @@ pub trait DepositReceiptExt: reth_primitives_traits::Receipt {
 
     /// Returns a reference to the inner deposit receipt, if this is a deposit.
     fn as_deposit_receipt(&self) -> Option<&DepositReceipt>;
+
+    /// Returns a reference to the inner EIP-8130 receipt, if this is one.
+    fn as_eip8130_receipt(&self) -> Option<&Eip8130Receipt>;
 }
 
 impl DepositReceiptExt for BaseReceipt {
+    fn as_eip8130_receipt(&self) -> Option<&Eip8130Receipt> {
+        match self {
+            Self::Eip8130(receipt) => Some(receipt),
+            _ => None,
+        }
+    }
+
     fn as_deposit_receipt_mut(&mut self) -> Option<&mut DepositReceipt> {
         match self {
             Self::Deposit(receipt) => Some(receipt),

@@ -1,7 +1,6 @@
 //! Build-time check that a declared EIP-8130 coinbase tip is payable.
 
 use alloy_primitives::{Address, U256};
-use base_common_consensus::CoinbaseTip;
 use base_execution_eip8130::FeeCheck;
 use base_execution_txpool::BasePooledTx;
 use revm::Database;
@@ -61,7 +60,7 @@ impl CoinbaseTipAffordability {
         let Some(signed) = tx.as_eip8130() else {
             return false;
         };
-        let Some(tip) = CoinbaseTip::decode(signed.tx()) else {
+        let Some(tip) = tx.coinbase_tip() else {
             return false;
         };
         let sender = tx.sender();
@@ -246,6 +245,36 @@ mod tests {
         assert!(
             !CoinbaseTipAffordability::unaffordable(&tx, 0, &mut db),
             "the classified payer covers gas and the sender covers the tip"
+        );
+    }
+
+    /// A policy-gated sender's fee-vault tip reverts and is never charged, so
+    /// it cannot make the transaction unaffordable.
+    #[test]
+    fn policy_gated_sender_tip_is_not_priced() {
+        let mut db = InMemoryDB::default();
+        fund(&mut db, SENDER, 1_000);
+        let tx = unrecoverable_open_payer_tip();
+        tx.set_limit_class(LimitClass {
+            sender: SENDER,
+            payer: SENDER,
+            classification_generation: 0,
+            sender_locked: false,
+            payer_locked: false,
+            payer_trusted: false,
+            payer_allowlisted: false,
+            payer_balance: U256::from(1_000u64),
+            max_cost: U256::from(42_000u64),
+        });
+        assert!(
+            CoinbaseTipAffordability::unaffordable(&tx, 0, &mut db),
+            "an ungated sender short of gas plus the tip is unaffordable"
+        );
+
+        tx.set_sender_policy_target(Address::repeat_byte(0x77));
+        assert!(
+            !CoinbaseTipAffordability::unaffordable(&tx, 0, &mut db),
+            "a gated sender's reverting tip is not priced"
         );
     }
 
