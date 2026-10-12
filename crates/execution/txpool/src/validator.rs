@@ -1171,18 +1171,13 @@ where
         // Admission uses the same safe ceiling as `eth_estimateGas`, so a tx whose
         // `gas_limit` was set from the estimate is never rejected here and can
         // never be admitted only to OOG at inclusion. The non-monotonic,
-        // state-dependent costs are pinned to their worst case: both policy gates
-        // charged (from Zenith; there are none before) and zero revoke discount.
+        // state-dependent costs are pinned to their worst case: the sender's policy
+        // gate charged (from Zenith; there are none before) and zero revoke discount.
         // Execution reprices them precisely.
         let intrinsic = IntrinsicGas::compute(
             signed,
             encoded.as_ref(),
-            &IntrinsicGasInput::worst_case(
-                sender,
-                nonce_key_first_use,
-                signed.tx().payer.is_some(),
-                keystore,
-            ),
+            &IntrinsicGasInput::worst_case(sender, nonce_key_first_use, keystore),
         )
         .map_err(|err| {
             Self::eip8130_error(match err {

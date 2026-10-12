@@ -80,7 +80,7 @@ intrinsic_gas = AA_BASE_COST + tx_payload_cost + nonce_key_cost + value_transfer
 | `value_transfer` | `6,000` per call with `value > 0` and `to != sender` |
 | `bytecode` | per create entry: `32,000 + 200 · code_len` |
 | `account_changes` | per create entry: one fresh packed `account_state` write plus one fresh `actor_config` slot write per initial actor; policy actors set `policy_commitment`/`policy_manager`, while ungated actors pay the cold zero-to-zero touches that preserve access warming; per config-change entry: a packed `account_state` write covering the sequence advance and lock read — the first access to that slot in the transaction (create bootstrap or first config change) is a cold zero-to-nonzero write, later same-account bumps are only a warm SLOAD + dirty SSTORE (`200`, the slot was already modified earlier in the transaction) — its `auth` cost, and each mutated actor/policy slot; revokes conservatively price all three actor/policy resets, except each revoke slot execution resolves to be an empty zero-to-zero touch is discounted by the reset-vs-cold-noop delta (an inline secp256k1 self revoke discounts its always-empty `actor_config` slot plus each policy slot — `manager`/`commitment` — whose stored value is zero, so three empty slots when ungated and one to three when policy-gated, since the EIP permits a gated actor to carry a zero manager and/or commitment); a self-actor change adds no separate bump — its inline-self write is already covered by the config-change `account_state` cost and its `actor_config(self)` home by the per-change slot cost; per delegation entry: the `4,600` indicator deposit |
-| `sender_auth` / `payer_auth` | authenticator execution gas + one cold config/state SLOAD, plus (from Zenith, which brings the Keystore) one cold `policy_manager` SLOAD when the resolved actor has `SCOPE_POLICY`; `payer_auth` adds the data cost of the `payer_auth` bytes and is `0` for self-pay. `payer_auth_cost` prices those bytes at the standard EIP-2028 rate; `payer_floor` prices them at the EIP-7623 floor rate, is the ceiling used for the payer's pre-charge, the EIP-7825 cap and the block gas reservation, and must not exceed `MAX_AUTHENTICATION_GAS` (100,000) |
+| `sender_auth` / `payer_auth` | authenticator execution gas + one cold config/state SLOAD; `sender_auth` adds (from Zenith, which brings the Keystore) one cold `policy_manager` SLOAD when the resolved sender actor has `SCOPE_POLICY`, while a payer only needs its sponsor scope and resolves no policy; `payer_auth` adds the data cost of the `payer_auth` bytes and is `0` for self-pay. `payer_auth_cost` prices those bytes at the standard EIP-2028 rate; `payer_floor` prices them at the EIP-7623 floor rate, is the ceiling used for the payer's pre-charge, the EIP-7825 cap and the block gas reservation, and must not exceed `MAX_AUTHENTICATION_GAS` (100,000) |
 
 A value-bearing call to an account that does not exist also pays `25,000` for
 account creation when it runs, since existence is only known at dispatch.
@@ -142,7 +142,7 @@ tip.
 
 The gas and fee layer is pure accounting: it reads no state and runs no EVM. The
 state-derived inputs (whether the nonce channel is first-use and whether
-sender/payer actors are policy-gated) are supplied
+the sender actor is policy-gated) are supplied
 by the caller via `IntrinsicGasInput`. It does
 not advance nonces, debit balances, or execute calls; cold/warm and set/reset
 refinements that depend on intra-transaction access order are finalized by the

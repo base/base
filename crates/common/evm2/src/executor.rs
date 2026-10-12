@@ -261,10 +261,8 @@ impl<'a> BaseBlockExecutor<'a> {
         // `is_regolith || !is_deposit` guard); every other transaction is checked.
         let mut reserved_gas = tx.gas_limit();
         if let Some(signed) = tx.as_eip8130() {
-            let keystore =
-                (self.evm.config_spec_id().upgrade() as u8) >= (BaseUpgrade::Zenith as u8);
-            let payer_auth = IntrinsicGas::max_payer_auth_cost(signed, keystore)
-                .map_err(HandlerError::external)?;
+            let payer_auth =
+                IntrinsicGas::max_payer_auth_cost(signed).map_err(HandlerError::external)?;
             reserved_gas = reserved_gas.saturating_add(payer_auth);
         }
         let block_gas_limit = self.evm.block().gas_limit.saturating_to::<u64>();

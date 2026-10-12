@@ -841,9 +841,8 @@ impl Eip8130Executor {
         // the per-transaction cap, so simulate at most the gas a real
         // transaction could carry. The payer authentication ceiling is the
         // worst case, so a submission at the returned estimate always fits.
-        let keystore = ctx.cfg().spec().is_enabled_in(BaseUpgrade::Zenith);
-        let payer_auth_ceiling = IntrinsicGas::max_payer_auth_cost(signed, keystore)
-            .map_err(BaseTransactionError::eip8130)?;
+        let payer_auth_ceiling =
+            IntrinsicGas::max_payer_auth_cost(signed).map_err(BaseTransactionError::eip8130)?;
         let gas_limit =
             tx.gas_limit.min(ctx.cfg().tx_gas_limit_cap().saturating_sub(payer_auth_ceiling));
         let max_fee = tx.max_fee_per_gas;
@@ -856,6 +855,7 @@ impl Eip8130Executor {
         // to; before a payer has signed (a stub that does not recover) the payer
         // is unknown and published as `UNSIGNED_OPEN_PAYER`, never the sender.
         let payer = signed.resolved_payer(sender).unwrap_or(Self::UNSIGNED_OPEN_PAYER);
+        let keystore = ctx.cfg().spec().is_enabled_in(BaseUpgrade::Zenith);
         if !keystore {
             TransactionAuthorizer::check_without_keystore(signed)
                 .map_err(BaseTransactionError::eip8130)?;
@@ -916,10 +916,9 @@ impl Eip8130Executor {
             //    The estimate is a safe ceiling that execution can only meet or
             //    undercharge. The non-monotonic, state-dependent costs are
             //    therefore pinned to their worst case rather than resolved:
-            //      - both policy gates charged (their `policy_manager` SLOAD), so a
-            //        `gas_limit == estimate` submission never OOGs if a gate flips
-            //        on before inclusion. The payer's unsigned representative blob
-            //        is not authenticable here in any case.
+            //      - from Zenith, the sender's policy gate charged (its
+            //        `policy_manager` SLOAD), so a `gas_limit == estimate`
+            //        submission never OOGs if the gate flips on before inclusion.
             //      - zero revoke discount, so revokes are priced at the full
             //        three-reset worst case regardless of which slots are empty.
             //    The monotonic, body-derivable nonce first-use cost stays resolved.
@@ -928,12 +927,7 @@ impl Eip8130Executor {
             let (intrinsic, execution_gas_available) = Self::resolve_execution_gas(
                 signed,
                 encoded,
-                &IntrinsicGasInput::worst_case(
-                    sender,
-                    nonce_key_first_use,
-                    tx.payer.is_some(),
-                    keystore,
-                ),
+                &IntrinsicGasInput::worst_case(sender, nonce_key_first_use, keystore),
                 gas_limit,
             )?;
 
@@ -1078,11 +1072,6 @@ impl Eip8130Executor {
             }
             .map_err(BaseTransactionError::eip8130)?;
             let sender_actor = applied_tx.actors.sender.resolved;
-            let payer_policy_gated = applied_tx
-                .actors
-                .payer
-                .as_ref()
-                .is_some_and(|actor| actor.resolved.is_policy_gated());
             let sender = applied_tx.actors.sender.account;
             let payer = applied_tx.actors.payer.as_ref().map_or(sender, |p| p.account);
             // Defense-in-depth: `authorize_and_apply` -> `verify_sender` already
@@ -1157,7 +1146,7 @@ impl Eip8130Executor {
                 signed,
                 encoded,
                 &IntrinsicGasInput::new(sender, nonce_key_first_use)
-                    .with_policy_gates(sender_actor.is_policy_gated(), payer_policy_gated)
+                    .with_sender_policy_gate(sender_actor.is_policy_gated())
                     .with_revoke_discount_slots(applied_tx.revoke_discount_slots),
                 gas_limit,
             )?;
@@ -3737,7 +3726,7 @@ mod tests {
         let mut payer_auth = Eip8130Constants::K1_AUTHENTICATOR.to_vec();
         payer_auth.extend_from_slice(&[0xab; 65]);
         let signed = Eip8130Signed::new(tx, eoa_sig(&key, B256::ZERO), Bytes::from(payer_auth));
-        let payer_auth_ceiling = IntrinsicGas::max_payer_auth_cost(&signed, false).unwrap();
+        let payer_auth_ceiling = IntrinsicGas::max_payer_auth_cost(&signed).unwrap();
         assert!(payer_auth_ceiling > 0);
 
         let mut sim = into_base_tx(&signed);
