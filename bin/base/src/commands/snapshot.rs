@@ -31,10 +31,7 @@ pub(crate) enum SnapshotSubcommand {
 impl SnapshotSubcommand {
     pub(crate) fn run(self) -> eyre::Result<()> {
         match self {
-            Self::Manifest(command) => {
-                command.execute()?;
-                Ok(())
-            }
+            Self::Manifest(command) => command.execute(),
             Self::Download(command) => {
                 let runner = CliRunner::try_default_runtime()?;
                 runner.run_blocking_until_ctrl_c((*command).execute::<BaseNode>())
