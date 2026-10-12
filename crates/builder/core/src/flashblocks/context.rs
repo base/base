@@ -943,7 +943,9 @@ impl BasePayloadBuilderCtx {
                 continue;
             }
             // Checked only once the predicates hold: until then the transaction stays parked, and a
-            // later commit may still leave its state unclaimed.
+            // later commit may still leave its state unclaimed. The kill lasts only for this block:
+            // the same predicates may hold again later, so the transaction is skipped rather than
+            // cached as permanently rejected, and its required block-number bound evicts it.
             if tx.fill_immediately_or_kill()
                 && info.claimed_predicate_keys.contended(tx.validity_predicates())
             {
@@ -963,7 +965,7 @@ impl BasePayloadBuilderCtx {
                     "fill_immediately_or_kill_contended",
                 )
                 .increment(1);
-                self.expire_current(best_txs, &mut diag, &cx, &tx, ordering_position);
+                self.reject_current(best_txs, &mut diag, &cx, &tx, ordering_position);
                 validity_handling +=
                     validity_handling_start.map_or_else(Duration::default, |start| start.elapsed());
                 continue;

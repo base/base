@@ -645,11 +645,12 @@ pub struct TransactionValidity {
     /// EIP-712 authorization by the transaction sender, required when enforcement is enabled.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub validity_signature: Option<Signature>,
-    /// Whether the transaction must fill at the first block position where its predicates hold.
+    /// Whether a builder drops this transaction once its predicate state has been claimed.
     ///
-    /// Once a builder finds the predicates satisfied, the transaction must be the next one
-    /// committed to the block. If any other transaction commits first, it is dropped instead of
-    /// included, even when its predicates still hold.
+    /// When set, a builder skips the transaction for the rest of the block if its predicates hold
+    /// but a validity transaction whose balance, nonce, or storage predicates read any of the same
+    /// locations has already committed in that block. Block-number and flashblock-index predicates
+    /// never claim a location.
     #[serde(default, skip_serializing_if = "core::ops::Not::not")]
     pub fill_immediately_or_kill: bool,
 }

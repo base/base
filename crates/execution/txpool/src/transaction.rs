@@ -172,7 +172,7 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
         self.validity_signature
     }
 
-    /// Returns whether this transaction must fill at the first position where its predicates hold.
+    /// Returns whether a builder drops this transaction once its predicate state has been claimed.
     pub const fn fill_immediately_or_kill(&self) -> bool {
         self.fill_immediately_or_kill
     }
@@ -433,7 +433,7 @@ pub trait BasePooledTx: PoolTransaction + DataAvailabilitySized {
         &[]
     }
 
-    /// Returns whether this transaction must fill at the first position where its predicates hold.
+    /// Returns whether a builder drops this transaction once its predicate state has been claimed.
     ///
     /// See [`crate::TransactionValidity::fill_immediately_or_kill`].
     fn fill_immediately_or_kill(&self) -> bool {

@@ -625,3 +625,80 @@ async fn fill_immediately_or_kill_fills_when_woken_without_competition() -> eyre
     assert_eq!(actual, tracked);
     Ok(())
 }
+
+/// A competitor committed in an earlier flashblock of the block still claims its state, and the
+/// resulting skip lasts only for that block: with no competitor in the next block, the same
+/// flagged transaction is included.
+#[tokio::test]
+async fn fill_immediately_or_kill_skip_spans_flashblocks_but_not_blocks() -> eyre::Result<()> {
+    let instance = LocalInstanceBuilder::new(BuilderConfig::for_tests())
+        .install_ext::<BuilderApiExtension>(
+            BuilderApiExtensionConfig::new(DEFAULT_MAX_VALIDITY_PREDICATES).with_noop_metering(),
+        )
+        .build()
+        .await?;
+    let driver = instance.driver().await?;
+    let accounts = driver.fund_accounts(2, ONE_ETH).await?;
+    let pool = Address::random();
+
+    insert_validity_transaction(&driver, &accounts[0], 100, vec![untouched_slot(pool, 1)], false)
+        .await?;
+    let config = instance.builder_config();
+    let block_number = driver.latest().await?.header.number + 1;
+    let flagged = vec![
+        ValidityPredicate::FlashblockIndex {
+            op: ValidityOperator::GreaterThanOrEqual,
+            value: U256::from(config.flashblocks_per_block() - 1),
+        },
+        ValidityPredicate::BlockNumber {
+            op: ValidityOperator::LessThanOrEqual,
+            value: U256::from(block_number + 1),
+        },
+        untouched_slot(pool, 1),
+    ];
+    let searcher = insert_validity_transaction(&driver, &accounts[1], 200, flagged, true).await?;
+
+    let contended = driver.build_new_block().await?;
+    assert!(!contended.transactions.hashes().any(|hash| hash == searcher));
+
+    let uncontended = driver.build_new_block().await?;
+    assert!(uncontended.transactions.hashes().any(|hash| hash == searcher));
+    Ok(())
+}
+
+/// A validity transaction that is parked rather than committed claims nothing.
+#[tokio::test]
+async fn parked_validity_transaction_does_not_claim_state() -> eyre::Result<()> {
+    let instance = LocalInstanceBuilder::new(BuilderConfig::for_tests())
+        .install_ext::<BuilderApiExtension>(
+            BuilderApiExtensionConfig::new(DEFAULT_MAX_VALIDITY_PREDICATES).with_noop_metering(),
+        )
+        .build()
+        .await?;
+    let driver = instance.driver().await?;
+    let accounts = driver.fund_accounts(2, ONE_ETH).await?;
+    let pool = Address::random();
+    let never_funded = ValidityPredicate::Balance {
+        address: Address::random(),
+        op: ValidityOperator::GreaterThan,
+        value: U256::ZERO,
+    };
+
+    let parked = insert_validity_transaction(
+        &driver,
+        &accounts[0],
+        100,
+        vec![untouched_slot(pool, 1), never_funded],
+        false,
+    )
+    .await?;
+    let searcher =
+        insert_validity_transaction(&driver, &accounts[1], 50, vec![untouched_slot(pool, 1)], true)
+            .await?;
+
+    let block = driver.build_new_block().await?;
+    let included = block.transactions.hashes().collect::<Vec<_>>();
+    assert!(!included.contains(&parked));
+    assert!(included.contains(&searcher));
+    Ok(())
+}

@@ -71,7 +71,7 @@ pub struct SendRawTransactionValidityOptions {
     /// EIP-712 signature authorizing these predicates for the signed transaction hash.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub validity_signature: Option<Signature>,
-    /// Drops the transaction unless it fills at the first position where its predicates hold.
+    /// Drops the transaction once a committed validity transaction claimed its predicate state.
     ///
     /// See [`TransactionValidity::fill_immediately_or_kill`].
     #[serde(default, skip_serializing_if = "core::ops::Not::not")]

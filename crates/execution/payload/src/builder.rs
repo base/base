@@ -1043,12 +1043,13 @@ where
                         .increment(1);
                         emit_native_validity_event!(
                             self,
-                            TransactionEventType::BuilderExpired,
+                            TransactionEventType::BuilderRejected,
                             tx_hash,
                             validity_consideration_index,
                             {
-                                "expire_reason" => "fill_immediately_or_kill_contended",
-                                "expire_detail" => "a validity transaction conditioned on the same state already committed in this block",
+                                "rejection_reason" => "fill_immediately_or_kill_contended",
+                                "rejection_detail" => "a validity transaction conditioned on the same state already committed in this block",
+                                "permanent" => false,
                             }
                         );
                         trace!(
@@ -1056,7 +1057,8 @@ where
                             tx_hash = ?tx_hash,
                             "dropping fill-immediately-or-kill transaction whose predicate state was already claimed"
                         );
-                        info.permanently_rejected_txs.push(tx_hash);
+                        // Skipped for this scan only, as in the flashblocks builder; the block-number
+                        // bound evicts it.
                         Self::skip_current(
                             &mut best_txs,
                             tx.sender(),
