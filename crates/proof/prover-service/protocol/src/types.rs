@@ -701,6 +701,7 @@ mod tests {
                 claimed_l2_output_root: B256::repeat_byte(4),
                 claimed_l2_block_number: 5,
                 proposer: address!("0000000000000000000000000000000000000006"),
+                intermediate_block_interval: 7,
                 l1_head_number: 8,
                 schedule_l2_block_number: None,
             },
@@ -719,6 +720,7 @@ mod tests {
                     "claimed_l2_output_root": format!("{:#x}", B256::repeat_byte(4)),
                     "claimed_l2_block_number": 5,
                     "proposer": "0x0000000000000000000000000000000000000006",
+                    "intermediate_block_interval": 7,
                     "l1_head_number": 8,
                 },
                 "tee_kind": "aws_nitro",
@@ -860,6 +862,7 @@ mod tests {
             claimed_l2_output_root: B256::repeat_byte(4),
             claimed_l2_block_number: 5,
             proposer: address!("0000000000000000000000000000000000000006"),
+            intermediate_block_interval: 7,
             l1_head_number: 8,
             schedule_l2_block_number: None,
         };
@@ -875,6 +878,7 @@ mod tests {
                 "claimed_l2_output_root": format!("{:#x}", B256::repeat_byte(4)),
                 "claimed_l2_block_number": 5,
                 "proposer": "0x0000000000000000000000000000000000000006",
+                "intermediate_block_interval": 7,
                 "l1_head_number": 8,
             })
         );

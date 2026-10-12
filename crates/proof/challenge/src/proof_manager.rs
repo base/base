@@ -299,6 +299,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {
             claimed_l2_output_root: expected_root,
             claimed_l2_block_number,
             proposer,
+            intermediate_block_interval: 0,
             l1_head_number,
             schedule_l2_block_number: Some(candidate.info.l2_block_number),
         })

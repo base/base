@@ -42,7 +42,13 @@ impl KeyValueStore for BootKeyValueStore {
             }
             PROPOSER_KEY => Some(self.cfg.request.proposer.to_vec()),
             INTERMEDIATE_BLOCK_INTERVAL_KEY => {
-                Some(INTERMEDIATE_BLOCK_INTERVAL.to_be_bytes().to_vec())
+                // The interval depends on the game's starting block (30 before Denim, 300 after),
+                // so prefer the per-request value over the default.
+                let interval = match self.cfg.request.intermediate_block_interval {
+                    0 => INTERMEDIATE_BLOCK_INTERVAL,
+                    interval => interval,
+                };
+                Some(interval.to_be_bytes().to_vec())
             }
             L1_HEAD_NUMBER_KEY => Some(self.cfg.request.l1_head_number.to_be_bytes().to_vec()),
             L2_SCHEDULE_BLOCK_NUMBER_KEY => {

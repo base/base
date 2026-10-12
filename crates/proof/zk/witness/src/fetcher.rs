@@ -850,6 +850,7 @@ impl OPSuccinctDataFetcher {
             l1_head_number,
             // We don't need to set the proposer for the range proof zk program
             proposer: Address::ZERO,
+            intermediate_block_interval: 0,
             schedule_l2_block_number,
         };
 

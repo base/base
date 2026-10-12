@@ -86,6 +86,7 @@ impl ProofDispatcher {
             claimed_l2_output_root,
             claimed_l2_block_number: target_block,
             proposer: self.proposer_address,
+            intermediate_block_interval: 0,
             l1_head_number: l1_header.number,
             schedule_l2_block_number: None,
         })

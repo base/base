@@ -366,6 +366,7 @@ mod tests {
                         claimed_l2_output_root: B256::repeat_byte(4),
                         claimed_l2_block_number: 600,
                         proposer: Address::repeat_byte(5),
+                        intermediate_block_interval: 0,
                         l1_head_number: 1200,
                         schedule_l2_block_number: None,
                     },
