@@ -34,7 +34,7 @@ use base_tx_forwarding::{
 use base_txpool_rpc::{
     DEFAULT_MAX_VALIDITY_EXPIRY_SECS, DEFAULT_MAX_VALIDITY_PREDICATES,
     SendRawTransactionValidityConfig, SendRawTransactionValidityExtension, TxPoolRpcConfig,
-    TxPoolRpcExtension,
+    TxPoolRpcExtension, ValiditySignatureMode,
 };
 use base_txpool_tracing::{TxPoolExtension, TxpoolConfig};
 use base_upgrade_signal::{
@@ -360,6 +360,11 @@ pub struct RpcStandardNodeArgs {
             .range(1..=DEFAULT_MAX_VALIDITY_PREDICATES as u64),
     )]
     pub validity_max_predicates: usize,
+
+    /// Staged validity signature rollout policy at local forwarding ingress.
+    /// Query nodes proxy the signature unchanged; the sequencer enforces its own policy.
+    #[arg(long = "validity-signature-mode", default_value_t = ValiditySignatureMode::Off)]
+    pub validity_signature_mode: ValiditySignatureMode,
 
     /// Maximum lifetime, in seconds, for a validity transaction.
     #[arg(
@@ -797,6 +802,7 @@ impl StandardBaseRethNode {
                 SendRawTransactionValidityConfig {
                     max_validity_predicates: args.rpc.validity_max_predicates,
                     max_validity_expiry_secs: args.rpc.validity_max_expiry_secs,
+                    validity_signature_mode: args.rpc.validity_signature_mode,
                     sequencer_url: args
                         .rpc
                         .rollup_args
@@ -1003,6 +1009,7 @@ mod tests {
             transaction_event_journal_path: None,
             enable_tx_forwarding: false,
             validity_max_predicates: DEFAULT_MAX_VALIDITY_PREDICATES,
+            validity_signature_mode: ValiditySignatureMode::Off,
             validity_max_expiry_secs: DEFAULT_MAX_VALIDITY_EXPIRY_SECS,
             builder_rpc_urls: Vec::new(),
             tx_forwarding_resend_after_ms: DEFAULT_RESEND_AFTER_MS,
@@ -1149,12 +1156,15 @@ mod tests {
             "8",
             "--validity-max-expiry-secs",
             "45",
+            "--validity-signature-mode",
+            "verify-if-present",
         ])
         .args;
 
         assert!(args.rpc.enable_tx_forwarding);
         assert_eq!(args.rpc.validity_max_predicates, 8);
         assert_eq!(args.rpc.validity_max_expiry_secs, 45);
+        assert_eq!(args.rpc.validity_signature_mode, ValiditySignatureMode::VerifyIfPresent);
         assert_eq!(args.rpc.builder_rpc_urls.len(), 1);
     }
 

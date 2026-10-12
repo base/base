@@ -109,6 +109,7 @@ impl BaseNode {
             max_inflight_delegated_slots,
             mempool_sender_limit,
             mempool_payer_limit,
+            mempool_allowlisted_payer_limit,
             ..
         } = self.args;
         ComponentsBuilder::default()
@@ -119,10 +120,12 @@ impl BaseNode {
                     .with_guard_limits(GuardLimits {
                         signature_limit: mempool_sender_limit,
                         payment_limit: mempool_payer_limit,
+                        allowlisted_payment_limit: mempool_allowlisted_payer_limit,
                     })
                     .with_additional_trusted_delegation_targets(
                         self.args.mempool_trusted_delegation_targets.iter().copied(),
-                    ),
+                    )
+                    .with_allowlisted_payers(self.args.mempool_allowlisted_payers.iter().copied()),
             )
             .executor(BaseExecutorBuilder::default())
             .payload(BasePayloadServiceBuilder::new(

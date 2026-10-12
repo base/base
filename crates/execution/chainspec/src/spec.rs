@@ -1091,12 +1091,24 @@ mod tests {
     }
 
     #[test]
-    fn builtin_chain_specs_never_activate_denim_everest_or_zenith() {
-        // Built-in production schedules do not configure Denim, Everest, or genesis-only Zenith.
-        for spec in [BaseChainSpec::mainnet(), BaseChainSpec::sepolia(), BaseChainSpec::devnet()] {
+    fn builtin_chain_specs_schedule_denim_only_on_sepolia() {
+        for spec in [BaseChainSpec::mainnet(), BaseChainSpec::devnet()] {
             assert_eq!(spec.fork(BaseUpgrade::Denim), ForkCondition::Never);
             assert!(!spec.is_fork_active_at_timestamp(BaseUpgrade::Denim, 0));
             assert!(!spec.is_fork_active_at_timestamp(BaseUpgrade::Denim, u64::MAX));
+        }
+
+        let sepolia = BaseChainSpec::sepolia();
+        let denim_timestamp = ChainConfig::sepolia().denim_timestamp.unwrap();
+        assert_eq!(sepolia.fork(BaseUpgrade::Denim), ForkCondition::Timestamp(denim_timestamp));
+        assert!(!sepolia.is_fork_active_at_timestamp(BaseUpgrade::Denim, denim_timestamp - 1));
+        assert!(sepolia.is_fork_active_at_timestamp(BaseUpgrade::Denim, denim_timestamp));
+    }
+
+    #[test]
+    fn builtin_chain_specs_never_activate_everest_or_zenith() {
+        // Built-in production schedules do not configure Everest or genesis-only Zenith.
+        for spec in [BaseChainSpec::mainnet(), BaseChainSpec::sepolia(), BaseChainSpec::devnet()] {
             assert_eq!(spec.fork(BaseUpgrade::Everest), ForkCondition::Never);
             assert!(!spec.is_fork_active_at_timestamp(BaseUpgrade::Everest, u64::MAX));
             assert_eq!(spec.fork(BaseUpgrade::Zenith), ForkCondition::Never);

@@ -14,12 +14,15 @@ use url::Url;
 /// E2E scenario to execute.
 #[derive(Debug, Clone, Copy, Default, Eq, PartialEq, ValueEnum)]
 pub enum Scenario {
-    /// Existing combined Path 1, Path 2 skip, and Path 4 run.
+    /// Every path on one fork: Path 1, Path 2 skip and dispute, Path 4 and
+    /// its follow-up, and a staged Path 3, over three games.
     #[default]
     All,
-    /// Path 1 followed by both the skip and dispute halves of Path 2.
+    /// Path 1 followed by both the skip and dispute halves of Path 2. A
+    /// cheaper subset of `all`, for `real` prover runs.
     Path1Path2,
-    /// Invalid ZK-only proposal coverage.
+    /// A staged invalid ZK-only proposal. A cheaper subset of `all`, for
+    /// `real` prover runs.
     Path3,
 }
 

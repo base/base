@@ -13,12 +13,12 @@ use std::{
 use alloy_consensus::transaction::SignableTransaction;
 use alloy_eips::Encodable2718;
 use alloy_network::{Ethereum, TransactionBuilder};
-use alloy_primitives::{Address, Bytes, TxHash, U256};
+use alloy_primitives::{Address, Bytes, Signature, TxHash, U256};
 use alloy_provider::RootProvider;
 use alloy_rpc_types::TransactionRequest;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
-use base_execution_txpool::ValidityPredicate;
+use base_execution_txpool::{ValidityAuthorization, ValidityPredicate};
 use base_tx_manager::NonceManager;
 use tokio::{
     sync::{Mutex, Semaphore, mpsc},
@@ -30,6 +30,7 @@ use tracing::{debug, warn};
 use super::{ResultsTracker, SentTransaction};
 use crate::{
     BaselineError, Result,
+    config::ValiditySigningMode,
     rpc::{BatchRpcClient, BatchSendResult, SubmitItem},
 };
 
@@ -279,6 +280,34 @@ pub struct SignedTransaction {
     pub validity: Vec<ValidityPredicate>,
     /// Submission cohort this transaction is routed to.
     pub cohort: SubmitCohort,
+    /// Sender authorization for resolved predicates; absent for unsigned or plain submissions.
+    pub validity_signature: Option<Signature>,
+}
+
+impl SignedTransaction {
+    /// Signs this transaction's immutable predicate batch without changing its raw bytes or nonce.
+    pub fn authorize_validity(&mut self, signer: &PrivateKeySigner, chain_id: u64) -> Result<()> {
+        if self.validity.is_empty() || self.validity_signature.is_some() {
+            return Ok(());
+        }
+        if signer.address() != self.from {
+            return Err(BaselineError::Transaction(
+                "validity signer does not match transaction sender".into(),
+            ));
+        }
+        self.validity_signature = Some(
+            signer
+                .sign_hash_sync(&ValidityAuthorization::signing_hash(
+                    chain_id,
+                    self.tx_hash,
+                    &self.validity,
+                ))
+                .map_err(|e| {
+                    BaselineError::Transaction(format!("failed to sign validity sidecar: {e}"))
+                })?,
+        );
+        Ok(())
+    }
 }
 
 /// A batch of prepared transactions.
@@ -415,6 +444,12 @@ impl fmt::Debug for SignerContext {
 /// Shared sender stage context.
 #[derive(Clone)]
 pub struct SenderContext {
+    /// Cached sender keys used only for sidecar authorization, never logged.
+    pub signers: Arc<HashMap<Address, PrivateKeySigner>>,
+    /// Chain ID of the already-signed transaction envelopes.
+    pub chain_id: u64,
+    /// Explicit signing or one-way adaptive signing during migration.
+    pub validity_signing: ValiditySigningMode,
     /// Transaction submission RPC clients.
     pub submission_batch_rpcs: Arc<Vec<BatchRpcClient>>,
     /// Results tracker updated after RPC acceptance.
@@ -451,6 +486,8 @@ pub struct SubmissionPipeline {
 /// Runtime configuration for submission pipeline workers and signing.
 #[derive(Debug, Clone, Copy)]
 pub struct PipelineStartConfig {
+    /// Sidecar signing strategy during staged rollout.
+    pub validity_signing: ValiditySigningMode,
     /// Chain ID used for transaction signing.
     pub chain_id: u64,
     /// Maximum allowed gas price.
@@ -527,6 +564,9 @@ impl SubmissionPipeline {
         let mut sender_workers = Vec::with_capacity(sender_worker_count);
         for _ in 0..sender_worker_count {
             let ctx = SenderContext {
+                signers: Arc::clone(&signers),
+                chain_id: config.chain_id,
+                validity_signing: config.validity_signing,
                 submission_batch_rpcs: Arc::clone(&submission_batch_rpcs),
                 results_tracker: results_tracker.clone(),
                 submit_event_tx: submit_event_tx.clone(),
@@ -796,6 +836,7 @@ impl SubmissionPipeline {
             gas_limit: prepared.gas_limit,
             estimated_gas: prepared.estimated_gas,
             validity: prepared.validity.clone(),
+            validity_signature: None,
             cohort: prepared.cohort,
         })
     }
@@ -914,12 +955,40 @@ impl SubmissionPipeline {
             }
 
             let attempt = batch.attempt;
+            let rpc_index = batch_id as usize % ctx.submission_batch_rpcs.len();
+            let rpc = &ctx.submission_batch_rpcs[rpc_index];
+            if ctx.validity_signing == ValiditySigningMode::Signed
+                || rpc.validity_signatures_required()
+            {
+                let signing_result = batch.txs.iter_mut().try_for_each(|signed| {
+                    if signed.validity.is_empty() || signed.validity_signature.is_some() {
+                        return Ok(());
+                    }
+                    let key = ctx.signers.get(&signed.from).ok_or_else(|| {
+                        BaselineError::Transaction("no key for validity sender".into())
+                    })?;
+                    signed.authorize_validity(key, ctx.chain_id)
+                });
+                if let Err(error) = signing_result {
+                    warn!(batch_id, error = %error, "failed to authorize validity sidecars");
+                    Self::fail_signed_batch(
+                        &ctx.submit_event_tx,
+                        batch.txs,
+                        "validity sidecar signing failed",
+                    )
+                    .await;
+                    return submitted;
+                }
+            }
             let submit_items: Vec<SubmitItem> = batch
                 .txs
                 .iter()
-                .map(|s| SubmitItem::with_validity(s.raw.clone(), s.validity.clone()))
+                .map(|signed| SubmitItem {
+                    raw: signed.raw.clone(),
+                    validity: signed.validity.clone(),
+                    validity_signature: signed.validity_signature,
+                })
                 .collect();
-            let rpc_index = batch_id as usize % ctx.submission_batch_rpcs.len();
             let batch_results = match ctx.submission_batch_rpcs[rpc_index]
                 .send_raw_transactions(&submit_items, ctx.submit_request_limiter.as_deref())
                 .await
@@ -988,6 +1057,17 @@ impl SubmissionPipeline {
                 match result {
                     BatchSendResult::Success(hash) => {
                         submitted += Self::record_submitted(&ctx, signed, hash, measured).await;
+                    }
+                    BatchSendResult::Error(err)
+                        if err.is_signature_required()
+                            && !signed.validity.is_empty()
+                            && signed.validity_signature.is_none() =>
+                    {
+                        rpc.require_validity_signatures();
+                        retry_rejected_error.get_or_insert_with(|| {
+                            "validity signature required; retrying signed sidecar".to_string()
+                        });
+                        retry_rejected_txs.push(signed);
                     }
                     BatchSendResult::Error(err) => match Self::classify_batch_error(err.message) {
                         BatchTxError::AlreadyKnown => {
@@ -1281,15 +1361,22 @@ mod tests {
     };
 
     use alloy_primitives::{Address, Bytes, TxHash, U256};
+    use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
+    use base_execution_txpool::{
+        TransactionValidity, ValidityAuthorization, ValidityAuthorizationError, ValidityOperator,
+        ValidityPredicate,
+    };
+    use httpmock::prelude::*;
     use tokio::sync::{mpsc, oneshot};
     use tokio_util::sync::CancellationToken;
 
     use super::{
         BatchTxError, Fees, GasPricer, MAX_FEE_BASE_FEE_MULTIPLIER, MIN_PRIORITY_FEE,
-        PipelineQueue, PreparedBatch, PreparedTransaction, SignedBatch, SignedTransaction,
-        SubmissionPipeline, SubmitCohort, SubmitEvent,
+        PipelineQueue, PipelineStartConfig, PreparedBatch, PreparedTransaction, SignedBatch,
+        SignedTransaction, SubmissionPipeline, SubmitCohort, SubmitEvent,
     };
+    use crate::{BatchRpcClient, ResultsTracker, config::ValiditySigningMode};
 
     #[test]
     fn batch_error_classification_identifies_retryable_transport_gaps() {
@@ -1518,6 +1605,7 @@ mod tests {
                     estimated_gas: 21_000,
                     validity: Vec::new(),
                     cohort: SubmitCohort::Plain,
+                    validity_signature: None,
                 }],
             })
             .await
@@ -1626,5 +1714,106 @@ mod tests {
         assert_eq!(SubmissionPipeline::sender_worker_count(1, Some(32)), 32);
         assert_eq!(SubmissionPipeline::sender_worker_count(2, Some(8)), 20);
         assert_eq!(SubmissionPipeline::sender_worker_count(1, Some(128)), 64);
+    }
+    #[rstest::rstest]
+    #[case::adaptive(ValiditySigningMode::Adaptive)]
+    #[case::proactive(ValiditySigningMode::Signed)]
+    #[tokio::test]
+    async fn validity_signing_migrates_without_resigning_transactions(
+        #[case] mode: ValiditySigningMode,
+    ) {
+        let server = MockServer::start();
+        let signer = PrivateKeySigner::random();
+        let from = signer.address();
+        let prepared = PreparedTransaction {
+            from,
+            to: Some(Address::repeat_byte(0xbb)),
+            value: U256::ZERO,
+            data: Bytes::new(),
+            gas_limit: 21_000,
+            estimated_gas: 21_000,
+            validity: vec![ValidityPredicate::BlockNumber {
+                op: ValidityOperator::LessThanOrEqual,
+                value: U256::from(31),
+            }],
+            cohort: SubmitCohort::ValidityPass,
+        };
+        let client =
+            BatchRpcClient::new(server.base_url().parse().unwrap()).expect("build batch client");
+        let (events, mut receiver) = mpsc::channel(32);
+        let mut pipeline = SubmissionPipeline::start(
+            Arc::new(std::collections::HashMap::from([(from, signer.clone())])),
+            Arc::new(std::collections::HashMap::new()),
+            Arc::new(vec![client.clone()]),
+            ResultsTracker::new(&[from]),
+            events,
+            PipelineStartConfig {
+                validity_signing: mode,
+                chain_id: 8453,
+                max_gas_price: 1_000_000_000,
+                validity_priority_lead_multiplier: 1,
+                validity_priority_fee_divisor: 1,
+                max_concurrent_submit_requests: Some(1),
+            },
+        );
+        for nonce in 0..2 {
+            let tx = SubmissionPipeline::sign_at_nonce(
+                &signer,
+                &prepared,
+                8453,
+                nonce,
+                Fees { max_fee: 1_000_000_000, priority_fee: 1 },
+            )
+            .unwrap();
+            let hash = tx.tx_hash;
+            let signature = signer
+                .sign_hash_sync(&ValidityAuthorization::signing_hash(8453, hash, &tx.validity))
+                .unwrap();
+            let unsigned = server.mock(|when, then| {
+                when.method(POST).json_body(serde_json::json!([{
+                    "jsonrpc":"2.0","id":0,"method":"base_sendRawTransactionValidity",
+                    "params":[tx.raw, TransactionValidity { validity: tx.validity.clone(), validity_signature: None }],
+                }]));
+                then.status(200).json_body(serde_json::json!([{"jsonrpc":"2.0","id":0,"error":{
+                    "code":-32602,"message":ValidityAuthorizationError::MissingSignature.to_string(),"data":"missing",
+                }}]));
+            });
+            let signed = server.mock(|when, then| {
+                when.method(POST).json_body(serde_json::json!([{
+                    "jsonrpc":"2.0","id":0,"method":"base_sendRawTransactionValidity",
+                    "params":[tx.raw, TransactionValidity { validity: tx.validity.clone(), validity_signature: Some(signature) }],
+                }]));
+                then.status(200).json_body(serde_json::json!([{"jsonrpc":"2.0","id":0,"result":hash}]));
+            });
+            pipeline
+                .enqueue_signed(SignedBatch {
+                    id: nonce,
+                    attempt: 0,
+                    measured: true,
+                    txs: vec![tx],
+                })
+                .await
+                .unwrap();
+            tokio::time::timeout(Duration::from_secs(3), async {
+                loop {
+                    match receiver.recv().await.expect("submission events remain open") {
+                        SubmitEvent::Submitted(actual) => {
+                            assert_eq!(actual, hash);
+                            break;
+                        }
+                        SubmitEvent::Failed(reason) => {
+                            panic!("validity migration failed: {reason}")
+                        }
+                        _ => {}
+                    }
+                }
+            })
+            .await
+            .expect("migration must complete within its retry budget");
+            signed.assert_calls(1);
+            unsigned.assert_calls(usize::from(mode == ValiditySigningMode::Adaptive && nonce == 0));
+        }
+        assert_eq!(client.validity_signatures_required(), mode == ValiditySigningMode::Adaptive);
+        pipeline.shutdown_and_join(Duration::from_secs(2)).await;
     }
 }

@@ -123,6 +123,7 @@ async fn predicates_delay_priority_without_blocking_nonce_descendants() -> eyre:
                 op: ValidityOperator::Equal,
                 value: U256::from_limbs([1, 0, 0, 0]),
             }],
+            validity_signature: None,
         },
     };
     driver
@@ -206,6 +207,7 @@ async fn nonce_predicate_promotes_after_watched_sender_executes() -> eyre::Resul
                 op: ValidityOperator::Equal,
                 value: U256::from(watched_nonce + 1),
             }],
+            validity_signature: None,
         },
     };
     driver
@@ -273,7 +275,10 @@ async fn predicate_eval_hard_cutoff_defers_without_evaluating() -> eyre::Result<
                 sender: accounts[0].address(),
                 raw: first.encoded_2718().into(),
                 metering: None,
-                extensions: TransactionValidity { validity: always_satisfied.clone() },
+                extensions: TransactionValidity {
+                    validity: always_satisfied.clone(),
+                    validity_signature: None,
+                },
             },),
         )
         .await?;
@@ -295,7 +300,10 @@ async fn predicate_eval_hard_cutoff_defers_without_evaluating() -> eyre::Result<
                 sender: accounts[1].address(),
                 raw: deferred.encoded_2718().into(),
                 metering: None,
-                extensions: TransactionValidity { validity: always_satisfied },
+                extensions: TransactionValidity {
+                    validity: always_satisfied,
+                    validity_signature: None,
+                },
             },),
         )
         .await?;
@@ -428,6 +436,7 @@ async fn resting_transaction_is_included_once_its_blocking_state_changes() -> ey
                         op: ValidityOperator::Equal,
                         value: U256::from(1),
                     }],
+                    validity_signature: None,
                 },
             },),
         )

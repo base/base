@@ -528,7 +528,6 @@ serde_json = { version = "1.0.151", default-features = false }
 
 # testing
 arbtest = "0.3"
-test-case = "3"
 mockall = "0.14"
 tempfile = "3.27"
 rstest = "0.26.1"
@@ -587,7 +586,6 @@ bytes = "1.12.1"
 # identifiers and randomness
 rand = "0.9"
 uuid = "1.24"
-nanoid = "0.4"
 rand_08 = { package = "rand", version = "0.8" }
 
 # time

@@ -9,11 +9,12 @@ use std::{any::Any, path::PathBuf, sync::Arc, time::Duration};
 
 use alloy_primitives::hex::ToHexExt;
 use alloy_rpc_types_engine::JwtSecret;
-use base_builder_core::{BuilderConfig, test_utils::get_available_port};
+use base_builder_core::BuilderConfig;
 use base_builder_multiplex::MultiplexingServiceBuilder;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_txpool::{
     BasePooledTransaction, BuilderApiImpl, BuilderApiServer, DEFAULT_MAX_VALIDITY_PREDICATES,
+    ValiditySignatureMode,
 };
 use base_node_core::{args::RollupArgs, node::BasePoolBuilder};
 use base_node_runner::{BaseNode, BaseNodeExtension, FromExtensionConfig, NodeHooks};
@@ -35,7 +36,7 @@ use tracing::warn;
 use url::Url;
 
 use super::InProcessNodeRuntime;
-use crate::{config::BUILDER, setup::BUILDER_ENODE_ID};
+use crate::{PortPool, config::BUILDER, setup::BUILDER_ENODE_ID};
 
 /// Configuration for starting an in-process builder.
 #[derive(Debug)]
@@ -62,6 +63,8 @@ pub struct InProcessBuilderConfig {
     pub metrics_port: Option<u16>,
     /// Whether to run both payload builders and cut over to basic at Denim.
     pub payload_builder_cutover: bool,
+    /// Staged signature policy used by both validity-bearing RPC endpoints.
+    pub validity_signature_mode: ValiditySignatureMode,
     /// Additional node extensions installed after the builder's built-in RPC wiring.
     ///
     /// Lets downstream consumers layer their own [`BaseNodeExtension`] onto the standard
@@ -145,10 +148,10 @@ impl InProcessBuilder {
 
         let chain_spec = Arc::clone(&config.chain_spec);
 
-        let flashblocks_port = config.flashblocks_port.unwrap_or_else(get_available_port);
+        let flashblocks_port = config.flashblocks_port.unwrap_or_else(PortPool::claim);
         let metrics_addr = SocketAddr::new(
             Ipv4Addr::LOCALHOST.into(),
-            config.metrics_port.unwrap_or_else(get_available_port),
+            config.metrics_port.unwrap_or_else(PortPool::claim),
         );
         let builder_config = BuilderConfig {
             block_time: config.block_time,
@@ -195,7 +198,10 @@ impl InProcessBuilder {
 
         let extra_extensions = config.extra_extensions;
         let hooks = Box::new(SendRawTransactionValidityExtension::from_config(
-            SendRawTransactionValidityConfig::default(),
+            SendRawTransactionValidityConfig {
+                validity_signature_mode: config.validity_signature_mode,
+                ..Default::default()
+            },
         ))
         .apply(NodeHooks::new());
         // Reth's `extend_rpc_modules` is a single-slot hook that silently replaces whatever was
@@ -207,7 +213,8 @@ impl InProcessBuilder {
                     ctx.pool().clone(),
                     true,
                     DEFAULT_MAX_VALIDITY_PREDICATES,
-                );
+                )
+                .with_validity_signature_mode(config.validity_signature_mode);
             ctx.modules.merge_configured(api.into_rpc())?;
             Ok(())
         });
@@ -448,6 +455,7 @@ fn create_node_config(
         node_config.debug.startup_sync_state_idle = true;
     }
 
+    config.runtime.bound_engine_memory(&mut node_config);
     if let Some(persistence_threshold) = config.persistence_threshold {
         node_config.engine.persistence_threshold = persistence_threshold;
     }

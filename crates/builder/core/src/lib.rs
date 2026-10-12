@@ -52,7 +52,7 @@ pub use flashblocks::{
 mod extension;
 pub use extension::{
     BuilderApiExtension, BuilderApiExtensionArgs, BuilderApiExtensionConfig,
-    DEFAULT_MAX_VALIDITY_PREDICATES,
+    DEFAULT_MAX_VALIDITY_PREDICATES, ValiditySignatureMode,
 };
 
 mod shadow_validity;

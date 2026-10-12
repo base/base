@@ -1,6 +1,6 @@
 #![doc = include_str!("../README.md")]
 #![cfg_attr(docsrs, feature(doc_cfg))]
-#![cfg_attr(not(any(test, feature = "test-utils")), no_std)]
+#![cfg_attr(not(test), no_std)]
 
 extern crate alloc;
 
@@ -19,6 +19,3 @@ pub use errors::{
 };
 
 mod util;
-
-#[cfg(feature = "test-utils")]
-pub mod test_utils;

@@ -60,6 +60,12 @@ base_metrics::define_metrics! {
     #[describe("Number of in-flight proof sessions")]
     pending_proofs: gauge,
 
+    #[describe(
+        "Total number of ZK dispute proofs the onchain verifier rejected with InvalidProof; \
+         the game is ignored, so any increase needs an operator"
+    )]
+    zk_invalid_proof_total: counter,
+
     #[describe("Number of games ignored after terminal proof-submission reverts")]
     ignored_games: gauge,
 

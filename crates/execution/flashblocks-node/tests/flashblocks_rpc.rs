@@ -782,6 +782,30 @@ async fn test_eth_estimate_gas() -> Result<()> {
 }
 
 #[tokio::test]
+async fn test_eth_estimate_gas_applies_block_overrides() -> Result<()> {
+    let harness = FlashblocksHarness::new().await?;
+    let client = harness.rpc_client()?;
+    // Reverts unless `TIMESTAMP == 1000`:
+    // TIMESTAMP PUSH2 1000 EQ PUSH1 0x0d JUMPI PUSH1 0 PUSH1 0 REVERT JUMPDEST STOP
+    let guard = address!("0x00000000000000000000000000000000000000ad");
+    let state_overrides =
+        json!({ (guard.to_string()): { "code": "0x426103e814600d5760006000fd5b00" } });
+    let call = json!({ "from": Account::Alice.address(), "to": guard });
+
+    for block in ["latest", "pending"] {
+        let at_head: Result<U256, _> =
+            client.request("eth_estimateGas", json!([call, block, state_overrides])).await;
+        assert!(at_head.is_err(), "{block}: the guard reverts at the head's timestamp");
+
+        let gas: U256 = client
+            .request("eth_estimateGas", json!([call, block, state_overrides, { "time": "0x3e8" }]))
+            .await?;
+        assert!(gas > U256::from(21_000u64), "{block}: the guard passes at the overridden time");
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn test_eth_simulate_v1() -> Result<()> {
     let setup = TestSetup::new().await?;
     let provider = setup.harness.provider();

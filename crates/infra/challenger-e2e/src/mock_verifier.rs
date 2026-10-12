@@ -82,6 +82,14 @@ pub(crate) async fn restore(provider: &RootProvider, original: &Original) -> Res
     Ok(())
 }
 
+/// Clears a verifier's `nullified` flag, real or mock: both keep it in slot 0.
+pub(crate) async fn revive(provider: &RootProvider, verifier: Address) -> Result<()> {
+    set_storage(provider, verifier, NULLIFIED_SLOT, B256::ZERO).await?;
+    let after = provider.get_storage_at(verifier, NULLIFIED_SLOT).await?;
+    ensure!(after.is_zero(), "verifier {verifier}'s nullified flag did not clear");
+    Ok(())
+}
+
 async fn set_code(provider: &RootProvider, address: Address, code: Bytes) -> Result<()> {
     provider
         .client()
@@ -230,5 +238,28 @@ mod tests {
         install(&provider, verifier, Address::repeat_byte(0x45)).await.expect("install");
 
         assert!(call(&provider, verifier, verify_calldata()).await.is_err(), "still nullified");
+    }
+
+    #[tokio::test]
+    async fn revive_makes_a_nullified_verifier_verify_again() {
+        let anvil = Anvil::new().spawn();
+        let provider: RootProvider = RootProvider::new_http(anvil.endpoint_url());
+        let verifier = Address::repeat_byte(0x46);
+        set_code(&provider, verifier, Bytes::from_static(&[0x00])).await.expect("seed");
+        install(&provider, verifier, Address::repeat_byte(0x47)).await.expect("install");
+        set_storage(&provider, verifier, NULLIFIED_SLOT, B256::with_last_byte(1))
+            .await
+            .expect("nullify");
+        assert!(call(&provider, verifier, verify_calldata()).await.is_err(), "nullified");
+
+        revive(&provider, verifier).await.expect("revive");
+
+        let verified = call(&provider, verifier, verify_calldata()).await.expect("verify");
+        assert_eq!(U256::from_be_slice(&verified), U256::from(1));
+        assert_eq!(
+            provider.get_storage_at(verifier, REGISTRY_SLOT).await.expect("slot 1"),
+            U256::from_be_bytes(Address::repeat_byte(0x47).into_word().0),
+            "only the flag is touched"
+        );
     }
 }

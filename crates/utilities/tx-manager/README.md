@@ -20,8 +20,6 @@ confirmation.
   optional blobs).
 - **`PreparedTx`** — signed transaction bytes and the fees, gas limit, nonce, and sidecar
   that were applied.
-- **`TxQueue`** — bounded async send queue with semaphore-based backpressure.
-- **`SendResult`** — pairs a caller-supplied ID with a transaction send outcome.
 
 ### Fee calculation
 

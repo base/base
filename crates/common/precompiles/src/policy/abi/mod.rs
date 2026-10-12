@@ -14,31 +14,6 @@ pub use v2::IPolicyRegistry as IPolicyRegistryV2;
 mod v3;
 pub use v3::{IPolicyRegistry, IPolicyRegistry as IPolicyRegistryV3};
 
-impl IPolicyRegistry::IPolicyRegistryCalls {
-    /// Returns the stable metric label for this decoded policy-registry call.
-    pub const fn as_label(&self) -> &'static str {
-        match self {
-            Self::createPolicy(_) => "policy.createPolicy",
-            Self::createPolicyWithAccounts(_) => "policy.createPolicyWithAccounts",
-            Self::createCompositePolicy(_) => "policy.createCompositePolicy",
-            Self::updateComposite(_) => "policy.updateComposite",
-            Self::stageUpdateAdmin(_) => "policy.stageUpdateAdmin",
-            Self::finalizeUpdateAdmin(_) => "policy.finalizeUpdateAdmin",
-            Self::renounceAdmin(_) => "policy.renounceAdmin",
-            Self::updateAllowlist(_) => "policy.updateAllowlist",
-            Self::updateBlocklist(_) => "policy.updateBlocklist",
-            Self::isAuthorized(_) => "policy.isAuthorized",
-            Self::MIN_COMPOSITE_CHILD_POLICIES(_) => "policy.MIN_COMPOSITE_CHILD_POLICIES",
-            Self::MAX_COMPOSITE_CHILD_POLICIES(_) => "policy.MAX_COMPOSITE_CHILD_POLICIES",
-            Self::policyExists(_) => "policy.policyExists",
-            Self::policyAdmin(_) => "policy.policyAdmin",
-            Self::pendingPolicyAdmin(_) => "policy.pendingPolicyAdmin",
-            Self::compositePolicyChildIds(_) => "policy.compositePolicyChildIds",
-            Self::invertedPolicyId(_) => "policy.invertedPolicyId",
-        }
-    }
-}
-
 impl IPolicyRegistry::PolicyType {
     /// Returns the raw `u8` discriminant for this policy type.
     pub const fn as_discriminant(self) -> u8 {
@@ -48,7 +23,7 @@ impl IPolicyRegistry::PolicyType {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Address, B256, b256};
+    use alloy_primitives::{B256, b256};
     use alloy_sol_types::{SolEnum, SolError, SolEvent, SolInterface};
 
     use super::{IPolicyRegistry, IPolicyRegistryV1, IPolicyRegistryV2, IPolicyRegistryV3};
@@ -124,17 +99,6 @@ mod tests {
             IPolicyRegistry::PolicyType::try_from(discriminant as u8)
                 .expect("generated PolicyType discriminant should decode");
         }
-    }
-
-    #[test]
-    fn policy_call_labels_are_stable() {
-        assert_eq!(
-            IPolicyRegistry::IPolicyRegistryCalls::isAuthorized(
-                IPolicyRegistry::isAuthorizedCall { policyId: 0, account: Address::ZERO },
-            )
-            .as_label(),
-            "policy.isAuthorized"
-        );
     }
 
     /// The leaf discriminants must mean the same thing on both surfaces. `PolicyType` rides the

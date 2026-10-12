@@ -435,7 +435,6 @@ mod tests {
         PolicyRegistryV1,
     };
 
-    const REGISTRY: Address = address!("0x8453000000000000000000000000000000000002");
     const ADMIN: Address = address!("0x1000000000000000000000000000000000000001");
     const ALICE: Address = address!("0xA000000000000000000000000000000000000001");
     const BOB: Address = address!("0xB000000000000000000000000000000000000001");
@@ -473,9 +472,6 @@ mod tests {
     }
 
     impl PolicyAccounting for FakePolicyAccounting {
-        fn registry_address(&self) -> Address {
-            REGISTRY
-        }
         fn caller(&self) -> Address {
             self.caller
         }

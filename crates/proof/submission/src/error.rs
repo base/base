@@ -27,6 +27,10 @@ pub enum ProofSubmissionError {
     #[error("invalid signer")]
     InvalidSigner,
 
+    /// The TEE or ZK verifier rejected the proof.
+    #[error("invalid proof")]
+    InvalidProof,
+
     /// The transaction was included but reverted onchain.
     #[error("transaction {0} reverted")]
     TxReverted(B256),
@@ -45,6 +49,7 @@ impl ProofSubmissionError {
             Self::L1OriginTooOld => "l1_origin_too_old",
             Self::InvalidParentGame => "invalid_parent_game",
             Self::InvalidSigner => "invalid_signer",
+            Self::InvalidProof => "invalid_proof",
             Self::TxReverted(_) => "tx_reverted",
             Self::TxManager(_) => "tx_manager",
         }
@@ -63,6 +68,7 @@ mod tests {
             (ProofSubmissionError::L1OriginTooOld, "l1_origin_too_old"),
             (ProofSubmissionError::InvalidParentGame, "invalid_parent_game"),
             (ProofSubmissionError::InvalidSigner, "invalid_signer"),
+            (ProofSubmissionError::InvalidProof, "invalid_proof"),
             (ProofSubmissionError::TxReverted(B256::ZERO), "tx_reverted"),
             (ProofSubmissionError::TxManager(TxManagerError::NonceTooLow), "tx_manager"),
         ];

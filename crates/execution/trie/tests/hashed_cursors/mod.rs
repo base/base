@@ -1,7 +1,7 @@
 //! Hashed account and storage cursor behavior tests.
 
+use rstest::rstest;
 use serial_test::serial;
-use test_case::test_case;
 
 use super::*;
 
@@ -33,12 +33,13 @@ fn storage_exact<S: BaseProofsStore>(
 // =============================================================================
 
 /// Test store and retrieve single account
-#[test_case(InMemoryProofsStorage::new(); "InMemory")]
-#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
+#[rstest]
+#[case::in_memory(InMemoryProofsStorage::new())]
+#[case::mdbx(create_mdbx_proofs_storage())]
+#[case::rocksdb(create_rocksdb_proofs_storage())]
 #[serial]
 fn test_store_and_retrieve_single_account<S: BaseProofsStore + BaseProofsInitialStateStore>(
-    storage: S,
+    #[case] storage: S,
 ) -> Result<(), BaseProofsStorageError> {
     let account_key = B256::repeat_byte(0x01);
     let account = create_test_account();
@@ -59,12 +60,13 @@ fn test_store_and_retrieve_single_account<S: BaseProofsStore + BaseProofsInitial
 }
 
 /// Test account cursor navigation
-#[test_case(InMemoryProofsStorage::new(); "InMemory")]
-#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
+#[rstest]
+#[case::in_memory(InMemoryProofsStorage::new())]
+#[case::mdbx(create_mdbx_proofs_storage())]
+#[case::rocksdb(create_rocksdb_proofs_storage())]
 #[serial]
 fn test_account_cursor_navigation<S: BaseProofsStore + BaseProofsInitialStateStore>(
-    storage: S,
+    #[case] storage: S,
 ) -> Result<(), BaseProofsStorageError> {
     let accounts = [
         (B256::repeat_byte(0x01), create_test_account()),
@@ -153,12 +155,13 @@ fn test_rocksdb_account_cursor_uses_creation_snapshot() -> Result<(), BaseProofs
 }
 
 /// Test account block versioning
-#[test_case(InMemoryProofsStorage::new(); "InMemory")]
-#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
+#[rstest]
+#[case::in_memory(InMemoryProofsStorage::new())]
+#[case::mdbx(create_mdbx_proofs_storage())]
+#[case::rocksdb(create_rocksdb_proofs_storage())]
 #[serial]
 fn test_account_block_versioning<S: BaseProofsStore + BaseProofsInitialStateStore>(
-    storage: S,
+    #[case] storage: S,
 ) -> Result<(), BaseProofsStorageError> {
     let account_key = B256::repeat_byte(0x01);
     let account_v1 = create_test_account_with_values(1, 100, 0xBB);
@@ -185,12 +188,13 @@ fn test_account_block_versioning<S: BaseProofsStore + BaseProofsInitialStateStor
 }
 
 /// Test store and retrieve storage
-#[test_case(InMemoryProofsStorage::new(); "InMemory")]
-#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
+#[rstest]
+#[case::in_memory(InMemoryProofsStorage::new())]
+#[case::mdbx(create_mdbx_proofs_storage())]
+#[case::rocksdb(create_rocksdb_proofs_storage())]
 #[serial]
 fn test_store_and_retrieve_storage<S: BaseProofsStore + BaseProofsInitialStateStore>(
-    storage: S,
+    #[case] storage: S,
 ) -> Result<(), BaseProofsStorageError> {
     let hashed_address = B256::repeat_byte(0x01);
     let storage_slots = vec![
@@ -216,12 +220,13 @@ fn test_store_and_retrieve_storage<S: BaseProofsStore + BaseProofsInitialStateSt
 }
 
 /// Test storage cursor navigation
-#[test_case(InMemoryProofsStorage::new(); "InMemory")]
-#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
+#[rstest]
+#[case::in_memory(InMemoryProofsStorage::new())]
+#[case::mdbx(create_mdbx_proofs_storage())]
+#[case::rocksdb(create_rocksdb_proofs_storage())]
 #[serial]
 fn test_storage_cursor_navigation<S: BaseProofsStore + BaseProofsInitialStateStore>(
-    storage: S,
+    #[case] storage: S,
 ) -> Result<(), BaseProofsStorageError> {
     let hashed_address = B256::repeat_byte(0x01);
     let storage_slots = vec![
@@ -249,12 +254,13 @@ fn test_storage_cursor_navigation<S: BaseProofsStore + BaseProofsInitialStateSto
 }
 
 /// Test storage account isolation
-#[test_case(InMemoryProofsStorage::new(); "InMemory")]
-#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
+#[rstest]
+#[case::in_memory(InMemoryProofsStorage::new())]
+#[case::mdbx(create_mdbx_proofs_storage())]
+#[case::rocksdb(create_rocksdb_proofs_storage())]
 #[serial]
 fn test_storage_account_isolation<S: BaseProofsStore + BaseProofsInitialStateStore>(
-    storage: S,
+    #[case] storage: S,
 ) -> Result<(), BaseProofsStorageError> {
     let address1 = B256::repeat_byte(0x01);
     let address2 = B256::repeat_byte(0x02);
@@ -285,12 +291,13 @@ fn test_storage_account_isolation<S: BaseProofsStore + BaseProofsInitialStateSto
 }
 
 /// Test storage block versioning
-#[test_case(InMemoryProofsStorage::new(); "InMemory")]
-#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
+#[rstest]
+#[case::in_memory(InMemoryProofsStorage::new())]
+#[case::mdbx(create_mdbx_proofs_storage())]
+#[case::rocksdb(create_rocksdb_proofs_storage())]
 #[serial]
 fn test_storage_block_versioning<S: BaseProofsStore + BaseProofsInitialStateStore>(
-    storage: S,
+    #[case] storage: S,
 ) -> Result<(), BaseProofsStorageError> {
     let hashed_address = B256::repeat_byte(0x01);
     let storage_key = B256::repeat_byte(0x10);
@@ -313,12 +320,13 @@ fn test_storage_block_versioning<S: BaseProofsStore + BaseProofsInitialStateStor
 }
 
 /// Test storage zero value deletion
-#[test_case(InMemoryProofsStorage::new(); "InMemory")]
-#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
+#[rstest]
+#[case::in_memory(InMemoryProofsStorage::new())]
+#[case::mdbx(create_mdbx_proofs_storage())]
+#[case::rocksdb(create_rocksdb_proofs_storage())]
 #[serial]
 fn test_storage_zero_value_deletion<S: BaseProofsStore + BaseProofsInitialStateStore>(
-    storage: S,
+    #[case] storage: S,
 ) -> Result<(), BaseProofsStorageError> {
     let hashed_address = B256::repeat_byte(0x01);
     let storage_key = B256::repeat_byte(0x10);
@@ -353,12 +361,13 @@ fn test_storage_zero_value_deletion<S: BaseProofsStore + BaseProofsInitialStateS
 }
 
 /// Test that zero values are skipped during iteration
-#[test_case(InMemoryProofsStorage::new(); "InMemory")]
-#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
+#[rstest]
+#[case::in_memory(InMemoryProofsStorage::new())]
+#[case::mdbx(create_mdbx_proofs_storage())]
+#[case::rocksdb(create_rocksdb_proofs_storage())]
 #[serial]
 fn test_storage_cursor_skips_zero_values<S: BaseProofsStore + BaseProofsInitialStateStore>(
-    storage: S,
+    #[case] storage: S,
 ) -> Result<(), BaseProofsStorageError> {
     let hashed_address = B256::repeat_byte(0x01);
 
@@ -403,12 +412,13 @@ fn test_storage_cursor_skips_zero_values<S: BaseProofsStore + BaseProofsInitialS
 }
 
 /// Test empty cursors
-#[test_case(InMemoryProofsStorage::new(); "InMemory")]
-#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
+#[rstest]
+#[case::in_memory(InMemoryProofsStorage::new())]
+#[case::mdbx(create_mdbx_proofs_storage())]
+#[case::rocksdb(create_rocksdb_proofs_storage())]
 #[serial]
 fn test_empty_cursors<S: BaseProofsStore + BaseProofsInitialStateStore>(
-    storage: S,
+    #[case] storage: S,
 ) -> Result<(), BaseProofsStorageError> {
     // Test empty account cursor
     let mut account_cursor = storage.account_hashed_cursor(100)?;
@@ -424,12 +434,13 @@ fn test_empty_cursors<S: BaseProofsStore + BaseProofsInitialStateStore>(
 }
 
 /// Test cursor boundary conditions
-#[test_case(InMemoryProofsStorage::new(); "InMemory")]
-#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
+#[rstest]
+#[case::in_memory(InMemoryProofsStorage::new())]
+#[case::mdbx(create_mdbx_proofs_storage())]
+#[case::rocksdb(create_rocksdb_proofs_storage())]
 #[serial]
 fn test_cursor_boundary_conditions<S: BaseProofsStore + BaseProofsInitialStateStore>(
-    storage: S,
+    #[case] storage: S,
 ) -> Result<(), BaseProofsStorageError> {
     let account_key = B256::repeat_byte(0x80); // Middle value
     let account = create_test_account();
@@ -454,12 +465,13 @@ fn test_cursor_boundary_conditions<S: BaseProofsStore + BaseProofsInitialStateSt
 }
 
 /// Test large batch operations
-#[test_case(InMemoryProofsStorage::new(); "InMemory")]
-#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
+#[rstest]
+#[case::in_memory(InMemoryProofsStorage::new())]
+#[case::mdbx(create_mdbx_proofs_storage())]
+#[case::rocksdb(create_rocksdb_proofs_storage())]
 #[serial]
 fn test_large_batch_operations<S: BaseProofsStore + BaseProofsInitialStateStore>(
-    storage: S,
+    #[case] storage: S,
 ) -> Result<(), BaseProofsStorageError> {
     // Create large batch of accounts
     let mut accounts = Vec::new();
@@ -489,14 +501,15 @@ fn test_large_batch_operations<S: BaseProofsStore + BaseProofsInitialStateStore>
     Ok(())
 }
 
-#[test_case(InMemoryProofsStorage::new(); "InMemory")]
-#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
+#[rstest]
+#[case::in_memory(InMemoryProofsStorage::new())]
+#[case::mdbx(create_mdbx_proofs_storage())]
+#[case::rocksdb(create_rocksdb_proofs_storage())]
 #[serial]
 fn test_exact_account_reads_do_not_return_lower_bound_neighbor<
     S: BaseProofsStore + BaseProofsInitialStateStore,
 >(
-    storage: S,
+    #[case] storage: S,
 ) -> Result<(), BaseProofsStorageError> {
     let left_key = B256::repeat_byte(0x10);
     let missing_key = B256::repeat_byte(0x20);
@@ -516,14 +529,15 @@ fn test_exact_account_reads_do_not_return_lower_bound_neighbor<
     Ok(())
 }
 
-#[test_case(InMemoryProofsStorage::new(); "InMemory")]
-#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
+#[rstest]
+#[case::in_memory(InMemoryProofsStorage::new())]
+#[case::mdbx(create_mdbx_proofs_storage())]
+#[case::rocksdb(create_rocksdb_proofs_storage())]
 #[serial]
 fn test_exact_storage_reads_do_not_return_lower_bound_neighbor<
     S: BaseProofsStore + BaseProofsInitialStateStore,
 >(
-    storage: S,
+    #[case] storage: S,
 ) -> Result<(), BaseProofsStorageError> {
     let hashed_address = B256::repeat_byte(0xA0);
     let left_key = B256::repeat_byte(0x10);
@@ -542,14 +556,15 @@ fn test_exact_storage_reads_do_not_return_lower_bound_neighbor<
     Ok(())
 }
 
-#[test_case(InMemoryProofsStorage::new(); "InMemory")]
-#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
+#[rstest]
+#[case::in_memory(InMemoryProofsStorage::new())]
+#[case::mdbx(create_mdbx_proofs_storage())]
+#[case::rocksdb(create_rocksdb_proofs_storage())]
 #[serial]
 fn test_exact_reads_hide_deleted_account_and_zero_storage<
     S: BaseProofsStore + BaseProofsInitialStateStore,
 >(
-    storage: S,
+    #[case] storage: S,
 ) -> Result<(), BaseProofsStorageError> {
     let deleted_account_key = B256::repeat_byte(0x40);
     let live_account_key = B256::repeat_byte(0x50);
@@ -702,14 +717,15 @@ fn test_rocksdb_exact_lookup_returns_none_when_versions_are_above_bound()
 /// fall through to a neighbor when the target is missing, tombstoned, zero, or only newer. The
 /// layout places misses next to a key whose many versions end in a tombstone, which is the shape
 /// that made range-cursor seeks walk dead history.
-#[test_case(InMemoryProofsStorage::new(); "InMemory")]
-#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
+#[rstest]
+#[case::in_memory(InMemoryProofsStorage::new())]
+#[case::mdbx(create_mdbx_proofs_storage())]
+#[case::rocksdb(create_rocksdb_proofs_storage())]
 #[serial]
 fn test_point_lookups_match_exact_seek_semantics<
     S: BaseProofsStore + BaseProofsInitialStateStore,
 >(
-    storage: S,
+    #[case] storage: S,
 ) -> Result<(), BaseProofsStorageError> {
     const DEAD_KEY_LIVE_BLOCKS: u64 = 50;
     const DEAD_KEY_TOMBSTONE_BLOCK: u64 = DEAD_KEY_LIVE_BLOCKS + 1;

@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use base_builder_core::{
     BuilderApiExtensionConfig, BuilderConfig, DEFAULT_MAX_VALIDITY_PREDICATES,
     ExecutionMeteringMode, RejectionCache, RestingPredicateMode, ShadowValidityConfig,
-    SharedMeteringProvider,
+    SharedMeteringProvider, ValiditySignatureMode,
 };
 use base_builder_metering::MeteringStore;
 use base_execution_cli::ShadowIndexerArgs;
@@ -199,6 +199,14 @@ pub struct Args {
     )]
     pub validity_max_predicates: usize,
 
+    /// Staged validity signature rollout policy for raw and forwarded submissions.
+    #[arg(
+        long = "validity-signature-mode",
+        default_value_t = ValiditySignatureMode::Off,
+        conflicts_with = "shadow_validity_injection_enabled"
+    )]
+    pub validity_signature_mode: ValiditySignatureMode,
+
     /// Decorate sampled ordinary transactions with a behavior-preserving validity predicate.
     ///
     /// This must only be enabled on a shadow builder.
@@ -334,6 +342,7 @@ impl Default for Args {
             extra_block_deadline_secs: 20,
             enable_resource_metering: false,
             validity_max_predicates: DEFAULT_MAX_VALIDITY_PREDICATES,
+            validity_signature_mode: ValiditySignatureMode::Off,
             shadow_validity_injection_enabled: false,
             shadow_validity_injection_sample_rate_bps: 100,
             max_uncompressed_block_size: None,
@@ -369,6 +378,7 @@ impl Args {
             ShadowValidityConfig::disabled()
         };
         Ok(BuilderApiExtensionConfig::new(self.validity_max_predicates)
+            .with_validity_signature_mode(self.validity_signature_mode)
             .with_shadow_validity(shadow_validity))
     }
 

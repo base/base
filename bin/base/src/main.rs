@@ -7,7 +7,6 @@ mod cli;
 mod commands;
 mod config;
 
-#[cfg(all(feature = "jemalloc-prof", unix))]
 #[global_allocator]
 static ALLOC: reth_cli_util::allocator::Allocator = reth_cli_util::allocator::new_allocator();
 

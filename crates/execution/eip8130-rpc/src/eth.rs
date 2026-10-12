@@ -3,8 +3,11 @@
 
 use alloy_eips::BlockId;
 use alloy_evm::EvmFactory;
-use alloy_primitives::{Address, U256};
-use alloy_rpc_types::state::{EvmOverrides, StateOverride};
+use alloy_primitives::{Address, Bytes, U256};
+use alloy_rpc_types::{
+    BlockOverrides,
+    state::{EvmOverrides, StateOverride},
+};
 use base_common_evm::BaseTransaction as BaseRevm;
 use base_common_rpc_types::{BaseRpcTypes, BaseTransactionRequest};
 use base_execution_chainspec::BaseChainSpec;
@@ -66,7 +69,23 @@ pub trait Eip8130EthApiOverride {
         request: BaseTransactionRequest,
         block_number: Option<BlockId>,
         state_overrides: Option<StateOverride>,
+        block_overrides: Option<Box<BlockOverrides>>,
     ) -> RpcResult<U256>;
+
+    /// Executes a call.
+    ///
+    /// A request carrying EIP-8130 fields (or `type: 0x79`) runs the same
+    /// read-only EIP-8130 simulation as `eth_estimateGas` (gated on the Everest
+    /// fork) and returns the output of its final call. A plain request falls
+    /// through to the standard reth `eth_call` unchanged.
+    #[method(name = "call")]
+    async fn call(
+        &self,
+        request: BaseTransactionRequest,
+        block_number: Option<BlockId>,
+        state_overrides: Option<StateOverride>,
+        block_overrides: Option<Box<BlockOverrides>>,
+    ) -> RpcResult<Bytes>;
 }
 
 /// Standalone EIP-8130 `eth_getTransactionCount` extension.
@@ -132,36 +151,44 @@ where
         request: BaseTransactionRequest,
         block_number: Option<BlockId>,
         state_overrides: Option<StateOverride>,
+        block_overrides: Option<Box<BlockOverrides>>,
     ) -> RpcResult<U256> {
         let block_id = block_number.unwrap_or_default();
+        let overrides = EvmOverrides::new(state_overrides, block_overrides);
 
         // Plain (non-8130) request: this override replaces the default
         // `eth_estimateGas`, so the common case must be delegated to the
         // standard reth estimator unchanged.
         if request.as_eip8130().is_none() {
-            return EthCall::estimate_gas_at(
-                &self.eth_api,
-                request,
-                block_id,
-                EvmOverrides::state(state_overrides),
-            )
-            .await
-            .map_err(Into::into);
+            return EthCall::estimate_gas_at(&self.eth_api, request, block_id, overrides)
+                .await
+                .map_err(Into::into);
         }
 
         debug!(message = "rpc::eip8130::estimate_gas", block_id = ?block_id);
 
         Eip8130EverestGate::check(&self.eth_api, block_id)?;
-        // This standalone override only receives state overrides (the
-        // `eth_estimateGas` RPC signature carries no block overrides); the
-        // estimator still accepts the full `EvmOverrides` so the flashblocks
-        // path can thread its pending block env through.
-        Eip8130GasEstimator::estimate(
-            &self.eth_api,
-            request,
-            block_id,
-            EvmOverrides::state(state_overrides),
-        )
-        .await
+        Eip8130GasEstimator::estimate(&self.eth_api, request, block_id, overrides).await
+    }
+
+    async fn call(
+        &self,
+        request: BaseTransactionRequest,
+        block_number: Option<BlockId>,
+        state_overrides: Option<StateOverride>,
+        block_overrides: Option<Box<BlockOverrides>>,
+    ) -> RpcResult<Bytes> {
+        let overrides = EvmOverrides::new(state_overrides, block_overrides);
+        if request.as_eip8130().is_none() {
+            return EthCall::call(&self.eth_api, request, block_number, overrides)
+                .await
+                .map_err(Into::into);
+        }
+
+        debug!(message = "rpc::eip8130::call", block_number = ?block_number);
+
+        let block_id = block_number.unwrap_or_default();
+        Eip8130EverestGate::check(&self.eth_api, block_id)?;
+        Eip8130GasEstimator::call(&self.eth_api, request, block_id, overrides).await
     }
 }

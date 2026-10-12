@@ -22,6 +22,7 @@ use testcontainers::bollard::{
 };
 use tokio::signal;
 use tracing::{debug, warn};
+use uuid::Uuid;
 
 use super::{EngineApi, Ipc};
 
@@ -56,7 +57,7 @@ impl ExternalNode {
             .map(PathBuf::from)
             .unwrap_or_else(|_| std::env::temp_dir());
 
-        let tempdir = tempdir.join(format!("reth-shared-{}", nanoid::nanoid!()));
+        let tempdir = tempdir.join(format!("reth-shared-{}", Uuid::new_v4()));
         let auth_ipc = tempdir.join("auth.ipc").to_string_lossy().to_string();
         let rpc_ipc = tempdir.join("rpc.ipc").to_string_lossy().to_string();
 

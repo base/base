@@ -31,11 +31,6 @@ impl BerylLookup {
         precompiles.set_precompile_lookup(BerylLookupWithObserver::new(observer, upgrade));
     }
 
-    /// Returns the B-20 variant precompile for `address` at `upgrade`, if it encodes one.
-    pub fn lookup(address: &Address, upgrade: BaseUpgrade) -> Option<DynPrecompile> {
-        Self::lookup_with_observer(address, upgrade, NoopPrecompileCallObserver)
-    }
-
     /// Returns an observed B-20 variant precompile for `address` at `upgrade`, if it encodes one.
     ///
     /// The active version is resolved inside the token's dispatcher from `upgrade`; the lookup

@@ -389,7 +389,7 @@ where
     ///
     /// Calls [`check_fee_limit`](Self::check_fee_limit) for the gas fee cap,
     /// and when `blob_fee_cap` is `Some`, also checks the blob fee cap
-    /// against [`raw_blob_baseline`](Self::raw_blob_baseline).
+    /// against `caps.raw_blob_fee_cap`.
     fn check_fee_limits(
         &self,
         fee_cap: u128,
@@ -398,21 +398,15 @@ where
     ) -> TxManagerResult<()> {
         self.check_fee_limit(fee_cap, caps.raw_gas_fee_cap)?;
         if let Some(blob_cap) = blob_fee_cap {
-            self.check_fee_limit(blob_cap, self.raw_blob_baseline(caps)?)?;
+            // A missing raw blob baseline is a caller bug on the blob transaction path.
+            let baseline = caps.raw_blob_fee_cap.ok_or_else(|| {
+                TxManagerError::Unsupported(
+                    "raw_blob_fee_cap missing on blob transaction path".into(),
+                )
+            })?;
+            self.check_fee_limit(blob_cap, baseline)?;
         }
         Ok(())
-    }
-
-    /// Returns the raw (pre-minimum) blob fee cap from `caps`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TxManagerError::Unsupported`] if `raw_blob_fee_cap` is `None`,
-    /// which indicates a caller bug (blob tx path must always populate this).
-    fn raw_blob_baseline(&self, caps: &GasPriceCaps) -> TxManagerResult<u128> {
-        caps.raw_blob_fee_cap.ok_or_else(|| {
-            TxManagerError::Unsupported("raw_blob_fee_cap missing on blob transaction path".into())
-        })
     }
 
     /// Constructs and signs a transaction, retrying on transient errors.
@@ -1141,48 +1135,42 @@ where
                 return Ok(receipt);
             }
 
-            // Respond immediately to the bump-fees flag set by
-            // process_send_error on retryable errors, rather than waiting
-            // for the next resubmission timer tick. take_bump_fees clears
-            // the flag atomically so a failed bump does not re-trigger.
-            if send_state.take_bump_fees() {
-                self.try_fee_bump(candidate, send_state, &receipt_tx, &mut bump).await;
-                // Reset the bump ticker so we get a full interval
-                // before the next timer-driven bump.
-                bump_ticker = self.runtime.interval(self.config.resubmission_timeout);
-                bump_ticker.next().await;
-                continue;
-            }
-
-            // Determine which event fired. handle_fee_bump (and
-            // transitively prepare()) is NOT cancellation-safe, so it
-            // must not run inside tokio::select!. The select block only
-            // captures which arm won; fee bump work runs to completion
-            // outside the select block.
-            tokio::select! {
-                biased;
-                result = receipt_rx.recv() => {
-                    match result {
-                        Some(receipt) => {
-                            info!(
-                                tx_hash = %receipt.transaction_hash,
-                                block = ?receipt.block_number,
-                                status = %receipt.inner.status(),
-                                "transaction receipt received",
-                            );
-                            return Ok(receipt);
-                        }
-                        None => {
-                            // All senders dropped — should not happen in normal flow.
-                            return Err(TxManagerError::ChannelClosed);
+            // Skip the select to respond immediately to the bump-fees flag set by
+            // process_send_error on retryable errors, rather than waiting for the
+            // next timer tick. take_bump_fees clears the flag atomically so a
+            // failed bump does not re-trigger.
+            if !send_state.take_bump_fees() {
+                // Determine which event fired. handle_fee_bump (and
+                // transitively prepare()) is NOT cancellation-safe, so it
+                // must not run inside tokio::select!. The select block only
+                // captures which arm won; fee bump work runs to completion
+                // outside the select block.
+                tokio::select! {
+                    biased;
+                    result = receipt_rx.recv() => {
+                        match result {
+                            Some(receipt) => {
+                                info!(
+                                    tx_hash = %receipt.transaction_hash,
+                                    block = ?receipt.block_number,
+                                    status = %receipt.inner.status(),
+                                    "transaction receipt received",
+                                );
+                                return Ok(receipt);
+                            }
+                            None => {
+                                // All senders dropped — should not happen in normal flow.
+                                return Err(TxManagerError::ChannelClosed);
+                            }
                         }
                     }
-                }
-                _ = bump_ticker.next() => {}
-            };
+                    _ = bump_ticker.next() => {}
+                };
+            }
 
-            // Bump tick fired — run fee bump logic.
+            // Fee bump work stays outside the select because preparation is not cancellation-safe.
             self.try_fee_bump(candidate, send_state, &receipt_tx, &mut bump).await;
+            // Reset the bump ticker so we get a full interval before the next timer-driven bump.
             bump_ticker = self.runtime.interval(self.config.resubmission_timeout);
             bump_ticker.next().await;
         }
@@ -1478,7 +1466,7 @@ where
             let receipt = tokio::select! {
                 biased;
                 () = receipt_tx.closed() => None,
-                receipt = manager.wait_mined_for_tx(&send_state, tx_hash) => receipt,
+                receipt = Self::wait_mined_using_runtime(&manager.runtime, &send_state, &manager.provider, tx_hash, &manager.config, &manager.closed) => receipt,
             };
             if let Some(receipt) = receipt {
                 let _ = receipt_tx.send(receipt).await;
@@ -1486,23 +1474,6 @@ where
 
             debug!(tx_hash = %tx_hash, "receipt polling ended");
         });
-    }
-
-    /// Polls for a transaction receipt using this manager's configured runtime.
-    async fn wait_mined_for_tx(
-        &self,
-        send_state: &SendState,
-        tx_hash: B256,
-    ) -> Option<TransactionReceipt> {
-        Self::wait_mined_using_runtime(
-            &self.runtime,
-            send_state,
-            &self.provider,
-            tx_hash,
-            &self.config,
-            &self.closed,
-        )
-        .await
     }
 
     /// Polls for a transaction receipt at `receipt_query_interval` until
@@ -2000,7 +1971,15 @@ mod tests {
                 metrics: Arc::new(NoopTxMetrics),
             };
 
-            let confirmed = manager.wait_mined_for_tx(&send_state, tx_hash).await;
+            let confirmed = SimpleTxManager::<_>::wait_mined_using_runtime(
+                &manager.runtime,
+                &send_state,
+                &manager.provider,
+                tx_hash,
+                &manager.config,
+                &manager.closed,
+            )
+            .await;
 
             assert_eq!(confirmed.map(|receipt| receipt.transaction_hash), Some(tx_hash));
             assert_eq!(ctx.now(), Duration::from_secs(4));

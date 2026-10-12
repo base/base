@@ -13,10 +13,11 @@ use alloy_eips::{
     eip7594::BlobTransactionSidecarVariant,
     eip7702::SignedAuthorization,
 };
-use alloy_primitives::{Address, B256, Bytes, TxHash, TxKind, U256};
+use alloy_primitives::{Address, B256, Bytes, Signature, TxHash, TxKind, U256};
 use base_bundles::MeterBundleResponse;
 use base_common_consensus::{
-    BaseTransactionSigned, EIP8130_TX_TYPE_ID, Eip8130Constants, Eip8130Signed,
+    BaseTransactionSigned, CoinbaseTip, EIP8130_TX_TYPE_ID, Eip8130Constants, Eip8130Signed,
+    Predeploys,
 };
 use c_kzg::KzgSettings;
 use reth_primitives_traits::{InMemorySize, SignedTransaction};
@@ -60,6 +61,8 @@ pub struct BasePooledTransaction<
     received_at: u128,
     /// Compiled conditions, shared across payload candidates; absent for ordinary transactions.
     validity_conditions: Option<Arc<crate::ValidityConditions>>,
+    /// Sender authorization retained for builder forwarding.
+    validity_signature: Option<Signature>,
     /// The set of on-chain state surfaces whose change invalidates this
     /// transaction, computed once during validation and consumed by the pool's
     /// invalidation index. Empty until set; see [`crate::WatchSet`].
@@ -69,6 +72,8 @@ pub struct BasePooledTransaction<
     /// consumed by the pool's admission guard. Unset until classified; see
     /// [`crate::LimitClass`].
     limit_class: OnceLock<crate::LimitClass>,
+    /// Sender policy gate target resolved during validation, when gated.
+    sender_policy_target: OnceLock<Address>,
     /// The authorization read-set and build-time predicates captured during
     /// EIP-8130 validation. Unset for other transaction types; see
     /// [`crate::WatchManifest`].
@@ -103,8 +108,10 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
             encoded_2718: Default::default(),
             received_at,
             validity_conditions: None,
+            validity_signature: None,
             watch_set: OnceLock::new(),
             limit_class: OnceLock::new(),
+            sender_policy_target: OnceLock::new(),
             watch_manifest: OnceLock::new(),
             metering: None,
         }
@@ -133,6 +140,7 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
     ) -> Self {
         self.validity_conditions = (!validity_predicates.is_empty())
             .then(|| Arc::new(crate::ValidityConditions::new(validity_predicates)));
+        self.validity_signature = None;
         self
     }
 
@@ -147,6 +155,20 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
     #[must_use]
     pub fn validity_conditions(&self) -> &crate::ValidityConditions {
         self.validity_conditions.as_deref().unwrap_or_else(|| crate::ValidityConditions::empty())
+    }
+
+    /// Attaches a validity sidecar without verifying its signature.
+    /// Raw ingress must validate authorization first; builder insertion trusts its forwarder.
+    #[must_use]
+    pub fn with_validity(mut self, validity: crate::TransactionValidity) -> Self {
+        self = self.with_validity_predicates(validity.validity);
+        self.validity_signature = validity.validity_signature;
+        self
+    }
+
+    /// Returns the sender's validity-sidecar signature, if any.
+    pub const fn validity_signature(&self) -> Option<Signature> {
+        self.validity_signature
     }
 
     /// Returns the estimated compressed size of a transaction in bytes.
@@ -424,6 +446,18 @@ pub trait BasePooledTx: PoolTransaction + DataAvailabilitySized {
         None
     }
 
+    /// Returns the statically declared coinbase tip this transaction can pay.
+    ///
+    /// A policy-gated sender's calls must all target its policy manager, so a
+    /// tip to the fee vault reverts, and pays nothing, unless the vault is that
+    /// target. Such a tip is not reported.
+    fn coinbase_tip(&self) -> Option<U256> {
+        let tip = CoinbaseTip::decode(self.as_eip8130()?.tx())?;
+        self.sender_policy_target()
+            .is_none_or(|target| target == Predeploys::SEQUENCER_FEE_VAULT)
+            .then_some(tip)
+    }
+
     /// Returns the EIP-8130 `nonce_key` when this transaction belongs to a
     /// finite non-zero nonce channel handled by the 2D nonce pool.
     fn eip8130_nonce_channel_key(&self) -> Option<U256> {
@@ -458,6 +492,16 @@ pub trait BasePooledTx: PoolTransaction + DataAvailabilitySized {
     /// Records the admission limit classification computed during validation.
     /// Defaults to a no-op.
     fn set_limit_class(&self, _limit_class: crate::LimitClass) {}
+
+    /// Returns the sender's policy gate target resolved during validation, when
+    /// the sender actor is policy-gated. Defaults to `None` (ungated).
+    fn sender_policy_target(&self) -> Option<Address> {
+        None
+    }
+
+    /// Records the sender's policy gate target resolved during validation.
+    /// Defaults to a no-op.
+    fn set_sender_policy_target(&self, _target: Address) {}
 
     /// Returns build-time predicates captured during EIP-8130 authorization.
     ///
@@ -542,6 +586,14 @@ where
 
     fn set_limit_class(&self, limit_class: crate::LimitClass) {
         let _ = self.limit_class.set(limit_class);
+    }
+
+    fn sender_policy_target(&self) -> Option<Address> {
+        self.sender_policy_target.get().copied()
+    }
+
+    fn set_sender_policy_target(&self, target: Address) {
+        let _ = self.sender_policy_target.set(target);
     }
 
     fn metering(&self) -> Option<&MeterBundleResponse> {

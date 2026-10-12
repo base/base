@@ -264,11 +264,6 @@ impl StablecoinAccounting for InMemoryTokenAccounting {
     fn currency(&self) -> Result<String> {
         Ok(self.currency.clone())
     }
-
-    fn set_currency(&mut self, currency: String) -> Result<()> {
-        self.currency = currency;
-        Ok(())
-    }
 }
 
 /// In-memory [`PolicyAccounting`] for unit tests.
@@ -322,10 +317,6 @@ impl FakePolicyAccounting {
 }
 
 impl PolicyAccounting for FakePolicyAccounting {
-    fn registry_address(&self) -> Address {
-        Address::repeat_byte(0x02)
-    }
-
     fn caller(&self) -> Address {
         self.caller
     }

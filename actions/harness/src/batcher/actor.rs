@@ -196,9 +196,13 @@ impl Batcher {
             BatchDriverInputs {
                 source,
                 l1_head_source,
-                // The driver learns the L1 head from the blocks the tests mine.
+                // The driver learns the L1 head from the blocks the tests mine, and the L1
+                // progress of derivation from the statuses they pass to `observe_derivation`.
                 initial_l1_head: 0,
-                initial_safe_head,
+                initial_derivation_status: DerivationStatus {
+                    safe_l2: initial_safe_head,
+                    ..Default::default()
+                },
                 derivation_status_rx,
                 admin_rx,
             },

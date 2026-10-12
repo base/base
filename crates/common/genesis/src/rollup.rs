@@ -26,7 +26,8 @@ pub struct RollupConfig {
     /// Note: When L1 has many 1 second consecutive blocks, and L2 grows at fixed 2 seconds,
     /// the L2 time may still grow beyond this difference.
     ///
-    /// Note: After the Fjord hardfork, this value becomes a constant of `1800`.
+    /// Note: After the Fjord hardfork, this value becomes a constant of `1800`, and after the
+    /// Denim hardfork a constant of `21600`.
     pub max_sequencer_drift: u64,
     /// The sequencer window size.
     pub seq_window_size: u64,
@@ -345,7 +346,9 @@ impl RollupConfig {
 
     /// Returns the max sequencer drift for the given timestamp.
     pub fn max_sequencer_drift(&self, timestamp: u64) -> u64 {
-        if self.is_fjord_active(timestamp) {
+        if self.is_denim_active(timestamp) {
+            Self::DENIM_MAX_SEQUENCER_DRIFT
+        } else if self.is_fjord_active(timestamp) {
             Self::FJORD_MAX_SEQUENCER_DRIFT
         } else {
             self.max_sequencer_drift
@@ -477,6 +480,9 @@ impl RollupConfig {
 
     /// The max sequencer drift when the Fjord hardfork is active.
     pub const FJORD_MAX_SEQUENCER_DRIFT: u64 = 1800;
+
+    /// The max sequencer drift when the Denim hardfork is active, in seconds (6 hours).
+    pub const DENIM_MAX_SEQUENCER_DRIFT: u64 = 6 * 60 * 60;
 
     /// The channel timeout once the Granite hardfork is active.
     pub const GRANITE_CHANNEL_TIMEOUT: u64 = 50;
@@ -732,6 +738,9 @@ mod tests {
         config.upgrades.fjord_time = Some(10);
         assert_eq!(config.max_sequencer_drift(0), 100);
         assert_eq!(config.max_sequencer_drift(10), RollupConfig::FJORD_MAX_SEQUENCER_DRIFT);
+        config.upgrades.base.denim = Some(20);
+        assert_eq!(config.max_sequencer_drift(19), RollupConfig::FJORD_MAX_SEQUENCER_DRIFT);
+        assert_eq!(config.max_sequencer_drift(20), RollupConfig::DENIM_MAX_SEQUENCER_DRIFT);
     }
 
     #[test]

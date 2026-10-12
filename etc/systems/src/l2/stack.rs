@@ -22,6 +22,7 @@ use base_common_network::Base;
 use base_common_rpc_types::BaseTransactionRequest;
 use base_consensus_node::NodeMode;
 use base_execution_cli::ExecutionUpgradeSignalConfig;
+use base_execution_txpool::ValiditySignatureMode;
 use base_node_runner::BaseNodeExtension;
 use base_tx_forwarding::TxForwardingConfig;
 use base_upgrade_signal::UpgradeSignalConfig;
@@ -79,6 +80,8 @@ pub struct L2StackConfig {
     /// Optional transaction forwarding configuration for the client node.
     /// When set, the client will forward transactions to builder RPC endpoints.
     pub tx_forwarding_config: Option<TxForwardingConfig>,
+    /// Signature policy shared by forwarding ingress and builder admission.
+    pub validity_signature_mode: ValiditySignatureMode,
     /// Whether the active builder cuts over from flashblocks to basic at Denim.
     pub payload_builder_cutover: bool,
     /// Number of L1 blocks to keep distance from the L1 head for the client (validator)
@@ -225,6 +228,7 @@ impl L2Stack {
             flashblocks_port: container_config.and_then(|c| c.builder_flashblocks_port),
             metrics_port: None,
             payload_builder_cutover: config.payload_builder_cutover,
+            validity_signature_mode: config.validity_signature_mode,
             extra_extensions: config.extra_builder_extensions,
             block_time: Duration::from_secs(rollup_config.block_time),
             persistence_threshold: None,
@@ -315,6 +319,7 @@ impl L2Stack {
             persistence_threshold: None,
             persistence_backpressure_threshold: None,
             tx_forwarding_config,
+            validity_signature_mode: config.validity_signature_mode,
             upgrade_signal: config.execution_upgrade_signal.clone(),
             extra_extensions: config.extra_client_extensions,
         };

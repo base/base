@@ -19,7 +19,7 @@ use base_proof_submission::KnownRevert;
 use base_prover_service_client::ProofRequesterProvider;
 use base_prover_service_protocol::{SnarkPlonkProofRequest, ZkBackend, ZkProofRequest, ZkVm};
 use base_tx_manager::{TxManager, TxManagerError};
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::{
     CandidateGame, ChallengeSubmitError, ChallengeSubmitter, ChallengerMetrics,
@@ -444,6 +444,29 @@ impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {
                         self.ignore_game(game_address);
                         return Ok(());
                     }
+                    ChallengeSubmitError::KnownRevert(KnownRevert::InvalidProof)
+                        if !targets_tee =>
+                    {
+                        // A ZK proof is deterministic for a given prover build:
+                        // re-proving returns another proof the verifier rejects,
+                        // and resubmitting this one fails every tick. The usual
+                        // cause is a prover running a different program than
+                        // the game's ZK_AGGREGATE_HASH / ZK_RANGE_HASH. Ignore
+                        // the game so it stops consuming proving capacity, and
+                        // make it loud: the invalid proposal is now unchallenged
+                        // until the prover is fixed and the challenger restarts.
+                        error!(
+                            error = %e,
+                            game = %game_address,
+                            invalid_index,
+                            "onchain verifier rejected the ZK proof (InvalidProof); the prover \
+                             likely runs a program other than the game's ZK hashes. Ignoring the \
+                             game until restart; it remains unchallenged"
+                        );
+                        ChallengerMetrics::zk_invalid_proof_total().increment(1);
+                        self.ignore_game(game_address);
+                        return Ok(());
+                    }
                     ChallengeSubmitError::KnownRevert(KnownRevert::InvalidSigner)
                         if !targets_tee =>
                     {
@@ -517,8 +540,9 @@ impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {
     const fn should_fallback_from_tee_submit(error: &ChallengeSubmitError) -> bool {
         matches!(
             error,
-            ChallengeSubmitError::KnownRevert(KnownRevert::InvalidSigner)
-                | ChallengeSubmitError::TxReverted { .. }
+            ChallengeSubmitError::KnownRevert(
+                KnownRevert::InvalidSigner | KnownRevert::InvalidProof
+            ) | ChallengeSubmitError::TxReverted { .. }
                 | ChallengeSubmitError::TxManager(TxManagerError::ExecutionReverted { .. })
         )
     }
@@ -627,7 +651,9 @@ mod tests {
     use std::{collections::HashMap, sync::Arc, time::Duration};
 
     use alloy_primitives::{Address, B256, Bytes};
-    use base_proof_contracts::{AggregateVerifierClient, GameStatus, l1_origin_too_old_selector};
+    use base_proof_contracts::{
+        AggregateVerifierClient, GameStatus, invalid_proof_selector, l1_origin_too_old_selector,
+    };
     use base_proof_rpc::L1Provider;
     use base_prover_service_protocol::{SnarkPlonkProofRequest, ZkProofRequest, ZkVm};
     use base_tx_manager::TxManagerError;
@@ -796,6 +822,42 @@ mod tests {
         assert!(!manager.pending_proofs.contains_key(&addr(0)));
         assert!(manager.is_ignored(addr(0)));
         assert!(proof_requester.state.lock().unwrap().prove_block_range_log.is_empty());
+    }
+
+    fn invalid_proof_revert() -> TxManagerError {
+        TxManagerError::ExecutionReverted {
+            reason: None,
+            data: Some(Bytes::from(invalid_proof_selector().to_vec())),
+        }
+    }
+
+    /// Before, this fell through to "dispute tx failed, will retry next tick"
+    /// and resubmitted the same rejected proof forever.
+    #[tokio::test]
+    async fn invalid_proof_revert_ignores_game_without_reproving() {
+        let (mut manager, submitter, proof_requester) =
+            manager_with_tx_error(invalid_proof_revert());
+        insert_ready_proof(&mut manager);
+
+        manager.poll_or_submit(addr(0), &submitter).await.unwrap();
+
+        assert!(!manager.pending_proofs.contains_key(&addr(0)));
+        assert!(manager.is_ignored(addr(0)));
+        assert!(proof_requester.state.lock().unwrap().prove_block_range_log.is_empty());
+    }
+
+    /// A TEE proof the verifier rejects still falls back to ZK, as it did when
+    /// the revert was only an unclassified `ExecutionReverted`.
+    #[tokio::test]
+    async fn invalid_proof_revert_on_tee_proof_falls_back_to_zk() {
+        let (mut manager, submitter, proof_requester) =
+            manager_with_tx_error(invalid_proof_revert());
+        insert_ready_tee_proof(&mut manager, true);
+
+        manager.poll_or_submit(addr(0), &submitter).await.unwrap();
+
+        assert!(!manager.is_ignored(addr(0)));
+        assert_zk_fallback_requested(&manager, &proof_requester);
     }
 
     #[test]

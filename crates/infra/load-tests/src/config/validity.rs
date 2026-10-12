@@ -10,6 +10,18 @@ use crate::{
     utils::{BaselineError, Result},
 };
 
+/// How the load tester supplies user authorization for validity predicates.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ValiditySigningMode {
+    /// Start unsigned, then sign future submissions to an endpoint after an explicit
+    /// signature-required response. Asynchronous builder drops cannot trigger this.
+    #[default]
+    Adaptive,
+    /// Sign every validity sidecar, allowing clients to migrate before enforcement.
+    Signed,
+}
+
 /// Validity-transaction workload configuration.
 ///
 /// A fraction of *senders* route their entire traffic through
@@ -19,6 +31,8 @@ use crate::{
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ValidityConfig {
+    /// Signing strategy; `signed` supports proactive fleet migration.
+    pub signing: ValiditySigningMode,
     /// Fraction `0.0..=1.0` of senders assigned to the validity path.
     pub ratio: f64,
 
@@ -45,6 +59,7 @@ pub struct ValidityConfig {
 impl Default for ValidityConfig {
     fn default() -> Self {
         Self {
+            signing: ValiditySigningMode::Adaptive,
             ratio: 0.0,
             priority_lead_ratio: 0.0,
             priority_lead_multiplier: 1,
@@ -594,6 +609,7 @@ mod tests {
             value: U256::ZERO,
         };
         let config = ValidityConfig {
+            signing: ValiditySigningMode::Adaptive,
             ratio: 1.0,
             priority_lead_ratio: 0.0,
             priority_lead_multiplier: 1,
@@ -607,6 +623,7 @@ mod tests {
     #[test]
     fn validate_surfaces_bad_operator() {
         let config = ValidityConfig {
+            signing: ValiditySigningMode::Adaptive,
             ratio: 1.0,
             priority_lead_ratio: 0.0,
             priority_lead_multiplier: 1,

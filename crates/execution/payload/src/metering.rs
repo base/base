@@ -8,7 +8,10 @@ use base_bundles::MeterBundleResponse;
 /// Trait abstracting resource metering data retrieval and management for the builder.
 pub trait MeteringProvider: Debug + Send + Sync + 'static {
     /// Retrieves the metering data for a given transaction hash.
-    fn get(&self, tx_hash: &TxHash) -> Option<MeterBundleResponse>;
+    ///
+    /// The response is shared rather than copied because lookups run once per
+    /// candidate transaction and most callers read only a few scalar fields.
+    fn get(&self, tx_hash: &TxHash) -> Option<Arc<MeterBundleResponse>>;
 
     /// Returns whether resource metering is currently enabled.
     fn is_enabled(&self) -> bool {
@@ -47,7 +50,7 @@ pub trait MeteringProvider: Debug + Send + Sync + 'static {
 pub struct NoopMeteringProvider;
 
 impl MeteringProvider for NoopMeteringProvider {
-    fn get(&self, _tx_hash: &TxHash) -> Option<MeterBundleResponse> {
+    fn get(&self, _tx_hash: &TxHash) -> Option<Arc<MeterBundleResponse>> {
         None
     }
 }

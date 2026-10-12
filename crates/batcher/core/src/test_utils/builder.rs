@@ -49,8 +49,9 @@ impl SubmissionStub {
 /// Builds a [`BatchDriver`] for tests.
 ///
 /// Unless told otherwise, the driver has a parked source, a parked L1 head source, a disabled
-/// throttle and at most one in-flight transaction. It starts from L1 head 0 and from the L2
-/// genesis (block 0) as safe head, so it drops blocks numbered 0 as already safe.
+/// throttle and at most one in-flight transaction. It starts from L1 head 0 and from the
+/// default derivation status, with the L2 genesis (block 0) as safe head and derivation at L1
+/// block 0, so it drops blocks numbered 0 as already safe.
 ///
 /// [`build`](Self::build) also creates the derivation-status and admin channels and hands
 /// their sending sides back as [`DriverHandles`]. Keep them alive while the driver runs:
@@ -66,7 +67,7 @@ pub struct DriverFixture<R, P, TM, S = PendingSource, L = PendingL1HeadSource> {
     throttle: DaThrottle,
     max_pending: usize,
     initial_l1_head: u64,
-    safe_head: BlockInfo,
+    derivation_status: DerivationStatus,
     force_blobs_when_throttling: bool,
 }
 
@@ -94,7 +95,7 @@ impl<R: Runtime, P: BatchPipeline, TM: TxManager> DriverFixture<R, P, TM> {
             throttle: DaThrottle::new(ThrottleController::disabled()),
             max_pending: 1,
             initial_l1_head: 0,
-            safe_head: BlockInfo::default(),
+            derivation_status: DerivationStatus::default(),
             force_blobs_when_throttling: true,
         }
     }
@@ -119,7 +120,7 @@ where
             throttle: self.throttle,
             max_pending: self.max_pending,
             initial_l1_head: self.initial_l1_head,
-            safe_head: self.safe_head,
+            derivation_status: self.derivation_status,
             force_blobs_when_throttling: self.force_blobs_when_throttling,
         }
     }
@@ -138,7 +139,7 @@ where
             throttle: self.throttle,
             max_pending: self.max_pending,
             initial_l1_head: self.initial_l1_head,
-            safe_head: self.safe_head,
+            derivation_status: self.derivation_status,
             force_blobs_when_throttling: self.force_blobs_when_throttling,
         }
     }
@@ -161,9 +162,9 @@ where
         self
     }
 
-    /// Set the safe L2 head the driver starts from.
-    pub const fn safe_head(mut self, safe_head: BlockInfo) -> Self {
-        self.safe_head = safe_head;
+    /// Set the derivation status the driver starts from.
+    pub const fn derivation_status(mut self, derivation_status: DerivationStatus) -> Self {
+        self.derivation_status = derivation_status;
         self
     }
 
@@ -193,7 +194,7 @@ where
                 source: self.source,
                 l1_head_source: self.l1_head_source,
                 initial_l1_head: self.initial_l1_head,
-                initial_safe_head: self.safe_head,
+                initial_derivation_status: self.derivation_status,
                 derivation_status_rx,
                 admin_rx,
             },

@@ -6,7 +6,7 @@ use alloy_primitives::{TxHash, U256};
 use base_bundles::MeterBundleResponse;
 use base_execution_txpool::{
     BasePooledTransaction, BuilderApiImpl, BuilderApiServer, InsertMetering, TransactionValidity,
-    ValidatedTransaction, ValidityOperator, ValidityPredicate,
+    ValidatedTransaction, ValidityOperator, ValidityPredicate, ValiditySignatureMode,
 };
 use jsonrpsee::core::RpcResult;
 use reth_transaction_pool::TransactionPool;
@@ -65,7 +65,7 @@ impl ShadowValidityConfig {
         if !self.enabled {
             return InjectionOutcome::Disabled;
         }
-        if !tx.extensions.validity.is_empty() {
+        if !tx.extensions.validity.is_empty() || tx.extensions.validity_signature.is_some() {
             return InjectionOutcome::ExistingValidity;
         }
         // EIP-1559 transactions use the 0x02 EIP-2718 type byte. The inner RPC handler performs
@@ -133,8 +133,15 @@ impl<P> ShadowValidityBuilderApi<P> {
     ) -> Self {
         Self {
             inner: BuilderApiImpl::with_extensions(pool, true, config.max_validity_predicates)
+                .with_validity_signature_mode(config.validity_signature_mode)
                 .with_metering_cache(Arc::new(InsertMeteringAdapter(metering_provider))),
-            config: config.shadow_validity,
+            // Shadow injection cannot create a user's signature. Never inject while
+            // enforcing authorization, even for callers constructing config directly.
+            config: if config.validity_signature_mode == ValiditySignatureMode::Required {
+                ShadowValidityConfig::disabled()
+            } else {
+                config.shadow_validity
+            },
         }
     }
 }
@@ -179,7 +186,11 @@ impl InjectionOutcome {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Address, Bytes};
+    use alloy_consensus::TxEip1559;
+    use alloy_eips::eip2718::Encodable2718;
+    use alloy_primitives::{Address, Bytes, Signature};
+    use base_common_consensus::{BaseTransactionSigned, BaseTypedTransaction};
+    use reth_transaction_pool::noop::NoopTransactionPool;
 
     use super::*;
 
@@ -232,6 +243,37 @@ mod tests {
         let first = config.inject(&mut transaction(raw.clone()));
         let second = config.inject(&mut transaction(raw));
         assert_eq!(first, second);
+    }
+
+    #[test]
+    fn signature_only_sidecars_are_not_modified_by_shadow_injection() {
+        let config = ShadowValidityConfig::enabled(MAX_SHADOW_VALIDITY_SAMPLE_RATE_BPS).unwrap();
+        let mut tx = transaction(Bytes::from_static(&[0x02, 0x01]));
+        tx.extensions.validity_signature =
+            Some(Signature::new(U256::from(1), U256::from(1), false));
+        let original = tx.clone();
+        assert_eq!(config.inject(&mut tx), InjectionOutcome::ExistingValidity);
+        assert_eq!(tx.extensions, original.extensions);
+    }
+
+    #[tokio::test]
+    async fn enforced_signatures_disable_shadow_injection_for_direct_config_callers() {
+        let api = ShadowValidityBuilderApi::new(
+            NoopTransactionPool::<BasePooledTransaction>::new(),
+            BuilderApiExtensionConfig::default()
+                .with_shadow_validity(
+                    ShadowValidityConfig::enabled(MAX_SHADOW_VALIDITY_SAMPLE_RATE_BPS).unwrap(),
+                )
+                .with_validity_signature_mode(ValiditySignatureMode::Required),
+            Arc::new(crate::NoopMeteringProvider),
+        );
+        let signed = BaseTransactionSigned::new_unhashed(
+            BaseTypedTransaction::Eip1559(TxEip1559 { chain_id: 8453, ..Default::default() }),
+            Signature::new(U256::from(1), U256::from(2), false),
+        );
+        let tx = transaction(signed.encoded_2718().into());
+        let error = api.insert_validated_transaction(tx).await.unwrap_err();
+        assert!(error.message().starts_with("pool rejected transaction:"));
     }
 
     #[test]

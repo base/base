@@ -36,16 +36,8 @@ pub use nonce::{NonceGuard, NonceManager, NonceState};
 mod manager;
 pub use manager::{PreparedTx, SimpleTxManager};
 
-mod queue;
-pub use queue::{SendResult, TxQueue};
-
 mod metrics;
 pub use metrics::{BaseTxMetrics, NoopTxMetrics, SendOutcome, TxManagerMetrics, TxMetrics};
 
 mod blob;
 pub use blob::{BlobTxBuilder, MAX_BLOBS_PER_TX};
-
-#[cfg(test)]
-pub mod test_utils;
-#[cfg(test)]
-pub use test_utils::StubReceipt;

@@ -21,3 +21,8 @@ base-builder-core.workspace = true
 moka = { workspace = true, features = ["sync"] }
 
 [dev-dependencies]
+criterion.workspace = true
+
+[[bench]]
+name = "store"
+harness = false

@@ -51,8 +51,8 @@ use base_common_consensus::{AccountChange, Delegation, Eip8130Constants, Predepl
 use base_common_precompiles::{NonceManagerStorage, TxContextStorage};
 use base_execution_eip8130::{
     AccountChangeApplier, AccountConfigurationStorage, ApplyError, DelegationEffect,
-    Eip8130GasSchedule, FeeCheck, IntrinsicGas, IntrinsicGasInput, NonceMode, NonceValidator,
-    TransactionAuthorizer,
+    Eip8130GasSchedule, FeeCheck, FeeError, IntrinsicGas, IntrinsicGasInput, NonceMode,
+    NonceValidator, TransactionAuthorizer,
 };
 use base_precompile_storage::{JournalStorageProvider, StorageCtx};
 use revm::{
@@ -61,7 +61,7 @@ use revm::{
     context_interface::{
         Block, Cfg, ContextTr, JournalTr,
         context::take_error,
-        result::{EVMError, ExecutionResult, Output, ResultGas, SuccessReason},
+        result::{EVMError, ExecutionResult, InvalidTransaction, Output, ResultGas, SuccessReason},
     },
     handler::{EthFrame, EvmTr, FrameResult, Handler, PrecompileProvider},
     inspector::{InspectorEvmTr, InspectorHandler, JournalExt},
@@ -75,7 +75,7 @@ use revm::{
 };
 
 use crate::{
-    BaseContext, BaseContextTr, BaseEvm, BaseHaltReason, BaseSpecId, BaseTransaction,
+    BaseContext, BaseContextTr, BaseEvm, BaseHaltReason, BaseSpecId, BaseTime, BaseTransaction,
     BaseTransactionError, BaseTxTr, BaseUpgrade, Eip8130PhaseStatuses, L1BlockInfo,
     handler::BaseHandler,
 };
@@ -167,7 +167,9 @@ struct CallsResult {
     /// phases are then skipped.
     reverted: bool,
     /// The return data of the call that reverted the transaction (or the
-    /// `ActorPolicyViolation` payload for a policy-gate block); empty on success.
+    /// `ActorPolicyViolation` payload for a policy-gate block), or on success
+    /// the return data of the last call (empty when `calls` was empty), which
+    /// is what an EIP-8130 `eth_call` returns.
     output: Bytes,
     /// Per-phase execution status, one entry per phase in `calls` and in phase
     /// order: `0x01` if the phase committed, `0x00` if it reverted or was skipped
@@ -264,6 +266,13 @@ impl Eip8130Executor {
             .timestamp()
             .try_into()
             .map_err(|_| BaseTransactionError::eip8130("block timestamp exceeds u64"))?;
+        // Everest implies Denim, so `tx[1]` has already written this block's
+        // millisecond part to `BaseTime`. Read through the database so the slot
+        // is not warmed in the transaction's journal.
+        let timestamp_millis_part =
+            BaseTime::fetch_timestamp_millis_part(ctx.journal_mut().db_mut())
+                .map_err(EVMError::Database)?;
+        let now_ms = BaseTime { timestamp_millis_part }.timestamp_ms(now);
         let base_fee: u128 = u128::from(ctx.block().basefee());
         let beneficiary = ctx.block().beneficiary();
         let block_number = ctx.block().number();
@@ -285,14 +294,15 @@ impl Eip8130Executor {
             *ctx.chain_mut() = fetched;
         }
 
-        let outcome =
-            match Self::authorize_and_apply(ctx, &signed, &encoded, chain_id, now, base_fee) {
-                Ok(outcome) => outcome,
-                Err(err) => {
-                    Self::discard_transaction_state(evm);
-                    return Err(err.into());
-                }
-            };
+        let outcome = match Self::authorize_and_apply(
+            ctx, &signed, &encoded, chain_id, now, now_ms, base_fee,
+        ) {
+            Ok(outcome) => outcome,
+            Err(err) => {
+                Self::discard_transaction_state(evm);
+                return Err(err);
+            }
+        };
 
         // Pre-charge the payer the worst-case fee (so `calls` cannot spend the
         // gas reservation), publish the transaction context, and run `calls`.
@@ -489,7 +499,7 @@ impl Eip8130Executor {
             Ok(outcome) => outcome,
             Err(err) => {
                 Self::discard_transaction_state(evm);
-                return Err(err.into());
+                return Err(err);
             }
         };
 
@@ -799,7 +809,7 @@ impl Eip8130Executor {
         base_fee: u128,
         acting_actor_hint: Option<B256>,
         now: u64,
-    ) -> Result<Eip8130Outcome, BaseTransactionError>
+    ) -> Result<Eip8130Outcome, EVMError<DB::Error, BaseTransactionError>>
     where
         DB: AlloyDatabase,
         BaseContext<DB>: BaseContextTr
@@ -839,7 +849,7 @@ impl Eip8130Executor {
         let internals = EvmInternals::from_context(ctx);
         let mut provider = JournalStorageProvider::new(internals, Address::ZERO);
 
-        StorageCtx::enter(&mut provider, |sctx| {
+        let outcome = StorageCtx::enter(&mut provider, |sctx| {
             let nonce_mgr = NonceManagerStorage::new(sctx);
 
             // 1. Nonce-channel first-use flag (drives intrinsic gas). Estimation
@@ -927,7 +937,8 @@ impl Eip8130Executor {
                 base_fee,
                 bump_protocol_nonce: false,
             })
-        })
+        });
+        Self::finish_pre_call(&mut provider, outcome)
     }
 
     /// Resolves the simulated acting actor's policy gate from the Keystore:
@@ -969,8 +980,9 @@ impl Eip8130Executor {
         encoded: &[u8],
         chain_id: u64,
         now: u64,
+        now_ms: u64,
         base_fee: u128,
-    ) -> Result<Eip8130Outcome, BaseTransactionError>
+    ) -> Result<Eip8130Outcome, EVMError<DB::Error, BaseTransactionError>>
     where
         DB: AlloyDatabase,
         BaseContext<DB>: BaseContextTr
@@ -990,18 +1002,19 @@ impl Eip8130Executor {
         // Validity bounds are normalized to Unix milliseconds (seconds bounds are
         // scaled by 1000 per EIP-8130 Timestamp Normalization); `0` stays `0`
         // (disabled). The nonce-free replay ring records this normalized upper
-        // bound and compares it against `block.timestamp * 1000` internally, so
-        // it MUST be the normalized value. The raw `valid_after`/`valid_before`
-        // remain the signed/encoded/replay-committed fields; only these
-        // comparisons use the normalized view.
+        // bound and compares it against `now_ms`, so it MUST be the normalized
+        // value. The raw `valid_after`/`valid_before` remain the
+        // signed/encoded/replay-committed fields; only these comparisons use the
+        // normalized view.
         let valid_after = tx.valid_after_ms();
         let valid_before = tx.valid_before_ms();
 
         // Consensus-level validity window. The transaction is includable only
         // within the inclusive interval `[valid_after, valid_before]` on the
-        // millisecond axis (`block.timestamp * 1000`). Per the EIP a transaction
-        // is still valid at `now_ms == valid_before`, so the upper bound is
-        // inclusive: reject only once `now_ms` is strictly past `valid_before`.
+        // millisecond axis (`now_ms`, the block's millisecond timestamp). Per the
+        // EIP a transaction is still valid at `now_ms == valid_before`, so the
+        // upper bound is inclusive: reject only once `now_ms` is strictly past
+        // `valid_before`.
         // Enforced here so a block that includes a transaction outside its window
         // is invalid at execution, not merely filtered by the mempool; both bounds
         // apply to nonce-free and nonce-bearing transactions alike (`0` disables
@@ -1009,18 +1022,19 @@ impl Eip8130Executor {
         // its own admission window (`valid_before > now_ms`) when it records the
         // nonce, so a nonce-free transaction at the boundary still fails there.
         let keystore = ctx.cfg().spec().is_enabled_in(BaseUpgrade::Zenith);
-        let now_ms = now.saturating_mul(1_000);
         if valid_after != 0 && now_ms < valid_after {
-            return Err(BaseTransactionError::eip8130("transaction is not yet valid"));
+            return Err(BaseTransactionError::eip8130("transaction is not yet valid").into());
         }
         if valid_before != 0 && now_ms > valid_before {
-            return Err(BaseTransactionError::eip8130("transaction validity window has expired"));
+            return Err(
+                BaseTransactionError::eip8130("transaction validity window has expired").into()
+            );
         }
 
         let internals = EvmInternals::from_context(ctx);
         let mut provider = JournalStorageProvider::new(internals, Address::ZERO);
 
-        StorageCtx::enter(&mut provider, |sctx| {
+        let outcome = StorageCtx::enter(&mut provider, |sctx| {
             // Ordering note: the apply step (1) and code effects (2) write journal
             // storage *before* the nonce is validated (3). Any `Err` returned from
             // this closure propagates out of `authorize_and_apply` and the caller
@@ -1075,9 +1089,9 @@ impl Eip8130Executor {
             let protocol_nonce = sctx
                 .with_account_info(sender, |info| Ok(info.nonce))
                 .map_err(BaseTransactionError::eip8130)?;
-            // The nonce-free replay lookup works in milliseconds (`now_ms`,
-            // `block.timestamp * 1000`), matching the validity window and the
-            // ring buffer; the sequence-channel branches ignore this argument.
+            // The nonce-free replay lookup works in milliseconds (`now_ms`),
+            // matching the validity window and the ring buffer; the
+            // sequence-channel branches ignore this argument.
             let (nonce_key_first_use, bump_protocol_nonce) =
                 if nonce_key == Eip8130Constants::NONCE_KEY_MAX {
                     NonceValidator::validate(
@@ -1091,7 +1105,7 @@ impl Eip8130Executor {
                     .map_err(BaseTransactionError::eip8130)?;
                     let replay = NonceValidator::replay_hash(tx, sender);
                     nonce_mgr
-                        .check_and_mark_expiring_nonce(replay, valid_before)
+                        .check_and_mark_expiring_nonce(replay, valid_before, now_ms)
                         .map_err(BaseTransactionError::eip8130)?;
                     (false, false)
                 } else if nonce_key == U256::ZERO {
@@ -1142,7 +1156,12 @@ impl Eip8130Executor {
                 .with_account_info(payer, |info| Ok(info.balance))
                 .map_err(BaseTransactionError::eip8130)?;
             FeeCheck::validate_balance(payer_balance, gas_limit, intrinsic.payer_auth, max_fee)
-                .map_err(BaseTransactionError::eip8130)?;
+                .map_err(|error| match error {
+                    FeeError::InsufficientBalance { balance, required } => {
+                        Self::payer_cannot_pay(balance, required)
+                    }
+                    error => BaseTransactionError::eip8130(error),
+                })?;
 
             // 6. Publish the transaction context (sender / payer / actor id) so it
             //    is readable by the `TxContext` precompile during `calls`.
@@ -1165,7 +1184,24 @@ impl Eip8130Executor {
                 base_fee,
                 bump_protocol_nonce,
             })
-        })
+        });
+        Self::finish_pre_call(&mut provider, outcome)
+    }
+
+    /// Resolves the outcome of a storage-backed pre-call pipeline. A journal
+    /// database failure observed anywhere in the pipeline is fatal, even when the
+    /// pipeline stringified it into a transaction error or swallowed it: the
+    /// state it read cannot be trusted, and reporting it as an invalid
+    /// transaction would wrongly reject the block (or the transaction) instead of
+    /// failing the node.
+    fn finish_pre_call<E>(
+        provider: &mut JournalStorageProvider<'_>,
+        outcome: Result<Eip8130Outcome, BaseTransactionError>,
+    ) -> Result<Eip8130Outcome, EVMError<E, BaseTransactionError>> {
+        if let Some(error) = provider.take_database_error() {
+            return Err(EVMError::Custom(error));
+        }
+        outcome.map_err(EVMError::Transaction)
     }
 
     /// Pre-charges the payer the worst-case fee and bumps the sender's protocol
@@ -1209,11 +1245,10 @@ impl Eip8130Executor {
 
         let mut payer_acc =
             ctx.journal_mut().load_account_mut(outcome.payer).map_err(EVMError::Database)?;
-        let debited = payer_acc.balance().checked_sub(prepay).ok_or_else(|| {
-            EVMError::Transaction(BaseTransactionError::eip8130(
-                "payer balance is below the worst-case fee",
-            ))
-        })?;
+        let balance = *payer_acc.balance();
+        let debited = balance
+            .checked_sub(prepay)
+            .ok_or_else(|| EVMError::Transaction(Self::payer_cannot_pay(balance, prepay)))?;
         payer_acc.set_balance(debited);
 
         Ok(prepay)
@@ -1256,6 +1291,7 @@ impl Eip8130Executor {
         // One status byte per phase; phases not reached after a revert are filled
         // with `0x00` below.
         let mut phase_statuses: Vec<u8> = Vec::with_capacity(total_phases);
+        let mut last_output = Bytes::new();
 
         for phase in &signed.tx().calls {
             let checkpoint = evm.ctx_mut().journal_mut().checkpoint();
@@ -1313,6 +1349,7 @@ impl Eip8130Executor {
                     // matching standard transaction-level refund accounting. The
                     // sum is clamped and EIP-3529-capped once in `settle_fees`.
                     phase_refund = phase_refund.saturating_add(gas.refunded());
+                    last_output = frame.interpreter_result().output.clone();
                 } else {
                     phase_reverted = true;
                     phase_output = frame.interpreter_result().output.clone();
@@ -1350,7 +1387,7 @@ impl Eip8130Executor {
             call_gas_spent: pool.saturating_sub(remaining),
             refund,
             reverted: false,
-            output: Bytes::new(),
+            output: last_output,
             phase_statuses,
         })
     }
@@ -1874,6 +1911,19 @@ impl Eip8130Executor {
         Ok((intrinsic, execution_gas_available))
     }
 
+    /// The rejection for a payer whose balance cannot cover the worst-case fee.
+    ///
+    /// Reported as revm's `LackOfFundForMaxFee` (not an EIP-8130-specific
+    /// error) so the builder skips the transaction like any other one that
+    /// cannot pay, rather than aborting the payload: a payer's balance can
+    /// change after admission, including earlier in the same block.
+    fn payer_cannot_pay(balance: U256, required: U256) -> BaseTransactionError {
+        BaseTransactionError::Base(InvalidTransaction::LackOfFundForMaxFee {
+            fee: Box::new(required),
+            balance: Box::new(balance),
+        })
+    }
+
     /// The rejection for an EIP-8130 transaction under a spec before Everest.
     fn not_active_error() -> BaseTransactionError {
         BaseTransactionError::eip8130("EIP-8130 transactions are not active before Everest")
@@ -1897,15 +1947,14 @@ impl Eip8130Executor {
 
 #[cfg(test)]
 mod tests {
-    use alloy_evm::{Evm, FromTxWithEncoded, precompiles::PrecompilesMap};
+    use alloy_evm::{Evm, EvmError, FromTxWithEncoded, precompiles::PrecompilesMap};
     use alloy_primitives::{Address, B256, Bytes, U256, address, bytes, keccak256};
-    use alloy_sol_types::{SolEvent, SolValue, sol};
+    use alloy_sol_types::{SolValue, sol};
     use base_common_consensus::{
         AccountChange, AccountChangeChannel, BaseTxEnvelope, Call, ChangeType, CreateEntry,
         Eip8130Contracts, Eip8130Signed, InitialActor, Predeploys, SignedAccountChanges,
         SignedChange, TxEip8130,
     };
-    use base_common_precompiles::INonceManager;
     use base_execution_eip8130::AccountChangeApplier;
     use base_precompile_storage::StorageCtx;
     use k256::ecdsa::SigningKey;
@@ -2326,6 +2375,23 @@ mod tests {
         assert!(sender_acc.info.balance < initial_balance);
     }
 
+    /// A protocol nonce at `u64::MAX` cannot be bumped, so a key-0 transaction
+    /// carrying that sequence would stay includable forever. Inclusion rejects it.
+    #[test]
+    fn saturated_protocol_nonce_is_rejected() {
+        let key = signing_key(0x21);
+        let sender = eoa_address(&key);
+        let signed = eoa_signed(TxEip8130 { nonce_sequence: u64::MAX, ..base_tx() }, &key);
+        let mut evm = evm_with(U256::from(10u64).pow(U256::from(18u64)), sender);
+        let db = evm.ctx_mut().journal_mut().db_mut();
+        let mut info = db.basic(sender).expect("account").unwrap_or_default();
+        info.nonce = u64::MAX;
+        db.insert_account_info(sender, info);
+
+        let err = evm.transact_raw(into_base_tx(&signed)).unwrap_err();
+        assert!(err.to_string().contains("u64::MAX"), "got {err}");
+    }
+
     #[test]
     fn two_dimensional_nonce_is_incremented() {
         let key = signing_key(0x2a);
@@ -2354,17 +2420,10 @@ mod tests {
         let stored_nonce =
             nonce_account.storage.get(&nonce_slot).expect("nonce slot updated").present_value;
         assert_eq!(stored_nonce, U256::from(current_nonce + 1));
-
-        let log = outcome
-            .result
-            .logs()
-            .iter()
-            .find(|log| log.address == NonceManagerStorage::ADDRESS)
-            .expect("nonce increment event");
-        let event = INonceManager::NonceIncremented::decode_log_data(&log.data).unwrap();
-        assert_eq!(event.account, sender);
-        assert_eq!(event.nonceKey, nonce_key);
-        assert_eq!(event.newNonce, current_nonce + 1);
+        assert!(
+            outcome.result.logs().iter().all(|log| log.address != NonceManagerStorage::ADDRESS),
+            "the protocol nonce increment must not add a receipt log"
+        );
     }
 
     #[test]
@@ -2958,7 +3017,18 @@ mod tests {
         // Far below the worst-case charge (gas_limit · max_fee_per_gas).
         let mut evm = evm_with(U256::from(1_000u64), sender);
         let err = evm.transact_raw(into_base_tx(&signed)).unwrap_err();
-        assert!(matches!(err, EVMError::Transaction(BaseTransactionError::Eip8130(_))));
+        assert!(
+            matches!(
+                err,
+                EVMError::Transaction(BaseTransactionError::Base(
+                    InvalidTransaction::LackOfFundForMaxFee { .. }
+                ))
+            ),
+            "got {err:?}"
+        );
+        // An invalid-transaction error, so the builder skips the transaction
+        // instead of aborting the payload.
+        assert!(err.as_invalid_tx_err().is_some());
     }
 
     #[test]
@@ -3105,6 +3175,46 @@ mod tests {
             matches!(err, EVMError::Database(_)),
             "DB failure during a call must surface as a fatal database error, got {err:?}",
         );
+    }
+
+    #[test]
+    fn db_failure_during_pre_call_is_fatal_not_an_invalid_transaction() {
+        // The pre-call pipeline reads the nonce manager through the journal
+        // storage provider. A backend failure there must abort as a fatal error:
+        // an invalid-transaction error would let a node with a transient storage
+        // fault reject a valid block.
+        const NONCE_MANAGER: Address = address!("0x813000000000000000000000000000000000aa01");
+        let key = signing_key(0x78);
+        let sender = eoa_address(&key);
+        let mut tx = base_tx();
+        tx.nonce_key = U256::from(7);
+        let signed = eoa_signed(tx, &key);
+
+        let mut db = InMemoryDB::default();
+        db.insert_account_info(
+            sender,
+            AccountInfo { balance: U256::from(10u64).pow(U256::from(18u64)), ..Default::default() },
+        );
+        let db = StorageFailDb { inner: db, fail_storage_at: NONCE_MANAGER };
+
+        let mut evm = Context::base()
+            .with_db(db)
+            .with_cfg(
+                CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Everest))
+                    .with_chain_id(CHAIN_ID),
+            )
+            .with_block(BlockEnv {
+                number: U256::from(1u64),
+                timestamp: U256::from(NOW),
+                basefee: BASE_FEE,
+                beneficiary: BENEFICIARY,
+                ..Default::default()
+            })
+            .build_with_inspector(NoOpInspector);
+
+        let err = evm.transact_raw(into_base_tx(&signed)).unwrap_err();
+        assert!(err.is_fatal(), "pre-call DB failure must be fatal, got {err:?}");
+        assert!(!err.is_invalid_tx_err(), "pre-call DB failure is not an invalid tx: {err:?}");
     }
 
     #[test]
@@ -3796,6 +3906,65 @@ mod tests {
             panic!("expected an Eip8130 validity rejection, got {err:?}");
         };
         assert!(got.contains("validity window has expired"), "unexpected reason: {got}");
+    }
+
+    #[test]
+    fn execution_window_and_replay_ring_use_the_base_time_millisecond_clock() {
+        // The block is `BLOCK_SECONDS` plus the 200 ms `BaseTime` part, so both
+        // bounds and the nonce-free replay ring compare against `now_ms`, not
+        // the whole second.
+        const BLOCK_SECONDS: u64 = 1_700_000_000;
+        const MILLIS_PART: u64 = 200;
+        let now_ms = BLOCK_SECONDS * 1_000 + MILLIS_PART;
+        let key = signing_key(0x7b);
+        let sender = eoa_address(&key);
+        let target = address!("0x00000000000000000000000000000000000000d3");
+        let initial = U256::from(10u64).pow(U256::from(18u64));
+
+        let transact = |nonce_free: bool, valid_after: u64, valid_before: u64| {
+            let mut tx = base_tx();
+            tx.calls = vec![vec![Call { to: target, value: U256::ZERO, data: Bytes::new() }]];
+            if nonce_free {
+                tx.nonce_key = Eip8130Constants::NONCE_KEY_MAX;
+            }
+            tx.valid_after = valid_after;
+            tx.valid_before = valid_before;
+            let signed = eoa_signed(tx, &key);
+            let mut evm = evm_with_accounts_and_storage(
+                initial,
+                sender,
+                &[(target, bytes!("00"))],
+                &[(
+                    Predeploys::BASE_TIME,
+                    BaseTime::TIMESTAMP_MILLIS_PART_SLOT,
+                    U256::from(MILLIS_PART),
+                )],
+            );
+            evm.ctx_mut().block.timestamp = U256::from(BLOCK_SECONDS);
+            evm.transact_raw(into_base_tx(&signed)).map(|outcome| outcome.result.is_success())
+        };
+        let rejection = |result: Result<bool, _>| match result {
+            Err(EVMError::Transaction(BaseTransactionError::Eip8130(reason))) => reason,
+            other => panic!("expected an Eip8130 rejection, got {other:?}"),
+        };
+
+        for nonce_free in [false, true] {
+            let valid_before = now_ms + 20_000;
+            assert_eq!(transact(nonce_free, now_ms, valid_before), Ok(true));
+            assert!(
+                rejection(transact(nonce_free, now_ms + 1, valid_before)).contains("not yet valid")
+            );
+            assert!(
+                rejection(transact(nonce_free, 0, now_ms - 1))
+                    .contains("validity window has expired")
+            );
+        }
+        assert_eq!(transact(false, 0, now_ms), Ok(true));
+        assert_eq!(
+            rejection(transact(true, 0, now_ms)),
+            "Revert",
+            "the replay ring requires `valid_before` strictly after `now_ms`"
+        );
     }
 
     #[test]

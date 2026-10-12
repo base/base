@@ -57,11 +57,6 @@ impl B20Variant {
         }
     }
 
-    /// Returns whether `variant` is supported by this factory.
-    pub const fn is_supported_discriminant(variant: u8) -> bool {
-        Self::from_discriminant(variant).is_some()
-    }
-
     /// Returns the token variant encoded in `address`, if it has a supported B-20 prefix.
     pub fn from_address(address: Address) -> Option<Self> {
         let bytes = address.as_slice();
@@ -163,16 +158,5 @@ impl B20Variant {
         addr_bytes[11..].copy_from_slice(&tail);
 
         (Address::from(addr_bytes), tail)
-    }
-
-    /// Returns `true` when `address` has a supported B-20 token variant prefix.
-    pub fn is_b20_address(address: Address) -> bool {
-        Self::from_address(address).is_some()
-    }
-
-    /// Returns the variant discriminant encoded in `address`, if supported.
-    pub fn variant_of(address: Address) -> Option<u8> {
-        Self::from_address(address)?;
-        Some(address.as_slice()[10])
     }
 }

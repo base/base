@@ -868,10 +868,6 @@ mod tests {
         fn currency(&self) -> Result<String> {
             Ok(self.currency.clone())
         }
-        fn set_currency(&mut self, currency: String) -> Result<()> {
-            self.currency = currency;
-            Ok(())
-        }
     }
 
     /// Minimal [`PolicyAccounting`] backed by in-memory maps.
@@ -910,9 +906,6 @@ mod tests {
     }
 
     impl PolicyAccounting for FakePolicyAccounting {
-        fn registry_address(&self) -> Address {
-            Address::repeat_byte(0x02)
-        }
         fn caller(&self) -> Address {
             self.caller
         }
