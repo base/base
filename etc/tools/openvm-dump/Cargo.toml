@@ -17,7 +17,6 @@ workspace = true
 
 [dependencies]
 # alloy
-alloy-eips = { workspace = true, features = ["std"] }
 alloy-provider = { workspace = true, features = ["reqwest"] }
 
 # base

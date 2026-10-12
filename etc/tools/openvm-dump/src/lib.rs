@@ -6,40 +6,43 @@ use std::{
     io::{self, Write as _},
     path::PathBuf,
     sync::Arc,
-    time::Duration,
 };
 
-use alloy_eips::BlockNumberOrTag;
 use alloy_provider::RootProvider;
 use base_common_network::Base;
 use base_optimism_rpc::OptimismRollupProviderExt;
 use base_proof_zk_backend::{L1HeadSource, OpSuccinctWitnessProvider, WitnessParams};
 use base_proof_zk_witness::fetcher::{OPSuccinctDataFetcher, RPCConfig};
+use clap::Parser;
 use eyre::{Result, WrapErr, ensure};
 use tempfile::TempDir;
-use tokio::time::{sleep, timeout};
 use tracing::info;
 use url::Url;
 
-const SAFE_L2_TIMEOUT: Duration = Duration::from_secs(120);
-const SAFE_L2_POLL_INTERVAL: Duration = Duration::from_millis(500);
-
 /// Dump a 1-block `OpenVM` range witness from live RPCs.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Parser)]
+#[command(name = "openvm-dump")]
 pub struct OpenVmRangeDump {
     /// L1 execution RPC.
+    #[arg(long, env = "OPENVM_L1_RPC")]
     pub l1_rpc: Url,
     /// L1 beacon HTTP endpoint.
+    #[arg(long, env = "OPENVM_L1_BEACON_RPC")]
     pub l1_beacon_rpc: Url,
     /// L2 execution RPC.
+    #[arg(long, env = "OPENVM_L2_RPC")]
     pub l2_rpc: Url,
     /// L2 consensus (op-node) RPC.
+    #[arg(long, env = "OPENVM_L2_NODE_RPC")]
     pub l2_node_rpc: Url,
     /// Inclusive start block. Defaults to `end_block - 1`.
+    #[arg(long, env = "OPENVM_START_BLOCK")]
     pub start_block: Option<u64>,
     /// Inclusive end block. Defaults to the current safe L2 head.
+    #[arg(long, env = "OPENVM_END_BLOCK")]
     pub end_block: Option<u64>,
     /// Directory that receives `input.json`.
+    #[arg(long)]
     pub out_dir: PathBuf,
 }
 
@@ -52,7 +55,12 @@ impl OpenVmRangeDump {
     pub async fn dump(&self) -> Result<()> {
         let rollup_provider = RootProvider::<Base>::new_http(self.l2_node_rpc.clone());
         let status = rollup_provider.optimism_sync_status().await?;
-        let end_block = self.end_block.unwrap_or(status.safe_l2.number);
+        let safe_head = status.safe_l2.number;
+        let end_block = self.end_block.unwrap_or(safe_head);
+        ensure!(
+            end_block <= safe_head,
+            "end_block {end_block} is past the safe L2 head {safe_head}"
+        );
         let start_block = match self.start_block {
             Some(start) => start,
             None => end_block
@@ -63,7 +71,6 @@ impl OpenVmRangeDump {
             start_block < end_block,
             "start_block {start_block} must be less than end_block {end_block}"
         );
-        wait_for_safe_l2(&rollup_provider, end_block).await?;
         Self::announce(start_block, end_block, 0);
 
         let l1_head = status.head_l1.hash;
@@ -114,28 +121,6 @@ impl OpenVmRangeDump {
         println!("OPENVM_WITNESS start={start_block} end={end_block} bytes={bytes}");
         let _ = io::stdout().flush();
     }
-}
-
-async fn wait_for_safe_l2(provider: &RootProvider<Base>, block_number: u64) -> Result<()> {
-    let wait = async {
-        loop {
-            let status = provider.optimism_sync_status().await?;
-            if status.safe_l2.number >= block_number {
-                provider.optimism_output_at_block(BlockNumberOrTag::Number(block_number)).await?;
-                return Ok::<_, eyre::Error>(());
-            }
-            sleep(SAFE_L2_POLL_INTERVAL).await;
-        }
-    };
-    if let Ok(result) = timeout(SAFE_L2_TIMEOUT, wait).await {
-        return result;
-    }
-    let status = provider.optimism_sync_status().await?;
-    eyre::bail!(
-        "timed out waiting for L2 block {block_number} to become safe (safe_l2={}, unsafe_l2={})",
-        status.safe_l2.number,
-        status.unsafe_l2.number
-    )
 }
 
 #[cfg(test)]
