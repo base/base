@@ -49,14 +49,8 @@ impl PrunerOutput {
     /// extend the current [`PrunerOutput`] with another [`PrunerOutput`]
     pub fn extend_ref(&mut self, other: Self) {
         self.duration += other.duration;
-        // take the earliest start block
-        if self.start_block > other.start_block {
-            self.start_block = other.start_block;
-        }
-        // take the latest end block
-        if self.end_block < other.end_block {
-            self.end_block = other.end_block;
-        }
+        self.start_block = self.start_block.min(other.start_block);
+        self.end_block = self.end_block.max(other.end_block);
         self.write_counts += other.write_counts;
     }
 }

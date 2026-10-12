@@ -125,20 +125,6 @@ where
             end_block,
             "Resolving proof storage prune batch block hashes",
         );
-        if end_block == 0 {
-            trace!(
-                target: "trie::pruner",
-                start_block,
-                end_block,
-                "Skipping proof storage prune batch at genesis block",
-            );
-            return Ok(PrunerOutput {
-                duration: batch_start_time.elapsed(),
-                start_block,
-                end_block,
-                ..Default::default()
-            });
-        }
 
         // Fetch the block hash for the new earliest block of this batch.
         //
