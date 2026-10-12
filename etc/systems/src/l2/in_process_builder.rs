@@ -17,7 +17,7 @@ use base_execution_txpool::{
     ValiditySignatureMode,
 };
 use base_node_core::{args::RollupArgs, node::BasePoolBuilder};
-use base_node_runner::{BaseNode, BaseNodeExtension, FromExtensionConfig, NodeHooks};
+use base_node_runner::{BaseNode, BaseNodeExtension, BaseProvider, FromExtensionConfig, NodeHooks};
 use base_txpool_rpc::{SendRawTransactionValidityConfig, SendRawTransactionValidityExtension};
 use eyre::{Result, WrapErr, eyre};
 use reth_db::{
@@ -100,6 +100,8 @@ impl InProcessBuilderConfig {
 /// This spawns a real builder node within the current process, binding to dynamic ports.
 /// Docker containers (like consensus nodes) can connect via `host.docker.internal`.
 pub struct InProcessBuilder {
+    /// Provider sharing the running execution node's database and canonical in-memory state.
+    pub provider: BaseProvider,
     http_api_addr: SocketAddr,
     ws_api_addr: SocketAddr,
     engine_addr: SocketAddr,
@@ -257,6 +259,7 @@ impl InProcessBuilder {
         let engine_addr = node_handle.auth_server_handle().local_addr();
 
         Ok(Self {
+            provider: node_handle.provider.clone(),
             http_api_addr,
             ws_api_addr,
             engine_addr,

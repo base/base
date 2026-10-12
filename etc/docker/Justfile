@@ -6,6 +6,8 @@ _base := "-f etc/docker/docker-compose.yml"
 _anvil := "-f etc/docker/docker-compose.yml -f etc/docker/docker-compose.anvil-l1.yml"
 _env := "--env-file etc/docker/devnet-env"
 
+mod snapshot '../just/snapshot.just'
+
 # Show devnet commands
 default:
     @just --justfile {{source_file()}} --list
