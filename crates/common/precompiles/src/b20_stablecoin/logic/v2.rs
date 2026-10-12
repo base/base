@@ -758,6 +758,7 @@ mod tests {
     use alloy_sol_types::SolEvent;
     use base_precompile_storage::{BasePrecompileError, Result};
     use k256::ecdsa::SigningKey;
+    use rstest::{fixture, rstest};
 
     use crate::{
         B20_MAX_SUPPLY_CAP, B20PolicyType, B20StablecoinToken, B20TokenRole, IB20, PackedPolicy,
@@ -1052,6 +1053,7 @@ mod tests {
 
     type Tok = B20StablecoinToken<FakeAccounting, FakePolicyAccounting>;
 
+    #[fixture]
     fn token() -> Tok {
         B20StablecoinToken::with_storage_and_policy(
             FakeAccounting::new(),
@@ -1119,31 +1121,56 @@ mod tests {
         assert_eq!(last_event_sig(&tok), IB20::Transfer::SIGNATURE_HASH);
     }
 
-    #[test]
-    fn transfer_reverts_on_zero_receiver() {
-        let mut tok = token();
-        fund(&mut tok, ALICE, U256::from(10u64));
-        let err =
-            LOGIC.transfer(&mut tok, ALICE, Address::ZERO, U256::from(1u64), true).unwrap_err();
-        assert_eq!(
-            err,
-            BasePrecompileError::revert(IB20::InvalidReceiver { receiver: Address::ZERO })
-        );
-    }
-
-    #[test]
-    fn transfer_reverts_on_insufficient_balance() {
-        let mut tok = token();
-        fund(&mut tok, ALICE, U256::from(10u64));
-        let err = LOGIC.transfer(&mut tok, ALICE, BOB, U256::from(50u64), true).unwrap_err();
-        assert_eq!(
-            err,
-            BasePrecompileError::revert(IB20::InsufficientBalance {
-                sender: ALICE,
-                balance: U256::from(10u64),
-                needed: U256::from(50u64),
-            })
-        );
+    #[rstest]
+    #[case::transfer_reverts_on_zero_receiver(
+        10,
+        |tok: &mut Tok| LOGIC.transfer(tok, ALICE, Address::ZERO, U256::from(1u64), true),
+        BasePrecompileError::revert(IB20::InvalidReceiver { receiver: Address::ZERO })
+    )]
+    #[case::transfer_reverts_on_insufficient_balance(
+        10,
+        |tok: &mut Tok| LOGIC.transfer(tok, ALICE, BOB, U256::from(50u64), true),
+        BasePrecompileError::revert(IB20::InsufficientBalance {
+            sender: ALICE,
+            balance: U256::from(10u64),
+            needed: U256::from(50u64),
+        })
+    )]
+    #[case::approve_reverts_on_zero_spender(
+        0,
+        |tok: &mut Tok| LOGIC.approve(tok, ALICE, Address::ZERO, U256::from(1u64)),
+        BasePrecompileError::revert(IB20::InvalidSpender { spender: Address::ZERO })
+    )]
+    #[case::burn_blocked_reverts_when_account_not_blocked(
+        100,
+        |tok: &mut Tok| LOGIC.burn_blocked(tok, ADMIN, ALICE, U256::from(1u64), true),
+        BasePrecompileError::revert(IB20::AccountNotBlocked { account: ALICE })
+    )]
+    #[case::seize_reverts_on_zero_receiver(
+        0,
+        |tok: &mut Tok| {
+            make_seizable(tok);
+            grant(tok, B20TokenRole::Seize.id(), ADMIN);
+            LOGIC.seize_with_memo(tok, ADMIN, ALICE, Address::ZERO, U256::from(1u64), MEMO)
+        },
+        BasePrecompileError::revert(IB20::InvalidReceiver { receiver: Address::ZERO })
+    )]
+    #[case::update_supply_cap_reverts_below_current_supply(
+        500,
+        |tok: &mut Tok| LOGIC.update_supply_cap(tok, ADMIN, U256::from(100u64), true),
+        BasePrecompileError::revert(IB20::InvalidSupplyCap {
+            currentSupply: U256::from(500u64),
+            proposedCap: U256::from(100u64),
+        })
+    )]
+    fn invalid_operation_reverts(
+        mut token: Tok,
+        #[case] balance: u64,
+        #[case] operation: fn(&mut Tok) -> Result<()>,
+        #[case] expected_error: BasePrecompileError,
+    ) {
+        fund(&mut token, ALICE, U256::from(balance));
+        assert_eq!(operation(&mut token).unwrap_err(), expected_error);
     }
 
     #[test]
@@ -1225,16 +1252,6 @@ mod tests {
         assert_eq!(last_event_sig(&tok), IB20::Approval::SIGNATURE_HASH);
     }
 
-    #[test]
-    fn approve_reverts_on_zero_spender() {
-        let mut tok = token();
-        let err = LOGIC.approve(&mut tok, ALICE, Address::ZERO, U256::from(1u64)).unwrap_err();
-        assert_eq!(
-            err,
-            BasePrecompileError::revert(IB20::InvalidSpender { spender: Address::ZERO })
-        );
-    }
-
     // --- mint ---
 
     #[test]
@@ -1311,15 +1328,6 @@ mod tests {
         assert_eq!(last_event_sig(&tok), IB20::BurnedBlocked::SIGNATURE_HASH);
     }
 
-    #[test]
-    fn burn_blocked_reverts_when_account_not_blocked() {
-        let mut tok = token();
-        fund(&mut tok, ALICE, U256::from(100u64));
-        // Default ALWAYS_ALLOW authorizes ALICE => not blocked.
-        let err = LOGIC.burn_blocked(&mut tok, ADMIN, ALICE, U256::from(1u64), true).unwrap_err();
-        assert_eq!(err, BasePrecompileError::revert(IB20::AccountNotBlocked { account: ALICE }));
-    }
-
     // --- seize ---
 
     /// Points `SEIZE_EXEMPT_POLICY` at the always-block policy, making every account seizable.
@@ -1364,20 +1372,6 @@ mod tests {
         let err =
             LOGIC.seize_with_memo(&mut tok, ADMIN, ALICE, BOB, U256::from(1u64), MEMO).unwrap_err();
         assert_eq!(err, BasePrecompileError::revert(IB20::AccountNotSeizable { account: ALICE }));
-    }
-
-    #[test]
-    fn seize_reverts_on_zero_receiver() {
-        let mut tok = token();
-        make_seizable(&mut tok);
-        grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
-        let err = LOGIC
-            .seize_with_memo(&mut tok, ADMIN, ALICE, Address::ZERO, U256::from(1u64), MEMO)
-            .unwrap_err();
-        assert_eq!(
-            err,
-            BasePrecompileError::revert(IB20::InvalidReceiver { receiver: Address::ZERO })
-        );
     }
 
     #[test]
@@ -1605,20 +1599,6 @@ mod tests {
         LOGIC.update_supply_cap(&mut tok, ADMIN, U256::from(1_000u64), true).unwrap();
         assert_eq!(tok.accounting().supply_cap().unwrap(), U256::from(1_000u64));
         assert_eq!(last_event_sig(&tok), IB20::SupplyCapUpdated::SIGNATURE_HASH);
-    }
-
-    #[test]
-    fn update_supply_cap_reverts_below_current_supply() {
-        let mut tok = token();
-        fund(&mut tok, ALICE, U256::from(500u64));
-        let err = LOGIC.update_supply_cap(&mut tok, ADMIN, U256::from(100u64), true).unwrap_err();
-        assert_eq!(
-            err,
-            BasePrecompileError::revert(IB20::InvalidSupplyCap {
-                currentSupply: U256::from(500u64),
-                proposedCap: U256::from(100u64),
-            })
-        );
     }
 
     #[test]

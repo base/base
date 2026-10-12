@@ -9,7 +9,7 @@ use std::{any::Any, path::PathBuf, sync::Arc, time::Duration};
 
 use alloy_primitives::hex::ToHexExt;
 use alloy_rpc_types_engine::JwtSecret;
-use base_builder_core::{BuilderConfig, test_utils::get_available_port};
+use base_builder_core::BuilderConfig;
 use base_builder_multiplex::MultiplexingServiceBuilder;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_txpool::{
@@ -36,7 +36,7 @@ use tracing::warn;
 use url::Url;
 
 use super::InProcessNodeRuntime;
-use crate::{config::BUILDER, setup::BUILDER_ENODE_ID};
+use crate::{PortPool, config::BUILDER, setup::BUILDER_ENODE_ID};
 
 /// Configuration for starting an in-process builder.
 #[derive(Debug)]
@@ -148,10 +148,10 @@ impl InProcessBuilder {
 
         let chain_spec = Arc::clone(&config.chain_spec);
 
-        let flashblocks_port = config.flashblocks_port.unwrap_or_else(get_available_port);
+        let flashblocks_port = config.flashblocks_port.unwrap_or_else(PortPool::claim);
         let metrics_addr = SocketAddr::new(
             Ipv4Addr::LOCALHOST.into(),
-            config.metrics_port.unwrap_or_else(get_available_port),
+            config.metrics_port.unwrap_or_else(PortPool::claim),
         );
         let builder_config = BuilderConfig {
             block_time: config.block_time,
@@ -455,6 +455,7 @@ fn create_node_config(
         node_config.debug.startup_sync_state_idle = true;
     }
 
+    config.runtime.bound_engine_memory(&mut node_config);
     if let Some(persistence_threshold) = config.persistence_threshold {
         node_config.engine.persistence_threshold = persistence_threshold;
     }

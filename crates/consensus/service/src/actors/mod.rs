@@ -31,8 +31,7 @@ pub use rpc::{
 
 mod derivation;
 pub use derivation::{
-    DelegateDerivationActor, DerivationActor, DerivationActorRequest, DerivationClientError,
-    DerivationClientResult, DerivationDelegateClient, DerivationDelegateClientError,
+    DerivationActor, DerivationActorRequest, DerivationClientError, DerivationClientResult,
     DerivationEngineClient, DerivationError, DerivationState, DerivationStateMachine,
     DerivationStateTransitionError, DerivationStateUpdate, L2Finalizer,
     QueuedDerivationEngineClient,
