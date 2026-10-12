@@ -7,7 +7,7 @@ use alloy_primitives::{Address, U256};
 use alloy_provider::Provider;
 use base_builder_core::{
     BuilderApiExtension, BuilderApiExtensionConfig, BuilderConfig, DEFAULT_MAX_VALIDITY_PREDICATES,
-    MAX_SHADOW_VALIDITY_SAMPLE_RATE_BPS, RestingPredicateMode, ShadowValidityConfig,
+    RestingPredicateMode,
     test_utils::{ChainDriverExt, LocalInstanceBuilder, ONE_ETH, setup_test_instance},
 };
 use base_execution_txpool::{
@@ -337,15 +337,11 @@ async fn predicate_eval_hard_cutoff_defers_without_evaluating() -> eyre::Result<
     Ok(())
 }
 
-/// Shadow injection adds only builder-local metadata: the original signed transaction executes
-/// with the same hash, encoding, and state transition.
+/// Ordinary forwarded transactions retain their signed encoding and execute the original transfer.
 #[tokio::test]
-async fn shadow_validity_injection_preserves_forwarded_transaction() -> eyre::Result<()> {
-    let shadow =
-        ShadowValidityConfig::enabled(MAX_SHADOW_VALIDITY_SAMPLE_RATE_BPS).expect("valid rate");
-    let api_config = BuilderApiExtensionConfig::new(DEFAULT_MAX_VALIDITY_PREDICATES)
-        .with_shadow_validity(shadow)
-        .with_noop_metering();
+async fn forwarded_transaction_preserves_encoding_and_state_transition() -> eyre::Result<()> {
+    let api_config =
+        BuilderApiExtensionConfig::new(DEFAULT_MAX_VALIDITY_PREDICATES).with_noop_metering();
     let instance = LocalInstanceBuilder::new(BuilderConfig::for_tests())
         .install_ext::<BuilderApiExtension>(api_config)
         .build()
@@ -386,7 +382,7 @@ async fn shadow_validity_injection_preserves_forwarded_transaction() -> eyre::Re
     assert_eq!(
         included.inner.inner.encoded_2718(),
         raw,
-        "validity metadata must not alter consensus bytes"
+        "forwarding must not alter consensus bytes"
     );
     assert_eq!(
         driver.provider().get_balance(recipient).await?,
