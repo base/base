@@ -1,4 +1,5 @@
-use alloc::vec::Vec;
+use alloc::{string::String, vec::Vec};
+use core::{fmt, marker::PhantomData};
 
 use alloy_consensus::{
     Sealed, SignableTransaction, Signed, TxEip1559, TxEip4844, TypedTransaction,
@@ -13,7 +14,11 @@ use base_common_consensus::{
     AccountChange, BaseTxEnvelope, BaseTypedTransaction, Call, EIP8130_TX_TYPE_ID,
     Eip8130Constants, Eip8130Contracts, Eip8130PayerSerde, TxDeposit,
 };
-use serde::{Deserialize, Serialize};
+use serde::{
+    Deserialize, Deserializer, Serialize,
+    de::{self, IgnoredAny, SeqAccess, Visitor},
+};
+use serde_json::{Map, Value};
 
 use crate::Transaction;
 
@@ -101,14 +106,22 @@ pub struct Eip8130RequestFields {
     /// Simulation applies them as inclusion would, so a sequenced config change
     /// must carry the account's current channel sequence (and, on the local
     /// channel, its current local epoch); a mismatch rejects the request.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "Eip8130RequestFields::deserialize_account_changes"
+    )]
     pub account_changes: Option<Vec<AccountChange>>,
     /// The phased call batches dispatched by the sender account.
     ///
     /// Alternatively, a single call can be given as the standard top-level
     /// `to` / `value` / `data`. Setting both `calls` and any of those is
     /// rejected as ambiguous.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "Eip8130RequestFields::deserialize_calls"
+    )]
     pub calls: Option<Vec<Vec<Call>>>,
     /// Optional lower bound of the validity window, in Unix seconds or
     /// milliseconds (the unit is detected from the magnitude; `0` or absent
@@ -213,18 +226,200 @@ impl Eip8130RequestFields {
             || self.payer.is_some()
             || self.payer_auth.is_some()
     }
+
+    /// Deserializes `accountChanges`, rejecting more than
+    /// [`Eip8130Constants::MAX_ACCOUNT_CHANGES_PER_TX`] entries while decoding.
+    pub fn deserialize_account_changes<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<Vec<AccountChange>>, D::Error> {
+        Self::deserialize_bounded(
+            deserializer,
+            Eip8130Constants::MAX_ACCOUNT_CHANGES_PER_TX,
+            "accountChanges",
+        )
+    }
+
+    /// Deserializes `calls`, rejecting more than
+    /// [`Eip8130Constants::MAX_CALL_PHASES_PER_TX`] phases while decoding.
+    pub fn deserialize_calls<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<Vec<Vec<Call>>>, D::Error> {
+        Self::deserialize_bounded(deserializer, Eip8130Constants::MAX_CALL_PHASES_PER_TX, "calls")
+    }
+
+    /// Deserializes an optional list of at most `max` entries. The entry past
+    /// `max` is skipped without being built, so an oversized list fails before
+    /// it allocates more than `max` entries.
+    fn deserialize_bounded<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
+        deserializer: D,
+        max: usize,
+        field: &'static str,
+    ) -> Result<Option<Vec<T>>, D::Error> {
+        struct BoundedList<T> {
+            max: usize,
+            field: &'static str,
+            entry: PhantomData<T>,
+        }
+
+        impl<'de, T: Deserialize<'de>> Visitor<'de> for BoundedList<T> {
+            type Value = Option<Vec<T>>;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                write!(formatter, "`{}` with at most {} entries", self.field, self.max)
+            }
+
+            fn visit_none<E: de::Error>(self) -> Result<Self::Value, E> {
+                Ok(None)
+            }
+
+            fn visit_unit<E: de::Error>(self) -> Result<Self::Value, E> {
+                Ok(None)
+            }
+
+            fn visit_some<D: Deserializer<'de>>(
+                self,
+                deserializer: D,
+            ) -> Result<Self::Value, D::Error> {
+                deserializer.deserialize_seq(self)
+            }
+
+            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let mut entries = Vec::with_capacity(seq.size_hint().unwrap_or(0).min(self.max));
+                while entries.len() < self.max {
+                    match seq.next_element()? {
+                        Some(entry) => entries.push(entry),
+                        None => return Ok(Some(entries)),
+                    }
+                }
+                if seq.next_element::<IgnoredAny>()?.is_some() {
+                    return Err(de::Error::invalid_length(self.max + 1, &self));
+                }
+                Ok(Some(entries))
+            }
+        }
+
+        deserializer.deserialize_option(BoundedList { max, field, entry: PhantomData })
+    }
 }
 
 /// Builder for [`BaseTypedTransaction`], with optional EIP-8130 simulation
 /// fields ([`Eip8130RequestFields`]) layered onto a standard
 /// [`TransactionRequest`]. A request with no 8130 fields serializes and behaves
 /// exactly like the underlying [`TransactionRequest`].
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+///
+/// Deserialization is a single pass over the JSON object rather than
+/// `#[serde(flatten)]`, which would buffer the whole object before decoding
+/// either half. The EIP-8130 fields decode straight into their bounded types,
+/// keys neither half defines are skipped without being buffered, and only
+/// [`TransactionRequest`]'s own keys are collected for it.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize)]
 pub struct BaseTransactionRequest {
     #[serde(flatten)]
     inner: TransactionRequest,
     #[serde(flatten)]
     eip8130: Eip8130RequestFields,
+}
+
+impl<'de> Deserialize<'de> for BaseTransactionRequest {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        /// Every key of both halves, so unknown keys are skipped rather than
+        /// buffered. The [`TransactionRequest`] keys (including those of its
+        /// flattened `input` and blob `sidecar`) are kept as raw JSON values and
+        /// decoded by [`TransactionRequest`] itself.
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Wire {
+            from: Option<Value>,
+            to: Option<Value>,
+            gas_price: Option<Value>,
+            max_fee_per_gas: Option<Value>,
+            max_priority_fee_per_gas: Option<Value>,
+            max_fee_per_blob_gas: Option<Value>,
+            gas: Option<Value>,
+            value: Option<Value>,
+            input: Option<Value>,
+            data: Option<Value>,
+            nonce: Option<Value>,
+            chain_id: Option<Value>,
+            access_list: Option<Value>,
+            #[serde(rename = "type")]
+            transaction_type: Option<Value>,
+            blob_versioned_hashes: Option<Value>,
+            blobs: Option<Value>,
+            commitments: Option<Value>,
+            proofs: Option<Value>,
+            cell_proofs: Option<Value>,
+            authorization_list: Option<Value>,
+            #[serde(default)]
+            nonce_key: Option<U256>,
+            #[serde(
+                default,
+                deserialize_with = "Eip8130RequestFields::deserialize_account_changes"
+            )]
+            account_changes: Option<Vec<AccountChange>>,
+            #[serde(default, deserialize_with = "Eip8130RequestFields::deserialize_calls")]
+            calls: Option<Vec<Vec<Call>>>,
+            #[serde(default, with = "alloy_serde::quantity::opt")]
+            valid_after: Option<u64>,
+            #[serde(default, with = "alloy_serde::quantity::opt")]
+            valid_before: Option<u64>,
+            #[serde(default)]
+            metadata: Option<Bytes>,
+            #[serde(default)]
+            sender: Option<Address>,
+            #[serde(default)]
+            sender_auth: Option<Bytes>,
+            #[serde(default, deserialize_with = "Eip8130PayerSerde::deserialize")]
+            payer: Option<Address>,
+            #[serde(default)]
+            payer_auth: Option<Bytes>,
+            #[serde(default)]
+            sender_actor_id: Option<B256>,
+        }
+
+        let wire = Wire::deserialize(deserializer)?;
+        let inner: Map<String, Value> = [
+            ("from", wire.from),
+            ("to", wire.to),
+            ("gasPrice", wire.gas_price),
+            ("maxFeePerGas", wire.max_fee_per_gas),
+            ("maxPriorityFeePerGas", wire.max_priority_fee_per_gas),
+            ("maxFeePerBlobGas", wire.max_fee_per_blob_gas),
+            ("gas", wire.gas),
+            ("value", wire.value),
+            ("input", wire.input),
+            ("data", wire.data),
+            ("nonce", wire.nonce),
+            ("chainId", wire.chain_id),
+            ("accessList", wire.access_list),
+            ("type", wire.transaction_type),
+            ("blobVersionedHashes", wire.blob_versioned_hashes),
+            ("blobs", wire.blobs),
+            ("commitments", wire.commitments),
+            ("proofs", wire.proofs),
+            ("cellProofs", wire.cell_proofs),
+            ("authorizationList", wire.authorization_list),
+        ]
+        .into_iter()
+        .filter_map(|(key, value)| value.map(|value| (String::from(key), value)))
+        .collect();
+        let inner =
+            TransactionRequest::deserialize(Value::Object(inner)).map_err(de::Error::custom)?;
+        let eip8130 = Eip8130RequestFields {
+            nonce_key: wire.nonce_key,
+            account_changes: wire.account_changes,
+            calls: wire.calls,
+            valid_after: wire.valid_after,
+            valid_before: wire.valid_before,
+            metadata: wire.metadata,
+            sender: wire.sender,
+            sender_auth: wire.sender_auth,
+            payer: wire.payer,
+            payer_auth: wire.payer_auth,
+            sender_actor_id: wire.sender_actor_id,
+        };
+        Ok(Self { inner, eip8130 })
+    }
 }
 
 impl BaseTransactionRequest {
@@ -575,7 +770,124 @@ impl TransactionBuilder for BaseTransactionRequest {
 
 #[cfg(test)]
 mod tests {
+    use alloy_eips::{
+        eip2930::AccessListItem,
+        eip4844::{BlobTransactionSidecar, Bytes48},
+        eip7594::{BlobTransactionSidecarEip7594, BlobTransactionSidecarVariant},
+    };
+    use alloy_primitives::address;
+    use base_common_consensus::Delegation;
+    use serde_json::json;
+
     use super::*;
+
+    const SENDER: Address = address!("0x00000000000000000000000000000000000000a1");
+
+    /// A request with every [`TransactionRequest`] field set (an exhaustive
+    /// literal, so a field added upstream fails to compile here) and every
+    /// EIP-8130 field set.
+    fn full_request(sidecar: BlobTransactionSidecarVariant) -> BaseTransactionRequest {
+        let inner = TransactionRequest {
+            from: Some(SENDER),
+            to: Some(TxKind::Call(Address::repeat_byte(0x02))),
+            gas_price: Some(1),
+            max_fee_per_gas: Some(2),
+            max_priority_fee_per_gas: Some(3),
+            max_fee_per_blob_gas: Some(4),
+            gas: Some(21_000),
+            value: Some(U256::from(5)),
+            input: TransactionInput::both(Bytes::from_static(&[0xab])),
+            nonce: Some(6),
+            chain_id: Some(8453),
+            access_list: Some(AccessList(vec![AccessListItem {
+                address: Address::repeat_byte(0x03),
+                storage_keys: vec![B256::repeat_byte(0x04)],
+            }])),
+            transaction_type: Some(EIP8130_TX_TYPE_ID),
+            blob_versioned_hashes: Some(vec![B256::repeat_byte(0x05)]),
+            sidecar: Some(sidecar),
+            authorization_list: Some(Vec::new()),
+        };
+        let eip8130 = Eip8130RequestFields {
+            nonce_key: Some(U256::from(7)),
+            account_changes: Some(vec![AccountChange::Delegation(Delegation {
+                target: Address::repeat_byte(0x06),
+            })]),
+            calls: Some(vec![vec![Call {
+                to: Address::repeat_byte(0x07),
+                value: U256::from(8),
+                data: Bytes::from_static(&[0xcd]),
+            }]]),
+            valid_after: Some(9),
+            valid_before: Some(10),
+            metadata: Some(Bytes::from_static(&[0xef])),
+            sender: Some(SENDER),
+            sender_auth: Some(Bytes::from_static(&[0x01])),
+            payer: Some(Address::repeat_byte(0x08)),
+            payer_auth: Some(Bytes::from_static(&[0x02])),
+            sender_actor_id: Some(B256::repeat_byte(0x09)),
+        };
+        BaseTransactionRequest { inner, eip8130 }
+    }
+
+    #[test]
+    fn every_field_survives_a_json_round_trip() {
+        let eip4844 = BlobTransactionSidecarVariant::Eip4844(BlobTransactionSidecar {
+            blobs: Vec::new(),
+            commitments: vec![Bytes48::repeat_byte(0x0a)],
+            proofs: vec![Bytes48::repeat_byte(0x0b)],
+        });
+        let eip7594 = BlobTransactionSidecarVariant::Eip7594(BlobTransactionSidecarEip7594 {
+            blobs: Vec::new(),
+            commitments: vec![Bytes48::repeat_byte(0x0a)],
+            cell_proofs: vec![Bytes48::repeat_byte(0x0c)],
+        });
+        for sidecar in [eip4844, eip7594] {
+            let request = full_request(sidecar);
+            let json = serde_json::to_string(&request).unwrap();
+            assert_eq!(serde_json::from_str::<BaseTransactionRequest>(&json).unwrap(), request);
+        }
+    }
+
+    #[test]
+    fn unknown_keys_are_ignored() {
+        let request: BaseTransactionRequest = serde_json::from_value(json!({
+            "sender": SENDER,
+            "unknown": [[], [], {"nested": [1, 2, 3]}],
+        }))
+        .unwrap();
+        assert_eq!(
+            request,
+            serde_json::from_value::<BaseTransactionRequest>(json!({ "sender": SENDER })).unwrap()
+        );
+    }
+
+    #[test]
+    fn eip8130_lists_are_bounded_while_decoding() {
+        let decode = |calls: usize, account_changes: usize| {
+            let delegation = json!({ "type": "0x1", "target": Address::repeat_byte(0x06) });
+            serde_json::from_str::<BaseTransactionRequest>(
+                &json!({
+                    "sender": SENDER,
+                    "calls": vec![Vec::<Call>::new(); calls],
+                    "accountChanges": vec![delegation; account_changes],
+                })
+                .to_string(),
+            )
+        };
+        let max_calls = Eip8130Constants::MAX_CALL_PHASES_PER_TX;
+        let max_changes = Eip8130Constants::MAX_ACCOUNT_CHANGES_PER_TX;
+
+        let request = decode(max_calls, max_changes).unwrap();
+        let fields = request.as_eip8130().unwrap();
+        assert_eq!(fields.calls.as_ref().unwrap().len(), max_calls);
+        assert_eq!(fields.account_changes.as_ref().unwrap().len(), max_changes);
+
+        let error = decode(max_calls + 1, max_changes).unwrap_err().to_string();
+        assert!(error.contains("`calls` with at most 1024 entries"), "{error}");
+        let error = decode(max_calls, max_changes + 1).unwrap_err().to_string();
+        assert!(error.contains("`accountChanges` with at most 3 entries"), "{error}");
+    }
 
     #[test]
     fn eip8130_auth_scheme_all_lists_every_variant() {
