@@ -23,9 +23,9 @@ pub struct SnapshotCli;
 
 impl SnapshotCli {
     /// Discovers or loads a manifest without creating a snapshot datadir.
-    pub async fn plan(chain: &str, manifest_url: Option<&str>) -> Output {
+    pub async fn plan(chain: &str, manifest_url: Option<&str>, args: &[&str]) -> Output {
         let home = TempDir::new().unwrap();
-        let datadir = home.path().join("data");
+        let datadir = home.path().join("snapshot data");
         let mut command = AsyncCommand::new(env!("CARGO_BIN_EXE_base"));
         command
             .args([
@@ -36,9 +36,10 @@ impl SnapshotCli {
                 chain,
                 "--non-interactive",
                 "--print-plan-json",
-                "--datadir",
+                "--dir",
             ])
             .arg(&datadir)
+            .args(args)
             .env("HOME", home.path())
             .env("XDG_CONFIG_HOME", home.path())
             .env("NO_COLOR", "1")
@@ -97,14 +98,16 @@ fn snapshot_download_help_advertises_base_defaults() {
 }
 
 #[rstest]
-#[case::valid(StatusCode::OK, false, None)]
-#[case::invalid_schema(StatusCode::OK, true, Some("storage_version"))]
-#[case::http_error(StatusCode::NOT_FOUND, false, Some("404"))]
+#[case::valid(StatusCode::OK, false, None, false)]
+#[case::dev_history(StatusCode::OK, false, None, true)]
+#[case::invalid_schema(StatusCode::OK, true, Some("storage_version"), false)]
+#[case::http_error(StatusCode::NOT_FOUND, false, Some("404"), false)]
 #[tokio::test]
 async fn snapshot_plan_fetches_only_manifest(
     #[case] status: StatusCode,
     #[case] omit_storage_version: bool,
     #[case] expected_error: Option<&str>,
+    #[case] dev_history: bool,
 ) {
     let mut manifest = json!({
         "chain_id": 763360,
@@ -126,6 +129,33 @@ async fn snapshot_plan_fetches_only_manifest(
     if omit_storage_version {
         manifest.as_object_mut().unwrap().remove("storage_version");
     }
+    let mut args = Vec::new();
+    if dev_history {
+        manifest["block"] = json!(3_000_000);
+        for component in
+            ["headers", "transactions", "receipts", "account_changesets", "storage_changesets"]
+        {
+            manifest["components"][component] = json!({
+                "blocks_per_file": 500_000,
+                "total_blocks": 3_000_000,
+                "chunk_sizes": vec![11; 6],
+                "chunk_files": (0..6).map(|i| format!("{component}-{i}.tar.zst")).collect::<Vec<_>>(),
+                "chunk_output_files": (0..6).map(|i| vec![json!({
+                    "path": format!("static_files/{component}-{i}"),
+                    "size": 13,
+                    "blake3": "0".repeat(64),
+                })]).collect::<Vec<_>>(),
+            });
+        }
+        args = vec![
+            "--with-txs-distance",
+            "1339200",
+            "--with-receipts-distance",
+            "1339200",
+            "--with-state-history-distance",
+            "1339200",
+        ];
+    }
     let requests = Arc::new(Mutex::new(Vec::new()));
     let request_log = Arc::clone(&requests);
     let app = Router::new().fallback(move |uri: Uri| {
@@ -145,7 +175,7 @@ async fn snapshot_plan_fetches_only_manifest(
     let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
 
     let output =
-        SnapshotCli::plan("zeronet", Some(&format!("http://{address}/manifest.json"))).await;
+        SnapshotCli::plan("zeronet", Some(&format!("http://{address}/manifest.json")), &args).await;
     server.abort();
     assert_eq!(*requests.lock().unwrap(), ["/manifest.json"]);
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -156,12 +186,31 @@ async fn snapshot_plan_fetches_only_manifest(
         assert!(output.status.success(), "snapshot planning failed: {stderr}");
         let plan: Value = serde_json::from_slice(&output.stdout).unwrap();
         assert_eq!(plan["chainId"], 763360);
-        assert_eq!(plan["block"], 1234);
-        assert_eq!(plan["totalDownloadSize"], 73);
-        assert_eq!(plan["totalOutputSize"], 211);
         let archives = plan["archives"].as_array().unwrap();
-        assert_eq!(archives.len(), 1);
         assert_eq!(archives[0]["url"], format!("http://{address}/state.tar.zst"));
+        if dev_history {
+            // Full headers/state, but only the last three half-million-block history chunks.
+            assert_eq!(plan["block"], 3_000_000);
+            assert_eq!(archives.len(), 19);
+            for component in
+                ["headers", "transactions", "receipts", "account_changesets", "storage_changesets"]
+            {
+                let files: Vec<_> = archives
+                    .iter()
+                    .filter(|archive| archive["component"] == component)
+                    .map(|archive| archive["fileName"].as_str().unwrap())
+                    .collect();
+                let first = if component == "headers" { 0 } else { 3 };
+                let expected: Vec<_> =
+                    (first..6).map(|i| format!("{component}-{i}.tar.zst")).collect();
+                assert_eq!(files, expected);
+            }
+        } else {
+            assert_eq!(plan["block"], 1234);
+            assert_eq!(plan["totalDownloadSize"], 73);
+            assert_eq!(plan["totalOutputSize"], 211);
+            assert_eq!(archives.len(), 1);
+        }
     }
 }
 
@@ -172,7 +221,7 @@ async fn snapshot_plan_fetches_only_manifest(
 #[ignore = "queries production snapshot metadata; run with just check-snapshot-manifests"]
 #[tokio::test]
 async fn live_snapshot_plan(#[case] chain: &str, #[case] expected_id: u64) {
-    let output = SnapshotCli::plan(chain, None).await;
+    let output = SnapshotCli::plan(chain, None, &[]).await;
     assert!(
         output.status.success(),
         "{chain} snapshot discovery failed: {}",
