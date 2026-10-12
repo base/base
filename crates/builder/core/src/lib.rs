@@ -52,7 +52,7 @@ pub use flashblocks::{
 mod extension;
 pub use extension::{
     BuilderApiExtension, BuilderApiExtensionArgs, BuilderApiExtensionConfig,
-    DEFAULT_MAX_VALIDITY_PREDICATES, InsertMeteringAdapter, ValiditySignatureMode,
+    DEFAULT_MAX_VALIDITY_PREDICATES, ValiditySignatureMode,
 };
 
 /// Shared test infrastructure: local node instances, chain drivers, transaction builders, and pool observers.
