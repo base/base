@@ -2,6 +2,7 @@ use std::{sync::Arc, time::Duration};
 
 use base_execution_exex::BaseProofsExEx;
 use base_execution_rpc::{
+    WitnessCache, WitnessCacheConfig,
     debug::{DebugApiExt, DebugApiOverrideServer},
     eth::proofs::{EthApiExt, EthApiOverrideServer},
 };
@@ -62,6 +63,13 @@ impl BaseNodeExtension for ProofsHistoryExtension {
                 error!(target: "reth::cli", error = ?e, "Proofs history storage path does not match selected backend");
                 return hooks.add_node_started_hook(move |_| Err(e));
             }
+            let witness_cache = match args.proofs_history_witness_cache.config(&path) {
+                Ok(witness_cache) => witness_cache,
+                Err(e) => {
+                    error!(target: "reth::cli", error = ?e, "Invalid proofs history witness cache configuration");
+                    return hooks.add_node_started_hook(move |_| Err(e));
+                }
+            };
 
             match proofs_history_db {
                 ProofsHistoryDbBackend::Rocksdb => {
@@ -92,6 +100,7 @@ impl BaseNodeExtension for ProofsHistoryExtension {
                         proofs_history_window,
                         proofs_history_prune_interval,
                         proofs_history_verification_interval,
+                        witness_cache,
                     );
                 }
                 ProofsHistoryDbBackend::Mdbx => {
@@ -115,6 +124,7 @@ impl BaseNodeExtension for ProofsHistoryExtension {
                         proofs_history_window,
                         proofs_history_prune_interval,
                         proofs_history_verification_interval,
+                        witness_cache,
                     );
                 }
             }
@@ -137,6 +147,7 @@ fn install_proofs_history<S>(
     proofs_history_window: u64,
     proofs_history_prune_interval: Duration,
     proofs_history_verification_interval: u64,
+    witness_cache: Option<WitnessCacheConfig>,
 ) -> NodeHooks
 where
     S: BaseProofsBatchStore + DatabaseMetrics + Send + Sync + 'static,
@@ -164,13 +175,21 @@ where
         })
         .add_rpc_module(move |ctx| {
             let api_ext = EthApiExt::new(ctx.registry.eth_api().clone(), storage.clone());
+            let cache = witness_cache
+                .as_ref()
+                .map(|config| WitnessCache::open(&config.path).map(Arc::new))
+                .transpose()?;
             let debug_ext = DebugApiExt::new(
                 ctx.node().provider().clone(),
                 ctx.registry.eth_api().clone(),
                 storage,
                 ctx.node().task_executor().clone(),
                 ctx.node().evm_config().clone(),
+                cache,
             );
+            if let Some(config) = &witness_cache {
+                debug_ext.spawn_witness_cache_builder(config);
+            }
             ctx.modules.replace_configured(api_ext.into_rpc())?;
             ctx.modules.replace_configured(debug_ext.into_rpc())?;
             Ok(())
