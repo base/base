@@ -60,7 +60,8 @@ including it. The skip is not cached: the transaction stays pooled and is consid
 later blocks until its required block-number bound evicts it.
 Block-number and flashblock-index predicates never claim a location. Matching is by location
 only, so two searchers conditioning on the same slot exclude each other whatever values
-they compare. The check needs no execution or rollback; it is not revert protection, and it
+they compare. Every committed validity transaction claims, including one that reverted and the
+sender's own earlier transaction, so a flagged follow-up on the same state is skipped too. The check needs no execution or rollback; it is not revert protection, and it
 does not react to ordinary transactions that change the same state.
 
 ### Signed validity predicates

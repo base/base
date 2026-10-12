@@ -1037,6 +1037,10 @@ where
                         if tx.fill_immediately_or_kill()
                             && claimed_predicate_keys.contended(tx.validity_predicates()) =>
                     {
+                        // Counted as matched like any other evaluation, as in the flashblocks
+                        // builder, and separately as a contended skip.
+                        ValidityMetrics::validity_predicate_evaluations_total("matched")
+                            .increment(1);
                         ValidityMetrics::validity_predicate_evaluations_total(
                             "fill_immediately_or_kill_contended",
                         )

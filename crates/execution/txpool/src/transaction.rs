@@ -64,8 +64,8 @@ pub struct BasePooledTransaction<
     validity_predicates: Vec<crate::ValidityPredicate>,
     /// Sender authorization retained for builder forwarding.
     validity_signature: Option<Signature>,
-    /// Whether a builder must drop this transaction instead of including it at a later position
-    /// than the first one where its predicates hold.
+    /// Whether a builder skips this transaction for the rest of a block once a committed validity
+    /// transaction claimed state its predicates read.
     fill_immediately_or_kill: bool,
     /// The set of on-chain state surfaces whose change invalidates this
     /// transaction, computed once during validation and consumed by the pool's

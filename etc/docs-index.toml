@@ -424,7 +424,7 @@ digest = "2e785bfe9d"
 
 ["crates/execution/txpool/README.md"]
 summary = "Base txpool validation/ordering, builder wire extensions, fill-immediately-or-kill eviction, staged EIP-712 predicate authorization, wallet signing contract, and rollout/security limits."
-digest = "d74155828d"
+digest = "ddc8cc6b5b"
 
 ["crates/infra/audit/README.md"]
 summary = "audit-archiver-lib: ingests Vector transaction-event/v1 batches into Postgres idempotently and serves JSON-RPC queries; covers the migrations and schema snapshot regeneration."
