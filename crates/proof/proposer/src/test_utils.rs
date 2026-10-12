@@ -484,6 +484,8 @@ pub struct MockProofRequester {
     pub return_wrong_session_id: bool,
     /// Reject every `delete_proof_request` call with a timeout.
     pub reject_delete: bool,
+    /// Reject session-only deletion while allowing registry-based bulk cleanup.
+    pub reject_session_delete: bool,
 }
 
 #[async_trait]
@@ -576,7 +578,7 @@ impl ProofRequesterProvider for MockProofRequester {
         &self,
         request: DeleteProofRequest,
     ) -> Result<(), ProverServiceClientError> {
-        if self.reject_delete {
+        if self.reject_delete || self.reject_session_delete {
             return Err(ProverServiceClientError::Timeout("simulated delete failure".into()));
         }
 

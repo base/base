@@ -387,7 +387,12 @@ where
                             error,
                             ProposerError::Submission(ProofSubmissionError::InvalidSigner)
                         ) {
-                            self.delete_proofs_by_unregistered_tee_signers(target_block).await
+                            self.discard_invalid_signer_proof(
+                                session_id,
+                                target_block,
+                                proof.tee_signer,
+                            )
+                            .await
                         } else {
                             self.delete_proof_request(session_id, target_block).await
                         }
@@ -429,12 +434,18 @@ where
         }
     }
 
-    /// Purges succeeded proofs from all currently unregistered signers after `InvalidSigner`.
+    /// Discards a rejected TEE proof and purges other currently unregistered signers.
     ///
     /// Call only after the current submission has returned. A fresh registry read fails
-    /// closed. Unknown destructive outcomes back off for the normal poll interval before
-    /// requesting recovery; known rejections and zero-row deletes idle without spinning.
-    pub async fn delete_proofs_by_unregistered_tee_signers(&self, target_block: u64) -> bool {
+    /// closed. A successful bulk delete that leaves the rejected session protected falls
+    /// back to deleting that terminal session alone. Unknown destructive outcomes back
+    /// off for the normal poll interval before recovery; definite RPC rejections idle.
+    pub async fn discard_invalid_signer_proof(
+        &self,
+        session_id: &str,
+        target_block: u64,
+        reported_signer: Address,
+    ) -> bool {
         let registered_signers = match self.tee_signer_registry.registered_signers().await {
             Ok(signers) => signers,
             Err(error) => {
@@ -443,6 +454,7 @@ where
                 return false;
             }
         };
+        let rejected_signer_is_registered = registered_signers.contains(&reported_signer);
         match self
             .proof_requester
             .delete_proofs_by_unregistered_tee_signers(
@@ -455,7 +467,17 @@ where
                     target_block,
                     deleted_count, "Deleted unregistered TEE signer proof requests"
                 );
-                deleted_count > 0
+                if deleted_count == 0 || rejected_signer_is_registered || reported_signer.is_zero()
+                {
+                    // A game's pinned verifier or journal can reject a proof even while its
+                    // host-reported signer remains registered in the active implementation.
+                    // Re-prove only that session; do not purge other registered proofs.
+                    let rejected_session_deleted =
+                        self.delete_proof_request(session_id, target_block).await;
+                    rejected_session_deleted || deleted_count > 0
+                } else {
+                    true
+                }
             }
             Err(ProverServiceClientError::RpcTransport(JsonRpcClientError::Call(ref call)))
                 if call.code() == ErrorCode::MethodNotFound.code()
@@ -937,7 +959,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fresh_registration_preserves_the_head_and_purges_another_stale_signer() {
+    async fn bulk_cleanup_reproves_the_registered_head_and_preserves_other_registered_proofs() {
         let registered = Address::repeat_byte(0x11);
         let stale = Address::repeat_byte(0x22);
         let later = ProposerProofAdapter::tee_session_id_for_root(B256::repeat_byte(0x2c));
@@ -949,12 +971,25 @@ mod tests {
         registry.expect_registered_signers().times(1).return_once(move || Ok(vec![registered]));
         let (collector, sessions) =
             invalid_signer_collector(Arc::clone(&requester), Arc::new(registry)).await;
+        let healthy_root = B256::repeat_byte(0x40);
+        let healthy_session = ProposerProofAdapter::tee_session_id_for_root(healthy_root);
+        requester
+            .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(ProofRequest {
+                claimed_l2_output_root: healthy_root,
+                claimed_l2_block_number: 400,
+                l1_head_number: 1000,
+                ..Default::default()
+            }))
+            .await
+            .unwrap();
         let mut current = recovered(100);
 
-        assert!(collector.tick(&mut current, 300, 300, &CancellationToken::new()).await);
+        assert!(collector.tick(&mut current, 400, 400, &CancellationToken::new()).await);
         let requests = requester.requests.lock().unwrap();
-        assert!(requests.contains_key(&sessions[0]));
+        assert!(!requests.contains_key(&sessions[0]));
         assert!(!requests.contains_key(&sessions[1]));
+        assert!(requests.contains_key(&healthy_session));
+        assert_eq!(requests.len(), 1);
         assert_eq!(
             *requester.deleted_tee_signer_allowlists.lock().unwrap(),
             vec![vec![registered]]
@@ -962,7 +997,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn zero_row_bulk_cleanup_idles_without_resetting_or_removing_the_head() {
+    async fn zero_row_cleanup_reproves_only_the_rejected_registered_session() {
         let requester = Arc::new(MockProofRequester::default());
         let registered = Address::repeat_byte(0x11);
         let mut registry = MockTeeSignerRegistry::new();
@@ -971,10 +1006,124 @@ mod tests {
             invalid_signer_collector(Arc::clone(&requester), Arc::new(registry)).await;
         let mut current = recovered(100);
 
-        assert!(!collector.tick(&mut current, 300, 300, &CancellationToken::new()).await);
-        let requests = requester.requests.lock().unwrap();
-        assert!(sessions.iter().all(|session| requests.contains_key(session)));
+        assert!(collector.tick(&mut current, 300, 300, &CancellationToken::new()).await);
+        assert!(
+            requester
+                .get_proof(GetProofRequest { session_id: sessions[0].clone() })
+                .await
+                .unwrap_err()
+                .is_not_found()
+        );
+        assert_eq!(
+            requester
+                .get_proof(GetProofRequest { session_id: sessions[1].clone() })
+                .await
+                .unwrap()
+                .status,
+            ProofStatus::Succeeded
+        );
         assert_eq!(requester.deleted_tee_signer_allowlists.lock().unwrap().len(), 1);
+        assert_eq!(current.l2_block_number, 100);
+    }
+
+    #[tokio::test]
+    async fn failed_session_fallback_restarts_only_after_committed_bulk_deletion() {
+        let registered = Address::repeat_byte(0x11);
+        let later = ProposerProofAdapter::tee_session_id_for_root(B256::repeat_byte(0x2c));
+        for purge_stale_backlog in [false, true] {
+            let requester = Arc::new(MockProofRequester {
+                reject_session_delete: true,
+                tee_signers: if purge_stale_backlog {
+                    [(later.clone(), Address::repeat_byte(0x22))].into_iter().collect()
+                } else {
+                    Default::default()
+                },
+                ..Default::default()
+            });
+            let mut registry = MockTeeSignerRegistry::new();
+            registry.expect_registered_signers().times(1).return_once(move || Ok(vec![registered]));
+            let (collector, sessions) =
+                invalid_signer_collector(Arc::clone(&requester), Arc::new(registry)).await;
+            let mut current = recovered(100);
+
+            assert_eq!(
+                collector.tick(&mut current, 300, 300, &CancellationToken::new()).await,
+                purge_stale_backlog
+            );
+            assert_eq!(
+                requester
+                    .get_proof(GetProofRequest { session_id: sessions[0].clone() })
+                    .await
+                    .unwrap()
+                    .status,
+                ProofStatus::Succeeded
+            );
+            assert_eq!(
+                requester
+                    .get_proof(GetProofRequest { session_id: sessions[1].clone() })
+                    .await
+                    .is_err(),
+                purge_stale_backlog
+            );
+            assert_eq!(current.l2_block_number, 100);
+        }
+    }
+
+    #[tokio::test]
+    async fn invalid_signer_from_existing_game_reproves_only_its_registered_head() {
+        let requester = Arc::new(MockProofRequester::default());
+        let registered = Address::repeat_byte(0x11);
+        let mut registry = MockTeeSignerRegistry::new();
+        registry.expect_registered_signers().times(1).return_once(move || Ok(vec![registered]));
+        let (_, sessions) = invalid_signer_collector(
+            Arc::clone(&requester),
+            Arc::new(MockTeeSignerRegistry::new()),
+        )
+        .await;
+        let target_block = 200;
+        let claimed_root = B256::repeat_byte(0xc8);
+        let game_address = Address::repeat_byte(0x20);
+        let key = game_lookup_key(
+            target_block - BLOCK_INTERVAL,
+            Address::ZERO,
+            BLOCK_INTERVAL,
+            BLOCK_INTERVAL,
+            &[claimed_root],
+        )
+        .unwrap();
+        let mut factory = MockDisputeGameFactory::default();
+        factory.uuid_games.insert((0, key.root_claim, key.extra_data), game_address);
+        let output = Arc::new(MockOutputProposer::default());
+        *output.verify_error.lock().unwrap() =
+            Some(ProposerError::Submission(ProofSubmissionError::InvalidSigner));
+        let collector = make_collector_with_contracts(
+            Arc::clone(&requester) as Arc<dyn ProofRequesterProvider>,
+            rollup_client(target_block, Some(claimed_root)),
+            Arc::clone(&output) as Arc<dyn OutputProposer>,
+            Arc::new(factory),
+            Arc::new(MockAggregateVerifier::default()),
+            Arc::new(registry),
+        );
+        let mut current = recovered(100);
+
+        assert!(collector.tick(&mut current, 300, 300, &CancellationToken::new()).await);
+        assert!(
+            requester
+                .get_proof(GetProofRequest { session_id: sessions[0].clone() })
+                .await
+                .unwrap_err()
+                .is_not_found()
+        );
+        assert_eq!(
+            requester
+                .get_proof(GetProofRequest { session_id: sessions[1].clone() })
+                .await
+                .unwrap()
+                .status,
+            ProofStatus::Succeeded
+        );
+        assert_eq!(*output.verified.lock().unwrap(), vec![game_address]);
+        assert_eq!(*output.created.lock().unwrap(), 0);
         assert_eq!(current.l2_block_number, 100);
     }
 
@@ -995,11 +1144,11 @@ mod tests {
             .times(1)
             .in_sequence(&mut sequence)
             .return_once(move || Ok(vec![second]));
-        let (collector, _) =
+        let (collector, sessions) =
             invalid_signer_collector(Arc::clone(&requester), Arc::new(registry)).await;
 
         for _ in 0..2 {
-            assert!(collector.delete_proofs_by_unregistered_tee_signers(200).await);
+            assert!(collector.discard_invalid_signer_proof(&sessions[0], 200, first).await);
         }
         assert_eq!(
             *requester.deleted_tee_signer_allowlists.lock().unwrap(),

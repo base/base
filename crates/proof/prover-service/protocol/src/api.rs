@@ -66,7 +66,10 @@ pub trait ProverRequesterApi {
 
     /// Delete succeeded TEE proofs whose nonzero signer is absent from a fresh registry snapshot.
     ///
-    /// The caller supplies the complete registered-signer allowlist for this deployment.
+    /// This is deployment-wide, not requester- or game-scoped. The caller supplies the
+    /// complete registered-signer allowlist covering every TEE proof in the database.
+    /// The server cannot validate that coverage; the proposer's single-registry snapshot
+    /// requires a queue that is not shared with independent signer-registration domains.
     /// Queued/running jobs, non-TEE proofs, and unknown signer metadata are preserved.
     #[method(name = "deleteProofsByUnregisteredTeeSigners")]
     async fn delete_proofs_by_unregistered_tee_signers(
