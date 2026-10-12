@@ -147,20 +147,11 @@ impl std::fmt::Debug for Context {
     }
 }
 
+#[derive(Default)]
 struct CancelState {
     cancelled: AtomicBool,
     wakers: Mutex<Vec<task::Waker>>,
     children: Mutex<Vec<Weak<Self>>>,
-}
-
-impl Default for CancelState {
-    fn default() -> Self {
-        Self {
-            cancelled: AtomicBool::new(false),
-            wakers: Mutex::new(Vec::new()),
-            children: Mutex::new(Vec::new()),
-        }
-    }
 }
 
 impl CancelState {
