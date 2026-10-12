@@ -98,20 +98,24 @@ where
     /// (`gas_limit + payer_auth`) pushes cumulative block gas over the limit.
     ///
     /// The payer authentication gas is a *conservative upper bound*
-    /// ([`IntrinsicGas::max_payer_auth_cost`]): it pins the payer's policy gate
-    /// worst-case, since the pre-execution check cannot resolve the payer's
-    /// on-chain scope. Reserving a ceiling can only over-reserve (never admit an
+    /// ([`IntrinsicGas::max_payer_auth_cost`]): from Zenith (`keystore`) it pins
+    /// the payer's policy gate worst-case, since the pre-execution check cannot
+    /// resolve the payer's on-chain scope. Reserving a ceiling can only over-reserve (never admit an
     /// over-limit block), and the same bound is used by block building and
     /// validation, keeping them consistent.
     ///
     /// A transaction whose payer authentication cannot be priced is invalid, so
     /// the failure is a validation error rather than an internal one.
     #[cfg(feature = "std")]
-    fn reserved_block_gas(tx_env: &E::Tx, gas_limit: u64) -> Result<u64, BlockExecutionError> {
+    fn reserved_block_gas(
+        tx_env: &E::Tx,
+        gas_limit: u64,
+        keystore: bool,
+    ) -> Result<u64, BlockExecutionError> {
         let Some(signed) = tx_env.eip8130_signed() else {
             return Ok(gas_limit);
         };
-        let payer_auth = IntrinsicGas::max_payer_auth_cost(signed)
+        let payer_auth = IntrinsicGas::max_payer_auth_cost(signed, keystore)
             .map_err(|error| BlockExecutionError::Validation(BlockValidationError::other(error)))?;
         Ok(gas_limit.saturating_add(payer_auth))
     }
@@ -123,6 +127,7 @@ where
     const fn reserved_block_gas(
         _tx_env: &E::Tx,
         gas_limit: u64,
+        _keystore: bool,
     ) -> Result<u64, BlockExecutionError> {
         Ok(gas_limit)
     }
@@ -220,7 +225,9 @@ where
         // prior, must be no greater than the block's gasLimit. For EIP-8130 the reserved amount is
         // `gas_limit + payer_auth`, since payer authentication is metered on top of the declared
         // gas_limit (see `reserved_block_gas`); for every other transaction it is `gas_limit`.
-        let reserved_gas = Self::reserved_block_gas(&tx_env, tx.tx().gas_limit())?;
+        let keystore =
+            self.spec.is_zenith_active_at_timestamp(self.evm.block().timestamp().saturating_to());
+        let reserved_gas = Self::reserved_block_gas(&tx_env, tx.tx().gas_limit(), keystore)?;
         let block_available_gas = self.evm.block().gas_limit().saturating_sub(self.gas_used);
         if reserved_gas > block_available_gas && (self.is_regolith || !is_deposit) {
             return Err(BlockValidationError::TransactionGasLimitMoreThanAvailableBlockGas {
@@ -689,7 +696,8 @@ mod tests {
         const JOVIAN_TIMESTAMP: u64 = 1746806402;
 
         let signed = signed_eip8130(GAS_LIMIT, true);
-        let payer_auth = IntrinsicGas::max_payer_auth_cost(&signed).expect("payer auth cost");
+        let payer_auth =
+            IntrinsicGas::max_payer_auth_cost(&signed, false).expect("payer auth cost");
         assert!(payer_auth > 0, "payer auth must be metered on top of gas_limit");
 
         // Block admits `gas_limit` alone but not `gas_limit + payer_auth`.
@@ -745,7 +753,7 @@ mod tests {
         let mut unscheduled_payer_auth = Address::repeat_byte(0xee).to_vec();
         unscheduled_payer_auth.extend_from_slice(&[0u8; 65]);
         let signed = Eip8130Signed::new(tx, Bytes::new(), Bytes::from(unscheduled_payer_auth));
-        assert!(IntrinsicGas::max_payer_auth_cost(&signed).is_err());
+        assert!(IntrinsicGas::max_payer_auth_cost(&signed, false).is_err());
 
         let mut db = prepare_jovian_db(0);
         let base_chain_upgrades = ChainUpgrades::new(
@@ -783,7 +791,7 @@ mod tests {
 
         let signed = signed_eip8130(GAS_LIMIT, false);
         assert_eq!(
-            IntrinsicGas::max_payer_auth_cost(&signed).expect("payer auth cost"),
+            IntrinsicGas::max_payer_auth_cost(&signed, false).expect("payer auth cost"),
             0,
             "self-pay meters no payer authentication",
         );

@@ -896,6 +896,7 @@ where
         <<Builder::Executor as BlockExecutor>::Evm as AlloyEvm>::DB: Database,
     {
         let gas_limit = builder.evm_mut().block().gas_limit();
+        let keystore = self.chain_spec.is_zenith_active_at_timestamp(self.attributes().timestamp());
         // If a gas limit is configured, use that limit as target if it's smaller, otherwise use
         // the block's actual gas limit.
         let block_gas_limit = self
@@ -1151,10 +1152,11 @@ where
 
             // EIP-8130 meters payer authentication gas on top of the declared gas limit, so it must
             // be reserved against the block gas budget in addition to `gas_limit`. Reserve a
-            // conservative upper bound (worst-case payer policy gate) derived from the payer auth
-            // blob (`0` for non-8130 / self-pay); see `IntrinsicGas::max_payer_auth_cost`.
+            // conservative upper bound (from Zenith, a worst-case payer policy gate) derived from
+            // the payer auth blob (`0` for non-8130 / self-pay); see
+            // `IntrinsicGas::max_payer_auth_cost`.
             let tx_payer_auth = match tx.as_eip8130() {
-                Some(signed) => match IntrinsicGas::max_payer_auth_cost(signed) {
+                Some(signed) => match IntrinsicGas::max_payer_auth_cost(signed, keystore) {
                     Ok(payer_auth) => payer_auth,
                     Err(err) => {
                         trace!(

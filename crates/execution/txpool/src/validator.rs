@@ -1172,7 +1172,8 @@ where
         // `gas_limit` was set from the estimate is never rejected here and can
         // never be admitted only to OOG at inclusion. The non-monotonic,
         // state-dependent costs are pinned to their worst case: both policy gates
-        // charged and zero revoke discount. Execution reprices them precisely.
+        // charged (from Zenith; there are none before) and zero revoke discount.
+        // Execution reprices them precisely.
         let intrinsic = IntrinsicGas::compute(
             signed,
             encoded.as_ref(),
@@ -1180,6 +1181,7 @@ where
                 sender,
                 nonce_key_first_use,
                 signed.tx().payer.is_some(),
+                keystore,
             ),
         )
         .map_err(|err| {

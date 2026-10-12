@@ -764,6 +764,7 @@ impl BasePayloadBuilderCtx {
 
         let block_number = as_u64_saturated!(self.evm_env.block_env.number);
         let block_timestamp = self.attributes().timestamp();
+        let keystore = self.chain_spec.is_zenith_active_at_timestamp(block_timestamp);
         let payload_id = self.payload_id().to_string();
         let mut predicate_index =
             ParkedPredicateIndex::new(self.builder_config.predicate_bucket_ordered_threshold);
@@ -977,10 +978,11 @@ impl BasePayloadBuilderCtx {
 
             // EIP-8130 meters payer authentication gas on top of the declared gas limit, so it must
             // be reserved against the block gas budget in addition to `gas_limit`. Reserve a
-            // conservative upper bound (worst-case payer policy gate) derived from the payer auth
-            // blob (`0` for non-8130 / self-pay); see `IntrinsicGas::max_payer_auth_cost`.
+            // conservative upper bound (from Zenith, a worst-case payer policy gate) derived from
+            // the payer auth blob (`0` for non-8130 / self-pay); see
+            // `IntrinsicGas::max_payer_auth_cost`.
             let tx_payer_auth = match tx.as_eip8130() {
-                Some(signed) => match IntrinsicGas::max_payer_auth_cost(signed) {
+                Some(signed) => match IntrinsicGas::max_payer_auth_cost(signed, keystore) {
                     Ok(payer_auth) => payer_auth,
                     Err(err) => {
                         trace!(
