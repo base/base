@@ -412,7 +412,7 @@ digest = "b72a1536e1"
 
 ["crates/execution/txpool-rpc/README.md"]
 summary = "Txpool RPC admin/status APIs and validity submissions; staged signature modes, fill-immediately-or-kill flag, signature metrics, predicate forwarding and sequencer proxy."
-digest = "8c22946008"
+digest = "e87c6ce576"
 
 ["crates/execution/txpool-tracing/README.md"]
 summary = "Txpool tracing extension: tracks mempool lifecycle events, txpool_transactionStatus RPC, enabling CLI flags, and reth_transaction_tracing_tx_event histogram. Use to debug tx latency or drops."
@@ -424,7 +424,7 @@ digest = "2e785bfe9d"
 
 ["crates/execution/txpool/README.md"]
 summary = "Base txpool validation/ordering, builder wire extensions, fill-immediately-or-kill eviction, staged EIP-712 predicate authorization, wallet signing contract, and rollout/security limits."
-digest = "ddc8cc6b5b"
+digest = "62191e880f"
 
 ["crates/infra/audit/README.md"]
 summary = "audit-archiver-lib: ingests Vector transaction-event/v1 batches into Postgres idempotently and serves JSON-RPC queries; covers the migrations and schema snapshot regeneration."

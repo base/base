@@ -626,11 +626,12 @@ async fn fill_immediately_or_kill_fills_when_woken_without_competition() -> eyre
     Ok(())
 }
 
-/// A competitor committed in an earlier flashblock of the block still claims its state, and the
-/// resulting skip lasts only for that block: with no competitor in the next block, the same
-/// flagged transaction is included.
+/// A competitor committed in an earlier flashblock of the block still claims its state. The killed
+/// transaction is evicted rather than retried, so it does not land in the next block even though its
+/// predicates still hold; it is not cached as rejected, so resubmitting it is admitted again.
 #[tokio::test]
-async fn fill_immediately_or_kill_skip_spans_flashblocks_but_not_blocks() -> eyre::Result<()> {
+async fn fill_immediately_or_kill_evicts_after_competitor_in_earlier_flashblock() -> eyre::Result<()>
+{
     let instance = LocalInstanceBuilder::new(BuilderConfig::for_tests())
         .install_ext::<BuilderApiExtension>(
             BuilderApiExtensionConfig::new(DEFAULT_MAX_VALIDITY_PREDICATES).with_noop_metering(),
@@ -645,24 +646,54 @@ async fn fill_immediately_or_kill_skip_spans_flashblocks_but_not_blocks() -> eyr
         .await?;
     let config = instance.builder_config();
     let block_number = driver.latest().await?.header.number + 1;
-    let flagged = vec![
+    let block_bound = ValidityPredicate::BlockNumber {
+        op: ValidityOperator::LessThanOrEqual,
+        value: U256::from(block_number + 2),
+    };
+    let searcher_tx = driver
+        .create_transaction()
+        .with_signer(&accounts[1])
+        .with_to(Address::random())
+        .with_max_priority_fee_per_gas(200)
+        .build()
+        .await;
+    let searcher = searcher_tx.tx_hash();
+    let insert = |validity: Vec<ValidityPredicate>| {
+        driver.provider().raw_request::<_, ()>(
+            "base_insertValidatedTransaction".into(),
+            (ValidatedTransaction {
+                sender: accounts[1].address(),
+                raw: searcher_tx.encoded_2718().into(),
+                metering: None,
+                extensions: TransactionValidity {
+                    validity,
+                    validity_signature: None,
+                    fill_immediately_or_kill: true,
+                },
+            },),
+        )
+    };
+    // The flashblock bound delays the searcher until after the competitor's flashblock.
+    insert(vec![
         ValidityPredicate::FlashblockIndex {
             op: ValidityOperator::GreaterThanOrEqual,
             value: U256::from(config.flashblocks_per_block() - 1),
         },
-        ValidityPredicate::BlockNumber {
-            op: ValidityOperator::LessThanOrEqual,
-            value: U256::from(block_number + 1),
-        },
+        block_bound.clone(),
         untouched_slot(pool, 1),
-    ];
-    let searcher = insert_validity_transaction(&driver, &accounts[1], 200, flagged, true).await?;
+    ])
+    .await?;
 
     let contended = driver.build_new_block().await?;
     assert!(!contended.transactions.hashes().any(|hash| hash == searcher));
+    assert!(instance.pool().is_dropped(searcher), "a killed bid must be evicted");
 
-    let uncontended = driver.build_new_block().await?;
-    assert!(uncontended.transactions.hashes().any(|hash| hash == searcher));
+    let next = driver.build_new_block().await?;
+    assert!(!next.transactions.hashes().any(|hash| hash == searcher));
+
+    insert(vec![block_bound, untouched_slot(pool, 1)]).await?;
+    let resubmitted = driver.build_new_block().await?;
+    assert!(resubmitted.transactions.hashes().any(|hash| hash == searcher));
     Ok(())
 }
 

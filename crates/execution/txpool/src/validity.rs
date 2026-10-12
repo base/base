@@ -647,7 +647,7 @@ pub struct TransactionValidity {
     pub validity_signature: Option<Signature>,
     /// Whether a builder drops this transaction once its predicate state has been claimed.
     ///
-    /// When set, a builder skips the transaction for the rest of the block if its predicates hold
+    /// When set, a builder evicts the transaction instead of including it if its predicates hold
     /// but a validity transaction whose balance, nonce, or storage predicates read any of the same
     /// locations has already committed in that block. Block-number and flashblock-index predicates
     /// never claim a location.

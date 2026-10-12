@@ -796,6 +796,9 @@ where
                     self.config.metering_provider.remove(&diag.permanently_rejected_txs);
                     self.pool.remove_transactions(diag.permanently_rejected_txs.clone());
                 }
+                if !diag.killed_txs.is_empty() {
+                    self.pool.remove_transactions(diag.killed_txs.clone());
+                }
 
                 // Send to handler outside mutex.
                 self.outputs

@@ -407,8 +407,9 @@ impl<Txs> Builder<'_, Txs> {
         if !ctx.attributes().no_tx_pool() {
             let best_txs = best(ctx.best_transaction_attributes(builder.evm_mut().block()));
             let cancelled = ctx.execute_best_transactions(&mut info, &mut builder, best_txs)?;
+            let killed = std::mem::take(&mut info.killed_txs);
             if !info.permanently_rejected_txs.is_empty() {
-                let rejected = std::mem::take(&mut info.permanently_rejected_txs);
+                let mut rejected = std::mem::take(&mut info.permanently_rejected_txs);
                 let count = rejected.len();
                 ctx.builder_config.rejection_cache.mark_rejected(&rejected);
                 RejectionCacheMetrics::insertions().increment(count as u64);
@@ -418,12 +419,15 @@ impl<Txs> Builder<'_, Txs> {
                     ctx.builder_config.resource_metering.provider.as_ref(),
                     &rejected,
                 );
+                rejected.extend(killed);
                 evict_permanently_rejected(rejected);
                 info!(
                     target: "payload_builder",
                     count,
                     "evicted permanently rejected transactions from pool",
                 );
+            } else if !killed.is_empty() {
+                evict_permanently_rejected(killed);
             }
             if cancelled.is_some() {
                 return Ok(BuildOutcomeKind::Cancelled);
@@ -590,6 +594,9 @@ pub struct ExecutionInfo {
     /// Transaction hashes that exceeded a per-transaction resource limit and should be
     /// permanently removed from the pool and recorded in the shared rejection cache.
     pub permanently_rejected_txs: Vec<TxHash>,
+    /// Fill-immediately-or-kill transactions that lost their opportunity and should be removed
+    /// from the pool, but not cached as rejected: a fresh, re-signed bid may still be valid.
+    pub killed_txs: Vec<TxHash>,
 }
 
 impl ExecutionInfo {
@@ -602,6 +609,7 @@ impl ExecutionInfo {
             inclusion: InclusionTracker::default(),
             resource_metering_usage: Vec::new(),
             permanently_rejected_txs: Vec::new(),
+            killed_txs: Vec::new(),
         }
     }
 
@@ -1047,13 +1055,12 @@ where
                         .increment(1);
                         emit_native_validity_event!(
                             self,
-                            TransactionEventType::BuilderRejected,
+                            TransactionEventType::BuilderExpired,
                             tx_hash,
                             validity_consideration_index,
                             {
-                                "rejection_reason" => "fill_immediately_or_kill_contended",
-                                "rejection_detail" => "a validity transaction conditioned on the same state already committed in this block",
-                                "permanent" => false,
+                                "expire_reason" => "fill_immediately_or_kill_contended",
+                                "expire_detail" => "a validity transaction conditioned on the same state already committed in this block",
                             }
                         );
                         trace!(
@@ -1061,8 +1068,9 @@ where
                             tx_hash = ?tx_hash,
                             "dropping fill-immediately-or-kill transaction whose predicate state was already claimed"
                         );
-                        // Skipped for this scan only, as in the flashblocks builder; the block-number
-                        // bound evicts it.
+                        // The opportunity is gone, so the transaction is evicted. It is not cached as
+                        // rejected: a re-signed bid on the same predicates may still be valid.
+                        info.killed_txs.push(tx_hash);
                         Self::skip_current(
                             &mut best_txs,
                             tx.sender(),
@@ -2235,11 +2243,11 @@ mod tests {
     }
 
     /// Builds a competitor and a lower-priority searcher whose predicates read `searcher_slot`, and
-    /// returns whether the searcher was included after the competitor.
-    fn native_searcher_included_after_competitor(
+    /// returns whether the searcher was included and whether it was evicted from the pool.
+    fn native_searcher_after_competitor(
         searcher_slot: u64,
         fill_immediately_or_kill: bool,
-    ) -> bool {
+    ) -> (bool, bool) {
         let untouched_slot = |slot: u64| ValidityPredicate::Storage {
             address: Address::repeat_byte(0x44),
             slot: U256::from(slot),
@@ -2258,11 +2266,18 @@ mod tests {
         let funded_senders = [competitor.sender(), searcher.sender()];
         let competitor_hash = *competitor.hash();
         let searcher_hash = *searcher.hash();
+        let ctx = pool_payload_context(DENIM_TIMESTAMP);
+        let cache = ctx.builder_config.rejection_cache.clone();
+        let evicted = Arc::new(Mutex::new(Vec::new()));
 
-        let BuildOutcomeKind::Freeze(payload) = build_parkable_pool_payload(
-            pool_payload_context(DENIM_TIMESTAMP),
+        let BuildOutcomeKind::Freeze(payload) = build_parkable_pool_payload_with(
+            ctx,
             TestParkableTransactions::new(vec![competitor, searcher]),
             &funded_senders,
+            {
+                let evicted = Arc::clone(&evicted);
+                move |hashes| evicted.lock().unwrap().extend(hashes)
+            },
         ) else {
             panic!("Denim payload must freeze")
         };
@@ -2274,18 +2289,21 @@ mod tests {
             .map(|transaction| *transaction.tx_hash())
             .collect::<Vec<_>>();
         assert_eq!(included[0], competitor_hash, "the winning bid must land first");
-        included.contains(&searcher_hash)
+        // A killed bid is evicted, but a re-signed bid on the same predicates stays admissible.
+        assert!(!cache.is_rejected(&searcher_hash));
+        let evicted = evicted.lock().unwrap().contains(&searcher_hash);
+        (included.contains(&searcher_hash), evicted)
     }
 
     #[test]
-    fn native_builder_drops_fill_immediately_or_kill_after_competitor_claims_its_state() {
-        assert!(native_searcher_included_after_competitor(1, false));
-        assert!(!native_searcher_included_after_competitor(1, true));
+    fn native_builder_evicts_fill_immediately_or_kill_after_competitor_claims_its_state() {
+        assert_eq!(native_searcher_after_competitor(1, false), (true, false));
+        assert_eq!(native_searcher_after_competitor(1, true), (false, true));
     }
 
     #[test]
     fn native_builder_keeps_fill_immediately_or_kill_after_unrelated_validity_commit() {
-        assert!(native_searcher_included_after_competitor(2, true));
+        assert_eq!(native_searcher_after_competitor(2, true), (true, false));
     }
 
     #[test]

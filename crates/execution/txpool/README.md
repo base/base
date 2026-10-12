@@ -55,9 +55,10 @@ predicates and defaults to `false`.
 Builders track the balance, nonce, and storage locations read by the predicates of every
 validity transaction committed in the block being built. When a flagged transaction's
 predicates hold but any of those locations was already claimed by an earlier validity
-transaction in the same block, the builder skips it for the rest of that block rather than
-including it. The skip is not cached: the transaction stays pooled and is considered again in
-later blocks until its required block-number bound evicts it.
+transaction in the same block, the builder evicts it from the pool rather than including it.
+The kill is final because the predicates would otherwise keep holding in later blocks after the
+opportunity is gone. It is not recorded in the rejection cache, so resubmitting the same signed
+transaction is admitted again.
 Block-number and flashblock-index predicates never claim a location. Matching is by location
 only, so two searchers conditioning on the same slot exclude each other whatever values
 they compare. Every committed validity transaction claims, including one that reverted and the
