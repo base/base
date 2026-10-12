@@ -12,6 +12,8 @@ use alloy_consensus::Header;
 use alloy_eips::{BlockNumHash, BlockNumberOrTag};
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::JwtSecret;
+use base_common_chains::BaseUpgradeExt;
+use base_common_consensus::REGOLITH_SYSTEM_TX_GAS;
 use base_common_genesis::{BaseUpgrade, RollupConfig, RuntimeUpgradeRegistry};
 use base_consensus_engine::{EngineClient, EngineClientError};
 use base_protocol::{BaseBlockConversionError, BaseTimeUpdateTx, L2BlockMetadata};
@@ -22,7 +24,7 @@ use url::Url;
 
 use crate::{
     EngineConfig, NodeOperatingMode, ShutdownSignal, StandaloneDenimSchedule,
-    StandaloneScheduleError, StandaloneSequencerNode,
+    StandaloneImpersonationQueue, StandaloneScheduleError, StandaloneSequencerNode,
 };
 
 /// Development schedule and snapshot identity persisted with a datadir.
@@ -107,12 +109,16 @@ impl StandaloneDevChain {
     /// `header_by_number` must read canonical headers from the already-open execution provider;
     /// historical block bodies may have been pruned.
     ///
+    /// `impersonation` starts accepting requests once the schedule is known, and its deposits are
+    /// sequenced after the system deposits of each block.
+    ///
     /// Returns an error if the sequencer stops for any other reason.
     pub async fn run<E: std::fmt::Display>(
         self,
         engine_url: Url,
         jwt_secret: JwtSecret,
         header_by_number: impl Fn(u64) -> Result<Option<Header>, E>,
+        impersonation: StandaloneImpersonationQueue,
         cancellation: CancellationToken,
     ) -> Result<(), StandaloneDevError> {
         let chain_id = self.rollup_config.l2_chain_id.id();
@@ -244,6 +250,14 @@ impl StandaloneDevChain {
             "block timestamps continue from the snapshot, not wall-clock time"
         );
 
+        // Every development block also carries the L1-info and BaseTime system deposits.
+        impersonation.activate(
+            schedule.system_config.gas_limit.saturating_sub(2 * REGOLITH_SYSTEM_TX_GAS),
+            BaseUpgrade::from_timestamp(
+                &rollup_config,
+                rollup_config.l2_block_timestamp(head_id.number + 1),
+            ),
+        );
         let mut node = StandaloneSequencerNode::new(
             Arc::new(rollup_config),
             Arc::new(engine),
@@ -252,6 +266,7 @@ impl StandaloneDevChain {
             None,
         );
         node.schedule_delay = schedule_delay;
+        node.attributes_builder.impersonation = Some(impersonation);
         // The sequencer also stops cleanly on a shutdown signal or when any actor exits. Polling the
         // signal first, and giving actors a child token, distinguishes requested shutdowns from an
         // unexpected stop.
