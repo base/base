@@ -75,6 +75,14 @@ pr: fix check::format check::udeps check::clippy check::deny check::docs-index c
 review *args:
     python3 .agents/skills/pr-review/review.py "$@"
 
+# Reviews a pull request (a number or a URL) in a temporary worktree of its head; prints, posts nothing
+review-pr pr *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    pr="$1"
+    shift
+    python3 .agents/skills/pr-review/review.py --pr "$pr" "$@"
+
 # Performs lychee checks, installing the lychee command if necessary
 lychee:
     @command -v lychee >/dev/null 2>&1 || cargo install lychee

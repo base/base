@@ -25,16 +25,18 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
+import contextlib
 import dataclasses
 import functools
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -342,6 +344,8 @@ class Context:
     repo: str = DEFAULT_REPO
     head_sha: str | None = None
     threads: list[dict[str, Any]] = dataclasses.field(default_factory=list)
+    # Where the agents read the pull request's files, when that is not the current checkout (see pr_worktree).
+    tree: Path | None = None
     # The threads that were there when the run started. Comments the run posts itself are new, not "open
     # from earlier", and the final decider should not be asked about them.
     earlier_thread_ids: frozenset[str] | None = None
@@ -465,7 +469,58 @@ def fetch_head(number: int, repo: str) -> str:
     return json.loads(gh(["pr", "view", str(number), "--repo", repo, "--json", "headRefOid"]))["headRefOid"]
 
 
-def pr_context(number: int, repo: str, post: bool = False) -> Context:
+def find_remote(repo: str) -> str:
+    """The name of the git remote that points at `repo` (owner/name)."""
+    pattern = re.compile(rf"[:/]{re.escape(repo)}(\.git)?/?$")
+    for line in git(["remote", "-v"]).splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and pattern.search(parts[1]):
+            return parts[0]
+    raise ReviewError(f"no git remote points at {repo}; add one, or check out the pull request's head yourself")
+
+
+@contextlib.contextmanager
+def pr_worktree(number: int, repo: str, head_sha: str) -> Iterator[Path]:
+    """A temporary detached worktree of a pull request's head commit, removed afterwards.
+
+    The agents read files from the working directory, so reviewing a pull request that is not what is
+    checked out needs its files somewhere. A worktree leaves your own checkout, branch and uncommitted
+    changes alone. Nothing from the pull request is run: the script comes from the current checkout, and
+    the agents only read.
+    """
+    remote = find_remote(repo)
+    for ref in (f"refs/pull/{number}/head", head_sha):
+        try:
+            git(["fetch", "--quiet", remote, ref])
+        except ReviewError:
+            continue
+        if git(["rev-parse", "FETCH_HEAD"]).strip() == head_sha:
+            break
+    else:
+        raise ReviewError(f"could not fetch commit {head_sha[:12]} of {repo}#{number} from `{remote}`; "
+                          f"if the branch was force-pushed the commit may be gone, so try again")
+    path = Path(tempfile.mkdtemp(prefix=f"pr-review-{number}-"))
+    try:
+        git(["worktree", "add", "--quiet", "--detach", str(path), head_sha])
+        log(f"Reading {repo}#{number} at {head_sha[:12]} from {path}")
+        yield path
+    finally:
+        # Deleting the directory and pruning is all `git worktree remove` would do, and it also works when
+        # the worktree was never fully created.
+        shutil.rmtree(path, ignore_errors=True)
+        try:
+            git(["worktree", "prune"])
+        except ReviewError as exc:
+            log(f"warning: could not prune worktrees ({exc}); run `git worktree prune`")
+
+
+def pr_context(number: int, repo: str, post: bool = False,
+               checkout: Callable[[str], Path] | None = None) -> Context:
+    """Read a pull request.
+
+    `checkout(head_sha)` is called, for a run that does not post, when this checkout is not at the pull
+    request's head; it returns a directory with that commit for the agents to read.
+    """
 
     # Read the metadata and the diff at one head commit, or comments could target the wrong lines.
     for _ in range(3):
@@ -485,6 +540,7 @@ def pr_context(number: int, repo: str, post: bool = False) -> Context:
         checked_out = git(["rev-parse", "HEAD"]).strip()
     except ReviewError:
         checked_out = None
+    tree: Path | None = None
     if checked_out != info["headRefOid"]:
         # Agents read files from the working directory; if it is not the PR head, the line numbers
         # they report can differ from the diff that comments are anchored to, and a finding about
@@ -493,7 +549,10 @@ def pr_context(number: int, repo: str, post: bool = False) -> Context:
                    f"{info['headRefOid'][:12]}")
         if post:
             raise HeadMovedError(message)
-        log(f"warning: {message}; check out the PR head for line numbers to match")
+        if checkout is None:
+            log(f"warning: {message}; check out the PR head for line numbers to match")
+        else:
+            tree = checkout(info["headRefOid"])
     if post and git(["status", "--porcelain", "--untracked-files=no"]).strip():
         # The agents read the working tree, so edits that GitHub does not have would be reviewed
         # and then posted as if they were in the pull request.
@@ -509,6 +568,7 @@ def pr_context(number: int, repo: str, post: bool = False) -> Context:
         repo=repo,
         head_sha=info["headRefOid"],
         threads=threads,
+        tree=tree,
     )
 
 
@@ -1243,12 +1303,29 @@ def render_report(plan: Plan) -> str:
     return "\n".join(out)
 
 
+PR_URL_RE = re.compile(r"^https://github\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/pull/(\d+)(?:[/?#].*)?$")
+
+
+def pr_number(value: str) -> tuple[str | None, int]:
+    """`--pr` takes a number, or a pull request URL, which also says which repository it is in."""
+    if value.isdecimal() and int(value) > 0:
+        return None, int(value)
+    match = PR_URL_RE.match(value)
+    if match:
+        return match.group(1), int(match.group(2))
+    raise argparse.ArgumentTypeError(f"{value!r} is not a pull request number or a https://github.com/OWNER/REPO/pull/N URL")
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--pr", type=int, help="review this pull request instead of the local branch")
+    parser.add_argument("--pr", type=pr_number, metavar="NUMBER_OR_URL",
+                        help="review this pull request (a number, or a github.com URL) instead of the local branch")
     parser.add_argument("--post", action="store_true", help="apply the decider's actions to --pr")
     parser.add_argument("--base", help="local mode: base ref (default: base/base remote's main)")
     parser.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY", DEFAULT_REPO))
+    parser.add_argument("--no-worktree", action="store_true",
+                        help="with --pr: read the files from the current checkout even if it is not at the "
+                             "pull request's head (by default a temporary worktree of the head is used)")
     parser.add_argument("--model", default=os.environ.get("PR_REVIEW_MODEL"),
                         help="use this model for every agent instead of the one in its file")
     parser.add_argument("--agents-dir", type=Path, default=AGENTS_DIR)
@@ -1257,6 +1334,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--refresh-status", action="store_true",
                         help="with --pr: update the latest summary's count of unreviewed commits; runs no model")
     args = parser.parse_args(argv)
+    if args.pr is not None and args.pr[0]:
+        args.repo = args.pr[0]  # a URL names the repository
+    args.pr = args.pr[1] if args.pr is not None else None
     if (args.post or args.refresh_status) and args.pr is None:
         parser.error("--post and --refresh-status require --pr")
     if args.refresh_status and args.post:
@@ -1270,11 +1350,17 @@ def main(argv: list[str] | None = None) -> int:
         if args.refresh_status:
             return refresh_status(args.pr, args.repo)
         agents = load_agents(args.agents_dir)
-        ctx = pr_context(args.pr, args.repo, post=args.post) if args.pr else local_context(args.base)
-        artifacts = args.artifacts_dir or Path(tempfile.mkdtemp(prefix="pr-review-"))
-        artifacts.mkdir(parents=True, exist_ok=True)
-        cwd = Path(git(["rev-parse", "--show-toplevel"]).strip())
-        outcome = run_pipeline(ctx, agents, cwd, artifacts, args.model, post=args.post)
+        with contextlib.ExitStack() as stack:
+            def checkout(head_sha: str) -> Path:
+                return stack.enter_context(pr_worktree(args.pr, args.repo, head_sha))
+
+            ctx = (pr_context(args.pr, args.repo, post=args.post, checkout=None if args.no_worktree else checkout)
+                   if args.pr else local_context(args.base))
+            artifacts = args.artifacts_dir or Path(tempfile.mkdtemp(prefix="pr-review-"))
+            artifacts.mkdir(parents=True, exist_ok=True)
+            cwd = ctx.tree or Path(git(["rev-parse", "--show-toplevel"]).strip())
+            outcome = run_pipeline(ctx, agents, cwd, artifacts, args.model, post=args.post)
+        # the worktree has been removed; nothing below needs the pull request's files
         plan = outcome.plan
         plan.summary = build_summary(outcome, plan, ctx)
         (artifacts / "plan.json").write_text(dumps(dataclasses.asdict(plan)))

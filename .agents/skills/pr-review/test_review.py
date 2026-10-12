@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Unit tests for review.py and render.py. Run with `python3 .agents/skills/pr-review/test_review.py`."""
 
+import argparse
 import dataclasses
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import threading
@@ -779,6 +781,171 @@ class RepeatTests(unittest.TestCase):
                                                                       return_value=[thread("open")]):
             review.apply_plan(plan, ctx)
         self.assertEqual(plan.replies, [])
+
+
+def git_in(path: Path, *args: str) -> str:
+    done = subprocess.run(["git", "-C", str(path), "-c", "user.email=t@t", "-c", "user.name=t", *args],
+                          capture_output=True, text=True, check=True)
+    return done.stdout.strip()
+
+
+class WorktreeTests(unittest.TestCase):
+    """The agents read a pull request's files from a temporary worktree, using real git repositories."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(self.tmp.name)
+        self.upstream, self.mine = root / "upstream", root / "mine"
+        self.upstream.mkdir()
+        git_in(self.upstream, "init", "-q", "-b", "main")
+        (self.upstream / "a.txt").write_text("base\n")
+        git_in(self.upstream, "add", "-A")
+        git_in(self.upstream, "commit", "-qm", "base")
+        git_in(self.upstream, "checkout", "-qb", "feature")
+        (self.upstream / "a.txt").write_text("the pull request's version\n")
+        git_in(self.upstream, "commit", "-qam", "change")
+        self.head = git_in(self.upstream, "rev-parse", "HEAD")
+        # GitHub exposes a pull request's head as refs/pull/N/head
+        git_in(self.upstream, "update-ref", "refs/pull/7/head", self.head)
+        git_in(self.upstream, "checkout", "-q", "main")
+        subprocess.run(["git", "clone", "-q", str(self.upstream), str(self.mine)], check=True)
+        git_in(self.mine, "remote", "rename", "origin", "base")
+        self.old_cwd = os.getcwd()
+        os.chdir(self.mine)
+
+    def tearDown(self) -> None:
+        os.chdir(self.old_cwd)
+        self.tmp.cleanup()
+
+    def remote_for(self, repo: str):
+        return mock.patch.object(review, "find_remote", return_value="base")
+
+    def test_the_worktree_holds_the_pull_requests_files_and_leaves_my_checkout_alone(self) -> None:
+        (self.mine / "a.txt").write_text("my own uncommitted edit\n")
+        before = git_in(self.mine, "rev-parse", "HEAD")
+        with self.remote_for("o/r"), review.pr_worktree(7, "o/r", self.head) as path:
+            self.assertEqual((path / "a.txt").read_text(), "the pull request's version\n")
+            self.assertEqual(git_in(path, "rev-parse", "HEAD"), self.head)
+            self.assertNotEqual(path.resolve(), self.mine.resolve())
+        self.assertEqual((self.mine / "a.txt").read_text(), "my own uncommitted edit\n")
+        self.assertEqual(git_in(self.mine, "rev-parse", "HEAD"), before)
+        self.assertEqual(git_in(self.mine, "branch", "--show-current"), "main")
+
+    def test_the_worktree_is_removed_afterwards_even_when_the_run_fails(self) -> None:
+        with self.remote_for("o/r"):
+            try:
+                with review.pr_worktree(7, "o/r", self.head) as path:
+                    raise RuntimeError("the review blew up")
+            except RuntimeError:
+                pass
+        self.assertFalse(path.exists())
+        self.assertNotIn(str(path), git_in(self.mine, "worktree", "list"))
+        self.assertEqual(len(git_in(self.mine, "worktree", "list").splitlines()), 1)
+
+    def test_a_pull_request_that_moved_on_is_read_at_the_head_whose_diff_was_read(self) -> None:
+        # The diff and the files must be of one commit, so the worktree is the commit that was asked for,
+        # even though refs/pull/7/head now points at a newer one. Git can fetch a reachable commit by its SHA.
+        git_in(self.upstream, "checkout", "-q", "feature")
+        (self.upstream / "a.txt").write_text("a newer push\n")
+        git_in(self.upstream, "commit", "-qam", "newer")
+        git_in(self.upstream, "update-ref", "refs/pull/7/head", git_in(self.upstream, "rev-parse", "HEAD"))
+        with self.remote_for("o/r"), review.pr_worktree(7, "o/r", self.head) as path:
+            self.assertEqual(git_in(path, "rev-parse", "HEAD"), self.head)
+            self.assertEqual((path / "a.txt").read_text(), "the pull request's version\n")
+
+    def test_a_commit_that_is_gone_gives_the_clear_error_and_never_the_pull_requests_other_files(self) -> None:
+        # The pull request now points at a newer commit, and the one the diff was read at is not on the
+        # server any more (a force push): there is nothing correct to read, so say that.
+        gone = "e" * 40  # a commit the server does not have
+        git_in(self.upstream, "checkout", "-q", "feature")
+        (self.upstream / "a.txt").write_text("a newer push\n")
+        git_in(self.upstream, "commit", "-qam", "newer")
+        git_in(self.upstream, "update-ref", "refs/pull/7/head", git_in(self.upstream, "rev-parse", "HEAD"))
+        with self.remote_for("o/r"), self.assertRaises(review.ReviewError) as caught:
+            with review.pr_worktree(7, "o/r", gone):
+                self.fail("a worktree must not be made for a commit that could not be fetched")
+        self.assertIn("could not fetch commit", str(caught.exception))
+        self.assertIn("force-pushed", str(caught.exception))
+        self.assertEqual(len(git_in(self.mine, "worktree", "list").splitlines()), 1)
+
+    def test_a_pull_request_that_cannot_be_fetched_is_an_error_not_a_review_of_the_wrong_files(self) -> None:
+        with self.remote_for("o/r"), self.assertRaises(review.ReviewError), review.pr_worktree(99, "o/r", "f" * 40):
+            pass
+
+    def test_the_remote_is_found_by_repository_name(self) -> None:
+        git_in(self.mine, "remote", "add", "fork", "git@github.com:meyer9/base.git")
+        git_in(self.mine, "remote", "add", "up", "https://github.com/base/base.git")
+        git_in(self.mine, "remote", "add", "other", "git@github.com:base/base-extra")
+        self.assertEqual(review.find_remote("base/base"), "up")
+        self.assertEqual(review.find_remote("meyer9/base"), "fork")
+        with self.assertRaises(review.ReviewError):
+            review.find_remote("nobody/nothing")
+
+    def test_pr_context_asks_for_a_worktree_only_when_the_head_differs(self) -> None:
+        calls: list[str] = []
+
+        def checkout(sha: str) -> Path:
+            calls.append(sha)
+            return Path("/the/worktree")
+
+        gh_fn, _ = PrContextTests().scripted()
+        for checked_out, expect_call in (("b" * 40, True), (PrContextTests.HEAD, False)):
+            with self.subTest(checked_out=checked_out[:7]):
+                calls.clear()
+                with mock.patch.object(review, "gh", gh_fn), mock.patch.object(
+                        review, "git", return_value=checked_out + "\n"):
+                    ctx = review.pr_context(7, "base/base", checkout=checkout)
+                self.assertEqual(calls, [PrContextTests.HEAD] if expect_call else [])
+                self.assertEqual(ctx.tree, Path("/the/worktree") if expect_call else None)
+
+    def test_posting_never_uses_a_worktree(self) -> None:
+        # A post is checked against the checkout that CI made; reading another tree would hide a mismatch.
+        gh_fn, _ = PrContextTests().scripted()
+        with mock.patch.object(review, "gh", gh_fn), mock.patch.object(
+                review, "git", return_value="b" * 40 + "\n"), self.assertRaises(review.HeadMovedError):
+            review.pr_context(7, "base/base", post=True, checkout=lambda sha: Path("/x"))
+
+    def test_the_pr_argument_takes_a_number_or_a_pull_request_url(self) -> None:
+        self.assertEqual(review.pr_number("5685"), (None, 5685))
+        self.assertEqual(review.pr_number("https://github.com/base/base/pull/5685"), ("base/base", 5685))
+        self.assertEqual(review.pr_number("https://github.com/base/base/pull/5685/files#diff"), ("base/base", 5685))
+        for bad in ("0", "-3", "abc", "", "https://evil.example/base/base/pull/1", "https://github.com/base/base/issues/5",
+                    "http://github.com/base/base/pull/5", "github.com/base/base/pull/5"):
+            with self.subTest(bad=bad), self.assertRaises(argparse.ArgumentTypeError):
+                review.pr_number(bad)
+
+    def test_the_just_recipe_hands_the_pull_request_to_the_script_without_a_shell_expanding_it(self) -> None:
+        justfile = next((p / "Justfile" for p in Path(__file__).resolve().parents if (p / "Justfile").exists()), None)
+        if justfile is None:
+            self.skipTest("no Justfile next to this skill")
+        recipe = justfile.read_text().split("review-pr pr *args:\n", 1)[1].split("\n\n", 1)[0]
+        # `{{pr}}` is pasted into the shell text by just, so a value such as `x$(command)` would run.
+        self.assertNotIn("{{pr}}", recipe)
+        self.assertIn('pr="$1"', recipe)
+        self.assertIn('--pr "$pr"', recipe)
+
+    def test_a_url_sets_the_repository(self) -> None:
+        args = review.parse_args(["--pr", "https://github.com/other/repo/pull/12"])
+        self.assertEqual((args.repo, args.pr), ("other/repo", 12))
+        args = review.parse_args(["--pr", "12", "--repo", "x/y"])
+        self.assertEqual((args.repo, args.pr), ("x/y", 12))
+        self.assertFalse(review.parse_args(["--pr", "12"]).no_worktree)
+        self.assertTrue(review.parse_args(["--pr", "12", "--no-worktree"]).no_worktree)
+
+    def test_the_agents_read_the_worktree_and_the_script_stays_in_my_checkout(self) -> None:
+        seen: dict[str, Path] = {}
+
+        def fake_run_pipeline(ctx, agents, cwd, artifacts, model, post=False):
+            seen["cwd"] = cwd
+            raise review.ReviewError("stop here")
+
+        ctx = review.Context(description="d", title="t", files=[], diff=DIFF, pr_number=7, head_sha="abc",
+                             tree=Path("/the/worktree"))
+        with mock.patch.object(review, "pr_context", return_value=ctx), mock.patch.object(
+                review, "run_pipeline", fake_run_pipeline), mock.patch.object(
+                review, "load_agents", return_value=[]):
+            review.main(["--pr", "7"])
+        self.assertEqual(seen["cwd"], Path("/the/worktree"))
 
 
 class StatusTests(unittest.TestCase):
