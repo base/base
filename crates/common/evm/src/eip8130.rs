@@ -300,7 +300,7 @@ impl Eip8130Executor {
             Ok(outcome) => outcome,
             Err(err) => {
                 Self::discard_transaction_state(evm);
-                return Err(err.into());
+                return Err(err);
             }
         };
 
@@ -499,7 +499,7 @@ impl Eip8130Executor {
             Ok(outcome) => outcome,
             Err(err) => {
                 Self::discard_transaction_state(evm);
-                return Err(err.into());
+                return Err(err);
             }
         };
 
@@ -809,7 +809,7 @@ impl Eip8130Executor {
         base_fee: u128,
         acting_actor_hint: Option<B256>,
         now: u64,
-    ) -> Result<Eip8130Outcome, BaseTransactionError>
+    ) -> Result<Eip8130Outcome, EVMError<DB::Error, BaseTransactionError>>
     where
         DB: AlloyDatabase,
         BaseContext<DB>: BaseContextTr
@@ -849,7 +849,7 @@ impl Eip8130Executor {
         let internals = EvmInternals::from_context(ctx);
         let mut provider = JournalStorageProvider::new(internals, Address::ZERO);
 
-        StorageCtx::enter(&mut provider, |sctx| {
+        let outcome = StorageCtx::enter(&mut provider, |sctx| {
             let nonce_mgr = NonceManagerStorage::new(sctx);
 
             // 1. Nonce-channel first-use flag (drives intrinsic gas). Estimation
@@ -937,7 +937,8 @@ impl Eip8130Executor {
                 base_fee,
                 bump_protocol_nonce: false,
             })
-        })
+        });
+        Self::finish_pre_call(&mut provider, outcome)
     }
 
     /// Resolves the simulated acting actor's policy gate from the Keystore:
@@ -981,7 +982,7 @@ impl Eip8130Executor {
         now: u64,
         now_ms: u64,
         base_fee: u128,
-    ) -> Result<Eip8130Outcome, BaseTransactionError>
+    ) -> Result<Eip8130Outcome, EVMError<DB::Error, BaseTransactionError>>
     where
         DB: AlloyDatabase,
         BaseContext<DB>: BaseContextTr
@@ -1022,16 +1023,18 @@ impl Eip8130Executor {
         // nonce, so a nonce-free transaction at the boundary still fails there.
         let keystore = ctx.cfg().spec().is_enabled_in(BaseUpgrade::Zenith);
         if valid_after != 0 && now_ms < valid_after {
-            return Err(BaseTransactionError::eip8130("transaction is not yet valid"));
+            return Err(BaseTransactionError::eip8130("transaction is not yet valid").into());
         }
         if valid_before != 0 && now_ms > valid_before {
-            return Err(BaseTransactionError::eip8130("transaction validity window has expired"));
+            return Err(
+                BaseTransactionError::eip8130("transaction validity window has expired").into()
+            );
         }
 
         let internals = EvmInternals::from_context(ctx);
         let mut provider = JournalStorageProvider::new(internals, Address::ZERO);
 
-        StorageCtx::enter(&mut provider, |sctx| {
+        let outcome = StorageCtx::enter(&mut provider, |sctx| {
             // Ordering note: the apply step (1) and code effects (2) write journal
             // storage *before* the nonce is validated (3). Any `Err` returned from
             // this closure propagates out of `authorize_and_apply` and the caller
@@ -1181,7 +1184,24 @@ impl Eip8130Executor {
                 base_fee,
                 bump_protocol_nonce,
             })
-        })
+        });
+        Self::finish_pre_call(&mut provider, outcome)
+    }
+
+    /// Resolves the outcome of a storage-backed pre-call pipeline. A journal
+    /// database failure observed anywhere in the pipeline is fatal, even when the
+    /// pipeline stringified it into a transaction error or swallowed it: the
+    /// state it read cannot be trusted, and reporting it as an invalid
+    /// transaction would wrongly reject the block (or the transaction) instead of
+    /// failing the node.
+    fn finish_pre_call<E>(
+        provider: &mut JournalStorageProvider<'_>,
+        outcome: Result<Eip8130Outcome, BaseTransactionError>,
+    ) -> Result<Eip8130Outcome, EVMError<E, BaseTransactionError>> {
+        if let Some(error) = provider.take_database_error() {
+            return Err(EVMError::Custom(error));
+        }
+        outcome.map_err(EVMError::Transaction)
     }
 
     /// Pre-charges the payer the worst-case fee and bumps the sender's protocol
@@ -3155,6 +3175,46 @@ mod tests {
             matches!(err, EVMError::Database(_)),
             "DB failure during a call must surface as a fatal database error, got {err:?}",
         );
+    }
+
+    #[test]
+    fn db_failure_during_pre_call_is_fatal_not_an_invalid_transaction() {
+        // The pre-call pipeline reads the nonce manager through the journal
+        // storage provider. A backend failure there must abort as a fatal error:
+        // an invalid-transaction error would let a node with a transient storage
+        // fault reject a valid block.
+        const NONCE_MANAGER: Address = address!("0x813000000000000000000000000000000000aa01");
+        let key = signing_key(0x78);
+        let sender = eoa_address(&key);
+        let mut tx = base_tx();
+        tx.nonce_key = U256::from(7);
+        let signed = eoa_signed(tx, &key);
+
+        let mut db = InMemoryDB::default();
+        db.insert_account_info(
+            sender,
+            AccountInfo { balance: U256::from(10u64).pow(U256::from(18u64)), ..Default::default() },
+        );
+        let db = StorageFailDb { inner: db, fail_storage_at: NONCE_MANAGER };
+
+        let mut evm = Context::base()
+            .with_db(db)
+            .with_cfg(
+                CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Everest))
+                    .with_chain_id(CHAIN_ID),
+            )
+            .with_block(BlockEnv {
+                number: U256::from(1u64),
+                timestamp: U256::from(NOW),
+                basefee: BASE_FEE,
+                beneficiary: BENEFICIARY,
+                ..Default::default()
+            })
+            .build_with_inspector(NoOpInspector);
+
+        let err = evm.transact_raw(into_base_tx(&signed)).unwrap_err();
+        assert!(err.is_fatal(), "pre-call DB failure must be fatal, got {err:?}");
+        assert!(!err.is_invalid_tx_err(), "pre-call DB failure is not an invalid tx: {err:?}");
     }
 
     #[test]
