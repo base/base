@@ -1,8 +1,10 @@
 //! Sidecar storage and iteration for channelized and nonce-free EIP-8130 transactions.
 
 use std::{
-    collections::{BTreeMap, BinaryHeap, HashSet},
+    cmp::Reverse,
+    collections::{BTreeMap, BTreeSet, BinaryHeap, HashSet},
     sync::Arc,
+    time::Instant,
 };
 
 use alloy_primitives::{
@@ -12,8 +14,8 @@ use alloy_primitives::{
 use base_common_consensus::Eip8130Constants;
 use reth_primitives_traits::transaction::error::InvalidTransactionError;
 use reth_transaction_pool::{
-    AddedTransactionOutcome, BestTransactions, PoolResult, PriceBumpConfig, TransactionOrdering,
-    ValidPoolTransaction,
+    AddedTransactionOutcome, BestTransactions, LocalTransactionConfig, PoolConfig, PoolResult,
+    PriceBumpConfig, SubPoolLimit, TransactionOrdering, ValidPoolTransaction,
     error::{InvalidPoolTransactionError, PoolError, PoolErrorKind},
     identifier::{SenderIdentifiers, TransactionId},
     pool::{AddedTransactionState, QueuedReason},
@@ -109,6 +111,82 @@ pub(crate) struct PruneMinedOutcome<T: BasePooledTx> {
     pub lanes: LaneUpdate<T>,
 }
 
+/// Admission and capacity limits for the sidecar, mirroring the protocol pool.
+#[derive(Debug, Clone)]
+pub(crate) struct SidecarLimits {
+    /// Count and byte caps across all sidecar transactions.
+    pub capacity: SubPoolLimit,
+    /// Transactions one non-local sender may hold beyond its lane heads.
+    pub max_account_slots: usize,
+    /// Minimum `max_fee_per_gas` accepted, in wei.
+    pub minimal_protocol_basefee: u64,
+    /// Senders and origins exempt from the per-sender slot cap.
+    pub local_transactions: LocalTransactionConfig,
+}
+
+impl SidecarLimits {
+    /// Applies the protocol pool's fee floor, slot cap and pending subpool cap.
+    pub(crate) fn from_pool_config(config: &PoolConfig) -> Self {
+        Self {
+            capacity: config.pending_limit,
+            max_account_slots: config.max_account_slots,
+            minimal_protocol_basefee: config.minimal_protocol_basefee,
+            local_transactions: config.local_transactions_config.clone(),
+        }
+    }
+
+    /// Limits that never reject or evict.
+    pub(crate) fn unlimited() -> Self {
+        Self {
+            capacity: SubPoolLimit::new(usize::MAX, usize::MAX),
+            max_account_slots: usize::MAX,
+            minimal_protocol_basefee: 0,
+            local_transactions: LocalTransactionConfig::default(),
+        }
+    }
+}
+
+/// Running totals checked against [`SidecarLimits`].
+#[derive(Debug, Default)]
+struct SidecarUsage {
+    size: usize,
+    per_sender: HashMap<Address, usize>,
+}
+
+impl SidecarUsage {
+    fn add<T: BasePooledTx>(&mut self, transaction: &ValidPoolTransaction<T>) {
+        self.size += transaction.transaction.size();
+        *self.per_sender.entry(transaction.sender()).or_default() += 1;
+    }
+
+    fn remove<T: BasePooledTx>(&mut self, transaction: &ValidPoolTransaction<T>) {
+        self.size = self.size.saturating_sub(transaction.transaction.size());
+        let sender = transaction.sender();
+        if let Some(count) = self.per_sender.get_mut(&sender) {
+            *count -= 1;
+            if *count == 0 {
+                self.per_sender.remove(&sender);
+            }
+        }
+    }
+
+    fn sender_count(&self, sender: &Address) -> usize {
+        self.per_sender.get(sender).copied().unwrap_or_default()
+    }
+}
+
+/// Eviction rank of a candidate (a lane tail or a nonce-free transaction); the
+/// smallest is evicted first. Field order is the ranking order: queued before
+/// pending, non-local before local, lowest fee cap, then most recently received.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct EvictionKey {
+    pending: bool,
+    local: bool,
+    max_fee_per_gas: u128,
+    received: Reverse<Instant>,
+    hash: TxHash,
+}
+
 /// EIP-8130 sidecar for finite non-zero nonce channels and nonce-free transactions.
 ///
 /// Finite channels are kept in ordered `(sender, nonce_key)` lanes. Nonce-free
@@ -121,10 +199,17 @@ pub(crate) struct TwoDNoncePool<T: BasePooledTx> {
     hashes: B256Map<Arc<ValidPoolTransaction<T>>>,
     senders: SenderIdentifiers,
     price_bump_config: PriceBumpConfig,
+    limits: SidecarLimits,
+    usage: SidecarUsage,
+    /// Every eviction candidate, ordered by [`EvictionKey`]. Kept in step with
+    /// `lanes` and `nonce_free` so eviction never scans the pool.
+    eviction_order: BTreeSet<EvictionKey>,
+    /// The key each lane's tail currently holds in `eviction_order`.
+    lane_candidates: HashMap<LaneId, EvictionKey>,
 }
 
 impl<T: BasePooledTx> TwoDNoncePool<T> {
-    /// Creates a new 2D nonce sidecar pool.
+    /// Creates a new 2D nonce sidecar pool without admission limits.
     pub(crate) fn new(price_bump_config: PriceBumpConfig) -> Self {
         Self {
             lanes: HashMap::default(),
@@ -132,7 +217,103 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             hashes: B256Map::default(),
             senders: SenderIdentifiers::default(),
             price_bump_config,
+            limits: SidecarLimits::unlimited(),
+            usage: SidecarUsage::default(),
+            eviction_order: BTreeSet::new(),
+            lane_candidates: HashMap::default(),
         }
+    }
+
+    /// Applies admission and capacity limits. Call before inserting.
+    #[must_use]
+    pub(crate) fn with_limits(mut self, limits: SidecarLimits) -> Self {
+        self.limits = limits;
+        self
+    }
+
+    /// Rejects a new transaction the protocol pool would refuse: a fee cap below
+    /// the protocol floor, or a transaction from a non-local sender that already
+    /// fills its slots. Replacements never add a slot.
+    ///
+    /// Reth exempts an account's next nonce from the slot cap. A sender can open
+    /// any number of lanes, each with its own head, so only the head of a lane
+    /// already holding queued transactions is exempt; a head on a fresh lane
+    /// counts against the cap.
+    fn ensure_admissible(
+        &self,
+        transaction: &ValidPoolTransaction<T>,
+        is_replacement: bool,
+        fills_existing_lane_head: bool,
+    ) -> PoolResult<()> {
+        let hash = *transaction.hash();
+        let fee_cap = transaction.max_fee_per_gas();
+        if fee_cap < u128::from(self.limits.minimal_protocol_basefee) {
+            return Err(PoolError::new(
+                hash,
+                PoolErrorKind::FeeCapBelowMinimumProtocolFeeCap(fee_cap),
+            ));
+        }
+        let sender = transaction.sender();
+        if !is_replacement
+            && !fills_existing_lane_head
+            && !self.limits.local_transactions.is_local(transaction.origin, &sender)
+            && self.usage.sender_count(&sender) >= self.limits.max_account_slots
+        {
+            return Err(PoolError::new(hash, PoolErrorKind::SpammerExceededCapacity(sender)));
+        }
+        Ok(())
+    }
+
+    /// Evicts the lowest-priority transactions until the sidecar fits its
+    /// capacity, returning them so callers can release their guard slots.
+    ///
+    /// Only lane tails and nonce-free transactions are candidates, so eviction
+    /// never opens a nonce gap. Queued tails (behind a nonce gap) go first: they
+    /// cannot execute and cost nothing to hold, so ranking them by fee alone
+    /// would let gapped spam push out pending transactions. See [`EvictionKey`]
+    /// for the full order. Each eviction is `O(log n)`.
+    pub(crate) fn evict_over_capacity(&mut self) -> Vec<Arc<ValidPoolTransaction<T>>> {
+        let mut evicted = Vec::new();
+        while self.limits.capacity.is_exceeded(self.hashes.len(), self.usage.size)
+            && let Some(hash) = self.eviction_candidate()
+            && let Some(transaction) = self.remove_hash(hash)
+        {
+            evicted.push(transaction);
+        }
+        evicted
+    }
+
+    fn eviction_candidate(&self) -> Option<TxHash> {
+        self.eviction_order.first().map(|key| key.hash)
+    }
+
+    fn eviction_key(&self, transaction: &ValidPoolTransaction<T>, pending: bool) -> EvictionKey {
+        EvictionKey {
+            pending,
+            local: self
+                .limits
+                .local_transactions
+                .is_local(transaction.origin, &transaction.sender()),
+            max_fee_per_gas: transaction.max_fee_per_gas(),
+            received: Reverse(transaction.timestamp),
+            hash: *transaction.hash(),
+        }
+    }
+
+    /// Re-ranks `lane_id`'s tail after the lane changed. Must follow every lane
+    /// mutation: the tail, and whether it is pending, depend on the whole lane.
+    fn refresh_lane_candidate(&mut self, lane_id: LaneId) {
+        if let Some(previous) = self.lane_candidates.remove(&lane_id) {
+            self.eviction_order.remove(&previous);
+        }
+        let Some(key) = self.lanes.get(&lane_id).and_then(|lane| {
+            let (_, tail) = lane.transactions.last_key_value()?;
+            Some(self.eviction_key(tail, lane.queued_transactions().next().is_none()))
+        }) else {
+            return;
+        };
+        self.eviction_order.insert(key);
+        self.lane_candidates.insert(lane_id, key);
     }
 
     /// Returns true if the sidecar already contains the hash.
@@ -283,6 +464,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         }
 
         if let Some(replay_id) = transaction.transaction.eip8130_replay_id() {
+            self.ensure_admissible(&transaction, self.nonce_free.contains_key(&replay_id), false)?;
             let sender_id = self.senders.sender_id_or_create(transaction.sender());
             transaction.transaction_id = TransactionId::new(sender_id, transaction.nonce());
             let transaction = Arc::new(transaction);
@@ -296,8 +478,12 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             };
             if let Some(existing) = &replaced {
                 self.hashes.remove(existing.hash());
+                self.usage.remove(existing);
+                self.eviction_order.remove(&self.eviction_key(existing, true));
             }
             self.nonce_free.insert(replay_id, Arc::clone(&transaction));
+            self.usage.add(&transaction);
+            self.eviction_order.insert(self.eviction_key(&transaction, true));
             self.hashes.insert(hash, transaction);
             return Ok(InsertOutcome {
                 outcome: AddedTransactionOutcome { hash, state: AddedTransactionState::Pending },
@@ -313,8 +499,13 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         })?;
 
         let lane_id = (sender, nonce_key);
-        let sender_id = self.senders.sender_id_or_create(sender);
         let nonce = transaction.nonce();
+        let existing_lane = self.lanes.get(&lane_id).filter(|lane| !lane.transactions.is_empty());
+        let is_replacement =
+            existing_lane.is_some_and(|lane| lane.transactions.contains_key(&nonce));
+        let fills_existing_lane_head = existing_lane.is_some() && nonce == state_nonce;
+        self.ensure_admissible(&transaction, is_replacement, fills_existing_lane_head)?;
+        let sender_id = self.senders.sender_id_or_create(sender);
         transaction.transaction_id = TransactionId::new(sender_id, nonce);
         let transaction = Arc::new(transaction);
         if nonce < state_nonce {
@@ -351,10 +542,12 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
 
         lane.transactions.insert(nonce, Arc::clone(&transaction));
         self.hashes.insert(hash, Arc::clone(&transaction));
+        self.usage.add(&transaction);
 
         if let Some(replaced) = &replaced {
             let replaced_hash = *replaced.hash();
             self.hashes.remove(&replaced_hash);
+            self.usage.remove(replaced);
         }
 
         let pending_len_after = lane.consecutive_pending_len();
@@ -378,6 +571,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             Vec::new()
         };
 
+        self.refresh_lane_candidate(lane_id);
         Ok(InsertOutcome {
             outcome: AddedTransactionOutcome { hash, state },
             replaced,
@@ -425,6 +619,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         lane.next_nonce = nonce;
         for transaction in stale.into_values() {
             self.hashes.remove(transaction.hash());
+            self.usage.remove(&transaction);
             update.discarded.push(transaction);
         }
 
@@ -443,6 +638,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         if lane.transactions.is_empty() {
             self.lanes.remove(&lane_id);
         }
+        self.refresh_lane_candidate(lane_id);
         update
     }
 
@@ -604,6 +800,8 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         {
             let transaction = self.nonce_free.remove(&replay_id)?;
             self.hashes.remove(&hash);
+            self.usage.remove(&transaction);
+            self.eviction_order.remove(&self.eviction_key(&transaction, true));
             return Some(transaction);
         }
         let transaction = self.hashes.get(&hash)?;
@@ -616,6 +814,8 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             self.lanes.remove(&lane_id);
         }
         self.hashes.remove(&hash);
+        self.usage.remove(&transaction);
+        self.refresh_lane_candidate(lane_id);
         Some(transaction)
     }
 }
@@ -1592,5 +1792,199 @@ mod tests {
 
         let mut best = pool.best_transactions(BaseOrdering::coinbase_tip(), 10);
         assert_eq!(best.next().map(|transaction| *transaction.hash()), Some(older_hash));
+    }
+
+    #[test]
+    fn sender_slot_cap_counts_fresh_lane_heads() {
+        let mut pool = TwoDNoncePool::new(PriceBumpConfig::default())
+            .with_limits(SidecarLimits { max_account_slots: 2, ..SidecarLimits::unlimited() });
+        let signer = signer();
+        for nonce_key in 1..=2 {
+            let queued = signed_channel_tx(&signer, U256::from(nonce_key), 1, 1_000);
+            pool.insert_validated(valid_pool_transaction(queued), 0).unwrap();
+        }
+
+        let over_cap = signed_channel_tx(&signer, U256::from(3), 1, 1_000);
+        let error = pool.insert_validated(valid_pool_transaction(over_cap), 0).unwrap_err();
+        assert!(matches!(error.kind, PoolErrorKind::SpammerExceededCapacity(_)));
+        let fresh_lane_head = signed_channel_tx(&signer, U256::from(3), 0, 1_000);
+        let error = pool.insert_validated(valid_pool_transaction(fresh_lane_head), 0).unwrap_err();
+        assert!(matches!(error.kind, PoolErrorKind::SpammerExceededCapacity(_)));
+
+        let gap_filling_head = signed_channel_tx(&signer, U256::from(1), 0, 1_000);
+        pool.insert_validated(valid_pool_transaction(gap_filling_head), 0).unwrap();
+        let replacement = signed_channel_tx(&signer, U256::from(1), 1, 2_000);
+        let outcome = pool.insert_validated(valid_pool_transaction(replacement), 0).unwrap();
+        assert!(outcome.replaced.is_some());
+    }
+
+    #[test]
+    fn slots_are_released_when_a_cursor_advance_discards_transactions() {
+        let mut pool = TwoDNoncePool::new(PriceBumpConfig::default())
+            .with_limits(SidecarLimits { max_account_slots: 2, ..SidecarLimits::unlimited() });
+        let signer = signer();
+        let nonce_key = U256::from(1);
+        for sequence in 0..2 {
+            let transaction = signed_channel_tx(&signer, nonce_key, sequence, 1_000);
+            pool.insert_validated(valid_pool_transaction(transaction), 0).unwrap();
+        }
+
+        let update = pool.advance_lane_nonce((signer.address(), nonce_key), 2);
+        assert_eq!(update.discarded.len(), 2);
+
+        for sequence in 2..4 {
+            let transaction = signed_channel_tx(&signer, nonce_key, sequence, 1_000);
+            pool.insert_validated(valid_pool_transaction(transaction), 2).unwrap();
+        }
+    }
+
+    #[test]
+    fn eviction_takes_the_cheapest_lane_tail_without_opening_a_gap() {
+        let mut pool = TwoDNoncePool::new(PriceBumpConfig::default()).with_limits(SidecarLimits {
+            capacity: SubPoolLimit::new(2, usize::MAX),
+            ..SidecarLimits::unlimited()
+        });
+        let lane_signer = signer();
+        let cheap_head =
+            valid_pool_transaction(signed_channel_tx(&lane_signer, U256::from(1), 0, 50));
+        let cheap_head_hash = *cheap_head.hash();
+        let rich_tail =
+            valid_pool_transaction(signed_channel_tx(&lane_signer, U256::from(1), 1, 5_000));
+        let rich_tail_hash = *rich_tail.hash();
+        let other = valid_pool_transaction(signed_channel_tx(&signer(), U256::from(1), 0, 1_000));
+        let other_hash = *other.hash();
+        pool.insert_validated(cheap_head, 0).unwrap();
+        pool.insert_validated(rich_tail, 0).unwrap();
+        pool.insert_validated(other, 0).unwrap();
+
+        let evicted: Vec<_> =
+            pool.evict_over_capacity().iter().map(|transaction| *transaction.hash()).collect();
+
+        assert_eq!(evicted, vec![other_hash]);
+        assert!(pool.contains(&cheap_head_hash));
+        assert!(pool.contains(&rich_tail_hash));
+        assert!(pool.evict_over_capacity().is_empty());
+    }
+
+    #[test]
+    fn full_sidecar_of_queued_spam_still_admits_a_cheaper_pending_head() {
+        let mut pool = TwoDNoncePool::new(PriceBumpConfig::default()).with_limits(SidecarLimits {
+            capacity: SubPoolLimit::new(2, usize::MAX),
+            ..SidecarLimits::unlimited()
+        });
+        let spam: Vec<_> = (0..2)
+            .map(|_| {
+                let gapped = valid_pool_transaction(signed_channel_tx(
+                    &signer(),
+                    U256::from(1),
+                    1,
+                    1_000_000,
+                ));
+                let hash = *gapped.hash();
+                pool.insert_validated(gapped, 0).unwrap();
+                hash
+            })
+            .collect();
+        assert_eq!(pool.pending_and_queued_txn_count(), (0, 2));
+        let honest = valid_pool_transaction(signed_channel_tx(&signer(), U256::from(1), 0, 100));
+        let honest_hash = *honest.hash();
+        pool.insert_validated(honest, 0).unwrap();
+
+        let evicted: Vec<_> =
+            pool.evict_over_capacity().iter().map(|transaction| *transaction.hash()).collect();
+
+        assert_eq!(evicted.len(), 1);
+        assert!(spam.contains(&evicted[0]), "a queued transaction is evicted first");
+        assert!(pool.contains(&honest_hash), "the pending head survives");
+    }
+
+    fn capped_pool(capacity: usize) -> TwoDNoncePool<BasePooledTransaction> {
+        TwoDNoncePool::new(PriceBumpConfig::default()).with_limits(SidecarLimits {
+            capacity: SubPoolLimit::new(capacity, usize::MAX),
+            ..SidecarLimits::unlimited()
+        })
+    }
+
+    fn evicted_hashes(pool: &mut TwoDNoncePool<BasePooledTransaction>) -> Vec<TxHash> {
+        pool.evict_over_capacity().iter().map(|transaction| *transaction.hash()).collect()
+    }
+
+    #[test]
+    fn filling_a_gap_ranks_the_lane_tail_as_pending() {
+        let mut pool = capped_pool(2);
+        let lane_signer = signer();
+        let gapped =
+            valid_pool_transaction(signed_channel_tx(&lane_signer, U256::from(1), 1, 1_000_000));
+        let gapped_hash = *gapped.hash();
+        let cheap = valid_pool_transaction(signed_channel_tx(&signer(), U256::from(1), 0, 100));
+        let cheap_hash = *cheap.hash();
+        pool.insert_validated(gapped, 0).unwrap();
+        pool.insert_validated(cheap, 0).unwrap();
+        pool.insert_validated(
+            valid_pool_transaction(signed_channel_tx(&lane_signer, U256::from(1), 0, 2_000)),
+            0,
+        )
+        .unwrap();
+
+        assert_eq!(evicted_hashes(&mut pool), vec![cheap_hash]);
+        assert!(pool.contains(&gapped_hash));
+    }
+
+    #[test]
+    fn moving_a_cursor_behind_a_gap_ranks_the_lane_tail_as_queued() {
+        let mut pool = capped_pool(2);
+        let lane_signer = signer();
+        let rich =
+            valid_pool_transaction(signed_channel_tx(&lane_signer, U256::from(1), 5, 1_000_000));
+        let rich_hash = *rich.hash();
+        pool.insert_validated(rich, 5).unwrap();
+        pool.set_lane_nonce((lane_signer.address(), U256::from(1)), 4);
+        let cheap = valid_pool_transaction(signed_channel_tx(&signer(), U256::from(1), 0, 100));
+        let cheap_hash = *cheap.hash();
+        pool.insert_validated(cheap, 0).unwrap();
+        pool.insert_validated(
+            valid_pool_transaction(signed_channel_tx(&signer(), U256::from(1), 0, 200)),
+            0,
+        )
+        .unwrap();
+
+        assert_eq!(evicted_hashes(&mut pool), vec![rich_hash]);
+        assert!(pool.contains(&cheap_hash));
+    }
+
+    #[test]
+    fn evicting_a_lane_tail_exposes_the_next_one() {
+        let mut pool = capped_pool(0);
+        let lane_signer = signer();
+        let head = valid_pool_transaction(signed_channel_tx(&lane_signer, U256::from(1), 0, 100));
+        let head_hash = *head.hash();
+        let tail = valid_pool_transaction(signed_channel_tx(&lane_signer, U256::from(1), 1, 100));
+        let tail_hash = *tail.hash();
+        pool.insert_validated(head, 0).unwrap();
+        pool.insert_validated(tail, 0).unwrap();
+
+        assert_eq!(evicted_hashes(&mut pool), vec![tail_hash, head_hash]);
+        assert_eq!(pool.pending_and_queued_txn_count(), (0, 0));
+    }
+
+    #[test]
+    fn nonce_free_eviction_follows_replacement_and_removal() {
+        let mut pool = capped_pool(0);
+        let signer = signer();
+        let replaced = valid_pool_transaction(signed_nonce_free_tx(&signer, 1, 0, 100));
+        let replacement = valid_pool_transaction(signed_nonce_free_tx(&signer, 1, 0, 5_000));
+        let replacement_hash = *replacement.hash();
+        let removed = valid_pool_transaction(signed_nonce_free_tx(&signer, 2, 0, 200));
+        let removed_hash = *removed.hash();
+        let cheapest = valid_pool_transaction(signed_nonce_free_tx(&signer, 3, 0, 300));
+        let cheapest_hash = *cheapest.hash();
+        let richest = valid_pool_transaction(signed_nonce_free_tx(&signer, 4, 0, 9_000));
+        let richest_hash = *richest.hash();
+        for transaction in [replaced, replacement, removed, cheapest, richest] {
+            pool.insert_validated(transaction, 0).unwrap();
+        }
+        assert_eq!(pool.remove_transactions(&[removed_hash]).len(), 1);
+
+        assert_eq!(evicted_hashes(&mut pool), vec![cheapest_hash, replacement_hash, richest_hash]);
     }
 }

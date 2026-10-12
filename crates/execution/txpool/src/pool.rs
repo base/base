@@ -32,7 +32,7 @@ use crate::{
     ParkableTransactionPool, ParkedBestTransactions, PredicateContext, StateDiffInvalidation,
     ValidityPoolMetrics, ValidityPredicate,
     best::MergeBestTransactions,
-    two_d_nonce_pool::{InsertOutcome, LaneId, LaneUpdate, TwoDNoncePool},
+    two_d_nonce_pool::{InsertOutcome, LaneId, LaneUpdate, SidecarLimits, TwoDNoncePool},
 };
 
 const SIDE_CAR_EVENT_CHANNEL_SIZE: usize = 1024;
@@ -190,11 +190,13 @@ where
         >,
         ordering: O,
     ) -> Self {
-        let price_bump_config = protocol_pool.config().price_bumps;
+        let config = protocol_pool.config();
+        let nonce_pool = TwoDNoncePool::new(config.price_bumps)
+            .with_limits(SidecarLimits::from_pool_config(config));
         Self {
             protocol_pool,
             ordering,
-            nonce_pool: Arc::new(RwLock::new(TwoDNoncePool::new(price_bump_config))),
+            nonce_pool: Arc::new(RwLock::new(nonce_pool)),
             listeners: Arc::new(RwLock::new(SidecarListeners::default())),
             guard: Arc::new(RwLock::new(MempoolGuard::unlimited())),
             block_expiry: Arc::new(RwLock::new(crate::BlockExpiryIndex::new())),
@@ -837,7 +839,7 @@ where
                     .map(|class| class.classification_generation);
                 let admission = Self::admission_for(&validated.transaction);
                 let is_validity = !validated.transaction.validity_predicates().is_empty();
-                let outcome = nonce_pool.insert_validated(validated, state_nonce)?;
+                let mut outcome = nonce_pool.insert_validated(validated, state_nonce)?;
                 // nonce_pool serializes sidecar replacement. Never acquire it while holding guard.
                 let mut guard = self.guard.write();
                 // Transactions below the anchored lane cursor are gone whether or
@@ -899,7 +901,29 @@ where
                     }
                     (None, None) => {}
                 }
+                let mut evicted = nonce_pool.evict_over_capacity();
+                for transaction in &evicted {
+                    guard.release(transaction.hash());
+                }
                 drop(guard);
+                let inserted_hash = outcome.outcome.hash;
+                let survived = |moved: &Arc<ValidPoolTransaction<T>>| {
+                    !evicted.iter().any(|transaction| transaction.hash() == moved.hash())
+                };
+                outcome.anchor.promoted.retain(survived);
+                outcome.anchor.queued.retain(survived);
+                outcome.promoted.retain(survived);
+                if evicted.iter().any(|transaction| *transaction.hash() == inserted_hash) {
+                    evicted.retain(|transaction| *transaction.hash() != inserted_hash);
+                    evicted.extend(outcome.replaced);
+                    listeners.on_discarded(&evicted);
+                    listeners.on_lane_moved(&outcome.anchor);
+                    return Err(reth_transaction_pool::error::PoolError::new(
+                        inserted_hash,
+                        reth_transaction_pool::error::PoolErrorKind::DiscardedOnInsert,
+                    ));
+                }
+                listeners.on_discarded(&evicted);
                 listeners.on_inserted(&nonce_pool, &outcome);
                 if is_validity {
                     ValidityPoolMetrics::record_admission(outcome.replaced.is_some());
@@ -908,7 +932,6 @@ where
                 // dropping the replaced hash's stale entry in the same pass.
                 // Release the sidecar locks first so the block-expiry index is
                 // not acquired while holding the nonce pool.
-                let inserted_hash = outcome.outcome.hash;
                 let replaced_hash = outcome.replaced.as_ref().map(|replaced| *replaced.hash());
                 drop(listeners);
                 drop(nonce_pool);
@@ -1065,9 +1088,9 @@ where
         let nonce_pool = self.nonce_pool.read();
         let (pending, queued) = nonce_pool.pending_and_queued_txn_count();
         let pending_size: usize =
-            nonce_pool.pending_transactions().iter().map(|tx| tx.encoded_length()).sum();
+            nonce_pool.pending_transactions().iter().map(|tx| tx.transaction.size()).sum();
         let queued_size: usize =
-            nonce_pool.queued_transactions().iter().map(|tx| tx.encoded_length()).sum();
+            nonce_pool.queued_transactions().iter().map(|tx| tx.transaction.size()).sum();
         size.pending += pending;
         size.pending_size += pending_size;
         size.queued += queued;
@@ -2061,13 +2084,13 @@ mod tests {
     use base_execution_evm::BaseEvmConfig;
     use base_test_utils::build_test_genesis_everest;
     use futures::{FutureExt, StreamExt, future::join_all};
-    use reth_primitives_traits::SealedBlock;
+    use reth_primitives_traits::{InMemorySize, SealedBlock};
     use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
     use reth_tasks::Runtime;
     use reth_transaction_pool::{
-        CanonicalStateUpdate, PoolConfig, PoolUpdateKind, PriceBumpConfig, TransactionOrigin,
-        blobstore::InMemoryBlobStore, identifier::TransactionId,
-        validate::EthTransactionValidatorBuilder,
+        CanonicalStateUpdate, PoolConfig, PoolUpdateKind, PriceBumpConfig, SubPoolLimit,
+        TransactionOrigin, blobstore::InMemoryBlobStore, error::PoolErrorKind,
+        identifier::TransactionId, validate::EthTransactionValidatorBuilder,
     };
 
     use super::*;
@@ -2340,17 +2363,24 @@ mod tests {
 
     fn build_integration_pool()
     -> (IntegrationPool, MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>) {
-        build_integration_pool_at(false)
+        build_integration_pool_at(false, PoolConfig::default())
     }
 
     /// [`build_integration_pool`] with the Keystore active (Zenith at genesis).
     fn build_zenith_integration_pool()
     -> (IntegrationPool, MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>) {
-        build_integration_pool_at(true)
+        build_integration_pool_at(true, PoolConfig::default())
+    }
+
+    fn build_integration_pool_with_config(
+        config: PoolConfig,
+    ) -> (IntegrationPool, MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>) {
+        build_integration_pool_at(false, config)
     }
 
     fn build_integration_pool_at(
         zenith: bool,
+        config: PoolConfig,
     ) -> (IntegrationPool, MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>) {
         let mut genesis = build_test_genesis_everest();
         genesis.config.chain_id = test_chain_id();
@@ -2393,7 +2423,7 @@ mod tests {
                 validator
             });
         let ordering = BaseOrdering::default();
-        let pool = Pool::new(validator, ordering.clone(), blob_store, PoolConfig::default());
+        let pool = Pool::new(validator, ordering.clone(), blob_store, config);
         (BaseTransactionPool::new(pool, ordering).with_guard_limits(GuardLimits::default()), client)
     }
 
@@ -2721,6 +2751,103 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn full_sidecar_evicts_the_cheapest_channel_transaction() {
+        let config =
+            PoolConfig { pending_limit: SubPoolLimit::new(1, usize::MAX), ..PoolConfig::default() };
+        let (pool, client) = build_integration_pool_with_config(config);
+        let incumbent_signer = signer();
+        let cheap_signer = signer();
+        let rich_signer = signer();
+        for signer in [&incumbent_signer, &cheap_signer, &rich_signer] {
+            fund(&client, signer.address());
+        }
+
+        let incumbent = self_paid_eoa_8130(&incumbent_signer, U256::from(1), 0, 0, 2_000);
+        let incumbent_hash = *incumbent.hash();
+        pool.add_transaction(TransactionOrigin::External, incumbent).await.unwrap();
+        let mut incumbent_events = pool.listeners.write().subscribe_hash(incumbent_hash).0;
+
+        let cheap = self_paid_eoa_8130(&cheap_signer, U256::from(1), 0, 0, 1_000);
+        let cheap_hash = *cheap.hash();
+        let error = pool
+            .add_transaction(TransactionOrigin::External, cheap)
+            .await
+            .expect_err("a full sidecar must not admit a cheaper transaction");
+        assert!(matches!(error.kind, PoolErrorKind::DiscardedOnInsert));
+        assert!(pool.get(&cheap_hash).is_none());
+        assert!(!pool.guard.read().contains(&cheap_hash));
+        assert!(pool.get(&incumbent_hash).is_some());
+
+        let rich = self_paid_eoa_8130(&rich_signer, U256::from(1), 0, 0, 3_000);
+        let rich_hash = *rich.hash();
+        pool.add_transaction(TransactionOrigin::External, rich).await.unwrap();
+        assert!(pool.get(&rich_hash).is_some());
+        assert!(pool.get(&incumbent_hash).is_none());
+        assert!(!pool.guard.read().contains(&incumbent_hash));
+        assert!(matches!(incumbent_events.next().await, Some(TransactionEvent::Discarded)));
+    }
+
+    #[tokio::test]
+    async fn sidecar_pool_size_reports_in_memory_size() {
+        let (pool, client) = build_integration_pool();
+        let signer = signer();
+        fund(&client, signer.address());
+        let transaction = self_paid_eoa_8130(&signer, U256::from(1), 0, 0, 1_000);
+        let hash = *transaction.hash();
+        pool.add_transaction(TransactionOrigin::External, transaction).await.unwrap();
+        let pooled = pool.get(&hash).expect("sidecar holds the transaction");
+
+        let reported = pool.pool_size();
+        assert_eq!(reported.pending, 1);
+        assert_eq!(reported.pending_size, pooled.transaction.size());
+        assert_ne!(reported.pending_size, pooled.encoded_length());
+    }
+
+    #[tokio::test]
+    async fn promoted_transaction_evicted_on_insert_is_not_announced_pending() {
+        let config =
+            PoolConfig { pending_limit: SubPoolLimit::new(2, usize::MAX), ..PoolConfig::default() };
+        let (pool, client) = build_integration_pool_with_config(config);
+        let lane_signer = signer();
+        let other_signer = signer();
+        fund(&client, lane_signer.address());
+        fund(&client, other_signer.address());
+
+        let cheap_queued = self_paid_eoa_8130(&lane_signer, U256::from(1), 1, 0, 1_000);
+        let cheap_queued_hash = *cheap_queued.hash();
+        pool.add_transaction(TransactionOrigin::External, cheap_queued).await.unwrap();
+        let other = self_paid_eoa_8130(&other_signer, U256::from(1), 0, 0, 5_000);
+        pool.add_transaction(TransactionOrigin::External, other).await.unwrap();
+        let mut pending = pool.listeners.write().subscribe_pending(TransactionListenerKind::All);
+
+        let gap_filler = self_paid_eoa_8130(&lane_signer, U256::from(1), 0, 0, 5_000);
+        let gap_filler_hash = *gap_filler.hash();
+        pool.add_transaction(TransactionOrigin::External, gap_filler).await.unwrap();
+
+        assert!(pool.get(&cheap_queued_hash).is_none());
+        let mut announced = Vec::new();
+        while let Ok(hash) = pending.try_recv() {
+            announced.push(hash);
+        }
+        assert_eq!(announced, vec![gap_filler_hash]);
+    }
+
+    #[tokio::test]
+    async fn sidecar_rejects_fee_cap_below_the_protocol_floor() {
+        let config = PoolConfig { minimal_protocol_basefee: 1_001, ..PoolConfig::default() };
+        let (pool, client) = build_integration_pool_with_config(config);
+        let signer = signer();
+        fund(&client, signer.address());
+
+        let transaction = self_paid_eoa_8130(&signer, U256::from(1), 0, 0, 1_000);
+        let error = pool
+            .add_transaction(TransactionOrigin::External, transaction)
+            .await
+            .expect_err("the sidecar must apply the protocol fee floor");
+        assert!(matches!(error.kind, PoolErrorKind::FeeCapBelowMinimumProtocolFeeCap(1_000)));
+    }
+
+    #[tokio::test]
     async fn stale_sidecar_replacement_restores_original_transaction() {
         let (pool, client) = build_integration_pool();
         let signer = signer();
@@ -2786,6 +2913,60 @@ mod tests {
 
         pool.add_validated_sidecar_transaction(validated, TransactionOrigin::Local)
             .expect_err("stale classification must roll back the insert");
+
+        let pending = pool.nonce_pool.read().pending_transactions();
+        assert!(pending.iter().any(|transaction| *transaction.hash() == queued_hash));
+        assert!(matches!(
+            queued_events.next().now_or_never(),
+            Some(Some(TransactionEvent::Pending))
+        ));
+    }
+
+    #[tokio::test]
+    async fn insert_discarded_by_eviction_still_announces_the_anchored_lane() {
+        let config =
+            PoolConfig { pending_limit: SubPoolLimit::new(2, usize::MAX), ..PoolConfig::default() };
+        let (pool, client) = build_integration_pool_with_config(config);
+        let lane_signer = signer();
+        let other_signer = signer();
+        fund(&client, lane_signer.address());
+        fund(&client, other_signer.address());
+
+        let queued = self_paid_eoa_8130(&lane_signer, U256::from(1), 1, 0, 1_000);
+        let queued_hash = *queued.hash();
+        pool.add_transaction(TransactionOrigin::External, queued).await.unwrap();
+        let other = self_paid_eoa_8130(&other_signer, U256::from(1), 0, 0, 5_000);
+        pool.add_transaction(TransactionOrigin::External, other).await.unwrap();
+        let mut queued_events = pool.listeners.write().subscribe_hash(queued_hash).0;
+
+        let successor = self_paid_eoa_8130(&lane_signer, U256::from(1), 2, 0, 1_000);
+        let validated = match pool
+            .validator()
+            .validate_transaction(TransactionOrigin::External, successor)
+            .await
+        {
+            TransactionValidationOutcome::Valid {
+                balance,
+                bytecode_hash,
+                transaction,
+                propagate,
+                authorities,
+                ..
+            } => TransactionValidationOutcome::Valid {
+                balance,
+                state_nonce: 1,
+                bytecode_hash,
+                transaction,
+                propagate,
+                authorities,
+            },
+            other => panic!("successor must validate: {other:?}"),
+        };
+
+        let error = pool
+            .add_validated_sidecar_transaction(validated, TransactionOrigin::External)
+            .expect_err("the cheapest tail is the inserted transaction");
+        assert!(matches!(error.kind, PoolErrorKind::DiscardedOnInsert));
 
         let pending = pool.nonce_pool.read().pending_transactions();
         assert!(pending.iter().any(|transaction| *transaction.hash() == queued_hash));
