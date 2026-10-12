@@ -156,12 +156,11 @@ the [snapshot benchmark harness](../../etc/systems/README.md) for benchmarks.
 
 ### Download selection and interruptions
 
-`download` fetches full state and headers plus 1,339,200 blocks of transactions, receipts, and
-account/storage history, rounded outward to archive chunk boundaries. It stops after downloading;
-it does not create a validator copy, start nodes or configure a fork. The production `--full` preset
-retains 13,392,000 blocks instead, so this recipe uses explicit distances, not `--full` or `--archive`.
-Transaction and history indices rebuild on node startup. Fresh downloads generate `reth.toml` with
-these retention distances; an existing `reth.toml` is not overwritten.
+`download` uses `--minimal`: full current state and headers with only recent transactions, receipts,
+and account/storage history, rounded outward to archive chunk boundaries. It stops after downloading;
+it does not create a validator copy, start nodes or configure a fork. Transaction and history indices
+rebuild on node startup. Fresh downloads generate `reth.toml` with the minimal preset's pruning
+settings; an existing `reth.toml` is not overwritten.
 
 Pin a manifest when resuming an interrupted download. Verified, unchanged archive outputs are
 reused; an interrupted large archive may restart from the beginning. Do not rerun download over a
@@ -172,9 +171,7 @@ datadir that has already produced development blocks; resume it with `run` inste
 just devnet snapshot download --dir "$HOME/data/my-devnet" --print-plan-json
 # Add --manifest-url <published-manifest-url> to pin a particular snapshot for download/resume.
 # Equivalent direct binary download:
-target/release/base snapshot download --dir "$HOME/data/my-devnet" \
-  --with-txs-distance 1339200 --with-receipts-distance 1339200 \
-  --with-state-history-distance 1339200
+target/release/base snapshot download --minimal --dir "$HOME/data/my-devnet"
 ```
 
 ### `dev_impersonateTransaction`

@@ -2,11 +2,11 @@
 default:
     @just --justfile {{ source_file() }} --list
 
-# Downloads full state with 1,339,200 blocks of history; never starts a node
+# Downloads the minimal snapshot preset; never starts a node
 [no-cd]
 [positional-arguments]
 download *args:
-    exec cargo run --release --manifest-path {{ quote(source_directory() / "../../Cargo.toml") }} --bin base -- snapshot download --with-txs-distance 1339200 --with-receipts-distance 1339200 --with-state-history-distance 1339200 "$@"
+    exec cargo run --release --manifest-path {{ quote(source_directory() / "../../Cargo.toml") }} --bin base -- snapshot download --minimal "$@"
 
 # Builds base and runs `base dev` in the foreground, e.g. `run --dir ~/data/devnet`
 [no-cd]
