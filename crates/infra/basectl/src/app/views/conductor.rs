@@ -1086,10 +1086,10 @@ fn render_cluster_table(
         .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
         .height(1);
 
+    let label_style = Style::default().fg(Color::White).add_modifier(Modifier::BOLD);
+
     // ── Role row ───────────────────────────────────────────────────────────
-    let mut role_cells = vec![
-        Cell::from("  Role").style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-    ];
+    let mut role_cells = vec![Cell::from("  Role").style(label_style)];
     for node in nodes {
         let (label, style) = if paused_nodes.contains_key(&node.name) {
             ("⏸  isolated", Style::default().fg(Color::Cyan))
@@ -1107,10 +1107,7 @@ fn render_cluster_table(
     let role_row = Row::new(role_cells).height(1);
 
     // ── Active row (conductor) ─────────────────────────────────────────────
-    let mut active_cells = vec![
-        Cell::from("  Active")
-            .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-    ];
+    let mut active_cells = vec![Cell::from("  Active").style(label_style)];
     for node in nodes {
         let (label, style) = if paused_nodes.contains_key(&node.name) {
             ("   isolated", Style::default().fg(Color::Cyan))
@@ -1155,10 +1152,7 @@ fn render_cluster_table(
     );
 
     // ── Seq active row (admin RPC) ─────────────────────────────────────────
-    let mut seq_active_cells = vec![
-        Cell::from("  Seq active")
-            .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-    ];
+    let mut seq_active_cells = vec![Cell::from("  Seq active").style(label_style)];
     for node in nodes {
         let (label, style) = if paused_nodes.contains_key(&node.name) {
             ("   isolated", Style::default().fg(Color::Cyan))
@@ -1176,10 +1170,7 @@ fn render_cluster_table(
     let seq_active_row = Row::new(seq_active_cells).height(1);
 
     // ── Unsafe L2 row ──────────────────────────────────────────────────────
-    let mut l2_cells = vec![
-        Cell::from("  Unsafe L2")
-            .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-    ];
+    let mut l2_cells = vec![Cell::from("  Unsafe L2").style(label_style)];
     for node in nodes {
         let (label, style) = match node.unsafe_l2_block {
             Some(n) if node.is_leader == Some(true) => {
@@ -1193,10 +1184,7 @@ fn render_cluster_table(
     let l2_row = Row::new(l2_cells).height(1);
 
     // ── Unsafe L2 hash row ────────────────────────────────────────────────
-    let mut l2_hash_cells = vec![
-        Cell::from("  Unsafe Hash")
-            .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-    ];
+    let mut l2_hash_cells = vec![Cell::from("  Unsafe Hash").style(label_style)];
     for node in nodes {
         let (label, style) = match node.unsafe_l2_hash {
             Some(h) if node.is_leader == Some(true) => {
@@ -1220,10 +1208,7 @@ fn render_cluster_table(
     let l2_hash_row = Row::new(l2_hash_cells).height(1);
 
     // ── Safe L2 row ────────────────────────────────────────────────────────
-    let mut safe_l2_cells = vec![
-        Cell::from("  Safe L2")
-            .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-    ];
+    let mut safe_l2_cells = vec![Cell::from("  Safe L2").style(label_style)];
     for node in nodes {
         let (label, style) = match node.safe_l2_block {
             Some(n) if node.is_leader == Some(true) => {
@@ -1237,10 +1222,7 @@ fn render_cluster_table(
     let safe_l2_row = Row::new(safe_l2_cells).height(1);
 
     // ── Safe L2 hash row ──────────────────────────────────────────────────
-    let mut safe_hash_cells = vec![
-        Cell::from("  Safe Hash")
-            .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-    ];
+    let mut safe_hash_cells = vec![Cell::from("  Safe Hash").style(label_style)];
     for node in nodes {
         let (label, style) = match node.safe_l2_hash {
             Some(h) if node.is_leader == Some(true) => {
@@ -1264,10 +1246,7 @@ fn render_cluster_table(
     let safe_hash_row = Row::new(safe_hash_cells).height(1);
 
     // ── Finalized L2 row ───────────────────────────────────────────────────
-    let mut finalized_l2_cells = vec![
-        Cell::from("  Finalized L2")
-            .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-    ];
+    let mut finalized_l2_cells = vec![Cell::from("  Finalized L2").style(label_style)];
     for node in nodes {
         let (label, style) = match node.finalized_l2_block {
             Some(n) if node.is_leader == Some(true) => {
@@ -1281,10 +1260,7 @@ fn render_cluster_table(
     let finalized_l2_row = Row::new(finalized_l2_cells).height(1);
 
     // ── L1 derivation row ──────────────────────────────────────────────────
-    let mut l1_cells = vec![
-        Cell::from("  L1 Derived")
-            .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-    ];
+    let mut l1_cells = vec![Cell::from("  L1 Derived").style(label_style)];
     for node in nodes {
         let (label, style) = match (node.current_l1_block, node.head_l1_block) {
             (Some(cur), Some(head)) => {
@@ -1299,10 +1275,7 @@ fn render_cluster_table(
     let l1_row = Row::new(l1_cells).height(1);
 
     // ── CL peer count row ──────────────────────────────────────────────────
-    let mut cl_peers_cells = vec![
-        Cell::from("  CL Peers")
-            .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-    ];
+    let mut cl_peers_cells = vec![Cell::from("  CL Peers").style(label_style)];
     for node in nodes {
         let (label, style) = match node.cl_peer_count {
             Some(0) => ("   0".to_string(), Style::default().fg(Color::Red)),
@@ -1314,9 +1287,7 @@ fn render_cluster_table(
     let cl_peers_row = Row::new(cl_peers_cells).height(1);
 
     // ── EL block row ───────────────────────────────────────────────────────
-    let mut el_block_cells = vec![
-        Cell::from("  Block").style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-    ];
+    let mut el_block_cells = vec![Cell::from("  Block").style(label_style)];
     for node in nodes {
         let (label, style) = match node.el_block {
             Some(n) if node.is_leader == Some(true) => {
@@ -1330,10 +1301,7 @@ fn render_cluster_table(
     let el_block_row = Row::new(el_block_cells).height(1);
 
     // ── EL syncing row ─────────────────────────────────────────────────────
-    let mut el_syncing_cells = vec![
-        Cell::from("  Syncing")
-            .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-    ];
+    let mut el_syncing_cells = vec![Cell::from("  Syncing").style(label_style)];
     for node in nodes {
         let (label, style) = match node.el_syncing {
             Some(true) => ("   yes", Style::default().fg(Color::Yellow)),
@@ -1345,10 +1313,7 @@ fn render_cluster_table(
     let el_syncing_row = Row::new(el_syncing_cells).height(1);
 
     // ── EL peer count row ──────────────────────────────────────────────────
-    let mut el_peers_cells = vec![
-        Cell::from("  EL Peers")
-            .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-    ];
+    let mut el_peers_cells = vec![Cell::from("  EL Peers").style(label_style)];
     for node in nodes {
         let (label, style) = match node.el_peer_count {
             Some(0) => ("   0".to_string(), Style::default().fg(Color::Red)),
@@ -1512,11 +1477,10 @@ fn render_validator_table(f: &mut Frame<'_>, area: Rect, nodes: &[ValidatorNodeS
         .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD))
         .height(1);
 
+    let label_style = Style::default().fg(Color::White).add_modifier(Modifier::BOLD);
+
     // ── Binary row ────────────────────────────────────────────────────────
-    let mut binary_cells = vec![
-        Cell::from("  Binary")
-            .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-    ];
+    let mut binary_cells = vec![Cell::from("  Binary").style(label_style)];
     for node in nodes {
         let (label, style) = node.binary.as_ref().map_or_else(
             || ("   ?".to_string(), Style::default().fg(Color::DarkGray)),
@@ -1530,10 +1494,7 @@ fn render_validator_table(f: &mut Frame<'_>, area: Rect, nodes: &[ValidatorNodeS
     let cl_section = section_row("CL", node_count);
 
     // ── Unsafe L2 row ──────────────────────────────────────────────────────
-    let mut l2_cells = vec![
-        Cell::from("  Unsafe L2")
-            .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-    ];
+    let mut l2_cells = vec![Cell::from("  Unsafe L2").style(label_style)];
     for node in nodes {
         let (label, style) = node.unsafe_l2_block.map_or_else(
             || (Line::from("   ?"), Style::default().fg(Color::DarkGray)),
@@ -1544,10 +1505,7 @@ fn render_validator_table(f: &mut Frame<'_>, area: Rect, nodes: &[ValidatorNodeS
     let l2_row = Row::new(l2_cells).height(1);
 
     // ── Unsafe L2 hash row ────────────────────────────────────────────────
-    let mut l2_hash_cells = vec![
-        Cell::from("  Unsafe Hash")
-            .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-    ];
+    let mut l2_hash_cells = vec![Cell::from("  Unsafe Hash").style(label_style)];
     for node in nodes {
         let (label, style) = node.unsafe_l2_hash.map_or_else(
             || ("   ?".to_string(), Style::default().fg(Color::DarkGray)),
@@ -1561,10 +1519,7 @@ fn render_validator_table(f: &mut Frame<'_>, area: Rect, nodes: &[ValidatorNodeS
     let l2_hash_row = Row::new(l2_hash_cells).height(1);
 
     // ── Safe L2 row ────────────────────────────────────────────────────────
-    let mut safe_l2_cells = vec![
-        Cell::from("  Safe L2")
-            .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-    ];
+    let mut safe_l2_cells = vec![Cell::from("  Safe L2").style(label_style)];
     for node in nodes {
         let (label, style) = node.safe_l2_block.map_or_else(
             || (Line::from("   ?"), Style::default().fg(Color::DarkGray)),
@@ -1575,10 +1530,7 @@ fn render_validator_table(f: &mut Frame<'_>, area: Rect, nodes: &[ValidatorNodeS
     let safe_l2_row = Row::new(safe_l2_cells).height(1);
 
     // ── Safe L2 hash row ──────────────────────────────────────────────────
-    let mut safe_hash_cells = vec![
-        Cell::from("  Safe Hash")
-            .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-    ];
+    let mut safe_hash_cells = vec![Cell::from("  Safe Hash").style(label_style)];
     for node in nodes {
         let (label, style) = node.safe_l2_hash.map_or_else(
             || ("   ?".to_string(), Style::default().fg(Color::DarkGray)),
@@ -1592,10 +1544,7 @@ fn render_validator_table(f: &mut Frame<'_>, area: Rect, nodes: &[ValidatorNodeS
     let safe_hash_row = Row::new(safe_hash_cells).height(1);
 
     // ── Finalized L2 row ───────────────────────────────────────────────────
-    let mut finalized_l2_cells = vec![
-        Cell::from("  Finalized L2")
-            .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-    ];
+    let mut finalized_l2_cells = vec![Cell::from("  Finalized L2").style(label_style)];
     for node in nodes {
         let (label, style) = node.finalized_l2_block.map_or_else(
             || (Line::from("   ?"), Style::default().fg(Color::DarkGray)),
@@ -1606,10 +1555,7 @@ fn render_validator_table(f: &mut Frame<'_>, area: Rect, nodes: &[ValidatorNodeS
     let finalized_l2_row = Row::new(finalized_l2_cells).height(1);
 
     // ── L1 derivation row ──────────────────────────────────────────────────
-    let mut l1_cells = vec![
-        Cell::from("  L1 Derived")
-            .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-    ];
+    let mut l1_cells = vec![Cell::from("  L1 Derived").style(label_style)];
     for node in nodes {
         let (label, style) = match (node.current_l1_block, node.head_l1_block) {
             (Some(cur), Some(head)) => {
@@ -1624,10 +1570,7 @@ fn render_validator_table(f: &mut Frame<'_>, area: Rect, nodes: &[ValidatorNodeS
     let l1_row = Row::new(l1_cells).height(1);
 
     // ── CL peer count row ──────────────────────────────────────────────────
-    let mut cl_peers_cells = vec![
-        Cell::from("  CL Peers")
-            .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-    ];
+    let mut cl_peers_cells = vec![Cell::from("  CL Peers").style(label_style)];
     for node in nodes {
         let (label, style) = match node.cl_peer_count {
             Some(0) => ("   0".to_string(), Style::default().fg(Color::Red)),
@@ -1642,9 +1585,7 @@ fn render_validator_table(f: &mut Frame<'_>, area: Rect, nodes: &[ValidatorNodeS
     let el_section = section_row("EL", node_count);
 
     // ── EL block row ───────────────────────────────────────────────────────
-    let mut el_block_cells = vec![
-        Cell::from("  Block").style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-    ];
+    let mut el_block_cells = vec![Cell::from("  Block").style(label_style)];
     for node in nodes {
         let (label, style) = node.el_block.map_or_else(
             || (Line::from("   -"), Style::default().fg(Color::DarkGray)),
@@ -1655,10 +1596,7 @@ fn render_validator_table(f: &mut Frame<'_>, area: Rect, nodes: &[ValidatorNodeS
     let el_block_row = Row::new(el_block_cells).height(1);
 
     // ── EL syncing row ─────────────────────────────────────────────────────
-    let mut el_syncing_cells = vec![
-        Cell::from("  Syncing")
-            .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-    ];
+    let mut el_syncing_cells = vec![Cell::from("  Syncing").style(label_style)];
     for node in nodes {
         let (label, style) = match node.el_syncing {
             Some(true) => ("   yes", Style::default().fg(Color::Yellow)),
@@ -1670,10 +1608,7 @@ fn render_validator_table(f: &mut Frame<'_>, area: Rect, nodes: &[ValidatorNodeS
     let el_syncing_row = Row::new(el_syncing_cells).height(1);
 
     // ── EL peer count row ──────────────────────────────────────────────────
-    let mut el_peers_cells = vec![
-        Cell::from("  EL Peers")
-            .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-    ];
+    let mut el_peers_cells = vec![Cell::from("  EL Peers").style(label_style)];
     for node in nodes {
         let (label, style) = match node.el_peer_count {
             Some(0) => ("   0".to_string(), Style::default().fg(Color::Red)),
