@@ -156,19 +156,21 @@ the [snapshot benchmark harness](../../etc/systems/README.md) for benchmarks.
 
 ### Download selection and interruptions
 
-`download` uses `--minimal`: full current state and headers with only recent transactions, receipts,
-and account/storage history, rounded outward to archive chunk boundaries. It stops after downloading;
+`download` uses `--full`: full current state and headers with 13,392,000 blocks of transactions,
+receipts, and account/storage history, rounded outward to archive chunk boundaries. That is 31 days
+at Denim's 200ms cadence, not archive history. It stops after downloading;
 it does not create a validator copy, start nodes or configure a fork. The recipe allows up to 16
 simultaneous HTTP downloads (`--download-concurrency 16`).
 
-Fresh downloads generate `reth.toml` with receipts at pruning distance 64 and block bodies and
-account/storage history at distance 10,064. Pruning follows persisted blocks and static-file
-boundaries, not an exact wall-clock expiry. An existing `reth.toml` is not overwritten.
+Fresh downloads generate `reth.toml` with the persisted transaction-hash index enabled and block
+bodies, receipts, and account/storage history at pruning distance 13,392,000. Indices rebuild on
+startup; this takes more disk space and startup work than `--minimal`. Pruning follows persisted
+blocks and static-file boundaries, not an exact wall-clock expiry. Hash-based lookups still require
+the corresponding transaction bodies and receipts to be retained.
 
-The minimal preset disables the persisted transaction-hash index; only retained account/storage
-history indices rebuild on startup. Hash-based transaction and receipt lookups can return `null`
-after a block leaves memory, even while its receipts remain on disk. Poll promptly in the examples
-below; `eth_getBlockReceipts` can retrieve receipts for a known block while they are retained.
+An existing `reth.toml` is not overwritten. Switching the recipe to `--full` does not upgrade a
+previous minimal datadir's pruning or rebuild its missing transaction-hash index. Use a fresh
+directory for a full download; never download over a datadir that has produced development blocks.
 
 Pin a manifest when resuming an interrupted download. Verified, unchanged archive outputs are
 reused; an interrupted large archive may restart from the beginning. Do not rerun download over a
@@ -179,7 +181,7 @@ datadir that has already produced development blocks; resume it with `run` inste
 just devnet snapshot download --dir "$HOME/data/my-devnet" --print-plan-json
 # Add --manifest-url <published-manifest-url> to pin a particular snapshot for download/resume.
 # Equivalent direct binary download:
-target/release/base snapshot download --minimal --download-concurrency 16 --dir "$HOME/data/my-devnet"
+target/release/base snapshot download --full --download-concurrency 16 --dir "$HOME/data/my-devnet"
 ```
 
 ### `dev_impersonateTransaction`
@@ -198,7 +200,7 @@ Use signed transactions to test admission and fees.
 
 A returned hash means the request is queued, not mined. Requests are added in order after the
 system deposits of the next block with enough gas, alongside ordinary pool transactions. Poll
-`eth_getTransactionReceipt` promptly for the hash; the minimal-pruning limits above apply. A call
+`eth_getTransactionReceipt` for the hash to confirm inclusion. A call
 that reverts or runs out of gas is still included, with status `0`; minted ETH is kept even then.
 Each request is a distinct transaction, so repeating it runs it again.
 
@@ -212,7 +214,7 @@ Fund a newly generated throwaway key, wait for inclusion, then submit a normal s
 
 ```sh
 RPC=http://127.0.0.1:8545
-DEV_KEY=$(cast wallet new --json | jq -r '.[0].private_key')
+DEV_KEY=$(cast wallet new --json | jq -er '(if type == "array" then . else .data end)[0].private_key')
 ACCOUNT=$(cast wallet address --private-key "$DEV_KEY")
 HASH=$(cast rpc --rpc-url "$RPC" dev_impersonateTransaction \
   "{\"from\":\"$ACCOUNT\",\"to\":\"$ACCOUNT\",\"gas\":\"0x5208\",\"mint\":\"0xde0b6b3a7640000\"}" | jq -r .)
