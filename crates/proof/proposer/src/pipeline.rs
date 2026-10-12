@@ -86,6 +86,7 @@ where
         // recovered onchain state invalidates this read-only pagination state.
         let mut signer_cursor_source = None;
         let mut signer_scan_cursor = None;
+        let mut signer_dispatched_through = 0;
         loop {
             let dispatched_through = Arc::new(AtomicU64::new(0));
             let (backlog_tx, backlog_rx) = watch::channel(None);
@@ -108,6 +109,7 @@ where
                         backlog_rx,
                         &mut signer_cursor_source,
                         &mut signer_scan_cursor,
+                        &mut signer_dispatched_through,
                     ), if self.tee_proof_recovery.is_some() => {
                         cleanup_restart.cancel();
                         // Stop polling dispatch and sweeping, but retain the current L1
@@ -195,13 +197,15 @@ where
     ///
     /// Sleeps one poll interval before every sweep and returns when cleanup requires a
     /// pipeline restart, or immediately if signer recovery is disabled. Callers must drop
-    /// this future on cancellation. Pagination may survive restarts while the full recovered
-    /// state is unchanged; a root, block, or parent change resets it before the next sweep.
+    /// this future on cancellation. Pagination and its historical accepted bound survive restarts
+    /// while the full recovered state is unchanged; a root, block, or parent change resets both.
+    /// The collector must continue using only the current session's accepted dispatch bound.
     pub async fn tee_recovery_loop(
         &self,
         backlog: watch::Receiver<Option<(RecoveredState, u64)>>,
         cursor_source: &mut Option<RecoveredState>,
         scan_cursor: &mut Option<u64>,
+        scan_dispatched_through: &mut u64,
     ) {
         let Some(recovery) = &self.tee_proof_recovery else { return };
         loop {
@@ -213,8 +217,27 @@ where
             if *cursor_source != Some(recovered) {
                 *cursor_source = Some(recovered);
                 *scan_cursor = None;
+                *scan_dispatched_through = dispatched_through;
+            } else {
+                // Previously accepted ranges remain scan candidates during slow redispatch.
+                // A shrinking session prefix must not reset pagination or hide later signers.
+                *scan_dispatched_through = (*scan_dispatched_through).max(dispatched_through);
             }
-            if recovery.tick(recovered.l2_block_number, dispatched_through, scan_cursor).await {
+            if recovery.tick(recovered.l2_block_number, *scan_dispatched_through, scan_cursor).await
+            {
+                // Dispatch can accept more targets while the sweep awaits RPCs. Preserve its
+                // latest coherent snapshot before this session (and its watch channel) is dropped.
+                let latest_bounds = *backlog.borrow();
+                if let Some((latest_recovered, latest_dispatched_through)) = latest_bounds {
+                    if *cursor_source != Some(latest_recovered) {
+                        *cursor_source = Some(latest_recovered);
+                        *scan_cursor = None;
+                        *scan_dispatched_through = latest_dispatched_through;
+                    } else {
+                        *scan_dispatched_through =
+                            (*scan_dispatched_through).max(latest_dispatched_through);
+                    }
+                }
                 return;
             }
         }
@@ -419,13 +442,17 @@ mod tests {
         let (_tx, rx) = watch::channel(None);
         let mut source = None;
         let mut cursor = Some(100);
-        pipeline.tee_recovery_loop(rx, &mut source, &mut cursor).await;
+        let mut scan_dispatched_through = 200;
+        pipeline
+            .tee_recovery_loop(rx, &mut source, &mut cursor, &mut scan_dispatched_through)
+            .await;
         assert_eq!(source, None);
         assert_eq!(cursor, Some(100));
+        assert_eq!(scan_dispatched_through, 200);
     }
 
     #[tokio::test(start_paused = true)]
-    async fn signer_pagination_resets_on_root_or_parent_change_but_not_cleanup_restart() {
+    async fn signer_pagination_and_bound_reset_only_on_recovered_state_change() {
         let previous = RecoveredState {
             parent_address: Address::ZERO,
             output_root: B256::ZERO,
@@ -435,6 +462,7 @@ mod tests {
             previous,
             RecoveredState { output_root: B256::repeat_byte(1), ..previous },
             RecoveredState { parent_address: Address::repeat_byte(1), ..previous },
+            RecoveredState { l2_block_number: 100, ..previous },
         ] {
             let rollup = Arc::new(MockRollupClient {
                 sync_status: test_sync_status(6500, B256::ZERO),
@@ -454,16 +482,26 @@ mod tests {
             let (_tx, rx) = watch::channel(Some((recovered, 6500)));
             let mut source = Some(previous);
             let mut cursor = Some(100);
+            let mut scan_dispatched_through = 13000;
             assert!(
                 tokio::time::timeout(
                     Duration::from_millis(15),
-                    pipeline.tee_recovery_loop(rx, &mut source, &mut cursor),
+                    pipeline.tee_recovery_loop(
+                        rx,
+                        &mut source,
+                        &mut cursor,
+                        &mut scan_dispatched_through,
+                    ),
                 )
                 .await
                 .is_err()
             );
             assert_eq!(source, Some(recovered));
-            assert_eq!(cursor, Some(if recovered == previous { 6500 } else { 6400 }));
+            assert_eq!(scan_dispatched_through, if recovered == previous { 13000 } else { 6500 });
+            assert_eq!(
+                cursor,
+                Some(if recovered == previous { 6500 } else { 6400 + recovered.l2_block_number })
+            );
         }
     }
 

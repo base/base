@@ -113,7 +113,9 @@ impl TeeProofRecovery {
     /// Inspects a bounded portion of the dispatched backlog without waiting for the collector.
     ///
     /// `scan_cursor` carries pagination across ticks and must be reset when recovered onchain
-    /// state changes. Returns `true` when both pipeline cursors must restart so deleted ranges
+    /// state changes. `dispatched_through` may include ranges accepted by a previous session with
+    /// the same recovered state; it must not shrink during redispatch. Returns `true` when both
+    /// pipeline cursors must restart so deleted ranges
     /// behind the dispatcher are resubmitted. Interrupted or ambiguous failed deletes also
     /// require a restart; standard method-not-found and invalid-params rejections do not.
     pub async fn tick(
@@ -1526,6 +1528,267 @@ mod tests {
             .expect("cancellation must drop a blocked sweep promptly");
         handle.stop().unwrap();
         tokio::time::timeout(Duration::from_secs(1), handle.stopped()).await.unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn signer_sweeps_preserve_historical_backlog_and_wrap_at_its_end() {
+        // Current-session prefixes must neither truncate a later page nor prevent a real wrap.
+        for (cursor, historical_bound, session_bound, expected_cursor, first_block) in [
+            (Some(6400), 6500, 0, None, 6500),
+            (Some(6400), 13000, 300, Some(12800), 6500),
+            (Some(6400), 13000, 6600, Some(12800), 6500),
+            (Some(6400), 6400, 6400, Some(6400), 100),
+            (None, 6500, 6500, Some(6400), 100),
+        ] {
+            let lookups = Arc::new(Mutex::new(Vec::new()));
+            let observed = Arc::clone(&lookups);
+            let mut requester = MockRequester::new();
+            requester.expect_get_proof().returning(move |request| {
+                observed.lock().unwrap().push(request.session_id);
+                Ok(unfinished(ProofStatus::Queued))
+            });
+            requester.expect_delete_proofs_by_tee_signer().never();
+            let mut registry = MockTeeSignerRegistry::new();
+            registry.expect_registered_signers().never();
+            let pipeline = test_pipeline(
+                Arc::new(requester),
+                registry,
+                rollup(historical_bound),
+                Duration::from_secs(1),
+                Duration::from_millis(10),
+                None,
+            );
+            let recovered = crate::RecoveredState {
+                parent_address: Address::ZERO,
+                output_root: root(0),
+                l2_block_number: 0,
+            };
+            let (_tx, rx) = tokio::sync::watch::channel(Some((recovered, session_bound)));
+            let mut source = Some(recovered);
+            let mut cursor = cursor;
+            let mut bound = historical_bound;
+            assert!(
+                tokio::time::timeout(
+                    Duration::from_millis(15),
+                    pipeline.tee_recovery_loop(rx, &mut source, &mut cursor, &mut bound),
+                )
+                .await
+                .is_err()
+            );
+            let lookups = lookups.lock().unwrap();
+            assert_eq!(lookups.first(), Some(&session(first_block)));
+            assert_eq!(cursor, expected_cursor);
+            assert_eq!(bound, historical_bound);
+            if expected_cursor == Some(12800) {
+                assert_eq!(lookups.last(), Some(&session(12800)));
+            }
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn cleanup_snapshot_resets_scan_state_on_in_flight_epoch_change() {
+        let previous = crate::RecoveredState {
+            parent_address: Address::ZERO,
+            output_root: root(0),
+            l2_block_number: 0,
+        };
+        for recovered in [
+            crate::RecoveredState { output_root: B256::repeat_byte(1), ..previous },
+            crate::RecoveredState { parent_address: Address::repeat_byte(1), ..previous },
+            crate::RecoveredState { l2_block_number: 100, ..previous },
+        ] {
+            let (tx, rx) = tokio::sync::watch::channel(Some((previous, 6400)));
+            let mut requester = MockRequester::new();
+            requester.expect_get_proof().returning(move |request| {
+                if request.session_id == session(200) {
+                    // Recovery changes while the old-epoch sweep is still in flight.
+                    tx.send_replace(Some((recovered, 300)));
+                    Ok(succeeded(200, Address::repeat_byte(0x11)))
+                } else {
+                    Ok(unfinished(ProofStatus::Queued))
+                }
+            });
+            requester.expect_delete_proofs_by_tee_signer().times(1).returning(|_| Ok(1));
+            let mut registry = MockTeeSignerRegistry::new();
+            registry.expect_registered_signers().times(1).returning(|| Ok(vec![]));
+            let pipeline = test_pipeline(
+                Arc::new(requester),
+                registry,
+                rollup(6500),
+                Duration::from_secs(1),
+                Duration::from_millis(10),
+                None,
+            );
+            let mut source = Some(previous);
+            let mut cursor = None;
+            let mut bound = 6400;
+            tokio::time::timeout(
+                Duration::from_secs(1),
+                pipeline.tee_recovery_loop(rx, &mut source, &mut cursor, &mut bound),
+            )
+            .await
+            .expect("cleanup must return after recording the latest coherent epoch");
+            assert_eq!(source, Some(recovered));
+            assert_eq!(cursor, None);
+            assert_eq!(bound, 300, "accepted bounds from different epochs must not be merged");
+        }
+    }
+
+    #[tokio::test]
+    async fn ambiguous_deletes_reach_later_pages_during_stalled_redispatch() {
+        // Stalls cover zero accepted prefix, a partial first page, and exactly one full page.
+        for stalled_target in [100, 400, 6500] {
+            assert_later_pages_during_stalled_redispatch(stalled_target, false).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn cleanup_preserves_targets_accepted_during_an_in_flight_sweep() {
+        for stalled_target in [100, 400] {
+            assert_later_pages_during_stalled_redispatch(stalled_target, true).await;
+        }
+    }
+
+    async fn assert_later_pages_during_stalled_redispatch(
+        stalled_target: u64,
+        advance_during_sweep: bool,
+    ) {
+        let first = Address::repeat_byte(0x11);
+        let later = Address::repeat_byte(0x22);
+        let last = (TeeProofRecovery::MAX_TARGETS_PER_TICK as u64 + 1) * 100;
+        let initial_dispatch_done = CancellationToken::new();
+        let first_page_dispatched = CancellationToken::new();
+        let allow_later_dispatch = CancellationToken::new();
+        let redispatch_stalled = CancellationToken::new();
+        let later_deleted = CancellationToken::new();
+        let delete_attempts = Arc::new(AtomicUsize::new(0));
+        let server = ServerBuilder::default().build("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}", server.local_addr().unwrap());
+        let mut module = RpcModule::new(());
+        let initial_done = initial_dispatch_done.clone();
+        let first_page = first_page_dispatched.clone();
+        let allow_later = allow_later_dispatch.clone();
+        let stalled = redispatch_stalled.clone();
+        let attempts = Arc::clone(&delete_attempts);
+        module
+            .register_async_method("prover_proveBlockRange", move |params, _, _| {
+                let initial_done = initial_done.clone();
+                let first_page = first_page.clone();
+                let allow_later = allow_later.clone();
+                let stalled = stalled.clone();
+                let attempts = Arc::clone(&attempts);
+                async move {
+                    let request: ProveBlockRangeRequest = params.one()?;
+                    let ProofRequestKind::Tee(tee) = &request.proof.request else {
+                        panic!("expected TEE")
+                    };
+                    if attempts.load(Ordering::SeqCst) > 0
+                        && tee.proof.claimed_l2_block_number == stalled_target
+                    {
+                        stalled.cancel();
+                        return pending::<RpcResult<ProveBlockRangeResponse>>().await;
+                    }
+                    if tee.proof.claimed_l2_block_number == last - 100 {
+                        first_page.cancel();
+                    }
+                    if advance_during_sweep {
+                        if tee.proof.claimed_l2_block_number == last {
+                            allow_later.cancelled().await;
+                        } else if tee.proof.claimed_l2_block_number == last + 100 {
+                            // Issuing the next request proves that `last` was already accepted.
+                            initial_done.cancel();
+                            return pending::<RpcResult<ProveBlockRangeResponse>>().await;
+                        }
+                    }
+                    if !advance_during_sweep && tee.proof.claimed_l2_block_number == last {
+                        initial_done.cancel();
+                    }
+                    Ok(ProveBlockRangeResponse { session_id: request.proof.session_id })
+                }
+            })
+            .unwrap();
+        let initial_done = initial_dispatch_done.clone();
+        let first_page = first_page_dispatched.clone();
+        let allow_later = allow_later_dispatch.clone();
+        let attempts = Arc::clone(&delete_attempts);
+        module
+            .register_async_method("prover_getProof", move |params, _, _| {
+                let initial_done = initial_done.clone();
+                let first_page = first_page.clone();
+                let allow_later = allow_later.clone();
+                let attempts = Arc::clone(&attempts);
+                async move {
+                    let request: GetProofRequest = params.one()?;
+                    if advance_during_sweep
+                        && request.session_id == session(200)
+                        && first_page.is_cancelled()
+                        && attempts.load(Ordering::SeqCst) == 0
+                    {
+                        // The sweep already sampled the first-page bound. Allow dispatch to
+                        // accept the later target before returning the deletion candidate.
+                        allow_later.cancel();
+                        initial_done.cancelled().await;
+                    }
+                    let response =
+                        if request.session_id == session(200) && initial_done.is_cancelled() {
+                            succeeded(200, first)
+                        } else if request.session_id == session(last)
+                            && attempts.load(Ordering::SeqCst) > 0
+                        {
+                            succeeded(last, later)
+                        } else {
+                            unfinished(ProofStatus::Queued)
+                        };
+                    Ok::<_, ErrorObjectOwned>(response)
+                }
+            })
+            .unwrap();
+        let attempts = Arc::clone(&delete_attempts);
+        let deleted = later_deleted.clone();
+        let stalled = redispatch_stalled.clone();
+        module
+            .register_method("prover_deleteProofsByTeeSigner", move |params, _, _| {
+                let request: DeleteProofsByTeeSignerRequest = params.one()?;
+                if request.tee_signer == first {
+                    attempts.fetch_add(1, Ordering::SeqCst);
+                    Err(ErrorObjectOwned::owned(-32000, "unknown deletion outcome", None::<()>))
+                } else {
+                    assert_eq!(request.tee_signer, later);
+                    assert!(
+                        stalled.is_cancelled(),
+                        "later signer must be found during redispatch lag"
+                    );
+                    deleted.cancel();
+                    Ok(1_u64)
+                }
+            })
+            .unwrap();
+        let handle = server.start(module);
+        let requester =
+            ProofRequesterClient::connect(&ProverServiceClientConfig::new(endpoint)).unwrap();
+        let mut registry = MockTeeSignerRegistry::new();
+        registry.expect_registered_signers().returning(|| Ok(vec![]));
+        let pipeline = test_pipeline(
+            Arc::new(requester),
+            registry,
+            rollup(if advance_during_sweep { last + 100 } else { last }),
+            Duration::from_secs(1),
+            Duration::from_millis(100),
+            None,
+        );
+        let cancel = CancellationToken::new();
+        let run = pipeline.run(cancel.clone());
+        tokio::pin!(run);
+        let result = tokio::select! {
+            () = &mut run => panic!("pipeline must run until cancelled"),
+            result = tokio::time::timeout(Duration::from_secs(3), later_deleted.cancelled()) => result,
+        };
+        cancel.cancel();
+        tokio::time::timeout(Duration::from_millis(100), &mut run).await.unwrap();
+        handle.stop().unwrap();
+        tokio::time::timeout(Duration::from_secs(1), handle.stopped()).await.unwrap();
+        result.expect("later signer must be discovered despite persistently ambiguous cleanup and redispatch lag");
+        assert!(delete_attempts.load(Ordering::SeqCst) > 0);
     }
 
     #[tokio::test(start_paused = true)]
