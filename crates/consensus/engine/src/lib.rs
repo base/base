@@ -11,11 +11,11 @@ extern crate tracing;
 
 mod task_queue;
 pub use task_queue::{
-    BuildTaskError, ConsolidateInput, ConsolidateTask, ConsolidateTaskError, Engine,
-    EngineBuildError, EngineResetError, EngineTask, EngineTaskError, EngineTaskErrorSeverity,
-    EngineTaskErrors, EngineTaskExt, FinalizeTask, FinalizeTaskError, InsertPayloadPolicy,
-    InsertPayloadSafety, InsertTask, InsertTaskError, InsertTaskResult, SealTask, SealTaskError,
-    SynchronizeTask, SynchronizeTaskError,
+    BuildTaskError, ConsolidateTask, ConsolidateTaskError, Engine, EngineBuildError,
+    EngineResetError, EngineTask, EngineTaskError, EngineTaskErrorSeverity, EngineTaskErrors,
+    EngineTaskExt, FinalizeTask, FinalizeTaskError, InsertPayloadPolicy, InsertPayloadSafety,
+    InsertTask, InsertTaskError, InsertTaskResult, SealTask, SealTaskError, SynchronizeTask,
+    SynchronizeTaskError,
 };
 
 mod attributes;

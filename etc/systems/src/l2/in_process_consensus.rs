@@ -15,7 +15,6 @@ use alloy_genesis::ChainConfig;
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::JwtSecret;
 use alloy_signer_local::PrivateKeySigner;
-use base_builder_core::test_utils::get_available_port;
 use base_common_genesis::RollupConfig;
 use base_consensus_disc::LocalNode;
 use base_consensus_node::{
@@ -38,6 +37,8 @@ use tokio::{
 };
 use tracing::info;
 use url::Url;
+
+use crate::PortPool;
 
 const SEQUENCER_UNSAFE_HEAD_TIMEOUT: Duration = Duration::from_secs(60);
 const SEQUENCER_UNSAFE_HEAD_POLL_INTERVAL: Duration = Duration::from_millis(250);
@@ -149,9 +150,9 @@ impl InProcessConsensus {
             }
         }
 
-        let rpc_port = config.rpc_port.unwrap_or_else(get_available_port);
-        let p2p_tcp_port = config.p2p_tcp_port.unwrap_or_else(get_available_port);
-        let p2p_udp_port = config.p2p_udp_port.unwrap_or_else(get_available_port);
+        let rpc_port = config.rpc_port.unwrap_or_else(PortPool::claim);
+        let p2p_tcp_port = config.p2p_tcp_port.unwrap_or_else(PortPool::claim);
+        let p2p_udp_port = config.p2p_udp_port.unwrap_or_else(PortPool::claim);
         let listen_ip = IpAddr::V4(Ipv4Addr::LOCALHOST);
 
         // Build keypair from P2P key or generate a random one.

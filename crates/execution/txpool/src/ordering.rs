@@ -12,7 +12,6 @@ use std::{
 };
 
 use alloy_primitives::{TxHash, U256};
-use base_common_consensus::CoinbaseTip;
 use reth_transaction_pool::{PoolTransaction, Priority, TransactionOrdering, ValidPoolTransaction};
 
 use crate::{BasePooledTransaction, BasePooledTx, TimestampedTransaction};
@@ -148,10 +147,11 @@ impl Ord for UnifiedTipPriority {
 
 /// Unified tip-per-gas ordering for standard and EIP-8130 transactions.
 ///
-/// Uses [`CoinbaseTip::decode`] when the transaction is a statically-analyzable
+/// Uses [`BasePooledTx::coinbase_tip`] when the transaction is a statically-analyzable
 /// EIP-8130 coinbase tip; otherwise ranks by `effective_tip_per_gas`. Returns
 /// [`Priority::None`] when `max_fee_per_gas < base_fee`, including for a
-/// decoded coinbase tip. Same bid prefers fewer validity predicates, so
+/// decoded coinbase tip. A policy-gated sender's tip only counts when the fee
+/// vault is its policy target. Same bid prefers fewer validity predicates, so
 /// standard transactions beat equally priced advanced transactions.
 #[derive(Debug)]
 #[non_exhaustive]
@@ -185,9 +185,7 @@ where
             return Priority::None;
         };
         let predicates = transaction.validity_predicates().len();
-        if let Some(signed) = transaction.as_eip8130()
-            && let Some(tip) = CoinbaseTip::decode(signed.tx())
-        {
+        if let Some(tip) = transaction.coinbase_tip() {
             return Priority::Value(UnifiedTipPriority::new(
                 tip,
                 transaction.gas_limit(),
@@ -297,7 +295,7 @@ where
 #[cfg(test)]
 mod tests {
     use alloy_eips::eip2718::Encodable2718;
-    use alloy_primitives::{Bytes, U256};
+    use alloy_primitives::{Address, Bytes, U256};
     use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
     use base_common_chains::ChainConfig;
@@ -593,6 +591,22 @@ mod tests {
 
         assert!(ordering.priority(&standard, 0) > ordering.priority(&cheaper_at, 0));
         assert!(ordering.priority(&richer_at, 0) > ordering.priority(&standard, 0));
+    }
+
+    #[test]
+    fn policy_gated_coinbase_tip_counts_only_when_the_vault_is_the_target() {
+        let ordering = UnifiedTipOrdering::<BasePooledTransaction>::default();
+        let tip = Some(U256::from(63_000));
+        let ungated = eip8130_pooled(10, 0, 21_000, tip);
+        let gated_elsewhere = eip8130_pooled(10, 0, 21_000, tip);
+        gated_elsewhere.set_sender_policy_target(Address::repeat_byte(0x77));
+        let gated_to_vault = eip8130_pooled(10, 0, 21_000, tip);
+        gated_to_vault.set_sender_policy_target(Predeploys::SEQUENCER_FEE_VAULT);
+        let no_tip = eip8130_pooled(10, 0, 21_000, None);
+
+        assert_eq!(ordering.priority(&gated_elsewhere, 0), ordering.priority(&no_tip, 0));
+        assert_eq!(ordering.priority(&gated_to_vault, 0), ordering.priority(&ungated, 0));
+        assert!(ordering.priority(&ungated, 0) > ordering.priority(&no_tip, 0));
     }
 
     #[test]

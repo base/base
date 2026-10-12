@@ -173,35 +173,20 @@ async fn get_shadow_candidates_batch(
         return Ok(Json(HashMap::new()));
     };
 
-    let mut parsed = Vec::new();
-    for entry in canonical.split(',') {
-        if parsed.len() >= 200 {
-            break;
-        }
-        let trimmed = entry.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        if let Ok(hash) = parse_block_id(trimmed) {
-            parsed.push(hash);
-        }
-    }
+    let hashes: Vec<String> =
+        canonical.split(',').filter_map(|entry| parse_block_id(entry).ok()).take(200).collect();
 
-    if parsed.is_empty() {
+    if hashes.is_empty() {
         return Ok(Json(HashMap::new()));
     }
 
-    let hashes: Vec<String> = parsed;
-    let repo = state.repo()?;
-    let shadows = repo.list_reorged_by_canonicals(&hashes).await?;
+    let shadows = state.repo()?.list_reorged_by_canonicals(&hashes).await?;
 
     let mut result: HashMap<String, Vec<ShadowBlockSummary>> = HashMap::new();
     for shadow in &shadows {
-        let Some(canonical_hash) = shadow.canonical_hash.as_ref() else {
-            continue;
-        };
-        let key = canonical_hash.clone();
-        result.entry(key).or_default().push(shadow_block_summary(shadow));
+        if let Some(key) = &shadow.canonical_hash {
+            result.entry(key.clone()).or_default().push(shadow_block_summary(shadow));
+        }
     }
 
     tracing::info!(

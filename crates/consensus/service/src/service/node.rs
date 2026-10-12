@@ -28,16 +28,15 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     AlloyL1BlockFetcher, CheckpointActor, CheckpointClient, CheckpointDB, CheckpointWriter,
-    Conductor, ConductorClient, DelayedL1OriginSelectorProvider, DelegateDerivationActor,
-    DerivationActor, DerivationDelegateClient, DerivationError, EngineActor, EngineActorRequest,
-    EngineConfig, EngineProcessor, EngineRequestReceiver, EngineRpcProcessor, L1OriginSelector,
-    L1WatcherActor, L1WatcherQueryProcessor, NetworkActor, NetworkBuilder, NetworkConfig,
-    NodeActor, NodeOperatingMode, PayloadBuilder, PrefetchedChainProvider, PreparedL1Origin,
-    QueuedDerivationEngineClient, QueuedEngineDerivationClient, QueuedEngineRpcClient,
-    QueuedL1WatcherDerivationClient, QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient,
-    QueuedSequencerEngineClient, RecoveryModeGuard, RpcActor, RpcContext, SequencerActor,
-    SequencerConfig, SequencerEngineRequestCoordinator, UpgradeSignalNodeConfig,
-    ValidatorEngineRequestHandler,
+    Conductor, ConductorClient, DelayedL1OriginSelectorProvider, DerivationActor, EngineActor,
+    EngineActorRequest, EngineConfig, EngineProcessor, EngineRequestReceiver, EngineRpcProcessor,
+    L1OriginSelector, L1WatcherActor, L1WatcherQueryProcessor, NetworkActor, NetworkBuilder,
+    NetworkConfig, NodeActor, NodeOperatingMode, PayloadBuilder, PrefetchedChainProvider,
+    PreparedL1Origin, QueuedDerivationEngineClient, QueuedEngineDerivationClient,
+    QueuedEngineRpcClient, QueuedL1WatcherDerivationClient, QueuedNetworkEngineClient,
+    QueuedSequencerAdminAPIClient, QueuedSequencerEngineClient, RecoveryModeGuard, RpcActor,
+    RpcContext, SequencerActor, SequencerConfig, SequencerEngineRequestCoordinator,
+    UpgradeSignalNodeConfig, ValidatorEngineRequestHandler,
     actors::{BlockStream, NetworkInboundData, QueuedUnsafePayloadGossipClient},
 };
 
@@ -128,8 +127,6 @@ pub struct RollupNode {
     pub p2p_config: NetworkConfig,
     /// The [`SequencerConfig`] for the node.
     pub sequencer_config: SequencerConfig,
-    /// Optional derivation delegate provider.
-    pub derivation_delegate_provider: Option<DerivationDelegateClient>,
     /// Path to the mandatory checkpoint database.
     ///
     /// The node records safe/finalized forkchoice checkpoints here so restart can recover
@@ -146,43 +143,6 @@ pub struct RollupNode {
     pub safedb_path: Option<PathBuf>,
     /// Optional upgrade signal configuration for the consensus node.
     pub upgrade_signal_config: Option<UpgradeSignalNodeConfig>,
-}
-
-/// A RollupNode-level derivation actor wrapper.
-///
-/// This type selects the concrete derivation actor implementation
-/// based on `RollupNode` configuration. It is generic over the pipeline
-/// type `P` to support both the online production pipeline and any
-/// pre-built pipeline (e.g., an in-memory test pipeline).
-///
-/// It is not intended to be generic or reusable outside the
-/// `RollupNode` wiring logic.
-enum ConfiguredDerivationActor<P>
-where
-    P: Pipeline + SignalReceiver + Send + Sync + 'static,
-{
-    Delegate(Box<DelegateDerivationActor<QueuedDerivationEngineClient>>),
-    Normal(Box<DerivationActor<QueuedDerivationEngineClient, P>>),
-}
-
-#[async_trait::async_trait]
-impl<P> NodeActor for ConfiguredDerivationActor<P>
-where
-    P: Pipeline + SignalReceiver + Send + Sync + 'static,
-    DelegateDerivationActor<QueuedDerivationEngineClient>:
-        NodeActor<StartData = (), Error = DerivationError>,
-    DerivationActor<QueuedDerivationEngineClient, P>:
-        NodeActor<StartData = (), Error = DerivationError>,
-{
-    type StartData = ();
-    type Error = DerivationError;
-
-    async fn start(self, ctx: ()) -> Result<(), Self::Error> {
-        match self {
-            Self::Delegate(a) => a.start(ctx).await,
-            Self::Normal(a) => a.start(ctx).await,
-        }
-    }
 }
 
 impl RollupNode {
@@ -370,8 +330,6 @@ impl RollupNode {
     pub async fn start_with<P>(&self, pipeline: P) -> Result<(), String>
     where
         P: Pipeline + SignalReceiver + Send + Sync + 'static,
-        DerivationActor<QueuedDerivationEngineClient, P>:
-            NodeActor<StartData = (), Error = DerivationError>,
     {
         let l1_head_number: base_consensus_providers::L1HeadNumber = Arc::new(AtomicU64::new(0));
         let engine_client =
@@ -403,8 +361,6 @@ impl RollupNode {
     where
         E: EngineClient + 'static,
         P: Pipeline + SignalReceiver + Send + Sync + 'static,
-        DerivationActor<QueuedDerivationEngineClient, P>:
-            NodeActor<StartData = (), Error = DerivationError>,
     {
         UpgradeSignalMetrics::record_mode(
             UpgradeSignalMetricLayer::Consensus,
@@ -412,25 +368,15 @@ impl RollupNode {
         );
 
         // Build the safe head DB pair. Both actors share the same underlying DB via Arc.
-        //
-        // In delegate mode the local derivation actor is replaced by a `DelegateDerivationActor`
-        // that never calls `safe_head_updated`, so opening a real SafeDB would leave it
-        // permanently empty and cause the RPC to return `Disabled` for every query.
-        // Force `DisabledSafeDB` in that case regardless of `safedb_path`.
         let (safe_head_listener, safe_db_reader): (
             Arc<dyn SafeHeadListener>,
             Arc<dyn SafeDBReader>,
-        ) = if self.derivation_delegate_provider.is_none() {
-            if let Some(path) = &self.safedb_path {
-                let db = Arc::new(
-                    SafeDB::open(path)
-                        .map_err(|e| format!("failed to open safe head database: {e}"))?,
-                );
-                (Arc::clone(&db) as Arc<dyn SafeHeadListener>, db as Arc<dyn SafeDBReader>)
-            } else {
-                let db = Arc::new(DisabledSafeDB);
-                (Arc::clone(&db) as Arc<dyn SafeHeadListener>, db as Arc<dyn SafeDBReader>)
-            }
+        ) = if let Some(path) = &self.safedb_path {
+            let db = Arc::new(
+                SafeDB::open(path)
+                    .map_err(|e| format!("failed to open safe head database: {e}"))?,
+            );
+            (Arc::clone(&db) as Arc<dyn SafeHeadListener>, db as Arc<dyn SafeDBReader>)
         } else {
             let db = Arc::new(DisabledSafeDB);
             (Arc::clone(&db) as Arc<dyn SafeHeadListener>, db as Arc<dyn SafeDBReader>)
@@ -485,37 +431,16 @@ impl RollupNode {
                 checkpoint_client,
             );
 
-        // Select the concrete derivation actor implementation based on
-        // RollupNode configuration.
-        let derivation: ConfiguredDerivationActor<P> =
-            if let Some(provider) = self.derivation_delegate_provider.clone() {
-                // L1 Provider for sanity checking Derivation Delegation
-                let l1_provider = AlloyChainProvider::new(
-                    self.l1_config.engine_provider.clone(),
-                    DERIVATION_PROVIDER_CACHE_SIZE,
-                );
-                ConfiguredDerivationActor::Delegate(Box::new(DelegateDerivationActor::<_>::new(
-                    QueuedDerivationEngineClient {
-                        engine_actor_request_tx: engine_actor_request_tx.clone(),
-                    },
-                    cancellation.clone(),
-                    derivation_actor_request_rx,
-                    provider,
-                    l1_provider,
-                    derivation_origin_tx,
-                )))
-            } else {
-                ConfiguredDerivationActor::Normal(Box::new(DerivationActor::<_, P>::new(
-                    QueuedDerivationEngineClient {
-                        engine_actor_request_tx: engine_actor_request_tx.clone(),
-                    },
-                    cancellation.clone(),
-                    derivation_actor_request_rx,
-                    pipeline,
-                    safe_head_listener,
-                    derivation_origin_tx,
-                )))
-            };
+        let derivation = DerivationActor::new(
+            QueuedDerivationEngineClient {
+                engine_actor_request_tx: engine_actor_request_tx.clone(),
+            },
+            cancellation.clone(),
+            derivation_actor_request_rx,
+            pipeline,
+            safe_head_listener,
+            derivation_origin_tx,
+        );
 
         // Create the p2p actor.
         let (
