@@ -1,0 +1,16 @@
+[package]
+name = "sp1_bls12_381"
+version = "0.8.0-sp1-6.0.0"
+edition = "2021"
+publish = false
+description = "Vanilla bls12_381 re-export so kzg-rs does not pull SP1 syscalls."
+
+[dependencies]
+subtle = { version = "2.6", default-features = false }
+bls12_381 = { version = "0.8.0", default-features = false, features = ["groups", "pairings", "alloc"] }
+
+[features]
+default = []
+alloc = []
+groups = []
+pairings = []

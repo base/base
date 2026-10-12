@@ -32,6 +32,6 @@ pub use view::View;
 mod views;
 pub use views::{
     ActionMenuItem, CommandCenterView, ConductorView, ConfigView, ConfirmButton, DaMonitorView,
-    FlashblocksView, HomeView, Overlay, PendingAction, PodsView, ProofsView, TransactionPane,
-    UpgradesView, create_view,
+    FlashblocksView, HomeView, OpenVmView, Overlay, PendingAction, PodsView, ProofsView,
+    TransactionPane, UpgradesView, create_view,
 };
