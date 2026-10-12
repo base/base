@@ -1,5 +1,7 @@
 //! Errors returned by transaction actor authorization.
 
+use alloy_primitives::B256;
+
 use crate::{ApplyError, AuthorizeError, Operation};
 
 /// Reason a transaction's actors could not be authorized.
@@ -57,6 +59,11 @@ pub enum TxAuthError {
     /// unlocked account.
     #[error("delegation requires an admin actor")]
     DelegationUnauthorized,
+
+    /// A create's `sender_auth` resolved to an actor outside the create's
+    /// `initial_actors`.
+    #[error("create sender actor {0} is not one of the initial actors")]
+    CreateSenderNotInitialActor(B256),
 
     /// The transaction carries an account change type this chain does not
     /// support.

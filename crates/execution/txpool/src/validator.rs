@@ -1628,6 +1628,7 @@ where
             TxAuthError::Scope { .. } => "actor scope insufficient",
             TxAuthError::AccountIsLocked => "account is locked",
             TxAuthError::DelegationUnauthorized => "delegation requires admin actor",
+            TxAuthError::CreateSenderNotInitialActor(_) => "create sender is not an initial actor",
             TxAuthError::BadSequence { .. } => "config change sequence mismatch",
             TxAuthError::StaleEpoch { .. } => "config change local epoch is stale",
             TxAuthError::SequenceSaturated => "config change channel sequence is saturated",

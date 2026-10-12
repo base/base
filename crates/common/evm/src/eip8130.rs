@@ -50,9 +50,9 @@ use alloy_primitives::{Address, B256, Bytes, U256, address};
 use base_common_consensus::{AccountChange, Delegation, Eip8130Constants, Predeploys};
 use base_common_precompiles::{NonceManagerStorage, TxContextStorage};
 use base_execution_eip8130::{
-    AccountChangeApplier, AccountConfigurationStorage, ApplyError, DelegationEffect,
-    Eip8130GasSchedule, FeeCheck, FeeError, IntrinsicGas, IntrinsicGasInput, NonceMode,
-    NonceValidator, TransactionAuthorizer,
+    AccountChangeApplier, AccountConfigurationStorage, ApplyError, CreatedAccount,
+    DelegationEffect, Eip8130GasSchedule, FeeCheck, FeeError, IntrinsicGas, IntrinsicGasInput,
+    NonceMode, NonceValidator, TransactionAuthorizer,
 };
 use base_precompile_storage::{JournalStorageProvider, StorageCtx};
 use revm::{
@@ -136,6 +136,9 @@ pub struct Eip8130Outcome {
     /// Whether the sender's protocol (basic) account nonce must be bumped
     /// (`nonce_key == 0`).
     pub bump_protocol_nonce: bool,
+    /// The account this transaction creates, installed on the journal before
+    /// `calls` run.
+    pub created: Option<CreatedAccount>,
 }
 
 impl Eip8130Outcome {
@@ -494,6 +497,12 @@ impl Eip8130Executor {
                 return Err(err.into());
             }
         };
+        if let Some(created) = &outcome.created
+            && let Err(err) = Self::create_account(evm.ctx_mut(), created)
+        {
+            Self::discard_transaction_state(evm);
+            return Err(err);
+        }
 
         // Dispatch `calls` from the resolved sender so `tx.origin` reads correctly
         // (mirrors `prepay`'s caller overwrite on the execution path).
@@ -861,7 +870,7 @@ impl Eip8130Executor {
             //    calls run against post-change code and create/delegation gas is
             //    priced. Must precede actor/policy resolution so an actor
             //    authorized in this same estimate request is visible.
-            Self::apply_account_changes(signed, sctx, sender, now)?;
+            let created = Self::apply_account_changes(signed, sctx, sender, now)?;
 
             // 3. Resolve the acting actor's real policy gate. No signature
             //    recovery: the optional RPC hint names the intended actor (e.g. a
@@ -928,6 +937,7 @@ impl Eip8130Executor {
                 effective: FeeCheck::effective_gas_price(max_fee, max_priority, base_fee),
                 base_fee,
                 bump_protocol_nonce: false,
+                created,
             })
         })
     }
@@ -1063,11 +1073,8 @@ impl Eip8130Executor {
                 ));
             }
 
-            // 2. Install the deferred account-*code* effects (created-account
-            //    bytecode, delegation indicator) the apply step surfaced.
-            if let Some(created) = &applied_tx.applied.created {
-                Self::install_created_code(sctx, created.address, &created.code)?;
-            }
+            // 2. Install the deferred delegation indicator the apply step
+            //    surfaced. A created account is installed by `prepay`.
             if let Some(delegation) = &applied_tx.applied.delegation {
                 delegation.install(sctx).map_err(BaseTransactionError::eip8130)?;
             }
@@ -1171,6 +1178,7 @@ impl Eip8130Executor {
                 effective: FeeCheck::effective_gas_price(max_fee, max_priority, base_fee),
                 base_fee,
                 bump_protocol_nonce,
+                created: applied_tx.applied.created,
             })
         })
     }
@@ -1195,7 +1203,11 @@ impl Eip8130Executor {
     {
         ctx.tx.base.caller = outcome.sender;
 
-        if outcome.bump_protocol_nonce {
+        if let Some(created) = &outcome.created {
+            // The created account is the sender. Creation sets its nonce to 1,
+            // which also consumes a `nonce_key == 0` create's sequence 0.
+            Self::create_account(ctx, created)?;
+        } else if outcome.bump_protocol_nonce {
             let mut sender_acc =
                 ctx.journal_mut().load_account_mut(outcome.sender).map_err(EVMError::Database)?;
             sender_acc.bump_nonce();
@@ -1755,8 +1767,8 @@ impl Eip8130Executor {
     }
 
     /// Applies the transaction's account-configuration changes and installs the
-    /// deferred account-*code* effects (created-account code and delegation),
-    /// directly on the journal-backed storage — *without* authenticating the
+    /// deferred delegation indicator directly on the journal-backed storage,
+    /// returning the created account (installed by the caller) — *without* authenticating the
     /// changes. Used by the read-only estimation pipeline
     /// ([`Self::simulate_resolve`]) so the post-change code the `calls` run
     /// against matches inclusion. The verifying pipeline instead routes through
@@ -1767,9 +1779,9 @@ impl Eip8130Executor {
         sctx: StorageCtx<'_>,
         sender: Address,
         now: u64,
-    ) -> Result<(), BaseTransactionError> {
+    ) -> Result<Option<CreatedAccount>, BaseTransactionError> {
         let mut acc_mut = AccountConfigurationStorage::new(sctx);
-        let mut created_effect: Option<(Address, Bytes)> = None;
+        let mut created_effect: Option<CreatedAccount> = None;
         let mut delegation_effect: Option<DelegationEffect> = None;
         for (index, change) in signed.tx().account_changes.iter().enumerate() {
             match change {
@@ -1782,9 +1794,10 @@ impl Eip8130Executor {
                             ApplyError::InvalidCreatePosition,
                         ));
                     }
-                    let created = AccountChangeApplier::apply_create(&mut acc_mut, entry)
-                        .map_err(BaseTransactionError::eip8130)?;
-                    created_effect = Some((created.address, created.code));
+                    created_effect = Some(
+                        AccountChangeApplier::apply_create(&mut acc_mut, entry)
+                            .map_err(BaseTransactionError::eip8130)?,
+                    );
                 }
                 AccountChange::ConfigChange(cc) => {
                     // Estimation prices revokes at the worst-case three-reset cost
@@ -1815,43 +1828,49 @@ impl Eip8130Executor {
                 }
             }
         }
-        if let Some((address, code)) = &created_effect {
-            Self::install_created_code(sctx, *address, code)?;
-        }
         if let Some(delegation) = delegation_effect {
             delegation.install(sctx).map_err(BaseTransactionError::eip8130)?;
         }
-        Ok(())
+        Ok(created_effect)
     }
 
-    /// Installs a created account's runtime code, enforcing the CREATE2 collision
-    /// rule the reference contract gets for free from a real deploy: the
-    /// destination must be empty (no code, zero nonce). The account info is read
-    /// from the real journal (not the config overlay), so block inclusion
-    /// enforces what mempool admission checks separately — an inclusion path that
-    /// bypasses the pool cannot overwrite preexisting third-party code.
+    /// Creates `created` on the journal as a contract creation would: the
+    /// destination must be empty (no code, zero nonce), and it is marked created
+    /// in this transaction (for EIP-6780 `SELFDESTRUCT`), gets nonce 1 (EIP-161),
+    /// and receives its runtime code. The account info is read from the real
+    /// journal (not the config overlay), so block inclusion enforces what mempool
+    /// admission checks separately — an inclusion path that bypasses the pool
+    /// cannot overwrite preexisting third-party code.
     ///
     /// The runtime is already validated non-empty, `<= MAX_CODE_SIZE`, and not
     /// `0xEF`-prefixed by [`AccountChangeApplier::apply_create`], so
     /// [`Bytecode::new_raw_checked`] never errors here; the fallible constructor
     /// is used anyway so any future gap surfaces as a validity error rather than
     /// a panic on transaction-controlled bytes.
-    fn install_created_code(
-        sctx: StorageCtx<'_>,
-        address: Address,
-        code: &Bytes,
-    ) -> Result<(), BaseTransactionError> {
-        let occupied = sctx
-            .with_account_info(address, |info| Ok(!info.is_empty_code_hash() || info.nonce != 0))
+    fn create_account<DB>(
+        ctx: &mut BaseContext<DB>,
+        created: &CreatedAccount,
+    ) -> Result<(), EVMError<DB::Error, BaseTransactionError>>
+    where
+        DB: AlloyDatabase,
+        BaseContext<DB>:
+            BaseContextTr + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv>,
+    {
+        let bytecode = Bytecode::new_raw_checked(created.code.clone())
             .map_err(BaseTransactionError::eip8130)?;
-        if occupied {
-            return Err(BaseTransactionError::eip8130(
-                "create destination already has code or a non-zero nonce",
-            ));
-        }
-        let bytecode =
-            Bytecode::new_raw_checked(code.clone()).map_err(BaseTransactionError::eip8130)?;
-        sctx.set_code(address, bytecode).map_err(BaseTransactionError::eip8130)
+        let spec: SpecId = ctx.cfg().spec().into();
+        let journal = ctx.journal_mut();
+        journal.load_account(created.address).map_err(EVMError::Database)?;
+        journal
+            .create_account_checkpoint(created.address, created.address, U256::ZERO, spec)
+            .map_err(|_| {
+                BaseTransactionError::eip8130(
+                    "create destination already has code or a non-zero nonce",
+                )
+            })?;
+        journal.checkpoint_commit();
+        journal.set_code(created.address, bytecode);
+        Ok(())
     }
 
     /// Computes the EIP-8130 intrinsic gas and the gas left for `calls`.
@@ -2112,6 +2131,7 @@ mod tests {
             effective: u128::from(BASE_FEE),
             base_fee: u128::from(BASE_FEE),
             bump_protocol_nonce: false,
+            created: None,
         };
 
         // Cheap execution: sender_intrinsic + call_gas_spent (110_000) is below the
@@ -3706,6 +3726,27 @@ mod tests {
         assert_eq!(created.info.nonce, 1, "create sender nonce bumped");
         assert!(!created.info.is_empty_code_hash(), "created account has code");
         assert!(created.info.balance < initial_balance, "self-paid create charged");
+    }
+
+    #[test]
+    fn create_on_two_d_nonce_key_installs_a_created_account() {
+        // Only `nonce_key == 0` bumps the protocol nonce, so the created account
+        // must still get creation semantics on every other key: nonce 1 and
+        // marked created in this transaction.
+        let key = signing_key(0xc7);
+        let (derived, signed) = counterfactual_create_signed(&key, bytes!("00"), Vec::new());
+        let mut tx = signed.tx().clone();
+        tx.nonce_key = U256::from(1);
+        let signed = configured_signed(tx, &key);
+
+        let mut evm = with_zenith(evm_with(U256::from(10u64).pow(U256::from(18u64)), derived));
+        let outcome = evm.transact_raw(into_base_tx(&signed)).expect("2D-key create executes");
+
+        assert!(outcome.result.is_success(), "expected success, got {:?}", outcome.result);
+        let created = outcome.state.get(&derived).expect("created account in state");
+        assert!(!created.info.is_empty_code_hash(), "created account has code");
+        assert_eq!(created.info.nonce, 1, "created account nonce");
+        assert!(created.is_created(), "account is marked created in this transaction");
     }
 
     /// Asserts a counterfactual create with `code` is rejected at inclusion with
