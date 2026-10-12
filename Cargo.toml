@@ -355,6 +355,7 @@ reth-trie = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
 reth-exex = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
 reth-tasks = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
 reth-ecies = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-config = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
 reth-db-api = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
 reth-discv4 = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
 reth-discv5 = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }

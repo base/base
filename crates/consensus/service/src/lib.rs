@@ -24,6 +24,9 @@ pub use standalone::{
     StandaloneOriginSelector, StandalonePrefund, StandaloneScheduleError, StandaloneSequencerNode,
 };
 
+mod standalone_dev;
+pub use standalone_dev::{StandaloneDevChain, StandaloneDevError, StandaloneDevState};
+
 mod actors;
 pub use actors::{
     AlloyL1BlockFetcher, BlockStream, BuildOutcome, BuildPipelineState, BuildRequest,
