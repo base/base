@@ -347,7 +347,7 @@ impl Default for Args {
 
 impl Args {
     /// Builds configuration for the builder transaction insertion RPC.
-    pub fn builder_api_config(&self) -> BuilderApiExtensionConfig {
+    pub const fn builder_api_config(&self) -> BuilderApiExtensionConfig {
         BuilderApiExtensionConfig::new(self.validity_max_predicates)
             .with_validity_signature_mode(self.validity_signature_mode)
     }
