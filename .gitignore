@@ -21,3 +21,4 @@ crates/proof/zk/programs/succinct/elf/*.bin
 /.tmp/
 
 crates/infra/load-tests/examples/*.yaml
+/.amp/portals/*

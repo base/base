@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# No shared credentials or always-on services are needed for local development.
+# Dependencies belong in setup so resumes and exact snapshots never reinstall them.
+for tool in cargo rustc go just forge cast anvil cargo-nextest; do
+    if ! command -v "$tool" >/dev/null 2>&1; then
+        echo "Missing $tool; run .agents/setup to repair this orb." >&2
+        exit 1
+    fi
+done
+echo 'Base development tools ready.'
