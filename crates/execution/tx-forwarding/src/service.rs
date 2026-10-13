@@ -264,9 +264,10 @@ mod tests {
     use std::{net::SocketAddr, sync::Mutex, time::Duration};
 
     use alloy_primitives::{Address, B256, Bytes};
-    use base_execution_txpool::ValidatedTransaction;
+    use base_execution_txpool::{BasePooledTransaction, ValidatedTransaction};
     use jsonrpsee::{RpcModule, server::Server};
     use reth_tasks::{RuntimeBuilder, RuntimeConfig, TokioConfig};
+    use reth_transaction_pool::noop::NoopTransactionPool;
     use serde_json::Value;
     use tokio::sync::oneshot;
 
@@ -348,6 +349,25 @@ mod tests {
         assert_eq!(report.task_failures, 0);
         assert!(!report.timed_out);
         assert_eq!(received.lock().unwrap().len(), 2, "both queued requests must be delivered");
+    }
+
+    /// An idle reader (empty pool, free queue) must still notice cancellation, so shutdown is not
+    /// left waiting on it.
+    #[tokio::test]
+    async fn shutdown_stops_an_idle_reader_promptly() {
+        let runtime = test_runtime();
+        let url: Url = "http://127.0.0.1:1".parse().expect("parses as a url");
+        let forwarding = TxForwardingService::new(TxForwardingConfig::new(vec![url]))
+            .spawn(NoopTransactionPool::<BasePooledTransaction>::new(), &runtime);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        let report = tokio::time::timeout(Duration::from_secs(2), forwarding.shutdown())
+            .await
+            .expect("shutdown must not wait on an idle reader");
+
+        assert_eq!(report.readers_completed, 1);
+        assert_eq!(report.forwarders_completed, 1);
+        assert!(!report.timed_out);
     }
 
     #[tokio::test]

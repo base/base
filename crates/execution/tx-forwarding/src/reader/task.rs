@@ -245,15 +245,20 @@ where
     /// Waiting for half rather than one slot means each snapshot fills a meaningful chunk of the
     /// queue instead of rebuilding the lanes for every request the forwarder takes. Returns
     /// `false` if the reader was cancelled or the forwarder is gone.
+    ///
+    /// Cancellation is checked before capacity, on every call: this is the reader loop's exit,
+    /// and an idle reader with a free queue must still take it.
     async fn wait_for_capacity(&self) -> bool {
         let wanted = self.sender.max_capacity().div_ceil(2);
-        while self.sender.capacity() < wanted {
+        loop {
             if self.cancel.is_cancelled() || self.sender.is_closed() {
                 return false;
             }
+            if self.sender.capacity() >= wanted {
+                return true;
+            }
             time::sleep(Self::CAPACITY_POLL_INTERVAL).await;
         }
-        !self.sender.is_closed()
     }
 
     /// Attempts to queue the transaction without waiting on a stale pool snapshot.
