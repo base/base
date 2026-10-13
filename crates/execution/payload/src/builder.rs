@@ -936,7 +936,7 @@ where
             }
 
             let tx_hash = *tx.hash();
-            let replay_independent = tx.eip8130_replay_id().is_some();
+            let replay_independent = tx.is_eip8130_nonce_free();
             if self.builder_config.rejection_cache.is_rejected(&tx_hash) {
                 RejectionCacheMetrics::hits().increment(1);
                 RejectionCacheMetrics::size()
