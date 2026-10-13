@@ -8,7 +8,7 @@ use tokio_tungstenite::{accept_hdr_async, tungstenite::Utf8Bytes};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
-use crate::{BroadcastLoop, FlashblockPosition, PositionedPayload, PublisherMetrics};
+use crate::{BroadcastLoop, PositionedPayload, PublisherMetrics, StreamPosition};
 
 /// Timeout for the WebSocket handshake.
 const HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
@@ -21,7 +21,7 @@ pub struct Listener {
     listener: TcpListener,
     metrics: Arc<dyn PublisherMetrics>,
     receiver: Receiver<PositionedPayload>,
-    ring_buffer: Arc<RwLock<RingBuffer<FlashblockPosition, Utf8Bytes>>>,
+    ring_buffer: Arc<RwLock<RingBuffer<StreamPosition, Utf8Bytes>>>,
     cancel: CancellationToken,
 }
 
@@ -39,7 +39,7 @@ impl Listener {
         listener: TcpListener,
         metrics: Arc<dyn PublisherMetrics>,
         receiver: Receiver<PositionedPayload>,
-        ring_buffer: Arc<RwLock<RingBuffer<FlashblockPosition, Utf8Bytes>>>,
+        ring_buffer: Arc<RwLock<RingBuffer<StreamPosition, Utf8Bytes>>>,
         cancel: CancellationToken,
     ) -> Self {
         Self { listener, metrics, receiver, ring_buffer, cancel }
@@ -102,7 +102,7 @@ impl Listener {
                             debug!(
                                 peer_addr = %peer_addr,
                                 block_number = pos.block_number,
-                                flashblock_index = pos.flashblock_index,
+                                index = pos.index,
                                 "Client requesting replay"
                             );
                         }
@@ -132,8 +132,9 @@ impl Listener {
 }
 
 /// Parses `block_number` and `flashblock_index` query parameters from a
-/// WebSocket upgrade request URI.
-fn parse_resume_position(request: &http::Request<()>) -> Option<FlashblockPosition> {
+/// WebSocket upgrade request URI. A missing `flashblock_index` defaults to `0`,
+/// which is the only index used by block stream messages.
+fn parse_resume_position(request: &http::Request<()>) -> Option<StreamPosition> {
     let query = request.uri().query()?;
     let mut block_number = None;
     let mut flashblock_index = None;
@@ -148,7 +149,7 @@ fn parse_resume_position(request: &http::Request<()>) -> Option<FlashblockPositi
         }
     }
 
-    Some(FlashblockPosition { block_number: block_number?, flashblock_index: flashblock_index? })
+    Some(StreamPosition { block_number: block_number?, index: flashblock_index.unwrap_or(0) })
 }
 
 #[cfg(test)]
@@ -223,11 +224,8 @@ mod tests {
 
         tokio::time::sleep(Duration::from_millis(50)).await;
 
-        tx.send((
-            FlashblockPosition { block_number: 1, flashblock_index: 0 },
-            Utf8Bytes::from("test-payload"),
-        ))
-        .unwrap();
+        tx.send((StreamPosition { block_number: 1, index: 0 }, Utf8Bytes::from("test-payload")))
+            .unwrap();
 
         let msg = client.next().await.unwrap().unwrap();
         assert_eq!(msg, Message::Text(Utf8Bytes::from("test-payload")));
@@ -275,11 +273,8 @@ mod tests {
 
         tokio::time::sleep(Duration::from_millis(50)).await;
 
-        tx.send((
-            FlashblockPosition { block_number: 1, flashblock_index: 0 },
-            Utf8Bytes::from("broadcast-msg"),
-        ))
-        .unwrap();
+        tx.send((StreamPosition { block_number: 1, index: 0 }, Utf8Bytes::from("broadcast-msg")))
+            .unwrap();
 
         let msg1 = client1.next().await.unwrap().unwrap();
         let msg2 = client2.next().await.unwrap().unwrap();
@@ -298,15 +293,18 @@ mod tests {
             .unwrap();
         assert_eq!(
             parse_resume_position(&req),
-            Some(FlashblockPosition { block_number: 100, flashblock_index: 3 })
+            Some(StreamPosition { block_number: 100, index: 3 })
         );
     }
 
     #[test]
-    fn parse_resume_missing_flashblock_index() {
+    fn parse_resume_missing_flashblock_index_defaults_to_zero() {
         let req =
             http::Request::builder().uri("ws://localhost/ws?block_number=100").body(()).unwrap();
-        assert_eq!(parse_resume_position(&req), None);
+        assert_eq!(
+            parse_resume_position(&req),
+            Some(StreamPosition { block_number: 100, index: 0 })
+        );
     }
 
     #[test]
@@ -330,7 +328,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             parse_resume_position(&req),
-            Some(FlashblockPosition { block_number: 42, flashblock_index: 0 })
+            Some(StreamPosition { block_number: 42, index: 0 })
         );
     }
 
@@ -345,18 +343,9 @@ mod tests {
         // Pre-populate the ring buffer with entries.
         {
             let mut buf = ring_buffer.write();
-            buf.push(
-                FlashblockPosition { block_number: 100, flashblock_index: 0 },
-                Utf8Bytes::from("msg-100-0"),
-            );
-            buf.push(
-                FlashblockPosition { block_number: 100, flashblock_index: 1 },
-                Utf8Bytes::from("msg-100-1"),
-            );
-            buf.push(
-                FlashblockPosition { block_number: 101, flashblock_index: 0 },
-                Utf8Bytes::from("msg-101-0"),
-            );
+            buf.push(StreamPosition { block_number: 100, index: 0 }, Utf8Bytes::from("msg-100-0"));
+            buf.push(StreamPosition { block_number: 100, index: 1 }, Utf8Bytes::from("msg-100-1"));
+            buf.push(StreamPosition { block_number: 101, index: 0 }, Utf8Bytes::from("msg-101-0"));
         }
 
         let handle = tokio::spawn({

@@ -63,6 +63,8 @@ pub struct InProcessBuilderConfig {
     pub metrics_port: Option<u16>,
     /// Whether to run both payload builders and cut over to basic at Denim.
     pub payload_builder_cutover: bool,
+    /// Whether to run only the basic payload builder.
+    pub basic_payload_builder: bool,
     /// Staged signature policy used by both validity-bearing RPC endpoints.
     pub validity_signature_mode: ValiditySignatureMode,
     /// Additional node extensions installed after the builder's built-in RPC wiring.
@@ -234,7 +236,8 @@ impl InProcessBuilder {
                     .with_components(
                         base_node.components().pool(pool_component(&rollup_args)).payload(
                             MultiplexingServiceBuilder::new(builder_config)
-                                .with_cutover_enabled(config.payload_builder_cutover),
+                                .with_cutover_enabled(config.payload_builder_cutover)
+                                .with_basic_only(config.basic_payload_builder),
                         ),
                     )
                     .with_add_ons(addons)

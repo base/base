@@ -78,9 +78,9 @@ impl Default for SubscriberOptions {
 /// Maintains a persistent websocket connection to an upstream server, automatically
 /// reconnecting with exponential backoff and monitoring liveness via ping/pong.
 ///
-/// Tracks the position of the last received flashblock message. On reconnect,
-/// appends `block_number` and `flashblock_index` query parameters to the URI
-/// so the upstream publisher can replay missed entries.
+/// Tracks the block number of the last received block message. On reconnect,
+/// appends a `block_number` query parameter to the URI so the upstream
+/// publisher can replay missed blocks.
 pub struct WebsocketSubscriber<F>
 where
     F: Fn(String) + Send + Sync + 'static,
@@ -90,7 +90,7 @@ where
     handler: F,
     backoff: ExponentialBackoff,
     options: SubscriberOptions,
-    last_position: Option<(u64, u64)>,
+    last_block_number: Option<u64>,
 }
 
 impl<F> std::fmt::Debug for WebsocketSubscriber<F>
@@ -101,7 +101,7 @@ where
         f.debug_struct("WebsocketSubscriber")
             .field("uri", &self.uri)
             .field("options", &self.options)
-            .field("last_position", &self.last_position)
+            .field("last_block_number", &self.last_block_number)
             .finish_non_exhaustive()
     }
 }
@@ -120,7 +120,7 @@ where
         };
 
         let uri_label = uri.to_string();
-        Self { uri, uri_label, handler, backoff, options, last_position: None }
+        Self { uri, uri_label, handler, backoff, options, last_block_number: None }
     }
 
     /// Runs the subscriber loop, reconnecting on failure until the token is cancelled.
@@ -175,18 +175,15 @@ where
         }
     }
 
-    /// Builds the connection URI, appending resume position query parameters
-    /// if a previous position is tracked.
+    /// Builds the connection URI, appending the resume block number if one is tracked.
     fn connect_uri(&self) -> Uri {
-        let Some((block_number, flashblock_index)) = self.last_position else {
+        let Some(block_number) = self.last_block_number else {
             return self.uri.clone();
         };
 
         let base = self.uri.to_string();
         let separator = if self.uri.query().is_some() { "&" } else { "?" };
-        let with_params = format!(
-            "{base}{separator}block_number={block_number}&flashblock_index={flashblock_index}"
-        );
+        let with_params = format!("{base}{separator}block_number={block_number}");
 
         with_params.parse().unwrap_or_else(|e| {
             warn!(error = %e, uri = %with_params, "Failed to parse reconnect URI, falling back to base URI");
@@ -299,8 +296,8 @@ where
                 // Update position tracking before calling handler so that if
                 // the connection drops immediately after, reconnection resumes
                 // from the latest delivered message rather than re-processing it.
-                if let Some(pos) = parse_flashblock_position(text.as_str()) {
-                    self.last_position = Some(pos);
+                if let Some(block_number) = parse_block_number(text.as_str()) {
+                    self.last_block_number = Some(block_number);
                 }
 
                 (self.handler)(text.to_string());
@@ -327,27 +324,17 @@ where
     }
 }
 
-/// Extracts `(block_number, flashblock_index)` from a flashblock JSON payload.
-///
-/// Reads `metadata.block_number` and the top-level `index` field, matching the
-/// wire format of [`FlashblocksPayloadV1`]. Returns `None` if the JSON is not
-/// a valid flashblock payload or either field is missing.
+/// Extracts the top-level `blockNumber` from a block stream JSON payload.
 ///
 /// Uses a minimal typed struct to avoid materializing the entire JSON tree.
 #[derive(serde::Deserialize)]
-struct PositionExtract {
-    index: u64,
-    metadata: MetadataExtract,
-}
-
-#[derive(serde::Deserialize)]
-struct MetadataExtract {
+#[serde(rename_all = "camelCase")]
+struct BlockNumberExtract {
     block_number: u64,
 }
 
-fn parse_flashblock_position(data: &str) -> Option<(u64, u64)> {
-    let extract: PositionExtract = serde_json::from_str(data).ok()?;
-    Some((extract.metadata.block_number, extract.index))
+fn parse_block_number(data: &str) -> Option<u64> {
+    serde_json::from_str::<BlockNumberExtract>(data).ok().map(|extract| extract.block_number)
 }
 
 #[cfg(test)]
@@ -610,26 +597,9 @@ mod tests {
     }
 
     #[test]
-    fn parse_flashblock_position_valid() {
-        let payload = r#"{"index":4,"metadata":{"block_number":123},"diff":{}}"#;
-        assert_eq!(parse_flashblock_position(payload), Some((123, 4)));
-    }
-
-    #[test]
-    fn parse_flashblock_position_missing_metadata() {
-        let payload = r#"{"index":0,"diff":{}}"#;
-        assert_eq!(parse_flashblock_position(payload), None);
-    }
-
-    #[test]
-    fn parse_flashblock_position_invalid_json() {
-        assert_eq!(parse_flashblock_position("not json"), None);
-    }
-
-    #[test]
-    fn parse_flashblock_position_missing_index() {
-        let payload = r#"{"metadata":{"block_number":123}}"#;
-        assert_eq!(parse_flashblock_position(payload), None);
+    fn parse_block_number_valid() {
+        let payload = r#"{"blockNumber":123,"header":{},"transactions":[],"receipts":[]}"#;
+        assert_eq!(parse_block_number(payload), Some(123));
     }
 
     #[test]
@@ -645,12 +615,9 @@ mod tests {
         let uri: Uri = "ws://localhost:9999/ws".parse().unwrap();
         let mut subscriber =
             WebsocketSubscriber::new(uri, |_: String| {}, SubscriberOptions::default());
-        subscriber.last_position = Some((100, 5));
+        subscriber.last_block_number = Some(100);
         let connect_uri = subscriber.connect_uri();
-        assert_eq!(
-            connect_uri.to_string(),
-            "ws://localhost:9999/ws?block_number=100&flashblock_index=5"
-        );
+        assert_eq!(connect_uri.to_string(), "ws://localhost:9999/ws?block_number=100");
     }
 
     #[test]
@@ -658,11 +625,8 @@ mod tests {
         let uri: Uri = "ws://localhost:9999/ws?token=abc".parse().unwrap();
         let mut subscriber =
             WebsocketSubscriber::new(uri, |_: String| {}, SubscriberOptions::default());
-        subscriber.last_position = Some((200, 3));
+        subscriber.last_block_number = Some(200);
         let connect_uri = subscriber.connect_uri();
-        assert_eq!(
-            connect_uri.to_string(),
-            "ws://localhost:9999/ws?token=abc&block_number=200&flashblock_index=3"
-        );
+        assert_eq!(connect_uri.to_string(), "ws://localhost:9999/ws?token=abc&block_number=200");
     }
 }

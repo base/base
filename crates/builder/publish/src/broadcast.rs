@@ -1,5 +1,5 @@
 use core::fmt::{Debug, Formatter};
-use std::{collections::HashSet, sync::Arc, time::Duration};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use base_ring_buffer::RingBuffer;
 use futures::{SinkExt, StreamExt};
@@ -15,7 +15,7 @@ use tokio_tungstenite::{
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
-use crate::{FlashblockPosition, PositionedPayload, PublisherMetrics};
+use crate::{PositionedPayload, PublisherMetrics, StreamPosition};
 
 /// Timeout for sending a single replay message during the replay phase.
 const REPLAY_SEND_TIMEOUT: Duration = Duration::from_secs(5);
@@ -30,8 +30,8 @@ pub struct BroadcastLoop {
     cancel: CancellationToken,
     metrics: Arc<dyn PublisherMetrics>,
     receiver: Receiver<PositionedPayload>,
-    ring_buffer: Arc<RwLock<RingBuffer<FlashblockPosition, Utf8Bytes>>>,
-    resume_from: Option<FlashblockPosition>,
+    ring_buffer: Arc<RwLock<RingBuffer<StreamPosition, Utf8Bytes>>>,
+    resume_from: Option<StreamPosition>,
 }
 
 impl Debug for BroadcastLoop {
@@ -47,8 +47,8 @@ impl BroadcastLoop {
         metrics: Arc<dyn PublisherMetrics>,
         cancel: CancellationToken,
         receiver: Receiver<PositionedPayload>,
-        ring_buffer: Arc<RwLock<RingBuffer<FlashblockPosition, Utf8Bytes>>>,
-        resume_from: Option<FlashblockPosition>,
+        ring_buffer: Arc<RwLock<RingBuffer<StreamPosition, Utf8Bytes>>>,
+        resume_from: Option<StreamPosition>,
     ) -> Self {
         Self { stream, metrics, cancel, receiver, ring_buffer, resume_from }
     }
@@ -130,10 +130,10 @@ impl BroadcastLoop {
     /// accumulating live messages since then.
     ///
     /// - **Phase 1**: Snapshot the ring buffer and send all entries after
-    ///   `cutoff`, tracking sent positions for dedup.
+    ///   `cutoff`, tracking sent messages for dedup.
     /// - **Phase 2**: Drain any messages that accumulated on the receiver
-    ///   during phase 1, deduplicating by position.
-    async fn replay(&mut self, cutoff: &FlashblockPosition) -> Result<(), ReplayError> {
+    ///   during phase 1, skipping messages identical to one already sent.
+    async fn replay(&mut self, cutoff: &StreamPosition) -> Result<(), ReplayError> {
         // Phase 1: snapshot ring buffer and replay.
         // `Utf8Bytes` is reference-counted (`bytes::Bytes`), so cloning is O(1)
         // per entry. Lock hold time is bounded by entry count, not payload size.
@@ -149,9 +149,9 @@ impl BroadcastLoop {
         if stale {
             self.metrics.on_replay_stale_position();
         }
-        let mut sent_positions = HashSet::with_capacity(snapshot.len());
+        let mut sent = HashMap::with_capacity(snapshot.len());
         for (pos, val) in snapshot {
-            sent_positions.insert(pos);
+            sent.insert(pos, val.clone());
             self.send_replay_message(val).await?;
         }
 
@@ -165,7 +165,8 @@ impl BroadcastLoop {
         loop {
             match self.receiver.try_recv() {
                 Ok((pos, data)) => {
-                    if sent_positions.insert(pos) {
+                    if sent.get(&pos) != Some(&data) {
+                        sent.insert(pos, data.clone());
                         pending.push(data);
                     }
                 }
@@ -282,11 +283,7 @@ mod tests {
 
         let (mut client, _) = connect_async(format!("ws://{addr}")).await.unwrap();
 
-        tx.send((
-            FlashblockPosition { block_number: 1, flashblock_index: 0 },
-            Utf8Bytes::from("hello"),
-        ))
-        .unwrap();
+        tx.send((StreamPosition { block_number: 1, index: 0 }, Utf8Bytes::from("hello"))).unwrap();
 
         let msg = client.next().await.unwrap().unwrap();
         assert_eq!(msg, Message::Text(Utf8Bytes::from("hello")));
@@ -368,7 +365,7 @@ mod tests {
 
         for i in 0..5 {
             let _ = tx.send((
-                FlashblockPosition { block_number: 1, flashblock_index: i },
+                StreamPosition { block_number: 1, index: i },
                 Utf8Bytes::from(format!("msg{i}")),
             ));
         }
@@ -418,22 +415,13 @@ mod tests {
 
         {
             let mut buf = ring_buffer.write();
-            buf.push(
-                FlashblockPosition { block_number: 1, flashblock_index: 0 },
-                Utf8Bytes::from("a"),
-            );
-            buf.push(
-                FlashblockPosition { block_number: 1, flashblock_index: 1 },
-                Utf8Bytes::from("b"),
-            );
-            buf.push(
-                FlashblockPosition { block_number: 2, flashblock_index: 0 },
-                Utf8Bytes::from("c"),
-            );
+            buf.push(StreamPosition { block_number: 1, index: 0 }, Utf8Bytes::from("a"));
+            buf.push(StreamPosition { block_number: 1, index: 1 }, Utf8Bytes::from("b"));
+            buf.push(StreamPosition { block_number: 2, index: 0 }, Utf8Bytes::from("c"));
         }
 
         // cutoff == latest entry: no entries to replay, not stale.
-        let resume_from = Some(FlashblockPosition { block_number: 2, flashblock_index: 0 });
+        let resume_from = Some(StreamPosition { block_number: 2, index: 0 });
 
         let server_handle = tokio::spawn({
             let metrics = Arc::clone(&metrics) as Arc<dyn crate::PublisherMetrics>;
@@ -473,23 +461,14 @@ mod tests {
 
         {
             let mut buf = ring_buffer.write();
-            buf.push(
-                FlashblockPosition { block_number: 1, flashblock_index: 0 },
-                Utf8Bytes::from("a"),
-            );
-            buf.push(
-                FlashblockPosition { block_number: 2, flashblock_index: 0 },
-                Utf8Bytes::from("b"),
-            );
-            buf.push(
-                FlashblockPosition { block_number: 3, flashblock_index: 0 },
-                Utf8Bytes::from("c"),
-            );
+            buf.push(StreamPosition { block_number: 1, index: 0 }, Utf8Bytes::from("a"));
+            buf.push(StreamPosition { block_number: 2, index: 0 }, Utf8Bytes::from("b"));
+            buf.push(StreamPosition { block_number: 3, index: 0 }, Utf8Bytes::from("c"));
             // oldest is now (2, 0); (1, 0) was evicted
         }
 
         // cutoff before oldest → stale
-        let resume_from = Some(FlashblockPosition { block_number: 1, flashblock_index: 0 });
+        let resume_from = Some(StreamPosition { block_number: 1, index: 0 });
 
         let server_handle = tokio::spawn({
             let metrics = Arc::clone(&metrics) as Arc<dyn crate::PublisherMetrics>;

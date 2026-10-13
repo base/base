@@ -7,10 +7,11 @@ use std::{collections::VecDeque, num::NonZeroUsize};
 ///
 /// # Ordering invariant
 ///
-/// Callers must push entries in non-decreasing position order.
-/// The lookup methods ([`entries_after`](Self::entries_after),
-/// [`positioned_entries_after`](Self::positioned_entries_after)) use binary
-/// search and will return incorrect results if this invariant is violated.
+/// Entries are kept in increasing position order: [`push`](Self::push) drops
+/// any entries at or after the pushed position. The lookup methods
+/// ([`entries_after`](Self::entries_after),
+/// [`positioned_entries_after`](Self::positioned_entries_after)) rely on this
+/// to binary search.
 #[derive(Debug, Clone)]
 pub struct RingBuffer<I, V> {
     entries: VecDeque<(I, V)>,
@@ -22,16 +23,6 @@ impl<I, V> RingBuffer<I, V> {
     pub fn new(capacity: NonZeroUsize) -> Self {
         let cap = capacity.get();
         Self { entries: VecDeque::with_capacity(cap), capacity: cap }
-    }
-
-    /// Appends an entry to the buffer.
-    ///
-    /// If the buffer is at capacity, the oldest entry is evicted first.
-    pub fn push(&mut self, position: I, value: V) {
-        if self.entries.len() == self.capacity {
-            self.entries.pop_front();
-        }
-        self.entries.push_back((position, value));
     }
 
     /// Returns the number of entries currently stored.
@@ -54,6 +45,20 @@ impl<I, V> RingBuffer<I, V>
 where
     I: Ord,
 {
+    /// Appends an entry to the buffer.
+    ///
+    /// Entries at or after `position` are dropped first, so re-publishing an
+    /// earlier position (for example after a reorg) replaces the stale entries.
+    /// If the buffer is at capacity, the oldest entry is then evicted.
+    pub fn push(&mut self, position: I, value: V) {
+        let keep = self.entries.partition_point(|(pos, _)| *pos < position);
+        self.entries.truncate(keep);
+        if self.entries.len() == self.capacity {
+            self.entries.pop_front();
+        }
+        self.entries.push_back((position, value));
+    }
+
     /// Returns an iterator over values for entries whose position is
     /// strictly greater than `cutoff`.
     ///
@@ -108,6 +113,19 @@ mod tests {
         assert_eq!(rb.len(), 3);
         let vals: Vec<_> = rb.entries_after(&0).collect();
         assert_eq!(vals, vec![&"b", &"c", &"d"]);
+    }
+
+    #[test]
+    fn push_of_earlier_position_replaces_later_entries() {
+        let mut rb = RingBuffer::new(cap(4));
+        rb.push(1u64, "a");
+        rb.push(2, "b");
+        rb.push(3, "c");
+        rb.push(2, "b2");
+
+        let vals: Vec<_> = rb.entries_after(&0).collect();
+        assert_eq!(vals, vec![&"a", &"b2"]);
+        assert_eq!(rb.entries_after(&1).collect::<Vec<_>>(), vec![&"b2"]);
     }
 
     #[test]

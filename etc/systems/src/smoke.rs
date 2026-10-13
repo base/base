@@ -398,6 +398,7 @@ pub struct SystemTestStackBuilder {
     tx_forwarding_config: Option<TxForwardingConfig>,
     validity_signature_mode: ValiditySignatureMode,
     payload_builder_cutover: bool,
+    basic_payload_builder: bool,
     verifier_l1_confs: u64,
     force_batch_submission: bool,
     client_consensus_mode: L2ClientConsensusMode,
@@ -535,6 +536,12 @@ impl SystemTestStackBuilder {
     /// Runs both payload builders and cuts selection from flashblocks to basic at Denim.
     pub const fn with_payload_builder_cutover(mut self) -> Self {
         self.payload_builder_cutover = true;
+        self
+    }
+
+    /// Runs only the basic payload builder, as after the Denim cutover is complete.
+    pub const fn with_basic_payload_builder(mut self) -> Self {
+        self.basic_payload_builder = true;
         self
     }
 
@@ -939,6 +946,7 @@ impl SystemTestStackBuilder {
             tx_forwarding_config: self.tx_forwarding_config,
             validity_signature_mode: self.validity_signature_mode,
             payload_builder_cutover: self.payload_builder_cutover,
+            basic_payload_builder: self.basic_payload_builder,
             verifier_l1_confs: self.verifier_l1_confs,
             force_batch_submission: self.force_batch_submission,
             client_consensus_mode: self.client_consensus_mode,

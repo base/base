@@ -11,17 +11,17 @@ use tracing::{Level, info, span};
 
 use crate::{Listener, PublisherMetrics, PublishingMetrics};
 
-/// Position key for a flashblock within a block.
+/// Position key for a published message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct FlashblockPosition {
+pub struct StreamPosition {
     /// The L2 block number.
     pub block_number: u64,
-    /// The index of the flashblock within the block.
-    pub flashblock_index: u64,
+    /// The index of the message within the block.
+    pub index: u64,
 }
 
 /// A broadcast payload paired with its position.
-pub type PositionedPayload = (FlashblockPosition, Utf8Bytes);
+pub type PositionedPayload = (StreamPosition, Utf8Bytes);
 
 /// Default broadcast channel capacity.
 const DEFAULT_CHANNEL_CAPACITY: usize = 100;
@@ -44,7 +44,7 @@ pub struct WebSocketPublisher {
     cancel: CancellationToken,
     pipe: broadcast::Sender<PositionedPayload>,
     metrics: Arc<dyn PublisherMetrics>,
-    ring_buffer: Arc<RwLock<RingBuffer<FlashblockPosition, Utf8Bytes>>>,
+    ring_buffer: Arc<RwLock<RingBuffer<StreamPosition, Utf8Bytes>>>,
 }
 
 impl WebSocketPublisher {
@@ -96,29 +96,35 @@ impl WebSocketPublisher {
     /// subscribers.
     ///
     /// The entry is stored in the ring buffer first, keyed by
-    /// `(block_number, flashblock_index)`, then broadcast to all receivers.
+    /// `(block_number, index)`, then broadcast to all receivers.
     ///
     /// Returns the byte size of the serialized payload on success.
     pub fn publish(
         &self,
         payload: &impl Serialize,
         block_number: u64,
-        flashblock_index: u64,
+        index: u64,
     ) -> Result<usize, serde_json::Error> {
+        Ok(self.publish_json(serde_json::to_string(payload)?, block_number, index))
+    }
+
+    /// Broadcasts an already-serialized JSON message, like [`Self::publish`].
+    ///
+    /// Returns the byte size of the message.
+    pub fn publish_json(&self, json: String, block_number: u64, index: u64) -> usize {
         let publish_span = span!(
             Level::INFO,
             "publish_flashblock",
             block_number,
-            flashblock_index,
+            index,
             byte_size = tracing::field::Empty,
         );
         let _publish_span_guard = publish_span.enter();
 
-        let json = serde_json::to_string(payload)?;
         let size = json.len();
         publish_span.record("byte_size", size);
         let utf8_bytes = Utf8Bytes::from(json);
-        let position = FlashblockPosition { block_number, flashblock_index };
+        let position = StreamPosition { block_number, index };
 
         {
             let mut buf = self.ring_buffer.write();
@@ -130,7 +136,7 @@ impl WebSocketPublisher {
         // for replay on future connections.
         let _ = self.pipe.send((position, utf8_bytes));
         self.metrics.on_payload_size(size);
-        Ok(size)
+        size
     }
 }
 
@@ -242,9 +248,8 @@ mod tests {
         let buf = publisher.ring_buffer.read();
         assert_eq!(buf.len(), 3);
 
-        let entries: Vec<_> = buf
-            .entries_after(&FlashblockPosition { block_number: 100, flashblock_index: 0 })
-            .collect();
+        let entries: Vec<_> =
+            buf.entries_after(&StreamPosition { block_number: 100, index: 0 }).collect();
         assert_eq!(entries.len(), 2);
     }
 }

@@ -13,6 +13,9 @@ extern crate alloc;
 mod block;
 pub use block::{BaseBlockResponse, BaseHeaderResponse};
 
+mod block_stream;
+pub use block_stream::BlockStreamPayloadV1;
+
 mod genesis;
 pub use genesis::{ChainInfo, FeeInfo, GenesisInfo, UpgradeInfo};
 

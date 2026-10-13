@@ -58,6 +58,7 @@ async fn standalone_sequencer_paces_historical_denim_activation() -> Result<()> 
         flashblocks_port: None,
         metrics_port: None,
         payload_builder_cutover: true,
+        basic_payload_builder: false,
         validity_signature_mode: ValiditySignatureMode::Off,
         extra_extensions: Vec::new(),
         block_time: Duration::from_millis(200),
