@@ -599,7 +599,16 @@ impl PendingBlocks {
             })
             .flatten();
 
-        let base_tx_result = BaseTxResult { inner: eth_tx_result, is_deposit, sender, depositor };
+        let eip8130_phase_statuses =
+            self.get_receipt(*tx_hash).and_then(|r| r.phase_statuses.clone()).unwrap_or_default();
+
+        let base_tx_result = BaseTxResult {
+            inner: eth_tx_result,
+            is_deposit,
+            sender,
+            depositor,
+            eip8130_phase_statuses,
+        };
 
         Some(base_tx_result)
     }

@@ -53,6 +53,7 @@ derive_more = { workspace = true, features = ["as_ref", "deref_mut", "try_from"]
 [dev-dependencies]
 rand.workspace = true
 similar-asserts.workspace = true
+k256 = { workspace = true, features = ["ecdsa"] }
 arbitrary = { workspace = true, features = ["derive"] }
 alloy-consensus = { workspace = true, features = ["arbitrary"] }
 alloy-primitives = { workspace = true, features = ["arbitrary"] }

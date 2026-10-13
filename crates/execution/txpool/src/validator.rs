@@ -105,6 +105,13 @@ struct Eip8130ValidationState {
 
 const LIMIT_CLASS_CACHE_CAPACITY: NonZeroUsize = NonZeroUsize::new(100_000).unwrap();
 
+// The pool must never admit a nonce-free transaction whose `valid_before` the
+// consensus inclusion check would reject.
+const _: () = assert!(
+    Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW <= NonceManagerStorage::NONCE_FREE_EXPIRY_WINDOW,
+    "mempool nonce-free expiry window exceeds the consensus inclusion window",
+);
+
 /// Cached lock state and trusted-delegation classification by account.
 #[derive(Debug)]
 pub struct LimitClassCache {
@@ -2752,25 +2759,6 @@ mod tests {
         };
         let signed = sign_eoa_eip8130(tx);
         assert!(validator.validate_eip8130_structural(&signed).is_ok());
-    }
-
-    /// The mempool pre-filter window must never exceed the authoritative,
-    /// consensus-critical on-chain inclusion window. If it did, the pool would
-    /// admit nonce-free transactions whose `expiry` the block-inclusion replay
-    /// check (`NonceManagerStorage::check_and_mark_expiring_nonce`) rejects,
-    /// wasting block space on transactions that can never land. See the note on
-    /// `Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW`.
-    #[test]
-    fn mempool_expiry_window_within_onchain_inclusion_window() {
-        const {
-            assert!(
-                Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW
-                    <= NonceManagerStorage::NONCE_FREE_EXPIRY_WINDOW,
-                "mempool expiry window exceeds the on-chain inclusion window; raising it is a \
-                 fork-level change (bump NONCE_FREE_EXPIRY_WINDOW and resize \
-                 REPLAY_BUFFER_CAPACITY)",
-            );
-        }
     }
 
     #[test]

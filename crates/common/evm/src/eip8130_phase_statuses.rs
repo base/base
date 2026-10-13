@@ -1,20 +1,23 @@
-//! Per-transaction handoff of EIP-8130 `phaseStatuses` from the executor to the
-//! receipt builder.
+//! Handoff of EIP-8130 `phaseStatuses` from the executor to the caller of
+//! [`Evm::transact`].
 //!
 //! The EIP-8130 executor computes a per-phase status array while running a
-//! transaction's `calls`, but the receipt builder ([`BaseReceiptBuilder`]) is
-//! generic over `E: Evm` and reth's block-executor / factory machinery offers no
-//! type-safe channel to pass extra per-transaction execution metadata to it (the
-//! receipt builder only receives the [`ExecutionResult`], whose `output` already
-//! carries the transaction's revert data and so cannot be repurposed).
+//! transaction's `calls`, but [`Evm::transact`] can only return a
+//! [`ResultAndState`], whose `output` already carries the transaction's revert
+//! data and so cannot be repurposed, and reth's block-executor / factory
+//! machinery is generic over `E: Evm` and offers no type-safe channel for extra
+//! per-transaction execution metadata.
 //!
-//! [`Eip8130PhaseStatuses`] bridges that gap with a thread-local slot. This is
-//! sound because block execution drives each transaction strictly as
-//! `execute → commit` on a single thread: the executor [`set`]s the statuses while
-//! running the transaction and the receipt builder [`take`]s them immediately
-//! afterward, with no other EIP-8130 transaction executing in between. The slot
-//! is cleared on read, and is only ever consulted when building an EIP-8130
-//! receipt.
+//! [`Eip8130PhaseStatuses`] bridges that gap with a thread-local slot whose
+//! lifetime is a single synchronous [`Evm::transact`] call: the executor
+//! [`set`]s the statuses as the last step of executing the transaction, and the
+//! code that called `transact` must [`take`] them on the same thread as soon as
+//! the call returns, before executing anything else. From there the statuses
+//! travel explicitly with the execution result
+//! ([`BaseTxResult::eip8130_phase_statuses`]) and are passed to the receipt
+//! builder ([`BaseReceiptBuilder::build_receipt`]), so the receipt may be built
+//! on a different thread from the one that executed the transaction. The receipt
+//! builder never reads the slot.
 //!
 //! # Panic safety
 //!
@@ -27,8 +30,10 @@
 //! transaction is discarded before the current one runs, and `set` publishes the
 //! current statuses as `execute`'s last step.
 //!
-//! [`BaseReceiptBuilder`]: crate::BaseReceiptBuilder
-//! [`ExecutionResult`]: revm::context_interface::result::ExecutionResult
+//! [`Evm::transact`]: alloy_evm::Evm::transact
+//! [`ResultAndState`]: revm::context_interface::result::ResultAndState
+//! [`BaseTxResult::eip8130_phase_statuses`]: crate::BaseTxResult::eip8130_phase_statuses
+//! [`BaseReceiptBuilder::build_receipt`]: crate::BaseReceiptBuilder::build_receipt
 //! [`set`]: Eip8130PhaseStatuses::set
 //! [`take`]: Eip8130PhaseStatuses::take
 //! [`clear`]: Eip8130PhaseStatuses::clear
@@ -38,12 +43,12 @@ use alloc::vec::Vec;
 #[cfg(feature = "std")]
 std::thread_local! {
     /// Per-thread slot holding the most recently executed EIP-8130 transaction's
-    /// per-phase statuses, awaiting consumption by the receipt builder.
+    /// per-phase statuses, awaiting consumption by the caller of `Evm::transact`.
     static PHASE_STATUSES: core::cell::RefCell<Vec<u8>> = const { core::cell::RefCell::new(Vec::new()) };
 }
 
 /// Thread-local handoff for EIP-8130 per-phase statuses between the executor and
-/// the receipt builder. See the [module docs](self) for the safety rationale.
+/// the caller of `Evm::transact`. See the [module docs](self) for the contract.
 #[derive(Debug, Clone, Copy)]
 #[non_exhaustive]
 pub struct Eip8130PhaseStatuses;
@@ -66,8 +71,8 @@ impl Eip8130PhaseStatuses {
     pub const fn clear() {}
 
     /// Records the per-phase statuses of the EIP-8130 transaction just executed
-    /// on this thread, to be consumed by the next [`Self::take`] when its receipt
-    /// is built. No-op in `no_std` builds (where EIP-8130 execution is disabled).
+    /// on this thread, to be consumed by the next [`Self::take`] once `transact`
+    /// returns. No-op in `no_std` builds (where EIP-8130 execution is disabled).
     pub fn set(statuses: Vec<u8>) {
         #[cfg(feature = "std")]
         PHASE_STATUSES.with(|cell| *cell.borrow_mut() = statuses);

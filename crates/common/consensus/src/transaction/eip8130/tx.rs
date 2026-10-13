@@ -223,7 +223,11 @@ impl TxEip8130 {
         length_of_length(payload_len) + payload_len
     }
 
-    fn decode_calls(buf: &mut &[u8]) -> alloy_rlp::Result<Vec<Vec<Call>>> {
+    /// Decodes the `calls` phase list, rejecting more than
+    /// [`Eip8130Constants::MAX_CALL_PHASES_PER_TX`] phases before allocating
+    /// the excess. Every decoder of an EIP-8130 `calls` field must use this so
+    /// all wire formats accept the same transactions.
+    pub fn decode_calls(buf: &mut &[u8]) -> alloy_rlp::Result<Vec<Vec<Call>>> {
         let header = Header::decode(buf)?;
         if !header.list {
             return Err(alloy_rlp::Error::UnexpectedString);
