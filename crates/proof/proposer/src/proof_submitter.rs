@@ -624,6 +624,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn submit_discards_proof_with_wrong_intermediate_root_count() {
+        let output = Arc::new(MockOutputProposer::default());
+        let submitter = submitter(
+            Arc::clone(&output),
+            MockDisputeGameFactory::default(),
+            MockAggregateVerifier::default(),
+        );
+
+        let (aggregate_proposal, _) = proof_result(TEST_BLOCK_INTERVAL);
+        let result =
+            submitter.submit(&aggregate_proposal, &[], 0, TEST_BLOCK_INTERVAL, Address::ZERO).await;
+
+        assert!(matches!(
+            result,
+            Err(SubmitAction::Discard(ref error))
+                if error.to_string().contains("proof signed 0 intermediate root(s), the game needs 1")
+        ));
+        assert_eq!(*output.created.lock().unwrap(), 0);
+    }
+
+    #[tokio::test]
     async fn submit_discards_invalid_parent_game_create_error() {
         let output = Arc::new(MockOutputProposer::with_create_error(ProposerError::Submission(
             ProofSubmissionError::InvalidParentGame,
