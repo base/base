@@ -16,6 +16,8 @@ pub struct SnapshotBenchmarkResult {
     pub chain_id: u64,
     /// Selected interval between blocks, in milliseconds.
     pub block_interval_ms: u64,
+    /// Engine API persistence-backpressure threshold used by both snapshot nodes.
+    pub persistence_backpressure_threshold: u64,
     /// Immutable snapshot boundary block number.
     pub boundary_number: u64,
     /// Immutable snapshot boundary block hash.
@@ -215,6 +217,10 @@ impl SnapshotBenchmarkReportConfig {
             ("Scenario".to_string(), serde_json::Value::String(self.scenario.clone())),
             ("ChainId".to_string(), result.chain_id.into()),
             ("BlockTimeMilliseconds".to_string(), result.block_interval_ms.into()),
+            (
+                "PersistenceBackpressureThreshold".to_string(),
+                result.persistence_backpressure_threshold.into(),
+            ),
             ("NodeType".to_string(), serde_json::Value::String("base-reth-node".to_string())),
             ("TransactionPayload".to_string(), serde_json::Value::String(transaction_payload)),
             ("ClientVersion".to_string(), serde_json::Value::String(self.client_version.clone())),
@@ -332,6 +338,7 @@ mod tests {
         let result = SnapshotBenchmarkResult {
             chain_id: 8453,
             block_interval_ms: 200,
+            persistence_backpressure_threshold: 16,
             boundary_number: 9,
             boundary_hash: B256::ZERO,
             builder_rpc_url: "http://127.0.0.1:1".to_string(),
@@ -406,6 +413,7 @@ transactions:
         assert_eq!(metadata["runs"][0]["testConfig"]["Scenario"], "blake2f-200ms");
         assert!(metadata["runs"][0]["testConfig"].get("GasLimit").is_none());
         assert_eq!(metadata["runs"][0]["testConfig"]["TransactionPayload"], "blake2f");
+        assert_eq!(metadata["runs"][0]["testConfig"]["PersistenceBackpressureThreshold"], 16);
         assert_eq!(
             metadata["runs"][0]["result"]["artifacts"]["loadTestResult"],
             "load-test-result.json"

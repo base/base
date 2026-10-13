@@ -65,6 +65,26 @@ const VISUALIZER_METRICS: &[&str] = &[
     "reth_tree_root_sparse_trie_total_duration_histogram_avg",
 ];
 
+/// Persistence and pruning diagnostics retained in benchmark artifacts.
+///
+/// The persistence service runs the pruner on the same thread that saves blocks, so pruning time
+/// directly delays persistence and can trigger Engine API backpressure. `_sum_per_block` values
+/// sum to total seconds spent over the measured window.
+const PERSISTENCE_DIAGNOSTIC_METRICS: &[&str] = &[
+    "reth_blockchain_tree_in_mem_state_num_blocks",
+    "reth_consensus_engine_persistence_prune_before_duration_seconds_avg",
+    "reth_consensus_engine_persistence_prune_before_duration_seconds_sum_per_block",
+    "reth_consensus_engine_persistence_save_blocks_duration_seconds_sum_per_block",
+    "reth_pruner_duration_seconds_avg",
+    "reth_pruner_duration_seconds_sum_per_block",
+];
+
+/// Labeled per-segment pruner metric families retained in benchmark artifacts.
+const PERSISTENCE_DIAGNOSTIC_PREFIXES: &[&str] = &[
+    "reth_pruner_segments_duration_seconds_segment_",
+    "reth_pruner_segments_highest_pruned_block_segment_",
+];
+
 #[derive(Debug, Clone, Copy)]
 enum ScalarSample {
     Counter(f64),
@@ -174,6 +194,9 @@ impl PrometheusSnapshot {
                 Self::counter_delta(count, previous.and_then(|sample| sample.count.as_ref()));
             if count_delta > 0.0 {
                 metrics.insert(format!("{key}_avg"), sum_delta / count_delta);
+            }
+            if count_delta > 0.0 || sum_delta > 0.0 {
+                metrics.insert(format!("{key}_sum_per_block"), sum_delta / divisor);
             }
         }
         metrics
@@ -328,6 +351,8 @@ impl PrometheusBlockCollector {
     /// by `base/benchmark`'s `ChartGrid`, including its compatibility aliases.
     pub fn is_visualizer_metric(name: &str) -> bool {
         VISUALIZER_METRICS.contains(&name)
+            || PERSISTENCE_DIAGNOSTIC_METRICS.contains(&name)
+            || PERSISTENCE_DIAGNOSTIC_PREFIXES.iter().any(|prefix| name.starts_with(prefix))
     }
 }
 
@@ -367,6 +392,19 @@ mod tests {
         assert_eq!(delta["requests"], 3.0);
         assert_eq!(delta["build_duration_avg"], 3.0);
         assert_eq!(delta["queue"], 7.0);
+    }
+
+    #[test]
+    fn records_histogram_sums_per_block() {
+        let previous = PrometheusSnapshot::parse(
+            "# TYPE prune_duration summary\nprune_duration_sum 1\nprune_duration_count 1\n",
+        );
+        let current = PrometheusSnapshot::parse(
+            "# TYPE prune_duration summary\nprune_duration_sum 1.6\nprune_duration_count 3\n",
+        );
+        let delta = current.delta_for_blocks(&previous, 4);
+        assert!((delta["prune_duration_avg"] - 0.3).abs() < 1e-9);
+        assert!((delta["prune_duration_sum_per_block"] - 0.15).abs() < 1e-9);
     }
 
     #[test]
@@ -412,6 +450,15 @@ build_duration_count{stage="execution"} 4
         ));
         assert!(PrometheusBlockCollector::is_visualizer_metric(
             "reth_op_rbuilder_flashblock_count"
+        ));
+        assert!(PrometheusBlockCollector::is_visualizer_metric(
+            "reth_consensus_engine_persistence_prune_before_duration_seconds_sum_per_block"
+        ));
+        assert!(PrometheusBlockCollector::is_visualizer_metric(
+            "reth_pruner_segments_duration_seconds_segment_AccountHistory_avg"
+        ));
+        assert!(PrometheusBlockCollector::is_visualizer_metric(
+            "reth_blockchain_tree_in_mem_state_num_blocks"
         ));
         assert!(!PrometheusBlockCollector::is_visualizer_metric(
             "reth_base_builder_flashblock_gas_headroom_flashblock_index_1_avg"

@@ -188,6 +188,10 @@ pub struct SnapshotBenchmarkArgs {
     /// 1 Ggas for 200ms blocks.
     #[arg(long)]
     pub block_gas_limit: Option<NonZeroU64>,
+    /// Engine API persistence-backpressure threshold for both snapshot nodes. Defaults to 16
+    /// blocks for 2s blocks and 160 blocks for 200ms blocks.
+    #[arg(long)]
+    pub persistence_backpressure_threshold: Option<NonZeroU64>,
     /// Maximum time to wait for graceful shutdown after writing results. Zero terminates the
     /// process immediately because snapshot datadirs are disposable.
     #[arg(long, default_value_t = 0)]
@@ -958,6 +962,8 @@ impl SnapshotBenchmarkArgs {
         snapshot.block_interval = block_interval;
         snapshot.block_gas_limit = self.block_gas_limit.map(NonZeroU64::get);
         snapshot.eip1559_elasticity_override = Some(SNAPSHOT_BENCHMARK_EIP1559_ELASTICITY);
+        snapshot.persistence_backpressure_threshold =
+            self.persistence_backpressure_threshold.map(NonZeroU64::get);
         snapshot.prefund =
             Some(DevnetPrefund { address: funder_key.address(), amount: PREFUND_AMOUNT_WEI });
 
@@ -1134,6 +1140,7 @@ impl SnapshotBenchmarkArgs {
         let result = SnapshotBenchmarkResult {
             chain_id: stack.chain_id(),
             block_interval_ms: block_interval.duration().as_millis() as u64,
+            persistence_backpressure_threshold: stack.persistence_backpressure_threshold(),
             boundary_number: stack.boundary().head.number,
             boundary_hash: stack.boundary().head.hash,
             builder_rpc_url: builder_rpc.to_string(),
@@ -1294,6 +1301,7 @@ mod tests {
         assert!(args.run_id.is_none());
         assert!(args.client_version.is_none());
         assert!(args.block_gas_limit.is_none());
+        assert!(args.persistence_backpressure_threshold.is_none());
         assert_eq!(args.shutdown_timeout_seconds, 0);
     }
 
@@ -1320,6 +1328,8 @@ mod tests {
             "30",
             "--block-gas-limit",
             "12000000000",
+            "--persistence-backpressure-threshold",
+            "16",
         ]);
 
         let Some(BenchmarkCommand::Snapshot(args)) = cli.command else {
@@ -1328,6 +1338,7 @@ mod tests {
         assert_eq!(args.output_dir.to_string_lossy(), "result-dir");
         assert_eq!(args.run_id.as_deref(), Some("manual-run-id"));
         assert_eq!(args.block_gas_limit.map(NonZeroU64::get), Some(12_000_000_000));
+        assert_eq!(args.persistence_backpressure_threshold.map(NonZeroU64::get), Some(16));
         assert_eq!(args.shutdown_timeout_seconds, 30);
     }
 
