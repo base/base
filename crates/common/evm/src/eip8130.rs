@@ -239,8 +239,8 @@ impl Eip8130Executor {
     {
         // Discard any phase statuses a previous transaction may have leaked into
         // the thread-local slot (e.g. via a panic caught between its `set` and the
-        // receipt builder's `take`), so this transaction's receipt can only ever
-        // observe its own statuses. See [`Eip8130PhaseStatuses`] panic safety.
+        // `transact` caller's `take`), so this transaction's result can only ever
+        // carry its own statuses. See [`Eip8130PhaseStatuses`] panic safety.
         Eip8130PhaseStatuses::clear();
 
         // The signed envelope is cloned out of the context because the pipeline
@@ -415,15 +415,15 @@ impl Eip8130Executor {
         evm.ctx().local_mut().clear();
         evm.frame_stack().clear();
 
-        // Hand the per-phase statuses to the receipt builder, which runs on this
-        // same thread immediately after execution (see [`Eip8130PhaseStatuses`]).
-        // This is the only channel available: the receipt builder is generic over
-        // the EVM and the `ExecutionResult`'s `output` already carries the
-        // transaction's revert data. Published as the last step before returning —
-        // after the transaction is fully settled and committed — so neither a
-        // `settle_fees` error nor a panic in the journal teardown above can leave
-        // stale statuses in the slot for the next transaction; only the
-        // allocation-free result construction below runs before the builder's
+        // Hand the per-phase statuses to the caller of `Evm::transact`, which takes
+        // them on this thread as soon as the call returns and carries them with the
+        // execution result to the receipt builder (see [`Eip8130PhaseStatuses`]).
+        // `transact` can only return a `ResultAndState`, whose `output` already
+        // carries the transaction's revert data. Published as the last step before
+        // returning — after the transaction is fully settled and committed — so
+        // neither a `settle_fees` error nor a panic in the journal teardown above
+        // can leave stale statuses in the slot for the next transaction; only the
+        // allocation-free result construction below runs before the caller's
         // `take`.
         Eip8130PhaseStatuses::set(core::mem::take(&mut calls.phase_statuses));
 

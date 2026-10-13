@@ -1,7 +1,7 @@
 //! Abstraction over receipt building logic to allow plugging different primitive types into
 //! [`super::BaseBlockExecutor`].
 
-use alloc::boxed::Box;
+use alloc::{boxed::Box, vec::Vec};
 use core::fmt::Debug;
 
 use alloy_consensus::{Eip658Value, TransactionEnvelope};
@@ -21,11 +21,16 @@ pub trait BaseReceiptBuilder: Debug {
 
     /// Builds a receipt given a transaction and the result of the execution.
     ///
+    /// `eip8130_phase_statuses` are the per-call-phase statuses produced by executing an EIP-8130
+    /// transaction (see [`crate::BaseTxResult::eip8130_phase_statuses`]); they are empty for every
+    /// other transaction type.
+    ///
     /// Note: this method should return `Err` if the transaction is a deposit transaction. In that
     /// case, the `build_deposit_receipt` method will be called.
     fn build_receipt<'a, E: Evm>(
         &self,
         ctx: ReceiptBuilderCtx<'a, <Self::Transaction as TransactionEnvelope>::TxType, E>,
+        eip8130_phase_statuses: Vec<u8>,
     ) -> Result<
         Self::Receipt,
         ReceiptBuilderError<'a, <Self::Transaction as TransactionEnvelope>::TxType, E>,
@@ -47,6 +52,7 @@ impl BaseReceiptBuilder for AlloyReceiptBuilder {
     fn build_receipt<'a, E: Evm>(
         &self,
         ctx: ReceiptBuilderCtx<'a, OpTxType, E>,
+        _eip8130_phase_statuses: Vec<u8>,
     ) -> Result<Self::Receipt, ReceiptBuilderError<'a, OpTxType, E>> {
         match ctx.tx_type {
             OpTxType::Deposit => Err(Box::new(ctx)),
