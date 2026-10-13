@@ -11,7 +11,7 @@ use std::{
     time::Instant,
 };
 
-use alloy_primitives::{TxHash, U256};
+use alloy_primitives::{TxHash, U64, U256, Uint};
 use reth_transaction_pool::{PoolTransaction, Priority, TransactionOrdering, ValidPoolTransaction};
 
 use crate::{BasePooledTransaction, BasePooledTx, TimestampedTransaction};
@@ -91,9 +91,9 @@ impl<T> Default for BaseOrdering<T> {
 /// `tip` and `gas = 1`. A statically decoded coinbase tip uses that amount as
 /// `tip` and the transaction `gas_limit` as `gas`.
 ///
-/// Equality and ordering compare the bid by cross-multiplication, then fewer
-/// predicates. Distinct `(tip, gas)` pairs that represent the same ratio compare
-/// equal.
+/// Equality and ordering compare the bid by exact cross-multiplication, then fewer
+/// predicates, so the order is total for every `tip`. Distinct `(tip, gas)` pairs that
+/// represent the same ratio compare equal. A `gas` of `0` compares as `1`.
 #[derive(Debug, Clone, Copy)]
 pub struct UnifiedTipPriority {
     /// Numerator of the tip-per-gas bid.
@@ -137,11 +137,17 @@ impl PartialOrd for UnifiedTipPriority {
 
 impl Ord for UnifiedTipPriority {
     fn cmp(&self, other: &Self) -> Ordering {
-        // Saturate at U256::MAX so a pathological tip*gas product ranks as
-        // the highest bid instead of wrapping.
-        let left = self.tip.saturating_mul(U256::from(other.gas));
-        let right = other.tip.saturating_mul(U256::from(self.gas));
-        left.cmp(&right).then_with(|| self.predicates.cmp(&other.predicates))
+        // Priority-fee bids (gas 1) compare tips directly. Otherwise a U256 tip times a
+        // u64 gas always fits in 320 bits, so the cross-products are exact and never
+        // saturate; saturation would make equality non-transitive.
+        let bid = if self.gas <= 1 && other.gas <= 1 {
+            self.tip.cmp(&other.tip)
+        } else {
+            let product =
+                |tip: U256, gas: u64| -> Uint<320, 5> { tip.widening_mul(U64::from(gas.max(1))) };
+            product(self.tip, other.gas).cmp(&product(other.tip, self.gas))
+        };
+        bid.then_with(|| self.predicates.cmp(&other.predicates))
     }
 }
 
@@ -295,7 +301,7 @@ where
 #[cfg(test)]
 mod tests {
     use alloy_eips::eip2718::Encodable2718;
-    use alloy_primitives::{Address, Bytes, U256};
+    use alloy_primitives::{Address, Bytes, U256, U512};
     use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
     use base_common_chains::ChainConfig;
@@ -308,6 +314,7 @@ mod tests {
     use reth_transaction_pool::{
         CoinbaseTipOrdering, PoolTransaction, TransactionOrdering, test_utils::TransactionBuilder,
     };
+    use rstest::rstest;
 
     use super::*;
     use crate::{BasePooledTransaction, ValidityOperator, ValidityPredicate};
@@ -659,5 +666,86 @@ mod tests {
         let ordering = UnifiedTipOrdering::<BasePooledTransaction>::default();
         let tx = eip8130_pooled(10, 0, 21_000, Some(U256::from(42_000)));
         assert_eq!(ordering.priority(&tx, 20), Priority::None);
+    }
+    /// Bids by struct literal, so `gas == 0` reaches `cmp` without `new`'s clamp.
+    fn bid(tip: U256, gas: u64) -> UnifiedTipPriority {
+        UnifiedTipPriority { tip, gas, predicates: Reverse(0) }
+    }
+
+    /// `(2^64 - 1) * LARGEST_UNSATURATED = 2^256 - 1`: one more wei of tip overflows 256 bits
+    /// against `u64::MAX` gas, where saturating cross-products used to tie.
+    fn largest_unsaturated() -> U256 {
+        (U256::from(1) << 192) + (U256::from(1) << 128) + (U256::from(1) << 64) + U256::from(1)
+    }
+
+    #[rstest]
+    #[case::gas_one_compares_tips(bid(U256::from(2), 1), bid(U256::from(1), 1), Ordering::Greater)]
+    #[case::gas_one_max_tips(bid(U256::MAX, 1), bid(U256::MAX - U256::from(1), 1), Ordering::Greater)]
+    #[case::gas_zero_as_one(bid(U256::from(5), 0), bid(U256::from(5), 1), Ordering::Equal)]
+    #[case::gas_zero_ratio(bid(U256::from(1), 0), bid(U256::from(2), 1), Ordering::Less)]
+    #[case::equal_ratio(bid(U256::from(3), 2), bid(U256::from(6), 4), Ordering::Equal)]
+    #[case::coinbase_tip_vs_priority_fee(
+        bid(U256::from(63_000), 21_000),
+        bid(U256::from(2), 1),
+        Ordering::Greater
+    )]
+    #[case::largest_unsaturated_product(
+        bid(largest_unsaturated(), 1),
+        bid(U256::MAX, u64::MAX),
+        Ordering::Equal
+    )]
+    #[case::saturating_product(
+        bid(largest_unsaturated() + U256::from(1), 1),
+        bid(U256::MAX, u64::MAX),
+        Ordering::Greater
+    )]
+    #[case::both_products_saturate(
+        bid(U256::MAX / U256::from(100_000) + U256::from(1), 200_000),
+        bid(U256::MAX / U256::from(200_000) + U256::from(1), 300_000),
+        Ordering::Greater
+    )]
+    fn compares_bids_exactly(
+        #[case] left: UnifiedTipPriority,
+        #[case] right: UnifiedTipPriority,
+        #[case] expected: Ordering,
+    ) {
+        assert_eq!(left.cmp(&right), expected);
+        assert_eq!(right.cmp(&left), expected.reverse());
+    }
+
+    /// Matching an exact rational oracle on every pair makes the order total (transitive and
+    /// antisymmetric) over these values, including products on both sides of 2^256.
+    #[test]
+    fn ordering_matches_exact_ratio_oracle() {
+        let exact = |l: &UnifiedTipPriority, r: &UnifiedTipPriority| {
+            let product = |tip: U256, gas: u64| U512::from(tip) * U512::from(gas.max(1));
+            product(l.tip, r.gas)
+                .cmp(&product(r.tip, l.gas))
+                .then_with(|| l.predicates.cmp(&r.predicates))
+        };
+        let tips = [
+            U256::ZERO,
+            U256::from(1),
+            U256::from(3),
+            U256::from(6),
+            U256::from(u128::MAX),
+            U256::from(1) << 192,
+            largest_unsaturated(),
+            largest_unsaturated() + U256::from(1),
+            U256::MAX / U256::from(200_000) + U256::from(1),
+            U256::MAX / U256::from(100_000) + U256::from(1),
+            U256::MAX,
+        ];
+        let gases = [0, 1, 2, 4, 21_000, 100_000, 200_000, 300_000, u64::MAX];
+        let priorities: Vec<_> = tips
+            .iter()
+            .flat_map(|&tip| gases.iter().map(move |&gas| bid(tip, gas)))
+            .flat_map(|p| [p, UnifiedTipPriority { predicates: Reverse(1), ..p }])
+            .collect();
+        for l in &priorities {
+            for r in &priorities {
+                assert_eq!(l.cmp(r), exact(l, r), "{l:?} vs {r:?}");
+            }
+        }
     }
 }
