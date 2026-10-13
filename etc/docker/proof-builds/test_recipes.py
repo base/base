@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -55,6 +56,34 @@ class CheckoutTests(unittest.TestCase):
 
 
 class InstallTests(unittest.TestCase):
+    def test_linuxkit_requires_successful_download_and_checksum(self):
+        payload = b"linuxkit fixture\n"
+        checksum = hashlib.sha256(payload).hexdigest()
+        for failure, download_exit, digest, expected_exit in (
+            ("download", 37, checksum, 37),
+            ("checksum", 0, "0" * 64, 1),
+            ("valid", 0, checksum, 0),
+        ):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                script = root / "install.sh"
+                # Redirect only the install destination; keep the real checksum and chmod.
+                script.write_text((RECIPES / "install.sh").read_text().replace(
+                    "/usr/local/bin/linuxkit", "./linuxkit"))
+                wget = root / "wget"
+                wget.write_text("#!/bin/sh\nprintf 'linuxkit fixture\\n' > linuxkit\n"
+                                'exit "$DOWNLOAD_EXIT"\n')
+                wget.chmod(0o755)
+                env = dict(os.environ, PATH=f"{root}:{os.environ['PATH']}",
+                           DOWNLOAD_EXIT=str(download_exit), LINUXKIT_SHA256=digest)
+                result = run("/bin/sh", str(script), "linuxkit", cwd=root, env=env)
+                self.assertEqual(result.returncode, expected_exit, result.stderr)
+                self.assertEqual((root / "linuxkit").read_bytes(), payload)
+                self.assertEqual(bool((root / "linuxkit").stat().st_mode & 0o111),
+                                 failure == "valid")
+                if failure == "checksum":
+                    self.assertIn("FAILED", result.stdout)
+
     def test_failed_toolchain_fetch_cannot_run_installer(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
