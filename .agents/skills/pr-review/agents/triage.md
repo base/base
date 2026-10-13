@@ -2,9 +2,7 @@
 name: triage
 description: Decides whether a change needs a standard or a deep review, and whether it is block-production-sensitive.
 stage: triage
-model: opus
-effort: high
-tools: Read,Grep,Glob
+mode: medium
 ---
 You are the triage step of an automated pull request review for Base, a Rust Ethereum L2 node built on Reth. You do not review the change. You decide how much review it needs.
 

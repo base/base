@@ -90,8 +90,6 @@ jobs:
     concurrency:
       group: claude-review-${{ github.event.pull_request.number || github.event.issue.number }}
       cancel-in-progress: false
-    # Note: This job runs on the BaseRunnerGroup to be able to access LLM Gateway
-    # It will not work on other runners
     # Runs only for a request that the `authorize` job let through: a pull request that is opened or marked
     # ready (not a draft, not a fork: secrets and the runner group are unavailable to forks, and it has no
     # review yet), or a `/review` comment, alone or followed by a space or a line break, from a member of the
@@ -100,10 +98,9 @@ jobs:
     # `!cancelled()` is there so that a skipped `authorize` (a push, a draft, a fork) skips this job cleanly.
     if: >-
       !cancelled() && needs.authorize.result == 'success' && needs.authorize.outputs.allowed == 'true'
-    runs-on:
-      group: BaseRunnerGroup
-    # Agents have no time limit of their own, so this is the only bound. About 1 in 9 Opus calls takes 5-13
-    # minutes, and a deep review chains several calls after the slowest reviewer (vote, chair, final round),
+    runs-on: ubuntu-latest
+    # Agents have no time limit of their own, so this is the only bound. Some model calls are slow (minutes),
+    # and a deep review chains several calls after the slowest reviewer (vote, chair, final round),
     # so it needs room for a few slow ones. A run that is killed loses the summary, not the findings already posted.
     timeout-minutes: 30
     steps:
@@ -117,7 +114,7 @@ jobs:
             objects.githubusercontent.com:443
             registry.npmjs.org:443
             release-assets.githubusercontent.com:443
-            ${{ vars.LLM_GATEWAY_HOSTNAME }}:443
+            ampcode.com:443
 
       # Read the pull request from the API, not from the event: a comment event does not carry it, and the
       # head may have moved since a queued run was triggered. The comment text goes through the environment,
@@ -171,10 +168,10 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       # Nothing from the pull request is on disk yet, so this cannot be influenced by it.
-      - name: Install Claude Code
+      - name: Install the Amp CLI
         if: steps.pr.outputs.ok == 'true'
         working-directory: ${{ runner.temp }}
-        run: npm install --global @anthropic-ai/claude-code@2.1.293
+        run: npm install --global @ampcode/cli@0.0.1791864325-g52e626
 
       # Agents read the PR's files, so check out the PR head (not the default merge commit) to make the
       # line numbers they report match the diff that comments are anchored to. Do not leave the job
@@ -239,8 +236,7 @@ jobs:
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          ANTHROPIC_BASE_URL: https://${{ vars.LLM_GATEWAY_HOSTNAME }}
-          ANTHROPIC_API_KEY: ${{ secrets.LLM_GATEWAY_API_KEY }}
+          AMP_API_KEY: ${{ secrets.AMP_API_KEY }}
 
       - name: Upload review artifacts
         if: always() && steps.pr.outputs.ok == 'true'
@@ -252,7 +248,7 @@ jobs:
           if-no-files-found: ignore
 
   # Keeps the review comment honest after a push: rewrites one line to say how many commits came after the
-  # one that was reviewed, with a link to their diff. Runs no model and needs no gateway access.
+  # one that was reviewed, with a link to their diff. Runs no model and needs no Amp access.
   status:
     name: Update review status
     if: >-

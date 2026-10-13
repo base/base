@@ -16,6 +16,7 @@ from unittest import mock
 import diagnose
 import render
 import review
+import tools_server
 
 DIFF = """\
 diff --git a/src/a.rs b/src/a.rs
@@ -62,7 +63,7 @@ def comment(**overrides) -> dict:
 
 
 def write_agent(directory: Path, name: str, stage: str, extra: str = "") -> None:
-    (directory / f"{name}.md").write_text(f"---\nstage: {stage}\nmodel: m\n{extra}---\nPrompt.")
+    (directory / f"{name}.md").write_text(f"---\nstage: {stage}\nmode: low\n{extra}---\nPrompt.")
 
 
 class AgentTests(unittest.TestCase):
@@ -77,20 +78,24 @@ class AgentTests(unittest.TestCase):
     def test_parse_agent_reads_front_matter_and_prompt(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "x.md"
-            path.write_text("---\nstage: review\nwhen: deep, block-production\nmodel: m\n"
-                            "max_budget_usd: 2.5\n---\nDo the thing.\n")
+            path.write_text("---\nstage: review\nwhen: deep, block-production\nmode: high\n"
+                            "timeout_seconds: 90\n---\nDo the thing.\n")
             agent = review.parse_agent(path)
         self.assertEqual(agent.when, ("deep", "block-production"))
-        self.assertEqual((agent.model, agent.effort, agent.max_budget_usd), ("m", "high", 2.5))
+        self.assertEqual((agent.mode, agent.timeout_seconds), ("high", 90))
         self.assertEqual(agent.prompt, "Do the thing.")
 
     def test_parse_agent_rejects_bad_files(self) -> None:
         bad = {
             "no front matter": "just text",
-            "missing model": "---\nstage: review\n---\nx",
-            "bad stage": "---\nstage: nope\nmodel: m\n---\nx",
-            "bad when": "---\nstage: review\nwhen: sometimes\nmodel: m\n---\nx",
-            "when on triage": "---\nstage: triage\nwhen: deep\nmodel: m\n---\nx",
+            "missing mode": "---\nstage: review\n---\nx",
+            "unknown mode": "---\nstage: review\nmode: turbo\n---\nx",
+            "bad stage": "---\nstage: nope\nmode: low\n---\nx",
+            "bad when": "---\nstage: review\nwhen: sometimes\nmode: low\n---\nx",
+            "when on triage": "---\nstage: triage\nwhen: deep\nmode: low\n---\nx",
+            "retired model field": "---\nstage: review\nmode: low\nmodel: opus\n---\nx",
+            "retired effort field": "---\nstage: review\nmode: low\neffort: high\n---\nx",
+            "retired tools field": "---\nstage: review\nmode: low\ntools: Read\n---\nx",
         }
         for label, text in bad.items():
             with self.subTest(label), tempfile.TemporaryDirectory() as tmp:
@@ -629,8 +634,19 @@ class WorkflowTests(unittest.TestCase):
         comment_branch = script.split("if [ \"$EVENT\" = issue_comment ]; then", 1)[1].split("\n          else\n", 1)[0]
         self.assertNotIn("already has a review", comment_branch)
 
+    def test_no_job_uses_a_self_hosted_runner_or_the_llm_gateway(self) -> None:
+        text = self.text
+        for gone in ("BaseRunnerGroup", "LLM_GATEWAY", "ANTHROPIC", "claude-code"):
+            self.assertNotIn(gone, text)
+        self.assertNotIn("runs-on:\n      group", text)
+
+    def test_the_review_job_has_the_amp_key_and_may_reach_amp_and_nothing_else_new(self) -> None:
+        self.assertIn("AMP_API_KEY: ${{ secrets.AMP_API_KEY }}", self.review_job)
+        self.assertIn("ampcode.com:443", self.review_job)
+        self.assertRegex(self.review_job, r"npm install --global @ampcode/cli@[0-9][0-9a-z.-]+")  # pinned
+
     def test_the_gate_needs_no_secret_but_the_token_and_no_self_hosted_runner(self) -> None:
-        self.assertNotIn("LLM_GATEWAY", self.authorize_job)
+        self.assertNotIn("AMP_API_KEY", self.authorize_job)
         self.assertNotIn("BaseRunnerGroup", self.authorize_job)
         self.assertIn("runs-on: ubuntu-latest", self.authorize_job)
 
@@ -682,10 +698,10 @@ class WorkflowTests(unittest.TestCase):
         # A comment that is not a review request must not share a group with the review.
         self.assertNotIn("\nconcurrency:", self.text.split("jobs:", 1)[0])
 
-    def test_the_status_job_runs_no_model_and_needs_no_gateway_secret(self) -> None:
+    def test_the_status_job_runs_no_model_and_needs_no_amp_secret(self) -> None:
         self.assertIn("--refresh-status", self.status_job)
-        self.assertNotIn("LLM_GATEWAY", self.status_job)
-        self.assertNotIn("ANTHROPIC", self.status_job)
+        self.assertNotIn("AMP_API_KEY", self.status_job)
+        self.assertNotIn("ampcode.com", self.status_job)
         self.assertNotIn("npm install", self.status_job)
         self.assertIn("github.event.action == 'synchronize'", self.job_if(self.status_job))
 
@@ -701,8 +717,8 @@ class WorkflowTests(unittest.TestCase):
         # npm reads .npmrc and package.json from the working directory, so installing from inside a checkout of
         # the pull request would let it influence what is installed in a job that holds secrets.
         steps = self.step_order(self.review_job)
-        self.assertLess(steps.index("Install Claude Code"), steps.index("actions/checkout"))
-        install = self.review_job.split("- name: Install Claude Code\n", 1)[1].split("\n      - ", 1)[0]
+        self.assertLess(steps.index("Install the Amp CLI"), steps.index("actions/checkout"))
+        install = self.review_job.split("- name: Install the Amp CLI\n", 1)[1].split("\n      - ", 1)[0]
         self.assertIn("working-directory: ${{ runner.temp }}", install)
 
     def test_the_review_script_comes_from_the_default_branch_not_the_pull_requests_base(self) -> None:
@@ -950,134 +966,114 @@ class WorktreeTests(unittest.TestCase):
 
 
 class SetupFailureTests(unittest.TestCase):
-    """A contributor without the maintainers' gateway must be told what is wrong, in words, quickly."""
+    """A contributor with no Amp account, or no network, must be told what is wrong, in words, quickly."""
 
-    def raw(self, result: str, stdout: str | None = None) -> str:
-        return stdout if stdout is not None else json.dumps({"is_error": True, "result": result})
-
-    def explain(self, result: str, base_url: str | None = "https://gateway.example.com/v1") -> str:
-        with mock.patch.dict(os.environ, {"ANTHROPIC_BASE_URL": base_url or ""}, clear=False):
-            if base_url is None:
-                os.environ.pop("ANTHROPIC_BASE_URL", None)
-            return review.explain_model_failure(result) or ""
+    def explain(self, raw: str, url: str | None = "https://amp.example.com/") -> str:
+        env = {"AMP_URL": url} if url else {}
+        with mock.patch.dict(os.environ, env, clear=False):
+            if url is None:
+                os.environ.pop("AMP_URL", None)
+            return review.explain_amp_failure(raw) or ""
 
     def test_every_failure_the_cli_was_seen_to_print_has_a_specific_explanation(self) -> None:
-        # The first column is the CLI's own words, recorded from real runs against a fake server.
+        # The first column is Amp's own words, recorded from real runs.
         cases = {
-            "Not logged in · Please run /login": "is not signed in",
-            "Invalid API key · Fix external API key": "rejected your credentials",
-            "Failed to authenticate. API Error: 403 Your API key does not have permission to use the specified resource.":
-                "will not let your key use",
-            "Failed to authenticate. API Error: 403 litellm.PermissionDeniedError: Access denied to restricted model 'grok-4.7'":
-                "will not let your key use",
-            "There's an issue with the selected model (m404). It may not exist or you may not have access to it.":
-                "does not exist on",
-            "Credit balance is too low": "no usable credit",
-            "API Error: Connection refused — a firewall or proxy may be blocking it (ECONNREFUSED)": "connection was refused",
-            "API Error: Can't reach the API server — check your internet or DNS (ENOTFOUND)": "address does not resolve",
-            "API Error: 500 Internal server error. This is a server-side issue, usually temporary": "busy or having a problem",
-            "API Error: 529 Overloaded. This is a server-side issue, usually temporary": "busy or having a problem",
-            "API Error: Request rejected (429) · Number of request tokens has exceeded your per-minute rate limit":
+            "Error: Invalid or missing API key. Run 'amp login' to authenticate.": "no valid sign-in",
+            "Error: Cannot reach Amp servers. Are you offline?": "Can't connect to",
+            "Error: The --model flag is not enabled for your account.": "not allowed to do something",
+            "Error: Unexpected error inside Amp CLI. Run with AMP_DEBUG=1 to see detailed logs.":
                 "busy or having a problem",
+            "You have reached your usage limit": "no credit left",
+            "API Error: 429 rate limit exceeded": "busy or having a problem",
+            "unable to verify the first certificate": "certificate check",
         }
         for raw, expected in cases.items():
             with self.subTest(raw=raw[:60]):
                 self.assertIn(expected, self.explain(raw))
 
     def test_the_service_is_named_by_host_and_never_by_the_whole_url(self) -> None:
-        text = self.explain("API Error: Connection refused (ECONNREFUSED)", "https://user:s3cret@gw.internal:8443/v1?token=abc")
-        self.assertIn("gw.internal", text)
+        text = self.explain("Error: Cannot reach Amp servers.", "https://user:s3cret@amp.internal:8443/v1?token=abc")
+        self.assertIn("amp.internal", text)
         for secret in ("s3cret", "user:", "token=abc", "8443", "/v1"):
             self.assertNotIn(secret, text)
 
-    def test_without_a_gateway_the_anthropic_api_is_named(self) -> None:
-        self.assertIn("api.anthropic.com", self.explain("Invalid API key", None))
-        self.assertIn("gateway.example.com", self.explain("Invalid API key"))
+    def test_without_an_amp_url_ampcode_is_named(self) -> None:
+        self.assertIn("ampcode.com", self.explain("Error: Cannot reach Amp servers.", None))
+        self.assertIn("amp.example.com", self.explain("Error: Cannot reach Amp servers."))
 
-    def test_a_base_url_that_cannot_be_read_does_not_break_the_message(self) -> None:
+    def test_an_amp_url_that_cannot_be_read_does_not_break_the_message(self) -> None:
         for odd in ("not a url", "http://", "//", ":::", "http://[bad"):
             with self.subTest(url=odd):
-                self.assertTrue(diagnose.model_service_host(odd))
+                self.assertTrue(diagnose.amp_host(odd))
 
     def test_an_unknown_error_is_passed_through_not_swallowed(self) -> None:
         self.assertEqual(self.explain("The flux capacitor is misconfigured"), "")
-        self.assertIsNone(diagnose.explain_model_error("The flux capacitor is misconfigured"))
+        self.assertIsNone(diagnose.explain_amp_error("The flux capacitor is misconfigured"))
 
-    def test_the_credit_and_quota_rule_does_not_swallow_a_rate_limit(self) -> None:
+    def test_the_credit_rule_does_not_swallow_a_rate_limit(self) -> None:
         self.assertIn("busy", self.explain("API Error: 429 rate limit exceeded"))
-        self.assertIn("no usable credit", self.explain("Your credit balance is too low"))
+        self.assertIn("no credit left", self.explain("Your credit balance is too low"))
 
     def test_each_explanation_says_what_to_do_next(self) -> None:
-        for _, diagnosis in (*diagnose.MODEL_RULES, *diagnose.GITHUB_RULES):
+        for _, diagnosis in (*diagnose.AMP_RULES, *diagnose.GITHUB_RULES):
             with self.subTest(summary=diagnosis.summary[:50]):
                 self.assertGreater(len(diagnosis.next_step), 20)
 
-    def test_every_model_explanation_names_the_service_it_is_about(self) -> None:
+    def test_the_connection_and_sign_in_explanations_name_the_service(self) -> None:
         # "Can't connect to XYZ" is the point: a contributor needs to know which service, not just that one failed.
-        for _, diagnosis in diagnose.MODEL_RULES:
-            with self.subTest(summary=diagnosis.summary[:50]):
-                self.assertIn("{target}", diagnosis.summary)
+        for raw in ("Error: Cannot reach Amp servers.", "Error: Invalid or missing API key."):
+            with self.subTest(raw=raw):
+                self.assertIn("amp.example.com", self.explain(raw))
 
-    def test_a_missing_claude_cli_is_explained(self) -> None:
+    def test_a_missing_amp_cli_is_explained(self) -> None:
         with mock.patch.object(review.shutil, "which", return_value=None), self.assertRaises(review.SetupError) as caught:
             review.preflight()
         self.assertIn("not installed", str(caught.exception))
-        self.assertIn("claude", str(caught.exception))
+        self.assertIn("amp", str(caught.exception))
 
-    def preflight_with(self, auth_stdout: str, call: subprocess.CompletedProcess | Exception):
+    def preflight_with(self, outcome: subprocess.CompletedProcess | Exception):
         def fake_run(cmd, **kwargs):
-            if cmd[:3] == ["claude", "auth", "status"]:
-                return subprocess.CompletedProcess(cmd, 0, auth_stdout, "")
-            if isinstance(call, Exception):
-                raise call
-            return call
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome
 
-        with mock.patch.object(review.shutil, "which", return_value="/usr/bin/claude"), mock.patch.object(
+        with mock.patch.object(review.shutil, "which", return_value="/usr/bin/amp"), mock.patch.object(
                 review.subprocess, "run", side_effect=fake_run) as run:
             review.preflight()
         return run
 
-    def test_signed_out_is_reported_before_any_model_call(self) -> None:
-        calls: list[list[str]] = []
-
-        def fake_run(cmd, **kwargs):
-            calls.append(cmd)
-            return subprocess.CompletedProcess(cmd, 1, json.dumps({"loggedIn": False}), "")
-
-        with mock.patch.object(review.shutil, "which", return_value="/usr/bin/claude"), mock.patch.object(
-                review.subprocess, "run", side_effect=fake_run), self.assertRaises(review.SetupError) as caught:
-            review.preflight()
-        self.assertIn("not signed in", str(caught.exception))
-        self.assertIn("claude auth login", str(caught.exception))
-        self.assertEqual([c[:3] for c in calls], [["claude", "auth", "status"]])  # no paid call was made
-
-    def test_a_refused_connection_is_reported_by_the_preflight(self) -> None:
-        failure = subprocess.CompletedProcess(
-            [], 1, json.dumps({"is_error": True, "result": "API Error: Connection refused (ECONNREFUSED)"}), "")
+    def test_signed_out_is_reported_by_the_preflight(self) -> None:
+        failure = subprocess.CompletedProcess([], 1, "", "\x1b[?25hError: Invalid or missing API key. Run 'amp login'.")
         with self.assertRaises(review.SetupError) as caught:
-            self.preflight_with(json.dumps({"loggedIn": True}), failure)
-        self.assertIn("connection was refused", str(caught.exception))
+            self.preflight_with(failure)
+        self.assertIn("no valid sign-in", str(caught.exception))
+        self.assertIn("amp login", str(caught.exception))
+
+    def test_an_unreachable_service_is_reported_by_the_preflight(self) -> None:
+        failure = subprocess.CompletedProcess([], 1, "", "Error: Cannot reach Amp servers. Are you offline?")
+        with mock.patch.dict(os.environ, {"AMP_URL": "https://amp.example.com"}), \
+                self.assertRaises(review.SetupError) as caught:
+            self.preflight_with(failure)
+        self.assertIn("Can't connect to amp.example.com", str(caught.exception))
 
     def test_a_preflight_that_gets_no_answer_says_how_long_it_waited(self) -> None:
         with self.assertRaises(review.SetupError) as caught:
-            self.preflight_with(json.dumps({"loggedIn": True}), subprocess.TimeoutExpired("claude", 60))
+            self.preflight_with(subprocess.TimeoutExpired("amp", 30))
         self.assertIn(f"{review.PREFLIGHT_TIMEOUT_SECONDS} s", str(caught.exception))
 
     def test_an_error_we_do_not_recognise_still_names_the_service_and_shows_the_raw_text(self) -> None:
-        failure = subprocess.CompletedProcess([], 1, json.dumps({"is_error": True, "result": "Something odd happened"}), "")
-        with mock.patch.dict(os.environ, {"ANTHROPIC_BASE_URL": "https://gateway.example.com"}), \
+        failure = subprocess.CompletedProcess([], 1, "", "Something odd happened")
+        with mock.patch.dict(os.environ, {"AMP_URL": "https://amp.example.com"}), \
                 self.assertRaises(review.SetupError) as caught:
-            self.preflight_with(json.dumps({"loggedIn": True}), failure)
+            self.preflight_with(failure)
         self.assertIn("Something odd happened", str(caught.exception))
-        self.assertIn("gateway.example.com", str(caught.exception))
+        self.assertIn("amp.example.com", str(caught.exception))
 
-    def test_a_working_setup_passes_and_the_call_is_capped_and_cheap(self) -> None:
-        ok = subprocess.CompletedProcess([], 0, json.dumps({"is_error": False, "result": "ok"}), "")
-        run = self.preflight_with(json.dumps({"loggedIn": True}), ok)
-        call = next(c for c in run.call_args_list if c.args[0][:2] == ["claude", "-p"])
-        self.assertEqual(call.kwargs["env"]["CLAUDE_CODE_MAX_RETRIES"], "1")  # the CLI otherwise retries ~3 minutes
+    def test_a_working_setup_passes_and_the_check_runs_no_model(self) -> None:
+        run = self.preflight_with(subprocess.CompletedProcess([], 0, "Signed in as x", ""))
+        call = run.call_args
+        self.assertEqual(call.args[0], ["amp", "usage"])  # asks about the account; no model is called
         self.assertEqual(call.kwargs["timeout"], review.PREFLIGHT_TIMEOUT_SECONDS)
-        self.assertIn("--tools", call.args[0])
         self.assertNotIn("GH_TOKEN", call.kwargs["env"])
 
     def test_the_preflight_never_runs_for_a_posting_run_or_when_skipped(self) -> None:
@@ -1093,17 +1089,9 @@ class SetupFailureTests(unittest.TestCase):
             review.main(["--pr", "7"])
         pre.assert_called_once()
 
-    def test_the_preflight_probes_the_model_the_run_will_use(self) -> None:
-        for argv, expected in ((["--pr", "7"], "haiku"), (["--pr", "7", "--model", "sonnet"], "sonnet")):
-            with self.subTest(argv=argv), mock.patch.object(review, "preflight") as pre, mock.patch.object(
-                    review, "load_agents", return_value=[]), mock.patch.object(
-                    review, "pr_context", side_effect=review.ReviewError("stop")):
-                review.main(argv)
-            pre.assert_called_once_with(expected)
-
     def test_a_setup_problem_exits_with_its_own_status_and_no_traceback(self) -> None:
         with mock.patch.object(review, "load_agents", return_value=[]), mock.patch.object(
-                review, "preflight", side_effect=review.SetupError("The `claude` CLI is not installed.")), \
+                review, "preflight", side_effect=review.SetupError("The `amp` CLI is not installed.")), \
                 mock.patch.object(review, "log") as log:
             self.assertEqual(review.main(["--pr", "7"]), review.EXIT_SETUP)
         message = " ".join(str(c.args[0]) for c in log.call_args_list)
@@ -1111,6 +1099,11 @@ class SetupFailureTests(unittest.TestCase):
         self.assertIn("not installed", message)
         self.assertIn("Nothing was posted.", message)
         self.assertNotIn("Traceback", message)
+
+    def test_a_mode_can_be_chosen_for_every_agent(self) -> None:
+        self.assertEqual(review.parse_args(["--mode", "high"]).mode, "high")
+        with self.assertRaises(SystemExit), mock.patch.object(sys, "stderr"):
+            review.parse_args(["--mode", "turbo"])
 
     def test_a_github_failure_is_explained_with_the_service_named(self) -> None:
         cases = {
@@ -1531,16 +1524,15 @@ class LimitTests(unittest.TestCase):
     def test_a_limit_in_an_agent_file_is_still_honoured(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "x.md"
-            path.write_text("---\nstage: review\nmodel: m\ntimeout_seconds: 90\n---\nx")
+            path.write_text("---\nstage: review\nmode: low\ntimeout_seconds: 90\n---\nx")
             self.assertEqual(review.parse_agent(path).timeout_seconds, 90)
 
     def test_the_cli_is_run_without_a_timeout_when_the_agent_has_none(self) -> None:
-        agent = review.Agent("a", "review", ("always",), "m", "high", "Read", None, None, None, "p", Path("a.md"))
-        envelope = json.dumps({"is_error": False, "structured_output": {"findings": []}, "total_cost_usd": 0,
-                               "modelUsage": {"m": {}}})
-        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(review, "run", return_value=envelope) as run:
+        agent = review.Agent("a", "review", ("always",), "low", None, "p", Path("a.md"))
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
+                review, "run_amp_once", return_value=({"findings": []}, None)) as once:
             review.run_agent(agent, "p", Path(tmp), Path(tmp), None)
-        self.assertIsNone(run.call_args.kwargs["timeout"])
+        self.assertIsNone(once.call_args.args[0].timeout_seconds)
 
     def test_the_review_has_no_whole_run_budget(self) -> None:
         self.assertFalse(hasattr(review, "Budget"))
@@ -1558,9 +1550,9 @@ class LimitTests(unittest.TestCase):
                          [review.GH_TIMEOUT_SECONDS, review.GH_TIMEOUT_SECONDS])
 
     def test_agents_do_not_inherit_github_credentials(self) -> None:
-        with mock.patch.dict(os.environ, {"GH_TOKEN": "x", "GITHUB_TOKEN": "y", "ANTHROPIC_API_KEY": "z"}):
+        with mock.patch.dict(os.environ, {"GH_TOKEN": "x", "GITHUB_TOKEN": "y", "AMP_API_KEY": "z"}):
             env = review.agent_env()
-        self.assertEqual((env.get("GH_TOKEN"), env.get("GITHUB_TOKEN"), env.get("ANTHROPIC_API_KEY")),
+        self.assertEqual((env.get("GH_TOKEN"), env.get("GITHUB_TOKEN"), env.get("AMP_API_KEY")),
                          (None, None, "z"))
 
 
@@ -1579,42 +1571,86 @@ JOB_LIMIT_SECONDS = 30 * 60  # timeout-minutes in claude-review.yml; a test chec
 
 class AgentRunTests(unittest.TestCase):
     def agent(self, **overrides) -> review.Agent:
-        fields = dict(name="a", stage="review", when=("always",), model="m", effort="high", tools="Read",
-                      timeout_seconds=100, max_budget_usd=None, max_output_tokens=None, prompt="p",
+        fields = dict(name="a", stage="review", when=("always",), mode="medium", timeout_seconds=100, prompt="p",
                       path=Path("a.md"))
         return review.Agent(**{**fields, **overrides})
 
-    def envelope(self, **extra) -> str:
-        return json.dumps({"is_error": False, "structured_output": {"findings": []}, "total_cost_usd": 0.1,
-                           "modelUsage": {"resolved-model": {}}, **extra})
+    def amp_run(self, answer: dict | None = None, *, result: dict | None = None, thread: str = "T-1"):
+        """A stand-in for `run` that plays the part of `amp -x`: it records the command and, as the agent's
+        `submit` call would, writes the answer where the tools server was told to."""
+        seen: dict = {}
 
-    def call(self, agent: review.Agent, runs: list):
-        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(review, "run", side_effect=runs) as run:
-            result = review.run_agent(agent, "prompt", Path(tmp), Path(tmp), None)
-        return result, run
+        def fake_run(cmd, **kwargs):
+            seen["cmd"], seen["kwargs"] = cmd, kwargs
+            server = json.loads(cmd[cmd.index("--mcp-config") + 1])["review"]
+            seen["server"] = server
+            seen["settings"] = json.loads(Path(cmd[cmd.index("--settings-file") + 1]).read_text())
+            seen["schema"] = json.loads(Path(server["env"]["REVIEW_SCHEMA"]).read_text())
+            if answer is not None:
+                Path(server["env"]["REVIEW_OUT"]).write_text(json.dumps(answer))
+            event = result or {"type": "result", "subtype": "success", "is_error": False, "result": "done",
+                               "session_id": thread}
+            return json.dumps({"type": "system", "subtype": "init"}) + "\n" + json.dumps(event) + "\n"
 
-    def test_max_output_tokens_is_passed_through_settings_only_when_set(self) -> None:
-        _, run = self.call(self.agent(max_output_tokens=32000), [self.envelope()])
-        cmd = run.call_args.args[0]
-        settings = json.loads(cmd[cmd.index("--settings") + 1])
-        self.assertEqual(settings, {"env": {"CLAUDE_CODE_MAX_OUTPUT_TOKENS": "32000"}})
-        _, run = self.call(self.agent(), [self.envelope()])
-        self.assertNotIn("--settings", run.call_args.args[0])
+        return fake_run, seen
+
+    def call(self, agent: review.Agent, runs: list | None = None, answer: dict | None = None, **kwargs):
+        fake, seen = self.amp_run({"findings": []} if answer is None else answer)
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(review, "run", side_effect=runs or fake), \
+                mock.patch.object(review, "thread_usage", return_value=(["Some Model"], 0.1)):
+            result = review.run_agent(agent, "prompt", Path(tmp), Path(tmp), None, **kwargs)
+            seen["prompt"] = (Path(tmp) / f"{kwargs.get('label') or agent.name}.prompt.md").read_text()
+        return result, seen
+
+    def test_the_agent_gets_only_the_review_tools_and_nothing_from_the_pull_request(self) -> None:
+        _, seen = self.call(self.agent())
+        # Every other Amp tool (shell, edit, web, subagents) is off: only this server's tools are enabled.
+        self.assertEqual(seen["settings"]["amp.tools.enable"], ["mcp__review__*"])
+        self.assertEqual(list(json.loads(seen["cmd"][seen["cmd"].index("--mcp-config") + 1])), ["review"])
+        self.assertEqual(seen["settings"]["amp.updates.mode"], "disabled")
+        self.assertIn("--no-ide", seen["cmd"])
+        self.assertEqual(seen["cmd"][seen["cmd"].index("--mode") + 1], "medium")
+
+    def test_amp_runs_in_an_empty_directory_so_the_pull_requests_instructions_are_not_obeyed(self) -> None:
+        # Amp reads an AGENTS.md in its working directory and follows it (seen in a test), so that directory
+        # must not be the pull request's checkout. The tools server reads the checkout instead.
+        with tempfile.TemporaryDirectory() as tree:
+            fake, seen = self.amp_run({"findings": []})
+            with tempfile.TemporaryDirectory() as art, mock.patch.object(review, "run", side_effect=fake), \
+                    mock.patch.object(review, "thread_usage", return_value=([], None)):
+                review.run_agent(self.agent(), "p", Path(tree), Path(art), None)
+        self.assertNotEqual(Path(seen["kwargs"]["cwd"]).resolve(), Path(tree).resolve())
+        self.assertEqual(seen["server"]["env"]["REVIEW_ROOT"], tree)
+
+    def test_the_answer_is_the_submitted_one_and_the_schema_is_the_stages(self) -> None:
+        result, seen = self.call(self.agent(stage="triage"), answer={"depth": "standard"})
+        self.assertEqual(result, {"depth": "standard"})
+        self.assertEqual(seen["schema"], json.loads((review.SCHEMAS_DIR / "triage.json").read_text()))
+        _, seen = self.call(self.agent(stage="council"), schema="votes", label="m.vote")
+        self.assertEqual(seen["schema"], json.loads((review.SCHEMAS_DIR / "votes.json").read_text()))
 
     def test_agents_that_explore_are_told_to_work_fast_and_the_ones_that_judge_are_not(self) -> None:
         for stage in review.STAGES:
             with self.subTest(stage=stage):
-                _, run = self.call(self.agent(stage=stage), [self.envelope()])
-                cmd = run.call_args.args[0]
-                prompt = cmd[cmd.index("--append-system-prompt") + 1]
-                self.assertEqual("## Working fast" in prompt, stage in review.EXPLORING_STAGES)
+                _, seen = self.call(self.agent(stage=stage))
+                self.assertEqual("## Working fast" in seen["prompt"], stage in review.EXPLORING_STAGES)
 
     def test_a_ballot_is_not_capped_even_though_a_council_member_casts_it(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(review, "run", return_value=self.envelope()) as run:
-            review.run_agent(self.agent(stage="council"), "p", Path(tmp), Path(tmp), None,
-                             schema="votes", label="m.vote")
-        cmd = run.call_args.args[0]
-        self.assertNotIn("## Working fast", cmd[cmd.index("--append-system-prompt") + 1])
+        _, seen = self.call(self.agent(stage="council"), schema="votes", label="m.vote")
+        self.assertNotIn("## Working fast", seen["prompt"])
+
+    def test_every_agent_is_told_how_to_answer(self) -> None:
+        _, seen = self.call(self.agent())
+        self.assertIn("calling `submit` exactly once", seen["prompt"])
+
+    def test_no_prompt_names_a_tool_the_agent_does_not_have(self) -> None:
+        # Agents are given read_file, grep, glob and submit. A prompt that tells them to use `Read`, `Bash` or
+        # `git show` would send them looking for a tool that is not there.
+        for path in sorted((review.SKILL_DIR / "agents").glob("*.md")) + sorted((review.SKILL_DIR / "shared").glob("*.md")):
+            text = path.read_text()
+            for banned in ("`Read`", "`Grep`", "`Glob`", "`Bash`", "git show", "gh pr", "run `"):
+                with self.subTest(file=path.name, banned=banned):
+                    self.assertNotIn(banned, text)
 
     def test_a_cut_off_diff_names_the_files_it_lost(self) -> None:
         def file_diff(name: str) -> str:
@@ -1648,32 +1684,67 @@ class AgentRunTests(unittest.TestCase):
         # The guide must use the same words as the note that change_block adds to a cut-off diff.
         self.assertIn("cut off", text)
 
-    def test_pr_settings_are_never_loaded(self) -> None:
-        _, run = self.call(self.agent(), [self.envelope()])
-        cmd = run.call_args.args[0]
-        self.assertEqual(cmd[cmd.index("--setting-sources") + 1], "user")
-
-    def test_the_model_that_really_ran_is_recorded(self) -> None:
+    def test_the_models_that_really_ran_are_recorded(self) -> None:
         review.MODELS_RAN.clear()
-        self.call(self.agent(name="alias-agent", model="opus"), [self.envelope()])
-        self.assertEqual(review.MODELS_RAN["alias-agent"], "resolved-model")
+        self.call(self.agent(name="mode-agent", mode="high"))
+        self.assertEqual(review.MODELS_RAN["mode-agent"], "Some Model")
 
-    def test_an_empty_answer_is_retried_once(self) -> None:
-        empty = json.dumps({"is_error": False, "structured_output": None, "subtype": "success", "result": ""})
-        result, run = self.call(self.agent(), [empty, self.envelope()])
+    def test_when_the_models_cannot_be_read_the_mode_is_shown(self) -> None:
+        review.MODELS_RAN.clear()
+        fake, _ = self.amp_run({"findings": []})
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(review, "run", side_effect=fake), \
+                mock.patch.object(review, "thread_usage", return_value=([], None)):
+            review.run_agent(self.agent(name="x", mode="ultra"), "p", Path(tmp), Path(tmp), None)
+        self.assertEqual(review.MODELS_RAN["x"], "amp ultra")
+
+    def test_an_agent_that_ends_without_submitting_is_retried_once(self) -> None:
+        silent, _ = self.amp_run(None)
+        good, _ = self.amp_run({"findings": []})
+        calls = iter([silent, good])
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
+                review, "run", side_effect=lambda *a, **k: next(calls)(*a, **k)) as run, mock.patch.object(
+                review, "thread_usage", return_value=([], None)):
+            result = review.run_agent(self.agent(), "p", Path(tmp), Path(tmp), None)
         self.assertEqual(result, {"findings": []})
         self.assertEqual(run.call_count, review.AGENT_ATTEMPTS)
 
     def test_a_second_failure_is_raised(self) -> None:
-        empty = json.dumps({"is_error": False, "structured_output": None})
-        with self.assertRaises(review.ReviewError):
-            self.call(self.agent(), [empty, empty])
+        silent, _ = self.amp_run(None)
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(review, "run", side_effect=silent):
+            with self.assertRaises(review.ReviewError) as caught:
+                review.run_agent(self.agent(), "p", Path(tmp), Path(tmp), None)
+        self.assertIn("without submitting", str(caught.exception))
+
+    def test_a_run_amp_reports_as_failed_is_an_error_with_its_reason(self) -> None:
+        failed, _ = self.amp_run({"findings": []}, result={"type": "result", "is_error": True,
+                                                            "result": "the model was overloaded"})
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(review, "run", side_effect=failed):
+            with self.assertRaises(review.ReviewError) as caught:
+                review.run_agent(self.agent(), "p", Path(tmp), Path(tmp), None)
+        self.assertIn("overloaded", str(caught.exception))
 
     def test_failures_that_a_retry_cannot_fix_are_not_retried(self) -> None:
-        for reason in ("`claude` timed out after 5s", "API Error: 403 Access denied to restricted model",
-                       "Invalid model name passed in model=x"):
-            with self.subTest(reason=reason), self.assertRaises(review.ReviewError):
-                self.call(self.agent(), [review.ReviewError(reason), self.envelope()])
+        good, _ = self.amp_run({"findings": []})
+        for reason in ("`amp` timed out after 5s", "Error: Invalid or missing API key. Run 'amp login'",
+                       "Error: The --mode flag is not enabled for your account."):
+            with self.subTest(reason=reason), tempfile.TemporaryDirectory() as tmp, mock.patch.object(
+                    review, "run", side_effect=[review.ReviewError(reason), good]) as run:
+                with self.assertRaises(review.ReviewError):
+                    review.run_agent(self.agent(), "p", Path(tmp), Path(tmp), None)
+                self.assertEqual(run.call_count, 1)
+
+    def test_the_usage_report_is_read_for_models_and_cost(self) -> None:
+        report = ("# Thread Usage\n\n## T\n\nCost: $0.33\nTokens: 1\n\n## Models\n\n"
+                  "| Model | Requests | Input | Output | Cost |\n| --- | ---: | ---: | ---: | ---: |\n"
+                  "| GPT-6 Astra | 3 | 21,989 | 36 | $0.33 |\n| Opus 5.5 | 1 | 5 | 5 | $0.01 |\n\n## Model Routing\n")
+        with mock.patch.object(review, "run", return_value=report):
+            self.assertEqual(review.thread_usage("T-1"), (["GPT-6 Astra", "Opus 5.5"], 0.33))
+        with mock.patch.object(review, "run", side_effect=review.ReviewError("no")):
+            self.assertEqual(review.thread_usage("T-1"), ([], None))
+
+    def test_terminal_escape_codes_are_not_shown_in_a_failure(self) -> None:
+        done = subprocess.CompletedProcess([], 1, "", "\x1b[?25hError: Cannot reach Amp servers.\x1b[=0u")
+        self.assertEqual(review.describe_failure(done), "Error: Cannot reach Amp servers.")
 
     def test_a_failed_command_keeps_its_full_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1693,31 +1764,20 @@ class AgentRunTests(unittest.TestCase):
             p.name for p in review.SKILL_DIR.iterdir() if p.is_dir()}
         self.assertEqual(sorted(names & set(sys.stdlib_module_names)), [])
 
-    def test_max_output_tokens_is_read_from_the_agent_file(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "x.md"
-            path.write_text("---\nstage: review\nmodel: m\nmax_output_tokens: 32000\n---\nx")
-            self.assertEqual(review.parse_agent(path).max_output_tokens, 32000)
-        self.assertTrue(any(a.max_output_tokens for a in review.load_agents()), "a Gemini member needs one")
-
 
 class FailureReasonTests(unittest.TestCase):
     def result(self, stdout: str = "", stderr: str = ""):
         return mock.Mock(stdout=stdout, stderr=stderr)
 
-    def test_the_api_error_in_stdout_is_reported_not_the_model_warning(self) -> None:
-        reason = review.describe_failure(self.result(
-            stdout=json.dumps({"is_error": True, "result": "API Error: 403 Access denied to restricted model"}),
-            stderr='[claude-code:unrecognized_model] {"model":"grok-4.7"}'))
-        self.assertIn("403", reason)
-        self.assertNotIn("unrecognized_model", reason)
+    def test_a_json_result_is_reported_by_its_result_field(self) -> None:
+        reason = review.describe_failure(self.result(stdout=json.dumps({"is_error": True, "result": "overloaded"})))
+        self.assertEqual(reason, "overloaded")
 
     def test_plain_stderr_is_used_when_stdout_is_not_json(self) -> None:
         self.assertEqual(review.describe_failure(self.result(stdout="", stderr="gh: HTTP 502")), "gh: HTTP 502")
 
-    def test_the_warning_alone_is_better_than_nothing(self) -> None:
-        reason = review.describe_failure(self.result(stderr="[claude-code:unrecognized_model] x"))
-        self.assertTrue(reason)
+    def test_stdout_is_used_when_stderr_is_empty(self) -> None:
+        self.assertEqual(review.describe_failure(self.result(stdout="something odd")), "something odd")
 
 
 class FakeGh:
@@ -2034,13 +2094,13 @@ class PipelineFailureTests(unittest.TestCase):
         self.finding = {"title": "t", "severity": "major", "category": "safety", "confidence": "high",
                         "path": "src/a.rs", "line": 1, "explanation": "e"}
 
-    def fake_run_agent(self, agent, prompt, cwd, artifacts, model_override, *, schema=None, label=None,
+    def fake_run_agent(self, agent, prompt, cwd, artifacts, mode_override, *, schema=None, label=None,
                        **_: object) -> dict:
         label = label or agent.name
         self.calls.append(label)
         if label in self.failing:
             raise review.ReviewError(f"{label} broke")
-        review.MODELS_RAN[agent.name] = model_override or agent.model  # what the real run_agent records
+        review.MODELS_RAN[agent.name] = mode_override or agent.mode  # what the real run_agent records
         if agent.stage == "triage":
             return self.triage
         if schema == "votes":
@@ -2131,13 +2191,13 @@ class RoundTests(unittest.TestCase):
         self.finding = {"title": "f", "severity": "major", "category": "safety", "confidence": "high",
                         "path": "src/a.rs", "line": 1, "explanation": "e"}
 
-    def fake_run_agent(self, agent, prompt, cwd, artifacts, model_override, *, schema=None, label=None, **_):
+    def fake_run_agent(self, agent, prompt, cwd, artifacts, mode_override, *, schema=None, label=None, **_):
         label = label or agent.name
         if agent.stage == "decide" and label == "decide.review-general":
             self.release.set()  # the slow reviewer may finish once the first round has been attempted
         if label in self.broken:
             raise review.ReviewError(f"{label} broke")
-        review.MODELS_RAN[agent.name] = agent.model
+        review.MODELS_RAN[agent.name] = agent.mode
         if agent.stage == "triage":
             return {"depth": "standard", "block_production_sensitive": False, "reasoning": "r", "focus_areas": []}
         if agent.stage == "decide":
@@ -2347,10 +2407,145 @@ class RoundTests(unittest.TestCase):
         self.assertEqual(summary.count("Brand new"), 1)
         self.assertNotIn('"thread_id": "own"', prompts[-1])  # and the final decider is not asked about it
 
-    def test_the_decider_uses_a_fast_model_and_the_judging_agents_do_not(self) -> None:
-        models = {a.name: a.model for a in self.agents}
-        self.assertEqual(models["decide"], "sonnet")
-        self.assertEqual(models["council-chair"], "opus")  # it checks other models' claims against the code
+    def test_the_decider_runs_in_a_cheaper_mode_than_the_agents_that_judge_the_code(self) -> None:
+        modes = {a.name: review.MODES.index(a.mode) for a in self.agents}
+        self.assertLessEqual(modes["decide"], modes["council-chair"])  # the chair checks claims against the code
+        self.assertLessEqual(modes["decide"], modes["review-general"])
+
+
+class ToolsServerTests(unittest.TestCase):
+    """What an agent can and cannot do: read the repository, and answer through `submit`."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name) / "repo"
+        (self.root / "src").mkdir(parents=True)
+        (self.root / "src" / "a.rs").write_text("fn main() {}\nlet secret = 1;\n")
+        (self.root / ".git").mkdir()
+        (self.root / ".git" / "config").write_text("token = hunter2")
+        (Path(self.tmp.name) / "outside.txt").write_text("OUTSIDE-CONTENT-7731")
+        self.schema = json.loads((review.SCHEMAS_DIR / "review.json").read_text())
+        self.out = Path(self.tmp.name) / "answer.json"
+        self.tools = tools_server.Tools(self.root, self.schema, self.out)
+
+    def test_files_inside_the_repository_can_be_read(self) -> None:
+        text, error = self.tools.call("read_file", {"path": "src/a.rs"})
+        self.assertFalse(error)
+        self.assertIn("fn main", text)
+
+    def test_nothing_outside_the_repository_can_be_read(self) -> None:
+        (self.root / "link").symlink_to(Path(self.tmp.name) / "outside.txt")
+        for path in ("../outside.txt", "/etc/hostname", "link", "src/../../outside.txt"):
+            with self.subTest(path=path):
+                text, error = self.tools.call("read_file", {"path": path})
+                self.assertTrue(error)
+                self.assertNotIn("OUTSIDE-CONTENT-7731", text)
+
+    def test_gits_own_data_is_not_readable_or_searchable(self) -> None:
+        self.assertTrue(self.tools.call("read_file", {"path": ".git/config"})[1])
+        self.assertNotIn("hunter2", self.tools.call("grep", {"pattern": "hunter2"})[0])
+        self.assertNotIn(".git", self.tools.call("glob", {"pattern": "**/*"})[0])
+
+    def test_grep_and_glob_find_files(self) -> None:
+        subprocess.run(["git", "init", "-q"], cwd=self.root, check=True)
+        self.assertIn("src/a.rs:2:let secret", self.tools.call("grep", {"pattern": "secret"})[0])
+        self.assertEqual(self.tools.call("glob", {"pattern": "src/*.rs"})[0], "src/a.rs")
+        self.assertEqual(self.tools.call("grep", {"pattern": "zzz-nothing"})[0], "(no matches)")
+
+    def test_an_unknown_tool_or_bad_arguments_are_errors_not_crashes(self) -> None:
+        self.assertTrue(self.tools.call("shell", {"cmd": "id"})[1])
+        self.assertTrue(self.tools.call("read_file", {"nope": 1})[1])
+
+    def test_a_valid_answer_is_recorded_once(self) -> None:
+        answer = {"findings": []}
+        self.assertFalse(self.tools.call("submit", answer)[1])
+        self.assertEqual(json.loads(self.out.read_text()), answer)
+        self.assertTrue(self.tools.call("submit", {"findings": [{"x": 1}]})[1])  # a second answer is refused
+        self.assertEqual(json.loads(self.out.read_text()), answer)
+
+    def test_an_answer_that_does_not_fit_the_schema_is_refused_with_the_reason(self) -> None:
+        text, error = self.tools.call("submit", {"findings": "none"})
+        self.assertTrue(error)
+        self.assertIn("findings must be an array", text)
+        self.assertFalse(self.out.exists())
+        text, error = self.tools.call("submit", {})
+        self.assertIn("findings is required", text)
+        # and the agent may fix it and try again
+        self.assertFalse(self.tools.call("submit", {"findings": []})[1])
+
+    def test_every_checked_in_schema_accepts_a_good_answer_and_rejects_a_bad_one(self) -> None:
+        for path in sorted(review.SCHEMAS_DIR.glob("*.json")):
+            schema = json.loads(path.read_text())
+            with self.subTest(schema=path.name):
+                self.assertTrue(tools_server.validate("not an object", schema))
+                self.assertTrue(tools_server.validate({"unexpected_field_xyz": 1}, schema))
+
+    def test_the_validator_understands_every_keyword_the_schemas_use(self) -> None:
+        # A keyword it does not know would be ignored, so a bad answer would pass. The first real run failed
+        # because decide.json says `"type": ["string", "null"]`, which the validator could not read.
+        def keywords(node):
+            if isinstance(node, dict):
+                for key, child in node.items():
+                    if key == "properties":
+                        for sub in child.values():
+                            yield from keywords(sub)
+                    else:
+                        yield key
+                        if key in ("items", "additionalProperties"):
+                            yield from keywords(child)
+
+        for path in sorted(review.SCHEMAS_DIR.glob("*.json")):
+            with self.subTest(schema=path.name):
+                used = set(keywords(json.loads(path.read_text())))
+                self.assertEqual(used - tools_server.SUPPORTED_KEYWORDS, set())
+
+    def test_a_type_may_be_a_list_of_names(self) -> None:
+        schema = {"type": ["string", "null"]}
+        self.assertEqual(tools_server.validate("x", schema), [])
+        self.assertEqual(tools_server.validate(None, schema), [])
+        self.assertIn("a string or a null", " ".join(tools_server.validate(3, schema)))
+
+    def test_every_stage_accepts_a_minimal_answer(self) -> None:
+        # What an agent with nothing to report submits. A validator crash or an over-strict schema fails here.
+        minimal = {
+            "triage": {"depth": "standard", "block_production_sensitive": False, "reasoning": "r", "focus_areas": []},
+            "review": {"findings": []},
+            "decide": {"actions": [], "overview": None, "dropped": []},
+        }
+        for name, answer in minimal.items():
+            schema = json.loads((review.SCHEMAS_DIR / f"{name}.json").read_text())
+            with self.subTest(schema=name):
+                self.assertEqual(tools_server.validate(answer, schema), [])
+
+    def test_the_validator_checks_the_keywords_the_schemas_use(self) -> None:
+        schema = {"type": "object", "additionalProperties": False, "required": ["n", "k", "l"], "properties": {
+            "n": {"type": "integer", "minimum": 1}, "k": {"enum": ["a", "b"]},
+            "l": {"type": "array", "maxItems": 2, "items": {"type": "string"}}}}
+        self.assertEqual(tools_server.validate({"n": 1, "k": "a", "l": ["x"]}, schema), [])
+        for bad, expect in (({"n": 0, "k": "a", "l": []}, "at least 1"), ({"n": True, "k": "a", "l": []}, "integer"),
+                            ({"n": 1, "k": "z", "l": []}, "one of"), ({"n": 1, "k": "a", "l": ["x"] * 3}, "at most 2"),
+                            ({"n": 1, "k": "a", "l": [1]}, "string"), ({"n": 1, "k": "a", "l": [], "z": 1}, "not allowed")):
+            with self.subTest(bad=bad):
+                self.assertIn(expect, " ".join(tools_server.validate(bad, schema)))
+
+    def test_the_server_speaks_mcp_over_stdio(self) -> None:
+        env = {**os.environ, "REVIEW_ROOT": str(self.root), "REVIEW_OUT": str(self.out),
+               "REVIEW_SCHEMA": str(review.SCHEMAS_DIR / "review.json")}
+        requests = [{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-03-26"}},
+                    {"jsonrpc": "2.0", "method": "notifications/initialized"},
+                    {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+                    {"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+                     "params": {"name": "read_file", "arguments": {"path": "src/a.rs"}}},
+                    {"jsonrpc": "2.0", "id": 4, "method": "tools/call",
+                     "params": {"name": "submit", "arguments": {"findings": []}}}]
+        done = subprocess.run([sys.executable, str(review.TOOLS_SERVER)], input="\n".join(map(json.dumps, requests)),
+                              capture_output=True, text=True, env=env, timeout=30, check=True)
+        replies = {r["id"]: r for r in map(json.loads, done.stdout.splitlines())}
+        self.assertEqual(sorted(replies), [1, 2, 3, 4])  # the notification gets no reply
+        self.assertEqual([t["name"] for t in replies[2]["result"]["tools"]], ["read_file", "grep", "glob", "submit"])
+        self.assertIn("fn main", replies[3]["result"]["content"][0]["text"])
+        self.assertEqual(json.loads(self.out.read_text()), {"findings": []})
 
 
 if __name__ == "__main__":

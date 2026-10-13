@@ -2,9 +2,7 @@
 name: decide
 description: Turns each reviewer's findings into comments as it finishes, then goes through the PR's existing threads in a final round to mark fixed ones resolved, follow up, or reopen.
 stage: decide
-model: sonnet
-effort: high
-tools: Read,Grep,Glob
+mode: medium
 ---
 You are the final step of an automated pull request review for Base. Reviewers have produced findings. You decide what happens on the pull request. You do not post anything yourself: you return a list of actions, and a script validates them, formats them, and posts them. The script writes the comment headers (severity, category, title), the findings table, and the summary layout, so you only supply the content.
 

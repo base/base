@@ -17,8 +17,8 @@ existing threads, edits that mark a fixed thread as resolved (or undo that), and
 replacement summary comment. render.py turns actions into Markdown. The Actions token
 cannot resolve a review thread, so the bot edits its own comment instead.
 
-Only the Python standard library, the `claude` CLI, and (for PR mode) `gh` are
-required. Agents get read-only tools; this script does all the posting.
+Only the Python standard library, the `amp` CLI, and (for PR mode) `gh` are
+required. Agents get read-only tools (tools_server.py); this script does all the posting.
 """
 
 from __future__ import annotations
@@ -44,6 +44,7 @@ import diagnose
 import render
 
 SKILL_DIR = Path(__file__).resolve().parent
+TOOLS_SERVER = SKILL_DIR / "tools_server.py"
 AGENTS_DIR = SKILL_DIR / "agents"
 SCHEMAS_DIR = SKILL_DIR / "schemas"
 FINDING_GUIDE = SKILL_DIR / "shared" / "finding-guide.md"
@@ -55,6 +56,10 @@ BOT_LOGIN = "github-actions"
 BOT_COMMENT_JQ = 'select(.user.login == "github-actions[bot]" and .user.type == "Bot")'
 # Credentials that agents, which only read files, have no use for.
 SECRET_ENV = ("GH_TOKEN", "GITHUB_TOKEN")
+# Amp's agent modes, cheapest first. A mode picks the model, so this is how a file chooses one.
+MODES = ("low", "medium", "high", "ultra")
+# Front matter from before the move to Amp. Rejected by name, so an old file says what to change.
+RETIRED_FIELDS = ("model", "effort", "tools", "max_budget_usd", "max_output_tokens")
 
 # Agents have no time limit unless their file sets `timeout_seconds`: a slow answer is still an answer, and
 # findings are posted as each reviewer finishes. The CI job's own limit is the backstop.
@@ -62,7 +67,7 @@ SECRET_ENV = ("GH_TOKEN", "GITHUB_TOKEN")
 GH_TIMEOUT_SECONDS = 90
 AGENT_ATTEMPTS = 2
 # Failures that a second try cannot fix.
-NO_RETRY = ("timed out", "Access denied", "Invalid model name")
+NO_RETRY = ("timed out", "Invalid or missing API key", "not enabled for your account")
 
 MAX_DIFF_CHARS = 400_000
 MAX_COMMENT_CHARS = 2_000
@@ -100,11 +105,8 @@ def log(message: str) -> None:
     print(message, file=sys.stderr, flush=True)
 
 
-# How long one probe of the model service may take. A person waits on this, so it is short.
-PREFLIGHT_TIMEOUT_SECONDS = 60
-# The claude CLI retries a failing request for about three minutes (a bad key, a refused connection and an
-# unknown host all took 181-190 s to give up). A pre-flight that says so after two seconds is kinder.
-PREFLIGHT_ENV = {"CLAUDE_CODE_MAX_RETRIES": "1"}
+# How long the pre-flight may take. A person waits on this, so it is short.
+PREFLIGHT_TIMEOUT_SECONDS = 30
 
 
 class SetupError(ReviewError):
@@ -112,58 +114,47 @@ class SetupError(ReviewError):
     explained in plain words. It is not a bug in the review."""
 
 
-def model_target() -> str:
-    return diagnose.model_service_host(os.environ.get("ANTHROPIC_BASE_URL"))
+def amp_target() -> str:
+    return diagnose.amp_host(os.environ.get("AMP_URL"))
 
 
-def explain_model_failure(raw: str) -> str | None:
-    """The plain-language explanation of a raw model-service error, or None if it is not a known kind."""
-    found = diagnose.explain_model_error(raw)
-    return found.text(model_target()) if found else None
+def explain_amp_failure(raw: str) -> str | None:
+    """The plain-language explanation of a raw Amp error, or None if it is not a known kind."""
+    found = diagnose.explain_amp_error(raw)
+    return found.text(amp_target()) if found else None
 
 
-def preflight(model: str = "haiku") -> None:
-    """Check, before any real work, that the tools are installed and can reach the services.
+def preflight() -> None:
+    """Check, before any real work, that `amp` is installed, signed in, and can reach its service.
 
-    Raises SetupError with an explanation. It makes one tiny model call (about a cent) with retries capped,
-    so a wrong setting fails in seconds instead of after minutes of retries.
+    Raises SetupError with an explanation. `amp usage` asks the service about the account and runs no model, so
+    it costs nothing and fails in about a second, with a message for each way the setup can be wrong.
     """
-    if shutil.which("claude") is None:
-        raise SetupError("The `claude` CLI is not installed.\n  Install Claude Code "
-                         "(https://docs.claude.com/en/docs/claude-code), then run the review again.")
+    if shutil.which("amp") is None:
+        raise SetupError("The `amp` CLI is not installed.\n  Install it (https://ampcode.com/manual#install), "
+                         "then run the review again.")
     try:
-        auth = subprocess.run(["claude", "auth", "status"], capture_output=True, text=True, timeout=30,
-                              check=False)
-        signed_in = bool(json.loads(auth.stdout).get("loggedIn"))
-    except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError):
-        signed_in = True  # cannot tell; the call below will say
-    if not signed_in:
-        raise SetupError(diagnose.explain_model_error("not logged in").text(model_target()))  # type: ignore[union-attr]
-    try:
-        done = subprocess.run(
-            ["claude", "-p", "--model", model, "--effort", "low", "--tools", "", "--no-session-persistence",
-             "--output-format", "json"], input="Reply with the word ok.", capture_output=True, text=True,
-            timeout=PREFLIGHT_TIMEOUT_SECONDS, check=False, env={**agent_env(), **PREFLIGHT_ENV})
+        done = subprocess.run(["amp", "usage"], capture_output=True, text=True, timeout=PREFLIGHT_TIMEOUT_SECONDS,
+                              env=agent_env(), check=False)
     except subprocess.TimeoutExpired as exc:
-        raise SetupError(f"No answer from {model_target()} after {PREFLIGHT_TIMEOUT_SECONDS} s.\n  "
-                         f"Check your connection, VPN or proxy, and ANTHROPIC_BASE_URL.") from exc
-    raw = describe_failure(done)
-    try:
-        envelope = json.loads(done.stdout)
-    except json.JSONDecodeError:
-        envelope = {}
-    if done.returncode or envelope.get("is_error"):
-        explained = explain_model_failure(raw)
+        raise SetupError(f"No answer from {amp_target()} after {PREFLIGHT_TIMEOUT_SECONDS} s.\n  "
+                         f"Check your connection, VPN or proxy, and AMP_URL.") from exc
+    if done.returncode:
+        raw = describe_failure(done)
+        explained = explain_amp_failure(raw)
         if explained is None:
-            explained = f"The `claude` CLI could not reach the model service ({model_target()}).\n  {raw[:300]}"
+            explained = f"The `amp` CLI could not reach its service ({amp_target()}).\n  {raw[:300]}"
         raise SetupError(explained)
+
+
+ANSI = re.compile(r"\x1b\[[0-9;?<=]*[A-Za-z]")
 
 
 def describe_failure(result: subprocess.CompletedProcess) -> str:
     """Why a command failed.
 
-    The claude CLI reports API errors as JSON on stdout and prints only a harmless model warning on
-    stderr, so stderr alone would hide the real cause.
+    `amp` and `gh` write their errors to stderr, `amp` with terminal escape codes around them. A JSON result
+    with a `result` field (a failed `amp --stream-json` turn) is reported by that field.
     """
     try:
         envelope = json.loads(result.stdout)
@@ -171,8 +162,8 @@ def describe_failure(result: subprocess.CompletedProcess) -> str:
         envelope = None
     if isinstance(envelope, dict) and envelope.get("result"):
         return str(envelope["result"])[:1000]
-    stderr = "\n".join(ln for ln in result.stderr.splitlines() if not ln.startswith("[claude-code:")).strip()
-    return (stderr or result.stdout.strip() or result.stderr.strip())[:1000]
+    stderr = ANSI.sub("", result.stderr).strip()
+    return (stderr or ANSI.sub("", result.stdout).strip())[:1000]
 
 
 def run(cmd: list[str], *, input_text: str | None = None, cwd: Path | None = None,
@@ -215,12 +206,8 @@ class Agent:
     name: str
     stage: str
     when: tuple[str, ...]
-    model: str
-    effort: str
-    tools: str
+    mode: str
     timeout_seconds: int | None
-    max_budget_usd: float | None
-    max_output_tokens: int | None
     prompt: str
     path: Path
 
@@ -236,6 +223,10 @@ def parse_agent(path: Path) -> Agent:
         if not sep:
             raise ReviewError(f"{path}: bad front matter line {line!r}")
         fields[key.strip()] = value.strip()
+    for retired in RETIRED_FIELDS:
+        if retired in fields:
+            raise ReviewError(f"{path}: `{retired}` is no longer used. The review runs on Amp, where `mode:` "
+                              f"({', '.join(MODES)}) chooses the model and how hard it thinks")
     try:
         stage = fields["stage"]
         if stage not in STAGES:
@@ -246,16 +237,15 @@ def parse_agent(path: Path) -> Agent:
         for condition in when:
             if condition not in CONDITIONS:
                 raise ReviewError(f"{path}: when must be a comma list of {', '.join(CONDITIONS)}")
+        mode = fields["mode"]
+        if mode not in MODES:
+            raise ReviewError(f"{path}: mode must be one of {', '.join(MODES)}")
         return Agent(
             name=path.stem,
             stage=stage,
             when=when,
-            model=fields["model"],
-            effort=fields.get("effort", "high"),
-            tools=fields.get("tools", "Read,Grep,Glob"),
+            mode=mode,
             timeout_seconds=int(fields["timeout_seconds"]) if "timeout_seconds" in fields else None,
-            max_budget_usd=float(fields["max_budget_usd"]) if "max_budget_usd" in fields else None,
-            max_output_tokens=int(fields["max_output_tokens"]) if "max_output_tokens" in fields else None,
             prompt=match.group(2).strip(),
             path=path,
         )
@@ -301,73 +291,113 @@ def select_reviewers(agents: list[Agent], triage: dict[str, Any]) -> list[Agent]
 # The model each agent really ran on, by agent name, for the summary.
 MODELS_RAN: dict[str, str] = {}
 
+# Appended to every agent's prompt. The answer is a tool call, not text: the tool checks it against the stage's
+# schema and says what is wrong, so a malformed answer is fixed by the agent that wrote it.
+ANSWER_GUIDE = """## Tools and your answer
+
+You have four tools: `read_file`, `grep` and `glob` read the repository, and `submit` gives your answer. You \
+cannot run commands, change files, or reach the network. Give your answer by calling `submit` exactly once, \
+with the fields it asks for. Anything you write in a message is discarded. If `submit` reports a problem, fix \
+it and call `submit` again."""
+
 
 def agent_env() -> dict[str, str]:
     """The environment for agents: ours, minus GitHub credentials."""
     return {k: v for k, v in os.environ.items() if k not in SECRET_ENV}
 
 
-def run_claude_once(cmd: list[str], user_prompt: str, cwd: Path, timeout: int | None, artifacts: Path,
-                    label: str) -> tuple[dict[str, Any], dict[str, Any]]:
-    """One `claude` invocation: the JSON envelope and its structured output, or a ReviewError."""
-    raw = run(cmd, input_text=user_prompt, cwd=cwd, timeout=timeout, env=agent_env(),
-              failure_log=artifacts / f"{label}.failed.txt")
-    (artifacts / f"{label}.result.json").write_text(raw)
+def thread_usage(thread_id: str) -> tuple[list[str], float | None]:
+    """The models an Amp thread used and what it cost, from `amp threads usage`. Best effort: ([], None) if
+    it cannot be read, because a summary without the model names is better than a review that failed."""
     try:
-        envelope = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise ReviewError(f"{label}: claude did not return JSON") from exc
-    output = envelope.get("structured_output")
-    if envelope.get("is_error") or not isinstance(output, dict):
-        raise ReviewError(f"{label}: no structured output ({envelope.get('subtype')}): "
-                          f"{str(envelope.get('result'))[:500]}")
-    return envelope, output
+        text = ANSI.sub("", run(["amp", "threads", "usage", thread_id, "--details"], timeout=30,
+                                env=agent_env()))
+    except ReviewError:
+        return [], None
+    cost = re.search(r"^Cost: \$([0-9.]+)", text, re.MULTILINE)
+    models: list[str] = []
+    section = re.search(r"^## Models\n(.*?)(?=^## |\Z)", text, re.MULTILINE | re.DOTALL)
+    for line in (section.group(1).splitlines() if section else []):
+        cell = line.strip().strip("|").split("|")[0].strip()
+        if cell and cell != "Model" and not set(cell) <= set("-: "):
+            models.append(cell)
+    return models, float(cost.group(1)) if cost else None
 
 
-def run_agent(agent: Agent, user_prompt: str, cwd: Path, artifacts: Path, model_override: str | None,
+def run_amp_once(agent: Agent, mode: str, prompt: str, tree: Path, schema_path: Path, artifacts: Path,
+                 label: str) -> tuple[dict[str, Any], str | None]:
+    """One `amp` run: the agent's submitted answer and the id of its Amp thread, or a ReviewError.
+
+    The agent's only tools are the ones in tools_server.py, which reads `tree` and nothing else. `amp` itself
+    runs in an empty directory of its own, because it obeys an AGENTS.md in its working directory, and the
+    pull request's files must be data to the agent, not instructions.
+    """
+    with tempfile.TemporaryDirectory(prefix="pr-review-agent-") as scratch:
+        work = Path(scratch)
+        answer = work / "answer.json"
+        settings = work / "settings.json"
+        settings.write_text(json.dumps({"amp.tools.enable": ["mcp__review__*"], "amp.updates.mode": "disabled"}))
+        server = {"review": {"command": sys.executable, "args": [str(TOOLS_SERVER)],
+                             "env": {"REVIEW_ROOT": str(tree), "REVIEW_SCHEMA": str(schema_path),
+                                     "REVIEW_OUT": str(answer)}}}
+        cmd = ["amp", "-x", "--mode", mode, "--settings-file", str(settings), "--mcp-config", json.dumps(server),
+               "--no-ide", "--no-notifications", "--visibility", "private", "--label", "pr-review",
+               "--title", f"pr-review: {label}", "--stream-json"]
+        raw = run(cmd, input_text=prompt, cwd=work, timeout=agent.timeout_seconds, env=agent_env(),
+                  failure_log=artifacts / f"{label}.failed.txt")
+        (artifacts / f"{label}.result.jsonl").write_text(raw)
+        result = None
+        for line in raw.splitlines():
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(event, dict) and event.get("type") == "result":
+                result = event
+        thread = result.get("session_id") if result else None
+        if result is None or result.get("is_error"):
+            reason = str((result or {}).get("result") or "no result")[:500]
+            raise ReviewError(f"{label}: amp did not finish ({reason})")
+        if not answer.exists():
+            raise ReviewError(f"{label}: the agent ended without submitting an answer: "
+                              f"{str(result.get('result'))[:300]}")
+        output = json.loads(answer.read_text())
+        (artifacts / f"{label}.answer.json").write_text(json.dumps(output, indent=2))
+        return output, thread
+
+
+def run_agent(agent: Agent, user_prompt: str, cwd: Path, artifacts: Path, mode_override: str | None,
               *, schema: str | None = None, label: str | None = None) -> dict[str, Any]:
-    """Run one agent through the `claude` CLI and return its schema-validated output."""
+    """Run one agent through the `amp` CLI and return its schema-validated output. `cwd` is what it may read."""
     label = label or agent.name
-    schema_text = (SCHEMAS_DIR / f"{schema or SCHEMA_FOR_STAGE[agent.stage]}.json").read_text()
-    model = model_override or agent.model
+    schema_path = SCHEMAS_DIR / f"{schema or SCHEMA_FOR_STAGE[agent.stage]}.json"
+    mode = mode_override or agent.mode
     system_prompt = agent.prompt
     if agent.stage in GUIDE_STAGES:
         system_prompt += "\n\n" + FINDING_GUIDE.read_text().strip()
     if agent.stage in EXPLORING_STAGES and schema != "votes":
         # A ballot has to check every finding the other members reported, so it is not capped.
         system_prompt += "\n\n" + WORKING_GUIDE.read_text().strip()
-    (artifacts / f"{label}.prompt.md").write_text(
-        f"model: {model}\neffort: {agent.effort}\ntools: {agent.tools}\n\n"
-        f"# System prompt\n\n{system_prompt}\n\n# User prompt\n\n{user_prompt}\n")
-    cmd = [
-        "claude", "-p", "--model", model, "--effort", agent.effort, "--tools", agent.tools,
-        "--permission-mode", "dontAsk", "--permission-prompts", "none",
-        "--setting-sources", "user", "--no-session-persistence",
-        "--output-format", "json", "--json-schema", schema_text,
-        "--append-system-prompt", system_prompt,
-    ]
-    if agent.max_budget_usd is not None:
-        cmd += ["--max-budget-usd", str(agent.max_budget_usd)]
-    if agent.max_output_tokens is not None:
-        # The CLI asks for 128k output tokens, which some gateway models (Gemini) reject.
-        cmd += ["--settings", json.dumps({"env": {"CLAUDE_CODE_MAX_OUTPUT_TOKENS": str(agent.max_output_tokens)}})]
+    prompt = f"{system_prompt}\n\n{ANSWER_GUIDE}\n\n---\n\n{user_prompt}"
+    (artifacts / f"{label}.prompt.md").write_text(f"mode: {mode}\n\n{prompt}\n")
     started = time.monotonic()
-    # Some models now and then end without the structured answer, and gateways drop requests. One more
-    # try is cheap next to losing a council member; failures that a retry cannot fix are not retried.
+    # Some models now and then end without submitting, and a request can be dropped. One more try is cheap
+    # next to losing a council member; failures that a retry cannot fix are not retried.
     for _ in range(AGENT_ATTEMPTS - 1):
         try:
-            envelope, output = run_claude_once(cmd, user_prompt, cwd, agent.timeout_seconds, artifacts, label)
+            output, thread = run_amp_once(agent, mode, prompt, cwd, schema_path, artifacts, label)
             break
         except ReviewError as exc:
             if any(marker in str(exc) for marker in NO_RETRY):
                 raise
             log(f"  {label}: {exc}; trying once more")
     else:
-        envelope, output = run_claude_once(cmd, user_prompt, cwd, agent.timeout_seconds, artifacts, label)
-    # An alias such as `opus` is resolved by the CLI; record what actually ran.
-    ran = next(iter(envelope.get("modelUsage") or {}), model)
+        output, thread = run_amp_once(agent, mode, prompt, cwd, schema_path, artifacts, label)
+    # A mode is resolved by Amp to a model that changes over time; record the one that actually ran.
+    models, cost = thread_usage(thread) if thread else ([], None)
+    ran = ", ".join(models) or f"amp {mode}"
     MODELS_RAN[agent.name] = ran
-    log(f"  {label}: {ran}, {time.monotonic() - started:.0f}s, ${envelope.get('total_cost_usd', 0):.2f}")
+    log(f"  {label}: {ran}, {time.monotonic() - started:.0f}s" + (f", ${cost:.2f}" if cost is not None else ""))
     return output
 
 
@@ -1144,14 +1174,14 @@ class Outcome:
 
 
 def run_council(ctx: Context, triage: dict[str, Any], members: list[Agent], chair: Agent, cwd: Path,
-                artifacts: Path, model_override: str | None) -> tuple[dict[str, Any], dict[str, str], bool]:
+                artifacts: Path, mode_override: str | None) -> tuple[dict[str, Any], dict[str, str], bool]:
     """Members review, vote on each other's findings, and the chair merges.
 
     Returns the council's findings, the names of failures, and whether the chair ran.
     """
     prompt = review_prompt(ctx, triage)
     drafts, failed = run_parallel({
-        m.name: functools.partial(run_agent, m, prompt, cwd, artifacts, model_override) for m in members})
+        m.name: functools.partial(run_agent, m, prompt, cwd, artifacts, mode_override) for m in members})
     if not drafts:
         raise ReviewError("every council member failed")
     candidates = merge_candidates(drafts)
@@ -1162,7 +1192,7 @@ def run_council(ctx: Context, triage: dict[str, Any], members: list[Agent], chai
               and any(c["reported_by"] != m.name for c in candidates)]
     ballots, vote_failed = run_parallel({
         m.name: functools.partial(run_agent, m, ballot_prompt(ctx, triage, m.name, candidates), cwd,
-                                  artifacts, model_override, schema="votes", label=f"{m.name}.vote")
+                                  artifacts, mode_override, schema="votes", label=f"{m.name}.vote")
         for m in voters})
     failed.update({f"{name}.vote": why for name, why in vote_failed.items()})
     votes: dict[str, list[dict[str, Any]]] = {}
@@ -1174,7 +1204,7 @@ def run_council(ctx: Context, triage: dict[str, Any], members: list[Agent], chai
 
     try:
         merged = run_agent(chair, chair_prompt(ctx, triage, candidates, votes, list(failed)), cwd,
-                           artifacts, model_override)
+                           artifacts, mode_override)
     except ReviewError as exc:
         # Better to pass the unmerged findings on, flagged, than to lose the council's work.
         failed[chair.name] = str(exc)
@@ -1187,7 +1217,7 @@ def run_council(ctx: Context, triage: dict[str, Any], members: list[Agent], chai
 
 
 def run_pipeline(ctx: Context, agents: list[Agent], cwd: Path, artifacts: Path,
-                 model_override: str | None, post: bool = False) -> Outcome:
+                 mode_override: str | None, post: bool = False) -> Outcome:
     """Run triage and the reviewers, deciding and posting each reviewer's findings as it finishes.
 
     The reviewers and the council run in parallel. When one finishes, a decide round turns its findings
@@ -1207,7 +1237,7 @@ def run_pipeline(ctx: Context, agents: list[Agent], cwd: Path, artifacts: Path,
 
     log("Triage")
     try:
-        triage = run_agent(triage_agent, triage_prompt(ctx), cwd, artifacts, model_override)
+        triage = run_agent(triage_agent, triage_prompt(ctx), cwd, artifacts, mode_override)
     except ReviewError as exc:
         log(f"  triage failed ({exc}); running every reviewer")
         triage = {"depth": "deep", "block_production_sensitive": True, "focus_areas": [],
@@ -1220,10 +1250,10 @@ def run_pipeline(ctx: Context, agents: list[Agent], cwd: Path, artifacts: Path,
     log(f"Review: {', '.join(a.name for a in reviewers)}" + (" + council" if use_council else ""))
     prompt = review_prompt(ctx, triage)
     jobs: dict[str, Callable[[], Any]] = {
-        a.name: functools.partial(run_agent, a, prompt, cwd, artifacts, model_override) for a in reviewers}
+        a.name: functools.partial(run_agent, a, prompt, cwd, artifacts, mode_override) for a in reviewers}
     if council_chair:
         jobs["council"] = functools.partial(run_council, ctx, triage, members, council_chair, cwd, artifacts,
-                                            model_override)
+                                            mode_override)
 
     valid_lines = diff_new_lines(ctx.diff)
     plan = Plan()
@@ -1253,7 +1283,7 @@ def run_pipeline(ctx: Context, agents: list[Agent], cwd: Path, artifacts: Path,
         try:
             decision = run_agent(decide_agent, decide_prompt(ctx, triage, {name: output}, {}, final=False,
                                                              posted=[t for _, t in sorted(seen, key=str)]),
-                                 cwd, artifacts, model_override, label=f"decide.{name}")
+                                 cwd, artifacts, mode_override, label=f"decide.{name}")
         except ReviewError as exc:
             # The final round gets another chance at these.
             unposted[name] = output
@@ -1289,7 +1319,7 @@ def run_pipeline(ctx: Context, agents: list[Agent], cwd: Path, artifacts: Path,
     try:
         decision = run_agent(decide_agent, decide_prompt(ctx, triage, unposted, failed, final=True,
                                                          posted=[t for _, t in sorted(seen, key=str)]),
-                             cwd, artifacts, model_override)
+                             cwd, artifacts, mode_override)
     except ReviewError as exc:
         # The findings already went out in their own rounds. What is lost is the pass over the threads
         # and the overview, and the findings of any round that failed (they are in the artifacts).
@@ -1396,13 +1426,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--base", help="local mode: base ref (default: base/base remote's main)")
     parser.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY", DEFAULT_REPO))
     parser.add_argument("--skip-preflight", action="store_true",
-                        help="do not check first that the claude CLI can reach its service (a run with --post "
-                             "never does: it is CI's)")
+                        help="do not check first that the amp CLI is signed in and can reach its service (a run "
+                             "with --post never does: it is CI's)")
     parser.add_argument("--no-worktree", action="store_true",
                         help="with --pr: read the files from the current checkout even if it is not at the "
                              "pull request's head (by default a temporary worktree of the head is used)")
-    parser.add_argument("--model", default=os.environ.get("PR_REVIEW_MODEL"),
-                        help="use this model for every agent instead of the one in its file")
+    parser.add_argument("--mode", choices=MODES, default=os.environ.get("PR_REVIEW_MODE"),
+                        help="run every agent in this Amp mode instead of the one in its file")
     parser.add_argument("--agents-dir", type=Path, default=AGENTS_DIR)
     parser.add_argument("--artifacts-dir", type=Path, help="where to keep prompts and raw results")
     parser.add_argument("--json", action="store_true", help="print the decider's raw output as JSON")
@@ -1428,7 +1458,7 @@ def main(argv: list[str] | None = None) -> int:
         if not (args.skip_preflight or args.post):
             # A posting run is CI's, and CI has its own setup; a person running locally gets the check.
             log("Checking that the review can reach its services")
-            preflight(args.model or "haiku")
+            preflight()
         with contextlib.ExitStack() as stack:
             def checkout(head_sha: str) -> Path:
                 return stack.enter_context(pr_worktree(args.pr, args.repo, head_sha))
@@ -1438,7 +1468,7 @@ def main(argv: list[str] | None = None) -> int:
             artifacts = args.artifacts_dir or Path(tempfile.mkdtemp(prefix="pr-review-"))
             artifacts.mkdir(parents=True, exist_ok=True)
             cwd = ctx.tree or Path(git(["rev-parse", "--show-toplevel"]).strip())
-            outcome = run_pipeline(ctx, agents, cwd, artifacts, args.model, post=args.post)
+            outcome = run_pipeline(ctx, agents, cwd, artifacts, args.mode, post=args.post)
         # the worktree has been removed; nothing below needs the pull request's files
         plan = outcome.plan
         plan.summary = build_summary(outcome, plan, ctx)

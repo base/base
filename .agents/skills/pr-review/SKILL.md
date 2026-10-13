@@ -1,6 +1,6 @@
 ---
 name: pr-review
-description: "Runs Base's multi-model pull request review. Use it when you are addressing review comments, to check that every comment is properly addressed before you ask for another look (`just review`, `just review-pr`). Do not run it on every push: it is expensive and not needed. Also use it to change which models, prompts, reviewers, or comment formats the review uses."
+description: "Runs Base's multi-agent pull request review on Amp. Use it when you are addressing review comments, to check that every comment is properly addressed before you ask for another look (`just review`, `just review-pr`). Do not run it on every push: it is expensive and not needed. Also use it to change which models, prompts, reviewers, or comment formats the review uses."
 ---
 
 # PR review
@@ -33,16 +33,16 @@ Each reviewer's findings are decided and posted as soon as that reviewer finishe
 1. **triage** (`agents/triage.md`) reads the change and decides the depth, `standard` or `deep`, and whether the change is block-production-sensitive. Depth depends on how hard the change is to get right, not how many lines it touches.
 2. **review** runs every reviewer whose `when` matches the triage result (`review-general` always, `review-block-production` for block-production-sensitive changes).
 3. **council** runs only when triage says `deep`, alongside the reviewers:
-   1. Every `council-*` member reviews the whole change through its own lens (invariants, adversarial scenarios, design and conventions). The members run on models from different vendors on purpose.
+   1. Every `council-*` member reviews the whole change through its own lens (invariants, adversarial scenarios, design and conventions). Members run in different Amp modes, which Amp serves with models from different vendors.
    2. Each member then votes `confirm`, `reject`, or `unsure` on every finding the others reported, after checking it against the code.
    3. The `council-chair` merges the findings. Votes inform it, but it verifies a rejected finding itself rather than counting heads.
-4. **decide** (`agents/decide.md`) runs more than once per review, on a fast model:
+4. **decide** (`agents/decide.md`) runs more than once per review, in a cheaper mode:
    - **A findings round** per reviewer (and one for the council), as soon as it finishes. It turns that reviewer's findings into comments, drops the ones that are wrong or already covered, and replies where an open thread already covers a problem. It posts them straight away.
    - **The final round**, when everything has finished. It goes through every open bot thread: it marks a thread whose problem the push fixed as resolved, replies where the author answered or there is something new to say, and reopens a thread it marked resolved when the problem is back. It writes the overview.
 
    The script allows each round only its own actions (a findings round cannot resolve or reopen a thread; the final round can also comment, for a problem no existing thread can carry, such as a thread that cannot be reopened). It skips a problem an earlier round already posted, gives a thread at most one follow-up per run, treats the comments a run posts itself as new rather than as threads "open from earlier", and keeps the inline comments of all rounds under the cap of 20. If a round fails, the final round takes that reviewer's findings and the incomplete-review banner is cleared when it posts them.
 
-`review.py` validates the decider's actions against the diff and the thread list, then `render.py` formats and posts them. Agents never write to GitHub; they have only `Read`, `Grep`, and `Glob`.
+`review.py` validates the decider's actions against the diff and the thread list, then `render.py` formats and posts them. Agents never write to GitHub. Their only tools are `read_file`, `grep` and `glob` on the pull request's files, and `submit` (see "How agents run").
 
 ## What a comment looks like
 
@@ -68,32 +68,31 @@ The summary comment is rendered from the same structured data, so its layout doe
 
 To change how comments look, edit `render.py`. To change what they say, edit `shared/finding-guide.md` or the agent prompts. If you add a severity or category, change `render.py`, the `enum`s in `schemas/`, and the guide together; `test_review.py` checks that they agree.
 
-### Choosing the decider's model
+### How agents run
 
-The decider's work is mostly mechanical (turn findings into comments, compare open threads with the current code), and it runs several times per review, so it is the stage where a fast model pays off. It is also the stage that marks threads as fixed, so a weak model costs more here than anywhere: a wrong "resolved" hides a live problem.
+Each agent is one `amp -x` run (Amp's scripted "execute" mode) with a prompt on stdin and **nothing else**: `tools_server.py`, a small MCP server, is its only tool provider, and `amp.tools.enable` is set to match, so Amp's own shell, file-editing, web and subagent tools are all off.
 
-I replayed the decider prompt from a real CI run (25 threads, 4 of them open and unfixed) on several models. Opus resolved the one thread that was fixed. Results:
+| Tool | What it does |
+| --- | --- |
+| `read_file`, `grep`, `glob` | Read the pull request's files. Paths outside the checkout, and `.git`, are refused. |
+| `submit` | The agent's answer. It takes the stage's schema (`schemas/*.json`) as its arguments, checks them, and tells the agent what is wrong so it can fix them and call again. |
 
-| Model | Time | Result |
-| --- | --- | --- |
-| `opus` | 42 s | resolved the one fixed thread |
-| `sonnet` | 19-28 s (three runs) | the same decision every time |
-| `gpt-lts-luna` | 31 s | the same decision |
-| `gemini-3.5-flash` | 48 s | resolved nothing |
-| `claude-haiku-4-5-20251001` | 119 s | resolved 4 threads, 3 of which were not fixed |
+An agent does not "return" text: it calls `submit`, and the script reads the accepted answer. Anything else it writes is discarded.
 
-That is one prompt, so it shows that Haiku is unsafe for this job and that Sonnet is a reasonable choice, not that Sonnet is equal to Opus in general. Triage and the chair showed the same speed on Sonnet as on Opus (11-13 s), so they stay on Opus. To change the decider's model, edit `agents/decide.md` and replay a real prompt first (`/tmp`-style replays work from the `*.prompt.md` files kept in the artifacts).
+`amp` itself runs in an empty temporary directory, not in the checkout: Amp obeys an `AGENTS.md` in its working directory (a test showed it following one that said to start every reply with a made-up word), and the pull request's files must be data. The tools server reads the checkout instead. The agent's `amp` process has no `GH_TOKEN`, but it does have `AMP_API_KEY`, which it needs to run.
+
+Each run is an Amp thread, labelled `pr-review` and private to the account whose key ran it. `Details` of a run's models and cost come from `amp threads usage`.
 
 ## Run it locally
 
 ```bash
 just review                    # your branch vs. the main of the base/base remote; prints, posts nothing
 just review --base origin/main
-just review --model claude-sonnet-5-5   # use one model for every stage
+just review --mode low         # run every agent in the cheapest mode
 just review --artifacts-dir /tmp/review # keep the exact prompts and raw results
 ```
 
-It needs the `claude` CLI, signed in or with `ANTHROPIC_API_KEY` (and `ANTHROPIC_BASE_URL` if you use the LLM gateway), and, to review a pull request, the `gh` CLI signed in. Uncommitted changes to tracked files are included. A deep change runs the council and costs noticeably more than a standard one. Local runs have no existing threads, so the decider only chooses what to comment on.
+It needs the `amp` CLI signed in (`amp login`, or `AMP_API_KEY`), and, to review a pull request, the `gh` CLI signed in. Uncommitted changes to tracked files are included. A deep change runs the council and costs noticeably more than a standard one. Local runs have no existing threads, so the decider only chooses what to comment on.
 
 To preview what CI would do on an open PR, run `just review --pr 1234`. It reads the PR's real threads but still posts nothing without `--post`.
 
@@ -103,21 +102,19 @@ To preview what CI would do on an open PR, run `just review --pr 1234`. It reads
 
 ### If it cannot run
 
-This is an open-source project, so the review works out of the box only for someone whose machine can reach a model service. Before any real work, `just review` makes one tiny call (about a cent) to check that the setup works, with the CLI's retries capped, so a wrong setting fails in a couple of seconds and not after about three minutes of retrying. When something is wrong it says what and what to do, and exits with status 4, without a traceback:
+This is an open-source project, so the review works out of the box only for someone with an Amp account. Before any real work, `just review` runs `amp usage`, which asks Amp about the account and runs no model, so it costs nothing and fails in about a second. When something is wrong it says what and what to do, and exits with status 4, without a traceback:
 
 ```
 The review could not run.
-  Can't find llm-gateway.example.com: its address does not resolve.
-  Check your internet connection, any VPN, and that ANTHROPIC_BASE_URL (if set) is spelled correctly.
+  Can't connect to ampcode.com.
+  Check your internet connection, any VPN or proxy (`amp.proxy` in the Amp settings), and AMP_URL if you set it.
 
 Nothing was posted.
 ```
 
-It names the service by host only (never the full URL, which can carry a password or token), and covers: the `claude` CLI missing or signed out, credentials rejected, a model your key may not use, a connection refused or timed out, a host that does not resolve, a certificate error, and a busy service; and for GitHub, the `gh` CLI signed out, a bad token, a pull request or repository that does not exist, and a rate limit. The wording is in `diagnose.py`. An error that is not one of these is shown as the CLI printed it.
+It names the service by host only (never the full URL, which can carry a password or token), and covers: the `amp` CLI missing, signed out or with a rejected key, an account out of credit, an account not allowed to do something, a service that cannot be reached or does not resolve, a certificate error, and a busy service; and for GitHub, the `gh` CLI signed out, a bad token, a pull request or repository that does not exist, and a rate limit. The wording is in `diagnose.py`. An error that is not one of these is shown as the CLI printed it. `--skip-preflight` skips the check.
 
-Contributors without the maintainers' gateway can use their own key (`claude auth login`, or `ANTHROPIC_API_KEY`), and `--model <name>` runs every stage on a model they have. `--skip-preflight` skips the check.
-
-## Change a model or a prompt
+## Change a mode or a prompt
 
 Every agent is `agents/<name>.md`: front matter, then the system prompt.
 
@@ -125,43 +122,39 @@ Every agent is `agents/<name>.md`: front matter, then the system prompt.
 | --- | --- |
 | `stage` | `triage`, `review`, `council`, `chair`, or `decide`. |
 | `when` | `review` agents only: comma-separated `always`, `block-production`, `deep`. The agent runs if any condition holds. Default `always`. |
-| `model` | Model ID passed to `claude --model`. |
-| `effort` | `low`, `medium`, `high`, `xhigh`, or `max`. Default `high`. |
-| `tools` | Tools the agent may use. Default `Read,Grep,Glob`. Keep it read-only. |
+| `mode` | `low`, `medium`, `high`, or `ultra`. Amp's agent mode: it chooses the model, how hard it thinks, and the system prompt. Required. |
 | `timeout_seconds` | Optional wall-clock limit for one attempt. Default: none. |
-| `max_budget_usd` | Optional spend cap for the agent. |
-| `max_output_tokens` | Optional. The CLI asks for 128k output tokens, which the gateway rejects for Gemini models (their limit is about 65k). Set this to 32000 for them. |
 
-The set must have exactly one `triage` and one `decide` agent and at least one `review` agent. A council needs at least two `council` members and exactly one `chair`; with no council, deep changes get only the reviewers.
+The older `model`, `effort`, `tools`, `max_budget_usd` and `max_output_tokens` fields are rejected with a message saying so. The set must have exactly one `triage` and one `decide` agent and at least one `review` agent. A council needs at least two `council` members and exactly one `chair`; with no council, deep changes get only the reviewers.
 
 Current agents (the front matter is the source of truth):
 
-| Agent | Stage | Runs when | Model |
+| Agent | Stage | Runs when | Mode |
 | --- | --- | --- | --- |
-| `triage` | triage | always | `opus` |
-| `review-general` | review | always | `opus` |
-| `review-block-production` | review | triage says block-production-sensitive | `opus` |
-| `council-invariants` | council | triage says `deep` | `opus` |
-| `council-adversary` | council | triage says `deep` | `gpt-6.1-sol` |
-| `council-design` | council | triage says `deep` | `gemini-3.1-pro-preview` |
-| `council-chair` | chair | triage says `deep` | `opus` |
-| `decide` | decide | each reviewer that has findings, then once at the end | `sonnet` |
+| `triage` | triage | always | `medium` |
+| `review-general` | review | always | `medium` |
+| `review-block-production` | review | triage says block-production-sensitive | `medium` |
+| `council-invariants` | council | triage says `deep` | `medium` |
+| `council-adversary` | council | triage says `deep` | `high` |
+| `council-design` | council | triage says `deep` | `medium` |
+| `council-chair` | chair | triage says `deep` | `medium` |
+| `decide` | decide | each reviewer that has findings, then once at the end | `medium` |
 
-### Choosing model IDs
+### Choosing a mode
 
-- **Use an alias where one exists, so the file does not go stale.** `opus`, `sonnet`, and `haiku` are resolved by the `claude` CLI to the newest model of that family (today `claude-opus-5-5`), and the summary records the model that actually ran. The alias moves when the CLI version pinned in `claude-review.yml` is bumped, so bump it deliberately and read the summary afterwards. The gateway has its own aliases ending in `-lts` (long-term support: a name that the platform team keeps pointing at a supported model) and `-latest`; `grok-lts` is the same model as `grok-4.7` today, but the CI key is not allowed to use it (see below).
-- **Pin an exact ID when you want a specific model.** `gpt-lts-sol` points at `gpt-5.6-sol`, which is older than `gpt-6.1-sol`, so `council-adversary` is pinned. A pinned ID stops working when the gateway retires it, and that shows up as a failed council member.
-- **The gateway decides what exists.** List it with `curl -s "$ANTHROPIC_BASE_URL/v1/models" -H "x-api-key: $ANTHROPIC_API_KEY"`, and see what an alias maps to and its output limit at `$ANTHROPIC_BASE_URL/model/info`. Some IDs are restricted (`claude-fable-5-1` returns a 403), and the CLI prints an `unrecognized_model` warning for non-Claude IDs that is harmless. There is no Muse model on this gateway today.
-- **Check a model before you rely on it:** `just review --model <id>`. A model that cannot call tools or return the JSON schema fails its stage; one retry is attempted, and the full output of the failure is saved as `<agent>.failed.txt` in the artifacts.
+**A mode is not a model, and Amp changes what each mode runs.** On 2026-10-12 `low` ran GLM-5.3 Flash, `medium` ran Opus 5.5, `high` ran GPT-6 Astra and `ultra` ran Fable 5.1, at about $0.02, $0.04, $0.33 and $1.07 for the same tiny request. That order is not guaranteed to hold. The summary's "How this was reviewed" table lists the models that actually ran, read from `amp threads usage` after each agent, so check it after changing a mode or upgrading the pinned CLI.
 
-The council spans Anthropic, OpenAI, and Google models. The chair stays on Opus because it checks other models' claims against the code. The decider runs on `sonnet`; see "Choosing the decider's model" below.
+- **The council gets variety from the modes.** Putting members in different modes gets different model families without naming any. `council-adversary` is in `high` for that reason. If the modes ever map to one vendor, the council loses its independence; the summary would show it.
+- **Cost scales steeply.** A deep review runs about ten agent calls, so a mode that costs 25 times more per call matters. Try a change with `just review --mode low` first.
+- **There is no per-agent model, effort or budget flag.** Amp's CLI has `--mode` and nothing else for this, and `--model` is not enabled for every account. If you need a specific model for one agent, that is a change to how `review.py` calls Amp, not to an agent file.
+- **The decider needs a model that is careful, not fast.** It is the stage that marks threads as fixed, so a weak model costs more here than anywhere: a wrong "resolved" hides a live problem. It was measured on several models under the old setup (one real prompt: a small model resolved three threads that were not fixed). Check what `medium` and `low` do with `just review --pr N` on a pull request with open bot threads before putting `decide` in a cheap mode.
 
-A Grok member was dropped: the gateway answers `403 Access denied to restricted model 'grok-4.7'` for the key used in CI, although it works with a developer key. To add one back, ask the platform team to allow that key to use the model, then add an agent file with `model: grok-lts`; a member that fails shows up as an "Incomplete review" banner, not a failed job.
-
-- **Switch a model:** edit `model:` in the agent file. Use `--model` or `PR_REVIEW_MODEL` to try one locally without editing anything.
+- **Switch a mode:** edit `mode:` in the agent file. Use `--mode` or `PR_REVIEW_MODE` to try one locally without editing anything.
 - **Add a council member or reviewer:** copy a `council-*.md` or `review-*.md` file and change the name and prompt. Nothing else needs to change. Every member votes on the others' findings automatically.
 - **Remove an agent:** delete its file, keeping the rules above.
-- **Change the output shape:** edit `schemas/<name>.json` and the code in `review.py` or `render.py` that consumes it. Prompts do not describe the JSON; the CLI enforces the schema.
+- **Change the output shape:** edit `schemas/<name>.json` and the code in `review.py` or `render.py` that consumes it. Prompts do not describe the JSON; `submit` enforces the schema. `tools_server.py` understands only a few JSON Schema keywords (`SUPPORTED_KEYWORDS`); a test fails if a schema uses another, because an unknown keyword would be ignored and a bad answer would pass.
+
+Prompts must not name tools the agent does not have (`Read`, `Bash`, `git show`, `gh pr`); a test checks this. Tell agents to `read_file`, `grep` and `glob`.
 
 `review-block-production` reads `docs/guides/BLOCK_PRODUCTION_REVIEW.md`. Edit that guide for what counts as a halt or stall trigger, and the agent file only for how the review is carried out.
 
@@ -169,13 +162,12 @@ A Grok member was dropped: the gateway answers `403 Access denied to restricted 
 
 There is no time limit on an agent, and no budget for the whole run. A slow answer is still an answer, and findings are posted as each reviewer finishes, so a slow reviewer delays only its own findings and the summary. The workflow job stops at 30 minutes as a backstop. A killed job loses the final round and the summary, not the findings already posted, and the summary's status line keeps pointing at the previous review until someone comments `/review`. To limit one agent, set `timeout_seconds` in its file; an agent that hits its limit is reported as "(did not finish)" and the review goes on without it.
 
-- **Typical run:** with medium effort (low for Gemini) and the "Working fast" guide in `shared/working-fast.md`, reviewers and council members take 30-120 seconds, and the votes, the chair and each decide round 10-40 seconds. Reviewers run in parallel, so the slowest sets when the summary appears; the first findings appear earlier.
-- **Slow calls happen:** about 1 in 9 Opus calls was slow in the saved runs (5-13 minutes for under 10k output tokens, at roughly 8-11 tokens/s, against the usual 70-90). Because findings are posted as each reviewer finishes, a slow one no longer holds back the others.
-- **Effort:** `max` took 5-19 minutes per agent (up to 18 tool calls). Effort and the working-fast guide are the levers; there are no time limits to raise.
+- **Not yet measured on Amp's default modes.** The only full run so far used `--mode low` on every agent (a deep review of this pull request): each agent took 25-180 seconds and the whole pipeline a few minutes, at roughly $0.04-0.15 per agent. Times and costs in `medium` and above have not been measured, and the earlier figures in this file (minutes per agent, about $2.50 to $7 per review) were for the previous setup. Read the per-agent seconds and cost that the run logs, and the artifacts, after the first CI runs, and put real numbers here.
+- **The "Working fast" guide** (`shared/working-fast.md`) caps exploring agents at about eight tool calls. It is the lever for time, together with the mode; there are no time limits to raise.
 
 ## In CI
 
-A review is expensive (about $2.50 for a standard change and $6-7 for a deep one, against about $0.60 for the reviewer this replaced), so it does not run on every push. `.github/workflows/claude-review.yml` runs it:
+A review runs several agents (about ten on a deep change), which costs much more than the single-prompt reviewer it replaced, so it does not run on every push. `.github/workflows/claude-review.yml` runs it:
 
 - **Once, when a pull request is opened or marked ready for review.** A draft is not reviewed. Marking a draft ready again does not buy a second review if the pull request already has one.
 - **On request, when someone comments `/review`** on the pull request. The comment must be `/review`, alone or followed by a space or a line break and any text (so `/reviewed` and `/reviewer` do nothing) and come from a member of the Base organization who has write access to this repository. Comments from bots and from anyone else, including the pull request's author if they are not an org member, are ignored. The review that follows replaces the previous summary comment.
@@ -191,11 +183,11 @@ Every review summary ends with how to ask for another one, and records the commi
 
 `/review` is handled by the workflow file on the default branch, not the pull request's copy, so a pull request cannot change who may run it. It starts working once this file is merged. A review that finds the pull request has moved to a newer commit while it was starting follows it to the new head once, instead of being lost.
 
-The review job runs on the BaseRunnerGroup runner (the one that can reach the LLM gateway). It runs `review.py --pr <number> --post`, which posts new inline comments (one review, most severe first), replies on existing bot threads, edits the bot's own comments to mark fixed threads or undo that, and one summary comment that replaces the previous one (marked `<!-- CLAUDE_REVIEW_SUMMARY -->`).
+The review job runs on a GitHub-hosted `ubuntu-latest` runner. Its only secret besides the job token is the repository secret `AMP_API_KEY` (an Amp access token, from https://ampcode.com/settings), and its egress allowlist adds `ampcode.com`. It installs a pinned `@ampcode/cli` from npm. It runs `review.py --pr <number> --post`, which posts new inline comments (one review, most severe first), replies on existing bot threads, edits the bot's own comments to mark fixed threads or undo that, and one summary comment that replaces the previous one (marked `<!-- CLAUDE_REVIEW_SUMMARY -->`).
 
 The job's token cannot resolve review threads (GitHub answers "Resource not accessible by integration"), and no other token is available to this workflow. So the bot never calls the resolve mutation. It edits its own comment instead, which the token is allowed to do, and the thread stays open for a person to close. If a token that can resolve threads is ever provided, the place to use it is `apply_plan` in `review.py`.
 
-The script that holds the tokens comes from a clean checkout of the default branch, so a pull request cannot add or replace files in it. A `/review` comment never runs a pull request's copy: if the default branch has no pipeline yet, the job stops. A `pull_request` run falls back to the pull request's own copy only for the pull request that introduces the pipeline. Nothing from the pull request is on disk when the CLI is installed (npm reads `.npmrc` and `package.json` from the working directory), and the `status` job checks out only the default branch, because it calls the GitHub API and reads no files from the pull request. Agents run with the PR's checkout as their working directory, `--setting-sources user` (the PR's own Claude settings and hooks are not loaded), read-only tools, and no `GH_TOKEN`.
+The script that holds the tokens comes from a clean checkout of the default branch, so a pull request cannot add or replace files in it. A `/review` comment never runs a pull request's copy: if the default branch has no pipeline yet, the job stops. A `pull_request` run falls back to the pull request's own copy only for the pull request that introduces the pipeline. Nothing from the pull request is on disk when the CLI is installed (npm reads `.npmrc` and `package.json` from the working directory), and the `status` job checks out only the default branch, because it calls the GitHub API and reads no files from the pull request. Agents read the PR's checkout through `tools_server.py` (see "How agents run"), run `amp` in an empty directory so that the PR's `AGENTS.md` and settings are never loaded, and have read-only tools and no `GH_TOKEN`.
 
 Code scanning (CodeQL) flags a workflow that checks out a pull request and then runs code in a job started by `issue_comment`. The pull request's files are read by the agents and are never executed by the job, and the script is not taken from the pull request. The first version of this workflow had two such alerts, on installing the CLI after the checkout and on the `status` job's checkout; both were changed as described above. Check the code-scanning result on the pull request after changing this workflow.
 

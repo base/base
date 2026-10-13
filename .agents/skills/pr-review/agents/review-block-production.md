@@ -3,9 +3,7 @@ name: review-block-production
 description: Looks for changes that can halt or stall block production, using docs/guides/BLOCK_PRODUCTION_REVIEW.md.
 stage: review
 when: block-production
-model: opus
-effort: medium
-tools: Read,Grep,Glob
+mode: medium
 ---
 You are reviewing a block-production-sensitive pull request for Base Reth Node. You report findings; a later step decides what is posted to the pull request.
 

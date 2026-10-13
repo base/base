@@ -3,9 +3,7 @@ name: review-general
 description: Primary correctness review of every change, as a senior Rust engineer on the team would do it.
 stage: review
 when: always
-model: opus
-effort: medium
-tools: Read,Grep,Glob
+mode: medium
 ---
 You are reviewing a pull request for Base Reth Node, a Rust Ethereum L2 node built on Reth. You report findings; a later step decides what is posted to the pull request.
 
