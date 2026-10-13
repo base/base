@@ -56,7 +56,7 @@ pub struct SignerManagerConfig {
     pub tx_retry_delay: Duration,
     /// Maximum attestation age accepted before onchain submission.
     pub max_attestation_age: Duration,
-    /// Whether AWS CRL checks and issuer/serial revocation transactions are enabled.
+    /// Enables fail-closed AWS CRL checks and issuer/serial revocation transactions.
     pub crl_checks_enabled: bool,
 }
 
@@ -470,6 +470,10 @@ where
             return Ok(());
         }
 
+        if !self.authenticate_plan(&plan, signer_cancel).await? {
+            return Ok(());
+        }
+
         let hints = match prepared_hints {
             Some(hints) => hints,
             None => {
@@ -551,6 +555,33 @@ where
         self.submit_registration(instance_id, signer_address, &plan, &hints, signer_cancel).await
     }
 
+    async fn authenticate_plan(
+        &self,
+        plan: &RegistrationPlan,
+        signer_cancel: &CancellationToken,
+    ) -> Result<bool> {
+        let Some(permit) = signer_cancel
+            .run_until_cancelled(Arc::clone(&self.hint_semaphore).acquire_owned())
+            .await
+        else {
+            return Ok(false);
+        };
+        let permit = permit.map_err(|_| {
+            RegistrarError::Service("authentication semaphore closed unexpectedly".into())
+        })?;
+        let plan = plan.clone();
+        let task = task::spawn_blocking(move || {
+            let _permit = permit;
+            AttestationPlanner::authenticate_registration_plan(&plan)
+        });
+        let Some(result) = signer_cancel.run_until_cancelled(task).await else {
+            return Ok(false);
+        };
+        result
+            .map_err(|e| RegistrarError::Service(format!("authentication task failed: {e}")))??;
+        Ok(true)
+    }
+
     async fn check_revocations(
         &self,
         plan: &RegistrationPlan,
@@ -569,6 +600,10 @@ where
             };
             if revoked {
                 RegistrarMetrics::onchain_revocations_detected().increment(1);
+                if !self.authenticate_plan(plan, signer_cancel).await? {
+                    return Ok(false);
+                }
+                self.deregister_revoked_signer(plan.signer, signer_cancel).await;
                 return Err(RegistrarError::RevokedCertificate { label: label.into(), cert_id });
             }
         }
@@ -605,19 +640,36 @@ where
         let Some(http_client) = &self.crl_http_client else {
             return Ok(true);
         };
-        let cert_infos = crl::CertCrlInfo::from_cert_plans(&plan.certs)?;
         RegistrarMetrics::crl_checks_total().increment(1);
-        let Some(revoked) = signer_cancel
+        let cert_infos = crl::CertCrlInfo::from_cert_plans(&plan.certs).inspect_err(|_| {
+            RegistrarMetrics::crl_check_outcomes_total(RegistrarMetrics::CRL_OUTCOME_INDETERMINATE)
+                .increment(1);
+        })?;
+        let Some(mut result) = signer_cancel
             .run_until_cancelled(crl::check_chain_against_crls(&cert_infos, http_client))
             .await
         else {
             return Ok(false);
         };
-        if revoked.is_empty() {
+        if !result.errors.is_empty() {
+            RegistrarMetrics::crl_check_outcomes_total(RegistrarMetrics::CRL_OUTCOME_INDETERMINATE)
+                .increment(1);
+        }
+        if result.is_clean() {
+            RegistrarMetrics::crl_check_outcomes_total(RegistrarMetrics::CRL_OUTCOME_CLEAN)
+                .increment(1);
             return Ok(true);
         }
-        RegistrarMetrics::crl_revocations_detected().increment(revoked.len() as u64);
-        for cert in &revoked {
+        if result.revoked.is_empty() {
+            return Err(result.errors.remove(0).into());
+        }
+        RegistrarMetrics::crl_check_outcomes_total(RegistrarMetrics::CRL_OUTCOME_REVOKED)
+            .increment(1);
+        RegistrarMetrics::crl_revocations_detected().increment(result.revoked.len() as u64);
+        if !self.authenticate_plan(plan, signer_cancel).await? {
+            return Ok(false);
+        }
+        for cert in &result.revoked {
             if let Err(e) = self
                 .submit_revocation(cert.revocation_id, plan.signer, plan.timestamp, signer_cancel)
                 .await
@@ -630,11 +682,89 @@ where
                 RegistrarMetrics::revoke_cert_tx_failures().increment(1);
             }
         }
-        let first = revoked[0];
+        self.deregister_revoked_signer(plan.signer, signer_cancel).await;
+        let first = result.revoked[0];
         Err(RegistrarError::RevokedCertificate {
             label: format!("CA certificate {}", first.index),
             cert_id: first.revocation_id,
         })
+    }
+
+    /// Attempts deregistration after the caller confirms revocation, recording failures.
+    pub async fn deregister_revoked_signer(&self, signer: Address, cancel: &CancellationToken) {
+        if let Err(error) = self.submit_deregistration(signer, cancel).await {
+            warn!(%error, %signer, "failed to deregister revoked signer");
+            RegistrarMetrics::processing_errors_total().increment(1);
+        }
+    }
+
+    /// Deregisters a registered signer with bounded retries and cooperative cancellation.
+    pub async fn submit_deregistration(
+        &self,
+        signer: Address,
+        cancel: &CancellationToken,
+    ) -> Result<()> {
+        let Some(registered) = cancel
+            .run_until_cancelled(self.registry.is_registered_signer(signer))
+            .await
+            .transpose()?
+        else {
+            return Ok(());
+        };
+        if !registered {
+            return Ok(());
+        }
+        let candidate = TxCandidate {
+            tx_data: Bytes::from(ITEEProverRegistry::deregisterSignerCall { signer }.abi_encode()),
+            to: Some(self.registry_address),
+            ..Default::default()
+        };
+        for retry in 0..=self.max_tx_retries {
+            if cancel.is_cancelled() {
+                return Ok(());
+            }
+            // Once sent, let TxManager finish tracking the transaction even if the signer task is cancelled.
+            let result = self.tx_manager.send(candidate.clone()).await;
+            if let Ok(receipt) = &result
+                && receipt.inner.status()
+            {
+                info!(%signer, tx_hash = %receipt.transaction_hash, "revoked signer deregistered");
+                RegistrarMetrics::deregistrations_total().increment(1);
+                return Ok(());
+            }
+            let observed =
+                cancel.run_until_cancelled(self.registry.is_registered_signer(signer)).await;
+            match observed {
+                None => return Ok(()),
+                Some(Ok(false)) => {
+                    RegistrarMetrics::deregistrations_total().increment(1);
+                    return Ok(());
+                }
+                Some(Err(error)) => {
+                    warn!(%error, %signer, "failed to query signer after deregistration")
+                }
+                Some(Ok(true)) => {}
+            }
+            match result {
+                Ok(receipt) => {
+                    return Err(RegistrarError::ReceiptReverted {
+                        tx_hash: receipt.transaction_hash,
+                    });
+                }
+                Err(error) => {
+                    if !error.is_retryable() || retry == self.max_tx_retries {
+                        return Err(error.into());
+                    }
+                    if !self
+                        .sleep_before_retry(retry + 1, signer, "deregistration", &error, cancel)
+                        .await
+                    {
+                        return Ok(());
+                    }
+                }
+            }
+        }
+        unreachable!("bounded deregistration retry loop must return")
     }
 
     async fn submit_revocation(
@@ -1213,6 +1343,7 @@ mod tests {
     use async_trait::async_trait;
     use base_proof_contracts::{ContractError, ICertManager, VerifiedCert};
     use base_tx_manager::{SendHandle, TxManagerError};
+    use ciborium::value::Value;
     #[cfg(feature = "metrics")]
     use metrics_util::{
         MetricKind,
@@ -1223,8 +1354,9 @@ mod tests {
     use crate::{
         DEFAULT_MAX_CONCURRENCY, RegisterableSigner,
         test_utils::{
-            EP1, EP2, HARDHAT_KEY_0, HARDHAT_KEY_1, TEST_REGISTRY_ADDRESS, healthy_prover_instance,
-            signer_from_private_key, stub_receipt_with_status,
+            CrlTestServer, EP1, EP2, HARDHAT_KEY_0, HARDHAT_KEY_1, TEST_REGISTRY_ADDRESS,
+            healthy_prover_instance, public_key_from_private, signer_from_private_key,
+            stub_receipt_with_status,
         },
     };
 
@@ -1625,16 +1757,403 @@ mod tests {
         (Arc::new(manager), chain)
     }
 
-    async fn register_prepared(manager: &TestManager, plan: RegistrationPlan) -> Result<()> {
-        manager
-            .register_plan(
-                TEST_INSTANCE,
-                plan.signer,
-                plan,
-                Some(synthetic_hints()),
-                &CancellationToken::new(),
-            )
-            .await
+    async fn cache_and_register(manager: &TestManager, plan: RegistrationPlan) -> Result<()> {
+        let cancel = CancellationToken::new();
+        let hints = synthetic_hints();
+        for (cert, hint) in plan.certs.iter().zip(&hints.cert_signature_hints) {
+            if !manager.ensure_cert_cached(cert, hint, plan.signer, plan.timestamp, &cancel).await?
+            {
+                return Ok(());
+            }
+        }
+        manager.submit_registration(TEST_INSTANCE, plan.signer, &plan, &hints, &cancel).await
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn revoked_deregistration_retries_and_observes_ambiguous_success() {
+        for (outcome, expected_sends) in [
+            (MockTxOutcome::Error(TxManagerError::Rpc("temporary".into())), 2),
+            (MockTxOutcome::ApplyThenError(TxManagerError::Rpc("receipt timeout".into())), 1),
+            (MockTxOutcome::ApplyThenRevert, 1),
+        ] {
+            let plan = signed_fixture_plan();
+            let (manager, chain) = manager_with_plan(&plan);
+            {
+                let mut state = chain.0.lock().unwrap();
+                state.registered.insert(plan.signer);
+                state.revoked.insert(plan.certs[0].revocation_id);
+            }
+            chain.set_outcomes([outcome]);
+            let result = manager.check_revocations(&plan, &CancellationToken::new()).await;
+            assert!(matches!(result, Err(RegistrarError::RevokedCertificate { .. })));
+            assert!(!chain.0.lock().unwrap().registered.contains(&plan.signer));
+            assert_eq!(chain.tx_count_to(TEST_REGISTRY_ADDRESS), expected_sends);
+        }
+    }
+
+    #[tokio::test]
+    async fn clean_crls_allow_authenticated_chain_for_new_and_registered_signers() {
+        let server = CrlTestServer::new(vec![CrlTestServer::ok(&CrlTestServer::der(None)); 2]);
+        let plan = signed_fixture_plan();
+        let (manager, chain) = manager_with_crl(&plan, &server);
+        AttestationPlanner::authenticate_registration_plan(&plan).unwrap();
+        assert!(manager.check_crls(&plan, &CancellationToken::new()).await.unwrap());
+        chain.0.lock().unwrap().registered.insert(plan.signer);
+        assert!(manager.check_crls(&plan, &CancellationToken::new()).await.unwrap());
+        assert!(chain.sent().is_empty());
+    }
+
+    #[cfg(feature = "metrics")]
+    #[test]
+    fn crl_metrics_distinguish_clean_indeterminate_and_revoked_checks() {
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        metrics::with_local_recorder(&recorder, || {
+            let runtime =
+                tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+            runtime.block_on(async {
+                let clean = CrlTestServer::ok(&CrlTestServer::der(None));
+                let plan = signed_fixture_plan();
+                let serial = crl::CertCrlInfo::from_cert_plans(&plan.certs).unwrap()[1]
+                    .serial_number
+                    .clone();
+                let revoked = CrlTestServer::ok(&CrlTestServer::der(Some(&serial)));
+                let invalid = CrlTestServer::ok(b"invalid DER");
+                for responses in [
+                    vec![clean.clone(), clean.clone()],
+                    vec![invalid.clone(), clean.clone()],
+                    vec![clean, revoked.clone()],
+                    vec![invalid, revoked],
+                ] {
+                    let server = CrlTestServer::new(responses);
+                    let plan = signed_fixture_plan();
+                    let (manager, chain) = manager_with_crl(&plan, &server);
+                    chain.0.lock().unwrap().registered.insert(plan.signer);
+                    let _ = manager.check_crls(&plan, &CancellationToken::new()).await;
+                }
+            });
+        });
+        let snapshot = snapshotter.snapshot().into_vec();
+        for (outcome, expected) in [
+            (RegistrarMetrics::CRL_OUTCOME_CLEAN, 1),
+            (RegistrarMetrics::CRL_OUTCOME_INDETERMINATE, 2),
+            (RegistrarMetrics::CRL_OUTCOME_REVOKED, 2),
+        ] {
+            let count: u64 = snapshot
+                .iter()
+                .filter(|(key, _, _, _)| {
+                    key.key().name() == "base_registrar.crl_check_outcomes_total"
+                        && key
+                            .key()
+                            .labels()
+                            .any(|label| label.key() == "outcome" && label.value() == outcome)
+                })
+                .map(|(_, _, _, value)| match value {
+                    DebugValue::Counter(count) => *count,
+                    other => panic!("expected counter, got {other:?}"),
+                })
+                .sum();
+            assert_eq!(count, expected, "CRL outcome {outcome}");
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn cancellation_during_revoked_deregistration_backoff_stops_retry() {
+        let plan = synthetic_plan(SIGNER_A);
+        let (manager, chain) = manager_with_plan(&plan);
+        chain.0.lock().unwrap().registered.insert(plan.signer);
+        chain.set_outcomes([MockTxOutcome::Error(TxManagerError::Rpc("temporary".into()))]);
+        let cancel = CancellationToken::new();
+        let task_cancel = cancel.clone();
+        let task =
+            tokio::spawn(
+                async move { manager.submit_deregistration(SIGNER_A, &task_cancel).await },
+            );
+        while chain.sent().is_empty() {
+            tokio::task::yield_now().await;
+        }
+        cancel.cancel();
+        task.await.unwrap().unwrap();
+        assert!(chain.0.lock().unwrap().registered.contains(&SIGNER_A));
+        assert_eq!(chain.tx_count_to(TEST_REGISTRY_ADDRESS), 1);
+    }
+
+    fn signed_fixture_plan() -> RegistrationPlan {
+        let raw = hex::decode(include_str!("testdata/nitro_attestation.hex").trim()).unwrap();
+        AttestationPlanner::prepare_registration_plan(&raw).unwrap()
+    }
+
+    fn forged_attestation() -> (Vec<u8>, RegistrationPlan) {
+        let raw = hex::decode(include_str!("testdata/nitro_attestation.hex").trim()).unwrap();
+        let signer = signer_from_private_key(&HARDHAT_KEY_1);
+        let cose = crate::NitroCose::parse_sign1(&raw).unwrap();
+        let mut payload: Value = ciborium::de::from_reader(cose.payload.as_slice()).unwrap();
+        for (key, value) in payload.as_map_mut().unwrap() {
+            match key.as_text().unwrap() {
+                "nonce" => {
+                    *value = Value::Bytes(
+                        TestManager::attestation_nonce_for(TEST_REGISTRY_ADDRESS, signer).to_vec(),
+                    )
+                }
+                "timestamp" => *value = Value::Integer((TestManager::now().1 - 1_000).into()),
+                "public_key" => *value = Value::Bytes(public_key_from_private(&HARDHAT_KEY_1)),
+                _ => {}
+            }
+        }
+        let mut encoded_payload = Vec::new();
+        ciborium::ser::into_writer(&payload, &mut encoded_payload).unwrap();
+        let envelope = Value::Array(vec![
+            Value::Bytes(vec![0xa1, 0x01, 0x38, 0x22]),
+            Value::Map(vec![]),
+            Value::Bytes(encoded_payload),
+            Value::Bytes(cose.signature),
+        ]);
+        let mut attestation = Vec::new();
+        ciborium::ser::into_writer(&envelope, &mut attestation).unwrap();
+        let plan = AttestationPlanner::prepare_registration_plan(&attestation).unwrap();
+        (attestation, plan)
+    }
+
+    fn manager_with_crl(
+        plan: &RegistrationPlan,
+        server: &CrlTestServer,
+    ) -> (Arc<TestManager>, MockChain) {
+        let max_age = Duration::from_secs(TestManager::now().0 - plan.timestamp / 1000 + 3600);
+        let (mut manager, chain) =
+            manager_with_config(plan, DEFAULT_MAX_TX_RETRIES, TEST_RETRY_DELAY, max_age);
+        Arc::get_mut(&mut manager).unwrap().crl_http_client = Some(server.client.clone());
+        (manager, chain)
+    }
+
+    #[tokio::test]
+    async fn forged_public_attestation_cannot_deregister_another_signer() {
+        for onchain_revoked in [true, false] {
+            let clean = CrlTestServer::ok(&CrlTestServer::der(None));
+            let (_, original) = forged_attestation();
+            let serial = crl::CertCrlInfo::from_cert_plans(&original.certs).unwrap()[1]
+                .serial_number
+                .clone();
+            let server = CrlTestServer::new(vec![
+                clean,
+                CrlTestServer::ok(&CrlTestServer::der(Some(&serial))),
+            ]);
+            let (attestation, plan) = forged_attestation();
+            let (manager, chain) = manager_with_crl(&plan, &server);
+            {
+                let mut state = chain.0.lock().unwrap();
+                state.registered.insert(plan.signer);
+                if onchain_revoked {
+                    state.revoked.insert(plan.certs[0].revocation_id);
+                }
+            }
+
+            let result = manager
+                .register_signer(
+                    TEST_INSTANCE,
+                    plan.signer,
+                    &attestation,
+                    &CancellationToken::new(),
+                )
+                .await;
+
+            assert!(
+                chain.sent().is_empty(),
+                "forged payload submitted a destructive transaction: {result:?}"
+            );
+            assert!(chain.0.lock().unwrap().registered.contains(&plan.signer));
+            assert!(matches!(result, Err(RegistrarError::Planning(_))));
+            let result = manager
+                .register_plan(
+                    TEST_INSTANCE,
+                    plan.signer,
+                    plan.clone(),
+                    Some(synthetic_hints()),
+                    &CancellationToken::new(),
+                )
+                .await;
+            assert!(matches!(result, Err(RegistrarError::Planning(_))));
+            assert!(chain.sent().is_empty(), "prepared hints must not bypass authentication");
+        }
+    }
+
+    #[tokio::test]
+    async fn tampered_plan_with_prepared_hints_cannot_submit_transactions() {
+        for revoked in [true, false] {
+            let mut plan = signed_fixture_plan();
+            plan.signer = signer_from_private_key(&HARDHAT_KEY_1);
+            plan.nonce = Some(
+                TestManager::attestation_nonce_for(TEST_REGISTRY_ADDRESS, plan.signer).to_vec(),
+            );
+            plan.timestamp = TestManager::now().1 - 1000;
+            let (manager, chain) = manager_with_plan(&plan);
+            if revoked {
+                let mut state = chain.0.lock().unwrap();
+                state.registered.insert(plan.signer);
+                state.revoked.insert(plan.certs[0].revocation_id);
+            }
+            let result = manager
+                .register_plan(
+                    TEST_INSTANCE,
+                    plan.signer,
+                    plan,
+                    Some(synthetic_hints()),
+                    &CancellationToken::new(),
+                )
+                .await;
+            assert!(matches!(result, Err(RegistrarError::Planning(_))));
+            assert!(chain.sent().is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn crl_failures_block_registration_without_register_transaction() {
+        let responses = [
+            ("network", "error sending request", Vec::new()),
+            (
+                "HTTP",
+                "HTTP 503",
+                b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n".to_vec(),
+            ),
+            (
+                "body-read",
+                "failed to read body",
+                b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nshort".to_vec(),
+            ),
+            (
+                "size",
+                "response too large",
+                b"HTTP/1.1 200 OK\r\nContent-Length: 10485761\r\n\r\n".to_vec(),
+            ),
+            ("DER", "CRL parse error", CrlTestServer::ok(b"invalid DER")),
+            ("unadvertised size", "response too large", {
+                let mut response = b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n".to_vec();
+                response.resize(response.len() + 10 * 1024 * 1024 + 1, 0);
+                response
+            }),
+        ];
+        for (kind, expected_error, response) in responses {
+            let server =
+                CrlTestServer::new(vec![response, CrlTestServer::ok(&CrlTestServer::der(None))]);
+            let (attestation, plan) = forged_attestation();
+            let (manager, chain) = manager_with_crl(&plan, &server);
+            chain.precache(&plan, plan.certs.len());
+            let result = manager
+                .register_plan(
+                    TEST_INSTANCE,
+                    plan.signer,
+                    plan.clone(),
+                    Some(synthetic_hints()),
+                    &CancellationToken::new(),
+                )
+                .await;
+            assert!(
+                matches!(&result, Err(RegistrarError::Crl(error)) if error.to_string().contains(expected_error)),
+                "{kind}: expected {expected_error}, got {result:?}"
+            );
+            assert!(
+                chain.sent().is_empty(),
+                "{kind}: indeterminate CRL must not submit registerSigner"
+            );
+            let result = manager
+                .register_signer(
+                    TEST_INSTANCE,
+                    plan.signer,
+                    &attestation,
+                    &CancellationToken::new(),
+                )
+                .await;
+            assert!(
+                matches!(result, Err(RegistrarError::Crl(_))),
+                "{kind}: public admission must reject indeterminate CRL, got {result:?}"
+            );
+            chain.0.lock().unwrap().registered.insert(plan.signer);
+            let result = manager
+                .register_signer(
+                    TEST_INSTANCE,
+                    plan.signer,
+                    &attestation,
+                    &CancellationToken::new(),
+                )
+                .await;
+            assert!(
+                matches!(result, Err(RegistrarError::Crl(_))),
+                "{kind}: already-registered CRL must remain indeterminate"
+            );
+            assert!(
+                chain.0.lock().unwrap().registered.contains(&plan.signer),
+                "indeterminate status is not evidence for deregistration"
+            );
+            assert!(
+                chain.sent().is_empty(),
+                "{kind}: public admission must not submit any transaction"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn crl_revocation_blocks_new_registration_and_retries_deregistration_next_cycle() {
+        let plan = signed_fixture_plan();
+        let serial =
+            crl::CertCrlInfo::from_cert_plans(&plan.certs).unwrap()[0].serial_number.clone();
+        let server = CrlTestServer::new(vec![
+            CrlTestServer::ok(&CrlTestServer::der(Some(&serial))),
+            CrlTestServer::ok(&CrlTestServer::der(None)),
+        ]);
+        let plan = signed_fixture_plan();
+        let (manager, chain) = manager_with_crl(&plan, &server);
+        let result = manager.check_crls(&plan, &CancellationToken::new()).await;
+        assert!(
+            matches!(result, Err(RegistrarError::RevokedCertificate { .. })),
+            "expected confirmed revocation, got {result:?}"
+        );
+        assert_eq!(
+            chain.tx_count_to(TEST_REGISTRY_ADDRESS),
+            0,
+            "confirmed revocation must not register a new signer"
+        );
+        assert!(chain.0.lock().unwrap().revoked.contains(&plan.certs[0].revocation_id));
+        chain.0.lock().unwrap().registered.insert(plan.signer);
+        chain.set_outcomes([MockTxOutcome::Error(TxManagerError::ExecutionReverted {
+            data: None,
+            reason: Some("temporary authorization failure".into()),
+        })]);
+        for _ in 0..2 {
+            let result = manager.check_revocations(&plan, &CancellationToken::new()).await;
+            assert!(matches!(result, Err(RegistrarError::RevokedCertificate { .. })));
+        }
+        assert!(
+            !chain.0.lock().unwrap().registered.contains(&plan.signer),
+            "durable sentinel must not short-circuit subsequent deregistration retries"
+        );
+        assert_eq!(chain.tx_count_to(TEST_REGISTRY_ADDRESS), 2);
+    }
+
+    #[tokio::test]
+    async fn crl_partial_failure_deregisters_registered_signer_even_if_persistence_fails() {
+        let original = signed_fixture_plan();
+        let serial =
+            crl::CertCrlInfo::from_cert_plans(&original.certs).unwrap()[1].serial_number.clone();
+        let server = CrlTestServer::new(vec![
+            CrlTestServer::ok(b"invalid DER"),
+            CrlTestServer::ok(&CrlTestServer::der(Some(&serial))),
+        ]);
+        let plan = signed_fixture_plan();
+        let (manager, chain) = manager_with_crl(&plan, &server);
+        chain.0.lock().unwrap().registered.insert(plan.signer);
+        chain.set_outcomes([MockTxOutcome::Error(TxManagerError::ExecutionReverted {
+            data: None,
+            reason: Some("not authorized".into()),
+        })]);
+        let result = manager.check_crls(&plan, &CancellationToken::new()).await;
+        assert!(
+            matches!(result, Err(RegistrarError::RevokedCertificate { .. })),
+            "partial failure must retain confirmed revocation: {result:?}"
+        );
+        assert!(
+            !chain.0.lock().unwrap().registered.contains(&plan.signer),
+            "persistence failure must not prevent explicit deregisterSigner"
+        );
+        assert_eq!(chain.tx_count_to(TEST_REGISTRY_ADDRESS), 1);
     }
 
     #[tokio::test]
@@ -1642,7 +2161,7 @@ mod tests {
         let plan = synthetic_plan(SIGNER_A);
         let (manager, chain) = manager_with_plan(&plan);
 
-        register_prepared(&manager, plan).await.unwrap();
+        cache_and_register(&manager, plan).await.unwrap();
 
         assert_eq!(chain.tx_count_to(TEST_CERT_MANAGER_ADDRESS), 4);
         assert_eq!(chain.tx_count_to(TEST_REGISTRY_ADDRESS), 1);
@@ -1655,7 +2174,7 @@ mod tests {
             let (manager, chain) = manager_with_plan(&plan);
             chain.precache(&plan, prefix);
 
-            register_prepared(&manager, plan).await.unwrap();
+            cache_and_register(&manager, plan).await.unwrap();
 
             assert_eq!(chain.tx_count_to(TEST_CERT_MANAGER_ADDRESS), 4 - prefix, "prefix {prefix}");
             assert_eq!(chain.tx_count_to(TEST_REGISTRY_ADDRESS), 1, "prefix {prefix}");
@@ -1668,7 +2187,7 @@ mod tests {
         let (manager, chain) = manager_with_plan(&plan);
         chain.precache(&plan, 3);
 
-        register_prepared(&manager, plan).await.unwrap();
+        cache_and_register(&manager, plan).await.unwrap();
 
         assert_eq!(chain.sent().len(), 2);
         assert_eq!(chain.tx_count_to(TEST_CERT_MANAGER_ADDRESS), 1);
@@ -1681,7 +2200,7 @@ mod tests {
         let (manager, chain) = manager_with_plan(&plan);
         chain.precache(&plan, 4);
 
-        register_prepared(&manager, plan).await.unwrap();
+        cache_and_register(&manager, plan).await.unwrap();
 
         assert_eq!(chain.sent().len(), 1);
         assert_eq!(chain.tx_count_to(TEST_REGISTRY_ADDRESS), 1);
@@ -1706,11 +2225,11 @@ mod tests {
         }
         let first = {
             let manager = Arc::clone(&manager);
-            tokio::spawn(async move { register_prepared(&manager, plan_a).await })
+            tokio::spawn(async move { cache_and_register(&manager, plan_a).await })
         };
         let second = {
             let manager = Arc::clone(&manager);
-            tokio::spawn(async move { register_prepared(&manager, plan_b).await })
+            tokio::spawn(async move { cache_and_register(&manager, plan_b).await })
         };
 
         first.await.unwrap().unwrap();
@@ -1730,7 +2249,7 @@ mod tests {
             let (manager, chain) = manager_with_plan(&plan);
             chain.set_outcomes([first_outcome]);
 
-            register_prepared(&manager, plan).await.unwrap();
+            cache_and_register(&manager, plan).await.unwrap();
 
             assert_eq!(chain.tx_count_to(TEST_CERT_MANAGER_ADDRESS), 4);
             assert_eq!(chain.tx_count_to(TEST_REGISTRY_ADDRESS), 1);
@@ -1750,7 +2269,7 @@ mod tests {
                 std::iter::repeat_n(MockTxOutcome::Success, 4).chain([final_outcome]),
             );
 
-            register_prepared(&manager, plan).await.unwrap();
+            cache_and_register(&manager, plan).await.unwrap();
 
             assert_eq!(chain.tx_count_to(TEST_REGISTRY_ADDRESS), 1);
         }
@@ -1763,7 +2282,7 @@ mod tests {
         chain.precache(&plan, 1);
         chain.0.lock().unwrap().cached.get_mut(&plan.certs[0].cert_hash).unwrap().1.not_after = 1;
 
-        let result = register_prepared(&manager, plan).await;
+        let result = cache_and_register(&manager, plan).await;
 
         assert!(matches!(result, Err(RegistrarError::ExpiredCertificate { .. })));
         assert!(chain.sent().is_empty());
@@ -1771,12 +2290,12 @@ mod tests {
 
     #[tokio::test]
     async fn root_and_certificate_revocations_are_rejected_before_cache_transactions() {
-        for cert_id in [PINNED_ROOT_CERT_HASH, B256::repeat_byte(0x12)] {
-            let plan = synthetic_plan(SIGNER_A);
+        let plan = signed_fixture_plan();
+        for cert_id in [PINNED_ROOT_CERT_HASH, plan.certs[1].revocation_id] {
             let (manager, chain) = manager_with_plan(&plan);
             chain.0.lock().unwrap().revoked.insert(cert_id);
 
-            let result = register_prepared(&manager, plan).await;
+            let result = manager.check_revocations(&plan, &CancellationToken::new()).await;
 
             assert!(matches!(result, Err(RegistrarError::RevokedCertificate { .. })));
             assert!(chain.sent().is_empty());
@@ -1785,18 +2304,22 @@ mod tests {
 
     #[tokio::test]
     async fn already_registered_signer_still_checks_revocation_state() {
-        let plan = synthetic_plan(SIGNER_A);
+        let plan = signed_fixture_plan();
         let (manager, chain) = manager_with_plan(&plan);
         {
             let mut state = chain.0.lock().unwrap();
-            state.registered.insert(SIGNER_A);
+            state.registered.insert(plan.signer);
             state.revoked.insert(plan.certs[0].revocation_id);
         }
 
-        let result = register_prepared(&manager, plan).await;
+        let result = manager.check_revocations(&plan, &CancellationToken::new()).await;
 
         assert!(matches!(result, Err(RegistrarError::RevokedCertificate { .. })));
-        assert!(chain.sent().is_empty());
+        assert!(
+            !chain.0.lock().unwrap().registered.contains(&plan.signer),
+            "revoked registered signer must be explicitly deregistered"
+        );
+        assert_eq!(chain.tx_count_to(TEST_REGISTRY_ADDRESS), 1);
     }
 
     #[tokio::test]
@@ -1807,7 +2330,7 @@ mod tests {
         chain.0.lock().unwrap().cached.get_mut(&plan.certs[0].cert_hash).unwrap().0 =
             B256::repeat_byte(0xfe);
 
-        let result = register_prepared(&manager, plan).await;
+        let result = cache_and_register(&manager, plan).await;
 
         assert!(
             matches!(result, Err(RegistrarError::InvalidAttestationProof(reason)) if reason.contains("parent cert mismatch"))
@@ -1848,7 +2371,15 @@ mod tests {
             }
             let (manager, chain) = manager_with_plan(&plan);
 
-            let result = register_prepared(&manager, plan).await;
+            let result = manager
+                .register_plan(
+                    TEST_INSTANCE,
+                    plan.signer,
+                    plan,
+                    Some(synthetic_hints()),
+                    &CancellationToken::new(),
+                )
+                .await;
 
             assert!(result.is_err());
             assert!(chain.sent().is_empty());
@@ -1871,7 +2402,7 @@ mod tests {
         chain.set_outcomes([MockTxOutcome::Error(TxManagerError::Rpc("temporary".into()))]);
         let start = tokio::time::Instant::now();
 
-        register_prepared(&manager, plan).await.unwrap();
+        cache_and_register(&manager, plan).await.unwrap();
 
         assert_eq!(start.elapsed(), TEST_RETRY_DELAY);
         assert_eq!(chain.tx_count_to(TEST_CERT_MANAGER_ADDRESS), 5);
@@ -1903,7 +2434,7 @@ mod tests {
                     let plan = synthetic_plan(SIGNER_A);
                     let (manager, chain) = manager_with_plan(&plan);
                     chain.set_outcomes([outcome]);
-                    register_prepared(&manager, plan).await.unwrap();
+                    cache_and_register(&manager, plan).await.unwrap();
                 }
             });
         });
@@ -1960,10 +2491,17 @@ mod tests {
             cancel_task.cancel();
         });
 
-        manager
-            .register_plan(TEST_INSTANCE, SIGNER_A, plan, Some(synthetic_hints()), &cancel)
+        let cached = manager
+            .ensure_cert_cached(
+                &plan.certs[0],
+                &synthetic_hints().cert_signature_hints[0],
+                plan.signer,
+                plan.timestamp,
+                &cancel,
+            )
             .await
             .unwrap();
+        assert!(!cached);
 
         assert_eq!(chain.sent().len(), 1);
     }

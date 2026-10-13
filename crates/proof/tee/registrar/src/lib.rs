@@ -2,7 +2,7 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 mod crl;
-pub use crl::{CertCrlInfo, CrlError, check_chain_against_crls};
+pub use crl::{CertCrlInfo, CrlCheckResult, CrlError, check_chain_against_crls};
 
 mod discovery;
 pub use discovery::AwsTargetGroupDiscovery;
