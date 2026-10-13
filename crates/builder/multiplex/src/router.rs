@@ -344,17 +344,7 @@ impl MultiplexRouter {
             let elapsed = started.elapsed();
             Self::record_selected_getpayload_latency(elapsed.as_secs_f64());
 
-            let result = match result {
-                Some(Ok(payload)) => Some(Ok(payload)),
-                Some(Err(PayloadBuilderError::ChannelClosed)) => {
-                    health.mark_unavailable();
-                    Self::set_service_health_metric(builder, false);
-                    Some(Err(Self::unavailable_error(builder)))
-                }
-                Some(Err(err)) => Some(Err(err)),
-                None if !health.is_healthy() => Some(Err(Self::unavailable_error(builder))),
-                None => None,
-            };
+            let result = Self::map_read_result(result, builder, &health);
 
             let response = result.map(|result| Box::pin(async move { result }) as ResolveFuture);
             let _ = tx.send(response);
