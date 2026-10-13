@@ -177,10 +177,13 @@ def describe_failure(result: subprocess.CompletedProcess) -> str:
 
 def run(cmd: list[str], *, input_text: str | None = None, cwd: Path | None = None,
         timeout: int | None = None, env: dict[str, str] | None = None,
-        failure_log: Path | None = None) -> str:
+        failure_log: Path | None = None, explain: bool = False) -> str:
     """Run a command and return stdout, raising ReviewError on failure.
 
     On failure the full stdout and stderr go to `failure_log`, because the error message is cut short.
+    With `explain`, a failed `gh` call that matches a known setup problem raises SetupError instead. Only
+    reads should ask for it: the explanations assume the call never got as far as changing anything, and
+    they would mislabel a failed write (a 403 on a PATCH is not a rate limit).
     """
     try:
         result = subprocess.run(cmd, input=input_text, capture_output=True, text=True,
@@ -194,7 +197,7 @@ def run(cmd: list[str], *, input_text: str | None = None, cwd: Path | None = Non
             failure_log.write_text(f"exit {result.returncode}\n\n--- stdout ---\n{result.stdout}\n\n"
                                    f"--- stderr ---\n{result.stderr}\n")
         reason = describe_failure(result)
-        if cmd[0] == "gh":
+        if explain and cmd[0] == "gh":
             found = diagnose.explain_github_error(f"{reason}\n{result.stderr}")
             if found:
                 raise SetupError(found.text(os.environ.get("GH_HOST", "GitHub")))
@@ -418,8 +421,9 @@ class Context:
     earlier_thread_ids: frozenset[str] | None = None
 
 
-def gh(args: list[str], input_text: str | None = None) -> str:
-    return run(["gh", *args], input_text=input_text, timeout=GH_TIMEOUT_SECONDS)
+def gh(args: list[str], input_text: str | None = None, *, explain: bool = False) -> str:
+    """Run `gh`. Pass `explain=True` for reads, so a setup problem is reported in plain words."""
+    return run(["gh", *args], input_text=input_text, timeout=GH_TIMEOUT_SECONDS, explain=explain)
 
 
 def git(args: list[str]) -> str:
@@ -512,7 +516,7 @@ def parse_threads(pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def diff_from_files(number: int, repo: str) -> str:
     """Rebuild a unified diff from the files API, for pull requests `gh pr diff` refuses to return."""
-    pages = json.loads(gh(["api", f"repos/{repo}/pulls/{number}/files", "--paginate", "--slurp"]))
+    pages = json.loads(gh(["api", f"repos/{repo}/pulls/{number}/files", "--paginate", "--slurp"], explain=True))
     out = []
     for f in (f for page in pages for f in page):
         old = f.get("previous_filename") or f["filename"]
@@ -528,12 +532,13 @@ def fetch_threads(number: int, repo: str) -> list[dict[str, Any]]:
     owner, name = repo.split("/", 1)
     return parse_threads(json.loads(gh([
         "api", "graphql", "--paginate", "--slurp", "-f", f"query={THREADS_QUERY}", "-f", f"owner={owner}",
-        "-f", f"name={name}", "-F", f"number={number}"])))
+        "-f", f"name={name}", "-F", f"number={number}"], explain=True)))
 
 
 def fetch_head(number: int, repo: str) -> str:
     """The commit the pull request points at right now."""
-    return json.loads(gh(["pr", "view", str(number), "--repo", repo, "--json", "headRefOid"]))["headRefOid"]
+    return json.loads(gh(["pr", "view", str(number), "--repo", repo, "--json", "headRefOid"],
+                         explain=True))["headRefOid"]
 
 
 def find_remote(repo: str) -> str:
@@ -592,7 +597,7 @@ def pr_context(number: int, repo: str, post: bool = False,
     # Read the metadata and the diff at one head commit, or comments could target the wrong lines.
     for _ in range(3):
         info = json.loads(gh(["pr", "view", str(number), "--repo", repo, "--json",
-                              "title,body,headRefOid,files"]))
+                              "title,body,headRefOid,files"], explain=True))
         try:
             diff = gh(["pr", "diff", str(number), "--repo", repo])
         except ReviewError as exc:
@@ -1080,7 +1085,7 @@ def commits_after(number: int, repo: str, reviewed: str) -> int | None:
     The pull request's own commit list is used, so commits that arrived by merging the base branch in do not
     count. A force push or rebase removes the reviewed commit from the list, which is the None case.
     """
-    pages = json.loads(gh(["api", f"repos/{repo}/pulls/{number}/commits", "--paginate", "--slurp"]))
+    pages = json.loads(gh(["api", f"repos/{repo}/pulls/{number}/commits", "--paginate", "--slurp"], explain=True))
     shas = [c["sha"] for page in pages for c in page]
     if len(shas) >= COMMIT_LIST_LIMIT:
         # The list is cut off: the newest commits are missing, so a count would be too low, and a reviewed
@@ -1423,7 +1428,7 @@ def main(argv: list[str] | None = None) -> int:
         if not (args.skip_preflight or args.post):
             # A posting run is CI's, and CI has its own setup; a person running locally gets the check.
             log("Checking that the review can reach its services")
-            preflight()
+            preflight(args.model or "haiku")
         with contextlib.ExitStack() as stack:
             def checkout(head_sha: str) -> Path:
                 return stack.enter_context(pr_worktree(args.pr, args.repo, head_sha))

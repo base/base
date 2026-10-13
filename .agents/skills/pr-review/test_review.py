@@ -1093,6 +1093,14 @@ class SetupFailureTests(unittest.TestCase):
             review.main(["--pr", "7"])
         pre.assert_called_once()
 
+    def test_the_preflight_probes_the_model_the_run_will_use(self) -> None:
+        for argv, expected in ((["--pr", "7"], "haiku"), (["--pr", "7", "--model", "sonnet"], "sonnet")):
+            with self.subTest(argv=argv), mock.patch.object(review, "preflight") as pre, mock.patch.object(
+                    review, "load_agents", return_value=[]), mock.patch.object(
+                    review, "pr_context", side_effect=review.ReviewError("stop")):
+                review.main(argv)
+            pre.assert_called_once_with(expected)
+
     def test_a_setup_problem_exits_with_its_own_status_and_no_traceback(self) -> None:
         with mock.patch.object(review, "load_agents", return_value=[]), mock.patch.object(
                 review, "preflight", side_effect=review.SetupError("The `claude` CLI is not installed.")), \
@@ -1125,8 +1133,35 @@ class SetupFailureTests(unittest.TestCase):
     def test_a_failed_gh_call_raises_the_explained_error(self) -> None:
         done = subprocess.CompletedProcess([], 1, "", "HTTP 401: Bad credentials (https://api.github.com/graphql)")
         with mock.patch.object(review.subprocess, "run", return_value=done), self.assertRaises(review.SetupError) as caught:
-            review.run(["gh", "pr", "view", "1"])
+            review.run(["gh", "pr", "view", "1"], explain=True)
         self.assertIn("rejected your token", str(caught.exception))
+
+    def test_a_failed_gh_write_keeps_its_own_error(self) -> None:
+        # A 403 on a PATCH or a 404 on a DELETE says nothing about the user's setup, and must not be reported
+        # as a rate limit or a missing repository (or end `status` with "The review could not run").
+        for stderr in ("HTTP 403: Resource not accessible by integration", "HTTP 404: Not Found"):
+            done = subprocess.CompletedProcess([], 1, "", stderr)
+            with self.subTest(stderr=stderr), mock.patch.object(review.subprocess, "run", return_value=done), \
+                    self.assertRaises(review.ReviewError) as caught:
+                review.gh(["api", "-X", "PATCH", "repos/o/r/issues/comments/1"])
+            self.assertNotIsInstance(caught.exception, review.SetupError)
+            self.assertIn(stderr, str(caught.exception))
+
+    def test_every_gh_write_in_the_script_is_left_unexplained(self) -> None:
+        source = Path(review.__file__).read_text()
+        writes = [line for line in source.splitlines()
+                  if "gh([" in line and any(w in line for w in ('"-X", "PATCH"', '"-X", "DELETE"', '"comment"'))]
+        self.assertTrue(writes)
+        for line in writes:
+            self.assertNotIn("explain=True", line)
+
+    def test_a_failed_read_is_explained_through_the_helpers_that_fetch(self) -> None:
+        done = subprocess.CompletedProcess([], 1, "", "HTTP 401: Bad credentials (https://api.github.com/graphql)")
+        for fetch in (review.fetch_head, review.fetch_threads, review.commits_after):
+            with self.subTest(fetch=fetch.__name__), mock.patch.object(review.subprocess, "run", return_value=done):
+                args = (7, "o/r") if fetch is not review.commits_after else (7, "o/r", "abc")
+                with self.assertRaises(review.SetupError):
+                    fetch(*args)
 
     def test_other_commands_keep_their_plain_error(self) -> None:
         done = subprocess.CompletedProcess([], 1, "", "fatal: not a git repository")
@@ -1214,7 +1249,7 @@ class CommitCountTests(unittest.TestCase):
     def fake_gh(self, shas, head=None, body=None):
         calls: list[list[str]] = []
 
-        def gh(args, input_text=None):
+        def gh(args, input_text=None, **_):
             calls.append(args)
             joined = " ".join(args)
             if "pulls/7/commits" in joined:
@@ -1258,7 +1293,7 @@ class CommitCountTests(unittest.TestCase):
         gh, _ = self.fake_gh(many, head="e" * 40, body=self.body(many[3]))
         sent: list[str] = []
 
-        def capture(args, input_text=None):
+        def capture(args, input_text=None, **_):
             if "PATCH" in args:
                 sent.append(input_text)
                 return ""
@@ -1284,7 +1319,7 @@ class CommitCountTests(unittest.TestCase):
         sent: list[str] = []
         real = gh
 
-        def capture(args, input_text=None):
+        def capture(args, input_text=None, **_):
             if "PATCH" in args:
                 sent.append(input_text)
                 return ""
@@ -1309,7 +1344,7 @@ class CommitCountTests(unittest.TestCase):
         sent: list[str] = []
         gh, _ = self.fake_gh(self.SHAS, body=self.body(self.SHAS[3], current=False))
 
-        def capture(args, input_text=None):
+        def capture(args, input_text=None, **_):
             if "PATCH" in args:
                 sent.append(json.loads(input_text)["body"])
                 return ""
@@ -1331,7 +1366,7 @@ class CommitCountTests(unittest.TestCase):
         old, new = self.body(self.SHAS[0]), self.body(self.SHAS[2])
         sent: list[str] = []
 
-        def gh(args, input_text=None):
+        def gh(args, input_text=None, **_):
             joined = " ".join(args)
             if "startswith" in joined:
                 return json.dumps({"id": 10, "body": old}) + "\n" + json.dumps({"id": 20, "body": new}) + "\n"
@@ -1353,7 +1388,7 @@ class CommitCountTests(unittest.TestCase):
         gh, _ = self.fake_gh(self.SHAS, head=self.SHAS[3])
         sent: list[str] = []
 
-        def capture(args, input_text=None):
+        def capture(args, input_text=None, **_):
             if "PATCH" in args:
                 sent.append(json.loads(input_text)["body"])
                 return ""
@@ -1422,7 +1457,7 @@ class PrContextTests(unittest.TestCase):
     def scripted(self, *, fail: tuple[str, ...] = (), head: str | None = None, files_pages: list | None = None):
         calls: list[str] = []
 
-        def fake_gh(args, input_text=None):
+        def fake_gh(args, input_text=None, **_):
             joined = " ".join(args)
             calls.append(joined)
             for needle in fail:
@@ -1694,7 +1729,7 @@ class FakeGh:
         self.fail = fail
         self.responses = responses or {}
 
-    def __call__(self, args: list[str], input_text: str | None = None) -> str:
+    def __call__(self, args: list[str], input_text: str | None = None, **_: object) -> str:
         self.calls.append(args)
         self.inputs.append(input_text)
         joined = " ".join(args)
