@@ -1171,22 +1171,37 @@ where
         origin: TransactionOrigin,
         transactions: Vec<Self::Transaction>,
     ) -> Vec<PoolResult<AddedTransactionOutcome>> {
-        let mut results = Vec::with_capacity(transactions.len());
-        for transaction in transactions {
-            results.push(self.add_transaction(origin, transaction).await);
-        }
-        results
+        self.add_transactions_with_origins(
+            transactions.into_iter().map(|transaction| (origin, transaction)).collect(),
+        )
+        .await
     }
 
     async fn add_transactions_with_origins(
         &self,
         transactions: Vec<(TransactionOrigin, Self::Transaction)>,
     ) -> Vec<PoolResult<AddedTransactionOutcome>> {
-        let mut results = Vec::with_capacity(transactions.len());
-        for (origin, transaction) in transactions {
-            results.push(self.add_transaction(origin, transaction).await);
+        if transactions.iter().any(|(_, transaction)| self.is_sidecar_transaction(transaction)) {
+            let mut results = Vec::with_capacity(transactions.len());
+            for (origin, transaction) in transactions {
+                results.push(self.add_transaction(origin, transaction).await);
+            }
+            return results;
         }
-        results
+        // Protocol validation reads canonical state, never pool contents, so
+        // validating the whole batch in one job before admitting each
+        // transaction in order yields the same per-transaction outcomes.
+        let keys: Vec<_> = transactions
+            .iter()
+            .map(|(origin, tx)| (*origin, *tx.hash(), tx.sender(), tx.nonce()))
+            .collect();
+        let validated = self.validator().validate_transactions(transactions).await;
+        keys.into_iter()
+            .zip(validated)
+            .map(|((origin, hash, sender, nonce), validated)| {
+                self.add_validated_protocol_transaction(origin, hash, sender, nonce, validated)
+            })
+            .collect()
     }
 
     fn transaction_event_listener(&self, tx_hash: TxHash) -> Option<TransactionEvents> {
@@ -2464,6 +2479,37 @@ mod tests {
         max_fee_per_gas: u128,
     ) -> BasePooledTransaction {
         signed_8130(signer, nonce_key, nonce_sequence, expiry, max_fee_per_gas, 1_000_000)
+    }
+
+    #[tokio::test]
+    async fn batch_add_matches_sequential_add() {
+        let (funded, unfunded) = (signer(), signer());
+        let batch = vec![
+            signed_1559(&funded, 0),
+            signed_1559(&funded, 1),
+            signed_1559(&funded, 0),
+            signed_1559(&funded, 3),
+            signed_1559(&unfunded, 0),
+            signed_1559(&funded, 2),
+        ];
+        let outcomes = |results: Vec<PoolResult<AddedTransactionOutcome>>| {
+            results.into_iter().map(|result| format!("{result:?}")).collect::<Vec<_>>()
+        };
+
+        let (sequential_pool, client) = build_integration_pool();
+        fund(&client, funded.address());
+        let mut sequential = Vec::new();
+        for transaction in batch.clone() {
+            sequential
+                .push(sequential_pool.add_transaction(TransactionOrigin::Local, transaction).await);
+        }
+
+        let (batch_pool, client) = build_integration_pool();
+        fund(&client, funded.address());
+        let batched = batch_pool.add_transactions(TransactionOrigin::Local, batch).await;
+
+        assert_eq!(outcomes(batched), outcomes(sequential));
+        assert_eq!(batch_pool.pool_size().pending, 4);
     }
 
     #[tokio::test]

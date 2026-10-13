@@ -1992,6 +1992,21 @@ where
         self.validate_one(origin, transaction).await
     }
 
+    /// Validates the batch in order against one state provider, as reth's
+    /// `EthTransactionValidator` does, instead of opening one per transaction.
+    async fn validate_transactions(
+        &self,
+        transactions: impl IntoIterator<Item = (TransactionOrigin, Self::Transaction), IntoIter: Send>
+        + Send,
+    ) -> Vec<TransactionValidationOutcome<Self::Transaction>> {
+        let mut state = None;
+        let mut outcomes = Vec::new();
+        for (origin, transaction) in transactions {
+            outcomes.push(self.validate_one_with_state(origin, transaction, &mut state).await);
+        }
+        outcomes
+    }
+
     fn on_new_head_block(&self, new_tip_block: &SealedBlock<Self::Block>) {
         self.inner.on_new_head_block(new_tip_block);
         self.update_l1_block_info(new_tip_block.header(), new_tip_block.body().transactions());
