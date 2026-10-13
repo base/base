@@ -1512,17 +1512,7 @@ where
     where
         Rt: Runtime,
     {
-        let mut poll_immediately = true;
-
         loop {
-            if poll_immediately {
-                poll_immediately = false;
-            } else {
-                // Keep the previous MissedTickBehavior::Delay semantics:
-                // slow receipt queries do not accumulate immediate catch-up ticks.
-                runtime.sleep(config.receipt_query_interval).await;
-            }
-
             match Self::query_receipt_using_runtime(
                 runtime,
                 send_state,
@@ -1547,6 +1537,10 @@ where
                 debug!(tx_hash = %tx_hash, "manager closed, stopping receipt polling");
                 return None;
             }
+
+            // Keep the previous MissedTickBehavior::Delay semantics:
+            // slow receipt queries do not accumulate immediate catch-up ticks.
+            runtime.sleep(config.receipt_query_interval).await;
         }
     }
 
@@ -1613,33 +1607,24 @@ where
             .map_err(|_| TxManagerError::Rpc("get_transaction_receipt timed out".into()))?
             .map_err(|e| RpcErrorClassifier::classify_rpc_error(&e))?;
 
-        let receipt = match receipt_opt {
-            Some(r) => r,
-            None => {
-                send_state.tx_not_mined(tx_hash);
-                debug!(tx_hash = %tx_hash, "receipt not found, possible reorg");
-                return Ok(None);
-            }
+        let Some(receipt) = receipt_opt else {
+            send_state.tx_not_mined(tx_hash);
+            debug!(tx_hash = %tx_hash, "receipt not found, possible reorg");
+            return Ok(None);
         };
 
-        let tx_block = match receipt.block_number {
-            Some(block) => block,
-            None => {
-                // Receipt without a block number (e.g., pending) — treat as not yet confirmed.
-                send_state.tx_not_mined(tx_hash);
-                return Ok(None);
-            }
+        let Some(tx_block) = receipt.block_number else {
+            // Receipt without a block number (e.g., pending) — treat as not yet confirmed.
+            send_state.tx_not_mined(tx_hash);
+            return Ok(None);
         };
 
         // Verify the receipt is on the canonical chain by comparing its block
         // hash against the canonical block at the same height.
-        let receipt_block_hash = match receipt.block_hash {
-            Some(hash) => hash,
-            None => {
-                send_state.tx_not_mined(tx_hash);
-                debug!(tx_hash = %tx_hash, "receipt has no block hash, treating as not mined");
-                return Ok(None);
-            }
+        let Some(receipt_block_hash) = receipt.block_hash else {
+            send_state.tx_not_mined(tx_hash);
+            debug!(tx_hash = %tx_hash, "receipt has no block hash, treating as not mined");
+            return Ok(None);
         };
 
         let canonical_block = RuntimeTimeout::run(
