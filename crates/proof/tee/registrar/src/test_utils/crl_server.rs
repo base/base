@@ -47,12 +47,15 @@ impl CrlTestServer {
                     }
                 }
                 let request = String::from_utf8_lossy(&request);
-                let Some(index) = request
-                    .split_whitespace()
-                    .nth(1)
-                    .and_then(|path| path.get(1..2))
-                    .and_then(|index| index.parse::<usize>().ok())
-                else {
+                let Some(index) = request.split_whitespace().nth(1).and_then(|path| {
+                    if path.starts_with("/crl/ab4960cc-") {
+                        Some(0)
+                    } else if path.starts_with("/crl/06d48f8e-") {
+                        Some(1)
+                    } else {
+                        path.get(1..2).and_then(|index| index.parse::<usize>().ok())
+                    }
+                }) else {
                     continue;
                 };
                 let _ = stream.write_all(&responses[index]);
@@ -65,6 +68,8 @@ impl CrlTestServer {
             .timeout(Duration::from_secs(10))
             .redirect(reqwest::redirect::Policy::none())
             .resolve("nitro-enclave.amazonaws.com", addr)
+            .resolve("aws-nitro-enclaves-crl.s3.amazonaws.com", addr)
+            .resolve("crl-us-east-1-aws-nitro-enclaves.s3.us-east-1.amazonaws.com", addr)
             .build()
             .unwrap();
         Self { client, port: addr.port(), stop, task: Some(task) }
