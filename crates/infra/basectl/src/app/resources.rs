@@ -491,11 +491,7 @@ impl DaState {
             .unwrap_or_default();
 
         for safe_block in safe_blocks {
-            if self.loaded {
-                self.tracker.update_safe_head(safe_block);
-            } else {
-                self.buffered_safe_heads.push(safe_block);
-            }
+            self.apply_conductor_safe_head(safe_block);
         }
 
         let l1_blocks: Vec<_> = self
