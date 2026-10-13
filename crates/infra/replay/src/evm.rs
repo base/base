@@ -22,9 +22,10 @@ use revm::{
 
 use crate::{ExecutionWitness, Fixture};
 
-/// Prepared EL inputs for execution independent of transaction preparation and root hashing.
-/// The captured canonical header supplies the environment; the full stateless-builder benchmark
-/// separately exercises parent-derived fee calculation and header construction.
+/// Prepared EVM inputs using the proof executor's witness-backed [`TrieDB`], not the
+/// sequencer's stateful storage provider. The EVM implementation is shared, but these
+/// timings include proof-trie reads. The full proof stateless-builder benchmark separately
+/// exercises parent-derived fee calculation and header construction.
 #[derive(Debug)]
 pub struct EvmWorkload<'a> {
     /// Mock state/oracle with content-addressed mainnet preimages.

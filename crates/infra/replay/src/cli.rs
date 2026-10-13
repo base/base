@@ -27,7 +27,7 @@ pub enum Command {
         /// Selection and state accesses.
         #[command(flatten)]
         selection: Capture,
-        /// Capture a full stateless execution witness. Requires every block transaction.
+        /// Capture a full proof-execution witness, not a sequencer build. Requires all transactions.
         #[arg(long)]
         execution: bool,
         /// Omit the duplicated JSON-RPC response tape from the exported fixture.
@@ -42,7 +42,7 @@ pub enum Command {
         /// Fixture JSON file.
         fixture: PathBuf,
     },
-    /// Benchmark transaction preparation, Fjord pricing and proof tries without network I/O.
+    /// Benchmark shared transaction components and proof execution, not sequencer block building.
     Bench {
         /// Fixture JSON file.
         fixture: PathBuf,

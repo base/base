@@ -45,7 +45,9 @@ explicit account/slot accesses. Internal call accounts are **not** inferred.
 ## Full execution and batching
 
 Capture an **entire ordered block** to execute real transactions, internal calls,
-precompiles, system calls, fees, receipts and storage writes without a node:
+precompiles, system calls, fees, receipts and storage writes through the **proof
+executor** without a node. This replays an existing block; it does not run the
+sequencer's critical block-building path:
 
 ```sh
 target/release/base-replay capture --block safe --limit 100000 --execution --compact \
@@ -108,11 +110,11 @@ the real epoch. These regenerated batches are not claims about what L1 posted.
 | --- | --- | --- |
 | CL/EL transaction input | `Fixture::payload()` → `BasePayloadAttributes` | Canonical envelope decoding and signature recovery used by block/proof execution |
 | Transaction fee input | `Fixture::transactions` → encoded envelopes | `base-common-flz::data_gas_fjord`, shared by sequencing and proof execution |
-| State storage | `Fixture::provider()` → `WitnessProvider: TrieProvider` | `base-proof-mpt::TrieNode::open` and `blind` |
+| Proof state storage | `Fixture::provider()` → `WitnessProvider: TrieProvider` | `base-proof-mpt::TrieNode::open` and `blind`, not sequencer storage |
 | RPC | `RecordedRpc: Rpc` | Exact method/parameter response replay; capture itself can run against this substitute |
 | Proof oracle | `ExecutionWitness: TrieDBProvider + TrieHinter` (by reference) | Real bytecode, ancestor headers and trie nodes with no network fallback |
-| EL execution | `EvmWorkload` | `BaseBlockExecutorFactory`, precompiles, fees, system calls, receipts and state transitions |
-| CL/EL block input | `Fixture::execution_payload()` | `StatelessL2Builder`, fork-dependent fee parameters and canonical block commitments |
+| Proof EVM execution | `EvmWorkload` | Shared `BaseBlockExecutorFactory` with proof-backed `TrieDB`; includes proof-trie reads |
+| Proof block input | `Fixture::execution_payload()` | Proof executor's `StatelessL2Builder`, fork-dependent fee parameters and canonical block commitments |
 | Batcher/L1 DA | `BatchWorkload::encode()` | `BatchEncoder`, `FrameEncoder`, `BlobEncoder` |
 | Derivation data | `BatchWorkload::decode()` | `BlobDecoder`, `Frame`, `Channel`, `BatchReader` |
 
@@ -126,6 +128,25 @@ Validation checks schema/chain identity, header linkage, transaction hashes and
 recovered senders, and EIP-1186 values against reconstructed state/storage roots.
 Headers are RPC-sourced, not consensus-verified. Fixtures are trusted workload
 inputs, not an authentication protocol for untrusted peers.
+
+### Proof execution is separate from sequencing
+
+`base-proof-mpt::TrieNode` and `base-proof-executor::StatelessL2Builder` are on the
+proof path. The Nitro enclave's `Server::prove` enters the TEE proof pipeline,
+whose executor replays derived blocks using this stateless builder. The `proof-*`
+stages below measure these execution components, not TEE attestation, signing,
+oracle transport, or the entire prover pipeline. Running `base-replay` on a
+normal host measures host performance, not latency inside a TEE.
+
+The sequencer's critical path uses the stateful Flashblocks payload builder in
+`crates/builder/core/src/flashblocks/payload.rs`; its root calculation calls
+`StateRootProvider::state_root_with_updates`. It does **not** use `base-proof-mpt`.
+There is currently no sequencer block-building or sequencer state-root benchmark
+in this tool. An MPT improvement is a proof-path improvement, not a sequencer gain.
+Although `EvmWorkload` uses the shared EVM, its witness-backed `TrieDB` also makes
+its measured storage costs proof-specific. Payload preparation and Fjord pricing
+are shared component measurements; batching and derivation are separate stages,
+not substitutes for a critical-path sequencing benchmark.
 
 ## What the numbers mean
 
@@ -143,21 +164,27 @@ are outside timing. Component allocations and output destruction are included.
 - `proof-open-cold`: fresh blinded tries, reads, decoding and value checks.
 - `proof-read-warm`: the same accesses against already opened tries.
 - `proof-root`: rehash opened account/storage paths, retaining blinded siblings.
-- `evm-execute`: a cold trie database, system calls, all EVM transactions, receipts
-  and merged state transitions. Decoding/signature recovery are prepared outside
-  timing; trie read/bytecode access costs are included.
-- `receipts-root`: fork-aware production receipt commitment calculation.
-- `storage-update-root`: apply the actual mainnet block's account/storage changes
-  and reconstruct its state root, including trie cloning to reset each iteration.
-- `stateless-block`: the entire stateless builder, including input preparation,
-  signature recovery, execution, state updates, commitments and header sealing.
+- `proof-evm-execute`: a cold proof `TrieDB`, system calls, all EVM transactions,
+  receipts and merged state transitions. Decoding/signature recovery are prepared
+  outside timing; proof-trie read/bytecode access costs are included.
+- `proof-receipts-root`: receipt commitment calculation used by the proof executor.
+- `proof-storage-update-root`: apply the actual mainnet block's account/storage
+  changes through proof `TrieDB`/`TrieNode` and reconstruct its state root,
+  including trie cloning to reset each iteration. Not the sequencer root provider.
+- `proof-stateless-block`: full block replay through the proof stateless builder,
+  including input preparation, signature recovery, execution, state updates,
+  commitments and header sealing. Not sequencer payload building or a full TEE proof.
 - `bench-batch` / `batch-encode`: composition through DA packing, including block
   cloning into the owning encoder.
 - `bench-batch` / `batch-derive`: DA decoding through strict batch decoding.
 
-These are **native component** benchmarks, not end-to-end sequencer throughput or
-ZK proof generation/cycle counts. Storage is an in-memory proof-backed substitute,
-not MDBX disk I/O. No running CL/EL service, mempool ordering, P2P transport,
+Earlier reports called these four stages `evm-execute`, `receipts-root`,
+`storage-update-root`, and `stateless-block`; only the labels changed, not the work.
+
+These are **native component** benchmarks, not end-to-end sequencer throughput,
+TEE prover latency, or ZK proof generation/cycle counts. Storage is an in-memory
+proof-backed substitute, not MDBX disk I/O. No running CL/EL service, mempool
+ordering, P2P transport,
 Engine API transport, L1 receipt verification, epoch/sequencing-window validation,
 reorg handling, KZG commitment generation, L1 submission or prover orchestration
 is timed. Batch derivation supplies all frames at one synthetic inclusion block;

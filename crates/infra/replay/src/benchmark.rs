@@ -148,7 +148,8 @@ impl Measurement {
     }
 }
 
-/// Offline native-component measurements, not sequencer throughput or zkVM cycle counts.
+/// Offline component measurements. Execution and trie stages use the proof executor,
+/// not the sequencer's stateful payload builder. Host timings are not TEE prover latency.
 #[derive(Debug, Serialize)]
 pub struct BenchmarkReport {
     /// Hash of canonical serialized fixture data, including the response tape.
@@ -237,17 +238,26 @@ impl BenchmarkReport {
                 "isolated EVM receipts mismatch"
             );
             ensure!(state.result.gas_used == fixture.header.gas_used, "isolated EVM gas mismatch");
-            measurements
-                .push(Measurement::measure("evm-execute", samples, iterations, || evm.execute())?);
-            measurements.push(Measurement::measure("receipts-root", samples, iterations, || {
-                Ok(compute_receipts_root(
-                    &state.result.receipts,
-                    &evm.config,
-                    fixture.header.timestamp,
-                ))
-            })?);
             measurements.push(Measurement::measure(
-                "storage-update-root",
+                "proof-evm-execute",
+                samples,
+                iterations,
+                || evm.execute(),
+            )?);
+            measurements.push(Measurement::measure(
+                "proof-receipts-root",
+                samples,
+                iterations,
+                || {
+                    Ok(compute_receipts_root(
+                        &state.result.receipts,
+                        &evm.config,
+                        fixture.header.timestamp,
+                    ))
+                },
+            )?);
+            measurements.push(Measurement::measure(
+                "proof-storage-update-root",
                 samples,
                 iterations,
                 || {
@@ -256,7 +266,7 @@ impl BenchmarkReport {
                 },
             )?);
             measurements.push(Measurement::measure(
-                "stateless-block",
+                "proof-stateless-block",
                 samples,
                 iterations,
                 || witness.execute(fixture),

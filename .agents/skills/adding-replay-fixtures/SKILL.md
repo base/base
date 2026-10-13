@@ -17,10 +17,12 @@ cargo build --locked --release -p base-replay-bin
 
 | Question | Capture | What it supports |
 | --- | --- | --- |
-| Why is this block slow to execute or update state? | Entire block with `--execution` | Real EVM, receipts, storage updates/root, and full stateless builder |
+| Why is this block slow in proof execution or proof state updates? | Entire block with `--execution` | Shared EVM with proof `TrieDB`, receipts, proof trie updates/root, and full proof stateless builder |
 | Is this transaction expensive to decode, recover, or price? | `--transactions HASH` or `--indices INDEX` | Selected-envelope component benchmarks |
 | Which account/storage reads are costly? | Selection plus `--proofs` and explicit `--storage ADDRESS:SLOT` | Parent-state proof reads and roots, not transaction execution |
 | Is batching or derivation expensive for this traffic? | Consecutive blocks, all transactions, no proofs needed | Composition, compression, frames/blobs, channel reassembly, batch decoding |
+
+**Separate proof execution from critical-path sequencing.** `base-proof-mpt::TrieNode` and `StatelessL2Builder` belong to the proof pipeline used by the TEE prover. The sequencer's Flashblocks builder uses a stateful provider and `state_root_with_updates`, which this tool does not benchmark. Label trie and witness-backed execution results as `proof-*`. A slow sequencer block is a useful input, but its proof replay time does not explain its sequencer latency. Host measurements are not TEE measurements; enclave overhead, attestation and signing are excluded.
 
 **A selected transaction is not independently executable against parent-block state.** Earlier transactions may change its prestate. To investigate its EVM behavior, capture its entire containing block and preserve ordering. The current tool reports whole-block execution, not per-transaction EVM timings; do not claim to isolate the target's execution cost or remove earlier transactions from the witness.
 
@@ -80,4 +82,4 @@ The command checks round-trip transaction bytes, ordering, timestamps, parents, 
 - Always set sample/iteration counts explicitly: the full-block `bench` defaults (30 samples, 100 iterations) are much slower than the quick 15-by-3 command above. A transaction-only workload needs more iterations because each operation is short.
 - Run `cargo test --locked -p base-replay --lib`. Add a permanent regression assertion only for a concrete observable contract the new example exercises; extend existing tests before adding another test file. No wall-time thresholds in unit tests.
 - Follow the `update-docs-index` skill for Markdown changes, then run `git diff --check`. Inspect fixture size and provenance before committing. Do not commit scratch logs, endpoint credentials, or duplicated RPC tapes without a reason.
-- Report separately: capture cost, offline benchmark wall time, measured component timings, and coverage gaps. Native stateless execution is not ZK proving/cycle measurement, disk MDBX performance, or end-to-end sequencer throughput. Do not infer `no_std` proof-runtime gains from native measurements.
+- Report separately: capture cost, offline benchmark wall time, measured component timings, and coverage gaps. Native proof execution is not TEE prover latency, ZK proving/cycle measurement, disk MDBX performance, or critical-path sequencer block building. Do not infer TEE or `no_std` proof-runtime gains from host measurements.
