@@ -5,11 +5,12 @@ use alloy_rlp::Decodable;
 use alloy_trie::{Nibbles, TrieAccount};
 use base_common_consensus::OpTxType;
 use base_common_flz::data_gas_fjord;
+use base_proof_executor::compute_receipts_root;
 use base_proof_mpt::{TrieNode, TrieProvider};
 use eyre::{Result, ensure};
 use serde::Serialize;
 
-use crate::Fixture;
+use crate::{EvmWorkload, Fixture};
 
 /// Lazily opened proof tries, reusable with any storage implementation of [`TrieProvider`].
 #[derive(Clone, Debug)]
@@ -160,6 +161,10 @@ pub struct BenchmarkReport {
     pub accounts: usize,
     /// Number of captured storage accesses.
     pub storage_slots: usize,
+    /// Number of deduplicated nodes in the full execution witness, if present.
+    pub execution_nodes: usize,
+    /// Canonical block gas, if full execution was verified.
+    pub execution_gas: Option<u64>,
     /// Inner loop count for each sample.
     pub iterations: u32,
     /// Debug binaries must not be mistaken for optimized benchmark results.
@@ -216,12 +221,55 @@ impl BenchmarkReport {
                 Ok(state.roots())
             })?);
         }
+        if let Some(witness) = &fixture.execution {
+            let evm = EvmWorkload::new(fixture)?;
+            let state = evm.execute()?;
+            ensure!(
+                state.db.clone().state_root(&state.bundle)? == fixture.header.state_root,
+                "isolated EVM/state update root mismatch"
+            );
+            ensure!(
+                compute_receipts_root(
+                    &state.result.receipts,
+                    &evm.config,
+                    fixture.header.timestamp
+                ) == fixture.header.receipts_root,
+                "isolated EVM receipts mismatch"
+            );
+            ensure!(state.result.gas_used == fixture.header.gas_used, "isolated EVM gas mismatch");
+            measurements
+                .push(Measurement::measure("evm-execute", samples, iterations, || evm.execute())?);
+            measurements.push(Measurement::measure("receipts-root", samples, iterations, || {
+                Ok(compute_receipts_root(
+                    &state.result.receipts,
+                    &evm.config,
+                    fixture.header.timestamp,
+                ))
+            })?);
+            measurements.push(Measurement::measure(
+                "storage-update-root",
+                samples,
+                iterations,
+                || {
+                    // Reset to the same opened parent trie every time, including clone/drop costs.
+                    Ok(state.db.clone().state_root(&state.bundle)?)
+                },
+            )?);
+            measurements.push(Measurement::measure(
+                "stateless-block",
+                samples,
+                iterations,
+                || witness.execute(fixture),
+            )?);
+        }
         Ok(Self {
             fixture_hash: keccak256(serde_json::to_vec(fixture)?),
             block_hash: fixture.block_hash,
             transactions: fixture.transactions.len(),
             accounts: fixture.proofs.len(),
             storage_slots: fixture.proofs.iter().map(|p| p.storage_proof.len()).sum(),
+            execution_nodes: fixture.execution.as_ref().map_or(0, |w| w.nodes.len()),
+            execution_gas: fixture.execution.as_ref().map(|_| fixture.header.gas_used),
             iterations,
             debug_assertions: cfg!(debug_assertions),
             arch: std::env::consts::ARCH.into(),

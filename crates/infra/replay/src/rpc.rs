@@ -49,17 +49,34 @@ impl Rpc for HttpRpc {
         // This tool must never forward writes, even when called as a library.
         if !matches!(
             method,
-            "eth_chainId" | "eth_getBlockByNumber" | "eth_getBlockByHash" | "eth_getProof"
+            "eth_chainId"
+                | "eth_getBlockByNumber"
+                | "eth_getBlockByHash"
+                | "eth_getProof"
+                | "eth_getCode"
         ) {
             bail!("unsupported capture method: {method}");
         }
-        let response: Value = self
-            .client
-            .post(self.url.clone())
-            .json(&json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}))
-            .send()
-            .await
-            .map_err(|e| e.without_url())?
+        let mut retries = 0;
+        let response = loop {
+            let response = self
+                .client
+                .post(self.url.clone())
+                .json(&json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}))
+                .send()
+                .await
+                .map_err(|e| e.without_url())?;
+            if retries < 5
+                && (response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS
+                    || response.status().is_server_error())
+            {
+                tokio::time::sleep(Duration::from_secs(1 << retries)).await;
+                retries += 1;
+                continue;
+            }
+            break response;
+        };
+        let response: Value = response
             .error_for_status()
             .map_err(|e| e.without_url())?
             .json()

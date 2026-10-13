@@ -1,11 +1,19 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs::File,
+    io::{BufReader, BufWriter, Write},
+    path::Path,
+};
 
 use alloy_consensus::{Header, Transaction, transaction::SignerRecoverable};
 use alloy_eips::eip2718::Encodable2718;
-use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
+use alloy_primitives::{Address, B64, B256, Bytes, U256, keccak256};
 use alloy_rlp::Decodable;
 use alloy_rpc_types_eth::EIP1186AccountProofResponse;
-use base_common_consensus::{BaseTxEnvelope, decode_2718_canonical};
+use base_common_chains::ChainConfig;
+use base_common_consensus::{
+    BaseTxEnvelope, HoloceneExtraData, JovianExtraData, decode_2718_canonical,
+};
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_proof_mpt::{TrieNode, TrieProvider};
 use clap::Args;
@@ -13,7 +21,7 @@ use eyre::{Result, ensure, eyre};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::{OpenedState, RecordedRpc, Rpc};
+use crate::{ExecutionWitness, OpenedState, RecordedRpc, Rpc};
 
 /// Explicit storage access to capture as `ADDRESS:SLOT` (hexadecimal).
 #[derive(Clone, Debug)]
@@ -95,6 +103,9 @@ pub struct Fixture {
     pub proofs: Vec<EIP1186AccountProofResponse>,
     /// Optional transport-level mock for callers of [`Rpc`].
     pub rpc: RecordedRpc,
+    /// Complete block execution witness, absent for transaction-selection fixtures.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution: Option<ExecutionWitness>,
 }
 
 impl Capture {
@@ -183,6 +194,7 @@ impl Capture {
             transactions,
             proofs,
             rpc: RecordedRpc::default(),
+            execution: None,
         };
         fixture.validate()?;
         Ok(fixture)
@@ -190,6 +202,32 @@ impl Capture {
 }
 
 impl Fixture {
+    /// Reads JSON or Zstandard-compressed JSON (`.zst`), without network access.
+    pub fn read(path: impl AsRef<Path>) -> Result<Self> {
+        let path = path.as_ref();
+        let input = BufReader::new(File::open(path)?);
+        if path.extension().is_some_and(|ext| ext == "zst") {
+            Ok(serde_json::from_reader(zstd::stream::read::Decoder::new(input)?)?)
+        } else {
+            Ok(serde_json::from_reader(input)?)
+        }
+    }
+
+    /// Writes a new JSON fixture; `.zst` requests compression. Never overwrites existing files.
+    pub fn write(&self, path: impl AsRef<Path>) -> Result<()> {
+        let path = path.as_ref();
+        let mut output = BufWriter::new(File::create_new(path)?);
+        if path.extension().is_some_and(|ext| ext == "zst") {
+            let mut encoder = zstd::stream::write::Encoder::new(output, 9)?;
+            serde_json::to_writer(&mut encoder, self)?;
+            encoder.finish()?.flush()?;
+        } else {
+            serde_json::to_writer_pretty(&mut output, self)?;
+            output.flush()?;
+        }
+        Ok(())
+    }
+
     /// Checks identities, canonical transaction bytes, recovered senders and proof values/roots.
     pub fn validate(&self) -> Result<()> {
         ensure!(self.version == 1, "unsupported fixture version {}", self.version);
@@ -215,6 +253,9 @@ impl Fixture {
             );
         }
         OpenedState::new(self)?;
+        if let Some(witness) = &self.execution {
+            witness.verify(self)?;
+        }
         Ok(())
     }
 
@@ -231,6 +272,43 @@ impl Fixture {
         payload.payload_attributes.suggested_fee_recipient = self.header.beneficiary;
         payload.payload_attributes.parent_beacon_block_root = self.header.parent_beacon_block_root;
         payload
+    }
+
+    /// Full-block CL/EL input using canonical fork parameters. Rejects partial selections
+    /// before any state capture or execution, by checking the block's transaction commitment.
+    pub fn execution_payload(&self) -> Result<BasePayloadAttributes> {
+        ensure!(
+            self.transactions.iter().enumerate().all(|(i, tx)| i == tx.index),
+            "execution requires all block transactions in canonical order"
+        );
+        let transactions = self.payload().decoded_transactions().collect::<Result<Vec<_>, _>>()?;
+        ensure!(
+            alloy_consensus::proofs::calculate_transaction_root(&transactions)
+                == self.header.transactions_root,
+            "execution requires a complete block"
+        );
+        let config = ChainConfig::mainnet().rollup_config();
+        let mut payload = self.payload();
+        if config.is_canyon_active(self.header.timestamp) {
+            payload.payload_attributes.withdrawals = Some(Vec::new());
+        }
+        let params = if config.is_jovian_active(self.header.timestamp) {
+            let (elasticity, denominator, minimum) =
+                JovianExtraData::decode(&self.header.extra_data)?;
+            payload.min_base_fee = Some(minimum);
+            Some((elasticity, denominator))
+        } else if config.is_holocene_active(self.header.timestamp) {
+            Some(HoloceneExtraData::decode(&self.header.extra_data)?)
+        } else {
+            None
+        };
+        if let Some((elasticity, denominator)) = params {
+            let mut encoded = [0; 8];
+            encoded[..4].copy_from_slice(&denominator.to_be_bytes());
+            encoded[4..].copy_from_slice(&elasticity.to_be_bytes());
+            payload.eip_1559_params = Some(B64::from(encoded));
+        }
+        Ok(payload)
     }
 
     /// Content-addressed state substitute; constructing it performs all preimage hashing once.

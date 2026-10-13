@@ -443,8 +443,8 @@ summary = "Load testing: devnet/sepolia profiles, YAML workloads, calibration, a
 digest = "a5633d6f46"
 
 ["crates/infra/replay/README.md"]
-summary = "base-replay: capture selected mainnet transactions and parent-state proofs, substitute payload/RPC/state inputs, and benchmark decoding, recovery, Fjord pricing and proof tries offline."
-digest = "d49c7ac5bc"
+summary = "base-replay: capture mainnet selections and full execution witnesses; benchmark batching, derivation, EVM execution, receipts and trie updates offline, with fixture provenance and coverage limits."
+digest = "be05b0562e"
 
 ["crates/infra/roxy/README.md"]
 summary = "Scaffold-only Rust JSON-RPC reverse proxy meant to replace the ProxyD fork; currently just a listen-address flag plus /healthz and /readyz probes, no proxying yet."

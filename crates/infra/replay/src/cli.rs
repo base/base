@@ -1,13 +1,11 @@
-use std::{
-    fs::File,
-    io::{BufReader, BufWriter, Write},
-    path::PathBuf,
-};
+use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 use eyre::Result;
 
-use crate::{BenchmarkReport, Capture, Fixture, HttpRpc};
+use crate::{
+    BatchWorkload, BenchmarkReport, Capture, CaptureOracle, Fixture, HttpRpc, Measurement,
+};
 
 /// Capture mainnet workloads and benchmark production components offline.
 #[derive(Debug, Parser)]
@@ -29,6 +27,12 @@ pub enum Command {
         /// Selection and state accesses.
         #[command(flatten)]
         selection: Capture,
+        /// Capture a full stateless execution witness. Requires every block transaction.
+        #[arg(long)]
+        execution: bool,
+        /// Omit the duplicated JSON-RPC response tape from the exported fixture.
+        #[arg(long)]
+        compact: bool,
         /// New fixture path. Existing files are not overwritten.
         #[arg(long)]
         out: PathBuf,
@@ -49,19 +53,41 @@ pub enum Command {
         #[arg(long, default_value_t = 100, value_parser = clap::value_parser!(u32).range(1..))]
         iterations: u32,
     },
+    /// Round-trip consecutive fixtures through batching, blobs, channels and batch derivation.
+    BenchBatch {
+        /// One or more consecutive block fixtures, in canonical order.
+        #[arg(required = true)]
+        fixtures: Vec<PathBuf>,
+        /// Number of measured batches.
+        #[arg(long, default_value_t = 15, value_parser = clap::value_parser!(u32).range(3..))]
+        samples: u32,
+        /// Iterations per sample.
+        #[arg(long, default_value_t = 2, value_parser = clap::value_parser!(u32).range(1..))]
+        iterations: u32,
+    },
 }
 
 impl Cli {
     /// Runs the selected command. Benchmark JSON goes to stdout for archiving/comparison.
     pub async fn run(self) -> Result<()> {
         match self.command {
-            Command::Capture { rpc_url, selection, out } => {
+            Command::Capture { rpc_url, selection, execution, compact, out } => {
                 let mut rpc = HttpRpc::new(&rpc_url)?;
                 let mut fixture = selection.capture(&mut rpc).await?;
-                fixture.rpc.exchanges = rpc.exchanges;
-                let mut output = BufWriter::new(File::create_new(out)?);
-                serde_json::to_writer_pretty(&mut output, &fixture)?;
-                output.flush()?;
+                if execution {
+                    fixture.execution_payload()?;
+                    eprintln!(
+                        "capturing stateless witness for block {}: {} transactions",
+                        fixture.header.number,
+                        fixture.transactions.len()
+                    );
+                    fixture.execution =
+                        Some(CaptureOracle::capture(fixture.clone(), rpc_url).await?);
+                }
+                if !compact {
+                    fixture.rpc.exchanges = rpc.exchanges;
+                }
+                fixture.write(out)?;
                 eprintln!(
                     "captured block {}: {} transactions, {} account proofs",
                     fixture.header.number,
@@ -70,8 +96,7 @@ impl Cli {
                 );
             }
             Command::Verify { fixture } => {
-                let fixture: Fixture =
-                    serde_json::from_reader(BufReader::new(File::open(fixture)?))?;
+                let fixture = Fixture::read(fixture)?;
                 fixture.validate()?;
                 println!(
                     "verified block {}: {} transactions, {} account proofs",
@@ -79,14 +104,45 @@ impl Cli {
                     fixture.transactions.len(),
                     fixture.proofs.len()
                 );
+                if let Some(witness) = &fixture.execution {
+                    println!(
+                        "full mainnet header matched: {} trie nodes, {} bytecodes, {} gas",
+                        witness.nodes.len(),
+                        witness.codes.len(),
+                        fixture.header.gas_used
+                    );
+                }
             }
             Command::Bench { fixture, samples, iterations } => {
-                let fixture = serde_json::from_reader(BufReader::new(File::open(fixture)?))?;
+                let fixture = Fixture::read(fixture)?;
                 println!(
                     "{}",
                     serde_json::to_string_pretty(&BenchmarkReport::run(
                         &fixture, samples, iterations
                     )?)?
+                );
+            }
+            Command::BenchBatch { fixtures, samples, iterations } => {
+                let fixtures =
+                    fixtures.iter().map(Fixture::read).collect::<Result<Vec<Fixture>>>()?;
+                let workload = BatchWorkload::new(&fixtures, Default::default())?;
+                let encoded = workload.encode()?;
+                workload.verify(&workload.decode(&encoded)?)?;
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "fixture_hashes": fixtures.iter().map(|f| serde_json::to_vec(f)
+                            .map(alloy_primitives::keccak256)).collect::<Result<Vec<_>, _>>()?,
+                        "blocks": fixtures.len(), "transactions": workload.user_transactions,
+                        "user_bytes": workload.user_bytes, "channel_bytes": encoded.channel_bytes,
+                        "frames": encoded.frames, "synthetic_l1_info": workload.synthetic_l1_info,
+                        "iterations": iterations, "debug_assertions": cfg!(debug_assertions),
+                        "arch": std::env::consts::ARCH,
+                        "measurements": [
+                            Measurement::measure("batch-encode", samples, iterations, || workload.encode())?,
+                            Measurement::measure("batch-derive", samples, iterations, || workload.decode(&encoded))?,
+                        ],
+                    }))?
                 );
             }
         }
