@@ -18,6 +18,9 @@ pub use builder::BaseChainSpecBuilder;
 
 mod upgrades;
 pub use upgrades::ChainUpgradesExt;
+mod engine;
+pub use engine::BaseEngineApiForks;
+
 
 mod spec;
 pub use spec::{BaseChainSpec, BaseChainSpecError, GenesisInfo};

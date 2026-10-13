@@ -10,6 +10,7 @@ use base_common_rpc_types_engine::{
     BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5,
     ExecutionData,
 };
+use base_execution_chainspec::BaseEngineApiForks;
 use base_execution_consensus::{BaseConsensusError, isthmus};
 use base_execution_payload_builder::{
     Attributes, BaseExecutionPayloadValidator, BasePayloadBuilderAttributes, BasePayloadTypes,
@@ -275,7 +276,7 @@ where
         >,
     ) -> Result<(), EngineObjectValidationError> {
         validate_withdrawals_presence(
-            self.chain_spec(),
+            &BaseEngineApiForks(self.chain_spec()),
             version,
             payload_or_attrs.message_validation_kind(),
             payload_or_attrs.timestamp(),
@@ -296,7 +297,7 @@ where
         attributes: &<Types as PayloadTypes>::PayloadAttributes,
     ) -> Result<(), EngineObjectValidationError> {
         validate_version_specific_fields(
-            self.chain_spec(),
+            &BaseEngineApiForks(self.chain_spec()),
             version,
             PayloadOrAttributes::<ExecutionData, Types::PayloadAttributes>::PayloadAttributes(
                 attributes,

@@ -30,6 +30,9 @@ pub enum BasePayloadError {
     /// The block access list carried by the payload is not valid RLP.
     #[error("invalid block access list: {0}")]
     InvalidBlockAccessList(alloy_rlp::Error),
+    /// The payload carries a block access list the block header does not commit to.
+    #[error("block access list without a header commitment")]
+    UnexpectedBlockAccessList,
     /// L1 [`PayloadError`] that can also occur on L2.
     #[error(transparent)]
     Eth(#[from] PayloadError),
