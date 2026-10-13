@@ -1827,8 +1827,9 @@ mod tests {
             TxEip1559 {
                 chain_id: 8_453,
                 nonce,
-                gas_limit: 100_000,
-                max_fee_per_gas: 2_000_000_000,
+                // Large enough to cover EIP-8037 new-account state creation (183,600 gas) for
+                // value transfers to fresh accounts once Denim activates SpecId::AMSTERDAM.
+                gas_limit: 400_000,
                 max_priority_fee_per_gas: 1,
                 to: TxKind::Call(to),
                 value,
@@ -2904,6 +2905,90 @@ mod tests {
             2,
             "the cache hit must be timed as well as the read-through; recording only the \
              read-through would hide the benefit of a warm cache"
+        );
+    }
+
+    /// Amsterdam payloads must commit to the block access list execution produced, and must
+    /// carry the list the header commits to.
+    #[test]
+    fn amsterdam_payload_commits_to_block_access_list() {
+        let ctx = pool_payload_context(DENIM_TIMESTAMP);
+        let outcome = build_pool_payload(
+            ctx,
+            NoopPayloadTransactions::<BasePooledTransaction>::default(),
+        );
+        let BuildOutcomeKind::Freeze(payload) = outcome else {
+            panic!("a Denim-active payload must freeze")
+        };
+
+        let committed = payload
+            .block()
+            .block_access_list_hash
+            .expect("an Amsterdam block must commit to a block access list");
+        let bytes = payload
+            .block_access_list
+            .clone()
+            .expect("an Amsterdam payload must carry the committed block access list");
+
+        let decoded = alloy_eips::eip7928::bal::DecodedBal::from_rlp_bytes(bytes)
+            .expect("the carried block access list must be valid RLP");
+        assert_eq!(
+            decoded.hash(),
+            committed,
+            "the carried block access list must hash to the header commitment"
+        );
+    }
+
+    /// Pre-Amsterdam payloads must keep their commitment-free header and carry no list.
+    #[test]
+    fn pre_amsterdam_payload_has_no_block_access_list() {
+        let chain_spec = Arc::new(BaseChainSpec::from(ChainSpec::default()));
+        let parent = Arc::new(SealedHeader::seal_slow(Header {
+            gas_limit: 30_000_000,
+            ..Default::default()
+        }));
+        let payload_id = PayloadId::new([0; 8]);
+        let attributes = BasePayloadBuilderAttributes::<BaseTxEnvelope> {
+            payload_attributes: EthPayloadBuilderAttributes {
+                id: payload_id,
+                parent: parent.hash(),
+                timestamp: 2,
+                parent_beacon_block_root: Some(B256::ZERO),
+                ..Default::default()
+            },
+            no_tx_pool: true,
+            gas_limit: Some(parent.gas_limit),
+            ..Default::default()
+        };
+        let ctx = BasePayloadBuilderCtx {
+            evm_config: BaseEvmConfig::<_, BasePrimitives>::base(Arc::clone(&chain_spec)),
+            builder_config: BaseBuilderConfig::default(),
+            chain_spec,
+            config: PayloadConfig::new(parent, attributes, payload_id),
+            cancel: Default::default(),
+            best_payload: None,
+        };
+        let provider = NoopProvider::default();
+        let builder = Builder::new(|_| NoopPayloadTransactions::<BasePooledTransaction>::default());
+        let outcome = builder
+            .build(
+                StateProviderDatabase::new((&provider).into_evm_state_provider()),
+                &provider,
+                Some(state_root_handle()),
+                ctx,
+            )
+            .expect("empty payload must build");
+        let BuildOutcomeKind::Freeze(payload) = outcome else {
+            panic!("no-tx-pool payload must freeze")
+        };
+
+        assert_eq!(
+            payload.block().block_access_list_hash, None,
+            "a pre-Amsterdam block must not commit to a block access list"
+        );
+        assert!(
+            payload.block_access_list.is_none(),
+            "a pre-Amsterdam payload must not carry a block access list"
         );
     }
 }
