@@ -98,11 +98,11 @@ where
     /// (`gas_limit + payer_auth`) pushes cumulative block gas over the limit.
     ///
     /// The payer authentication gas is a *conservative upper bound*
-    /// ([`IntrinsicGas::max_payer_auth_cost`]): it pins the payer's policy gate
-    /// worst-case, since the pre-execution check cannot resolve the payer's
-    /// on-chain scope. Reserving a ceiling can only over-reserve (never admit an
-    /// over-limit block), and the same bound is used by block building and
-    /// validation, keeping them consistent.
+    /// ([`IntrinsicGas::max_payer_auth_cost`]): it prices the `payer_auth` bytes
+    /// at the EIP-7623 floor rate, which settlement can only meet or undercharge.
+    /// Reserving a ceiling can only over-reserve (never admit an over-limit
+    /// block), and the same bound is used by block building and validation,
+    /// keeping them consistent.
     ///
     /// A transaction whose payer authentication cannot be priced is invalid, so
     /// the failure is a validation error rather than an internal one.

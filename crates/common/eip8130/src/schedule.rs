@@ -68,6 +68,10 @@ impl Eip8130GasSchedule {
     /// a slot on each write).
     pub const NONCE_FREE_COST: u64 =
         2 * Self::COLD_SLOAD + Self::WARM_SLOAD + 3 * Self::SSTORE_RESET;
+    /// `nonce_key_cost` for the protocol nonce (`nonce_key == 0`). It is the
+    /// account nonce, bumped without touching the nonce manager, so the bump is
+    /// covered by `AA_BASE_COST` as it is by a legacy transaction's base cost.
+    pub const PROTOCOL_NONCE_COST: u64 = 0;
     /// `nonce_key_cost` for the first use of a sequence nonce key (cold SLOAD +
     /// SSTORE set).
     pub const NONCE_KEY_FIRST_USE_COST: u64 = Self::COLD_SLOAD + Self::SSTORE_SET;
