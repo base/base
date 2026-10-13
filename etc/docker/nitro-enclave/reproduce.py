@@ -37,22 +37,32 @@ def write_json(path, value):
 
 
 def context(ref, output, root=ROOT):
-    tree = subprocess.check_output(["git", "rev-parse", f"{ref}^{{tree}}"], cwd=root, text=True).strip()
-    process = subprocess.Popen(["git", "archive", "--format=tar", tree], cwd=root, stdout=subprocess.PIPE)
-    with process.stdout, tarfile.open(fileobj=process.stdout, mode="r|") as source, tarfile.open(output, "w", format=tarfile.USTAR_FORMAT) as target:
-        for member in source:
-            path = PurePosixPath(member.name)
-            if path.parts[0] in EXCLUDED_ROOTS or member.name in EXCLUDED_FILES or (len(path.parts) == 1 and member.name.endswith(".md")):
-                continue
-            if path.is_absolute() or ".." in path.parts or not (member.isfile() or member.isdir() or member.issym()):
-                raise ValueError(f"Unsupported source entry: {member.name}")
-            member.uid = member.gid = member.mtime = 0
-            member.uname = member.gname = ""
-            member.pax_headers = {}
-            member.mode = 0o755 if member.isdir() or member.mode & 0o111 else 0o644
-            target.addfile(member, source.extractfile(member) if member.isfile() else None)
-    if process.wait() != 0:
-        raise RuntimeError("git archive failed")
+    env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull, GIT_ATTR_NOSYSTEM="1", GIT_NO_REPLACE_OBJECTS="1")
+    tree, objects = subprocess.check_output([
+        "git", "rev-parse", "--path-format=absolute", f"{ref}^{{tree}}", "--git-path", "objects",
+    ], cwd=root, env=env, text=True).splitlines()
+    # A separate Git directory excludes repository-local config and info/attributes.
+    with tempfile.TemporaryDirectory() as git_dir:
+        subprocess.run(["git", "init", "--bare", "--quiet", "--template=", git_dir], env=env, check=True)
+        env["GIT_OBJECT_DIRECTORY"] = objects
+        process = subprocess.Popen([
+            "git", f"--git-dir={git_dir}", "-c", f"core.attributesFile={os.devnull}", "archive", "--format=tar", tree,
+        ], env=env, stdout=subprocess.PIPE)
+        with process.stdout, tarfile.open(fileobj=process.stdout, mode="r|") as source, tarfile.open(output, "w", format=tarfile.USTAR_FORMAT) as target:
+            for member in source:
+                path = PurePosixPath(member.name)
+                if path.parts[0] in EXCLUDED_ROOTS or member.name in EXCLUDED_FILES or (len(path.parts) == 1 and member.name.endswith(".md")):
+                    continue
+                if path.is_absolute() or ".." in path.parts or not (member.isfile() or member.isdir() or member.issym()):
+                    raise ValueError(f"Unsupported source entry: {member.name}")
+                member.uid = member.gid = member.mtime = 0
+                member.uname = member.gname = ""
+                member.pax_headers = {}
+                member.mode = 0o755 if member.isdir() or member.mode & 0o111 else 0o644
+                target.addfile(member, source.extractfile(member) if member.isfile() else None)
+        if process.wait() != 0:
+            raise RuntimeError("git archive failed")
     return {"source_tree": tree, "source_identity": digest(output)}
 
 

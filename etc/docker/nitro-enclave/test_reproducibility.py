@@ -13,6 +13,7 @@ import sys
 import tarfile
 import tempfile
 import unittest
+from unittest.mock import patch
 
 sys.dont_write_bytecode = True
 import reproduce
@@ -78,6 +79,57 @@ class ReproducibilityTests(unittest.TestCase):
             (root / "untracked.rs").write_text("not part of the build")
             reproduce.context(tree, second, root)
             self.assertEqual(first.read_bytes(), second.read_bytes())
+
+    def test_committed_context_ignores_client_local_attributes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "checkout"
+            root.mkdir()
+            subprocess.run(["git", "init", "-q", str(root)], check=True)
+            readme = "bin/prover/nitro-enclave/README.md"
+            for name, content in {
+                readme: "compile-time input\n",
+                "script.sh": "#!/bin/sh\n",
+                ".gitattributes": "ignored.txt export-ignore\n",
+                "ignored.txt": "committed export-ignore\n",
+                "README.md": "operational documentation\n",
+                "etc/docker/nitro-enclave/baseline.json": "{}\n",
+            }.items():
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(content)
+            (root / "script.sh").chmod(0o755)
+            (root / "readme-link").symlink_to(readme)
+            subprocess.run(["git", "-C", str(root), "add", "."], check=True)
+            tree = subprocess.check_output(["git", "-C", str(root), "write-tree"], text=True).strip()
+            first, second = Path(tmp) / "first.tar", Path(tmp) / "second.tar"
+            expected = reproduce.context(tree, first, root)
+            with tarfile.open(first) as tar:
+                self.assertEqual(tar.extractfile(readme).read(), b"compile-time input\n")
+                self.assertEqual(tar.getmember("script.sh").mode, 0o755)
+                self.assertEqual(tar.getmember("readme-link").linkname, readme)
+                self.assertTrue(tar.getmember("readme-link").issym())
+                self.assertTrue({"ignored.txt", "README.md", "etc/docker/nitro-enclave/baseline.json"}.isdisjoint(tar.getnames()))
+            attributes = Path(tmp) / "attributes"
+            attributes.write_text(f"{readme} export-ignore\n")
+            config = Path(tmp) / "gitconfig"
+            config.write_text(f"[core]\n\tattributesFile = {attributes}\n")
+            for source, env in (
+                ("global", {"GIT_CONFIG_GLOBAL": str(config)}),
+                ("environment", {"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "core.attributesFile", "GIT_CONFIG_VALUE_0": str(attributes)}),
+                ("repository", {}),
+            ):
+                if source == "repository":
+                    (root / ".git/info/attributes").write_text(attributes.read_text())
+                with patch.dict(os.environ, env):
+                    actual = reproduce.context(tree, second, root)
+                with self.subTest(source=source, check="compile-time input"):
+                    with tarfile.open(second) as tar:
+                        self.assertIn(readme, tar.getnames())
+                with self.subTest(source=source, check="source identity"):
+                    self.assertEqual(expected, actual)
+                with self.subTest(source=source, check="full context bytes"):
+                    self.assertTrue(first.read_bytes() == second.read_bytes(), "Client-local attributes changed the context bytes")
+
 
     def test_filtered_context_retains_compile_time_inputs(self):
         sources = subprocess.check_output(["git", "ls-files", "*.rs"], cwd=reproduce.ROOT, text=True).splitlines()
