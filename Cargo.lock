@@ -6064,6 +6064,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-replay"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus 2.4.1",
+ "alloy-eips 2.4.1",
+ "alloy-primitives",
+ "alloy-rlp",
+ "alloy-rpc-types-eth 2.4.1",
+ "alloy-trie",
+ "async-trait",
+ "base-common-consensus",
+ "base-common-flz",
+ "base-common-rpc-types-engine",
+ "base-proof-mpt",
+ "clap",
+ "eyre",
+ "reqwest 0.13.4",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "base-replay-bin"
+version = "0.0.0"
+dependencies = [
+ "base-replay",
+ "clap",
+ "eyre",
+ "tokio",
+]
+
+[[package]]
 name = "base-reth-cli"
 version = "0.0.0"
 dependencies = [
