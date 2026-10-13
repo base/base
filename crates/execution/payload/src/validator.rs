@@ -2,12 +2,13 @@
 
 use alloc::sync::Arc;
 
-use alloy_consensus::Block;
+use alloy_consensus::{Block, BlockHeader};
+use alloy_eips::eip7928::bal::DecodedBal;
 use alloy_rpc_types_engine::PayloadError;
 use base_common_chains::Upgrades;
 use base_common_rpc_types_engine::{BasePayloadError, ExecutionData};
 use derive_more::{Constructor, Deref};
-use reth_payload_validator::{cancun, prague, shanghai};
+use reth_payload_validator::{amsterdam, cancun, prague, shanghai};
 use reth_primitives_traits::{Block as _, SealedBlock, SignedTransaction};
 
 /// Execution payload validator.
@@ -66,7 +67,7 @@ where
 {
     // BAL bytes are carried through `ExecutionData` for Amsterdam-aware paths, but payload
     // well-formedness here is defined by the encoded execution payload + sidecar alone.
-    let ExecutionData { payload, sidecar, .. } = payload;
+    let ExecutionData { payload, sidecar, block_access_list } = payload;
 
     let expected_hash = payload.block_hash();
 
@@ -94,6 +95,33 @@ where
         sidecar.isthmus(),
         chain_spec.is_prague_active_at_timestamp(sealed_block.timestamp),
     )?;
+
+    let is_amsterdam = chain_spec.is_amsterdam_active_at_timestamp(sealed_block.timestamp);
+    amsterdam::ensure_well_formed_fields(&sealed_block, is_amsterdam)?;
+
+    // EIP-7928: an Amsterdam block must ship the access list its header commits to, and the
+    // shipped list must hash to that commitment. Without this a peer could advertise a
+    // commitment it never supplied a matching list for.
+    match (is_amsterdam, block_access_list) {
+        (true, None) => {
+            return Err(PayloadError::PostAmsterdamBlockWithoutBlockAccessList.into());
+        }
+        (true, Some(bytes)) => {
+            let header_hash = sealed_block
+                .block_access_list_hash()
+                .ok_or(PayloadError::PostAmsterdamBlockWithoutBlockAccessList)?;
+            let decoded = DecodedBal::from_rlp_bytes(bytes)
+                .map_err(BasePayloadError::InvalidBlockAccessList)?;
+            let payload_hash = decoded.hash();
+            if payload_hash != header_hash {
+                return Err(BasePayloadError::BlockAccessListHashMismatch {
+                    header: header_hash,
+                    payload: payload_hash,
+                });
+            }
+        }
+        (false, _) => {}
+    }
 
     Ok(sealed_block)
 }
