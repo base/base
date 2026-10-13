@@ -38,6 +38,50 @@ class ReproducibilityTests(unittest.TestCase):
             "ci": {"job": job, "attempt": f"run:{attempt}:{job}"},
         })
 
+    def test_build_rejects_unsupported_daemon_before_allocating_builder(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            docker = root / "docker"
+            docker.write_text(
+                '#!/bin/sh\nif [ "$1" = info ]; then\n'
+                '  printf "%s\\n" "$DOCKER_INFO"\nelse\n'
+                '  touch "$DOCKER_ALLOCATION"\n  exit 99\nfi\n'
+            )
+            docker.chmod(0o755)
+            for os_type, architecture in (("linux", "arm64"), ("linux", "aarch64"), ("darwin", "amd64")):
+                with self.subTest(os=os_type, architecture=architecture):
+                    result = subprocess.run(
+                        [sys.executable, str(HERE / "reproduce.py"), "build", "--output", str(root / "export")],
+                        env=dict(os.environ, PATH=f"{root}{os.pathsep}{os.environ['PATH']}",
+                                 DOCKER_INFO=json.dumps({"OSType": os_type, "Architecture": architecture}),
+                                 DOCKER_ALLOCATION=str(root / "allocated")),
+                        capture_output=True, text=True,
+                    )
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("Select a native Linux x86_64 Docker context", result.stderr)
+                    self.assertFalse((root / "allocated").exists(), "Unsupported daemon allocated build resources")
+                    self.assertFalse((root / "export").exists())
+
+    def test_baseline_cli_serializes_provenance_and_refuses_invalid_pair_without_output(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            first, second = Path(tmp) / "first", Path(tmp) / "second"
+            for directory in (first, second):
+                self.write_export(directory)
+            command = [sys.executable, str(HERE / "reproduce.py"), "baseline", str(first)]
+            result = subprocess.run([*command, str(second)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            baseline = json.loads(result.stdout)
+            self.assertEqual(baseline["source_tree"], "current-tree")
+            self.assertEqual(baseline["hosts"], [json.loads((directory / "host.json").read_text()) for directory in (first, second)])
+            self.assertEqual(baseline["measurements"]["source_identity"], "source")
+            self.assertEqual(baseline["measurements"]["eif_sha256"], hashlib.sha256(b"eif.bin").hexdigest())
+            self.assertEqual(baseline["measurements"]["pcr0"], "ab" * 48)
+            refused = subprocess.run([*command, str(first)], capture_output=True, text=True)
+            self.assertNotEqual(refused.returncode, 0)
+            self.assertEqual(refused.stdout, "", "Refused baseline emitted publishable JSON")
+            self.assertIn("Independent worker hosts", refused.stderr)
+
+
     @unittest.skipUnless(shutil.which("rustc"), "rustc is required")
     def test_rust_source_paths_and_metadata_do_not_change_objects(self):
         objects = []
@@ -219,8 +263,22 @@ class ReproducibilityTests(unittest.TestCase):
                     for directory in (first, second):
                         (directory / name).write_bytes(name.encode())
 
+    def test_ci_partial_retry_accepts_producer_attempt_above_comparator_attempt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            exports = Path(tmp)
+            for host, attempt in (("first", 2), ("second", 1)):
+                self.write_export(exports / f"nitro-eif-{host}-attempt-{attempt}", attempt=attempt)
+            result = subprocess.run(
+                [sys.executable, str(HERE / "reproduce.py"), "compare-ci", str(exports),
+                 "--run-id", "run"],
+                env=dict(os.environ, NITRO_RUN_ATTEMPT="1"), capture_output=True, text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(json.loads(result.stdout)["eif_sha256"], hashlib.sha256(b"eif.bin").hexdigest())
+
+
     def test_ci_comparison_uses_each_producing_attempt_not_artifact_ids(self):
-        for latest_attempts, current_attempt in (((10, 10), 10), ((2, 1), 2), ((2, 1), 3)):
+        for latest_attempts in ((10, 10), (2, 1)):
             with self.subTest(attempts=latest_attempts), tempfile.TemporaryDirectory() as tmp:
                 exports = Path(tmp)
                 # Simulate downloads whose newest producing attempt has the lower artifact ID.
@@ -235,19 +293,19 @@ class ReproducibilityTests(unittest.TestCase):
                         (directory / "artifact-id.txt").write_text(str(artifact_id))
                         if attempt != latest:
                             (directory / "eif.bin").write_bytes(b"stale invalid export")
-                result = reproduce.compare_ci(exports, "run", current_attempt)
+                result = reproduce.compare_ci(exports, "run")
                 self.assertEqual(result["eif_sha256"], hashlib.sha256(b"eif.bin").hexdigest())
                 selected = exports / f"nitro-eif-second-attempt-{latest_attempts[1]}"
                 host_record = json.loads((selected / "host.json").read_text())
                 host_record["ci"]["attempt"] = "run:99:build:second"
                 reproduce.write_json(selected / "host.json", host_record)
                 with self.assertRaisesRegex(ValueError, "Producing CI attempt"):
-                    reproduce.compare_ci(exports, "run", current_attempt)
+                    reproduce.compare_ci(exports, "run")
                 host_record["ci"]["attempt"] = f"run:{latest_attempts[1]}:build:second"
                 reproduce.write_json(selected / "host.json", host_record)
                 reproduce.write_json(selected / "identity.json", {"source_identity": "other-context"})
                 with self.assertRaisesRegex(ValueError, "source_identity:"):
-                    reproduce.compare_ci(exports, "run", current_attempt)
+                    reproduce.compare_ci(exports, "run")
 
 
 if __name__ == "__main__":

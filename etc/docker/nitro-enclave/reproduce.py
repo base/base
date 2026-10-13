@@ -164,15 +164,13 @@ def compare(first, second, baseline=None, require_independent=False):
     return left
 
 
-def compare_ci(exports, run_id, run_attempt, baseline=None):
+def compare_ci(exports, run_id, baseline=None):
     selected = {}
     for directory in Path(exports).iterdir():
         match = re.fullmatch(r"nitro-eif-(first|second)-attempt-([1-9][0-9]*)", directory.name)
         if not match or not directory.is_dir():
             raise ValueError(f"Invalid CI export name: {directory.name}")
         host, attempt = match[1], int(match[2])
-        if attempt > run_attempt:
-            raise ValueError(f"CI export attempt exceeds current run attempt: {directory.name}")
         if host not in selected or attempt > selected[host][0]:
             selected[host] = (attempt, directory)
     for host in ("first", "second"):
@@ -203,7 +201,6 @@ def main():
     subparser = commands.add_parser("compare-ci")
     subparser.add_argument("exports", type=Path)
     subparser.add_argument("--run-id", required=True)
-    subparser.add_argument("--run-attempt", type=int, required=True)
     subparser.add_argument("--baseline", type=Path)
     args = parser.parse_args()
     if args.command == "context":
@@ -214,7 +211,7 @@ def main():
         result = compare(args.first, args.second, args.baseline, args.require_independent)
         print(json.dumps(result, indent=2, sort_keys=True))
     elif args.command == "compare-ci":
-        result = compare_ci(args.exports, args.run_id, args.run_attempt, args.baseline)
+        result = compare_ci(args.exports, args.run_id, args.baseline)
         print(json.dumps(result, indent=2, sort_keys=True))
     else:
         result = compare(args.first, args.second, require_independent=True)

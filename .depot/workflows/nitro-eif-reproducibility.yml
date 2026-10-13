@@ -63,8 +63,7 @@ jobs:
       - name: Compare independent exports against the measured baseline
         env:
           NITRO_RUN_ID: ${{ github.run_id }}
-          NITRO_RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
           python3 etc/docker/nitro-enclave/reproduce.py compare-ci artifacts \
-            --run-id "$NITRO_RUN_ID" --run-attempt "$NITRO_RUN_ATTEMPT" \
+            --run-id "$NITRO_RUN_ID" \
             --baseline etc/docker/nitro-enclave/baseline.json
