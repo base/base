@@ -507,6 +507,18 @@ impl TrieNode {
     /// - `usize` - The encoded length of the value, blinded if the raw encoded length is longer
     ///   than a [B256].
     fn blinded_length(&self) -> usize {
+        if let Self::Branch { stack } = self {
+            let mut payload_length = 0;
+            for node in stack {
+                payload_length += node.blinded_length();
+                // A list has at least a one-byte header. Once it cannot be inlined, the
+                // remaining descendants cannot change the length of its hash reference.
+                if payload_length >= B256::ZERO.len() - 1 {
+                    return B256::ZERO.length();
+                }
+            }
+            return Header { list: true, payload_length }.length() + payload_length;
+        }
         let encoded_len = self.length();
         if encoded_len >= B256::ZERO.len() { B256::ZERO.length() } else { encoded_len }
     }
@@ -528,7 +540,7 @@ impl Encodable for TrieNode {
                 // Encode the extension node's header, prefix, and pointer node.
                 Header { list: true, payload_length }.encode(out);
                 alloy_trie::nodes::encode_path_leaf(prefix, false).as_slice().encode(out);
-                if node.length() >= B256::ZERO.len() {
+                if node.blinded_length() >= B256::ZERO.len() {
                     let hash = node.blind();
                     hash.encode(out);
                 } else {
@@ -541,7 +553,7 @@ impl Encodable for TrieNode {
                 // that are longer than 32 bytes in length.
                 Header { list: true, payload_length }.encode(out);
                 for node in stack {
-                    if node.length() >= B256::ZERO.len() {
+                    if node.blinded_length() >= B256::ZERO.len() {
                         let hash = node.blind();
                         hash.encode(out);
                     } else {
@@ -792,6 +804,25 @@ mod tests {
     }
 
     proptest::proptest! {
+        /// Shared prefixes and small values exercise both sides of the inline/hash boundary.
+        #[test]
+        fn diff_hash_builder_inline_branches(items in proptest::collection::btree_map(
+            proptest::prelude::any::<u8>(),
+            proptest::collection::vec(proptest::prelude::any::<u8>(), 1..40),
+            1..64,
+        )) {
+            let mut hb = HashBuilder::default();
+            let mut node = TrieNode::Empty;
+            for (suffix, value) in items {
+                let mut key = [0x42; 32];
+                key[31] = suffix;
+                let path = Nibbles::unpack(key);
+                hb.add_leaf(path, &value);
+                node.insert(&path, value.into(), &NoopTrieProvider).unwrap();
+            }
+            assert_eq!(node.blind(), hb.root());
+        }
+
         /// Differential test for inserting an arbitrary number of keys into an empty `TrieNode` / `HashBuilder`.
         #[test]
         fn diff_hash_builder_insert(mut keys in proptest::collection::vec(proptest::prelude::any::<[u8; 32]>(), 1..4096)) {

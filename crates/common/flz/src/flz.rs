@@ -105,16 +105,31 @@ const fn literals(r: u32, size: u32) -> u32 {
     if r != 0 { size + r + 1 } else { size }
 }
 
-const fn cmp(input: &[u8], p: u32, q: u32, r: u32) -> u32 {
-    let mut l = 0;
-    let mut r = r - q;
-    while l < r {
-        if input[(p + l) as usize] != input[(q + l) as usize] {
-            r = 0;
+// Keep word comparison out of the per-byte hash lookup loop. Short, incompressible
+// inputs never need it and should not pay for its code size/register pressure.
+#[inline(never)]
+fn cmp(input: &[u8], p: u32, q: u32, r: u32) -> u32 {
+    let limit = (r - q) as usize;
+    let left = &input[p as usize..p as usize + limit];
+    let right = &input[q as usize..r as usize];
+    let mut matched = 0;
+    for (left, right) in left.chunks_exact(8).zip(right.chunks_exact(8)) {
+        let difference = u64::from_le_bytes(left.try_into().expect("eight-byte chunk"))
+            ^ u64::from_le_bytes(right.try_into().expect("eight-byte chunk"));
+        if difference != 0 {
+            // FastLZ counts the mismatching byte too. Little-endian words make the
+            // first differing byte independent of the host's endianness.
+            return matched as u32 + difference.trailing_zeros() / 8 + 1;
         }
-        l += 1;
+        matched += 8;
     }
-    l
+    while matched < limit {
+        if left[matched] != right[matched] {
+            return matched as u32 + 1;
+        }
+        matched += 1;
+    }
+    matched as u32
 }
 
 const fn flz_match(l: u32, size: u32) -> u32 {
