@@ -8,9 +8,8 @@ use base_common_consensus::{BaseBlock, BaseTransaction, Predeploys};
 use base_common_evm::BaseTime;
 use base_common_rpc_types_engine::{
     BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5,
-    ExecutionData,
+    BaseExecutionPayloadEnvelopeV6, ExecutionData,
 };
-use base_execution_chainspec::BaseEngineApiForks;
 use base_execution_consensus::{BaseConsensusError, isthmus};
 use base_execution_payload_builder::{
     Attributes, BaseExecutionPayloadValidator, BasePayloadBuilderAttributes, BasePayloadTypes,
@@ -24,7 +23,8 @@ use reth_node_api::{
     payload::{
         EngineApiMessageVersion, EngineObjectValidationError, MessageValidationKind,
         NewPayloadError, PayloadOrAttributes, PayloadTypes, VersionSpecificValidationError,
-        validate_parent_beacon_block_root_presence,
+        validate_block_access_list_presence, validate_parent_beacon_block_root_presence,
+        validate_slot_number_presence,
     },
     validate_version_specific_fields,
 };
@@ -71,14 +71,15 @@ where
         + TryInto<ExecutionPayloadEnvelopeV2>
         + TryInto<BaseExecutionPayloadEnvelopeV3>
         + TryInto<BaseExecutionPayloadEnvelopeV4>
-        + TryInto<BaseExecutionPayloadEnvelopeV5>,
+        + TryInto<BaseExecutionPayloadEnvelopeV5>
+        + TryInto<BaseExecutionPayloadEnvelopeV6>,
 {
     type ExecutionPayloadEnvelopeV1 = ExecutionPayloadV1;
     type ExecutionPayloadEnvelopeV2 = ExecutionPayloadEnvelopeV2;
     type ExecutionPayloadEnvelopeV3 = BaseExecutionPayloadEnvelopeV3;
     type ExecutionPayloadEnvelopeV4 = BaseExecutionPayloadEnvelopeV4;
     type ExecutionPayloadEnvelopeV5 = BaseExecutionPayloadEnvelopeV5;
-    type ExecutionPayloadEnvelopeV6 = BaseExecutionPayloadEnvelopeV5;
+    type ExecutionPayloadEnvelopeV6 = BaseExecutionPayloadEnvelopeV6;
 }
 
 /// Validator for Base engine API.
@@ -282,8 +283,24 @@ where
             payload_or_attrs.timestamp(),
             payload_or_attrs.withdrawals().is_some(),
         )?;
+        // EIP-7928 / EIP-7843: Amsterdam payloads must carry a block access list and a slot
+        // number, and pre-Amsterdam payloads must not.
+        validate_block_access_list_presence(
+            self.chain_spec(),
+            version,
+            payload_or_attrs.message_validation_kind(),
+            payload_or_attrs.timestamp(),
+            payload_or_attrs.block_access_list().is_some(),
+        )?;
+        validate_slot_number_presence(
+            self.chain_spec(),
+            version,
+            payload_or_attrs.message_validation_kind(),
+            payload_or_attrs.timestamp(),
+            payload_or_attrs.slot_number().is_some(),
+        )?;
         validate_parent_beacon_block_root_presence(
-            &BaseEngineApiForks(self.chain_spec()),
+            self.chain_spec(),
             version,
             payload_or_attrs.message_validation_kind(),
             payload_or_attrs.timestamp(),
@@ -297,7 +314,7 @@ where
         attributes: &<Types as PayloadTypes>::PayloadAttributes,
     ) -> Result<(), EngineObjectValidationError> {
         validate_version_specific_fields(
-            &BaseEngineApiForks(self.chain_spec()),
+            self.chain_spec(),
             version,
             PayloadOrAttributes::<ExecutionData, Types::PayloadAttributes>::PayloadAttributes(
                 attributes,

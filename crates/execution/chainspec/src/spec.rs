@@ -306,12 +306,6 @@ impl BaseChainSpec {
     pub fn make_genesis_header(genesis: &Genesis, upgrades: &ChainHardforks) -> Header {
         let mut header = reth_chainspec::make_genesis_header(genesis, upgrades);
 
-        // Denim's EVM spec does not change Base's header format. Until Base introduces BAL
-        // commitments and slot numbers, genesis must match the headers produced by
-        // BaseBlockAssembler and reconstructed by the consensus payload types.
-        header.block_access_list_hash = None;
-        header.slot_number = None;
-
         if upgrades.fork(BaseUpgrade::Isthmus).active_at_timestamp(header.timestamp)
             && let Some(storage_root) = Self::l2_to_l1_message_passer_storage_root(genesis)
         {

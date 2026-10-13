@@ -6,7 +6,7 @@ use alloy_rpc_types_engine::{
     ClientVersionV1, ExecutionPayloadBodiesV1, ExecutionPayloadInputV2, ExecutionPayloadV3,
     ForkchoiceState, ForkchoiceUpdated, PayloadId, PayloadStatus,
 };
-use base_common_rpc_types_engine::{BaseExecutionPayloadV4, ExecutionData};
+use base_common_rpc_types_engine::{BaseExecutionPayloadV4, BaseExecutionPayloadV5, ExecutionData};
 use derive_more::Constructor;
 use jsonrpsee::proc_macros::rpc;
 use jsonrpsee_core::{RpcResult, server::RpcModule};
@@ -25,14 +25,17 @@ pub const ENGINE_CAPABILITIES: &[&str] = &[
     "engine_forkchoiceUpdatedV1",
     "engine_forkchoiceUpdatedV2",
     "engine_forkchoiceUpdatedV3",
+    "engine_forkchoiceUpdatedV4",
     "engine_getClientVersionV1",
     "engine_getPayloadV2",
     "engine_getPayloadV3",
     "engine_getPayloadV4",
     "engine_getPayloadV5",
+    "engine_getPayloadV6",
     "engine_newPayloadV2",
     "engine_newPayloadV3",
     "engine_newPayloadV4",
+    "engine_newPayloadV5",
     "engine_getPayloadBodiesByHashV1",
     "engine_getPayloadBodiesByRangeV1",
 ];
@@ -88,6 +91,25 @@ pub trait BaseEngineApi<Engine: EngineTypes> {
         execution_requests: Requests,
     ) -> RpcResult<PayloadStatus>;
 
+    /// Sends the given payload to the execution layer client, as specified for the Amsterdam fork.
+    ///
+    /// See also <https://github.com/ethereum/execution-apis/blob/main/src/engine/amsterdam.md#engine_newpayloadv5>
+    ///
+    /// Rollup modifications:
+    /// - blob versioned hashes MUST be empty list.
+    /// - execution layer requests MUST be empty list.
+    /// - `blockAccessList` MUST be the RLP-encoded block access list the block header commits to
+    ///   (EIP-7928).
+    /// - `slotNumber` MUST be the L2 block number of the payload (EIP-7843).
+    #[method(name = "newPayloadV5")]
+    async fn new_payload_v5(
+        &self,
+        payload: BaseExecutionPayloadV5,
+        versioned_hashes: Vec<B256>,
+        parent_beacon_block_root: B256,
+        execution_requests: Requests,
+    ) -> RpcResult<PayloadStatus>;
+
     /// See also <https://github.com/ethereum/execution-apis/blob/6709c2a795b707202e93c4f2867fa0bf2640a84f/src/engine/paris.md#engine_forkchoiceupdatedv1>
     ///
     /// This exists for compatibility with consensus nodes: <https://github.com/ethereum-optimism/optimism/blob/0bc5fe8d16155dc68bcdf1fa5733abc58689a618/op-node/rollup/types.go#L615-L617>
@@ -127,6 +149,20 @@ pub trait BaseEngineApi<Engine: EngineTypes> {
     /// - The `payload_attributes` parameter is extended with the [`EngineTypes::PayloadAttributes`](EngineTypes) type as described in <https://specs.base.org/protocol/execution#extended-payloadattributesv2>
     #[method(name = "forkchoiceUpdatedV3")]
     async fn fork_choice_updated_v3(
+        &self,
+        fork_choice_state: ForkchoiceState,
+        payload_attributes: Option<Engine::PayloadAttributes>,
+    ) -> RpcResult<ForkchoiceUpdated>;
+
+    /// Updates the execution layer client with the given fork choice, as specified for the
+    /// Amsterdam fork.
+    ///
+    /// This is the same as `forkchoiceUpdatedV3`, but the payload attributes are expected to carry
+    /// the EIP-7843 `slotNumber` (the L2 block number on Base) when attributes are provided.
+    ///
+    /// See also <https://github.com/ethereum/execution-apis/blob/main/src/engine/amsterdam.md#engine_forkchoiceupdatedv4>
+    #[method(name = "forkchoiceUpdatedV4")]
+    async fn fork_choice_updated_v4(
         &self,
         fork_choice_state: ForkchoiceState,
         payload_attributes: Option<Engine::PayloadAttributes>,
@@ -195,6 +231,20 @@ pub trait BaseEngineApi<Engine: EngineTypes> {
         &self,
         payload_id: PayloadId,
     ) -> RpcResult<Engine::ExecutionPayloadEnvelopeV5>;
+
+    /// Returns the most recent version of the payload that is available in the corresponding
+    /// payload build process at the time of receiving this call, as specified for the Amsterdam
+    /// fork.
+    ///
+    /// See also <https://github.com/ethereum/execution-apis/blob/main/src/engine/amsterdam.md#engine_getpayloadv6>
+    ///
+    /// Returns the [`BaseExecutionPayloadEnvelopeV6`](base_common_rpc_types_engine::BaseExecutionPayloadEnvelopeV6),
+    /// which carries the block access list and slot number of the built payload.
+    #[method(name = "getPayloadV6")]
+    async fn get_payload_v6(
+        &self,
+        payload_id: PayloadId,
+    ) -> RpcResult<Engine::ExecutionPayloadEnvelopeV6>;
 
     /// Returns the execution payload bodies by the given hash.
     ///
@@ -306,6 +356,24 @@ where
         Ok(self.inner.new_payload_v4_metered(payload).await?)
     }
 
+    async fn new_payload_v5(
+        &self,
+        payload: BaseExecutionPayloadV5,
+        versioned_hashes: Vec<B256>,
+        parent_beacon_block_root: B256,
+        execution_requests: Requests,
+    ) -> RpcResult<PayloadStatus> {
+        trace!(target: "rpc::engine", "Serving engine_newPayloadV5");
+        let payload = ExecutionData::v5(
+            payload,
+            versioned_hashes,
+            parent_beacon_block_root,
+            execution_requests,
+        );
+
+        Ok(self.inner.new_payload_v5_metered(payload).await?)
+    }
+
     #[instrument(
         level = "debug",
         target = "rpc::engine",
@@ -366,6 +434,30 @@ where
         Ok(self.inner.fork_choice_updated_v3_metered(fork_choice_state, payload_attributes).await?)
     }
 
+    #[instrument(
+        level = "debug",
+        target = "rpc::engine",
+        skip_all,
+        fields(
+            head = ?fork_choice_state.head_block_hash,
+            safe = ?fork_choice_state.safe_block_hash,
+            finalized = ?fork_choice_state.finalized_block_hash,
+            has_attributes = payload_attributes.is_some()
+        )
+    )]
+    async fn fork_choice_updated_v4(
+        &self,
+        fork_choice_state: ForkchoiceState,
+        payload_attributes: Option<EngineT::PayloadAttributes>,
+    ) -> RpcResult<ForkchoiceUpdated> {
+        trace!(target: "rpc::engine", "Serving engine_forkchoiceUpdatedV4");
+        // Base does not support the EIP-8070 custody columns, so none are forwarded.
+        Ok(self
+            .inner
+            .fork_choice_updated_v4_metered(fork_choice_state, payload_attributes, None)
+            .await?)
+    }
+
     #[instrument(level = "debug", target = "rpc::engine", skip_all, fields(id = %payload_id))]
     async fn get_payload_v2(
         &self,
@@ -400,6 +492,15 @@ where
     ) -> RpcResult<EngineT::ExecutionPayloadEnvelopeV5> {
         trace!(target: "rpc::engine", "Serving engine_getPayloadV5");
         Ok(self.inner.get_payload_v5_metered(payload_id).await?)
+    }
+
+    #[instrument(level = "debug", target = "rpc::engine", skip_all, fields(id = %payload_id))]
+    async fn get_payload_v6(
+        &self,
+        payload_id: PayloadId,
+    ) -> RpcResult<EngineT::ExecutionPayloadEnvelopeV6> {
+        trace!(target: "rpc::engine", "Serving engine_getPayloadV6");
+        Ok(self.inner.get_payload_v6_metered(payload_id).await?)
     }
 
     async fn get_payload_bodies_by_hash_v1(
