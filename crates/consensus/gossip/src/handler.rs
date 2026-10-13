@@ -43,6 +43,8 @@ pub struct BlockHandler {
     pub blocks_v3_topic: IdentTopic,
     /// The libp2p topic for V4 blocks.
     pub blocks_v4_topic: IdentTopic,
+    /// The libp2p topic for V5 (Denim/Amsterdam) blocks, which carry the block access list.
+    pub blocks_v5_topic: IdentTopic,
     /// A map of seen block height to block hash set.
     /// This map is pruned when it contains more than [`Self::SEEN_HASH_CACHE_SIZE`] entries.
     pub seen_hashes: BTreeMap<u64, HashSet<B256>>,
@@ -69,6 +71,8 @@ impl Handler for BlockHandler {
                 NetworkPayloadEnvelope::decode_v3
             } else if msg.topic == self.blocks_v4_topic.hash() {
                 NetworkPayloadEnvelope::decode_v4
+            } else if msg.topic == self.blocks_v5_topic.hash() {
+                NetworkPayloadEnvelope::decode_v5
             } else {
                 warn!(target: "gossip", topic = ?msg.topic, "Received block with unknown topic");
                 return (MessageAcceptance::Reject, None);
@@ -126,6 +130,7 @@ impl BlockHandler {
             ("v2", &self.blocks_v2_topic),
             ("v3", &self.blocks_v3_topic),
             ("v4", &self.blocks_v4_topic),
+            ("v5", &self.blocks_v5_topic),
         ]
         .into_iter()
         .find_map(|(version, known)| (known.hash() == *topic).then_some(version))
@@ -144,6 +149,7 @@ impl BlockHandler {
             self.blocks_v2_topic.hash(),
             self.blocks_v3_topic.hash(),
             self.blocks_v4_topic.hash(),
+            self.blocks_v5_topic.hash(),
         ]
         .into_iter()
         .skip_while(|topic| *topic != oldest_topic)
@@ -162,6 +168,7 @@ impl BlockHandler {
             blocks_v2_topic: IdentTopic::new(format!("/optimism/{chain_id}/1/blocks")),
             blocks_v3_topic: IdentTopic::new(format!("/optimism/{chain_id}/2/blocks")),
             blocks_v4_topic: IdentTopic::new(format!("/optimism/{chain_id}/3/blocks")),
+            blocks_v5_topic: IdentTopic::new(format!("/optimism/{chain_id}/4/blocks")),
             seen_hashes: BTreeMap::new(),
         }
     }
@@ -170,7 +177,9 @@ impl BlockHandler {
     ///
     /// Reference: <https://github.com/ethereum-optimism/optimism/blob/0bc5fe8d16155dc68bcdf1fa5733abc58689a618/op-node/p2p/gossip.go#L604C1-L612C3>
     pub fn topic(&self, timestamp: u64) -> IdentTopic {
-        if self.rollup_config.is_isthmus_active(timestamp) {
+        if self.rollup_config.is_denim_active(timestamp) {
+            self.blocks_v5_topic.clone()
+        } else if self.rollup_config.is_isthmus_active(timestamp) {
             self.blocks_v4_topic.clone()
         } else if self.rollup_config.is_ecotone_active(timestamp) {
             self.blocks_v3_topic.clone()
@@ -205,6 +214,7 @@ impl BlockHandler {
             hash if hash == self.blocks_v2_topic.hash() => envelope.encode_v2()?,
             hash if hash == self.blocks_v3_topic.hash() => envelope.encode_v3()?,
             hash if hash == self.blocks_v4_topic.hash() => envelope.encode_v4()?,
+            hash if hash == self.blocks_v5_topic.hash() => envelope.encode_v5()?,
             hash => return Err(HandlerEncodeError::UnknownTopic(hash)),
         };
         Ok(encoded)
@@ -248,6 +258,7 @@ mod tests {
             handler.blocks_v2_topic.hash(),
             handler.blocks_v3_topic.hash(),
             handler.blocks_v4_topic.hash(),
+            handler.blocks_v5_topic.hash(),
         ];
 
         // At fork + 59, a block from the preceding second is still within the
@@ -273,17 +284,51 @@ mod tests {
         let (_, signer) = tokio::sync::watch::channel(Address::ZERO);
         let mut handler = BlockHandler::new(RollupConfig::default(), signer);
         let all = handler.topics_at(0);
-        assert_eq!(all.len(), 4);
+        assert_eq!(all.len(), 5);
         assert_eq!(handler.topics_at(u64::MAX), all);
 
         // Later forks imply their predecessors, even if the earlier timestamps
         // are omitted by a custom chain configuration.
         handler.rollup_config.upgrades.isthmus_time = Some(100);
         assert_eq!(handler.topics_at(159), all);
-        assert_eq!(handler.topics_at(160), [handler.blocks_v4_topic.hash()]);
+        assert_eq!(
+            handler.topics_at(160),
+            [handler.blocks_v4_topic.hash(), handler.blocks_v5_topic.hash()]
+        );
 
         handler.rollup_config.upgrades.isthmus_time = Some(0);
-        assert_eq!(handler.topics_at(0), [handler.blocks_v4_topic.hash()]);
+        assert_eq!(
+            handler.topics_at(0),
+            [handler.blocks_v4_topic.hash(), handler.blocks_v5_topic.hash()]
+        );
+    }
+
+    #[test]
+    fn denim_replaces_the_v4_topic_with_v5() {
+        let (_, signer) = tokio::sync::watch::channel(Address::ZERO);
+        let mut handler = BlockHandler::new(
+            RollupConfig {
+                upgrades: UpgradeConfig { isthmus_time: Some(100), ..Default::default() },
+                ..Default::default()
+            },
+            signer,
+        );
+        // Denim is unscheduled, so the newest topic stays V4 and V5 is subscribed ahead of it.
+        assert_eq!(handler.topic(1_000).hash(), handler.blocks_v4_topic.hash());
+        assert_eq!(
+            handler.topics_at(1_000),
+            [handler.blocks_v4_topic.hash(), handler.blocks_v5_topic.hash()]
+        );
+
+        // A Denim activation moves the newest topic to V5; V4 retires once its gossip age
+        // window has elapsed.
+        handler.rollup_config.upgrades.base.denim = Some(1_000);
+        assert_eq!(handler.topic(1_000).hash(), handler.blocks_v5_topic.hash());
+        assert_eq!(
+            handler.topics_at(1_000),
+            [handler.blocks_v4_topic.hash(), handler.blocks_v5_topic.hash()]
+        );
+        assert_eq!(handler.topics_at(1_060), [handler.blocks_v5_topic.hash()]);
     }
 
     #[test]

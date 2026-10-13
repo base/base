@@ -302,6 +302,7 @@ impl P2pRpcRequest {
                     gossip.handler.blocks_v2_topic.hash(),
                     gossip.handler.blocks_v3_topic.hash(),
                     gossip.handler.blocks_v4_topic.hash(),
+                    gossip.handler.blocks_v5_topic.hash(),
                 ]);
 
                 if topics.iter().any(|topic| supported_topics.contains(topic)) {
