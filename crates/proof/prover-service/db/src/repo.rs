@@ -1968,9 +1968,6 @@ fn comparable_request_payload(
         };
     if let Some(map) = zk_backend_path.and_then(|path| value.pointer_mut(path)?.as_object_mut()) {
         map.entry("zk_backend").or_insert_with(|| serde_json::Value::String("cluster".to_owned()));
-        // Older ZK payloads recorded a caller-supplied interval. The range program
-        // ignores it, so it must not split an otherwise identical replay.
-        map.remove("intermediate_root_interval");
     }
     if mode == RequestMismatchMode::AllowL1HeadReplacement {
         remove_l1_head_fields(&mut value);
@@ -1994,6 +1991,9 @@ fn remove_l1_head_fields(value: &mut serde_json::Value) {
 
 #[cfg(test)]
 mod tests {
+    use std::num::NonZeroU64;
+
+    use base_proof_primitives::ProofRequest as PrimitiveProofRequest;
     use base_prover_service_protocol::{
         ProofRequest as ProtocolProofRequest, ProofRequestKind, TeeKind as ProtocolTeeKind,
         TeeProofRequest, ZkBackend, ZkProofRequest, ZkVm,
@@ -2012,6 +2012,7 @@ mod tests {
                 sequence_window: Some(50),
                 l1_head: None,
                 schedule_l2_block_number: None,
+                intermediate_block_interval: NonZeroU64::new(5).unwrap(),
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,
             }),
@@ -2047,6 +2048,7 @@ mod tests {
                 sequence_window: None,
                 l1_head: None,
                 schedule_l2_block_number: None,
+                intermediate_block_interval: NonZeroU64::new(5).unwrap(),
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,
             }),
@@ -2062,7 +2064,6 @@ mod tests {
 
         assert!(!payload.contains_key("sequence_window"));
         assert!(!payload.contains_key("l1_head"));
-        assert!(!payload.contains_key("intermediate_root_interval"));
         assert!(!payload.contains_key("schedule_l2_block_number"));
     }
 
@@ -2074,41 +2075,9 @@ mod tests {
     }
 
     #[test]
-    fn fallback_tee_protocol_payload_deserializes() {
-        let payload = ProtocolRequestPayloadParams {
-            session_id: "tee-session",
-            start_block_number: 100,
-            number_of_blocks_to_prove: 1,
-            sequence_window: None,
-            api_proof_type: ApiProofType::Tee,
-            tee_kind: Some(TeeKind::AwsNitro),
-            zk_backend: None,
-            prover_address: None,
-            l1_head: Some(ZERO_HASH),
-        }
-        .build();
-
-        let protocol_request: ProtocolProofRequest =
-            serde_json::from_value(payload).expect("fallback TEE payload should deserialize");
-
-        assert_eq!(protocol_request.session_id, "tee-session");
-        let ProofRequestKind::Tee(request) = protocol_request.request else {
-            panic!("expected TEE protocol request");
-        };
-        assert_eq!(request.tee_kind, ProtocolTeeKind::AwsNitro);
-        assert_eq!(request.proof.claimed_l2_block_number, 100);
-    }
-
-    #[test]
     fn prepared_request_represents_tee_protocol_request() {
-        let create = CreateProofRequest::new(ProtocolProofRequest {
-            session_id: "tee-session".to_owned(),
-            request: ProofRequestKind::Tee(TeeProofRequest {
-                proof: Default::default(),
-                tee_kind: ProtocolTeeKind::AwsNitro,
-            }),
-        })
-        .expect("TEE request should validate");
+        let create = CreateProofRequest::new(tee_protocol_request("tee-session"))
+            .expect("TEE request should validate");
 
         let prepared = PreparedProofRequest::try_from(create).expect("TEE request should prepare");
 
@@ -2185,7 +2154,7 @@ mod tests {
                 serde_json::json!({
                     "request": {
                         "proof_type": "compressed",
-                        "payload": {"start_block_number": 1, "intermediate_root_interval": 10}
+                        "payload": {"start_block_number": 1}
                     }
                 }),
                 serde_json::json!({
@@ -2222,7 +2191,7 @@ mod tests {
         ProtocolProofRequest {
             session_id: session_id.to_owned(),
             request: ProofRequestKind::Tee(TeeProofRequest {
-                proof: Default::default(),
+                proof: PrimitiveProofRequest::for_tests(600, 30),
                 tee_kind: ProtocolTeeKind::AwsNitro,
             }),
         }
@@ -2235,14 +2204,8 @@ mod tests {
 
     #[test]
     fn prepared_request_rejects_unsupported_protocol_combination() {
-        let mut create = CreateProofRequest::new(ProtocolProofRequest {
-            session_id: "bad-tee-session".to_owned(),
-            request: ProofRequestKind::Tee(TeeProofRequest {
-                proof: Default::default(),
-                tee_kind: ProtocolTeeKind::AwsNitro,
-            }),
-        })
-        .expect("TEE request should validate");
+        let mut create = CreateProofRequest::new(tee_protocol_request("bad-tee-session"))
+            .expect("TEE request should validate");
         create.zk_vm = Some(ZkVmKind::Sp1);
 
         let err =
@@ -2261,6 +2224,7 @@ mod tests {
                 sequence_window: None,
                 l1_head: None,
                 schedule_l2_block_number: None,
+                intermediate_block_interval: NonZeroU64::new(5).unwrap(),
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,
             }),

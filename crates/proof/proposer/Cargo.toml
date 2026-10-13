@@ -81,6 +81,7 @@ alloy-rpc-types-eth.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 metrics-util = { workspace = true, features = ["debugging"] }
 base-common-genesis = { workspace = true, features = ["serde"] }
+base-proof-primitives = { workspace = true, features = ["test-utils"] }
 
 [features]
 metrics = [ "base-metrics/metrics", "base-tx-manager/metrics", "dep:metrics" ]

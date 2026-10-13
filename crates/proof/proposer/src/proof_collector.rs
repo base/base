@@ -306,7 +306,7 @@ where
             .run_until_cancelled(async {
                 let submit = self.submitter.submit(
                     &proof.aggregate_proposal,
-                    &proof.proposals,
+                    &proof.intermediate_roots,
                     starting_block,
                     target_block,
                     parent_address,
@@ -470,7 +470,8 @@ mod tests {
         DriverConfig, OutputProposer,
         test_utils::{
             MockAggregateVerifier, MockDisputeGameFactory, MockOutputProposer, MockProofRequester,
-            MockRollupClient, test_fixed_interval_resolver, test_proposal, test_sync_status,
+            MockRollupClient, test_fixed_interval_resolver, test_proof_request, test_proposal,
+            test_sync_status,
         },
     };
 
@@ -575,7 +576,7 @@ mod tests {
             claimed_l2_output_root: claimed_root,
             claimed_l2_block_number: target_block,
             l1_head_number: 1000,
-            ..Default::default()
+            ..test_proof_request()
         };
         requester
             .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(proof_request))
@@ -612,7 +613,7 @@ mod tests {
                 claimed_l2_output_root: claimed_root,
                 claimed_l2_block_number: target_block,
                 l1_head_number: 1000,
-                ..Default::default()
+                ..test_proof_request()
             };
             requester
                 .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(
@@ -675,7 +676,7 @@ mod tests {
             claimed_l2_output_root: claimed_root,
             claimed_l2_block_number: target_block,
             l1_head_number: 1000,
-            ..Default::default()
+            ..test_proof_request()
         };
         requester
             .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(proof_request))
@@ -688,7 +689,7 @@ mod tests {
                 claimed_l2_output_root: later_root,
                 claimed_l2_block_number: target_block + BLOCK_INTERVAL,
                 l1_head_number: 1000,
-                ..Default::default()
+                ..test_proof_request()
             }))
             .await
             .expect("test setup should dispatch later root session");
@@ -724,7 +725,7 @@ mod tests {
             claimed_l2_output_root: claimed_root,
             claimed_l2_block_number: target_block,
             l1_head_number: 1000,
-            ..Default::default()
+            ..test_proof_request()
         };
         requester
             .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(proof_request))
@@ -758,7 +759,7 @@ mod tests {
             claimed_l2_output_root: stale_root,
             claimed_l2_block_number: target_block,
             l1_head_number: 1000,
-            ..Default::default()
+            ..test_proof_request()
         };
         requester
             .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(proof_request))
@@ -779,7 +780,7 @@ mod tests {
                 &session_id,
                 TeeProofResult {
                     aggregate_proposal,
-                    proposals: vec![],
+                    intermediate_roots: vec![],
                     tee_kind: TeeKind::AwsNitro,
                     tee_signer: Address::repeat_byte(0x11),
                 },
