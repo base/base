@@ -1353,7 +1353,9 @@ where
         };
         // Admission only requires the payer to cover the transaction's fees.
         // `call.value` is not reserved: a call whose value the sender cannot
-        // cover reverts at execution, and the fees are still paid.
+        // cover reverts at execution, and the fees are still paid. EIP-8430
+        // mempool acceptance also checks the sender's balance against the summed
+        // `call.value` (https://eips.ethereum.org/EIPS/eip-8430); this pool does not.
         let payer_max_cost = gas_charge.saturating_add(additional_fee);
         if payer_account.balance < payer_max_cost {
             return Err(InvalidTransactionError::InsufficientFunds(

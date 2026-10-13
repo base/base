@@ -120,6 +120,11 @@ impl Eip8130Constants {
     ///
     /// Defined by the AA transaction type. `0x00` is reserved there and never
     /// decodes.
+    ///
+    /// The account-change type bytes follow [EIP-8430]: delegation `0x01`, with
+    /// the Keystore create (`0x02`) and config (`0x03`) entries after it.
+    ///
+    /// [EIP-8430]: https://eips.ethereum.org/EIPS/eip-8430
     pub const ACCOUNT_CHANGE_TYPE_DELEGATION: u8 = 0x01;
 
     /// `account_changes` entry type byte: Keystore account creation.

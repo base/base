@@ -92,6 +92,11 @@ impl NonceManagerStorage<'_> {
 
     /// Returns the current 2D nonce for `account` at `nonce_key`.
     ///
+    /// Reverts for `nonce_key` `0` rather than returning the account nonce as
+    /// [EIP-8430] specifies; read key `0` from the account itself.
+    ///
+    /// [EIP-8430]: https://eips.ethereum.org/EIPS/eip-8430
+    ///
     /// # Errors
     /// - [`INonceManager::ProtocolNonceNotSupported`] — `nonce_key` is `0`, the
     ///   protocol nonce, which is stored in account state and must be read from there.
@@ -183,8 +188,14 @@ impl NonceManagerStorage<'_> {
     /// authoritative inclusion-time replay check (cf. the advisory
     /// [`Self::is_expiring_nonce_seen`] used by the mempool).
     ///
+    /// The `valid_before` bound is exclusive: a nonce-free transaction is invalid
+    /// at `now_ms == valid_before`, whereas [EIP-8430] invalidates a transaction
+    /// only once `now_ms > valid_before`.
+    ///
     /// Intended for the EIP-8130 execution layer; not reachable through ABI
     /// dispatch.
+    ///
+    /// [EIP-8430]: https://eips.ethereum.org/EIPS/eip-8430
     ///
     /// # Errors
     /// - [`INonceManager::InvalidExpiringNonceExpiry`] — `valid_before` is not in

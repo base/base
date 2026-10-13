@@ -16,6 +16,11 @@ use base_precompile_storage::{BasePrecompileError, Result, StorageCtx};
 /// address and [`Self::sender_actor_id`] returns
 /// `bytes32(uint256(uint160(tx.origin)))`,
 /// so callers observe the actual transaction originator uniformly across tx types.
+///
+/// [EIP-8430] defines only the payer getter, with the `tx.origin` fallback; the
+/// sender and sender-actor-id getters are extensions it permits and share that fallback.
+///
+/// [EIP-8430]: https://eips.ethereum.org/EIPS/eip-8430
 #[derive(Debug)]
 pub struct TxContextStorage<'a> {
     storage: StorageCtx<'a>,
