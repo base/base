@@ -20,6 +20,10 @@ pub fn hash_rollup_config(config: &RollupConfig) -> B256 {
 }
 
 sol! {
+    /// Public values committed by the range program.
+    ///
+    /// `intermediateBlockInterval` is not part of the onchain journal; the aggregation program
+    /// uses it to check that all aggregated ranges share one interval.
     #[derive(Debug, Serialize, Deserialize)]
     struct BootInfoStruct {
         bytes32 l1Head;
@@ -29,6 +33,7 @@ sol! {
         uint64 l2BlockNumber;
         bytes32 rollupConfigHash;
         bytes32 scheduleId;
+        uint64 intermediateBlockInterval;
         bytes intermediateRoots;
     }
 }
@@ -56,6 +61,7 @@ impl BootInfoStruct {
             l2BlockNumber: l2_block_number,
             rollupConfigHash: hash_rollup_config(&boot_info.rollup_config),
             scheduleId: boot_info.schedule_id,
+            intermediateBlockInterval: boot_info.intermediate_block_interval.get(),
             intermediateRoots: Bytes::from(
                 intermediate_roots
                     .iter()
@@ -69,6 +75,8 @@ impl BootInfoStruct {
 
 #[cfg(test)]
 mod tests {
+    use std::num::NonZeroU64;
+
     use alloy_primitives::{Address, b256};
     use base_common_chains::ChainConfig;
 
@@ -93,7 +101,7 @@ mod tests {
             rollup_config,
             l1_config,
             proposer: Address::ZERO,
-            intermediate_block_interval: 0,
+            intermediate_block_interval: NonZeroU64::new(10).unwrap(),
             l1_head_number: 0,
             schedule_id: B256::repeat_byte(0x44),
         }

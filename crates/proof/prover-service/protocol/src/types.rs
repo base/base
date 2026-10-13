@@ -1,6 +1,6 @@
 //! JSON-RPC request and response types for the shared prover service protocol.
 
-use std::{collections::HashMap, fmt};
+use std::{collections::HashMap, fmt, num::NonZeroU64};
 
 use alloy_primitives::{Address, B256, Bytes};
 use base_proof_primitives::{ProofRequest as PrimitiveProofRequest, Proposal};
@@ -209,6 +209,10 @@ pub struct ZkProofRequest {
     /// L2 block used to pin the upgrade schedule; defaults to the claimed block.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub schedule_l2_block_number: Option<u64>,
+    /// Number of L2 blocks between two intermediate output roots of the game being proven.
+    ///
+    /// `number_of_blocks_to_prove` must be a multiple of it.
+    pub intermediate_block_interval: NonZeroU64,
     /// ZK virtual machine implementation to use.
     pub zk_vm: ZkVm,
     /// Proving backend that should execute this request.
@@ -285,10 +289,10 @@ pub struct SnarkPlonkProofResult {
 /// TEE proof result.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TeeProofResult {
-    /// Aggregate proposal covering the entire proven block range.
+    /// Signed proposal covering the entire proven block range.
     pub aggregate_proposal: Proposal,
-    /// Individual signed proposals.
-    pub proposals: Vec<Proposal>,
+    /// Intermediate output roots committed by the aggregate signature.
+    pub intermediate_roots: Vec<B256>,
     /// Trusted execution environment implementation that produced the proof.
     pub tee_kind: TeeKind,
     /// Signer that produced the proof, recovered host-side from the proof
@@ -582,6 +586,7 @@ mod tests {
                     sequence_window: None,
                     l1_head: Some(B256::repeat_byte(0xab)),
                     schedule_l2_block_number: None,
+                    intermediate_block_interval: NonZeroU64::new(10).unwrap(),
                     zk_vm: ZkVm::Sp1,
                     zk_backend: ZkBackend::Cluster,
                 }),
@@ -602,6 +607,7 @@ mod tests {
                             "start_block_number": 10,
                             "number_of_blocks_to_prove": 20,
                             "l1_head": format!("{:#x}", B256::repeat_byte(0xab)),
+                            "intermediate_block_interval": 10,
                             "zk_vm": "sp1",
                             "zk_backend": "cluster"
                         }
@@ -622,6 +628,7 @@ mod tests {
                     "payload": {
                         "start_block_number": 10,
                         "number_of_blocks_to_prove": 20,
+                        "intermediate_block_interval": 10,
                         "zk_vm": "sp1"
                     }
                 }
@@ -640,6 +647,7 @@ mod tests {
                 "payload": {
                     "start_block_number": 10,
                     "number_of_blocks_to_prove": 20,
+                    "intermediate_block_interval": 10,
                     "zk_vm": "sp1"
                 }
             }
@@ -703,6 +711,7 @@ mod tests {
                 proposer: address!("0000000000000000000000000000000000000006"),
                 l1_head_number: 8,
                 schedule_l2_block_number: None,
+                intermediate_block_interval: NonZeroU64::new(5).unwrap(),
             },
             tee_kind: TeeKind::AwsNitro,
         };
@@ -720,6 +729,7 @@ mod tests {
                     "claimed_l2_block_number": 5,
                     "proposer": "0x0000000000000000000000000000000000000006",
                     "l1_head_number": 8,
+                    "intermediate_block_interval": 5,
                 },
                 "tee_kind": "aws_nitro",
             })
@@ -764,10 +774,9 @@ mod tests {
     #[test]
     fn tee_result_uses_flat_proposal_shape() {
         let aggregate_proposal = tee_proposal(1, 20);
-        let proposal = tee_proposal(2, 19);
         let result = ProofResult::Tee(TeeProofResult {
             aggregate_proposal: aggregate_proposal.clone(),
-            proposals: vec![proposal.clone()],
+            intermediate_roots: vec![B256::repeat_byte(9), aggregate_proposal.output_root],
             tee_kind: TeeKind::AwsNitro,
             tee_signer: Address::repeat_byte(0x11),
         });
@@ -790,17 +799,11 @@ mod tests {
             })
         );
         assert_eq!(
-            value["payload"]["proposals"][0],
-            json!({
-                "output_root": format!("{:#x}", proposal.output_root),
-                "signature": "0x020202",
-                "l1_origin_hash": format!("{:#x}", proposal.l1_origin_hash),
-                "l1_origin_number": proposal.l1_origin_number,
-                "l2_block_number": proposal.l2_block_number,
-                "prev_output_root": format!("{:#x}", proposal.prev_output_root),
-                "config_hash": format!("{:#x}", proposal.config_hash),
-                "schedule_id": format!("{:#x}", proposal.schedule_id),
-            })
+            value["payload"]["intermediate_roots"],
+            json!([
+                format!("{:#x}", B256::repeat_byte(9)),
+                format!("{:#x}", aggregate_proposal.output_root),
+            ])
         );
     }
 
@@ -820,7 +823,7 @@ mod tests {
                         "prev_output_root": format!("{:#x}", aggregate_proposal.prev_output_root),
                         "config_hash": format!("{:#x}", aggregate_proposal.config_hash),
                     },
-                    "proposals": []
+                    "intermediate_roots": []
                 },
                 "tee_kind": "aws_nitro"
             }
@@ -831,20 +834,12 @@ mod tests {
 
     #[test]
     fn tee_result_requires_aggregate_proposal() {
-        let proposal = tee_proposal(2, 19);
         let result = serde_json::from_value::<ProofResult>(json!({
             "proof_type": "tee",
             "payload": {
-                "proposals": [{
-                    "output_root": format!("{:#x}", proposal.output_root),
-                    "signature": "0x020202",
-                    "l1_origin_hash": format!("{:#x}", proposal.l1_origin_hash),
-                    "l1_origin_number": proposal.l1_origin_number,
-                    "l2_block_number": proposal.l2_block_number,
-                    "prev_output_root": format!("{:#x}", proposal.prev_output_root),
-                    "config_hash": format!("{:#x}", proposal.config_hash),
-                }],
-                "tee_kind": "aws_nitro"
+                "intermediate_roots": [format!("{:#x}", B256::repeat_byte(2))],
+                "tee_kind": "aws_nitro",
+                "tee_signer": "0x1111111111111111111111111111111111111111"
             }
         }));
 
@@ -862,6 +857,7 @@ mod tests {
             proposer: address!("0000000000000000000000000000000000000006"),
             l1_head_number: 8,
             schedule_l2_block_number: None,
+            intermediate_block_interval: NonZeroU64::new(5).unwrap(),
         };
 
         let value = serde_json::to_value(request).expect("tee request payload should serialize");
@@ -876,6 +872,7 @@ mod tests {
                 "claimed_l2_block_number": 5,
                 "proposer": "0x0000000000000000000000000000000000000006",
                 "l1_head_number": 8,
+                "intermediate_block_interval": 5,
             })
         );
     }
@@ -883,10 +880,9 @@ mod tests {
     #[test]
     fn tee_proposal_uses_hex_encoded_fixed_values() {
         let aggregate_proposal = tee_proposal(1, 20);
-        let proposal = tee_proposal(2, 19);
         let result = TeeProofResult {
             aggregate_proposal: aggregate_proposal.clone(),
-            proposals: vec![proposal.clone()],
+            intermediate_roots: vec![aggregate_proposal.output_root],
             tee_kind: TeeKind::AwsNitro,
             tee_signer: Address::repeat_byte(0x11),
         };
@@ -906,19 +902,6 @@ mod tests {
                 "schedule_id": format!("{:#x}", aggregate_proposal.schedule_id),
             })
         );
-        assert_eq!(
-            value["proposals"][0],
-            json!({
-                "output_root": format!("{:#x}", proposal.output_root),
-                "signature": "0x020202",
-                "l1_origin_hash": format!("{:#x}", proposal.l1_origin_hash),
-                "l1_origin_number": proposal.l1_origin_number,
-                "l2_block_number": proposal.l2_block_number,
-                "prev_output_root": format!("{:#x}", proposal.prev_output_root),
-                "config_hash": format!("{:#x}", proposal.config_hash),
-                "schedule_id": format!("{:#x}", proposal.schedule_id),
-            })
-        );
     }
 
     #[test]
@@ -926,18 +909,10 @@ mod tests {
         let request: ZkProofRequest = serde_json::from_value(json!({
             "start_block_number": 10,
             "number_of_blocks_to_prove": 20,
+            "intermediate_block_interval": 10,
             "zk_vm": "sp1"
         }))
         .expect("zk request should accept omitted optional fields");
-
-        let with_legacy_interval: ZkProofRequest = serde_json::from_value(json!({
-            "start_block_number": 10,
-            "number_of_blocks_to_prove": 20,
-            "intermediate_root_interval": 30,
-            "zk_vm": "sp1"
-        }))
-        .expect("zk request should ignore a legacy intermediate root interval");
-        assert_eq!(with_legacy_interval, request);
 
         assert_eq!(
             request,
@@ -947,6 +922,7 @@ mod tests {
                 sequence_window: None,
                 l1_head: None,
                 schedule_l2_block_number: None,
+                intermediate_block_interval: NonZeroU64::new(10).unwrap(),
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,
             }
@@ -961,6 +937,7 @@ mod tests {
             sequence_window: None,
             l1_head: None,
             schedule_l2_block_number: Some(42),
+            intermediate_block_interval: NonZeroU64::new(10).unwrap(),
             zk_vm: ZkVm::Sp1,
             zk_backend: ZkBackend::Cluster,
         };
@@ -979,6 +956,7 @@ mod tests {
             "start_block_number": 10,
             "number_of_blocks_to_prove": 20,
             "l1_head": "0xabc",
+            "intermediate_block_interval": 10,
             "zk_vm": "sp1"
         }));
 
