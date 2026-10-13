@@ -80,20 +80,6 @@ pub(crate) struct ResolvedChainValues {
     pub(crate) l1_chain_id: u64,
 }
 
-impl ResolvedChainValues {
-    /// Creates resolved values from a built-in Base network selector.
-    ///
-    /// Returns `None` if the selector is not a known built-in chain.
-    pub(crate) fn from_builtin(selector: &str) -> Option<Self> {
-        let config = ChainConfig::from_base_chain(selector)?;
-        Some(Self {
-            name: selector.to_owned(),
-            l2_chain_id: config.chain_id,
-            l1_chain_id: config.l1_chain_id,
-        })
-    }
-}
-
 impl ResolvedChainConfig {
     /// Returns the execution chainspec for this chain.
     pub(crate) fn execution_chain_spec(&self) -> eyre::Result<Arc<BaseChainSpec>> {
@@ -140,8 +126,13 @@ impl ChainResolver {
     pub(crate) fn resolve(&self) -> eyre::Result<ResolvedChainConfig> {
         match &self.chain {
             ChainArg::BuiltIn(chain) => {
-                let defaults = ResolvedChainValues::from_builtin(chain)
+                let config = ChainConfig::from_base_chain(chain)
                     .ok_or_else(|| eyre::eyre!("unknown built-in chain `{chain}`"))?;
+                let defaults = ResolvedChainValues {
+                    name: chain.clone(),
+                    l2_chain_id: config.chain_id,
+                    l1_chain_id: config.l1_chain_id,
+                };
                 let figment = Figment::from(Serialized::defaults(defaults))
                     .merge(Env::prefixed(BASE_CHAIN_ENV_PREFIX));
                 Self::extract(figment, ChainArg::BuiltIn(chain.clone()))
