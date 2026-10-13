@@ -3796,6 +3796,7 @@ dependencies = [
  "base-common-consensus",
  "base-common-evm",
  "derive_more 2.1.1",
+ "k256 0.13.4",
  "rand 0.9.5",
  "reth-primitives-traits",
  "reth-rpc-convert",
