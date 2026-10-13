@@ -29,6 +29,8 @@
 //! skipped, but the gas already consumed is still charged and the transaction is
 //! still included (nonce consumed, fee paid). Each call is dispatched from
 //! `sender` to `call.to` with `msg.value == call.value` and `tx.origin == sender`.
+//! Each call frame is given the whole remaining pool; as for any EVM frame, a
+//! call that halts exceptionally (anything but `REVERT`) consumes all of it.
 //!
 //! Dispatching a call draws EIP-2929 account-access gas from the pool as a
 //! `CALL` would: the cold account access cost for a cold `call.to`, and again
@@ -1559,7 +1561,8 @@ impl Eip8130Executor {
     /// wei to `to`) as a top-level EVM call frame with `gas_limit` and runs it to
     /// completion, returning the [`FrameResult`]. Reuses the Base handler's frame
     /// loop and drives the configured inspector when inspection is enabled. A
-    /// `value` the caller cannot afford reverts the frame like any other `CALL`.
+    /// `value` the caller cannot afford reverts the frame like any other `CALL`,
+    /// and a frame that halts exceptionally reports its whole `gas_limit` spent.
     fn run_call<DB, I, P>(
         evm: &mut BaseEvm<DB, I, P>,
         caller: Address,
@@ -1646,7 +1649,7 @@ impl Eip8130Executor {
             EVMError<DB::Error, BaseTransactionError>,
             EthFrame<EthInterpreter>,
         >::new();
-        let frame = if evm.inspect {
+        let mut frame = if evm.inspect {
             handler.inspect_run_exec_loop(evm, frame_init)?
         } else {
             handler.run_exec_loop(evm, frame_init)?
@@ -1661,6 +1664,15 @@ impl Eip8130Executor {
         // mid-call propagates as a fatal `Err` instead of being misread as a
         // deterministic call revert on this consensus-critical path.
         take_error::<EVMError<DB::Error, BaseTransactionError>, _>(evm.ctx_mut().error())?;
+
+        // An exceptional halt consumes all of the frame's gas, as it does for a
+        // nested frame and for the top frame of a normal transaction. The root
+        // frame is returned without passing through either settlement step, so
+        // only a plain out-of-gas would otherwise have been burned. A revert
+        // keeps its unused gas.
+        if frame.interpreter_result().result.is_halt() {
+            frame.gas_mut().spend_all();
+        }
 
         Ok(frame)
     }
@@ -4317,5 +4329,88 @@ mod tests {
         let cold_estimate = estimate(BENEFICIARY);
         assert_eq!(cold_estimate - estimate(target), COLD_ACCOUNT_ACCESS_COST);
         assert_eq!(cold_estimate, gas_used_with_coinbase(&signed, sender, &[], BENEFICIARY));
+    }
+
+    /// Executes and estimates a single-call transaction into a contract running
+    /// `code`, returning `(executed gas used, estimated gas, gas limit)`.
+    fn single_call_gas(signer: u8, code: Bytes) -> (u64, u64, u64) {
+        let key = signing_key(signer);
+        let sender = eoa_address(&key);
+        let target = address!("0x00000000000000000000000000000000000000f1");
+        let mut tx = base_tx();
+        tx.calls = vec![vec![Call { to: target, value: U256::ZERO, data: Bytes::new() }]];
+        let signed = eoa_signed(tx, &key);
+        let fresh = || {
+            evm_with_accounts(
+                U256::from(10u64).pow(U256::from(18u64)),
+                sender,
+                &[(target, code.clone())],
+            )
+        };
+
+        let outcome = fresh().transact_raw(into_base_tx(&signed)).expect("tx is included");
+        assert!(!outcome.result.is_success(), "expected a failed phase");
+
+        let mut evm = fresh();
+        evm.ctx_mut().tx = into_base_tx(&signed);
+        evm.ctx_mut().tx.base.caller = sender;
+        let estimate = Eip8130Executor::simulate(&mut evm).expect("estimation runs");
+        assert!(!estimate.is_success(), "expected a failed estimate");
+
+        (outcome.result.tx_gas_used(), estimate.tx_gas_used(), signed.tx().gas_limit)
+    }
+
+    /// A root call that halts on `INVALID` consumes the whole call pool it was
+    /// given, in execution and in the estimate.
+    #[test]
+    fn halting_root_call_consumes_its_whole_gas_allotment() {
+        let (gas_used, estimate, gas_limit) = single_call_gas(0xd1, bytes!("fe"));
+        assert_eq!(gas_used, gas_limit);
+        assert_eq!(estimate, gas_limit);
+    }
+
+    /// A root call that reverts keeps its unused gas.
+    #[test]
+    fn reverting_root_call_keeps_its_unused_gas() {
+        let (gas_used, estimate, gas_limit) = single_call_gas(0xd2, bytes!("60006000fd"));
+        assert!(gas_used < gas_limit, "revert must not burn the pool: {gas_used}");
+        assert_eq!(estimate, gas_used);
+    }
+
+    /// A halt in a later phase burns the rest of the pool and skips every
+    /// later phase, while an earlier committed phase keeps its writes.
+    #[test]
+    fn halting_root_call_keeps_earlier_phases_and_skips_later_ones() {
+        let key = signing_key(0xd3);
+        let sender = eoa_address(&key);
+        let first = address!("0x00000000000000000000000000000000000000f2");
+        let halter = address!("0x00000000000000000000000000000000000000f3");
+        let last = address!("0x00000000000000000000000000000000000000f4");
+        let call = |to| vec![Call { to, value: U256::ZERO, data: Bytes::new() }];
+        let mut tx = base_tx();
+        tx.calls = vec![call(first), call(halter), call(last)];
+        let signed = eoa_signed(tx, &key);
+
+        // PUSH1 1, PUSH1 0, SSTORE, STOP
+        let storer = bytes!("600160005500");
+        let mut evm = evm_with_accounts(
+            U256::from(10u64).pow(U256::from(18u64)),
+            sender,
+            &[(first, storer.clone()), (halter, bytes!("fe")), (last, storer)],
+        );
+        let outcome = evm.transact_raw(into_base_tx(&signed)).expect("tx is included");
+
+        assert!(matches!(outcome.result, ExecutionResult::Revert { .. }));
+        assert_eq!(outcome.result.tx_gas_used(), signed.tx().gas_limit);
+        assert_eq!(Eip8130PhaseStatuses::take(), vec![0x01, 0x00, 0x00]);
+        let slot0 = |address: Address| {
+            outcome
+                .state
+                .get(&address)
+                .and_then(|account| account.storage.get(&U256::ZERO))
+                .map(|slot| slot.present_value)
+        };
+        assert_eq!(slot0(first), Some(U256::from(1u64)), "committed phase keeps its write");
+        assert!(slot0(last).is_none_or(|value| value.is_zero()), "later phase is skipped");
     }
 }
