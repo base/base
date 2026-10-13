@@ -112,6 +112,8 @@ where
 ///
 /// - Compares the receipts root in the block header to the block body
 /// - Compares the gas used in the block header to the actual gas usage after execution
+/// - Compares the block access list commitment in the block header to the list recomputed
+///   during execution when Amsterdam is active
 ///
 /// If `receipt_root_bloom` is provided, the pre-computed receipt root and logs bloom are used
 /// instead of computing them from the receipts.
@@ -120,8 +122,10 @@ pub fn validate_block_post_execution<R: DepositReceiptExt>(
     chain_spec: impl Upgrades,
     result: &BlockExecutionResult<R>,
     receipt_root_bloom: Option<(B256, Bloom)>,
+    block_access_list_hash: Option<B256>,
 ) -> Result<(), ConsensusError> {
     let timestamp = header.timestamp();
+    validate_block_access_list(&header, &chain_spec, block_access_list_hash)?;
     let trust_precomputed_receipt_root =
         should_trust_precomputed_receipt_root(&chain_spec, timestamp);
 
@@ -193,6 +197,37 @@ pub fn validate_block_post_execution<R: DepositReceiptExt>(
             gas: GotExpected { got: cumulative_gas_used, expected: header.gas_used() },
             gas_spent_by_tx: gas_spent_by_transactions(receipts),
         });
+    }
+
+    Ok(())
+}
+
+/// Verifies the header's block access list commitment against the list recomputed during
+/// execution.
+///
+/// Amsterdam requires every header to commit to the block access list its execution produced.
+/// The commitment is the hash of the list's RLP encoding, so a validator that recomputes the
+/// list while executing the block can reject a block that advertised a different one. Pre-fork
+/// headers must not carry a commitment at all.
+pub fn validate_block_access_list(
+    header: impl BlockHeader,
+    chain_spec: impl Upgrades,
+    computed_block_access_list_hash: Option<B256>,
+) -> Result<(), ConsensusError> {
+    if chain_spec.is_amsterdam_active_at_timestamp(header.timestamp()) {
+        let Some(computed) = computed_block_access_list_hash else {
+            return Err(ConsensusError::BlockAccessListHashMissing);
+        };
+        let Some(header_hash) = header.block_access_list_hash() else {
+            return Err(ConsensusError::BlockAccessListHashMissing);
+        };
+        if header_hash != computed {
+            return Err(ConsensusError::BlockAccessListHashMismatch(
+                GotExpected::new(header_hash, computed).into(),
+            ));
+        }
+    } else if header.block_access_list_hash().is_some() {
+        return Err(ConsensusError::BlockAccessListHashUnexpected);
     }
 
     Ok(())
@@ -660,7 +695,7 @@ mod tests {
             requests: Requests::default(),
             gas_used: GAS_USED,
         };
-        validate_block_post_execution(&header, &chainspec, &result, None).unwrap();
+        validate_block_post_execution(&header, &chainspec, &result, None, None).unwrap();
     }
 
     #[test]
@@ -682,7 +717,7 @@ mod tests {
             gas_used: GAS_USED,
         };
         assert!(matches!(
-            validate_block_post_execution(&header, &chainspec, &result, None).unwrap_err(),
+            validate_block_post_execution(&header, &chainspec, &result, None, None).unwrap_err(),
             ConsensusError::BlobGasUsedDiff(diff)
                 if diff.got == BLOB_GAS_USED && diff.expected == BLOB_GAS_USED + 1
         ));
@@ -714,6 +749,7 @@ mod tests {
             BaseChainSpec::sepolia(),
             &result,
             Some(plain_precomputed_receipt_root_bloom(&receipts)),
+            None,
         )
         .expect(
             "Pre-Canyon blocks should recompute receipt roots instead of trusting the fast path",
@@ -739,6 +775,7 @@ mod tests {
                 BaseChainSpec::sepolia(),
                 &result,
                 Some((invalid_receipts_root, logs_bloom)),
+                None,
             )
             .unwrap_err(),
             ConsensusError::BodyReceiptRootDiff(_)
@@ -761,6 +798,7 @@ mod tests {
             BaseChainSpec::sepolia(),
             &result,
             Some(plain_precomputed_receipt_root_bloom(&receipts)),
+            None,
         )
         .expect("Canyon blocks should keep using the precomputed receipt root fast path");
     }

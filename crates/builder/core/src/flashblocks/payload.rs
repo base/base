@@ -12,9 +12,12 @@ use alloy_consensus::{
     BlockBody, EMPTY_OMMER_ROOT_HASH, Header, Transaction, TxReceipt, constants::EMPTY_WITHDRAWALS,
     proofs,
 };
-use alloy_eips::{Encodable2718, eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE};
+use alloy_eips::{
+    Encodable2718, eip7685::EMPTY_REQUESTS_HASH, eip7928::compute_block_access_list_hash_with_buf,
+    merge::BEACON_NONCE,
+};
 use alloy_evm::Database;
-use alloy_primitives::{Address, B256, Bloom, U256, logs_bloom, map::foldhash::HashMap};
+use alloy_primitives::{Address, B256, Bloom, Bytes, U256, logs_bloom, map::foldhash::HashMap};
 use base_builder_publish::WebSocketPublisher;
 use base_common_chains::Upgrades;
 use base_common_consensus::{BaseReceipt, BaseTransactionSigned};
@@ -32,6 +35,7 @@ use base_execution_txpool::AccountStateDiff;
 use base_observability_events::{GlobalTransactionEventWriter, TransactionEventType};
 use eyre::WrapErr as _;
 use reth_basic_payload_builder::BuildOutcome;
+use reth_chainspec::EthereumHardforks;
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
 use reth_execution_types::ChangedAccount;
 use reth_node_api::{Block, BuiltPayloadExecutedBlock, PayloadBuilderError};
@@ -294,8 +298,15 @@ where
 
         // 1. execute the pre steps and seal an early block with that
         let sequencer_tx_start_time = Instant::now();
-        let mut state =
-            State::builder().with_database(cached_reads.as_db_mut(db)).with_bundle_update().build();
+        // Track the block access list only once Amsterdam is active so pre-fork blocks keep
+        // their exact header and payload shape.
+        let is_amsterdam =
+            ctx.chain_spec.is_amsterdam_active_at_timestamp(ctx.attributes().timestamp());
+        let mut state = State::builder()
+            .with_database(cached_reads.as_db_mut(db))
+            .with_bundle_update()
+            .with_bal_builder_if(is_amsterdam)
+            .build();
 
         let mut info = execute_pre_steps(&mut state, &ctx)?;
         let sequencer_tx_time = sequencer_tx_start_time.elapsed();
@@ -1134,6 +1145,10 @@ where
         .map_err(PayloadBuilderError::other)?
         .apply_pre_execution_changes()?;
 
+    // Pre-execution changes are attributed to the pre-execution block access index;
+    // subsequent transactions start at index 1 (no-op unless a BAL builder is active).
+    state.bump_bal_index();
+
     // 2. execute sequencer transactions
     let info = ctx.execute_sequencer_transactions(state)?;
 
@@ -1228,6 +1243,19 @@ where
             None
         };
 
+    // EIP-7928: the header commits to the block access list accumulated by the state during
+    // execution. `bal_builder()` is only `Some` once Amsterdam is active, so pre-fork blocks
+    // keep an empty commitment.
+    let block_access_list = state.bal_state.bal_builder().map(|bal| bal.into_alloy_bal());
+    let (block_access_list_hash, block_access_list_bytes) = match &block_access_list {
+        Some(bal) => {
+            let mut raw = Vec::new();
+            let hash = compute_block_access_list_hash_with_buf(bal, &mut raw);
+            (Some(hash), Some(Bytes::from(raw)))
+        }
+        None => (None, None),
+    };
+
     // create the block header
     let transactions_root = proofs::calculate_transaction_root(&info.executed_transactions);
 
@@ -1256,7 +1284,7 @@ where
         blob_gas_used,
         excess_blob_gas,
         requests_hash,
-        block_access_list_hash: None,
+        block_access_list_hash,
         slot_number: ctx.attributes().payload_attributes.slot_number,
     };
 
@@ -1383,7 +1411,7 @@ where
             sealed_block,
             info.total_fees,
             Some(executed),
-            None,
+            block_access_list_bytes,
         ),
         fb_payload,
         state_diff,

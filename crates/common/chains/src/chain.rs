@@ -4,6 +4,7 @@ use core::ops::Index;
 use EthereumHardfork::{
     ArrowGlacier, Berlin, Bogota, Bpo1, Bpo2, Bpo3, Bpo4, Bpo5, Byzantium, Constantinople, Dao,
     Frontier, GrayGlacier, Homestead, Istanbul, London, MuirGlacier, Paris, Petersburg,
+    SpuriousDragon, Tangerine,
 };
 use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
 use alloy_primitives::U256;

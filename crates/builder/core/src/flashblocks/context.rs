@@ -608,6 +608,10 @@ impl BasePayloadBuilderCtx {
             // commit changes
             evm.db_mut().commit(state);
 
+            // Advance the block access index so the committed transaction's writes are
+            // attributed to its own index (no-op unless a BAL builder is active).
+            evm.db_mut().bump_bal_index();
+
             // append sender and transaction to the respective lists
             info.executed_senders.push(sequencer_tx.signer());
             info.executed_transactions.push(sequencer_tx.into_inner());
@@ -1416,6 +1420,10 @@ impl BasePayloadBuilderCtx {
 
             // commit changes
             evm.db_mut().commit(state);
+
+            // Advance the block access index so the committed transaction's writes are
+            // attributed to its own index (no-op unless a BAL builder is active).
+            evm.db_mut().bump_bal_index();
 
             // Release the committed transaction's lane before promoting predicate-unblocked heads.
             best_txs.mark_current_committed();
