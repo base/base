@@ -5,6 +5,7 @@
 use core::fmt::Debug;
 
 use ExecutionMeteringLimitExceeded::TransactionExecutionTime;
+use alloy_consensus::ReceiptWithBloom;
 use alloy_primitives::{Address, U256};
 use base_common_consensus::{BaseReceipt, BaseTransactionSigned};
 use base_common_evm::BaseTransactionError;
@@ -210,8 +211,8 @@ pub struct ExecutionInfo {
     pub executed_transactions: Vec<BaseTransactionSigned>,
     /// The recovered senders for the executed transactions.
     pub executed_senders: Vec<Address>,
-    /// The transaction receipts
-    pub receipts: Vec<BaseReceipt>,
+    /// Receipts with blooms computed at execution, reused by every subsequent Flashblock.
+    pub receipts: Vec<ReceiptWithBloom<BaseReceipt>>,
     /// All gas used so far
     pub cumulative_gas_used: u64,
     /// Estimated DA size

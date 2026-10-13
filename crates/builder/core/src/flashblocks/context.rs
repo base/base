@@ -4,7 +4,7 @@ use std::{
     time::{Duration, Instant, SystemTime},
 };
 
-use alloy_consensus::{Eip658Value, Transaction};
+use alloy_consensus::{Eip658Value, Transaction, TxReceipt};
 use alloy_eips::{Encodable2718, Typed2718};
 use alloy_evm::Database;
 #[cfg(any(test, feature = "test-utils"))]
@@ -598,7 +598,7 @@ impl BasePayloadBuilderCtx {
                 cumulative_gas_used: info.cumulative_gas_used,
             };
 
-            info.receipts.push(self.build_receipt(ctx, depositor_nonce));
+            info.receipts.push(self.build_receipt(ctx, depositor_nonce).into_with_bloom());
 
             // commit changes
             evm.db_mut().commit(state);
@@ -1392,11 +1392,11 @@ impl BasePayloadBuilderCtx {
                 state: &state,
                 cumulative_gas_used: info.cumulative_gas_used,
             };
-            info.receipts.push(self.build_receipt(ctx, None));
+            info.receipts.push(self.build_receipt(ctx, None).into_with_bloom());
             // The tip is a phase-0 transfer, so it is revenue only if that phase
             // committed; a reverted or policy-blocked phase pays nothing.
             let coinbase_tip = coinbase_tip.filter(|_| {
-                matches!(info.receipts.last(), Some(BaseReceipt::Eip8130(receipt)) if receipt.phase_committed(0))
+                matches!(info.receipts.last().map(|r| &r.receipt), Some(BaseReceipt::Eip8130(receipt)) if receipt.phase_committed(0))
             });
 
             let state_change_effects = if predicate_index.is_empty() {
