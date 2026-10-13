@@ -50,6 +50,10 @@ pub struct BaseNextBlockEnvAttributes {
     pub parent_beacon_block_root: Option<B256>,
     /// Encoded EIP-1559 parameters to include into block's `extra_data` field.
     pub extra_data: RevmBytes,
+    /// The Amsterdam slot number for the next block (EIP-7843), when known.
+    ///
+    /// Base carries the L2 block number in this field.
+    pub slot_number: Option<u64>,
 }
 
 #[cfg(feature = "rpc")]
@@ -69,6 +73,7 @@ impl<H: alloy_consensus::BlockHeader> reth_rpc_eth_api::helpers::pending_block::
             gas_limit: parent.gas_limit(),
             parent_beacon_block_root: parent.parent_beacon_block_root(),
             extra_data: parent.extra_data().clone(),
+            slot_number: parent.slot_number(),
         }
     }
 }
@@ -198,6 +203,7 @@ where
             parent_hash: block.header().parent_hash(),
             parent_beacon_block_root: block.header().parent_beacon_block_root(),
             extra_data: block.header().extra_data().clone(),
+            slot_number: block.header().slot_number(),
         })
     }
 
@@ -210,6 +216,7 @@ where
             parent_hash: parent.hash(),
             parent_beacon_block_root: attributes.parent_beacon_block_root,
             extra_data: attributes.extra_data,
+            slot_number: attributes.slot_number,
         })
     }
 }
@@ -241,6 +248,7 @@ where
             parent_hash: payload.parent_hash(),
             parent_beacon_block_root: payload.sidecar.parent_beacon_block_root(),
             extra_data: payload.payload.as_v1().extra_data.clone(),
+            slot_number: payload.payload.as_v5().map(|payload| payload.slot_number),
         })
     }
 
