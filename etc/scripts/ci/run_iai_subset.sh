@@ -12,6 +12,7 @@
 # The gated bench (see bench-iai.yml --gate) is different: its cargo status is
 # this script's exit status, and a commit without it prints iai_compare.py's
 # GATED_ABSENT line, so the gate can tell "not on this commit" from "failed".
+# RUN_GATE=false (set by bench-iai.yml when no relevant path changed) skips it.
 set -uo pipefail
 
 run() {
@@ -29,7 +30,9 @@ run cargo bench -p base-consensus-derive --bench batch_queue_iai --features test
 run cargo bench -p base-common-flashblocks --bench flashblock_decode_iai
 
 gated_status=0
-if [ -f crates/builder/core/benches/build_loop_iai.rs ]; then
+if [ "${RUN_GATE:-true}" != true ]; then
+  echo "iai-subset: gated bench skipped (RUN_GATE=$RUN_GATE)"
+elif [ -f crates/builder/core/benches/build_loop_iai.rs ]; then
   run cargo bench -p base-builder-core --bench build_loop_iai || gated_status=$?
 else
   echo "iai-subset: gated bench absent on this commit"

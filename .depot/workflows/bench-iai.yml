@@ -7,9 +7,10 @@ name: Benchmarks (iai · deterministic)
 # single comment. Every bench is advisory except `build_loop/mainnet_block`
 # (the builder's whole-block selection loop, Off and Enforce modes), whose
 # instruction count fails the job if it rises 3% or more over the base commit,
-# or if it stops producing a result. Its counts vary by about 0.04% run-to-run
-# (randomly seeded hashing), far below the 3% gate. The bench also pins the block's selection
-# counts, so a selection change fails it outright.
+# or if it stops producing a result. On PRs it runs only when a path that can
+# move its numbers changed (see the prepare step). Its counts vary by about
+# 0.04% run-to-run (randomly seeded hashing), far below the 3% gate. The bench
+# also pins the block's selection counts, so a selection change fails it outright.
 on:
   pull_request:
   workflow_dispatch:
@@ -113,6 +114,65 @@ jobs:
             BASE_SHA="$(git rev-parse FETCH_HEAD)"
           fi
           git fetch --no-tags --depth 1 origin "$BASE_SHA"
+          # The build_loop perf gate doubles the job's build, so on PRs it runs only
+          # when a path that can move its numbers changed. A failed diff runs it.
+          RUN_GATE=true
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            # base-builder-core's workspace dep closure (normal/build/optional/dev, via `cargo metadata`).
+            gate_paths=(
+              crates/builder/
+              crates/common/bundles/
+              crates/common/chains/
+              crates/common/consensus/
+              crates/common/eip8130/
+              crates/common/evm/
+              crates/common/flashblocks/
+              crates/common/flz/
+              crates/common/genesis/
+              crates/common/l1-fees/
+              crates/common/network/
+              crates/common/observability-events/
+              crates/common/precompile-macros/
+              crates/common/precompile-storage/
+              crates/common/precompiles/
+              crates/common/rpc-types/
+              crates/common/rpc-types-engine/
+              crates/consensus/protocol/
+              crates/execution/chainspec/
+              crates/execution/consensus/
+              crates/execution/eip8130/
+              crates/execution/evm/
+              crates/execution/exex/
+              crates/execution/node/
+              crates/execution/payload/
+              crates/execution/rpc/
+              crates/execution/runner/
+              crates/execution/trie/
+              crates/execution/txpool/
+              crates/execution/txpool-rpc/
+              crates/utilities/metrics/
+              crates/utilities/retry/
+              crates/utilities/ring-buffer/
+              crates/utilities/test-utils/
+              crates/utilities/upgrade-signal/
+              Cargo.toml Cargo.lock rust-toolchain.toml .cargo/ .depot/actions/setup/
+              .depot/workflows/bench-iai.yml etc/scripts/ci/iai_compare.py etc/scripts/ci/run_iai_subset.sh
+            )
+            # --no-renames reports a moved file under its old path too, not only the new one.
+            if changed="$(git diff --no-renames --name-only "$BASE_SHA" "$HEAD_SHA")"; then
+              RUN_GATE=false
+              while IFS= read -r file; do
+                for path in "${gate_paths[@]}"; do
+                  if [[ $file == "$path" || ( $path == */ && $file == "$path"* ) ]]; then
+                    RUN_GATE=true
+                  fi
+                done
+              done <<< "$changed"
+            else
+              echo "::warning title=Benchmark gate::changed-file detection failed; running the gate"
+            fi
+          fi
+          echo "RUN_GATE=$RUN_GATE" >> "$GITHUB_ENV"
           cp etc/scripts/ci/run_iai_subset.sh "$RUNNER_TEMP/run_iai_subset.sh"
           cp etc/scripts/ci/iai_compare.py "$RUNNER_TEMP/iai_compare.py"
           echo "BASE_SHA=$BASE_SHA" >> "$GITHUB_ENV"
@@ -148,15 +208,19 @@ jobs:
           # The gate result is held until the comment is posted, so a failing gate
           # still shows its numbers on the PR.
           gate_failed=false
+          gate_args=(--gate build_loop/mainnet_block/off --gate build_loop/mainnet_block/enforce)
+          [ "$RUN_GATE" = true ] || gate_args=()
           python3 "$RUNNER_TEMP/iai_compare.py" \
             --base "$RUNNER_TEMP/base.txt" \
             --head "$RUNNER_TEMP/head.txt" \
             --output "$RUNNER_TEMP/comment.md" \
             --run-url "$WORKFLOW_RUN_URL" \
             --threshold-pct 2 \
-            --gate build_loop/mainnet_block/off \
-            --gate build_loop/mainnet_block/enforce \
+            "${gate_args[@]}" \
             --fail-pct 3 || gate_failed=true
+          if [ "$RUN_GATE" != true ]; then
+            printf '\nperf gate skipped: no relevant paths changed\n' >> "$RUNNER_TEMP/comment.md"
+          fi
           echo "gate_failed=$gate_failed" >> "$GITHUB_OUTPUT"
           cat "$RUNNER_TEMP/comment.md" | tee -a "$GITHUB_STEP_SUMMARY"
 
