@@ -250,7 +250,7 @@ impl Eip8130RequestFields {
     /// Deserializes an optional list of at most `max` entries. The entry past
     /// `max` is skipped without being built, so an oversized list fails before
     /// it allocates more than `max` entries.
-    fn deserialize_bounded<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
+    pub fn deserialize_bounded<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
         deserializer: D,
         max: usize,
         field: &'static str,
@@ -847,6 +847,23 @@ mod tests {
             let json = serde_json::to_string(&request).unwrap();
             assert_eq!(serde_json::from_str::<BaseTransactionRequest>(&json).unwrap(), request);
         }
+    }
+
+    /// A request built in code skips decoding, so the structural check run by
+    /// simulation is what bounds it.
+    #[cfg(feature = "eip8130")]
+    #[test]
+    fn oversized_calls_built_in_code_fail_the_structural_check() {
+        let mut request = BaseTransactionRequest::default();
+        request.eip8130.sender = Some(SENDER);
+        request.eip8130.calls =
+            Some(vec![Vec::new(); Eip8130Constants::MAX_CALL_PHASES_PER_TX + 1]);
+        assert_eq!(
+            request.to_eip8130_simulation_tx(8453, 30_000_000).err(),
+            Some(crate::Eip8130SimulationRequestError::Structural(
+                base_common_consensus::Eip8130StructuralError::TooManyCallPhases
+            ))
+        );
     }
 
     #[test]

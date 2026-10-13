@@ -419,7 +419,8 @@ mod tests {
             "sender": SENDER,
             "calls": calls,
         }));
-        assert!(decoded.is_err(), "an oversized `calls` list must not decode");
+        let error = decoded.unwrap_err().to_string();
+        assert!(error.contains("`calls` with at most 1024 entries"), "{error}");
     }
 
     #[test]
