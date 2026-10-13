@@ -6514,10 +6514,12 @@ version = "0.0.0"
 dependencies = [
  "alloy-consensus 2.4.1",
  "alloy-eips 2.4.1",
+ "alloy-genesis",
  "alloy-network 2.4.1",
  "alloy-primitives",
  "alloy-provider",
  "alloy-signer 2.4.1",
+ "alloy-signer-local 2.4.1",
  "base-common-consensus",
  "base-common-rpc-types",
  "base-execution-chainspec",

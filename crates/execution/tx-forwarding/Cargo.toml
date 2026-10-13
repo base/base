@@ -41,9 +41,11 @@ jsonrpsee = { workspace = true, features = ["http-client"] }
 [dev-dependencies]
 # ethereum
 alloy-signer.workspace = true
+alloy-genesis.workspace = true
 alloy-network.workspace = true
 alloy-provider.workspace = true
 alloy-consensus.workspace = true
+alloy-signer-local.workspace = true
 
 # workspace
 base-test-utils.workspace = true
