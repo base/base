@@ -28,12 +28,12 @@ use crate::forwarder::InsertValidatedTransaction;
 type Snapshot<T> =
     LaneScheduler<Arc<ValidPoolTransaction<T>>, Priority<UnifiedTipPriority>, BestTransactionLane>;
 
-/// The pool reads a [`DestinationReader`] makes.
+/// The pool reads the forwarding reader makes.
 ///
 /// Narrower than [`TransactionPool`] so tests can control what a snapshot yields and how long it
 /// takes; every [`TransactionPool`] implements it.
 #[cfg_attr(test, mockall::automock(type Transaction = base_execution_txpool::BasePooledTransaction;))]
-pub(crate) trait ReaderPool: Send + Sync {
+pub trait ReaderPool: Send + Sync {
     /// Transaction type the pool holds.
     type Transaction: PoolTransaction;
 
@@ -540,12 +540,19 @@ mod tests {
         });
 
         let run = tokio::spawn(async move { reader.run().await });
-        time::sleep(Duration::from_millis(100)).await;
+        // Waits for spans rather than a fixed time, so a slow machine only makes the test longer.
+        let mut spans = Vec::new();
+        time::timeout(Duration::from_secs(5), async {
+            while spans.len() < 3 {
+                spans.push(snapshots.recv().await.expect("the reader keeps snapshotting"));
+            }
+        })
+        .await
+        .expect("three snapshots are taken");
         cancel.cancel();
-        time::timeout(Duration::from_secs(1), run).await.expect("reader exits").unwrap();
+        time::timeout(Duration::from_secs(5), run).await.expect("reader exits").unwrap();
         announcer.join().unwrap();
 
-        let mut spans = Vec::new();
         while let Ok(span) = snapshots.try_recv() {
             spans.push(span);
         }
@@ -573,7 +580,9 @@ mod tests {
     /// reader at once rather than after the gap or another snapshot.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn cancelling_during_the_pacing_gap_returns_promptly() {
-        const COST: Duration = Duration::from_millis(300);
+        // The join bound must stay well below the cost, or a reader that starts another snapshot
+        // instead of waiting out the gap would still pass.
+        const COST: Duration = Duration::from_secs(2);
         let (_announce, announcements) = mpsc::channel(16);
         let (snapshot_tx, _snapshots) = mpsc::unbounded_channel();
         let (sender, mut queue) = mpsc::channel(64);
@@ -587,10 +596,10 @@ mod tests {
         let run = tokio::spawn(async move { reader.run().await });
         queue.recv().await.expect("the first snapshot's transaction is forwarded");
         // Long enough to be well into whatever follows the first snapshot, short of its cost.
-        time::sleep(Duration::from_millis(20)).await;
+        time::sleep(Duration::from_millis(200)).await;
         cancel.cancel();
 
-        time::timeout(Duration::from_millis(100), run)
+        time::timeout(Duration::from_millis(500), run)
             .await
             .expect("reader exits well before the gap or another snapshot ends")
             .unwrap();
