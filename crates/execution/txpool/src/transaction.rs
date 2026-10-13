@@ -256,7 +256,14 @@ where
         self.inner.transaction.signer_ref()
     }
 
+    /// A sponsored EIP-8130 transaction costs its sender nothing: the payer
+    /// covers the fees and admission does not reserve `call.value`. The payer's
+    /// funding is enforced by the admission guard's balance watch, so the
+    /// protocol pool's sender-balance accounting must not charge the sender.
     fn cost(&self) -> &U256 {
+        if self.limit_class.get().is_some_and(|class| class.payer != class.sender) {
+            return &U256::ZERO;
+        }
         &self.inner.cost
     }
 

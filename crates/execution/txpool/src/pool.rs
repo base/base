@@ -3162,6 +3162,55 @@ mod tests {
         assert!(!pool.guard.read().contains(&hash));
     }
 
+    fn is_pending(pool: &IntegrationPool, hash: TxHash) -> bool {
+        pool.pending_transactions().iter().any(|transaction| *transaction.hash() == hash)
+    }
+
+    #[tokio::test]
+    async fn sponsored_key0_transaction_is_not_demoted_by_sender_account_changes() {
+        let (pool, client) = build_integration_pool();
+        let [sender, payer] = std::array::from_fn(|_| signer());
+        fund(&client, payer.address());
+        let transaction = sponsored_eoa_8130(&sender, &payer, U256::ZERO, 1_000);
+        let hash = *transaction.hash();
+        pool.add_transaction(TransactionOrigin::External, transaction).await.unwrap();
+        assert!(is_pending(&pool, hash));
+
+        pool.update_accounts(vec![ChangedAccount {
+            address: sender.address(),
+            nonce: 0,
+            balance: U256::from(1),
+        }]);
+        assert!(is_pending(&pool, hash), "the unfunded sender does not pay for a sponsored tx");
+        assert!(pool.best_transactions().any(|transaction| *transaction.hash() == hash));
+
+        pool.update_accounts(vec![ChangedAccount {
+            address: payer.address(),
+            nonce: 0,
+            balance: U256::from(1),
+        }]);
+        assert!(pool.get(&hash).is_none(), "the payer's balance still bounds a sponsored tx");
+    }
+
+    #[tokio::test]
+    async fn self_paid_key0_transaction_leaves_pending_when_sender_balance_drops() {
+        let (pool, client) = build_integration_pool();
+        let sender = signer();
+        fund(&client, sender.address());
+        let transaction = self_paid_eoa_8130(&sender, U256::ZERO, 0, 0, 1_000);
+        let hash = *transaction.hash();
+        pool.add_transaction(TransactionOrigin::External, transaction).await.unwrap();
+        assert!(is_pending(&pool, hash));
+
+        pool.update_accounts(vec![ChangedAccount {
+            address: sender.address(),
+            nonce: 0,
+            balance: U256::from(1),
+        }]);
+        assert!(!is_pending(&pool, hash));
+        assert!(pool.best_transactions().all(|transaction| *transaction.hash() != hash));
+    }
+
     #[test]
     fn sidecar_balance_updates_are_payer_keyed_without_a_pool_scan() {
         let (pool, _) = build_integration_pool();
