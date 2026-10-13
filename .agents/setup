@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Native Rust component tests/benchmarks need no node, database, or proving service.
+if [[ ! -x "$HOME/.cargo/bin/rustup" ]]; then
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs |
+        sh -s -- -y --profile minimal --default-toolchain none
+fi
+source "$HOME/.cargo/env"
+# Reads rust-toolchain.toml, including its pinned version and components.
+rustup show active-toolchain
+# The repository's formatter uses nightly-only import settings.
+if ! rustup toolchain list | grep -q '^nightly-'; then
+    rustup toolchain install nightly --profile minimal --component rustfmt
+fi
