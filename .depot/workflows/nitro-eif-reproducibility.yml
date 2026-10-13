@@ -1,0 +1,65 @@
+name: Nitro EIF reproducibility
+on:
+  pull_request:
+  push:
+    branches: [main]
+  merge_group:
+  workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  build:
+    name: Native amd64 EIF ${{ matrix.host }}
+    runs-on: depot-ubuntu-24.04-8
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        host: [first, second]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+        with:
+          version: v0.35.0
+          install: false
+      - name: Regression tests
+        run: python3 etc/docker/nitro-enclave/test_reproducibility.py
+      - name: Export a cold canonical build with varied checkout metadata
+        env:
+          HOST_VARIANT: ${{ matrix.host }}
+        run: |
+          test "$(uname -s)/$(uname -m)" = Linux/x86_64
+          git add -A
+          source_tree=$(git write-tree)
+          if [ "$HOST_VARIANT" = first ]; then
+            git ls-files -z | xargs -0 touch -h -t 200101010000
+          else
+            git ls-files -z | xargs -0 touch -h -t 202510101010
+            git ls-files -z '*.rs' | xargs -0 chmod 600
+          fi
+          python3 etc/docker/nitro-enclave/reproduce.py build --ref "$source_tree" --output "$RUNNER_TEMP/eif"
+          printf '%s\n' "$RUNNER_NAME" > "$RUNNER_TEMP/eif/runner-name.txt"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nitro-eif-${{ matrix.host }}
+          path: ${{ runner.temp }}/eif/
+          if-no-files-found: error
+          retention-days: 14
+  compare:
+    name: EIF bytes, SHA256, PCR0 and measured baseline
+    needs: build
+    runs-on: depot-ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: nitro-eif-*
+          path: artifacts
+      - name: Compare independent exports against the measured baseline
+        run: |
+          python3 etc/docker/nitro-enclave/reproduce.py compare \
+            artifacts/nitro-eif-first artifacts/nitro-eif-second \
+            --require-independent --baseline etc/docker/nitro-enclave/baseline.json

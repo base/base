@@ -99,12 +99,13 @@ build-enclave-binary-and-ramdisks BOOTSTRAP_DIR OUT_DIR:
     BOOTSTRAP_DIR="$(cd '{{ BOOTSTRAP_DIR }}' && pwd)"
     OUT_DIR="$(mkdir -p '{{ OUT_DIR }}' && cd '{{ OUT_DIR }}' && pwd)"
 
-    # Reproducibility: pin source date and force static musl linking.
-    export SOURCE_DATE_EPOCH=0
-    export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_RUSTFLAGS="-C target-feature=+crt-static -C link-self-contained=yes"
-    export OPENSSL_STATIC=1
-    export OPENSSL_LIB_DIR=/usr/lib
-    export OPENSSL_INCLUDE_DIR=/usr/include
+    export NITRO_SOURCE_ROOT="$REPO_ROOT"
+    source "$REPO_ROOT/etc/docker/nitro-enclave/build-env.sh"
+    export RUSTUP_TOOLCHAIN=1.96.0
+    [ "$(uname -s)/$(uname -m)" = Linux/x86_64 ] || { echo "Use the canonical remote amd64 builder on this host" >&2; exit 1; }
+    WORK_DIR="$(mktemp -d)"
+    trap 'rm -rf "$WORK_DIR"' EXIT
+    export CARGO_TARGET_DIR="$WORK_DIR/target"
 
     # Reproducibility: ramdisk content depends on the linuxkit version, so any
     # mismatch would change PCR0. Refuse to proceed if the wrong version is on PATH.
@@ -118,12 +119,10 @@ build-enclave-binary-and-ramdisks BOOTSTRAP_DIR OUT_DIR:
     # 1. Compile the static enclave binary.
     cargo build --release --locked --target x86_64-unknown-linux-musl \
         --package base-prover-nitro-enclave --bin base-prover-nitro-enclave
-    cp target/x86_64-unknown-linux-musl/release/base-prover-nitro-enclave "$OUT_DIR/"
+    cp "$CARGO_TARGET_DIR/x86_64-unknown-linux-musl/release/base-prover-nitro-enclave" "$OUT_DIR/"
 
     # 2. Assemble linuxkit ramdisks. user-ramdisk.yaml expects the enclave
     #    binary in CWD; init-ramdisk.yaml expects a `bootstrap/` directory.
-    WORK_DIR="$(mktemp -d)"
-    trap 'rm -rf "$WORK_DIR"' EXIT
     cp "$OUT_DIR/base-prover-nitro-enclave" "$WORK_DIR/base-prover-nitro-enclave"
     ln -sf "$BOOTSTRAP_DIR" "$WORK_DIR/bootstrap"
     cd "$WORK_DIR"
@@ -158,9 +157,14 @@ build-enclave-eif-and-cli STAGE1_DIR BOOTSTRAP_DIR OUT_DIR:
 
     # Reproducibility: pin source date for fixed embedded timestamps.
     export SOURCE_DATE_EPOCH=0
+    export RUSTUP_TOOLCHAIN=1.96.0
+    export CARGO_INCREMENTAL=0
+    export RUSTC_WRAPPER= RUSTC_WORKSPACE_WRAPPER=
+    [ "$(uname -s)/$(uname -m)" = Linux/x86_64 ] || { echo "Use the canonical remote amd64 builder on this host" >&2; exit 1; }
 
     WORK_DIR="$(mktemp -d)"
     trap 'rm -rf "$WORK_DIR"' EXIT
+    export CARGO_TARGET_DIR="$WORK_DIR/target"
 
     # 1. Build eif_build from the pinned upstream commit using our pinned Cargo.lock.
     mkdir -p "$WORK_DIR/eif-build-src"
@@ -171,7 +175,7 @@ build-enclave-eif-and-cli STAGE1_DIR BOOTSTRAP_DIR OUT_DIR:
     git reset --hard FETCH_HEAD
     cp "$REPO_ROOT/etc/docker/nitro-enclave/aws-nitro-enclaves-image-format.Cargo.lock" Cargo.lock
     cargo build --all --release --locked
-    cp target/release/eif_build "$WORK_DIR/eif_build"
+    cp "$CARGO_TARGET_DIR/release/eif_build" "$WORK_DIR/eif_build"
 
     # 2. Assemble eif.bin with reproducible build-time.
     cd "$WORK_DIR"
@@ -195,7 +199,7 @@ build-enclave-eif-and-cli STAGE1_DIR BOOTSTRAP_DIR OUT_DIR:
     git reset --hard FETCH_HEAD
     cargo build --release --locked
     git apply "$REPO_ROOT/etc/docker/nitro-enclave/nitro-cli-config.patch"
-    cp target/release/nitro-cli "$OUT_DIR/"
+    cp "$CARGO_TARGET_DIR/release/nitro-cli" "$OUT_DIR/"
     cp bootstrap/nitro-cli-config "$OUT_DIR/"
     cp bootstrap/nitro-enclaves-allocator "$OUT_DIR/"
 
@@ -246,6 +250,20 @@ remote-pcr0 url:
     TEE_IMAGE_HASH=$(cast keccak "0x$PCR0")
     echo "PCR0:         $PCR0"
     echo "teeImageHash: $TEE_IMAGE_HASH"
+
+# Export the canonical EIF and diagnostic artifacts using a native amd64 Docker context
+canonical-eif OUT_DIR REF='HEAD':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd ../../..
+    python3 etc/docker/nitro-enclave/reproduce.py build --ref '{{ REF }}' --output '{{ OUT_DIR }}'
+
+# Compare independent canonical exports and the checked-in measured baseline
+compare-canonical-eif FIRST SECOND:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd ../../..
+    python3 etc/docker/nitro-enclave/reproduce.py compare '{{ FIRST }}' '{{ SECOND }}' --baseline etc/docker/nitro-enclave/baseline.json
 
 # Build EIF and extract it (via --target describe)
 build-eif *args="":

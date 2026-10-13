@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1
+# syntax=docker/dockerfile:1.18.0@sha256:dabfc0969b935b2080555ace70ee69a5261af8a8f1b4df97b9e7fbcf6722eddf
 # check=skip=FromPlatformFlagConstDisallowed
 
 # Builds the base-prover-nitro-enclave EIF (Enclave Image Format).
@@ -12,56 +12,47 @@
 FROM --platform=linux/amd64 ghcr.io/mdehoog/aws-nitro-enclaves-sdk-bootstrap@sha256:6e5e53bd47370dbc1920208e93d222533a36f9f5dc85615591cbfe56a03312b0 AS bootstrap
 
 # Stage 2: Rust base image - Alpine musl for fully static enclave binary
-FROM --platform=linux/amd64 rust:1.95-alpine3.21@sha256:3ccb4699768d7097f0b3e2c0b3f31cb403983873d69f5865a1e66ec154eb1786 AS rust
+FROM --platform=linux/amd64 rust:1.96-alpine3.21@sha256:138d97c279ad440ac738f2d21d955d4d7301c68574742ef27a8e0265db5fa038 AS rust
 WORKDIR /app
 
+ENV RUSTUP_TOOLCHAIN=1.96.0
 ENV SOURCE_DATE_EPOCH=0
-ENV CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_RUSTFLAGS="-C target-feature=+crt-static -C link-self-contained=yes"
-
-ENV OPENSSL_STATIC=1
-ENV OPENSSL_LIB_DIR=/usr/lib
-ENV OPENSSL_INCLUDE_DIR=/usr/include
-
-RUN apk add --no-cache \
-    musl-dev \
-    openssl-dev \
-    openssl-libs-static \
-    pkgconfig \
-    perl \
-    make \
-    clang \
-    clang-dev \
-    git \
-    protobuf-dev \
-    zlib-dev \
-    zlib-static
+ENV CARGO_INCREMENTAL=0
+ENV RUSTC_WRAPPER="" RUSTC_WORKSPACE_WRAPPER=""
+COPY etc/docker/nitro-enclave/apk.lock etc/docker/nitro-enclave/install-apks.sh /tmp/apks/
+RUN sh /tmp/apks/install-apks.sh /tmp/apks/apk.lock && rm -rf /tmp/apks
 
 # Stage 3: Builder - compile enclave binary and assemble ramdisks
 FROM rust AS builder
 
-ARG LINUXKIT_VERSION=v1.8.2
-ARG LINUXKIT_SHA256=18b97b0d83401dd88ade14f207eb26358d9a7fde5d3dc4b1e24bd8faf087be6f
+ENV LINUXKIT_VERSION=v1.8.2
+ENV LINUXKIT_SHA256=18b97b0d83401dd88ade14f207eb26358d9a7fde5d3dc4b1e24bd8faf087be6f
 RUN wget -q -O /usr/local/bin/linuxkit \
     "https://github.com/linuxkit/linuxkit/releases/download/${LINUXKIT_VERSION}/linuxkit-linux-amd64" && \
     echo "${LINUXKIT_SHA256}  /usr/local/bin/linuxkit" | sha256sum -c - && \
     chmod +x /usr/local/bin/linuxkit
 
 COPY . .
+RUN sh ./etc/docker/nitro-enclave/test-build-env.sh ./etc/docker/nitro-enclave/build-env.sh
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry,id=enclave-registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,id=enclave-git,sharing=locked \
-    --mount=type=cache,target=/app/target,id=enclave-target,sharing=locked \
+    . ./etc/docker/nitro-enclave/build-env.sh && \
     cargo build --release --locked --target x86_64-unknown-linux-musl --package base-prover-nitro-enclave --bin base-prover-nitro-enclave && \
     cp target/x86_64-unknown-linux-musl/release/base-prover-nitro-enclave /app/base-prover-nitro-enclave
 
 COPY --from=bootstrap /build/out bootstrap
 RUN linuxkit build --format kernel+initrd --no-sbom --name init-ramdisk ./etc/docker/nitro-enclave/init-ramdisk.yaml
 RUN linuxkit build --format kernel+initrd --no-sbom --name user-ramdisk ./etc/docker/nitro-enclave/user-ramdisk.yaml
+RUN sh ./etc/docker/nitro-enclave/test-ramdisks.sh ./etc/docker/nitro-enclave
 
 # Stage 4: EIF - Build EIF using aws-nitro-enclaves-image-format
-FROM --platform=linux/amd64 rust:1.95@sha256:443dd9a3260cf23c22fc05051dd5661dd7b4028d3d25dbaffab6563b63c3539c AS eif
+FROM --platform=linux/amd64 rust:1.96@sha256:897292968f3e2c7aaba68bf8e6239b61994a8adbdd09e49bd866b69822b98af9 AS eif
 
 ENV SOURCE_DATE_EPOCH=0
+ENV RUSTUP_TOOLCHAIN=1.96.0
+ENV CARGO_INCREMENTAL=0
+ENV RUSTC_WRAPPER="" RUSTC_WORKSPACE_WRAPPER=""
 
 WORKDIR /build
 
@@ -75,7 +66,6 @@ RUN git init && \
 COPY etc/docker/nitro-enclave/aws-nitro-enclaves-image-format.Cargo.lock Cargo.lock
 RUN --mount=type=cache,target=/usr/local/cargo/registry,id=eif-registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,id=eif-git,sharing=locked \
-    --mount=type=cache,target=/build/target,id=eif-target,sharing=locked \
     cargo build --all --release --locked && \
     cp target/release/eif_build /usr/local/bin/eif_build
 
@@ -92,7 +82,16 @@ RUN eif_build \
     --ramdisk init-ramdisk-initrd.img \
     --ramdisk user-ramdisk-initrd.img \
     --build-time "1970-01-01T00:00:00+00:00" \
-    --output eif.bin
+    --output eif.bin > measurements.txt && \
+    sed -n '/^{/,$p' measurements.txt > measurements.json
+
+FROM scratch AS artifacts
+COPY --from=eif /build/eif.bin /build/measurements.json /
+COPY --from=eif /usr/local/bin/eif_build /eif_build
+COPY --from=eif /build/bootstrap/bzImage /build/bootstrap/bzImage.config /bootstrap/
+COPY --from=eif /build/cmdline /cmdline
+COPY --from=builder /app/base-prover-nitro-enclave /base-prover-nitro-enclave
+COPY --from=builder /app/init-ramdisk-initrd.img /app/user-ramdisk-initrd.img /
 
 # Stage 5: Nitro CLI - build aws-nitro-enclaves-cli from source
 FROM --platform=linux/amd64 rust:1.95@sha256:443dd9a3260cf23c22fc05051dd5661dd7b4028d3d25dbaffab6563b63c3539c AS nitro-cli
