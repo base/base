@@ -304,6 +304,7 @@ impl ChallengerE2e {
             quiet_window = ?config.quiet_window,
             dispute_timeout = ?config.dispute_timeout,
             game_type = config.game_type,
+            driver_commit = config.driver_commit.as_deref().unwrap_or("unknown"),
             "starting scenario"
         );
         progress.start(Phase::Setup);
@@ -316,6 +317,9 @@ impl ChallengerE2e {
         let fork_url = anvil.endpoint_url();
         let provider: RootProvider = RootProvider::new_http(fork_url.clone());
         config.fork_block = provider.get_block_number().await?;
+        // Every later read of L1 state is as of this block, so it is what a
+        // rerun against the same chain state needs.
+        info!(phase = %Phase::Setup, fork_block = config.fork_block, "forked L1");
         Self::fund(&provider, &[driver.address(), challenger.address()]).await?;
 
         // Up before anything asks for a proof: the dual-proof staging below
@@ -395,6 +399,7 @@ impl ChallengerE2e {
         *challenger_released = true;
         Self::release_challenger(&config.env_file, &fork_url, &config.zk_rpc_url, &challenger)?;
         Self::await_first_scan(&config).await?;
+        Self::log_challenger_build(&config).await;
         progress.pass();
 
         progress.start(Phase::QuietWindow);
@@ -1547,6 +1552,21 @@ impl ChallengerE2e {
             },
         )
         .await
+    }
+
+    /// Logs the version the challenger under test reports in `base_info`.
+    ///
+    /// The challenger is a separate image, pinned separately, so this is the
+    /// driver's only view of what it is testing. Best effort: a missing series
+    /// is logged as unknown rather than failing the run.
+    async fn log_challenger_build(config: &Config) {
+        let scrape = Scrape::fetch(&config.challenger_metrics_url).await.unwrap_or_default();
+        info!(
+            phase = %Phase::Setup,
+            challenger_version = scrape.label_value("base_info", "version").unwrap_or("unknown"),
+            challenger_binary = scrape.label_value("base_info", "binary").unwrap_or("unknown"),
+            "challenger under test"
+        );
     }
 
     /// Positive case: a challenger that disputes valid games fails here.
