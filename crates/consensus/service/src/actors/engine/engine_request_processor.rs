@@ -825,6 +825,7 @@ mod tests {
                 block_hash,
                 transactions: vec![],
             }),
+            bls_aggregate: None,
         }
     }
 
@@ -1967,6 +1968,7 @@ mod tests {
                 block_hash,
                 transactions: vec![encoded_l1_info_deposit_tx(L1BlockInfoBedrock::default())],
             }),
+            bls_aggregate: None,
         }
     }
 

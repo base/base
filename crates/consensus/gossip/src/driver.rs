@@ -649,6 +649,7 @@ mod tests {
                 signature: Signature::test_signature(),
                 payload_hash: PayloadHash(B256::ZERO),
                 parent_beacon_block_root: block.header.parent_beacon_block_root,
+                bls_aggregate: None,
             };
             let decoded =
                 NetworkPayloadEnvelope::decode_v4(&envelope.encode_v4().unwrap()).unwrap();
@@ -893,6 +894,7 @@ mod tests {
             signature: Signature::test_signature(),
             payload_hash: PayloadHash(B256::ZERO),
             parent_beacon_block_root: None,
+            bls_aggregate: None,
         };
         assert!(matches!(
             driver.publish(|handler| handler.blocks_v2_topic.clone(), Some(envelope)),
@@ -936,6 +938,7 @@ mod tests {
             signature: Signature::test_signature(),
             payload_hash: PayloadHash(B256::ZERO),
             parent_beacon_block_root: None,
+            bls_aggregate: None,
         };
         let encoded = envelope.encode_v2().unwrap();
         let decoded = NetworkPayloadEnvelope::decode_v2(&encoded).unwrap();

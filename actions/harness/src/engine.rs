@@ -576,6 +576,7 @@ impl ActionEngineClient {
             // The spec notes: "as long as MinBaseFee is not explicitly set, the
             // default value (0) will be systematically applied."
             min_base_fee: Some(0),
+            bls_derived: false,
         };
 
         let built = Self::build_payload(inner, payload.parent_hash, attrs)?;
@@ -1018,8 +1019,13 @@ impl SequencerEngineClient for ActionEngineClient {
         let parent_beacon_block_root = block.header().parent_beacon_block_root();
         let (payload, _sidecar) =
             BaseExecutionPayload::from_block_unchecked(block_hash, &block.clone_block());
+        let bls_aggregate = pending.built.bls_aggregate();
         guard.sealed_payloads.insert(block_hash, pending);
-        Ok(BaseExecutionPayloadEnvelope { parent_beacon_block_root, execution_payload: payload })
+        Ok(BaseExecutionPayloadEnvelope {
+            parent_beacon_block_root,
+            execution_payload: payload,
+            bls_aggregate,
+        })
     }
 
     async fn insert_unsafe_payload(

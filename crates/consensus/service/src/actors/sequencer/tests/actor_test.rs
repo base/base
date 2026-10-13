@@ -54,6 +54,7 @@ fn dummy_envelope() -> BaseExecutionPayloadEnvelope {
             block_hash: B256::ZERO,
             transactions: vec![],
         }),
+        bls_aggregate: None,
     }
 }
 

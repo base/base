@@ -10,8 +10,9 @@ use alloy_network_primitives::TransactionBuilder7702;
 use alloy_primitives::{Address, B256, Bytes, ChainId, Signature, TxKind, U256};
 use alloy_rpc_types_eth::{AccessList, TransactionInput, TransactionRequest};
 use base_common_consensus::{
-    AccountChange, BLS_TX_TYPE_ID, BaseTxEnvelope, BaseTypedTransaction, BlsConstants, Call,
-    EIP8130_TX_TYPE_ID, Eip8130Constants, Eip8130Contracts, Eip8130PayerSerde, TxBls, TxDeposit,
+    AccountChange, BLS_TRANSFER_TX_TYPE_ID, BLS_TX_TYPE_ID, BaseTxEnvelope, BaseTypedTransaction,
+    BlsConstants, Call, EIP8130_TX_TYPE_ID, Eip8130Constants, Eip8130Contracts, Eip8130PayerSerde,
+    TxBls, TxBlsTransfer, TxDeposit,
 };
 use serde::{Deserialize, Serialize};
 
@@ -266,6 +267,40 @@ impl BaseTransactionRequest {
         }
         None
     }
+
+    /// Whether this request declares the native BLS transfer type (`type: 0x7b`).
+    pub fn is_bls_transfer(&self) -> bool {
+        self.inner.transaction_type == Some(BLS_TRANSFER_TX_TYPE_ID)
+    }
+
+    /// Returns why a native BLS transfer (`type: 0x7b`) request cannot describe a native BLS
+    /// transfer, or `None` when its shape fits. A transfer is a plain value call with
+    /// [`BlsConstants::TRANSFER_GAS_LIMIT`] gas, EIP-1559 fee fields, no input, and no access
+    /// list, authorizations, or blobs.
+    pub fn bls_transfer_request_error(&self) -> Option<&'static str> {
+        let inner = &self.inner;
+        if inner.to.is_some_and(|to| to.is_create()) {
+            return Some("native BLS transfers cannot create contracts");
+        }
+        if inner.input.input().is_some_and(|input| !input.is_empty()) {
+            return Some("native BLS transfers carry no input");
+        }
+        if inner.gas.is_some_and(|gas| gas != BlsConstants::TRANSFER_GAS_LIMIT) {
+            return Some("native BLS transfers use exactly 21000 gas");
+        }
+        if inner.gas_price.is_some()
+            || inner.access_list.as_ref().is_some_and(|list| !list.is_empty())
+            || inner.authorization_list.is_some()
+            || inner.blob_versioned_hashes.is_some()
+            || inner.max_fee_per_blob_gas.is_some()
+            || inner.sidecar.is_some()
+        {
+            return Some(
+                "native BLS transfers take only EIP-1559 fee fields and no access list, authorizations, or blobs",
+            );
+        }
+        None
+    }
 }
 
 impl AsRef<TransactionRequest> for BaseTransactionRequest {
@@ -403,6 +438,38 @@ impl BaseTransactionRequest {
                 input: inner.input.input().cloned().unwrap_or_default(),
             }));
         }
+        if self.is_bls_transfer() {
+            let inner = &self.inner;
+            let (
+                None,
+                Some(chain_id),
+                Some(sender),
+                Some(nonce),
+                Some(TxKind::Call(recipient)),
+                Some(max_fee_per_gas),
+                Some(max_priority_fee_per_gas),
+            ) = (
+                self.bls_transfer_request_error(),
+                inner.chain_id,
+                inner.from,
+                inner.nonce,
+                inner.to,
+                inner.max_fee_per_gas,
+                inner.max_priority_fee_per_gas,
+            )
+            else {
+                return Err(self);
+            };
+            return Ok(BaseTypedTransaction::BlsTransfer(TxBlsTransfer {
+                chain_id,
+                sender,
+                nonce,
+                recipient,
+                value: inner.value.unwrap_or_default(),
+                max_priority_fee_per_gas,
+                max_fee_per_gas,
+            }));
+        }
         let Self { inner, eip8130 } = self;
         let tx = match inner.build_typed_tx() {
             Ok(tx) => tx,
@@ -434,6 +501,26 @@ impl BaseTransactionRequest {
 impl From<BaseTransactionRequest> for TransactionRequest {
     fn from(value: BaseTransactionRequest) -> Self {
         value.inner
+    }
+}
+
+/// Projects a native BLS transfer onto a `type: 0x7b` request, which simulation and
+/// [`BaseTransactionRequest::build_typed_tx`] route back to the transfer.
+impl From<TxBlsTransfer> for BaseTransactionRequest {
+    fn from(tx: TxBlsTransfer) -> Self {
+        TransactionRequest {
+            from: Some(tx.sender),
+            to: Some(TxKind::Call(tx.recipient)),
+            value: Some(tx.value),
+            nonce: Some(tx.nonce),
+            gas: Some(BlsConstants::TRANSFER_GAS_LIMIT),
+            max_fee_per_gas: Some(tx.max_fee_per_gas),
+            max_priority_fee_per_gas: Some(tx.max_priority_fee_per_gas),
+            chain_id: Some(tx.chain_id),
+            transaction_type: Some(BLS_TRANSFER_TX_TYPE_ID),
+            ..Default::default()
+        }
+        .into()
     }
 }
 
@@ -516,6 +603,7 @@ impl From<BaseTypedTransaction> for BaseTransactionRequest {
                 "BaseTypedTransaction::Eip8130 cannot be projected onto BaseTransactionRequest; AA transactions have no single sender/recipient/value"
             ),
             BaseTypedTransaction::Bls(tx) => tx.into(),
+            BaseTypedTransaction::BlsTransfer(tx) => tx.into(),
             BaseTypedTransaction::Deposit(tx) => tx.into(),
         }
     }
@@ -541,6 +629,7 @@ impl From<BaseTxEnvelope> for BaseTransactionRequest {
                 request.as_mut().from = from;
                 request
             }
+            BaseTxEnvelope::BlsTransfer(tx) => tx.into_inner().into(),
             BaseTxEnvelope::Deposit(tx) => tx.into(),
         }
     }
@@ -777,5 +866,30 @@ mod tests {
         let req: BaseTransactionRequest = serde_json::from_str(json).unwrap();
         assert!(req.bls_request_error().is_some());
         assert!(req.build_typed_tx().is_err(), "a BLS request must not become a plain call");
+    }
+
+    /// A native BLS transfer projected onto a request comes back as the same transfer, and a
+    /// request without a sender or recipient cannot describe one.
+    #[test]
+    fn bls_transfer_request_round_trips_to_the_transfer() {
+        let tx = TxBlsTransfer {
+            chain_id: BlsConstants::CHAIN_ID,
+            sender: Address::repeat_byte(1),
+            nonce: 4,
+            recipient: Address::repeat_byte(2),
+            value: U256::from(9),
+            max_priority_fee_per_gas: 1,
+            max_fee_per_gas: 3,
+        };
+        let request: BaseTransactionRequest = tx.into();
+        assert!(request.is_bls_transfer());
+        assert_eq!(
+            request.clone().build_typed_tx().unwrap(),
+            BaseTypedTransaction::BlsTransfer(tx)
+        );
+
+        let mut no_sender = request;
+        no_sender.as_mut().from = None;
+        assert!(no_sender.build_typed_tx().is_err(), "the sender is part of the transfer intent");
     }
 }

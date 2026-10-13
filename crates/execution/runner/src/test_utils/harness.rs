@@ -194,6 +194,7 @@ impl TestHarness {
                 gas_limit: Some(GAS_LIMIT),
                 no_tx_pool: Some(true),
                 min_base_fee: Some(min_base_fee),
+                bls_derived: false,
                 eip_1559_params: Some(B64::from(eip_1559_params)),
             },
             3,

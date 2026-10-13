@@ -29,13 +29,15 @@ pub use receipts::{
 
 mod transaction;
 pub use transaction::{
-    AccountChange, AccountChangeChannel, BLS_TX_TYPE_ID, BasePooledTransaction, BaseTransaction,
-    BaseTransactionInfo, BaseTxEnvelope, BaseTypedTransaction, BlsConstants, BlsPayload,
-    BlsPayloadError, BlsTransfer, Call, ChangeType, CoinbaseTip, CreateEntry, DEPOSIT_TX_TYPE_ID,
+    AccountChange, AccountChangeChannel, BLS_TRANSFER_TX_TYPE_ID, BLS_TX_TYPE_ID,
+    BasePooledTransaction, BaseTransaction, BaseTransactionInfo, BaseTxEnvelope,
+    BaseTypedTransaction, BlsConstants, BlsPayload, BlsPayloadError, BlsTransfer,
+    BlsTransferWithSignature, Call, ChangeType, CoinbaseTip, CreateEntry, DEPOSIT_TX_TYPE_ID,
     Delegation, DepositInfo, DepositTransaction, EIP8130_REJECTION_MSG, EIP8130_TX_TYPE_ID,
     Eip8130Constants, Eip8130Contracts, Eip8130Signed, Eip8130StaticError, Eip8130StructuralError,
     Eip8130Structure, Eip8130TimestampError, IDefaultAccount, InitialActor, OpTxType, Scope,
-    SignedAccountChanges, SignedChange, TxBls, TxDeposit, TxEip8130, decode_2718_canonical,
+    SignedAccountChanges, SignedChange, TxBls, TxBlsTransfer, TxDeposit, TxEip8130,
+    decode_2718_canonical,
 };
 #[cfg(feature = "serde")]
 pub use transaction::{Eip8130PayerSerde, serde_deposit_tx_rpc};

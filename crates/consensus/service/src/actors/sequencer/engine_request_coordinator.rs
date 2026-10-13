@@ -967,6 +967,7 @@ mod tests {
                     transactions: vec![],
                 }),
                 parent_beacon_block_root: None,
+                bls_aggregate: None,
             });
         }
         catchup.commit(head);
@@ -1078,6 +1079,7 @@ mod tests {
                     transactions: vec![],
                 }),
                 parent_beacon_block_root: None,
+                bls_aggregate: None,
             });
         }
         catchup.commit(head);

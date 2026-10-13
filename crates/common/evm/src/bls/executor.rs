@@ -79,7 +79,7 @@ mod tests {
     use alloc::{collections::BTreeMap, vec, vec::Vec};
     use core::convert::Infallible;
 
-    use alloy_consensus::{SignableTransaction, TxEip1559};
+    use alloy_consensus::{Sealable, SignableTransaction, TxEip1559};
     use alloy_eips::Encodable2718;
     use alloy_evm::FromTxWithEncoded;
     use alloy_primitives::{
@@ -90,7 +90,7 @@ mod tests {
     use ark_ff::One;
     use ark_serialize::CanonicalSerialize;
     use base_common_consensus::{
-        BaseTxEnvelope, BlsConstants, BlsPayload, BlsTransfer, Predeploys, TxBls,
+        BaseTxEnvelope, BlsConstants, BlsPayload, BlsTransfer, Predeploys, TxBls, TxBlsTransfer,
     };
     use revm::{
         Context, ExecuteCommitEvm,
@@ -102,9 +102,9 @@ mod tests {
     };
 
     use crate::{
-        BaseHaltReason, BaseSpecId, BaseTransaction, BaseTransactionError, BaseUpgrade,
-        BlsRegistry, BlsValidationError, BlsValidator, Builder, DefaultBase, L1BlockInfo,
-        test_utils::BlsTestKey,
+        BaseHaltReason, BaseSpecId, BaseTransaction, BaseTransactionError, BaseUpgrade, BlsCrypto,
+        BlsRegistry, BlsTransferError, BlsTransferIntent, BlsTransferValidator, BlsValidationError,
+        BlsValidator, Builder, DefaultBase, L1BlockInfo, test_utils::BlsTestKey,
     };
 
     const BASE_FEE: u64 = 1_000_000;
@@ -245,6 +245,25 @@ mod tests {
         fn envelope_tx(signer: Address, envelope: BaseTxEnvelope) -> BaseTransaction<TxEnv> {
             let encoded = envelope.encoded_2718().into();
             BaseTransaction::from_encoded_tx(&envelope, signer, encoded)
+        }
+
+        /// A canonical native BLS transfer from `sender` at its current nonce.
+        fn intent(&self, sender: Address, recipient: Address, value: U256) -> TxBlsTransfer {
+            TxBlsTransfer {
+                chain_id: BlsConstants::CHAIN_ID,
+                sender,
+                nonce: self.nonce(sender),
+                recipient,
+                value,
+                max_priority_fee_per_gas: PRIORITY_FEE,
+                max_fee_per_gas: MAX_FEE,
+            }
+        }
+
+        fn transfer_tx(intent: TxBlsTransfer) -> BaseTransaction<TxEnv> {
+            // The recovered caller is deliberately wrong: execution must debit the intent's
+            // sender, never whoever the caller claims to be.
+            Self::envelope_tx(RELAYER, BaseTxEnvelope::BlsTransfer(intent.seal_slow()))
         }
 
         fn register(&mut self, owner: Address, seed: u64) {
@@ -646,5 +665,225 @@ mod tests {
         };
         // The key is still unregistered, so a real registration succeeds afterwards.
         assert!(BlsValidator::validate(&mut h.db, BlsConstants::CHAIN_ID, ALICE, &tx).is_ok());
+    }
+
+    #[test]
+    fn bls_transfer_executes_as_ordinary_sender_paid_transfer() {
+        let mut h = Harness::new();
+        h.register(ALICE, ALICE_SEED);
+        let before = h.snapshot();
+        let (alice, carol, relayer) = (h.balance(ALICE), h.balance(CAROL), h.balance(RELAYER));
+        let vaults = [
+            COINBASE,
+            Predeploys::BASE_FEE_VAULT,
+            Predeploys::L1_FEE_VAULT,
+            Predeploys::OPERATOR_FEE_VAULT,
+        ]
+        .map(|vault| h.balance(vault));
+
+        let tx = Harness::transfer_tx(h.intent(ALICE, CAROL, ether(1)));
+        let enveloped = tx.enveloped_tx.clone().unwrap();
+        let result = h.transact(tx).expect("transfer executes");
+        assert!(result.is_success());
+        assert!(result.logs().is_empty());
+        assert_eq!(result.tx_gas_used(), 21_000);
+
+        // The sender pays value, ordinary gas, L1 data and operator fees and consumes its nonce;
+        // the claimed caller (the relayer) is untouched.
+        let l1_cost = Harness::l1_block_info()
+            .calculate_tx_l1_cost(&enveloped, BaseSpecId::new(BaseUpgrade::Isthmus));
+        assert!(!l1_cost.is_zero());
+        let operator_fee =
+            U256::from(21_000 * OPERATOR_FEE_SCALAR / 1_000_000 + OPERATOR_FEE_CONSTANT);
+        let gas_fee = U256::from(21_000u128 * (BASE_FEE as u128 + PRIORITY_FEE));
+        assert_eq!(h.balance(ALICE), alice - ether(1) - gas_fee - l1_cost - operator_fee);
+        assert_eq!(h.nonce(ALICE), 2);
+        assert_eq!(h.balance(CAROL), carol + ether(1));
+        assert_eq!((h.balance(RELAYER), h.nonce(RELAYER)), (relayer, 0));
+        assert_eq!(h.balance(COINBASE), vaults[0] + U256::from(21_000 * PRIORITY_FEE));
+        assert_eq!(
+            h.balance(Predeploys::BASE_FEE_VAULT),
+            vaults[1] + U256::from(21_000 * BASE_FEE)
+        );
+        assert_eq!(h.balance(Predeploys::L1_FEE_VAULT), vaults[2] + l1_cost);
+        assert_eq!(h.balance(Predeploys::OPERATOR_FEE_VAULT), vaults[3] + operator_fee);
+        let total = |s: &Snapshot| s.values().fold(U256::ZERO, |sum, account| sum + account.0);
+        assert_eq!(total(&h.snapshot()), total(&before));
+
+        // The sender repeats with its next nonce, including a self-transfer; replay fails.
+        let replay =
+            Harness::transfer_tx(TxBlsTransfer { nonce: 1, ..h.intent(ALICE, CAROL, ether(1)) });
+        assert!(
+            h.transact(Harness::transfer_tx(h.intent(ALICE, ALICE, ether(1))))
+                .unwrap()
+                .is_success()
+        );
+        assert_eq!(h.nonce(ALICE), 3);
+        let snapshot = h.snapshot();
+        assert!(matches!(
+            h.transact(replay),
+            Err(EVMError::Transaction(BaseTransactionError::Base(
+                InvalidTransaction::NonceTooLow { .. }
+            )))
+        ));
+        assert_eq!(h.snapshot(), snapshot);
+    }
+
+    #[test]
+    fn bls_transfer_rejects_invalid_state_and_fees_without_side_effects() {
+        let mut h = Harness::new();
+        h.register(ALICE, ALICE_SEED);
+
+        h.assert_rejected(
+            Harness::transfer_tx(h.intent(BOB, CAROL, ether(1))),
+            "has no registered key",
+        );
+        h.assert_rejected(
+            Harness::transfer_tx(h.intent(ALICE, BlsConstants::REGISTRY_ADDRESS, ether(1))),
+            "recipient is the registry",
+        );
+        let precompile = address!("0x0000000000000000000000000000000000000004");
+        h.assert_rejected(
+            Harness::transfer_tx(h.intent(ALICE, precompile, ether(1))),
+            "is a precompile",
+        );
+
+        let mut contract = AccountInfo { balance: ether(1), ..Default::default() };
+        contract.set_code(Bytecode::new_raw(Bytes::from_static(&[0x00])));
+        h.db.insert_account_info(CAROL, contract);
+        h.assert_rejected(Harness::transfer_tx(h.intent(ALICE, CAROL, ether(1))), "recipient");
+
+        // An EIP-7702 delegated sender is not a plain EOA.
+        let mut delegated = h.account(ALICE);
+        delegated.set_code(Bytecode::new_eip7702(BOB));
+        h.db.insert_account_info(ALICE, delegated);
+        h.assert_rejected(Harness::transfer_tx(h.intent(ALICE, BOB, ether(1))), "sender");
+        let mut plain = h.account(ALICE);
+        plain.set_code(Bytecode::default());
+        h.db.insert_account_info(ALICE, plain);
+
+        // Only the development chain executes the type.
+        h.chain_id = 8453;
+        h.assert_rejected(
+            Harness::transfer_tx(h.intent(ALICE, BOB, ether(1))),
+            "disabled on this chain",
+        );
+        h.chain_id = BlsConstants::CHAIN_ID;
+
+        // Ordinary transaction checks apply to the sender.
+        let expect_base_error =
+            |h: &mut Harness, intent: TxBlsTransfer, check: fn(&InvalidTransaction) -> bool| {
+                let before = h.snapshot();
+                match h.transact(Harness::transfer_tx(intent)) {
+                    Err(EVMError::Transaction(BaseTransactionError::Base(error))) => {
+                        assert!(check(&error), "unexpected error {error:?}");
+                    }
+                    other => panic!("expected an ordinary rejection, got {other:?}"),
+                }
+                assert_eq!(h.snapshot(), before);
+            };
+        let intent = h.intent(ALICE, BOB, ether(1));
+        expect_base_error(&mut h, TxBlsTransfer { chain_id: 8453, ..intent }, |e| {
+            matches!(e, InvalidTransaction::InvalidChainId)
+        });
+        expect_base_error(&mut h, TxBlsTransfer { nonce: intent.nonce + 1, ..intent }, |e| {
+            matches!(e, InvalidTransaction::NonceTooHigh { .. })
+        });
+        expect_base_error(
+            &mut h,
+            TxBlsTransfer {
+                max_fee_per_gas: BASE_FEE as u128 - 1,
+                max_priority_fee_per_gas: 0,
+                ..intent
+            },
+            |e| matches!(e, InvalidTransaction::GasPriceLessThanBasefee),
+        );
+        expect_base_error(
+            &mut h,
+            TxBlsTransfer { max_priority_fee_per_gas: MAX_FEE + 1, ..intent },
+            |e| matches!(e, InvalidTransaction::PriorityFeeGreaterThanMaxFee),
+        );
+        expect_base_error(&mut h, TxBlsTransfer { value: ether(10), ..intent }, |e| {
+            matches!(e, InvalidTransaction::LackOfFundForMaxFee { .. })
+        });
+        // The ordinary transfer still executes afterwards.
+        assert!(h.transact(Harness::transfer_tx(intent)).unwrap().is_success());
+    }
+
+    #[test]
+    fn bls_transfer_admission_checks_state_before_witness() {
+        let mut h = Harness::new();
+        h.register(ALICE, ALICE_SEED);
+        let alice = BlsTestKey::from_seed(ALICE_SEED);
+        let tx = h.intent(ALICE, CAROL, ether(1));
+        let signature = alice.sign(tx.signing_digest());
+        let chain = BlsConstants::CHAIN_ID;
+
+        assert_eq!(
+            BlsTransferValidator::validate(&mut h.db, &tx, chain, &signature),
+            Ok(BlsTransferIntent {
+                sender: ALICE,
+                public_key: alice.public_key(),
+                digest: tx.signing_digest()
+            })
+        );
+
+        // Witness failures: another key, another transfer, a non-subgroup point.
+        let other_tx = TxBlsTransfer { value: ether(2), ..tx };
+        for (witness, expected) in [
+            (
+                BlsTestKey::from_seed(BOB_SEED).sign(tx.signing_digest()),
+                BlsTransferError::InvalidSignature,
+            ),
+            (alice.sign(other_tx.signing_digest()), BlsTransferError::InvalidSignature),
+            (non_subgroup_g1(), BlsTransferError::InvalidSignaturePoint),
+        ] {
+            let error =
+                BlsTransferValidator::validate(&mut h.db, &tx, chain, &witness).unwrap_err();
+            assert_eq!(error, expected);
+            assert!(error.is_invalid_witness());
+        }
+
+        // State and shape failures win over a bad witness and are not witness failures.
+        let garbage = non_subgroup_g1();
+        for (tx, chain_id, expected) in [
+            (
+                h.intent(BOB, CAROL, ether(1)),
+                chain,
+                BlsTransferError::UnregisteredSender { sender: BOB },
+            ),
+            (tx, 8453, BlsTransferError::UnsupportedChain { chain_id: 8453 }),
+            (
+                TxBlsTransfer { chain_id: 8453, ..tx },
+                chain,
+                BlsTransferError::ChainIdMismatch { chain_id: chain, tx_chain_id: 8453 },
+            ),
+            (
+                TxBlsTransfer { max_priority_fee_per_gas: MAX_FEE + 1, ..tx },
+                chain,
+                BlsTransferError::PriorityFeeAboveMaxFee {
+                    max_priority_fee_per_gas: MAX_FEE + 1,
+                    max_fee_per_gas: MAX_FEE,
+                },
+            ),
+            (
+                TxBlsTransfer { recipient: BlsConstants::REGISTRY_ADDRESS, ..tx },
+                chain,
+                BlsTransferError::RecipientIsRegistry,
+            ),
+        ] {
+            let error =
+                BlsTransferValidator::validate(&mut h.db, &tx, chain_id, &garbage).unwrap_err();
+            assert_eq!(error, expected);
+            assert!(!error.is_invalid_witness());
+        }
+    }
+
+    #[test]
+    fn ciphersuite_constants_match_protocol_constants() {
+        assert_eq!(BlsCrypto::SIGNATURE_DST, BlsConstants::SIGNATURE_DST);
+        assert_eq!(BlsCrypto::POP_DST, BlsConstants::POP_DST);
+        assert_eq!(BlsCrypto::PUBKEY_LEN, BlsConstants::PUBKEY_LEN);
+        assert_eq!(BlsCrypto::SIGNATURE_LEN, BlsConstants::SIGNATURE_LEN);
     }
 }

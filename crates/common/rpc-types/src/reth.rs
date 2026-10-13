@@ -11,7 +11,9 @@ use alloy_evm::{
 use alloy_network::TxSigner;
 use alloy_primitives::{Address, Bytes, TxKind};
 use alloy_signer::Signature;
-use base_common_consensus::{BLS_TX_TYPE_ID, BaseTransactionInfo, BaseTxEnvelope, BlsConstants};
+use base_common_consensus::{
+    BLS_TRANSFER_TX_TYPE_ID, BLS_TX_TYPE_ID, BaseTransactionInfo, BaseTxEnvelope, BlsConstants,
+};
 use base_common_evm::BaseTransaction as BaseRevm;
 use reth_rpc_convert::{FromConsensusTx, SignTxRequestError, SignableTxRequest, TryIntoSimTx};
 use revm::context::TxEnv;
@@ -84,6 +86,15 @@ impl<Spec, Block: BlockEnvironment> TryIntoTxEnv<BaseRevm<TxEnv>, Spec, Block>
             base.tx_type = BLS_TX_TYPE_ID;
             base.kind = TxKind::Call(BlsConstants::REGISTRY_ADDRESS);
         }
+        // A native BLS transfer simulates as the transfer itself through the shared handler. The
+        // BLS witness authorizes block inclusion, not execution, so simulation needs none.
+        if self.is_bls_transfer() {
+            if let Some(reason) = self.bls_transfer_request_error() {
+                return Err(BaseTxEnvError::InvalidBlsRequest(reason));
+            }
+            base.tx_type = BLS_TRANSFER_TX_TYPE_ID;
+            base.gas_limit = BlsConstants::TRANSFER_GAS_LIMIT;
+        }
         Ok(BaseRevm {
             base,
             enveloped_tx: Some(Bytes::new()),
@@ -117,8 +128,9 @@ impl SignableTxRequest<BaseTxEnvelope> for BaseTransactionRequest {
         let mut tx =
             self.build_typed_tx().map_err(|_| SignTxRequestError::InvalidTransactionRequest)?;
 
-        // sanity check: deposit transactions must not be signed by the user
-        if tx.is_deposit() {
+        // sanity check: deposit transactions must not be signed by the user, and native BLS
+        // transfers are authorized by a BLS signature rather than an ECDSA one
+        if tx.is_deposit() || tx.is_bls_transfer() {
             return Err(SignTxRequestError::InvalidTransactionRequest);
         }
 
@@ -206,6 +218,36 @@ mod tests {
             TryIntoTxEnv::<BaseRevm<TxEnv>, _, _>::try_into_tx_env(valued, &env),
             Err(BaseTxEnvError::InvalidBlsRequest(_))
         ));
+    }
+
+    /// A native BLS transfer request simulates as the transfer itself through the shared
+    /// handler, with its fixed gas, and a request no transfer can match is rejected.
+    #[test]
+    fn standard_tx_env_routes_bls_transfer_requests_to_the_shared_handler() {
+        const TO: Address = address!("0x00000000000000000000000000000000000000d4");
+        let env = EvmEnv::<revm::primitives::hardfork::SpecId>::default();
+        let request: BaseTransactionRequest = serde_json::from_value(
+            json!({ "from": FROM, "to": TO, "value": "0x5", "type": "0x7b" }),
+        )
+        .unwrap();
+        let tx = TryIntoTxEnv::<BaseRevm<TxEnv>, _, _>::try_into_tx_env(request, &env).unwrap();
+        assert_eq!(tx.base.tx_type, BLS_TRANSFER_TX_TYPE_ID);
+        assert_eq!(tx.base.kind, TxKind::Call(TO));
+        assert_eq!(tx.base.caller, FROM);
+        assert_eq!(tx.base.value, alloy_primitives::U256::from(5));
+        assert_eq!(tx.base.gas_limit, BlsConstants::TRANSFER_GAS_LIMIT);
+
+        for invalid in [
+            json!({ "from": FROM, "to": TO, "input": "0x01", "type": "0x7b" }),
+            json!({ "from": FROM, "to": TO, "gas": "0x5209", "type": "0x7b" }),
+            json!({ "from": FROM, "type": "0x7b", "to": null, "input": "0x" , "gasPrice": "0x1"}),
+        ] {
+            let request: BaseTransactionRequest = serde_json::from_value(invalid).unwrap();
+            assert!(matches!(
+                TryIntoTxEnv::<BaseRevm<TxEnv>, _, _>::try_into_tx_env(request, &env),
+                Err(BaseTxEnvError::InvalidBlsRequest(_))
+            ));
+        }
     }
 
     #[test]

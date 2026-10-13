@@ -1,7 +1,10 @@
 //! Handler related to Base chain
 use alloc::{boxed::Box, vec::Vec};
+use core::convert::Infallible;
 
-use base_common_consensus::{BLS_TX_TYPE_ID, BlsConstants, BlsPayload, Predeploys};
+use base_common_consensus::{
+    BLS_TRANSFER_TX_TYPE_ID, BLS_TX_TYPE_ID, BlsConstants, BlsPayload, Predeploys,
+};
 use base_common_genesis::BaseUpgrade;
 use revm::{
     context::{
@@ -16,7 +19,7 @@ use revm::{
         result::{EVMError, ExecutionResult, FromStringError, ResultGas},
     },
     handler::{
-        EthFrame, EvmTr, FrameResult, Handler, MainnetHandler,
+        EthFrame, EvmTr, FrameResult, Handler, MainnetHandler, PrecompileProvider,
         evm::FrameTr,
         handle_reservoir_remaining_gas,
         handler::EvmTrError,
@@ -30,7 +33,8 @@ use revm::{
 };
 
 use crate::{
-    BaseContextTr, BaseHaltReason, BlsExecutor, BlsGas, BlsJournalState, BlsValidator, L1BlockInfo,
+    BaseContextTr, BaseHaltReason, BlsExecutor, BlsGas, BlsJournalState, BlsTransferError,
+    BlsTransferValidator, BlsValidator, L1BlockInfo,
     transaction::{BaseTransactionError, BaseTxTr, DEPOSIT_TRANSACTION_TYPE},
 };
 
@@ -94,9 +98,9 @@ where
             return Ok(());
         }
 
-        if tx_type == BLS_TX_TYPE_ID {
+        if tx_type == BLS_TX_TYPE_ID || tx_type == BLS_TRANSFER_TX_TYPE_ID {
             // Development-chain gate for every execution path (payload building, block import,
-            // Engine API, RPC): the type is rejected before any state is read on other chains.
+            // Engine API, RPC): the types are rejected before any state is read on other chains.
             let chain_id = ctx.cfg().chain_id();
             if chain_id != BlsConstants::CHAIN_ID {
                 return Err(BaseTransactionError::bls(
@@ -107,8 +111,16 @@ where
             if tx.chain_id() != Some(chain_id) {
                 return Err(InvalidTransaction::InvalidChainId.into());
             }
-            if tx.kind() != TxKind::Call(BlsConstants::REGISTRY_ADDRESS)
-                || !tx.value().is_zero()
+            // A `0x7a` transaction is a value-free call to the registry; a `0x7b` transfer is a
+            // plain value transfer call with no input and exactly the transfer gas.
+            let shape_ok = if tx_type == BLS_TX_TYPE_ID {
+                tx.kind() == TxKind::Call(BlsConstants::REGISTRY_ADDRESS) && tx.value().is_zero()
+            } else {
+                tx.kind().is_call()
+                    && tx.input().is_empty()
+                    && tx.gas_limit() == BlsConstants::TRANSFER_GAS_LIMIT
+            };
+            if !shape_ok
                 || tx.access_list().is_some_and(|mut list| list.next().is_some())
                 || tx.authorization_list_len() != 0
                 || !tx.blob_versioned_hashes().is_empty()
@@ -141,10 +153,15 @@ where
         &self,
         evm: &mut Self::Evm,
     ) -> Result<InitialAndFloorGas, Self::Error> {
-        if evm.ctx_ref().tx().tx_type() != BLS_TX_TYPE_ID {
+        let tx = evm.ctx_ref().tx();
+        if tx.tx_type() == BLS_TRANSFER_TX_TYPE_ID {
+            // A native BLS transfer is an input-free value transfer to a code-free account and
+            // costs exactly the base transaction gas, which `validate_env` pinned as its limit.
+            return Ok(InitialAndFloorGas::new(BlsGas::TX_BASE, 0));
+        }
+        if tx.tx_type() != BLS_TX_TYPE_ID {
             return self.mainnet.validate_initial_tx_gas(evm);
         }
-        let tx = evm.ctx_ref().tx();
         // A native BLS transaction consumes exactly its deterministic gas (see `BlsGas`); the
         // EVM calldata floor does not apply to this native payload. L1 data fees remain separate.
         let payload = BlsPayload::decode(tx.input()).map_err(BaseTransactionError::bls)?;
@@ -164,6 +181,21 @@ where
         evm: &mut Self::Evm,
         _initial_and_floor_gas: &mut InitialAndFloorGas,
     ) -> Result<(), Self::Error> {
+        // A transfer to a precompile would run the precompile instead of a plain transfer. The
+        // precompile set is only loaded into the journal after validation, so ask the provider.
+        if evm.ctx_ref().tx().tx_type() == BLS_TRANSFER_TX_TYPE_ID {
+            let (ctx, _, precompiles, _) = evm.all_mut();
+            precompiles.set_spec(ctx.cfg().spec());
+            if let Some(recipient) = ctx.tx().kind().to().copied()
+                && precompiles.contains(&recipient)
+            {
+                return Err(BaseTransactionError::bls(
+                    BlsTransferError::<Infallible>::RecipientIsPrecompile { recipient },
+                )
+                .into());
+            }
+        }
+
         let (block, tx, cfg, journal, chain, _) = evm.ctx().all_mut();
         let spec = cfg.spec();
 
@@ -224,6 +256,21 @@ where
         } else {
             None
         };
+
+        // A native BLS transfer executes as an ordinary transfer from its sender, who pays its
+        // own fees and nonce below. Only its state preconditions are checked here; its detached
+        // signature is authenticated per block (`BlsBlockAuthorization`) or at pool admission.
+        if tx.tx_type() == BLS_TRANSFER_TX_TYPE_ID {
+            let recipient = tx.kind().to().copied().unwrap_or_default();
+            BlsTransferValidator::validate_state(
+                &mut BlsJournalState(journal),
+                cfg.chain_id(),
+                tx.chain_id().unwrap_or_default(),
+                tx.caller(),
+                recipient,
+            )
+            .map_err(|error| error.into_evm_error::<ERROR>())?;
+        }
 
         let mut caller_account = journal.load_account_with_code_mut(tx.caller())?.data;
 

@@ -453,7 +453,9 @@ impl SpanBatchTransactions {
                     }
                     (*sig, None, tx.nonce, tx.gas_limit)
                 }
-                BaseTxEnvelope::Deposit(_) => {
+                // Native BLS transfers are unsigned in canonical form; only an authenticated
+                // chunk batch may carry them, never a span batch.
+                BaseTxEnvelope::Deposit(_) | BaseTxEnvelope::BlsTransfer(_) => {
                     return Err(SpanBatchError::Decoding(
                         SpanDecodingError::InvalidTransactionType,
                     ));

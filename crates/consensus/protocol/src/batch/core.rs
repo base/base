@@ -2,10 +2,12 @@
 
 use alloy_primitives::bytes;
 use alloy_rlp::{Buf, Decodable, Encodable};
+use base_common_consensus::BlsConstants;
 use base_common_genesis::RollupConfig;
 
 use crate::{
-    BatchDecodingError, BatchEncodingError, BatchType, RawSpanBatch, SingleBatch, SpanBatch,
+    BatchDecodingError, BatchEncodingError, BatchType, BlsChunkBatch, RawSpanBatch, SingleBatch,
+    SpanBatch,
 };
 
 /// A Batch.
@@ -16,6 +18,8 @@ pub enum Batch {
     Single(SingleBatch),
     /// Span Batches
     Span(SpanBatch),
+    /// Native BLS chunk batches, development chain only
+    BlsChunk(BlsChunkBatch),
 }
 
 impl core::fmt::Display for Batch {
@@ -23,6 +27,7 @@ impl core::fmt::Display for Batch {
         match self {
             Self::Single(_) => write!(f, "single"),
             Self::Span(_) => write!(f, "span"),
+            Self::BlsChunk(_) => write!(f, "bls_chunk"),
         }
     }
 }
@@ -33,6 +38,7 @@ impl Batch {
         match self {
             Self::Single(sb) => sb.timestamp,
             Self::Span(sb) => sb.starting_timestamp(),
+            Self::BlsChunk(chunk) => chunk.starting_timestamp(),
         }
     }
 
@@ -59,6 +65,11 @@ impl Batch {
                     .map_err(BatchDecodingError::SpanBatchError)?;
                 Ok(Self::Span(span_batch))
             }
+            // Other chains keep rejecting the type byte exactly as before chunks existed.
+            BatchType::BlsChunk if cfg.l2_chain_id.id() != BlsConstants::CHAIN_ID => {
+                Err(BatchDecodingError::InvalidBatchType(BatchType::BLS_CHUNK))
+            }
+            BatchType::BlsChunk => Ok(Self::BlsChunk(BlsChunkBatch::decode(r)?)),
         }
     }
 
@@ -72,6 +83,10 @@ impl Batch {
             Self::Span(sb) => {
                 out.put_u8(BatchType::Span as u8);
                 sb.encode(out).map_err(BatchEncodingError::SpanBatchError)?;
+            }
+            Self::BlsChunk(chunk) => {
+                out.put_u8(BatchType::BlsChunk as u8);
+                chunk.encode(out)?;
             }
         }
         Ok(())

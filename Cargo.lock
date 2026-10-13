@@ -3108,6 +3108,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-rlp",
  "base-blobs",
+ "base-common-bls",
  "base-common-consensus",
  "base-common-genesis",
  "base-comp",
@@ -3573,6 +3574,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-common-bls"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "ark-bls12-381",
+ "ark-ec",
+ "ark-ff 0.6.0",
+ "ark-serialize 0.6.0",
+ "sha2 0.10.9",
+ "thiserror 2.0.19",
+]
+
+[[package]]
 name = "base-common-chains"
 version = "0.0.0"
 dependencies = [
@@ -3648,6 +3662,7 @@ dependencies = [
  "ark-ff 0.6.0",
  "ark-serialize 0.6.0",
  "auto_impl",
+ "base-common-bls",
  "base-common-chains",
  "base-common-consensus",
  "base-common-flz",
@@ -3664,7 +3679,6 @@ dependencies = [
  "rstest",
  "serde",
  "serde_json",
- "sha2 0.10.9",
  "thiserror 2.0.19",
 ]
 
@@ -4637,7 +4651,6 @@ dependencies = [
  "base-observability-events",
  "base-protocol",
  "criterion",
- "derive_more 2.1.1",
  "eyre",
  "futures",
  "http 1.4.2",

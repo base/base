@@ -59,6 +59,7 @@ impl ExecutionPayloadConverter {
                 let envelope = BaseExecutionPayloadEnvelope {
                     execution_payload: execution_payload.clone(),
                     parent_beacon_block_root,
+                    bls_aggregate: None,
                 };
                 let ph = envelope.payload_hash();
                 let msg = ph.signature_message(chain_id);
@@ -72,6 +73,7 @@ impl ExecutionPayloadConverter {
             signature,
             payload_hash,
             parent_beacon_block_root,
+            bls_aggregate: None,
         }
     }
 }

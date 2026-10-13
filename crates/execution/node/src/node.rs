@@ -12,18 +12,22 @@ use alloy_primitives::{Address, B64, B256, Bytes, map::AddressSet};
 use alloy_rlp::encode;
 use base_common_chains::Upgrades;
 use base_common_consensus::{
-    BLS_TX_TYPE_ID, BasePrimitives, BaseTransaction, BaseTxEnvelope, BlsConstants,
+    BLS_TRANSFER_TX_TYPE_ID, BLS_TX_TYPE_ID, BasePrimitives, BaseTransaction, BaseTxEnvelope,
+    BlsConstants,
 };
 use base_common_rpc_types_engine::{BasePayloadAttributes, ExecutionData};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_consensus::BaseBeaconConsensus;
-use base_execution_evm::{BaseEvmConfig, BaseRethReceiptBuilder};
+use base_execution_evm::{
+    BaseEvmConfig, BaseRethReceiptBuilder, BlsWitnessStore, BlsWitnessStoreProvider,
+};
 use base_execution_payload_builder::{
     Attributes, BaseBuiltPayload, BasePayloadBuilderAttributes,
     DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, PayloadPrimitives, RejectionCache,
     config::{BaseBuilderConfig, BaseDAConfig, GasLimitConfig, ResourceMeteringConfig},
 };
 use base_execution_rpc::{
+    BaseBlsApi, BaseBlsApiServer,
     config::{BaseEthConfigApiServer, BaseEthConfigHandler},
     eth::BaseEthApiBuilder,
     miner::{BaseMinerExtApi, MinerApiExtServer},
@@ -31,8 +35,8 @@ use base_execution_rpc::{
 };
 use base_execution_txpool::{
     BaseOrdering, BasePooledTransaction, BasePooledTx, BaseTransactionPool,
-    BaseTransactionValidator, GuardLimits, ParkableTransactionPool, TimestampedTransaction,
-    maintain_state_diff_invalidation,
+    BaseTransactionValidator, BlsTransferBackup, GuardLimits, ParkableTransactionPool,
+    TimestampedTransaction, maintain_state_diff_invalidation,
 };
 use reth_chain_state::CanonStateSubscriptions;
 use reth_chainspec::{BaseFeeParams, ChainSpecProvider, EthChainSpec, Hardforks};
@@ -66,7 +70,7 @@ use reth_primitives_traits::{SealedHeader, header::HeaderMut};
 use reth_provider::providers::ProviderFactoryBuilder;
 use reth_rpc_api::{DebugApiServer, eth::RpcTypes};
 use reth_rpc_server_types::RethRpcModule;
-use reth_tracing::tracing::{debug, info};
+use reth_tracing::tracing::{debug, info, warn};
 use reth_transaction_pool::{
     EthPoolTransaction, PoolPooledTx, PoolTransaction, TransactionPool,
     TransactionValidationTaskExecutor, blobstore::DiskFileBlobStore,
@@ -185,6 +189,7 @@ impl PayloadAttributesBuilder<BasePayloadBuilderAttributes<BaseTxEnvelope>>
             gas_limit,
             eip_1559_params,
             min_base_fee: Some(0),
+            bls_derived: false,
         };
 
         BasePayloadBuilderAttributes::try_new(parent.hash(), attributes, 3)
@@ -586,7 +591,7 @@ where
             Types: BaseNodeTypes + NodeTypes<Payload: PayloadTypes<PayloadAttributes = Attrs>>,
             Evm: ConfigureEvm<
                 NextBlockEnvCtx: BuildNextEnv<Attrs, HeaderTy<N::Types>, BaseChainSpec>,
-            >,
+            > + BlsWitnessStoreProvider,
             Pool: TransactionPool<Transaction: BasePooledTx>,
         >,
     EthB: EthApiBuilder<N>,
@@ -622,6 +627,10 @@ where
             builder,
         );
         let miner_ext = BaseMinerExtApi::new(da_config, gas_limit_config);
+        let bls_ext = BaseBlsApi::new(
+            ctx.node.provider().clone(),
+            ctx.node.evm_config().bls_witness_store().cloned(),
+        );
 
         rpc_add_ons
             .launch_add_ons_with(ctx, move |container| {
@@ -629,6 +638,13 @@ where
                     container;
 
                 modules.merge_if_module_configured(RethRpcModule::Eth, eth_config.into_rpc())?;
+
+                // Read-only native BLS authorization queries (`base_` namespace) for batchers
+                // and derivation; they refuse off the development chain.
+                modules.merge_configured(bls_ext.clone().into_rpc())?;
+                // The integrated consensus client reads L2 through the authenticated Engine
+                // endpoint, so its chunk checks need the methods there too.
+                auth_module.merge_auth_methods(bls_ext.into_rpc())?;
 
                 debug!(target: "reth::cli", "Installing debug payload witness rpc endpoint");
                 modules.merge_if_module_configured(RethRpcModule::Debug, debug_ext.into_rpc())?;
@@ -664,7 +680,7 @@ where
             Types: BaseNodeTypes + NodeTypes<Payload: PayloadTypes<PayloadAttributes = Attrs>>,
             Evm: ConfigureEvm<
                 NextBlockEnvCtx: BuildNextEnv<Attrs, HeaderTy<N::Types>, BaseChainSpec>,
-            >,
+            > + BlsWitnessStoreProvider,
         >,
     <<N as FullNodeComponents>::Pool as TransactionPool>::Transaction: BasePooledTx,
     EthB: EthApiBuilder<N>,
@@ -864,7 +880,16 @@ where
     >;
 
     async fn build_evm(self, ctx: &BuilderContext<Node>) -> eyre::Result<Self::EVM> {
-        let evm_config = BaseEvmConfig::new(ctx.chain_spec(), BaseRethReceiptBuilder::default());
+        let mut evm_config =
+            BaseEvmConfig::new(ctx.chain_spec(), BaseRethReceiptBuilder::default());
+        // Native BLS transfers exist only on the development chain. Its nodes keep each
+        // block's BLS authorization durably so blocks re-execute and batchers recover the
+        // aggregates after a restart; the payload builder, Engine API and BLS RPC share it.
+        if ctx.chain_spec().chain().id() == BlsConstants::CHAIN_ID {
+            let store =
+                BlsWitnessStore::open(ctx.config().datadir().data_dir().join("bls-witness"))?;
+            evm_config = evm_config.with_bls_witness_store(Arc::new(store));
+        }
 
         Ok(evm_config)
     }
@@ -1005,10 +1030,12 @@ where
                         .additional_validation_tasks
                         .unwrap_or_else(|| ctx.config().txpool.additional_validation_tasks),
                 );
-        // Native BLS transactions are an experimental type of the development chain only;
-        // every other chain keeps rejecting `0x7a` as an unsupported transaction type.
+        // Native BLS transactions and transfers are experimental types of the development chain
+        // only; every other chain keeps rejecting `0x7a` and `0x7b` as unsupported types.
         if ctx.chain_spec().chain().id() == BlsConstants::CHAIN_ID {
-            validator_builder = validator_builder.with_custom_tx_type(BLS_TX_TYPE_ID);
+            validator_builder = validator_builder
+                .with_custom_tx_type(BLS_TX_TYPE_ID)
+                .with_custom_tx_type(BLS_TRANSFER_TX_TYPE_ID);
         }
         let validator = validator_builder
             .build_with_tasks(ctx.task_executor().clone(), blob_store.clone())
@@ -1036,6 +1063,28 @@ where
         let transaction_pool =
             BaseTransactionPool::new(transaction_pool, ordering).with_guard_limits(guard_limits);
         spawn_maintenance_tasks(ctx, transaction_pool.clone(), &final_pool_config)?;
+        // Reth's local backup keeps the consensus form, which drops a native BLS transfer's
+        // witness; keep the development chain's local transfers in their pooled form as well.
+        if ctx.chain_spec().chain().id() == BlsConstants::CHAIN_ID
+            && !ctx.config().txpool.disable_transactions_backup
+        {
+            let backup = BlsTransferBackup::new(
+                ctx.config().datadir().data_dir().join("txpool-bls-transfers.json"),
+            );
+            let pool = transaction_pool.clone();
+            ctx.task_executor().spawn_critical_with_graceful_shutdown_signal(
+                "native BLS transfer backup task",
+                |shutdown| async move {
+                    if let Err(error) = backup.restore(&pool).await {
+                        warn!(target: "reth::cli", error = %error, "failed to restore native BLS transfers");
+                    }
+                    let _guard = shutdown.await;
+                    if let Err(error) = backup.save(&pool) {
+                        warn!(target: "reth::cli", error = %error, "failed to save native BLS transfers");
+                    }
+                },
+            );
+        }
         let state_diff_events = BroadcastStream::new(ctx.provider().subscribe_to_canonical_state());
         ctx.task_executor().spawn_critical_task(
             "mempool-invalidation",
@@ -1161,7 +1210,8 @@ where
                 HeaderTy<Node::Types>,
                 <Node::Types as NodeTypes>::ChainSpec,
             >,
-        > + 'static,
+        > + BlsWitnessStoreProvider
+        + 'static,
     Pool: ParkableTransactionPool<Transaction: BasePooledTx<Consensus = TxTy<Node::Types>>>
         + Unpin
         + 'static,
@@ -1176,6 +1226,7 @@ where
         pool: Pool,
         evm_config: Evm,
     ) -> eyre::Result<Self::PayloadBuilder> {
+        let bls_witness_store = evm_config.bls_witness_store().cloned();
         let payload_builder =
             base_execution_payload_builder::BasePayloadBuilder::with_builder_config(
                 pool,
@@ -1190,6 +1241,7 @@ where
                     resource_metering: self.resource_metering,
                     rejection_cache: self.rejection_cache,
                     state_provider_metrics: ctx.config().engine.state_provider_metrics,
+                    bls_witness_store,
                 },
             );
         Ok(payload_builder)

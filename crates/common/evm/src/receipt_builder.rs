@@ -66,6 +66,7 @@ impl BaseReceiptBuilder for AlloyReceiptBuilder {
                     OpTxType::Deposit => unreachable!(),
                     OpTxType::Eip8130 => BaseReceiptEnvelope::Eip8130(receipt),
                     OpTxType::Bls => BaseReceiptEnvelope::Bls(receipt),
+                    OpTxType::BlsTransfer => BaseReceiptEnvelope::BlsTransfer(receipt),
                 })
             }
         }

@@ -276,6 +276,8 @@ where
                 .is_jovian_active(target_l2_time)
                 .then(|| sys_config.min_base_fee.unwrap_or_default()), /* Default to zero if not
                                                                         * set at Jovian */
+            // Only the attributes queue marks transfers authenticated by a verified chunk.
+            bls_derived: false,
         })
     }
 }
@@ -752,6 +754,7 @@ mod tests {
             )),
             eip_1559_params: None,
             min_base_fee: None,
+            bls_derived: false,
         };
         assert_eq!(payload, expected);
         assert_eq!(payload.transactions.unwrap().len(), 1);
@@ -1026,6 +1029,7 @@ mod tests {
             )),
             eip_1559_params: None,
             min_base_fee: None,
+            bls_derived: false,
         };
         assert_eq!(payload, expected);
         assert_eq!(payload.transactions.unwrap().len(), 1);
@@ -1086,6 +1090,7 @@ mod tests {
             )),
             eip_1559_params: None,
             min_base_fee: None,
+            bls_derived: false,
         };
         assert_eq!(payload, expected);
         assert_eq!(payload.transactions.unwrap().len(), 7);
@@ -1145,6 +1150,7 @@ mod tests {
             )),
             eip_1559_params: None,
             min_base_fee: None,
+            bls_derived: false,
         };
         assert_eq!(payload.transactions.as_ref().unwrap().len(), 10);
         assert_eq!(payload, expected);

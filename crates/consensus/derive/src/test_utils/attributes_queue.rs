@@ -63,6 +63,8 @@ pub struct TestAttributesProvider {
     pub reset: bool,
     /// Tracks if the provider has been flushed.
     pub flushed: bool,
+    /// Provenance reported for every returned batch.
+    pub bls_authenticated: bool,
 }
 
 impl OriginProvider for TestAttributesProvider {
@@ -104,6 +106,10 @@ impl AttributesProvider for TestAttributesProvider {
     fn is_last_in_span(&self) -> bool {
         self.batches.is_empty()
     }
+
+    fn is_bls_authenticated(&self) -> bool {
+        self.bls_authenticated
+    }
 }
 
 /// Creates a new [`TestAttributesProvider`] with the given origin and batches.
@@ -111,5 +117,11 @@ pub const fn new_test_attributes_provider(
     origin: Option<BlockInfo>,
     batches: Vec<PipelineResult<SingleBatch>>,
 ) -> TestAttributesProvider {
-    TestAttributesProvider { origin, batches, reset: false, flushed: false }
+    TestAttributesProvider {
+        origin,
+        batches,
+        reset: false,
+        flushed: false,
+        bls_authenticated: false,
+    }
 }

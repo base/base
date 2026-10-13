@@ -1,17 +1,26 @@
 //! Implements the Base engine API RPC methods.
 
+use std::sync::Arc;
+
 use alloy_eips::eip7685::Requests;
 use alloy_primitives::{B256, BlockHash, U64};
 use alloy_rpc_types_engine::{
     ClientVersionV1, ExecutionPayloadBodiesV1, ExecutionPayloadInputV2, ExecutionPayloadV3,
-    ForkchoiceState, ForkchoiceUpdated, PayloadId, PayloadStatus,
+    ForkchoiceState, ForkchoiceUpdated, PayloadId, PayloadStatus, PayloadStatusEnum,
 };
-use base_common_rpc_types_engine::{BaseExecutionPayloadV4, ExecutionData};
-use derive_more::Constructor;
+use base_common_consensus::{BLS_TRANSFER_TX_TYPE_ID, BlsConstants};
+use base_common_evm::{BlsChunkVerifier, BlsDatabaseState};
+use base_common_rpc_types_engine::{BaseExecutionPayloadV4, BlsPayloadWitness, ExecutionData};
+use base_execution_evm::{BlsStoredWitness, BlsWitnessStore};
 use jsonrpsee::proc_macros::rpc;
 use jsonrpsee_core::{RpcResult, server::RpcModule};
-use reth_chainspec::EthereumHardforks;
+use jsonrpsee_types::{
+    ErrorObjectOwned,
+    error::{INTERNAL_ERROR_CODE, INVALID_PARAMS_CODE},
+};
+use reth_chainspec::{EthChainSpec, EthereumHardforks};
 use reth_node_api::{EngineApiValidator, EngineTypes};
+use reth_revm::database::StateProviderDatabase;
 use reth_rpc_api::IntoEngineApiRpcModule;
 use reth_rpc_engine_api::EngineApi;
 use reth_storage_api::{BalProvider, BlockReader, HeaderProvider, StateProviderFactory};
@@ -71,6 +80,7 @@ pub trait BaseEngineApi<Engine: EngineTypes> {
         payload: ExecutionPayloadV3,
         versioned_hashes: Vec<B256>,
         parent_beacon_block_root: B256,
+        bls_witness: Option<BlsPayloadWitness>,
     ) -> RpcResult<PayloadStatus>;
 
     /// Sends the given payload to the execution layer client, as specified for the Prague fork.
@@ -86,6 +96,7 @@ pub trait BaseEngineApi<Engine: EngineTypes> {
         versioned_hashes: Vec<B256>,
         parent_beacon_block_root: B256,
         execution_requests: Requests,
+        bls_witness: Option<BlsPayloadWitness>,
     ) -> RpcResult<PayloadStatus>;
 
     /// See also <https://github.com/ethereum/execution-apis/blob/6709c2a795b707202e93c4f2867fa0bf2640a84f/src/engine/paris.md#engine_forkchoiceupdatedv1>
@@ -245,18 +256,130 @@ pub trait BaseEngineApi<Engine: EngineTypes> {
 
 /// The Engine API implementation that grants the Consensus layer access to data and
 /// functions in the Execution layer that are crucial for the consensus process.
-#[derive(Debug, Constructor)]
+#[derive(Debug)]
 pub struct BaseEngineApi<Provider, EngineT: EngineTypes, Pool, Validator, ChainSpec> {
     inner: EngineApi<Provider, EngineT, Pool, Validator, ChainSpec>,
+    bls_provider: Option<Provider>,
+    bls_witness_store: Option<Arc<BlsWitnessStore>>,
+}
+
+impl<Provider, EngineT: EngineTypes, Pool, Validator, ChainSpec>
+    BaseEngineApi<Provider, EngineT, Pool, Validator, ChainSpec>
+{
+    /// Creates the ordinary Engine API wrapper, with native BLS witness import disabled.
+    pub const fn new(inner: EngineApi<Provider, EngineT, Pool, Validator, ChainSpec>) -> Self {
+        Self { inner, bls_provider: None, bls_witness_store: None }
+    }
+
+    /// Enables state-backed BLS witness checks and durable witness retention on the dev chain.
+    pub fn with_bls_witness_store(
+        mut self,
+        store: Arc<BlsWitnessStore>,
+        provider: Provider,
+    ) -> Self {
+        self.bls_provider = Some(provider);
+        self.bls_witness_store = Some(store);
+        self
+    }
 }
 
 impl<Provider, PayloadT, Pool, Validator, ChainSpec> Clone
     for BaseEngineApi<Provider, PayloadT, Pool, Validator, ChainSpec>
 where
+    Provider: Clone,
     PayloadT: EngineTypes,
 {
     fn clone(&self) -> Self {
-        Self { inner: self.inner.clone() }
+        Self {
+            inner: self.inner.clone(),
+            bls_provider: self.bls_provider.clone(),
+            bls_witness_store: self.bls_witness_store.clone(),
+        }
+    }
+}
+
+impl<Provider, EngineT, Pool, Validator, ChainSpec>
+    BaseEngineApi<Provider, EngineT, Pool, Validator, ChainSpec>
+where
+    Provider: StateProviderFactory,
+    EngineT: EngineTypes,
+    ChainSpec: EthChainSpec,
+{
+    /// Validate detached data before entering the header-hash cache. A cached VALID block must
+    /// not cause a subsequently supplied forged witness to be persisted for that same hash.
+    pub fn validate_bls_witness(
+        &self,
+        payload: &ExecutionData,
+    ) -> RpcResult<Option<BlsStoredWitness>> {
+        let has_intents = payload
+            .payload
+            .transactions()
+            .iter()
+            .any(|tx| tx.first() == Some(&BLS_TRANSFER_TX_TYPE_ID));
+        if !has_intents && payload.bls_witness.is_none() {
+            return Ok(None);
+        }
+        if !has_intents || self.inner.chain_spec().chain().id() != BlsConstants::CHAIN_ID {
+            return Err(ErrorObjectOwned::owned(
+                INVALID_PARAMS_CODE,
+                "unexpected BLS witness",
+                None::<()>,
+            ));
+        }
+        if self.bls_witness_store.is_none() {
+            return Err(ErrorObjectOwned::owned(
+                INTERNAL_ERROR_CODE,
+                "BLS witness store unavailable",
+                None::<()>,
+            ));
+        }
+        match payload.bls_witness {
+            Some(BlsPayloadWitness::Derived) => Ok(Some(BlsStoredWitness::Derived)),
+            Some(BlsPayloadWitness::Aggregate(signature)) => {
+                let provider = self.bls_provider.as_ref().ok_or_else(|| {
+                    ErrorObjectOwned::owned(
+                        INTERNAL_ERROR_CODE,
+                        "BLS state provider unavailable",
+                        None::<()>,
+                    )
+                })?;
+                let state =
+                    provider.state_by_block_hash(payload.parent_hash()).map_err(|error| {
+                        ErrorObjectOwned::owned(INTERNAL_ERROR_CODE, error.to_string(), None::<()>)
+                    })?;
+                let mut db = StateProviderDatabase::new(state);
+                BlsChunkVerifier::verify(
+                    &mut BlsDatabaseState(&mut db),
+                    BlsConstants::CHAIN_ID,
+                    &[payload.payload.transactions().clone()],
+                    Some(signature),
+                )
+                .map_err(|error| {
+                    ErrorObjectOwned::owned(INVALID_PARAMS_CODE, error.to_string(), None::<()>)
+                })?;
+                Ok(Some(BlsStoredWitness::Aggregate(signature)))
+            }
+            None => {
+                Err(ErrorObjectOwned::owned(INVALID_PARAMS_CODE, "missing BLS witness", None::<()>))
+            }
+        }
+    }
+
+    /// Only persist witnesses of fully valid blocks, never SYNCING/ACCEPTED payloads.
+    pub fn persist_bls_witness(
+        &self,
+        hash: B256,
+        witness: Option<BlsStoredWitness>,
+        status: &PayloadStatus,
+    ) -> RpcResult<()> {
+        if matches!(status.status, PayloadStatusEnum::Valid)
+            && let (Some(store), Some(witness)) = (&self.bls_witness_store, witness)
+        {
+            store.put(hash, witness).map_err(|error| {
+                ErrorObjectOwned::owned(INTERNAL_ERROR_CODE, error.to_string(), None::<()>)
+            })?;
+        }
+        Ok(())
     }
 }
 
@@ -268,7 +391,7 @@ where
     EngineT: EngineTypes<ExecutionData = ExecutionData>,
     Pool: TransactionPool + 'static,
     Validator: EngineApiValidator<EngineT>,
-    ChainSpec: EthereumHardforks + Send + Sync + 'static,
+    ChainSpec: EthereumHardforks + EthChainSpec + Send + Sync + 'static,
 {
     async fn new_payload_v2(&self, payload: ExecutionPayloadInputV2) -> RpcResult<PayloadStatus> {
         trace!(target: "rpc::engine", "Serving engine_newPayloadV2");
@@ -281,11 +404,16 @@ where
         payload: ExecutionPayloadV3,
         versioned_hashes: Vec<B256>,
         parent_beacon_block_root: B256,
+        bls_witness: Option<BlsPayloadWitness>,
     ) -> RpcResult<PayloadStatus> {
         trace!(target: "rpc::engine", "Serving engine_newPayloadV3");
-        let payload = ExecutionData::v3(payload, versioned_hashes, parent_beacon_block_root);
-
-        Ok(self.inner.new_payload_v3_metered(payload).await?)
+        let mut payload = ExecutionData::v3(payload, versioned_hashes, parent_beacon_block_root);
+        payload.bls_witness = bls_witness;
+        let witness = self.validate_bls_witness(&payload)?;
+        let hash = payload.block_hash();
+        let status = self.inner.new_payload_v3_metered(payload).await?;
+        self.persist_bls_witness(hash, witness, &status)?;
+        Ok(status)
     }
 
     async fn new_payload_v4(
@@ -294,16 +422,21 @@ where
         versioned_hashes: Vec<B256>,
         parent_beacon_block_root: B256,
         execution_requests: Requests,
+        bls_witness: Option<BlsPayloadWitness>,
     ) -> RpcResult<PayloadStatus> {
         trace!(target: "rpc::engine", "Serving engine_newPayloadV4");
-        let payload = ExecutionData::v4(
+        let mut payload = ExecutionData::v4(
             payload,
             versioned_hashes,
             parent_beacon_block_root,
             execution_requests,
         );
-
-        Ok(self.inner.new_payload_v4_metered(payload).await?)
+        payload.bls_witness = bls_witness;
+        let witness = self.validate_bls_witness(&payload)?;
+        let hash = payload.block_hash();
+        let status = self.inner.new_payload_v4_metered(payload).await?;
+        self.persist_bls_witness(hash, witness, &status)?;
+        Ok(status)
     }
 
     #[instrument(

@@ -53,10 +53,14 @@ impl BlsRegistry {
     }
 
     /// Reads `owner`'s registered compressed public key, or `None` if it is not registered.
+    ///
+    /// Loads the registry account before its storage: some states, such as the proof trie
+    /// database, only serve storage of accounts already loaded through `basic`.
     pub fn read_key<S: BlsState>(
         state: &mut S,
         owner: Address,
     ) -> Result<Option<[u8; BlsConstants::PUBKEY_LEN]>, S::Error> {
+        state.basic(BlsConstants::REGISTRY_ADDRESS)?;
         let mut words = [U256::ZERO; Self::KEY_WORDS];
         for (word, slot) in words.iter_mut().zip(Self::key_slots(owner)) {
             *word = state.storage(BlsConstants::REGISTRY_ADDRESS, slot)?;

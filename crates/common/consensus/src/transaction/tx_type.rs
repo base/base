@@ -17,6 +17,9 @@ pub const EIP8130_TX_TYPE_ID: u8 = 121; // 0x79
 /// Identifier for the development-only native BLS transaction ([`crate::TxBls`]).
 pub const BLS_TX_TYPE_ID: u8 = 122; // 0x7A
 
+/// Identifier for a native BLS transfer ([`crate::TxBlsTransfer`]).
+pub const BLS_TRANSFER_TX_TYPE_ID: u8 = 123; // 0x7B
+
 /// Canonical user-facing rejection message for EIP-8130 transactions submitted before Everest.
 ///
 /// Used by `base-execution-rpc` when an EIP-8130 transaction is submitted before
@@ -41,19 +44,21 @@ impl Display for OpTxType {
             Self::Deposit => write!(f, "deposit"),
             Self::Eip8130 => write!(f, "eip8130"),
             Self::Bls => write!(f, "bls"),
+            Self::BlsTransfer => write!(f, "bls-transfer"),
         }
     }
 }
 
 impl OpTxType {
     /// List of all variants.
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Legacy,
         Self::Eip2930,
         Self::Eip1559,
         Self::Eip7702,
         Self::Eip8130,
         Self::Bls,
+        Self::BlsTransfer,
         Self::Deposit,
     ];
 
@@ -70,6 +75,11 @@ impl OpTxType {
     /// Returns `true` if the type is [`OpTxType::Bls`].
     pub const fn is_bls(&self) -> bool {
         matches!(self, Self::Bls)
+    }
+
+    /// Returns `true` if the type is [`OpTxType::BlsTransfer`].
+    pub const fn is_bls_transfer(&self) -> bool {
+        matches!(self, Self::BlsTransfer)
     }
 }
 
@@ -90,7 +100,7 @@ mod tests {
 
     #[test]
     fn test_all_tx_types() {
-        assert_eq!(OpTxType::ALL.len(), 7);
+        assert_eq!(OpTxType::ALL.len(), 8);
         let all = vec![
             OpTxType::Legacy,
             OpTxType::Eip2930,
@@ -98,6 +108,7 @@ mod tests {
             OpTxType::Eip7702,
             OpTxType::Eip8130,
             OpTxType::Bls,
+            OpTxType::BlsTransfer,
             OpTxType::Deposit,
         ];
         assert_eq!(OpTxType::ALL.to_vec(), all);

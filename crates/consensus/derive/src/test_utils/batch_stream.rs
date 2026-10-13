@@ -26,12 +26,20 @@ pub struct TestBatchStreamProvider {
     pub reset: bool,
     /// Whether the provider was flushed.
     pub flushed: bool,
+    /// Whether the current channel was dropped by [`BatchStreamProvider::flush`].
+    pub channel_flushed: bool,
 }
 
 impl TestBatchStreamProvider {
     /// Creates a new [`TestBatchStreamProvider`] with the given origin and batches.
     pub fn new(batches: Vec<PipelineResult<Batch>>) -> Self {
-        Self { origin: Some(BlockInfo::default()), batches, reset: false, flushed: false }
+        Self {
+            origin: Some(BlockInfo::default()),
+            batches,
+            reset: false,
+            flushed: false,
+            channel_flushed: false,
+        }
     }
 }
 
@@ -43,7 +51,9 @@ impl OriginProvider for TestBatchStreamProvider {
 
 #[async_trait]
 impl BatchStreamProvider for TestBatchStreamProvider {
-    fn flush(&mut self) {}
+    fn flush(&mut self) {
+        self.channel_flushed = true;
+    }
 
     async fn next_batch(&mut self) -> PipelineResult<Batch> {
         self.batches.pop().ok_or(PipelineError::Eof.temp())?

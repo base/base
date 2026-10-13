@@ -38,8 +38,11 @@ impl SeedGenerator {
 
         let parent_beacon_block_root = block.header.parent_beacon_block_root;
 
-        let envelope =
-            BaseExecutionPayloadEnvelope { parent_beacon_block_root, execution_payload: payload };
+        let envelope = BaseExecutionPayloadEnvelope {
+            parent_beacon_block_root,
+            execution_payload: payload,
+            bls_aggregate: None,
+        };
 
         Ok(envelope)
     }
@@ -53,6 +56,8 @@ impl SeedGenerator {
 
         // Generate a random instance of MyStruct
         let mut block: Block<BaseTxEnvelope> = Block::arbitrary_take_rest(u).unwrap();
+        // Ordinary fixtures carry no detached BLS aggregate, so they must not contain intents.
+        block.body.transactions.retain(|tx| !tx.is_bls_transfer());
 
         let transactions: Vec<Bytes> =
             block.body.transactions().map(|tx| tx.encoded_2718().into()).collect();

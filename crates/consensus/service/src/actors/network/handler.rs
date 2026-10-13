@@ -135,6 +135,8 @@ impl GossipTransport for NetworkHandler {
             parent_beacon_block_root: block.parent_beacon_block_root,
             signature,
             payload_hash,
+            // Covered by `payload_hash` and the signature above; required for intent blocks.
+            bls_aggregate: block.bls_aggregate,
         };
 
         match self.gossip.publish(selector, Some(payload)) {

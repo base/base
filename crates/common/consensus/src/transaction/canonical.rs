@@ -28,7 +28,7 @@ mod tests {
     use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256};
 
     use super::*;
-    use crate::{BaseTxEnvelope, Eip8130Signed, TxBls, TxDeposit, TxEip8130};
+    use crate::{BaseTxEnvelope, Eip8130Signed, TxBls, TxBlsTransfer, TxDeposit, TxEip8130};
 
     fn canonical_transactions() -> Vec<BaseTxEnvelope> {
         let signature = Signature::test_signature();
@@ -124,6 +124,16 @@ mod tests {
                 input: Bytes::from_static(&[0x01]),
             }
             .into_signed(signature)
+            .into(),
+            TxBlsTransfer {
+                chain_id: 84_538_453,
+                sender: Address::repeat_byte(0x42),
+                nonce: 1,
+                recipient: to,
+                value: U256::from(1u64),
+                max_priority_fee_per_gas: 1,
+                max_fee_per_gas: 2,
+            }
             .into(),
         ]
     }

@@ -29,6 +29,17 @@ pub enum BasePayloadBuilderError {
     /// executor.
     #[error("sequencer transaction commit was refused")]
     SequencerTransactionCommitRefused,
+    /// Thrown when attribute-only (`no_tx_pool`) payload attributes carry a native BLS
+    /// transfer without being derived from authenticated input. Such a transfer has no
+    /// witness, so nothing authorizes it.
+    #[error("native BLS transfer in non-derived payload attributes")]
+    UnauthenticatedBlsTransfer,
+    /// Thrown when the included native BLS transfers' witnesses cannot be aggregated.
+    #[error("failed to aggregate native BLS transfer witnesses: {0}")]
+    BlsAggregation(#[from] base_common_evm::BlsAggregationError),
+    /// Thrown when the block's BLS authorization cannot be persisted after finalizing it.
+    #[error("failed to persist the block's BLS authorization: {0}")]
+    BlsWitnessPersist(#[from] std::io::Error),
     /// Thrown when the job was cancelled, e.g. because the requesting client went away.
     #[error("payload job cancelled")]
     Cancelled,

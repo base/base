@@ -72,6 +72,16 @@ pub enum BatchDropReason {
     L2BlockInfoExtractionFailed,
     /// Overlapped block's L1 origin number does not match.
     OverlappedL1OriginMismatch,
+
+    // === Native BLS chunk drops ===
+    /// Native BLS chunk received where chunks are not accepted.
+    BlsChunkUnsupported,
+    /// Native BLS chunk violates its structural bounds or aggregate presence rule.
+    BlsChunkInvalid,
+    /// Native BLS chunk aggregate does not authenticate its transfers.
+    BlsChunkUnauthenticated,
+    /// Native BLS transfer outside an authenticated chunk.
+    BlsTransferOutsideChunk,
 }
 
 impl core::fmt::Display for BatchDropReason {
@@ -124,6 +134,14 @@ impl core::fmt::Display for BatchDropReason {
             }
             Self::OverlappedL1OriginMismatch => {
                 write!(f, "overlapped block L1 origin number mismatch")
+            }
+            Self::BlsChunkUnsupported => write!(f, "BLS chunk batch is not accepted here"),
+            Self::BlsChunkInvalid => write!(f, "BLS chunk batch is structurally invalid"),
+            Self::BlsChunkUnauthenticated => {
+                write!(f, "BLS chunk aggregate does not authenticate its transfers")
+            }
+            Self::BlsTransferOutsideChunk => {
+                write!(f, "BLS transfer outside an authenticated chunk")
             }
         }
     }

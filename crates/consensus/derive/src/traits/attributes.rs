@@ -22,6 +22,12 @@ pub trait AttributesProvider {
 
     /// Returns whether the current batch is the last in its span.
     fn is_last_in_span(&self) -> bool;
+
+    /// Returns whether the current batch is a member of a native BLS chunk whose aggregate was
+    /// verified before release. Defaults to `false`, which never authorizes a transfer.
+    fn is_bls_authenticated(&self) -> bool {
+        false
+    }
 }
 
 /// [`NextAttributes`] defines the interface for pulling attributes from

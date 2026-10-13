@@ -16,6 +16,12 @@ services:
   base-rpc:
     volumes:
       - ${NATIVE_BASE_BINARY:?Set NATIVE_BASE_BINARY to the rebuilt absolute binary path}:/app/base:ro
+    # Derivation must use the same post-Denim native builder as the producer.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - 'exec /app/base-entrypoint.sh "$$@" --builder.payload-builder-cutover'
+      - base
   op-batcher:
     profiles: [legacy-go]
   base-batcher:
@@ -30,7 +36,10 @@ services:
       - --l1-rpc-url=http://l1-el:${L1_HTTP_PORT}
       - --private-key=${BATCHER_KEY}
       - --no-throttle
-      - --max-channel-duration=2
+      - --max-channel-duration=${BLS_CHANNEL_DURATION:-2}
+      - --bls-chunk-blocks=${BLS_CHUNK_BLOCKS:-32}
+      - --admin-addr=0.0.0.0
+      - --admin-port=7601
       - --poll-interval=1
       - --sub-safety-margin=0
       - --num-confirmations=1

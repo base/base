@@ -3,7 +3,7 @@ use core::{future::Future, marker::PhantomData};
 use alloy_eips::{BlockNumberOrTag, eip7685::Requests};
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::{ForkchoiceState, ForkchoiceUpdated, PayloadStatus};
-use base_common_rpc_types_engine::BaseExecutionPayloadV4;
+use base_common_rpc_types_engine::{BaseExecutionPayloadV4, BlsPayloadWitness};
 use base_execution_rpc::BaseEngineApiClient;
 use base_node_core::BaseEngineTypes;
 use jsonrpsee::{
@@ -178,13 +178,35 @@ impl<P: Protocol> EngineApi<P> {
             .await?)
     }
 
-    /// Submits a new execution payload for validation.
+    /// Submits a new execution payload without a native BLS witness, via `engine_newPayloadV4`.
     pub async fn new_payload(
         &self,
         payload: BaseExecutionPayloadV4,
         versioned_hashes: Vec<B256>,
         parent_beacon_block_root: B256,
         execution_requests: Requests,
+    ) -> eyre::Result<PayloadStatus> {
+        self.new_payload_with_bls_witness(
+            payload,
+            versioned_hashes,
+            parent_beacon_block_root,
+            execution_requests,
+            None,
+        )
+        .await
+    }
+
+    /// Submits a new execution payload with its native BLS witness, via `engine_newPayloadV4`.
+    ///
+    /// A payload containing BLS transfer intents is rejected without a witness, and a witness for
+    /// a payload without intents is rejected as unexpected.
+    pub async fn new_payload_with_bls_witness(
+        &self,
+        payload: BaseExecutionPayloadV4,
+        versioned_hashes: Vec<B256>,
+        parent_beacon_block_root: B256,
+        execution_requests: Requests,
+        bls_witness: Option<BlsPayloadWitness>,
     ) -> eyre::Result<PayloadStatus> {
         debug!(timestamp = %chrono::Utc::now(), "Submitting new payload");
         Ok(BaseEngineApiClient::<BaseEngineTypes>::new_payload_v4(
@@ -193,6 +215,7 @@ impl<P: Protocol> EngineApi<P> {
             versioned_hashes,
             parent_beacon_block_root,
             execution_requests,
+            bls_witness,
         )
         .await?)
     }

@@ -54,6 +54,15 @@ pub trait NextBatchProvider {
     /// [`SingleBatch`]: base_protocol::SingleBatch
     fn span_buffer_size(&self) -> usize;
 
+    /// Returns whether the [`SingleBatch`] most recently returned by
+    /// [`Self::next_batch`] is a member of a native BLS chunk whose aggregate was verified before
+    /// release. This provenance is never read from batch data, so it defaults to `false`.
+    ///
+    /// [`SingleBatch`]: base_protocol::SingleBatch
+    fn is_bls_authenticated(&self) -> bool {
+        false
+    }
+
     /// Allows the stage to flush the buffer in the [`crate::stages::BatchStream`]
     /// if an invalid single batch is found. Pre-holocene upgrade, this will be a no-op.
     fn flush(&mut self);

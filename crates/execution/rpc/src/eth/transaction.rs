@@ -11,8 +11,8 @@ use alloy_primitives::{B256, Bytes};
 use alloy_rpc_types_eth::TransactionInfo;
 use base_common_chains::Upgrades;
 use base_common_consensus::{
-    BLS_TX_TYPE_ID, BaseTransaction, BaseTransactionInfo, BlsConstants, DepositInfo,
-    DepositReceiptExt, EIP8130_TX_TYPE_ID,
+    BLS_TRANSFER_TX_TYPE_ID, BLS_TX_TYPE_ID, BaseTransaction, BaseTransactionInfo, BlsConstants,
+    DepositInfo, DepositReceiptExt, EIP8130_TX_TYPE_ID,
 };
 use base_observability_events::{
     TransactionEventProducer, TransactionEventType, transaction_event,
@@ -72,9 +72,11 @@ where
             return Err(BaseInvalidTransactionError::Eip8130NotAccepted.into());
         }
 
-        // Native BLS transactions are an experimental development-chain type. Reject them
-        // before broadcasting or forwarding; the pool runs the full native validation.
-        if pool_transaction.consensus_ref().ty() == BLS_TX_TYPE_ID
+        // Native BLS transactions and transfers are experimental development-chain types.
+        // Reject them before broadcasting or forwarding; the pool runs the full native
+        // validation, including a transfer's witness. The returned hash is a transfer's
+        // canonical intent hash.
+        if matches!(pool_transaction.consensus_ref().ty(), BLS_TX_TYPE_ID | BLS_TRANSFER_TX_TYPE_ID)
             && self.provider().chain_spec().chain().id() != BlsConstants::CHAIN_ID
         {
             return Err(BaseInvalidTransactionError::BlsNotAccepted.into());

@@ -25,12 +25,20 @@ pub struct TestNextBatchProvider {
     pub flushed: bool,
     /// Tracks if the reset method was called.
     pub reset: bool,
+    /// Provenance reported for every returned batch.
+    pub bls_authenticated: bool,
 }
 
 impl TestNextBatchProvider {
     /// Creates a new [`TestNextBatchProvider`] with the given origin and batches.
     pub fn new(batches: Vec<PipelineResult<Batch>>) -> Self {
-        Self { origin: Some(BlockInfo::default()), batches, flushed: false, reset: false }
+        Self {
+            origin: Some(BlockInfo::default()),
+            batches,
+            flushed: false,
+            reset: false,
+            bls_authenticated: false,
+        }
     }
 }
 
@@ -48,6 +56,10 @@ impl NextBatchProvider for TestNextBatchProvider {
 
     fn span_buffer_size(&self) -> usize {
         self.batches.len()
+    }
+
+    fn is_bls_authenticated(&self) -> bool {
+        self.bls_authenticated
     }
 
     async fn next_batch(&mut self, _: L2BlockInfo, _: &[BlockInfo]) -> PipelineResult<Batch> {

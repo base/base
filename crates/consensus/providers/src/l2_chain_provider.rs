@@ -3,7 +3,7 @@
 use std::{num::NonZeroUsize, sync::Arc, time::Duration};
 
 use alloy_consensus::Header;
-use alloy_primitives::{B256, Bytes};
+use alloy_primitives::{B256, Bytes, FixedBytes};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_client::RpcClient;
 use alloy_rpc_types_engine::JwtSecret;
@@ -17,7 +17,7 @@ use base_common_consensus::BaseBlock;
 use base_common_genesis::{RollupConfig, SystemConfig};
 use base_common_network::Base;
 use base_consensus_derive::{L2ChainProvider, PipelineError, PipelineErrorKind, ResetError};
-use base_protocol::{BatchValidationProvider, L2BlockInfo, to_system_config};
+use base_protocol::{BatchValidationProvider, BlsChunkBatch, L2BlockInfo, to_system_config};
 use http_body_util::Full;
 use lru::LruCache;
 use tower::ServiceBuilder;
@@ -26,6 +26,7 @@ use crate::Metrics;
 
 const L2_BLOCK_REF_BY_NUMBER_METHOD: &str = "l2_block_ref_by_number";
 const L2_BLOCK_REF_BY_HASH_METHOD: &str = "l2_block_ref_by_hash";
+const VERIFY_BLS_CHUNK_METHOD: &str = "base_verifyBlsChunk";
 const L2_BLOCK_VISIBILITY_RETRY_ATTEMPTS: usize = 5;
 const L2_BLOCK_VISIBILITY_RETRY_DELAY: Duration = Duration::from_millis(20);
 
@@ -327,6 +328,35 @@ impl L2ChainProvider for AlloyL2ChainProvider {
         to_system_config(&block, &rollup_config)
             .map_err(|_| AlloyL2ChainProviderError::SystemConfigConversion(hash))
     }
+    /// Asks the execution client to verify the chunk over its state at `parent_hash`.
+    ///
+    /// The execution client answers `false` for an invalid chunk and an error when it cannot
+    /// decide, which surfaces as a temporary error. A chunk beyond the protocol bounds is invalid
+    /// without a request.
+    async fn verify_bls_chunk(
+        &mut self,
+        parent_hash: B256,
+        blocks: &[Vec<Bytes>],
+        aggregate: Option<FixedBytes<48>>,
+    ) -> Result<bool, PipelineErrorKind> {
+        let transfers: usize = blocks.iter().map(|txs| BlsChunkBatch::count_transfers(txs)).sum();
+        if blocks.len() > BlsChunkBatch::MAX_BLOCKS || transfers > BlsChunkBatch::MAX_TRANSFERS {
+            return Ok(false);
+        }
+        Metrics::l2_chain_requests(VERIFY_BLS_CHUNK_METHOD).increment(1);
+        base_metrics::time!(Metrics::request_duration(VERIFY_BLS_CHUNK_METHOD), {
+            self.inner
+                .raw_request::<_, bool>(
+                    VERIFY_BLS_CHUNK_METHOD.into(),
+                    (parent_hash, blocks, aggregate),
+                )
+                .await
+        })
+        .map_err(|error| {
+            Metrics::l2_chain_errors(VERIFY_BLS_CHUNK_METHOD).increment(1);
+            AlloyL2ChainProviderError::Transport(error).into()
+        })
+    }
 }
 
 #[cfg(test)]
@@ -584,5 +614,74 @@ mod tests {
 
         number_mock.assert_calls_async(1).await;
         hash_mock.assert_calls_async(1).await;
+    }
+
+    /// The verdict comes from `base_verifyBlsChunk` with positional
+    /// `[parent_hash, blocks, aggregate]` parameters; `false` is an invalid chunk and an RPC
+    /// error stays a temporary error, never a verdict.
+    #[tokio::test]
+    async fn test_verify_bls_chunk_calls_execution_client() {
+        let parent_hash = B256::repeat_byte(0x11);
+        let blocks = vec![vec![Bytes::from(vec![0x7b, 0xc0]), Bytes::from(vec![0x02])], vec![]];
+        let aggregate = FixedBytes::<48>::repeat_byte(0xa1);
+        let expected_params = json!([parent_hash, blocks, aggregate]);
+
+        for (response, expected) in
+            [(Some(true), Ok(true)), (Some(false), Ok(false)), (None, Err(()))]
+        {
+            let server = MockServer::start_async().await;
+            let params = expected_params.clone();
+            let mock = server
+                .mock_async(move |when, then| {
+                    when.method(POST)
+                        .path("/")
+                        .json_body_includes(r#"{"method":"base_verifyBlsChunk"}"#)
+                        .json_body_includes(json!({ "params": params }).to_string());
+                    then.respond_with(move |req| {
+                        let body = response.map_or_else(
+                            || json_rpc_error_response(req),
+                            |verdict| json_rpc_response(req, json!(verdict)),
+                        );
+                        HttpMockResponse::builder()
+                            .status(200)
+                            .header("content-type", "application/json")
+                            .body(body)
+                            .build()
+                    });
+                })
+                .await;
+
+            let verdict =
+                l2_provider(&server).verify_bls_chunk(parent_hash, &blocks, Some(aggregate)).await;
+            match expected {
+                Ok(expected) => assert_eq!(verdict, Ok(expected)),
+                Err(()) => assert!(matches!(verdict, Err(PipelineErrorKind::Temporary(_)))),
+            }
+            mock.assert_calls_async(1).await;
+        }
+    }
+
+    /// A chunk beyond the protocol bounds is invalid without contacting the execution client.
+    #[tokio::test]
+    async fn test_verify_bls_chunk_rejects_oversized_chunk_without_request() {
+        let server = MockServer::start_async().await;
+        let mock = server
+            .mock_async(|when, then| {
+                when.method(POST).path("/");
+                then.status(500);
+            })
+            .await;
+        let mut provider = l2_provider(&server);
+
+        let too_many_blocks = vec![Vec::new(); BlsChunkBatch::MAX_BLOCKS + 1];
+        assert_eq!(provider.verify_bls_chunk(B256::ZERO, &too_many_blocks, None).await, Ok(false));
+        let too_many_transfers =
+            vec![vec![Bytes::from(vec![0x7b]); BlsChunkBatch::MAX_TRANSFERS + 1]];
+        let aggregate = Some(FixedBytes::repeat_byte(0xa1));
+        assert_eq!(
+            provider.verify_bls_chunk(B256::ZERO, &too_many_transfers, aggregate).await,
+            Ok(false)
+        );
+        mock.assert_calls_async(0).await;
     }
 }

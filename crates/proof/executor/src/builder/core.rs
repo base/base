@@ -15,6 +15,7 @@ use alloy_evm::{
 use base_common_consensus::{BaseReceiptEnvelope, BaseTxEnvelope};
 use base_common_evm::{
     AlloyReceiptBuilder, BaseBlockExecutionCtx, BaseBlockExecutorFactory, BaseSpecId, BaseTxEnv,
+    BlsBlockAuthorization,
 };
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::BasePayloadAttributes;
@@ -146,6 +147,13 @@ where
             parent_beacon_block_root: attrs.payload_attributes.parent_beacon_block_root,
             // This field is unused for individual block building jobs.
             extra_data: Default::default(),
+            // The oracle-backed derivation pipeline verifies the complete DA chunk before
+            // exposing any of its intents. Ordinary attributes retain fail-closed validation.
+            bls_authorization: if attrs.bls_derived {
+                BlsBlockAuthorization::Derived
+            } else {
+                BlsBlockAuthorization::default()
+            },
         };
         let executor = self.factory.create_executor(evm, ctx);
 

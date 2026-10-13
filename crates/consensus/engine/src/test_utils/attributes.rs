@@ -101,6 +101,7 @@ impl TestAttributesBuilder {
             gas_limit: self.gas_limit,
             eip_1559_params: self.eip_1559_params,
             min_base_fee: self.min_base_fee,
+            bls_derived: false,
         };
 
         AttributesWithParent::new(attributes, self.parent, self.derived_from, self.is_last_in_span)

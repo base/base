@@ -105,6 +105,11 @@ pub struct BatcherArgs {
     #[arg(long = "compressed-size-target", env = "BASE_BATCHER_COMPRESSED_SIZE_TARGET")]
     pub compressed_size_target: Option<usize>,
 
+    /// BLS reaggregation target on development chain 84538453 (32, 64 or 128 blocks).
+    /// Defaults to 32 on that chain; specifying it on other chains is an error.
+    #[arg(long = "bls-chunk-blocks", env = "BASE_BATCHER_BLS_CHUNK_BLOCKS")]
+    pub bls_chunk_blocks: Option<usize>,
+
     /// Maximum number of blobs per L1 transaction (hard maximum: 6).
     #[arg(long = "max-blobs-per-tx", default_value = "6", env = "BASE_BATCHER_MAX_BLOBS_PER_TX")]
     pub max_blobs_per_tx: usize,
@@ -316,6 +321,7 @@ impl BatcherArgs {
         let brotli_level = base_batcher_encoder::BrotliLevel::from_u8(self.brotli_quality)
             .expect("clap restricts Brotli quality to 0..=11");
         let encoder_config = base_batcher_encoder::EncoderConfig {
+            bls_chunk_blocks: self.bls_chunk_blocks,
             compressed_size_target: self.compressed_size_target,
             max_frame_size,
             max_channel_duration: self.max_channel_duration,

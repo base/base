@@ -266,6 +266,13 @@ pub enum PipelineError {
     /// failures, API errors, and provider-specific issues.
     #[error("Provider error: {0}")]
     Provider(String),
+    /// The L2 chain provider cannot verify native BLS chunks.
+    ///
+    /// # Recovery
+    /// None within the pipeline: a chunk is never released without a verdict, so derivation
+    /// halts until a provider that can verify chunks is configured.
+    #[error("L2 chain provider does not support BLS chunk verification")]
+    BlsChunkVerificationUnsupported,
 }
 
 impl PipelineError {

@@ -17,7 +17,9 @@ use base_common_consensus::{
     BaseTimeUpdateTx, BlsConstants, BlsPayload, Eip8130Constants, Eip8130Contracts, Eip8130Signed,
     Eip8130StructuralError, Eip8130Structure, Eip8130TimestampError,
 };
-use base_common_evm::{BaseSpecId, BlsRegistry, BlsValidator, L1BlockInfo};
+use base_common_evm::{
+    BaseSpecId, BlsRegistry, BlsTransferError, BlsTransferValidator, BlsValidator, L1BlockInfo,
+};
 use base_common_genesis::DaFootprintGasScalarUpdate;
 use base_common_precompiles::NonceManagerStorage;
 use base_execution_eip8130::{
@@ -79,6 +81,17 @@ pub enum BaseTxPoolError {
     /// execution runs before mutating state.
     #[error("BLS validation failed: {reason}")]
     BlsValidation {
+        /// The underlying rejection reason.
+        reason: String,
+    },
+    /// The native BLS transfer (`0x7b`) is missing its witness or failed witness or state
+    /// validation.
+    ///
+    /// The transfer's hash commits to its intent but not its witness, so this is never a
+    /// bad-transaction verdict: caching the hash as bad would let an invalid witness block
+    /// the same intent with a valid one.
+    #[error("BLS transfer validation failed: {reason}")]
+    BlsTransferValidation {
         /// The underlying rejection reason.
         reason: String,
     },
@@ -670,7 +683,7 @@ impl PrecompileStorageProvider for OverlayPrecompileStorage<'_> {
 
 impl PoolTransactionError for BaseTxPoolError {
     fn is_bad_transaction(&self) -> bool {
-        true
+        !matches!(self, Self::BlsTransferValidation { .. })
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -1044,8 +1057,26 @@ where
                 InvalidTransactionError::TxTypeNotSupported.into(),
             );
         }
+        // A native BLS transfer is an ordinary transfer of its explicit sender, authorized by a
+        // detached BLS witness that only the pooled form carries.
+        let is_bls_transfer = transaction.as_bls_transfer().is_some();
+        if is_bls_transfer {
+            if self.chain_spec().chain().id() != BlsConstants::CHAIN_ID {
+                return TransactionValidationOutcome::Invalid(
+                    transaction,
+                    InvalidTransactionError::TxTypeNotSupported.into(),
+                );
+            }
+            if transaction.bls_transfer_signature().is_none() {
+                return TransactionValidationOutcome::Invalid(
+                    transaction,
+                    Self::bls_transfer_error("missing BLS witness"),
+                );
+            }
+        }
         // The inner validator covers the outer ECDSA signer of a native BLS transaction
-        // like any other transaction: chain id, nonce, fee caps, and balance.
+        // like any other transaction: chain id, nonce, fee caps, and balance. It covers a native
+        // BLS transfer's sender the same way.
         let outcome = match self.inner.validate_one_with_state(origin, transaction, state) {
             TransactionValidationOutcome::Invalid(
                 transaction,
@@ -1079,7 +1110,80 @@ where
             outcome => outcome,
         };
         let outcome = self.apply_base_checks(outcome, 0);
-        if is_bls { self.apply_bls_checks(outcome) } else { outcome }
+        if is_bls {
+            self.apply_bls_checks(outcome)
+        } else if is_bls_transfer {
+            self.apply_bls_transfer_checks(outcome)
+        } else {
+            outcome
+        }
+    }
+
+    /// Verifies a native BLS transfer's witness after its ordinary checks passed: the sender's
+    /// registered key, code-free sender and recipient, and the individual BLS signature over
+    /// the transfer's signing digest. Signature verification is the most expensive admission
+    /// step, so it runs last.
+    pub fn apply_bls_transfer_checks(
+        &self,
+        outcome: TransactionValidationOutcome<Tx>,
+    ) -> TransactionValidationOutcome<Tx> {
+        let TransactionValidationOutcome::Valid {
+            balance,
+            state_nonce,
+            transaction: valid_tx,
+            propagate,
+            bytecode_hash,
+            authorities,
+        } = outcome
+        else {
+            return outcome;
+        };
+        match self.validate_bls_transfer(valid_tx.transaction()) {
+            Ok(()) => TransactionValidationOutcome::Valid {
+                balance,
+                state_nonce,
+                transaction: valid_tx,
+                propagate,
+                bytecode_hash,
+                authorities,
+            },
+            Err(BlsTransferError::Database(error)) => {
+                TransactionValidationOutcome::Error(*valid_tx.hash(), Box::new(error))
+            }
+            Err(error) => TransactionValidationOutcome::Invalid(
+                valid_tx.into_transaction(),
+                Self::bls_transfer_error(error),
+            ),
+        }
+    }
+
+    /// Checks a native BLS transfer against the latest state and its retained witness.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the transaction is not a native BLS transfer with a witness.
+    pub fn validate_bls_transfer(
+        &self,
+        transaction: &Tx,
+    ) -> Result<(), BlsTransferError<reth_storage_api::errors::ProviderError>> {
+        let tx = transaction.as_bls_transfer().expect("only called for native BLS transfers");
+        let signature =
+            transaction.bls_transfer_signature().expect("witness presence checked on entry");
+        let state = self.client().latest().map_err(BlsTransferError::Database)?;
+        BlsTransferValidator::validate(
+            &mut StateProviderDatabase::new(state),
+            tx.inner(),
+            self.chain_spec().chain().id(),
+            &signature,
+        )?;
+        Ok(())
+    }
+
+    /// Classifies an invalid witness without poisoning its canonical intent hash.
+    pub fn bls_transfer_error(error: impl core::fmt::Display) -> InvalidPoolTransactionError {
+        InvalidPoolTransactionError::other(BaseTxPoolError::BlsTransferValidation {
+            reason: error.to_string(),
+        })
     }
 
     /// Runs the native BLS validation execution runs before mutating state, so a
@@ -1137,8 +1241,8 @@ where
         .map_err(Self::bls_error)?;
 
         // Evict instead of leaving to fail at block building: a registration once the
-        // signer's key lands, and a batch once an inner sender's nonce or an inner
-        // account's code changes. The outer signer's nonce and balance are tracked by the
+        // signer's key lands, and a batch once an inner sender's nonce, an inner account's
+        // code, or an inner sender's balance below its transfer changes. The outer signer's nonce and balance are tracked by the
         // protocol pool like any other sender.
         let mut watch_set = WatchSet::new();
         match &validated.payload {
@@ -1151,6 +1255,7 @@ where
             BlsPayload::Batch { transfers, .. } => {
                 for transfer in transfers {
                     watch_set.push(InvalidationKey::ProtocolNonce(transfer.sender));
+                    watch_set.push(InvalidationKey::Balance(transfer.sender));
                     watch_set.push(InvalidationKey::CodeHash(transfer.sender));
                     watch_set.push(InvalidationKey::CodeHash(transfer.recipient));
                 }
@@ -2149,17 +2254,20 @@ where
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::{SignableTransaction, TxEip1559, transaction::SignerRecoverable};
+    use alloy_consensus::{
+        Sealable, SignableTransaction, TxEip1559, transaction::SignerRecoverable,
+    };
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{Address, B256, Bytes, TxKind, U256, aliases::U96, bytes, hex::decode};
     use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
     use base_common_chains::ChainConfig;
     use base_common_consensus::{
-        AccountChange, AccountChangeChannel, BLS_TX_TYPE_ID, BasePrimitives, BaseTransactionSigned,
-        BaseTxEnvelope, BlsTransfer, Call, ChangeType, CreateEntry, Delegation, Eip8130Constants,
-        Eip8130Signed, InitialActor, SignedAccountChanges, SignedChange, TxBls, TxDeposit,
-        TxEip8130,
+        AccountChange, AccountChangeChannel, BLS_TRANSFER_TX_TYPE_ID, BLS_TX_TYPE_ID,
+        BasePooledTransaction as ConsensusPooledTransaction, BasePrimitives, BaseTransactionSigned,
+        BaseTxEnvelope, BlsTransfer, BlsTransferWithSignature, Call, ChangeType, CreateEntry,
+        Delegation, Eip8130Constants, Eip8130Signed, InitialActor, SignedAccountChanges,
+        SignedChange, TxBls, TxBlsTransfer, TxDeposit, TxEip8130,
     };
     use base_common_evm::test_utils::BlsTestKey;
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
@@ -4100,6 +4208,7 @@ mod tests {
             .no_shanghai()
             .no_cancun()
             .with_custom_tx_type(BLS_TX_TYPE_ID)
+            .with_custom_tx_type(BLS_TRANSFER_TX_TYPE_ID)
             .build(InMemoryBlobStore::default());
         BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default())
     }
@@ -4294,5 +4403,94 @@ mod tests {
         assert_bls_rejected(
             validate(bls_batch(relayer.address(), 0, recipient, &relayer_key)).await,
         );
+    }
+
+    fn pooled_bls_transfer(
+        chain_id: u64,
+        sender: Address,
+        recipient: Address,
+        key: &BlsTestKey,
+    ) -> BasePooledTransaction {
+        let tx = TxBlsTransfer {
+            chain_id,
+            sender,
+            nonce: 0,
+            recipient,
+            value: U256::from(1_000u64),
+            max_priority_fee_per_gas: 0,
+            max_fee_per_gas: 1_000,
+        };
+        let signature = key.sign(tx.signing_digest());
+        let pooled = ConsensusPooledTransaction::from(BlsTransferWithSignature {
+            transaction: tx.seal_slow(),
+            signature,
+        });
+        <BasePooledTransaction as reth_transaction_pool::PoolTransaction>::recover_raw_transaction(
+            &pooled.encoded_2718(),
+        )
+        .unwrap()
+    }
+
+    #[track_caller]
+    fn assert_bls_transfer_rejected(outcome: TransactionValidationOutcome<BasePooledTransaction>) {
+        match outcome {
+            TransactionValidationOutcome::Invalid(_, InvalidPoolTransactionError::Other(error)) => {
+                assert!(
+                    matches!(
+                        error.as_any().downcast_ref::<BaseTxPoolError>(),
+                        Some(BaseTxPoolError::BlsTransferValidation { .. })
+                    ),
+                    "expected BlsTransferValidation, got {error:?}"
+                );
+                assert!(!error.is_bad_transaction());
+            }
+            other => panic!("expected BlsTransferValidation, got {other:?}"),
+        }
+    }
+
+    /// Beyond a valid witness, admission requires the development chain, a registered sender
+    /// key, and code-free sender and recipient accounts.
+    #[tokio::test]
+    async fn bls_transfer_admission_checks_chain_and_account_state() {
+        let key = BlsTestKey::from_seed(1);
+        let sender = Address::repeat_byte(0x51);
+        let unregistered = Address::repeat_byte(0x53);
+        let contract = Address::repeat_byte(0x54);
+        let recipient = Address::repeat_byte(0x52);
+        let accounts = || {
+            [
+                (sender, bls_funded()),
+                (unregistered, bls_funded()),
+                (contract, bls_funded().with_bytecode(Bytes::from_static(&[0x00]))),
+                bls_registry(&[(sender, &key)]),
+            ]
+        };
+        let validator = build_bls_validator(bls_chain_spec(), accounts());
+        let validate = |tx| validator.validate_one(TransactionOrigin::External, tx);
+
+        assert_bls_admitted(
+            validate(pooled_bls_transfer(BlsConstants::CHAIN_ID, sender, recipient, &key)).await,
+        );
+        assert_bls_transfer_rejected(
+            validate(pooled_bls_transfer(BlsConstants::CHAIN_ID, unregistered, recipient, &key))
+                .await,
+        );
+        assert_bls_transfer_rejected(
+            validate(pooled_bls_transfer(BlsConstants::CHAIN_ID, sender, contract, &key)).await,
+        );
+
+        let mainnet = build_bls_validator(everest_chain_spec(), accounts());
+        assert!(matches!(
+            mainnet
+                .validate_one(
+                    TransactionOrigin::External,
+                    pooled_bls_transfer(test_chain_id(), sender, recipient, &key),
+                )
+                .await,
+            TransactionValidationOutcome::Invalid(
+                _,
+                InvalidPoolTransactionError::Consensus(InvalidTransactionError::TxTypeNotSupported)
+            )
+        ));
     }
 }

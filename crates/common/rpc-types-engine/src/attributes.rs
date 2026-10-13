@@ -49,6 +49,13 @@ pub struct BasePayloadAttributes {
     /// Prior to Jovian activation, this field should always be [None].
     #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
     pub min_base_fee: Option<u64>,
+    /// The consensus layer authenticated native BLS intents against an entire L1 DA chunk.
+    ///
+    /// This is an Engine-only assertion, like the provenance of forced deposit transactions.
+    /// Public transaction submission must never set it, and derivation may set it only after
+    /// verifying the chunk's aggregate over every intent before releasing its first block.
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "core::ops::Not::not"))]
+    pub bls_derived: bool,
 }
 
 impl BasePayloadAttributes {
@@ -100,6 +107,12 @@ impl BasePayloadAttributes {
 
         if let Some(min_base_fee) = self.min_base_fee {
             hasher.update(min_base_fee.to_be_bytes());
+        }
+
+        // Preserve historical payload IDs when absent; authenticated and unauthenticated
+        // builds of the same intents must never share a payload job.
+        if self.bls_derived {
+            hasher.update(b"base-bls-derived:v1");
         }
 
         let mut out = hasher.finalize();
@@ -266,6 +279,7 @@ mod test {
             gas_limit: Some(30000000),
             eip_1559_params: None,
             min_base_fee: None,
+            bls_derived: false,
         };
 
         // Reth's `PayloadId` should match op-geth's `PayloadId`. This fails
@@ -301,6 +315,7 @@ mod test {
             gas_limit: Some(30000000),
             eip_1559_params: None,
             min_base_fee: Some(100),
+            bls_derived: false,
         };
 
         // Reth's `PayloadId` should match op-geth's `PayloadId`. This fails
@@ -329,6 +344,8 @@ mod test {
         };
 
         assert_ne!(first.payload_id(&parent, 3), second.payload_id(&parent, 3));
+        let authenticated = BasePayloadAttributes { bls_derived: true, ..first.clone() };
+        assert_ne!(first.payload_id(&parent, 3), authenticated.payload_id(&parent, 3));
     }
 
     #[test]
@@ -348,6 +365,7 @@ mod test {
             gas_limit: Some(42),
             eip_1559_params: None,
             min_base_fee: None,
+            bls_derived: false,
         };
 
         let ser = serde_json::to_string(&attributes).unwrap();
@@ -373,6 +391,7 @@ mod test {
             gas_limit: Some(42),
             eip_1559_params: Some(b64!("0000dead0000beef")),
             min_base_fee: None,
+            bls_derived: false,
         };
 
         let ser = serde_json::to_string(&attributes).unwrap();
@@ -416,6 +435,7 @@ mod test {
             gas_limit: Some(42),
             eip_1559_params: Some(b64!("0000dead0000beef")),
             min_base_fee: None,
+            bls_derived: false,
         };
 
         let ser = serde_json::to_string(&attributes).unwrap();
@@ -441,6 +461,7 @@ mod test {
             gas_limit: Some(42),
             eip_1559_params: None,
             min_base_fee: Some(1),
+            bls_derived: false,
         };
 
         let ser = serde_json::to_string(&attributes).unwrap();

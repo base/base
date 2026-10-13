@@ -20,6 +20,7 @@ mod base_time;
 pub use base_time::{BaseTime, BaseTimeTransitionError};
 
 mod transaction;
+pub use base_common_bls::{BlsAggregationError, BlsCrypto};
 pub use transaction::{
     BaseTransaction, BaseTransactionBuilder, BaseTransactionError, BaseTxTr, BuildError,
     DEPOSIT_TRANSACTION_TYPE, DepositTransactionParts, EIP8130_TRANSACTION_TYPE,
@@ -28,8 +29,10 @@ pub use transaction::{
 
 mod bls;
 pub use bls::{
-    BlsCrypto, BlsDatabaseState, BlsExecutor, BlsGas, BlsJournalState, BlsRegistry, BlsState,
-    BlsValidated, BlsValidationError, BlsValidator,
+    BlsBlockAuthorization, BlsBlockAuthorizationError, BlsChunkError, BlsChunkVerifier,
+    BlsDatabaseState, BlsExecutor, BlsGas, BlsJournalState, BlsRegistry, BlsState,
+    BlsTransferError, BlsTransferIntent, BlsTransferValidator, BlsValidated, BlsValidationError,
+    BlsValidator,
 };
 
 #[cfg(any(test, feature = "test-utils"))]

@@ -448,6 +448,7 @@ mod tests {
                 block_hash: B256::from([number as u8; 32]),
                 transactions: vec![],
             }),
+            bls_aggregate: None,
         }
     }
 

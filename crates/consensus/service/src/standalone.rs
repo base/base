@@ -161,6 +161,8 @@ impl AttributesBuilder for StandaloneAttributesBuilder {
                 .rollup_config
                 .is_jovian_active(next_l2_time)
                 .then(|| self.system_config.min_base_fee.unwrap_or_default()),
+            // Local deposits and pool transactions; native BLS transfers need a block aggregate.
+            bls_derived: false,
         })
     }
 }

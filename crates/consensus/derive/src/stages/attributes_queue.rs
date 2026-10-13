@@ -7,7 +7,7 @@ use alloy_eips::BlockNumHash;
 use async_trait::async_trait;
 use base_common_genesis::{RollupConfig, SystemConfig};
 use base_common_rpc_types_engine::BasePayloadAttributes;
-use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo, SingleBatch};
+use base_protocol::{AttributesWithParent, BlockInfo, BlsChunkBatch, L2BlockInfo, SingleBatch};
 
 use crate::{
     Metrics,
@@ -44,6 +44,8 @@ where
     pub prev: P,
     /// Whether the current batch is the last in its span.
     pub is_last_in_span: bool,
+    /// Whether the current batch came from an authenticated native BLS chunk.
+    pub is_bls_authenticated: bool,
     /// The current batch being processed.
     pub batch: Option<SingleBatch>,
     /// The attributes builder.
@@ -57,7 +59,14 @@ where
 {
     /// Create a new [`AttributesQueue`] stage.
     pub const fn new(cfg: Arc<RollupConfig>, prev: P, builder: AB) -> Self {
-        Self { cfg, prev, is_last_in_span: false, batch: None, builder }
+        Self {
+            cfg,
+            prev,
+            is_last_in_span: false,
+            is_bls_authenticated: false,
+            batch: None,
+            builder,
+        }
     }
 
     /// Loads a [`SingleBatch`] from the [`AttributesProvider`] if needed.
@@ -66,6 +75,7 @@ where
             let batch = self.prev.next_batch(parent).await?;
             self.batch = Some(batch);
             self.is_last_in_span = self.prev.is_last_in_span();
+            self.is_bls_authenticated = self.prev.is_bls_authenticated();
         }
         self.batch.as_ref().cloned().ok_or(PipelineError::Eof.temp())
     }
@@ -98,6 +108,7 @@ where
         // Clear out the local state once payload attributes are prepared.
         self.batch = None;
         self.is_last_in_span = false;
+        self.is_bls_authenticated = false;
         Ok(populated_attributes)
     }
 
@@ -117,6 +128,10 @@ where
         let tx_count = batch.transactions.len();
         let mut attributes = self.builder.prepare_payload_attributes(parent, batch.epoch()).await?;
         attributes.no_tx_pool = Some(true);
+        // Native BLS transfers carry no signature; only the batch stream's verified chunk
+        // provenance authorizes them. Blocks without transfers keep their original attributes.
+        attributes.bls_derived =
+            self.is_bls_authenticated && BlsChunkBatch::count_transfers(&batch.transactions) > 0;
         match attributes.transactions {
             Some(ref mut txs) => txs.extend(batch.transactions),
             None => {
@@ -186,6 +201,7 @@ where
         self.prev.reset(l1_origin, system_config).await?;
         self.batch = None;
         self.is_last_in_span = false;
+        self.is_bls_authenticated = false;
         Ok(())
     }
 
@@ -193,12 +209,14 @@ where
         self.prev.activate().await?;
         self.batch = None;
         self.is_last_in_span = false;
+        self.is_bls_authenticated = false;
         Ok(())
     }
 
     async fn flush_channel(&mut self) -> PipelineResult<()> {
         // Clear batch first, then propagate.
         self.batch = None;
+        self.is_bls_authenticated = false;
         self.prev.flush_channel().await
     }
 }
@@ -235,6 +253,7 @@ mod tests {
             gas_limit: None,
             eip_1559_params: None,
             min_base_fee: None,
+            bls_derived: false,
         }
     }
 
@@ -322,6 +341,30 @@ mod tests {
             result,
             PipelineError::AttributesBuilder(BuilderError::AttributesUnavailable).crit()
         );
+    }
+
+    /// Only a batch the provider released from an authenticated chunk, and that carries a
+    /// transfer, is marked BLS-derived. Raw `0x7b` bytes alone never set the marker.
+    #[tokio::test]
+    async fn test_next_attributes_bls_derived_only_from_authenticated_chunks() {
+        let transfer = Bytes::from(vec![BlsChunkBatch::TRANSFER_TX_TYPE, 0xc0]);
+        let ordinary = Bytes::from(vec![0x02, 0xc0]);
+        for (authenticated, tx, expected) in
+            [(true, transfer.clone(), true), (false, transfer, false), (true, ordinary, false)]
+        {
+            let batch = SingleBatch { transactions: vec![tx], ..Default::default() };
+            let mut provider =
+                new_test_attributes_provider(Some(BlockInfo::default()), vec![Ok(batch)]);
+            provider.bls_authenticated = authenticated;
+            let builder = TestAttributesBuilder {
+                attributes: vec![Ok(default_payload_attributes())],
+                ..Default::default()
+            };
+            let mut aq = AttributesQueue::new(Arc::new(RollupConfig::default()), provider, builder);
+            let attributes = aq.next_attributes(L2BlockInfo::default()).await.unwrap();
+            assert_eq!(attributes.attributes.bls_derived, expected);
+            assert!(!aq.is_bls_authenticated);
+        }
     }
 
     #[tokio::test]

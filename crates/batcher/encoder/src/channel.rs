@@ -7,7 +7,8 @@ use alloy_rlp::Encodable;
 use base_common_genesis::RollupConfig;
 use base_comp::CompressionStream;
 use base_protocol::{
-    BLOB_DERIVATION_PREFIX_SIZE, BLOB_MAX_DATA_SIZE, BatchType, ChannelId, Frame, SingleBatch,
+    BLOB_DERIVATION_PREFIX_SIZE, BLOB_MAX_DATA_SIZE, BatchType, BlsChunkBatch, ChannelId, Frame,
+    SingleBatch,
 };
 
 use crate::{BatcherMetrics, CompressionError, EncoderConfig, EncoderConfigError};
@@ -80,6 +81,12 @@ impl ChannelCloseReason {
 /// Error returned by a channel state transition.
 #[derive(Debug, thiserror::Error)]
 pub enum ChannelError {
+    /// Canonical intents have no individual witness and cannot be published as plain singles.
+    #[error("BLS transfer requires authenticated chunk encoding")]
+    BlsTransferOutsideChunk,
+    /// A chunk violates its protocol bounds or aggregate-presence contract.
+    #[error(transparent)]
+    BlsChunk(#[from] base_protocol::BlsChunkError),
     /// Compression failed.
     #[error(transparent)]
     Compression(#[from] CompressionError),
@@ -282,17 +289,51 @@ impl Channel {
         batch: &SingleBatch,
         da_backlog_bytes: u64,
     ) -> Result<ChannelAddOutcome, ChannelError> {
+        if batch.transactions.iter().any(|tx| BlsChunkBatch::is_transfer(tx)) {
+            return Err(ChannelError::BlsTransferOutsideChunk);
+        }
         let max_channel_bytes = self.rollup_config.max_rlp_bytes_per_channel(batch.timestamp);
-        let max_frame_data = self.max_frame_data();
-        let Some(compressor) = self.compressor.as_mut() else {
-            return Err(ChannelError::Closed);
-        };
 
         // Wire form of one Single batch: RLP string header, type byte, payload.
         self.candidate_scratch.clear();
         batch.rlp_header().encode(&mut self.candidate_scratch);
         self.candidate_scratch.push(BatchType::Single as u8);
         batch.encode(&mut self.candidate_scratch);
+        self.commit_candidate(max_channel_bytes, da_backlog_bytes, 1)
+    }
+
+    /// Append an entire authenticated chunk atomically, tracking all member blocks for replay.
+    pub fn add_bls_chunk(
+        &mut self,
+        chunk: &BlsChunkBatch,
+        da_backlog_bytes: u64,
+    ) -> Result<ChannelAddOutcome, ChannelError> {
+        let mut encoded = vec![BatchType::BlsChunk as u8];
+        chunk.encode(&mut encoded)?;
+        self.candidate_scratch.clear();
+        alloy_rlp::Header { list: false, payload_length: encoded.len() }
+            .encode(&mut self.candidate_scratch);
+        self.candidate_scratch.extend_from_slice(&encoded);
+        let max_channel_bytes = chunk
+            .batches
+            .iter()
+            .map(|batch| self.rollup_config.max_rlp_bytes_per_channel(batch.timestamp))
+            .min()
+            .expect("encoded chunks are nonempty");
+        self.commit_candidate(max_channel_bytes, da_backlog_bytes, chunk.batches.len())
+    }
+
+    /// Apply channel limits before committing the complete candidate to the compression stream.
+    pub fn commit_candidate(
+        &mut self,
+        max_channel_bytes: u64,
+        da_backlog_bytes: u64,
+        blocks: usize,
+    ) -> Result<ChannelAddOutcome, ChannelError> {
+        let max_frame_data = self.max_frame_data();
+        let Some(compressor) = self.compressor.as_mut() else {
+            return Err(ChannelError::Closed);
+        };
 
         // Reject on the cumulative RLP limit first. Every projection below then
         // starts from an input size the protocol bounds well inside memory.
@@ -339,7 +380,7 @@ impl Channel {
 
         self.push_output(output);
         self.input_bytes = next_input_bytes;
-        self.blocks_added += 1;
+        self.blocks_added += blocks;
         self.da_backlog_bytes += da_backlog_bytes;
 
         if self.compressed_size_target.is_some_and(|target| total_output >= target) {

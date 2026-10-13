@@ -126,6 +126,7 @@ mod test {
             gas_limit: None,
             eip_1559_params,
             min_base_fee: None,
+            bls_derived: false,
         }
     }
 

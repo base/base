@@ -138,7 +138,8 @@ impl TryFrom<&BaseTxEnvelope> for SpanBatchTransactionData {
                 }))
             }
             BaseTxEnvelope::Bls(signed) => Ok(Self::Bls(signed.tx().into())),
-            BaseTxEnvelope::Deposit(_) => {
+            // Native BLS transfers travel only in authenticated chunk batches.
+            BaseTxEnvelope::Deposit(_) | BaseTxEnvelope::BlsTransfer(_) => {
                 Err(SpanBatchError::Decoding(SpanDecodingError::InvalidTransactionType))
             }
         }

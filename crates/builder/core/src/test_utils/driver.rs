@@ -185,6 +185,7 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
                 gas_limit: Some(self.gas_limit.unwrap_or(DEFAULT_GAS_LIMIT)),
                 no_tx_pool,
                 min_base_fee,
+                bls_derived: false,
                 eip_1559_params: Some(B64::from(eip_1559_params)),
             })
             .await?;

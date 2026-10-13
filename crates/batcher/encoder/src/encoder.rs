@@ -3,10 +3,11 @@
 use std::{collections::VecDeque, fmt, sync::Arc};
 
 use alloy_eips::eip2718::Encodable2718;
-use alloy_primitives::B256;
-use base_common_consensus::{BaseBlock, BaseTxEnvelope};
+use alloy_primitives::{B256, FixedBytes};
+use base_common_bls::BlsCrypto;
+use base_common_consensus::{BaseBlock, BaseTxEnvelope, BlsConstants};
 use base_common_genesis::RollupConfig;
-use base_protocol::{BlockInfo, ChannelId};
+use base_protocol::{BlockInfo, BlsChunkBatch, ChannelId};
 use rand::{RngCore, SeedableRng, rngs::SmallRng};
 use tracing::{debug, warn};
 
@@ -29,6 +30,8 @@ pub struct BatchEncoder {
     l1_head: u64,
     /// Buffered L2 blocks above the latest observed safe head.
     blocks: VecDeque<BaseBlock>,
+    /// Detached block witnesses, retained alongside the block queue for replay.
+    bls_witnesses: VecDeque<Option<FixedBytes<48>>>,
     /// Index into `blocks`: next block not yet appended to the writable channel tail.
     block_cursor: usize,
     /// Hash of the last accepted block or safe-head anchor.
@@ -71,14 +74,22 @@ impl BatchEncoder {
     /// derivation invariant.
     pub fn new(
         rollup_config: Arc<RollupConfig>,
-        config: EncoderConfig,
+        mut config: EncoderConfig,
     ) -> Result<Self, EncoderConfigError> {
         config.validate()?;
+        if rollup_config.l2_chain_id == BlsConstants::CHAIN_ID {
+            config.bls_chunk_blocks.get_or_insert(32);
+        } else if config.bls_chunk_blocks.is_some() {
+            return Err(EncoderConfigError::BlsUnsupportedChain {
+                chain_id: rollup_config.l2_chain_id.id(),
+            });
+        }
         Ok(Self {
             rollup_config,
             config,
             l1_head: 0,
             blocks: VecDeque::new(),
+            bls_witnesses: VecDeque::new(),
             block_cursor: 0,
             tip: None,
             channels: VecDeque::new(),
@@ -227,6 +238,9 @@ impl BatchEncoder {
 
         if should_close {
             debug!(l1_head = %self.l1_head, "channel timed out, closing");
+            if self.config.bls_chunk_blocks.is_some() && self.block_cursor < self.blocks.len() {
+                self.step_bls_chunk(true)?;
+            }
             self.close_current_channel(ChannelCloseReason::Timeout)?;
         }
 
@@ -398,6 +412,7 @@ impl BatchEncoder {
 
         // Remove the safe block prefix and rebase every remaining block-relative offset.
         self.blocks.drain(..prune_count);
+        self.bls_witnesses.drain(..prune_count);
         self.rebase_after_block_prune(prune_count);
         if self.blocks.is_empty() {
             self.tip = Some(safe_l2.hash);
@@ -432,16 +447,127 @@ impl BatchEncoder {
 
     /// Closes the writable tail and makes retained partial channel output eligible for framing.
     fn flush_channels(&mut self) -> Result<(), StepError> {
+        if self.config.bls_chunk_blocks.is_some() {
+            while self.block_cursor < self.blocks.len() {
+                self.step_bls_chunk(true)?;
+            }
+        }
         self.close_current_channel(ChannelCloseReason::Flush)?;
         for channel in &mut self.channels {
             channel.release_at(self.l1_head);
         }
         Ok(())
     }
+
+    /// Encode a bounded prefix with one reaggregated signature. A partial prefix waits for
+    /// more blocks unless its channel deadline or an explicit flush requires publication.
+    pub fn step_bls_chunk(&mut self, force: bool) -> Result<StepResult, StepError> {
+        if self.block_cursor >= self.blocks.len() {
+            return Ok(StepResult::Idle);
+        }
+        let target = self.config.bls_chunk_blocks.expect("chunk mode is enabled");
+        if !self.channels.back().is_some_and(Channel::is_open) {
+            self.open_new_channel(self.block_cursor);
+        }
+        let deadline = self.channels.back().expect("channel exists").deadline_due(self.l1_head);
+        let mut batches = Vec::new();
+        let mut signatures = Vec::new();
+        let mut backlog = Vec::new();
+        let mut transfers = 0;
+        for cursor in self.block_cursor..self.blocks.len().min(self.block_cursor + target) {
+            let block = &self.blocks[cursor];
+            let count = block.body.transactions.iter().filter(|tx| tx.is_bls_transfer()).count();
+            if transfers + count > BlsChunkBatch::MAX_TRANSFERS {
+                if batches.is_empty() {
+                    return Err(StepError::BlsWitness { cursor });
+                }
+                break;
+            }
+            let signature = self.bls_witnesses[cursor];
+            if (count > 0) != signature.is_some() {
+                return Err(StepError::BlsWitness { cursor });
+            }
+            batches.push(
+                BatchComposer::block_to_single_batch(block)
+                    .map_err(|source| StepError::CompositionFailed { cursor, source })?,
+            );
+            signatures.push(signature);
+            backlog.push(Self::block_da_backlog_bytes(block));
+            transfers += count;
+        }
+        if !force
+            && !deadline
+            && batches.len() < target
+            && self.block_cursor + batches.len() == self.blocks.len()
+            && transfers < BlsChunkBatch::MAX_TRANSFERS
+        {
+            return Ok(StepResult::Idle);
+        }
+
+        loop {
+            let aggregate = signatures.iter().flatten().copied().collect::<Vec<_>>();
+            let aggregate = if aggregate.is_empty() {
+                None
+            } else {
+                Some(BlsCrypto::aggregate_signatures(&aggregate)?)
+            };
+            let chunk = BlsChunkBatch { aggregate, batches };
+            let channel = self.channels.back_mut().expect("channel exists");
+            let outcome = channel.add_bls_chunk(&chunk, backlog.iter().sum())?;
+            match outcome {
+                ChannelAddOutcome::Accepted | ChannelAddOutcome::TargetReached => {
+                    self.block_cursor += chunk.batches.len();
+                    debug!(
+                        blocks = chunk.batches.len(),
+                        transfers = chunk.transfer_count(),
+                        aggregate_bytes = if aggregate.is_some() { 48 } else { 0 },
+                        "encoded BLS chunk"
+                    );
+                    if outcome == ChannelAddOutcome::TargetReached || deadline {
+                        self.close_current_channel(if deadline {
+                            ChannelCloseReason::Timeout
+                        } else {
+                            ChannelCloseReason::SoftTarget
+                        })?;
+                        return Ok(StepResult::ChannelClosed);
+                    }
+                    return Ok(StepResult::BlockEncoded);
+                }
+                ChannelAddOutcome::Rejected(limit) => {
+                    if !channel.is_empty() {
+                        self.close_current_channel(ChannelCloseReason::ProtocolLimit)?;
+                        return Ok(StepResult::ChannelClosed);
+                    }
+                    if chunk.batches.len() == 1 {
+                        self.channels.pop_back();
+                        return Err(StepError::BlockExceedsChannelLimit {
+                            cursor: self.block_cursor,
+                            limit,
+                        });
+                    }
+                    // Reaggregate only the retained prefix; never publish a signature covering
+                    // blocks that did not fit in this channel.
+                    batches = chunk.batches;
+                    let shorter = batches.len() / 2;
+                    batches.truncate(shorter);
+                    signatures.truncate(shorter);
+                    backlog.truncate(shorter);
+                }
+            }
+        }
+    }
 }
 
 impl BatchPipeline for BatchEncoder {
     fn add_block(&mut self, block: BaseBlock) -> Result<(), (ReorgError, Box<BaseBlock>)> {
+        self.add_witnessed_block(block, None)
+    }
+
+    fn add_witnessed_block(
+        &mut self,
+        block: BaseBlock,
+        bls_aggregate: Option<FixedBytes<48>>,
+    ) -> Result<(), (ReorgError, Box<BaseBlock>)> {
         if let Some(expected) = self.tip
             && block.header.parent_hash != expected
         {
@@ -455,6 +581,7 @@ impl BatchPipeline for BatchEncoder {
         let hash = block.header.hash_slow();
         self.tip = Some(hash);
         self.blocks.push_back(block);
+        self.bls_witnesses.push_back(bls_aggregate);
         BatcherMetrics::pending_blocks().increment(1.0);
 
         debug!(block = %number, pending_blocks = %self.blocks.len(), "block added to encoder queue");
@@ -476,7 +603,15 @@ impl BatchPipeline for BatchEncoder {
             return Ok(StepResult::Idle);
         }
 
+        if self.config.bls_chunk_blocks.is_some() {
+            return self.step_bls_chunk(false);
+        }
         let block = &self.blocks[self.block_cursor];
+        if self.bls_witnesses[self.block_cursor].is_some()
+            || block.body.transactions.iter().any(|tx| tx.is_bls_transfer())
+        {
+            return Err(StepError::BlsWitness { cursor: self.block_cursor });
+        }
         let block_da_backlog_bytes = Self::block_da_backlog_bytes(block);
 
         // Composition failure is fatal: skipping the block would gap the L2 sequence.
@@ -619,6 +754,7 @@ impl BatchPipeline for BatchEncoder {
             "resetting encoder pipeline (reorg or explicit reset)"
         );
         self.blocks.clear();
+        self.bls_witnesses.clear();
         self.block_cursor = 0;
         self.tip = None;
         self.channels.clear();
@@ -666,6 +802,212 @@ impl BatchPipeline for BatchEncoder {
         self.blob_override = active;
         if self.config.da_type == DaType::Calldata {
             debug!(active = active, "blob override toggled for calldata-configured encoder");
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use alloy_consensus::{BlockBody, Header, SignableTransaction, TxLegacy};
+    use alloy_primitives::{Sealed, Signature, hex};
+    use base_common_consensus::{TxBlsTransfer, TxDeposit};
+    use base_protocol::{Batch, BatchReader, Frame, L1BlockInfoBedrock, L1BlockInfoTx};
+
+    use super::*;
+    use crate::SubmissionPayload;
+
+    // Independent noble-curves G1 generator multiples. The encoder only adds points;
+    // execution/derivation tests check authorization against the actual transfer messages.
+    const POINT: FixedBytes<48> = FixedBytes(hex!(
+        "97f1d3a73197d7942695638c4fa9ac0fc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb"
+    ));
+
+    fn blocks(count: usize) -> Vec<BaseBlock> {
+        let mut parent_hash = B256::ZERO;
+        (0..count)
+            .map(|index| {
+                let block = BaseBlock {
+                    header: Header {
+                        parent_hash,
+                        number: index as u64 + 1,
+                        timestamp: index as u64 * 2,
+                        ..Default::default()
+                    },
+                    body: BlockBody {
+                        transactions: vec![
+                            BaseTxEnvelope::Deposit(Sealed::new(TxDeposit {
+                                input: L1BlockInfoTx::Bedrock(L1BlockInfoBedrock::default())
+                                    .encode_calldata(),
+                                ..Default::default()
+                            })),
+                            TxBlsTransfer {
+                                chain_id: BlsConstants::CHAIN_ID,
+                                nonce: index as u64,
+                                ..Default::default()
+                            }
+                            .into(),
+                        ],
+                        ..Default::default()
+                    },
+                };
+                parent_hash = block.header.hash_slow();
+                block
+            })
+            .collect()
+    }
+
+    fn config() -> Arc<RollupConfig> {
+        Arc::new(RollupConfig { l2_chain_id: BlsConstants::CHAIN_ID.into(), ..Default::default() })
+    }
+
+    fn chunks(submissions: &[BatchSubmission], config: &RollupConfig) -> Vec<BlsChunkBatch> {
+        let mut channels = BTreeMap::<ChannelId, Vec<u8>>::new();
+        for submission in submissions {
+            let frames: Vec<_> = match submission.payload() {
+                SubmissionPayload::Blobs(blobs) => {
+                    blobs.iter().flat_map(|blob| blob.frames()).collect()
+                }
+                SubmissionPayload::Calldata(frame) => vec![frame],
+            };
+            for frame in frames {
+                channels.entry(frame.id).or_default().extend_from_slice(&frame.data);
+            }
+        }
+        let mut result = Vec::new();
+        for bytes in channels.values() {
+            let mut reader = BatchReader::new(bytes.as_slice(), 10_000_000, true);
+            while let Some(batch) = reader.next_batch_strict(config).unwrap() {
+                let Batch::BlsChunk(chunk) = batch else {
+                    panic!("expected authenticated chunk");
+                };
+                result.push(chunk);
+            }
+        }
+        result.sort_by_key(BlsChunkBatch::starting_timestamp);
+        result
+    }
+
+    #[test]
+    fn reaggregates_complete_chunks_and_flushes_only_the_remaining_signature() {
+        for (width, expected) in [
+            (
+                32,
+                hex!(
+                    "a72841987e4f219d54f2b6a9eac5fe6e78704644753c3579e776a3691bc123743f8c63770ed0f72a71e9e964dbf58f43"
+                ),
+            ),
+            (
+                64,
+                hex!(
+                    "911bb496153aa457e3302ea8e74427962c6eb57e97096f65cafe45a238f739b86d4b790debd5c7359f18f3642d7d774c"
+                ),
+            ),
+            (
+                128,
+                hex!(
+                    "8b737f47d5b2794819b5dc01236895e684f1406f8b9f0d9aa06b5fb36dba6c185efec755b77d9424d09b848468127559"
+                ),
+            ),
+        ] {
+            let config = config();
+            let mut encoder = BatchEncoder::new(
+                Arc::clone(&config),
+                EncoderConfig { bls_chunk_blocks: Some(width), ..Default::default() },
+            )
+            .unwrap();
+            let blocks = blocks(width + 1);
+            for block in &blocks {
+                encoder.add_witnessed_block(block.clone(), Some(POINT)).unwrap();
+            }
+            assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
+            assert_eq!(encoder.step().unwrap(), StepResult::Idle);
+            let submissions = encoder.encode_and_drain().unwrap();
+            let decoded = chunks(&submissions, &config);
+            assert_eq!(decoded.len(), 2);
+            assert_eq!(decoded[0].aggregate, Some(FixedBytes(expected)));
+            assert_eq!(decoded[1].aggregate, Some(POINT));
+            assert_eq!(decoded[0].batches.len(), width);
+            assert_eq!(decoded[1].batches.len(), 1);
+            assert_eq!(
+                decoded.iter().flat_map(|chunk| chunk.batches.clone()).collect::<Vec<_>>(),
+                blocks
+                    .iter()
+                    .map(|block| BatchComposer::block_to_single_batch(block).unwrap())
+                    .collect::<Vec<_>>()
+            );
+
+            for submission in &submissions {
+                encoder.requeue(submission.id);
+            }
+            let retried: Vec<_> = std::iter::from_fn(|| encoder.next_submission()).collect();
+            assert_eq!(chunks(&retried, &config), decoded);
+        }
+    }
+
+    #[test]
+    fn channel_limit_splits_and_reaggregates_only_the_accepted_prefix() {
+        let config = config();
+        let mut encoder = BatchEncoder::new(
+            Arc::clone(&config),
+            EncoderConfig { max_frame_size: Frame::ENCODED_OVERHEAD + 1, ..Default::default() },
+        )
+        .unwrap();
+        let mut blocks = blocks(2);
+        for block in &mut blocks {
+            // Each block fits the frame-count limit, but both together do not.
+            block.body.transactions.push(BaseTxEnvelope::Legacy(
+                TxLegacy { input: vec![0x11; 40_000].into(), ..Default::default() }
+                    .into_signed(Signature::test_signature()),
+            ));
+            encoder.add_witnessed_block(block.clone(), Some(POINT)).unwrap();
+        }
+        let decoded = chunks(&encoder.encode_and_drain().unwrap(), &config);
+        assert_eq!(decoded.len(), 2);
+        for (chunk, block) in decoded.iter().zip(&blocks) {
+            assert_eq!(chunk.aggregate, Some(POINT));
+            assert_eq!(chunk.batches, vec![BatchComposer::block_to_single_batch(block).unwrap()]);
+        }
+    }
+
+    #[test]
+    fn deadline_flushes_partial_chunk_and_reset_drops_old_witnesses() {
+        let config = config();
+        let mut encoder = BatchEncoder::new(Arc::clone(&config), EncoderConfig::default()).unwrap();
+        let blocks = blocks(2);
+        encoder.add_witnessed_block(blocks[0].clone(), Some(POINT)).unwrap();
+        assert_eq!(encoder.step().unwrap(), StepResult::Idle);
+        encoder.reset();
+        encoder.add_witnessed_block(blocks[1].clone(), Some(POINT)).unwrap();
+        assert_eq!(encoder.step().unwrap(), StepResult::Idle);
+        encoder.advance_l1_head(2);
+        let submissions: Vec<_> = std::iter::from_fn(|| encoder.next_submission()).collect();
+        let decoded = chunks(&submissions, &config);
+        assert_eq!(decoded.len(), 1);
+        assert_eq!(decoded[0].aggregate, Some(POINT));
+        assert_eq!(
+            decoded[0].batches,
+            vec![BatchComposer::block_to_single_batch(&blocks[1]).unwrap()]
+        );
+    }
+
+    #[test]
+    fn refuses_missing_extraneous_and_non_chunk_witnesses() {
+        for (index, (mut block, witness, rollup)) in [
+            (blocks(1).remove(0), None, config()),
+            (blocks(1).remove(0), Some(POINT), config()),
+            (blocks(1).remove(0), Some(POINT), Arc::new(RollupConfig::default())),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            if index == 1 {
+                block.body.transactions.pop();
+            }
+            let mut encoder = BatchEncoder::new(rollup, EncoderConfig::default()).unwrap();
+            encoder.add_witnessed_block(block, witness).unwrap();
+            assert!(matches!(encoder.step(), Err(StepError::BlsWitness { .. })));
         }
     }
 }

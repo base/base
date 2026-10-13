@@ -134,6 +134,11 @@ pub struct Admission {
     pub priority: u128,
     /// The invalidation surfaces this transaction depends on.
     pub watch_set: WatchSet,
+    /// Fixed amounts that accounts other than the payer must keep covering for the
+    /// transaction to execute, such as the value a native BLS batch moves out of each
+    /// inner sender. Each account must also be watched as [`InvalidationKey::Balance`];
+    /// a balance change below its amount drops the transaction.
+    pub spend_thresholds: Vec<(Address, U256)>,
 }
 
 /// How a transaction was charged against the limits, retained so removal can
@@ -168,6 +173,7 @@ pub struct MempoolGuard {
     payment_counts: InflightCounters,
     payer_books: HashMap<Address, PayerBook>,
     records: HashMap<TxHash, AdmissionRecord>,
+    spend_thresholds: HashMap<TxHash, Vec<(Address, U256)>>,
     limits: GuardLimits,
 }
 
@@ -194,6 +200,7 @@ impl MempoolGuard {
             payment_counts: InflightCounters::new(),
             payer_books: HashMap::new(),
             records: HashMap::new(),
+            spend_thresholds: HashMap::new(),
             limits,
         }
     }
@@ -347,6 +354,9 @@ impl MempoolGuard {
                 max_cost: admission.max_cost,
             },
         );
+        if !admission.spend_thresholds.is_empty() {
+            self.spend_thresholds.insert(admission.hash, admission.spend_thresholds);
+        }
         self.index.insert(admission.hash, admission.watch_set);
         Ok(())
     }
@@ -444,6 +454,9 @@ impl MempoolGuard {
                 max_cost: admission.max_cost,
             },
         );
+        if !admission.spend_thresholds.is_empty() {
+            self.spend_thresholds.insert(admission.hash, admission.spend_thresholds);
+        }
         self.index.insert(admission.hash, admission.watch_set);
     }
 
@@ -507,6 +520,7 @@ impl MempoolGuard {
         if record.payment_counted {
             self.payment_counts.decrement(record.payer);
         }
+        self.spend_thresholds.remove(hash);
         self.index.remove(hash);
         true
     }
@@ -556,6 +570,8 @@ impl MempoolGuard {
     /// * Count-limited payers (and self-paying senders) drop any individual
     ///   transaction whose max cost now exceeds the balance (per-transaction
     ///   threshold), matching standard EIP-1559 semantics.
+    /// * Any transaction with a [`Admission::spend_thresholds`] entry for the account is
+    ///   dropped once the balance falls below that entry's amount.
     ///
     /// Returns the dropped hashes.
     pub fn on_balance_changed(&mut self, account: Address, new_balance: U256) -> Vec<TxHash> {
@@ -572,11 +588,17 @@ impl MempoolGuard {
                 .iter()
                 .filter(|hash| {
                     self.records.get(*hash).is_some_and(|record| {
-                        debug_assert_eq!(
-                            record.payer, account,
-                            "balance watcher must match the transaction payer"
+                        let spend = self.spend_thresholds.get(*hash).and_then(|spends| {
+                            spends.iter().find(|(spender, _)| *spender == account)
+                        });
+                        debug_assert!(
+                            record.payer == account || spend.is_some(),
+                            "balance watcher must match the transaction payer or a spend threshold"
                         );
-                        !record.payer_booked && record.max_cost > new_balance
+                        let payer_short = record.payer == account
+                            && !record.payer_booked
+                            && record.max_cost > new_balance;
+                        payer_short || spend.is_some_and(|(_, amount)| *amount > new_balance)
                     })
                 })
                 .copied()
@@ -634,6 +656,7 @@ mod tests {
             max_cost: U256::from(max_cost),
             priority: 1,
             watch_set: WatchSet::new(),
+            spend_thresholds: Vec::new(),
         }
     }
 

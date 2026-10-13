@@ -2,9 +2,53 @@
 
 Research-only example. Do not use these public test keys or unaudited implementations with real funds.
 
-There are two executable paths: a development-chain-only **native transaction type `0x7a`** in this checkout, and the earlier Solidity control experiment. The native path changes consensus on chain **84538453 only**; it is not a mainnet activation proposal. `estimate.mjs` remains a separate counterfactual sizing experiment for general mainnet traffic.
+The current path uses **independent native `0x7b` transfers**, with automatic block aggregation and L1 chunk reaggregation. The earlier `0x7a` user-batch and Solidity experiments remain as controls. Native consensus changes apply on chain **84538453 only**, not mainnet. `estimate.mjs` remains a separate counterfactual sizing experiment for general mainnet traffic.
 
-## Native transaction flow
+## Wallet API: create once, transfer independently
+
+`intent-wallet.mjs` exposes `create()` and `transfer({ to, value })`. Creation is an ECDSA-authorized `0x7a` registration containing a 96-byte BLS public key and a 48-byte proof of possession (PoP). Transfers use that registered key; users never choose batches or coordinate with other users. Each sender pays its own fees and exactly **21,000 execution gas** per transfer. Registration and DA charges remain separate.
+
+Unlike ECDSA, BLS signatures can be added after signing. Each wallet submits an intent and its 48-byte signature to the pool. The sequencer verifies each signature and aggregates only those transfers included in its block. Blocks retain the canonical intent bytes, while the block aggregate travels as a detached witness covered by the sequencer's gossip signature. The batcher adds block aggregates again to produce one 48-byte aggregate per **32, 64 or 128 blocks**. Empty blocks contribute no signature. Partial chunks flush on channel deadlines; channel-size and 16,384-transfer limits can shorten chunks.
+
+The canonical intent is `0x7b || rlp([chainId, sender, nonce, recipient, value, maxPriorityFeePerGas, maxFeePerGas])`. Its transaction hash is the hash of those bytes, not of the pooled signature. The signing digest binds the application domain and that hash. The fixed gas limit is 21,000; the sender address costs 20 bytes because signature recovery no longer supplies it. Arbitrary contract calls, precompile recipients, key rotation and code-bearing senders are unsupported.
+
+L1 carries `0x02 || rlp([aggregate48_or_empty, [SingleBatch...]])`, with normal channel framing. Derivation authenticates the **whole chunk before releasing any member**. A missing, wrong or incomplete signature drops the chunk; unavailable verification retries the same pending chunk. Plain singles and span batches cannot smuggle in unsigned `0x7b` intents. The proof provider verifies the same chunk against an oracle-backed registry. The authenticated Engine boundary carries a non-DA `Derived` assertion only after this verification. A durable per-block witness/derivation marker supports database reexecution; a missing marker fails closed.
+
+The batcher's block source and unsafe followers must read from a producer or node retaining block witnesses. A node reconstructed from L1 has a chunk aggregate, not recoverable individual block aggregates, and cannot provide those witnesses. It can validate/reconstruct from L1; it is not a substitute source for unsafe block-witness RPCs.
+
+### Reaggregation does not make verification constant-time
+
+For secret scalars \(x_i\), public keys \(PK_i=x_iG_2\), and message points \(H(m_i)\), the aggregate is \(\sigma=\sum_i x_iH(m_i)\). Verification checks:
+
+\[
+e(\sigma,G_2)=\prod_i e(H(m_i),PK_i).
+\]
+
+It is **not** the product of the sum of public keys and the sum of message hashes; that introduces cross terms. Signatures can be added across blocks because point addition is associative. Different transfer messages still require separate pairing terms. A single 48-byte DA witness does not imply one-signature verification cost, and 21,000 is experimental gas pricing rather than a CPU/prover benchmark.
+
+This implementation chooses the BLS PoP scheme: every key must pass a domain-separated PoP check before use. ECDSA creation proves authority over the existing address; PoP proves possession of the new BLS secret. Canonical encoding, subgroup membership and non-identity checks serve different purposes and cannot replace PoP. A basic scheme with enforced distinct messages or a message-augmentation scheme could avoid a separate PoP, but those are different protocols with different validation requirements. Tests and independent noble verification provide implementation evidence, not a formal security proof or audit.
+
+### Current demo and measurement scope
+
+`intent.mjs` sends eight independent users' transfers for 130 rounds by default, checks sender-paid 21,000-gas receipts, rejects forged and unsigned submissions, independently verifies block aggregates, and models compressed DA for each chunk width. With `ENGINE_IPC_PATH` (or `ENGINE_JWT_FILE` and `ENGINE_RPC_URL`), it also checks that missing/forged witnesses cannot exploit an already-VALID Engine header cache. The integrated sequencer uses `$DEVNET_ROOT/l2/builder/engine.ipc`; the checker needs permission to connect to that socket. Its authenticated HTTP listener uses an ephemeral loopback port, not the Compose-published auth port. `verify-intent.mjs` checks a fresh, L1-isolated node and independently decodes beacon blobs, channel frames, registration PoPs and chunk aggregates. Expected JSON is a checker input, never imported into the node.
+
+The DA tables emitted by the script compare mined intents with independently signed ECDSA references at matching block boundaries. They exclude blob padding and are sensitive to repeated addresses and flush policy. At the same DA budget and fill ratio, the capacity bound scales by `ECDSA compressed bytes / BLS compressed bytes`; execution, networking and proving can impose lower limits. Historical measurements below are for the earlier user-batch format, **not measurements of the new architecture**.
+
+The current wallet run executed 1,040 transfers for **21,840,000 gas** and passed all eight live checks, including ordinary ECDSA funding, registration, invalid-signature admission, block/chunk authorization and the Engine cache check. For its repeated eight sender/recipient pairs, the controlled warm-channel model measured:
+
+| Chunk width | ECDSA bytes | BLS bytes | DA saving | Conditional DA-capacity ratio |
+| --- | ---: | ---: | ---: | ---: |
+| 32 blocks | 83,378 | 15,117 | 81.87% | 5.52× |
+| 64 blocks | 83,378 | 14,802 | 82.25% | 5.63× |
+| 128 blocks | 83,378 | 14,606 | 82.48% | 5.71× |
+
+The registration-only channel cost 2,083 bytes for eight keys, including keys, PoPs, ECDSA authorization and envelopes. Flushing separately per chunk changed the 128-block comparison to 84,172 versus 15,684 bytes (5.37×), and the 32-block comparison to 87,091 versus 20,051 bytes (4.34×). These are not observed TPS or blob utilization. The generic-traffic estimates later in this document are much smaller; repeated simple transfers are not a representative Base workload.
+
+A fresh L1-isolated node reproduced checkpoint **2233** (`0x8b9`), hash `0xe0d0c77939183f7b0d58c12e961cb83b3a6d769e945b1b2f21761daea0c638cf`, all three roots, 1,064 receipts, and the workload's balances/nonces. It had zero execution peers and sequencing disabled. Independent blob decoding verified 16 published keys/PoPs and 2,080 transfer intents, including an earlier diagnostic workload whose HTTP Engine check could not connect. The successful Engine check used IPC. Actual L1 chunks included 128-block aggregates and shorter deadline/admin-flush tails. Registration and aggregation data came from beacon blobs, not the producer's witness RPC or the expected-output file.
+
+Replay caught a missing `base_verifyBlsChunk` registration on the authenticated Engine endpoint; this is now installed there as well as on the public RPC. The prototype requires the native basic builder (or post-Denim `--builder.payload-builder-cutover`) on both producer and replay node. Flashblocks deliberately refuses these unsigned canonical transfers; the overlay enables the cutover on both. Pool restart preserves individual signatures, but reorg reinjection from signature-free canonical transactions cannot recover them: wallets must resubmit those intents. Admission cannot see the precompile set and may admit a transfer that execution later rejects. None of these checks measures production verification/proving capacity or constitutes a security audit.
+
+## Earlier native user-batch transaction flow
 
 `native.mjs` exercises raw RPC submission, txpool admission, block inclusion, native receipts, and real EOA balance/nonce changes. It funds 32 owners and 32 existing recipients with ordinary ECDSA transfers, registers each owner's BLS key with a PoP, and sends 1,000 transfers in 33 native batches (one transfer, 31 batches of 32, then seven). No vault contract holds the transfer balances.
 
@@ -14,7 +58,7 @@ Registration input contains the **96-byte compressed G2 key plus its 48-byte G1 
 
 `verify-native.mjs` checks a fresh node with no L2 peers or producer connection, deriving safe blocks from the real Rust batcher's L1 blobs. It compares block hash and all three roots, exact native transaction bytes/hashes, receipts, balances, and nonces. It extracts registration keys and proofs from the derived transactions and independently verifies every PoP and aggregate using noble; the node uses arkworks. Expected JSON is a checker input, never imported into the node.
 
-### Run the native devnet
+### Run the native devnet with the current wallet API
 
 Use a fresh disposable data directory. Do not run alongside another repository devnet: container names and ports are shared. Build the setup image as in the contract instructions below, then run from the repository root:
 
@@ -26,6 +70,7 @@ CARGO_PROFILE_DEV_DEBUG=0 CARGO_INCREMENTAL=0 CARGO_BUILD_JOBS=8 \
   --config 'profile.dev.package.ark-bls12-381.opt-level=3' \
   --config 'profile.dev.package.ark-serialize.opt-level=3' \
   --config 'profile.dev.package.sha2.opt-level=3' \
+  --config 'profile.dev.package.base-common-bls.opt-level=3' \
   --config 'profile.dev.package.base-common-evm.opt-level=3'
 export NATIVE_BASE_BINARY="$PWD/target/debug/base"
 export DEVNET_ROOT=$(mktemp -d /tmp/base-native-bls.XXXXXX)
@@ -38,7 +83,7 @@ dc() {
 }
 dc up -d --no-build setup-devnet l1-el l1-cl l1-vc base-builder base-batcher
 npm ci --prefix etc/scripts/devnet/bls-da
-node etc/scripts/devnet/bls-da/native.mjs /tmp/native-demo.json
+node etc/scripts/devnet/bls-da/intent.mjs /tmp/native-demo.json
 
 # The replay node must start with no L2 state.
 sudo test ! -e "$DEVNET_ROOT/l2/base-rpc"
@@ -49,9 +94,11 @@ sudo docker network inspect bls-da_l1-only \
 IP=$(sudo docker inspect base-rpc \
   -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')
 VALIDATOR_RPC_URL=http://$IP:8645 VALIDATOR_CL_RPC_URL=http://$IP:8649 \
-  node etc/scripts/devnet/bls-da/verify-native.mjs /tmp/native-demo.json /tmp/native-replay.json
+  node etc/scripts/devnet/bls-da/verify-intent.mjs /tmp/native-demo.json /tmp/native-replay.json
 dc down
 ```
+
+The batcher defaults to 32-block chunks on this development chain. Set `BLS_CHUNK_BLOCKS=64` or `128` and preserve that environment variable through `sudo` to change it. `BLS_CHANNEL_DURATION` controls the L1-block channel deadline; short deadlines intentionally flush incomplete chunks. The old `native.mjs` / `verify-native.mjs` scripts remain available for the earlier user-batch control.
 
 The crypto profile overrides matter: an unoptimized 32-message pairing can exceed the devnet's block-building time budget. A release build is another option. The overlay mounts the rebuilt binary in every Base service, including `base-batcher`. Do not substitute the external Go batcher: its transaction decoder does not know `0x7a`. The base container image supplies the entrypoint and userspace, not the Base executable being tested. The demo records the binary SHA-256 and client version.
 

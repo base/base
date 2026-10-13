@@ -332,6 +332,14 @@ impl FromTxWithEncoded<BaseTxEnvelope> for BaseTransaction<TxEnv> {
                 deposit: Default::default(),
                 eip8130: None,
             },
+            // A native BLS transfer projects to an ordinary value transfer from its sender; its
+            // detached signature is not part of the canonical transaction.
+            BaseTxEnvelope::BlsTransfer(tx) => Self {
+                base: TxEnv::from_recovered_tx(tx.inner(), caller),
+                enveloped_tx: Some(encoded),
+                deposit: Default::default(),
+                eip8130: None,
+            },
             BaseTxEnvelope::Deposit(tx) => Self::from_encoded_tx(tx.inner(), caller, encoded),
         }
     }

@@ -219,6 +219,8 @@ where
             gas_limit: config.attributes.gas_limit.unwrap_or(config.parent_header.gas_limit),
             parent_beacon_block_root: config.attributes.payload_attributes.parent_beacon_block_root,
             extra_data,
+            // Flashblocks build no native BLS transfers (see `execute_best_transactions`).
+            bls_derived: false,
         };
 
         let evm_config = self.evm_config.clone();

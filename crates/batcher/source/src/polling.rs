@@ -2,6 +2,7 @@
 
 use std::time::Duration;
 
+use alloy_primitives::{B256, FixedBytes};
 use async_trait::async_trait;
 use base_common_consensus::BaseBlock;
 use base_protocol::BlockInfo;
@@ -16,6 +17,13 @@ pub trait PollingSource: Send + Sync {
     /// Fetch `number`, returning [`SourceError::BlockUnavailable`] when the
     /// provider does not have it yet.
     async fn block_by_number(&self, number: u64) -> Result<BaseBlock, SourceError>;
+
+    /// Fetch the durable aggregate for a block containing native BLS transfers.
+    /// Missing witnesses must not advance the source cursor.
+    async fn bls_block_aggregate(
+        &self,
+        block_hash: B256,
+    ) -> Result<Option<FixedBytes<48>>, SourceError>;
 }
 
 /// Delivers consecutive L2 blocks above a trusted safe head.
@@ -81,7 +89,28 @@ where
             let expected = self.tip.number.saturating_add(1);
             match self.poller.block_by_number(expected).await {
                 Ok(block) if block.header.number == expected => {
-                    return self.process(block);
+                    if block.header.parent_hash != self.tip.hash
+                        || !block.body.transactions.iter().any(|tx| tx.is_bls_transfer())
+                    {
+                        return self.process(block);
+                    }
+                    match self.poller.bls_block_aggregate(block.header.hash_slow()).await {
+                        Ok(Some(aggregate)) => {
+                            let L2BlockEvent::Block(block) = self.process(block) else {
+                                unreachable!("parent was checked before requesting the witness");
+                            };
+                            return L2BlockEvent::WitnessedBlock {
+                                block,
+                                bls_aggregate: Some(aggregate),
+                            };
+                        }
+                        Ok(None) => {
+                            tracing::warn!(block = expected, "BLS block witness not available yet");
+                        }
+                        Err(error) => {
+                            tracing::warn!(block = expected, %error, "failed to fetch BLS block witness");
+                        }
+                    }
                 }
                 Ok(block) => {
                     tracing::warn!(
@@ -279,6 +308,56 @@ mod tests {
                 panic!("expected block");
             };
             assert_eq!(block.header.number, 6);
+        });
+    }
+
+    #[test]
+    fn missing_or_unavailable_witness_retries_without_skipping_the_block() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let mut blocks = chain(1);
+            blocks[1]
+                .body
+                .transactions
+                .push(base_common_consensus::TxBlsTransfer::default().into());
+            let expected_block = blocks[1].clone();
+            let mut poller = MockPollingSource::new();
+            poller
+                .expect_block_by_number()
+                .with(eq(1))
+                .returning(move |_| Ok(expected_block.clone()));
+            let mut sequence = Sequence::new();
+            poller
+                .expect_bls_block_aggregate()
+                .with(eq(blocks[1].header.hash_slow()))
+                .once()
+                .in_sequence(&mut sequence)
+                .return_once(|_| Ok(None));
+            poller
+                .expect_bls_block_aggregate()
+                .with(eq(blocks[1].header.hash_slow()))
+                .once()
+                .in_sequence(&mut sequence)
+                .return_once(|_| Err(SourceError::Provider("temporary failure".into())));
+            let witness = FixedBytes::repeat_byte(7);
+            poller
+                .expect_bls_block_aggregate()
+                .with(eq(blocks[1].header.hash_slow()))
+                .once()
+                .in_sequence(&mut sequence)
+                .return_once(move |_| Ok(Some(witness)));
+            let start = ctx.now();
+            let mut source = PollingBlockSource::new(
+                ctx.clone(),
+                poller,
+                BlockInfo::from(&blocks[0]),
+                Duration::from_secs(1),
+            );
+            let L2BlockEvent::WitnessedBlock { block, bls_aggregate } = source.next().await else {
+                panic!("unsigned intents must not be emitted without their block witness");
+            };
+            assert_eq!(*block, blocks[1]);
+            assert_eq!(bls_aggregate, Some(witness));
+            assert_eq!(ctx.now(), start + Duration::from_secs(2));
         });
     }
 }

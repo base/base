@@ -393,6 +393,7 @@ mod tests {
                 block_hash,
                 transactions: vec![],
             }),
+            bls_aggregate: None,
         }
     }
 

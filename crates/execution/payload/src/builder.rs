@@ -10,13 +10,16 @@ use alloy_evm::{
     Evm as AlloyEvm,
     block::{CommitChanges, TxResult},
 };
-use alloy_primitives::{Address, B256, TxHash, U256};
+use alloy_primitives::{Address, B256, FixedBytes, TxHash, U256};
 use alloy_rpc_types_debug::ExecutionWitness;
 use alloy_rpc_types_engine::PayloadId;
 use base_common_chains::Upgrades;
-use base_common_consensus::{BaseTransaction, DepositReceiptExt, Predeploys};
-use base_common_evm::L1BlockInfo;
+use base_common_consensus::{
+    BLS_TRANSFER_TX_TYPE_ID, BaseTransaction, DepositReceiptExt, Predeploys,
+};
+use base_common_evm::{BlsChunkVerifier, BlsCrypto, L1BlockInfo};
 use base_execution_eip8130::IntrinsicGas;
+use base_execution_evm::BlsStoredWitness;
 use base_execution_txpool::{
     BasePooledTx, GuardMetrics, ParkableTransactionPool, PredicateContext, ValidityPredicate,
     estimated_da_size::DataAvailabilitySized,
@@ -462,6 +465,17 @@ impl<Txs> Builder<'_, Txs> {
                 }
             }
         });
+        // Pool builds verified every included transfer's witness at admission, so the
+        // aggregate is valid by construction; it is published with the block for later
+        // verification without the pooled witnesses.
+        let bls_aggregate = if info.bls_transfer_signatures.is_empty() {
+            None
+        } else {
+            Some(BlsCrypto::aggregate_signatures(&info.bls_transfer_signatures).map_err(
+                |error| PayloadBuilderError::other(BasePayloadBuilderError::from(error)),
+            )?)
+        };
+
         let BlockBuilderOutcome {
             execution_result,
             hashed_state,
@@ -470,6 +484,19 @@ impl<Txs> Builder<'_, Txs> {
             block_access_list,
         } = debug_span!("finish_payload", block_num)
             .in_scope(|| builder.finish(state_provider, state_root))?;
+
+        // Record the block's authorization only once the block is final. A derived block's
+        // transfers are authorized by its L1 input rather than a signature.
+        let bls_witness = bls_aggregate.map(BlsStoredWitness::Aggregate).or_else(|| {
+            (ctx.attributes().bls_derived()
+                && block.body().transactions().any(|tx| tx.ty() == BLS_TRANSFER_TX_TYPE_ID))
+            .then_some(BlsStoredWitness::Derived)
+        });
+        if let (Some(store), Some(witness)) = (&ctx.builder_config.bls_witness_store, bls_witness) {
+            store.put(block.hash(), witness).map_err(|error| {
+                PayloadBuilderError::other(BasePayloadBuilderError::from(error))
+            })?;
+        }
 
         let sealed_block = Arc::new(block.sealed_block().clone());
         debug!(target: "payload_builder", id=%ctx.payload_id(), sealed_block_header = ?sealed_block.header(), "sealed built block");
@@ -493,7 +520,8 @@ impl<Txs> Builder<'_, Txs> {
             info.total_fees,
             Some(executed),
             block_access_list.map(|bal| alloy_rlp::encode(bal).into()),
-        );
+        )
+        .with_bls_aggregate(bls_aggregate);
         BuilderMetrics::record_inclusion(&info.inclusion);
 
         if no_tx_pool || ctx.is_denim_active() {
@@ -590,6 +618,9 @@ pub struct ExecutionInfo {
     /// Transaction hashes that exceeded a per-transaction resource limit and should be
     /// permanently removed from the pool and recorded in the shared rejection cache.
     pub permanently_rejected_txs: Vec<TxHash>,
+    /// Individual BLS witnesses of the native BLS transfers committed from the pool, in block
+    /// order. Skipped or rejected transfers never contribute.
+    pub bls_transfer_signatures: Vec<FixedBytes<48>>,
 }
 
 impl ExecutionInfo {
@@ -602,6 +633,7 @@ impl ExecutionInfo {
             inclusion: InclusionTracker::default(),
             resource_metering_usage: Vec::new(),
             permanently_rejected_txs: Vec::new(),
+            bls_transfer_signatures: Vec::new(),
         }
     }
 
@@ -805,6 +837,25 @@ where
                 return Err(PayloadBuilderError::other(
                     BasePayloadBuilderError::BlobTransactionRejected,
                 ));
+            }
+
+            // A native BLS transfer in the attributes carries no witness, so only derivation
+            // from authenticated input can authorize it. Pool builds run with local derived
+            // authorization, so an unauthenticated attribute transfer must never execute.
+            if sequencer_tx.value().ty() == BLS_TRANSFER_TX_TYPE_ID
+                && !self.attributes().bls_derived()
+            {
+                if no_tx_pool {
+                    return Err(PayloadBuilderError::other(
+                        BasePayloadBuilderError::UnauthenticatedBlsTransfer,
+                    ));
+                }
+                warn!(
+                    target: "payload_builder",
+                    tx_hash = %sequencer_tx.value().tx_hash(),
+                    "skipping native BLS transfer in non-derived payload attributes"
+                );
+                continue;
             }
 
             // Convert the transaction to a [RecoveredTx]. This is
@@ -1235,6 +1286,32 @@ where
                 continue;
             }
 
+            // A native BLS transfer needs its individual witness for the block aggregate, and a
+            // block may carry at most as many transfers as one chunk proof verifies.
+            let bls_transfer_signature = if tx.as_bls_transfer().is_some() {
+                let Some(signature) = tx.bls_transfer_signature() else {
+                    trace!(
+                        target: "payload_builder",
+                        tx_hash = %tx_hash,
+                        "skipping native BLS transfer without a witness"
+                    );
+                    Self::skip_current(&mut best_txs, tx.sender(), tx.nonce(), replay_independent);
+                    continue;
+                };
+                if info.bls_transfer_signatures.len() >= BlsChunkVerifier::MAX_TRANSFERS {
+                    trace!(
+                        target: "payload_builder",
+                        tx_hash = %tx_hash,
+                        "skipping native BLS transfer over the per-block transfer limit"
+                    );
+                    Self::skip_current(&mut best_txs, tx.sender(), tx.nonce(), replay_independent);
+                    continue;
+                }
+                Some(signature)
+            } else {
+                None
+            };
+
             let tx = tx.into_consensus();
 
             let da_footprint_gas_scalar = self
@@ -1385,6 +1462,7 @@ where
 
             info.cumulative_gas_used += gas_output.tx_gas_used();
             info.cumulative_da_bytes_used += tx_da_size;
+            info.bls_transfer_signatures.extend(bls_transfer_signature);
             if let Some(usage) = pending_resource_usage {
                 resource_metering.apply_accounted_usage(
                     &tx_hash,
@@ -1544,16 +1622,23 @@ mod tests {
         time::Duration,
     };
 
-    use alloy_consensus::{Header, SignableTransaction, TxEip1559};
+    use alloy_consensus::{
+        Header, Sealable, SignableTransaction, TxEip1559, transaction::Recovered,
+    };
     use alloy_eips::eip2718::Encodable2718;
     use alloy_evm::Evm;
-    use alloy_primitives::{Address, B256, Signature, StorageKey, TxHash, TxKind, U256};
+    use alloy_primitives::{
+        Address, B256, FixedBytes, Signature, StorageKey, TxHash, TxKind, U256,
+    };
     use base_bundles::{MeterBundleResponse, OpcodeGas, TransactionResult};
     use base_common_chains::BaseUpgrade;
-    use base_common_consensus::{BasePrimitives, BaseTxEnvelope, Predeploys};
-    use base_common_evm::BaseTime;
+    use base_common_consensus::{
+        BasePooledTransaction as BasePooledEnvelope, BasePrimitives, BaseReceipt, BaseTxEnvelope,
+        BlsConstants, BlsTransferWithSignature, Predeploys, TxBlsTransfer,
+    };
+    use base_common_evm::{BaseTime, BlsRegistry, test_utils::BlsTestKey};
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
-    use base_execution_evm::BaseEvmConfig;
+    use base_execution_evm::{BaseEvmConfig, BlsStoredWitness, BlsWitnessStore};
     use base_execution_txpool::{BasePooledTransaction, ValidityOperator, ValidityPredicate};
     use base_observability_events::{TransactionEventCapture, TransactionEventType};
     use reth_basic_payload_builder::{BuildOutcomeKind, PayloadConfig};
@@ -1561,6 +1646,7 @@ mod tests {
     use reth_ethereum_forks::ForkCondition;
     use reth_evm::execute::BlockBuilder;
     use reth_payload_builder::PayloadId;
+    use reth_payload_primitives::BuiltPayload;
     use reth_payload_util::{NoopPayloadTransactions, PayloadTransactions};
     use reth_primitives_traits::{Account, SealedHeader, SignedTransaction, WithEncoded};
     use reth_provider::noop::NoopProvider;
@@ -1944,6 +2030,272 @@ mod tests {
         fn discard_parked(&mut self, transaction_hash: B256) -> bool {
             self.transactions.discard_parked(transaction_hash)
         }
+    }
+
+    /// A development-chain builder context whose state registers `keys` and funds their owners.
+    fn bls_payload_context(
+        no_tx_pool: bool,
+        bls_derived: bool,
+        transactions: Vec<WithEncoded<BaseTxEnvelope>>,
+    ) -> BasePayloadBuilderCtx<BaseEvmConfig, BaseChainSpec> {
+        let mut ctx = pool_payload_context(DENIM_TIMESTAMP - 1);
+        let chain_spec = Arc::new(
+            BaseChainSpecBuilder::base_mainnet()
+                .chain(reth_chainspec::Chain::from_id(BlsConstants::CHAIN_ID))
+                .with_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(DENIM_TIMESTAMP))
+                .build(),
+        );
+        ctx.evm_config = BaseEvmConfig::<_, BasePrimitives>::base(Arc::clone(&chain_spec));
+        ctx.chain_spec = chain_spec;
+        let mut attributes = ctx.config.attributes.clone();
+        attributes.no_tx_pool = no_tx_pool;
+        attributes.bls_derived = bls_derived;
+        attributes.transactions = transactions;
+        ctx.config =
+            PayloadConfig::new(Arc::clone(&ctx.config.parent_header), attributes, ctx.payload_id());
+        ctx
+    }
+
+    fn bls_state(keys: &[(Address, &BlsTestKey)], contract: Address) -> StateProviderTest {
+        let mut storage = HashMap::default();
+        storage.insert(
+            StorageKey::from(BaseTime::ADMIN_SLOT.to_be_bytes::<32>()),
+            U256::from_be_slice(Predeploys::PROXY_ADMIN.as_slice()),
+        );
+        let mut provider = StateProviderTest::default();
+        provider.insert_account(
+            Predeploys::BASE_TIME,
+            Account::default(),
+            Some(BaseTime::proxy_bytecode()),
+            storage,
+        );
+        let registry = keys
+            .iter()
+            .flat_map(|(owner, key)| {
+                BlsRegistry::key_slots(*owner)
+                    .into_iter()
+                    .zip(BlsRegistry::key_words(&key.public_key().0))
+                    .map(|(slot, word)| (StorageKey::from(slot), word))
+            })
+            .collect();
+        provider.insert_account(
+            BlsConstants::REGISTRY_ADDRESS,
+            Account { nonce: BlsRegistry::ACCOUNT_NONCE, ..Default::default() },
+            None,
+            registry,
+        );
+        for (owner, _) in keys {
+            provider.insert_account(
+                *owner,
+                Account { balance: U256::from(10u128.pow(20)), ..Default::default() },
+                None,
+                HashMap::default(),
+            );
+        }
+        provider.insert_account(
+            contract,
+            Account::default(),
+            Some(alloy_primitives::Bytes::from_static(&[0x00])),
+            HashMap::default(),
+        );
+        provider
+    }
+
+    fn bls_transfer(sender: Address, nonce: u64, recipient: Address) -> TxBlsTransfer {
+        TxBlsTransfer {
+            chain_id: BlsConstants::CHAIN_ID,
+            sender,
+            nonce,
+            recipient,
+            value: U256::from(1_000u64),
+            max_priority_fee_per_gas: 1,
+            max_fee_per_gas: 2_000_000_000,
+        }
+    }
+
+    fn signed_pool_transfer(tx: TxBlsTransfer, signature: FixedBytes<48>) -> BasePooledTransaction {
+        BasePooledTransaction::from_pooled(Recovered::new_unchecked(
+            BasePooledEnvelope::from(BlsTransferWithSignature {
+                transaction: tx.seal_slow(),
+                signature,
+            }),
+            tx.sender,
+        ))
+    }
+
+    /// A transfer rebuilt from its consensus form, which carries no witness.
+    fn unsigned_pool_transfer(tx: TxBlsTransfer) -> BasePooledTransaction {
+        let envelope = BaseTxEnvelope::from(tx);
+        let encoded_len = envelope.encode_2718_len();
+        BasePooledTransaction::new(Recovered::new_unchecked(envelope, tx.sender), encoded_len)
+    }
+
+    /// An ordinary EIP-1559 control transaction on the development chain.
+    fn dev_chain_transaction() -> BasePooledTransaction {
+        let envelope = BaseTxEnvelope::Eip1559(
+            TxEip1559 {
+                chain_id: BlsConstants::CHAIN_ID,
+                gas_limit: 100_000,
+                max_fee_per_gas: 2_000_000_000,
+                max_priority_fee_per_gas: 1,
+                to: TxKind::Call(Address::repeat_byte(0x11)),
+                ..Default::default()
+            }
+            .into_signed(Signature::test_signature()),
+        );
+        let encoded_len = envelope.encode_2718_len();
+        BasePooledTransaction::new(envelope.try_into_recovered().unwrap(), encoded_len)
+    }
+
+    fn temp_witness_store() -> (Arc<BlsWitnessStore>, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!(
+            "builder-bls-witness-{}-{}",
+            std::process::id(),
+            B256::random()
+        ));
+        (Arc::new(BlsWitnessStore::open(dir.clone()).unwrap()), dir)
+    }
+
+    /// The payload aggregates the witnesses of exactly the native BLS transfers it commits, in
+    /// block order: never one the builder skipped for a missing witness or one execution
+    /// rejected. The aggregate is recorded for the finalized block.
+    #[test]
+    fn native_builder_aggregates_only_committed_bls_transfer_witnesses() {
+        let key = BlsTestKey::from_seed(1);
+        let other_key = BlsTestKey::from_seed(2);
+        let sender = Address::repeat_byte(0x51);
+        let other = Address::repeat_byte(0x53);
+        let unsigned_sender = Address::repeat_byte(0x55);
+        let recipient = Address::repeat_byte(0x52);
+        let contract = Address::repeat_byte(0x54);
+
+        let first = bls_transfer(sender, 0, recipient);
+        let second = bls_transfer(sender, 1, recipient);
+        let to_contract = bls_transfer(other, 0, contract);
+        let unsigned = bls_transfer(unsigned_sender, 0, recipient);
+        let ordinary = dev_chain_transaction();
+        let transactions = TestParkableTransactions::new(vec![
+            signed_pool_transfer(first, key.sign(first.signing_digest())),
+            signed_pool_transfer(to_contract, other_key.sign(to_contract.signing_digest())),
+            unsigned_pool_transfer(unsigned),
+            ordinary.clone(),
+            signed_pool_transfer(second, key.sign(second.signing_digest())),
+        ]);
+
+        let (store, dir) = temp_witness_store();
+        let mut ctx = bls_payload_context(false, false, vec![]);
+        ctx.builder_config.bls_witness_store = Some(Arc::clone(&store));
+        let mut provider =
+            bls_state(&[(sender, &key), (other, &other_key), (unsigned_sender, &key)], contract);
+        provider.insert_account(
+            ordinary.sender(),
+            Account { balance: U256::MAX, ..Default::default() },
+            None,
+            HashMap::default(),
+        );
+        let outcome = Builder::new(|_| transactions)
+            .build(StateProviderDatabase::new(&provider), &provider, Some(state_root_handle()), ctx)
+            .expect("payload must build");
+        let BuildOutcomeKind::Better { payload } = outcome else {
+            panic!("expected a built payload, got {outcome:?}");
+        };
+
+        let included: Vec<_> =
+            payload.block().body().transactions.iter().map(|tx| *tx.tx_hash()).collect();
+        assert_eq!(included, vec![first.tx_hash(), *ordinary.hash(), second.tx_hash()]);
+        let executed = BuiltPayload::executed_block(&payload).expect("executed block");
+        let receipts = &executed.execution_output.result.receipts;
+        assert!(
+            matches!(receipts[0], BaseReceipt::BlsTransfer(ref receipt) if receipt.status.coerce_status())
+        );
+        assert!(matches!(receipts[1], BaseReceipt::Eip1559(_)));
+        assert!(
+            matches!(receipts[2], BaseReceipt::BlsTransfer(ref receipt) if receipt.status.coerce_status())
+        );
+        let expected = BlsTestKey::aggregate(&[
+            key.sign(first.signing_digest()),
+            key.sign(second.signing_digest()),
+        ]);
+        assert_eq!(payload.bls_aggregate(), Some(expected));
+        assert_eq!(
+            store.get(payload.block().hash()).unwrap(),
+            Some(BlsStoredWitness::Aggregate(expected))
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A pool build without native BLS transfers publishes no aggregate and records nothing.
+    #[test]
+    fn native_builder_publishes_no_aggregate_without_bls_transfers() {
+        let (store, dir) = temp_witness_store();
+        let mut ctx = bls_payload_context(false, false, vec![]);
+        ctx.builder_config.bls_witness_store = Some(Arc::clone(&store));
+        let ordinary = dev_chain_transaction();
+        let mut provider = bls_state(&[], Address::repeat_byte(0x54));
+        provider.insert_account(
+            ordinary.sender(),
+            Account { balance: U256::MAX, ..Default::default() },
+            None,
+            HashMap::default(),
+        );
+        let outcome = Builder::new(|_| TestParkableTransactions::new(vec![ordinary]))
+            .build(StateProviderDatabase::new(&provider), &provider, Some(state_root_handle()), ctx)
+            .expect("payload must build");
+        let BuildOutcomeKind::Better { payload } = outcome else {
+            panic!("expected a built payload, got {outcome:?}");
+        };
+        assert_eq!(payload.block().body().transactions.len(), 1);
+        assert_eq!(payload.bls_aggregate(), None);
+        assert_eq!(store.get(payload.block().hash()).unwrap(), None);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Attribute transfers carry no witnesses. A derived attribute-only build executes them under
+    /// derived authorization and fabricates no aggregate; a non-derived attribute-only build
+    /// fails, and a pool build skips them.
+    #[test]
+    fn attribute_bls_transfers_need_derived_authorization() {
+        let key = BlsTestKey::from_seed(1);
+        let sender = Address::repeat_byte(0x51);
+        let recipient = Address::repeat_byte(0x52);
+        let transfer = BaseTxEnvelope::from(bls_transfer(sender, 0, recipient));
+        let attribute_txs = vec![WithEncoded::new(transfer.encoded_2718().into(), transfer)];
+        let provider = bls_state(&[(sender, &key)], Address::repeat_byte(0x54));
+        let build = |ctx| {
+            Builder::new(|_| NoopPayloadTransactions::<BasePooledTransaction>::default()).build(
+                StateProviderDatabase::new(&provider),
+                &provider,
+                Some(state_root_handle()),
+                ctx,
+            )
+        };
+
+        let (store, dir) = temp_witness_store();
+        let mut derived = bls_payload_context(true, true, attribute_txs.clone());
+        derived.builder_config.bls_witness_store = Some(Arc::clone(&store));
+        let BuildOutcomeKind::Freeze(payload) = build(derived).expect("derived build") else {
+            panic!("expected a frozen attribute-only payload");
+        };
+        assert_eq!(payload.block().body().transactions.len(), 1);
+        assert_eq!(payload.bls_aggregate(), None, "derivation carries no signature");
+        assert_eq!(store.get(payload.block().hash()).unwrap(), Some(BlsStoredWitness::Derived));
+        std::fs::remove_dir_all(dir).unwrap();
+
+        let error = build(bls_payload_context(true, false, attribute_txs.clone())).unwrap_err();
+        assert!(
+            error.to_string().contains("non-derived payload attributes"),
+            "expected an unauthenticated-transfer error, got {error}"
+        );
+
+        // A pool build runs with local derived authorization for its verified pool transfers,
+        // so it must skip an unauthenticated attribute transfer rather than execute it.
+        let BuildOutcomeKind::Better { payload } =
+            build(bls_payload_context(false, false, attribute_txs)).expect("pool build")
+        else {
+            panic!("expected a pool payload");
+        };
+        assert!(payload.block().body().transactions.is_empty());
+        assert_eq!(payload.bls_aggregate(), None);
     }
 
     #[test]

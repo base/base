@@ -22,7 +22,7 @@ use base_common_genesis::RollupConfig;
 use base_common_network::{Base, BaseEngineApi};
 use base_common_rpc_types_engine::{
     BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5,
-    BaseExecutionPayloadV4, BasePayloadAttributes,
+    BaseExecutionPayloadV4, BasePayloadAttributes, BlsPayloadWitness,
 };
 use base_consensus_providers::L1RpcProvider;
 use base_protocol::{FromBlockError, L2BlockInfo};
@@ -291,6 +291,28 @@ where
             parent_beacon_block_root,
         );
 
+        record_call_time(call, Metrics::NEW_PAYLOAD_METHOD).await
+    }
+
+    async fn new_payload_v3_with_witness(
+        &self,
+        payload: ExecutionPayloadV3,
+        parent_beacon_block_root: B256,
+        witness: Option<BlsPayloadWitness>,
+    ) -> TransportResult<PayloadStatus> {
+        let call =
+            self.engine.new_payload_v3_with_witness(payload, parent_beacon_block_root, witness);
+        record_call_time(call, Metrics::NEW_PAYLOAD_METHOD).await
+    }
+
+    async fn new_payload_v4_with_witness(
+        &self,
+        payload: BaseExecutionPayloadV4,
+        parent_beacon_block_root: B256,
+        witness: Option<BlsPayloadWitness>,
+    ) -> TransportResult<PayloadStatus> {
+        let call =
+            self.engine.new_payload_v4_with_witness(payload, parent_beacon_block_root, witness);
         record_call_time(call, Metrics::NEW_PAYLOAD_METHOD).await
     }
 

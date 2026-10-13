@@ -79,6 +79,7 @@ impl MultiplexingServiceBuilder {
             },
             rejection_cache: self.builder_config.rejection_cache.clone(),
             state_provider_metrics,
+            bls_witness_store: None,
         }
     }
 }
@@ -115,7 +116,8 @@ where
                 pool.clone(),
                 ctx.provider().clone(),
                 evm_config.clone(),
-                self.native_payload_config(builder_config.state_provider_metrics),
+                self.native_payload_config(builder_config.state_provider_metrics)
+                    .with_bls_witness_store(evm_config.bls_witness_store().cloned()),
             );
 
         let payload_config = ctx.config().builder.clone();

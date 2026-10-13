@@ -420,6 +420,8 @@ where
         // For singular batches, the span batch cache should be empty.
         match batch {
             Batch::Single(sb) => Ok(sb),
+            // The batch stream never forwards chunks before Holocene.
+            Batch::BlsChunk(_) => Err(PipelineError::InvalidBatchType.crit()),
             Batch::Span(sb) => {
                 let batches = match sb.get_singular_batches(&self.l1_blocks, parent).map_err(|e| {
                     PipelineError::BadEncoding(PipelineEncodingError::SpanBatchError(e)).crit()

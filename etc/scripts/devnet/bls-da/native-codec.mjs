@@ -14,6 +14,34 @@ export const bls = curve.shortSignatures;
 export const rlpInt = n => BigInt(n) === 0n ? '0x' : toBeHex(BigInt(n));
 export const signatureBytes = point => hexlify(bls.Signature.toBytes(point));
 
+// A wallet submits the pooled form, but blocks and DA carry only the canonical intent.
+export const TRANSFER_TYPE = '0x7b';
+export function transferFields(tx) {
+  return [rlpInt(tx.chainId ?? CHAIN_ID), tx.sender, rlpInt(tx.nonce), tx.recipient,
+    rlpInt(tx.value), rlpInt(tx.maxPriorityFeePerGas), rlpInt(tx.maxFeePerGas)];
+}
+
+export function transferIntent(tx) {
+  const fields = transferFields(tx);
+  const canonical = concat([TRANSFER_TYPE, encodeRlp(fields)]);
+  const hash = keccak256(canonical);
+  return { fields, canonical, hash, digest: getBytes(keccak256(concat([DOMAIN, hash]))) };
+}
+
+export function signTransfer(tx, secretKey) {
+  const intent = transferIntent(tx);
+  const signature = signatureBytes(bls.sign(bls.hash(intent.digest, DST), secretKey));
+  return { ...intent, signature, raw: concat([TRANSFER_TYPE, encodeRlp([intent.fields, signature])]) };
+}
+
+export function transferFromRpc(tx) {
+  assert.equal(BigInt(tx.type), 123n);
+  assert.equal(BigInt(tx.gas), 21_000n);
+  const intent = transferIntent({ ...tx, sender: tx.sender ?? tx.from, recipient: tx.recipient ?? tx.to });
+  assert.equal(intent.hash, tx.hash, 'Intent RPC fields must reproduce the canonical hash');
+  return intent;
+}
+
 export function registration(key) {
   const publicKey = key.publicKey.toBytes(true);
   const proof = signatureBytes(bls.sign(bls.hash(publicKey, POP), key.secretKey));

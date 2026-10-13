@@ -7,7 +7,10 @@ mod deposit;
 pub use deposit::{DepositTransaction, TxDeposit};
 
 mod bls;
-pub use bls::{BlsConstants, BlsPayload, BlsPayloadError, BlsTransfer, TxBls};
+pub use bls::{
+    BlsConstants, BlsPayload, BlsPayloadError, BlsTransfer, BlsTransferWithSignature, TxBls,
+    TxBlsTransfer,
+};
 
 mod eip8130;
 #[cfg(feature = "serde")]
@@ -20,7 +23,10 @@ pub use eip8130::{
 };
 
 mod tx_type;
-pub use tx_type::{BLS_TX_TYPE_ID, DEPOSIT_TX_TYPE_ID, EIP8130_REJECTION_MSG, EIP8130_TX_TYPE_ID};
+pub use tx_type::{
+    BLS_TRANSFER_TX_TYPE_ID, BLS_TX_TYPE_ID, DEPOSIT_TX_TYPE_ID, EIP8130_REJECTION_MSG,
+    EIP8130_TX_TYPE_ID,
+};
 
 mod envelope;
 pub use envelope::{BaseTransaction, BaseTxEnvelope, OpTxType};

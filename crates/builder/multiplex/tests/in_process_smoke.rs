@@ -185,6 +185,7 @@ async fn build_new_block(
             no_tx_pool: Some(true),
             min_base_fee: Some(0),
             eip_1559_params: Some(B64::from(eip_1559_params)),
+            bls_derived: false,
         },
         3,
     )?;

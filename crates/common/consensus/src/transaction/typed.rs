@@ -6,7 +6,10 @@ use alloy_eips::Encodable2718;
 use alloy_primitives::{B256, ChainId, Signature, TxHash, bytes::BufMut};
 
 pub use crate::transaction::envelope::BaseTypedTransaction;
-use crate::{BaseTxEnvelope, OpTxType, TxBls, TxDeposit, TxEip8130, transaction::Eip8130Signed};
+use crate::{
+    BaseTxEnvelope, BlsConstants, OpTxType, TxBls, TxBlsTransfer, TxDeposit, TxEip8130,
+    transaction::Eip8130Signed,
+};
 
 impl From<TxLegacy> for BaseTypedTransaction {
     fn from(tx: TxLegacy) -> Self {
@@ -50,6 +53,12 @@ impl From<TxBls> for BaseTypedTransaction {
     }
 }
 
+impl From<TxBlsTransfer> for BaseTypedTransaction {
+    fn from(tx: TxBlsTransfer) -> Self {
+        Self::BlsTransfer(tx)
+    }
+}
+
 impl From<BaseTxEnvelope> for BaseTypedTransaction {
     fn from(envelope: BaseTxEnvelope) -> Self {
         match envelope {
@@ -59,6 +68,7 @@ impl From<BaseTxEnvelope> for BaseTypedTransaction {
             BaseTxEnvelope::Eip7702(tx) => Self::Eip7702(tx.strip_signature()),
             BaseTxEnvelope::Eip8130(tx) => Self::Eip8130(tx.into_tx()),
             BaseTxEnvelope::Bls(tx) => Self::Bls(tx.strip_signature()),
+            BaseTxEnvelope::BlsTransfer(tx) => Self::BlsTransfer(tx.into_inner()),
             BaseTxEnvelope::Deposit(tx) => Self::Deposit(tx.into_inner()),
         }
     }
@@ -76,6 +86,7 @@ impl From<BaseTypedTransaction> for alloy_rpc_types_eth::TransactionRequest {
                 "BaseTypedTransaction::Eip8130 cannot be converted to an alloy TransactionRequest; AA transactions have no single sender/recipient/value to project into the legacy request shape"
             ),
             BaseTypedTransaction::Bls(tx) => tx.into(),
+            BaseTypedTransaction::BlsTransfer(tx) => tx.into(),
             BaseTypedTransaction::Deposit(tx) => tx.into(),
         }
     }
@@ -91,13 +102,14 @@ impl BaseTypedTransaction {
             Self::Eip7702(_) => OpTxType::Eip7702,
             Self::Eip8130(_) => OpTxType::Eip8130,
             Self::Bls(_) => OpTxType::Bls,
+            Self::BlsTransfer(_) => OpTxType::BlsTransfer,
             Self::Deposit(_) => OpTxType::Deposit,
         }
     }
 
     /// Calculates the signing hash for the transaction.
     ///
-    /// Returns `None` if the tx is a deposit or EIP-8130 transaction (those
+    /// Returns `None` if the tx is a deposit, EIP-8130 or BLS transfer transaction (those
     /// do not use a standard ECDSA single-signature path).
     pub fn checked_signature_hash(&self) -> Option<B256> {
         match self {
@@ -106,7 +118,7 @@ impl BaseTypedTransaction {
             Self::Eip1559(tx) => Some(tx.signature_hash()),
             Self::Eip7702(tx) => Some(tx.signature_hash()),
             Self::Bls(tx) => Some(tx.signature_hash()),
-            Self::Eip8130(_) | Self::Deposit(_) => None,
+            Self::Eip8130(_) | Self::BlsTransfer(_) | Self::Deposit(_) => None,
         }
     }
 
@@ -173,9 +185,22 @@ impl BaseTypedTransaction {
         matches!(self, Self::Bls(_))
     }
 
+    /// Return the inner native BLS transfer if it exists.
+    pub const fn bls_transfer(&self) -> Option<&TxBlsTransfer> {
+        match self {
+            Self::BlsTransfer(tx) => Some(tx),
+            _ => None,
+        }
+    }
+
+    /// Returns `true` if transaction is a native BLS transfer.
+    pub const fn is_bls_transfer(&self) -> bool {
+        matches!(self, Self::BlsTransfer(_))
+    }
+
     /// Calculate the transaction hash for the given signature.
     ///
-    /// For a deposit variant the regular tx hash is returned (signature ignored).
+    /// For a deposit or BLS transfer variant the regular tx hash is returned (signature ignored).
     /// Panics on an EIP-8130 variant: that variant has no ECDSA signature and
     /// callers must hash through the [`BaseTxEnvelope`] path instead.
     pub fn tx_hash(&self, signature: &Signature) -> TxHash {
@@ -188,13 +213,15 @@ impl BaseTypedTransaction {
             Self::Eip8130(_) => unimplemented!(
                 "BaseTypedTransaction::tx_hash invoked on an EIP-8130 variant; use Eip8130Signed::hash via the envelope path"
             ),
+            Self::BlsTransfer(tx) => tx.tx_hash(),
             Self::Deposit(tx) => tx.tx_hash(),
         }
     }
 
     /// Convenience function to convert this typed transaction into an [`BaseTxEnvelope`].
     ///
-    /// Note: If this is a [`BaseTypedTransaction::Deposit`] variant, the signature will be ignored.
+    /// Note: If this is a [`BaseTypedTransaction::Deposit`] or [`BaseTypedTransaction::BlsTransfer`]
+    /// variant, the signature will be ignored.
     pub fn into_envelope(self, signature: Signature) -> BaseTxEnvelope {
         self.into_signed(signature).into()
     }
@@ -213,7 +240,7 @@ impl BaseTypedTransaction {
                 tx,
                 "EIP-8130 transactions cannot be converted to ethereum transaction",
             )),
-            tx @ Self::Bls(_) => Err(ValueError::new(
+            tx @ (Self::Bls(_) | Self::BlsTransfer(_)) => Err(ValueError::new(
                 tx,
                 "BLS transactions cannot be converted to ethereum transaction",
             )),
@@ -234,6 +261,7 @@ impl RlpEcdsaEncodableTx for BaseTypedTransaction {
             Self::Eip7702(tx) => tx.rlp_encoded_fields_length(),
             Self::Eip8130(tx) => tx.rlp_encoded_fields_length(),
             Self::Bls(tx) => tx.rlp_encoded_fields_length(),
+            Self::BlsTransfer(tx) => tx.rlp_encoded_fields_length(),
             Self::Deposit(tx) => tx.rlp_encoded_fields_length(),
         }
     }
@@ -246,6 +274,7 @@ impl RlpEcdsaEncodableTx for BaseTypedTransaction {
             Self::Eip7702(tx) => tx.rlp_encode_fields(out),
             Self::Eip8130(tx) => tx.rlp_encode_fields(out),
             Self::Bls(tx) => tx.rlp_encode_fields(out),
+            Self::BlsTransfer(tx) => tx.rlp_encode_fields(out),
             Self::Deposit(tx) => tx.rlp_encode_fields(out),
         }
     }
@@ -260,6 +289,7 @@ impl RlpEcdsaEncodableTx for BaseTypedTransaction {
             Self::Eip8130(_) => unimplemented!(
                 "BaseTypedTransaction::eip2718_encode_with_type invoked on EIP-8130 variant; use Eip8130Signed::encode_2718"
             ),
+            Self::BlsTransfer(tx) => tx.encode_2718(out),
             Self::Deposit(tx) => tx.encode_2718(out),
         }
     }
@@ -274,6 +304,7 @@ impl RlpEcdsaEncodableTx for BaseTypedTransaction {
             Self::Eip8130(_) => unimplemented!(
                 "BaseTypedTransaction::eip2718_encode invoked on EIP-8130 variant; use Eip8130Signed::encode_2718"
             ),
+            Self::BlsTransfer(tx) => tx.encode_2718(out),
             Self::Deposit(tx) => tx.encode_2718(out),
         }
     }
@@ -288,6 +319,7 @@ impl RlpEcdsaEncodableTx for BaseTypedTransaction {
             Self::Eip8130(_) => unimplemented!(
                 "BaseTypedTransaction::network_encode_with_type invoked on EIP-8130 variant"
             ),
+            Self::BlsTransfer(tx) => tx.network_encode(out),
             Self::Deposit(tx) => tx.network_encode(out),
         }
     }
@@ -302,6 +334,7 @@ impl RlpEcdsaEncodableTx for BaseTypedTransaction {
             Self::Eip8130(_) => {
                 unimplemented!("BaseTypedTransaction::network_encode invoked on EIP-8130 variant")
             }
+            Self::BlsTransfer(tx) => tx.network_encode(out),
             Self::Deposit(tx) => tx.network_encode(out),
         }
     }
@@ -318,6 +351,7 @@ impl RlpEcdsaEncodableTx for BaseTypedTransaction {
                     "BaseTypedTransaction::tx_hash_with_type invoked on EIP-8130 variant"
                 )
             }
+            Self::BlsTransfer(tx) => tx.tx_hash(),
             Self::Deposit(tx) => tx.tx_hash(),
         }
     }
@@ -332,6 +366,7 @@ impl RlpEcdsaEncodableTx for BaseTypedTransaction {
             Self::Eip8130(_) => {
                 unimplemented!("BaseTypedTransaction::tx_hash invoked on EIP-8130 variant")
             }
+            Self::BlsTransfer(tx) => tx.tx_hash(),
             Self::Deposit(tx) => tx.tx_hash(),
         }
     }
@@ -346,6 +381,7 @@ impl SignableTransaction<Signature> for BaseTypedTransaction {
             Self::Eip7702(tx) => tx.set_chain_id(chain_id),
             Self::Eip8130(tx) => tx.set_chain_id(chain_id),
             Self::Bls(tx) => tx.set_chain_id(chain_id),
+            Self::BlsTransfer(tx) => tx.chain_id = chain_id,
             Self::Deposit(_) => {}
         }
     }
@@ -358,6 +394,11 @@ impl SignableTransaction<Signature> for BaseTypedTransaction {
             Self::Eip7702(tx) => tx.encode_for_signing(out),
             Self::Eip8130(tx) => tx.encode_for_signing(out),
             Self::Bls(tx) => tx.encode_for_signing(out),
+            // `keccak256` of this preimage is the BLS signing digest.
+            Self::BlsTransfer(tx) => {
+                out.put_slice(BlsConstants::DOMAIN.as_slice());
+                out.put_slice(tx.tx_hash().as_slice());
+            }
             Self::Deposit(_) => {}
         }
     }
@@ -370,6 +411,7 @@ impl SignableTransaction<Signature> for BaseTypedTransaction {
             Self::Eip7702(tx) => tx.payload_len_for_signature(),
             Self::Eip8130(tx) => tx.payload_len_for_signature(),
             Self::Bls(tx) => tx.payload_len_for_signature(),
+            Self::BlsTransfer(_) => 64,
             Self::Deposit(_) => 0,
         }
     }
@@ -392,6 +434,7 @@ impl InMemorySize for BaseTypedTransaction {
             Self::Eip7702(tx) => tx.size(),
             Self::Eip8130(tx) => tx.size(),
             Self::Bls(tx) => tx.size(),
+            Self::BlsTransfer(tx) => tx.size(),
             Self::Deposit(tx) => tx.size(),
         }
     }

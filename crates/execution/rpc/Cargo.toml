@@ -87,7 +87,6 @@ lru.workspace = true
 eyre.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
-derive_more = { workspace = true, features = ["constructor"] }
 
 # metrics
 base-metrics.workspace = true
@@ -99,6 +98,8 @@ alloy-signer.workspace = true
 reth-network-api.workspace = true
 alloy-signer-local.workspace = true
 reth-provider = { workspace = true, features = ["test-utils"] }
+base-common-evm = { workspace = true, features = ["test-utils"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
 [[bench]]
 name = "insertion"

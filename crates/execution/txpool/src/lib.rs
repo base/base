@@ -7,6 +7,9 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
+mod bls_backup;
+pub use bls_backup::BlsTransferBackup;
+
 mod guard;
 pub use guard::{
     Admission, AdmissionRecord, DEFAULT_ALLOWLISTED_PAYMENT_LIMIT, DEFAULT_PAYMENT_LIMIT,

@@ -192,6 +192,11 @@ where
         )
     }
 
+    fn is_bls_authenticated(&self) -> bool {
+        // The pre-Holocene batch queue never releases chunk members.
+        self.batch_validator.as_ref().is_some_and(|validator| validator.is_bls_authenticated())
+    }
+
     async fn next_batch(&mut self, parent: L2BlockInfo) -> PipelineResult<SingleBatch> {
         self.attempt_update()?;
 

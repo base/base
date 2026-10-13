@@ -2,7 +2,7 @@
 
 use alloy_primitives::{Address, B256, address, b256};
 
-use crate::BLS_TX_TYPE_ID;
+use crate::{BLS_TRANSFER_TX_TYPE_ID, BLS_TX_TYPE_ID};
 
 /// Protocol constants for the development-only native BLS transaction type ([`crate::TxBls`]).
 ///
@@ -15,6 +15,12 @@ impl BlsConstants {
     /// EIP-2718 transaction type byte.
     pub const TX_TYPE: u8 = BLS_TX_TYPE_ID;
 
+    /// EIP-2718 transaction type byte of a native BLS transfer ([`crate::TxBlsTransfer`]).
+    pub const TRANSFER_TX_TYPE: u8 = BLS_TRANSFER_TX_TYPE_ID;
+
+    /// Fixed gas limit of every [`crate::TxBlsTransfer`], equal to a plain ETH transfer.
+    pub const TRANSFER_GAS_LIMIT: u64 = 21_000;
+
     /// The only chain ID on which the native BLS transaction type may execute.
     pub const CHAIN_ID: u64 = 84_538_453;
 
@@ -25,7 +31,8 @@ impl BlsConstants {
     /// UTF-8 domain tag hashed into [`Self::DOMAIN`].
     pub const DOMAIN_TAG: &'static str = "base-native-bls:v1:eth-transfer";
 
-    /// `keccak256(DOMAIN_TAG)`, the first 32 bytes of every inner transfer signing digest.
+    /// `keccak256(DOMAIN_TAG)`, the first 32 bytes of every transfer signing digest, both for
+    /// [`crate::BlsTransfer`] batch records and for [`crate::TxBlsTransfer`].
     pub const DOMAIN: B256 =
         b256!("0x835368e0f686eb6dcb505d223e8e32872c58ba04ef2d946a7ae78ab07a13d651");
 

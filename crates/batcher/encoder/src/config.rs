@@ -1,5 +1,6 @@
 //! Encoder configuration and its validation error type.
 
+use base_common_consensus::BlsConstants;
 use base_common_genesis::RollupConfig;
 use base_protocol::{
     BLOB_DERIVATION_PREFIX_SIZE as PROTOCOL_BLOB_DERIVATION_PREFIX_SIZE,
@@ -12,6 +13,10 @@ use crate::{BrotliLevel, DaType};
 /// Configuration for the [`BatchEncoder`](crate::BatchEncoder).
 #[derive(Debug, Clone)]
 pub struct EncoderConfig {
+    /// Dev-chain BLS chunk target: 32, 64 or 128 blocks. Unset selects 32 on the
+    /// development chain and leaves historical encoding unchanged elsewhere.
+    /// Deadlines, transfer counts and channel size limits can force smaller chunks.
+    pub bls_chunk_blocks: Option<usize>,
     /// Optional soft target for stable bytes emitted by the compression stream.
     /// The reaching batch stays, then the channel closes. `None` closes on
     /// duration, flush, or protocol limits.
@@ -71,6 +76,7 @@ pub struct EncoderConfig {
 impl Default for EncoderConfig {
     fn default() -> Self {
         Self {
+            bls_chunk_blocks: None,
             compressed_size_target: None,
             max_frame_size: Self::MAX_BLOB_FRAME_SIZE,
             max_channel_duration: 2,
@@ -101,6 +107,11 @@ impl EncoderConfig {
     /// [`BatchEncoder::new`](crate::BatchEncoder::new) calls this automatically.
     /// It remains public for CLI and service startup validation.
     pub fn validate(&self) -> Result<(), EncoderConfigError> {
+        if let Some(blocks) = self.bls_chunk_blocks
+            && !matches!(blocks, 32 | 64 | 128)
+        {
+            return Err(EncoderConfigError::BlsChunkBlocks { blocks });
+        }
         // Channel timing must leave at least one L1 block of usable duration.
         if self.sub_safety_margin >= self.max_channel_duration {
             return Err(EncoderConfigError::SafetyMarginTooLarge {
@@ -176,6 +187,11 @@ impl EncoderConfig {
     ) -> Result<(), EncoderConfigError> {
         self.validate()?;
 
+        if self.bls_chunk_blocks.is_some() && rollup_config.l2_chain_id != BlsConstants::CHAIN_ID {
+            return Err(EncoderConfigError::BlsUnsupportedChain {
+                chain_id: rollup_config.l2_chain_id.id(),
+            });
+        }
         if !rollup_config.is_fjord_active(next_l2_timestamp) {
             return Err(EncoderConfigError::BrotliRequiresFjord { next_l2_timestamp });
         }
@@ -198,6 +214,18 @@ impl EncoderConfig {
 /// Errors returned when validating [`EncoderConfig`].
 #[derive(Debug, thiserror::Error)]
 pub enum EncoderConfigError {
+    /// Only the supported bounded chunk widths can be configured.
+    #[error("BLS chunk blocks must be 32, 64 or 128, got {blocks}")]
+    BlsChunkBlocks {
+        /// Configured chunk target.
+        blocks: usize,
+    },
+    /// Chunk encoding must never change a production chain's DA format.
+    #[error("BLS chunks are disabled on chain {chain_id}")]
+    BlsUnsupportedChain {
+        /// Configured rollup chain.
+        chain_id: u64,
+    },
     /// `sub_safety_margin >= max_channel_duration`.
     ///
     /// The effective channel timeout (`max_channel_duration - sub_safety_margin`) would

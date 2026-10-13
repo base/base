@@ -496,4 +496,58 @@ mod tests {
         let value = serde_json::to_value(transaction_without_millis).unwrap();
         assert!(value.get("blockTimestampMs").is_none());
     }
+
+    /// A native BLS transfer is rendered with its explicit sender, recipient, value, fees and
+    /// fixed gas, its intent hash, and no ECDSA signature fields, and round-trips.
+    #[test]
+    fn bls_transfer_serializes_without_ecdsa_fields() {
+        let sender = Address::with_last_byte(0x11);
+        let tx = base_common_consensus::TxBlsTransfer {
+            chain_id: base_common_consensus::BlsConstants::CHAIN_ID,
+            sender,
+            nonce: 3,
+            recipient: Address::with_last_byte(0x22),
+            value: U256::from(1_000u64),
+            max_priority_fee_per_gas: 2,
+            max_fee_per_gas: 10,
+        };
+        let hash = tx.tx_hash();
+        let tx_info = BaseTransactionInfo {
+            inner: alloy_rpc_types_eth::TransactionInfo {
+                hash: Some(hash),
+                block_hash: Some(B256::repeat_byte(0x01)),
+                block_number: Some(100),
+                block_timestamp: None,
+                index: Some(0),
+                base_fee: Some(5),
+            },
+            deposit_meta: Default::default(),
+            block_timestamp_ms: None,
+        };
+        let rpc_tx = Transaction::from_transaction(
+            Recovered::new_unchecked(BaseTxEnvelope::from(tx), sender),
+            tx_info,
+        );
+
+        let value = serde_json::to_value(&rpc_tx).unwrap();
+        assert_eq!(value["type"], "0x7b");
+        assert_eq!(value["hash"], serde_json::to_value(hash).unwrap());
+        assert_eq!(value["from"], "0x0000000000000000000000000000000000000011");
+        assert_eq!(value["sender"], "0x0000000000000000000000000000000000000011");
+        assert_eq!(value["recipient"], "0x0000000000000000000000000000000000000022");
+        assert_eq!(value["value"], "0x3e8");
+        assert_eq!(value["nonce"], "0x3");
+        assert_eq!(value["gas"], "0x5208");
+        assert_eq!(value["maxFeePerGas"], "0xa");
+        assert_eq!(value["maxPriorityFeePerGas"], "0x2");
+        // The effective price paid at a base fee of 5 with a tip of 2.
+        assert_eq!(value["gasPrice"], "0x7");
+        for field in ["v", "r", "s", "yParity", "signature"] {
+            assert!(value.get(field).is_none(), "a BLS transfer must not claim an ECDSA {field}");
+        }
+        assert_eq!(serde_json::to_string(&rpc_tx).unwrap().matches("\"hash\":").count(), 1);
+
+        let deserialized: Transaction = serde_json::from_value(value).unwrap();
+        assert_eq!(deserialized, rpc_tx);
+    }
 }

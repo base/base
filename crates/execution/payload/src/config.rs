@@ -8,6 +8,7 @@ use std::{
 };
 
 use alloy_primitives::TxHash;
+use base_execution_evm::BlsWitnessStore;
 use reth_engine_tree::tree::instrumented_state::{InstrumentedStateProvider, StateProviderStats};
 use reth_execution_cache::{
     CachedStateMetrics, CachedStateMetricsSource, CachedStateProvider, ExecutionCache,
@@ -53,6 +54,10 @@ pub struct BaseBuilderConfig {
     /// label. Adds overhead to every state read, so it follows reth's
     /// `--engine.state-provider-metrics` and stays off by default.
     pub state_provider_metrics: bool,
+    /// Durable per-block BLS authorization store. When set, each built block that includes
+    /// native BLS transfers records its aggregate (or derived marker) once finalized, so the
+    /// batcher can recover it after a restart.
+    pub bls_witness_store: Option<Arc<BlsWitnessStore>>,
 }
 
 impl Default for BaseBuilderConfig {
@@ -66,6 +71,7 @@ impl Default for BaseBuilderConfig {
             resource_metering: ResourceMeteringConfig::default(),
             rejection_cache: RejectionCache::default(),
             state_provider_metrics: false,
+            bls_witness_store: None,
         }
     }
 }
@@ -86,6 +92,7 @@ impl BaseBuilderConfig {
             resource_metering: ResourceMeteringConfig::default(),
             rejection_cache: RejectionCache::default(),
             state_provider_metrics: false,
+            bls_witness_store: None,
         }
     }
 
@@ -93,6 +100,13 @@ impl BaseBuilderConfig {
     #[must_use]
     pub const fn with_state_provider_metrics(mut self, enabled: bool) -> Self {
         self.state_provider_metrics = enabled;
+        self
+    }
+
+    /// Sets the durable per-block BLS authorization store.
+    #[must_use]
+    pub fn with_bls_witness_store(mut self, store: Option<Arc<BlsWitnessStore>>) -> Self {
+        self.bls_witness_store = store;
         self
     }
 

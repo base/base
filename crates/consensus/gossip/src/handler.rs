@@ -353,6 +353,7 @@ mod tests {
             signature: Signature::test_signature(),
             payload_hash: PayloadHash(B256::ZERO),
             parent_beacon_block_root: None,
+            bls_aggregate: None,
         };
         assert!(matches!(
             handler.encode(handler.blocks_v2_topic.clone(), envelope),
@@ -417,6 +418,7 @@ mod tests {
                 signature: Signature::test_signature(),
                 payload_hash: PayloadHash(B256::ZERO),
                 parent_beacon_block_root: block.header.parent_beacon_block_root,
+                bls_aggregate: None,
             };
             let encoded = envelope.encode_v4().unwrap();
             let decoded = NetworkPayloadEnvelope::decode_v4(&encoded).unwrap();
@@ -463,6 +465,7 @@ mod tests {
             signature: Signature::test_signature(),
             payload_hash: PayloadHash(B256::ZERO),
             parent_beacon_block_root: None,
+            bls_aggregate: None,
         };
 
         let msg = envelope.payload_hash.signature_message(8453);
@@ -508,6 +511,7 @@ mod tests {
             signature: Signature::test_signature(),
             payload_hash: PayloadHash(B256::ZERO),
             parent_beacon_block_root: None,
+            bls_aggregate: None,
         };
 
         let msg = envelope.payload_hash.signature_message(8453);
@@ -542,6 +546,7 @@ mod tests {
             signature: Signature::test_signature(),
             payload_hash: PayloadHash(B256::ZERO),
             parent_beacon_block_root: None,
+            bls_aggregate: None,
         };
 
         let msg = envelope.payload_hash.signature_message(8453);
@@ -581,6 +586,7 @@ mod tests {
             parent_beacon_block_root: Some(
                 block.header.parent_beacon_block_root.unwrap_or_default(),
             ),
+            bls_aggregate: None,
         };
 
         let msg = envelope.payload_hash.signature_message(8453);
@@ -620,6 +626,7 @@ mod tests {
             parent_beacon_block_root: Some(
                 block.header.parent_beacon_block_root.unwrap_or_default(),
             ),
+            bls_aggregate: None,
         };
 
         let msg = envelope.payload_hash.signature_message(8453);
@@ -663,6 +670,7 @@ mod tests {
             parent_beacon_block_root: Some(
                 block.header.parent_beacon_block_root.unwrap_or_default(),
             ),
+            bls_aggregate: None,
         };
 
         let msg = envelope.payload_hash.signature_message(8453);
@@ -706,6 +714,7 @@ mod tests {
             parent_beacon_block_root: Some(
                 block.header.parent_beacon_block_root.unwrap_or_default(),
             ),
+            bls_aggregate: None,
         };
 
         let msg = envelope.payload_hash.signature_message(8453);
@@ -756,6 +765,7 @@ mod tests {
             parent_beacon_block_root: Some(
                 block.header.parent_beacon_block_root.unwrap_or_default(),
             ),
+            bls_aggregate: None,
         };
 
         let msg = envelope.payload_hash.signature_message(8453);
