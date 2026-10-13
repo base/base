@@ -84,6 +84,13 @@ intrinsic_gas = AA_BASE_COST + tx_payload_cost + nonce_key_cost + value_transfer
 
 A value-bearing call to an account that does not exist also pays `25,000` for
 account creation when it runs, since existence is only known at dispatch.
+Dispatching a call also pays the EIP-2929 cold account access cost (`2,600`)
+when its target is cold, and again when the target is an EIP-7702 delegated
+account whose delegation target is cold, as a `CALL` would. The precompiles,
+the coinbase, the sender, the payer, and every account the pre-call pipeline
+touched start warm, and a repeated target pays once. A call that halts
+exceptionally (anything but `REVERT`) consumes all of the call gas left in the
+pool, as any EVM frame does.
 
 `sender_intrinsic` excludes `payer_auth` (payer authentication is metered on top
 of `gas_limit`), so `execution_gas_available(gas_limit) = gas_limit -
