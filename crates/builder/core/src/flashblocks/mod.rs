@@ -27,7 +27,6 @@ pub use context::{
 };
 
 mod payload;
-#[cfg(any(test, feature = "test-utils"))]
 pub use payload::{build_block, execute_pre_steps};
 
 mod resting;

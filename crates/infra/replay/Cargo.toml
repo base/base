@@ -48,12 +48,12 @@ reth-transaction-pool.workspace = true
 reth-primitives-traits.workspace = true
 reth-basic-payload-builder.workspace = true
 
+base-builder-core.workspace = true
 base-execution-evm.workspace = true
 base-execution-txpool.workspace = true
 base-common-flashblocks.workspace = true
 base-execution-chainspec.workspace = true
 base-execution-payload-builder.workspace = true
-base-builder-core = { workspace = true, features = ["test-utils"] }
 
 tokio = { workspace = true, features = ["macros", "rt"] }
 criterion = { workspace = true, features = ["html_reports"] }

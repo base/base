@@ -23,7 +23,7 @@ use alloy_primitives::{Address, B256, U256, address};
 use base_builder_core::{
     BasePayloadBuilderCtx, BestFlashblocksTxs, BlockDeferrals, BuilderConfig, ExecutionInfo,
     FlashblocksExtraCtx, ParkableBestPayloadTransactions, RejectionCache, ResourceLimits,
-    test_utils::{build_block, execute_pre_steps},
+    build_block, execute_pre_steps,
 };
 use base_common_consensus::BaseTransactionSigned;
 use base_common_flashblocks::FlashblockId;
@@ -274,6 +274,7 @@ pub fn assembly_info(info: &ExecutionInfo) -> ExecutionInfo {
         executed_senders: info.executed_senders.clone(),
         receipts: info.receipts.clone(),
         cumulative_gas_used: info.cumulative_gas_used,
+        cumulative_da_bytes_used: info.cumulative_da_bytes_used,
         total_fees: info.total_fees,
         da_footprint_scalar: info.da_footprint_scalar,
         ..Default::default()
@@ -304,7 +305,9 @@ pub fn mainnet_build(c: &mut Criterion) {
     // Capture reads through the actual builder, then physically remove the proof database.
     let _ = execute(&ctx, &pool, &db);
     drop(db.source.borrow_mut().take());
-    let (mut state, mut info) = execute(&ctx, &pool, &db);
+    let (mut state, info) = execute(&ctx, &pool, &db);
+    // Check the exact snapshot used by assembly-only timing, not just the full execution output.
+    let mut info = assembly_info(&info);
     assert_eq!(info.cumulative_gas_used, fixture.header.gas_used);
     assert_eq!(info.executed_transactions.len(), fixture.transactions.len());
     let (payload, message, _) =
