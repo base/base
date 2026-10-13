@@ -94,6 +94,7 @@ use std::sync::{Arc, OnceLock};
 use alloy_rpc_types_engine::ClientVersionV1;
 use base_common_network::SharedEngineApi;
 use base_common_rpc_types_engine::ExecutionData;
+use base_execution_chainspec::BaseEngineApiForks;
 use base_execution_rpc::{BaseEngineApi, engine::ENGINE_CAPABILITIES};
 use reth_chainspec::EthereumHardforks;
 use reth_node_api::{
@@ -144,8 +145,7 @@ where
         N::Provider,
         <N::Types as NodeTypes>::Payload,
         N::Pool,
-        EV::Validator,
-        <N::Types as NodeTypes>::ChainSpec,
+        BaseEngineApiForks<Arc<<N::Types as NodeTypes>::ChainSpec>>,
     >;
 
     async fn build_engine_api(self, ctx: &AddOnsContext<'_, N>) -> eyre::Result<Self::EngineApi> {
@@ -158,7 +158,7 @@ where
         };
         let inner = EngineApi::new(
             ctx.node.provider().clone(),
-            Arc::clone(&ctx.config.chain),
+            Arc::new(BaseEngineApiForks(Arc::clone(&ctx.config.chain))),
             ctx.beacon_engine_handle.clone(),
             PayloadStore::new(ctx.node.payload_builder_handle().clone()),
             ctx.node.pool().clone(),
