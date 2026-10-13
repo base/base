@@ -734,8 +734,31 @@ mod tests {
             eip8130_raw(tx, Bytes::from_static(&[0xab; 65]), Bytes::from_static(&[0xcd; 65]))
         };
 
+        // Nonce-free (`NONCE_KEY_MAX`) with a K1-authenticated sender and payer and a
+        // value-bearing call.
+        let nonce_free = {
+            let mut tx = eip8130_body();
+            tx.sender = Some(sender);
+            tx.payer = Some(payer);
+            tx.nonce_key = Eip8130Constants::NONCE_KEY_MAX;
+            tx.valid_before = 1_900_000_020_000;
+            tx.max_priority_fee_per_gas = 1_000_000;
+            tx.max_fee_per_gas = 2_000_000_000;
+            tx.gas_limit = 120_000;
+            tx.calls = vec![vec![Call {
+                to: address!("00000000000000000000000000000000000000dd"),
+                value: U256::from(1_000_000_000_000_000u64),
+                data: bytes!("a9059cbb"),
+            }]];
+            let mut sender_auth = Eip8130Constants::K1_AUTHENTICATOR.as_slice().to_vec();
+            sender_auth.extend_from_slice(&[0x5a; 65]);
+            let mut payer_auth = Eip8130Constants::K1_AUTHENTICATOR.as_slice().to_vec();
+            payer_auth.extend_from_slice(&[0xa5; 65]);
+            eip8130_raw(tx, Bytes::from(sender_auth), Bytes::from(payer_auth))
+        };
+
         assert_span_batch_roundtrip(
-            vec![eoa, configured, rich, minimal, open_payer],
+            vec![eoa, configured, rich, minimal, open_payer, nonce_free],
             EIP8130_CHAIN_ID,
         );
     }
