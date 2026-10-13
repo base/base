@@ -80,7 +80,7 @@ where
         block: &RecoveredBlock<N::Block>,
         result: &BlockExecutionResult<N::Receipt>,
         receipt_root_bloom: Option<ReceiptRootBloom>,
-        _block_access_list_hash: Option<B256>,
+        block_access_list_hash: Option<B256>,
     ) -> Result<(), ConsensusError> {
         // Staged execution calls this hook without calling `validate_block_pre_execution`.
         validate_base_time_metadata(
@@ -89,7 +89,13 @@ where
             block.number(),
             block.body().transactions(),
         )?;
-        validate_block_post_execution(block.header(), &self.chain_spec, result, receipt_root_bloom)
+        validate_block_post_execution(
+            block.header(),
+            &self.chain_spec,
+            result,
+            receipt_root_bloom,
+            block_access_list_hash,
+        )
     }
 }
 
