@@ -11,10 +11,11 @@ use std::{
 use alloy_consensus::Header;
 use alloy_eips::{BlockNumHash, BlockNumberOrTag};
 use alloy_primitives::B256;
-use alloy_rpc_types_engine::JwtSecret;
+use alloy_rpc_types_engine::{ForkchoiceState, JwtSecret};
 use base_common_chains::BaseUpgradeExt;
 use base_common_consensus::REGOLITH_SYSTEM_TX_GAS;
 use base_common_genesis::{BaseUpgrade, RollupConfig, RuntimeUpgradeRegistry};
+use base_common_network::BaseEngineApi;
 use base_consensus_engine::{EngineClient, EngineClientError};
 use base_protocol::{BaseBlockConversionError, BaseTimeUpdateTx, L2BlockMetadata};
 use serde::{Deserialize, Serialize};
@@ -70,6 +71,9 @@ pub struct StandaloneDevChain {
 impl StandaloneDevChain {
     /// Name of the state file inside the datadir.
     pub const STATE_FILE: &str = "base-dev.json";
+
+    /// Interval between checks for the execution node to finish its startup sync.
+    pub const EL_SYNC_POLL_INTERVAL: Duration = Duration::from_secs(1);
 
     /// Restores persisted state from `datadir` and installs its Denim schedule process-wide.
     ///
@@ -231,6 +235,24 @@ impl StandaloneDevChain {
             BaseUpgrade::Denim,
             denim_timestamp,
         );
+
+        // The execution node answers `Syncing` while it runs pipeline stages on startup, such as
+        // rebuilding the indices a snapshot download resets. Anchoring the schedule before then
+        // would leave every block scheduled during the rebuild overdue.
+        let forkchoice = ForkchoiceState { head_block_hash: head_id.hash, ..Default::default() };
+        while engine
+            .fork_choice_updated_v3(forkchoice, None)
+            .await
+            .map_err(EngineClientError::from)?
+            .payload_status
+            .status
+            .is_syncing()
+        {
+            tokio::select! {
+                () = cancellation.cancelled() => return Ok(()),
+                () = tokio::time::sleep(Self::EL_SYNC_POLL_INTERVAL) => {}
+            }
+        }
 
         let head_time = UNIX_EPOCH
             + Duration::from_millis(rollup_config.l2_block_timestamp_millis(head_id.number));
