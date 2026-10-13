@@ -14,10 +14,10 @@ use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, LogData, U256, map::AddressSet};
 use base_common_chains::{BaseUpgrade, Upgrades};
 use base_common_consensus::{
-    BaseTimeUpdateTx, Eip8130Constants, Eip8130Contracts, Eip8130Signed, Eip8130StructuralError,
-    Eip8130Structure, Eip8130TimestampError,
+    BaseTimeUpdateTx, BlsConstants, BlsPayload, Eip8130Constants, Eip8130Contracts, Eip8130Signed,
+    Eip8130StructuralError, Eip8130Structure, Eip8130TimestampError,
 };
-use base_common_evm::{BaseSpecId, L1BlockInfo};
+use base_common_evm::{BaseSpecId, BlsRegistry, BlsValidator, L1BlockInfo};
 use base_common_genesis::DaFootprintGasScalarUpdate;
 use base_common_precompiles::NonceManagerStorage;
 use base_execution_eip8130::{
@@ -36,6 +36,7 @@ use reth_primitives_traits::{
     Block, BlockBody, BlockTy, GotExpected, SealedBlock, constants::MAX_TX_GAS_LIMIT_OSAKA,
     transaction::error::InvalidTransactionError,
 };
+use reth_revm::database::StateProviderDatabase;
 use reth_storage_api::{
     AccountInfoReader, AccountReader, BlockReaderIdExt, StateProvider, StateProviderFactory,
 };
@@ -73,6 +74,13 @@ pub enum BaseTxPoolError {
     Eip8130Validation {
         /// Static validation label for the failure.
         reason: &'static str,
+    },
+    /// The native BLS (`0x7a`) transaction failed the native validation that
+    /// execution runs before mutating state.
+    #[error("BLS validation failed: {reason}")]
+    BlsValidation {
+        /// The underlying rejection reason.
+        reason: String,
     },
 }
 
@@ -964,7 +972,13 @@ where
         transaction: Tx,
         state: &mut Option<Box<dyn AccountInfoReader + Send>>,
     ) -> TransactionValidationOutcome<Tx> {
-        let kind = if transaction.as_eip8130().is_some() { "eip8130" } else { "standard" };
+        let kind = if transaction.as_eip8130().is_some() {
+            "eip8130"
+        } else if transaction.as_bls().is_some() {
+            "bls"
+        } else {
+            "standard"
+        };
         let start = Instant::now();
         let outcome = self.validate_one_with_state_inner(origin, transaction, state);
         ValidatorMetrics::validate_seconds(kind).record(start.elapsed().as_secs_f64());
@@ -1022,8 +1036,147 @@ where
             };
             return self.apply_base_checks(outcome, state.payer_auth);
         }
-        let outcome = self.inner.validate_one_with_state(origin, transaction, state);
-        self.apply_base_checks(outcome, 0)
+
+        let is_bls = transaction.as_bls().is_some();
+        if is_bls && self.chain_spec().chain().id() != BlsConstants::CHAIN_ID {
+            return TransactionValidationOutcome::Invalid(
+                transaction,
+                InvalidTransactionError::TxTypeNotSupported.into(),
+            );
+        }
+        // The inner validator covers the outer ECDSA signer of a native BLS transaction
+        // like any other transaction: chain id, nonce, fee caps, and balance.
+        let outcome = match self.inner.validate_one_with_state(origin, transaction, state) {
+            TransactionValidationOutcome::Invalid(
+                transaction,
+                InvalidPoolTransactionError::IntrinsicGasTooLow,
+            ) if is_bls => {
+                // Reth prices the native payload as EVM calldata, which overprices a
+                // single-transfer batch. All earlier stateless checks still apply. In the
+                // pinned reth validator the remaining applicable built-in stateless check
+                // is the fork gas cap; Base installs no additional stateless hook.
+                // apply_bls_checks below enforces the native intrinsic cost and authorization.
+                let cap = self.inner.fork_tracker().tx_gas_limit_cap.load(Ordering::Relaxed);
+                if cap > 0 && transaction.gas_limit() > cap {
+                    return TransactionValidationOutcome::Invalid(
+                        transaction,
+                        InvalidTransactionError::GasLimitTooHigh.into(),
+                    );
+                }
+                if state.is_none() {
+                    match self.client().latest() {
+                        Ok(provider) => *state = Some(Box::new(provider)),
+                        Err(error) => {
+                            return TransactionValidationOutcome::Error(
+                                *transaction.hash(),
+                                Box::new(error),
+                            );
+                        }
+                    }
+                }
+                self.inner.validate_stateful(origin, transaction, state.as_ref().unwrap())
+            }
+            outcome => outcome,
+        };
+        let outcome = self.apply_base_checks(outcome, 0);
+        if is_bls { self.apply_bls_checks(outcome) } else { outcome }
+    }
+
+    /// Runs the native BLS validation execution runs before mutating state, so a
+    /// forged registration or batch authorization, a replayed inner nonce, or an
+    /// unfunded inner sender is rejected at admission even though the outer relayer
+    /// signature recovers. Only called for transactions that passed the outer checks,
+    /// since BLS verification is the most expensive admission step.
+    fn apply_bls_checks(
+        &self,
+        outcome: TransactionValidationOutcome<Tx>,
+    ) -> TransactionValidationOutcome<Tx> {
+        let TransactionValidationOutcome::Valid {
+            balance,
+            state_nonce,
+            transaction: valid_tx,
+            propagate,
+            bytecode_hash,
+            authorities,
+        } = outcome
+        else {
+            return outcome;
+        };
+        if let Err(error) = self.validate_bls(valid_tx.transaction(), balance) {
+            return TransactionValidationOutcome::Invalid(valid_tx.into_transaction(), error);
+        }
+        TransactionValidationOutcome::Valid {
+            balance,
+            state_nonce,
+            transaction: valid_tx,
+            propagate,
+            bytecode_hash,
+            authorities,
+        }
+    }
+
+    fn validate_bls(
+        &self,
+        transaction: &Tx,
+        balance: U256,
+    ) -> Result<(), InvalidPoolTransactionError> {
+        let tx = transaction.as_bls().expect("only called for native BLS transactions").tx();
+        let intrinsic_gas = BlsValidator::intrinsic_gas(tx).map_err(Self::bls_error)?;
+        if tx.gas_limit < intrinsic_gas {
+            return Err(InvalidPoolTransactionError::IntrinsicGasTooLow);
+        }
+
+        let classification_generation = self.limit_class_cache_generation();
+        let state = self.client().latest().map_err(Self::bls_error)?;
+        let validated = BlsValidator::validate(
+            &mut StateProviderDatabase::new(state),
+            self.chain_spec().chain().id(),
+            transaction.sender(),
+            tx,
+        )
+        .map_err(Self::bls_error)?;
+
+        // Evict instead of leaving to fail at block building: a registration once the
+        // signer's key lands, and a batch once an inner sender's nonce or an inner
+        // account's code changes. The outer signer's nonce and balance are tracked by the
+        // protocol pool like any other sender.
+        let mut watch_set = WatchSet::new();
+        match &validated.payload {
+            BlsPayload::Registration { .. } => {
+                watch_set.push(InvalidationKey::Slot {
+                    address: BlsConstants::REGISTRY_ADDRESS,
+                    slot: BlsRegistry::key_slots(transaction.sender())[0],
+                });
+            }
+            BlsPayload::Batch { transfers, .. } => {
+                for transfer in transfers {
+                    watch_set.push(InvalidationKey::ProtocolNonce(transfer.sender));
+                    watch_set.push(InvalidationKey::CodeHash(transfer.sender));
+                    watch_set.push(InvalidationKey::CodeHash(transfer.recipient));
+                }
+            }
+        }
+        transaction.set_watch_set(watch_set);
+        // The outer signer pays for itself and its ECDSA key cannot rotate, so only the
+        // count-limited payment dimension bounds its inflight native BLS transactions.
+        transaction.set_limit_class(LimitClass {
+            sender: transaction.sender(),
+            payer: transaction.sender(),
+            classification_generation,
+            sender_locked: true,
+            payer_locked: true,
+            payer_trusted: false,
+            payer_allowlisted: false,
+            payer_balance: balance,
+            max_cost: *transaction.cost(),
+        });
+        Ok(())
+    }
+
+    fn bls_error(error: impl core::fmt::Display) -> InvalidPoolTransactionError {
+        InvalidPoolTransactionError::other(BaseTxPoolError::BlsValidation {
+            reason: error.to_string(),
+        })
     }
 
     /// Returns a low-cardinality sender authenticator label for metrics.
@@ -1998,15 +2151,17 @@ where
 mod tests {
     use alloy_consensus::{SignableTransaction, TxEip1559, transaction::SignerRecoverable};
     use alloy_eips::eip2718::Encodable2718;
-    use alloy_primitives::{Address, B256, Bytes, TxKind, U256, bytes, hex::decode};
+    use alloy_primitives::{Address, B256, Bytes, TxKind, U256, aliases::U96, bytes, hex::decode};
     use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
     use base_common_chains::ChainConfig;
     use base_common_consensus::{
-        AccountChange, AccountChangeChannel, BasePrimitives, BaseTransactionSigned, BaseTxEnvelope,
-        Call, ChangeType, CreateEntry, Delegation, Eip8130Constants, Eip8130Signed, InitialActor,
-        SignedAccountChanges, SignedChange, TxDeposit, TxEip8130,
+        AccountChange, AccountChangeChannel, BLS_TX_TYPE_ID, BasePrimitives, BaseTransactionSigned,
+        BaseTxEnvelope, BlsTransfer, Call, ChangeType, CreateEntry, Delegation, Eip8130Constants,
+        Eip8130Signed, InitialActor, SignedAccountChanges, SignedChange, TxBls, TxDeposit,
+        TxEip8130,
     };
+    use base_common_evm::test_utils::BlsTestKey;
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_execution_eip8130::{AccountChangeApplier, ConfigChangeAuthorizer};
     use base_execution_evm::BaseEvmConfig;
@@ -3922,5 +4077,222 @@ mod tests {
         assert_eq!(state.payer, sender);
         assert_eq!(state.sender_bytecode_hash, Some(expected_hash));
         assert!(state.watch_set.iter().any(|key| *key == InvalidationKey::CodeHash(sender)));
+    }
+
+    fn bls_chain_spec() -> Arc<BaseChainSpec> {
+        let mut genesis = build_test_genesis_everest();
+        genesis.config.chain_id = BlsConstants::CHAIN_ID;
+        Arc::new(BaseChainSpec::from_genesis(genesis))
+    }
+
+    /// Builds a validator whose inner validator accepts the native BLS type, as the node
+    /// configures it on the development chain, with the given canonical accounts.
+    fn build_bls_validator(
+        chain_spec: Arc<BaseChainSpec>,
+        accounts: impl IntoIterator<Item = (Address, ExtendedAccount)>,
+    ) -> TestValidator {
+        let client = MockEthProvider::<BasePrimitives>::new()
+            .with_chain_spec(Arc::clone(&chain_spec))
+            .with_genesis_block();
+        client.extend_accounts(accounts);
+        let evm_config = BaseEvmConfig::base(Arc::clone(&chain_spec));
+        let inner = EthTransactionValidatorBuilder::new(client, evm_config)
+            .no_shanghai()
+            .no_cancun()
+            .with_custom_tx_type(BLS_TX_TYPE_ID)
+            .build(InMemoryBlobStore::default());
+        BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default())
+    }
+
+    fn bls_funded() -> ExtendedAccount {
+        ExtendedAccount::new(0, U256::from(1_000_000_000_000_000_000u64))
+    }
+
+    /// The native registry account with each owner's BLS key registered.
+    fn bls_registry(keys: &[(Address, &BlsTestKey)]) -> (Address, ExtendedAccount) {
+        let storage: Vec<_> = keys
+            .iter()
+            .flat_map(|(owner, key)| {
+                BlsRegistry::key_slots(*owner)
+                    .into_iter()
+                    .zip(BlsRegistry::key_words(&key.public_key().0))
+            })
+            .collect();
+        let registry =
+            ExtendedAccount::new(BlsRegistry::ACCOUNT_NONCE, U256::ZERO).extend_storage(storage);
+        (BlsConstants::REGISTRY_ADDRESS, registry)
+    }
+
+    /// Signs a native BLS transaction carrying `payload`, with a gas limit `gas_shortfall`
+    /// below its intrinsic gas.
+    fn signed_bls(
+        signer: &PrivateKeySigner,
+        chain_id: u64,
+        payload: &BlsPayload,
+        gas_shortfall: u64,
+    ) -> BasePooledTransaction {
+        let mut tx = TxBls {
+            chain_id,
+            nonce: 0,
+            max_priority_fee_per_gas: 0,
+            max_fee_per_gas: 1_000,
+            gas_limit: 0,
+            input: payload.encode(),
+        };
+        tx.gas_limit = BlsValidator::intrinsic_gas(&tx).unwrap() - gas_shortfall;
+        let signature = signer.sign_hash_sync(&tx.signature_hash()).unwrap();
+        let envelope = BaseTxEnvelope::Bls(tx.into_signed(signature));
+        let encoded_len = envelope.encode_2718_len();
+        BasePooledTransaction::new(envelope.try_into_recovered().unwrap(), encoded_len)
+    }
+
+    fn bls_batch(sender: Address, nonce: u64, recipient: Address, key: &BlsTestKey) -> BlsPayload {
+        let transfer = BlsTransfer { sender, nonce, recipient, value: U96::from(1_000u64) };
+        let signature =
+            BlsTestKey::aggregate(&[key.sign(transfer.signing_digest(BlsConstants::CHAIN_ID))]);
+        BlsPayload::Batch { transfers: vec![transfer], signature }
+    }
+
+    #[track_caller]
+    fn assert_bls_admitted(outcome: TransactionValidationOutcome<BasePooledTransaction>) {
+        assert!(outcome.is_valid(), "expected native BLS admission, got {outcome:?}");
+    }
+
+    #[track_caller]
+    fn assert_bls_rejected(outcome: TransactionValidationOutcome<BasePooledTransaction>) {
+        match outcome {
+            TransactionValidationOutcome::Invalid(_, InvalidPoolTransactionError::Other(error)) => {
+                assert!(
+                    matches!(
+                        error.as_any().downcast_ref::<BaseTxPoolError>(),
+                        Some(BaseTxPoolError::BlsValidation { .. })
+                    ),
+                    "expected BlsValidation, got {error:?}"
+                );
+            }
+            other => panic!("expected BlsValidation, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn bls_transactions_are_rejected_off_the_development_chain() {
+        let signer = PrivateKeySigner::random();
+        let key = BlsTestKey::from_seed(1);
+        // Even with the type enabled at the inner validator, the Base gate rejects it.
+        let validator =
+            build_bls_validator(everest_chain_spec(), [(signer.address(), bls_funded())]);
+        let registration =
+            BlsPayload::Registration { pubkey: key.public_key(), pop: key.proof_of_possession() };
+
+        let outcome = validator
+            .validate_one(
+                TransactionOrigin::External,
+                signed_bls(&signer, test_chain_id(), &registration, 0),
+            )
+            .await;
+
+        assert!(
+            matches!(
+                outcome,
+                TransactionValidationOutcome::Invalid(
+                    _,
+                    InvalidPoolTransactionError::Consensus(
+                        InvalidTransactionError::TxTypeNotSupported
+                    )
+                )
+            ),
+            "expected TxTypeNotSupported, got {outcome:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn bls_registration_admission_requires_a_valid_proof_of_possession() {
+        let signer = PrivateKeySigner::random();
+        let key = BlsTestKey::from_seed(1);
+        let validator = build_bls_validator(bls_chain_spec(), [(signer.address(), bls_funded())]);
+        let registration = |pop| BlsPayload::Registration { pubkey: key.public_key(), pop };
+        let valid = registration(key.proof_of_possession());
+        let validate = |payload: &BlsPayload, gas_shortfall| {
+            validator.validate_one(
+                TransactionOrigin::External,
+                signed_bls(&signer, BlsConstants::CHAIN_ID, payload, gas_shortfall),
+            )
+        };
+
+        assert_bls_admitted(validate(&valid, 0).await);
+
+        // The outer ECDSA signature still recovers; only the PoP is wrong.
+        let forged = registration(BlsTestKey::from_seed(2).proof_of_possession());
+        assert_bls_rejected(validate(&forged, 0).await);
+
+        assert!(matches!(
+            validate(&valid, 1).await,
+            TransactionValidationOutcome::Invalid(
+                _,
+                InvalidPoolTransactionError::IntrinsicGasTooLow
+            )
+        ));
+    }
+
+    #[tokio::test]
+    async fn bls_batch_admission_enforces_inner_authorization_and_nonces() {
+        let relayer = PrivateKeySigner::random();
+        let key = BlsTestKey::from_seed(1);
+        let relayer_key = BlsTestKey::from_seed(3);
+        let sender = Address::repeat_byte(0x51);
+        let recipient = Address::repeat_byte(0x52);
+        let validator = build_bls_validator(
+            bls_chain_spec(),
+            [
+                (relayer.address(), bls_funded()),
+                (sender, bls_funded()),
+                bls_registry(&[(sender, &key), (relayer.address(), &relayer_key)]),
+            ],
+        );
+        let validate = |payload: BlsPayload| {
+            validator.validate_one(
+                TransactionOrigin::External,
+                signed_bls(&relayer, BlsConstants::CHAIN_ID, &payload, 0),
+            )
+        };
+
+        let payload = bls_batch(sender, 0, recipient, &key);
+        let exact = signed_bls(&relayer, BlsConstants::CHAIN_ID, &payload, 0);
+        assert_eq!(exact.gas_limit(), 21_000);
+        assert_bls_admitted(validate(bls_batch(sender, 0, recipient, &key)).await);
+        assert!(matches!(
+            validator
+                .validate_one(
+                    TransactionOrigin::External,
+                    signed_bls(&relayer, BlsConstants::CHAIN_ID, &payload, 1),
+                )
+                .await,
+            TransactionValidationOutcome::Invalid(
+                _,
+                InvalidPoolTransactionError::IntrinsicGasTooLow
+            )
+        ));
+        // Replacing the calldata gas check must not bypass the outer payer's balance check.
+        let unfunded = PrivateKeySigner::random();
+        assert!(
+            validator
+                .validate_one(
+                    TransactionOrigin::External,
+                    signed_bls(&unfunded, BlsConstants::CHAIN_ID, &payload, 0),
+                )
+                .await
+                .is_invalid()
+        );
+
+        // Signed by a key other than the sender's registered one.
+        assert_bls_rejected(
+            validate(bls_batch(sender, 0, recipient, &BlsTestKey::from_seed(2))).await,
+        );
+        // A validly signed record whose nonce the sender's account does not have.
+        assert_bls_rejected(validate(bls_batch(sender, 1, recipient, &key)).await);
+        // The relayer cannot pay for a batch that spends its own balance.
+        assert_bls_rejected(
+            validate(bls_batch(relayer.address(), 0, recipient, &relayer_key)).await,
+        );
     }
 }

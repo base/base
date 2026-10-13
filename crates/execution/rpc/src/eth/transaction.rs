@@ -11,14 +11,15 @@ use alloy_primitives::{B256, Bytes};
 use alloy_rpc_types_eth::TransactionInfo;
 use base_common_chains::Upgrades;
 use base_common_consensus::{
-    BaseTransaction, BaseTransactionInfo, DepositInfo, DepositReceiptExt, EIP8130_TX_TYPE_ID,
+    BLS_TX_TYPE_ID, BaseTransaction, BaseTransactionInfo, BlsConstants, DepositInfo,
+    DepositReceiptExt, EIP8130_TX_TYPE_ID,
 };
 use base_observability_events::{
     TransactionEventProducer, TransactionEventType, transaction_event,
 };
 use futures::StreamExt;
 use reth_chain_state::CanonStateSubscriptions;
-use reth_chainspec::ChainSpecProvider;
+use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_primitives_traits::{SignedTransaction, SignerRecoverable, WithEncoded};
 use reth_rpc_eth_api::{
     EthApiTypes as _, FromEthApiError, FromEvmError, RpcConvert, RpcNodeCore, RpcReceipt,
@@ -69,6 +70,14 @@ where
             && !self.is_everest_active_at_latest()?
         {
             return Err(BaseInvalidTransactionError::Eip8130NotAccepted.into());
+        }
+
+        // Native BLS transactions are an experimental development-chain type. Reject them
+        // before broadcasting or forwarding; the pool runs the full native validation.
+        if pool_transaction.consensus_ref().ty() == BLS_TX_TYPE_ID
+            && self.provider().chain_spec().chain().id() != BlsConstants::CHAIN_ID
+        {
+            return Err(BaseInvalidTransactionError::BlsNotAccepted.into());
         }
 
         let tx_hash = *pool_transaction.hash();

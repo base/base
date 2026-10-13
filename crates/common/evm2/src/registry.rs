@@ -47,7 +47,8 @@ impl BaseEvmTypes {
             eip1559::handle_with_hooks::<Self, BaseTxHandlerHooks>,
         );
         // Type 3 (EIP-4844 blob transactions) is intentionally not registered:
-        // Base rejects blob transactions, so no handler exists for them.
+        // Base rejects blob transactions, so no handler exists for them. Neither is the
+        // development-only native BLS type (0x7a): it executes only on the revm path.
         registry.register(
             4,
             |tx: &BaseTxEnvelope| tx.as_standard().and_then(TxEnvelope::as_eip7702),
@@ -192,6 +193,7 @@ impl BaseEvmTypes {
 mod tests {
     use alloy_consensus::transaction::Recovered;
     use alloy_primitives::{Address, Bytes, TxKind, U256};
+    use base_common_consensus::BLS_TX_TYPE_ID;
     use base_common_genesis::BaseUpgrade;
     use evm2::{Evm, Precompiles, env::BlockEnv, evm::InMemoryDB};
 
@@ -255,6 +257,13 @@ mod tests {
             assert!(registry.contains(ty), "standard handler {ty} must be registered");
         }
         assert!(!registry.contains(3), "EIP-4844 blob handler must not be registered");
+        // The development-only native BLS type (0x7a) executes only on the revm path
+        // (`base-common-evm`); this envelope cannot carry it and the registry rejects the type
+        // instead of running it as an ordinary registry call.
+        assert!(matches!(
+            registry.try_get_by_type(BLS_TX_TYPE_ID),
+            Err(HandlerError::UnsupportedTransactionType(BLS_TX_TYPE_ID))
+        ));
     }
 
     #[test]

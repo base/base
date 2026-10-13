@@ -26,6 +26,15 @@ pub use transaction::{
     Eip8130ExecutionMode, Eip8130TransactionParts,
 };
 
+mod bls;
+pub use bls::{
+    BlsCrypto, BlsDatabaseState, BlsExecutor, BlsGas, BlsJournalState, BlsRegistry, BlsState,
+    BlsValidated, BlsValidationError, BlsValidator,
+};
+
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_utils;
+
 mod handler;
 pub use handler::{BaseHandler, IsTxError};
 

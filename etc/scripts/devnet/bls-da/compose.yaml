@@ -1,0 +1,88 @@
+# Overlay etc/docker/docker-compose.yml, using the published Base v1.4.2 client.
+# Start the validator only AFTER demo.mjs; its empty database and isolated network
+# force it to obtain every registration and transfer through L1 derivation.
+services:
+  base-bootnode:
+    image: ghcr.io/base/node:v1.4.2
+  base-builder:
+    image: ghcr.io/base/node:v1.4.2
+    # v1.4.2 predates --rpc.execution-forwarding-endpoint in the default compose.
+    command: !override
+      - --chain=dev
+      - sequencer
+      - --execution-chain=/genesis/l2/genesis.json
+      - --datadir=/data
+      - --http
+      - --http.addr=0.0.0.0
+      - --http.port=${L2_BUILDER_HTTP_PORT}
+      - --http.api=admin,eth,web3,net,rpc,debug,txpool,miner
+      - --authrpc.port=${L2_BUILDER_AUTH_PORT}
+      - --authrpc.jwtsecret=/genesis/jwt.hex
+      - --port=${L2_BUILDER_P2P_PORT}
+      - --disable-discovery
+      - --flashblocks.addr=0.0.0.0
+      - --flashblocks.port=${L2_BUILDER_FLASHBLOCKS_PORT}
+      - --flashblocks.block-time=200
+      - --rollup.chain-block-time=2000
+      - --builder.payload-builder-cutover
+      - --rpc.txfeecap=0
+      - --rpc.gascap=600000000
+      - --l1-eth-rpc=http://l1-el:${L1_HTTP_PORT}
+      - --l1-beacon=${L1_CONTAINER_BEACON_URL}
+      - --l2-config-file=/genesis/l2/rollup.json
+      - --l1-config-file=/genesis/el/chain-config.json
+      - --rpc.port=${L2_BUILDER_CL_RPC_PORT}
+      - --rpc.enable-admin
+      - --p2p.listen.tcp=${L2_BUILDER_CL_P2P_PORT}
+      - --p2p.listen.udp=${L2_BUILDER_CL_P2P_PORT}
+      - --p2p.priv.path=/genesis/l2/builder-p2p-key.txt
+      - --sequencer.l1-confs=0
+      - --p2p.sequencer.key=${SEQUENCER_KEY}
+  l1-el:
+    networks:
+      default: {}
+      l1-only: {}
+  l1-cl:
+    networks:
+      default: {}
+      l1-only: {}
+  base-rpc:
+    image: ghcr.io/base/node:v1.4.2
+    networks: !override
+      l1-only: {}
+    command: !override
+      - --chain=dev
+      # Pure rpc mode waits for an initial gossip payload before EL sync. A stopped
+      # sequencer bootstraps from its own genesis and derives without producing blocks.
+      - sequencer
+      - --sequencer.stopped
+      # Public dummy scalar 1, NOT the producer's signing key. Required by CLI
+      # validation even while stopped; never used to sign or produce a block.
+      - --p2p.sequencer.key=0000000000000000000000000000000000000000000000000000000000000001
+      - --execution-chain=/genesis/l2/genesis.json
+      - --datadir=/data
+      - --http
+      - --http.addr=0.0.0.0
+      - --http.port=${L2_BASE_RPC_HTTP_PORT}
+      - --http.api=admin,eth,web3,net,rpc,debug
+      - --authrpc.port=${L2_BASE_RPC_AUTH_PORT}
+      - --authrpc.jwtsecret=/genesis/jwt.hex
+      - --port=${L2_BASE_RPC_P2P_PORT}
+      - --max-peers=0
+      - --disable-discovery
+      - --rpc.gascap=600000000
+      - --l1-eth-rpc=http://l1-el:${L1_HTTP_PORT}
+      - --l1-beacon=${L1_CONTAINER_BEACON_URL}
+      - --l2-config-file=/genesis/l2/rollup.json
+      - --l1-config-file=/genesis/el/chain-config.json
+      - --rpc.port=${L2_BASE_RPC_CL_RPC_PORT}
+      - --rpc.enable-admin
+      - --p2p.listen.ip=127.0.0.1
+      - --p2p.listen.tcp=${L2_BASE_RPC_CL_P2P_PORT}
+      - --p2p.listen.udp=${L2_BASE_RPC_CL_P2P_PORT}
+      - --p2p.no-discovery
+      - --p2p.no-bootstore
+      - --l1.verifier-confs=0
+networks:
+  l1-only:
+    internal: true

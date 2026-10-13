@@ -15,5 +15,8 @@ pub use eip2930::SpanBatchEip2930TransactionData;
 mod eip7702;
 pub use eip7702::SpanBatchEip7702TransactionData;
 
+mod bls;
+pub use bls::SpanBatchBlsTransactionData;
+
 mod eip8130;
 pub use eip8130::SpanBatchEip8130TransactionData;

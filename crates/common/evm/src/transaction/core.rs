@@ -323,6 +323,15 @@ impl FromTxWithEncoded<BaseTxEnvelope> for BaseTransaction<TxEnv> {
                     eip8130: Some(Eip8130TransactionParts::new(signed.clone())),
                 }
             }
+            // A native BLS transaction projects to a typed (`0x7a`) call to the registry with
+            // its payload as input; `BaseHandler` intercepts the type and runs the native
+            // registration/batch transition, so it never executes as an ordinary call.
+            BaseTxEnvelope::Bls(tx) => Self {
+                base: TxEnv::from_recovered_tx(tx.tx(), caller),
+                enveloped_tx: Some(encoded),
+                deposit: Default::default(),
+                eip8130: None,
+            },
             BaseTxEnvelope::Deposit(tx) => Self::from_encoded_tx(tx.inner(), caller, encoded),
         }
     }

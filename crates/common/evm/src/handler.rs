@@ -1,7 +1,7 @@
 //! Handler related to Base chain
 use alloc::{boxed::Box, vec::Vec};
 
-use base_common_consensus::Predeploys;
+use base_common_consensus::{BLS_TX_TYPE_ID, BlsConstants, BlsPayload, Predeploys};
 use base_common_genesis::BaseUpgrade;
 use revm::{
     context::{
@@ -22,14 +22,15 @@ use revm::{
         handler::EvmTrError,
         post_execution::{self, reimburse_caller},
         pre_execution::{calculate_caller_fee, validate_account_nonce_and_code_with_components},
+        validation::validate_priority_fee_tx,
     },
     inspector::{Inspector, InspectorEvmTr, InspectorHandler},
     interpreter::{GasTracker, interpreter::EthInterpreter, interpreter_action::FrameInit},
-    primitives::U256,
+    primitives::{TxKind, U256},
 };
 
 use crate::{
-    BaseContextTr, BaseHaltReason, L1BlockInfo,
+    BaseContextTr, BaseHaltReason, BlsExecutor, BlsGas, BlsJournalState, BlsValidator, L1BlockInfo,
     transaction::{BaseTransactionError, BaseTxTr, DEPOSIT_TRANSACTION_TYPE},
 };
 
@@ -93,12 +94,69 @@ where
             return Ok(());
         }
 
+        if tx_type == BLS_TX_TYPE_ID {
+            // Development-chain gate for every execution path (payload building, block import,
+            // Engine API, RPC): the type is rejected before any state is read on other chains.
+            let chain_id = ctx.cfg().chain_id();
+            if chain_id != BlsConstants::CHAIN_ID {
+                return Err(BaseTransactionError::bls(
+                    "native BLS transactions are disabled on this chain",
+                )
+                .into());
+            }
+            if tx.chain_id() != Some(chain_id) {
+                return Err(InvalidTransaction::InvalidChainId.into());
+            }
+            if tx.kind() != TxKind::Call(BlsConstants::REGISTRY_ADDRESS)
+                || !tx.value().is_zero()
+                || tx.access_list().is_some_and(|mut list| list.next().is_some())
+                || tx.authorization_list_len() != 0
+                || !tx.blob_versioned_hashes().is_empty()
+            {
+                return Err(BaseTransactionError::bls(
+                    "malformed native BLS transaction environment",
+                )
+                .into());
+            }
+            // revm skips fee validation for custom transaction types; apply EIP-1559 rules.
+            let base_fee =
+                (!ctx.cfg().is_base_fee_check_disabled()).then(|| ctx.block().basefee() as u128);
+            validate_priority_fee_tx(
+                tx.max_fee_per_gas(),
+                tx.max_priority_fee_per_gas().unwrap_or_default(),
+                base_fee,
+                ctx.cfg().is_priority_fee_check_disabled(),
+            )?;
+        }
+
         // Check that non-deposit transactions have enveloped_tx set
         if tx.enveloped_tx().is_none() {
             return Err(BaseTransactionError::MissingEnvelopedTx.into());
         }
 
         self.mainnet.validate_env(evm)
+    }
+
+    fn validate_initial_tx_gas(
+        &self,
+        evm: &mut Self::Evm,
+    ) -> Result<InitialAndFloorGas, Self::Error> {
+        if evm.ctx_ref().tx().tx_type() != BLS_TX_TYPE_ID {
+            return self.mainnet.validate_initial_tx_gas(evm);
+        }
+        let tx = evm.ctx_ref().tx();
+        // A native BLS transaction consumes exactly its deterministic gas (see `BlsGas`); the
+        // EVM calldata floor does not apply to this native payload. L1 data fees remain separate.
+        let payload = BlsPayload::decode(tx.input()).map_err(BaseTransactionError::bls)?;
+        let initial_gas = BlsGas::intrinsic_gas(tx.input(), &payload);
+        if initial_gas > tx.gas_limit() {
+            return Err(InvalidTransaction::CallGasCostMoreThanGasLimit {
+                gas_limit: tx.gas_limit(),
+                initial_gas,
+            }
+            .into());
+        }
+        Ok(InitialAndFloorGas::new(initial_gas, 0))
     }
 
     fn validate_against_state_and_deduct_caller(
@@ -148,6 +206,25 @@ where
             *chain = L1BlockInfo::try_fetch(journal.db_mut(), block.number(), spec)?;
         }
 
+        // A native BLS transaction is fully validated against the journal before anything is
+        // mutated. Its transition is applied below, after the outer fees are deducted, inside the
+        // same transaction journal: any error discards the whole transaction, so neither state
+        // nor fees leak. The subsequent top-level call to the code-free registry is a no-op, so
+        // the transaction consumes exactly its intrinsic gas.
+        let bls_payload = if tx.tx_type() == BLS_TX_TYPE_ID {
+            let validated = BlsValidator::validate_input(
+                &mut BlsJournalState(journal),
+                cfg.chain_id(),
+                tx.chain_id().unwrap_or_default(),
+                tx.caller(),
+                tx.input(),
+            )
+            .map_err(|error| error.into_evm_error::<ERROR>())?;
+            Some(validated.payload)
+        } else {
+            None
+        };
+
         let mut caller_account = journal.load_account_with_code_mut(tx.caller())?.data;
 
         // validates account nonce and code
@@ -178,6 +255,12 @@ where
         caller_account.set_balance(balance);
         if tx.kind().is_call() {
             caller_account.bump_nonce();
+        }
+        drop(caller_account);
+
+        if let Some(payload) = bls_payload {
+            BlsExecutor::apply(journal, tx.caller(), &payload)
+                .map_err(|error| error.into_evm_error::<ERROR>())?;
         }
 
         Ok(())

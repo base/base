@@ -6,6 +6,7 @@ use alloy_json_rpc::ErrorPayload;
 use alloy_primitives::Bytes;
 use alloy_rpc_types_eth::{BlockError, error::EthRpcErrorCode};
 use alloy_transport::{RpcError, TransportErrorKind};
+use base_common_consensus::BlsConstants;
 use base_common_evm::{BaseHaltReason, BaseTransactionError};
 use base_common_rpc_types::BaseTxEnvError;
 use base_execution_evm::BaseBlockExecutionError;
@@ -90,6 +91,15 @@ pub enum BaseInvalidTransactionError {
     /// account-change apply). The string carries the underlying rejection reason.
     #[error("EIP-8130 transaction rejected: {0}")]
     Eip8130Rejected(String),
+    /// A native BLS (`0x7a`) transaction was submitted on a chain other than the
+    /// development chain that supports it.
+    #[error("native BLS transactions are only supported on chain {}", BlsConstants::CHAIN_ID)]
+    BlsNotAccepted,
+    /// A native BLS (`0x7a`) transaction was rejected by its native validation
+    /// (chain gate, payload, BLS authorization, or inner account state). The string
+    /// carries the underlying rejection reason.
+    #[error("BLS transaction rejected: {0}")]
+    BlsRejected(String),
 }
 
 impl From<BaseInvalidTransactionError> for jsonrpsee_types::error::ErrorObject<'static> {
@@ -99,7 +109,9 @@ impl From<BaseInvalidTransactionError> for jsonrpsee_types::error::ErrorObject<'
             | BaseInvalidTransactionError::HaltedDepositPostRegolith
             | BaseInvalidTransactionError::MissingEnvelopedTx
             | BaseInvalidTransactionError::Eip8130NotAccepted
-            | BaseInvalidTransactionError::Eip8130Rejected(_) => {
+            | BaseInvalidTransactionError::Eip8130Rejected(_)
+            | BaseInvalidTransactionError::BlsNotAccepted
+            | BaseInvalidTransactionError::BlsRejected(_) => {
                 rpc_err(EthRpcErrorCode::TransactionRejected.code(), err.to_string(), None)
             }
         }
@@ -117,6 +129,7 @@ impl TryFrom<BaseTransactionError> for BaseInvalidTransactionError {
             BaseTransactionError::HaltedDepositPostRegolith => Ok(Self::HaltedDepositPostRegolith),
             BaseTransactionError::MissingEnvelopedTx => Ok(Self::MissingEnvelopedTx),
             BaseTransactionError::Eip8130(reason) => Ok(Self::Eip8130Rejected(reason)),
+            BaseTransactionError::Bls(reason) => Ok(Self::BlsRejected(reason)),
             BaseTransactionError::Base(err) => Err(err),
         }
     }
@@ -198,7 +211,7 @@ impl From<BaseTxEnvError> for BaseEthApiError {
     fn from(value: BaseTxEnvError) -> Self {
         match value {
             BaseTxEnvError::Eth(error) => error.into(),
-            BaseTxEnvError::Eip8130Unsupported => {
+            BaseTxEnvError::Eip8130Unsupported | BaseTxEnvError::InvalidBlsRequest(_) => {
                 Self::Eth(EthApiError::InvalidParams(value.to_string()))
             }
         }

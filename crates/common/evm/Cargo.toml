@@ -34,6 +34,13 @@ base-common-consensus = { workspace = true, features = ["evm"] }
 # revm
 revm.workspace = true
 
+# crypto (native BLS transaction verification; no_std)
+sha2.workspace = true
+ark-ec.workspace = true
+ark-ff.workspace = true
+ark-serialize.workspace = true
+ark-bls12-381 = { workspace = true, features = ["curve"] }
+
 # misc
 auto_impl.workspace = true
 thiserror.workspace = true
@@ -49,7 +56,6 @@ reth-evm = { workspace = true, optional = true }
 [dev-dependencies]
 rstest.workspace = true
 k256 = { workspace = true, features = ["ecdsa"] }
-sha2 = { workspace = true, default-features = false }
 alloy-hardforks.workspace = true
 alloy-sol-types = { workspace = true, default-features = false }
 alloy-primitives = { workspace = true, default-features = false }
@@ -63,6 +69,10 @@ std = [
 	"alloy-eips/std",
 	"alloy-evm/std",
 	"alloy-primitives/std",
+	"ark-bls12-381/std",
+	"ark-ec/std",
+	"ark-ff/std",
+	"ark-serialize/std",
 	"base-common-chains/std",
 	"base-common-consensus/std",
 	"base-common-flz/std",
@@ -74,6 +84,7 @@ std = [
 	"dep:base-execution-eip8130",
 	"revm/std",
 	"serde?/std",
+	"sha2/std",
 	"thiserror/std",
 ]
 serde = [
@@ -87,6 +98,7 @@ serde = [
 	"revm/serde",
 ]
 reth = [ "dep:reth-evm", "std" ]
+test-utils = []
 metrics = [
 	"base-common-precompiles/metrics",
 	"base-metrics/metrics",

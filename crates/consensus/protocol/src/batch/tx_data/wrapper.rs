@@ -3,10 +3,10 @@
 use alloy_consensus::Transaction;
 use alloy_primitives::{Address, Signature, U256};
 use alloy_rlp::{Bytes, Decodable, Encodable};
-use base_common_consensus::{BaseTxEnvelope, OpTxType};
+use base_common_consensus::{BaseTxEnvelope, BlsConstants, OpTxType};
 
 use crate::{
-    SpanBatchEip1559TransactionData, SpanBatchEip2930TransactionData,
+    SpanBatchBlsTransactionData, SpanBatchEip1559TransactionData, SpanBatchEip2930TransactionData,
     SpanBatchEip7702TransactionData, SpanBatchEip8130TransactionData, SpanBatchError,
     SpanBatchLegacyTransactionData, SpanDecodingError,
 };
@@ -24,6 +24,8 @@ pub enum SpanBatchTransactionData {
     Eip7702(SpanBatchEip7702TransactionData),
     /// EIP-8130 transaction data.
     Eip8130(SpanBatchEip8130TransactionData),
+    /// Development-only native BLS transaction data.
+    Bls(SpanBatchBlsTransactionData),
 }
 
 impl Encodable for SpanBatchTransactionData {
@@ -46,6 +48,10 @@ impl Encodable for SpanBatchTransactionData {
             }
             Self::Eip8130(data) => {
                 out.put_u8(OpTxType::Eip8130 as u8);
+                data.encode(out);
+            }
+            Self::Bls(data) => {
+                out.put_u8(OpTxType::Bls as u8);
                 data.encode(out);
             }
         }
@@ -131,6 +137,7 @@ impl TryFrom<&BaseTxEnvelope> for SpanBatchTransactionData {
                     .0,
                 }))
             }
+            BaseTxEnvelope::Bls(signed) => Ok(Self::Bls(signed.tx().into())),
             BaseTxEnvelope::Deposit(_) => {
                 Err(SpanBatchError::Decoding(SpanDecodingError::InvalidTransactionType))
             }
@@ -147,6 +154,7 @@ impl SpanBatchTransactionData {
             Self::Eip1559(_) => OpTxType::Eip1559,
             Self::Eip7702(_) => OpTxType::Eip7702,
             Self::Eip8130(_) => OpTxType::Eip8130,
+            Self::Bls(_) => OpTxType::Bls,
         }
     }
 
@@ -169,6 +177,7 @@ impl SpanBatchTransactionData {
             OpTxType::Eip8130 => {
                 Ok(Self::Eip8130(SpanBatchEip8130TransactionData::decode(&mut &b[1..])?))
             }
+            OpTxType::Bls => Ok(Self::Bls(SpanBatchBlsTransactionData::decode(&mut &b[1..])?)),
             _ => Err(alloy_rlp::Error::Custom("Invalid transaction type")),
         }
     }
@@ -211,6 +220,20 @@ impl SpanBatchTransactionData {
             // `full_txs`, which supplies the auth proofs carried in the trailing column.
             Self::Eip8130(_) => {
                 return Err(SpanBatchError::Decoding(SpanDecodingError::InvalidTransactionType));
+            }
+            // BLS transactions exist only on the development chain and carry no `to` entry.
+            Self::Bls(data) => {
+                if chain_id != BlsConstants::CHAIN_ID {
+                    return Err(SpanBatchError::Decoding(
+                        SpanDecodingError::InvalidTransactionType,
+                    ));
+                }
+                if to.is_some() {
+                    return Err(SpanBatchError::Decoding(
+                        SpanDecodingError::InvalidTransactionData,
+                    ));
+                }
+                BaseTxEnvelope::Bls(data.to_signed_tx(nonce, gas, chain_id, signature))
             }
         })
     }

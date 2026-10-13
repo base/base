@@ -11,7 +11,9 @@ use alloy_consensus::BlockHeader;
 use alloy_primitives::{Address, B64, B256, Bytes, map::AddressSet};
 use alloy_rlp::encode;
 use base_common_chains::Upgrades;
-use base_common_consensus::{BasePrimitives, BaseTransaction, BaseTxEnvelope};
+use base_common_consensus::{
+    BLS_TX_TYPE_ID, BasePrimitives, BaseTransaction, BaseTxEnvelope, BlsConstants,
+};
 use base_common_rpc_types_engine::{BasePayloadAttributes, ExecutionData};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_consensus::BaseBeaconConsensus;
@@ -990,7 +992,7 @@ where
         } = self;
 
         let blob_store = reth_node_builder::components::create_blob_store(ctx)?;
-        let validator =
+        let mut validator_builder =
             TransactionValidationTaskExecutor::eth_builder(ctx.provider().clone(), evm_config)
                 .no_eip4844()
                 .with_max_tx_input_bytes(ctx.config().txpool.max_tx_input_bytes)
@@ -1002,18 +1004,24 @@ where
                     pool_config_overrides
                         .additional_validation_tasks
                         .unwrap_or_else(|| ctx.config().txpool.additional_validation_tasks),
-                )
-                .build_with_tasks(ctx.task_executor().clone(), blob_store.clone())
-                .map(|validator| {
-                    BaseTransactionValidator::new(validator)
-                        // In --dev mode we can't require gas fees because we're unable to decode
-                        // the L1 block info
-                        .require_l1_data_gas_fee(!ctx.config().dev.dev)
-                        .with_additional_trusted_delegation_targets(
-                            additional_trusted_delegation_targets.clone(),
-                        )
-                        .with_allowlisted_payers(allowlisted_payers.iter().copied())
-                });
+                );
+        // Native BLS transactions are an experimental type of the development chain only;
+        // every other chain keeps rejecting `0x7a` as an unsupported transaction type.
+        if ctx.chain_spec().chain().id() == BlsConstants::CHAIN_ID {
+            validator_builder = validator_builder.with_custom_tx_type(BLS_TX_TYPE_ID);
+        }
+        let validator = validator_builder
+            .build_with_tasks(ctx.task_executor().clone(), blob_store.clone())
+            .map(|validator| {
+                BaseTransactionValidator::new(validator)
+                    // In --dev mode we can't require gas fees because we're unable to decode
+                    // the L1 block info
+                    .require_l1_data_gas_fee(!ctx.config().dev.dev)
+                    .with_additional_trusted_delegation_targets(
+                        additional_trusted_delegation_targets.clone(),
+                    )
+                    .with_allowlisted_payers(allowlisted_payers.iter().copied())
+            });
 
         let mut final_pool_config = pool_config_overrides.apply(ctx.pool_config());
         final_pool_config.max_inflight_delegated_slot_limit = max_inflight_delegated_slots;

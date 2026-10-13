@@ -5,7 +5,7 @@ use std::{
 };
 
 use alloy_consensus::{
-    BlobTransactionValidationError, Transaction, Typed2718, transaction::Recovered,
+    BlobTransactionValidationError, Signed, Transaction, Typed2718, transaction::Recovered,
 };
 use alloy_eips::{
     eip2718::{Encodable2718, WithEncoded},
@@ -17,7 +17,7 @@ use alloy_primitives::{Address, B256, Bytes, Signature, TxHash, TxKind, U256};
 use base_bundles::MeterBundleResponse;
 use base_common_consensus::{
     BaseTransactionSigned, CoinbaseTip, EIP8130_TX_TYPE_ID, Eip8130Constants, Eip8130Signed,
-    Predeploys,
+    Predeploys, TxBls,
 };
 use c_kzg::KzgSettings;
 use reth_primitives_traits::{InMemorySize, SignedTransaction};
@@ -431,6 +431,14 @@ pub trait BasePooledTx: PoolTransaction + DataAvailabilitySized {
         None
     }
 
+    /// Returns the signed native BLS (`0x7a`) transaction when this transaction is one.
+    ///
+    /// Required for the mempool validator's native BLS admission checks; the default
+    /// returns `None` for implementers that never carry native BLS transactions.
+    fn as_bls(&self) -> Option<&Signed<TxBls>> {
+        None
+    }
+
     /// Returns the statically declared coinbase tip this transaction can pay.
     ///
     /// A policy-gated sender's calls must all target its policy manager, so a
@@ -527,6 +535,10 @@ where
 
     fn as_eip8130(&self) -> Option<&Eip8130Signed> {
         self.inner.transaction().inner().as_eip8130()
+    }
+
+    fn as_bls(&self) -> Option<&Signed<TxBls>> {
+        self.inner.transaction().inner().as_bls()
     }
 
     fn eip8130_nonce_channel_key(&self) -> Option<U256> {

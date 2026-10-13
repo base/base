@@ -9,9 +9,9 @@ use alloy_evm::{
     rpc::{EthTxEnvError, TryIntoTxEnv},
 };
 use alloy_network::TxSigner;
-use alloy_primitives::{Address, Bytes};
+use alloy_primitives::{Address, Bytes, TxKind};
 use alloy_signer::Signature;
-use base_common_consensus::{BaseTransactionInfo, BaseTxEnvelope};
+use base_common_consensus::{BLS_TX_TYPE_ID, BaseTransactionInfo, BaseTxEnvelope, BlsConstants};
 use base_common_evm::BaseTransaction as BaseRevm;
 use reth_rpc_convert::{FromConsensusTx, SignTxRequestError, SignableTxRequest, TryIntoSimTx};
 use revm::context::TxEnv;
@@ -60,6 +60,9 @@ pub enum BaseTxEnvError {
     /// represent: converting it would silently drop them.
     #[error("EIP-8130 requests are supported only by eth_call and eth_estimateGas")]
     Eip8130Unsupported,
+    /// The request declares the native BLS type but a shape no native BLS transaction has.
+    #[error("{0}")]
+    InvalidBlsRequest(&'static str),
 }
 
 impl<Spec, Block: BlockEnvironment> TryIntoTxEnv<BaseRevm<TxEnv>, Spec, Block>
@@ -71,8 +74,18 @@ impl<Spec, Block: BlockEnvironment> TryIntoTxEnv<BaseRevm<TxEnv>, Spec, Block>
         if self.as_eip8130().is_some() {
             return Err(BaseTxEnvError::Eip8130Unsupported);
         }
+        let mut base = self.as_ref().clone().try_into_tx_env(evm_env)?;
+        // A native BLS request runs the native BLS path, with its validation and fixed gas,
+        // rather than a plain call to the code-empty registry.
+        if self.is_bls() {
+            if let Some(reason) = self.bls_request_error() {
+                return Err(BaseTxEnvError::InvalidBlsRequest(reason));
+            }
+            base.tx_type = BLS_TX_TYPE_ID;
+            base.kind = TxKind::Call(BlsConstants::REGISTRY_ADDRESS);
+        }
         Ok(BaseRevm {
-            base: self.as_ref().clone().try_into_tx_env(evm_env)?,
+            base,
             enveloped_tx: Some(Bytes::new()),
             deposit: Default::default(),
             eip8130: None,
@@ -170,6 +183,29 @@ mod tests {
             serde_json::from_value(json!({ "from": FROM, "to": SENDER })).unwrap();
         let tx = TryIntoTxEnv::<BaseRevm<TxEnv>, _, _>::try_into_tx_env(plain, &env).unwrap();
         assert!(tx.eip8130.is_none());
+    }
+
+    /// A native BLS request simulates through the native BLS path rather than as a call to
+    /// the code-empty registry, and a request no native BLS transaction can match is rejected.
+    #[test]
+    fn standard_tx_env_routes_bls_requests_to_the_native_path() {
+        let env = EvmEnv::<revm::primitives::hardfork::SpecId>::default();
+        let request: BaseTransactionRequest =
+            serde_json::from_value(json!({ "from": FROM, "input": "0x01", "type": "0x7a" }))
+                .unwrap();
+        let tx = TryIntoTxEnv::<BaseRevm<TxEnv>, _, _>::try_into_tx_env(request, &env).unwrap();
+        assert_eq!(tx.base.tx_type, BLS_TX_TYPE_ID);
+        assert_eq!(tx.base.kind, TxKind::Call(BlsConstants::REGISTRY_ADDRESS));
+        assert_eq!(tx.base.caller, FROM);
+
+        let valued: BaseTransactionRequest = serde_json::from_value(
+            json!({ "from": FROM, "input": "0x01", "value": "0x1", "type": "0x7a" }),
+        )
+        .unwrap();
+        assert!(matches!(
+            TryIntoTxEnv::<BaseRevm<TxEnv>, _, _>::try_into_tx_env(valued, &env),
+            Err(BaseTxEnvError::InvalidBlsRequest(_))
+        ));
     }
 
     #[test]

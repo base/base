@@ -14,6 +14,9 @@ pub const DEPOSIT_TX_TYPE_ID: u8 = 126; // 0x7E
 /// [EIP-8130]: https://eips.ethereum.org/EIPS/eip-8130
 pub const EIP8130_TX_TYPE_ID: u8 = 121; // 0x79
 
+/// Identifier for the development-only native BLS transaction ([`crate::TxBls`]).
+pub const BLS_TX_TYPE_ID: u8 = 122; // 0x7A
+
 /// Canonical user-facing rejection message for EIP-8130 transactions submitted before Everest.
 ///
 /// Used by `base-execution-rpc` when an EIP-8130 transaction is submitted before
@@ -37,14 +40,22 @@ impl Display for OpTxType {
             Self::Eip7702 => write!(f, "eip7702"),
             Self::Deposit => write!(f, "deposit"),
             Self::Eip8130 => write!(f, "eip8130"),
+            Self::Bls => write!(f, "bls"),
         }
     }
 }
 
 impl OpTxType {
     /// List of all variants.
-    pub const ALL: [Self; 6] =
-        [Self::Legacy, Self::Eip2930, Self::Eip1559, Self::Eip7702, Self::Eip8130, Self::Deposit];
+    pub const ALL: [Self; 7] = [
+        Self::Legacy,
+        Self::Eip2930,
+        Self::Eip1559,
+        Self::Eip7702,
+        Self::Eip8130,
+        Self::Bls,
+        Self::Deposit,
+    ];
 
     /// Returns `true` if the type is [`OpTxType::Deposit`].
     pub const fn is_deposit(&self) -> bool {
@@ -54,6 +65,11 @@ impl OpTxType {
     /// Returns `true` if the type is [`OpTxType::Eip8130`].
     pub const fn is_eip8130(&self) -> bool {
         matches!(self, Self::Eip8130)
+    }
+
+    /// Returns `true` if the type is [`OpTxType::Bls`].
+    pub const fn is_bls(&self) -> bool {
+        matches!(self, Self::Bls)
     }
 }
 
@@ -74,13 +90,14 @@ mod tests {
 
     #[test]
     fn test_all_tx_types() {
-        assert_eq!(OpTxType::ALL.len(), 6);
+        assert_eq!(OpTxType::ALL.len(), 7);
         let all = vec![
             OpTxType::Legacy,
             OpTxType::Eip2930,
             OpTxType::Eip1559,
             OpTxType::Eip7702,
             OpTxType::Eip8130,
+            OpTxType::Bls,
             OpTxType::Deposit,
         ];
         assert_eq!(OpTxType::ALL.to_vec(), all);

@@ -55,6 +55,9 @@ pub enum BaseReceiptEnvelope {
     /// [EIP-8130]: https://eips.ethereum.org/EIPS/eip-8130
     #[cfg_attr(feature = "serde", serde(rename = "0x79"))]
     Eip8130(ReceiptWithBloom<Receipt<Log>>),
+    /// Receipt envelope with type flag 122, containing a development-only native BLS receipt.
+    #[cfg_attr(feature = "serde", serde(rename = "0x7a", alias = "0x7A"))]
+    Bls(ReceiptWithBloom<Receipt<Log>>),
 }
 
 impl BaseReceiptEnvelope {
@@ -87,6 +90,7 @@ impl BaseReceiptEnvelope {
             OpTxType::Eip8130 => {
                 Self::Eip8130(ReceiptWithBloom { receipt: inner_receipt, logs_bloom })
             }
+            OpTxType::Bls => Self::Bls(ReceiptWithBloom { receipt: inner_receipt, logs_bloom }),
             OpTxType::Deposit => {
                 let inner = DepositReceiptWithBloom {
                     receipt: DepositReceipt {
@@ -111,6 +115,7 @@ impl BaseReceiptEnvelope {
             Self::Eip1559(_) => OpTxType::Eip1559,
             Self::Eip7702(_) => OpTxType::Eip7702,
             Self::Eip8130(_) => OpTxType::Eip8130,
+            Self::Bls(_) => OpTxType::Bls,
             Self::Deposit(_) => OpTxType::Deposit,
         }
     }
@@ -147,6 +152,7 @@ impl BaseReceiptEnvelope {
             | Self::Eip2930(t)
             | Self::Eip1559(t)
             | Self::Eip7702(t)
+            | Self::Bls(t)
             | Self::Eip8130(t) => &t.logs_bloom,
             Self::Deposit(t) => &t.logs_bloom,
         }
@@ -185,6 +191,7 @@ impl BaseReceiptEnvelope {
             | Self::Eip2930(t)
             | Self::Eip1559(t)
             | Self::Eip7702(t)
+            | Self::Bls(t)
             | Self::Eip8130(t) => t.receipt,
             Self::Deposit(t) => t.receipt.into_inner(),
         }
@@ -198,6 +205,7 @@ impl BaseReceiptEnvelope {
             | Self::Eip2930(t)
             | Self::Eip1559(t)
             | Self::Eip7702(t)
+            | Self::Bls(t)
             | Self::Eip8130(t) => Some(&t.receipt),
             Self::Deposit(t) => Some(&t.receipt.inner),
         }
@@ -212,6 +220,7 @@ impl BaseReceiptEnvelope {
             | Self::Eip2930(t)
             | Self::Eip1559(t)
             | Self::Eip7702(t)
+            | Self::Bls(t)
             | Self::Eip8130(t) => t.length(),
             Self::Deposit(t) => t.length(),
         }
@@ -287,6 +296,7 @@ impl Typed2718 for BaseReceiptEnvelope {
             Self::Eip1559(_) => OpTxType::Eip1559,
             Self::Eip7702(_) => OpTxType::Eip7702,
             Self::Eip8130(_) => OpTxType::Eip8130,
+            Self::Bls(_) => OpTxType::Bls,
             Self::Deposit(_) => OpTxType::Deposit,
         };
         ty as u8
@@ -314,6 +324,7 @@ impl Encodable2718 for BaseReceiptEnvelope {
             | Self::Eip2930(t)
             | Self::Eip1559(t)
             | Self::Eip7702(t)
+            | Self::Bls(t)
             | Self::Eip8130(t) => t.encode(out),
             Self::Deposit(t) => t.encode(out),
         }
@@ -331,6 +342,7 @@ impl Decodable2718 for BaseReceiptEnvelope {
             OpTxType::Eip7702 => Ok(Self::Eip7702(Decodable::decode(buf)?)),
             OpTxType::Eip2930 => Ok(Self::Eip2930(Decodable::decode(buf)?)),
             OpTxType::Eip8130 => Ok(Self::Eip8130(Decodable::decode(buf)?)),
+            OpTxType::Bls => Ok(Self::Bls(Decodable::decode(buf)?)),
             OpTxType::Deposit => Ok(Self::Deposit(Decodable::decode(buf)?)),
         }
     }
@@ -355,12 +367,13 @@ impl From<BaseReceiptEnvelope> for Receipt<Log> {
 #[cfg(all(test, feature = "arbitrary"))]
 impl<'a> arbitrary::Arbitrary<'a> for BaseReceiptEnvelope {
     fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
-        match u.int_in_range(0..=5)? {
+        match u.int_in_range(0..=6)? {
             0 => Ok(Self::Legacy(ReceiptWithBloom::arbitrary(u)?)),
             1 => Ok(Self::Eip2930(ReceiptWithBloom::arbitrary(u)?)),
             2 => Ok(Self::Eip1559(ReceiptWithBloom::arbitrary(u)?)),
             3 => Ok(Self::Eip7702(ReceiptWithBloom::arbitrary(u)?)),
             4 => Ok(Self::Deposit(DepositReceiptWithBloom::arbitrary(u)?)),
+            5 => Ok(Self::Bls(ReceiptWithBloom::arbitrary(u)?)),
             _ => Ok(Self::Eip8130(ReceiptWithBloom::arbitrary(u)?)),
         }
     }
@@ -372,7 +385,7 @@ mod tests {
     use alloc::vec;
 
     use alloy_consensus::{Receipt, ReceiptWithBloom};
-    use alloy_eips::eip2718::Encodable2718;
+    use alloy_eips::eip2718::{Decodable2718, Encodable2718};
     use alloy_primitives::{Log, LogData, address, b256, bytes, hex};
     use alloy_rlp::Encodable;
 
@@ -435,5 +448,21 @@ mod tests {
         assert_eq!(receipt.tx_type(), OpTxType::Deposit);
         assert_eq!(receipt.deposit_nonce(), Some(1));
         assert_eq!(receipt.deposit_receipt_version(), Some(2));
+    }
+
+    #[test]
+    fn bls_receipt_2718_roundtrip_through_base_receipt() {
+        let envelope =
+            BaseReceiptEnvelope::from_parts(true, 21_000, vec![], OpTxType::Bls, None, None);
+        let encoded = envelope.encoded_2718();
+        assert_eq!(encoded[0], 0x7a);
+        let decoded = BaseReceiptEnvelope::decode_2718(&mut encoded.as_slice()).unwrap();
+        assert_eq!(decoded, envelope);
+
+        let receipt = crate::BaseReceipt::from(decoded);
+        assert_eq!(receipt.tx_type(), OpTxType::Bls);
+        let bloom = envelope.logs_bloom();
+        let rewrapped = BaseReceiptEnvelope::from(ReceiptWithBloom::new(receipt, *bloom));
+        assert_eq!(rewrapped.encoded_2718(), encoded);
     }
 }

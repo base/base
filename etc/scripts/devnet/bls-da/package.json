@@ -1,0 +1,16 @@
+{
+  "name": "base-bls-da-example",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "demo": "node demo.mjs"
+  },
+  "dependencies": {
+    "@noble/curves": "2.4.0",
+    "ethers": "6.17.0",
+    "solc": "0.8.37"
+  },
+  "overrides": {
+    "tmp": "0.2.7"
+  }
+}

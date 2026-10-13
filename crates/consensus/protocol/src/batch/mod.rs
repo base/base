@@ -76,7 +76,7 @@ pub use single::SingleBatch;
 
 mod tx_data;
 pub use tx_data::{
-    SpanBatchEip1559TransactionData, SpanBatchEip2930TransactionData,
+    SpanBatchBlsTransactionData, SpanBatchEip1559TransactionData, SpanBatchEip2930TransactionData,
     SpanBatchEip7702TransactionData, SpanBatchEip8130TransactionData,
     SpanBatchLegacyTransactionData, SpanBatchTransactionData,
 };
