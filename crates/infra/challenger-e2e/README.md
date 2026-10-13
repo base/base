@@ -317,7 +317,8 @@ answerable without reading the whole stream. Note the prefix: the driver's
 | Every Path 3 outcome, all runs | `@data.message.fields.phase:path3` |
 | A phase that ran but was not asserted | `@data.message.fields.verdict:skip` |
 | What one run actually asserted | `"scenario complete"` — has `phases_asserted` |
-| Which scenario a run was | `"starting scenario"` — has `scenario`, both keys, the timeouts |
+| Which scenario a run was | `"starting scenario"` — has `scenario`, both keys, the timeouts, and `driver_commit` |
+| What a run tested | `"challenger under test"` — has `challenger_version`, `challenger_binary`; `"forked L1"` — has `fork_block` |
 | A named contract revert | `"reverted with"` |
 | Where a run is, phase by phase | `"started" OR "finished" OR "failed" OR "skipped"` with `@data.message.fields.phase:*` |
 | Which phase a failed run died in | `"failed" @data.message.fields.verdict:fail` — has `phase`, and `elapsed_ms` unless the error came between two phases (charged to the next one) |
@@ -416,6 +417,7 @@ is pointed at and talks to the same prover-service.
 | `CHALLENGER_E2E_QUIET_WINDOW` | No (default `90s`) | Positive-case (and Path 2 skip) observation window |
 | `CHALLENGER_E2E_DISPUTE_TIMEOUT` | No (default `45m`) | Budget for each SNARK / dispute; sized for a real proof, generous in `mock` mode |
 | `CHALLENGER_E2E_POLL_INTERVAL` | No (default `5s`) | Driver poll interval |
+| `CHALLENGER_E2E_DRIVER_COMMIT` | No | `base/base` commit the driver was built from; the image sets it, and it is only logged |
 | `CHALLENGER_E2E_L2_RETRY_BUDGET` | No (default `10m`) | How long an L2 read that fails like an unavailable node is retried before the run fails as an infrastructure failure (exit code 75) |
 
 `anvil` must be on `PATH`. The challenger under test must be reachable on
