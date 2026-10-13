@@ -1,6 +1,6 @@
 //! Batcher pipeline trait and the types that drive it.
 
-use alloy_primitives::B256;
+use alloy_primitives::{B256, FixedBytes};
 use base_common_consensus::BaseBlock;
 use base_protocol::BlockInfo;
 
@@ -20,6 +20,15 @@ pub enum StepResult {
 /// Encoding failed. Fatal: do not continue.
 #[derive(Debug, thiserror::Error)]
 pub enum StepError {
+    /// Native BLS blocks must have exactly the required witness and use chunk encoding.
+    #[error("invalid BLS witness or unsupported BLS chunk at cursor {cursor}")]
+    BlsWitness {
+        /// Position of the invalid block in the input queue.
+        cursor: usize,
+    },
+    /// A detached block signature is not a valid subgroup point.
+    #[error(transparent)]
+    BlsAggregation(#[from] base_common_bls::BlsAggregationError),
     /// The block could not be converted to a [`base_protocol::SingleBatch`].
     #[error("batch composition failed for block at cursor {cursor}: {source}")]
     CompositionFailed {
@@ -70,6 +79,13 @@ pub enum DerivationReconciliation {
 pub trait BatchPipeline: Send {
     /// Queue an L2 block. Parent mismatch returns the block so the caller can reset.
     fn add_block(&mut self, block: BaseBlock) -> Result<(), (ReorgError, Box<BaseBlock>)>;
+
+    /// Queue a block together with the detached signature to retain across encoding retries.
+    fn add_witnessed_block(
+        &mut self,
+        block: BaseBlock,
+        bls_aggregate: Option<FixedBytes<48>>,
+    ) -> Result<(), (ReorgError, Box<BaseBlock>)>;
 
     /// Encode one pending block or close the writable channel.
     ///

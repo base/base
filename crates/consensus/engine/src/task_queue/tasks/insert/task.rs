@@ -11,6 +11,7 @@ use base_common_consensus::BaseBlock;
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::{
     BaseExecutionPayload, BaseExecutionPayloadEnvelope, BaseExecutionPayloadSidecar,
+    BlsPayloadWitness,
 };
 use base_protocol::{BaseTimeUpdateTx, L2BlockInfo};
 use tokio::sync::mpsc;
@@ -277,6 +278,16 @@ impl<EngineClient_: EngineClient> InsertTask<EngineClient_> {
             block.header.timestamp,
         )?;
 
+        let witness = if self.payload_safety.advances_safe_head()
+            && block.body.transactions.iter().any(|tx| tx.is_bls_transfer())
+        {
+            // Only the authenticated derivation path promotes blocks to safe. Its chunk
+            // signature has already been verified before any member's attributes were built.
+            Some(BlsPayloadWitness::Derived)
+        } else {
+            self.envelope.bls_aggregate.map(BlsPayloadWitness::Aggregate)
+        };
+
         // Insert the new payload.
         let insert_time_start = Instant::now();
         let response = match execution_payload {
@@ -293,10 +304,14 @@ impl<EngineClient_: EngineClient> InsertTask<EngineClient_> {
                 self.client.new_payload_v2(payload_input).await
             }
             BaseExecutionPayload::V3(payload) => {
-                self.client.new_payload_v3(payload, parent_beacon_block_root).await
+                self.client
+                    .new_payload_v3_with_witness(payload, parent_beacon_block_root, witness)
+                    .await
             }
             BaseExecutionPayload::V4(payload) => {
-                self.client.new_payload_v4(payload, parent_beacon_block_root).await
+                self.client
+                    .new_payload_v4_with_witness(payload, parent_beacon_block_root, witness)
+                    .await
             }
         };
 
@@ -557,6 +572,7 @@ mod tests {
         let envelope = BaseExecutionPayloadEnvelope {
             parent_beacon_block_root: None,
             execution_payload: payload,
+            bls_aggregate: None,
         };
         let mut state = TestEngineStateBuilder::new().build();
 
@@ -587,6 +603,7 @@ mod tests {
         let envelope = BaseExecutionPayloadEnvelope {
             parent_beacon_block_root: None,
             execution_payload: payload,
+            bls_aggregate: None,
         };
         let mut state = TestEngineStateBuilder::new().build();
 
@@ -618,6 +635,7 @@ mod tests {
         let envelope = BaseExecutionPayloadEnvelope {
             parent_beacon_block_root: None,
             execution_payload: payload,
+            bls_aggregate: None,
         };
         let mut state = TestEngineStateBuilder::new().build();
 
@@ -642,6 +660,7 @@ mod tests {
         let envelope = BaseExecutionPayloadEnvelope {
             parent_beacon_block_root: None,
             execution_payload: payload,
+            bls_aggregate: None,
         };
         let mut state = TestEngineStateBuilder::new().build();
 
@@ -667,6 +686,7 @@ mod tests {
         let envelope = BaseExecutionPayloadEnvelope {
             parent_beacon_block_root: None,
             execution_payload: bedrock_payload_with_parent(2, B256::with_last_byte(1)),
+            bls_aggregate: None,
         };
 
         InsertTask::unsafe_payload(
@@ -711,6 +731,7 @@ mod tests {
                 BaseExecutionPayloadEnvelope {
                     parent_beacon_block_root: None,
                     execution_payload: bedrock_payload(1),
+                    bls_aggregate: None,
                 },
             ))));
         }
@@ -749,6 +770,7 @@ mod tests {
                 BaseExecutionPayloadEnvelope {
                     parent_beacon_block_root: None,
                     execution_payload: payload,
+                    bls_aggregate: None,
                 },
             )
             .execute_with_result(&mut state)
@@ -772,6 +794,7 @@ mod tests {
         let envelope = BaseExecutionPayloadEnvelope {
             parent_beacon_block_root: None,
             execution_payload: denim_payload(2, 3, 200),
+            bls_aggregate: None,
         };
 
         let error = InsertTask::new(
@@ -796,6 +819,7 @@ mod tests {
         let envelope = BaseExecutionPayloadEnvelope {
             parent_beacon_block_root: None,
             execution_payload: denim_payload(2, 3, 200),
+            bls_aggregate: None,
         };
 
         let result = InsertTask::unsafe_payload(Arc::clone(&client), denim_config(), envelope)
@@ -815,6 +839,7 @@ mod tests {
         let envelope = BaseExecutionPayloadEnvelope {
             parent_beacon_block_root: None,
             execution_payload: bedrock_payload_with_parent(5, B256::with_last_byte(0x99)),
+            bls_aggregate: None,
         };
 
         InsertTask::unsafe_payload(
@@ -841,6 +866,7 @@ mod tests {
         let envelope = BaseExecutionPayloadEnvelope {
             parent_beacon_block_root: None,
             execution_payload: bedrock_payload_with_parent(5, current_unsafe.block_info.hash),
+            bls_aggregate: None,
         };
 
         InsertTask::unsafe_payload(
@@ -873,6 +899,7 @@ mod tests {
         let envelope = BaseExecutionPayloadEnvelope {
             parent_beacon_block_root: None,
             execution_payload: bedrock_payload_with_parent(8, B256::with_last_byte(7)),
+            bls_aggregate: None,
         };
 
         let inserted_head = InsertTask::authoritative_payload(
@@ -916,10 +943,12 @@ mod tests {
             BaseExecutionPayloadEnvelope {
                 parent_beacon_block_root: None,
                 execution_payload: bedrock_payload_with_parent(8, B256::with_last_byte(7)),
+                bls_aggregate: None,
             },
             BaseExecutionPayloadEnvelope {
                 parent_beacon_block_root: None,
                 execution_payload: bedrock_payload_with_parent(9, B256::with_last_byte(8)),
+                bls_aggregate: None,
             },
         ];
 
@@ -945,6 +974,7 @@ mod tests {
         let envelope = BaseExecutionPayloadEnvelope {
             parent_beacon_block_root: None,
             execution_payload: bedrock_payload(1),
+            bls_aggregate: None,
         };
         let mut state = TestEngineStateBuilder::new().build();
         InsertTask::unsafe_payload(test_client(), Arc::clone(&config), envelope.clone())

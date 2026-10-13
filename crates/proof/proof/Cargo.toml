@@ -61,6 +61,7 @@ rstest.workspace = true
 c-kzg = { workspace = true, features = [] }
 tokio = { workspace = true, features = ["full"] }
 alloy-eips = { workspace = true, features = ["kzg"] }
+base-common-evm = { workspace = true, features = ["test-utils"] }
 
 [features]
 std = [

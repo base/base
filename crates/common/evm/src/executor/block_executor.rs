@@ -3,7 +3,7 @@
 use alloc::{boxed::Box, vec::Vec};
 
 use alloy_consensus::{Eip658Value, Header, Transaction, TransactionEnvelope, TxReceipt};
-use alloy_eips::{Encodable2718, Typed2718};
+use alloy_eips::{Decodable2718, Encodable2718, Typed2718};
 use alloy_evm::{
     Database, Evm, FromRecoveredTx, FromTxWithEncoded, RecoveredTx,
     block::{
@@ -14,7 +14,9 @@ use alloy_evm::{
     eth::{EthTxResult, receipt_builder::ReceiptBuilderCtx},
 };
 use base_common_chains::Upgrades;
-use base_common_consensus::{DepositReceipt, Predeploys};
+use base_common_consensus::{
+    BLS_TRANSFER_TX_TYPE_ID, BaseTxEnvelope, DepositReceipt, Predeploys, TxBlsTransfer,
+};
 use base_common_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
 #[cfg(feature = "std")]
 use base_execution_eip8130::IntrinsicGas;
@@ -26,7 +28,8 @@ use revm::{
 
 use crate::{
     BaseBlockExecutionCtx, BaseBlockExecutionError, BaseReceiptBuilder, BaseTime, BaseTxEnv,
-    BaseTxResult, DEPOSIT_TRANSACTION_TYPE, L1BlockInfo, canyon,
+    BaseTxResult, BlsBlockAuthorization, BlsDatabaseState, BlsRegistry, BlsTransferIntent,
+    DEPOSIT_TRANSACTION_TYPE, L1BlockInfo, canyon,
 };
 
 /// Block executor for Base.
@@ -53,6 +56,9 @@ pub struct BaseBlockExecutor<Evm, R: BaseReceiptBuilder, Spec> {
     pub is_regolith: bool,
     /// Utility to call system smart contracts.
     pub system_caller: SystemCaller<Spec>,
+    /// One entry per committed native BLS transfer, in block order: its authorization intent,
+    /// or `None` if it was not collected. Checked against `ctx.bls_authorization` in `finish`.
+    pub bls_transfers: Vec<Option<BlsTransferIntent>>,
 }
 
 impl<E, R, Spec> BaseBlockExecutor<E, R, Spec>
@@ -73,6 +79,7 @@ where
             receipts: Vec::new(),
             gas_used: 0,
             da_footprint_used: 0,
+            bls_transfers: Vec::new(),
             ctx,
         }
     }
@@ -267,6 +274,30 @@ where
             .transpose()
             .map_err(BlockExecutionError::other)?;
 
+        // Collect a native BLS transfer's intent from the block's own canonical transaction:
+        // the sender it debits, that sender's registered key (immutable once registered) and
+        // the signing digest. Collected only when the block verifies a witness; an uncollected
+        // transfer fails verification in `finish`.
+        let bls_transfer = if tx.tx().ty() == BLS_TRANSFER_TX_TYPE_ID
+            && matches!(self.ctx.bls_authorization, BlsBlockAuthorization::Verify(_))
+        {
+            match BaseTxEnvelope::decode_2718_exact(&tx.tx().encoded_2718()) {
+                Ok(BaseTxEnvelope::BlsTransfer(transfer)) => {
+                    let sender = transfer.sender;
+                    BlsRegistry::read_key(&mut BlsDatabaseState(self.evm.db_mut()), sender)
+                        .map_err(BlockExecutionError::other)?
+                        .map(|public_key| BlsTransferIntent {
+                            sender,
+                            public_key: public_key.into(),
+                            digest: TxBlsTransfer::signing_digest_for_hash(transfer.hash()),
+                        })
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
+
         Ok(BaseTxResult {
             inner: EthTxResult {
                 result,
@@ -276,6 +307,7 @@ where
             is_deposit,
             sender: *tx.signer(),
             depositor,
+            bls_transfer,
         })
     }
 
@@ -285,7 +317,12 @@ where
             is_deposit,
             sender: _,
             depositor,
+            bls_transfer,
         } = output;
+
+        if tx_type.ty() == BLS_TRANSFER_TX_TYPE_ID {
+            self.bls_transfers.push(bls_transfer);
+        }
 
         let tx_gas_used = result.tx_gas_used();
         let state_gas_used = result.gas().block_state_gas_used();
@@ -335,6 +372,14 @@ where
     fn finish(
         mut self,
     ) -> Result<(Self::Evm, BlockExecutionResult<R::Receipt>), BlockExecutionError> {
+        // Authorize the block's native BLS transfers before exposing any finalized result. A bad
+        // witness is reported as a non-validation error: it condemns the supplied aggregate, not
+        // the canonical block, which may still execute with a valid aggregate.
+        self.ctx
+            .bls_authorization
+            .verify(&self.bls_transfers)
+            .map_err(BlockExecutionError::other)?;
+
         let balance_increments =
             post_block_balance_increments::<Header>(&self.spec, self.evm.block(), &[], None);
 
@@ -814,6 +859,222 @@ mod tests {
         )) = executor.execute_transaction(&tx)
         {
             panic!("self-pay transaction must not be rejected by the block gas pre-check");
+        }
+    }
+
+    mod bls_transfers {
+        use alloy_consensus::Sealable;
+        use alloy_evm::block::InternalBlockExecutionError;
+        use alloy_primitives::{FixedBytes, address};
+        use base_common_consensus::{BaseReceiptEnvelope, BlsConstants};
+
+        use super::*;
+        use crate::{BlsBlockAuthorizationError, BlsCrypto, test_utils::BlsTestKey};
+
+        const ALICE: Address = address!("0x00000000000000000000000000000000000a11ce");
+        const BOB: Address = address!("0x0000000000000000000000000000000000000b0b");
+        const CAROL: Address = address!("0x0000000000000000000000000000000000ca401e");
+        const ALICE_SEED: u64 = 1;
+        const BOB_SEED: u64 = 2;
+        const FUNDS: u64 = 1_000_000_000_000;
+
+        /// A state where Alice and Bob are funded and already registered.
+        fn registered_db() -> revm::database::State<InMemoryDB> {
+            let mut db =
+                revm::database::State::builder().with_database(InMemoryDB::default()).build();
+            let mut registry = HashMap::default();
+            for (owner, seed) in [(ALICE, ALICE_SEED), (BOB, BOB_SEED)] {
+                db.insert_account(
+                    owner,
+                    AccountInfo { balance: U256::from(FUNDS), ..Default::default() },
+                );
+                let key = BlsTestKey::from_seed(seed).public_key();
+                for (slot, word) in
+                    BlsRegistry::key_slots(owner).into_iter().zip(BlsRegistry::key_words(&key.0))
+                {
+                    registry.insert(U256::from_be_bytes(slot.0), word);
+                }
+            }
+            db.insert_account_with_storage(
+                BlsConstants::REGISTRY_ADDRESS,
+                AccountInfo { nonce: BlsRegistry::ACCOUNT_NONCE, ..Default::default() },
+                registry,
+            );
+            db
+        }
+
+        /// Three transfers, two from the same sender, and their individual signatures.
+        fn transfers() -> Vec<(Recovered<BaseTxEnvelope>, FixedBytes<48>)> {
+            [(ALICE, 0, CAROL, ALICE_SEED), (BOB, 0, ALICE, BOB_SEED), (ALICE, 1, BOB, ALICE_SEED)]
+                .into_iter()
+                .map(|(sender, nonce, recipient, seed)| {
+                    let tx = TxBlsTransfer {
+                        chain_id: BlsConstants::CHAIN_ID,
+                        sender,
+                        nonce,
+                        recipient,
+                        value: U256::from(1_000),
+                        max_priority_fee_per_gas: 1,
+                        max_fee_per_gas: 2,
+                    };
+                    let signature = BlsTestKey::from_seed(seed).sign(tx.signing_digest());
+                    (
+                        Recovered::new_unchecked(
+                            BaseTxEnvelope::BlsTransfer(tx.seal_slow()),
+                            sender,
+                        ),
+                        signature,
+                    )
+                })
+                .collect()
+        }
+
+        fn aggregate(signatures: &[FixedBytes<48>]) -> FixedBytes<48> {
+            BlsCrypto::aggregate_signatures(signatures).unwrap()
+        }
+
+        /// Executes `txs` as one block under `authorization` and finishes it.
+        fn execute(
+            txs: &[Recovered<BaseTxEnvelope>],
+            authorization: BlsBlockAuthorization,
+        ) -> Result<(Vec<BaseReceiptEnvelope>, [u64; 2]), BlockExecutionError> {
+            let mut db = registered_db();
+            let receipt_builder = AlloyReceiptBuilder::default();
+            let upgrades = ChainUpgrades::mainnet();
+            let evm = Context::base()
+                .with_db(&mut db)
+                .with_chain(L1BlockInfo { l2_block: Some(U256::from(1)), ..Default::default() })
+                .with_block(BlockEnv {
+                    number: U256::from(1),
+                    basefee: 1,
+                    gas_limit: 30_000_000,
+                    ..Default::default()
+                })
+                .modify_cfg_chained(|cfg| {
+                    cfg.spec = BaseSpecId::new(BaseUpgrade::Isthmus);
+                    cfg.chain_id = BlsConstants::CHAIN_ID;
+                })
+                .build_with_inspector(NoOpInspector {});
+            let ctx =
+                BaseBlockExecutionCtx { bls_authorization: authorization, ..Default::default() };
+            let mut executor = BaseBlockExecutor::new(evm, ctx, &upgrades, &receipt_builder);
+            for tx in txs {
+                executor.execute_transaction(tx)?;
+            }
+            let (_, result) = executor.finish()?;
+            let nonces = [ALICE, BOB].map(|owner| db.basic(owner).unwrap().unwrap().nonce);
+            Ok((result.receipts, nonces))
+        }
+
+        /// Asserts the block failed authorization with `expected`, as a non-validation error.
+        fn assert_unauthorized(
+            result: Result<(Vec<BaseReceiptEnvelope>, [u64; 2]), BlockExecutionError>,
+            expected: BlsBlockAuthorizationError,
+        ) {
+            match result {
+                Err(BlockExecutionError::Internal(InternalBlockExecutionError::Other(error))) => {
+                    assert_eq!(error.downcast_ref::<BlsBlockAuthorizationError>(), Some(&expected));
+                }
+                other => panic!("expected an internal authorization error, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn verified_block_produces_21k_receipts_and_ordinary_nonces() {
+            let (txs, signatures): (Vec<_>, Vec<_>) = transfers().into_iter().unzip();
+            let (receipts, nonces) =
+                execute(&txs, BlsBlockAuthorization::Verify(Some(aggregate(&signatures)))).unwrap();
+            assert_eq!(receipts.len(), 3);
+            for (index, receipt) in receipts.iter().enumerate() {
+                assert!(matches!(receipt, BaseReceiptEnvelope::BlsTransfer(_)));
+                assert!(receipt.status());
+                assert_eq!(receipt.cumulative_gas_used(), 21_000 * (index as u64 + 1));
+            }
+            assert_eq!(nonces, [2, 1]);
+
+            // The aggregate is order-independent and may be built from partial aggregates.
+            let partial = aggregate(&signatures[..2]);
+            assert!(
+                execute(
+                    &txs,
+                    BlsBlockAuthorization::Verify(Some(aggregate(&[signatures[2], partial])))
+                )
+                .is_ok()
+            );
+            // Derived blocks were authenticated upstream and carry no witness.
+            assert!(execute(&txs, BlsBlockAuthorization::Derived).is_ok());
+        }
+
+        #[test]
+        fn missing_or_wrong_aggregate_fails_closed_but_is_retryable() {
+            let (txs, signatures): (Vec<_>, Vec<_>) = transfers().into_iter().unzip();
+            assert_unauthorized(
+                execute(&txs, BlsBlockAuthorization::Verify(None)),
+                BlsBlockAuthorizationError::MissingAggregate { transfers: 3 },
+            );
+            // Omitted signature, extra signature, a signature over a different message.
+            let foreign = BlsTestKey::from_seed(ALICE_SEED).sign(alloy_primitives::B256::ZERO);
+            for witness in [
+                aggregate(&signatures[..2]),
+                aggregate(&[signatures.as_slice(), &[foreign]].concat()),
+                aggregate(&[signatures[0], signatures[1], foreign]),
+            ] {
+                assert_unauthorized(
+                    execute(&txs, BlsBlockAuthorization::Verify(Some(witness))),
+                    BlsBlockAuthorizationError::InvalidAggregate,
+                );
+            }
+            let mut infinity = FixedBytes::<48>::ZERO;
+            infinity[0] = 0xc0;
+            assert_unauthorized(
+                execute(&txs, BlsBlockAuthorization::Verify(Some(infinity))),
+                BlsBlockAuthorizationError::InvalidAggregatePoint,
+            );
+            // The same transactions still execute with a valid replacement witness.
+            assert!(
+                execute(&txs, BlsBlockAuthorization::Verify(Some(aggregate(&signatures)))).is_ok()
+            );
+
+            // A block without transfers accepts no witness.
+            let witness = aggregate(&signatures);
+            assert!(execute(&[], BlsBlockAuthorization::Verify(None)).is_ok());
+            assert_unauthorized(
+                execute(&[], BlsBlockAuthorization::Verify(Some(witness))),
+                BlsBlockAuthorizationError::UnexpectedAggregate,
+            );
+        }
+
+        #[test]
+        fn switching_to_verify_after_uncollected_execution_fails_closed() {
+            let (txs, signatures): (Vec<_>, Vec<_>) = transfers().into_iter().unzip();
+            let mut db = registered_db();
+            let receipt_builder = AlloyReceiptBuilder::default();
+            let upgrades = ChainUpgrades::mainnet();
+            let evm = Context::base()
+                .with_db(&mut db)
+                .with_chain(L1BlockInfo { l2_block: Some(U256::from(1)), ..Default::default() })
+                .with_block(BlockEnv {
+                    number: U256::from(1),
+                    basefee: 1,
+                    gas_limit: 30_000_000,
+                    ..Default::default()
+                })
+                .modify_cfg_chained(|cfg| {
+                    cfg.spec = BaseSpecId::new(BaseUpgrade::Isthmus);
+                    cfg.chain_id = BlsConstants::CHAIN_ID;
+                })
+                .build_with_inspector(NoOpInspector {});
+            let ctx = BaseBlockExecutionCtx {
+                bls_authorization: BlsBlockAuthorization::Derived,
+                ..Default::default()
+            };
+            let mut executor = BaseBlockExecutor::new(evm, ctx, &upgrades, &receipt_builder);
+            executor.execute_transaction(&txs[0]).unwrap();
+            executor.ctx.bls_authorization = BlsBlockAuthorization::Verify(Some(signatures[0]));
+            assert_unauthorized(
+                executor.finish().map(|_| (Vec::new(), [0; 2])),
+                BlsBlockAuthorizationError::UnattestedTransfer { index: 0 },
+            );
         }
     }
 }

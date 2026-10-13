@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 
 use alloy_consensus::Block;
 use alloy_eips::Decodable2718;
-use alloy_primitives::{B256, Bytes, U256};
+use alloy_primitives::{B256, Bytes, FixedBytes, U256};
 use alloy_rpc_types_engine::{BlobsBundleV1, ExecutionPayloadV3, PayloadError};
 
 /// The Base execution payload for `newPayloadV4` of the engine API introduced with isthmus.
@@ -265,6 +265,9 @@ pub struct BaseExecutionPayloadEnvelopeV4 {
     ///
     /// [eip7685]: https://eips.ethereum.org/EIPS/eip-7685
     pub execution_requests: Vec<Bytes>,
+    /// Detached aggregate authenticating the block's native BLS transfer intents.
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    pub bls_aggregate: Option<FixedBytes<48>>,
 }
 
 #[cfg(test)]

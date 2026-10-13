@@ -7,10 +7,12 @@ use alloc::vec::Vec;
 
 use alloy_consensus::{Block, BlockHeader, Sealable, Transaction};
 use alloy_eips::{Encodable2718, eip4895::Withdrawal, eip7685::Requests};
-use alloy_primitives::{B256, Bytes, Signature, keccak256};
+use alloy_primitives::{B256, Bytes, FixedBytes, Signature, keccak256};
 use alloy_rpc_types_engine::{
     CancunPayloadFields, ExecutionPayloadInputV2, ExecutionPayloadV3, PraguePayloadFields,
 };
+#[cfg(feature = "std")]
+use base_common_consensus::BLS_TRANSFER_TX_TYPE_ID;
 
 use crate::{BaseExecutionPayload, BaseExecutionPayloadSidecar, BaseExecutionPayloadV4};
 #[cfg(feature = "std")]
@@ -34,6 +36,10 @@ pub struct BaseExecutionPayloadEnvelope {
     pub parent_beacon_block_root: Option<B256>,
     /// The execution payload.
     pub execution_payload: BaseExecutionPayload,
+    /// Detached authorization over native BLS intents, covered by the gossip signature but
+    /// deliberately excluded from transaction and block hashes.
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    pub bls_aggregate: Option<FixedBytes<48>>,
 }
 
 impl BaseExecutionPayloadEnvelope {
@@ -66,12 +72,16 @@ impl ssz::Encode for BaseExecutionPayloadEnvelope {
 
         // Write payload
         self.execution_payload.ssz_append(buf);
+        if let Some(aggregate) = self.bls_aggregate {
+            buf.extend_from_slice(aggregate.as_slice());
+        }
     }
 
     fn ssz_bytes_len(&self) -> usize {
         let mut len = 0;
         len += B256::ssz_fixed_len(); // parent_beacon_block_root is always 32 bytes
         len += self.execution_payload.ssz_bytes_len();
+        len += self.bls_aggregate.map_or(0, |_| 48);
         len
     }
 }
@@ -101,10 +111,12 @@ impl ssz::Decode for BaseExecutionPayloadEnvelope {
         };
 
         // Decode payload
-        let execution_payload =
-            BaseExecutionPayload::from_ssz_bytes(&bytes[B256::ssz_fixed_len()..])?;
+        let (execution_payload, bls_aggregate) = BlsPayloadWitness::decode_payload(
+            &bytes[B256::ssz_fixed_len()..],
+            BaseExecutionPayload::from_ssz_bytes,
+        )?;
 
-        Ok(Self { parent_beacon_block_root, execution_payload })
+        Ok(Self { parent_beacon_block_root, execution_payload, bls_aggregate })
     }
 }
 
@@ -113,7 +125,47 @@ impl From<NetworkPayloadEnvelope> for BaseExecutionPayloadEnvelope {
         Self {
             execution_payload: envelope.payload,
             parent_beacon_block_root: envelope.parent_beacon_block_root,
+            bls_aggregate: envelope.bls_aggregate,
         }
+    }
+}
+
+/// Authorization supplied over the authenticated Engine API, never public transaction RPC.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+pub enum BlsPayloadWitness {
+    /// Independently verify a detached block aggregate before accepting an unsafe payload.
+    Aggregate(FixedBytes<48>),
+    /// The local consensus layer verified the complete L1 chunk before deriving this block.
+    /// Like forced deposits, this assertion is trusted only at the CL/EL Engine boundary.
+    Derived,
+}
+
+#[cfg(feature = "std")]
+impl BlsPayloadWitness {
+    /// Decodes a legacy payload or a native-intent payload followed by its 48-byte witness.
+    ///
+    /// Presence of the new transaction type selects the extended format. No marker is guessed
+    /// from arbitrary payload bytes: ordinary payloads retain exactly their historical encoding.
+    pub fn decode_payload(
+        bytes: &[u8],
+        decode: impl Fn(&[u8]) -> Result<BaseExecutionPayload, ssz::DecodeError>,
+    ) -> Result<(BaseExecutionPayload, Option<FixedBytes<48>>), ssz::DecodeError> {
+        let has_intents = |payload: &BaseExecutionPayload| {
+            payload.transactions().iter().any(|tx| tx.first() == Some(&BLS_TRANSFER_TX_TYPE_ID))
+        };
+        if let Some(split) = bytes.len().checked_sub(48)
+            && let Ok(payload) = decode(&bytes[..split])
+            && has_intents(&payload)
+        {
+            return Ok((payload, Some(FixedBytes::from_slice(&bytes[split..]))));
+        }
+        let payload = decode(bytes)?;
+        if has_intents(&payload) {
+            return Err(ssz::DecodeError::BytesInvalid("missing BLS block witness".into()));
+        }
+        Ok((payload, None))
     }
 }
 
@@ -129,6 +181,9 @@ pub struct ExecutionData {
     /// Optional Amsterdam block access list RLP bytes.
     #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
     pub block_access_list: Option<Bytes>,
+    /// Native BLS authorization; absence must reject payloads containing unsigned intents.
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    pub bls_witness: Option<BlsPayloadWitness>,
 }
 
 impl ExecutionData {
@@ -138,7 +193,7 @@ impl ExecutionData {
         sidecar: BaseExecutionPayloadSidecar,
         block_access_list: Option<Bytes>,
     ) -> Self {
-        Self { payload, sidecar, block_access_list }
+        Self { payload, sidecar, block_access_list, bls_witness: None }
     }
 
     /// Conversion from [`alloy_consensus::Block`]. Also returns the [`BaseExecutionPayloadSidecar`]
@@ -280,6 +335,8 @@ pub struct NetworkPayloadEnvelope {
     pub payload_hash: PayloadHash,
     /// The parent beacon block root.
     pub parent_beacon_block_root: Option<B256>,
+    /// Detached block aggregate. The sequencer signature covers these bytes as well as payload.
+    pub bls_aggregate: Option<FixedBytes<48>>,
 }
 
 impl NetworkPayloadEnvelope {
@@ -302,6 +359,32 @@ impl NetworkPayloadEnvelope {
         Ok(snap::raw::Decoder::new().decompress_vec(data)?)
     }
 
+    /// Appends a native witness and enforces the peer's decoded-byte limit before compression.
+    #[cfg(feature = "std")]
+    pub fn compress_bounded(
+        &self,
+        mut data: Vec<u8>,
+    ) -> Result<Vec<u8>, PayloadEnvelopeEncodeError> {
+        let has_intents = self
+            .payload
+            .transactions()
+            .iter()
+            .any(|tx| tx.first() == Some(&BLS_TRANSFER_TX_TYPE_ID));
+        if has_intents != self.bls_aggregate.is_some() {
+            return Err(PayloadEnvelopeEncodeError::MissingData);
+        }
+        if let Some(aggregate) = self.bls_aggregate {
+            data.extend_from_slice(aggregate.as_slice());
+        }
+        if data.len() > MAX_DECOMPRESSED_ENVELOPE_BYTES {
+            return Err(PayloadEnvelopeEncodeError::TooLarge {
+                given: data.len(),
+                max: MAX_DECOMPRESSED_ENVELOPE_BYTES,
+            });
+        }
+        Ok(snap::raw::Encoder::new().compress_vec(&data)?)
+    }
+
     /// Decode a payload envelope from a snappy-compressed byte array.
     /// The payload version decoded is `ExecutionPayloadV1` from SSZ bytes.
     #[cfg(feature = "std")]
@@ -319,10 +402,17 @@ impl NetworkPayloadEnvelope {
         let signature = Signature::try_from(sig_data)?;
         let hash = PayloadHash::from(block_data);
 
-        let payload =
-            BaseExecutionPayload::V1(BoundedExecutionPayloadV1::from_ssz_bytes(block_data)?.0);
+        let (payload, bls_aggregate) = BlsPayloadWitness::decode_payload(block_data, |bytes| {
+            Ok(BaseExecutionPayload::V1(BoundedExecutionPayloadV1::from_ssz_bytes(bytes)?.0))
+        })?;
 
-        Ok(Self { payload, signature, payload_hash: hash, parent_beacon_block_root: None })
+        Ok(Self {
+            payload,
+            signature,
+            payload_hash: hash,
+            parent_beacon_block_root: None,
+            bls_aggregate,
+        })
     }
 
     /// Encodes a payload envelope as a snappy-compressed byte array.
@@ -341,7 +431,7 @@ impl NetworkPayloadEnvelope {
         let block_data = execution_payload_v1.as_ssz_bytes();
         data.extend_from_slice(block_data.as_slice());
 
-        Ok(snap::raw::Encoder::new().compress_vec(&data)?)
+        self.compress_bounded(data)
     }
 
     /// Decode a payload envelope from a snappy-compressed byte array.
@@ -361,10 +451,17 @@ impl NetworkPayloadEnvelope {
         let signature = Signature::try_from(sig_data)?;
         let hash = PayloadHash::from(block_data);
 
-        let payload =
-            BaseExecutionPayload::V2(BoundedExecutionPayloadV2::from_ssz_bytes(block_data)?.0);
+        let (payload, bls_aggregate) = BlsPayloadWitness::decode_payload(block_data, |bytes| {
+            Ok(BaseExecutionPayload::V2(BoundedExecutionPayloadV2::from_ssz_bytes(bytes)?.0))
+        })?;
 
-        Ok(Self { payload, signature, payload_hash: hash, parent_beacon_block_root: None })
+        Ok(Self {
+            payload,
+            signature,
+            payload_hash: hash,
+            parent_beacon_block_root: None,
+            bls_aggregate,
+        })
     }
 
     /// Encodes a payload envelope as a snappy-compressed byte array.
@@ -383,7 +480,7 @@ impl NetworkPayloadEnvelope {
         let block_data = execution_payload_v2.as_ssz_bytes();
         data.extend_from_slice(block_data.as_slice());
 
-        Ok(snap::raw::Encoder::new().compress_vec(&data)?)
+        self.compress_bounded(data)
     }
 
     /// Decode a payload envelope from a snappy-compressed byte array.
@@ -407,14 +504,16 @@ impl NetworkPayloadEnvelope {
             [parent_beacon_block_root.as_slice(), block_data].concat().as_slice(),
         );
 
-        let payload =
-            BaseExecutionPayload::V3(BoundedExecutionPayloadV3::from_ssz_bytes(block_data)?.0);
+        let (payload, bls_aggregate) = BlsPayloadWitness::decode_payload(block_data, |bytes| {
+            Ok(BaseExecutionPayload::V3(BoundedExecutionPayloadV3::from_ssz_bytes(bytes)?.0))
+        })?;
 
         Ok(Self {
             payload,
             signature,
             payload_hash: hash,
             parent_beacon_block_root: Some(parent_beacon_block_root),
+            bls_aggregate,
         })
     }
 
@@ -437,7 +536,7 @@ impl NetworkPayloadEnvelope {
         let block_data = execution_payload_v3.as_ssz_bytes();
         data.extend_from_slice(block_data.as_slice());
 
-        Ok(snap::raw::Encoder::new().compress_vec(&data)?)
+        self.compress_bounded(data)
     }
 
     /// Decode a payload envelope from a snappy-compressed byte array.
@@ -461,13 +560,16 @@ impl NetworkPayloadEnvelope {
             [parent_beacon_block_root.as_slice(), block_data].concat().as_slice(),
         );
 
-        let payload = BaseExecutionPayload::V4(BaseExecutionPayloadV4::from_ssz_bytes(block_data)?);
+        let (payload, bls_aggregate) = BlsPayloadWitness::decode_payload(block_data, |bytes| {
+            Ok(BaseExecutionPayload::V4(BaseExecutionPayloadV4::from_ssz_bytes(bytes)?))
+        })?;
 
         Ok(Self {
             payload,
             signature,
             payload_hash: hash,
             parent_beacon_block_root: Some(parent_beacon_block_root),
+            bls_aggregate,
         })
     }
 
@@ -490,7 +592,7 @@ impl NetworkPayloadEnvelope {
         let block_data = execution_payload_v4.as_ssz_bytes();
         data.extend_from_slice(block_data.as_slice());
 
-        Ok(snap::raw::Encoder::new().compress_vec(&data)?)
+        self.compress_bounded(data)
     }
 }
 
@@ -503,6 +605,14 @@ pub enum PayloadEnvelopeEncodeError {
     /// Missing required data (e.g. parent beacon block root for V3+ payloads).
     #[error("Missing required data")]
     MissingData,
+    /// The envelope exceeds the receiving peer's decoded-byte limit.
+    #[error("Encoded payload too large: {given} > {max}")]
+    TooLarge {
+        /// Serialized size including the sequencer signature and detached witness.
+        given: usize,
+        /// Maximum decoded size accepted by peers.
+        max: usize,
+    },
     /// An error occurred during snap encoding.
     #[error(transparent)]
     #[cfg(feature = "std")]
@@ -687,6 +797,38 @@ mod tests {
         assert_eq!(1741842007, payload_envelop.payload.timestamp());
         let encoded = payload_envelop.encode_v4().unwrap();
         assert_eq!(data, encoded);
+
+        // The new wire extension authenticates the witness without changing the block hash.
+        let mut envelope = payload_envelop;
+        envelope.payload.transactions_mut().push(Bytes::from_static(&[BLS_TRANSFER_TX_TYPE_ID]));
+        assert_eq!(envelope.encode_v4(), Err(PayloadEnvelopeEncodeError::MissingData));
+        envelope.bls_aggregate = Some(FixedBytes::repeat_byte(0x81));
+        let rpc_envelope = BaseExecutionPayloadEnvelope {
+            parent_beacon_block_root: envelope.parent_beacon_block_root,
+            execution_payload: envelope.payload.clone(),
+            bls_aggregate: envelope.bls_aggregate,
+        };
+        envelope.payload_hash = rpc_envelope.payload_hash();
+        let encoded = envelope.encode_v4().unwrap();
+        assert_eq!(NetworkPayloadEnvelope::decode_v4(&encoded).unwrap(), envelope);
+        let mut corrupted = snap::raw::Decoder::new().decompress_vec(&encoded).unwrap();
+        *corrupted.last_mut().unwrap() ^= 1;
+        let corrupted = snap::raw::Encoder::new().compress_vec(&corrupted).unwrap();
+        let corrupted = NetworkPayloadEnvelope::decode_v4(&corrupted).unwrap();
+        assert_ne!(corrupted.payload_hash, envelope.payload_hash);
+        assert_eq!(corrupted.payload.block_hash(), envelope.payload.block_hash());
+
+        // Include the detached 48-byte witness in the existing 10 MiB decoded-byte ceiling.
+        let overhead = snap::raw::decompress_len(&encoded).unwrap();
+        let mut record = vec![0; MAX_DECOMPRESSED_ENVELOPE_BYTES - overhead + 1];
+        record[0] = BLS_TRANSFER_TX_TYPE_ID;
+        *envelope.payload.transactions_mut().last_mut().unwrap() = record.clone().into();
+        let at_limit = envelope.encode_v4().unwrap();
+        assert_eq!(snap::raw::decompress_len(&at_limit).unwrap(), MAX_DECOMPRESSED_ENVELOPE_BYTES);
+        NetworkPayloadEnvelope::decode_v4(&at_limit).unwrap();
+        record.push(0);
+        *envelope.payload.transactions_mut().last_mut().unwrap() = record.into();
+        assert!(matches!(envelope.encode_v4(), Err(PayloadEnvelopeEncodeError::TooLarge { .. })));
     }
 
     #[test]

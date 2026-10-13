@@ -7,7 +7,7 @@ use alloy_consensus::Transaction;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, Bytes, Signature, U256, bytes};
 use alloy_rlp::{Buf, Decodable, Encodable};
-use base_common_consensus::{BaseTxEnvelope, OpTxType};
+use base_common_consensus::{BaseTxEnvelope, BlsConstants, OpTxType};
 
 use crate::{
     SpanBatchBits, SpanBatchEip8130TransactionData, SpanBatchElement, SpanBatchError,
@@ -437,7 +437,25 @@ impl SpanBatchTransactions {
                         inner.gas_limit,
                     )
                 }
-                BaseTxEnvelope::Deposit(_) => {
+                // BLS transactions exist only on the development chain. Their call target is
+                // fixed, so they omit the `to` column entry and set the contract-creation bit.
+                BaseTxEnvelope::Bls(tx) => {
+                    let (tx, sig) = (tx.tx(), tx.signature());
+                    if chain_id != BlsConstants::CHAIN_ID {
+                        return Err(SpanBatchError::Decoding(
+                            SpanDecodingError::InvalidTransactionType,
+                        ));
+                    }
+                    if tx.chain_id != chain_id {
+                        return Err(SpanBatchError::Decoding(
+                            SpanDecodingError::InvalidTransactionData,
+                        ));
+                    }
+                    (*sig, None, tx.nonce, tx.gas_limit)
+                }
+                // Native BLS transfers are unsigned in canonical form; only an authenticated
+                // chunk batch may carry them, never a span batch.
+                BaseTxEnvelope::Deposit(_) | BaseTxEnvelope::BlsTransfer(_) => {
                     return Err(SpanBatchError::Decoding(
                         SpanDecodingError::InvalidTransactionType,
                     ));
@@ -470,12 +488,14 @@ impl SpanBatchTransactions {
 mod tests {
     use alloc::vec;
 
-    use alloy_consensus::{Signed, TxEip1559, TxEip2930, TxEip7702, TxEnvelope, TxLegacy};
-    use alloy_primitives::{B256, Signature, TxKind, address};
+    use alloy_consensus::{
+        SignableTransaction, Signed, TxEip1559, TxEip2930, TxEip7702, TxEnvelope, TxLegacy,
+    };
+    use alloy_primitives::{B256, Signature, TxKind, address, aliases::U96};
     use base_common_consensus::{
-        AccountChange, AccountChangeChannel, Call, ChangeType, CreateEntry, Delegation,
-        Eip8130Constants, Eip8130Signed, InitialActor, SignedAccountChanges, SignedChange,
-        TxEip8130,
+        AccountChange, AccountChangeChannel, BlsPayload, BlsTransfer, Call, ChangeType,
+        CreateEntry, Delegation, Eip8130Constants, Eip8130Signed, InitialActor,
+        SignedAccountChanges, SignedChange, TxBls, TxEip8130,
     };
 
     use super::*;
@@ -737,6 +757,113 @@ mod tests {
         assert_span_batch_roundtrip(
             vec![eoa, configured, rich, minimal, open_payer],
             EIP8130_CHAIN_ID,
+        );
+    }
+
+    /// A canonical-looking compressed point (flags set, coordinates below the modulus).
+    fn bls_point<const N: usize>() -> [u8; N] {
+        let mut point = [0x11; N];
+        point[0] = 0xa1;
+        point
+    }
+
+    /// Encodes a native BLS transaction to its raw EIP-2718 form.
+    fn bls_raw(chain_id: u64, nonce: u64, payload: &BlsPayload) -> Bytes {
+        let tx = TxBls {
+            chain_id,
+            nonce,
+            max_priority_fee_per_gas: 1_000_000_000 + nonce as u128,
+            max_fee_per_gas: 3_000_000_000,
+            gas_limit: 120_000 + nonce,
+            input: payload.encode(),
+        };
+        let signature =
+            Signature::new(U256::from(0xabc + nonce), U256::from(0xdef), nonce.is_multiple_of(2));
+        let mut buf = Vec::new();
+        BaseTxEnvelope::Bls(tx.into_signed(signature)).encode_2718(&mut buf);
+        Bytes::from(buf)
+    }
+
+    fn bls_registration() -> BlsPayload {
+        BlsPayload::Registration { pubkey: bls_point::<96>().into(), pop: bls_point::<48>().into() }
+    }
+
+    fn bls_batch() -> BlsPayload {
+        let transfer = |sender: u8, nonce: u64| BlsTransfer {
+            sender: Address::repeat_byte(sender),
+            nonce,
+            recipient: Address::repeat_byte(0xee),
+            value: U96::from(1_000_000_000_000_000_u64),
+        };
+        BlsPayload::Batch {
+            transfers: vec![transfer(0x01, 0), transfer(0x02, 5)],
+            signature: bls_point::<48>().into(),
+        }
+    }
+
+    #[test]
+    fn test_bls_span_batch_roundtrip_dev_chain() {
+        let chain_id = BlsConstants::CHAIN_ID;
+        let to = address!("0123456789012345678901234567890123456789");
+        let mut eip1559 = Vec::new();
+        TxEnvelope::Eip1559(Signed::new_unchecked(
+            TxEip1559 {
+                chain_id,
+                nonce: 2,
+                gas_limit: 50_000,
+                max_fee_per_gas: 5_000_000_000,
+                max_priority_fee_per_gas: 1_000_000_000,
+                to: TxKind::Call(to),
+                ..Default::default()
+            },
+            Signature::test_signature(),
+            Default::default(),
+        ))
+        .encode_2718(&mut eip1559);
+        let raws = vec![
+            bls_raw(chain_id, 1, &bls_registration()),
+            Bytes::from(eip1559),
+            bls_raw(chain_id, 3, &bls_batch()),
+        ];
+
+        let mut batch = SpanBatchTransactions::default();
+        batch.add_txs(raws.clone(), chain_id).unwrap();
+        // BLS transactions carry no `to` column entry.
+        assert_eq!(batch.tx_tos, vec![to]);
+
+        assert_span_batch_roundtrip(raws, chain_id);
+    }
+
+    #[test]
+    fn test_bls_span_batch_rejected_off_dev_chain() {
+        let other_chain = 8453;
+        let mut batch = SpanBatchTransactions::default();
+        assert_eq!(
+            batch.add_txs(vec![bls_raw(other_chain, 0, &bls_registration())], other_chain),
+            Err(SpanBatchError::Decoding(SpanDecodingError::InvalidTransactionType))
+        );
+
+        // Data encoded for the development chain does not reconstruct on another chain.
+        let mut batch = SpanBatchTransactions::default();
+        let raw = bls_raw(BlsConstants::CHAIN_ID, 0, &bls_batch());
+        batch.add_txs(vec![raw], BlsConstants::CHAIN_ID).unwrap();
+        assert_eq!(
+            batch.full_txs(other_chain),
+            Err(SpanBatchError::Decoding(SpanDecodingError::InvalidTransactionType))
+        );
+    }
+
+    #[test]
+    fn test_bls_span_batch_rejects_to_entry() {
+        let mut batch = SpanBatchTransactions::default();
+        let raw = bls_raw(BlsConstants::CHAIN_ID, 0, &bls_registration());
+        batch.add_txs(vec![raw], BlsConstants::CHAIN_ID).unwrap();
+        // A cleared contract-creation bit would make a BLS transaction consume a `to` entry.
+        batch.contract_creation_bits.set_bit(0, false);
+        batch.tx_tos.push(BlsConstants::REGISTRY_ADDRESS);
+        assert_eq!(
+            batch.full_txs(BlsConstants::CHAIN_ID),
+            Err(SpanBatchError::Decoding(SpanDecodingError::InvalidTransactionData))
         );
     }
 

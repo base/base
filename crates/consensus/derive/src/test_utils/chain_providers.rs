@@ -1,9 +1,9 @@
 //! Test Utilities for chain provider traits
 
-use alloc::{boxed::Box, string::ToString, sync::Arc, vec::Vec};
+use alloc::{boxed::Box, collections::VecDeque, string::ToString, sync::Arc, vec::Vec};
 
 use alloy_consensus::{Header, Receipt, TxEnvelope};
-use alloy_primitives::{B256, map::HashMap};
+use alloy_primitives::{B256, Bytes, FixedBytes, map::HashMap};
 use async_trait::async_trait;
 use base_common_consensus::BaseBlock;
 use base_common_genesis::{RollupConfig, SystemConfig};
@@ -163,6 +163,11 @@ pub struct TestL2ChainProvider {
     pub base_blocks: Vec<BaseBlock>,
     /// System configs, keyed by L2 block hash.
     pub system_configs: HashMap<B256, SystemConfig>,
+    /// Scripted BLS chunk verdicts, consumed front to back. `None` is an unavailable verdict
+    /// (a temporary provider error). With no verdict left, verification is unsupported.
+    pub bls_chunk_verdicts: VecDeque<Option<bool>>,
+    /// Every BLS chunk verification request received, in order.
+    pub bls_chunk_requests: Vec<(B256, Vec<Vec<Bytes>>, Option<FixedBytes<48>>)>,
 }
 
 impl TestL2ChainProvider {
@@ -172,7 +177,14 @@ impl TestL2ChainProvider {
         base_blocks: Vec<BaseBlock>,
         system_configs: HashMap<B256, SystemConfig>,
     ) -> Self {
-        Self { blocks, short_circuit: false, base_blocks, system_configs }
+        Self {
+            blocks,
+            short_circuit: false,
+            base_blocks,
+            system_configs,
+            bls_chunk_verdicts: VecDeque::new(),
+            bls_chunk_requests: Vec::new(),
+        }
     }
 }
 
@@ -218,5 +230,19 @@ impl L2ChainProvider for TestL2ChainProvider {
         _: Arc<RollupConfig>,
     ) -> Result<SystemConfig, <Self as L2ChainProvider>::Error> {
         self.system_configs.get(&hash).ok_or(TestProviderError::SystemConfigNotFound(hash)).cloned()
+    }
+
+    async fn verify_bls_chunk(
+        &mut self,
+        parent_hash: B256,
+        blocks: &[Vec<Bytes>],
+        aggregate: Option<FixedBytes<48>>,
+    ) -> Result<bool, PipelineErrorKind> {
+        self.bls_chunk_requests.push((parent_hash, blocks.to_vec(), aggregate));
+        match self.bls_chunk_verdicts.pop_front() {
+            Some(Some(verdict)) => Ok(verdict),
+            Some(None) => Err(PipelineError::Provider("verdict unavailable".to_string()).temp()),
+            None => Err(PipelineError::BlsChunkVerificationUnsupported.crit()),
+        }
     }
 }

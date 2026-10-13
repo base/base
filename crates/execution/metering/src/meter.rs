@@ -763,6 +763,8 @@ where
         gas_limit: header.gas_limit(),
         parent_beacon_block_root: header.parent_beacon_block_root(),
         extra_data: header.extra_data().clone(),
+        // Simulated bundles are unauthenticated input.
+        bls_derived: false,
     };
 
     // Execute transactions with a MeteringInspector to collect per-opcode and

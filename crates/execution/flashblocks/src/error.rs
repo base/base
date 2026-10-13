@@ -55,6 +55,14 @@ pub enum ExecutionError {
         reason: String,
     },
 
+    /// The flashblock carries a native BLS transfer. Flashblocks publish no BLS witnesses, so
+    /// such a transfer is unauthenticated and the pending state refuses it.
+    #[error("unsupported native BLS transfer {tx_hash} in flashblock")]
+    UnsupportedBlsTransfer {
+        /// The transfer's intent hash.
+        tx_hash: B256,
+    },
+
     /// ECDSA signature recovery failed.
     #[error("sender recovery failed: {0}")]
     SenderRecovery(String),

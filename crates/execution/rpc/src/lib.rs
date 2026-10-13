@@ -7,6 +7,10 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
+mod bls;
+#[cfg(feature = "client")]
+pub use bls::BaseBlsApiClient;
+pub use bls::{BaseBlsApi, BaseBlsApiServer};
 pub mod config;
 pub mod debug;
 pub mod engine;

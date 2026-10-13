@@ -2,7 +2,7 @@
 
 use alloc::vec::Vec;
 
-use alloy_primitives::{Bytes, U256};
+use alloy_primitives::{Bytes, FixedBytes, U256};
 use alloy_rpc_types_engine::BlobsBundleV2;
 
 use super::v4::BaseExecutionPayloadV4;
@@ -31,6 +31,9 @@ pub struct BaseExecutionPayloadEnvelopeV5 {
     pub should_override_builder: bool,
     /// EIP-7685 execution layer requests.
     pub execution_requests: Vec<Bytes>,
+    /// Detached aggregate authenticating the block's native BLS transfer intents.
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    pub bls_aggregate: Option<FixedBytes<48>>,
 }
 
 #[cfg(test)]

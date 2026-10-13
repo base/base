@@ -15,8 +15,9 @@ pub use attributes::BasePayloadAttributes;
 
 mod envelope;
 pub use envelope::{
-    BaseExecutionPayloadEnvelope, ExecutionData, MAX_DECOMPRESSED_ENVELOPE_BYTES,
-    NetworkPayloadEnvelope, PayloadEnvelopeEncodeError, PayloadEnvelopeError, PayloadHash,
+    BaseExecutionPayloadEnvelope, BlsPayloadWitness, ExecutionData,
+    MAX_DECOMPRESSED_ENVELOPE_BYTES, NetworkPayloadEnvelope, PayloadEnvelopeEncodeError,
+    PayloadEnvelopeError, PayloadHash,
 };
 
 mod sidecar;

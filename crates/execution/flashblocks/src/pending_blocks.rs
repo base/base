@@ -599,7 +599,14 @@ impl PendingBlocks {
             })
             .flatten();
 
-        let base_tx_result = BaseTxResult { inner: eth_tx_result, is_deposit, sender, depositor };
+        // The processor refuses native BLS transfers, so a cached result never carries one.
+        let base_tx_result = BaseTxResult {
+            inner: eth_tx_result,
+            is_deposit,
+            sender,
+            depositor,
+            bls_transfer: None,
+        };
 
         Some(base_tx_result)
     }

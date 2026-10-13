@@ -9,6 +9,7 @@
 //! The batch type is encoded as a single byte:
 //! - `0x00` for a `SingleBatch`
 //! - `0x01` for a `SpanBatch`
+//! - `0x02` for a `BlsChunkBatch` (native BLS development chain only)
 
 use alloy_rlp::{Decodable, Encodable};
 
@@ -23,6 +24,8 @@ pub enum BatchType {
     Single = Self::SINGLE,
     /// Span Batch.
     Span = Self::SPAN,
+    /// Native BLS chunk batch, accepted only on the native BLS development chain.
+    BlsChunk = Self::BLS_CHUNK,
 }
 
 impl BatchType {
@@ -31,6 +34,9 @@ impl BatchType {
 
     /// The span batch type identifier.
     pub const SPAN: u8 = 0x01;
+
+    /// The native BLS chunk batch type identifier.
+    pub const BLS_CHUNK: u8 = 0x02;
 }
 
 impl TryFrom<u8> for BatchType {
@@ -39,6 +45,7 @@ impl TryFrom<u8> for BatchType {
         match val {
             Self::SINGLE => Ok(Self::Single),
             Self::SPAN => Ok(Self::Span),
+            Self::BLS_CHUNK => Ok(Self::BlsChunk),
             _ => Err(BatchDecodingError::InvalidBatchType(val)),
         }
     }
@@ -65,7 +72,7 @@ mod tests {
 
     #[test]
     fn test_batch_type_rlp_roundtrip() {
-        for batch_type in [BatchType::Single, BatchType::Span] {
+        for batch_type in [BatchType::Single, BatchType::Span, BatchType::BlsChunk] {
             let mut buf = Vec::new();
             batch_type.encode(&mut buf);
             let decoded = BatchType::decode(&mut buf.as_slice()).unwrap();
@@ -75,7 +82,7 @@ mod tests {
 
     #[test]
     fn test_invalid_batch_type() {
-        let result = BatchType::decode(&mut [2u8].as_slice());
+        let result = BatchType::decode(&mut [3u8].as_slice());
         assert!(result.is_err());
     }
 }

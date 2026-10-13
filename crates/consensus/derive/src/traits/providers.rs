@@ -4,12 +4,12 @@ use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use core::fmt::Display;
 
 use alloy_consensus::{Header, Receipt, TxEnvelope};
-use alloy_primitives::B256;
+use alloy_primitives::{B256, Bytes, FixedBytes};
 use async_trait::async_trait;
 use base_common_genesis::{RollupConfig, SystemConfig};
 use base_protocol::{BatchValidationProvider, BlockInfo};
 
-use crate::PipelineErrorKind;
+use crate::{PipelineError, PipelineErrorKind};
 
 /// Describes the functionality of a data source that can provide information from the blockchain.
 #[async_trait]
@@ -47,6 +47,23 @@ pub trait L2ChainProvider: BatchValidationProviderDerive {
         hash: B256,
         rollup_config: Arc<RollupConfig>,
     ) -> Result<SystemConfig, <Self as L2ChainProvider>::Error>;
+
+    /// Verifies that `aggregate` authenticates every native BLS transfer in a chunk of
+    /// consecutive blocks, replaying the chunk's registrations on the state of `parent_hash`.
+    ///
+    /// Returns `Ok(true)` only for an authentic chunk and `Ok(false)` for an invalid one. An
+    /// `Err` means the verdict is unavailable (for example missing state or a provider failure)
+    /// and never authorizes anything; temporary errors are retried with the same chunk.
+    ///
+    /// Callers bound the chunk before calling. The default implementation fails closed.
+    async fn verify_bls_chunk(
+        &mut self,
+        _parent_hash: B256,
+        _blocks: &[Vec<Bytes>],
+        _aggregate: Option<FixedBytes<48>>,
+    ) -> Result<bool, PipelineErrorKind> {
+        Err(PipelineError::BlsChunkVerificationUnsupported.crit())
+    }
 }
 
 /// A super-trait for [`BatchValidationProvider`] that binds `Self::Error` to have a conversion into

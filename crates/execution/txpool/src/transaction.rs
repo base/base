@@ -5,7 +5,8 @@ use std::{
 };
 
 use alloy_consensus::{
-    BlobTransactionValidationError, Transaction, Typed2718, transaction::Recovered,
+    BlobTransactionValidationError, Sealed, Signed, Transaction, Typed2718, error::ValueError,
+    transaction::Recovered,
 };
 use alloy_eips::{
     eip2718::{Encodable2718, WithEncoded},
@@ -13,11 +14,12 @@ use alloy_eips::{
     eip7594::BlobTransactionSidecarVariant,
     eip7702::SignedAuthorization,
 };
-use alloy_primitives::{Address, B256, Bytes, Signature, TxHash, TxKind, U256};
+use alloy_primitives::{Address, B256, Bytes, FixedBytes, Signature, TxHash, TxKind, U256};
 use base_bundles::MeterBundleResponse;
 use base_common_consensus::{
-    BaseTransactionSigned, CoinbaseTip, EIP8130_TX_TYPE_ID, Eip8130Constants, Eip8130Signed,
-    Predeploys,
+    BasePooledTransaction as ConsensusPooledTransaction, BaseTransactionSigned,
+    BlsTransferWithSignature, CoinbaseTip, EIP8130_TX_TYPE_ID, Eip8130Constants, Eip8130Signed,
+    Predeploys, TxBls, TxBlsTransfer,
 };
 use c_kzg::KzgSettings;
 use reth_primitives_traits::{InMemorySize, SignedTransaction};
@@ -86,6 +88,10 @@ pub struct BasePooledTransaction<
     /// sequencer/builder inserts and on mempool txs while inline simulation is
     /// off. The later consumer only forwards `Some`.
     metering: Option<Arc<MeterBundleResponse>>,
+    /// The BLS witness of a native BLS transfer (`0x7b`), retained from its pooled form because
+    /// the consensus form carries none. `None` for every other type, and for a transfer built
+    /// from its consensus form, which admission rejects.
+    bls_transfer_signature: Option<FixedBytes<48>>,
 }
 
 impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
@@ -115,6 +121,7 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
             sender_policy_target: OnceLock::new(),
             watch_manifest: OnceLock::new(),
             metering: None,
+            bls_transfer_signature: None,
         }
     }
 
@@ -190,14 +197,10 @@ impl<Cons: SignedTransaction, Pooled> DataAvailabilitySized
     }
 }
 
-impl<Pooled> PoolTransaction for BasePooledTransaction<BaseTransactionSigned, Pooled>
-where
-    BaseTransactionSigned: From<Pooled>,
-    Pooled: SignedTransaction + TryFrom<BaseTransactionSigned, Error: core::error::Error>,
-{
-    type TryFromConsensusError = <Pooled as TryFrom<BaseTransactionSigned>>::Error;
+impl PoolTransaction for BasePooledTransaction {
+    type TryFromConsensusError = ValueError<BaseTransactionSigned>;
     type Consensus = BaseTransactionSigned;
-    type Pooled = Pooled;
+    type Pooled = ConsensusPooledTransaction;
 
     fn is_replacement_underpriced(
         &self,
@@ -241,7 +244,28 @@ where
 
     fn from_pooled(tx: Recovered<Self::Pooled>) -> Self {
         let encoded_len = tx.encode_2718_len();
-        Self::new(tx.convert(), encoded_len)
+        // The consensus form of a native BLS transfer drops its witness, so retain it here for
+        // admission, propagation, backups and payload aggregation.
+        let bls_transfer_signature = tx.inner().as_bls_transfer().map(|tx| tx.signature);
+        let mut transaction = Self::new(tx.convert(), encoded_len);
+        transaction.bls_transfer_signature = bls_transfer_signature;
+        transaction
+    }
+
+    fn try_into_pooled(self) -> Result<Recovered<Self::Pooled>, Self::TryFromConsensusError> {
+        self.clone_into_pooled()
+    }
+
+    fn clone_into_pooled(&self) -> Result<Recovered<Self::Pooled>, Self::TryFromConsensusError> {
+        let consensus = self.inner.transaction();
+        if let (Some(transaction), Some(signature)) =
+            (consensus.inner().as_bls_transfer(), self.bls_transfer_signature)
+        {
+            let pooled = BlsTransferWithSignature { transaction: *transaction, signature };
+            return Ok(Recovered::new_unchecked(pooled.into(), consensus.signer()));
+        }
+        let (tx, signer) = consensus.clone().into_parts();
+        Ok(Recovered::new_unchecked(tx.try_into()?, signer))
     }
 
     fn hash(&self) -> &TxHash {
@@ -298,6 +322,7 @@ impl<Cons: InMemorySize, Pooled> InMemorySize for BasePooledTransaction<Cons, Po
             + validity_predicates_size
             + core::mem::size_of::<Option<Arc<MeterBundleResponse>>>()
             + metering_size
+            + core::mem::size_of::<Option<FixedBytes<48>>>()
     }
 }
 
@@ -375,12 +400,7 @@ where
     }
 }
 
-impl<Pooled> EthPoolTransaction for BasePooledTransaction<BaseTransactionSigned, Pooled>
-where
-    BaseTransactionSigned: From<Pooled>,
-    Pooled: SignedTransaction + TryFrom<BaseTransactionSigned>,
-    <Pooled as TryFrom<BaseTransactionSigned>>::Error: core::error::Error,
-{
+impl EthPoolTransaction for BasePooledTransaction {
     fn take_blob(&mut self) -> EthBlobTransactionSidecar {
         EthBlobTransactionSidecar::None
     }
@@ -428,6 +448,27 @@ pub trait BasePooledTx: PoolTransaction + DataAvailabilitySized {
     /// default returns `None` for implementers that never carry EIP-8130
     /// (account abstraction) transactions.
     fn as_eip8130(&self) -> Option<&Eip8130Signed> {
+        None
+    }
+
+    /// Returns the signed native BLS (`0x7a`) transaction when this transaction is one.
+    ///
+    /// Required for the mempool validator's native BLS admission checks; the default
+    /// returns `None` for implementers that never carry native BLS transactions.
+    fn as_bls(&self) -> Option<&Signed<TxBls>> {
+        None
+    }
+
+    /// Returns the canonical native BLS transfer (`0x7b`) when this transaction is one.
+    fn as_bls_transfer(&self) -> Option<&Sealed<TxBlsTransfer>> {
+        None
+    }
+
+    /// Returns the BLS witness retained for a native BLS transfer (`0x7b`), if any.
+    ///
+    /// The canonical transaction does not carry it; a transfer without a witness is never
+    /// admitted or built.
+    fn bls_transfer_signature(&self) -> Option<FixedBytes<48>> {
         None
     }
 
@@ -517,12 +558,7 @@ pub trait BasePooledTx: PoolTransaction + DataAvailabilitySized {
     }
 }
 
-impl<Pooled> BasePooledTx for BasePooledTransaction<BaseTransactionSigned, Pooled>
-where
-    BaseTransactionSigned: From<Pooled>,
-    Pooled: SignedTransaction + TryFrom<BaseTransactionSigned>,
-    <Pooled as TryFrom<BaseTransactionSigned>>::Error: core::error::Error,
-{
+impl BasePooledTx for BasePooledTransaction {
     fn encoded_2718(&self) -> Cow<'_, Bytes> {
         Cow::Borrowed(self.encoded_2718())
     }
@@ -533,6 +569,18 @@ where
 
     fn as_eip8130(&self) -> Option<&Eip8130Signed> {
         self.inner.transaction().inner().as_eip8130()
+    }
+
+    fn as_bls(&self) -> Option<&Signed<TxBls>> {
+        self.inner.transaction().inner().as_bls()
+    }
+
+    fn as_bls_transfer(&self) -> Option<&Sealed<TxBlsTransfer>> {
+        self.inner.transaction().inner().as_bls_transfer()
+    }
+
+    fn bls_transfer_signature(&self) -> Option<FixedBytes<48>> {
+        self.bls_transfer_signature
     }
 
     fn eip8130_nonce_channel_key(&self) -> Option<U256> {

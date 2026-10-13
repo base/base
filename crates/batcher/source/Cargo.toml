@@ -19,6 +19,7 @@ tracing = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
 base-protocol = { workspace = true, features = ["std"] }
 derive_more = { workspace = true, features = ["debug"] }
+alloy-primitives = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["macros", "sync"] }
 base-common-consensus = { workspace = true, features = ["std"] }
 
@@ -26,7 +27,6 @@ base-common-consensus = { workspace = true, features = ["std"] }
 mockall.workspace = true
 alloy-consensus.workspace = true
 tokio = { workspace = true, features = ["rt"] }
-alloy-primitives = { workspace = true, features = ["std"] }
 base-runtime = { workspace = true, features = ["test-utils"] }
 
 [features]

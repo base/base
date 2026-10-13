@@ -92,6 +92,7 @@ mod tests {
                 transactions: vec![],
             }),
             parent_beacon_block_root: None,
+            bls_aggregate: None,
         };
 
         client

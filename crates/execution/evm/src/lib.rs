@@ -13,8 +13,15 @@ extern crate alloc;
 mod build;
 pub use build::BaseBlockAssembler;
 
+#[cfg(feature = "std")]
+mod bls_store;
+#[cfg(feature = "std")]
+pub use bls_store::{BlsStoredWitness, BlsWitnessStore, BlsWitnessStoreProvider};
+
 mod config;
-pub use config::{BaseEvmConfig, BaseExecutorProvider, BaseNextBlockEnvAttributes};
+pub use config::{
+    BaseEvmConfig, BaseEvmConfigError, BaseExecutorProvider, BaseNextBlockEnvAttributes,
+};
 
 mod env;
 pub use env::BaseEvmEnvBuilder;

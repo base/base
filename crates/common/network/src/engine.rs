@@ -4,10 +4,10 @@ use alloy_rpc_types_engine::{
     ClientVersionV1, ExecutionPayloadBodiesV1, ExecutionPayloadEnvelopeV2, ExecutionPayloadInputV2,
     ExecutionPayloadV3, ForkchoiceState, ForkchoiceUpdated, PayloadId, PayloadStatus,
 };
-use alloy_transport::TransportResult;
+use alloy_transport::{TransportErrorKind, TransportResult};
 use base_common_rpc_types_engine::{
     BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5,
-    BaseExecutionPayloadV4, BasePayloadAttributes,
+    BaseExecutionPayloadV4, BasePayloadAttributes, BlsPayloadWitness,
 };
 
 use crate::Base;
@@ -61,6 +61,33 @@ pub trait BaseEngineApi {
         payload: BaseExecutionPayloadV4,
         parent_beacon_block_root: B256,
     ) -> TransportResult<PayloadStatus>;
+
+    /// Imports an unsafe block with its detached BLS aggregate, or a CL-authenticated derived
+    /// block. Implementations that do not understand witnesses must fail closed.
+    async fn new_payload_v3_with_witness(
+        &self,
+        payload: ExecutionPayloadV3,
+        parent_beacon_block_root: B256,
+        witness: Option<BlsPayloadWitness>,
+    ) -> TransportResult<PayloadStatus> {
+        if witness.is_some() {
+            return Err(TransportErrorKind::custom_str("BLS payload witnesses unsupported"));
+        }
+        self.new_payload_v3(payload, parent_beacon_block_root).await
+    }
+
+    /// V4 equivalent of [`Self::new_payload_v3_with_witness`].
+    async fn new_payload_v4_with_witness(
+        &self,
+        payload: BaseExecutionPayloadV4,
+        parent_beacon_block_root: B256,
+        witness: Option<BlsPayloadWitness>,
+    ) -> TransportResult<PayloadStatus> {
+        if witness.is_some() {
+            return Err(TransportErrorKind::custom_str("BLS payload witnesses unsupported"));
+        }
+        self.new_payload_v4(payload, parent_beacon_block_root).await
+    }
 
     /// Updates the execution layer client with the given fork choice, as specified for the Shanghai
     /// fork.
@@ -246,6 +273,46 @@ where
     ) -> TransportResult<ForkchoiceUpdated> {
         self.client()
             .request("engine_forkchoiceUpdatedV2", (fork_choice_state, payload_attributes))
+            .await
+    }
+
+    async fn new_payload_v3_with_witness(
+        &self,
+        payload: ExecutionPayloadV3,
+        parent_beacon_block_root: B256,
+        witness: Option<BlsPayloadWitness>,
+    ) -> TransportResult<PayloadStatus> {
+        if witness.is_none() {
+            return self.new_payload_v3(payload, parent_beacon_block_root).await;
+        }
+        self.client()
+            .request(
+                "engine_newPayloadV3",
+                (payload, Vec::<B256>::new(), parent_beacon_block_root, witness),
+            )
+            .await
+    }
+
+    async fn new_payload_v4_with_witness(
+        &self,
+        payload: BaseExecutionPayloadV4,
+        parent_beacon_block_root: B256,
+        witness: Option<BlsPayloadWitness>,
+    ) -> TransportResult<PayloadStatus> {
+        if witness.is_none() {
+            return self.new_payload_v4(payload, parent_beacon_block_root).await;
+        }
+        self.client()
+            .request(
+                "engine_newPayloadV4",
+                (
+                    payload,
+                    Vec::<B256>::new(),
+                    parent_beacon_block_root,
+                    Vec::<Bytes>::new(),
+                    witness,
+                ),
+            )
             .await
     }
 

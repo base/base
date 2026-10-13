@@ -156,6 +156,7 @@ mod tests {
                 block_hash: B256::with_last_byte(number as u8),
                 transactions: vec![l1_info_deposit_tx().into()],
             }),
+            bls_aggregate: None,
         }
     }
 

@@ -634,6 +634,11 @@ where
             .par_iter()
             .cloned()
             .map(|tx| -> Result<(BaseTxEnvelope, Address)> {
+                if tx.is_bls_transfer() {
+                    return Err(
+                        ExecutionError::UnsupportedBlsTransfer { tx_hash: tx.tx_hash() }.into()
+                    );
+                }
                 let sender = tx.recover_signer()?;
                 Ok((tx, sender))
             })
@@ -755,6 +760,7 @@ where
             gas_limit: base.gas_limit,
             parent_beacon_block_root: Some(base.parent_beacon_block_root),
             extra_data: base.extra_data.clone(),
+            bls_derived: false,
         };
         let evm_env = evm_config
             .next_evm_env(&previous_header, &block_env_attributes)
@@ -768,6 +774,11 @@ where
             .par_iter()
             .cloned()
             .map(|tx| -> Result<(BaseTxEnvelope, Address)> {
+                if tx.is_bls_transfer() {
+                    return Err(
+                        ExecutionError::UnsupportedBlsTransfer { tx_hash: tx.tx_hash() }.into()
+                    );
+                }
                 let sender = tx.recover_signer()?;
                 Ok((tx, sender))
             })
@@ -897,6 +908,7 @@ where
                 gas_limit: assembled.base.gas_limit,
                 parent_beacon_block_root: Some(assembled.base.parent_beacon_block_root),
                 extra_data: assembled.base.extra_data.clone(),
+                bls_derived: false,
             };
 
             db.block_hashes
@@ -917,6 +929,9 @@ where
                 .cloned()
                 .map(|tx| -> Result<(BaseTxEnvelope, Address)> {
                     let tx_hash = tx.tx_hash();
+                    if tx.is_bls_transfer() {
+                        return Err(ExecutionError::UnsupportedBlsTransfer { tx_hash }.into());
+                    }
                     let sender = match prev_pending_blocks
                         .as_ref()
                         .and_then(|p| p.get_transaction_sender(&tx_hash))

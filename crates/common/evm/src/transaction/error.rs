@@ -78,6 +78,13 @@ pub enum BaseTransactionError {
     /// the transaction's journal writes are reverted and it is not added to the
     /// block.
     Eip8130(alloc::string::String),
+    /// A development-only native BLS transaction (type `0x7a`) was rejected: it targets a chain
+    /// other than the development chain, its payload is malformed, or its registration or
+    /// aggregate authorization failed validation against state. The string is the reason.
+    ///
+    /// As an [`EVMError::Transaction`] error this is cause for non-inclusion: no state change and
+    /// no fee is applied.
+    Bls(alloc::string::String),
 }
 
 impl BaseTransactionError {
@@ -87,6 +94,11 @@ impl BaseTransactionError {
     /// `.map_err(BaseTransactionError::eip8130)?`.
     pub fn eip8130(reason: impl Display) -> Self {
         Self::Eip8130(alloc::string::ToString::to_string(&reason))
+    }
+
+    /// Wraps a native BLS transaction rejection as [`BaseTransactionError::Bls`].
+    pub fn bls(reason: impl Display) -> Self {
+        Self::Bls(alloc::string::ToString::to_string(&reason))
     }
 }
 
@@ -110,6 +122,9 @@ impl Display for BaseTransactionError {
             }
             Self::Eip8130(reason) => {
                 write!(f, "EIP-8130 transaction rejected: {reason}")
+            }
+            Self::Bls(reason) => {
+                write!(f, "BLS transaction rejected: {reason}")
             }
         }
     }

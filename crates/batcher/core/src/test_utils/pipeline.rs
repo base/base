@@ -12,7 +12,7 @@ use std::{
     },
 };
 
-use alloy_primitives::B256;
+use alloy_primitives::{B256, FixedBytes};
 use base_batcher_encoder::{
     BatchPipeline, BatchSubmission, DerivationReconciliation, ReorgError, StepError, StepResult,
     SubmissionId, SubmissionPayload,
@@ -224,6 +224,14 @@ impl TrackingPipeline {
 }
 
 impl BatchPipeline for TrackingPipeline {
+    fn add_witnessed_block(
+        &mut self,
+        block: BaseBlock,
+        _bls_aggregate: Option<FixedBytes<48>>,
+    ) -> Result<(), (ReorgError, Box<BaseBlock>)> {
+        self.add_block(block)
+    }
+
     fn add_block(&mut self, block: BaseBlock) -> Result<(), (ReorgError, Box<BaseBlock>)> {
         self.record(PipelineCall::AddBlock(block.header.number));
         if self.add_block_reorgs {

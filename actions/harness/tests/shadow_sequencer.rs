@@ -46,6 +46,7 @@ async fn late_shadow_catches_up_safe_then_unsafe() {
         BaseExecutionPayloadEnvelope {
             execution_payload,
             parent_beacon_block_root: block.header.parent_beacon_block_root,
+            bls_aggregate: None,
         }
     };
     let mut catchup = CanonicalUnsafeCatchup::default();

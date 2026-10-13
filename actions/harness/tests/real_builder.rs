@@ -6,11 +6,14 @@
 //! `FlashblocksServiceBuilder`. It proves the harness's production sequencer actor can build blocks
 //! through the real builder over the Engine API, against the harness's rollup-derived genesis.
 
+use alloy_primitives::FixedBytes;
 use base_action_harness::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, BuilderBackedEngineClient,
     L1MinerConfig, L2Sequencer, SharedL1Chain, TestRollupConfigBuilder,
 };
 use base_batcher_encoder::{DaType, EncoderConfig};
+use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
+use base_consensus_node::SequencerEngineClient;
 
 /// Build a harness + builder-backed sequencer anchored a few seconds ahead of wall-clock, so the
 /// Flashblocks builder schedules flashblocks and selects from the pool (see the module docs).
@@ -90,6 +93,49 @@ async fn builder_backed_sequencer_produces_block_with_azul_active() -> eyre::Res
 
     assert_eq!(block.header.number, 1, "actor + real builder must produce block 1 under Azul");
     assert_eq!(sequencer.head().block_info.number, 1, "unsafe head must advance to block 1");
+
+    Ok(())
+}
+
+/// The builder backend forwards an envelope's detached BLS aggregate to the builder's
+/// `engine_newPayloadV4` as its witness. The engine rejects a witness on a block without BLS
+/// transfer intents before consulting its block cache, so a forged aggregate on an already-imported
+/// block fails only if the backend actually carried it, and the same block imports without one.
+#[tokio::test(flavor = "multi_thread")]
+async fn builder_backend_forwards_bls_aggregate_to_new_payload() -> eyre::Result<()> {
+    let batcher_cfg = BatcherConfig {
+        encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
+        ..BatcherConfig::default()
+    };
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg)
+        .through_isthmus()
+        .with_jovian_at(0)
+        .build();
+    let h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
+    let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
+    let mut sequencer = h.create_l2_sequencer_with_builder(l1_chain).await?;
+    let block = sequencer.build_empty_block().await;
+    let engine = sequencer.engine_client();
+
+    let envelope = |bls_aggregate| {
+        let (execution_payload, _) =
+            BaseExecutionPayload::from_block_unchecked(block.header.hash_slow(), &block);
+        BaseExecutionPayloadEnvelope {
+            parent_beacon_block_root: block.header.parent_beacon_block_root,
+            execution_payload,
+            bls_aggregate,
+        }
+    };
+
+    let err = engine
+        .insert_unsafe_payload(envelope(Some(FixedBytes::repeat_byte(0x81))))
+        .await
+        .expect_err("a witness for a block without intents must reach and be rejected by the EL");
+    assert!(err.to_string().contains("unexpected BLS witness"), "{err}");
+    assert_eq!(engine.get_unsafe_head().await?.block_info.number, 1);
+
+    let head = engine.insert_unsafe_payload(envelope(None)).await?;
+    assert_eq!(head.block_info.hash, block.header.hash_slow());
 
     Ok(())
 }

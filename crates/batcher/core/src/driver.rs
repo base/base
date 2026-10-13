@@ -2,6 +2,7 @@
 
 use std::time::Duration;
 
+use alloy_primitives::FixedBytes;
 use base_batcher_encoder::{BatchPipeline, BatcherMetrics, DerivationReconciliation, StepResult};
 use base_batcher_source::{L1HeadSource, L2BlockEvent, UnsafeBlockSource};
 use base_common_consensus::BaseBlock;
@@ -179,7 +180,8 @@ where
                 }
 
                 event = self.source.next(), if !self.stopped && !encoding_left => match event {
-                    L2BlockEvent::Block(block) => self.on_block(block),
+                    L2BlockEvent::Block(block) => self.on_block(block, None),
+                    L2BlockEvent::WitnessedBlock { block, bls_aggregate } => self.on_block(block, bls_aggregate),
                     L2BlockEvent::Reorg => {
                         warn!("L2 reorg detected, resetting pipeline and catching up from safe head");
                         self.reset_to_safe_head(BatcherMetrics::RESET_SOURCE_REORG);
@@ -337,13 +339,13 @@ where
     /// If the pipeline signals a reorg via `add_block` (parent-hash mismatch),
     /// resets the pipeline and restarts sequential catchup above the safe head.
     /// The triggering block will be re-delivered by the sequential poller.
-    fn on_block(&mut self, block: Box<BaseBlock>) {
+    fn on_block(&mut self, block: Box<BaseBlock>, bls_aggregate: Option<FixedBytes<48>>) {
         let number = block.header.number;
         if number <= self.derivation.safe_l2.number {
             return;
         }
 
-        match self.pipeline.add_block(*block) {
+        match self.pipeline.add_witnessed_block(*block, bls_aggregate) {
             Ok(()) => {
                 debug!(block = %number, "added unsafe block to pipeline");
             }

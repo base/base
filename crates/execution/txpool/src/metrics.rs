@@ -130,7 +130,7 @@ base_metrics::define_metrics! {
     txpool.validator,
     struct = ValidatorMetrics,
     #[describe("End-to-end mempool validation wall time by transaction kind")]
-    #[label(name = "kind", default = ["eip8130", "standard"])]
+    #[label(name = "kind", default = ["eip8130", "bls", "standard"])]
     validate_seconds: histogram,
     #[describe("EIP-8130 authorization wall time by sender authenticator type")]
     #[label(name = "sig_type", default = ["k1", "p256", "passkey", "delegate", "delegate-k1", "delegate-p256", "delegate-passkey", "other"])]

@@ -1025,6 +1025,7 @@ mod tests {
         let envelope = BaseExecutionPayloadEnvelope {
             execution_payload: payload,
             parent_beacon_block_root: None,
+            bls_aggregate: None,
         };
         (PayloadSealer::new(envelope), head, config)
     }

@@ -34,7 +34,9 @@ use base_builder_core::{
 use base_common_consensus::BaseTxEnvelope;
 use base_common_genesis::RollupConfig;
 use base_common_network::Base;
-use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
+use base_common_rpc_types_engine::{
+    BaseExecutionPayload, BaseExecutionPayloadEnvelope, BlsPayloadWitness,
+};
 use base_consensus_engine::EngineGetPayloadVersion;
 use base_consensus_node::{
     EngineClientError, EngineClientResult, ResetReason, SequencerEngineClient,
@@ -191,7 +193,7 @@ impl SequencerEngineClient for BuilderBackedEngineClient {
         // `insert_unsafe_payload`); earlier upgrades use V4. Both envelopes carry the same
         // `BaseExecutionPayloadV4` payload and `execution_requests` shape, so only the retrieval
         // call differs.
-        let (execution_payload, execution_requests) =
+        let (execution_payload, execution_requests, bls_aggregate) =
             match EngineGetPayloadVersion::from_cfg(&self.rollup_config, timestamp) {
                 EngineGetPayloadVersion::V5 => {
                     let envelope = self
@@ -199,7 +201,11 @@ impl SequencerEngineClient for BuilderBackedEngineClient {
                         .get_payload_v5(payload_id)
                         .await
                         .map_err(|e| EngineClientError::ResponseError(e.to_string()))?;
-                    (envelope.execution_payload, envelope.execution_requests)
+                    (
+                        envelope.execution_payload,
+                        envelope.execution_requests,
+                        envelope.bls_aggregate,
+                    )
                 }
                 _ => {
                     let envelope = self
@@ -207,7 +213,11 @@ impl SequencerEngineClient for BuilderBackedEngineClient {
                         .get_payload(payload_id)
                         .await
                         .map_err(|e| EngineClientError::ResponseError(e.to_string()))?;
-                    (envelope.execution_payload, envelope.execution_requests)
+                    (
+                        envelope.execution_payload,
+                        envelope.execution_requests,
+                        envelope.bls_aggregate,
+                    )
                 }
             };
         // The production builder never populates EIP-7685 requests for Base blocks (L2 has no
@@ -225,6 +235,7 @@ impl SequencerEngineClient for BuilderBackedEngineClient {
                 .payload_attributes
                 .parent_beacon_block_root,
             execution_payload: BaseExecutionPayload::V4(execution_payload),
+            bls_aggregate,
         })
     }
 
@@ -244,7 +255,13 @@ impl SequencerEngineClient for BuilderBackedEngineClient {
 
         let engine = self.engine();
         let status = engine
-            .new_payload(v4, vec![], parent_beacon_block_root, Requests::default())
+            .new_payload_with_bls_witness(
+                v4,
+                vec![],
+                parent_beacon_block_root,
+                Requests::default(),
+                payload.bls_aggregate.map(BlsPayloadWitness::Aggregate),
+            )
             .await
             .map_err(|e| EngineClientError::RequestError(e.to_string()))?;
         if !status.is_valid() {

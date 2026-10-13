@@ -18,7 +18,7 @@ use alloy_serde::WithOtherFields;
 use revm::context::TxEnv;
 
 use crate::{
-    BasePooledTransaction, TxDeposit,
+    BasePooledTransaction, TxBls, TxBlsTransfer, TxDeposit,
     transaction::{BaseTransactionInfo, DepositInfo, Eip8130Signed, TxEip8130},
 };
 
@@ -49,6 +49,14 @@ pub enum BaseTxEnvelope {
     /// [EIP-8130]: https://eips.ethereum.org/EIPS/eip-8130
     #[envelope(ty = 121, typed = TxEip8130)]
     Eip8130(Eip8130Signed),
+    /// A development-only native BLS [`TxBls`] tagged with type 0x7A.
+    #[envelope(ty = 122)]
+    Bls(Signed<TxBls>),
+    /// A native BLS [`TxBlsTransfer`] tagged with type 0x7B. Carries no signature; its witness is
+    /// verified outside the envelope.
+    #[envelope(ty = 123)]
+    #[serde(deserialize_with = "TxBlsTransfer::deserialize_sealed")]
+    BlsTransfer(Sealed<TxBlsTransfer>),
 }
 
 /// Represents a transaction envelope for Base chains.
@@ -136,9 +144,27 @@ impl From<Signed<TxEip7702>> for BaseTxEnvelope {
     }
 }
 
+impl From<Signed<TxBls>> for BaseTxEnvelope {
+    fn from(v: Signed<TxBls>) -> Self {
+        Self::Bls(v)
+    }
+}
+
 impl From<TxDeposit> for BaseTxEnvelope {
     fn from(v: TxDeposit) -> Self {
         v.seal_slow().into()
+    }
+}
+
+impl From<Sealed<TxBlsTransfer>> for BaseTxEnvelope {
+    fn from(v: Sealed<TxBlsTransfer>) -> Self {
+        Self::BlsTransfer(v)
+    }
+}
+
+impl From<TxBlsTransfer> for BaseTxEnvelope {
+    fn from(v: TxBlsTransfer) -> Self {
+        Self::BlsTransfer(v.seal_slow())
     }
 }
 
@@ -172,6 +198,10 @@ impl From<Signed<BaseTypedTransaction>> for BaseTxEnvelope {
                     "sponsored EIP-8130 transactions must not be wrapped through the ECDSA Signed<BaseTypedTransaction> path; the payer_auth would be silently dropped",
                 );
                 Self::Eip8130(Eip8130Signed::new(tx, sig.as_bytes().into(), Bytes::new()))
+            }
+            BaseTypedTransaction::Bls(tx) => Self::Bls(Signed::new_unchecked(tx, sig, hash)),
+            BaseTypedTransaction::BlsTransfer(tx) => {
+                Self::BlsTransfer(Sealed::new_unchecked(tx, hash))
             }
             BaseTypedTransaction::Deposit(tx) => Self::Deposit(Sealed::new_unchecked(tx, hash)),
         }
@@ -223,6 +253,8 @@ impl FromRecoveredTx<BaseTxEnvelope> for TxEnv {
             BaseTxEnvelope::Eip8130(_) => {
                 unimplemented!("EIP-8130 AA transactions cannot be converted to TxEnv yet")
             }
+            BaseTxEnvelope::Bls(tx) => Self::from_recovered_tx(tx.tx(), caller),
+            BaseTxEnvelope::BlsTransfer(tx) => Self::from_recovered_tx(tx.inner(), caller),
             BaseTxEnvelope::Deposit(tx) => Self::from_recovered_tx(tx.inner(), caller),
         }
     }
@@ -250,6 +282,8 @@ impl From<BaseTxEnvelope> for alloy_rpc_types_eth::TransactionRequest {
             BaseTxEnvelope::Eip8130(_) => unimplemented!(
                 "BaseTxEnvelope::Eip8130 cannot be converted to an alloy TransactionRequest; AA transactions have no single sender/recipient/value to project into the legacy request shape"
             ),
+            BaseTxEnvelope::Bls(tx) => tx.into_parts().0.into(),
+            BaseTxEnvelope::BlsTransfer(tx) => tx.into_inner().into(),
             BaseTxEnvelope::Deposit(tx) => tx.into_inner().into(),
         }
     }
@@ -339,7 +373,8 @@ impl BaseTxEnvelope {
     /// Attempts to convert the envelope into the pooled variant.
     ///
     /// Returns an error if the envelope's variant is incompatible with the pooled format:
-    /// [`TxDeposit`].
+    /// [`TxDeposit`], or [`TxBlsTransfer`], whose canonical form lacks the BLS signature that the
+    /// pooled form ([`crate::BlsTransferWithSignature`]) requires.
     pub fn try_into_pooled(self) -> Result<BasePooledTransaction, ValueError<Self>> {
         match self {
             Self::Legacy(tx) => Ok(tx.into()),
@@ -347,6 +382,11 @@ impl BaseTxEnvelope {
             Self::Eip1559(tx) => Ok(tx.into()),
             Self::Eip7702(tx) => Ok(tx.into()),
             Self::Eip8130(tx) => Ok(tx.into()),
+            Self::Bls(tx) => Ok(tx.into()),
+            tx @ Self::BlsTransfer(_) => Err(ValueError::new(
+                tx,
+                "Canonical BLS transfers carry no signature and cannot be pooled",
+            )),
             Self::Deposit(tx) => {
                 Err(ValueError::new(tx.into(), "Deposit transactions cannot be pooled"))
             }
@@ -368,6 +408,10 @@ impl BaseTxEnvelope {
                 tx,
                 "EIP-8130 transactions cannot be converted to ethereum PooledTransaction",
             )),
+            tx @ (Self::Bls(_) | Self::BlsTransfer(_)) => Err(ValueError::new(
+                tx,
+                "BLS transactions cannot be converted to ethereum PooledTransaction",
+            )),
             other => other.try_into_pooled().map(Into::into),
         }
     }
@@ -384,6 +428,10 @@ impl BaseTxEnvelope {
             tx @ Self::Eip8130(_) => Err(ValueError::new(
                 tx,
                 "EIP-8130 transactions cannot be converted to ethereum transaction",
+            )),
+            tx @ (Self::Bls(_) | Self::BlsTransfer(_)) => Err(ValueError::new(
+                tx,
+                "BLS transactions cannot be converted to ethereum transaction",
             )),
             tx @ Self::Deposit(_) => Err(ValueError::new(
                 tx,
@@ -428,7 +476,8 @@ impl BaseTxEnvelope {
     /// Caution: modifying this will cause side-effects on the hash.
     ///
     /// Panics for [`Self::Eip8130`] since EIP-8130 transactions have no single
-    /// input field; their payload is a list of calls.
+    /// input field; their payload is a list of calls, and for [`Self::BlsTransfer`], whose input
+    /// is always empty.
     #[doc(hidden)]
     pub fn input_mut(&mut self) -> &mut Bytes {
         match self {
@@ -439,6 +488,8 @@ impl BaseTxEnvelope {
             Self::Eip8130(_) => {
                 unimplemented!("EIP-8130 transactions have no single input field")
             }
+            Self::Bls(tx) => &mut tx.tx_mut().input,
+            Self::BlsTransfer(_) => unimplemented!("BLS transfers have no input field"),
             Self::Deposit(tx) => &mut tx.inner_mut().input,
         }
     }
@@ -478,6 +529,18 @@ impl BaseTxEnvelope {
     #[inline]
     pub const fn is_eip8130(&self) -> bool {
         matches!(self, Self::Eip8130(_))
+    }
+
+    /// Returns true if the transaction is a development-only native BLS transaction.
+    #[inline]
+    pub const fn is_bls(&self) -> bool {
+        matches!(self, Self::Bls(_))
+    }
+
+    /// Returns true if the transaction is a native BLS transfer.
+    #[inline]
+    pub const fn is_bls_transfer(&self) -> bool {
+        matches!(self, Self::BlsTransfer(_))
     }
 
     /// Returns the [`TxLegacy`] variant if the transaction is a legacy transaction.
@@ -520,16 +583,33 @@ impl BaseTxEnvelope {
         }
     }
 
+    /// Returns the [`TxBls`] variant if the transaction is a native BLS transaction.
+    pub const fn as_bls(&self) -> Option<&Signed<TxBls>> {
+        match self {
+            Self::Bls(tx) => Some(tx),
+            _ => None,
+        }
+    }
+
+    /// Returns the sealed [`TxBlsTransfer`] if the transaction is a native BLS transfer.
+    pub const fn as_bls_transfer(&self) -> Option<&Sealed<TxBlsTransfer>> {
+        match self {
+            Self::BlsTransfer(tx) => Some(tx),
+            _ => None,
+        }
+    }
+
     /// Return the reference to signature.
     ///
-    /// Returns `None` if this is a deposit or EIP-8130 variant.
+    /// Returns `None` if this is a deposit, EIP-8130 or BLS transfer variant.
     pub const fn signature(&self) -> Option<&Signature> {
         match self {
             Self::Legacy(tx) => Some(tx.signature()),
             Self::Eip2930(tx) => Some(tx.signature()),
             Self::Eip1559(tx) => Some(tx.signature()),
             Self::Eip7702(tx) => Some(tx.signature()),
-            Self::Eip8130(_) | Self::Deposit(_) => None,
+            Self::Bls(tx) => Some(tx.signature()),
+            Self::Eip8130(_) | Self::BlsTransfer(_) | Self::Deposit(_) => None,
         }
     }
 
@@ -541,6 +621,8 @@ impl BaseTxEnvelope {
             Self::Eip1559(_) => OpTxType::Eip1559,
             Self::Eip7702(_) => OpTxType::Eip7702,
             Self::Eip8130(_) => OpTxType::Eip8130,
+            Self::Bls(_) => OpTxType::Bls,
+            Self::BlsTransfer(_) => OpTxType::BlsTransfer,
             Self::Deposit(_) => OpTxType::Deposit,
         }
     }
@@ -553,6 +635,8 @@ impl BaseTxEnvelope {
             Self::Eip2930(tx) => tx.hash(),
             Self::Eip7702(tx) => tx.hash(),
             Self::Eip8130(tx) => tx.hash(),
+            Self::Bls(tx) => tx.hash(),
+            Self::BlsTransfer(tx) => tx.hash_ref(),
             Self::Deposit(tx) => tx.hash_ref(),
         }
     }
@@ -570,6 +654,8 @@ impl BaseTxEnvelope {
             Self::Eip1559(t) => t.eip2718_encoded_length(),
             Self::Eip7702(t) => t.eip2718_encoded_length(),
             Self::Eip8130(t) => t.encode_2718_len(),
+            Self::Bls(t) => t.eip2718_encoded_length(),
+            Self::BlsTransfer(t) => t.encode_2718_len(),
             Self::Deposit(t) => t.eip2718_encoded_length(),
         }
     }
@@ -591,9 +677,11 @@ impl alloy_consensus::transaction::SignerRecoverable for BaseTxEnvelope {
             Self::Eip2930(tx) => tx.signature_hash(),
             Self::Eip1559(tx) => tx.signature_hash(),
             Self::Eip7702(tx) => tx.signature_hash(),
+            Self::Bls(tx) => tx.signature_hash(),
             Self::Eip8130(tx) => return tx.recover_sender(),
-            // The Deposit transaction does not have a signature. Directly return the
-            // `from` address.
+            // Neither carries an ECDSA signature: return the explicit sender. For BLS
+            // transfers this is unauthenticated; callers must verify the BLS witness.
+            Self::BlsTransfer(tx) => return Ok(tx.sender),
             Self::Deposit(tx) => return Ok(tx.from),
         };
         let signature = match self {
@@ -601,7 +689,8 @@ impl alloy_consensus::transaction::SignerRecoverable for BaseTxEnvelope {
             Self::Eip2930(tx) => tx.signature(),
             Self::Eip1559(tx) => tx.signature(),
             Self::Eip7702(tx) => tx.signature(),
-            Self::Eip8130(_) | Self::Deposit(_) => {
+            Self::Bls(tx) => tx.signature(),
+            Self::Eip8130(_) | Self::BlsTransfer(_) | Self::Deposit(_) => {
                 unreachable!("non-ECDSA variants short-circuit above")
             }
         };
@@ -616,9 +705,11 @@ impl alloy_consensus::transaction::SignerRecoverable for BaseTxEnvelope {
             Self::Eip2930(tx) => tx.signature_hash(),
             Self::Eip1559(tx) => tx.signature_hash(),
             Self::Eip7702(tx) => tx.signature_hash(),
+            Self::Bls(tx) => tx.signature_hash(),
             Self::Eip8130(tx) => return tx.recover_sender_unchecked(),
-            // The Deposit transaction does not have a signature. Directly return the
-            // `from` address.
+            // Neither carries an ECDSA signature: return the explicit sender. For BLS
+            // transfers this is unauthenticated; callers must verify the BLS witness.
+            Self::BlsTransfer(tx) => return Ok(tx.sender),
             Self::Deposit(tx) => return Ok(tx.from),
         };
         let signature = match self {
@@ -626,7 +717,8 @@ impl alloy_consensus::transaction::SignerRecoverable for BaseTxEnvelope {
             Self::Eip2930(tx) => tx.signature(),
             Self::Eip1559(tx) => tx.signature(),
             Self::Eip7702(tx) => tx.signature(),
-            Self::Eip8130(_) | Self::Deposit(_) => {
+            Self::Bls(tx) => tx.signature(),
+            Self::Eip8130(_) | Self::BlsTransfer(_) | Self::Deposit(_) => {
                 unreachable!("non-ECDSA variants short-circuit above")
             }
         };
@@ -650,7 +742,11 @@ impl alloy_consensus::transaction::SignerRecoverable for BaseTxEnvelope {
             Self::Eip7702(tx) => {
                 alloy_consensus::transaction::SignerRecoverable::recover_unchecked_with_buf(tx, buf)
             }
+            Self::Bls(tx) => {
+                alloy_consensus::transaction::SignerRecoverable::recover_unchecked_with_buf(tx, buf)
+            }
             Self::Eip8130(tx) => tx.recover_sender_unchecked(),
+            Self::BlsTransfer(tx) => Ok(tx.sender),
             Self::Deposit(tx) => Ok(tx.from),
         }
     }
@@ -659,16 +755,20 @@ impl alloy_consensus::transaction::SignerRecoverable for BaseTxEnvelope {
 /// Bincode-compatible serde implementation for [`BaseTxEnvelope`].
 #[cfg(all(feature = "serde", feature = "serde-bincode-compat"))]
 pub(super) mod serde_bincode_compat {
+    use alloc::borrow::Cow;
+
     use alloy_consensus::{
         Sealed, Signed,
         transaction::serde_bincode_compat::{TxEip1559, TxEip2930, TxEip7702, TxLegacy},
     };
     use alloy_eips::eip2718::{Decodable2718, Encodable2718};
-    use alloy_primitives::{B256, Signature};
+    use alloy_primitives::{Address, B256, Signature, U256};
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use serde_with::{DeserializeAs, SerializeAs};
 
-    use crate::{serde_bincode_compat::TxDeposit, transaction::Eip8130Signed};
+    use crate::{
+        TxBls, TxBlsTransfer, serde_bincode_compat::TxDeposit, transaction::Eip8130Signed,
+    };
 
     /// Bincode-safe projection of an [`Eip8130Signed`].
     ///
@@ -742,6 +842,34 @@ pub(super) mod serde_bincode_compat {
             /// bincode-safe (see [`Eip8130Bincode`]).
             transaction: Eip8130Bincode,
         },
+        /// Development-only native BLS variant.
+        Bls {
+            /// Transaction signature.
+            signature: Signature,
+            /// Borrowed BLS transaction data. Every field is a fixed-shape quantity or bytes,
+            /// so the plain serde representation is bincode-safe.
+            transaction: Cow<'a, TxBls>,
+        },
+        /// Native BLS transfer variant. Appended last to keep the bincode discriminants of
+        /// existing variants stable. Fields are plain primitives so the representation does not
+        /// depend on the human-readable JSON serde of [`TxBlsTransfer`]; the hash is recomputed
+        /// on decode.
+        BlsTransfer {
+            /// EIP-155 chain ID.
+            chain_id: u64,
+            /// Account debited by the transfer.
+            sender: Address,
+            /// Sender account nonce.
+            nonce: u64,
+            /// Account credited by the transfer.
+            recipient: Address,
+            /// Transferred amount in wei.
+            value: U256,
+            /// Maximum priority fee per gas.
+            max_priority_fee_per_gas: u128,
+            /// Maximum total fee per gas.
+            max_fee_per_gas: u128,
+        },
     }
 
     impl<'a> From<&'a super::BaseTxEnvelope> for BaseTxEnvelope<'a> {
@@ -766,6 +894,19 @@ pub(super) mod serde_bincode_compat {
                 super::BaseTxEnvelope::Eip8130(eip8130_signed) => {
                     Self::Eip8130 { transaction: Eip8130Bincode(eip8130_signed.clone()) }
                 }
+                super::BaseTxEnvelope::Bls(signed_bls) => Self::Bls {
+                    signature: *signed_bls.signature(),
+                    transaction: Cow::Borrowed(signed_bls.tx()),
+                },
+                super::BaseTxEnvelope::BlsTransfer(sealed) => Self::BlsTransfer {
+                    chain_id: sealed.chain_id,
+                    sender: sealed.sender,
+                    nonce: sealed.nonce,
+                    recipient: sealed.recipient,
+                    value: sealed.value,
+                    max_priority_fee_per_gas: sealed.max_priority_fee_per_gas,
+                    max_fee_per_gas: sealed.max_fee_per_gas,
+                },
                 super::BaseTxEnvelope::Deposit(sealed_deposit) => Self::Deposit {
                     hash: sealed_deposit.seal(),
                     transaction: sealed_deposit.inner().into(),
@@ -790,6 +931,26 @@ pub(super) mod serde_bincode_compat {
                     Self::Eip7702(Signed::new_unhashed(transaction.into(), signature))
                 }
                 BaseTxEnvelope::Eip8130 { transaction } => Self::Eip8130(transaction.0),
+                BaseTxEnvelope::Bls { signature, transaction } => {
+                    Self::Bls(Signed::new_unhashed(transaction.into_owned(), signature))
+                }
+                BaseTxEnvelope::BlsTransfer {
+                    chain_id,
+                    sender,
+                    nonce,
+                    recipient,
+                    value,
+                    max_priority_fee_per_gas,
+                    max_fee_per_gas,
+                } => Self::BlsTransfer(Sealed::new(TxBlsTransfer {
+                    chain_id,
+                    sender,
+                    nonce,
+                    recipient,
+                    value,
+                    max_priority_fee_per_gas,
+                    max_fee_per_gas,
+                })),
                 BaseTxEnvelope::Deposit { hash, transaction } => {
                     Self::Deposit(Sealed::new_unchecked(transaction.into(), hash))
                 }
@@ -863,6 +1024,8 @@ impl InMemorySize for BaseTxEnvelope {
             Self::Eip1559(tx) => tx.size(),
             Self::Eip7702(tx) => tx.size(),
             Self::Eip8130(tx) => tx.size(),
+            Self::Bls(tx) => tx.size(),
+            Self::BlsTransfer(tx) => tx.size(),
             Self::Deposit(tx) => tx.size(),
         }
     }
@@ -872,10 +1035,20 @@ impl InMemorySize for BaseTxEnvelope {
 mod tests {
     use alloc::vec;
 
+    #[cfg(feature = "k256")]
+    use alloy_consensus::transaction::SignerRecoverable;
     use alloy_consensus::{SignableTransaction, Transaction};
-    use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256, hex};
+    use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256, hex, keccak256};
+    #[cfg(feature = "k256")]
+    use alloy_signer::SignerSync;
+    #[cfg(feature = "k256")]
+    use alloy_signer_local::PrivateKeySigner;
     #[cfg(feature = "reth")]
     use reth_codecs::Compact;
+    #[cfg(all(feature = "serde", feature = "serde-bincode-compat"))]
+    use serde::{Deserialize, Serialize};
+    #[cfg(all(feature = "serde", feature = "serde-bincode-compat"))]
+    use serde_with::serde_as;
 
     use super::*;
 
@@ -1107,6 +1280,259 @@ mod tests {
         assert_eq!(envelope.recover_signer_unchecked().unwrap(), explicit);
         let mut buf = alloc::vec::Vec::new();
         assert_eq!(envelope.recover_unchecked_with_buf(&mut buf).unwrap(), explicit);
+    }
+
+    fn bls_envelope() -> BaseTxEnvelope {
+        let mut input = vec![crate::BlsConstants::KIND_REGISTRATION, 0xa5];
+        input.extend_from_slice(&[0x11; 95]);
+        input.push(0x95);
+        input.extend_from_slice(&[0x11; 47]);
+        let tx = TxBls {
+            chain_id: crate::BlsConstants::CHAIN_ID,
+            nonce: 3,
+            max_priority_fee_per_gas: 1,
+            max_fee_per_gas: 2,
+            gas_limit: 90_000,
+            input: input.into(),
+        };
+        BaseTxEnvelope::Bls(tx.into_signed(Signature::new(
+            U256::from(11u64),
+            U256::from(22u64),
+            false,
+        )))
+    }
+
+    #[test]
+    fn bls_envelope_2718_roundtrip_preserves_raw_bytes_and_hash() {
+        let envelope = bls_envelope();
+        let raw = envelope.encoded_2718();
+        assert_eq!(raw[0], crate::BLS_TX_TYPE_ID);
+        assert_eq!(envelope.tx_hash(), keccak256(&raw));
+
+        let decoded = BaseTxEnvelope::decode_2718(&mut raw.as_slice()).unwrap();
+        assert_eq!(decoded.tx_type(), OpTxType::Bls);
+        assert_eq!(decoded.encoded_2718(), raw);
+        assert_eq!(decoded.tx_hash(), keccak256(&raw));
+        assert_eq!(decoded.to(), Some(crate::BlsConstants::REGISTRY_ADDRESS));
+        assert_eq!(decoded.value(), U256::ZERO);
+
+        // The pooled and typed representations keep the BLS variant and hash.
+        let pooled = BasePooledTransaction::decode_2718(&mut raw.as_slice()).unwrap();
+        assert!(pooled.is_bls());
+        assert_eq!(pooled.hash(), decoded.hash());
+        assert_eq!(BaseTxEnvelope::from(pooled.clone()), decoded);
+        assert_eq!(decoded.clone().try_into_pooled().unwrap(), pooled);
+        let typed = BaseTypedTransaction::from(decoded.clone());
+        assert!(typed.is_bls());
+        assert_eq!(typed.into_envelope(*decoded.signature().unwrap()), decoded);
+
+        // BLS has no ethereum representation and never degrades to an ECDSA type.
+        assert!(decoded.clone().try_into_eth_envelope().is_err());
+        assert!(decoded.try_into_eth_pooled().is_err());
+    }
+
+    #[cfg(feature = "k256")]
+    #[test]
+    fn bls_envelope_recovers_outer_ecdsa_signer() {
+        let signer = PrivateKeySigner::random();
+        let BaseTxEnvelope::Bls(unsigned) = bls_envelope() else { unreachable!() };
+        let tx = unsigned.strip_signature();
+        let signature = signer.sign_hash_sync(&tx.signature_hash()).unwrap();
+        let raw = BaseTxEnvelope::Bls(tx.into_signed(signature)).encoded_2718();
+
+        let envelope = BaseTxEnvelope::decode_2718(&mut raw.as_slice()).unwrap();
+        assert_eq!(envelope.recover_signer().unwrap(), signer.address());
+        assert_eq!(envelope.recover_signer_unchecked().unwrap(), signer.address());
+        let mut buf = Vec::new();
+        assert_eq!(envelope.recover_unchecked_with_buf(&mut buf).unwrap(), signer.address());
+        let pooled = BasePooledTransaction::decode_2718(&mut raw.as_slice()).unwrap();
+        assert_eq!(pooled.recover_signer().unwrap(), signer.address());
+    }
+
+    #[test]
+    #[cfg(feature = "serde")]
+    fn bls_envelope_serde_roundtrip() {
+        let envelope = bls_envelope();
+        let json = serde_json::to_value(&envelope).unwrap();
+        assert_eq!(json["type"], "0x7a");
+        assert_eq!(json["gas"], "0x15f90");
+        let decoded: BaseTxEnvelope = serde_json::from_value(json).unwrap();
+        assert_eq!(decoded, envelope);
+        assert_eq!(decoded.tx_hash(), envelope.tx_hash());
+    }
+
+    #[test]
+    #[cfg(all(feature = "serde", feature = "serde-bincode-compat"))]
+    fn bls_envelope_bincode_roundtrip() {
+        #[serde_as]
+        #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+        struct Data {
+            #[serde_as(as = "serde_bincode_compat::BaseTxEnvelope<'_>")]
+            envelope: BaseTxEnvelope,
+        }
+
+        let data = Data { envelope: bls_envelope() };
+        let encoded = bincode::serde::encode_to_vec(&data, bincode::config::legacy()).unwrap();
+        // Bls is appended after every existing variant, so their bincode indices are unchanged.
+        assert_eq!(encoded[..4], 6u32.to_le_bytes());
+        let (decoded, _) =
+            bincode::serde::decode_from_slice::<Data, _>(&encoded, bincode::config::legacy())
+                .unwrap();
+        assert_eq!(decoded, data);
+    }
+
+    #[cfg(feature = "reth")]
+    #[test]
+    fn bls_compact_roundtrip() {
+        let envelope = bls_envelope();
+        let mut buf = Vec::new();
+        let len = envelope.to_compact(&mut buf);
+        // Inputs of 32+ bytes take reth's zstd path, which does not advance the remainder.
+        let (decoded, _) = BaseTxEnvelope::from_compact(&buf, len);
+        assert_eq!(decoded, envelope);
+        assert_eq!(decoded.tx_hash(), envelope.tx_hash());
+
+        let typed = BaseTypedTransaction::from(envelope);
+        let mut buf = Vec::new();
+        let identifier = typed.to_compact(&mut buf);
+        let (decoded, remaining) = BaseTypedTransaction::from_compact(&buf, identifier);
+        assert_eq!(decoded, typed);
+        assert!(remaining.is_empty());
+    }
+
+    fn bls_transfer() -> TxBlsTransfer {
+        TxBlsTransfer {
+            chain_id: crate::BlsConstants::CHAIN_ID,
+            sender: Address::repeat_byte(0x11),
+            nonce: 9,
+            recipient: Address::repeat_byte(0x22),
+            value: U256::from(12_345u64),
+            max_priority_fee_per_gas: 1,
+            max_fee_per_gas: 2,
+        }
+    }
+
+    #[test]
+    fn bls_transfer_envelope_roundtrip_and_conversions() {
+        let tx = bls_transfer();
+        let envelope = BaseTxEnvelope::from(tx);
+        let raw = envelope.encoded_2718();
+        assert_eq!(raw[0], crate::BLS_TRANSFER_TX_TYPE_ID);
+        assert_eq!(envelope.tx_hash(), keccak256(&raw));
+        assert_eq!(envelope.as_bls_transfer().unwrap().inner(), &tx);
+        assert!(envelope.signature().is_none());
+
+        let decoded = crate::decode_2718_canonical::<BaseTxEnvelope>(&raw).unwrap();
+        assert_eq!(decoded, envelope);
+        assert_eq!(decoded.tx_type(), OpTxType::BlsTransfer);
+        assert_eq!(decoded.eip2718_encoded_length(), raw.len());
+        assert_eq!(decoded.gas_limit(), 21_000);
+        assert_eq!(decoded.to(), Some(tx.recipient));
+
+        let typed = BaseTypedTransaction::from(decoded.clone());
+        assert_eq!(typed.bls_transfer(), Some(&tx));
+        assert!(typed.checked_signature_hash().is_none());
+        // The signing payload of the typed form hashes to the BLS signing digest.
+        assert_eq!(typed.signature_hash(), tx.signing_digest());
+        assert_eq!(typed.tx_hash(&Signature::test_signature()), envelope.tx_hash());
+        assert_eq!(typed.clone().into_envelope(Signature::test_signature()), envelope);
+        assert!(typed.try_into_eth().is_err());
+
+        // Without its witness the canonical form cannot be pooled or become an Ethereum type.
+        assert!(decoded.clone().try_into_pooled().is_err());
+        assert!(decoded.clone().try_into_eth_pooled().is_err());
+        assert!(decoded.try_into_eth_envelope().is_err());
+    }
+
+    #[cfg(feature = "k256")]
+    #[test]
+    fn bls_transfer_recovery_returns_unauthenticated_sender() {
+        let envelope = BaseTxEnvelope::from(bls_transfer());
+        let sender = Address::repeat_byte(0x11);
+        assert_eq!(envelope.recover_signer().unwrap(), sender);
+        assert_eq!(envelope.recover_signer_unchecked().unwrap(), sender);
+        assert_eq!(envelope.recover_unchecked_with_buf(&mut Vec::new()).unwrap(), sender);
+
+        let pooled = BasePooledTransaction::from(crate::BlsTransferWithSignature {
+            transaction: bls_transfer().seal_slow(),
+            signature: Default::default(),
+        });
+        assert_eq!(pooled.recover_signer().unwrap(), sender);
+    }
+
+    #[cfg(feature = "evm")]
+    #[test]
+    fn bls_transfer_envelope_tx_env() {
+        let env = TxEnv::from_recovered_tx(&BaseTxEnvelope::from(bls_transfer()), Address::ZERO);
+        assert_eq!(env.tx_type, 0x7b);
+        assert_eq!(env.caller, Address::repeat_byte(0x11));
+        assert_eq!(env.kind, TxKind::Call(Address::repeat_byte(0x22)));
+        assert_eq!(env.value, U256::from(12_345u64));
+        assert_eq!(env.gas_limit, 21_000);
+        assert!(env.data.is_empty());
+    }
+
+    #[test]
+    #[cfg(feature = "serde")]
+    fn bls_transfer_envelope_serde_recomputes_hash() {
+        let envelope = BaseTxEnvelope::from(bls_transfer());
+        let json = serde_json::to_value(&envelope).unwrap();
+        assert_eq!(json["type"], "0x7b");
+        assert_eq!(json["gas"], "0x5208");
+        assert_eq!(json["hash"], serde_json::to_value(envelope.tx_hash()).unwrap());
+        assert!(json.get("r").is_none() && json.get("signature").is_none());
+        let decoded: BaseTxEnvelope = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(decoded, envelope);
+        assert_eq!(decoded.tx_hash(), envelope.tx_hash());
+
+        let mut forged = json;
+        forged["hash"] = serde_json::to_value(B256::repeat_byte(0xab)).unwrap();
+        assert!(serde_json::from_value::<BaseTxEnvelope>(forged).is_err());
+
+        let typed = BaseTypedTransaction::from(bls_transfer());
+        let json = serde_json::to_value(&typed).unwrap();
+        assert_eq!(json["type"], "0x7b");
+        assert_eq!(serde_json::from_value::<BaseTypedTransaction>(json).unwrap(), typed);
+    }
+
+    #[test]
+    #[cfg(all(feature = "serde", feature = "serde-bincode-compat"))]
+    fn bls_transfer_envelope_bincode_roundtrip() {
+        #[serde_as]
+        #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+        struct Data {
+            #[serde_as(as = "serde_bincode_compat::BaseTxEnvelope<'_>")]
+            envelope: BaseTxEnvelope,
+        }
+
+        let data = Data { envelope: BaseTxEnvelope::from(bls_transfer()) };
+        let encoded = bincode::serde::encode_to_vec(&data, bincode::config::legacy()).unwrap();
+        // BlsTransfer is appended after every existing variant.
+        assert_eq!(encoded[..4], 7u32.to_le_bytes());
+        let (decoded, _) =
+            bincode::serde::decode_from_slice::<Data, _>(&encoded, bincode::config::legacy())
+                .unwrap();
+        assert_eq!(decoded, data);
+        assert_eq!(decoded.envelope.tx_hash(), data.envelope.tx_hash());
+    }
+
+    #[cfg(feature = "reth")]
+    #[test]
+    fn bls_transfer_compact_roundtrip() {
+        let envelope = BaseTxEnvelope::from(bls_transfer());
+        let mut buf = Vec::new();
+        let len = envelope.to_compact(&mut buf);
+        let (decoded, remaining) = BaseTxEnvelope::from_compact(&buf, len);
+        assert_eq!(decoded, envelope);
+        assert_eq!(decoded.tx_hash(), envelope.tx_hash());
+        assert!(remaining.is_empty());
+
+        let typed = BaseTypedTransaction::from(bls_transfer());
+        let mut buf = Vec::new();
+        let identifier = typed.to_compact(&mut buf);
+        let (decoded, remaining) = BaseTypedTransaction::from_compact(&buf, identifier);
+        assert_eq!(decoded, typed);
+        assert!(remaining.is_empty());
     }
 
     #[cfg(feature = "reth")]

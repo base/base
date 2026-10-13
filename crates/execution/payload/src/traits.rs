@@ -62,6 +62,10 @@ pub trait Attributes: PayloadAttributes {
 
     /// Sequencer transactions to include in the payload.
     fn sequencer_transactions(&self) -> &[WithEncoded<Self::Transaction>];
+
+    /// Whether the sequencer transactions were derived from authenticated input, which
+    /// authorizes their native BLS transfers without witnesses.
+    fn bls_derived(&self) -> bool;
 }
 
 impl<T: SignedTransaction> Attributes for BasePayloadBuilderAttributes<T> {
@@ -86,5 +90,9 @@ impl<T: SignedTransaction> Attributes for BasePayloadBuilderAttributes<T> {
 
     fn sequencer_transactions(&self) -> &[WithEncoded<Self::Transaction>] {
         &self.transactions
+    }
+
+    fn bls_derived(&self) -> bool {
+        self.bls_derived
     }
 }

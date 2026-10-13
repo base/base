@@ -10,6 +10,10 @@
 //! Traditional batch format containing transactions for a single L2 block.
 //! Simple, straightforward format used before span batch optimization.
 //!
+//! ## Native BLS Chunk Batches
+//! Development-chain-only batches of consecutive single batches with one aggregate BLS
+//! signature authenticating every native BLS transfer in them.
+//!
 //! ## Span Batches
 //! Advanced batch format that can contain transactions for multiple L2 blocks,
 //! providing significant compression and efficiency improvements. Introduced
@@ -23,7 +27,7 @@
 //!
 //! # Key Components
 //!
-//! - **Batch Types**: [`SingleBatch`], [`SpanBatch`] for different batch formats
+//! - **Batch Types**: [`SingleBatch`], [`SpanBatch`], [`BlsChunkBatch`] for different batch formats
 //! - **Batch Reading**: [`BatchReader`] for decoding batch data from channels
 //! - **Validation**: [`BatchValidationProvider`] for batch validity checking
 //! - **Transaction Data**: Specialized transaction formats for span batches
@@ -54,7 +58,9 @@ mod inclusion;
 pub use inclusion::BatchWithInclusionBlock;
 
 mod errors;
-pub use errors::{BatchDecodingError, BatchEncodingError, SpanBatchError, SpanDecodingError};
+pub use errors::{
+    BatchDecodingError, BatchEncodingError, BlsChunkError, SpanBatchError, SpanDecodingError,
+};
 
 mod bits;
 pub use bits::SpanBatchBits;
@@ -74,9 +80,12 @@ pub use validity::{BatchDropReason, BatchValidity};
 mod single;
 pub use single::SingleBatch;
 
+mod bls_chunk;
+pub use bls_chunk::BlsChunkBatch;
+
 mod tx_data;
 pub use tx_data::{
-    SpanBatchEip1559TransactionData, SpanBatchEip2930TransactionData,
+    SpanBatchBlsTransactionData, SpanBatchEip1559TransactionData, SpanBatchEip2930TransactionData,
     SpanBatchEip7702TransactionData, SpanBatchEip8130TransactionData,
     SpanBatchLegacyTransactionData, SpanBatchTransactionData,
 };

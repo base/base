@@ -21,8 +21,9 @@ use reth_codecs::{
 };
 
 use crate::{
-    BaseBlock, BaseReceipt, BaseTxEnvelope, BaseTypedTransaction, DEPOSIT_TX_TYPE_ID,
-    DepositReceipt, EIP8130_TX_TYPE_ID, Eip8130Receipt, OpTxType, TxDeposit, TxEip8130,
+    BLS_TRANSFER_TX_TYPE_ID, BLS_TX_TYPE_ID, BaseBlock, BaseReceipt, BaseTxEnvelope,
+    BaseTypedTransaction, DEPOSIT_TX_TYPE_ID, DepositReceipt, EIP8130_TX_TYPE_ID, Eip8130Receipt,
+    OpTxType, TxBls, TxBlsTransfer, TxDeposit, TxEip8130,
 };
 
 // ---------------------------------------------------------------------------
@@ -116,6 +117,14 @@ impl Compact for OpTxType {
                 buf.put_u8(EIP8130_TX_TYPE_ID);
                 COMPACT_EXTENDED_IDENTIFIER_FLAG
             }
+            Self::Bls => {
+                buf.put_u8(BLS_TX_TYPE_ID);
+                COMPACT_EXTENDED_IDENTIFIER_FLAG
+            }
+            Self::BlsTransfer => {
+                buf.put_u8(BLS_TRANSFER_TX_TYPE_ID);
+                COMPACT_EXTENDED_IDENTIFIER_FLAG
+            }
         }
     }
 
@@ -131,6 +140,8 @@ impl Compact for OpTxType {
                         EIP7702_TX_TYPE_ID => Self::Eip7702,
                         DEPOSIT_TX_TYPE_ID => Self::Deposit,
                         EIP8130_TX_TYPE_ID => Self::Eip8130,
+                        BLS_TX_TYPE_ID => Self::Bls,
+                        BLS_TRANSFER_TX_TYPE_ID => Self::BlsTransfer,
                         _ => panic!("Unsupported OpTxType identifier: {extended_identifier}"),
                     }
                 }
@@ -158,6 +169,8 @@ impl Compact for BaseTypedTransaction {
             Self::Eip7702(tx) => tx.to_compact(out),
             Self::Deposit(tx) => tx.to_compact(out),
             Self::Eip8130(tx) => tx.to_compact(out),
+            Self::Bls(tx) => tx.to_compact(out),
+            Self::BlsTransfer(tx) => tx.to_compact(out),
         };
         identifier
     }
@@ -189,6 +202,14 @@ impl Compact for BaseTypedTransaction {
                 let (tx, buf) = TxEip8130::from_compact(buf, buf.len());
                 (Self::Eip8130(tx), buf)
             }
+            OpTxType::Bls => {
+                let (tx, buf) = TxBls::from_compact(buf, buf.len());
+                (Self::Bls(tx), buf)
+            }
+            OpTxType::BlsTransfer => {
+                let (tx, buf) = TxBlsTransfer::from_compact(buf, buf.len());
+                (Self::BlsTransfer(tx), buf)
+            }
         }
     }
 }
@@ -216,6 +237,12 @@ impl reth_codecs::alloy::transaction::ToTxCompact for BaseTxEnvelope {
                 tx.to_compact(buf);
             }
             Self::Eip8130(tx) => {
+                tx.to_compact(buf);
+            }
+            Self::Bls(tx) => {
+                tx.tx().to_compact(buf);
+            }
+            Self::BlsTransfer(tx) => {
                 tx.to_compact(buf);
             }
         };
@@ -260,6 +287,17 @@ impl reth_codecs::alloy::transaction::FromTxCompact for BaseTxEnvelope {
                 let _ = signature;
                 (Self::Eip8130(tx), buf)
             }
+            OpTxType::Bls => {
+                let (tx, buf) = TxBls::from_compact(buf, buf.len());
+                let tx = Signed::new_unhashed(tx, signature);
+                (Self::Bls(tx), buf)
+            }
+            OpTxType::BlsTransfer => {
+                let (tx, buf) = TxBlsTransfer::from_compact(buf, buf.len());
+                // The BLS witness is not stored; the placeholder signature is ignored.
+                let _ = signature;
+                (Self::BlsTransfer(Sealed::new(tx)), buf)
+            }
         }
     }
 }
@@ -278,12 +316,13 @@ impl reth_codecs::alloy::transaction::Envelope for BaseTxEnvelope {
             Self::Eip2930(tx) => tx.signature(),
             Self::Eip1559(tx) => tx.signature(),
             Self::Eip7702(tx) => tx.signature(),
-            // The `Envelope` trait forces a `&Signature` return, so neither variant can
+            Self::Bls(tx) => tx.signature(),
+            // The `Envelope` trait forces a `&Signature` return, so these variants cannot
             // signal absence the way `BaseTxEnvelope::signature` (which returns `Option`)
-            // does. Both Deposit and EIP-8130 AA transactions carry their own auth model
-            // and have no meaningful ECDSA signature: callers MUST NOT feed this value
+            // does. Deposit, EIP-8130 AA and BLS transfer transactions carry their own auth
+            // model and have no meaningful ECDSA signature: callers MUST NOT feed this value
             // into ECDSA recovery — it is an all-zero placeholder.
-            Self::Deposit(_) | Self::Eip8130(_) => &PLACEHOLDER_SIGNATURE,
+            Self::Deposit(_) | Self::Eip8130(_) | Self::BlsTransfer(_) => &PLACEHOLDER_SIGNATURE,
         }
     }
 
@@ -421,6 +460,8 @@ impl From<CompactBaseReceipt<'_>> for BaseReceipt {
             OpTxType::Eip2930 => Self::Eip2930(inner),
             OpTxType::Eip1559 => Self::Eip1559(inner),
             OpTxType::Eip7702 => Self::Eip7702(inner),
+            OpTxType::Bls => Self::Bls(inner),
+            OpTxType::BlsTransfer => Self::BlsTransfer(inner),
             OpTxType::Deposit => {
                 Self::Deposit(DepositReceipt { inner, deposit_nonce, deposit_receipt_version })
             }
@@ -589,6 +630,21 @@ mod tests {
         let (decoded, _) = BaseReceipt::from_compact(&buf, len);
 
         assert_eq!(decoded, receipt);
+    }
+
+    #[test]
+    fn base_receipt_compact_roundtrips_bls_types() {
+        let inner = Receipt {
+            status: true.into(),
+            cumulative_gas_used: 21_000,
+            logs: vec![Log::default()],
+        };
+        for receipt in [BaseReceipt::Bls(inner.clone()), BaseReceipt::BlsTransfer(inner)] {
+            let mut buf = Vec::new();
+            let len = receipt.to_compact(&mut buf);
+            let (decoded, _) = BaseReceipt::from_compact(&buf, len);
+            assert_eq!(decoded, receipt);
+        }
     }
 
     #[test]

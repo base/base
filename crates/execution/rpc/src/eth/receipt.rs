@@ -381,6 +381,8 @@ impl BaseReceiptBuilder {
                 BaseReceipt::Eip2930(receipt) => BaseReceipt::Eip2930(map_logs(receipt)),
                 BaseReceipt::Eip1559(receipt) => BaseReceipt::Eip1559(map_logs(receipt)),
                 BaseReceipt::Eip7702(receipt) => BaseReceipt::Eip7702(map_logs(receipt)),
+                BaseReceipt::Bls(receipt) => BaseReceipt::Bls(map_logs(receipt)),
+                BaseReceipt::BlsTransfer(receipt) => BaseReceipt::BlsTransfer(map_logs(receipt)),
                 BaseReceipt::Deposit(receipt) => BaseReceipt::Deposit(receipt.map_inner(map_logs)),
                 BaseReceipt::Eip8130(receipt) => BaseReceipt::Eip8130(receipt.map_inner(map_logs)),
             };

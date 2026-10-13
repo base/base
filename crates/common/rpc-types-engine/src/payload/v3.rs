@@ -1,6 +1,6 @@
 //! Execution payload envelope V3.
 
-use alloy_primitives::{B256, U256};
+use alloy_primitives::{B256, FixedBytes, U256};
 use alloy_rpc_types_engine::{BlobsBundleV1, ExecutionPayloadV3};
 
 /// This structure maps to the return value of `engine_getPayload` in the beacon chain spec, for
@@ -23,6 +23,9 @@ pub struct BaseExecutionPayloadEnvelopeV3 {
     pub should_override_builder: bool,
     /// Ecotone parent beacon block root
     pub parent_beacon_block_root: B256,
+    /// Detached aggregate authenticating the block's native BLS transfer intents.
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    pub bls_aggregate: Option<FixedBytes<48>>,
 }
 
 #[cfg(test)]

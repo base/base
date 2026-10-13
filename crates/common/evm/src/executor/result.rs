@@ -4,6 +4,8 @@ use alloy_evm::{block::TxResult as TxResultTrait, eth::EthTxResult};
 use alloy_primitives::Address;
 use revm::{context::result::ResultAndState, state::AccountInfo};
 
+use crate::BlsTransferIntent;
+
 /// The result of executing a Base transaction.
 #[derive(Debug)]
 pub struct BaseTxResult<H, T> {
@@ -15,6 +17,9 @@ pub struct BaseTxResult<H, T> {
     pub sender: Address,
     /// The depositor account info, fetched during execution for post-Regolith deposit nonce.
     pub depositor: Option<AccountInfo>,
+    /// The authorization intent of a native BLS transfer, collected during execution when the
+    /// block verifies its transfers. A committed transfer without one fails verification.
+    pub bls_transfer: Option<BlsTransferIntent>,
 }
 
 impl<H: Send + 'static, T: Send + 'static> TxResultTrait for BaseTxResult<H, T> {

@@ -93,6 +93,7 @@ use std::sync::Arc;
 
 use alloy_rpc_types_engine::ClientVersionV1;
 use base_common_rpc_types_engine::ExecutionData;
+use base_execution_evm::BlsWitnessStoreProvider;
 use base_execution_rpc::{BaseEngineApi, engine::ENGINE_CAPABILITIES};
 use reth_chainspec::EthereumHardforks;
 use reth_node_api::{
@@ -114,11 +115,12 @@ pub struct BaseEngineApiBuilder<EV> {
 impl<N, EV> EngineApiBuilder<N> for BaseEngineApiBuilder<EV>
 where
     N: FullNodeComponents<
-        Types: NodeTypes<
-            ChainSpec: EthereumHardforks,
-            Payload: EngineTypes<ExecutionData = ExecutionData>,
+            Types: NodeTypes<
+                ChainSpec: EthereumHardforks,
+                Payload: EngineTypes<ExecutionData = ExecutionData>,
+            >,
+            Evm: BlsWitnessStoreProvider,
         >,
-    >,
     EV: PayloadValidatorBuilder<N>,
     EV::Validator: EngineApiValidator<<N::Types as NodeTypes>::Payload>,
 {
@@ -154,6 +156,14 @@ where
             ctx.node.network().clone(),
         );
 
-        Ok(BaseEngineApi::new(inner))
+        let engine_api = BaseEngineApi::new(inner);
+        // The development chain's Engine API checks and durably retains BLS payload witnesses
+        // in the same store block execution reads.
+        Ok(match ctx.node.evm_config().bls_witness_store() {
+            Some(store) => {
+                engine_api.with_bls_witness_store(Arc::clone(store), ctx.node.provider().clone())
+            }
+            None => engine_api,
+        })
     }
 }

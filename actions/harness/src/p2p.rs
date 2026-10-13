@@ -186,6 +186,7 @@ impl GossipTransport for TestGossipTransport {
             signature,
             payload_hash,
             parent_beacon_block_root,
+            bls_aggregate: payload.bls_aggregate,
         });
         Ok(())
     }

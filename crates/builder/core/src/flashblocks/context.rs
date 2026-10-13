@@ -537,6 +537,12 @@ impl BasePayloadBuilderCtx {
                     BasePayloadBuilderError::BlobTransactionRejected,
                 ));
             }
+            // Flashblocks cannot authorize native BLS transfers, which carry no witness here.
+            if sequencer_tx.value().is_bls_transfer() {
+                return Err(PayloadBuilderError::other(
+                    BasePayloadBuilderError::UnauthenticatedBlsTransfer,
+                ));
+            }
 
             // Convert the transaction to a [Recovered<TransactionSigned>]. This is
             // purely for the purposes of utilizing the `evm_config.tx_env`` function.
@@ -1192,7 +1198,9 @@ impl BasePayloadBuilderCtx {
                 BuilderMetrics::tx_predicted_execution_time_us().record(predicted_us as f64);
             }
             // A sequencer's block should never contain blob or deposit transactions from the pool.
-            if tx.is_eip4844() || tx.is_deposit() {
+            // Flashblocks publish no BLS witnesses yet, so a native BLS transfer would be
+            // unauthenticated; those are built by the plain payload builder instead.
+            if tx.is_eip4844() || tx.is_deposit() || tx.is_bls_transfer() {
                 let err = TxnExecutionError::SequencerTransaction;
                 diag.record_rejection(&err);
                 let priority_fee = tx.effective_tip_per_gas(base_fee).unwrap_or(0) as f64;
@@ -1650,6 +1658,7 @@ impl BasePayloadBuilderCtx {
             gas_limit: parent.gas_limit,
             parent_beacon_block_root: Some(B256::ZERO),
             extra_data: Default::default(),
+            bls_derived: false,
         };
 
         let evm_env = evm_config

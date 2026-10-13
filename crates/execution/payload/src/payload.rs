@@ -9,7 +9,7 @@ use alloy_eips::{
     eip4895::Withdrawals,
     eip7685::Requests,
 };
-use alloy_primitives::{Address, B64, B256, Bytes, U256};
+use alloy_primitives::{Address, B64, B256, Bytes, FixedBytes, U256};
 use alloy_rpc_types_engine::{
     BlobsBundleV1, BlobsBundleV2, ExecutionPayloadEnvelopeV2, ExecutionPayloadFieldV2,
     ExecutionPayloadV1, ExecutionPayloadV3, PayloadAttributes as EthPayloadAttributes, PayloadId,
@@ -22,7 +22,7 @@ use base_common_consensus::{
 pub use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_common_rpc_types_engine::{
     BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5,
-    BaseExecutionPayloadV4,
+    BaseExecutionPayloadV4, BlsPayloadWitness,
 };
 use base_execution_evm::BaseNextBlockEnvAttributes;
 use reth_chainspec::EthChainSpec;
@@ -71,6 +71,9 @@ pub struct BasePayloadBuilderAttributes<T> {
     pub eip_1559_params: Option<B64>,
     /// Min base fee for the generated payload (only available post-Jovian)
     pub min_base_fee: Option<u64>,
+    /// Whether the attribute transactions were derived from authenticated L1 input, which
+    /// authorizes their native BLS transfers without a per-block aggregate.
+    pub bls_derived: bool,
 }
 
 impl<T> Default for BasePayloadBuilderAttributes<T> {
@@ -82,6 +85,7 @@ impl<T> Default for BasePayloadBuilderAttributes<T> {
             eip_1559_params: Default::default(),
             transactions: Default::default(),
             min_base_fee: Default::default(),
+            bls_derived: Default::default(),
         }
     }
 }
@@ -108,6 +112,7 @@ impl<T> BasePayloadBuilderAttributes<T> {
             gas_limit: self.gas_limit,
             eip_1559_params: self.eip_1559_params,
             min_base_fee: self.min_base_fee,
+            bls_derived: self.bls_derived,
         }
     }
 
@@ -185,6 +190,7 @@ impl<T: Decodable2718 + Encodable2718 + Send + Sync + Debug + Unpin + 'static>
             gas_limit: attributes.gas_limit,
             eip_1559_params: attributes.eip_1559_params,
             min_base_fee: attributes.min_base_fee,
+            bls_derived: attributes.bls_derived,
         })
     }
 }
@@ -278,6 +284,9 @@ pub struct BaseBuiltPayload<N: NodePrimitives = BasePrimitives> {
     pub(crate) block_access_list: Option<Bytes>,
     /// The fees of the block
     pub(crate) fees: U256,
+    /// Aggregate of the individual BLS witnesses of every native BLS transfer the block
+    /// includes, or `None` when it includes none or authorizes them by derivation.
+    pub(crate) bls_aggregate: Option<FixedBytes<48>>,
 }
 
 // === impl BuiltPayload ===
@@ -291,7 +300,19 @@ impl<N: NodePrimitives> BaseBuiltPayload<N> {
         executed_block: Option<BuiltPayloadExecutedBlock<N>>,
         block_access_list: Option<Bytes>,
     ) -> Self {
-        Self { id, block, fees, executed_block, block_access_list }
+        Self { id, block, fees, executed_block, block_access_list, bls_aggregate: None }
+    }
+
+    /// Sets the aggregate BLS witness of the block's native BLS transfers.
+    #[must_use]
+    pub const fn with_bls_aggregate(mut self, bls_aggregate: Option<FixedBytes<48>>) -> Self {
+        self.bls_aggregate = bls_aggregate;
+        self
+    }
+
+    /// Returns the aggregate BLS witness of the block's native BLS transfers, if any.
+    pub const fn bls_aggregate(&self) -> Option<FixedBytes<48>> {
+        self.bls_aggregate
     }
 
     /// Returns the identifier of the payload.
@@ -344,15 +365,17 @@ where
     N::SignedTx: SignedTransaction,
 {
     fn from(value: BaseBuiltPayload<N>) -> Self {
-        let BaseBuiltPayload { block, block_access_list, .. } = value;
+        let BaseBuiltPayload { block, block_access_list, bls_aggregate, .. } = value;
         let block_hash = block.hash();
         let block = Arc::unwrap_or_clone(block).into_block();
 
-        Self::from_block_unchecked_with_extras(
+        let mut data = Self::from_block_unchecked_with_extras(
             block_hash,
             &block.into_ethereum_block(),
             block_access_list,
-        )
+        );
+        data.bls_witness = bls_aggregate.map(BlsPayloadWitness::Aggregate);
+        data
     }
 }
 
@@ -395,7 +418,7 @@ where
     N: NodePrimitives<Block = Block<T>>,
 {
     fn from(value: BaseBuiltPayload<N>) -> Self {
-        let BaseBuiltPayload { block, fees, .. } = value;
+        let BaseBuiltPayload { block, fees, bls_aggregate, .. } = value;
 
         let parent_beacon_block_root = block.parent_beacon_block_root.unwrap_or_default();
 
@@ -417,6 +440,7 @@ where
             // No blobs for Base execution payloads.
             blobs_bundle: BlobsBundleV1 { blobs: vec![], commitments: vec![], proofs: vec![] },
             parent_beacon_block_root,
+            bls_aggregate,
         }
     }
 }
@@ -440,6 +464,7 @@ where
             blobs_bundle: v3.blobs_bundle,
             parent_beacon_block_root: v3.parent_beacon_block_root,
             execution_requests: vec![],
+            bls_aggregate: v3.bls_aggregate,
         }
     }
 }
@@ -459,6 +484,7 @@ where
             blobs_bundle: BlobsBundleV2::default(),
             should_override_builder: v4.should_override_builder,
             execution_requests: v4.execution_requests,
+            bls_aggregate: v4.bls_aggregate,
         }
     }
 }
@@ -495,6 +521,10 @@ where
             gas_limit: attributes.gas_limit.unwrap_or_else(|| parent.gas_limit()),
             parent_beacon_block_root: attributes.payload_attributes.parent_beacon_block_root,
             extra_data,
+            // Pool builds admit only native BLS transfers whose individual witnesses the pool
+            // verified, and the builder refuses unauthenticated attribute transfers, so their
+            // authorization is local. Attribute-only builds are authorized only when derived.
+            bls_derived: attributes.bls_derived || !attributes.no_tx_pool,
         })
     }
 }
@@ -580,6 +610,27 @@ mod tests {
                     None,
                 );
 
+                // The aggregate of the block's native BLS transfer witnesses travels with every
+                // envelope version and with the engine payload.
+                let aggregate = FixedBytes::<48>::repeat_byte(0xa5);
+                let aggregated = built_payload.clone().with_bls_aggregate(Some(aggregate));
+                assert_eq!(
+                    BaseExecutionPayloadEnvelopeV3::from(aggregated.clone()).bls_aggregate,
+                    Some(aggregate)
+                );
+                assert_eq!(
+                    BaseExecutionPayloadEnvelopeV4::from(aggregated.clone()).bls_aggregate,
+                    Some(aggregate)
+                );
+                assert_eq!(
+                    BaseExecutionPayloadEnvelopeV5::from(aggregated.clone()).bls_aggregate,
+                    Some(aggregate)
+                );
+                assert_eq!(
+                    base_common_rpc_types_engine::ExecutionData::from(aggregated).bls_witness,
+                    Some(BlsPayloadWitness::Aggregate(aggregate))
+                );
+
                 assert_eq!(
                     BaseExecutionPayloadEnvelopeV4::from(built_payload.clone()),
                     BaseExecutionPayloadEnvelopeV4 {
@@ -589,6 +640,7 @@ mod tests {
                         blobs_bundle: BlobsBundleV1::default(),
                         parent_beacon_block_root: parent_beacon_block_root.unwrap_or(B256::ZERO),
                         execution_requests: vec![],
+                        bls_aggregate: None,
                     }
                 );
                 assert_eq!(
@@ -599,6 +651,7 @@ mod tests {
                         should_override_builder: false,
                         blobs_bundle: BlobsBundleV2::default(),
                         execution_requests: vec![],
+                        bls_aggregate: None,
                     }
                 );
             }
@@ -626,6 +679,7 @@ mod tests {
             gas_limit: Some(30000000),
             eip_1559_params: None,
             min_base_fee: None,
+            bls_derived: false,
         };
 
         // Reth's `PayloadId` should match op-geth's `PayloadId`. This fails
@@ -658,6 +712,7 @@ mod tests {
             gas_limit: Some(30000000),
             eip_1559_params: None,
             min_base_fee: Some(100),
+            bls_derived: false,
         };
 
         // Reth's `PayloadId` should match op-geth's `PayloadId`. This fails

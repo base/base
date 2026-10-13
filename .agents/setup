@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# The orb image includes Docker Engine, but the devnet also needs Compose and
+# BuildKit (Dockerfile.devnet uses Git ADD and cache mounts).
+missing=()
+docker compose version >/dev/null 2>&1 || missing+=(docker-compose-plugin)
+docker buildx version >/dev/null 2>&1 || missing+=(docker-buildx-plugin)
+for package in build-essential pkg-config libssl-dev libclang-dev clang cmake lld protobuf-compiler libprotobuf-dev; do
+    if ! dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -q 'install ok installed'; then
+        missing+=("$package")
+    fi
+done
+if ((${#missing[@]})); then
+    sudo apt-get update -qq
+    sudo apt-get install -y --no-install-recommends "${missing[@]}"
+fi
+
+if [[ ! -x "$HOME/.cargo/bin/rustup" ]]; then
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs |
+        sh -s -- -y --profile minimal --default-toolchain none
+fi
+export PATH="$HOME/.cargo/bin:$PATH"
+toolchain=$(sed -n 's/^channel = "\([^"]*\)"/\1/p' rust-toolchain.toml)
+rustup toolchain install "$toolchain" --profile minimal --component rustfmt,clippy
+
+# The repository's format check uses nightly-only rustfmt options.
+if ! rustup run nightly rustfmt --version >/dev/null 2>&1; then
+    rustup toolchain install nightly --profile minimal --component rustfmt
+fi

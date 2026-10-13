@@ -349,6 +349,8 @@ pub(crate) mod tests {
 
         // Generate a random instance of MyStruct
         let mut block: Block<BaseTxEnvelope> = Block::arbitrary_take_rest(u).unwrap();
+        // Ordinary fixtures carry no detached BLS aggregate, so they must not contain intents.
+        block.body.transactions.retain(|tx| !tx.is_bls_transfer());
 
         let transactions: Vec<Bytes> =
             block.body.transactions().map(|tx| tx.encoded_2718().into()).collect();
@@ -442,6 +444,7 @@ pub(crate) mod tests {
             signature: Signature::test_signature(),
             payload_hash: PayloadHash(B256::ZERO),
             parent_beacon_block_root: None,
+            bls_aggregate: None,
         };
 
         let msg = envelope.payload_hash.signature_message(8453);
@@ -470,6 +473,7 @@ pub(crate) mod tests {
             signature: Signature::test_signature(),
             payload_hash: PayloadHash(B256::ZERO),
             parent_beacon_block_root: None,
+            bls_aggregate: None,
         };
 
         let msg = envelope.payload_hash.signature_message(8453);
@@ -498,6 +502,7 @@ pub(crate) mod tests {
             signature: Signature::test_signature(),
             payload_hash: PayloadHash(B256::ZERO),
             parent_beacon_block_root: None,
+            bls_aggregate: None,
         };
 
         let msg = envelope.payload_hash.signature_message(8453);
@@ -526,6 +531,7 @@ pub(crate) mod tests {
             signature: Signature::test_signature(),
             payload_hash: PayloadHash(B256::ZERO),
             parent_beacon_block_root: None,
+            bls_aggregate: None,
         };
 
         let msg = envelope.payload_hash.signature_message(8453);
@@ -551,6 +557,7 @@ pub(crate) mod tests {
             signature: Signature::test_signature(),
             payload_hash: PayloadHash(B256::ZERO),
             parent_beacon_block_root: None,
+            bls_aggregate: None,
         };
 
         let msg = envelope.payload_hash.signature_message(8453);
@@ -579,6 +586,7 @@ pub(crate) mod tests {
             signature: Signature::test_signature(),
             payload_hash: PayloadHash(B256::ZERO),
             parent_beacon_block_root: None,
+            bls_aggregate: None,
         };
 
         let msg = envelope.payload_hash.signature_message(8453);
@@ -605,6 +613,7 @@ pub(crate) mod tests {
                     signature: Signature::test_signature(),
                     payload_hash: PayloadHash(B256::ZERO),
                     parent_beacon_block_root: None,
+                    bls_aggregate: None,
                 }
             })
             .collect::<Vec<_>>();
@@ -633,6 +642,7 @@ pub(crate) mod tests {
             signature: Signature::test_signature(),
             payload_hash: PayloadHash(B256::ZERO),
             parent_beacon_block_root: None,
+            bls_aggregate: None,
         };
 
         let msg = envelope.payload_hash.signature_message(8453);
@@ -665,6 +675,7 @@ pub(crate) mod tests {
             signature: Signature::test_signature(),
             payload_hash: PayloadHash(B256::ZERO),
             parent_beacon_block_root: None,
+            bls_aggregate: None,
         };
 
         let msg = envelope.payload_hash.signature_message(8453);
@@ -696,6 +707,7 @@ pub(crate) mod tests {
             signature: Signature::test_signature(),
             payload_hash: PayloadHash(B256::ZERO),
             parent_beacon_block_root: None,
+            bls_aggregate: None,
         };
 
         let (_, unsafe_signer) = tokio::sync::watch::channel(Address::default());
@@ -722,6 +734,7 @@ pub(crate) mod tests {
             signature: Signature::test_signature(),
             payload_hash: PayloadHash(B256::ZERO),
             parent_beacon_block_root: Some(B256::ZERO),
+            bls_aggregate: None,
         };
 
         let msg = envelope.payload_hash.signature_message(8453);
@@ -744,6 +757,7 @@ pub(crate) mod tests {
             signature: Signature::test_signature(),
             payload_hash: PayloadHash(B256::ZERO),
             parent_beacon_block_root: Some(B256::ZERO),
+            bls_aggregate: None,
         };
 
         let msg = envelope.payload_hash.signature_message(8453);
@@ -769,6 +783,7 @@ pub(crate) mod tests {
             signature: Signature::test_signature(),
             payload_hash: PayloadHash(B256::ZERO),
             parent_beacon_block_root: None,
+            bls_aggregate: None,
         };
 
         let msg = envelope.payload_hash.signature_message(8453);
@@ -799,6 +814,7 @@ pub(crate) mod tests {
             signature: Signature::test_signature(),
             payload_hash: PayloadHash(B256::ZERO),
             parent_beacon_block_root: None,
+            bls_aggregate: None,
         };
 
         let msg = envelope.payload_hash.signature_message(8453);
@@ -829,6 +845,7 @@ pub(crate) mod tests {
             parent_beacon_block_root: Some(
                 block.header.parent_beacon_block_root.unwrap_or_default(),
             ),
+            bls_aggregate: None,
         };
 
         let msg = envelope.payload_hash.signature_message(8453);
@@ -861,6 +878,7 @@ pub(crate) mod tests {
             parent_beacon_block_root: Some(
                 block.header.parent_beacon_block_root.unwrap_or_default(),
             ),
+            bls_aggregate: None,
         };
 
         let msg = envelope.payload_hash.signature_message(8453);
@@ -892,6 +910,7 @@ pub(crate) mod tests {
             parent_beacon_block_root: Some(
                 block.header.parent_beacon_block_root.unwrap_or_default(),
             ),
+            bls_aggregate: None,
         };
 
         let msg = envelope.payload_hash.signature_message(8453);
@@ -917,6 +936,7 @@ pub(crate) mod tests {
             parent_beacon_block_root: Some(
                 block.header.parent_beacon_block_root.unwrap_or_default(),
             ),
+            bls_aggregate: None,
         };
 
         assert!(matches!(handler.block_valid(&envelope), Err(BlockInvalidError::ExcessBlobGas)));
@@ -940,6 +960,7 @@ pub(crate) mod tests {
             parent_beacon_block_root: Some(
                 block.header.parent_beacon_block_root.unwrap_or_default(),
             ),
+            bls_aggregate: None,
         };
 
         let msg = envelope.payload_hash.signature_message(8453);
@@ -1009,6 +1030,7 @@ pub(crate) mod tests {
             signature: Signature::test_signature(),
             payload_hash: PayloadHash(B256::ZERO),
             parent_beacon_block_root: None,
+            bls_aggregate: None,
         };
 
         let msg = envelope.payload_hash.signature_message(8453);

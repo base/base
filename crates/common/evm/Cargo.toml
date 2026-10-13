@@ -16,10 +16,11 @@ workspace = true
 # alloy
 alloy-evm.workspace = true
 alloy-eips.workspace = true
-alloy-consensus.workspace = true
 alloy-primitives.workspace = true
+alloy-consensus = { workspace = true, features = ["k256"] }
 
 # base
+base-common-bls.workspace = true
 base-common-flz.workspace = true
 base-common-l1-fees.workspace = true
 base-common-chains.workspace = true
@@ -34,6 +35,13 @@ base-common-consensus = { workspace = true, features = ["evm"] }
 # revm
 revm.workspace = true
 
+# crypto (native BLS point types; no_std)
+ark-bls12-381 = { workspace = true, features = ["curve"] }
+# Only used by the `test-utils` BLS signing key.
+ark-ec = { workspace = true, optional = true }
+ark-ff = { workspace = true, optional = true }
+ark-serialize = { workspace = true, optional = true }
+
 # misc
 auto_impl.workspace = true
 thiserror.workspace = true
@@ -47,9 +55,11 @@ metrics = { workspace = true, optional = true }
 reth-evm = { workspace = true, optional = true }
 
 [dev-dependencies]
+ark-ec.workspace = true
+ark-ff.workspace = true
 rstest.workspace = true
+ark-serialize.workspace = true
 k256 = { workspace = true, features = ["ecdsa"] }
-sha2 = { workspace = true, default-features = false }
 alloy-hardforks.workspace = true
 alloy-sol-types = { workspace = true, default-features = false }
 alloy-primitives = { workspace = true, default-features = false }
@@ -63,6 +73,11 @@ std = [
 	"alloy-eips/std",
 	"alloy-evm/std",
 	"alloy-primitives/std",
+	"ark-bls12-381/std",
+	"ark-ec?/std",
+	"ark-ff?/std",
+	"ark-serialize?/std",
+	"base-common-bls/std",
 	"base-common-chains/std",
 	"base-common-consensus/std",
 	"base-common-flz/std",
@@ -87,6 +102,7 @@ serde = [
 	"revm/serde",
 ]
 reth = [ "dep:reth-evm", "std" ]
+test-utils = [ "dep:ark-ec", "dep:ark-ff", "dep:ark-serialize" ]
 metrics = [
 	"base-common-precompiles/metrics",
 	"base-metrics/metrics",

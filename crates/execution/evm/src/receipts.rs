@@ -34,6 +34,8 @@ impl BaseReceiptBuilder for BaseRethReceiptBuilder {
                     OpTxType::Eip1559 => BaseReceipt::Eip1559(receipt),
                     OpTxType::Eip2930 => BaseReceipt::Eip2930(receipt),
                     OpTxType::Eip7702 => BaseReceipt::Eip7702(receipt),
+                    OpTxType::Bls => BaseReceipt::Bls(receipt),
+                    OpTxType::BlsTransfer => BaseReceipt::BlsTransfer(receipt),
                     OpTxType::Deposit => unreachable!(),
                     // Consume the per-phase statuses published by the executor for
                     // this transaction (see [`Eip8130PhaseStatuses`]).

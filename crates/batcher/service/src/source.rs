@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use alloy_primitives::{B256, FixedBytes};
 use alloy_provider::Provider;
 use async_trait::async_trait;
 use base_batcher_source::{PollingSource, SourceError};
@@ -37,5 +38,16 @@ impl PollingSource for RpcPollingSource {
             .into_consensus()
             .map_transactions(|t| t.inner.into_inner());
         Ok(block)
+    }
+
+    async fn bls_block_aggregate(
+        &self,
+        block_hash: B256,
+    ) -> Result<Option<FixedBytes<48>>, SourceError> {
+        self.provider
+            .client()
+            .request("base_blsBlockAggregate", (block_hash,))
+            .await
+            .map_err(|error| SourceError::Provider(error.to_string()))
     }
 }

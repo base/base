@@ -319,6 +319,10 @@ impl From<BaseTransactionReceipt> for BaseReceiptEnvelope {
             BaseReceipt::Eip7702(receipt) => {
                 Self::Eip7702(convert_standard_receipt(receipt, logs_bloom))
             }
+            BaseReceipt::Bls(receipt) => Self::Bls(convert_standard_receipt(receipt, logs_bloom)),
+            BaseReceipt::BlsTransfer(receipt) => {
+                Self::BlsTransfer(convert_standard_receipt(receipt, logs_bloom))
+            }
             BaseReceipt::Eip8130(receipt) => {
                 // The consensus envelope only carries the standard receipt; the
                 // EIP-8130 `phaseStatuses` live on the RPC receipt, not in RLP.

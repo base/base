@@ -370,6 +370,7 @@ mod tests {
                 block_hash: B256::with_last_byte(1),
                 transactions: vec![],
             }),
+            bls_aggregate: None,
         }
     }
 

@@ -10,12 +10,12 @@ use base_common_chains::Upgrades;
 use base_common_consensus::{BasePrimitives, DepositReceiptExt, EIP1559ParamError};
 use base_common_evm::{
     BaseBlockExecutionCtx, BaseBlockExecutorFactory, BaseEvmFactory, BaseReceiptBuilder,
-    BaseSpecId, BaseTransaction, BaseTxEnv,
+    BaseSpecId, BaseTransaction, BaseTxEnv, BlsBlockAuthorization,
 };
 #[cfg(not(feature = "std"))]
 use base_common_rpc_types_engine as _;
 #[cfg(feature = "std")]
-use base_common_rpc_types_engine::ExecutionData;
+use base_common_rpc_types_engine::{BlsPayloadWitness, ExecutionData};
 use base_execution_chainspec::BaseChainSpec;
 use reth_chainspec::EthChainSpec;
 #[cfg(feature = "std")]
@@ -34,6 +34,20 @@ use revm::{
 };
 
 use crate::{BaseBlockAssembler, BaseEvmEnvBuilder, BaseRethReceiptBuilder};
+#[cfg(feature = "std")]
+use crate::{BlsStoredWitness, BlsWitnessStore};
+
+/// Failure to construct the execution environment or load its durable authorization witness.
+#[derive(Debug, thiserror::Error)]
+pub enum BaseEvmConfigError {
+    /// Fork-specific fee parameters are invalid.
+    #[error(transparent)]
+    FeeParameters(#[from] EIP1559ParamError),
+    /// A witness could not be loaded; never treat an unavailable witness as authorization.
+    #[cfg(feature = "std")]
+    #[error("BLS authorization storage: {0}")]
+    WitnessStorage(#[from] std::io::Error),
+}
 
 /// Context relevant for execution of a next Base block.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,6 +64,8 @@ pub struct BaseNextBlockEnvAttributes {
     pub parent_beacon_block_root: Option<B256>,
     /// Encoded EIP-1559 parameters to include into block's `extra_data` field.
     pub extra_data: RevmBytes,
+    /// Authorization was verified upstream by derivation or individual pool admission.
+    pub bls_derived: bool,
 }
 
 #[cfg(feature = "rpc")]
@@ -69,6 +85,7 @@ impl<H: alloy_consensus::BlockHeader> reth_rpc_eth_api::helpers::pending_block::
             gas_limit: parent.gas_limit(),
             parent_beacon_block_root: parent.parent_beacon_block_root(),
             extra_data: parent.extra_data().clone(),
+            bls_derived: false,
         }
     }
 }
@@ -85,6 +102,9 @@ pub struct BaseEvmConfig<
     pub executor_factory: BaseBlockExecutorFactory<R, Arc<ChainSpec>, EvmFactory>,
     /// Base block assembler.
     pub block_assembler: BaseBlockAssembler<ChainSpec>,
+    /// Durable block authorization for restart and database re-execution.
+    #[cfg(feature = "std")]
+    pub bls_witness_store: Option<Arc<BlsWitnessStore>>,
     #[doc(hidden)]
     pub _pd: PhantomData<N>,
 }
@@ -99,6 +119,8 @@ impl<ChainSpec, N: NodePrimitives, R: Clone, EvmFactory: Clone> Clone
         Self {
             executor_factory: self.executor_factory.clone(),
             block_assembler: self.block_assembler.clone(),
+            #[cfg(feature = "std")]
+            bls_witness_store: self.bls_witness_store.clone(),
             _pd: self._pd,
         }
     }
@@ -122,6 +144,8 @@ impl<ChainSpec: Upgrades, N: NodePrimitives, R> BaseEvmConfig<ChainSpec, N, R> {
                 chain_spec,
                 BaseEvmFactory::new(activation_admin_address),
             ),
+            #[cfg(feature = "std")]
+            bls_witness_store: None,
             _pd: PhantomData,
         }
     }
@@ -135,6 +159,19 @@ where
     /// Returns the chain spec associated with this configuration.
     pub const fn chain_spec(&self) -> &Arc<ChainSpec> {
         self.executor_factory.spec()
+    }
+
+    /// Shares durable block authorization with the payload builder and Engine API.
+    #[cfg(feature = "std")]
+    pub fn with_bls_witness_store(mut self, store: Arc<BlsWitnessStore>) -> Self {
+        self.bls_witness_store = Some(store);
+        self
+    }
+
+    /// Returns the configured durable authorization store.
+    #[cfg(feature = "std")]
+    pub const fn bls_witness_store(&self) -> Option<&Arc<BlsWitnessStore>> {
+        self.bls_witness_store.as_ref()
     }
 }
 
@@ -162,7 +199,7 @@ where
     Self: Send + Sync + Unpin + Clone + 'static,
 {
     type Primitives = N;
-    type Error = EIP1559ParamError;
+    type Error = BaseEvmConfigError;
     type NextBlockEnvCtx = BaseNextBlockEnvAttributes;
     type BlockExecutorFactory = BaseBlockExecutorFactory<R, Arc<ChainSpec>, EvmF>;
     type BlockAssembler = BaseBlockAssembler<ChainSpec>;
@@ -194,10 +231,28 @@ where
         &self,
         block: &'_ SealedBlock<N::Block>,
     ) -> Result<BaseBlockExecutionCtx, Self::Error> {
+        #[cfg(feature = "std")]
+        let witness = self
+            .bls_witness_store
+            .as_ref()
+            .map(|store| store.get(block.hash()))
+            .transpose()?
+            .flatten();
+        #[cfg(feature = "std")]
+        let bls_authorization = match witness {
+            Some(BlsStoredWitness::Aggregate(signature)) => {
+                BlsBlockAuthorization::Verify(Some(signature))
+            }
+            Some(BlsStoredWitness::Derived) => BlsBlockAuthorization::Derived,
+            None => BlsBlockAuthorization::default(),
+        };
+        #[cfg(not(feature = "std"))]
+        let bls_authorization = BlsBlockAuthorization::default();
         Ok(BaseBlockExecutionCtx {
             parent_hash: block.header().parent_hash(),
             parent_beacon_block_root: block.header().parent_beacon_block_root(),
             extra_data: block.header().extra_data().clone(),
+            bls_authorization,
         })
     }
 
@@ -210,6 +265,11 @@ where
             parent_hash: parent.hash(),
             parent_beacon_block_root: attributes.parent_beacon_block_root,
             extra_data: attributes.extra_data,
+            bls_authorization: if attributes.bls_derived {
+                BlsBlockAuthorization::Derived
+            } else {
+                BlsBlockAuthorization::default()
+            },
         })
     }
 }
@@ -241,6 +301,13 @@ where
             parent_hash: payload.parent_hash(),
             parent_beacon_block_root: payload.sidecar.parent_beacon_block_root(),
             extra_data: payload.payload.as_v1().extra_data.clone(),
+            bls_authorization: match payload.bls_witness {
+                Some(BlsPayloadWitness::Aggregate(signature)) => {
+                    BlsBlockAuthorization::Verify(Some(signature))
+                }
+                Some(BlsPayloadWitness::Derived) => BlsBlockAuthorization::Derived,
+                None => BlsBlockAuthorization::default(),
+            },
         })
     }
 

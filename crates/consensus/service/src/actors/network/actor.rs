@@ -254,6 +254,7 @@ mod tests {
                 ExecutionPayloadV1::arbitrary(&mut arbitrary::Unstructured::new(&bytes)).unwrap(),
             ),
             parent_beacon_block_root: None,
+            bls_aggregate: None,
         };
 
         let payload_hash = block.payload_hash();
@@ -263,6 +264,7 @@ mod tests {
             parent_beacon_block_root: block.parent_beacon_block_root,
             signature,
             payload_hash,
+            bls_aggregate: None,
         };
         let encoded_payload = payload.encode_v1().unwrap();
 
@@ -292,6 +294,7 @@ mod tests {
         let block = BaseExecutionPayloadEnvelope {
             execution_payload: BaseExecutionPayload::V3(execution_payload),
             parent_beacon_block_root: Some(B256::random()),
+            bls_aggregate: None,
         };
 
         let payload_hash = block.payload_hash();
@@ -301,6 +304,7 @@ mod tests {
             parent_beacon_block_root: block.parent_beacon_block_root,
             signature,
             payload_hash,
+            bls_aggregate: None,
         };
         let encoded_payload = payload.encode_v3().unwrap();
 

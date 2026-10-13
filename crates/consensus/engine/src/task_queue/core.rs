@@ -356,6 +356,7 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
                         .payload_attributes
                         .parent_beacon_block_root,
                     execution_payload: BaseExecutionPayload::V4(payload.execution_payload),
+                    bls_aggregate: payload.bls_aggregate,
                 }
             }
             EngineGetPayloadVersion::V4 => {
@@ -365,6 +366,7 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
                 BaseExecutionPayloadEnvelope {
                     parent_beacon_block_root: Some(payload.parent_beacon_block_root),
                     execution_payload: BaseExecutionPayload::V4(payload.execution_payload),
+                    bls_aggregate: payload.bls_aggregate,
                 }
             }
             EngineGetPayloadVersion::V3 => {
@@ -374,6 +376,7 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
                 BaseExecutionPayloadEnvelope {
                     parent_beacon_block_root: Some(payload.parent_beacon_block_root),
                     execution_payload: BaseExecutionPayload::V3(payload.execution_payload),
+                    bls_aggregate: payload.bls_aggregate,
                 }
             }
             EngineGetPayloadVersion::V2 => {
@@ -382,6 +385,7 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
 
                 BaseExecutionPayloadEnvelope {
                     parent_beacon_block_root: None,
+                    bls_aggregate: None,
                     execution_payload: match payload.execution_payload.into_payload() {
                         ExecutionPayload::V1(payload) => BaseExecutionPayload::V1(payload),
                         ExecutionPayload::V2(payload) => BaseExecutionPayload::V2(payload),

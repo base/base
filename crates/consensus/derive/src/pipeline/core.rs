@@ -292,6 +292,7 @@ mod tests {
                 gas_limit: None,
                 eip_1559_params: None,
                 min_base_fee: None,
+                bls_derived: false,
             },
             parent: Default::default(),
             derived_from: Default::default(),

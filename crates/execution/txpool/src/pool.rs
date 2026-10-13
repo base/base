@@ -7,6 +7,7 @@ use alloy_eips::{
     eip7594::BlobTransactionSidecarVariant,
 };
 use alloy_primitives::{Address, B128, B256, TxHash, U256, map::AddressSet};
+use base_common_consensus::BlsPayload;
 use base_common_precompiles::NonceManagerStorage;
 use futures::StreamExt;
 use parking_lot::{Mutex, RwLock};
@@ -212,11 +213,25 @@ where
         self
     }
 
-    /// Builds guard admission metadata carried by a validated EIP-8130 transaction.
+    /// Builds guard admission metadata carried by a validated EIP-8130 or native BLS
+    /// transaction.
     pub fn admission_for(transaction: &T) -> Option<Admission> {
-        transaction.as_eip8130()?;
+        if transaction.as_eip8130().is_none() && transaction.as_bls().is_none() {
+            return None;
+        }
         let watch_set = transaction.watch_set().cloned()?;
         let class = *transaction.limit_class()?;
+        // A batch moves value out of each inner sender's balance, which can drain without a
+        // nonce change (an EIP-8130 transaction on a 2D nonce channel), so each sender's
+        // balance must keep covering its transfer. Batches carry each sender once.
+        let spend_thresholds =
+            match transaction.as_bls().map(|tx| BlsPayload::decode(&tx.tx().input)) {
+                Some(Ok(BlsPayload::Batch { transfers, .. })) => transfers
+                    .iter()
+                    .map(|transfer| (transfer.sender, U256::from(transfer.value)))
+                    .collect(),
+                _ => Vec::new(),
+            };
         Some(Admission {
             hash: *transaction.hash(),
             sender: class.sender,
@@ -229,6 +244,7 @@ where
             max_cost: class.max_cost,
             priority: transaction.priority_fee_or_price(),
             watch_set,
+            spend_thresholds,
         })
     }
 
@@ -2068,18 +2084,21 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use alloy_consensus::{
-        SignableTransaction, Transaction, TxEip1559,
+        Sealable, SignableTransaction, Transaction, TxEip1559,
         transaction::{Recovered, SignerRecoverable},
     };
     use alloy_eips::eip2718::Encodable2718;
-    use alloy_primitives::{Bytes, TxKind, U256};
+    use alloy_primitives::{Bytes, FixedBytes, TxKind, U256, aliases::U96};
     use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
     use base_common_chains::ChainConfig;
     use base_common_consensus::{
-        BaseBlock, BasePooledTransaction as ConsensusPooledTransaction, BasePrimitives,
-        BaseTxEnvelope, Eip8130Constants, Eip8130Signed, TxEip8130,
+        BLS_TRANSFER_TX_TYPE_ID, BLS_TX_TYPE_ID, BaseBlock,
+        BasePooledTransaction as ConsensusPooledTransaction, BasePrimitives, BaseTxEnvelope,
+        BlsConstants, BlsPayload, BlsTransfer, BlsTransferWithSignature, Eip8130Constants,
+        Eip8130Signed, TxBls, TxBlsTransfer, TxEip8130,
     };
+    use base_common_evm::{BlsRegistry, BlsValidator, test_utils::BlsTestKey};
     use base_execution_chainspec::BaseChainSpec;
     use base_execution_evm::BaseEvmConfig;
     use base_test_utils::build_test_genesis_everest;
@@ -2095,8 +2114,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        BaseL1BlockInfo, BaseOrdering, BasePooledTransaction, LimitClass, ValidityOperator,
-        ValidityPredicate, WatchSet,
+        BaseL1BlockInfo, BaseOrdering, BasePooledTransaction, BlsTransferBackup, LimitClass,
+        ValidityOperator, ValidityPredicate, WatchSet,
     };
 
     fn test_chain_id() -> u64 {
@@ -2382,8 +2401,18 @@ mod tests {
         zenith: bool,
         config: PoolConfig,
     ) -> (IntegrationPool, MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>) {
+        build_integration_pool_on(test_chain_id(), zenith, config)
+    }
+
+    /// [`build_integration_pool_at`] on the given chain. The development chain accepts
+    /// native BLS transactions, as the node configures it.
+    fn build_integration_pool_on(
+        chain_id: u64,
+        zenith: bool,
+        config: PoolConfig,
+    ) -> (IntegrationPool, MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>) {
         let mut genesis = build_test_genesis_everest();
-        genesis.config.chain_id = test_chain_id();
+        genesis.config.chain_id = chain_id;
         if zenith {
             genesis.config.extra_fields.insert(
                 "base".to_string(),
@@ -2398,11 +2427,16 @@ mod tests {
             .with_genesis_block();
         let evm_config = BaseEvmConfig::base(Arc::clone(&chain_spec));
         let blob_store = InMemoryBlobStore::default();
-        let validator = EthTransactionValidatorBuilder::new(client.clone(), evm_config)
+        let mut validator = EthTransactionValidatorBuilder::new(client.clone(), evm_config)
             .no_shanghai()
-            .no_cancun()
-            .build_with_tasks(Runtime::test(), blob_store.clone())
-            .map(|inner| {
+            .no_cancun();
+        if chain_id == BlsConstants::CHAIN_ID {
+            validator = validator
+                .with_custom_tx_type(BLS_TX_TYPE_ID)
+                .with_custom_tx_type(BLS_TRANSFER_TX_TYPE_ID);
+        }
+        let validator =
+            validator.build_with_tasks(Runtime::test(), blob_store.clone()).map(|inner| {
                 // Seed a realistic wall clock so millisecond-scale nonce-free
                 // `valid_before` bounds evaluate against a representative `now`
                 // (default is timestamp 0, where no future ms bound is reachable).
@@ -3017,6 +3051,316 @@ mod tests {
         assert_eq!(*removed[0].hash(), channel_hash);
         assert!(pool.get(&channel_hash).is_none());
         assert!(pool.guard.read().is_empty());
+    }
+
+    /// Funds `relayer` and `sender`, registers `sender`'s BLS key, and admits a relayed
+    /// native BLS batch moving 1,000 wei from `sender` to `recipient`.
+    async fn admit_bls_batch(
+        pool: &IntegrationPool,
+        client: &MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>,
+        relayer: &PrivateKeySigner,
+        sender: Address,
+        recipient: Address,
+    ) -> TxHash {
+        let key = BlsTestKey::from_seed(1);
+        fund(client, relayer.address());
+        fund(client, sender);
+        let registered_key = BlsRegistry::key_slots(sender)
+            .into_iter()
+            .zip(BlsRegistry::key_words(&key.public_key().0));
+        client.add_account(
+            BlsConstants::REGISTRY_ADDRESS,
+            ExtendedAccount::new(BlsRegistry::ACCOUNT_NONCE, U256::ZERO)
+                .extend_storage(registered_key),
+        );
+
+        let transfer = BlsTransfer { sender, nonce: 0, recipient, value: U96::from(1_000u64) };
+        let signature =
+            BlsTestKey::aggregate(&[key.sign(transfer.signing_digest(BlsConstants::CHAIN_ID))]);
+        let mut tx = TxBls {
+            chain_id: BlsConstants::CHAIN_ID,
+            nonce: 0,
+            max_priority_fee_per_gas: 0,
+            max_fee_per_gas: 1_000,
+            gas_limit: 0,
+            input: BlsPayload::Batch { transfers: vec![transfer], signature }.encode(),
+        };
+        tx.gas_limit = BlsValidator::intrinsic_gas(&tx).unwrap();
+        let signature = relayer.sign_hash_sync(&tx.signature_hash()).unwrap();
+        let envelope = BaseTxEnvelope::Bls(tx.into_signed(signature));
+        let batch = BasePooledTransaction::new(
+            envelope.clone().try_into_recovered().unwrap(),
+            envelope.encode_2718_len(),
+        );
+        let batch_hash = *batch.hash();
+        pool.add_transaction(TransactionOrigin::Local, batch).await.unwrap();
+        assert!(pool.guard.read().contains(&batch_hash));
+        batch_hash
+    }
+
+    /// A pooled native BLS batch reserves its inner sender's nonce: canonically advancing it
+    /// evicts the batch, while unrelated state changes and the relayer's ordinary
+    /// transactions are unaffected.
+    #[tokio::test]
+    async fn bls_batch_is_evicted_when_an_inner_sender_nonce_advances() {
+        let (pool, client) =
+            build_integration_pool_on(BlsConstants::CHAIN_ID, false, PoolConfig::default());
+        let relayer = signer();
+        let sender = Address::repeat_byte(0x51);
+        let recipient = Address::repeat_byte(0x52);
+        let batch_hash = admit_bls_batch(&pool, &client, &relayer, sender, recipient).await;
+
+        let follow_up = TxEip1559 {
+            chain_id: BlsConstants::CHAIN_ID,
+            nonce: 1,
+            gas_limit: 50_000,
+            max_fee_per_gas: 1_000,
+            max_priority_fee_per_gas: 0,
+            to: TxKind::Call(sender),
+            value: U256::from(1),
+            access_list: Default::default(),
+            input: Bytes::new(),
+        };
+        let signature = relayer.sign_hash_sync(&follow_up.signature_hash()).unwrap();
+        let envelope = BaseTxEnvelope::Eip1559(follow_up.into_signed(signature));
+        let follow_up = BasePooledTransaction::new(
+            envelope.clone().try_into_recovered().unwrap(),
+            envelope.encode_2718_len(),
+        );
+        let follow_up_hash = *follow_up.hash();
+        pool.add_transaction(TransactionOrigin::Local, follow_up).await.unwrap();
+
+        let removed = pool.apply_state_diff(&[AccountStateDiff {
+            address: recipient,
+            nonce: Some(1),
+            ..Default::default()
+        }]);
+        assert!(removed.is_empty(), "the recipient's nonce is not part of the batch");
+
+        let removed = pool.apply_state_diff(&[AccountStateDiff {
+            address: sender,
+            nonce: Some(1),
+            ..Default::default()
+        }]);
+        let removed: Vec<_> = removed.iter().map(|transaction| *transaction.hash()).collect();
+        assert_eq!(removed, vec![batch_hash]);
+        assert!(pool.get(&batch_hash).is_none());
+        assert!(!pool.guard.read().contains(&batch_hash));
+        assert!(pool.get(&follow_up_hash).is_some());
+    }
+
+    /// An inner sender's balance can drain without a nonce change, for example through an
+    /// EIP-8130 transaction on a 2D nonce channel. The batch is evicted once that balance can
+    /// no longer cover the sender's transfer, and kept while it still can.
+    #[tokio::test]
+    async fn bls_batch_is_evicted_when_an_inner_sender_balance_drops_below_its_transfer() {
+        let (pool, client) =
+            build_integration_pool_on(BlsConstants::CHAIN_ID, false, PoolConfig::default());
+        let relayer = signer();
+        let sender = Address::repeat_byte(0x51);
+        let recipient = Address::repeat_byte(0x52);
+        let batch_hash = admit_bls_batch(&pool, &client, &relayer, sender, recipient).await;
+        let balance_diff = |address, balance: u64| AccountStateDiff {
+            address,
+            balance: Some(U256::from(balance)),
+            ..Default::default()
+        };
+
+        assert!(pool.apply_state_diff(&[balance_diff(recipient, 0)]).is_empty());
+        assert!(
+            pool.apply_state_diff(&[balance_diff(sender, 1_000)]).is_empty(),
+            "a balance that still covers the transfer keeps the batch"
+        );
+        assert!(pool.get(&batch_hash).is_some());
+
+        let removed = pool.apply_state_diff(&[balance_diff(sender, 999)]);
+        let removed: Vec<_> = removed.iter().map(|transaction| *transaction.hash()).collect();
+        assert_eq!(removed, vec![batch_hash]);
+        assert!(pool.get(&batch_hash).is_none());
+        assert!(!pool.guard.read().contains(&batch_hash));
+    }
+
+    /// Funds `sender` and registers `key` as its BLS key on the development chain pool's state.
+    fn register_bls_sender(
+        client: &MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>,
+        sender: Address,
+        key: &BlsTestKey,
+    ) {
+        fund(client, sender);
+        let registered_key = BlsRegistry::key_slots(sender)
+            .into_iter()
+            .zip(BlsRegistry::key_words(&key.public_key().0));
+        client.add_account(
+            BlsConstants::REGISTRY_ADDRESS,
+            ExtendedAccount::new(BlsRegistry::ACCOUNT_NONCE, U256::ZERO)
+                .extend_storage(registered_key),
+        );
+    }
+
+    fn bls_transfer(sender: Address, nonce: u64) -> TxBlsTransfer {
+        TxBlsTransfer {
+            chain_id: BlsConstants::CHAIN_ID,
+            sender,
+            nonce,
+            recipient: Address::repeat_byte(0x62),
+            value: U256::from(1_000u64),
+            max_priority_fee_per_gas: 0,
+            max_fee_per_gas: 1_000,
+        }
+    }
+
+    /// The pooled form of `tx` carrying `signature`, as raw submission and peers deliver it.
+    fn pooled_bls_transfer(tx: TxBlsTransfer, signature: FixedBytes<48>) -> BasePooledTransaction {
+        let pooled = ConsensusPooledTransaction::from(BlsTransferWithSignature {
+            transaction: tx.seal_slow(),
+            signature,
+        });
+        <BasePooledTransaction as PoolTransaction>::recover_raw_transaction(&pooled.encoded_2718())
+            .unwrap()
+    }
+
+    /// A sender's individually signed transfers with sequential nonces queue and become pending
+    /// exactly like ordinary transfers, each keeping its own witness.
+    #[tokio::test]
+    async fn bls_transfers_from_one_sender_are_sequenced_like_ordinary_transfers() {
+        let (pool, client) =
+            build_integration_pool_on(BlsConstants::CHAIN_ID, false, PoolConfig::default());
+        let key = BlsTestKey::from_seed(7);
+        let sender = Address::repeat_byte(0x61);
+        register_bls_sender(&client, sender, &key);
+
+        // Submitted out of order: nonce 1 queues until nonce 0 arrives.
+        let transfers: Vec<_> = (0..3).map(|nonce| bls_transfer(sender, nonce)).collect();
+        for nonce in [1, 0, 2] {
+            let tx = transfers[nonce];
+            let hash = pool
+                .add_transaction(
+                    TransactionOrigin::External,
+                    pooled_bls_transfer(tx, key.sign(tx.signing_digest())),
+                )
+                .await
+                .unwrap()
+                .hash;
+            assert_eq!(hash, tx.tx_hash(), "the pool keys a transfer by its intent hash");
+        }
+
+        let pending = pool.pending_transactions();
+        assert_eq!(pending.len(), 3);
+        let mut best = pool.best_transactions();
+        for tx in &transfers {
+            let next = best.next().expect("pending transfer");
+            assert_eq!(*next.hash(), tx.tx_hash());
+            assert_eq!(
+                next.transaction.bls_transfer_signature(),
+                Some(key.sign(tx.signing_digest()))
+            );
+        }
+        assert!(best.next().is_none());
+    }
+
+    /// A transfer's hash commits to its intent but not its witness. Rejecting an invalid witness
+    /// must not mark the hash bad, so the same intent with its valid witness is still admitted,
+    /// and the pooled form served to peers carries that valid witness.
+    #[tokio::test]
+    async fn invalid_bls_witness_does_not_poison_the_intent_hash() {
+        let (pool, client) =
+            build_integration_pool_on(BlsConstants::CHAIN_ID, false, PoolConfig::default());
+        let key = BlsTestKey::from_seed(7);
+        let sender = Address::repeat_byte(0x61);
+        register_bls_sender(&client, sender, &key);
+        let tx = bls_transfer(sender, 0);
+        let valid = key.sign(tx.signing_digest());
+
+        let forged = BlsTestKey::from_seed(8).sign(tx.signing_digest());
+        let error = pool
+            .add_transaction(TransactionOrigin::External, pooled_bls_transfer(tx, forged))
+            .await
+            .unwrap_err();
+        assert_eq!(error.hash, tx.tx_hash());
+        assert!(!error.is_bad_transaction(), "an invalid witness must not be cached as bad");
+
+        let hash = pool
+            .add_transaction(TransactionOrigin::External, pooled_bls_transfer(tx, valid))
+            .await
+            .unwrap()
+            .hash;
+        assert_eq!(hash, tx.tx_hash());
+
+        let served = pool.get_pooled_transaction_element(hash).expect("pooled form");
+        let ConsensusPooledTransaction::BlsTransfer(served) = served.into_inner() else {
+            panic!("expected a pooled native BLS transfer");
+        };
+        assert_eq!(served.signature, valid);
+        assert_eq!(*served.transaction.hash_ref(), tx.tx_hash());
+    }
+
+    /// A transfer rebuilt from its consensus form, as reth's reorg reinjection and consensus-form
+    /// backup do, has no witness and is never admitted.
+    #[tokio::test]
+    async fn bls_transfer_without_its_witness_is_rejected() {
+        let (pool, client) =
+            build_integration_pool_on(BlsConstants::CHAIN_ID, false, PoolConfig::default());
+        let key = BlsTestKey::from_seed(7);
+        let sender = Address::repeat_byte(0x61);
+        register_bls_sender(&client, sender, &key);
+        let envelope = BaseTxEnvelope::from(bls_transfer(sender, 0));
+        assert!(
+            BasePooledTransaction::try_from_consensus(Recovered::new_unchecked(
+                envelope.clone(),
+                sender
+            ))
+            .is_err(),
+            "the consensus form cannot become a pooled transaction"
+        );
+
+        let unsigned = BasePooledTransaction::new(
+            Recovered::new_unchecked(envelope.clone(), sender),
+            envelope.encode_2718_len(),
+        );
+        let error = pool.add_transaction(TransactionOrigin::Local, unsigned).await.unwrap_err();
+        assert!(
+            matches!(
+                error.kind,
+                PoolErrorKind::InvalidTransaction(
+                    reth_transaction_pool::error::InvalidPoolTransactionError::Other(_)
+                )
+            ),
+            "expected a missing-witness rejection, got {error:?}"
+        );
+        assert!(pool.pool_size().total == 0);
+    }
+
+    /// Local transfers survive a restart with their witnesses: the pooled-form backup readmits
+    /// them into a fresh pool, through ordinary validation.
+    #[tokio::test]
+    async fn bls_transfer_backup_restores_witnesses_after_restart() {
+        let (pool, client) =
+            build_integration_pool_on(BlsConstants::CHAIN_ID, false, PoolConfig::default());
+        let key = BlsTestKey::from_seed(7);
+        let sender = Address::repeat_byte(0x61);
+        register_bls_sender(&client, sender, &key);
+        let tx = bls_transfer(sender, 0);
+        let signature = key.sign(tx.signing_digest());
+        pool.add_transaction(TransactionOrigin::Local, pooled_bls_transfer(tx, signature))
+            .await
+            .unwrap();
+
+        let path = std::env::temp_dir().join(format!(
+            "bls-transfer-backup-{}-{}.json",
+            std::process::id(),
+            B256::random()
+        ));
+        let backup = BlsTransferBackup::new(path.clone());
+        assert_eq!(backup.save(&pool).unwrap(), 1);
+
+        let (restarted, restarted_client) =
+            build_integration_pool_on(BlsConstants::CHAIN_ID, false, PoolConfig::default());
+        register_bls_sender(&restarted_client, sender, &key);
+        assert_eq!(backup.restore(&restarted).await.unwrap(), 1);
+        let restored = restarted.get(&tx.tx_hash()).expect("restored transfer");
+        assert_eq!(restored.transaction.bls_transfer_signature(), Some(signature));
+        assert!(restored.origin.is_local());
+        assert!(!path.exists(), "a restored backup is consumed");
     }
 
     /// Including a lane head advances the nonce its successors watch. Canonical

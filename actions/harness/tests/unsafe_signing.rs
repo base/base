@@ -108,6 +108,7 @@ async fn injected_forged_block_dropped_real_block_accepted() {
         signature: Signature::new(U256::ZERO, U256::ZERO, false),
         payload_hash: PayloadHash(B256::ZERO),
         parent_beacon_block_root: block.header.parent_beacon_block_root,
+        bls_aggregate: None,
     });
     assert!(transport.try_next_unsafe_block().is_none(), "forged block must be dropped");
 

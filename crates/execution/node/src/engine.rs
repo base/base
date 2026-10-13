@@ -460,6 +460,7 @@ mod tests {
                 gas_limit: Some(1000),
                 eip_1559_params,
                 min_base_fee,
+                bls_derived: false,
                 transactions: None,
                 no_tx_pool: None,
                 payload_attributes: PayloadAttributes {

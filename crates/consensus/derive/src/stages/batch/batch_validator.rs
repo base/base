@@ -38,6 +38,8 @@ where
     pub provider: F,
     /// A candidate and its inclusion block retained while canonical ancestry lookup is retried.
     pub pending_batch: Option<(SingleBatch, BlockInfo)>,
+    /// Whether the current candidate came from an authenticated native BLS chunk.
+    pub bls_authenticated: bool,
     /// The L1 origin of the batch sequencer.
     pub origin: Option<BlockInfo>,
     /// A consecutive, time-centric window of L1 Blocks.
@@ -56,7 +58,15 @@ where
 {
     /// Create a new [`BatchValidator`] stage.
     pub const fn new(cfg: Arc<RollupConfig>, prev: P, provider: F) -> Self {
-        Self { cfg, prev, provider, pending_batch: None, origin: None, l1_blocks: Vec::new() }
+        Self {
+            cfg,
+            prev,
+            provider,
+            pending_batch: None,
+            bls_authenticated: false,
+            origin: None,
+            l1_blocks: Vec::new(),
+        }
     }
 
     /// Returns `true` if the pipeline origin is behind the parent origin.
@@ -236,10 +246,13 @@ where
                 let next_batch = match self.prev.next_batch(parent, self.l1_blocks.as_ref()).await {
                     Ok(batch) => batch,
                     Err(PipelineErrorKind::Temporary(PipelineError::Eof)) => {
+                        self.bls_authenticated = false;
                         return self.try_derive_empty_batch(&parent);
                     }
                     Err(e) => return Err(e),
                 };
+                // A candidate retried from `pending_batch` keeps the provenance read here.
+                self.bls_authenticated = self.prev.is_bls_authenticated();
 
                 let Batch::Single(next_batch) = next_batch else {
                     error!(target: "batch_validator", "BatchValidator received a batch that is not a SingleBatch");
@@ -328,6 +341,10 @@ where
     fn is_last_in_span(&self) -> bool {
         self.prev.span_buffer_size() == 0
     }
+
+    fn is_bls_authenticated(&self) -> bool {
+        self.bls_authenticated
+    }
 }
 
 impl<P, F> OriginProvider for BatchValidator<P, F>
@@ -364,6 +381,7 @@ where
     ) -> PipelineResult<()> {
         self.prev.reset(l1_origin, system_config).await?;
         self.pending_batch = None;
+        self.bls_authenticated = false;
         self.origin = self.prev.origin();
         // Include the new origin as an origin to build on.
         // This is only for the initialization case.
@@ -381,6 +399,7 @@ where
 
     async fn flush_channel(&mut self) -> PipelineResult<()> {
         self.pending_batch = None;
+        self.bls_authenticated = false;
         self.prev.flush_channel().await
     }
 }
@@ -634,6 +653,52 @@ mod tests {
         // Grab the next batch.
         let produced_batch = bv.next_batch(parent).await.unwrap();
         assert_eq!(produced_batch, batch);
+    }
+
+    /// The validator forwards the stream's chunk provenance for the batch it accepts, and an
+    /// empty batch it derives itself is never authenticated.
+    #[tokio::test]
+    async fn test_batch_validator_forwards_bls_provenance() {
+        let cfg = Arc::new(RollupConfig {
+            upgrades: UpgradeConfig { holocene_time: Some(0), ..Default::default() },
+            block_time: 2,
+            max_sequencer_drift: 700,
+            seq_window_size: 5,
+            ..Default::default()
+        });
+        let batch = SingleBatch {
+            parent_hash: B256::repeat_byte(1),
+            epoch_num: 2,
+            timestamp: 4,
+            ..Default::default()
+        };
+        let parent = L2BlockInfo {
+            block_info: BlockInfo {
+                number: 1,
+                hash: B256::repeat_byte(1),
+                timestamp: 2,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut mock = TestNextBatchProvider::new(vec![Ok(Batch::Single(batch.clone()))]);
+        mock.origin = Some(BlockInfo { number: 1, ..Default::default() });
+        mock.bls_authenticated = true;
+        let mut bv = BatchValidator::new(cfg, mock, TestL2ChainProvider::default());
+        bv.reset(BlockNumHash { number: 1, ..Default::default() }, SystemConfig::default())
+            .await
+            .unwrap();
+        bv.l1_blocks.push(BlockInfo { number: 1, ..Default::default() });
+
+        assert_eq!(bv.next_batch(parent).await.unwrap(), batch);
+        assert!(bv.is_bls_authenticated());
+
+        // With the stream drained and the window expired, the validator derives an empty batch.
+        for _ in 0..6 {
+            bv.advance_origin().await.unwrap();
+        }
+        let empty = bv.next_batch(parent).await;
+        assert!(!bv.is_bls_authenticated(), "{empty:?}");
     }
 
     #[tokio::test]

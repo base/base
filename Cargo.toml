@@ -164,6 +164,7 @@ base-common-network = { path = "crates/common/network" }
 base-common-rpc-types = { path = "crates/common/rpc-types" }
 base-common-flashblocks = { path = "crates/common/flashblocks" }
 base-precompile-macros = { path = "crates/common/precompile-macros" }
+base-common-bls = { path = "crates/common/bls", default-features = false }
 base-common-evm = { path = "crates/common/evm", default-features = false }
 base-common-evm2 = { path = "crates/common/evm2", default-features = false }
 base-common-flz = { path = "crates/common/flz", default-features = false }
@@ -490,7 +491,9 @@ x509-parser = "0.17"
 sha2 = { version = "0.10", default-features = false }
 c-kzg = { version = "2.1.5", default-features = false }
 kzg-rs = { version = "0.2.8", default-features = false }
+ark-ec = { version = "0.6.0", default-features = false }
 ark-ff = { version = "0.6.0", default-features = false }
+ark-serialize = { version = "0.6.0", default-features = false }
 ark-bls12-381 = { version = "0.6.0", default-features = false }
 
 # http

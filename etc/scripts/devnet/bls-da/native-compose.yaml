@@ -1,0 +1,46 @@
+# Apply after compose.yaml. Every Base service runs the rebuilt native-tx binary,
+# including the real Rust batcher; the external Go batcher cannot decode type 0x7a.
+services:
+  base-bootnode:
+    volumes:
+      - ${NATIVE_BASE_BINARY:?Set NATIVE_BASE_BINARY to the rebuilt absolute binary path}:/app/base:ro
+  base-builder:
+    volumes:
+      - ${NATIVE_BASE_BINARY:?Set NATIVE_BASE_BINARY to the rebuilt absolute binary path}:/app/base:ro
+    # Retain the devnet upgrade-signal wrapper and the underlying command list.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - 'exec /app/base-entrypoint.sh "$$@" --rpc.execution-forwarding-endpoint=http://127.0.0.1:${L2_BUILDER_HTTP_PORT}'
+      - base
+  base-rpc:
+    volumes:
+      - ${NATIVE_BASE_BINARY:?Set NATIVE_BASE_BINARY to the rebuilt absolute binary path}:/app/base:ro
+    # Derivation must use the same post-Denim native builder as the producer.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - 'exec /app/base-entrypoint.sh "$$@" --builder.payload-builder-cutover'
+      - base
+  op-batcher:
+    profiles: [legacy-go]
+  base-batcher:
+    image: ghcr.io/base/node:v1.4.2
+    volumes:
+      - ${NATIVE_BASE_BINARY:?Set NATIVE_BASE_BINARY to the rebuilt absolute binary path}:/app/base:ro
+    depends_on: !override
+      base-builder:
+        condition: service_healthy
+    command: !override
+      - batcher
+      - --l1-rpc-url=http://l1-el:${L1_HTTP_PORT}
+      - --private-key=${BATCHER_KEY}
+      - --no-throttle
+      - --max-channel-duration=${BLS_CHANNEL_DURATION:-2}
+      - --bls-chunk-blocks=${BLS_CHUNK_BLOCKS:-32}
+      - --admin-addr=0.0.0.0
+      - --admin-port=7601
+      - --poll-interval=1
+      - --sub-safety-margin=0
+      - --num-confirmations=1
+      - --data-availability-type=blobs
