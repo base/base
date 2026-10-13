@@ -51,7 +51,8 @@ pub use block_expiry::{BlockExpiryIndex, ExpiryPosition, FlashblockExpiry};
 
 mod transaction;
 pub use transaction::{
-    BasePooledTransaction, BasePooledTx, TimestampedTransaction, unix_time_millis,
+    BasePooledTransaction, BasePooledTx, CoinbaseTipBacking, TimestampedTransaction,
+    unix_time_millis,
 };
 
 mod ordering;

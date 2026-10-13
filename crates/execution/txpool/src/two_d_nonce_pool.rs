@@ -146,28 +146,54 @@ impl SidecarLimits {
     }
 }
 
-/// Running totals checked against [`SidecarLimits`].
+/// Running totals checked against [`SidecarLimits`], and each sender's summed
+/// `cost()` against its balance for coinbase tip backing.
 #[derive(Debug, Default)]
 struct SidecarUsage {
     size: usize,
     per_sender: HashMap<Address, usize>,
+    sender_costs: HashMap<Address, U256>,
+    /// Kept only for senders with sidecar transactions. A sender without a
+    /// recorded balance backs nothing.
+    sender_balances: HashMap<Address, U256>,
 }
 
 impl SidecarUsage {
     fn add<T: BasePooledTx>(&mut self, transaction: &ValidPoolTransaction<T>) {
         self.size += transaction.transaction.size();
-        *self.per_sender.entry(transaction.sender()).or_default() += 1;
+        let sender = transaction.sender();
+        *self.per_sender.entry(sender).or_default() += 1;
+        let cost = self.sender_costs.entry(sender).or_default();
+        *cost = cost.saturating_add(*transaction.transaction.cost());
     }
 
     fn remove<T: BasePooledTx>(&mut self, transaction: &ValidPoolTransaction<T>) {
         self.size = self.size.saturating_sub(transaction.transaction.size());
         let sender = transaction.sender();
+        if let Some(cost) = self.sender_costs.get_mut(&sender) {
+            *cost = cost.saturating_sub(*transaction.transaction.cost());
+        }
         if let Some(count) = self.per_sender.get_mut(&sender) {
             *count -= 1;
             if *count == 0 {
                 self.per_sender.remove(&sender);
+                self.sender_costs.remove(&sender);
+                self.sender_balances.remove(&sender);
             }
         }
+    }
+
+    fn set_sender_balance(&mut self, sender: Address, balance: U256) {
+        if self.per_sender.contains_key(&sender) {
+            self.sender_balances.insert(sender, balance);
+        }
+    }
+
+    /// Whether `sender`'s balance covers the summed `cost()` of all its sidecar
+    /// transactions, which then all rank by their coinbase tips.
+    fn tip_backed(&self, sender: &Address) -> bool {
+        let cost = self.sender_costs.get(sender).copied().unwrap_or_default();
+        self.sender_balances.get(sender).is_some_and(|balance| cost <= *balance)
     }
 
     fn sender_count(&self, sender: &Address) -> usize {
@@ -782,7 +808,18 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         self.remove_transactions(&hashes)
     }
 
+    /// Records `sender`'s balance, which backs the coinbase tips of its sidecar
+    /// transactions. Ignored for a sender with no sidecar transactions.
+    pub(crate) fn set_sender_balance(&mut self, sender: Address, balance: U256) {
+        self.usage.set_sender_balance(sender, balance);
+    }
+
     /// Returns a best-transactions iterator snapshot.
+    ///
+    /// Unlike the protocol pool, the sidecar never queues a transaction on its
+    /// sender's balance, so a sender's coinbase tips rank its transactions only
+    /// while its balance covers the summed `cost()` of all its sidecar
+    /// transactions.
     pub(crate) fn best_transactions<O>(
         &self,
         ordering: O,
@@ -791,6 +828,16 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     where
         O: TransactionOrdering<Transaction = T>,
     {
+        for transaction in self
+            .lanes
+            .values()
+            .flat_map(NonceLane::consecutive_pending_transactions)
+            .chain(self.nonce_free.values())
+        {
+            transaction
+                .transaction
+                .set_coinbase_tip_backed(self.usage.tip_backed(&transaction.sender()));
+        }
         BestTwoDTransactions::new(&self.lanes, &self.nonce_free, ordering, base_fee)
     }
 

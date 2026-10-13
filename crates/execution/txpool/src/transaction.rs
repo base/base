@@ -1,7 +1,10 @@
 use core::fmt::Debug;
 use std::{
     borrow::Cow,
-    sync::{Arc, OnceLock},
+    sync::{
+        Arc, OnceLock,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use alloy_consensus::{
@@ -36,6 +39,38 @@ pub fn unix_time_millis() -> u128 {
             tracing::warn!(error = %err, "system clock before Unix epoch, using 0 as timestamp");
             0
         }
+    }
+}
+
+/// Whether a pooled transaction's declared coinbase tip is backed by its
+/// sender's balance, and so may rank it.
+///
+/// Starts backed: the protocol pool backs tips through `cost()`, so only the
+/// EIP-8130 sidecar ever clears it. Cloning copies the current value.
+#[derive(Debug)]
+pub struct CoinbaseTipBacking(AtomicBool);
+
+impl CoinbaseTipBacking {
+    /// Returns whether the tip is backed.
+    pub fn is_backed(&self) -> bool {
+        self.0.load(Ordering::Relaxed)
+    }
+
+    /// Records whether the tip is backed.
+    pub fn set(&self, backed: bool) {
+        self.0.store(backed, Ordering::Relaxed);
+    }
+}
+
+impl Default for CoinbaseTipBacking {
+    fn default() -> Self {
+        Self(AtomicBool::new(true))
+    }
+}
+
+impl Clone for CoinbaseTipBacking {
+    fn clone(&self) -> Self {
+        Self(AtomicBool::new(self.is_backed()))
     }
 }
 
@@ -77,6 +112,8 @@ pub struct BasePooledTransaction<
     sender_policy_target: OnceLock<Address>,
     /// The classified EIP-8130 sender's obligation reported by `cost()`.
     sender_cost: OnceLock<U256>,
+    /// Whether the sender's balance currently backs the declared coinbase tip.
+    coinbase_tip_backing: CoinbaseTipBacking,
     /// The authorization read-set and build-time predicates captured during
     /// EIP-8130 validation. Unset for other transaction types; see
     /// [`crate::WatchManifest`].
@@ -116,6 +153,7 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
             limit_class: OnceLock::new(),
             sender_policy_target: OnceLock::new(),
             sender_cost: OnceLock::new(),
+            coinbase_tip_backing: CoinbaseTipBacking::default(),
             watch_manifest: OnceLock::new(),
             metering: None,
         }
@@ -463,6 +501,19 @@ pub trait BasePooledTx: PoolTransaction + DataAvailabilitySized {
             .then_some(tip)
     }
 
+    /// Returns whether the sender's balance currently backs
+    /// [`Self::coinbase_tip`], so ordering may rank by it. Defaults to `true`.
+    ///
+    /// The protocol pool backs tips through `cost()`; the EIP-8130 sidecar
+    /// records its per-sender backing here.
+    fn coinbase_tip_backed(&self) -> bool {
+        true
+    }
+
+    /// Records whether the sender's balance backs [`Self::coinbase_tip`].
+    /// Defaults to a no-op.
+    fn set_coinbase_tip_backed(&self, _backed: bool) {}
+
     /// Returns the EIP-8130 `nonce_key` when this transaction belongs to a
     /// finite non-zero nonce channel handled by the 2D nonce pool.
     fn eip8130_nonce_channel_key(&self) -> Option<U256> {
@@ -599,6 +650,14 @@ where
 
     fn set_sender_policy_target(&self, target: Address) {
         let _ = self.sender_policy_target.set(target);
+    }
+
+    fn coinbase_tip_backed(&self) -> bool {
+        self.coinbase_tip_backing.is_backed()
+    }
+
+    fn set_coinbase_tip_backed(&self, backed: bool) {
+        self.coinbase_tip_backing.set(backed);
     }
 
     fn metering(&self) -> Option<&MeterBundleResponse> {

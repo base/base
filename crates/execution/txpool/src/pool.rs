@@ -277,9 +277,15 @@ where
         self.validator().validator().invalidate_limit_class_cache(diffs);
         let mut exact = Vec::new();
         let mut advances = Vec::new();
-        for diff in diffs {
-            diff.push_exact_keys(&mut exact);
-            diff.push_nonce_advances(&mut advances);
+        {
+            let mut nonce_pool = self.nonce_pool.write();
+            for diff in diffs {
+                diff.push_exact_keys(&mut exact);
+                diff.push_nonce_advances(&mut advances);
+                if let Some(balance) = diff.balance {
+                    nonce_pool.set_sender_balance(diff.address, balance);
+                }
+            }
         }
         let (behind, lane_moves) = self.resolve_nonce_advances(&advances);
         // Move lane cursors before releasing what fell behind them, so a
@@ -817,6 +823,7 @@ where
         }
         match validated {
             TransactionValidationOutcome::Valid {
+                balance,
                 transaction,
                 propagate,
                 authorities,
@@ -839,7 +846,9 @@ where
                     .map(|class| class.classification_generation);
                 let admission = Self::admission_for(&validated.transaction);
                 let is_validity = !validated.transaction.validity_predicates().is_empty();
+                let sender = validated.sender();
                 let mut outcome = nonce_pool.insert_validated(validated, state_nonce)?;
+                nonce_pool.set_sender_balance(sender, balance);
                 // nonce_pool serializes sidecar replacement. Never acquire it while holding guard.
                 let mut guard = self.guard.write();
                 // Transactions below the anchored lane cursor are gone whether or
@@ -879,6 +888,7 @@ where
                             guard.release(replaced.hash());
                             listeners.on_discarded(std::slice::from_ref(replaced));
                         }
+                        nonce_pool.set_sender_balance(sender, balance);
                     }
                     return Err(error);
                 }
@@ -1795,6 +1805,12 @@ where
         // dropped reservation cannot be recreated from an older validation
         // snapshot after reth publishes the transaction.
         let _admission_guard = self.protocol_admission_lock.lock();
+        {
+            let mut nonce_pool = self.nonce_pool.write();
+            for account in &accounts {
+                nonce_pool.set_sender_balance(account.address, account.balance);
+            }
+        }
         let dropped = {
             let mut guard = self.guard.write();
             let mut dropped = Vec::new();
@@ -3229,6 +3245,7 @@ mod tests {
 
     const TIPPING_MAX_FEE_PER_GAS: u128 = 1_000;
     const TIPPING_GAS_LIMIT: u64 = 1_000_000;
+    const TIPPING_NONCE_KEY: U256 = U256::from_limbs([7, 0, 0, 0]);
 
     /// The most a [`tipping_eoa_8130`] transaction can charge in fees.
     fn tipping_fees() -> U256 {
@@ -3242,13 +3259,51 @@ mod tests {
         nonce_sequence: u64,
         tip: U256,
     ) -> BasePooledTransaction {
+        tipping_8130(signer, payer, U256::ZERO, nonce_sequence, 0, tip)
+    }
+
+    /// A tipping finite-channel sidecar transaction on [`TIPPING_NONCE_KEY`].
+    fn tipping_channel_8130(
+        signer: &PrivateKeySigner,
+        payer: Option<&PrivateKeySigner>,
+        nonce_sequence: u64,
+        tip: U256,
+    ) -> BasePooledTransaction {
+        tipping_8130(signer, payer, TIPPING_NONCE_KEY, nonce_sequence, 0, tip)
+    }
+
+    /// A tipping nonce-free sidecar transaction; `expiry_offset_ms` keeps
+    /// each one a distinct sidecar member.
+    fn tipping_nonce_free_8130(
+        signer: &PrivateKeySigner,
+        expiry_offset_ms: u64,
+        tip: U256,
+    ) -> BasePooledTransaction {
+        tipping_8130(
+            signer,
+            None,
+            Eip8130Constants::NONCE_KEY_MAX,
+            0,
+            INTEGRATION_POOL_NOW_MS + expiry_offset_ms + 1,
+            tip,
+        )
+    }
+
+    fn tipping_8130(
+        signer: &PrivateKeySigner,
+        payer: Option<&PrivateKeySigner>,
+        nonce_key: U256,
+        nonce_sequence: u64,
+        valid_before: u64,
+        tip: U256,
+    ) -> BasePooledTransaction {
         let tx = TxEip8130 {
             chain_id: test_chain_id(),
             sender: None,
-            nonce_key: U256::ZERO,
+            nonce_key,
             nonce_sequence,
             valid_after: 0,
-            valid_before: 0,
+            valid_before,
             max_priority_fee_per_gas: 0,
             max_fee_per_gas: TIPPING_MAX_FEE_PER_GAS,
             gas_limit: TIPPING_GAS_LIMIT,
@@ -3385,6 +3440,104 @@ mod tests {
         set_balance(&pool, funded.address(), tip - U256::from(1));
         assert!(!is_pending(&pool, backed_hash));
         assert!(!is_best(&pool, backed_hash));
+    }
+
+    fn best_hashes(pool: &IntegrationPool) -> Vec<TxHash> {
+        pool.best_transactions().map(|transaction| *transaction.hash()).collect()
+    }
+
+    /// Funds `attacker` with ten times the tipping fees, adds an honest
+    /// EIP-1559 transaction with priority fee 1, and returns its hash and the
+    /// attacker's balance.
+    async fn setup_tip_race(
+        pool: &IntegrationPool,
+        client: &MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>,
+        attacker: &PrivateKeySigner,
+    ) -> (TxHash, U256) {
+        let honest = signer();
+        fund(client, honest.address());
+        let balance = U256::from(10) * tipping_fees();
+        client.add_account(attacker.address(), ExtendedAccount::new(0, balance));
+        let honest_tx = signed_1559_with_priority_fee(&honest, 0, 1);
+        let honest_hash = *honest_tx.hash();
+        pool.add_transaction(TransactionOrigin::External, honest_tx).await.unwrap();
+        (honest_hash, balance)
+    }
+
+    #[tokio::test]
+    async fn sidecar_lane_balance_backs_only_one_full_balance_coinbase_tip() {
+        let (pool, client) = build_integration_pool();
+        let attacker = signer();
+        let (honest_hash, balance) = setup_tip_race(&pool, &client, &attacker).await;
+        let full_balance_tip = balance - tipping_fees();
+
+        let backed = tipping_channel_8130(&attacker, None, 0, full_balance_tip);
+        let backed_hash = *backed.hash();
+        pool.add_transaction(TransactionOrigin::External, backed).await.unwrap();
+        assert_eq!(best_hashes(&pool)[0], backed_hash, "a backed tip ranks by the tip");
+
+        for nonce in 1..3 {
+            let transaction = tipping_channel_8130(&attacker, None, nonce, full_balance_tip);
+            pool.add_transaction(TransactionOrigin::External, transaction).await.unwrap();
+        }
+        assert!(is_pending(&pool, backed_hash));
+        assert_eq!(best_hashes(&pool)[0], honest_hash, "over-committed tips rank by priority fee");
+    }
+
+    #[tokio::test]
+    async fn nonce_free_balance_backs_only_one_full_balance_coinbase_tip() {
+        let (pool, client) = build_integration_pool();
+        let attacker = signer();
+        let (honest_hash, balance) = setup_tip_race(&pool, &client, &attacker).await;
+        let full_balance_tip = balance - tipping_fees();
+
+        let backed = tipping_nonce_free_8130(&attacker, 0, full_balance_tip);
+        let backed_hash = *backed.hash();
+        pool.add_transaction(TransactionOrigin::External, backed).await.unwrap();
+        assert_eq!(best_hashes(&pool)[0], backed_hash, "a backed tip ranks by the tip");
+
+        for offset in 1..3 {
+            let transaction = tipping_nonce_free_8130(&attacker, offset, full_balance_tip);
+            pool.add_transaction(TransactionOrigin::External, transaction).await.unwrap();
+        }
+        assert!(is_pending(&pool, backed_hash));
+        assert_eq!(best_hashes(&pool)[0], honest_hash, "over-committed tips rank by priority fee");
+    }
+
+    #[tokio::test]
+    async fn sidecar_coinbase_tip_backing_follows_sender_balance_updates() {
+        let (pool, client) = build_integration_pool();
+        let attacker = signer();
+        let (honest_hash, balance) = setup_tip_race(&pool, &client, &attacker).await;
+        let tip = balance - tipping_fees();
+        let transaction = tipping_channel_8130(&attacker, None, 0, tip);
+        let hash = *transaction.hash();
+        pool.add_transaction(TransactionOrigin::External, transaction).await.unwrap();
+        assert_eq!(best_hashes(&pool)[0], hash);
+
+        set_balance(&pool, attacker.address(), balance - U256::from(1));
+        assert!(pool.get(&hash).is_some(), "the fees are still covered");
+        assert_eq!(best_hashes(&pool)[0], honest_hash, "a balance drop un-backs the tip");
+
+        pool.apply_state_diff(&[AccountStateDiff {
+            balance: Some(balance),
+            ..AccountStateDiff::new(attacker.address())
+        }]);
+        assert_eq!(best_hashes(&pool)[0], hash, "a canonical balance restore re-backs the tip");
+    }
+
+    #[tokio::test]
+    async fn sponsored_sidecar_coinbase_tip_from_an_unfunded_sender_is_unbacked() {
+        let (pool, client) = build_integration_pool();
+        let [unfunded, payer] = std::array::from_fn(|_| signer());
+        let (honest_hash, _) = setup_tip_race(&pool, &client, &signer()).await;
+        fund(&client, payer.address());
+
+        let transaction = tipping_channel_8130(&unfunded, Some(&payer), 0, tipping_fees());
+        let hash = *transaction.hash();
+        pool.add_transaction(TransactionOrigin::External, transaction).await.unwrap();
+        assert!(is_pending(&pool, hash), "the payer still funds the transaction");
+        assert_eq!(best_hashes(&pool)[0], honest_hash, "the payer does not back the sender's tip");
     }
 
     #[test]
