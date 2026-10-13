@@ -94,8 +94,10 @@ impl<P: TransactionPool> ReaderPool for P {
 /// After each snapshot the reader waits at least as long as that snapshot took before reading
 /// the pool again. A snapshot costs a pass over every pending transaction, so without this gap a
 /// continuous stream of announcements over a deep pool would keep the reader thread snapshotting
-/// nonstop; with it, snapshotting uses at most about half of the thread. With a small pool the gap
-/// is microseconds, so an isolated transaction is not delayed.
+/// nonstop; with it, snapshotting uses at most about half of the thread. While the previous
+/// snapshot still holds transactions the reader keeps filling the queue from it during the gap,
+/// so the gap only idles the thread once that snapshot is used up. With a small pool the gap is
+/// microseconds, so an isolated transaction is not delayed.
 ///
 /// Conversion to the builder-RPC wire form happens here rather than in the
 /// forwarder: this is the component that holds a [`ValidPoolTransaction`], and
@@ -164,8 +166,10 @@ where
         // When the last snapshot finished, how long it took, and what is left of it.
         let mut snapshot: Option<(Instant, Duration, Snapshot<P::Transaction>)> = None;
         while self.wait_for_capacity().await {
-            let stale = snapshot.as_ref().is_none_or(|(taken_at, _, lanes)| {
-                lanes.is_empty() || taken_at.elapsed() >= Self::SNAPSHOT_MAX_AGE
+            // A snapshot that still has transactions is reused until the pacing gap after it has
+            // passed, so a deep backlog keeps refilling the queue instead of idling in the gap.
+            let stale = snapshot.as_ref().is_none_or(|(taken_at, cost, lanes)| {
+                lanes.is_empty() || taken_at.elapsed() >= Self::SNAPSHOT_MAX_AGE.max(*cost)
             });
             if stale {
                 let gap = snapshot
@@ -570,6 +574,46 @@ mod tests {
         while let Ok(forwarded) = queue.try_recv() {
             delivered.push(forwarded.tx_hash);
         }
+        delivered.sort();
+        let mut expected: Vec<_> = txs.iter().map(|tx| *tx.hash()).collect();
+        expected.sort();
+        assert_eq!(delivered, expected, "every transaction is forwarded exactly once");
+    }
+
+    /// A snapshot that still holds transactions keeps refilling the queue through the pacing gap,
+    /// so a backlog larger than the queue drains from one snapshot instead of idling until the
+    /// next one.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn backlog_keeps_refilling_from_the_snapshot_during_the_gap() {
+        // Draining the backlog takes well past `SNAPSHOT_MAX_AGE` but well short of this cost.
+        const COST: Duration = Duration::from_millis(500);
+        const BACKLOG: usize = 40;
+        let txs: Vec<_> = (0..BACKLOG as u64).map(transaction).collect();
+        let (_announce, announcements) = mpsc::channel(16);
+        let (snapshot_tx, mut snapshots) = mpsc::unbounded_channel();
+        let (sender, mut queue) = mpsc::channel(8);
+        let cancel = CancellationToken::new();
+        let mut reader = paced_reader(
+            costly_pool(COST, txs.clone(), announcements, snapshot_tx),
+            sender,
+            cancel.clone(),
+        );
+
+        let run = tokio::spawn(async move { reader.run().await });
+        let mut delivered = Vec::new();
+        time::timeout(Duration::from_secs(5), async {
+            while delivered.len() < BACKLOG {
+                delivered.push(queue.recv().await.expect("the reader keeps forwarding").tx_hash);
+                time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .expect("the whole backlog is forwarded");
+        let snapshots_taken = std::iter::from_fn(|| snapshots.try_recv().ok()).count();
+        cancel.cancel();
+        time::timeout(Duration::from_secs(5), run).await.expect("reader exits").unwrap();
+
+        assert_eq!(snapshots_taken, 1, "the backlog drains from the first snapshot");
         delivered.sort();
         let mut expected: Vec<_> = txs.iter().map(|tx| *tx.hash()).collect();
         expected.sort();
