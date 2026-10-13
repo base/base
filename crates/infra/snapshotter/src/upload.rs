@@ -1328,27 +1328,16 @@ impl SnapshotUploader {
                 "starting multipart upload"
             );
             progress.start_file(key.clone(), file_size, UploadStage::CreatingMultipart);
-            match self.upload_multipart(file_path, &key, file_size, progress).await {
-                Ok(()) => progress.finish_file(&key),
-                Err(error) => {
-                    progress.fail_file(&key);
-                    return Err(error);
-                }
-            }
+            self.upload_multipart(file_path, &key, file_size, progress)
+                .await
+                .inspect_err(|_| progress.fail_file(&key))?;
         } else {
             debug!(key = %key, size = file_size, "uploading file");
             progress.start_file(key.clone(), file_size, UploadStage::Uploading);
-            match self.upload_single(file_path, &key).await {
-                Ok(()) => {
-                    progress.add_for_file(&key, file_size);
-                    progress.finish_file(&key);
-                }
-                Err(error) => {
-                    progress.fail_file(&key);
-                    return Err(error);
-                }
-            }
+            self.upload_single(file_path, &key).await.inspect_err(|_| progress.fail_file(&key))?;
+            progress.add_for_file(&key, file_size);
         }
+        progress.finish_file(&key);
 
         Ok(())
     }
