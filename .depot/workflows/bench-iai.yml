@@ -3,8 +3,13 @@ name: Benchmarks (iai · deterministic)
 # Deterministic, instruction-count benchmarks for the compute-bound subset, run
 # under Valgrind's Cachegrind simulator. Counts are identical run-to-run, so a
 # base-vs-head delta reflects a code change, not machine noise — unlike the
-# wall-clock advisory job, which cannot reliably read these per PR. This check is
-# advisory: it posts a single comment and never gates a merge.
+# wall-clock advisory job, which cannot reliably read these per PR. It posts a
+# single comment. Every bench is advisory except `build_loop/mainnet_block`
+# (the builder's whole-block selection loop, Off and Enforce modes), whose
+# instruction count fails the job if it rises 3% or more over the base commit,
+# or if it stops producing a result. Its counts vary by about 0.04% run-to-run
+# (randomly seeded hashing), far below the 3% gate. The bench also pins the block's selection
+# counts, so a selection change fails it outright.
 on:
   pull_request:
   workflow_dispatch:
@@ -28,8 +33,8 @@ jobs:
     timeout-minutes: 60
     env:
       # For pull_request, github.sha is the merge commit and base.sha is the base
-      # branch tip. For push/workflow_dispatch there is no base; it is resolved to
-      # the merge-base with origin/main in the prepare step below.
+      # branch tip. For push/workflow_dispatch there is no base; the prepare step
+      # below compares against the current tip of origin/main.
       HEAD_SHA: ${{ github.sha }}
       BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
     steps:
@@ -48,7 +53,9 @@ jobs:
       # running (and any stale result from a prior push is replaced) rather than
       # only appearing when the ~minutes-long run finishes. Skip forked PRs because
       # their pull_request workflows cannot write comments with GITHUB_TOKEN.
+      # Best-effort: a comment API failure must not skip the benchmarks or the gate.
       - name: Post in-progress comment
+        continue-on-error: true
         if: >
           github.event_name == 'pull_request' &&
           github.event.pull_request.head.repo.full_name == github.repository
@@ -132,22 +139,32 @@ jobs:
         run: bash "$RUNNER_TEMP/run_iai_subset.sh" > "$RUNNER_TEMP/head.txt" 2>&1
 
       - name: Render comparison
+        id: render
         shell: bash
         env:
           WORKFLOW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
+          # The gate result is held until the comment is posted, so a failing gate
+          # still shows its numbers on the PR.
+          gate_failed=false
           python3 "$RUNNER_TEMP/iai_compare.py" \
             --base "$RUNNER_TEMP/base.txt" \
             --head "$RUNNER_TEMP/head.txt" \
             --output "$RUNNER_TEMP/comment.md" \
             --run-url "$WORKFLOW_RUN_URL" \
-            --threshold-pct 2
+            --threshold-pct 2 \
+            --gate build_loop/mainnet_block/off \
+            --gate build_loop/mainnet_block/enforce \
+            --fail-pct 3 || gate_failed=true
+          echo "gate_failed=$gate_failed" >> "$GITHUB_OUTPUT"
           cat "$RUNNER_TEMP/comment.md" | tee -a "$GITHUB_STEP_SUMMARY"
 
       # Replace the in-progress comment with the results. Skip forked PRs because
       # their pull_request workflows cannot write comments with GITHUB_TOKEN.
+      # Best-effort, like the in-progress comment: the gate below does not depend on it.
       - name: Post or update results on PR
+        continue-on-error: true
         if: >
           github.event_name == 'pull_request' &&
           github.event.pull_request.head.repo.full_name == github.repository
@@ -158,11 +175,20 @@ jobs:
           REPO: ${{ github.repository }}
         run: bash etc/scripts/ci/post_pr_comment.sh "$RUNNER_TEMP/comment.md"
 
+      - name: Enforce benchmark gate
+        if: always() && steps.render.outputs.gate_failed == 'true'
+        shell: bash
+        run: |
+          echo "::error title=Benchmark gate::build_loop/mainnet_block regressed or produced no result; see the comparison above."
+          exit 1
+
       # If any earlier step failed the in-progress comment would otherwise hang on
       # "running" forever; replace it with a failure notice pointing at the logs.
+      # A failed gate already tried to post its results, so keep that comment.
       - name: Report failure on PR
         if: >
           failure() &&
+          steps.render.outputs.gate_failed != 'true' &&
           github.event_name == 'pull_request' &&
           github.event.pull_request.head.repo.full_name == github.repository
         shell: bash
