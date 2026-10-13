@@ -1833,6 +1833,7 @@ mod tests {
                 // Large enough to cover EIP-8037 new-account state creation (183,600 gas) for
                 // value transfers to fresh accounts once Denim activates SpecId::AMSTERDAM.
                 gas_limit: 400_000,
+                max_fee_per_gas: 2_000_000_000,
                 max_priority_fee_per_gas: 1,
                 to: TxKind::Call(to),
                 value,
