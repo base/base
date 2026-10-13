@@ -28,7 +28,7 @@ use reth_basic_payload_builder::{
     BuildArguments, BuildOutcome, BuildOutcomeKind, MissingPayloadBehaviour, PayloadBuilder,
     PayloadConfig, is_better_payload,
 };
-use reth_chainspec::{ChainSpecProvider, EthChainSpec};
+use reth_chainspec::{ChainSpecProvider, EthChainSpec, EthereumHardforks};
 use reth_evm::{
     BlockExecutorForEvm, ConfigureEvm, Database,
     execute::{
@@ -381,7 +381,14 @@ impl<Txs> Builder<'_, Txs> {
         let Self { best, evict_permanently_rejected } = self;
         debug!(target: "payload_builder", id=%ctx.payload_id(), parent_header = ?ctx.parent().hash(), parent_number = ctx.parent().number(), "building new payload");
 
-        let mut db = State::builder().with_database(db).with_bundle_update().build();
+        // Enable BAL building only once Amsterdam is active so pre-fork blocks keep their exact
+        // header and payload shape.
+        let is_amsterdam = ctx.chain_spec.is_amsterdam_active_at_timestamp(ctx.attributes().timestamp());
+        let mut db = State::builder()
+            .with_database(db)
+            .with_bundle_update()
+            .with_bal_builder_if(is_amsterdam)
+            .build();
 
         // Load the L1 block contract into the database cache. If the L1 block contract is not
         // pre-loaded the database will panic when trying to fetch the DA footprint gas

@@ -205,6 +205,7 @@ impl BaseChainSpec {
             (BaseUpgrade::Azul.boxed(), azul_time),
             (BaseUpgrade::Beryl.boxed(), beryl_time),
             (BaseUpgrade::Cobalt.boxed(), cobalt_time),
+            (EthereumHardfork::Amsterdam.boxed(), denim_time),
             (BaseUpgrade::Denim.boxed(), denim_time),
             (BaseUpgrade::Everest.boxed(), everest_time),
             (BaseUpgrade::Zenith.boxed(), zenith_time),

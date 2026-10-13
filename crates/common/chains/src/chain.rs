@@ -2,9 +2,8 @@ use core::ops::Index;
 
 // Production imports for upgrade implementations
 use EthereumHardfork::{
-    Amsterdam, ArrowGlacier, Berlin, Bogota, Bpo1, Bpo2, Bpo3, Bpo4, Bpo5, Byzantium,
-    Constantinople, Dao, Frontier, GrayGlacier, Homestead, Istanbul, London, MuirGlacier, Paris,
-    Petersburg, SpuriousDragon, Tangerine,
+    ArrowGlacier, Berlin, Bogota, Bpo1, Bpo2, Bpo3, Bpo4, Bpo5, Byzantium, Constantinople, Dao,
+    Frontier, GrayGlacier, Homestead, Istanbul, London, MuirGlacier, Paris, Petersburg,
 };
 use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
 use alloy_primitives::U256;
@@ -103,7 +102,7 @@ impl Index<EthereumHardfork> for ChainUpgrades {
 
         match hf {
             // Dao Upgrade is not needed for ChainUpgrades
-            Dao | Bpo1 | Bpo2 | Bpo3 | Bpo4 | Bpo5 | Amsterdam | Bogota => &ForkCondition::Never,
+            Dao | Bpo1 | Bpo2 | Bpo3 | Bpo4 | Bpo5 | Bogota => &ForkCondition::Never,
             Frontier | Homestead | Tangerine | SpuriousDragon | Byzantium | Constantinople
             | Petersburg | Istanbul | MuirGlacier | Berlin => &ForkCondition::ZERO_BLOCK,
             London | ArrowGlacier | GrayGlacier => &self[BaseUpgrade::Bedrock],

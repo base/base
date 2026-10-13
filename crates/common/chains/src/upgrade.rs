@@ -56,9 +56,11 @@ impl BaseUpgradeExt for BaseUpgrade {
             | Self::Holocene
             | Self::PectraBlobSchedule => SpecId::CANCUN,
             Self::Isthmus | Self::Jovian => SpecId::PRAGUE,
-            // Azul, Beryl, Cobalt, Denim, Everest, Zenith, and newer Base upgrades inherit the latest
+            Self::Azul | Self::Beryl | Self::Cobalt => SpecId::OSAKA,
+            // Denim adopts the Glamsterdam EIP bundle, whose EVM changes revm gates behind
+            // `SpecId::AMSTERDAM`. Everest, Zenith, and newer Base upgrades inherit the latest
             // known Ethereum spec until explicitly mapped.
-            _ => SpecId::OSAKA,
+            _ => SpecId::AMSTERDAM,
         }
     }
 
@@ -236,9 +238,9 @@ mod tests {
             (BaseUpgrade::Azul, SpecId::OSAKA),
             (BaseUpgrade::Beryl, SpecId::OSAKA),
             (BaseUpgrade::Cobalt, SpecId::OSAKA),
-            (BaseUpgrade::Denim, SpecId::OSAKA),
-            (BaseUpgrade::Everest, SpecId::OSAKA),
-            (BaseUpgrade::Zenith, SpecId::OSAKA),
+            (BaseUpgrade::Denim, SpecId::AMSTERDAM),
+            (BaseUpgrade::Everest, SpecId::AMSTERDAM),
+            (BaseUpgrade::Zenith, SpecId::AMSTERDAM),
         ];
 
         for (base_upgrade, eth_spec) in test_cases {
