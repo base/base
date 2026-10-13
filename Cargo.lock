@@ -3289,6 +3289,7 @@ dependencies = [
  "http-body-util",
  "hyper 1.11.0",
  "hyper-util",
+ "iai-callgrind",
  "jsonrpsee",
  "jsonrpsee-core",
  "jsonrpsee-types",

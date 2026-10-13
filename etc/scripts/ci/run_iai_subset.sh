@@ -7,13 +7,19 @@
 # bench that does not exist on the base commit — e.g. the PR that first introduces
 # it — simply produces no output for that side and is reported as "new" rather
 # than failing the run. `set -e` is deliberately omitted so one missing or broken
-# bench never suppresses the others; this job is advisory and never gates a merge.
+# bench never suppresses the others; the advisory benches' failures are ignored.
+#
+# The gated bench (see bench-iai.yml --gate) is different: its cargo status is
+# this script's exit status, and a commit without it prints iai_compare.py's
+# GATED_ABSENT line, so the gate can tell "not on this commit" from "failed".
 set -uo pipefail
 
 run() {
   echo "::group::$*"
   "$@"
+  local status=$?
   echo "::endgroup::"
+  return "$status"
 }
 
 run cargo bench -p base-common-flz --bench flz_iai
@@ -22,4 +28,10 @@ run cargo bench -p base-protocol --bench batch_transaction_iai
 run cargo bench -p base-consensus-derive --bench batch_queue_iai --features test-utils
 run cargo bench -p base-common-flashblocks --bench flashblock_decode_iai
 
-exit 0
+gated_status=0
+if [ -f crates/builder/core/benches/build_loop_iai.rs ]; then
+  run cargo bench -p base-builder-core --bench build_loop_iai || gated_status=$?
+else
+  echo "iai-subset: gated bench absent on this commit"
+fi
+exit "$gated_status"
