@@ -200,7 +200,7 @@ pub enum TxnOutcome {
 #[derive(Debug, Default, Clone)]
 pub struct FlashblocksExecutionInfo {
     /// Index of the last consumed flashblock
-    pub(crate) last_flashblock_index: usize,
+    pub last_flashblock_index: usize,
 }
 
 /// Accumulated execution state for the current block being built.

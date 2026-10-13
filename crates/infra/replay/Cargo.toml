@@ -1,0 +1,63 @@
+[package]
+name = "base-replay"
+description = "Offline mainnet component fixtures and benchmarks"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+eyre.workspace = true
+revm.workspace = true
+zstd.workspace = true
+serde_json.workspace = true
+async-trait.workspace = true
+reqwest = { workspace = true, features = ["json"] }
+serde = { workspace = true, features = ["derive"] }
+tokio = { workspace = true, features = ["rt", "time"] }
+clap = { workspace = true, features = ["derive", "env"] }
+
+alloy-rlp.workspace = true
+alloy-evm.workspace = true
+alloy-eips.workspace = true
+alloy-trie.workspace = true
+alloy-consensus = { workspace = true, features = ["serde"] }
+alloy-primitives = { workspace = true, features = ["serde"] }
+alloy-rpc-types-eth = { workspace = true, features = ["serde"] }
+
+base-blobs.workspace = true
+base-common-flz.workspace = true
+base-common-evm.workspace = true
+base-common-chains.workspace = true
+base-common-genesis.workspace = true
+base-batcher-encoder.workspace = true
+base-protocol = { workspace = true, features = ["std"] }
+base-proof-mpt = { workspace = true, features = ["std"] }
+base-proof-executor = { workspace = true, features = ["std"] }
+base-common-consensus = { workspace = true, features = ["serde", "k256"] }
+base-common-rpc-types-engine = { workspace = true, features = ["serde", "k256"] }
+
+[dev-dependencies]
+reth-evm.workspace = true
+reth-provider.workspace = true
+reth-trie-common.workspace = true
+reth-transaction-pool.workspace = true
+reth-primitives-traits.workspace = true
+reth-basic-payload-builder.workspace = true
+
+base-builder-core.workspace = true
+base-execution-evm.workspace = true
+base-execution-txpool.workspace = true
+base-common-flashblocks.workspace = true
+base-execution-chainspec.workspace = true
+base-execution-payload-builder.workspace = true
+
+tokio = { workspace = true, features = ["macros", "rt"] }
+criterion = { workspace = true, features = ["html_reports"] }
+
+[[bench]]
+name = "mainnet_build"
+harness = false
