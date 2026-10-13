@@ -71,6 +71,18 @@ fi
 
 mkdir -p "$RETH_DATA_DIR"
 echo "Starting reth with additional args: $ADDITIONAL_ARGS"
+# Without an explicit secret, generate one on first start and share it with the consensus
+# container through ENGINE_JWT_FILE.
+ENGINE_JWT_FILE="${ENGINE_JWT_FILE:-/engine-auth/jwt.hex}"
+if [[ -z "${BASE_NODE_L2_ENGINE_AUTH_RAW:-}" ]]; then
+    if [[ ! -s "$ENGINE_JWT_FILE" ]]; then
+        mkdir -p "$(dirname "$ENGINE_JWT_FILE")"
+        (umask 077 && head -c 32 /dev/urandom | od -An -v -tx1 | tr -d ' \n' > "$ENGINE_JWT_FILE.tmp")
+        mv "$ENGINE_JWT_FILE.tmp" "$ENGINE_JWT_FILE"
+        echo "Generated engine API JWT secret at $ENGINE_JWT_FILE"
+    fi
+    BASE_NODE_L2_ENGINE_AUTH_RAW=$(cat "$ENGINE_JWT_FILE")
+fi
 echo "$BASE_NODE_L2_ENGINE_AUTH_RAW" > "$BASE_NODE_L2_ENGINE_AUTH"
 
 exec "$BINARY" node \
