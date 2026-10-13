@@ -1,0 +1,33 @@
+name: Nitro PCR0 mismatch comment
+
+on:
+  workflow_run:
+    workflows: [Nitro PCR0]
+    types: [completed]
+
+permissions:
+  contents: read
+  actions: read
+  pull-requests: write
+
+jobs:
+  comment:
+    if: ${{ github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'failure' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+      # workflow_run uses the default branch, never the untrusted PR checkout.
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: etc/scripts/ci/nitro_pcr0.py
+          sparse-checkout-cone-mode: false
+      - name: Report the validated mismatch on its current PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 etc/scripts/ci/nitro_pcr0.py comment --event "$GITHUB_EVENT_PATH"

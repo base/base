@@ -1,0 +1,66 @@
+name: Nitro PCR0
+
+on:
+  pull_request:
+  merge_group:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  pcr0:
+    name: Nitro enclave PCR0
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Test PCR0 validation and comment boundary
+        run: python3 -m unittest discover -s etc/scripts/ci -p 'test_nitro_pcr0.py' -v
+      - name: Free disk space for the reproducible build
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
+        with:
+          tool-cache: false
+          large-packages: false
+          docker-images: false
+          swap-storage: false
+      - name: Build the enclave describe image
+        run: >-
+          docker build --platform linux/amd64 --target describe
+          --tag nitro-enclave:measurement
+          --file etc/docker/Dockerfile.nitro-enclave .
+      - name: Measure and compare PCR0
+        id: compare
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/nitro-pcr0"
+          docker run --rm --network none nitro-enclave:measurement \
+            ./nitro-cli describe-eif --eif-path eif.bin > "$RUNNER_TEMP/measurement.json"
+          python3 etc/scripts/ci/nitro_pcr0.py check \
+            --measurement "$RUNNER_TEMP/measurement.json" \
+            --result "$RUNNER_TEMP/nitro-pcr0/result.json" \
+            --head-sha "$HEAD_SHA" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT"
+      - name: Upload PCR0 result for the trusted commenter
+        if: ${{ !cancelled() && steps.compare.outcome == 'failure' && github.event_name == 'pull_request' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nitro-pcr0
+          path: ${{ runner.temp }}/nitro-pcr0/result.json
+          if-no-files-found: error
+          retention-days: 7
