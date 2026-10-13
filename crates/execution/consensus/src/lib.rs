@@ -36,7 +36,8 @@ pub use proof::{calculate_receipt_root, calculate_receipt_root_no_memo};
 
 pub mod validation;
 pub use validation::{
-    canyon, holocene, isthmus, validate_base_time_metadata, validate_block_post_execution,
+    canyon, holocene, isthmus, validate_base_time_metadata, validate_block_access_list,
+    validate_block_post_execution,
 };
 
 pub mod error;
