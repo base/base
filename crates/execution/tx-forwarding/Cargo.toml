@@ -60,6 +60,7 @@ base-observability-events = { workspace = true, features = ["test-utils"] }
 # misc
 eyre.workspace = true
 rstest.workspace = true
+mockall.workspace = true
 serde = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 jsonrpsee = { workspace = true, features = ["server"] }

@@ -10,8 +10,8 @@ use base_execution_txpool::{
     ValidatedTransaction, ValidatedTransactionExtensions,
 };
 use reth_transaction_pool::{
-    PoolTransaction, Priority, TransactionListenerKind, TransactionOrdering, TransactionPool,
-    ValidPoolTransaction,
+    BlockInfo, PoolTransaction, Priority, TransactionListenerKind, TransactionOrdering,
+    TransactionPool, ValidPoolTransaction,
 };
 use tokio::{sync::mpsc, time};
 use tokio_util::sync::CancellationToken;
@@ -27,6 +27,51 @@ use crate::forwarder::InsertValidatedTransaction;
 /// nonce lane.
 type Snapshot<T> =
     LaneScheduler<Arc<ValidPoolTransaction<T>>, Priority<UnifiedTipPriority>, BestTransactionLane>;
+
+/// The pool reads a [`DestinationReader`] makes.
+///
+/// Narrower than [`TransactionPool`] so tests can control what a snapshot yields and how long it
+/// takes; every [`TransactionPool`] implements it.
+#[cfg_attr(test, mockall::automock(type Transaction = base_execution_txpool::BasePooledTransaction;))]
+pub(crate) trait ReaderPool: Send + Sync {
+    /// Transaction type the pool holds.
+    type Transaction: PoolTransaction;
+
+    /// See [`TransactionPool::block_info`].
+    fn block_info(&self) -> BlockInfo;
+
+    /// See [`TransactionPool::best_transactions`].
+    fn best_transactions(
+        &self,
+    ) -> Box<dyn Iterator<Item = Arc<ValidPoolTransaction<Self::Transaction>>> + Send>;
+
+    /// See [`TransactionPool::pending_transactions_listener_for`].
+    fn pending_transactions_listener_for(
+        &self,
+        kind: TransactionListenerKind,
+    ) -> mpsc::Receiver<TxHash>;
+}
+
+impl<P: TransactionPool> ReaderPool for P {
+    type Transaction = P::Transaction;
+
+    fn block_info(&self) -> BlockInfo {
+        TransactionPool::block_info(self)
+    }
+
+    fn best_transactions(
+        &self,
+    ) -> Box<dyn Iterator<Item = Arc<ValidPoolTransaction<Self::Transaction>>> + Send> {
+        TransactionPool::best_transactions(self)
+    }
+
+    fn pending_transactions_listener_for(
+        &self,
+        kind: TransactionListenerKind,
+    ) -> mpsc::Receiver<TxHash> {
+        TransactionPool::pending_transactions_listener_for(self, kind)
+    }
+}
 
 /// Background reader that drains the pool for one destination.
 ///
@@ -56,7 +101,7 @@ type Snapshot<T> =
 /// forwarder: this is the component that holds a [`ValidPoolTransaction`], and
 /// it runs on a dedicated blocking thread, which keeps the EIP-2718 encoding
 /// and pool snapshots off the shared async workers.
-pub(crate) struct DestinationReader<P: TransactionPool, E = NoExtensions> {
+pub(crate) struct DestinationReader<P: ReaderPool, E = NoExtensions> {
     pool: P,
     config: ReaderConfig,
     recently_sent: RecentlySent,
@@ -69,8 +114,8 @@ pub(crate) struct DestinationReader<P: TransactionPool, E = NoExtensions> {
 
 impl<P, E> DestinationReader<P, E>
 where
-    P: TransactionPool + 'static,
-    P::Transaction: PoolTransaction + BasePooledTx,
+    P: ReaderPool + 'static,
+    P::Transaction: BasePooledTx,
     E: ValidatedTransactionExtensions<P::Transaction>,
 {
     /// Wait between checks for free queue capacity.
@@ -80,7 +125,9 @@ where
     ///
     /// Reading the pool costs a pass over every pending transaction, so under a deep backlog the
     /// reader refills the queue from the previous snapshot instead of re-reading for every free
-    /// chunk. A transaction that arrives in the meantime waits at most this long to be considered.
+    /// chunk. A transaction that arrives in the meantime waits up to this long, plus the pacing gap
+    /// before the next snapshot, to be considered. That gap is as long as the previous snapshot
+    /// took, so it has no fixed ceiling: it grows with the pool.
     const SNAPSHOT_MAX_AGE: Duration = Duration::from_millis(10);
 
     /// Creates a reader for one destination.
@@ -308,7 +355,7 @@ where
     }
 }
 
-impl<P: TransactionPool, E> fmt::Debug for DestinationReader<P, E> {
+impl<P: ReaderPool, E> fmt::Debug for DestinationReader<P, E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("DestinationReader")
             .field("builder_url", &self.builder_url)
@@ -329,6 +376,9 @@ mod tests {
     };
 
     use super::*;
+
+    /// Start and end of one `best_transactions()` call.
+    type SnapshotSpan = (Instant, Instant);
 
     fn transaction(nonce: u64) -> Arc<ValidPoolTransaction<BasePooledTransaction>> {
         let sender = Address::repeat_byte((nonce + 1) as u8);
@@ -423,5 +473,126 @@ mod tests {
             reader.try_enqueue(&transaction(1)),
             Err(mpsc::error::TrySendError::Closed(()))
         ));
+    }
+
+    /// A pool whose snapshots block for `cost` and yield `txs`, announcing whatever arrives on
+    /// `announcements` and reporting each snapshot's span on `snapshots`.
+    fn costly_pool(
+        cost: Duration,
+        txs: Vec<Arc<ValidPoolTransaction<BasePooledTransaction>>>,
+        announcements: mpsc::Receiver<TxHash>,
+        snapshots: mpsc::UnboundedSender<SnapshotSpan>,
+    ) -> MockReaderPool {
+        let mut pool = MockReaderPool::new();
+        pool.expect_block_info().returning(BlockInfo::default);
+        pool.expect_pending_transactions_listener_for().return_once(move |_| announcements);
+        pool.expect_best_transactions().returning(move || {
+            let started = Instant::now();
+            std::thread::sleep(cost);
+            let _ = snapshots.send((started, Instant::now()));
+            Box::new(txs.clone().into_iter())
+        });
+        pool
+    }
+
+    /// A reader over `pool` that wakes only on announcements, never on the poll interval.
+    fn paced_reader(
+        pool: MockReaderPool,
+        sender: mpsc::Sender<InsertValidatedTransaction>,
+        cancel: CancellationToken,
+    ) -> DestinationReader<MockReaderPool> {
+        DestinationReader::new(
+            pool,
+            ReaderConfig {
+                resend_after: Duration::from_secs(60),
+                channel_capacity: 64,
+                poll_interval: Duration::from_secs(60),
+                fifo_percent: 20,
+            },
+            sender,
+            cancel,
+            "http://builder.test".parse().unwrap(),
+        )
+    }
+
+    /// Every wake under a steady stream of announcements finds nothing new to send, so without
+    /// pacing the reader would snapshot back to back; each snapshot must instead be followed by a
+    /// gap at least as long as it took.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn continuous_announcements_pace_snapshots_by_their_cost() {
+        const COST: Duration = Duration::from_millis(5);
+        let txs: Vec<_> = (0..4).map(transaction).collect();
+        let (announce, announcements) = mpsc::channel(16);
+        let (snapshot_tx, mut snapshots) = mpsc::unbounded_channel();
+        let (sender, mut queue) = mpsc::channel(64);
+        let cancel = CancellationToken::new();
+        let mut reader = paced_reader(
+            costly_pool(COST, txs.clone(), announcements, snapshot_tx),
+            sender,
+            cancel.clone(),
+        );
+        // A plain thread, so announcements keep coming while a snapshot blocks a runtime worker.
+        let announcer = std::thread::spawn(move || {
+            while !announce.is_closed() {
+                let _ = announce.try_send(TxHash::ZERO);
+                std::thread::sleep(Duration::from_micros(100));
+            }
+        });
+
+        let run = tokio::spawn(async move { reader.run().await });
+        time::sleep(Duration::from_millis(100)).await;
+        cancel.cancel();
+        time::timeout(Duration::from_secs(1), run).await.expect("reader exits").unwrap();
+        announcer.join().unwrap();
+
+        let mut spans = Vec::new();
+        while let Ok(span) = snapshots.try_recv() {
+            spans.push(span);
+        }
+        assert!(spans.len() >= 3, "too few snapshots to judge pacing: {}", spans.len());
+        for pair in spans.windows(2) {
+            let ((started, finished), (next, _)) = (pair[0], pair[1]);
+            assert!(
+                next - finished >= finished - started,
+                "snapshot taking {:?} was followed after only {:?}",
+                finished - started,
+                next - finished,
+            );
+        }
+        let mut delivered = Vec::new();
+        while let Ok(forwarded) = queue.try_recv() {
+            delivered.push(forwarded.tx_hash);
+        }
+        delivered.sort();
+        let mut expected: Vec<_> = txs.iter().map(|tx| *tx.hash()).collect();
+        expected.sort();
+        assert_eq!(delivered, expected, "every transaction is forwarded exactly once");
+    }
+
+    /// Cancelling while the reader waits out the gap after an expensive snapshot must end the
+    /// reader at once rather than after the gap or another snapshot.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn cancelling_during_the_pacing_gap_returns_promptly() {
+        const COST: Duration = Duration::from_millis(300);
+        let (_announce, announcements) = mpsc::channel(16);
+        let (snapshot_tx, _snapshots) = mpsc::unbounded_channel();
+        let (sender, mut queue) = mpsc::channel(64);
+        let cancel = CancellationToken::new();
+        let mut reader = paced_reader(
+            costly_pool(COST, vec![transaction(0)], announcements, snapshot_tx),
+            sender,
+            cancel.clone(),
+        );
+
+        let run = tokio::spawn(async move { reader.run().await });
+        queue.recv().await.expect("the first snapshot's transaction is forwarded");
+        // Long enough to be well into whatever follows the first snapshot, short of its cost.
+        time::sleep(Duration::from_millis(20)).await;
+        cancel.cancel();
+
+        time::timeout(Duration::from_millis(100), run)
+            .await
+            .expect("reader exits well before the gap or another snapshot ends")
+            .unwrap();
     }
 }

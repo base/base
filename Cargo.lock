@@ -6536,6 +6536,7 @@ dependencies = [
  "futures",
  "jsonrpsee",
  "metrics",
+ "mockall",
  "reth-tasks",
  "reth-transaction-pool",
  "rstest",
