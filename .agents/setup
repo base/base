@@ -32,89 +32,54 @@ if ((${#missing[@]})); then
     sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${missing[@]}"
 fi
 
-step 'Rust toolchains'
-export PATH="$HOME/.cargo/bin:$HOME/.foundry/bin:$PATH"
-if ! command -v rustup >/dev/null 2>&1; then
-    curl --fail --show-error --location --retry 3 --max-time 120 \
-        https://sh.rustup.rs -o "$scratch/rustup.sh"
-    sh "$scratch/rustup.sh" -y --profile minimal --default-toolchain none --no-modify-path
-fi
-# This honors the channel and components in rust-toolchain.toml, including updates.
-rustup show active-toolchain
-rustup target add riscv32imac-unknown-none-elf
-if ! rustup toolchain list | grep -q '^nightly-'; then
-    rustup toolchain install nightly --profile minimal --component rustfmt,rust-src
-else
-    rustup component add --toolchain nightly rustfmt rust-src
-fi
-
-step 'Prebuilt development tools'
+step 'Checksum-pinned mise bootstrap'
 case "$(uname -m)" in
-    x86_64) rust_arch=x86_64; foundry_arch=amd64 ;;
-    aarch64) rust_arch=aarch64; foundry_arch=arm64 ;;
+    x86_64)
+        mise_arch=x64
+        mise_sha=77fbb428fff656ec0bbacb99d7ed5b038a0e09a9cc0168909fcf3da56b5d51e0
+        ;;
+    aarch64)
+        mise_arch=arm64
+        mise_sha=0c7f27abf12f80949837fe281137b6c68a8af47cd70068559516eb6160e1728d
+        ;;
     *) echo 'Unsupported orb architecture' >&2; exit 1 ;;
 esac
-if ! command -v cargo-binstall >/dev/null 2>&1; then
+mise_bin="$HOME/.local/bin/mise"
+if [[ ! -x "$mise_bin" ]] || ! echo "$mise_sha  $mise_bin" | sha256sum --check --status 2>/dev/null; then
     curl --fail --show-error --location --retry 3 --max-time 120 \
-        "https://github.com/cargo-bins/cargo-binstall/releases/download/v1.25.3/cargo-binstall-${rust_arch}-unknown-linux-musl.tgz" \
-        -o "$scratch/binstall.tgz"
-    tar -xzf "$scratch/binstall.tgz" -C "$HOME/.cargo/bin" cargo-binstall
-fi
-tools=()
-# CONTRIBUTING requires just >=1.51; pin a release supporting every recipe.
-if [[ "$(just --version 2>/dev/null || true)" != 'just 1.58.0' ]]; then
-    tools+=(just@1.58.0)
-fi
-for tool in cargo-nextest cargo-deny cargo-udeps sccache lychee zepter; do
-    if ! command -v "$tool" >/dev/null 2>&1; then
-        tools+=("$tool")
-    fi
-done
-if ((${#tools[@]})); then
-    # Never fall back to lengthy source builds during snapshot creation.
-    # Prefer musl binaries: current GNU releases can require glibc newer than Debian 12.
-    cargo binstall --no-confirm --disable-strategies compile \
-        --targets "${rust_arch}-unknown-linux-musl" "${tools[@]}"
-fi
-# Newer Soldeer versions rewrite the checked-in lockfile even on an unchanged install.
-if ! forge --version 2>/dev/null | grep -Eq '^forge Version: 1\.5\.1(-|$)' ||
-    ! command -v cast >/dev/null 2>&1 || ! command -v anvil >/dev/null 2>&1; then
-    curl --fail --show-error --location --retry 3 --max-time 120 \
-        "https://github.com/foundry-rs/foundry/releases/download/v1.5.1/foundry_v1.5.1_linux_${foundry_arch}.tar.gz" \
-        -o "$scratch/foundry.tar.gz"
-    mkdir -p "$HOME/.foundry/bin"
-    tar -xzf "$scratch/foundry.tar.gz" -C "$HOME/.foundry/bin" forge cast anvil chisel
+        "https://github.com/jdx/mise/releases/download/v2026.10.9/mise-v2026.10.9-linux-${mise_arch}-musl" \
+        -o "$scratch/mise"
+    echo "$mise_sha  $scratch/mise" | sha256sum -c -
+    install -Dm755 "$scratch/mise" "$mise_bin"
 fi
 
-step 'Go for SP1 host dependencies (matches CI 1.24.x)'
-go_root="$HOME/.local/share/base-orb/go-1.24.13"
-if [[ ! -x "$go_root/bin/go" ]]; then
-    case "$foundry_arch" in
-        amd64) go_sha=1fc94b57134d51669c72173ad5d49fd62afb0f1db9bf3f798fd98ee423f8d730 ;;
-        arm64) go_sha=74d97be1cc3a474129590c67ebf748a96e72d9f3a2b6fef3ed3275de591d49b3 ;;
-    esac
-    curl --fail --show-error --location --retry 3 --max-time 120 \
-        "https://go.dev/dl/go1.24.13.linux-${foundry_arch}.tar.gz" -o "$scratch/go.tar.gz"
-    echo "$go_sha  $scratch/go.tar.gz" | sha256sum -c -
-    tar -xzf "$scratch/go.tar.gz" -C "$scratch"
-    mkdir -p "$(dirname "$go_root")"
-    mv "$scratch/go" "$go_root"
-fi
+step 'Install locked development tools'
+"$mise_bin" trust "$repo_root/mise.toml"
+"$mise_bin" install --locked
+# Activate in this installer; later processes receive the same complete environment.
+mise_env="$("$mise_bin" env --shell bash)"
+eval "$mise_env"
 
 step 'Persist environment for non-interactive login shells'
 mkdir -p "$HOME/.config/base-orb"
 cat > "$HOME/.config/base-orb/env" <<EOF
-. "\$HOME/.cargo/env"
-for directory in "\$HOME/.foundry/bin" "$go_root/bin"; do
-    case ":\$PATH:" in
-        *":\$directory:"*) ;;
-        *) export PATH="\$directory:\$PATH" ;;
-    esac
-done
+if [[ -z "\${BASE_ORB_MISE_ACTIVE:-}" ]]; then
+    export BASE_ORB_MISE_ACTIVE=1
+    export PATH="\$HOME/.local/bin:\$PATH"
+    eval "\$("\$HOME/.local/bin/mise" env --shell bash)"
+fi
 export LIBCLANG_PATH="\$(llvm-config --libdir)"
 EOF
-# Apply to this installer; independently verify persistence with a new login shell.
-source "$HOME/.config/base-orb/env"
+# Creating .bash_profile must preserve Bash's previous login-file precedence.
+if [[ ! -e "$HOME/.bash_profile" ]]; then
+    cat > "$HOME/.bash_profile" <<'EOF'
+if [[ -f "$HOME/.bash_login" ]]; then
+    . "$HOME/.bash_login"
+elif [[ -f "$HOME/.profile" ]]; then
+    . "$HOME/.profile"
+fi
+EOF
+fi
 marker='# Base orb development environment'
 if ! grep -Fqx "$marker" "$HOME/.bash_profile" 2>/dev/null; then
     cat >> "$HOME/.bash_profile" <<EOF
@@ -126,6 +91,8 @@ esac
 EOF
 fi
 
+export LIBCLANG_PATH
+LIBCLANG_PATH="$(llvm-config --libdir)"
 step 'Fetch locked Cargo dependencies'
 cargo fetch --locked
 
