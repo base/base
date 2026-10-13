@@ -5,7 +5,8 @@
     "depth",
     "block_production_sensitive",
     "reasoning",
-    "focus_areas"
+    "focus_areas",
+    "findings"
   ],
   "properties": {
     "depth": {
@@ -25,6 +26,27 @@
       "maxItems": 5,
       "items": {
         "type": "string"
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["title", "severity", "category", "confidence", "path", "line", "explanation"],
+        "properties": {
+          "title": {"type": "string"},
+          "severity": {"enum": ["critical", "major", "minor"]},
+          "category": {
+            "enum": ["block-production", "correctness", "concurrency", "error-handling", "safety",
+                     "performance", "compatibility", "design", "tests"]
+          },
+          "confidence": {"enum": ["high", "medium", "low"]},
+          "path": {"type": "string"},
+          "line": {"type": "integer", "minimum": 1},
+          "explanation": {"type": "string"},
+          "suggested_fix": {"type": "string"}
+        }
       }
     }
   }

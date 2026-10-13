@@ -3,7 +3,7 @@
 
 Stages (each is a prompt file in agents/, see SKILL.md):
 
-  triage    decides review depth and block-production sensitivity
+  triage    initial medium-mode review, findings and follow-up selection
   review    reviewers selected by `when`, run in parallel
   council   on deep changes only: several members review, then vote on each
             other's findings in parallel
@@ -56,8 +56,8 @@ BOT_LOGIN = "github-actions"
 BOT_COMMENT_JQ = 'select(.user.login == "github-actions[bot]" and .user.type == "Bot")'
 # Credentials that agents, which only read files, have no use for.
 SECRET_ENV = ("GH_TOKEN", "GITHUB_TOKEN")
-# Amp's agent modes, cheapest first. A mode picks the model, so this is how a file chooses one.
-MODES = ("low", "medium", "high", "ultra")
+# Only these Amp modes are used by the pipeline; low always enables Fast serving.
+MODES = ("low", "medium")
 # Front matter from before the move to Amp. Rejected by name, so an old file says what to change.
 RETIRED_FIELDS = ("model", "effort", "tools", "max_budget_usd", "max_output_tokens")
 
@@ -80,9 +80,10 @@ CONDITIONS = ("always", "deep", "block-production")
 SCHEMA_FOR_STAGE = {"triage": "triage", "review": "review", "council": "review",
                     "chair": "chair", "decide": "decide"}
 # Stages that report or post findings get the shared vocabulary and writing guide appended.
-GUIDE_STAGES = frozenset({"review", "council", "chair", "decide"})
+GUIDE_STAGES = frozenset({"triage", "review", "council", "chair", "decide"})
 # Stages that explore the code to find problems. The "Working fast" guide caps their tool calls; the
-# chair and decider check other agents' claims and every open thread, so they get no such cap.
+# initial reviewer must cover the whole change, and the chair and decider check other agents' claims
+# and every open thread, so they get no such cap.
 EXPLORING_STAGES = frozenset({"review", "council"})
 
 
@@ -343,6 +344,8 @@ def run_amp_once(agent: Agent, mode: str, prompt: str, tree: Path, schema_path: 
         cmd = ["amp", "-x", "--mode", mode, "--settings-file", str(settings), "--mcp-config", json.dumps(server),
                "--no-ide", "--no-notifications", "--visibility", "private", "--label", "pr-review",
                "--title", f"pr-review: {label}", "--stream-json"]
+        if mode == "low":
+            cmd.append("--fast")
         raw = run(cmd, input_text=prompt, cwd=work, timeout=agent.timeout_seconds, env=agent_env(),
                   failure_log=artifacts / f"{label}.failed.txt")
         (artifacts / f"{label}.result.jsonl").write_text(raw)
@@ -371,7 +374,8 @@ def run_agent(agent: Agent, user_prompt: str, cwd: Path, artifacts: Path, mode_o
     """Run one agent through the `amp` CLI and return its schema-validated output. `cwd` is what it may read."""
     label = label or agent.name
     schema_path = SCHEMAS_DIR / f"{schema or SCHEMA_FOR_STAGE[agent.stage]}.json"
-    mode = mode_override or agent.mode
+    # A cheap follow-up override must not weaken the initial review or the decisions that can hide bugs.
+    mode = "medium" if agent.stage in ("triage", "decide") else mode_override or agent.mode
     system_prompt = agent.prompt
     if agent.stage in GUIDE_STAGES:
         system_prompt += "\n\n" + FINDING_GUIDE.read_text().strip()
@@ -379,7 +383,7 @@ def run_agent(agent: Agent, user_prompt: str, cwd: Path, artifacts: Path, mode_o
         # A ballot has to check every finding the other members reported, so it is not capped.
         system_prompt += "\n\n" + WORKING_GUIDE.read_text().strip()
     prompt = f"{system_prompt}\n\n{ANSWER_GUIDE}\n\n---\n\n{user_prompt}"
-    (artifacts / f"{label}.prompt.md").write_text(f"mode: {mode}\n\n{prompt}\n")
+    (artifacts / f"{label}.prompt.md").write_text(f"mode: {mode}\nfast: {mode == 'low'}\n\n{prompt}\n")
     started = time.monotonic()
     # Some models now and then end without submitting, and a request can be dropped. One more try is cheap
     # next to losing a council member; failures that a retry cannot fix are not retried.
@@ -738,7 +742,7 @@ def change_block(ctx: Context) -> str:
 
 
 def triage_prompt(ctx: Context) -> str:
-    return change_block(ctx) + "\nTriage this change."
+    return change_block(ctx) + "\nReview this change fully, report findings, and select the follow-up review depth."
 
 
 def review_prompt(ctx: Context, triage: dict[str, Any]) -> str:
@@ -1218,7 +1222,7 @@ def run_council(ctx: Context, triage: dict[str, Any], members: list[Agent], chai
 
 def run_pipeline(ctx: Context, agents: list[Agent], cwd: Path, artifacts: Path,
                  mode_override: str | None, post: bool = False) -> Outcome:
-    """Run triage and the reviewers, deciding and posting each reviewer's findings as it finishes.
+    """Review in medium mode first, then run the selected follow-ups and decide each reviewer's findings.
 
     The reviewers and the council run in parallel. When one finishes, a decide round turns its findings
     into comments straight away while the others are still working. A final round then goes through the
@@ -1235,13 +1239,18 @@ def run_pipeline(ctx: Context, agents: list[Agent], cwd: Path, artifacts: Path,
         # An agent that failed never recorded a model, so it is shown as not finished.
         return agent.stage, agent.name, MODELS_RAN.get(agent.name, "(did not finish)")
 
-    log("Triage")
+    initial: dict[str, Any] | None = None
+    failed: dict[str, str] = {}
+    log("Initial review (medium)")
     try:
-        triage = run_agent(triage_agent, triage_prompt(ctx), cwd, artifacts, mode_override)
+        initial = run_agent(triage_agent, triage_prompt(ctx), cwd, artifacts, mode_override)
+        # Follow-up reviewers get the routing rationale, not the initial findings: review independently.
+        triage = {k: v for k, v in initial.items() if k != "findings"}
     except ReviewError as exc:
-        log(f"  triage failed ({exc}); running every reviewer")
+        failed[triage_agent.name] = str(exc)
+        log(f"  initial review failed ({exc}); running every reviewer")
         triage = {"depth": "deep", "block_production_sensitive": True, "focus_areas": [],
-                  "reasoning": f"Triage failed, so every reviewer was run: {exc}"}
+                  "reasoning": f"Initial review failed, so every reviewer was run: {exc}"}
     rows = [row(triage_agent)]
 
     reviewers = select_reviewers(agents, triage)
@@ -1260,7 +1269,6 @@ def run_pipeline(ctx: Context, agents: list[Agent], cwd: Path, artifacts: Path,
     problems: list[str] = []
     dropped: list[dict[str, str]] = []
     reviews: dict[str, dict[str, Any]] = {}
-    failed: dict[str, str] = {}
     unposted: dict[str, dict[str, Any]] = {}
     seen: set[tuple[str | None, str]] = set()
     replied: set[str] = set()
@@ -1307,6 +1315,8 @@ def run_pipeline(ctx: Context, agents: list[Agent], cwd: Path, artifacts: Path,
                 log(f"  {name} is done; still running: {', '.join(sorted(still_running))}")
             findings_round(name, output)
 
+    if initial is not None:
+        on_done(triage_agent.name, {"findings": initial["findings"]}, set())
     _, job_failed = run_parallel(jobs, on_done=on_done)
     failed.update(job_failed)
     rows += [row(a) for a in reviewers]
@@ -1432,13 +1442,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         help="with --pr: read the files from the current checkout even if it is not at the "
                              "pull request's head (by default a temporary worktree of the head is used)")
     parser.add_argument("--mode", choices=MODES, default=os.environ.get("PR_REVIEW_MODE"),
-                        help="run every agent in this Amp mode instead of the one in its file")
+                        help="override follow-up reviewers and council modes; initial review and decide stay medium; "
+                             "low always enables Fast serving")
     parser.add_argument("--agents-dir", type=Path, default=AGENTS_DIR)
     parser.add_argument("--artifacts-dir", type=Path, help="where to keep prompts and raw results")
     parser.add_argument("--json", action="store_true", help="print the decider's raw output as JSON")
     parser.add_argument("--refresh-status", action="store_true",
                         help="with --pr: update the latest summary's count of unreviewed commits; runs no model")
     args = parser.parse_args(argv)
+    if args.mode is not None and args.mode not in MODES:
+        parser.error(f"PR_REVIEW_MODE must be one of {', '.join(MODES)}")
     if args.pr is not None and args.pr[0]:
         args.repo = args.pr[0]  # a URL names the repository
     args.pr = args.pr[1] if args.pr is not None else None

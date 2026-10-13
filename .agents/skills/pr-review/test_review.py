@@ -78,11 +78,11 @@ class AgentTests(unittest.TestCase):
     def test_parse_agent_reads_front_matter_and_prompt(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "x.md"
-            path.write_text("---\nstage: review\nwhen: deep, block-production\nmode: high\n"
+            path.write_text("---\nstage: review\nwhen: deep, block-production\nmode: medium\n"
                             "timeout_seconds: 90\n---\nDo the thing.\n")
             agent = review.parse_agent(path)
         self.assertEqual(agent.when, ("deep", "block-production"))
-        self.assertEqual((agent.mode, agent.timeout_seconds), ("high", 90))
+        self.assertEqual((agent.mode, agent.timeout_seconds), ("medium", 90))
         self.assertEqual(agent.prompt, "Do the thing.")
 
     def test_parse_agent_rejects_bad_files(self) -> None:
@@ -90,6 +90,8 @@ class AgentTests(unittest.TestCase):
             "no front matter": "just text",
             "missing mode": "---\nstage: review\n---\nx",
             "unknown mode": "---\nstage: review\nmode: turbo\n---\nx",
+            "high is excluded": "---\nstage: review\nmode: high\n---\nx",
+            "ultra is excluded": "---\nstage: review\nmode: ultra\n---\nx",
             "bad stage": "---\nstage: nope\nmode: low\n---\nx",
             "bad when": "---\nstage: review\nwhen: sometimes\nmode: low\n---\nx",
             "when on triage": "---\nstage: triage\nwhen: deep\nmode: low\n---\nx",
@@ -132,10 +134,12 @@ class AgentTests(unittest.TestCase):
             return {a.name for a in review.select_reviewers(agents, triage)}
 
         self.assertEqual(names({"depth": "standard", "block_production_sensitive": False}),
-                         {"review-general"})
+                         set())
         self.assertEqual(names({"depth": "deep", "block_production_sensitive": False}),
                          {"review-general"})
         self.assertEqual(names({"depth": "standard", "block_production_sensitive": True}),
+                         {"review-block-production"})
+        self.assertEqual(names({"depth": "deep", "block_production_sensitive": True}),
                          {"review-general", "review-block-production"})
 
 
@@ -151,7 +155,8 @@ class VocabularyTests(unittest.TestCase):
     def test_schema_enums_match_render(self) -> None:
         categories = [c for c in render.CATEGORIES if c != "other"]
         severities = list(render.SEVERITIES)
-        for schema, prefix in (("review", ("findings", "items")), ("chair", ("findings", "items")),
+        for schema, prefix in (("triage", ("findings", "items")), ("review", ("findings", "items")),
+                               ("chair", ("findings", "items")),
                                ("decide", ("actions", "items"))):
             with self.subTest(schema):
                 node = json.loads((review.SCHEMAS_DIR / f"{schema}.json").read_text())
@@ -960,7 +965,7 @@ class WorktreeTests(unittest.TestCase):
                              tree=Path("/the/worktree"))
         with mock.patch.object(review, "pr_context", return_value=ctx), mock.patch.object(
                 review, "run_pipeline", fake_run_pipeline), mock.patch.object(
-                review, "load_agents", return_value=[]):
+                review, "load_agents", return_value=[]), mock.patch.object(review, "preflight"):
             review.main(["--pr", "7"])
         self.assertEqual(seen["cwd"], Path("/the/worktree"))
 
@@ -1100,10 +1105,15 @@ class SetupFailureTests(unittest.TestCase):
         self.assertIn("Nothing was posted.", message)
         self.assertNotIn("Traceback", message)
 
-    def test_a_mode_can_be_chosen_for_every_agent(self) -> None:
-        self.assertEqual(review.parse_args(["--mode", "high"]).mode, "high")
-        with self.assertRaises(SystemExit), mock.patch.object(sys, "stderr"):
-            review.parse_args(["--mode", "turbo"])
+    def test_a_mode_can_be_chosen_for_follow_up_agents(self) -> None:
+        for mode in ("low", "medium"):
+            self.assertEqual(review.parse_args(["--mode", mode]).mode, mode)
+        for mode in ("high", "ultra", "turbo"):
+            with self.subTest(mode=mode), self.assertRaises(SystemExit), mock.patch.object(sys, "stderr"):
+                review.parse_args(["--mode", mode])
+            with self.subTest(env=mode), mock.patch.dict(os.environ, {"PR_REVIEW_MODE": mode}), \
+                    self.assertRaises(SystemExit), mock.patch.object(sys, "stderr"):
+                review.parse_args([])
 
     def test_a_github_failure_is_explained_with_the_service_named(self) -> None:
         cases = {
@@ -1609,7 +1619,20 @@ class AgentRunTests(unittest.TestCase):
         self.assertEqual(list(json.loads(seen["cmd"][seen["cmd"].index("--mcp-config") + 1])), ["review"])
         self.assertEqual(seen["settings"]["amp.updates.mode"], "disabled")
         self.assertIn("--no-ide", seen["cmd"])
+        self.assertEqual(seen["cmd"][seen["cmd"].index("--visibility") + 1], "private")
         self.assertEqual(seen["cmd"][seen["cmd"].index("--mode") + 1], "medium")
+
+    def test_modes_protect_initial_review_and_decisions_and_enable_fast_only_for_low(self) -> None:
+        for stage in review.STAGES:
+            for override in (None, "low", "medium"):
+                with self.subTest(stage=stage, override=override), tempfile.TemporaryDirectory() as tmp:
+                    fake, seen = self.amp_run({"findings": []})
+                    with mock.patch.object(review, "run", side_effect=fake), mock.patch.object(
+                            review, "thread_usage", return_value=(["Some Model"], 0.1)):
+                        review.run_agent(self.agent(stage=stage, mode="low"), "p", Path(tmp), Path(tmp), override)
+                    expected = "medium" if stage in ("triage", "decide") else override or "low"
+                    self.assertEqual(seen["cmd"][seen["cmd"].index("--mode") + 1], expected)
+                    self.assertEqual("--fast" in seen["cmd"], expected == "low")
 
     def test_amp_runs_in_an_empty_directory_so_the_pull_requests_instructions_are_not_obeyed(self) -> None:
         # Amp reads an AGENTS.md in its working directory and follows it (seen in a test), so that directory
@@ -1686,7 +1709,7 @@ class AgentRunTests(unittest.TestCase):
 
     def test_the_models_that_really_ran_are_recorded(self) -> None:
         review.MODELS_RAN.clear()
-        self.call(self.agent(name="mode-agent", mode="high"))
+        self.call(self.agent(name="mode-agent", mode="medium"))
         self.assertEqual(review.MODELS_RAN["mode-agent"], "Some Model")
 
     def test_when_the_models_cannot_be_read_the_mode_is_shown(self) -> None:
@@ -1694,8 +1717,8 @@ class AgentRunTests(unittest.TestCase):
         fake, _ = self.amp_run({"findings": []})
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(review, "run", side_effect=fake), \
                 mock.patch.object(review, "thread_usage", return_value=([], None)):
-            review.run_agent(self.agent(name="x", mode="ultra"), "p", Path(tmp), Path(tmp), None)
-        self.assertEqual(review.MODELS_RAN["x"], "amp ultra")
+            review.run_agent(self.agent(name="x", mode="medium"), "p", Path(tmp), Path(tmp), None)
+        self.assertEqual(review.MODELS_RAN["x"], "amp medium")
 
     def test_an_agent_that_ends_without_submitting_is_retried_once(self) -> None:
         silent, _ = self.amp_run(None)
@@ -2090,7 +2113,8 @@ class PipelineFailureTests(unittest.TestCase):
         self.calls: list[str] = []
         self.failing: set[str] = set()
         self.decisions: dict[str, dict] = {}
-        self.triage = {"depth": "deep", "block_production_sensitive": False, "reasoning": "r", "focus_areas": []}
+        self.triage = {"depth": "deep", "block_production_sensitive": False, "reasoning": "r", "focus_areas": [],
+                       "findings": []}
         self.finding = {"title": "t", "severity": "major", "category": "safety", "confidence": "high",
                         "path": "src/a.rs", "line": 1, "explanation": "e"}
 
@@ -2124,14 +2148,40 @@ class PipelineFailureTests(unittest.TestCase):
 
     def test_standard_change_skips_the_council(self) -> None:
         self.triage["depth"] = "standard"
-        self.run_pipeline()
-        self.assertFalse([c for c in self.calls if c.startswith("council")])
+        outcome = self.run_pipeline()
+        self.assertEqual(self.calls, ["triage", "decide"])
+        self.assertEqual(outcome.reviews, {"triage": {"findings": []}})
+
+    def test_initial_findings_reach_the_plan_without_follow_ups_even_if_their_round_fails(self) -> None:
+        self.triage.update(depth="standard", findings=[self.finding])
+        decision = {"actions": [comment_on_line_one("Initial finding")], "dropped": [], "overview": None}
+        prompts = []
+        for fail_round in (False, True):
+            with self.subTest(fail_round=fail_round):
+                self.calls.clear()
+                self.failing = {"decide.triage"} if fail_round else set()
+                self.decisions = {"decide" if fail_round else "decide.triage": decision}
+                prompts.clear()
+
+                def spy(agent, prompt, *args, **kwargs):
+                    if agent.stage == "decide":
+                        prompts.append(prompt)
+                    return self.fake_run_agent(agent, prompt, *args, **kwargs)
+
+                with mock.patch.object(review, "run_agent", spy):
+                    outcome = review.run_pipeline(self.ctx, self.agents, Path("."), Path("."), "low")
+                self.assertEqual(self.calls, ["triage", "decide.triage", "decide"])
+                self.assertEqual([f.title for f in outcome.plan.new], ["Initial finding"])
+                self.assertIn('"explanation": "e"', prompts[-1] if fail_round else prompts[0])
+                self.assertNotIn("findings", outcome.triage)
+                self.assertEqual(outcome.failed, {})
 
     def test_triage_failure_runs_everything_and_says_so(self) -> None:
         self.failing = {"triage"}
         outcome = self.run_pipeline()
         self.assertTrue(outcome.triage["block_production_sensitive"])
-        self.assertIn("Triage failed", outcome.triage["reasoning"])
+        self.assertIn("Initial review failed", outcome.triage["reasoning"])
+        self.assertIn("triage", outcome.failed)
         self.assertIn("review-block-production", self.calls)
         self.assertIn("council-chair", self.calls)
 
@@ -2164,8 +2214,19 @@ class PipelineFailureTests(unittest.TestCase):
         self.assertIn("decide", outcome.failed)
         self.assertIn("final step failed", outcome.decision["overview"])
 
-    def test_every_reviewer_failing_is_an_error(self) -> None:
+    def test_follow_up_failures_preserve_the_initial_review(self) -> None:
+        self.triage["findings"] = [self.finding]
+        self.decisions["decide.triage"] = {"actions": [comment_on_line_one("Initial finding")],
+                                           "dropped": [], "overview": None}
         self.failing = {"review-general", "council-invariants", "council-adversary", "council-design"}
+        outcome = self.run_pipeline()
+        self.assertEqual(outcome.reviews, {"triage": {"findings": [self.finding]}})
+        self.assertEqual([f.title for f in outcome.plan.new], ["Initial finding"])
+        self.assertIn("review-general", outcome.failed)
+        self.assertIn("council", outcome.failed)
+
+    def test_every_reviewer_failing_is_an_error(self) -> None:
+        self.failing = {a.name for a in self.agents if a.stage in ("triage", "review", "council")}
         with self.assertRaises(review.ReviewError):
             self.run_pipeline()
 
@@ -2199,7 +2260,8 @@ class RoundTests(unittest.TestCase):
             raise review.ReviewError(f"{label} broke")
         review.MODELS_RAN[agent.name] = agent.mode
         if agent.stage == "triage":
-            return {"depth": "standard", "block_production_sensitive": False, "reasoning": "r", "focus_areas": []}
+            return {"depth": "standard", "block_production_sensitive": False, "reasoning": "r", "focus_areas": [],
+                    "findings": []}
         if agent.stage == "decide":
             if label == "decide":
                 self.events.append("final-round")
@@ -2217,7 +2279,7 @@ class RoundTests(unittest.TestCase):
     def run_pipeline(self, post: bool = True, reviewers: str = "review-general") -> review.Outcome:
         # A standard change with the general reviewer, plus a second reviewer that is slow.
         agents = [a for a in self.agents if a.stage in ("triage", "decide")]
-        general = next(a for a in self.agents if a.name == "review-general")
+        general = dataclasses_replace(next(a for a in self.agents if a.name == "review-general"), when=("always",))
         slow = dataclasses_replace(general, name=self.slow)
         agents += [general, slow]
         with mock.patch.object(review, "run_agent", self.fake_run_agent), mock.patch.object(
@@ -2394,7 +2456,7 @@ class RoundTests(unittest.TestCase):
             return orig(agent, prompt, *args, **kwargs)
 
         agents = [a for a in self.agents if a.stage in ("triage", "decide")]
-        general = next(a for a in self.agents if a.name == "review-general")
+        general = dataclasses_replace(next(a for a in self.agents if a.name == "review-general"), when=("always",))
         agents += [general, dataclasses_replace(general, name=self.slow)]
         gh = FakeGh(responses={"pr view": json.dumps({"headRefOid": "abc"})})
         live = [thread("open", comment_id=11), own]  # what GitHub returns once the first round has posted
@@ -2406,12 +2468,6 @@ class RoundTests(unittest.TestCase):
         self.assertIn("Brand new", summary)  # listed once, under "New in this review"
         self.assertEqual(summary.count("Brand new"), 1)
         self.assertNotIn('"thread_id": "own"', prompts[-1])  # and the final decider is not asked about it
-
-    def test_the_decider_runs_in_a_cheaper_mode_than_the_agents_that_judge_the_code(self) -> None:
-        modes = {a.name: review.MODES.index(a.mode) for a in self.agents}
-        self.assertLessEqual(modes["decide"], modes["council-chair"])  # the chair checks claims against the code
-        self.assertLessEqual(modes["decide"], modes["review-general"])
-
 
 class ToolsServerTests(unittest.TestCase):
     """What an agent can and cannot do: read the repository, and answer through `submit`."""
@@ -2509,7 +2565,8 @@ class ToolsServerTests(unittest.TestCase):
     def test_every_stage_accepts_a_minimal_answer(self) -> None:
         # What an agent with nothing to report submits. A validator crash or an over-strict schema fails here.
         minimal = {
-            "triage": {"depth": "standard", "block_production_sensitive": False, "reasoning": "r", "focus_areas": []},
+            "triage": {"depth": "standard", "block_production_sensitive": False, "reasoning": "r", "focus_areas": [],
+                       "findings": []},
             "review": {"findings": []},
             "decide": {"actions": [], "overview": None, "dropped": []},
         }
