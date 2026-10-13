@@ -87,6 +87,7 @@ pub use wire::{
 };
 
 mod two_d_nonce_pool;
+pub use two_d_nonce_pool::SidecarSenderIds;
 
 mod metrics;
 pub use metrics::{GuardMetrics, ValidatorMetrics, ValidityPoolMetrics, ValiditySignatureMetrics};

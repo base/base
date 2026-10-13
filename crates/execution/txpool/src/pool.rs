@@ -827,20 +827,13 @@ where
                 balance,
                 transaction,
                 propagate,
-                authorities,
                 state_nonce,
                 ..
             } => {
                 // Keep the sidecar lock order consistent everywhere: nonce_pool before listeners.
                 let mut nonce_pool = self.nonce_pool.write();
                 let mut listeners = self.listeners.write();
-                let validated = self.validated_pool_transaction(
-                    transaction,
-                    origin,
-                    propagate,
-                    authorities,
-                    &mut nonce_pool,
-                );
+                let validated = Self::validated_pool_transaction(transaction, origin, propagate);
                 let generation = validated
                     .transaction
                     .limit_class()
@@ -966,33 +959,24 @@ where
         }
     }
 
+    /// Wraps a validated sidecar transaction. Its sender and authority ids are
+    /// placeholders until [`TwoDNoncePool::insert_validated`] assigns them.
     fn validated_pool_transaction(
-        &self,
         transaction: reth_transaction_pool::validate::ValidTransaction<T>,
         origin: TransactionOrigin,
         propagate: bool,
-        authorities: Option<Vec<Address>>,
-        nonce_pool: &mut TwoDNoncePool<T>,
     ) -> ValidPoolTransaction<T> {
         let transaction = transaction.into_transaction();
-        let sender_id = nonce_pool.sender_id_or_create(transaction.sender());
-        let authority_ids = authorities.map(|authorities| {
-            authorities
-                .into_iter()
-                .map(|authority| nonce_pool.sender_id_or_create(authority))
-                .collect()
-        });
-
         ValidPoolTransaction {
             transaction_id: reth_transaction_pool::identifier::TransactionId::new(
-                sender_id,
+                0u64.into(),
                 transaction.nonce(),
             ),
             transaction,
             propagate,
             timestamp: std::time::Instant::now(),
             origin,
-            authority_ids,
+            authority_ids: None,
         }
     }
 
