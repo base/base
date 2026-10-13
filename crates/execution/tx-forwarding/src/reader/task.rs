@@ -46,6 +46,12 @@ type Snapshot<T> =
 /// Waking on the announcement rather than on the interval alone is what keeps an isolated
 /// transaction from waiting out the rest of an idle sleep before it is forwarded.
 ///
+/// After each snapshot the reader waits at least as long as that snapshot took before reading
+/// the pool again. A snapshot costs a pass over every pending transaction, so without this gap a
+/// continuous stream of announcements over a deep pool would keep the reader thread snapshotting
+/// nonstop; with it, snapshotting uses at most about half of the thread. With a small pool the gap
+/// is microseconds, so an isolated transaction is not delayed.
+///
 /// Conversion to the builder-RPC wire form happens here rather than in the
 /// forwarder: this is the component that holds a [`ValidPoolTransaction`], and
 /// it runs on a dedicated blocking thread, which keeps the EIP-2718 encoding
@@ -108,18 +114,30 @@ where
         // Subscribed before the first snapshot, so nothing that becomes pending after it is missed.
         let mut pending =
             Some(self.pool.pending_transactions_listener_for(TransactionListenerKind::All));
-        let mut snapshot: Option<(Instant, Snapshot<P::Transaction>)> = None;
+        // When the last snapshot finished, how long it took, and what is left of it.
+        let mut snapshot: Option<(Instant, Duration, Snapshot<P::Transaction>)> = None;
         while self.wait_for_capacity().await {
-            let stale = snapshot.as_ref().is_none_or(|(taken_at, lanes)| {
+            let stale = snapshot.as_ref().is_none_or(|(taken_at, _, lanes)| {
                 lanes.is_empty() || taken_at.elapsed() >= Self::SNAPSHOT_MAX_AGE
             });
             if stale {
+                let gap = snapshot
+                    .as_ref()
+                    .and_then(|(taken_at, cost, _)| cost.checked_sub(taken_at.elapsed()));
+                if let Some(gap) = gap {
+                    tokio::select! {
+                        () = time::sleep(gap) => {}
+                        () = self.cancel.cancelled() => break,
+                    }
+                }
                 // Everything announced so far is in the pool, so the snapshot below covers it.
                 Self::drain_announcements(&mut pending);
+                let started = Instant::now();
                 let Some(lanes) = self.take_snapshot() else { break };
-                snapshot = Some((Instant::now(), lanes));
+                let taken_at = Instant::now();
+                snapshot = Some((taken_at, taken_at - started, lanes));
             }
-            let Some((_, lanes)) = snapshot.as_mut() else { break };
+            let Some((_, _, lanes)) = snapshot.as_mut() else { break };
 
             Metrics::iterations(Arc::clone(&self.url_label)).increment(1);
             match self.fill_queue(lanes) {
