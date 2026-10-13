@@ -763,6 +763,7 @@ where
         gas_limit: header.gas_limit(),
         parent_beacon_block_root: header.parent_beacon_block_root(),
         extra_data: header.extra_data().clone(),
+        slot_number: header.slot_number(),
     };
 
     // Execute transactions with a MeteringInspector to collect per-opcode and

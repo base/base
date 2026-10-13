@@ -12,6 +12,7 @@ use base_common_consensus::DepositReceiptExt;
 use base_common_evm::BaseBlockExecutionCtx;
 use base_execution_consensus::{calculate_receipt_root_no_memo, isthmus};
 use reth_evm::execute::{BlockAssembler, BlockAssemblerInput};
+use reth_chainspec::EthereumHardforks;
 use reth_execution_errors::BlockExecutionError;
 use reth_execution_types::BlockExecutionResult;
 use reth_primitives_traits::{Receipt, SignedTransaction};
@@ -64,6 +65,17 @@ impl<ChainSpec: Upgrades> BaseBlockAssembler<ChainSpec> {
 
         let mut requests_hash = None;
 
+        let number = evm_env.block_env.number().saturating_to();
+
+        // EIP-7843: from Amsterdam on, the header carries a slot number. Base puts the L2 block
+        // number here, preferring the value the consensus layer supplied in the payload
+        // attributes and falling back to the block number being built (e.g. the `--dev`
+        // instant-seal path, which sends no slot number).
+        let slot_number = self
+            .chain_spec
+            .is_amsterdam_active_at_timestamp(timestamp)
+            .then_some(ctx.slot_number.unwrap_or(number));
+
         let withdrawals_root =
             if Upgrades::is_isthmus_active_at_timestamp(&*self.chain_spec, timestamp) {
                 // always empty requests hash post isthmus
@@ -105,7 +117,7 @@ impl<ChainSpec: Upgrades> BaseBlockAssembler<ChainSpec> {
             mix_hash: evm_env.block_env.prevrandao().unwrap_or_default(),
             nonce: BEACON_NONCE.into(),
             base_fee_per_gas: Some(evm_env.block_env.basefee()),
-            number: evm_env.block_env.number().saturating_to(),
+            number,
             gas_limit: evm_env.block_env.gas_limit(),
             difficulty: evm_env.block_env.difficulty(),
             gas_used: *gas_used,
@@ -115,7 +127,7 @@ impl<ChainSpec: Upgrades> BaseBlockAssembler<ChainSpec> {
             excess_blob_gas,
             requests_hash,
             block_access_list_hash,
-            slot_number: None,
+            slot_number,
         };
 
         Ok(Block::new(

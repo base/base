@@ -2995,4 +2995,51 @@ mod tests {
             "a pre-Amsterdam payload must not carry a block access list"
         );
     }
+
+    /// EIP-7843: when the payload attributes do not carry a slot number, an Amsterdam block must
+    /// fall back to its own block number so that locally-built blocks stay well formed.
+    #[test]
+    fn amsterdam_payload_defaults_slot_number_to_block_number() {
+        let ctx = pool_payload_context(DENIM_TIMESTAMP);
+        assert_eq!(
+            ctx.attributes().payload_attributes.slot_number, None,
+            "the default attributes must not carry a slot number"
+        );
+        let outcome = build_pool_payload(
+            ctx,
+            NoopPayloadTransactions::<BasePooledTransaction>::default(),
+        );
+        let BuildOutcomeKind::Freeze(payload) = outcome else {
+            panic!("a Denim-active payload must freeze")
+        };
+
+        let block = payload.block();
+        assert_eq!(block.number, 1, "the parent header is block 0, so this is block 1");
+        assert_eq!(
+            block.slot_number,
+            Some(block.number),
+            "a block without an attribute slot number must fall back to its own block number"
+        );
+    }
+
+    /// EIP-7843: when the payload attributes carry a slot number, an Amsterdam block must use it
+    /// verbatim instead of the block number.
+    #[test]
+    fn amsterdam_payload_prefers_attribute_slot_number() {
+        let mut ctx = pool_payload_context(DENIM_TIMESTAMP);
+        ctx.config.attributes.payload_attributes.slot_number = Some(42);
+        let outcome = build_pool_payload(
+            ctx,
+            NoopPayloadTransactions::<BasePooledTransaction>::default(),
+        );
+        let BuildOutcomeKind::Freeze(payload) = outcome else {
+            panic!("a Denim-active payload must freeze")
+        };
+
+        assert_eq!(
+            payload.block().slot_number,
+            Some(42),
+            "the attribute slot number must win over the block number fallback"
+        );
+    }
 }

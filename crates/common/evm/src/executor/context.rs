@@ -11,4 +11,8 @@ pub struct BaseBlockExecutionCtx {
     pub parent_beacon_block_root: Option<B256>,
     /// The block's extra data.
     pub extra_data: Bytes,
+    /// The block's Amsterdam slot number (EIP-7843), when known.
+    ///
+    /// Base carries the L2 block number in this field.
+    pub slot_number: Option<u64>,
 }

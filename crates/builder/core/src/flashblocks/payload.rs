@@ -223,6 +223,7 @@ where
             gas_limit: config.attributes.gas_limit.unwrap_or(config.parent_header.gas_limit),
             parent_beacon_block_root: config.attributes.payload_attributes.parent_beacon_block_root,
             extra_data,
+            slot_number: config.attributes.payload_attributes.slot_number,
         };
 
         let evm_config = self.evm_config.clone();
@@ -1256,6 +1257,19 @@ where
         None => (None, None),
     };
 
+    // EIP-7843: from Amsterdam on, the header carries a slot number. Base puts the L2 block
+    // number here, preferring the value the consensus layer supplied in the payload attributes
+    // and falling back to the block number being built.
+    let slot_number = ctx
+        .chain_spec
+        .is_amsterdam_active_at_timestamp(ctx.attributes().timestamp())
+        .then_some(
+            ctx.attributes()
+                .payload_attributes
+                .slot_number
+                .unwrap_or_else(|| ctx.parent().number + 1),
+        );
+
     // create the block header
     let transactions_root = proofs::calculate_transaction_root(&info.executed_transactions);
 
@@ -1285,7 +1299,7 @@ where
         excess_blob_gas,
         requests_hash,
         block_access_list_hash,
-        slot_number: ctx.attributes().payload_attributes.slot_number,
+        slot_number,
     };
 
     // seal the block
