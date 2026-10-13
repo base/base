@@ -83,14 +83,12 @@ struct Eip8130ValidationState {
     payer: Address,
     classification_generation: u64,
     payer_balance: U256,
-    payer_balance_after_auth: U256,
+    /// The sender's balance, which reth's per-sender accounting checks the
+    /// sender's `cost()` against. The payer's balance is enforced by admission
+    /// and the guard's payer balance watch.
+    sender_balance: U256,
     sender_nonce: u64,
     sender_bytecode_hash: Option<B256>,
-    /// Payer-authentication gas metered on top of `gas_limit`. The execution
-    /// path charges the operator fee on `gas_limit + payer_auth`, so admission
-    /// must do the same to avoid admitting operator-fee-underfunded sponsored
-    /// transactions. Zero for self-pay transactions.
-    payer_auth: u64,
     watch_set: WatchSet,
     sender_locked: bool,
     payer_locked: bool,
@@ -1013,17 +1011,17 @@ where
                 max_cost: state.payer_max_cost,
             });
             let outcome = TransactionValidationOutcome::Valid {
-                balance: state.payer_balance_after_auth,
+                balance: state.sender_balance,
                 state_nonce: state.sender_nonce,
                 transaction: ValidTransaction::new(transaction, None),
                 propagate,
                 bytecode_hash: state.sender_bytecode_hash,
                 authorities: (state.payer != state.sender).then_some(vec![state.payer]),
             };
-            return self.apply_base_checks(outcome, state.payer_auth);
+            return self.apply_base_checks(outcome, false);
         }
         let outcome = self.inner.validate_one_with_state(origin, transaction, state);
-        self.apply_base_checks(outcome, 0)
+        self.apply_base_checks(outcome, true)
     }
 
     /// Returns a low-cardinality sender authenticator label for metrics.
@@ -1229,8 +1227,6 @@ where
                 .into(),
             ))
         })?;
-        let payer_auth_charge = U256::from(intrinsic.payer_auth)
-            .saturating_mul(U256::from(signed.tx().max_fee_per_gas));
 
         let nonce_free = signed.tx().nonce_key == Eip8130Constants::NONCE_KEY_MAX;
         let transaction_expiry =
@@ -1375,10 +1371,9 @@ where
             payer,
             classification_generation,
             payer_balance: payer_account.balance,
-            payer_balance_after_auth: payer_account.balance.saturating_sub(payer_auth_charge),
+            sender_balance: sender_account.balance,
             sender_nonce,
             sender_bytecode_hash: sender_account.bytecode_hash,
-            payer_auth: intrinsic.payer_auth,
             watch_set,
             // Without the Keystore an account's only key is its own secp256k1
             // key, which can never change: its authorization is as stable as a
@@ -1878,19 +1873,18 @@ where
         }
     }
 
-    /// Performs the necessary Base-specific checks based on top of the regular eth outcome.
+    /// Performs the necessary Base-specific checks on top of the regular eth outcome: the DA
+    /// footprint limit and, when `check_cost` is set, that `balance` covers the transaction's
+    /// cost plus its L1 data and operator fees.
     ///
-    /// `operator_fee_gas_addition` is gas charged the operator fee on top of the
-    /// transaction's signed `gas_limit`. It is zero for ordinary transactions; for
-    /// EIP-8130 it is the payer-authentication gas, because the execution path meters
-    /// the operator fee on `gas_limit + payer_auth` (the gas-price portion of that
-    /// payer-auth gas is already reflected in the reduced `balance`). Mirroring it here
-    /// prevents admitting sponsored transactions that are operator-fee-underfunded and
-    /// would never execute.
+    /// EIP-8130 admission already requires the payer to cover gas plus those fees (see
+    /// `validate_eip8130_full`), so it passes `check_cost = false`: its `cost()` is the
+    /// sender's obligation, including a declared coinbase tip that admission deliberately does
+    /// not require.
     fn apply_base_checks(
         &self,
         outcome: TransactionValidationOutcome<Tx>,
-        operator_fee_gas_addition: u64,
+        check_cost: bool,
     ) -> TransactionValidationOutcome<Tx> {
         if !self.requires_l1_data_gas_fee() {
             // no need to check L1 gas fee
@@ -1930,6 +1924,17 @@ where
                 }
             }
 
+            if !check_cost {
+                return TransactionValidationOutcome::Valid {
+                    balance,
+                    state_nonce,
+                    transaction: valid_tx,
+                    propagate,
+                    bytecode_hash,
+                    authorities,
+                };
+            }
+
             let encoded = valid_tx.transaction().encoded_2718();
 
             // Must mirror the execution-side cost in `BaseHandler` (L1 data fee + operator fee
@@ -1937,9 +1942,7 @@ where
             let spec_id = BaseSpecId::from_timestamp(self.chain_spec(), self.block_timestamp());
             let cost_addition = l1_block_info.tx_cost(
                 &encoded,
-                U256::from(
-                    valid_tx.transaction().gas_limit().saturating_add(operator_fee_gas_addition),
-                ),
+                U256::from(valid_tx.transaction().gas_limit()),
                 spec_id,
             );
             let cost = valid_tx.transaction().cost().saturating_add(cost_addition);
@@ -3564,12 +3567,10 @@ mod tests {
 
         let state = validator.validate_eip8130_full(&signed).expect("valid funded EIP-8130 tx");
         let encoded = validator.eip8130_encoded(&signed);
-        let max_gas = FeeCheck::max_chargeable_gas(signed.tx().gas_limit, state.payer_auth);
-        let gas_charge = FeeCheck::max_fee_charge(
-            signed.tx().gas_limit,
-            state.payer_auth,
-            signed.tx().max_fee_per_gas,
-        );
+        // Self-pay: no payer authentication gas.
+        let max_gas = FeeCheck::max_chargeable_gas(signed.tx().gas_limit, 0);
+        let gas_charge =
+            FeeCheck::max_fee_charge(signed.tx().gas_limit, 0, signed.tx().max_fee_per_gas);
         let spec_id = BaseSpecId::from_timestamp(&chain_spec, chain_config.isthmus_timestamp);
         let mut l1_block_info = base_execution_evm::parse_l1_info(&isthmus_data).unwrap();
         let additional_fees = l1_block_info.tx_cost(&encoded, U256::from(max_gas), spec_id);

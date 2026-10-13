@@ -75,6 +75,8 @@ pub struct BasePooledTransaction<
     limit_class: OnceLock<crate::LimitClass>,
     /// Sender policy gate target resolved during validation, when gated.
     sender_policy_target: OnceLock<Address>,
+    /// The classified EIP-8130 sender's obligation reported by `cost()`.
+    sender_cost: OnceLock<U256>,
     /// The authorization read-set and build-time predicates captured during
     /// EIP-8130 validation. Unset for other transaction types; see
     /// [`crate::WatchManifest`].
@@ -113,6 +115,7 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
             watch_set: OnceLock::new(),
             limit_class: OnceLock::new(),
             sender_policy_target: OnceLock::new(),
+            sender_cost: OnceLock::new(),
             watch_manifest: OnceLock::new(),
             metering: None,
         }
@@ -257,15 +260,24 @@ where
         self.inner.transaction.signer_ref()
     }
 
-    /// A sponsored EIP-8130 transaction costs its sender nothing: the payer
-    /// covers the fees and admission does not reserve `call.value`. The payer's
-    /// funding is enforced by the admission guard's balance watch, so the
-    /// protocol pool's sender-balance accounting must not charge the sender.
+    /// The most a classified EIP-8130 transaction can debit its sender: the
+    /// fees plus the declared coinbase tip when self-paid, and only the tip
+    /// when sponsored, since the payer covers the fees. Reth checks the
+    /// sender's cumulative cost against its balance on insert and on every
+    /// account change, so a tip the sender cannot cover parks the transaction
+    /// as queued instead of ranking it. Admission does not require the tip.
+    ///
+    /// Computed once classified; validation sets the sender policy target,
+    /// which [`BasePooledTx::coinbase_tip`] reads, before the classification,
+    /// so the value is fixed while the transaction is pooled.
     fn cost(&self) -> &U256 {
-        if self.limit_class.get().is_some_and(|class| class.payer != class.sender) {
-            return &U256::ZERO;
-        }
-        &self.inner.cost
+        let Some(class) = self.limit_class.get() else {
+            return &self.inner.cost;
+        };
+        self.sender_cost.get_or_init(|| {
+            let tip = self.coinbase_tip().unwrap_or_default();
+            if class.payer == class.sender { self.inner.cost.saturating_add(tip) } else { tip }
+        })
     }
 
     fn encoded_length(&self) -> usize {

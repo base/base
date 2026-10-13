@@ -2078,7 +2078,7 @@ mod tests {
     use base_common_chains::ChainConfig;
     use base_common_consensus::{
         BaseBlock, BasePooledTransaction as ConsensusPooledTransaction, BasePrimitives,
-        BaseTxEnvelope, Eip8130Constants, Eip8130Signed, TxEip8130,
+        BaseTxEnvelope, Call, Eip8130Constants, Eip8130Signed, Predeploys, TxEip8130,
     };
     use base_execution_chainspec::BaseChainSpec;
     use base_execution_evm::BaseEvmConfig;
@@ -2439,12 +2439,20 @@ mod tests {
     }
 
     fn signed_1559(signer: &PrivateKeySigner, nonce: u64) -> BasePooledTransaction {
+        signed_1559_with_priority_fee(signer, nonce, 0)
+    }
+
+    fn signed_1559_with_priority_fee(
+        signer: &PrivateKeySigner,
+        nonce: u64,
+        max_priority_fee_per_gas: u128,
+    ) -> BasePooledTransaction {
         let tx = TxEip1559 {
             chain_id: test_chain_id(),
             nonce,
             gas_limit: 50_000,
             max_fee_per_gas: 1_000,
-            max_priority_fee_per_gas: 0,
+            max_priority_fee_per_gas,
             to: TxKind::Call(Address::repeat_byte(0xEE)),
             value: U256::ZERO,
             access_list: Default::default(),
@@ -3217,6 +3225,166 @@ mod tests {
         }]);
         assert!(!is_pending(&pool, hash));
         assert!(pool.best_transactions().all(|transaction| *transaction.hash() != hash));
+    }
+
+    const TIPPING_MAX_FEE_PER_GAS: u128 = 1_000;
+    const TIPPING_GAS_LIMIT: u64 = 1_000_000;
+
+    /// The most a [`tipping_eoa_8130`] transaction can charge in fees.
+    fn tipping_fees() -> U256 {
+        U256::from(TIPPING_GAS_LIMIT) * U256::from(TIPPING_MAX_FEE_PER_GAS)
+    }
+
+    /// A key-0 EIP-8130 transaction declaring `tip` to the sequencer fee vault.
+    fn tipping_eoa_8130(
+        signer: &PrivateKeySigner,
+        payer: Option<&PrivateKeySigner>,
+        nonce_sequence: u64,
+        tip: U256,
+    ) -> BasePooledTransaction {
+        let tx = TxEip8130 {
+            chain_id: test_chain_id(),
+            sender: None,
+            nonce_key: U256::ZERO,
+            nonce_sequence,
+            valid_after: 0,
+            valid_before: 0,
+            max_priority_fee_per_gas: 0,
+            max_fee_per_gas: TIPPING_MAX_FEE_PER_GAS,
+            gas_limit: TIPPING_GAS_LIMIT,
+            account_changes: Vec::new(),
+            calls: vec![vec![Call {
+                to: Predeploys::SEQUENCER_FEE_VAULT,
+                value: tip,
+                data: Bytes::new(),
+            }]],
+            metadata: Bytes::new(),
+            payer: payer.map(PrivateKeySigner::address),
+        };
+        let sender_auth = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
+        let payer_auth = payer.map_or_else(Vec::new, |payer| {
+            let payer_sig =
+                payer.sign_hash_sync(&tx.payer_signature_hash(signer.address())).unwrap();
+            let mut payer_auth = Eip8130Constants::K1_AUTHENTICATOR.to_vec();
+            payer_auth.extend_from_slice(&payer_sig.as_bytes());
+            payer_auth
+        });
+        let signed = Eip8130Signed::new(
+            tx,
+            Bytes::from(sender_auth.as_bytes().to_vec()),
+            Bytes::from(payer_auth),
+        );
+        let pooled = ConsensusPooledTransaction::Eip8130(signed);
+        BasePooledTransaction::from_pooled(Recovered::new_unchecked(pooled, signer.address()))
+    }
+
+    fn set_balance(pool: &IntegrationPool, address: Address, balance: U256) {
+        pool.update_accounts(vec![ChangedAccount { address, nonce: 0, balance }]);
+    }
+
+    fn is_best(pool: &IntegrationPool, hash: TxHash) -> bool {
+        pool.best_transactions().any(|transaction| *transaction.hash() == hash)
+    }
+
+    #[tokio::test]
+    async fn one_balance_backs_only_one_full_balance_coinbase_tip() {
+        let mut config = PoolConfig::default();
+        config.pending_limit.max_txs = 2;
+        let (pool, client) = build_integration_pool_with_config(config);
+        let [attacker, honest] = std::array::from_fn(|_| signer());
+        let balance = U256::from(10) * tipping_fees();
+        client.add_account(attacker.address(), ExtendedAccount::new(0, balance));
+        fund(&client, honest.address());
+
+        let honest_tx = signed_1559_with_priority_fee(&honest, 0, 1);
+        let honest_hash = *honest_tx.hash();
+        pool.add_transaction(TransactionOrigin::External, honest_tx).await.unwrap();
+
+        let full_balance_tip = balance - tipping_fees();
+        let mut hashes = Vec::new();
+        for nonce in 0..4 {
+            let transaction = tipping_eoa_8130(&attacker, None, nonce, full_balance_tip);
+            hashes.push(*transaction.hash());
+            let _ = pool.add_transaction(TransactionOrigin::External, transaction).await;
+        }
+
+        assert!(is_pending(&pool, honest_hash), "unbacked tips must not evict an honest tx");
+        assert!(is_best(&pool, honest_hash));
+        assert!(is_pending(&pool, hashes[0]), "the balance backs the first tip");
+        for hash in &hashes[1..] {
+            assert!(!is_pending(&pool, *hash), "an over-committed tip must not rank");
+            assert!(!is_best(&pool, *hash));
+        }
+    }
+
+    #[tokio::test]
+    async fn only_the_backed_prefix_of_coinbase_tips_is_pending() {
+        let (pool, client) = build_integration_pool();
+        let sender = signer();
+        // The balance covers all three transactions' fees but only the first tip.
+        let tip = U256::from(2) * tipping_fees();
+        client.add_account(
+            sender.address(),
+            ExtendedAccount::new(0, U256::from(3) * tipping_fees() + tip),
+        );
+
+        let mut hashes = Vec::new();
+        for nonce in 0..3 {
+            let transaction = tipping_eoa_8130(&sender, None, nonce, tip);
+            hashes.push(*transaction.hash());
+            pool.add_transaction(TransactionOrigin::External, transaction).await.unwrap();
+        }
+
+        assert!(is_pending(&pool, hashes[0]));
+        for hash in &hashes[1..] {
+            assert!(pool.get(hash).is_some());
+            assert!(!is_pending(&pool, *hash));
+        }
+    }
+
+    #[tokio::test]
+    async fn coinbase_tip_ranks_only_while_the_sender_balance_backs_it() {
+        let (pool, client) = build_integration_pool();
+        let sender = signer();
+        let tip = tipping_fees();
+        let backed = tipping_fees() + tip;
+        client.add_account(sender.address(), ExtendedAccount::new(0, backed));
+        let transaction = tipping_eoa_8130(&sender, None, 0, tip);
+        let hash = *transaction.hash();
+        pool.add_transaction(TransactionOrigin::External, transaction).await.unwrap();
+        assert!(is_pending(&pool, hash));
+
+        set_balance(&pool, sender.address(), backed - U256::from(1));
+        assert!(pool.get(&hash).is_some(), "the fees are still covered");
+        assert!(!is_pending(&pool, hash));
+        assert!(!is_best(&pool, hash));
+
+        set_balance(&pool, sender.address(), backed);
+        assert!(is_pending(&pool, hash));
+    }
+
+    #[tokio::test]
+    async fn sponsored_coinbase_tip_is_backed_by_the_sender() {
+        let (pool, client) = build_integration_pool();
+        let [unfunded, funded, payer] = std::array::from_fn(|_| signer());
+        fund(&client, payer.address());
+        let tip = tipping_fees();
+        client.add_account(funded.address(), ExtendedAccount::new(0, tip));
+
+        let unbacked = tipping_eoa_8130(&unfunded, Some(&payer), 0, tip);
+        let unbacked_hash = *unbacked.hash();
+        pool.add_transaction(TransactionOrigin::External, unbacked).await.unwrap();
+        assert!(pool.get(&unbacked_hash).is_some());
+        assert!(!is_pending(&pool, unbacked_hash), "the payer does not back the sender's tip");
+
+        let backed = tipping_eoa_8130(&funded, Some(&payer), 0, tip);
+        let backed_hash = *backed.hash();
+        pool.add_transaction(TransactionOrigin::External, backed).await.unwrap();
+        assert!(is_pending(&pool, backed_hash));
+
+        set_balance(&pool, funded.address(), tip - U256::from(1));
+        assert!(!is_pending(&pool, backed_hash));
+        assert!(!is_best(&pool, backed_hash));
     }
 
     #[test]
