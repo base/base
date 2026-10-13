@@ -3,9 +3,11 @@ import hashlib
 import os
 from pathlib import Path
 import shlex
+import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import unittest
 
@@ -53,9 +55,27 @@ class ReproducibilityTests(unittest.TestCase):
             reproduce.context(tree, first, root)
             os.utime(source, (1700000000, 1700000000))
             source.chmod(0o777)
+            source.write_text("local dirty content must not enter a committed build")
             (root / "untracked.rs").write_text("not part of the build")
             reproduce.context(tree, second, root)
             self.assertEqual(first.read_bytes(), second.read_bytes())
+
+    def test_filtered_context_retains_compile_time_inputs(self):
+        sources = subprocess.check_output(["git", "ls-files", "*.rs"], cwd=reproduce.ROOT, text=True).splitlines()
+        inputs = set()
+        for name in sources:
+            source = reproduce.ROOT / name
+            for literal in re.findall(r'include_(?:str|bytes)!\(\s*"([^"]+)"\s*\)', source.read_text()):
+                included = (source.parent / literal).resolve()
+                if included.is_file() and included.is_relative_to(reproduce.ROOT):
+                    inputs.add(str(included.relative_to(reproduce.ROOT)))
+        self.assertIn("bin/prover/nitro-enclave/README.md", inputs)
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = Path(tmp) / "context.tar"
+            reproduce.context("HEAD", archive)
+            with tarfile.open(archive) as tar:
+                missing = inputs - set(tar.getnames())
+        self.assertEqual(missing, set(), f"Compile-time inputs missing from canonical context: {sorted(missing)}")
 
     def test_comparison_rejects_eif_bytes_pcr0_and_stale_baselines(self):
         with tempfile.TemporaryDirectory() as tmp:

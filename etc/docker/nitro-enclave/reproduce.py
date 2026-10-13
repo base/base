@@ -17,6 +17,7 @@ EXCLUDED_ROOTS = {".agents", ".github", ".depot", "docs"}
 EXCLUDED_FILES = {
     "llms.txt", "llms-full.txt", "etc/docs-index.toml",
     "etc/docker/nitro-enclave/baseline.json",
+    "etc/docker/nitro-enclave/README.md",
 }
 ARTIFACTS = (
     "base-prover-nitro-enclave", "bootstrap/bzImage", "bootstrap/bzImage.config",
@@ -39,7 +40,7 @@ def context(ref, output, root=ROOT):
     with process.stdout, tarfile.open(fileobj=process.stdout, mode="r|") as source, tarfile.open(output, "w", format=tarfile.USTAR_FORMAT) as target:
         for member in source:
             path = PurePosixPath(member.name)
-            if path.parts[0] in EXCLUDED_ROOTS or member.name in EXCLUDED_FILES or member.name.endswith(".md"):
+            if path.parts[0] in EXCLUDED_ROOTS or member.name in EXCLUDED_FILES or (len(path.parts) == 1 and member.name.endswith(".md")):
                 continue
             if path.is_absolute() or ".." in path.parts or not (member.isfile() or member.isdir() or member.issym()):
                 raise ValueError(f"Unsupported source entry: {member.name}")
