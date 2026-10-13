@@ -1,28 +1,111 @@
 name: Claude Code Review
 
+# The review is expensive, so it does not run on every push:
+#  - once, when a pull request is opened or marked ready for review;
+#  - again when a member of the Base organization who has write access to this repository comments `/review`.
+# A push only updates one line of the review comment, which counts the commits that have not been reviewed.
 on:
   pull_request:
-    types: [opened, synchronize, ready_for_review, reopened]
+    types: [opened, ready_for_review, synchronize]
+  # An `issue_comment` run uses the workflow file on the default branch, never the pull request's copy, so a
+  # pull request cannot change how its own `/review` is handled. `/review` therefore starts working once
+  # this file is on the default branch.
+  issue_comment:
+    types: [created]
 
-concurrency:
-  group: claude-review-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
-
+# This workflow can post comments and edit its own comments. It cannot push commits or modify files in the
+# repo, and GitHub does not let this token resolve review threads (see .agents/skills/pr-review/SKILL.md).
 permissions:
   contents: read
-  # This allows posting comments and reviews
-  # It does not allow pushing any commits or modifying any files in the repo
-  pull-requests: write
 
 jobs:
+  # Decides whether a request may start a review, before it joins the review job's concurrency group. It has no
+  # group of its own on purpose: GitHub keeps only one run waiting per group, so a request that is going to
+  # be refused (a member without write access, or a pull request that was marked ready again after it already
+  # got a review) must be refused here, or it could take the place of an authorized `/review` that is waiting.
+  # It does not catch a review that is still running and has not posted its summary yet; in that case a
+  # second request can still take the waiting place, and the person asking has to ask again. It needs no
+  # secret other than the token and runs on a hosted runner.
+  authorize:
+    name: Authorize request
+    permissions:
+      contents: read
+      pull-requests: read
+    if: >-
+      (github.event_name == 'pull_request' && github.event.action != 'synchronize'
+        && github.event.pull_request.draft == false
+        && github.event.pull_request.head.repo.full_name == github.repository)
+      || (github.event_name == 'issue_comment'
+        && github.event.issue.pull_request && github.event.issue.state == 'open'
+        && (github.event.comment.body == '/review'
+            || startsWith(github.event.comment.body, '/review ')
+            || startsWith(github.event.comment.body, format('/review{0}', fromJSON('"\n"')))
+            || startsWith(github.event.comment.body, format('/review{0}', fromJSON('"\r"'))))
+        && github.event.comment.user.type != 'Bot'
+        && contains(fromJSON('["OWNER","MEMBER"]'), github.event.comment.author_association))
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      allowed: ${{ steps.check.outputs.allowed }}
+    steps:
+      - name: Check the request
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
+          COMMENTER: ${{ github.event.comment.user.login }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = issue_comment ]; then
+            # A comment needs the commenter to have write access, not only to be in the organization.
+            can_push=$(gh api "repos/$REPO/collaborators/$COMMENTER/permission" --jq '.user.permissions.push' 2>/dev/null || echo false)
+            if [ "$can_push" != true ]; then
+              echo "::notice::Not reviewing: $COMMENTER does not have write access to this repository."
+              echo "allowed=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          else
+            # Opening a pull request or marking it ready reviews it once; a second ready event must not buy another.
+            existing=$(gh api "repos/$REPO/issues/$NUMBER/comments" --paginate --jq \
+              '.[] | select(.user.login == "github-actions[bot]" and .user.type == "Bot") | select(.body | startswith("<!-- CLAUDE_REVIEW_SUMMARY -->")) | .id' | wc -l)
+            if [ "$existing" -gt 0 ]; then
+              echo "::notice::Not reviewing: this pull request already has a review. Comment /review for a new one."
+              echo "allowed=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+          echo "allowed=true" >> "$GITHUB_OUTPUT"
+
   review:
     name: Review PR
+    needs: authorize
+    permissions:
+      contents: read
+      pull-requests: write
+    # Concurrency is set on the job, not the workflow: every comment on every pull request starts a run of this
+    # workflow, and a comment that is not a review request must not get in the way of a review in progress.
+    # A second request waits for the first rather than cancelling it, because a review cannot be redone cheaply.
+    concurrency:
+      group: claude-review-${{ github.event.pull_request.number || github.event.issue.number }}
+      cancel-in-progress: false
     # Note: This job runs on the BaseRunnerGroup to be able to access LLM Gateway
     # It will not work on other runners
-    # Skip for external contributor PRs (forks) — secrets and runner group are unavailable
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    # Runs only for a request that the `authorize` job let through: a pull request that is opened or marked
+    # ready (not a draft, not a fork: secrets and the runner group are unavailable to forks, and it has no
+    # review yet), or a `/review` comment, alone or followed by a space or a line break, from a member of the
+    # organization with write access. Everything that can refuse a request is decided in `authorize`, before
+    # this job joins the concurrency group below, because GitHub keeps one waiting run per group.
+    # `!cancelled()` is there so that a skipped `authorize` (a push, a draft, a fork) skips this job cleanly.
+    if: >-
+      !cancelled() && needs.authorize.result == 'success' && needs.authorize.outputs.allowed == 'true'
     runs-on:
       group: BaseRunnerGroup
+    # Agents have no time limit of their own, so this is the only bound. About 1 in 9 Opus calls takes 5-13
+    # minutes, and a deep review chains several calls after the slowest reviewer (vote, chair, final round),
+    # so it needs room for a few slow ones. A run that is killed loses the summary, not the findings already posted.
+    timeout-minutes: 30
     steps:
       - name: Harden the runner (Block unauthorized outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -30,148 +113,184 @@ jobs:
           egress-policy: block
           allowed-endpoints: >
             api.github.com:443
-            bun.sh:443
             github.com:443
             objects.githubusercontent.com:443
             registry.npmjs.org:443
             release-assets.githubusercontent.com:443
             ${{ vars.LLM_GATEWAY_HOSTNAME }}:443
 
+      # Read the pull request from the API, not from the event: a comment event does not carry it, and the
+      # head may have moved since a queued run was triggered. The comment text goes through the environment,
+      # never into the script.
+      - name: Find the pull request
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
+          EVENT: ${{ github.event_name }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+        run: |
+          set -euo pipefail
+          # Whether the commenter may ask was decided by the `authorize` job; this is a second look at the text.
+          if [ "$EVENT" = issue_comment ] && ! [[ "$COMMENT_BODY" =~ ^/review([[:space:]]|$) ]]; then
+            echo "::notice::Not reviewing: the comment is not a /review request."
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          read -r state head_repo head_sha draft < <(gh api "repos/$REPO/pulls/$NUMBER" \
+            --jq '[.state, .head.repo.full_name, .head.sha, .draft] | @tsv')
+          if [ "$state" != open ] || [ "$head_repo" != "$REPO" ]; then
+            echo "::notice::Not reviewing: the pull request is not open, or it comes from a fork."
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$draft" = true ]; then
+            echo "::notice::Not reviewing: the pull request is a draft. Mark it ready for review."
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if ! [[ "$head_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Unexpected head commit from the API."
+            exit 1
+          fi
+          # A second look at what `authorize` checked, taken after any wait in the concurrency group: a review
+          # that was running when `authorize` ran has posted its summary by now.
+          if [ "$EVENT" = pull_request ]; then
+            existing=$(gh api "repos/$REPO/issues/$NUMBER/comments" --paginate --jq \
+              '.[] | select(.user.login == "github-actions[bot]" and .user.type == "Bot") | select(.body | startswith("<!-- CLAUDE_REVIEW_SUMMARY -->")) | .id' | wc -l)
+            if [ "$existing" -gt 0 ]; then
+              echo "::notice::Not reviewing: this pull request already has a review. Comment /review for a new one."
+              echo "ok=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+          {
+            echo "ok=true"
+            echo "head_sha=$head_sha"
+          } >> "$GITHUB_OUTPUT"
+
+      # Nothing from the pull request is on disk yet, so this cannot be influenced by it.
+      - name: Install Claude Code
+        if: steps.pr.outputs.ok == 'true'
+        working-directory: ${{ runner.temp }}
+        run: npm install --global @anthropic-ai/claude-code@2.1.293
+
+      # Agents read the PR's files, so check out the PR head (not the default merge commit) to make the
+      # line numbers they report match the diff that comments are anchored to. Do not leave the job
+      # token in .git/config, where an agent reading untrusted PR content could copy it.
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        if: steps.pr.outputs.ok == 'true'
+        with:
+          ref: ${{ steps.pr.outputs.head_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      # Models, prompts, and which reviewers run are defined in .agents/skills/pr-review/.
+      # The script that holds the secrets always comes from a clean checkout of the default branch, never
+      # from the pull request: a pull request cannot add or replace files (agents, prompts, or a module that
+      # shadows the standard library) in code it does not control. The agents read the pull request's files
+      # from the working directory, and `--setting-sources user` keeps the PR's own Claude settings and hooks
+      # out. The one exception is the pull request that introduces the pipeline, which has no default-branch
+      # copy yet and runs its own; that is allowed for a `pull_request` run only, whose workflow file is the
+      # PR's own anyway. A `/review` comment never runs a pull request's copy.
+      - name: Check out the review pipeline from the default branch
+        id: pipeline
+        if: steps.pr.outputs.ok == 'true'
+        run: |
+          git fetch --depth 1 origin "$DEFAULT_BRANCH"
+          script=.agents/skills/pr-review/review.py
+          if git cat-file -e "FETCH_HEAD:$script" 2>/dev/null; then
+            rm -rf "$RUNNER_TEMP/pipeline"
+            git worktree prune
+            git worktree add --force --detach "$RUNNER_TEMP/pipeline" FETCH_HEAD
+            script="$RUNNER_TEMP/pipeline/$script"
+          elif [ "$EVENT" != pull_request ]; then
+            echo "::error::The default branch has no review pipeline, and a comment may not run the pull request's copy."
+            exit 1
+          fi
+          echo "script=$script" >> "$GITHUB_OUTPUT"
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          EVENT: ${{ github.event_name }}
+
+      # The script exits with 3 when the pull request's head is no longer the commit that was checked out. The
+      # review runs once per pull request, so it must not be lost to a push that landed a moment earlier:
+      # follow the pull request to its new head and try once more.
+      - name: Review pull request
+        if: steps.pr.outputs.ok == 'true'
+        run: |
+          review() { python3 "$SCRIPT" --pr "$NUMBER" --post --artifacts-dir "$RUNNER_TEMP/pr-review"; }
+          code=0
+          review || code=$?
+          if [ "$code" -eq 3 ]; then
+            head=$(gh api "repos/$REPO/pulls/$NUMBER" --jq .head.sha)
+            echo "::notice::The pull request moved to $head while the review started; reviewing that commit."
+            [[ "$head" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Unexpected head commit from the API."; exit 1; }
+            git fetch --depth 1 origin "$head"
+            git checkout --detach "$head"
+            code=0
+            review || code=$?
+          fi
+          exit "$code"
+        env:
+          SCRIPT: ${{ steps.pipeline.outputs.script }}
+          NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          ANTHROPIC_BASE_URL: https://${{ vars.LLM_GATEWAY_HOSTNAME }}
+          ANTHROPIC_API_KEY: ${{ secrets.LLM_GATEWAY_API_KEY }}
+
+      - name: Upload review artifacts
+        if: always() && steps.pr.outputs.ok == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pr-review
+          path: ${{ runner.temp }}/pr-review
+          retention-days: 7
+          if-no-files-found: ignore
+
+  # Keeps the review comment honest after a push: rewrites one line to say how many commits came after the
+  # one that was reviewed, with a link to their diff. Runs no model and needs no gateway access.
+  status:
+    name: Update review status
+    if: >-
+      github.event_name == 'pull_request' && github.event.action == 'synchronize'
+      && github.event.pull_request.draft == false
+      && github.event.pull_request.head.repo.full_name == github.repository
+    # A newer push makes an older update pointless.
+    concurrency:
+      group: claude-review-status-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      # Only the default branch is checked out, never the pull request: the script calls the GitHub API and
+      # reads nothing from the pull request's files. Until the pipeline is on the default branch there is
+      # nothing to run, and the step below says so.
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
+          ref: ${{ github.event.repository.default_branch }}
           fetch-depth: 1
+          persist-credentials: false
 
-      - name: Record pre-review comment boundary
-        id: review-comments
+      - name: Update the count of unreviewed commits
+        run: |
+          if [ ! -f .agents/skills/pr-review/review.py ]; then
+            echo "::notice::The review pipeline is not on the default branch yet, so there is no status line to update."
+            exit 0
+          fi
+          python3 .agents/skills/pr-review/review.py --pr "$PR_NUMBER" --refresh-status
         env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          latest_comment_id="$(gh api --paginate --slurp "repos/$GH_REPO/issues/$PR_NUMBER/comments" |
-            jq '[.[][] | .id] | max // 0')"
-          echo "latest_comment_id=$latest_comment_id" >> "$GITHUB_OUTPUT"
-
-      # The action's claude.ai installer is blocked by the runner's egress policy.
-      - name: Install Claude Code from npm
-        id: install-claude
-        shell: bash
-        run: |
-          set -euo pipefail
-          npm install --prefix "$RUNNER_TEMP/claude-code" --no-save --no-package-lock --no-audit --no-fund @anthropic-ai/claude-code@2.1.293
-          claude_path="$RUNNER_TEMP/claude-code/node_modules/.bin/claude"
-          "$claude_path" --version
-          echo "claude_path=$claude_path" >> "$GITHUB_OUTPUT"
-
-      - name: Run Claude Code
-        id: claude-review
-        uses: anthropics/claude-code-action@6fed3ca145920b639991cb756090506e1bcaf515 # v1.0.245
-        env:
-          ANTHROPIC_BASE_URL: https://${{ vars.LLM_GATEWAY_HOSTNAME }}
-
-        with:
-          anthropic_api_key: ${{ secrets.LLM_GATEWAY_API_KEY }}
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          path_to_claude_code_executable: ${{ steps.install-claude.outputs.claude_path }}
-
-          # When track_progress is enabled:
-          # - Creates a tracking comment with progress checkboxes
-          # - Includes all PR context (comments, attachments, images)
-          # - Updates progress as the review proceeds
-          # - Marks as completed when done
-          track_progress: false
-
-          # review instructions
-          prompt: |
-            You are reviewing a Pull Request for Base Reth Node — a Rust Ethereum L2 node built on Reth.
-
-            CODEBASE:
-            - 4 core crate groups: crates/{client, builder, consensus, shared}
-            - devnet/: system and E2E test infrastructure for Base node
-            - Error handling: thiserror enums with From impls
-            - Async: tokio, async-trait, arc-swap for lock-free config
-            - CI already enforces: clippy (52 rules, -D warnings), rustfmt (2024 edition), cargo-deny, cargo-udeps
-
-            REVIEW GUIDELINES:
-            - Review as a principal Rust auditor. Be thorough, but do not nit-pick for the sake of it
-            - Focus on correctness, safety, and idiomatic Rust
-            - Verify that the logic matches the PR description and intended behavior
-            - Look for meaningful redundancy, unnecessary complexity, or missed reuse of existing abstractions
-            - Review code using the PR context and the `gh pr diff` / `gh pr view` commands; do not rely on broad local repo reads
-            - DO NOT comment on formatting or style — clippy and rustfmt handle that
-            - DO NOT post praise, "looks good", or filler comments. If there are no actionable findings, post nothing
-            - Use inline comments for specific code feedback via mcp__github_inline_comment__create_inline_comment
-            - Keep each inline finding to one concise sentence where possible: state the issue and its concrete consequence. The Critical block-production finding requirements below take precedence over brevity
-            - Post one brief summary comment at the end with your overall assessment (if you have findings)
-
-            DUPLICATE AVOIDANCE:
-            Before posting any inline comment, first fetch all existing inline review comments on this PR by running:
-            gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments --jq '.[] | select(.user.login == "github-actions[bot]") | {path, body}'
-            Do NOT post a comment if there is already a comment from github-actions[bot] on the same file raising the same or substantially similar issue.
-            Only post new findings that haven't been raised before.
-
-            WHAT TO LOOK FOR:
-            - Error handling: .unwrap()/.expect() in non-test code, discarded error context (.map_err(|_| ...)), missing From impls
-            - Memory & performance: unnecessary .clone() on large types in hot paths, unbounded collections from external input
-            - Concurrency: locks held across .await, channel misuse (no backpressure, unhandled closed channels), cancellation safety in tokio::select!
-            - Safety: unsafe without // SAFETY comments, unchecked arithmetic on financial/gas values, HashMap in determinism-sensitive code
-            - API design: missing #[must_use] on Result-returning public methods, breaking changes to public interfaces
-            - Architecture: dependency direction violations (shared depending on client/builder), tight coupling between crate layers
-            - Rust idioms: &String instead of &str, &Vec<T> instead of &[T], manual implementations of standard traits, needless lifetime annotations
-
-            BLOCK PRODUCTION HALT/STALL CRITICAL FINDINGS:
-            Treat PRs touching builder, execution, precompile, payload assembly, state-root, tx selection, metering, payload/data transport, or flashblocks publishing paths as block-production-sensitive.
-            After forming your standard review findings, check whether the PR is block-production-sensitive. If it is, run `git show HEAD:docs/guides/BLOCK_PRODUCTION_REVIEW.md` and use that guide as an additional authoritative source for Critical block-production halt/stall findings.
-            The guide's known trigger classes are not exhaustive. Use your own engineering judgment to identify analogous changes that could halt block production, stall payload finalization, prevent validator re-execution, or indefinitely exclude valid transactions.
-
-            Leave an inline Critical finding for any unmitigated change that can introduce, widen, or obscure a block-production halt/stall trigger described in the guide or an analogous trigger you identify.
-            A Critical finding must explain the triggering input/state/config, affected code path, propagated error or panic, why block production or validator progression can halt/stall, and the missing mitigation or test.
-
-            COMMENT MANAGEMENT:
-            If you have findings, post one summary using `gh pr comment ${{ github.event.pull_request.number }} --body ...`.
-            Start the body with the exact marker `<!-- CLAUDE_REVIEW_SUMMARY -->`, followed by a blank line and your summary.
-            Do not edit or delete existing top-level comments. A dedicated workflow step removes older marked summaries after you finish.
-
-          claude_args: |
-            --model claude-opus-5-5
-            --effort max
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(git ls-files docs),Bash(git show HEAD:docs/:*),Bash(cat /home/runner/.claude/projects/:*),Bash(gh pr comment ${{ github.event.pull_request.number }} --body:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments:*),Bash(gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments:*)"
-
-      - name: Remove superseded review summaries
-        # A review can post its summary before a later action error.
-        if: ${{ !cancelled() && steps.review-comments.outcome == 'success' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          PRE_REVIEW_COMMENT_ID: ${{ steps.review-comments.outputs.latest_comment_id }}
-          REVIEW_OUTCOME: ${{ steps.claude-review.outcome }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          stale_comments="$(mktemp)"
-          trap 'rm -f "$stale_comments"' EXIT
-
-          # Fetch every page before deleting anything. Keep the newest summary
-          # unless a successful review posted none, making all old summaries stale.
-          # Failed reviews without a replacement retain the latest prior summary.
-          # Never touch human comments or comments owned by other workflows.
-          gh api --paginate --slurp "repos/$GH_REPO/issues/$PR_NUMBER/comments" |
-            jq -r --argjson boundary "$PRE_REVIEW_COMMENT_ID" --arg outcome "$REVIEW_OUTCOME" '[.[][]
-              | select(.user.login == "github-actions[bot]" and .user.type == "Bot")
-              | select((.body // "") | startswith("<!-- CLAUDE_REVIEW_SUMMARY -->"))]
-              | sort_by(.id)
-              | if $outcome == "success" and ((.[-1].id // 0) <= $boundary)
-                then .[] else .[:-1][] end
-              | .id' > "$stale_comments"
-
-          cleanup_failed=0
-          while IFS= read -r comment_id; do
-            if ! gh api --method DELETE "repos/$GH_REPO/issues/comments/$comment_id"; then
-              echo "::warning::Failed to delete stale review summary $comment_id"
-              cleanup_failed=1
-            fi
-          done < "$stale_comments"
-          exit "$cleanup_failed"
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
