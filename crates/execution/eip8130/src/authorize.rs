@@ -51,35 +51,54 @@ impl ActorAuthorizer {
         now: u64,
         account_state: Option<&AccountState>,
     ) -> Result<ResolvedActor, AuthorizeError> {
-        if auth.len() < 20 {
-            return Err(AuthError::MalformedAuth.into());
-        }
-        let authenticator = Address::from_slice(&auth[..20]);
-        Self::authenticate(storage, account, hash, authenticator, &auth[20..], now, account_state)
+        Self::authenticate(storage, account, hash, auth, now, account_state, true)
     }
 
-    /// Mirror of `_authenticate`: route by authenticator, then authorize the
-    /// resolved actor against the account's config.
+    /// Authenticates a payer's `auth` (`authenticator(20) || data`) for
+    /// `account` against `hash`.
+    ///
+    /// Like [`Self::authenticate_actor`] but resolves no policy: a payer only
+    /// needs its sponsor scope, so the returned `policy_target` is always
+    /// [`Address::ZERO`] and no `policy_manager` slot is read.
+    pub fn authenticate_payer(
+        storage: &AccountConfigurationStorage<'_>,
+        account: Address,
+        hash: B256,
+        auth: &[u8],
+        now: u64,
+    ) -> Result<ResolvedActor, AuthorizeError> {
+        Self::authenticate(storage, account, hash, auth, now, None, false)
+    }
+
+    /// Mirror of `_authenticate`: route `auth` (`authenticator(20) || data`) by
+    /// authenticator, then authorize the resolved actor against the account's
+    /// config, reading its policy manager only when `resolve_policy`.
     fn authenticate(
         storage: &AccountConfigurationStorage<'_>,
         account: Address,
         hash: B256,
-        authenticator: Address,
-        data: &[u8],
+        auth: &[u8],
         now: u64,
         account_state: Option<&AccountState>,
+        resolve_policy: bool,
     ) -> Result<ResolvedActor, AuthorizeError> {
+        if auth.len() < 20 {
+            return Err(AuthError::MalformedAuth.into());
+        }
+        let authenticator = Address::from_slice(&auth[..20]);
+        let data = &auth[20..];
         // secp256k1 signers — the implicit default EOA and every explicit k1
         // actor — authenticate through `K1_AUTHENTICATOR`. Recover here (the
         // `RecoveredActorId` token proves the recovery) and authorize against
         // the account.
         if authenticator == Eip8130Constants::K1_AUTHENTICATOR {
-            return Self::authorize_k1_with_account_state(
+            return Self::resolve_k1(
                 storage,
                 account,
                 RecoveredActorId::recover_k1(hash, data)?,
                 now,
                 account_state,
+                resolve_policy,
             );
         }
 
@@ -87,7 +106,7 @@ impl ActorAuthorizer {
         // non-canonical authenticators are rejected there.
         match AuthenticatorDispatch::authenticate(hash, authenticator, data)? {
             DispatchOutcome::Authenticated { actor_id } => {
-                Self::resolve_bound(storage, account, actor_id, authenticator, now)
+                Self::resolve_bound(storage, account, actor_id, authenticator, now, resolve_policy)
             }
             DispatchOutcome::Delegated { actor_id, delegate_account } => {
                 // `data` = delegate_account(20) || nested_auth. Mirror
@@ -131,6 +150,7 @@ impl ActorAuthorizer {
                     actor_id,
                     Eip8130Contracts::DELEGATE_AUTHENTICATOR,
                     now,
+                    resolve_policy,
                 )
             }
         }
@@ -175,6 +195,33 @@ impl ActorAuthorizer {
         now: u64,
         account_state: Option<&AccountState>,
     ) -> Result<ResolvedActor, AuthorizeError> {
+        Self::resolve_k1(storage, account, recovered, now, account_state, true)
+    }
+
+    /// Resolves a recovered secp256k1 payer signer against `account`.
+    ///
+    /// Like [`Self::authorize_k1`] but resolves no policy: a payer only needs
+    /// its sponsor scope, so the returned `policy_target` is always
+    /// [`Address::ZERO`] and no `policy_manager` slot is read.
+    pub fn authorize_k1_payer(
+        storage: &AccountConfigurationStorage<'_>,
+        account: Address,
+        recovered: RecoveredActorId,
+        now: u64,
+    ) -> Result<ResolvedActor, AuthorizeError> {
+        Self::resolve_k1(storage, account, recovered, now, None, false)
+    }
+
+    /// Shared body of [`Self::authorize_k1_with_account_state`] and
+    /// [`Self::authorize_k1_payer`].
+    fn resolve_k1(
+        storage: &AccountConfigurationStorage<'_>,
+        account: Address,
+        recovered: RecoveredActorId,
+        now: u64,
+        account_state: Option<&AccountState>,
+        resolve_policy: bool,
+    ) -> Result<ResolvedActor, AuthorizeError> {
         let recovered = recovered.actor_id();
         if recovered == AccountConfigurationStorage::self_actor_id(account) {
             let loaded_state;
@@ -200,7 +247,8 @@ impl ActorAuthorizer {
             // `_resolvePolicyTarget`: address(0) when ungated, else the policy
             // manager (keyed by the self-actorId, shared keyspace). An ungated
             // (full-owner) self costs no extra read. OPERATOR overrides POLICY.
-            let policy_target = if Eip8130Constants::sender_is_policy_gated(state.default_eoa_scope)
+            let policy_target = if resolve_policy
+                && Eip8130Constants::sender_is_policy_gated(state.default_eoa_scope)
             {
                 storage.get_policy_manager(account, recovered)?
             } else {
@@ -213,19 +261,27 @@ impl ActorAuthorizer {
                 expiry: state.default_eoa_expiry,
             });
         }
-        Self::resolve_bound(storage, account, recovered, Eip8130Constants::K1_AUTHENTICATOR, now)
+        Self::resolve_bound(
+            storage,
+            account,
+            recovered,
+            Eip8130Constants::K1_AUTHENTICATOR,
+            now,
+            resolve_policy,
+        )
     }
 
     /// Loads `actor_config[actor_id][account]`, requires it to be bound to
     /// `authenticator` and not expired, and returns the authorization surface
-    /// (`scope`, resolved `policy_target`). Mirrors the shared tail
-    /// of `_authenticate` / `_authenticateK1`.
+    /// (`scope`, and `policy_target` when `resolve_policy`). Mirrors the shared
+    /// tail of `_authenticate` / `_authenticateK1`.
     fn resolve_bound(
         storage: &AccountConfigurationStorage<'_>,
         account: Address,
         actor_id: B256,
         authenticator: Address,
         now: u64,
+        resolve_policy: bool,
     ) -> Result<ResolvedActor, AuthorizeError> {
         if actor_id.is_zero() {
             return Err(AuthorizeError::AuthenticationFailed);
@@ -242,11 +298,12 @@ impl ActorAuthorizer {
         // (never the signed commitment). Resolved from the `config` already in
         // hand so an ungated actor costs no extra read and a gated one reads only
         // the manager slot (no `actor_config` re-read). OPERATOR overrides POLICY.
-        let policy_target = if Eip8130Constants::sender_is_policy_gated(config.scope) {
-            storage.get_policy_manager(account, actor_id)?
-        } else {
-            Address::ZERO
-        };
+        let policy_target =
+            if resolve_policy && Eip8130Constants::sender_is_policy_gated(config.scope) {
+                storage.get_policy_manager(account, actor_id)?
+            } else {
+                Address::ZERO
+            };
         Ok(ResolvedActor { actor_id, scope: config.scope, policy_target, expiry: config.expiry })
     }
 }
