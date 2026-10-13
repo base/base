@@ -293,7 +293,7 @@ mod tests {
     use base_common_genesis::BaseUpgrade;
     use base_execution_chainspec::BaseChainSpec;
     use base_protocol::{BaseTimeMetadataError, BaseTimeScheduleError, BaseTimeUpdateTx};
-    use reth_chainspec::{BaseFeeParams, EthChainSpec, ForkCondition};
+    use reth_chainspec::{BaseFeeParams, EthChainSpec, EthereumHardfork, ForkCondition};
 
     use super::*;
 
@@ -700,6 +700,7 @@ mod tests {
             gas_used: GAS_USED,
         };
         validate_block_post_execution(&header, &chainspec, &result, None, Some(bal_hash))
+            .unwrap();
     }
 
     #[test]
@@ -818,13 +819,16 @@ mod tests {
     fn amsterdam_chainspec() -> BaseChainSpec {
         let mut chainspec = BaseChainSpec::sepolia();
         chainspec.set_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(AMSTERDAM_TIMESTAMP));
+        chainspec.set_fork(EthereumHardfork::Amsterdam, ForkCondition::Timestamp(AMSTERDAM_TIMESTAMP));
         chainspec
     }
 
     /// Sepolia with Amsterdam (Denim) scheduled beyond any timestamp used in tests.
     fn pre_amsterdam_chainspec() -> BaseChainSpec {
         let mut chainspec = BaseChainSpec::sepolia();
+        // Denim and Amsterdam are two accessors for the same fork, so both must be moved.
         chainspec.set_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(u64::MAX));
+        chainspec.set_fork(EthereumHardfork::Amsterdam, ForkCondition::Timestamp(u64::MAX));
         chainspec
     }
 

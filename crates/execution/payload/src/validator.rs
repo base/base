@@ -4,7 +4,7 @@ use alloc::sync::Arc;
 
 use alloy_consensus::{Block, BlockHeader};
 use alloy_eips::eip7928::bal::DecodedBal;
-use alloy_primitives::B256;
+use alloy_primitives::{B256, Bytes};
 use alloy_rpc_types_engine::PayloadError;
 use base_common_chains::Upgrades;
 use base_common_rpc_types_engine::{BasePayloadError, ExecutionData};
@@ -131,10 +131,11 @@ pub fn validate_block_access_list(
         (Some(_), None) => Err(BasePayloadError::UnexpectedBlockAccessList),
         (None, _) => Ok(()),
     }
+}
 
 #[cfg(test)]
 mod tests {
-    use alloy_eips::eip7928::Bal;
+    use alloy_eips::eip7928::bal::Bal;
     use alloy_primitives::b256;
 
     use super::*;
@@ -213,5 +214,4 @@ mod tests {
         validate_block_access_list(None, None)
             .expect("an absent list and commitment must be accepted");
     }
-}
 }
