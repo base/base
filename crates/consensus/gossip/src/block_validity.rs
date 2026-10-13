@@ -126,6 +126,7 @@ impl BlockHandler {
             BaseExecutionPayload::V2(_) => "v2",
             BaseExecutionPayload::V3(_) => "v3",
             BaseExecutionPayload::V4(_) => "v4",
+            BaseExecutionPayload::V5(_) => "v5",
         };
         Metrics::block_version(version).increment(1);
 
@@ -318,6 +319,11 @@ impl BlockHandler {
             BaseExecutionPayload::V4(payload) => {
                 validate_v4(&self.rollup_config, payload, envelope.parent_beacon_block_root)
             }
+            BaseExecutionPayload::V5(payload) => validate_v4(
+                &self.rollup_config,
+                &payload.payload_inner,
+                envelope.parent_beacon_block_root,
+            ),
         }
     }
 }

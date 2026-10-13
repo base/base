@@ -130,6 +130,7 @@ mod tests {
             IdentTopic::new("/optimism/8453/1/blocks").hash(),
             IdentTopic::new("/optimism/8453/2/blocks").hash(),
             IdentTopic::new("/optimism/8453/3/blocks").hash(),
+            IdentTopic::new("/optimism/8453/4/blocks").hash(),
         ]
     }
 
@@ -142,7 +143,7 @@ mod tests {
     }
 
     #[test]
-    fn startup_after_isthmus_only_subscribes_to_v4() {
+    fn startup_after_isthmus_subscribes_to_v4_and_the_future_v5_topic() {
         let key = libp2p::identity::Keypair::generate_secp256k1();
         let (_, recv) = tokio::sync::watch::channel(Address::ZERO);
         let handler = BlockHandler::new(
@@ -153,10 +154,14 @@ mod tests {
             },
             recv,
         );
-        let expected = handler.blocks_v4_topic.hash();
+        let mut expected =
+            vec![handler.blocks_v4_topic.hash(), handler.blocks_v5_topic.hash()];
+        expected.sort();
         let behaviour =
             Behaviour::new(key.public(), config::default_config(), &[Box::new(handler)]).unwrap();
-        assert_eq!(behaviour.gossipsub.topics().cloned().collect::<Vec<_>>(), [expected]);
+        let mut subscribed = behaviour.gossipsub.topics().cloned().collect::<Vec<_>>();
+        subscribed.sort();
+        assert_eq!(subscribed, expected);
     }
 
     #[test]
