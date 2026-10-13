@@ -7,6 +7,7 @@ import os
 from pathlib import Path, PurePosixPath
 import re
 import subprocess
+import sys
 import tarfile
 import tempfile
 import uuid
@@ -138,11 +139,41 @@ def compare(first, second, baseline=None, require_independent=False):
             differences.append("Noncanonical build host or BuildKit pin")
     if baseline is not None:
         expected = json.loads(Path(baseline).read_text())
-        if expected["measurements"] != left:
+        if any(expected["measurements"][key] != left[key] for key in ("eif_sha256", "pcr0", "sha256")):
             differences.append("Checked-in baseline differs. Review diagnostics and follow the measured baseline update policy.")
+        identity = json.loads((first / "identity.json").read_text())
+        if (expected["measurements"]["source_identity"], expected.get("source_tree")) != (left["source_identity"], identity.get("source_tree")):
+            print(
+                "Baseline source context differs (provenance only): "
+                f"measured identity={expected['measurements']['source_identity']}, tree={expected.get('source_tree')}; "
+                f"compared identity={left['source_identity']}, tree={identity.get('source_tree')}",
+                file=sys.stderr,
+            )
     if differences:
         raise ValueError("\n".join(differences))
     return left
+
+
+def compare_ci(exports, run_id, run_attempt, baseline=None):
+    selected = {}
+    for directory in Path(exports).iterdir():
+        match = re.fullmatch(r"nitro-eif-(first|second)-attempt-([1-9][0-9]*)", directory.name)
+        if not match or not directory.is_dir():
+            raise ValueError(f"Invalid CI export name: {directory.name}")
+        host, attempt = match[1], int(match[2])
+        if attempt > run_attempt:
+            raise ValueError(f"CI export attempt exceeds current run attempt: {directory.name}")
+        if host not in selected or attempt > selected[host][0]:
+            selected[host] = (attempt, directory)
+    for host in ("first", "second"):
+        if host not in selected:
+            raise ValueError(f"Missing CI export for build:{host}")
+        attempt, directory = selected[host]
+        evidence = json.loads((directory / "host.json").read_text()).get("ci", {})
+        job = f"build:{host}"
+        if evidence.get("job") != job or evidence.get("attempt") != f"{run_id}:{attempt}:{job}":
+            raise ValueError(f"Producing CI attempt does not match export name/run: {directory.name}")
+    return compare(selected["first"][1], selected["second"][1], baseline, require_independent=True)
 
 
 def main():
@@ -159,6 +190,11 @@ def main():
         subparser.add_argument("--require-independent", action="store_true")
         if command == "compare":
             subparser.add_argument("--baseline", type=Path)
+    subparser = commands.add_parser("compare-ci")
+    subparser.add_argument("exports", type=Path)
+    subparser.add_argument("--run-id", required=True)
+    subparser.add_argument("--run-attempt", type=int, required=True)
+    subparser.add_argument("--baseline", type=Path)
     args = parser.parse_args()
     if args.command == "context":
         print(json.dumps(context(args.ref, args.output), indent=2, sort_keys=True))
@@ -166,6 +202,9 @@ def main():
         build(args.ref, args.output)
     elif args.command == "compare":
         result = compare(args.first, args.second, args.baseline, args.require_independent)
+        print(json.dumps(result, indent=2, sort_keys=True))
+    elif args.command == "compare-ci":
+        result = compare_ci(args.exports, args.run_id, args.run_attempt, args.baseline)
         print(json.dumps(result, indent=2, sort_keys=True))
     else:
         result = compare(args.first, args.second, require_independent=True)

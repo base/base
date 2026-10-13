@@ -4,37 +4,37 @@
       "architecture": "x86_64",
       "buildkit": "moby/buildkit:v0.23.2@sha256:e39f6119f134b4811af19fd5c20f495a6a264a85c1b6920daf569b23009dd42c",
       "ci": {
-        "attempt": "128588312494473:1:build:first",
+        "attempt": "369349742589379:1:build:first",
         "job": "build:first"
       },
       "docker_id": "2e467ca7-ca10-47ef-b528-d421035f88a5",
-      "name": "depot-worker-cml8kp85rgn869vrvmgm"
+      "name": "depot-worker-xwbfrq4jllq7frb1rx2x"
     },
     {
       "architecture": "x86_64",
       "buildkit": "moby/buildkit:v0.23.2@sha256:e39f6119f134b4811af19fd5c20f495a6a264a85c1b6920daf569b23009dd42c",
       "ci": {
-        "attempt": "128588312494473:1:build:second",
+        "attempt": "369349742589379:2:build:second",
         "job": "build:second"
       },
       "docker_id": "2e467ca7-ca10-47ef-b528-d421035f88a5",
-      "name": "depot-worker-gtlvp2c23gr131plwnx8"
+      "name": "depot-worker-vvxk6pt2s3jdgbnr9ctv"
     }
   ],
   "measurements": {
-    "eif_sha256": "ef5c11d71053996a39a0a1bd55d6a5a216ea779d9c5a40d762a41e166b694bca",
-    "pcr0": "46d4170264baf1c1d33d622925690b648a5c1fe233b16261093b1ea17b9e51ac9002faef23afe974c59adcc6d306f7bb",
+    "eif_sha256": "21ca71cc64fd8da3c2723e3cedccf5c9866d51ed4d99a1343cc5d580eed0f57b",
+    "pcr0": "c457ae799a06cbf5b9f563264888d85eee495dcd4a11ce1de4bc22676f6a8637fff2a42182466d72593c343b160327fa",
     "sha256": {
-      "base-prover-nitro-enclave": "db01f450762ee345630f1a5fba5f8c0a286a1985dc8f54e8750970c019dcb317",
+      "base-prover-nitro-enclave": "059e02c2fe847e42d76aee2742cb423fc836e0bfad9f9fb537f7646d30786026",
       "bootstrap/bzImage": "16a90b65a2920f51462f4e4a71217efd5b7fc63b93bd72a2ad3c759160d472ab",
       "bootstrap/bzImage.config": "fab17e49df1b621dfe8584ede8124712116b24c6d3b61cd91dc209ddf7da2b2c",
       "cmdline": "10e182738c73d88854c480aa22032474cfc9e82443d39ce92bf5fa1684fee68d",
-      "eif.bin": "ef5c11d71053996a39a0a1bd55d6a5a216ea779d9c5a40d762a41e166b694bca",
+      "eif.bin": "21ca71cc64fd8da3c2723e3cedccf5c9866d51ed4d99a1343cc5d580eed0f57b",
       "eif_build": "f1f7c3123533f229b94511f4bd17d0cff851e97eca83c2016c6d4ae103381d28",
       "init-ramdisk-initrd.img": "e8ad119967e623804566ccc9da24a1d0739f691d0644be6b0254fcf33721077b",
-      "user-ramdisk-initrd.img": "ab7419618543893bc1a75ec9cf233072e5f35b812eb74e7fce4f7367f8d2e672"
+      "user-ramdisk-initrd.img": "b187564d53e21d1892ec70c9b834cb9ae0e5274acc8ff8388edbf764b91bcf64"
     },
-    "source_identity": "8f6c55411fc4f7ac69a86b6c4b9850b17197a24d0cdf3f397f47ace4eeb12da9"
+    "source_identity": "d6e9faa7a83f65dc5adc1c66dc5a3d2f03eb0cf776410760e9219287f90c124d"
   },
-  "source_tree": "ee5704f3286444485303eec54080fc08d6685782"
+  "source_tree": "48e30a103caf5e5777fbb433ab313a9b222b16a5"
 }

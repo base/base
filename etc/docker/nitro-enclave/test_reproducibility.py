@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
+from contextlib import redirect_stderr
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -19,6 +21,22 @@ HERE = Path(__file__).resolve().parent
 
 
 class ReproducibilityTests(unittest.TestCase):
+    def write_export(self, directory, source="source", attempt=1):
+        for name in reproduce.ARTIFACTS:
+            path = directory / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(name.encode())
+        job = "build:first" if "first" in directory.name else "build:second"
+        reproduce.write_json(directory / "identity.json", {
+            "source_identity": source, "source_tree": "current-tree",
+        })
+        reproduce.write_json(directory / "measurements.json", {"PCR0": "ab" * 48})
+        reproduce.write_json(directory / "host.json", {
+            "docker_id": "cloned-daemon-id", "name": directory.name,
+            "architecture": "amd64", "buildkit": reproduce.BUILDKIT,
+            "ci": {"job": job, "attempt": f"run:{attempt}:{job}"},
+        })
+
     @unittest.skipUnless(shutil.which("rustc"), "rustc is required")
     def test_rust_source_paths_and_metadata_do_not_change_objects(self):
         objects = []
@@ -82,32 +100,20 @@ class ReproducibilityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             first, second = Path(tmp) / "first", Path(tmp) / "second"
             for directory in (first, second):
-                for name in reproduce.ARTIFACTS:
-                    path = directory / name
-                    path.parent.mkdir(parents=True, exist_ok=True)
-                    path.write_bytes(name.encode())
-                reproduce.write_json(directory / "identity.json", {"source_identity": "source"})
-                reproduce.write_json(directory / "measurements.json", {"PCR0": "ab" * 48})
-                reproduce.write_json(directory / "host.json", {
-                    "docker_id": "cloned-daemon-id", "name": directory.name,
-                    "architecture": "amd64", "buildkit": reproduce.BUILDKIT,
-                    "ci": {"job": directory.name, "attempt": "run/1/" + directory.name},
-                })
-            expected = reproduce.compare(first, second, require_independent=True)
+                self.write_export(directory)
+            reproduce.compare(first, second, require_independent=True)
             second_host = json.loads((second / "host.json").read_text())
             second_host["name"] = first.name
             reproduce.write_json(second / "host.json", second_host)
             with self.assertRaisesRegex(ValueError, "Independent.*hosts"):
                 reproduce.compare(first, second, require_independent=True)
             second_host["name"] = second.name
-            second_host["ci"] = {"job": first.name, "attempt": "run/1/" + first.name}
+            second_host["ci"] = json.loads((first / "host.json").read_text())["ci"]
             reproduce.write_json(second / "host.json", second_host)
             with self.assertRaisesRegex(ValueError, "CI job and attempt"):
                 reproduce.compare(first, second, require_independent=True)
-            second_host["ci"] = {"job": second.name, "attempt": "run/1/" + second.name}
+            second_host["ci"] = {"job": "build:second", "attempt": "run:1:build:second"}
             reproduce.write_json(second / "host.json", second_host)
-            baseline = Path(tmp) / "baseline.json"
-            reproduce.write_json(baseline, {"measurements": expected})
             (second / "eif.bin").write_bytes(b"different EIF")
             with self.assertRaisesRegex(ValueError, "Full EIF bytes differ"):
                 reproduce.compare(first, second)
@@ -116,10 +122,80 @@ class ReproducibilityTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "pcr0:"):
                 reproduce.compare(first, second)
             shutil.copyfile(first / "measurements.json", second / "measurements.json")
-            reproduce.write_json(first / "identity.json", {"source_identity": "new source"})
-            reproduce.write_json(second / "identity.json", {"source_identity": "new source"})
+
+    def test_baseline_context_drift_is_diagnostic_but_artifacts_are_gated(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            first, second = Path(tmp) / "first", Path(tmp) / "second"
+            for directory in (first, second):
+                self.write_export(directory)
+            expected = reproduce.manifest(first)
+            expected["source_identity"] = "measured-source"
+            baseline = Path(tmp) / "baseline.json"
+            reproduce.write_json(baseline, {
+                "source_tree": "measured-tree", "measurements": expected,
+            })
+            with redirect_stderr(io.StringIO()) as diagnostics:
+                result = reproduce.compare(first, second, baseline, require_independent=True)
+            self.assertIn("provenance only", diagnostics.getvalue())
+            self.assertIn("measured-source", diagnostics.getvalue())
+            self.assertIn("measured-tree", diagnostics.getvalue())
+            reproduce.write_json(baseline, {
+                "source_tree": "current-tree", "measurements": reproduce.manifest(first),
+            })
+            self.assertEqual(result["source_identity"], "source")
+            reproduce.write_json(second / "identity.json", {"source_identity": "different-source"})
+            with self.assertRaisesRegex(ValueError, "source_identity:"):
+                reproduce.compare(first, second, baseline)
+            reproduce.write_json(second / "identity.json", {
+                "source_identity": "source", "source_tree": "current-tree",
+            })
+            for directory in (first, second):
+                reproduce.write_json(directory / "measurements.json", {"PCR0": "cd" * 48})
             with self.assertRaisesRegex(ValueError, "Checked-in baseline differs"):
                 reproduce.compare(first, second, baseline)
+            for directory in (first, second):
+                reproduce.write_json(directory / "measurements.json", {"PCR0": "ab" * 48})
+            for name in reproduce.ARTIFACTS:
+                with self.subTest(artifact=name):
+                    (second / name).write_bytes(b"changed artifact")
+                    with self.assertRaisesRegex(ValueError, re.escape(name) + ":"):
+                        reproduce.compare(first, second, baseline)
+                    for directory in (first, second):
+                        (directory / name).write_bytes(b"changed artifact")
+                    with self.assertRaisesRegex(ValueError, "Checked-in baseline differs"):
+                        reproduce.compare(first, second, baseline)
+                    for directory in (first, second):
+                        (directory / name).write_bytes(name.encode())
+
+    def test_ci_comparison_uses_each_producing_attempt_not_artifact_ids(self):
+        for latest_attempts, current_attempt in (((10, 10), 10), ((2, 1), 2), ((2, 1), 3)):
+            with self.subTest(attempts=latest_attempts), tempfile.TemporaryDirectory() as tmp:
+                exports = Path(tmp)
+                # Simulate downloads whose newest producing attempt has the lower artifact ID.
+                for host, latest in zip(("first", "second"), latest_attempts):
+                    for attempt, artifact_id in ((latest - 1, 9000), (latest, 7)):
+                        if attempt < 1:
+                            continue
+                        directory = exports / f"nitro-eif-{host}-attempt-{attempt}"
+                        if directory.exists():
+                            continue
+                        self.write_export(directory, attempt=attempt)
+                        (directory / "artifact-id.txt").write_text(str(artifact_id))
+                        if attempt != latest:
+                            (directory / "eif.bin").write_bytes(b"stale invalid export")
+                result = reproduce.compare_ci(exports, "run", current_attempt)
+                self.assertEqual(result["eif_sha256"], hashlib.sha256(b"eif.bin").hexdigest())
+                selected = exports / f"nitro-eif-second-attempt-{latest_attempts[1]}"
+                host_record = json.loads((selected / "host.json").read_text())
+                host_record["ci"]["attempt"] = "run:99:build:second"
+                reproduce.write_json(selected / "host.json", host_record)
+                with self.assertRaisesRegex(ValueError, "Producing CI attempt"):
+                    reproduce.compare_ci(exports, "run", current_attempt)
+                host_record["ci"]["attempt"] = f"run:{latest_attempts[1]}:build:second"
+                reproduce.write_json(selected / "host.json", host_record)
+                reproduce.write_json(selected / "identity.json", {"source_identity": "other-context"})
+                with self.assertRaisesRegex(ValueError, "source_identity:"):
+                    reproduce.compare_ci(exports, "run", current_attempt)
 
 
 if __name__ == "__main__":

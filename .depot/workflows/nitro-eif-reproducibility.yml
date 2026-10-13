@@ -46,7 +46,7 @@ jobs:
           printf '%s\n' "$RUNNER_NAME" > "$RUNNER_TEMP/eif/runner-name.txt"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: nitro-eif-${{ matrix.host }}
+          name: nitro-eif-${{ matrix.host }}-attempt-${{ github.run_attempt }}
           path: ${{ runner.temp }}/eif/
           if-no-files-found: error
           retention-days: 14
@@ -58,10 +58,13 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          pattern: nitro-eif-*
+          pattern: nitro-eif-*-attempt-*
           path: artifacts
       - name: Compare independent exports against the measured baseline
+        env:
+          NITRO_RUN_ID: ${{ github.run_id }}
+          NITRO_RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
-          python3 etc/docker/nitro-enclave/reproduce.py compare \
-            artifacts/nitro-eif-first artifacts/nitro-eif-second \
-            --require-independent --baseline etc/docker/nitro-enclave/baseline.json
+          python3 etc/docker/nitro-enclave/reproduce.py compare-ci artifacts \
+            --run-id "$NITRO_RUN_ID" --run-attempt "$NITRO_RUN_ATTEMPT" \
+            --baseline etc/docker/nitro-enclave/baseline.json

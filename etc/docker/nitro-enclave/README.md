@@ -1,6 +1,6 @@
 # Reproduce the Nitro prover EIF
 
-The canonical build exports `eif.bin`, PCR measurements and intermediate artifacts without publishing an image. `baseline.json` records the measured EIF SHA256 and PCR0 for a specific source/build identity. This is a new reproducibility baseline. It is not a claim that the EIF matches the current onchain verifier. Updating this file does not authorize an onchain update or deployment.
+The canonical build exports `eif.bin`, PCR measurements and intermediate artifacts without publishing an image. `baseline.json` records measured artifact hashes and PCR0, with the exact source identity, Git tree and host evidence from those builds as provenance. This is a new reproducibility baseline. It is not a claim that the EIF matches the current onchain verifier. Updating this file does not authorize an onchain update or deployment.
 
 ## Supported clients and builders
 
@@ -39,7 +39,7 @@ python3 etc/docker/nitro-enclave/reproduce.py compare \
   --baseline etc/docker/nitro-enclave/baseline.json
 ```
 
-The comparison checks full EIF bytes, SHA256, PCR0 and the intermediate hashes. `--require-independent` requires different worker hostnames and the canonical BuildKit pin. CI exports must also identify different jobs and attempt tuples. Docker daemon IDs are retained for diagnostics but are not unique across cloned runner images. A successful comparison against `baseline.json` also requires its source/build identity to match.
+The two exports must have the same normalized source identity, full EIF bytes, EIF SHA256, PCR0 and every intermediate hash. `--require-independent` requires different worker hostnames and the canonical BuildKit pin. CI exports must also identify different jobs and attempt tuples. Docker daemon IDs are retained for diagnostics but are not unique across cloned runner images. Against `baseline.json`, EIF SHA256, PCR0 and every intermediate hash must match. The baseline's source identity and Git tree are measured provenance, not equality gates; source-context drift is reported diagnostically even when artifact bytes are unchanged.
 
 Each export contains:
 
@@ -56,7 +56,7 @@ The Dockerfile pins the amd64 Rust images, bootstrap image, Dockerfile frontend,
 
 `apk.lock` contains SHA256 and URLs for the complete Alpine dependency closure, including upgrades to packages in the pinned base. `install-apks.sh` verifies every downloaded APK before installing it with networking and repository indexes disabled. The build does not resolve dependencies against a mutable APKINDEX. An upstream removal fails the build rather than selecting replacement bytes. When refreshing this lock, resolve the intended packages on the pinned amd64 Alpine base, download every selected direct and transitive APK, verify its Alpine signature, and record its SHA256 and exact URL. Review the entire closure and measure a new baseline.
 
-The context comes from Git objects, with tar timestamps and ownership set to zero and file modes derived from Git. It excludes workflow directories, agent instructions, `docs/`, root Markdown, the docs indexes and manifest, this README, and `baseline.json`. Crate and binary READMEs remain because Rust uses them as compile-time inputs. The identity deliberately includes the rest of the tracked context, not only Rust files thought to affect the enclave. Changes to that context require a measured baseline update even if the resulting EIF remains unchanged.
+The context comes from Git objects, with tar timestamps and ownership set to zero and file modes derived from Git. It excludes workflow directories, agent instructions, `docs/`, root Markdown, the docs indexes and manifest, this README, and `baseline.json`. Crate and binary READMEs remain because Rust uses them as compile-time inputs. The identity deliberately includes the rest of the tracked context, not only Rust files thought to affect the enclave. Unrelated repository or merge-queue changes can change this identity without changing artifacts. Both builds must still use the same normalized context; only artifact or PCR0 changes require a measured baseline update.
 
 The enclave compiler remaps source and Cargo paths, disables incremental compilation and compiler wrappers, and remaps native compiler file paths. Artifact builds do not mount persistent Cargo target directories. Registry and Git download caches cannot supply compiled target output. `SOURCE_DATE_EPOCH` and EIF build-time are fixed.
 
@@ -66,9 +66,11 @@ The inline Justfile recipes use the same enclave compiler environment and fresh 
 
 ## CI and baseline updates
 
-`.depot/workflows/nitro-eif-reproducibility.yml` builds on two separate existing native amd64 runners. Each uses a fresh pinned BuildKit instance and no layer cache. The jobs vary checkout timestamps and Rust file permissions, upload the full exports, and compare EIF bytes, SHA256, PCR0 and diagnostics against the checked-in baseline. The check rejects equal worker hostnames or CI job/attempt tuples. Match the worker hostnames to the CI service's separate job, attempt and sandbox records when reviewing independence. Client CPU architecture does not substitute for independent build-host evidence.
+`.depot/workflows/nitro-eif-reproducibility.yml` builds on two separate existing native amd64 runners, using the default checkout revision for PRs and merge groups. Each uses a fresh pinned BuildKit instance and no layer cache. The jobs vary checkout timestamps and Rust file permissions, upload the full exports, and enforce the pair and baseline comparisons described above. The check rejects equal worker hostnames or CI job/attempt tuples. Match the worker hostnames to the CI service's separate job, attempt and sandbox records when reviewing independence. Client CPU architecture does not substitute for independent build-host evidence.
 
-Update the baseline only for a reviewed source or build-input change:
+Exports use names such as `nitro-eif-first-attempt-1`. The comparator selects the highest numeric producing attempt separately for each matrix variant and verifies its recorded run, job and attempt against the export name. Artifact IDs and download order are not chronological evidence. A full rerun selects both new exports; a partial rerun retains the successful variant's export and selects the retried variant's new export. The retained and retried exports must have the same normalized source identity. Missing exports, mismatched attempt evidence or differing artifacts fail the comparison rather than falling back to an older pair.
+
+Update the baseline only for a reviewed change to artifact bytes or PCR0:
 
 1. Commit the intended build inputs. Run the focused tests below. Do not change expected hashes to silence an unexplained mismatch.
 2. Build that exact revision on two independent native amd64 hosts, using the canonical commands, or download the two successful CI exports.
@@ -85,9 +87,9 @@ Update the baseline only for a reviewed source or build-input change:
      --baseline etc/docker/nitro-enclave/baseline.json
    ```
 
-4. Review the source identity, EIF SHA256, PCR0 and intermediate changes. Commit the measured baseline with the input change and link both build-host records and exports in the PR. CI then enforces those values. `baseline.json` is excluded from the context, so adding the measured values does not change the build identity.
+4. Review the source identity, EIF SHA256, PCR0 and intermediate changes. Commit the measured baseline with the input change and link both build-host records and exports in the PR. CI enforces the artifact hashes and PCR0, while preserving source and host records as measured provenance. `baseline.json` is excluded from the context, so adding the measured values does not change the build identity.
 
-Every input change has this legitimate update path. Baseline generation refuses disagreeing artifacts or missing independent-host evidence. It never generates placeholder hashes. No update to the baseline changes the authorized onchain verification value.
+Changes that leave all artifacts and PCR0 unchanged do not require baseline refreshes. Keep the baseline's exact measured source and host records; do not relabel them as a later revision that was not built. Baseline generation refuses disagreeing source identities, artifacts or missing independent-host evidence. It never generates placeholder hashes. No update to the baseline changes the authorized onchain verification value.
 
 Focused checks, without a full EIF build:
 
@@ -98,4 +100,4 @@ shellcheck etc/docker/nitro-enclave/{build-env,install-apks,test-build-env,test-
 python3 etc/scripts/local/docs-index.py check
 ```
 
-The Python suite exercises Rust source-path bytes, committed-context metadata independence, retained compile-time includes, and rejection of EIF, PCR0 and stale-baseline mismatches. The Docker build also runs the pinned native Rust object check and ramdisk metadata regression. Full cross-host validation still requires two successful artifact exports and comparison; passing these focused checks alone is not release evidence.
+The Python suite exercises Rust source-path bytes, committed-context metadata independence, retained compile-time includes, baseline-context-only drift, rejection of mismatched pair contexts and artifact/PCR0 changes, and producing-attempt selection across full and partial reruns. The Docker build also runs the pinned native Rust object check and ramdisk metadata regression. Full cross-host validation still requires two successful artifact exports and comparison; passing these focused checks alone is not release evidence.
