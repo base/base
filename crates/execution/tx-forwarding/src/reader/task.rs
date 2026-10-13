@@ -5,15 +5,16 @@ use std::{
 };
 
 use alloy_eips::Encodable2718;
-use alloy_primitives::Bytes;
+use alloy_primitives::{Bytes, TxHash};
 use base_execution_txpool::{
     BasePooledTx, BestTransactionLane, NoExtensions, UnifiedTipOrdering, UnifiedTipPriority,
     ValidatedTransaction, ValidatedTransactionExtensions,
 };
 use reth_transaction_pool::{
-    PoolTransaction, Priority, TransactionOrdering, TransactionPool, ValidPoolTransaction,
+    PoolTransaction, Priority, TransactionListenerKind, TransactionOrdering, TransactionPool,
+    ValidPoolTransaction,
 };
-use tokio::sync::mpsc;
+use tokio::{sync::mpsc, time};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, trace};
 use url::Url;
@@ -41,10 +42,15 @@ type Snapshot<T> =
 /// queue shallow is what lets a high bid that arrives during a burst overtake transactions that
 /// are still in the pool.
 ///
+/// A pass that finds nothing to send waits for the pool to announce a new pending transaction,
+/// or for [`ReaderConfig::poll_interval`] so that transactions due for a resend are picked up.
+/// Waking on the announcement rather than on the interval alone is what keeps an isolated
+/// transaction from waiting out the rest of an idle sleep before it is forwarded.
+///
 /// Conversion to the builder-RPC wire form happens here rather than in the
 /// forwarder: this is the component that holds a [`ValidPoolTransaction`], and
-/// it runs on a blocking thread, which keeps the EIP-2718 encoding off the
-/// async runtime.
+/// it runs on a dedicated blocking thread, which keeps the EIP-2718 encoding
+/// and pool snapshots off the shared async workers.
 pub(crate) struct DestinationReader<P: TransactionPool, E = NoExtensions> {
     pool: P,
     config: ReaderConfig,
@@ -87,8 +93,11 @@ where
         Self { pool, config, recently_sent, lane_mix, sender, cancel, builder_url, url_label }
     }
 
-    /// Blocking loop — runs until the [`CancellationToken`] is cancelled.
-    pub(crate) fn run(&mut self) {
+    /// Reader loop — runs until the [`CancellationToken`] is cancelled.
+    ///
+    /// Meant to be driven on its own blocking thread: snapshots and encoding run synchronously
+    /// between awaits.
+    pub(crate) async fn run(&mut self) {
         info!(
             builder_url = %self.builder_url,
             resend_after_ms = self.config.resend_after.as_millis() as u64,
@@ -98,12 +107,17 @@ where
             "starting transaction reader",
         );
 
+        // Subscribed before the first snapshot, so nothing that becomes pending after it is missed.
+        let mut pending =
+            Some(self.pool.pending_transactions_listener_for(TransactionListenerKind::All));
         let mut snapshot: Option<(Instant, Snapshot<P::Transaction>)> = None;
-        while self.wait_for_capacity() {
+        while self.wait_for_capacity().await {
             let stale = snapshot.as_ref().is_none_or(|(taken_at, lanes)| {
                 lanes.is_empty() || taken_at.elapsed() >= Self::SNAPSHOT_MAX_AGE
             });
             if stale {
+                // Everything announced so far is in the pool, so the snapshot below covers it.
+                Self::drain_announcements(&mut pending);
                 let Some(lanes) = self.take_snapshot() else { break };
                 snapshot = Some((Instant::now(), lanes));
             }
@@ -112,7 +126,7 @@ where
             Metrics::iterations(Arc::clone(&self.url_label)).increment(1);
             match self.fill_queue(lanes) {
                 None => return,
-                Some(0) => std::thread::sleep(self.config.poll_interval),
+                Some(0) => self.wait_for_pending(&mut pending).await,
                 Some(_) => {}
             }
         }
@@ -186,18 +200,60 @@ where
         Some(txs_sent)
     }
 
-    /// Blocks until at least half of the destination queue is free.
+    /// Discards queued pending-transaction announcements without waiting.
+    ///
+    /// Drops the listener once the pool closes it, so later waits fall back to the poll interval
+    /// instead of spinning on a closed channel.
+    fn drain_announcements(pending: &mut Option<mpsc::Receiver<TxHash>>) {
+        let Some(receiver) = pending else { return };
+        loop {
+            match receiver.try_recv() {
+                Ok(_) => {}
+                Err(mpsc::error::TryRecvError::Empty) => return,
+                Err(mpsc::error::TryRecvError::Disconnected) => {
+                    *pending = None;
+                    return;
+                }
+            }
+        }
+    }
+
+    /// Waits until the pool announces a pending transaction, the poll interval elapses, or the
+    /// reader is cancelled, whichever comes first.
+    ///
+    /// An announcement may concern a transaction the last snapshot already covered; the cost of
+    /// such a spurious wake is one extra snapshot.
+    async fn wait_for_pending(&self, pending: &mut Option<mpsc::Receiver<TxHash>>) {
+        let announced = async {
+            match pending {
+                Some(receiver) => {
+                    if receiver.recv().await.is_none() {
+                        *pending = None;
+                        time::sleep(self.config.poll_interval).await;
+                    }
+                }
+                None => std::future::pending().await,
+            }
+        };
+        tokio::select! {
+            () = announced => {}
+            () = time::sleep(self.config.poll_interval) => {}
+            () = self.cancel.cancelled() => {}
+        }
+    }
+
+    /// Waits until at least half of the destination queue is free.
     ///
     /// Waiting for half rather than one slot means each snapshot fills a meaningful chunk of the
     /// queue instead of rebuilding the lanes for every request the forwarder takes. Returns
     /// `false` if the reader was cancelled or the forwarder is gone.
-    fn wait_for_capacity(&self) -> bool {
+    async fn wait_for_capacity(&self) -> bool {
         let wanted = self.sender.max_capacity().div_ceil(2);
         while self.sender.capacity() < wanted {
             if self.cancel.is_cancelled() || self.sender.is_closed() {
                 return false;
             }
-            std::thread::sleep(Self::CAPACITY_POLL_INTERVAL);
+            time::sleep(Self::CAPACITY_POLL_INTERVAL).await;
         }
         !self.sender.is_closed()
     }

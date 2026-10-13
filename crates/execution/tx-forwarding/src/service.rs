@@ -115,7 +115,7 @@ impl TxForwardingService {
             );
 
             reader_tasks.push(executor.spawn_blocking_task(Box::pin(async move {
-                reader.run();
+                reader.run().await;
             })));
             forwarder_tasks.push(executor.spawn_task(Box::pin(async move {
                 forwarder.run().await;
