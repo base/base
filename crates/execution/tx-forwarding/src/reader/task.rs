@@ -4,8 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use alloy_eips::Encodable2718;
-use alloy_primitives::{Bytes, TxHash};
+use alloy_primitives::TxHash;
 use base_execution_txpool::{
     BasePooledTx, BestTransactionLane, NoExtensions, UnifiedTipOrdering, UnifiedTipPriority,
     ValidatedTransaction, ValidatedTransactionExtensions,
@@ -66,7 +65,6 @@ impl<P, E> DestinationReader<P, E>
 where
     P: TransactionPool + 'static,
     P::Transaction: PoolTransaction + BasePooledTx,
-    <P::Transaction as PoolTransaction>::Consensus: Encodable2718,
     E: ValidatedTransactionExtensions<P::Transaction>,
 {
     /// Wait between checks for free queue capacity.
@@ -270,16 +268,15 @@ where
 
     /// Converts a pooled transaction into the request the forwarder relays.
     ///
-    /// Done once per transaction rather than once per queue-full retry: the encoding is the
-    /// expensive part and the result is what the queue carries.
+    /// The bytes are the pooled transaction's cached EIP-2718 encoding, which mempool validation
+    /// has already filled, so forwarding shares them instead of cloning and re-encoding.
     fn to_wire(
         transaction: &Arc<ValidPoolTransaction<P::Transaction>>,
     ) -> InsertValidatedTransaction<E> {
-        let consensus = transaction.transaction.clone_into_consensus();
         InsertValidatedTransaction {
             transaction: ValidatedTransaction {
                 sender: *transaction.sender_ref(),
-                raw: Bytes::from(consensus.inner().encoded_2718()),
+                raw: BasePooledTx::encoded_2718(&transaction.transaction).into_owned(),
                 metering: transaction.transaction.metering().cloned(),
                 extensions: E::extract(transaction),
             },

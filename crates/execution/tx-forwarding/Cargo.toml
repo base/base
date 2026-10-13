@@ -13,7 +13,6 @@ workspace = true
 
 [dependencies]
 # ethereum
-alloy-eips.workspace = true
 alloy-primitives.workspace = true
 
 # reth
@@ -40,6 +39,7 @@ jsonrpsee = { workspace = true, features = ["http-client"] }
 
 [dev-dependencies]
 # ethereum
+alloy-eips.workspace = true
 alloy-signer.workspace = true
 alloy-genesis.workspace = true
 alloy-network.workspace = true
