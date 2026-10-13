@@ -128,6 +128,17 @@ pub struct BasePooledTransaction<
 }
 
 impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
+    /// The most a classified EIP-8130 transaction reports from `cost()`,
+    /// 2^224 - 1 wei.
+    ///
+    /// Reth sums a sender's costs with wrapping `U256` addition, so an
+    /// uncapped declared tip could wrap the cumulative cost back under the
+    /// balance. The cap exceeds any reachable balance (the total ether supply
+    /// is below 2^87 wei), so a capped cost is never backed, and summing up to
+    /// 2^32 capped costs per sender cannot wrap. Real fees stay below 2^192
+    /// (`u64` gas limit times `u128` fee cap) and are never capped.
+    pub const MAX_POOL_COST: U256 = U256::MAX.wrapping_shr(32);
+
     /// Create new instance of [Self].
     pub fn new(transaction: Recovered<Cons>, encoded_length: usize) -> Self {
         Self::new_with_received_at(transaction, encoded_length, unix_time_millis())
@@ -303,7 +314,8 @@ where
     /// when sponsored, since the payer covers the fees. Reth checks the
     /// sender's cumulative cost against its balance on insert and on every
     /// account change, so a tip the sender cannot cover parks the transaction
-    /// as queued instead of ranking it. Admission does not require the tip.
+    /// as queued instead of ranking it. Admission does not require the tip,
+    /// so the cost is capped at [`BasePooledTransaction::MAX_POOL_COST`].
     ///
     /// Computed once classified; validation sets the sender policy target,
     /// which [`BasePooledTx::coinbase_tip`] reads, before the classification,
@@ -314,7 +326,9 @@ where
         };
         self.sender_cost.get_or_init(|| {
             let tip = self.coinbase_tip().unwrap_or_default();
-            if class.payer == class.sender { self.inner.cost.saturating_add(tip) } else { tip }
+            let cost =
+                if class.payer == class.sender { self.inner.cost.saturating_add(tip) } else { tip };
+            cost.min(Self::MAX_POOL_COST)
         })
     }
 

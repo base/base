@@ -3468,6 +3468,39 @@ mod tests {
         assert!(!is_best(&pool, backed_hash));
     }
 
+    /// Adds a backed self-paid tx0 below the honest transaction's rank, then
+    /// tx1 declaring `tx1_tip(c0)` where `c0` is tx0's cost, and asserts tx1
+    /// neither pends nor outranks the honest transaction.
+    async fn assert_tip_cannot_wrap_cumulative_cost(tx1_tip: impl FnOnce(U256) -> U256) {
+        let (pool, client) = build_integration_pool();
+        let attacker = signer();
+        let (honest_hash, _) = setup_tip_race(&pool, &client, &attacker).await;
+        let tx0_tip = U256::from(3);
+        let tx0 = tipping_eoa_8130(&attacker, None, 0, tx0_tip);
+        let tx0_hash = *tx0.hash();
+        pool.add_transaction(TransactionOrigin::External, tx0).await.unwrap();
+        assert!(is_pending(&pool, tx0_hash));
+
+        let tx1 = tipping_eoa_8130(&attacker, None, 1, tx1_tip(tipping_fees() + tx0_tip));
+        let tx1_hash = *tx1.hash();
+        let _ = pool.add_transaction(TransactionOrigin::External, tx1).await;
+
+        assert!(!is_pending(&pool, tx1_hash), "an unbacked tip must not wrap into pending");
+        assert!(!is_best(&pool, tx1_hash));
+        assert_eq!(best_hashes(&pool).first(), Some(&honest_hash));
+    }
+
+    #[tokio::test]
+    async fn maximal_coinbase_tip_cannot_wrap_the_cumulative_cost() {
+        assert_tip_cannot_wrap_cumulative_cost(|_| U256::MAX).await;
+    }
+
+    #[tokio::test]
+    async fn exact_wrapping_coinbase_tip_cannot_wrap_the_cumulative_cost() {
+        assert_tip_cannot_wrap_cumulative_cost(|c0| U256::ZERO.wrapping_sub(c0) + U256::from(1))
+            .await;
+    }
+
     fn best_hashes(pool: &IntegrationPool) -> Vec<TxHash> {
         pool.best_transactions().map(|transaction| *transaction.hash()).collect()
     }
