@@ -127,6 +127,7 @@ where
         N::Provider,
         <N::Types as NodeTypes>::Payload,
         N::Pool,
+        EV::Validator,
         BaseEngineApiForks<Arc<<N::Types as NodeTypes>::ChainSpec>>,
     >;
 

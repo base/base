@@ -1566,7 +1566,7 @@ mod tests {
     use base_observability_events::{TransactionEventCapture, TransactionEventType};
     use reth_basic_payload_builder::{BuildOutcomeKind, PayloadConfig};
     use reth_chainspec::ChainSpec;
-    use reth_ethereum_forks::ForkCondition;
+    use reth_ethereum_forks::{EthereumHardfork, ForkCondition};
     use reth_evm::execute::BlockBuilder;
     use reth_payload_builder::PayloadId;
     use reth_payload_util::{NoopPayloadTransactions, PayloadTransactions};
@@ -1689,6 +1689,9 @@ mod tests {
         let chain_spec = Arc::new(
             BaseChainSpecBuilder::base_mainnet()
                 .with_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(DENIM_TIMESTAMP))
+                // Amsterdam is the Ethereum fork paired with Denim; activating Denim must
+                // activate it too so the block access list gate is coherent.
+                .with_fork(EthereumHardfork::Amsterdam, ForkCondition::Timestamp(DENIM_TIMESTAMP))
                 .build(),
         );
         let parent = Arc::new(SealedHeader::seal_slow(Header {

@@ -276,14 +276,14 @@ where
         >,
     ) -> Result<(), EngineObjectValidationError> {
         validate_withdrawals_presence(
-            &BaseEngineApiForks(self.chain_spec()),
+            self.chain_spec(),
             version,
             payload_or_attrs.message_validation_kind(),
             payload_or_attrs.timestamp(),
             payload_or_attrs.withdrawals().is_some(),
         )?;
         validate_parent_beacon_block_root_presence(
-            self.chain_spec(),
+            &BaseEngineApiForks(self.chain_spec()),
             version,
             payload_or_attrs.message_validation_kind(),
             payload_or_attrs.timestamp(),
