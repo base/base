@@ -11,8 +11,12 @@ use base_prover_service_client::ProofRequesterProvider;
 use tracing::{debug, info, instrument, warn};
 
 use crate::{
-    Metrics, driver::RecoveredState, error::ProposerError, proof_adapter::ProposerProofAdapter,
-    proof_target::ProofTarget, proposal_intervals::IntervalResolver,
+    Metrics,
+    driver::RecoveredState,
+    error::ProposerError,
+    proof_adapter::ProposerProofAdapter,
+    proof_target::ProofTarget,
+    proposal_intervals::{IntervalResolver, Intervals},
 };
 
 /// Builds and dispatches proposer TEE proof requests.
@@ -46,12 +50,14 @@ impl ProofDispatcher {
         Self { proof_requester, l1_client, l2_client, rollup_client, intervals, proposer_address }
     }
 
-    /// Builds a proof request for `target_block` using `recovered` as the agreed parent.
+    /// Builds a proof request for `target_block` using `recovered` as the agreed parent, for
+    /// a game created with `intervals`.
     async fn build_request(
         &self,
         target_block: u64,
         recovered: &RecoveredState,
         claimed_l2_output_root: B256,
+        intervals: Intervals,
     ) -> Result<ProofRequest, ProposerError> {
         let (sync_status, agreed_l2_head) = tokio::try_join!(
             self.rollup_client.sync_status(),
@@ -88,6 +94,7 @@ impl ProofDispatcher {
             proposer: self.proposer_address,
             l1_head_number: l1_header.number,
             schedule_l2_block_number: None,
+            intermediate_block_interval: intervals.intermediate_block_interval,
         })
     }
 
@@ -176,20 +183,22 @@ impl ProofDispatcher {
                 break;
             };
 
-            let request =
-                match self.build_request(target_block, current, claimed_l2_output_root).await {
-                    Ok(request) => request,
-                    Err(error) => {
-                        Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_BUILD_FAILED)
-                            .increment(1);
-                        warn!(
-                            target_block,
-                            error = %error,
-                            "Failed to build proof request, will retry next iteration"
-                        );
-                        break;
-                    }
-                };
+            let request = match self
+                .build_request(target_block, current, claimed_l2_output_root, intervals)
+                .await
+            {
+                Ok(request) => request,
+                Err(error) => {
+                    Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_BUILD_FAILED)
+                        .increment(1);
+                    warn!(
+                        target_block,
+                        error = %error,
+                        "Failed to build proof request, will retry next iteration"
+                    );
+                    break;
+                }
+            };
 
             match self.dispatch_request(request).await {
                 Ok(session_id) => {
@@ -221,14 +230,14 @@ impl ProofDispatcher {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::{collections::HashMap, num::NonZeroU64};
 
     use alloy_primitives::Address;
 
     use super::*;
     use crate::test_utils::{
         MockL1, MockL2, MockProofRequester, MockRollupClient, test_fixed_interval_resolver,
-        test_l1_block_ref, test_l1_header, test_l2_block_ref, test_sync_status,
+        test_l1_block_ref, test_l1_header, test_l2_block_ref, test_proof_request, test_sync_status,
     };
 
     fn dispatcher(requester: Arc<MockProofRequester>) -> ProofDispatcher {
@@ -310,7 +319,15 @@ mod tests {
         };
 
         let err = dispatcher
-            .build_request(200, &recovered, B256::repeat_byte(0xaa))
+            .build_request(
+                200,
+                &recovered,
+                B256::repeat_byte(0xaa),
+                Intervals {
+                    block_interval: 100,
+                    intermediate_block_interval: NonZeroU64::new(100).unwrap(),
+                },
+            )
             .await
             .expect_err("L1 RPC header must match rollup-selected L1 head");
 
@@ -323,8 +340,10 @@ mod tests {
             Arc::new(MockProofRequester { return_wrong_session_id: true, ..Default::default() });
         let dispatcher = dispatcher(requester);
 
-        let request =
-            ProofRequest { claimed_l2_output_root: B256::repeat_byte(0xaa), ..Default::default() };
+        let request = ProofRequest {
+            claimed_l2_output_root: B256::repeat_byte(0xaa),
+            ..test_proof_request()
+        };
         let error = dispatcher.dispatch_request(request).await.expect_err("dispatch should fail");
 
         let ProposerError::Prover(message) = error else {
@@ -339,8 +358,10 @@ mod tests {
             Arc::new(MockProofRequester { reject_l1_head_conflict: true, ..Default::default() });
         let dispatcher = dispatcher(requester);
 
-        let request =
-            ProofRequest { claimed_l2_output_root: B256::repeat_byte(0xaa), ..Default::default() };
+        let request = ProofRequest {
+            claimed_l2_output_root: B256::repeat_byte(0xaa),
+            ..test_proof_request()
+        };
         dispatcher.dispatch_request(request).await.expect("dispatch should accept");
     }
 

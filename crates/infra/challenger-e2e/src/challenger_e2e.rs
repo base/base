@@ -2,6 +2,7 @@
 
 use std::{
     collections::BTreeSet,
+    num::NonZeroU64,
     path::Path,
     sync::Arc,
     time::{Duration, Instant},
@@ -1072,8 +1073,12 @@ impl ChallengerE2e {
             let verifier = AggregateVerifierContractClient::new(provider.clone());
             let l1_head = verifier.l1_head(game).await?;
             let schedule = verifier.game_info(game).await?.l2_block_number;
-            let expected =
-                Self::expected_dispute_request(checkpoint, l1_head, schedule, challenger.address());
+            let expected = Self::expected_dispute_request(
+                checkpoint,
+                l1_head,
+                schedule,
+                challenger.address(),
+            )?;
             let requested: Vec<_> = requests
                 .snark_requests()
                 .into_iter()
@@ -1102,24 +1107,27 @@ impl ChallengerE2e {
     /// schedule pinned to the game's final L2 block, and the disputer as
     /// prover. Mirrors what the challenger builds (`build_zk_request`) and
     /// what the contract reconstructs into the journal.
-    const fn expected_dispute_request(
+    fn expected_dispute_request(
         checkpoint: &Checkpoint,
         l1_head: B256,
         schedule_l2_block_number: u64,
         prover_address: Address,
-    ) -> SnarkPlonkProofRequest {
-        SnarkPlonkProofRequest {
+    ) -> Result<SnarkPlonkProofRequest> {
+        let intermediate_block_interval = NonZeroU64::new(checkpoint.interval)
+            .ok_or_else(|| eyre!("checkpoint interval must be nonzero"))?;
+        Ok(SnarkPlonkProofRequest {
             proof: ZkProofRequest {
                 start_block_number: checkpoint.start_block,
                 number_of_blocks_to_prove: checkpoint.block_count,
                 sequence_window: None,
                 l1_head: Some(l1_head),
                 schedule_l2_block_number: Some(schedule_l2_block_number),
+                intermediate_block_interval,
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,
             },
             prover_address,
-        }
+        })
     }
 
     /// Path 3: the challenger must clear the invalid ZK-only proposal.
