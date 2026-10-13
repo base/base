@@ -3302,6 +3302,27 @@ mod tests {
         valid_before: u64,
         tip: U256,
     ) -> BasePooledTransaction {
+        tipping_8130_with_fees(
+            signer,
+            payer,
+            nonce_key,
+            nonce_sequence,
+            valid_before,
+            tip,
+            (0, TIPPING_MAX_FEE_PER_GAS),
+        )
+    }
+
+    /// [`tipping_8130`] with explicit `(max_priority_fee_per_gas, max_fee_per_gas)`.
+    fn tipping_8130_with_fees(
+        signer: &PrivateKeySigner,
+        payer: Option<&PrivateKeySigner>,
+        nonce_key: U256,
+        nonce_sequence: u64,
+        valid_before: u64,
+        tip: U256,
+        (max_priority_fee_per_gas, max_fee_per_gas): (u128, u128),
+    ) -> BasePooledTransaction {
         let tx = TxEip8130 {
             chain_id: test_chain_id(),
             sender: None,
@@ -3309,8 +3330,8 @@ mod tests {
             nonce_sequence,
             valid_after: 0,
             valid_before,
-            max_priority_fee_per_gas: 0,
-            max_fee_per_gas: TIPPING_MAX_FEE_PER_GAS,
+            max_priority_fee_per_gas,
+            max_fee_per_gas,
             gas_limit: TIPPING_GAS_LIMIT,
             account_changes: Vec::new(),
             calls: vec![vec![Call {
@@ -3582,6 +3603,64 @@ mod tests {
 
         set_balance(&pool, attacker.address(), balance);
         assert_eq!(best_hashes(&pool)[0], hash, "a current balance backs the tip again");
+    }
+
+    #[tokio::test]
+    async fn replacing_an_oversized_sidecar_tip_keeps_it_unbacked() {
+        let (pool, client) = build_integration_pool();
+        let attacker = signer();
+        let (honest_hash, _) = setup_tip_race(&pool, &client, &attacker).await;
+        let original = tipping_channel_8130(&attacker, None, 0, U256::MAX);
+        pool.add_transaction(TransactionOrigin::External, original).await.unwrap();
+
+        let bumped_fees = (0, TIPPING_MAX_FEE_PER_GAS * 2);
+        let replacement = tipping_8130_with_fees(
+            &attacker,
+            None,
+            TIPPING_NONCE_KEY,
+            0,
+            0,
+            U256::MAX,
+            bumped_fees,
+        );
+        let replacement_hash = *replacement.hash();
+        let outcome = pool.add_transaction(TransactionOrigin::External, replacement).await.unwrap();
+        assert_eq!(outcome.hash, replacement_hash);
+        assert!(is_pending(&pool, replacement_hash));
+        assert_eq!(best_hashes(&pool)[0], honest_hash, "an impossible tip must not rank");
+    }
+
+    #[tokio::test]
+    async fn removing_one_of_two_oversized_sidecar_tips_keeps_the_other_unbacked() {
+        let (pool, client) = build_integration_pool();
+        let attacker = signer();
+        let (honest_hash, _) = setup_tip_race(&pool, &client, &attacker).await;
+        let [kept, removed] =
+            [0, 1].map(|offset| tipping_nonce_free_8130(&attacker, offset, U256::MAX));
+        let removed_hash = *removed.hash();
+        pool.add_transaction(TransactionOrigin::External, kept).await.unwrap();
+        pool.add_transaction(TransactionOrigin::External, removed).await.unwrap();
+
+        assert_eq!(pool.remove_transactions(vec![removed_hash]).len(), 1);
+        assert_eq!(best_hashes(&pool)[0], honest_hash, "an impossible tip must not rank");
+    }
+
+    #[tokio::test]
+    async fn sponsored_tip_validated_before_its_sender_is_drained_is_unbacked() {
+        let (pool, client) = build_integration_pool();
+        let [sender, payer] = std::array::from_fn(|_| signer());
+        let (honest_hash, _) = setup_tip_race(&pool, &client, &signer()).await;
+        fund(&client, payer.address());
+        let tip = tipping_fees();
+        client.add_account(sender.address(), ExtendedAccount::new(0, U256::from(2) * tip));
+        let first = tipping_channel_8130(&sender, Some(&payer), 0, tip);
+        pool.add_transaction(TransactionOrigin::External, first).await.unwrap();
+
+        let second = tipping_channel_8130(&sender, Some(&payer), 1, tip);
+        insert_after_balance_drop(&pool, second, U256::ZERO).await;
+        let best = best_hashes(&pool);
+        assert_eq!(best[0], honest_hash, "neither of the drained sender's tips may rank");
+        assert_eq!(best.len(), 3);
     }
 
     #[tokio::test]

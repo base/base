@@ -8,7 +8,7 @@ use std::{
 };
 
 use alloy_primitives::{
-    Address, TxHash, U256,
+    Address, TxHash, U256, U512,
     map::{B256Map, HashMap},
 };
 use base_common_consensus::Eip8130Constants;
@@ -152,7 +152,9 @@ impl SidecarLimits {
 struct SidecarUsage {
     size: usize,
     per_sender: HashMap<Address, usize>,
-    sender_costs: HashMap<Address, U256>,
+    /// Exact sum of each sender's `cost()`s. Fewer than 2^64 values below
+    /// 2^256 cannot overflow 512 bits, so additions and removals never saturate.
+    sender_costs: HashMap<Address, U512>,
     /// Each sender's balance, `None` when unknown, and the balance epoch it was
     /// recorded at. Kept only for senders with sidecar transactions; an unknown
     /// or missing balance backs nothing.
@@ -167,15 +169,15 @@ impl SidecarUsage {
         self.size += transaction.transaction.size();
         let sender = transaction.sender();
         *self.per_sender.entry(sender).or_default() += 1;
-        let cost = self.sender_costs.entry(sender).or_default();
-        *cost = cost.saturating_add(*transaction.transaction.cost());
+        *self.sender_costs.entry(sender).or_default() +=
+            U512::from(*transaction.transaction.cost());
     }
 
     fn remove<T: BasePooledTx>(&mut self, transaction: &ValidPoolTransaction<T>) {
         self.size = self.size.saturating_sub(transaction.transaction.size());
         let sender = transaction.sender();
         if let Some(cost) = self.sender_costs.get_mut(&sender) {
-            *cost = cost.saturating_sub(*transaction.transaction.cost());
+            *cost -= U512::from(*transaction.transaction.cost());
         }
         if let Some(count) = self.per_sender.get_mut(&sender) {
             *count -= 1;
@@ -217,7 +219,7 @@ impl SidecarUsage {
         self.sender_balances
             .get(sender)
             .and_then(|(balance, _)| *balance)
-            .is_some_and(|balance| cost <= balance)
+            .is_some_and(|balance| cost <= U512::from(balance))
     }
 
     fn sender_count(&self, sender: &Address) -> usize {
