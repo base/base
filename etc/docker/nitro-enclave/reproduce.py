@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path, PurePosixPath
 import re
 import subprocess
@@ -80,7 +81,11 @@ def build(ref, output):
                     "--output", f"type=local,dest={output}", "-",
                 ], stdin=stream, check=True)
             write_json(output / "identity.json", identity)
-            write_json(output / "host.json", {"docker_id": host["ID"], "name": host["Name"], "architecture": host["Architecture"], "buildkit": BUILDKIT})
+            host_record = {"docker_id": host["ID"], "name": host["Name"], "architecture": host["Architecture"], "buildkit": BUILDKIT}
+            ci = {"job": os.environ.get("NITRO_CI_JOB"), "attempt": os.environ.get("NITRO_CI_ATTEMPT")}
+            if any(ci.values()):
+                host_record["ci"] = ci
+            write_json(output / "host.json", host_record)
             write_json(output / "manifest.json", manifest(output))
         finally:
             subprocess.run(["docker", "buildx", "rm", "--force", builder], check=True)
@@ -121,8 +126,14 @@ def compare(first, second, baseline=None, require_independent=False):
                 break
     if require_independent:
         hosts = [json.loads((directory / "host.json").read_text()) for directory in (first, second)]
-        if not hosts[0]["docker_id"] or hosts[0]["docker_id"] == hosts[1]["docker_id"]:
-            differences.append("Independent Docker hosts were not demonstrated")
+        # Runner images can contain a cloned Docker daemon ID; worker hostnames must still differ.
+        if any(not host.get("name") for host in hosts) or hosts[0]["name"] == hosts[1]["name"]:
+            differences.append("Independent worker hosts were not demonstrated")
+        if any("ci" in host for host in hosts):
+            for key in ("job", "attempt"):
+                values = [host.get("ci", {}).get(key) for host in hosts]
+                if any(not value for value in values) or values[0] == values[1]:
+                    differences.append("Distinct CI job and attempt evidence was not demonstrated")
         if any(host["architecture"] not in {"amd64", "x86_64"} or host["buildkit"] != BUILDKIT for host in hosts):
             differences.append("Noncanonical build host or BuildKit pin")
     if baseline is not None:
@@ -158,7 +169,11 @@ def main():
         print(json.dumps(result, indent=2, sort_keys=True))
     else:
         result = compare(args.first, args.second, require_independent=True)
-        print(json.dumps({"source_tree": json.loads((args.first / "identity.json").read_text())["source_tree"], "measurements": result}, indent=2, sort_keys=True))
+        print(json.dumps({
+            "source_tree": json.loads((args.first / "identity.json").read_text())["source_tree"],
+            "hosts": [json.loads((directory / "host.json").read_text()) for directory in (args.first, args.second)],
+            "measurements": result,
+        }, indent=2, sort_keys=True))
 
 
 if __name__ == "__main__":

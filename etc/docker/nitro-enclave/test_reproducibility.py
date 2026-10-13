@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import hashlib
+import json
 import os
 from pathlib import Path
 import shlex
@@ -77,7 +78,7 @@ class ReproducibilityTests(unittest.TestCase):
                 missing = inputs - set(tar.getnames())
         self.assertEqual(missing, set(), f"Compile-time inputs missing from canonical context: {sorted(missing)}")
 
-    def test_comparison_rejects_eif_bytes_pcr0_and_stale_baselines(self):
+    def test_comparison_accepts_cloned_daemon_ids_and_rejects_tampering(self):
         with tempfile.TemporaryDirectory() as tmp:
             first, second = Path(tmp) / "first", Path(tmp) / "second"
             for directory in (first, second):
@@ -87,8 +88,24 @@ class ReproducibilityTests(unittest.TestCase):
                     path.write_bytes(name.encode())
                 reproduce.write_json(directory / "identity.json", {"source_identity": "source"})
                 reproduce.write_json(directory / "measurements.json", {"PCR0": "ab" * 48})
-                reproduce.write_json(directory / "host.json", {"docker_id": directory.name, "architecture": "amd64", "buildkit": reproduce.BUILDKIT})
+                reproduce.write_json(directory / "host.json", {
+                    "docker_id": "cloned-daemon-id", "name": directory.name,
+                    "architecture": "amd64", "buildkit": reproduce.BUILDKIT,
+                    "ci": {"job": directory.name, "attempt": "run/1/" + directory.name},
+                })
             expected = reproduce.compare(first, second, require_independent=True)
+            second_host = json.loads((second / "host.json").read_text())
+            second_host["name"] = first.name
+            reproduce.write_json(second / "host.json", second_host)
+            with self.assertRaisesRegex(ValueError, "Independent.*hosts"):
+                reproduce.compare(first, second, require_independent=True)
+            second_host["name"] = second.name
+            second_host["ci"] = {"job": first.name, "attempt": "run/1/" + first.name}
+            reproduce.write_json(second / "host.json", second_host)
+            with self.assertRaisesRegex(ValueError, "CI job and attempt"):
+                reproduce.compare(first, second, require_independent=True)
+            second_host["ci"] = {"job": second.name, "attempt": "run/1/" + second.name}
+            reproduce.write_json(second / "host.json", second_host)
             baseline = Path(tmp) / "baseline.json"
             reproduce.write_json(baseline, {"measurements": expected})
             (second / "eif.bin").write_bytes(b"different EIF")

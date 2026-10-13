@@ -30,6 +30,8 @@ jobs:
       - name: Export a cold canonical build with varied checkout metadata
         env:
           HOST_VARIANT: ${{ matrix.host }}
+          NITRO_CI_JOB: ${{ github.job }}:${{ matrix.host }}
+          NITRO_CI_ATTEMPT: ${{ github.run_id }}:${{ github.run_attempt }}:${{ github.job }}:${{ matrix.host }}
         run: |
           test "$(uname -s)/$(uname -m)" = Linux/x86_64
           git add -A
