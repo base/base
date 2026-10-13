@@ -40,6 +40,9 @@ pub fn main() {
         // from the same chain and span batch range.
         assert_eq!(prev_boot_info.rollupConfigHash, boot_info.rollupConfigHash);
         assert_eq!(prev_boot_info.scheduleId, boot_info.scheduleId);
+
+        // The concatenated intermediate roots must be sampled at one interval.
+        assert_eq!(prev_boot_info.intermediateBlockInterval, boot_info.intermediateBlockInterval);
     });
 
     // Verify each range program proof.
@@ -95,6 +98,7 @@ pub fn main() {
         l1Head: agg_inputs.latest_l1_checkpoint_head,
         rollupConfigHash: last_boot_info.rollupConfigHash,
         scheduleId: last_boot_info.scheduleId,
+        intermediateBlockInterval: last_boot_info.intermediateBlockInterval,
         intermediateRoots: intermediate_roots,
     };
 

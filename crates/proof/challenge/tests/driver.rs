@@ -2,6 +2,7 @@
 
 use std::{
     collections::HashMap,
+    num::NonZeroU64,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -150,6 +151,7 @@ fn default_ready_proof(intent: DisputeIntent) -> PendingProof {
             sequence_window: None,
             l1_head: Some(DEFAULT_L1_HEAD),
             schedule_l2_block_number: None,
+            intermediate_block_interval: NonZeroU64::new(5).unwrap(),
             zk_vm: ZkVm::Sp1,
             zk_backend: ZkBackend::Cluster,
         },
@@ -185,8 +187,8 @@ fn succeeded_tee_prover(aggregate_proposal: Proposal) -> Arc<MockZkProofProvider
         state: Mutex::new(MockZkProofState {
             proof_status: ProofStatus::Succeeded,
             result: Some(ApiProofResult::Tee(TeeProofResult {
+                intermediate_roots: vec![aggregate_proposal.output_root],
                 aggregate_proposal,
-                proposals: Vec::new(),
                 tee_kind: TeeKind::AwsNitro,
                 tee_signer: Address::repeat_byte(0x11),
             })),

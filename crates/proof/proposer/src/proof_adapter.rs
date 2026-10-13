@@ -74,6 +74,8 @@ impl ProposerProofAdapter {
 
 #[cfg(test)]
 mod tests {
+    use std::num::NonZeroU64;
+
     use alloy_primitives::{Address, B256, Bytes};
     use base_prover_service_protocol::{
         ProofRequestKind, ProofResult, SnarkPlonkProofResult, TeeKind, TeeProofResult,
@@ -93,6 +95,7 @@ mod tests {
             proposer: Address::repeat_byte(0x04),
             l1_head_number: 1200,
             schedule_l2_block_number: None,
+            intermediate_block_interval: NonZeroU64::new(30).unwrap(),
         }
     }
 
@@ -117,10 +120,10 @@ mod tests {
     #[test]
     fn tee_proof_result_converts_to_proposal_parts() {
         let aggregate = test_proposal(600);
-        let proposal = test_proposal(300);
+        let intermediate_roots = vec![test_proposal(300).output_root, aggregate.output_root];
         let result = ProofResult::Tee(TeeProofResult {
             aggregate_proposal: aggregate.clone(),
-            proposals: vec![proposal.clone()],
+            intermediate_roots: intermediate_roots.clone(),
             tee_kind: TeeKind::AwsNitro,
             tee_signer: Address::repeat_byte(0x11),
         });
@@ -128,7 +131,7 @@ mod tests {
         let converted = ProposerProofAdapter::tee_proof_result(result).unwrap();
 
         assert_eq!(converted.aggregate_proposal, aggregate);
-        assert_eq!(converted.proposals, vec![proposal]);
+        assert_eq!(converted.intermediate_roots, intermediate_roots);
         assert_eq!(converted.tee_signer, Address::repeat_byte(0x11));
     }
 

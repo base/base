@@ -407,9 +407,10 @@ pub enum ProofGeneratorError {
 
 #[cfg(test)]
 mod tests {
-    use std::{sync::Mutex, time::Duration};
+    use std::{num::NonZeroU64, sync::Mutex, time::Duration};
 
     use alloy_genesis::ChainConfig;
+    use alloy_primitives::{Address, B256};
     use async_trait::async_trait;
     use base_common_genesis::RollupConfig;
     use base_proof_host::ProverConfig;
@@ -586,7 +587,17 @@ mod tests {
     }
 
     fn primitive_request(block: u64) -> NitroProofRequest {
-        NitroProofRequest { claimed_l2_block_number: block, ..Default::default() }
+        NitroProofRequest {
+            l1_head: B256::ZERO,
+            agreed_l2_head_hash: B256::ZERO,
+            agreed_l2_output_root: B256::ZERO,
+            claimed_l2_output_root: B256::ZERO,
+            claimed_l2_block_number: block,
+            proposer: Address::ZERO,
+            l1_head_number: 0,
+            schedule_l2_block_number: None,
+            intermediate_block_interval: NonZeroU64::new(1).unwrap(),
+        }
     }
 
     fn test_prover_config() -> ProverConfig {
@@ -640,6 +651,7 @@ mod tests {
                     sequence_window: None,
                     l1_head: None,
                     schedule_l2_block_number: None,
+                    intermediate_block_interval: NonZeroU64::new(1).unwrap(),
                     zk_vm: base_prover_service_protocol::ZkVm::Sp1,
                     zk_backend: base_prover_service_protocol::ZkBackend::Cluster,
                 })

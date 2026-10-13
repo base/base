@@ -279,9 +279,10 @@ impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {
         l1_provider: &dyn L1Provider,
     ) -> eyre::Result<TeeProofRequest> {
         let start_block_number = candidate.checkpoint_start_block(invalid_index)?;
+        let intermediate_block_interval = candidate.intermediate_block_interval;
 
         let claimed_l2_block_number = start_block_number
-            .checked_add(candidate.intermediate_block_interval)
+            .checked_add(intermediate_block_interval.get())
             .ok_or_else(|| eyre::eyre!("claimed_l2_block_number overflow"))?;
 
         let l1_head = candidate.l1_head;
@@ -301,6 +302,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {
             proposer,
             l1_head_number,
             schedule_l2_block_number: Some(candidate.info.l2_block_number),
+            intermediate_block_interval,
         })
     }
 
@@ -311,14 +313,17 @@ impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {
         invalid_index: u64,
     ) -> eyre::Result<SnarkPlonkProofRequest> {
         let start_block_number = candidate.checkpoint_start_block(invalid_index)?;
+        let intermediate_block_interval = candidate.intermediate_block_interval;
 
+        // A dispute proves the one segment ending at the disputed root.
         Ok(SnarkPlonkProofRequest {
             proof: ZkProofRequest {
                 start_block_number,
-                number_of_blocks_to_prove: candidate.intermediate_block_interval,
+                number_of_blocks_to_prove: intermediate_block_interval.get(),
                 sequence_window: None,
                 l1_head: Some(candidate.l1_head),
                 schedule_l2_block_number: Some(candidate.info.l2_block_number),
+                intermediate_block_interval,
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,
             },
@@ -648,7 +653,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashMap, sync::Arc, time::Duration};
+    use std::{collections::HashMap, num::NonZeroU64, sync::Arc, time::Duration};
 
     use alloy_primitives::{Address, B256, Bytes};
     use base_proof_contracts::{
@@ -675,6 +680,7 @@ mod tests {
                 sequence_window: None,
                 l1_head: Some(B256::repeat_byte(0xAA)),
                 schedule_l2_block_number: None,
+                intermediate_block_interval: NonZeroU64::new(10).unwrap(),
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,
             },
