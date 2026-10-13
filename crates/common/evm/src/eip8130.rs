@@ -817,11 +817,12 @@ impl Eip8130Executor {
         Ok(highest)
     }
 
-    /// Resolves the [`Eip8130Outcome`] for [`Self::simulate`]: applies account
-    /// changes, then resolves the acting actor (an optional RPC hint, else the
+    /// Resolves the [`Eip8130Outcome`] for [`Self::simulate`]: prices intrinsic
+    /// gas and checks it against the gas limit, then applies account changes,
+    /// then resolves the acting actor (an optional RPC hint, else the
     /// account's self-actor) and its policy from the post-apply journal — no
-    /// signature recovery — then prices intrinsic gas without
-    /// validating or advancing the nonce or checking the payer balance. The
+    /// signature recovery — without validating or advancing the nonce or
+    /// checking the payer balance. The
     /// authentication gas for the sender's (and any payer's) declared
     /// authenticator is priced from the synthesized auth-blob shape via
     /// [`IntrinsicGas`]. Storage writes land on the journal; the caller's
@@ -894,13 +895,36 @@ impl Eip8130Executor {
                 nonce_mgr.get_nonce(sender, nonce_key).map_err(BaseTransactionError::eip8130)? == 0
             };
 
-            // 2. Apply account changes and install deferred code effects so the
+            // 2. Intrinsic gas (auth gas is priced from the auth-blob shape, so a
+            //    stub signature of the right authenticator type estimates exactly).
+            //    The estimate is a safe ceiling that execution can only meet or
+            //    undercharge. The non-monotonic, state-dependent costs are
+            //    therefore pinned to their worst case rather than resolved:
+            //      - from Zenith, the sender's policy gate charged (its
+            //        `policy_manager` SLOAD), so a `gas_limit == estimate`
+            //        submission never OOGs if the gate flips on before inclusion.
+            //      - zero revoke discount, so revokes are priced at the full
+            //        three-reset worst case regardless of which slots are empty.
+            //    The monotonic, body-derivable nonce first-use cost stays resolved.
+            //    Execution reprices all of these precisely against the
+            //    authenticated actors and real state.
+            //    None of this depends on the applied account changes, so a
+            //    `gas_limit` that cannot cover it is rejected before any change
+            //    is applied.
+            let (intrinsic, execution_gas_available) = Self::resolve_execution_gas(
+                signed,
+                encoded,
+                &IntrinsicGasInput::worst_case(sender, nonce_key_first_use, keystore),
+                gas_limit,
+            )?;
+
+            // 3. Apply account changes and install deferred code effects so the
             //    calls run against post-change code and create/delegation gas is
             //    priced. Must precede actor/policy resolution so an actor
             //    authorized in this same estimate request is visible.
             Self::apply_account_changes(signed, sctx, sender, now)?;
 
-            // 3. Resolve the acting actor's real policy gate. No signature
+            // 4. Resolve the acting actor's real policy gate. No signature
             //    recovery: the optional RPC hint names the intended actor (e.g. a
             //    session key); absent that, fall back to the account's self-actor.
             //    Policy is read from the post-apply journal so same-tx
@@ -910,7 +934,7 @@ impl Eip8130Executor {
             //
             //    This real gate drives only the outcome's call-gating (whether
             //    `call.to` must equal `policy_target`); it does NOT feed the
-            //    intrinsic-gas estimate, which pins the gate worst-case (step 5)
+            //    intrinsic-gas estimate, which pins the gate worst-case (step 2)
             //    so the returned ceiling stays valid even if the gate flips
             //    between estimation and inclusion (the gate is a non-monotonic
             //    state-dependent cost).
@@ -924,26 +948,6 @@ impl Eip8130Executor {
             } else {
                 (false, Address::ZERO)
             };
-
-            // 4. Intrinsic gas (auth gas is priced from the auth-blob shape, so a
-            //    stub signature of the right authenticator type estimates exactly).
-            //    The estimate is a safe ceiling that execution can only meet or
-            //    undercharge. The non-monotonic, state-dependent costs are
-            //    therefore pinned to their worst case rather than resolved:
-            //      - from Zenith, the sender's policy gate charged (its
-            //        `policy_manager` SLOAD), so a `gas_limit == estimate`
-            //        submission never OOGs if the gate flips on before inclusion.
-            //      - zero revoke discount, so revokes are priced at the full
-            //        three-reset worst case regardless of which slots are empty.
-            //    The monotonic, body-derivable nonce first-use cost stays resolved.
-            //    Execution reprices all of these precisely against the
-            //    authenticated actors and real state.
-            let (intrinsic, execution_gas_available) = Self::resolve_execution_gas(
-                signed,
-                encoded,
-                &IntrinsicGasInput::worst_case(sender, nonce_key_first_use, keystore),
-                gas_limit,
-            )?;
 
             // 5. Publish the transaction context for the `TxContext` precompile.
             TxContextStorage::new(sctx)
@@ -4457,5 +4461,28 @@ mod tests {
         assert_eq!(slot(0), Some(U256::ZERO), "MSIZE at entry");
         assert_eq!(slot(1), Some(U256::ZERO), "MLOAD(0) at entry");
         assert_eq!(slot(2), Some(U256::from(PUSH0_MLOAD_GAS_FROM_EMPTY_MEMORY)));
+    }
+
+    /// Estimation rejects a gas limit below intrinsic gas before it applies any
+    /// account change: a malformed second create entry is never reached.
+    #[test]
+    fn simulate_checks_intrinsic_gas_before_applying_account_changes() {
+        let key = signing_key(0xc9);
+        let (derived, signed) = counterfactual_create_signed(&key, bytes!("00"), Vec::new());
+        let mut tx = signed.tx().clone();
+        let create = tx.account_changes[0].clone();
+        tx.account_changes.push(create);
+        tx.gas_limit = 1;
+        let signed = configured_signed(tx, &key);
+
+        let mut evm = with_zenith(evm_with(U256::from(10u64).pow(U256::from(18u64)), derived));
+        let mut sim = into_base_tx(&signed);
+        sim.base.caller = derived;
+        if let Some(parts) = sim.eip8130.as_mut() {
+            parts.mode = Eip8130ExecutionMode::Simulate;
+        }
+        evm.ctx_mut().tx = sim;
+        let err = Eip8130Executor::simulate(&mut evm).unwrap_err();
+        assert!(err.to_string().contains("below the EIP-7623 calldata floor"), "got {err}");
     }
 }
