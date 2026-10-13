@@ -46,7 +46,7 @@ impl BestTransactionLane {
         T: BasePooledTx,
     {
         let nonce_key = transaction.transaction.eip8130_nonce_channel_key();
-        if nonce_key.is_none() && transaction.transaction.eip8130_replay_id().is_some() {
+        if nonce_key.is_none() && transaction.transaction.is_eip8130_nonce_free() {
             return None;
         }
         Some(Self { sender: transaction.sender(), nonce_key: nonce_key.unwrap_or_default() })
