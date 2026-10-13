@@ -50,6 +50,7 @@ reqwest.workspace = true
 alloy-genesis.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
 base-common-genesis = { workspace = true, features = ["serde", "std"] }
+base-proof-primitives = { workspace = true, features = ["test-utils"] }
 
 [features]
 metrics = [ "base-proof-host/metrics" ]

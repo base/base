@@ -5,6 +5,8 @@
 
 mod common;
 
+use std::num::NonZeroU64;
+
 use base_prover_service_protocol::{
     ProofRequest, ProofRequestKind, ProveBlockRangeRequest, ProverRequesterApiClient, ZkBackend,
     ZkProofRequest, ZkVm,
@@ -22,6 +24,7 @@ fn compressed_request(session_id: &str, start_block_number: u64) -> ProveBlockRa
                 sequence_window: None,
                 l1_head: None,
                 schedule_l2_block_number: None,
+                intermediate_block_interval: NonZeroU64::new(1).unwrap(),
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,
             }),

@@ -261,7 +261,7 @@ impl ProofRecovery {
                 state.l2_block_number,
                 state.parent_address,
                 intervals.block_interval,
-                intervals.intermediate_block_interval,
+                intervals.intermediate_block_interval.get(),
                 &intermediate_roots,
             )
             .map_err(|e| ProposerError::Config(e.to_string()))?;
@@ -308,7 +308,7 @@ impl ProofRecovery {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashMap, sync::Arc};
+    use std::{collections::HashMap, num::NonZeroU64, sync::Arc};
 
     use alloy_primitives::{Address, B256};
     use base_proof_contracts::AnchorRoot;
@@ -348,15 +348,18 @@ mod tests {
             let block = anchor_block + block_interval * (i as u64 + 1);
             let root_claim = B256::repeat_byte((i as u8) + 1);
             let parent_block = block - block_interval;
-            let intermediate_roots = Intervals { block_interval, intermediate_block_interval }
-                .intermediate_block_numbers(parent_block)
-                .unwrap()
-                .into_iter()
-                .map(|intermediate_block| match intermediate_block {
-                    n if n == block => root_claim,
-                    n => B256::repeat_byte(n as u8),
-                })
-                .collect::<Vec<_>>();
+            let intermediate_roots = Intervals {
+                block_interval,
+                intermediate_block_interval: NonZeroU64::new(intermediate_block_interval).unwrap(),
+            }
+            .intermediate_block_numbers(parent_block)
+            .unwrap()
+            .into_iter()
+            .map(|intermediate_block| match intermediate_block {
+                n if n == block => root_claim,
+                n => B256::repeat_byte(n as u8),
+            })
+            .collect::<Vec<_>>();
             output_roots.insert(block, root_claim);
             let key = game_lookup_key(
                 parent_block,
@@ -521,10 +524,10 @@ mod tests {
     #[tokio::test]
     async fn test_recovery_forward_walk_crosses_fast_activation_block() {
         const SLOW_INTERVAL: u64 = 100;
-        const SLOW_INTERMEDIATE: u64 = 50;
+        const SLOW_INTERMEDIATE: NonZeroU64 = NonZeroU64::new(50).unwrap();
         const FAST_ACTIVATION_BLOCK: u64 = 300;
         const FAST_INTERVAL: u64 = 200;
-        const FAST_INTERMEDIATE: u64 = 100;
+        const FAST_INTERMEDIATE: NonZeroU64 = NonZeroU64::new(100).unwrap();
 
         // Starting blocks either side of the boundary: 0/100/200 are slow-cadence,
         // 300/500 are fast-cadence.
@@ -560,7 +563,7 @@ mod tests {
                 starting_block,
                 parent,
                 intervals.block_interval,
-                intervals.intermediate_block_interval,
+                intervals.intermediate_block_interval.get(),
                 &intermediate_roots,
             )
             .unwrap();
@@ -589,10 +592,10 @@ mod tests {
 
         let denim_aware = fixture(test_interval_resolver(MockAggregateVerifier {
             block_interval: SLOW_INTERVAL,
-            intermediate_block_interval: SLOW_INTERMEDIATE,
+            intermediate_block_interval: SLOW_INTERMEDIATE.get(),
             fast_activation_block: FAST_ACTIVATION_BLOCK,
             fast_block_interval: FAST_INTERVAL,
-            fast_intermediate_block_interval: FAST_INTERMEDIATE,
+            fast_intermediate_block_interval: FAST_INTERMEDIATE.get(),
             ..Default::default()
         }));
         let (state, _) = recover_uncached(&denim_aware).await;
@@ -601,7 +604,7 @@ mod tests {
 
         // The slow-cadence pair applied everywhere is the bug this guards against:
         // the walk looks for a 100-block game at 400 and stops at the boundary.
-        let stale = fixture(test_fixed_interval_resolver(SLOW_INTERVAL, SLOW_INTERMEDIATE));
+        let stale = fixture(test_fixed_interval_resolver(SLOW_INTERVAL, SLOW_INTERMEDIATE.get()));
         let (state, _) = recover_uncached(&stale).await;
         assert_eq!(state.l2_block_number, FAST_ACTIVATION_BLOCK);
     }

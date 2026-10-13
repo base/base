@@ -141,6 +141,12 @@ pub enum OracleProviderError {
         /// The configured rollup genesis L2 block number.
         genesis_block: u64,
     },
+    /// The boot data does not carry the game's intermediate block interval, which has no default.
+    #[error("Missing intermediate block interval")]
+    MissingIntermediateBlockInterval,
+    /// The boot data carries a zero intermediate block interval.
+    #[error("Intermediate block interval must be non-zero")]
+    ZeroIntermediateBlockInterval,
     /// The rollup config has a zero L2 block time.
     #[error("L2 block time must be non-zero")]
     InvalidL2BlockTime,
