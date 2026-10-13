@@ -1638,7 +1638,11 @@ impl Eip8130Executor {
         // the next call reuses it (there is no "return to pool" step). The per-tx
         // buffer is reclaimed by the `local_mut().clear()` after `commit_tx` in
         // `execute`.
+        //
+        // Each call is a fresh call frame, so it must start with empty memory.
+        // No frame is live here, and truncating keeps the allocation.
         let ctx = evm.ctx_mut();
+        ctx.local().shared_memory_buffer().borrow_mut().clear();
         let mut memory =
             SharedMemory::new_with_buffer(Rc::clone(ctx.local().shared_memory_buffer()));
         memory.set_memory_limit(ctx.cfg().memory_limit());
@@ -4412,5 +4416,46 @@ mod tests {
         };
         assert_eq!(slot0(first), Some(U256::from(1u64)), "committed phase keeps its write");
         assert!(slot0(last).is_none_or(|value| value.is_zero()), "later phase is skipped");
+    }
+
+    /// A root call starts with empty memory even after an earlier root call in
+    /// the same phase expanded it, and pays memory expansion from zero.
+    #[test]
+    fn root_call_starts_with_empty_memory() {
+        let key = signing_key(0xd4);
+        let sender = eoa_address(&key);
+        let writer = address!("0x00000000000000000000000000000000000000f5");
+        let reader = address!("0x00000000000000000000000000000000000000f6");
+        // MSTORE 0xff..ff at 0x00 and 0x60 (memory size 0x80), then RETURN(0, 0).
+        let writer_code = bytes!(
+            "7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff5f527fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff60605260005ff3"
+        );
+        // slot 0 = MSIZE; slot 1 = MLOAD(0); slot 2 = gas spent across
+        // `PUSH0 MLOAD GAS`, read with two `GAS` opcodes.
+        // MSIZE PUSH0 SSTORE GAS PUSH0 MLOAD GAS SWAP1 PUSH1 1 SSTORE SWAP1 SUB PUSH1 2 SSTORE STOP
+        let reader_code = bytes!("595f555a5f515a90600155900360025500");
+        // PUSH0 (2) + MLOAD (3) + one word of memory expansion (3) + GAS (2).
+        const PUSH0_MLOAD_GAS_FROM_EMPTY_MEMORY: u64 = 2 + 3 + 3 + 2;
+
+        let mut tx = base_tx();
+        tx.calls = vec![vec![
+            Call { to: writer, value: U256::ZERO, data: Bytes::new() },
+            Call { to: reader, value: U256::ZERO, data: Bytes::new() },
+        ]];
+        let signed = eoa_signed(tx, &key);
+        let mut evm = evm_with_accounts(
+            U256::from(10u64).pow(U256::from(18u64)),
+            sender,
+            &[(writer, writer_code), (reader, reader_code)],
+        );
+        let outcome = evm.transact_raw(into_base_tx(&signed)).expect("tx is included");
+        assert!(outcome.result.is_success(), "expected success, got {:?}", outcome.result);
+
+        let slot = |index: u64| {
+            outcome.state[&reader].storage.get(&U256::from(index)).map(|slot| slot.present_value)
+        };
+        assert_eq!(slot(0), Some(U256::ZERO), "MSIZE at entry");
+        assert_eq!(slot(1), Some(U256::ZERO), "MLOAD(0) at entry");
+        assert_eq!(slot(2), Some(U256::from(PUSH0_MLOAD_GAS_FROM_EMPTY_MEMORY)));
     }
 }
