@@ -8,8 +8,9 @@ use alloc::{string::ToString, vec::Vec};
 use core::fmt::Debug;
 
 use alloy_consensus::{Header, Sealed, crypto::RecoveryError};
+use alloy_eips::eip7928::compute_block_access_list_hash;
 use alloy_evm::{
-    EvmFactory, FromRecoveredTx, FromTxWithEncoded,
+    Evm, EvmFactory, FromRecoveredTx, FromTxWithEncoded,
     block::{BlockExecutionResult, BlockExecutor, BlockExecutorFactory},
 };
 use base_common_consensus::{BaseReceiptEnvelope, BaseTxEnvelope};
@@ -138,8 +139,14 @@ where
         );
 
         // Step 2. Create the executor, using the trie database.
-        let mut state =
-            State::builder().with_database(&mut self.trie_db).with_bundle_update().build();
+        // Amsterdam (Denim) blocks commit to a block access list, so the stateless executor has to
+        // build the same list as the sequencer to reproduce the header.
+        let is_amsterdam = self.config.is_denim_active(attrs.payload_attributes.timestamp);
+        let mut state = State::builder()
+            .with_database(&mut self.trie_db)
+            .with_bundle_update()
+            .with_bal_builder_if(is_amsterdam)
+            .build();
         let evm = self.factory.evm_factory().create_evm(&mut state, evm_env);
         let ctx = BaseBlockExecutionCtx {
             parent_hash,
@@ -147,14 +154,26 @@ where
             // This field is unused for individual block building jobs.
             extra_data: Default::default(),
         };
-        let executor = self.factory.create_executor(evm, ctx);
+        let mut executor = self.factory.create_executor(evm, ctx);
 
         // Step 3. Execute the block containing the transactions within the payload attributes.
         let transactions = attrs
             .recovered_transactions_with_encoded()
             .collect::<Result<Vec<_>, RecoveryError>>()
             .map_err(ExecutorError::Recovery)?;
-        let ex_result = executor.execute_block(transactions.iter())?;
+        let ex_result = if is_amsterdam {
+            // `BlockExecutor::execute_block` does not advance the block access index, so the block
+            // builder's loop is inlined here to keep each transaction's changes at its own index.
+            executor.apply_pre_execution_changes()?;
+            executor.evm_mut().db_mut().bump_bal_index();
+            for tx in &transactions {
+                executor.execute_transaction(tx)?;
+                executor.evm_mut().db_mut().bump_bal_index();
+            }
+            executor.apply_post_execution_changes()?
+        } else {
+            executor.execute_block(transactions.iter())?
+        };
 
         info!(
             target: "block_builder",
@@ -164,9 +183,20 @@ where
         );
 
         // Step 4. Merge state transitions and seal the block.
+        let block_access_list_hash = state
+            .bal_state
+            .bal_builder()
+            .map(|bal| compute_block_access_list_hash(&bal.into_alloy_bal()));
         state.merge_transitions(BundleRetention::Reverts);
         let bundle = state.take_bundle();
-        let header = self.seal_block(&attrs, parent_hash, &block_env, &ex_result, bundle)?;
+        let header = self.seal_block(
+            &attrs,
+            parent_hash,
+            &block_env,
+            &ex_result,
+            bundle,
+            block_access_list_hash,
+        )?;
 
         info!(
             target: "block_builder",
