@@ -229,7 +229,7 @@ impl L2BlockInfo {
         genesis: &ChainGenesis,
     ) -> Result<Self, FromBlockError> {
         let block: BaseBlock = match payload {
-            BaseExecutionPayload::V4(_) => {
+            BaseExecutionPayload::V4(_) | BaseExecutionPayload::V5(_) => {
                 let sidecar = BaseExecutionPayloadSidecar::v4(
                     CancunPayloadFields::new(
                         parent_beacon_block_root.unwrap_or_default(),
