@@ -12,8 +12,17 @@ from pathlib import Path
 SCRIPT = Path(__file__).with_name("nitro_pcr0.py")
 EXPECTED = "a" * 96
 ACTUAL = "b" * 96
-SHA = "c" * 40
+SHA = "462a94be183c784b1f0f6d22267eb4852a1e4ffd"
 REPO = "base/base"
+HEAD_REPO = {
+    "id": 1414128345,
+    "full_name": "zerozebrazone/base",
+}
+HEAD_BRANCH = "fix/basectl-l1-block-retry"
+FORK_PULLS = (
+    "repos/base/base/pulls?state=open&"
+    "head=zerozebrazone%3Afix%2Fbasectl-l1-block-retry&per_page=100"
+)
 
 
 class NitroPcr0Tests(unittest.TestCase):
@@ -115,6 +124,7 @@ class NitroPcr0Tests(unittest.TestCase):
                 self.assertFalse(self.result.exists())
 
     def comment_fixture(self, *, associated=True):
+        self.root.joinpath("posted.json").unlink(missing_ok=True)
         run = {
             "id": 55,
             "run_attempt": 1,
@@ -122,14 +132,15 @@ class NitroPcr0Tests(unittest.TestCase):
             "status": "completed",
             "conclusion": "failure",
             "head_sha": SHA,
-            "head_branch": "feature",
+            "head_branch": HEAD_BRANCH,
+            "head_repository": HEAD_REPO,
             "path": ".github/workflows/nitro-pcr0.yml",
-            "pull_requests": [{"number": 7}] if associated else [],
+            "pull_requests": [{"number": 5731}] if associated else [],
         }
         pr = {
-            "number": 7,
+            "number": 5731,
             "state": "open",
-            "head": {"sha": SHA, "ref": "feature"},
+            "head": {"sha": SHA, "ref": HEAD_BRANCH, "repo": dict(HEAD_REPO)},
             "base": {"repo": {"full_name": REPO}},
         }
         self.event = self.root / "event.json"
@@ -146,13 +157,15 @@ class NitroPcr0Tests(unittest.TestCase):
         }
         self.responses = {
             "repos/base/base/actions/runs/55": run,
-            "repos/base/base/pulls/7": pr,
-            "repos/base/base/commits/" + SHA + "/pulls?per_page=100": [pr],
+            "repos/base/base/pulls/5731": pr,
+            # GitHub returns no base commit association for this open fork PR.
+            "repos/base/base/commits/" + SHA + "/pulls?per_page=100": [],
+            FORK_PULLS: [pr],
             "repos/base/base/actions/runs/55/artifacts?per_page=100": {
                 "artifacts": [
                     {
                         "id": 88,
-                        "name": "nitro-pcr0",
+                        "name": "nitro-pcr0-1",
                         "expired": False,
                         "size_in_bytes": 1000,
                     }
@@ -174,9 +187,10 @@ if "--method" in sys.argv:
         print("HTTP 403: forbidden", file=sys.stderr)
         sys.exit(1)
     root.joinpath("posted.json").write_text(sys.stdin.read())
+    root.joinpath("posted-endpoint.txt").write_text(endpoint)
     print("{}")
 elif endpoint.endswith("/zip"):
-    sys.stdout.buffer.write(root.joinpath("artifact.zip").read_bytes())
+    sys.stdout.buffer.write(root.joinpath(endpoint.split("/")[-2] + ".zip").read_bytes())
 else:
     print(json.dumps(json.loads(root.joinpath("responses.json").read_text())[endpoint]))
 """
@@ -185,7 +199,7 @@ else:
 
     def comment(self, *, fail=False, entries=None):
         self.root.joinpath("responses.json").write_text(json.dumps(self.responses))
-        with zipfile.ZipFile(self.root / "artifact.zip", "w") as archive:
+        with zipfile.ZipFile(self.root / "88.zip", "w") as archive:
             for name, content in (
                 entries or {"result.json": json.dumps(self.report)}
             ).items():
@@ -208,6 +222,11 @@ else:
         self.comment_fixture(associated=False)
         result = self.comment()
         self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(self.root.joinpath("posted.json").exists())
+        self.assertEqual(
+            self.root.joinpath("posted-endpoint.txt").read_text(),
+            "repos/base/base/issues/5731/comments",
+        )
         body = json.loads(self.root.joinpath("posted.json").read_text())["body"]
         self.assertIn("Committed expected", body)
         self.assertIn(EXPECTED, body)
@@ -216,6 +235,66 @@ else:
         self.assertIn("etc/docker/nitro-enclave/pcr0.txt", body)
         self.assertIn("/actions/runs/55", body)
         self.assertIn(SHA, body)
+
+    def test_fork_head_query_encodes_branch_characters(self):
+        self.comment_fixture(associated=False)
+        branch = "feature/a+b&c#d"
+        self.responses["repos/base/base/actions/runs/55"]["head_branch"] = branch
+        self.responses["repos/base/base/pulls/5731"]["head"]["ref"] = branch
+        self.responses[
+            "repos/base/base/pulls?state=open&"
+            "head=zerozebrazone%3Afeature%2Fa%2Bb%26c%23d&per_page=100"
+        ] = self.responses.pop(FORK_PULLS)
+        result = self.comment()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(self.root.joinpath("posted.json").exists())
+
+    def test_pr_identity_must_match_run_for_both_association_paths(self):
+        for associated in (True, False):
+            for mismatch in ("sha", "ref", "head_repo_name", "head_repo_id", "base"):
+                with self.subTest(associated=associated, mismatch=mismatch):
+                    self.comment_fixture(associated=associated)
+                    pr = self.responses["repos/base/base/pulls/5731"]
+                    if mismatch == "sha":
+                        pr["head"]["sha"] = "d" * 40
+                    elif mismatch == "ref":
+                        pr["head"]["ref"] = "other"
+                    elif mismatch == "head_repo_name":
+                        pr["head"]["repo"]["full_name"] = "other/base"
+                    elif mismatch == "head_repo_id":
+                        pr["head"]["repo"]["id"] += 1
+                    else:
+                        pr["base"]["repo"]["full_name"] = "other/base"
+                    self.comment()
+                    self.assertFalse(self.root.joinpath("posted.json").exists())
+
+    def test_rerun_ignores_older_artifact_and_comments_current_attempt(self):
+        self.comment_fixture()
+        run = self.responses["repos/base/base/actions/runs/55"]
+        run["run_attempt"] = 2
+        self.event.write_text(
+            json.dumps({"workflow_run": run, "repository": {"full_name": REPO}})
+        )
+        self.report["run_attempt"] = 2
+        self.responses["repos/base/base/actions/runs/55/artifacts?per_page=100"][
+            "artifacts"
+        ] = [
+            {
+                "id": 87,
+                "name": "nitro-pcr0-1",
+                "expired": True,
+                "size_in_bytes": 1000,
+            },
+            {
+                "id": 88,
+                "name": "nitro-pcr0-2",
+                "expired": False,
+                "size_in_bytes": 1000,
+            },
+        ]
+        result = self.comment()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(self.root.joinpath("posted.json").exists())
 
     def test_comment_api_failure_exits_nonzero(self):
         self.comment_fixture()
@@ -229,11 +308,13 @@ else:
             with self.subTest(stale=stale):
                 self.comment_fixture()
                 if stale == "head":
-                    self.responses["repos/base/base/pulls/7"]["head"]["sha"] = "d" * 40
+                    self.responses["repos/base/base/pulls/5731"]["head"]["sha"] = (
+                        "d" * 40
+                    )
                 elif stale == "attempt":
                     self.responses["repos/base/base/actions/runs/55"]["run_attempt"] = 2
                 else:
-                    self.responses["repos/base/base/pulls/7"]["state"] = "closed"
+                    self.responses["repos/base/base/pulls/5731"]["state"] = "closed"
                 result = self.comment()
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertFalse(self.root.joinpath("posted.json").exists())
@@ -270,9 +351,7 @@ else:
 
     def test_ambiguous_fork_association_rejected(self):
         self.comment_fixture(associated=False)
-        candidates = self.responses[
-            "repos/base/base/commits/" + SHA + "/pulls?per_page=100"
-        ]
+        candidates = self.responses[FORK_PULLS]
         candidates.append(dict(candidates[0], number=8))
         result = self.comment()
         self.assertEqual(result.returncode, 1, result.stderr)

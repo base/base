@@ -9,6 +9,7 @@ import subprocess
 import sys
 import zipfile
 from pathlib import Path
+from urllib.parse import urlencode
 
 EXPECTED_PATH = "etc/docker/nitro-enclave/pcr0.txt"
 WORKFLOW_PATH = ".github/workflows/nitro-pcr0.yml"
@@ -100,13 +101,14 @@ def api(endpoint, *, body=None, raw=False):
 
 
 def artifact_report(repository, run):
+    attempt = positive_integer(run["run_attempt"], "run attempt")
     artifacts = api(
         f"repos/{repository}/actions/runs/{run['id']}/artifacts?per_page=100"
     )
     matches = [
         artifact
         for artifact in artifacts["artifacts"]
-        if artifact["name"] == "nitro-pcr0"
+        if artifact["name"] == f"nitro-pcr0-{attempt}"
     ]
     if not matches:
         print("No PCR0 result artifact; the build or measurement may have failed.")
@@ -150,12 +152,28 @@ def artifact_report(repository, run):
 
 
 def pull_request(repository, run):
+    head_repository = run["head_repository"]
+    head_repository_id = positive_integer(head_repository["id"], "head repository ID")
+    head_repository_name = head_repository["full_name"]
+    if (
+        not isinstance(head_repository_name, str)
+        or re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", head_repository_name)
+        is None
+    ):
+        raise ValueError("invalid head repository")
+    if not isinstance(run["head_branch"], str) or not run["head_branch"]:
+        raise ValueError("invalid head branch")
     associated = run["pull_requests"]
     if not associated:
-        # Fork workflow_run payloads can omit pull_requests; resolve through GitHub, not the artifact.
-        associated = api(
-            f"repos/{repository}/commits/{run['head_sha']}/pulls?per_page=100"
+        # Fork commits need not exist in the base repository's commit associations.
+        query = urlencode(
+            {
+                "state": "open",
+                "head": f"{head_repository_name.split('/')[0]}:{run['head_branch']}",
+                "per_page": 100,
+            }
         )
+        associated = api(f"repos/{repository}/pulls?{query}")
         associated = [
             pr
             for pr in associated
@@ -163,6 +181,8 @@ def pull_request(repository, run):
             and pr["head"]["sha"] == run["head_sha"]
             and pr["head"]["ref"] == run["head_branch"]
             and pr["base"]["repo"]["full_name"] == repository
+            and pr["head"]["repo"]["full_name"] == head_repository_name
+            and pr["head"]["repo"]["id"] == head_repository_id
         ]
         if not associated:
             print("No current PR for this run; skipping stale result.")
@@ -180,6 +200,11 @@ def pull_request(repository, run):
     ):
         print("PR is closed or has a newer head; skipping stale result.")
         return None
+    if (
+        pr["head"]["repo"]["full_name"] != head_repository_name
+        or pr["head"]["repo"]["id"] != head_repository_id
+    ):
+        raise ValueError("PR head repository does not match the workflow run")
     return pr
 
 
