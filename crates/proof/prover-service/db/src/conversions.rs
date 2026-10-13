@@ -260,6 +260,8 @@ impl ProofRequest {
 
 #[cfg(test)]
 mod tests {
+    use std::num::NonZeroU64;
+
     use base_prover_service_protocol::{
         ProofRequest as ProtocolProofRequest, ProofRequestKind, ZkBackend as ProtocolZkBackend,
     };
@@ -277,6 +279,7 @@ mod tests {
                 sequence_window: None,
                 l1_head: None,
                 schedule_l2_block_number: None,
+                intermediate_block_interval: NonZeroU64::new(2).unwrap(),
                 zk_vm: ProtocolZkVm::Sp1,
                 zk_backend: ProtocolZkBackend::Cluster,
             }),
@@ -483,7 +486,7 @@ mod tests {
                     "prev_output_root": "0x0000000000000000000000000000000000000000000000000000000000000000",
                     "config_hash": "0x0000000000000000000000000000000000000000000000000000000000000000"
                 },
-                "proposals": [],
+                "intermediate_roots": [],
                 "tee_kind": "aws_nitro",
                 "tee_signer": "0x1111111111111111111111111111111111111111"
             }
