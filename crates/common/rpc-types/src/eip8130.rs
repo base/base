@@ -410,21 +410,17 @@ mod tests {
         );
     }
 
-    /// The structural limits enforced at pool admission also bound simulation.
+    /// The structural limits enforced at pool admission also bound simulation;
+    /// over JSON the phase cap already applies while decoding.
     #[test]
     fn too_many_call_phases_are_rejected() {
         let calls: Vec<Vec<Call>> = vec![vec![]; Eip8130Constants::MAX_CALL_PHASES_PER_TX + 1];
-        let request = serde_json::from_value::<BaseTransactionRequest>(json!({
+        let decoded = serde_json::from_value::<BaseTransactionRequest>(json!({
             "sender": SENDER,
             "calls": calls,
-        }))
-        .unwrap();
-        assert_eq!(
-            request.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).err(),
-            Some(Eip8130SimulationRequestError::Structural(
-                Eip8130StructuralError::TooManyCallPhases
-            ))
-        );
+        }));
+        let error = decoded.unwrap_err().to_string();
+        assert!(error.contains("`calls` with at most 1024 entries"), "{error}");
     }
 
     #[test]
