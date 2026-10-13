@@ -192,6 +192,17 @@ class ReproducibilityTests(unittest.TestCase):
                 missing = inputs - set(tar.getnames())
         self.assertEqual(missing, set(), f"Compile-time inputs missing from canonical context: {sorted(missing)}")
 
+    def test_canonical_just_comparison_rejects_duplicate_host_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            first = Path(tmp) / "first"
+            self.write_export(first)
+            result = subprocess.run(
+                ["just", "tee::compare-canonical-eif", str(first), str(first)],
+                cwd=reproduce.ROOT, capture_output=True, text=True,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Independent worker hosts were not demonstrated", result.stderr)
+
     def test_comparison_accepts_cloned_daemon_ids_and_rejects_tampering(self):
         with tempfile.TemporaryDirectory() as tmp:
             first, second = Path(tmp) / "first", Path(tmp) / "second"

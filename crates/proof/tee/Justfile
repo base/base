@@ -263,7 +263,7 @@ compare-canonical-eif FIRST SECOND:
     #!/usr/bin/env bash
     set -euo pipefail
     cd ../../..
-    python3 etc/docker/nitro-enclave/reproduce.py compare '{{ FIRST }}' '{{ SECOND }}' --baseline etc/docker/nitro-enclave/baseline.json
+    python3 etc/docker/nitro-enclave/reproduce.py compare '{{ FIRST }}' '{{ SECOND }}' --require-independent --baseline etc/docker/nitro-enclave/baseline.json
 
 # Build EIF and extract it (via --target describe)
 build-eif *args="":

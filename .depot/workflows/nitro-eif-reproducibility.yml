@@ -25,6 +25,9 @@ jobs:
         with:
           version: v0.35.0
           install: false
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+        with:
+          just-version: "1.43.1"
       - name: Regression tests
         run: python3 etc/docker/nitro-enclave/test_reproducibility.py
       - name: Export a cold canonical build with varied checkout metadata
