@@ -277,16 +277,13 @@ where
         self.validator().validator().invalidate_limit_class_cache(diffs);
         let mut exact = Vec::new();
         let mut advances = Vec::new();
-        {
-            let mut nonce_pool = self.nonce_pool.write();
-            for diff in diffs {
-                diff.push_exact_keys(&mut exact);
-                diff.push_nonce_advances(&mut advances);
-                if let Some(balance) = diff.balance {
-                    nonce_pool.set_sender_balance(diff.address, balance);
-                }
-            }
+        for diff in diffs {
+            diff.push_exact_keys(&mut exact);
+            diff.push_nonce_advances(&mut advances);
         }
+        self.nonce_pool.write().apply_balance_updates(
+            diffs.iter().filter_map(|diff| Some((diff.address, diff.balance?))),
+        );
         let (behind, lane_moves) = self.resolve_nonce_advances(&advances);
         // Move lane cursors before releasing what fell behind them, so a
         // successor that stays pending is not re-announced as promoted.
@@ -800,14 +797,18 @@ where
         origin: TransactionOrigin,
         transaction: T,
     ) -> PoolResult<AddedTransactionOutcome> {
+        let balance_epoch = self.nonce_pool.read().balance_epoch();
         let validated = self.validator().validate_transaction(origin, transaction).await;
-        self.add_validated_sidecar_transaction(validated, origin)
+        self.add_validated_sidecar_transaction(validated, origin, balance_epoch)
     }
 
+    /// Inserts a validated sidecar transaction. `balance_epoch` is the sidecar
+    /// balance epoch read before validation started.
     fn add_validated_sidecar_transaction(
         &self,
         validated: TransactionValidationOutcome<T>,
         origin: TransactionOrigin,
+        balance_epoch: u64,
     ) -> PoolResult<AddedTransactionOutcome> {
         // Capture the block-expiry bound before `validated` is consumed by the
         // match below, mirroring the protocol admission paths. A sidecar (EIP-8130)
@@ -848,7 +849,7 @@ where
                 let is_validity = !validated.transaction.validity_predicates().is_empty();
                 let sender = validated.sender();
                 let mut outcome = nonce_pool.insert_validated(validated, state_nonce)?;
-                nonce_pool.set_sender_balance(sender, balance);
+                nonce_pool.record_validated_balance(sender, balance, balance_epoch);
                 // nonce_pool serializes sidecar replacement. Never acquire it while holding guard.
                 let mut guard = self.guard.write();
                 // Transactions below the anchored lane cursor are gone whether or
@@ -888,7 +889,7 @@ where
                             guard.release(replaced.hash());
                             listeners.on_discarded(std::slice::from_ref(replaced));
                         }
-                        nonce_pool.set_sender_balance(sender, balance);
+                        nonce_pool.record_validated_balance(sender, balance, balance_epoch);
                     }
                     return Err(error);
                 }
@@ -1805,12 +1806,9 @@ where
         // dropped reservation cannot be recreated from an older validation
         // snapshot after reth publishes the transaction.
         let _admission_guard = self.protocol_admission_lock.lock();
-        {
-            let mut nonce_pool = self.nonce_pool.write();
-            for account in &accounts {
-                nonce_pool.set_sender_balance(account.address, account.balance);
-            }
-        }
+        self.nonce_pool.write().apply_balance_updates(
+            accounts.iter().map(|account| (account.address, account.balance)),
+        );
         let dropped = {
             let mut guard = self.guard.write();
             let mut dropped = Vec::new();
@@ -2892,12 +2890,13 @@ mod tests {
         let replacement = self_paid_eoa_8130(&signer, U256::from(1), 0, 0, 1_250);
         let replacement_hash = *replacement.hash();
         let mut replacement_events = pool.listeners.write().subscribe_hash(replacement_hash).0;
+        let balance_epoch = pool.nonce_pool.read().balance_epoch();
         let validated =
             pool.validator().validate_transaction(TransactionOrigin::Local, replacement).await;
         pool.validator().validator().clear_limit_class_cache();
 
         let error = pool
-            .add_validated_sidecar_transaction(validated, TransactionOrigin::Local)
+            .add_validated_sidecar_transaction(validated, TransactionOrigin::Local, balance_epoch)
             .expect_err("stale classification must reject the replacement");
         assert!(error.to_string().contains("classification changed during validation"));
         assert!(pool.get(&replacement_hash).is_none());
@@ -2919,6 +2918,7 @@ mod tests {
         let mut queued_events = pool.listeners.write().subscribe_hash(queued_hash).0;
 
         let successor = self_paid_eoa_8130(&signer, U256::from(1), 2, 0, 1_000);
+        let balance_epoch = pool.nonce_pool.read().balance_epoch();
         let validated = match pool
             .validator()
             .validate_transaction(TransactionOrigin::Local, successor)
@@ -2943,7 +2943,7 @@ mod tests {
         };
         pool.validator().validator().clear_limit_class_cache();
 
-        pool.add_validated_sidecar_transaction(validated, TransactionOrigin::Local)
+        pool.add_validated_sidecar_transaction(validated, TransactionOrigin::Local, balance_epoch)
             .expect_err("stale classification must roll back the insert");
 
         let pending = pool.nonce_pool.read().pending_transactions();
@@ -2972,6 +2972,7 @@ mod tests {
         let mut queued_events = pool.listeners.write().subscribe_hash(queued_hash).0;
 
         let successor = self_paid_eoa_8130(&lane_signer, U256::from(1), 2, 0, 1_000);
+        let balance_epoch = pool.nonce_pool.read().balance_epoch();
         let validated = match pool
             .validator()
             .validate_transaction(TransactionOrigin::External, successor)
@@ -2996,7 +2997,11 @@ mod tests {
         };
 
         let error = pool
-            .add_validated_sidecar_transaction(validated, TransactionOrigin::External)
+            .add_validated_sidecar_transaction(
+                validated,
+                TransactionOrigin::External,
+                balance_epoch,
+            )
             .expect_err("the cheapest tail is the inserted transaction");
         assert!(matches!(error.kind, PoolErrorKind::DiscardedOnInsert));
 
@@ -3524,6 +3529,59 @@ mod tests {
             ..AccountStateDiff::new(attacker.address())
         }]);
         assert_eq!(best_hashes(&pool)[0], hash, "a canonical balance restore re-backs the tip");
+    }
+
+    /// Validates `transaction`, applies `balance` for its sender as a newer
+    /// account update, then inserts the validated transaction.
+    async fn insert_after_balance_drop(
+        pool: &IntegrationPool,
+        transaction: BasePooledTransaction,
+        balance: U256,
+    ) {
+        let sender = transaction.sender();
+        let balance_epoch = pool.nonce_pool.read().balance_epoch();
+        let validated =
+            pool.validator().validate_transaction(TransactionOrigin::External, transaction).await;
+        set_balance(pool, sender, balance);
+        pool.add_validated_sidecar_transaction(
+            validated,
+            TransactionOrigin::External,
+            balance_epoch,
+        )
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn balance_drop_during_validation_of_a_first_sidecar_tip_is_not_overwritten() {
+        let (pool, client) = build_integration_pool();
+        let attacker = signer();
+        let (honest_hash, balance) = setup_tip_race(&pool, &client, &attacker).await;
+        let tip = balance - tipping_fees();
+
+        let transaction = tipping_channel_8130(&attacker, None, 0, tip);
+        let hash = *transaction.hash();
+        insert_after_balance_drop(&pool, transaction, balance - U256::from(1)).await;
+        assert!(is_pending(&pool, hash));
+        assert_eq!(best_hashes(&pool)[0], honest_hash, "the stale balance must not back the tip");
+    }
+
+    #[tokio::test]
+    async fn balance_drop_during_validation_of_a_further_sidecar_tip_is_not_overwritten() {
+        let (pool, client) = build_integration_pool();
+        let attacker = signer();
+        let (honest_hash, balance) = setup_tip_race(&pool, &client, &attacker).await;
+        let untipped = tipping_nonce_free_8130(&attacker, 0, U256::ZERO);
+        pool.add_transaction(TransactionOrigin::External, untipped).await.unwrap();
+        let tip = balance - U256::from(2) * tipping_fees();
+
+        let transaction = tipping_channel_8130(&attacker, None, 0, tip);
+        let hash = *transaction.hash();
+        insert_after_balance_drop(&pool, transaction, balance - U256::from(1)).await;
+        assert!(is_pending(&pool, hash));
+        assert_eq!(best_hashes(&pool)[0], honest_hash, "the stale balance must not back the tip");
+
+        set_balance(&pool, attacker.address(), balance);
+        assert_eq!(best_hashes(&pool)[0], hash, "a current balance backs the tip again");
     }
 
     #[tokio::test]

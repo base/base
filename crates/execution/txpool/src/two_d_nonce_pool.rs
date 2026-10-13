@@ -153,9 +153,13 @@ struct SidecarUsage {
     size: usize,
     per_sender: HashMap<Address, usize>,
     sender_costs: HashMap<Address, U256>,
-    /// Kept only for senders with sidecar transactions. A sender without a
-    /// recorded balance backs nothing.
-    sender_balances: HashMap<Address, U256>,
+    /// Each sender's balance, `None` when unknown, and the balance epoch it was
+    /// recorded at. Kept only for senders with sidecar transactions; an unknown
+    /// or missing balance backs nothing.
+    sender_balances: HashMap<Address, (Option<U256>, u64)>,
+    /// Advanced by every batch of balance updates, so a balance read during
+    /// validation can be ordered against them.
+    balance_epoch: u64,
 }
 
 impl SidecarUsage {
@@ -183,17 +187,37 @@ impl SidecarUsage {
         }
     }
 
-    fn set_sender_balance(&mut self, sender: Address, balance: U256) {
-        if self.per_sender.contains_key(&sender) {
-            self.sender_balances.insert(sender, balance);
+    fn apply_balance_updates(&mut self, updates: impl IntoIterator<Item = (Address, U256)>) {
+        self.balance_epoch += 1;
+        for (sender, balance) in updates {
+            if self.per_sender.contains_key(&sender) {
+                self.sender_balances.insert(sender, (Some(balance), self.balance_epoch));
+            }
         }
+    }
+
+    fn record_validated_balance(&mut self, sender: Address, balance: U256, epoch: u64) {
+        if !self.per_sender.contains_key(&sender) {
+            return;
+        }
+        let recorded = match self.sender_balances.get(&sender) {
+            Some((_, recorded_epoch)) if *recorded_epoch > epoch => return,
+            Some(_) => (Some(balance), epoch),
+            None if epoch == self.balance_epoch => (Some(balance), epoch),
+            // A newer update may have been dropped while the sender had no entry.
+            None => (None, self.balance_epoch),
+        };
+        self.sender_balances.insert(sender, recorded);
     }
 
     /// Whether `sender`'s balance covers the summed `cost()` of all its sidecar
     /// transactions, which then all rank by their coinbase tips.
     fn tip_backed(&self, sender: &Address) -> bool {
         let cost = self.sender_costs.get(sender).copied().unwrap_or_default();
-        self.sender_balances.get(sender).is_some_and(|balance| cost <= *balance)
+        self.sender_balances
+            .get(sender)
+            .and_then(|(balance, _)| *balance)
+            .is_some_and(|balance| cost <= balance)
     }
 
     fn sender_count(&self, sender: &Address) -> usize {
@@ -808,10 +832,32 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         self.remove_transactions(&hashes)
     }
 
-    /// Records `sender`'s balance, which backs the coinbase tips of its sidecar
-    /// transactions. Ignored for a sender with no sidecar transactions.
-    pub(crate) fn set_sender_balance(&mut self, sender: Address, balance: U256) {
-        self.usage.set_sender_balance(sender, balance);
+    /// Returns the current balance epoch. Read it before validating a
+    /// transaction and pass it to [`Self::record_validated_balance`].
+    pub(crate) const fn balance_epoch(&self) -> u64 {
+        self.usage.balance_epoch
+    }
+
+    /// Records a batch of current account balances, which back the coinbase
+    /// tips of the senders' sidecar transactions, and advances the balance
+    /// epoch. Senders with no sidecar transactions are ignored.
+    pub(crate) fn apply_balance_updates(
+        &mut self,
+        updates: impl IntoIterator<Item = (Address, U256)>,
+    ) {
+        self.usage.apply_balance_updates(updates);
+    }
+
+    /// Records the sender balance a validation read after observing balance
+    /// epoch `epoch`.
+    ///
+    /// A balance recorded by a later update wins. A sender with no recorded
+    /// balance takes the validation's balance only when no update has run since
+    /// `epoch`, because an update for a sender without sidecar transactions is
+    /// dropped; otherwise its balance is unknown, and backs nothing, until the
+    /// next update or validation.
+    pub(crate) fn record_validated_balance(&mut self, sender: Address, balance: U256, epoch: u64) {
+        self.usage.record_validated_balance(sender, balance, epoch);
     }
 
     /// Returns a best-transactions iterator snapshot.
