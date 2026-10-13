@@ -51,6 +51,7 @@ impl<ChainSpec: Upgrades> BaseBlockAssembler<ChainSpec> {
             bundle_state,
             state_root,
             state_provider,
+            block_access_list_hash,
             ..
         } = input;
         let ctx = ctx.into();
@@ -113,8 +114,7 @@ impl<ChainSpec: Upgrades> BaseBlockAssembler<ChainSpec> {
             blob_gas_used,
             excess_blob_gas,
             requests_hash,
-            block_access_list_hash: None,
-            slot_number: None,
+            block_access_list_hash,
         };
 
         Ok(Block::new(
