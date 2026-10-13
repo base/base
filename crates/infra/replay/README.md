@@ -144,13 +144,13 @@ The builder's `mainnet_build` benchmark consumes the same full execution fixture
 but calls the **production Flashblocks builder**, not the proof stateless builder:
 
 ```sh
-CARGO_PROFILE_BENCH_DEBUG=0 cargo bench --locked -p base-builder-core \
+CARGO_PROFILE_BENCH_DEBUG=0 cargo bench --locked -p base-replay \
   --bench mainnet_build -- --test
-CARGO_PROFILE_BENCH_DEBUG=0 cargo bench --locked -p base-builder-core \
+CARGO_PROFILE_BENCH_DEBUG=0 cargo bench --locked -p base-replay \
   --bench mainnet_build -- --warm-up-time 1 --measurement-time 2
 # Override the default mainnet-execution.json.zst with another complete block:
 BASE_REPLAY_FIXTURE=/absolute/path/to/execution.json.zst \
-  CARGO_PROFILE_BENCH_DEBUG=0 cargo bench --locked -p base-builder-core \
+  CARGO_PROFILE_BENCH_DEBUG=0 cargo bench --locked -p base-replay \
   --bench mainnet_build -- --warm-up-time 1 --measurement-time 2
 ```
 

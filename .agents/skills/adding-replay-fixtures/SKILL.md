@@ -52,9 +52,9 @@ Use the same complete execution fixture with the real builder benchmark, after r
 
 ```sh
 BASE_REPLAY_FIXTURE="$FIXTURE" CARGO_PROFILE_BENCH_DEBUG=0 \
-  cargo bench --locked -p base-builder-core --bench mainnet_build -- --test
+  cargo bench --locked -p base-replay --bench mainnet_build -- --test
 BASE_REPLAY_FIXTURE="$FIXTURE" CARGO_PROFILE_BENCH_DEBUG=0 \
-  cargo bench --locked -p base-builder-core --bench mainnet_build -- \
+  cargo bench --locked -p base-replay --bench mainnet_build -- \
   --warm-up-time 1 --measurement-time 2
 ```
 

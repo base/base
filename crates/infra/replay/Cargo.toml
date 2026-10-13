@@ -41,4 +41,23 @@ base-common-consensus = { workspace = true, features = ["serde", "k256"] }
 base-common-rpc-types-engine = { workspace = true, features = ["serde", "k256"] }
 
 [dev-dependencies]
+reth-evm.workspace = true
+reth-provider.workspace = true
+reth-trie-common.workspace = true
+reth-transaction-pool.workspace = true
+reth-primitives-traits.workspace = true
+reth-basic-payload-builder.workspace = true
+
+base-execution-evm.workspace = true
+base-execution-txpool.workspace = true
+base-common-flashblocks.workspace = true
+base-execution-chainspec.workspace = true
+base-execution-payload-builder.workspace = true
+base-builder-core = { workspace = true, features = ["test-utils"] }
+
 tokio = { workspace = true, features = ["macros", "rt"] }
+criterion = { workspace = true, features = ["html_reports"] }
+
+[[bench]]
+name = "mainnet_build"
+harness = false

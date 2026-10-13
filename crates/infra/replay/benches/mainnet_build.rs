@@ -283,11 +283,7 @@ pub fn assembly_info(info: &ExecutionInfo) -> ExecutionInfo {
 /// Runs checks before measuring production selection, assembly and publication encoding.
 pub fn mainnet_build(c: &mut Criterion) {
     let path = std::env::var("BASE_REPLAY_FIXTURE").unwrap_or_else(|_| {
-        concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../infra/replay/fixtures/mainnet-execution.json.zst"
-        )
-        .into()
+        concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/mainnet-execution.json.zst").into()
     });
     let fixture = Fixture::read(path).unwrap();
     fixture.validate().unwrap();
