@@ -78,7 +78,9 @@ mod pool_error_label;
 pub use pool_error_label::PoolRejectionLabel;
 
 mod builder;
-pub use builder::{BuilderApiImpl, BuilderApiMetrics, BuilderApiServer, InsertMetering};
+pub use builder::{
+    BuilderApiImpl, BuilderApiMetrics, BuilderApiServer, InsertMetering, MAX_VALIDATED_INSERT_BATCH,
+};
 
 mod wire;
 pub use wire::{

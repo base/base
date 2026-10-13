@@ -32,9 +32,9 @@ serde.workspace = true
 futures.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
-serde_json.workspace = true
 tokio-util.workspace = true
 metrics = { workspace = true, optional = true }
+serde_json = { workspace = true, features = ["raw_value"] }
 tokio = { workspace = true, features = ["sync", "rt", "time"] }
 jsonrpsee = { workspace = true, features = ["http-client"] }
 

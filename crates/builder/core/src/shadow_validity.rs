@@ -8,7 +8,7 @@ use base_execution_txpool::{
     BasePooledTransaction, BuilderApiImpl, BuilderApiServer, InsertMetering, TransactionValidity,
     ValidatedTransaction, ValidityOperator, ValidityPredicate, ValiditySignatureMode,
 };
-use jsonrpsee::core::RpcResult;
+use jsonrpsee::{core::RpcResult, types::ErrorObjectOwned};
 use reth_transaction_pool::TransactionPool;
 
 use crate::{BuilderApiExtensionConfig, BuilderMetrics, SharedMeteringProvider};
@@ -161,6 +161,20 @@ where
         }
         self.inner.insert_validated_transaction(tx).await
     }
+
+    async fn insert_validated_transactions(
+        &self,
+        mut txs: Vec<ValidatedTransaction<TransactionValidity>>,
+    ) -> RpcResult<Vec<Option<ErrorObjectOwned>>> {
+        BuilderApiImpl::<P, TransactionValidity>::check_batch_size(txs.len())?;
+        for tx in &mut txs {
+            let outcome = self.config.inject(tx);
+            if self.config.is_enabled() {
+                BuilderMetrics::shadow_validity_injection_total(outcome.label()).increment(1);
+            }
+        }
+        self.inner.insert_validated_transactions(txs).await
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -190,6 +204,8 @@ mod tests {
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{Address, Bytes, Signature};
     use base_common_consensus::{BaseTransactionSigned, BaseTypedTransaction};
+    use base_execution_txpool::MAX_VALIDATED_INSERT_BATCH;
+    use jsonrpsee::types::ErrorCode;
     use reth_transaction_pool::noop::NoopTransactionPool;
 
     use super::*;
@@ -274,6 +290,33 @@ mod tests {
         let tx = transaction(signed.encoded_2718().into());
         let error = api.insert_validated_transaction(tx).await.unwrap_err();
         assert!(error.message().starts_with("pool rejected transaction:"));
+    }
+
+    /// An oversized batch is refused before any transaction is shadow-processed.
+    #[cfg(feature = "metrics")]
+    #[test]
+    fn oversized_batch_is_rejected_before_shadow_injection() {
+        let api = ShadowValidityBuilderApi::new(
+            NoopTransactionPool::<BasePooledTransaction>::new(),
+            BuilderApiExtensionConfig::default().with_shadow_validity(
+                ShadowValidityConfig::enabled(MAX_SHADOW_VALIDITY_SAMPLE_RATE_BPS).unwrap(),
+            ),
+            Arc::new(crate::NoopMeteringProvider),
+        );
+        let tx = transaction(Bytes::from_static(&[0x02, 0x01]));
+        let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+        let metrics = recorder.handle();
+
+        metrics::with_local_recorder(&recorder, || {
+            let oversized = vec![tx.clone(); MAX_VALIDATED_INSERT_BATCH + 1];
+            let error = futures::executor::block_on(api.insert_validated_transactions(oversized))
+                .unwrap_err();
+            assert_eq!(error.code(), ErrorCode::InvalidParams.code());
+            assert!(!metrics.render().contains("shadow_validity_injection"));
+
+            futures::executor::block_on(api.insert_validated_transactions(vec![tx])).unwrap();
+            assert!(metrics.render().contains("shadow_validity_injection"));
+        });
     }
 
     #[test]

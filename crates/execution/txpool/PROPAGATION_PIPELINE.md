@@ -154,6 +154,7 @@ Wires consumer + forwarder into the node using the `BaseNodeExtension` pattern.
 | `--tx-forwarding-resend-after-ms` | u64 | 4000 | Resend-after window in ms (default: 2 blocks) |
 | `--tx-forwarding-batch-size` | usize | 100 | Forwarder batch size |
 | `--tx-forwarding-max-rps` | u32 | 200 | Maximum RPC requests per second per forwarder |
+| `--tx-forwarding-batched-insert` | bool | false | Send each batch as one `base_insertValidatedTransactions` call |
 
 ### Extension Pattern
 

@@ -25,6 +25,8 @@ pub(crate) struct ForwarderConfig {
     pub(crate) retry_backoff: Duration,
     /// Per-request timeout for the HTTP client.
     pub(crate) request_timeout: Duration,
+    /// Send batches of inserts as one `base_insertValidatedTransactions` call.
+    pub(crate) batched_insert: bool,
 }
 
 impl ForwarderConfig {
@@ -44,6 +46,7 @@ impl Default for ForwarderConfig {
             max_retries: 3,
             retry_backoff: Duration::from_millis(100),
             request_timeout: Duration::from_secs(1),
+            batched_insert: false,
         }
     }
 }

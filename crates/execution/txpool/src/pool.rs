@@ -2112,8 +2112,9 @@ mod tests {
 
     use super::*;
     use crate::{
-        BaseL1BlockInfo, BaseOrdering, BasePooledTransaction, LimitClass, ValidityOperator,
-        ValidityPredicate, WatchSet,
+        BaseL1BlockInfo, BaseOrdering, BasePooledTransaction, BuilderApiImpl, BuilderApiServer,
+        LimitClass, NoExtensions, ValidatedTransaction, ValidityOperator, ValidityPredicate,
+        WatchSet,
     };
 
     fn test_chain_id() -> u64 {
@@ -2595,6 +2596,52 @@ mod tests {
         let size = |pool: &IntegrationPool| (pool.pool_size().pending, pool.pool_size().queued);
         assert_eq!(size(&batch_pool), size(&sequential_pool));
         (batched, batch_pool)
+    }
+
+    #[tokio::test]
+    async fn rpc_batch_insert_matches_single_inserts() {
+        let (funded, unfunded) = (signer(), signer());
+        let wire = |tx: BasePooledTransaction| {
+            let recovered = tx.clone_into_consensus();
+            ValidatedTransaction {
+                sender: recovered.signer(),
+                raw: recovered.inner().encoded_2718().into(),
+                metering: None,
+                extensions: NoExtensions::default(),
+            }
+        };
+        let mut undecodable = wire(signed_1559(&funded, 4));
+        undecodable.raw = Bytes::from_static(&[0x02, 0xff]);
+        let batch = vec![
+            wire(signed_1559(&funded, 0)),
+            wire(signed_1559(&funded, 1)),
+            wire(signed_1559(&funded, 0)),
+            undecodable,
+            wire(signed_1559(&unfunded, 0)),
+            wire(signed_1559(&funded, 2)),
+        ];
+
+        let (single_pool, client) = build_integration_pool();
+        fund(&client, funded.address());
+        let single = BuilderApiImpl::new(single_pool.clone());
+        let mut expected = Vec::new();
+        for tx in batch.clone() {
+            expected.push(single.insert_validated_transaction(tx).await.err());
+        }
+
+        let (batch_pool, client) = build_integration_pool();
+        fund(&client, funded.address());
+        let batched =
+            BuilderApiImpl::new(batch_pool.clone()).insert_validated_transactions(batch).await;
+
+        assert_eq!(batched.unwrap(), expected);
+        assert_eq!(
+            expected.iter().map(Option::is_none).collect::<Vec<_>>(),
+            [true, true, false, false, false, true]
+        );
+        let size = |pool: &IntegrationPool| (pool.pool_size().pending, pool.pool_size().queued);
+        assert_eq!(size(&batch_pool), size(&single_pool));
+        assert_eq!(size(&batch_pool), (3, 0));
     }
 
     #[tokio::test]

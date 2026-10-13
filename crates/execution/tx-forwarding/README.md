@@ -34,7 +34,11 @@ pool for every free slot, so a new transaction can wait that long before it is c
 A slow builder backpressures only its own reader. Transactions are marked as recently sent only
 after that builder's queue accepts them, so another destination cannot suppress their delivery.
 Each forwarder sends an isolated request immediately, but drains any other requests already waiting
-for that destination into the same RPC batch up to the configured batch size.
+for that destination into the same RPC batch up to the configured batch size. With
+`--tx-forwarding-batched-insert`, a batch of inserts goes out as one
+`base_insertValidatedTransactions` call, which the builder admits as one pool batch and answers
+with a result per transaction. It is off by default: deploy builders that serve the method first,
+then enable it on the forwarding nodes.
 
 ## Forwarding without the pool
 
@@ -80,6 +84,7 @@ than a logged skip, so a caller never silently forwards to fewer destinations th
 | `--tx-forwarding-max-rps` | u32 | 200 | Maximum RPC requests per second per forwarder |
 | `--tx-forwarding-fifo-percent` | u8 | 20 | Percentage of picks taken oldest-first; the rest by highest tip (100 = pure FIFO) |
 | `--tx-forwarding-queue-capacity` | usize | 2x batch size | Per-builder queue capacity |
+| `--tx-forwarding-batched-insert` | bool | false | Send each batch as one `base_insertValidatedTransactions` call; every builder must serve it |
 
 ## Usage
 

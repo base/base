@@ -45,6 +45,11 @@ pub struct TxForwardingConfig {
     /// priority. With no backlog every pending transaction is sent in the next batch, so the
     /// percentage only matters while a destination is behind.
     pub fifo_percent: u8,
+    /// Whether batches of inserts are sent as one `base_insertValidatedTransactions` call instead
+    /// of a JSON-RPC batch of `base_insertValidatedTransaction` calls.
+    ///
+    /// Every destination must serve the batched method before this is enabled.
+    pub batched_insert: bool,
     /// Per-destination queue capacity. [`None`] uses
     /// [`DEFAULT_QUEUE_CAPACITY_BATCHES`] batches.
     pub queue_capacity: Option<usize>,
@@ -71,6 +76,7 @@ impl Default for TxForwardingConfig {
             max_batch_size: DEFAULT_MAX_BATCH_SIZE,
             max_rps: DEFAULT_MAX_RPS,
             fifo_percent: DEFAULT_FIFO_PERCENT,
+            batched_insert: false,
             queue_capacity: None,
             inline_simulation: false,
             inline_simulation_workers: DEFAULT_INLINE_SIMULATION_WORKERS,
@@ -112,6 +118,12 @@ impl TxForwardingConfig {
     /// Sets the percentage of forwarding picks served oldest-first.
     pub const fn with_fifo_percent(mut self, percent: u8) -> Self {
         self.fifo_percent = percent;
+        self
+    }
+
+    /// Enables or disables sending batches of inserts as one batched builder call.
+    pub const fn with_batched_insert(mut self, enabled: bool) -> Self {
+        self.batched_insert = enabled;
         self
     }
 
@@ -166,6 +178,7 @@ impl TxForwardingConfig {
         ForwarderConfig {
             max_batch_size: self.max_batch_size,
             max_rps: self.max_rps,
+            batched_insert: self.batched_insert,
             ..Default::default()
         }
     }
