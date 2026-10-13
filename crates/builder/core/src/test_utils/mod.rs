@@ -25,6 +25,7 @@ pub use txs::*;
 pub use utils::*;
 
 use crate::BuilderConfig;
+pub use crate::flashblocks::{build_block, execute_pre_steps};
 
 /// Signs a Base transaction and returns the recovered signed transaction.
 pub fn sign_base_tx(

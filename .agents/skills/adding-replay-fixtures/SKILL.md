@@ -17,12 +17,13 @@ cargo build --locked --release -p base-replay-bin
 
 | Question | Capture | What it supports |
 | --- | --- | --- |
+| Where does block-building CPU time go? | Entire block with `--execution`, then builder `mainnet_build` bench | Real Flashblocks selection/execution, assembly and JSON publication with flat mock state; no sequencer roots or disk I/O |
 | Why is this block slow in proof execution or proof state updates? | Entire block with `--execution` | Shared EVM with proof `TrieDB`, receipts, proof trie updates/root, and full proof stateless builder |
 | Is this transaction expensive to decode, recover, or price? | `--transactions HASH` or `--indices INDEX` | Selected-envelope component benchmarks |
 | Which account/storage reads are costly? | Selection plus `--proofs` and explicit `--storage ADDRESS:SLOT` | Parent-state proof reads and roots, not transaction execution |
 | Is batching or derivation expensive for this traffic? | Consecutive blocks, all transactions, no proofs needed | Composition, compression, frames/blobs, channel reassembly, batch decoding |
 
-**Separate proof execution from critical-path sequencing.** `base-proof-mpt::TrieNode` and `StatelessL2Builder` belong to the proof pipeline used by the TEE prover. The sequencer's Flashblocks builder uses a stateful provider and `state_root_with_updates`, which this tool does not benchmark. Label trie and witness-backed execution results as `proof-*`. A slow sequencer block is a useful input, but its proof replay time does not explain its sequencer latency. Host measurements are not TEE measurements; enclave overhead, attestation and signing are excluded.
+**Separate proof execution from critical-path sequencing.** `base-proof-mpt::TrieNode` and `StatelessL2Builder` belong to the proof pipeline used by the TEE prover. Label trie and witness-backed execution results as `proof-*`. The builder's `mainnet_build` benchmark instead prepares flat reads outside timing and removes the proof database before running real Flashblocks code. It excludes the sequencer's `state_root_with_updates` and disk I/O. A slow sequencer block is a useful input, but its proof replay time does not explain its sequencer latency. Host measurements are not TEE measurements; enclave overhead, attestation and signing are excluded.
 
 **A selected transaction is not independently executable against parent-block state.** Earlier transactions may change its prestate. To investigate its EVM behavior, capture its entire containing block and preserve ordering. The current tool reports whole-block execution, not per-transaction EVM timings; do not claim to isolate the target's execution cost or remove earlier transactions from the witness.
 
@@ -44,6 +45,22 @@ target/release/base-replay bench "$FIXTURE" --samples 15 --iterations 3 \
 Require `full mainnet header matched` from verification. Capture exports only after the production builder reconstructs the canonical header and a second, offline execution agrees. Partial selection, missing state, wrong code, and unavailable proofs must fail, not be replaced with zero state.
 
 An old block needs an endpoint retaining its parent proofs and code. Use the existing `BASE_REPLAY_RPC_URL` environment variable for a supplied endpoint; do not print credentials, save them in fixtures, or include them in commands/logs committed to Git. If state is unavailable, report the limitation or use transaction-only capture explicitly. Do not silently substitute another block for a specifically requested one. Capture may take minutes and can fail when required sibling nodes cannot be recovered through public proof APIs.
+
+## Sequencer block building
+
+Use the same complete execution fixture with the real builder benchmark, after running offline verification:
+
+```sh
+BASE_REPLAY_FIXTURE="$FIXTURE" CARGO_PROFILE_BENCH_DEBUG=0 \
+  cargo bench --locked -p base-builder-core --bench mainnet_build -- --test
+BASE_REPLAY_FIXTURE="$FIXTURE" CARGO_PROFILE_BENCH_DEBUG=0 \
+  cargo bench --locked -p base-builder-core --bench mainnet_build -- \
+  --warm-up-time 1 --measurement-time 2
+```
+
+Compilation requires libclang; `.agents/setup` installs it. The test-mode run checks the canonical header except its deliberately uncomputed state root, all transaction bytes/order, gas, and a missing-read negative control. The withdrawals root is explicitly mocked. The production FIFO pool reproduces block order, not historical competing transactions or arrival times. Fixtures must have leading deposits followed by pool transactions. `assemble-tail-no-roots` publishes a synthetic final tenth, not a captured Flashblock boundary. Report flat-state execution, assembly, and JSON serialization separately; do not claim end-to-end block latency, root computation, metering-service enforcement or network fanout. The separate builder `state_root` benchmark uses real RocksDB with **synthetic** state, not mainnet state.
+
+Retain Criterion raw samples from `target/criterion` for before/after comparisons. Use identical fixtures and benchmark parameters in at least three alternating runs of preserved baseline/candidate binaries; record binary hashes. Do not run capture or compilation concurrently with timing.
 
 ## A specific transaction
 
@@ -82,4 +99,4 @@ The command checks round-trip transaction bytes, ordering, timestamps, parents, 
 - Always set sample/iteration counts explicitly: the full-block `bench` defaults (30 samples, 100 iterations) are much slower than the quick 15-by-3 command above. A transaction-only workload needs more iterations because each operation is short.
 - Run `cargo test --locked -p base-replay --lib`. Add a permanent regression assertion only for a concrete observable contract the new example exercises; extend existing tests before adding another test file. No wall-time thresholds in unit tests.
 - Follow the `update-docs-index` skill for Markdown changes, then run `git diff --check`. Inspect fixture size and provenance before committing. Do not commit scratch logs, endpoint credentials, or duplicated RPC tapes without a reason.
-- Report separately: capture cost, offline benchmark wall time, measured component timings, and coverage gaps. Native proof execution is not TEE prover latency, ZK proving/cycle measurement, disk MDBX performance, or critical-path sequencer block building. Do not infer TEE or `no_std` proof-runtime gains from host measurements.
+- Report separately: capture cost, offline benchmark wall time, measured component timings, and coverage gaps. Native proof execution is not TEE prover latency, ZK proving/cycle measurement, disk MDBX performance, or critical-path sequencer block building. Builder flat-state timings cover critical-path CPU components, not storage/transport or end-to-end latency. Do not infer TEE or `no_std` proof-runtime gains from host measurements.

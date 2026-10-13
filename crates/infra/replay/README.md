@@ -84,6 +84,15 @@ no BLOCKHASH ancestor reads; header-oracle performance is not represented by it.
 `fixtures/historical-isthmus.json` adds all 185 transactions of block 32,000,000,
 captured with `--block 32000000 --limit 100000 --compact` without historical state.
 
+`fixtures/b52557780-execution.json.zst` is a lower-gas execution control: 126
+transactions, 26,903,215 gas, 11,618 trie nodes, 261 bytecodes, and no ancestor
+reads. Its block hash is
+`0x174638c73b79ef4ed0cf289d02c7f87e5b7689d8f0166292e3213b9c6aa03d60`.
+Capture used `--block 52557780 --limit 100000 --execution --compact`. The builder
+reads 428 accounts and 2,179 slots, versus 448 and 2,859 for block 52,541,820.
+It was chosen from blocks 52,557,778–52,557,785 for a lower-gas/count control,
+not as evidence that gas predicts wall time. Both are post-Azul blocks.
+
 The checked-in `fixtures/batch/b52540000.json` through `b52540011.json` contain
 12 consecutive full mainnet blocks: 1,815 transactions (1,803 non-deposits),
 including legacy, EIP-1559 and EIP-7702 envelopes. Generate equivalent inputs with
@@ -129,6 +138,62 @@ recovered senders, and EIP-1186 values against reconstructed state/storage roots
 Headers are RPC-sourced, not consensus-verified. Fixtures are trusted workload
 inputs, not an authentication protocol for untrusted peers.
 
+### Sequencer block-building components
+
+The builder's `mainnet_build` benchmark consumes the same full execution fixtures,
+but calls the **production Flashblocks builder**, not the proof stateless builder:
+
+```sh
+CARGO_PROFILE_BENCH_DEBUG=0 cargo bench --locked -p base-builder-core \
+  --bench mainnet_build -- --test
+CARGO_PROFILE_BENCH_DEBUG=0 cargo bench --locked -p base-builder-core \
+  --bench mainnet_build -- --warm-up-time 1 --measurement-time 2
+# Override the default mainnet-execution.json.zst with another complete block:
+BASE_REPLAY_FIXTURE=/absolute/path/to/execution.json.zst \
+  CARGO_PROFILE_BENCH_DEBUG=0 cargo bench --locked -p base-builder-core \
+  --bench mainnet_build -- --warm-up-time 1 --measurement-time 2
+```
+
+Compilation needs libclang (installed by `.agents/setup`). No node or network is
+needed to run it. Untimed preparation records the real builder's account, code,
+storage and BLOCKHASH reads from the witness into flat maps, then **drops the
+proof database**. Missing captured reads fail instead of falling back to a proof,
+RPC, or zero state. This substitutes storage, not the builder's EVM.
+
+The real pending pool uses FIFO arrival timestamps to preserve canonical order;
+deposits enter through payload attributes. This is not a historical mempool trace:
+admission/signature validation is prepared, and competing/rejected transactions,
+metering-service enforcement, arrival timing and Flashblock deadlines are absent.
+Only fixtures with leading deposits followed by ordinary pool transactions are
+supported; unsupported ordering fails explicitly.
+
+Before timing, gas, transaction count/order, and the entire assembled header are
+checked against mainnet, **except the deliberately uncomputed state root**.
+The message-passer withdrawals root is a captured constant. The checks also cover
+a later Flashblock's transaction suffix and reject a missing account read.
+
+Criterion writes raw samples under `target/criterion/sequencer_mainnet_*`:
+
+- `select-execute-flat-state`: pre-block/system calls, deposits, pool iteration,
+  resource checks, EVM execution and state transitions with flat captured reads.
+- `build-no-roots`: selection/execution followed by real payload and Flashblock
+  assembly. It does not include publication encoding or final root computation.
+- `assemble-no-roots`: transition merging, receipts/transaction commitments,
+  bloom, header sealing, executed-block packaging and Flashblock construction.
+  Cloning the starting state and receipts is outside timing; production copies
+  inside `build_block` remain timed. Criterion excludes returned-value destruction.
+- `assemble-tail-no-roots`: the same accumulated block, publishing only the final
+  tenth of transactions (rounded up). The split is synthetic, not the historical
+  Flashblock boundary; commitments still cover the entire block.
+- `publication-json`: serializing the all-transactions Flashblock message, with
+  no websocket, subscriber fanout or network delivery.
+
+These are **CPU/component measurements with mocked storage**, not production
+block latency. Actual sequencer `state_root_with_updates`, MDBX/RocksDB access,
+engine validation/commit, CL/EL transport and service scheduling are not timed.
+The separate `state_root` builder benchmark exercises the real RocksDB-backed root
+provider with synthetic state; do not label its input as mainnet.
+
 ### Proof execution is separate from sequencing
 
 `base-proof-mpt::TrieNode` and `base-proof-executor::StatelessL2Builder` are on the
@@ -141,8 +206,9 @@ normal host measures host performance, not latency inside a TEE.
 The sequencer's critical path uses the stateful Flashblocks payload builder in
 `crates/builder/core/src/flashblocks/payload.rs`; its root calculation calls
 `StateRootProvider::state_root_with_updates`. It does **not** use `base-proof-mpt`.
-There is currently no sequencer block-building or sequencer state-root benchmark
-in this tool. An MPT improvement is a proof-path improvement, not a sequencer gain.
+The `mainnet_build` benchmark above measures builder components with flat mock
+state, but excludes root calculation. An MPT improvement is a proof-path
+improvement, not a sequencer gain.
 Although `EvmWorkload` uses the shared EVM, its witness-backed `TrieDB` also makes
 its measured storage costs proof-specific. Payload preparation and Fjord pricing
 are shared component measurements; batching and derivation are separate stages,
@@ -182,9 +248,9 @@ Earlier reports called these four stages `evm-execute`, `receipts-root`,
 `storage-update-root`, and `stateless-block`; only the labels changed, not the work.
 
 These are **native component** benchmarks, not end-to-end sequencer throughput,
-TEE prover latency, or ZK proof generation/cycle counts. Storage is an in-memory
-proof-backed substitute, not MDBX disk I/O. No running CL/EL service, mempool
-ordering, P2P transport,
+TEE prover latency, or ZK proof generation/cycle counts. The CLI uses in-memory
+proof-backed storage; `mainnet_build` uses flat captured reads and a FIFO pool.
+Neither measures disk I/O. No running CL/EL service, historical mempool competition, P2P transport,
 Engine API transport, L1 receipt verification, epoch/sequencing-window validation,
 reorg handling, KZG commitment generation, L1 submission or prover orchestration
 is timed. Batch derivation supplies all frames at one synthetic inclusion block;

@@ -154,6 +154,8 @@ tikv-jemallocator = { workspace = true, optional = true }
 # workspace
 base-test-utils.workspace = true
 base-txpool-rpc.workspace = true
+base-proof-executor.workspace = true
+base-replay = { path = "../../infra/replay" }
 base-builder-core = { path = ".", features = ["test-utils"] }
 
 # reth
@@ -242,4 +244,8 @@ harness = false
 
 [[bench]]
 name = "tx_selection"
+harness = false
+
+[[bench]]
+name = "mainnet_build"
 harness = false

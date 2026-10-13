@@ -3277,6 +3277,8 @@ dependencies = [
  "base-node-core",
  "base-node-runner",
  "base-observability-events",
+ "base-proof-executor",
+ "base-replay",
  "base-test-utils",
  "base-txpool-rpc",
  "chrono",
