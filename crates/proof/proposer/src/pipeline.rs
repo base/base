@@ -78,8 +78,8 @@ where
 
             // dispatcher_loop intentionally does not return; this branch keeps it
             // polled while collector_loop remains the session restart signal.
-            // Dropping either loop mid-tick is safe: the next recovery walk
-            // rediscovers any already-broadcast L1 transaction from onchain state.
+            // Normal restarts are requested only after the collector's current submission returns.
+            // Explicit shutdown still drops both loops; cleanup must not cancel an in-flight send.
             let session = async {
                 tokio::select! {
                     biased;
@@ -264,6 +264,13 @@ mod tests {
             unimplemented!("pipeline tests do not delete proofs")
         }
 
+        async fn delete_proofs_by_unregistered_tee_signers(
+            &self,
+            _request: base_prover_service_protocol::DeleteProofsByUnregisteredTeeSignersRequest,
+        ) -> Result<u64, ProverServiceClientError> {
+            unimplemented!("pipeline tests do not delete proofs")
+        }
+
         async fn list_proofs(
             &self,
             _request: ListProofsRequest,
@@ -326,7 +333,8 @@ mod tests {
             Arc::clone(&rollup),
             proof_submitter,
             intervals,
-            config.submit_timeout,
+            Arc::new(crate::tee_signer_registry::MockTeeSignerRegistry::new()),
+            &config,
         );
         ProvingPipeline::new(config, proof_dispatcher, proof_recovery, proof_collector)
     }

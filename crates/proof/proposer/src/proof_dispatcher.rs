@@ -308,6 +308,10 @@ mod tests {
                 &self,
                 request: DeleteProofsByTeeSignerRequest,
             ) -> Result<u64, ProverServiceClientError>;
+            async fn delete_proofs_by_unregistered_tee_signers(
+                &self,
+                request: base_prover_service_protocol::DeleteProofsByUnregisteredTeeSignersRequest,
+            ) -> Result<u64, ProverServiceClientError>;
             async fn list_proofs(
                 &self,
                 request: ListProofsRequest,

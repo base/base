@@ -424,7 +424,8 @@ async fn test_matching_validity_predicates_are_forwarded_and_included() -> Resul
     let recipient_balance_before = builder_provider.get_balance(recipient).await?;
     let (_, raw_tx, expected_tx_hash) =
         create_signed_eip1559_tx(&signer, L2_CHAIN_ID, nonce, recipient)?;
-    let current_block = builder_provider.get_block_number().await?;
+    // Anchor the expiry window to the receiving mempool node, which can lag the builder.
+    let current_block = client_provider.get_block_number().await?;
     let validity = vec![
         ValidityPredicate::Balance {
             address: sender,

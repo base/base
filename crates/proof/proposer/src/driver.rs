@@ -287,7 +287,8 @@ mod tests {
             Arc::clone(&rollup),
             proof_submitter,
             intervals,
-            config.submit_timeout,
+            Arc::new(crate::tee_signer_registry::MockTeeSignerRegistry::new()),
+            &config,
         );
         let pipeline =
             ProvingPipeline::new(config, proof_dispatcher, proof_recovery, proof_collector);

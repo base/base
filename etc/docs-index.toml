@@ -523,8 +523,8 @@ summary = "base-proposer: TEE-based output proposer; requests a TEE-signed propo
 digest = "4f414183f1"
 
 ["crates/proof/prover-service/README.md"]
-summary = "base-prover-service: JSON-RPC contract and service for proof requests, status polling and worker-claimed ZK/TEE jobs via the proof_requests queue; backends live in worker hosts."
-digest = "be991df775"
+summary = "JSON-RPC requester/worker proof queue; deployment-wide TEE cleanup requires a complete registered-signer snapshot covering a single registration domain."
+digest = "27c9bee3c5"
 
 ["crates/proof/prover-service/client/README.md"]
 summary = "base-prover-service-client: separate requester and worker JSON-RPC client types for the prover service, built on base-prover-service-protocol."

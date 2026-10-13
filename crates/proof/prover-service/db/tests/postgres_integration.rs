@@ -633,6 +633,7 @@ async fn test_create_for_worker_queue_accepts_tee_requests() {
 async fn test_create_for_worker_queue_idempotent_for_legacy_null_backend() {
     let pool = test_pool().await;
     let repo = test_repo(pool.clone());
+    drain_claimable_compressed_jobs(&repo).await;
 
     let explicit_id = Uuid::new_v4();
     let mut req = compressed_request();
@@ -1564,6 +1565,224 @@ async fn test_delete_proof_requests_by_tee_signer() {
     assert_eq!(result.tee_signer, other_signer.parse::<Address>().unwrap());
 
     assert_eq!(repo.delete_proof_requests_by_tee_signer(other_signer).await.unwrap(), 1);
+}
+
+async fn complete_tee_request(
+    repo: &ProofRequestRepo,
+    signer: Address,
+    worker_id: &str,
+) -> (Uuid, ProtocolProofRequest) {
+    let request = tee_request();
+    let public_request = request.request_payload.clone();
+    let id = repo.create(request).await.unwrap();
+    let claimed = repo.claim_next_proof_job(tee_claim(worker_id, 3)).await.unwrap().unwrap();
+    assert_eq!(claimed.id, id);
+    let result = ProtocolProofResult::Tee(TeeProofResult {
+        aggregate_proposal: Proposal {
+            output_root: Default::default(),
+            signature: Default::default(),
+            l1_origin_hash: Default::default(),
+            l1_origin_number: 0,
+            l2_block_number: 0,
+            prev_output_root: Default::default(),
+            config_hash: Default::default(),
+            schedule_id: Default::default(),
+        },
+        proposals: vec![],
+        tee_kind: ProtocolTeeKind::AwsNitro,
+        tee_signer: signer,
+    });
+    let outcome = repo
+        .complete_claimed_proof_job(CompleteClaimedProofJob {
+            session_id: claimed.session_id,
+            lock_id: claimed.lock_id.unwrap(),
+            worker_id: worker_id.to_owned(),
+            result,
+        })
+        .await
+        .unwrap();
+    assert!(matches!(outcome, SubmitProofOutcome::Completed(_)));
+    (id, public_request)
+}
+
+#[tokio::test]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL)"]
+async fn test_bulk_unregistered_signer_cleanup_preserves_other_jobs_and_requeues_deleted_ranges() {
+    let pool = test_pool().await;
+    let repo = test_repo(pool.clone());
+    let existing: Vec<String> = sqlx::query_scalar(
+        "SELECT DISTINCT tee_signer FROM proof_requests WHERE api_proof_type = 'tee' \
+         AND status = 'SUCCEEDED' AND tee_signer IS NOT NULL",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    let mut registered =
+        existing.iter().map(|signer| signer.parse::<Address>().unwrap()).collect::<Vec<_>>();
+    let new_signer =
+        || format!("0x{}00000000", Uuid::new_v4().simple()).parse::<Address>().unwrap();
+    let first = new_signer();
+    let second = new_signer();
+    let valid = new_signer();
+    registered.push(valid);
+    drain_claimable_tee_jobs(&repo).await;
+    let mut completed = Vec::new();
+    for signer in [first, first, second, valid, Address::ZERO, new_signer()] {
+        let item = complete_tee_request(&repo, signer, "bulk-delete-worker").await;
+        sqlx::query(
+            "INSERT INTO proof_request_outbox (proof_request_id, request_params) VALUES ($1, '{}'::jsonb)",
+        ).bind(item.0).execute(&pool).await.unwrap();
+        completed.push(item);
+    }
+    sqlx::query("UPDATE proof_requests SET tee_signer = NULL WHERE id = $1")
+        .bind(completed[5].0)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let mut protected = completed[3..].iter().map(|item| item.0).collect::<Vec<_>>();
+    for (status, job_status) in [
+        (ProofStatus::Created, ProofJobStatus::Pending),
+        (ProofStatus::Pending, ProofJobStatus::Pending),
+        (ProofStatus::Running, ProofJobStatus::Claimed),
+        (ProofStatus::Failed, ProofJobStatus::Failed),
+    ] {
+        let id = repo.create(tee_request()).await.unwrap();
+        set_request_state(&pool, id, status, job_status).await;
+        sqlx::query("UPDATE proof_requests SET tee_signer = $1 WHERE id = $2")
+            .bind(format!("{first:#x}"))
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        protected.push(id);
+    }
+    let zk = repo.create(compressed_request()).await.unwrap();
+    set_request_state(&pool, zk, ProofStatus::Succeeded, ProofJobStatus::Succeeded).await;
+    // Even misplaced signer metadata must not authorize deletion of a ZK request.
+    sqlx::query("UPDATE proof_requests SET tee_signer = $1 WHERE id = $2")
+        .bind(format!("{first:#x}"))
+        .bind(zk)
+        .execute(&pool)
+        .await
+        .unwrap();
+    protected.push(zk);
+
+    assert_eq!(
+        repo.delete_proof_requests_by_unregistered_tee_signers(&registered).await.unwrap(),
+        3
+    );
+    for item in &completed[..3] {
+        assert!(repo.get(item.0).await.unwrap().is_none());
+        assert!(repo.get_proof_job_by_session_id(&item.1.session_id).await.unwrap().is_none());
+    }
+    for id in protected {
+        assert!(repo.get(id).await.unwrap().is_some());
+    }
+    let deleted_ids = completed[..3].iter().map(|item| item.0).collect::<Vec<_>>();
+    let remaining_outbox: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM proof_request_outbox WHERE proof_request_id = ANY($1)",
+    )
+    .bind(&deleted_ids)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(remaining_outbox, 0);
+    assert_eq!(
+        repo.delete_proof_requests_by_unregistered_tee_signers(&registered).await.unwrap(),
+        0
+    );
+    for item in &completed[..3] {
+        let outcome = repo
+            .create_for_worker_queue(
+                CreateProofRequest::new(item.1.clone()).unwrap(),
+                TEST_MAX_PROOF_RETRIES,
+                true,
+            )
+            .await
+            .unwrap();
+        assert!(matches!(outcome, CreateProofRequestOutcome::Created(_)));
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL)"]
+async fn test_empty_registry_snapshot_deletes_only_succeeded_known_nonzero_tee_signers() {
+    let pool = test_pool().await;
+    let repo = test_repo(pool.clone());
+    let before: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM proof_requests WHERE api_proof_type = 'tee' \
+         AND status = 'SUCCEEDED' AND tee_signer IS NOT NULL AND tee_signer <> $1",
+    )
+    .bind(format!("{:#x}", Address::ZERO))
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    drain_claimable_tee_jobs(&repo).await;
+    let first =
+        complete_tee_request(&repo, Address::repeat_byte(0xa1), "empty-registry-worker").await;
+    let second =
+        complete_tee_request(&repo, Address::repeat_byte(0xa2), "empty-registry-worker").await;
+    let zero = complete_tee_request(&repo, Address::ZERO, "empty-registry-worker").await;
+
+    assert_eq!(
+        repo.delete_proof_requests_by_unregistered_tee_signers(&[]).await.unwrap(),
+        u64::try_from(before).unwrap() + 2
+    );
+    assert!(repo.get(first.0).await.unwrap().is_none());
+    assert!(repo.get(second.0).await.unwrap().is_none());
+    assert!(repo.get(zero.0).await.unwrap().is_some());
+}
+
+#[tokio::test]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL)"]
+async fn test_bulk_signer_cleanup_rolls_back_outbox_and_request_deletion_together() {
+    let pool = test_pool().await;
+    let repo = test_repo(pool.clone());
+    drain_claimable_tee_jobs(&repo).await;
+    let target = complete_tee_request(&repo, Address::repeat_byte(0xb1), "rollback-worker").await;
+    let registered: Vec<String> = sqlx::query_scalar(
+        "SELECT DISTINCT tee_signer FROM proof_requests WHERE api_proof_type = 'tee' \
+         AND tee_signer IS NOT NULL AND tee_signer <> $1",
+    )
+    .bind(format!("{:#x}", Address::repeat_byte(0xb1)))
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    let registered =
+        registered.iter().map(|signer| signer.parse::<Address>().unwrap()).collect::<Vec<_>>();
+    sqlx::query(
+        "INSERT INTO proof_request_outbox (proof_request_id, request_params) VALUES ($1, '{}'::jsonb)",
+    ).bind(target.0).execute(&pool).await.unwrap();
+    let guard = format!("bulk_delete_guard_{}", Uuid::new_v4().simple());
+    sqlx::query(&format!(
+        "CREATE TABLE {guard} (proof_request_id UUID REFERENCES proof_requests(id))"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(&format!("INSERT INTO {guard} (proof_request_id) VALUES ($1)"))
+        .bind(target.0)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let error =
+        repo.delete_proof_requests_by_unregistered_tee_signers(&registered).await.unwrap_err();
+    assert_eq!(error.as_database_error().and_then(|error| error.code()).as_deref(), Some("23503"));
+    assert!(repo.get(target.0).await.unwrap().is_some());
+    let outbox: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM proof_request_outbox WHERE proof_request_id = $1")
+            .bind(target.0)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(outbox, 1);
+    sqlx::query(&format!("DROP TABLE {guard}")).execute(&pool).await.unwrap();
+    assert_eq!(
+        repo.delete_proof_requests_by_unregistered_tee_signers(&registered).await.unwrap(),
+        1
+    );
 }
 
 #[tokio::test]

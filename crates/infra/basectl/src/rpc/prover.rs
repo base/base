@@ -779,6 +779,17 @@ mod tests {
             ))
         }
 
+        async fn delete_proofs_by_unregistered_tee_signers(
+            &self,
+            _request: base_prover_service_protocol::DeleteProofsByUnregisteredTeeSignersRequest,
+        ) -> RpcResult<u64> {
+            Err(ErrorObjectOwned::owned(
+                ErrorCode::MethodNotFound.code(),
+                "not used by tests",
+                None::<()>,
+            ))
+        }
+
         async fn list_proofs(&self, _request: ListProofsRequest) -> RpcResult<ListProofsResponse> {
             Ok(ListProofsResponse { proofs: vec![], total_count: 0 })
         }

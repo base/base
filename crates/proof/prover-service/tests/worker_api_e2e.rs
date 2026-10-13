@@ -13,16 +13,19 @@
 
 use std::{net::SocketAddr, time::Duration};
 
+use base_proof_primitives::Proposal;
 use base_prover_service::{ProverServiceServer, ServerConfig, WorkerApiConfig, WorkerQueueConfig};
 use base_prover_service_db::{
     ApiProofType, ClaimProofJob, CreateProofRequest, DatabaseConfig, ProofRequestRepo,
-    ProofStatus as DbProofStatus, ZkVmKind,
+    ProofStatus as DbProofStatus, TeeKind as DbTeeKind, ZkVmKind,
 };
 use base_prover_service_protocol::{
-    AbandonProofRequest, BackendSessionState, GetNextProofRequest, GetProofSessionRequest,
-    HeartbeatRequest, ProofJobStatus, ProofRequest as ProtocolProofRequest, ProofRequestKind,
-    ProofResult, ProofType, ProverRequesterApiServer, ProverWorkerApiClient, ProverWorkerApiServer,
-    RecordProofSessionRequest, SessionType, WorkerSubmitProofRequest, ZkBackend, ZkProofRequest,
+    AbandonProofRequest, BackendSessionState, DeleteProofsByUnregisteredTeeSignersRequest,
+    GetNextProofRequest, GetProofRequest, GetProofSessionRequest, HeartbeatRequest, ProofJobStatus,
+    ProofRequest as ProtocolProofRequest, ProofRequestKind, ProofResult, ProofType,
+    ProverRequesterApiClient, ProverRequesterApiServer, ProverWorkerApiClient,
+    ProverWorkerApiServer, RecordProofSessionRequest, SessionType, TeeKind as ProtocolTeeKind,
+    TeeProofRequest, TeeProofResult, WorkerSubmitProofRequest, ZkBackend, ZkProofRequest,
     ZkProofResult, ZkVm,
 };
 use jsonrpsee::{
@@ -146,6 +149,125 @@ fn worker_claim(worker_id: &str) -> GetNextProofRequest {
         zk_backends: Vec::new(),
         lock_duration_seconds: 60,
     }
+}
+
+#[tokio::test]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL)"]
+async fn requester_bulk_signer_cleanup_round_trip() {
+    let repo = test_repo().await;
+    let drain = ClaimProofJob {
+        worker_id: "bulk-rpc-drain".to_owned(),
+        api_proof_type: ApiProofType::Tee,
+        tee_kinds: vec![DbTeeKind::AwsNitro],
+        zk_vms: Vec::new(),
+        zk_backends: Vec::new(),
+        lock_duration_seconds: 3600,
+        max_attempts: u32::MAX,
+    };
+    while repo.claim_next_proof_job(drain.clone()).await.unwrap().is_some() {}
+    let server = RunningServer::spawn(repo.clone()).await;
+    let signers = [
+        "0x1111111111111111111111111111111111111111",
+        "0x2222222222222222222222222222222222222222",
+        "0x3333333333333333333333333333333333333333",
+        "0x0000000000000000000000000000000000000000",
+    ]
+    .map(|signer| signer.parse().unwrap());
+    let mut sessions = Vec::new();
+    for signer in signers {
+        let session = Uuid::new_v4().to_string();
+        let request = CreateProofRequest::new(ProtocolProofRequest {
+            session_id: session.clone(),
+            request: ProofRequestKind::Tee(TeeProofRequest {
+                proof: Default::default(),
+                tee_kind: ProtocolTeeKind::AwsNitro,
+            }),
+        })
+        .unwrap();
+        repo.create_for_worker_queue(request, TEST_MAX_PROOF_RETRIES, true).await.unwrap();
+        let claimed = server
+            .client
+            .get_next_proof(GetNextProofRequest {
+                worker_id: "bulk-rpc-worker".to_owned(),
+                proof_type: ProofType::Tee,
+                tee_kinds: vec![ProtocolTeeKind::AwsNitro],
+                zk_vms: Vec::new(),
+                zk_backends: Vec::new(),
+                lock_duration_seconds: 60,
+            })
+            .await
+            .unwrap()
+            .job
+            .unwrap();
+        assert_eq!(claimed.session_id, session);
+        server
+            .client
+            .submit_proof(WorkerSubmitProofRequest {
+                session_id: session.clone(),
+                lock_id: claimed.lock_id.unwrap(),
+                worker_id: "bulk-rpc-worker".to_owned(),
+                result: ProofResult::Tee(TeeProofResult {
+                    aggregate_proposal: Proposal {
+                        output_root: Default::default(),
+                        signature: Default::default(),
+                        l1_origin_hash: Default::default(),
+                        l1_origin_number: 0,
+                        l2_block_number: 0,
+                        prev_output_root: Default::default(),
+                        config_hash: Default::default(),
+                        schedule_id: Default::default(),
+                    },
+                    proposals: Vec::new(),
+                    tee_kind: ProtocolTeeKind::AwsNitro,
+                    tee_signer: signer,
+                }),
+            })
+            .await
+            .unwrap();
+        sessions.push(session);
+    }
+
+    let deleted = server
+        .client
+        .delete_proofs_by_unregistered_tee_signers(DeleteProofsByUnregisteredTeeSignersRequest {
+            registered_signers: vec![signers[2]],
+        })
+        .await
+        .unwrap();
+    assert!(deleted >= 2);
+    for session in &sessions[..2] {
+        let error = server
+            .client
+            .get_proof(GetProofRequest { session_id: session.clone() })
+            .await
+            .unwrap_err();
+        assert_rpc_error_code(&error, ERROR_NOT_FOUND);
+    }
+    for session in &sessions[2..] {
+        assert!(repo.get_by_session_id(session).await.unwrap().is_some());
+    }
+    let error = server
+        .client
+        .delete_proofs_by_unregistered_tee_signers(DeleteProofsByUnregisteredTeeSignersRequest {
+            registered_signers: vec![Default::default()],
+        })
+        .await
+        .unwrap_err();
+    assert_rpc_error_code(&error, jsonrpsee::types::ErrorCode::InvalidParams.code());
+    assert!(repo.get_by_session_id(&sessions[2]).await.unwrap().is_some());
+    assert_eq!(
+        server
+            .client
+            .delete_proofs_by_unregistered_tee_signers(
+                DeleteProofsByUnregisteredTeeSignersRequest { registered_signers: Vec::new() },
+            )
+            .await
+            .unwrap(),
+        1
+    );
+    assert!(repo.get_by_session_id(&sessions[2]).await.unwrap().is_none());
+    assert!(repo.get_by_session_id(&sessions[3]).await.unwrap().is_some());
+    server.shutdown().await;
 }
 
 #[tokio::test]

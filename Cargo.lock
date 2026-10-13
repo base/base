@@ -5847,6 +5847,7 @@ dependencies = [
  "alloy-provider",
  "alloy-rpc-types-eth 2.4.1",
  "alloy-signer-local 2.4.1",
+ "alloy-sol-types",
  "async-trait",
  "base-balance-monitor",
  "base-cli-utils",
@@ -5964,6 +5965,7 @@ name = "base-prover-service"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "base-proof-primitives",
  "base-prover-service-db",
  "base-prover-service-protocol",
  "chrono",

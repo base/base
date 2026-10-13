@@ -11,6 +11,9 @@ repository.workspace = true
 # protocol
 base-prover-service-protocol.workspace = true
 
+# primitives
+alloy-primitives.workspace = true
+
 # database
 futures.workspace = true
 sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "uuid", "chrono", "derive", "tls-native-tls"] }
@@ -29,7 +32,6 @@ thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
-alloy-primitives.workspace = true
 base-proof-primitives.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
