@@ -40,6 +40,7 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
+import diagnose
 import render
 
 SKILL_DIR = Path(__file__).resolve().parent
@@ -91,10 +92,71 @@ class HeadMovedError(ReviewError):
 # Exit status for HeadMovedError. The workflow follows the pull request to its new head and tries once more,
 # because a review that runs once per pull request must not be lost to a push that landed a moment earlier.
 EXIT_HEAD_MOVED = 3
+# Exit status for SetupError: the machine, not the review, needs attention.
+EXIT_SETUP = 4
 
 
 def log(message: str) -> None:
     print(message, file=sys.stderr, flush=True)
+
+
+# How long one probe of the model service may take. A person waits on this, so it is short.
+PREFLIGHT_TIMEOUT_SECONDS = 60
+# The claude CLI retries a failing request for about three minutes (a bad key, a refused connection and an
+# unknown host all took 181-190 s to give up). A pre-flight that says so after two seconds is kinder.
+PREFLIGHT_ENV = {"CLAUDE_CODE_MAX_RETRIES": "1"}
+
+
+class SetupError(ReviewError):
+    """A problem with the machine running the review (a missing or signed-out tool, an unreachable service),
+    explained in plain words. It is not a bug in the review."""
+
+
+def model_target() -> str:
+    return diagnose.model_service_host(os.environ.get("ANTHROPIC_BASE_URL"))
+
+
+def explain_model_failure(raw: str) -> str | None:
+    """The plain-language explanation of a raw model-service error, or None if it is not a known kind."""
+    found = diagnose.explain_model_error(raw)
+    return found.text(model_target()) if found else None
+
+
+def preflight(model: str = "haiku") -> None:
+    """Check, before any real work, that the tools are installed and can reach the services.
+
+    Raises SetupError with an explanation. It makes one tiny model call (about a cent) with retries capped,
+    so a wrong setting fails in seconds instead of after minutes of retries.
+    """
+    if shutil.which("claude") is None:
+        raise SetupError("The `claude` CLI is not installed.\n  Install Claude Code "
+                         "(https://docs.claude.com/en/docs/claude-code), then run the review again.")
+    try:
+        auth = subprocess.run(["claude", "auth", "status"], capture_output=True, text=True, timeout=30,
+                              check=False)
+        signed_in = bool(json.loads(auth.stdout).get("loggedIn"))
+    except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError):
+        signed_in = True  # cannot tell; the call below will say
+    if not signed_in:
+        raise SetupError(diagnose.explain_model_error("not logged in").text(model_target()))  # type: ignore[union-attr]
+    try:
+        done = subprocess.run(
+            ["claude", "-p", "--model", model, "--effort", "low", "--tools", "", "--no-session-persistence",
+             "--output-format", "json"], input="Reply with the word ok.", capture_output=True, text=True,
+            timeout=PREFLIGHT_TIMEOUT_SECONDS, check=False, env={**agent_env(), **PREFLIGHT_ENV})
+    except subprocess.TimeoutExpired as exc:
+        raise SetupError(f"No answer from {model_target()} after {PREFLIGHT_TIMEOUT_SECONDS} s.\n  "
+                         f"Check your connection, VPN or proxy, and ANTHROPIC_BASE_URL.") from exc
+    raw = describe_failure(done)
+    try:
+        envelope = json.loads(done.stdout)
+    except json.JSONDecodeError:
+        envelope = {}
+    if done.returncode or envelope.get("is_error"):
+        explained = explain_model_failure(raw)
+        if explained is None:
+            explained = f"The `claude` CLI could not reach the model service ({model_target()}).\n  {raw[:300]}"
+        raise SetupError(explained)
 
 
 def describe_failure(result: subprocess.CompletedProcess) -> str:
@@ -131,7 +193,12 @@ def run(cmd: list[str], *, input_text: str | None = None, cwd: Path | None = Non
         if failure_log:
             failure_log.write_text(f"exit {result.returncode}\n\n--- stdout ---\n{result.stdout}\n\n"
                                    f"--- stderr ---\n{result.stderr}\n")
-        raise ReviewError(f"`{' '.join(cmd[:4])}` failed: {describe_failure(result)}")
+        reason = describe_failure(result)
+        if cmd[0] == "gh":
+            found = diagnose.explain_github_error(f"{reason}\n{result.stderr}")
+            if found:
+                raise SetupError(found.text(os.environ.get("GH_HOST", "GitHub")))
+        raise ReviewError(f"`{' '.join(cmd[:4])}` failed: {reason}")
     return result.stdout
 
 
@@ -1323,6 +1390,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--post", action="store_true", help="apply the decider's actions to --pr")
     parser.add_argument("--base", help="local mode: base ref (default: base/base remote's main)")
     parser.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY", DEFAULT_REPO))
+    parser.add_argument("--skip-preflight", action="store_true",
+                        help="do not check first that the claude CLI can reach its service (a run with --post "
+                             "never does: it is CI's)")
     parser.add_argument("--no-worktree", action="store_true",
                         help="with --pr: read the files from the current checkout even if it is not at the "
                              "pull request's head (by default a temporary worktree of the head is used)")
@@ -1350,6 +1420,10 @@ def main(argv: list[str] | None = None) -> int:
         if args.refresh_status:
             return refresh_status(args.pr, args.repo)
         agents = load_agents(args.agents_dir)
+        if not (args.skip_preflight or args.post):
+            # A posting run is CI's, and CI has its own setup; a person running locally gets the check.
+            log("Checking that the review can reach its services")
+            preflight()
         with contextlib.ExitStack() as stack:
             def checkout(head_sha: str) -> Path:
                 return stack.enter_context(pr_worktree(args.pr, args.repo, head_sha))
@@ -1383,6 +1457,10 @@ def main(argv: list[str] | None = None) -> int:
         log(f"Artifacts: {artifacts}")
         if "decide" in outcome.failed:
             return 1
+    except SetupError as exc:
+        # Not a bug: something on this machine needs attention. Say what, once, without a traceback.
+        log(f"\nThe review could not run.\n  {exc}\n\nNothing was posted.")
+        return EXIT_SETUP
     except HeadMovedError as exc:
         log(f"error: {exc}")
         return EXIT_HEAD_MOVED
