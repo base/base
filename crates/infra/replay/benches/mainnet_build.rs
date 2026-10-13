@@ -26,11 +26,14 @@ use base_builder_core::{
     build_block, execute_pre_steps,
 };
 use base_common_consensus::BaseTransactionSigned;
-use base_common_flashblocks::FlashblockId;
+use base_common_flashblocks::{FlashblockId, FlashblocksPayloadV1};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
-use base_execution_payload_builder::BasePayloadBuilderAttributes;
-use base_execution_txpool::{BaseOrdering, BasePooledTransaction, ParkedBestTransactions};
+use base_execution_payload_builder::{BaseBuiltPayload, BasePayloadBuilderAttributes};
+use base_execution_txpool::{
+    AccountStateDiff, BaseOrdering, BasePooledTransaction, ParkableBestTransactions,
+    ParkedBestTransactions,
+};
 use base_proof_executor::TrieDB;
 use base_replay::{ExecutionWitness, Fixture};
 use criterion::{BatchSize, Criterion, Throughput, criterion_group, criterion_main};
@@ -45,13 +48,13 @@ use reth_transaction_pool::{
     pool::PendingPool,
 };
 use reth_trie_common::{
-    HashedPostState, HashedStorage, StorageMultiProof, StorageProof, TrieInput,
+    HashedPostState, HashedStorage, KeccakKeyHasher, StorageMultiProof, StorageProof, TrieInput,
     updates::TrieUpdates,
 };
 use revm::{
     Database,
     bytecode::Bytecode,
-    database::{BundleState, State},
+    database::{BundleState, State, states::bundle_state::BundleRetention},
     state::AccountInfo,
 };
 
@@ -245,6 +248,17 @@ pub fn execute<'a, 'w>(
 ) -> (State<&'a CapturedDb<'w>>, ExecutionInfo) {
     let mut state = State::builder().with_database(db).with_bundle_update().build();
     let mut info = execute_pre_steps(&mut state, ctx).unwrap();
+    execute_pool(ctx, pool, &mut state, &mut info);
+    (state, info)
+}
+
+/// Executes one captured arrival chunk against the accumulated block state.
+pub fn execute_pool(
+    ctx: &BasePayloadBuilderCtx,
+    pool: &Pool,
+    state: &mut State<&CapturedDb<'_>>,
+    info: &mut ExecutionInfo,
+) {
     let mut best = pool.best();
     best.no_updates();
     let mut txs = BestFlashblocksTxs::new(
@@ -256,15 +270,42 @@ pub fn execute<'a, 'w>(
         RejectionCache::new(1_000, Duration::from_secs(60)),
     );
     let limits = ResourceLimits { block_gas_limit: ctx.block_gas_limit(), ..Default::default() };
-    ctx.execute_best_transactions(
-        &mut info,
-        &mut BlockDeferrals::default(),
-        &mut state,
-        &mut txs,
-        &limits,
-    )
-    .unwrap();
-    (state, info)
+    ctx.execute_best_transactions(info, &mut BlockDeferrals::default(), state, &mut txs, &limits)
+        .unwrap();
+}
+
+/// Builds the deposit-only fallback and ten synthetic arrival chunks, retaining EVM state.
+/// The callback checks each publication outside timing; timed runs black-box each output.
+pub fn progressive_build(
+    ctx: &mut BasePayloadBuilderCtx,
+    chunks: &[Pool],
+    db: &CapturedDb<'_>,
+    mut inspect: impl FnMut(&BaseBuiltPayload, &FlashblocksPayloadV1),
+) -> BaseBuiltPayload {
+    ctx.extra.flashblock_index = 0;
+    let mut state = State::builder().with_database(db).with_bundle_update().build();
+    let mut info = execute_pre_steps(&mut state, ctx).unwrap();
+    let (mut payload, message, _) =
+        build_block(&mut state, ctx, &mut info, FlashblockId::default(), false).unwrap();
+    inspect(&payload, &message);
+    black_box(message);
+    for (index, pool) in chunks.iter().enumerate() {
+        ctx.extra.flashblock_index = index as u64 + 1;
+        execute_pool(ctx, pool, &mut state, &mut info);
+        let (next, message, diff) = build_block(
+            &mut state,
+            ctx,
+            &mut info,
+            FlashblockId { block_number: ctx.block_number(), index: index as u64 },
+            false,
+        )
+        .unwrap();
+        inspect(&next, &message);
+        black_box((message, diff));
+        payload = next;
+    }
+    ctx.extra.flashblock_index = 0;
+    payload
 }
 
 /// Copies only assembly inputs, outside assembly-only timing.
@@ -288,7 +329,7 @@ pub fn mainnet_build(c: &mut Criterion) {
     });
     let fixture = Fixture::read(path).unwrap();
     fixture.validate().unwrap();
-    let (ctx, pool) = prepare(&fixture);
+    let (mut ctx, pool) = prepare(&fixture);
     let witness = fixture.execution.as_ref().expect("execution witness required");
     let db = CapturedDb {
         source: RefCell::new(Some(TrieDB::new(
@@ -326,6 +367,46 @@ pub fn mainnet_build(c: &mut Criterion) {
         build_block(&mut state, &ctx, &mut info, FlashblockId::default(), false).unwrap();
     assert_eq!(tail_payload.block().header(), &expected);
     assert_eq!(tail_message.diff.transactions, message.diff.transactions[tail_start..]);
+
+    // Real transactions and state, synthetic evenly sized arrival chunks. No copying or
+    // re-executing the earlier prefix between publications. Pool population is untimed.
+    let mut best = pool.best();
+    best.no_updates();
+    let users = best.collect::<Vec<_>>();
+    let chunks = (0..10)
+        .map(|index| {
+            let mut chunk = Pool::new(BaseOrdering::timestamp());
+            for tx in &users[users.len() * index / 10..users.len() * (index + 1) / 10] {
+                chunk.add_transaction(Arc::clone(tx), ctx.evm_env.block_env.basefee);
+            }
+            chunk
+        })
+        .collect::<Vec<_>>();
+    let mut published = Vec::new();
+    let progressive = progressive_build(&mut ctx, &chunks, &db, |payload, message| {
+        published.extend_from_slice(&message.diff.transactions);
+        assert_eq!(
+            published,
+            fixture.transactions[..published.len()]
+                .iter()
+                .map(|tx| tx.encoded.clone())
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(payload.block().body().transactions.len(), published.len());
+    });
+    assert_eq!(progressive.block().header(), &expected);
+    assert_eq!(published, message.diff.transactions);
+
+    let mut best = pool.best();
+    best.no_updates();
+    let mut selected =
+        ParkedBestTransactions::new(best, BaseOrdering::timestamp(), ctx.evm_env.block_env.basefee);
+    for expected in &users {
+        let actual = selected.next().expect("every captured pool transaction is eligible");
+        assert_eq!(actual.hash(), expected.hash());
+        selected.mark_committed(&actual);
+    }
+    assert!(selected.next().is_none());
     // Negative control: a missing captured account must fail, not turn into an empty account.
     let first = fixture.transactions[0].sender;
     let account = db.accounts.borrow_mut().remove(&first).unwrap();
@@ -353,6 +434,57 @@ pub fn mainnet_build(c: &mut Criterion) {
                 build_block(&mut state, &ctx, &mut info, FlashblockId::default(), false).unwrap(),
             )
         })
+    });
+    group.bench_function("build-progressive-10-no-roots", |b| {
+        b.iter(|| black_box(progressive_build(&mut ctx, &chunks, &db, |_, _| {})))
+    });
+    group.bench_function("pool-select-commit", |b| {
+        b.iter(|| {
+            let mut best = pool.best();
+            best.no_updates();
+            let mut best = ParkedBestTransactions::new(
+                best,
+                BaseOrdering::timestamp(),
+                ctx.evm_env.block_env.basefee,
+            );
+            while let Some(tx) = best.next() {
+                best.mark_committed(black_box(&tx));
+            }
+        })
+    });
+    group.bench_function("pre-steps-flat-state", |b| {
+        b.iter_batched(
+            || State::builder().with_database(&db).with_bundle_update().build(),
+            |mut state| black_box(execute_pre_steps(&mut state, &ctx).unwrap()),
+            BatchSize::SmallInput,
+        )
+    });
+    group.bench_function("transition-merge", |b| {
+        b.iter_batched(
+            || {
+                let mut state = State::builder().with_database(&db).with_bundle_update().build();
+                state.transition_state = executed.transition_state.clone();
+                state
+            },
+            |mut state| {
+                state.merge_transitions(BundleRetention::Reverts);
+                black_box(state.take_bundle())
+            },
+            BatchSize::SmallInput,
+        )
+    });
+    let mut merged = State::builder().with_database(&db).with_bundle_update().build();
+    merged.transition_state = executed.transition_state.clone();
+    merged.merge_transitions(BundleRetention::Reverts);
+    group.bench_function("state-key-hashing", |b| {
+        b.iter(|| {
+            black_box(HashedPostState::from_bundle_state::<KeccakKeyHasher>(
+                merged.bundle_state.state(),
+            ))
+        })
+    });
+    group.bench_function("intra-block-state-diff", |b| {
+        b.iter(|| black_box(AccountStateDiff::collect_for_intra_block(&merged.bundle_state)))
     });
     for (name, start) in [("assemble-no-roots", 0), ("assemble-tail-no-roots", tail_start)] {
         group.bench_function(name, |b| {

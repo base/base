@@ -178,6 +178,25 @@ Criterion writes raw samples under `target/criterion/sequencer_mainnet_*`:
   resource checks, EVM execution and state transitions with flat captured reads.
 - `build-no-roots`: selection/execution followed by real payload and Flashblock
   assembly. It does not include publication encoding or final root computation.
+- `build-progressive-10-no-roots`: a deposit-only fallback followed by ten
+  evenly sized chunks of the real pool transactions, executing each transaction
+  once and retaining state and receipts between assemblies. Chunk pools are
+  populated outside timing; selection, execution, eleven assemblies and disposal
+  of intermediate payloads are timed. Every published suffix is checked and the
+  final header must match the one-shot build. These are synthetic arrival
+  boundaries, not historical Flashblocks or a deadline/metering simulation.
+- `pool-select-commit`: the production pending-pool snapshot and lane-aware
+  iterator, marking each transaction committed without EVM execution. Checks
+  exact canonical user-transaction order before timing; no competing pool load.
+- `pre-steps-flat-state`: system calls and forced deposits against a fresh flat
+  state, without pool transactions. State construction is outside timing.
+- `transition-merge`: production transition merging with revert retention from
+  the real executed block. Snapshot cloning is outside timing.
+- `state-key-hashing`: the production Keccak account/storage-key hashing used
+  before state-root calculation, on the real merged bundle. This is not a trie
+  root benchmark and does not access disk.
+- `intra-block-state-diff`: production balance/code/storage invalidation-diff
+  collection from the real merged bundle, excluding the pool's invalidation index.
 - `assemble-no-roots`: transition merging, receipts/transaction commitments,
   bloom, header sealing, executed-block packaging and Flashblock construction.
   Cloning the starting state and receipts is outside timing; production copies
@@ -187,6 +206,12 @@ Criterion writes raw samples under `target/criterion/sequencer_mainnet_*`:
   Flashblock boundary; commitments still cover the entire block.
 - `publication-json`: serializing the all-transactions Flashblock message, with
   no websocket, subscriber fanout or network delivery.
+
+Use the progressive and single-build totals when evaluating work moved between
+execution and assembly (for example, precomputing receipt blooms). An isolated
+assembly speedup does not establish a net improvement. Stages overlap and their
+timings must not be added. The full suite has eleven stages; a Criterion filter
+such as `build-progressive` runs just that workload after the correctness checks.
 
 These are **CPU/component measurements with mocked storage**, not production
 block latency. Actual sequencer `state_root_with_updates`, MDBX/RocksDB access,
