@@ -22,6 +22,7 @@ pub use v4::{
 pub use v4::{BoundedTransactions, BoundedWithdrawals};
 
 mod v5;
+mod v6;
 use alloc::vec::Vec;
 
 use alloy_consensus::{Block, BlockHeader, HeaderInfo, Transaction};
@@ -33,6 +34,7 @@ use alloy_rpc_types_engine::{
 };
 use base_common_consensus::decode_2718_canonical;
 pub use v5::BaseExecutionPayloadEnvelopeV5;
+pub use v6::{BaseExecutionPayloadEnvelopeV6, BaseExecutionPayloadV5};
 
 use crate::BaseExecutionPayloadSidecar;
 
@@ -52,6 +54,8 @@ pub enum BaseExecutionPayload {
     V3(ExecutionPayloadV3),
     /// V4 payload
     V4(BaseExecutionPayloadV4),
+    /// V5 payload
+    V5(BaseExecutionPayloadV5),
 }
 
 #[cfg(feature = "serde")]
@@ -96,6 +100,8 @@ impl<'de> serde::Deserialize<'de> for BaseExecutionPayload {
                     BlobGasUsed,
                     ExcessBlobGas,
                     WithdrawalsRoot,
+                    BlockAccessList,
+                    SlotNumber,
                     Unknown(alloc::string::String),
                 }
 
@@ -139,6 +145,8 @@ impl<'de> serde::Deserialize<'de> for BaseExecutionPayload {
                                     "blobGasUsed" => Fields::BlobGasUsed,
                                     "excessBlobGas" => Fields::ExcessBlobGas,
                                     "withdrawalsRoot" => Fields::WithdrawalsRoot,
+                                    "blockAccessList" => Fields::BlockAccessList,
+                                    "slotNumber" => Fields::SlotNumber,
                                     _ => Fields::Unknown(value.into()),
                                 })
                             }
@@ -166,6 +174,8 @@ impl<'de> serde::Deserialize<'de> for BaseExecutionPayload {
                 let mut blob_gas_used = None;
                 let mut excess_blob_gas = None;
                 let mut withdrawals_root = None;
+                let mut block_access_list = None;
+                let mut slot_number = None;
 
                 let mut extra_fields = HashMap::new();
 
@@ -207,6 +217,13 @@ impl<'de> serde::Deserialize<'de> for BaseExecutionPayload {
                             excess_blob_gas = Some(raw.to());
                         }
                         Fields::WithdrawalsRoot => withdrawals_root = Some(map.next_value()?),
+                        Fields::BlockAccessList => {
+                            block_access_list = Some(map.next_value()?)
+                        }
+                        Fields::SlotNumber => {
+                            let raw = map.next_value::<U64>()?;
+                            slot_number = Some(raw.to());
+                        }
                         Fields::Unknown(field) => {
                             let raw = map.next_value::<String>()?;
                             extra_fields.insert(field, raw);
@@ -248,6 +265,13 @@ impl<'de> serde::Deserialize<'de> for BaseExecutionPayload {
                 let withdrawals =
                     withdrawals.ok_or_else(|| serde::de::Error::missing_field("withdrawals"))?;
 
+                // `slotNumber` is only defined alongside `blockAccessList` (EIP-7843).
+                if slot_number.is_some() && block_access_list.is_none() {
+                    return Err(serde::de::Error::custom(
+                        "slotNumber requires blockAccessList",
+                    ));
+                }
+
                 // Construct base V2 payload
                 let payload_v2 = ExecutionPayloadV2 { payload_inner: v1, withdrawals };
 
@@ -262,14 +286,32 @@ impl<'de> serde::Deserialize<'de> for BaseExecutionPayload {
                             excess_blob_gas,
                         };
 
-                        // If `withdrawals_root` is present, wrap into V4; otherwise, return V3
-                        if let Some(withdrawals_root) = withdrawals_root {
-                            Ok(BaseExecutionPayload::V4(BaseExecutionPayloadV4 {
-                                payload_inner: payload_v3,
-                                withdrawals_root,
-                            }))
-                        } else {
-                            Ok(BaseExecutionPayload::V3(payload_v3))
+                        match (block_access_list, withdrawals_root) {
+                            // Amsterdam adds `blockAccessList` and `slotNumber` on top of V4.
+                            (Some(block_access_list), Some(withdrawals_root)) => {
+                                let slot_number = slot_number.ok_or_else(|| {
+                                    serde::de::Error::missing_field("slotNumber")
+                                })?;
+                                Ok(BaseExecutionPayload::V5(BaseExecutionPayloadV5 {
+                                    payload_inner: BaseExecutionPayloadV4 {
+                                        payload_inner: payload_v3,
+                                        withdrawals_root,
+                                    },
+                                    block_access_list,
+                                    slot_number,
+                                }))
+                            }
+                            (Some(_), None) => Err(serde::de::Error::custom(
+                                "blockAccessList requires withdrawalsRoot",
+                            )),
+                            // If `withdrawals_root` is present, wrap into V4; otherwise, return V3
+                            (None, Some(withdrawals_root)) => {
+                                Ok(BaseExecutionPayload::V4(BaseExecutionPayloadV4 {
+                                    payload_inner: payload_v3,
+                                    withdrawals_root,
+                                }))
+                            }
+                            (None, None) => Ok(BaseExecutionPayload::V3(payload_v3)),
                         }
                     }
                     // If one is missing, reject as invalid
@@ -301,6 +343,8 @@ impl<'de> serde::Deserialize<'de> for BaseExecutionPayload {
             "blobGasUsed",
             "excessBlobGas",
             "withdrawalsRoot",
+            "blockAccessList",
+            "slotNumber",
         ];
 
         deserializer.deserialize_struct("BaseExecutionPayload", FIELDS, ExecutionPayloadVisitor)
@@ -327,6 +371,12 @@ impl BaseExecutionPayload {
     ///
     /// See also [`ExecutionPayload::from_block_unchecked`].
     /// See also [`BaseExecutionPayloadSidecar::from_block`].
+    ///
+    /// A header only commits to the `keccak256` hash of the Amsterdam block access list, never to
+    /// the encoded list itself, so this conversion cannot reconstruct the bytes and yields at most
+    /// a [`V4`](Self::V4) payload. Use
+    /// [`ExecutionData::from_block_unchecked_with_extras`](crate::ExecutionData::from_block_unchecked_with_extras)
+    /// when the encoded list is available.
     pub fn from_block_unchecked<T, H>(
         block_hash: B256,
         block: &Block<T, H>,
@@ -388,6 +438,13 @@ impl BaseExecutionPayload {
         Self::V4(payload)
     }
 
+    /// Creates a new instance from `newPayloadV5` payload, i.e. [`V5`](Self::V5) variant.
+    ///
+    /// Spec: <https://specs.base.org/upgrades/denim/exec-engine#engine_newpayloadv5>
+    pub const fn v5(payload: BaseExecutionPayloadV5) -> Self {
+        Self::V5(payload)
+    }
+
     /// Returns a reference to the V1 payload.
     pub const fn as_v1(&self) -> &ExecutionPayloadV1 {
         match self {
@@ -395,6 +452,7 @@ impl BaseExecutionPayload {
             Self::V2(payload) => &payload.payload_inner,
             Self::V3(payload) => &payload.payload_inner.payload_inner,
             Self::V4(payload) => &payload.payload_inner.payload_inner.payload_inner,
+            Self::V5(payload) => &payload.payload_inner.payload_inner.payload_inner.payload_inner,
         }
     }
 
@@ -405,6 +463,9 @@ impl BaseExecutionPayload {
             Self::V2(payload) => &mut payload.payload_inner,
             Self::V3(payload) => &mut payload.payload_inner.payload_inner,
             Self::V4(payload) => &mut payload.payload_inner.payload_inner.payload_inner,
+            Self::V5(payload) => {
+                &mut payload.payload_inner.payload_inner.payload_inner.payload_inner
+            }
         }
     }
 
@@ -415,6 +476,7 @@ impl BaseExecutionPayload {
             Self::V2(payload) => Some(payload),
             Self::V3(payload) => Some(&payload.payload_inner),
             Self::V4(payload) => Some(&payload.payload_inner.payload_inner),
+            Self::V5(payload) => Some(&payload.payload_inner.payload_inner.payload_inner),
         }
     }
 
@@ -425,6 +487,7 @@ impl BaseExecutionPayload {
             Self::V2(payload) => Some(payload),
             Self::V3(payload) => Some(&mut payload.payload_inner),
             Self::V4(payload) => Some(&mut payload.payload_inner.payload_inner),
+            Self::V5(payload) => Some(&mut payload.payload_inner.payload_inner.payload_inner),
         }
     }
 
@@ -434,6 +497,7 @@ impl BaseExecutionPayload {
             Self::V1(_) | Self::V2(_) => None,
             Self::V3(payload) => Some(payload),
             Self::V4(payload) => Some(&payload.payload_inner),
+            Self::V5(payload) => Some(&payload.payload_inner.payload_inner),
         }
     }
 
@@ -443,6 +507,7 @@ impl BaseExecutionPayload {
             Self::V1(_) | Self::V2(_) => None,
             Self::V3(payload) => Some(payload),
             Self::V4(payload) => Some(&mut payload.payload_inner),
+            Self::V5(payload) => Some(&mut payload.payload_inner.payload_inner),
         }
     }
 
@@ -451,6 +516,7 @@ impl BaseExecutionPayload {
         match self {
             Self::V1(_) | Self::V2(_) | Self::V3(_) => None,
             Self::V4(payload) => Some(payload),
+            Self::V5(payload) => Some(&payload.payload_inner),
         }
     }
 
@@ -459,6 +525,23 @@ impl BaseExecutionPayload {
         match self {
             Self::V1(_) | Self::V2(_) | Self::V3(_) => None,
             Self::V4(payload) => Some(payload),
+            Self::V5(payload) => Some(&mut payload.payload_inner),
+        }
+    }
+
+    /// Returns a reference to the V5 payload, if any.
+    pub const fn as_v5(&self) -> Option<&BaseExecutionPayloadV5> {
+        match self {
+            Self::V1(_) | Self::V2(_) | Self::V3(_) | Self::V4(_) => None,
+            Self::V5(payload) => Some(payload),
+        }
+    }
+
+    /// Returns a mutable reference to the V5 payload, if any.
+    pub const fn as_v5_mut(&mut self) -> Option<&mut BaseExecutionPayloadV5> {
+        match self {
+            Self::V1(_) | Self::V2(_) | Self::V3(_) | Self::V4(_) => None,
+            Self::V5(payload) => Some(payload),
         }
     }
 
@@ -534,7 +617,7 @@ impl BaseExecutionPayload {
             blob_gas_used: self.blob_gas_used(),
             difficulty: U256::ZERO,
             mix_hash: Some(self.prev_randao()),
-            slot_number: None,
+            slot_number: self.as_v5().map(|payload| payload.slot_number),
         }
     }
 
@@ -551,6 +634,7 @@ impl BaseExecutionPayload {
             Self::V2(payload) => payload.into_block_raw(),
             Self::V3(payload) => payload.into_block_raw(),
             Self::V4(payload) => payload.into_block_raw(),
+            Self::V5(payload) => payload.into_block_raw(),
         }
     }
 
@@ -639,6 +723,7 @@ impl BaseExecutionPayload {
             Self::V2(payload) => return Ok(payload.try_into_block_with(f)?),
             Self::V3(payload) => payload.try_into_block_with(f)?,
             Self::V4(payload) => payload.try_into_block_with(f)?,
+            Self::V5(payload) => payload.try_into_block_with(f)?,
         };
         if block.body.has_eip4844_transactions() {
             return Err(BasePayloadError::BlobTransaction);
@@ -788,6 +873,29 @@ mod tests {
 
         let payload_v4: BaseExecutionPayloadV4 = serde_json::from_str(response_v4).unwrap();
         assert_eq!(payload.as_v4().unwrap(), &payload_v4);
+    }
+
+    #[test]
+    #[cfg(feature = "serde")]
+    fn serde_payload_input_enum_v5() {
+        let response_v5 = r#"{"parentHash":"0xe927a1448525fb5d32cb50ee1408461a945ba6c39bd5cf5621407d500ecc8de9","feeRecipient":"0x0000000000000000000000000000000000000000","stateRoot":"0x10f8a0830000e8edef6d00cc727ff833f064b1950afd591ae41357f97e543119","receiptsRoot":"0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421","logsBloom":"0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","prevRandao":"0xe0d8b4521a7da1582a713244ffb6a86aa1726932087386e2dc7973f43fc6cb24","blockNumber":"0x1","gasLimit":"0x2ffbd2","gasUsed":"0x0","timestamp":"0x1235","extraData":"0xd883010d00846765746888676f312e32312e30856c696e7578","baseFeePerGas":"0x342770c0","blockHash":"0x44d0fa5f2f73a938ebb96a2a21679eb8dea3e7b7dd8fd9f35aa756dda8bf0a8a","transactions":[],"withdrawals":[],"blobGasUsed":"0x0","excessBlobGas":"0x0","withdrawalsRoot":"0x123400000000000000000000000000000000000000000000000000000000babe","blockAccessList":"0xdeadbeef","slotNumber":"0x2a"}"#;
+
+        let payload: BaseExecutionPayload = serde_json::from_str(response_v5).unwrap();
+        assert!(payload.as_v5().is_some());
+        assert_eq!(payload.as_v5().unwrap().slot_number, 42);
+        assert_eq!(payload.as_v5().unwrap().block_access_list, Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef]));
+        assert_eq!(serde_json::to_string(&payload).unwrap(), response_v5);
+    }
+
+    #[test]
+    #[cfg(feature = "serde")]
+    fn serde_payload_input_enum_v5_requires_block_access_list_for_slot_number() {
+        // A V4 payload carrying `slotNumber` but no `blockAccessList` must be rejected.
+        let response = r#"{"parentHash":"0xe927a1448525fb5d32cb50ee1408461a945ba6c39bd5cf5621407d500ecc8de9","feeRecipient":"0x0000000000000000000000000000000000000000","stateRoot":"0x10f8a0830000e8edef6d00cc727ff833f064b1950afd591ae41357f97e543119","receiptsRoot":"0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421","logsBloom":"0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","prevRandao":"0xe0d8b4521a7da1582a713244ffb6a86aa1726932087386e2dc7973f43fc6cb24","blockNumber":"0x1","gasLimit":"0x2ffbd2","gasUsed":"0x0","timestamp":"0x1235","extraData":"0xd883010d00846765746888676f312e32312e30856c696e7578","baseFeePerGas":"0x342770c0","blockHash":"0x44d0fa5f2f73a938ebb96a2a21679eb8dea3e7b7dd8fd9f35aa756dda8bf0a8a","transactions":[],"withdrawals":[],"blobGasUsed":"0x0","excessBlobGas":"0x0","withdrawalsRoot":"0x123400000000000000000000000000000000000000000000000000000000babe","slotNumber":"0x2a"}"#;
+
+        let payload: Result<BaseExecutionPayload, serde_json::Error> =
+            serde_json::from_str(response);
+        assert!(payload.is_err());
     }
 
     #[test]

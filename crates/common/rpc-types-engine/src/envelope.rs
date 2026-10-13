@@ -12,7 +12,10 @@ use alloy_rpc_types_engine::{
     CancunPayloadFields, ExecutionPayloadInputV2, ExecutionPayloadV3, PraguePayloadFields,
 };
 
-use crate::{BaseExecutionPayload, BaseExecutionPayloadSidecar, BaseExecutionPayloadV4};
+use crate::{
+    BaseExecutionPayload, BaseExecutionPayloadSidecar, BaseExecutionPayloadV4,
+    BaseExecutionPayloadV5,
+};
 #[cfg(feature = "std")]
 use crate::{BoundedExecutionPayloadV1, BoundedExecutionPayloadV2, BoundedExecutionPayloadV3};
 
@@ -229,6 +232,29 @@ impl ExecutionData {
         )
     }
 
+    /// Creates a new instance from args to engine API method `newPayloadV5`.
+    ///
+    /// The payload already carries the Amsterdam block access list, so it is also mirrored into
+    /// [`ExecutionData::block_access_list`] for the carried-list consensus validation.
+    ///
+    /// Spec: <https://specs.base.org/upgrades/denim/exec-engine#engine_newpayloadv5>
+    pub fn v5(
+        payload: BaseExecutionPayloadV5,
+        versioned_hashes: Vec<B256>,
+        parent_beacon_block_root: B256,
+        execution_requests: Requests,
+    ) -> Self {
+        let block_access_list = Some(payload.block_access_list.clone());
+        Self::new(
+            BaseExecutionPayload::v5(payload),
+            BaseExecutionPayloadSidecar::v4(
+                CancunPayloadFields::new(parent_beacon_block_root, versioned_hashes),
+                PraguePayloadFields::new(execution_requests),
+            ),
+            block_access_list,
+        )
+    }
+
     /// Returns the parent beacon block root, if any.
     pub fn parent_beacon_block_root(&self) -> Option<B256> {
         self.sidecar.parent_beacon_block_root()
@@ -246,6 +272,9 @@ impl ExecutionData {
             }
             BaseExecutionPayload::V4(base_execution_payload_v4) => {
                 Some(base_execution_payload_v4.payload_inner.withdrawals())
+            }
+            BaseExecutionPayload::V5(base_execution_payload_v5) => {
+                Some(base_execution_payload_v5.payload_inner.payload_inner.withdrawals())
             }
         }
     }
@@ -488,6 +517,61 @@ impl NetworkPayloadEnvelope {
             self.parent_beacon_block_root.ok_or(PayloadEnvelopeEncodeError::MissingData)?;
         data.extend_from_slice(parent_beacon_block_root.as_slice());
         let block_data = execution_payload_v4.as_ssz_bytes();
+        data.extend_from_slice(block_data.as_slice());
+
+        Ok(snap::raw::Encoder::new().compress_vec(&data)?)
+    }
+
+    /// Decode a payload envelope from a snappy-compressed byte array.
+    /// The payload version decoded is `BaseExecutionPayloadV5` from SSZ bytes, which carries the
+    /// Amsterdam block access list and slot number.
+    #[cfg(feature = "std")]
+    pub fn decode_v5(data: &[u8]) -> Result<Self, PayloadEnvelopeError> {
+        use ssz::Decode;
+        let decompressed = Self::decompress_bounded(data)?;
+
+        if decompressed.len() < 98 {
+            return Err(PayloadEnvelopeError::InvalidLength);
+        }
+
+        let sig_data = &decompressed[..65];
+        let parent_beacon_block_root = &decompressed[65..97];
+        let block_data = &decompressed[97..];
+
+        let signature = Signature::try_from(sig_data)?;
+        let parent_beacon_block_root = B256::from_slice(parent_beacon_block_root);
+        let hash = PayloadHash::from(
+            [parent_beacon_block_root.as_slice(), block_data].concat().as_slice(),
+        );
+
+        let payload =
+            BaseExecutionPayload::V5(BaseExecutionPayloadV5::from_ssz_bytes(block_data)?);
+
+        Ok(Self {
+            payload,
+            signature,
+            payload_hash: hash,
+            parent_beacon_block_root: Some(parent_beacon_block_root),
+        })
+    }
+
+    /// Encodes a payload envelope as a snappy-compressed byte array.
+    #[cfg(feature = "std")]
+    pub fn encode_v5(&self) -> Result<Vec<u8>, PayloadEnvelopeEncodeError> {
+        use ssz::Encode;
+        let execution_payload_v5 = match &self.payload {
+            BaseExecutionPayload::V5(execution_payload_v5) => execution_payload_v5,
+            _ => return Err(PayloadEnvelopeEncodeError::WrongVersion),
+        };
+
+        let mut data = Vec::new();
+        let mut sig = self.signature.as_bytes();
+        sig[64] = self.signature.v() as u8;
+        data.extend_from_slice(&sig[..]);
+        let parent_beacon_block_root =
+            self.parent_beacon_block_root.ok_or(PayloadEnvelopeEncodeError::MissingData)?;
+        data.extend_from_slice(parent_beacon_block_root.as_slice());
+        let block_data = execution_payload_v5.as_ssz_bytes();
         data.extend_from_slice(block_data.as_slice());
 
         Ok(snap::raw::Encoder::new().compress_vec(&data)?)

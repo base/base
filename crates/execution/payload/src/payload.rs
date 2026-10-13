@@ -12,7 +12,8 @@ use alloy_eips::{
 use alloy_primitives::{Address, B64, B256, Bytes, U256};
 use alloy_rpc_types_engine::{
     BlobsBundleV1, BlobsBundleV2, ExecutionPayloadEnvelopeV2, ExecutionPayloadFieldV2,
-    ExecutionPayloadV1, ExecutionPayloadV3, PayloadAttributes as EthPayloadAttributes, PayloadId,
+    ExecutionPayloadV1, ExecutionPayloadV3, PayloadAttributes as EthPayloadAttributes, PayloadError,
+    PayloadId,
 };
 use base_common_chains::Upgrades;
 use base_common_consensus::{
@@ -22,7 +23,7 @@ use base_common_consensus::{
 pub use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_common_rpc_types_engine::{
     BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5,
-    BaseExecutionPayloadV4,
+    BaseExecutionPayloadEnvelopeV6, BaseExecutionPayloadV4, BaseExecutionPayloadV5, BasePayloadError,
 };
 use base_execution_evm::BaseNextBlockEnvAttributes;
 use reth_chainspec::EthChainSpec;
@@ -463,6 +464,55 @@ where
     }
 }
 
+// V6 engine_getPayloadV6 response (Amsterdam)
+impl<T, N> TryFrom<BaseBuiltPayload<N>> for BaseExecutionPayloadEnvelopeV6
+where
+    T: SignedTransaction,
+    N: NodePrimitives<Block = Block<T>>,
+{
+    type Error = BasePayloadError;
+
+    fn try_from(value: BaseBuiltPayload<N>) -> Result<Self, Self::Error> {
+        let BaseBuiltPayload { block, fees, block_access_list, .. } = value;
+
+        // Amsterdam payloads must carry the block access list the header commits to, along with
+        // the slot number (EIP-7843).
+        let block_access_list = block_access_list.ok_or(PayloadError::PostAmsterdamBlockWithoutBlockAccessList)?;
+        let slot_number =
+            block.slot_number.ok_or(PayloadError::PostAmsterdamBlockWithoutSlotNumber)?;
+
+        let l2_withdrawals_root = block.withdrawals_root.unwrap_or_default();
+        let payload_v3 = ExecutionPayloadV3::from_block_unchecked(
+            block.hash(),
+            &Arc::unwrap_or_clone(block).into_block(),
+        );
+
+        Ok(Self {
+            execution_payload: BaseExecutionPayloadV5::new(
+                BaseExecutionPayloadV4::from_v3_with_withdrawals_root(
+                    payload_v3,
+                    l2_withdrawals_root,
+                ),
+                block_access_list,
+                slot_number,
+            ),
+            block_value: fees,
+            // No blobs for Base.
+            blobs_bundle: BlobsBundleV2::default(),
+            // From the engine API spec:
+            //
+            // > Client software **MAY** use any heuristics to decide whether to set
+            // `shouldOverrideBuilder` flag or not. If client software does not implement any
+            // heuristic this flag **SHOULD** be set to `false`.
+            //
+            // Spec:
+            // <https://github.com/ethereum/execution-apis/blob/fe8e13c288c592ec154ce25c534e26cb7ce0530d/src/engine/cancun.md#specification-2>
+            should_override_builder: false,
+            execution_requests: vec![],
+        })
+    }
+}
+
 impl<H, T, ChainSpec> BuildNextEnv<BasePayloadBuilderAttributes<T>, H, ChainSpec>
     for BaseNextBlockEnvAttributes
 where
@@ -495,6 +545,7 @@ where
             gas_limit: attributes.gas_limit.unwrap_or_else(|| parent.gas_limit()),
             parent_beacon_block_root: attributes.payload_attributes.parent_beacon_block_root,
             extra_data,
+            slot_number: attributes.payload_attributes.slot_number,
         })
     }
 }
