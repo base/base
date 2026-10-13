@@ -4755,6 +4755,7 @@ dependencies = [
  "base-precompile-storage",
  "base-test-utils",
  "c-kzg",
+ "criterion",
  "derive_more 2.1.1",
  "futures",
  "hostname",
