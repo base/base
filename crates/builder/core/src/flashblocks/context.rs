@@ -652,7 +652,7 @@ impl BasePayloadBuilderCtx {
 
     /// [`Self::skip_current`] using the pooled transaction's sender, nonce, and replay ID.
     fn skip_pooled_current<B: PayloadTxsBounds>(best_txs: &mut B, tx: &B::Transaction) {
-        Self::skip_current(best_txs, tx.sender(), tx.nonce(), tx.eip8130_replay_id().is_some());
+        Self::skip_current(best_txs, tx.sender(), tx.nonce(), tx.is_eip8130_nonce_free());
     }
 
     /// Emits rejected, counts an "other" rejection, and closes the current iterator candidate.
@@ -793,7 +793,7 @@ impl BasePayloadBuilderCtx {
             num_txs_considered += 1;
             let ordering_position = num_txs_considered;
             let tx_hash = *tx.hash();
-            let replay_independent = tx.eip8130_replay_id().is_some();
+            let replay_independent = tx.is_eip8130_nonce_free();
             let has_validity_predicates = !tx.validity_predicates().is_empty();
             let validity_handling_start = has_validity_predicates.then(Instant::now);
             let coinbase_tip = tx.coinbase_tip();
@@ -977,8 +977,9 @@ impl BasePayloadBuilderCtx {
 
             // EIP-8130 meters payer authentication gas on top of the declared gas limit, so it must
             // be reserved against the block gas budget in addition to `gas_limit`. Reserve a
-            // conservative upper bound (worst-case payer policy gate) derived from the payer auth
-            // blob (`0` for non-8130 / self-pay); see `IntrinsicGas::max_payer_auth_cost`.
+            // conservative upper bound (the payer auth bytes at the EIP-7623 floor rate) derived
+            // from the payer auth blob (`0` for non-8130 / self-pay); see
+            // `IntrinsicGas::max_payer_auth_cost`.
             let tx_payer_auth = match tx.as_eip8130() {
                 Some(signed) => match IntrinsicGas::max_payer_auth_cost(signed) {
                     Ok(payer_auth) => payer_auth,

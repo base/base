@@ -65,6 +65,7 @@ rocksdb = { workspace = true, optional = true, features = ["snappy", "bindgen-ru
 
 [dev-dependencies]
 proptest.workspace = true
+base-proof-primitives = { workspace = true, features = ["test-utils"] }
 
 [features]
 disk = [ "dep:rocksdb" ]

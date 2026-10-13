@@ -1,6 +1,6 @@
 //! Prover-service requester client helpers for the `basectl proofs` command group.
 
-use std::{fmt, time::Duration};
+use std::{fmt, num::NonZeroU64, time::Duration};
 
 use alloy_primitives::{Address, B256};
 use base_prover_service_client::{
@@ -38,7 +38,7 @@ pub struct ProofProposeRequest {
     /// L1 head hash stored at game creation time.
     pub l1_head: B256,
     /// Intermediate output root interval matching the game's checkpoints.
-    pub intermediate_root_interval: u64,
+    pub intermediate_root_interval: NonZeroU64,
     /// L1 wallet address that will later submit the proof on chain.
     ///
     /// The proof journal commits to this address as the proposer, so the
@@ -133,7 +133,7 @@ impl ProofProposeRequest {
     fn intermediate_root_interval(
         details: &GameDetails,
         intermediate_root_interval: Option<u64>,
-    ) -> Result<u64, ProofsCommandError> {
+    ) -> Result<NonZeroU64, ProofsCommandError> {
         let not_provable = |reason: &str| ProofsCommandError::GameNotProvable {
             game: details.address.to_string(),
             reason: reason.to_string(),
@@ -158,17 +158,17 @@ impl ProofProposeRequest {
                      pass --intermediate-root-interval",
                 )
             })?;
-        if intermediate_root_interval == 0
-            || !details.block_interval.is_multiple_of(intermediate_root_interval)
-        {
+        let Some(intermediate_root_interval) = NonZeroU64::new(intermediate_root_interval)
+            .filter(|interval| details.block_interval.is_multiple_of(interval.get()))
+        else {
             return Err(not_provable(&format!(
                 "intermediate root interval {intermediate_root_interval} must be a nonzero \
                  divisor of the game's {}-block range",
                 details.block_interval
             )));
-        }
+        };
 
-        let expected_root_count = details.block_interval / intermediate_root_interval;
+        let expected_root_count = details.block_interval / intermediate_root_interval.get();
         if expected_root_count != details.intermediate_root_count as u64 {
             return Err(not_provable(&format!(
                 "game committed {} intermediate root(s) but its {}-block range at a \
@@ -209,7 +209,7 @@ impl ProofProposeRequest {
         game: Address,
         pre_state_block: u64,
         num_blocks: u64,
-        intermediate_root_interval: u64,
+        intermediate_root_interval: NonZeroU64,
         prover_address: Address,
         zk_backend: ZkBackend,
     ) -> String {
@@ -226,7 +226,7 @@ impl ProofProposeRequest {
                 game.as_slice(),
                 &pre_state_block.to_be_bytes(),
                 &num_blocks.to_be_bytes(),
-                &intermediate_root_interval.to_be_bytes(),
+                &intermediate_root_interval.get().to_be_bytes(),
                 prover_address.as_slice(),
             ],
         )
@@ -245,6 +245,7 @@ impl ProofProposeRequest {
                         sequence_window: None,
                         l1_head: Some(self.l1_head),
                         schedule_l2_block_number: None,
+                        intermediate_block_interval: self.intermediate_root_interval,
                         zk_vm: ZkVm::Sp1,
                         zk_backend: self.zk_backend,
                     },
@@ -435,6 +436,7 @@ mod tests {
         error::Error as _,
         io,
         net::SocketAddr,
+        num::NonZeroU64,
         sync::{Arc, Mutex},
         time::Duration,
     };
@@ -498,7 +500,7 @@ mod tests {
         assert_eq!(request.pre_state_block, 4000);
         assert_eq!(request.num_blocks, 1000);
         assert_eq!(request.l1_head, B256::repeat_byte(0x22));
-        assert_eq!(request.intermediate_root_interval, 100);
+        assert_eq!(request.intermediate_root_interval.get(), 100);
         assert_eq!(request.prover_address, Address::repeat_byte(0xDD));
     }
 
@@ -582,7 +584,7 @@ mod tests {
         )
         .expect("stride override should build a request");
 
-        assert_eq!(request.intermediate_root_interval, 250);
+        assert_eq!(request.intermediate_root_interval.get(), 250);
     }
 
     #[test]
@@ -633,8 +635,10 @@ mod tests {
             ProofProposeRequest { prover_address: Address::repeat_byte(0x88), ..request.clone() };
         let other_backend =
             ProofProposeRequest { zk_backend: ZkBackend::Cluster, ..request.clone() };
-        let other_stride =
-            ProofProposeRequest { intermediate_root_interval: 200, ..request.clone() };
+        let other_stride = ProofProposeRequest {
+            intermediate_root_interval: NonZeroU64::new(200).unwrap(),
+            ..request.clone()
+        };
 
         let base_id = request.effective_session_id("mainnet");
         assert_ne!(base_id, other_game.effective_session_id("mainnet"));
@@ -688,6 +692,7 @@ mod tests {
                 assert_eq!(snark.proof.number_of_blocks_to_prove, 1000);
                 assert_eq!(snark.proof.sequence_window, None);
                 assert_eq!(snark.proof.l1_head, Some(B256::repeat_byte(0x22)));
+                assert_eq!(snark.proof.intermediate_block_interval.get(), 100);
                 assert_eq!(snark.proof.zk_vm, ZkVm::Sp1);
                 assert_eq!(snark.proof.zk_backend, ZkBackend::Network);
             }

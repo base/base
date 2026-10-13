@@ -60,7 +60,7 @@ digest = "9cf77aec37"
 
 ["bin/basectl/README.md"]
 summary = "basectl operator console reference: global options, TUI and scriptable commands (block, sync-status, p2p, txpool, conductor, sequencer, batcher, doctor, proofs), JSON output and examples."
-digest = "dede2cd58a"
+digest = "78a08a9f7a"
 
 ["bin/builder/README.md"]
 summary = "Stub README for the base-builder block builder binary, which runs base-builder-core. Minimal, no usage details."
@@ -344,7 +344,7 @@ digest = "9c987d9934"
 
 ["crates/execution/eip8130/README.md"]
 summary = "Native EIP-8130 account abstraction validation: enshrined authenticators (not precompiles) needing parity with contracts, validation layers, intrinsic gas formula, EIP-7623 floor, fee checks."
-digest = "38c1df7bcf"
+digest = "e0ec05b8f0"
 
 ["crates/execution/evm/README.md"]
 summary = "BaseEvmConfig implementing reth ConfigureEvm, mapping timestamps to SpecId for upgrade-aware EVM environments, and re-exporting executor types. Use when changing Base EVM setup or fork specs."
@@ -512,7 +512,7 @@ digest = "dc8e161148"
 
 ["crates/proof/primitives/README.md"]
 summary = "base-proof-primitives: shared proof wire types (Proposal, ProofBundle, ProofResult with Tee and Zk variants) exchanged among proposer, enclave, provers and on-chain verifiers."
-digest = "274b61e6c7"
+digest = "b8cdb98d76"
 
 ["crates/proof/proof/README.md"]
 summary = "base-proof SDK: oracle-backed derivation and execution pieces (OraclePipeline, Oracle L1/L2 providers, CachingOracle, BaseExecutor), boot info and EIP-2935 lookups for fault proof generation."
