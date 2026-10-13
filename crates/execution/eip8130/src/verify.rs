@@ -28,7 +28,8 @@ pub struct TxActors {
     pub sender: AuthorizedActor,
     /// The gas payer, scope-gated for [`Operation::SelfPayer`] (explicit
     /// self-pay) or [`Operation::SponsorPayer`] (distinct sponsor), or `None`
-    /// when the sender implicitly pays (`tx.payer == None`).
+    /// when the sender implicitly pays (`tx.payer == None`). A payer resolves
+    /// no policy, so its `policy_target` is always zero.
     pub payer: Option<AuthorizedActor>,
 }
 
@@ -91,7 +92,8 @@ impl ActorTxVerifier {
                 let recovered = RecoveredActorId::recover_k1(hash, signed.payer_auth())
                     .map_err(|_| TxAuthError::PayerRecovery)?;
                 let account = recovered.address();
-                let resolved = ActorAuthorizer::authorize_k1(storage, account, recovered, now)?;
+                let resolved =
+                    ActorAuthorizer::authorize_k1_payer(storage, account, recovered, now)?;
                 let operation = if account == sender.account {
                     Operation::SelfPayer
                 } else {
@@ -112,14 +114,16 @@ impl ActorTxVerifier {
                 } else {
                     Operation::SponsorPayer
                 };
-                let resolved = Self::authorize_scoped(
+                let resolved = ActorAuthorizer::authenticate_payer(
                     storage,
                     account,
                     hash,
                     signed.payer_auth(),
-                    operation,
                     now,
                 )?;
+                if !operation.is_granted(&resolved) {
+                    return Err(TxAuthError::Scope { operation, scope: resolved.scope });
+                }
                 Some(AuthorizedActor { account, resolved })
             }
         };
@@ -248,6 +252,12 @@ mod tests {
         U256::from_be_slice(authenticator.as_slice())
             | (U256::from(expiry) << 160)
             | (U256::from(scope) << 208)
+    }
+
+    /// Account-state packing of an inline secp256k1 self with `scope` (bits
+    /// 232..248), no expiry and not revoked.
+    fn pack_self_scope(scope: u16) -> U256 {
+        U256::from(scope) << 232
     }
 
     fn base_tx(sender: Option<Address>, payer: Option<Address>) -> TxEip8130 {
@@ -484,6 +494,58 @@ mod tests {
             let payer = actors.payer.expect("open payer resolves");
             assert_eq!(payer.account, payer_account);
             assert!(payer.resolved.is_admin());
+        });
+    }
+
+    #[test]
+    fn policy_scoped_payer_resolves_no_policy() {
+        // A payer needs only its sponsor scope: even with SCOPE_POLICY and a
+        // policy manager set, payer authorization resolves no policy target.
+        let sk = key(0x48);
+        let sender_account = addr(&sk);
+        let manager = address!("0x00000000000000000000000000000000000000d4");
+        let gated = Eip8130Constants::SCOPE_SPONSOR_PAYER | Eip8130Constants::SCOPE_POLICY;
+
+        // Named payer authorized by a bound k1 actor.
+        let pk = key(0x59);
+        let pid = actor_id(addr(&pk));
+        let payer_account = address!("0x00000000000000000000000000000000000000cc");
+        let tx = base_tx(None, Some(payer_account));
+        let sender_hash = tx.sender_signature_hash();
+        let payer_hash = tx.payer_signature_hash(sender_account);
+        let named = Eip8130Signed::new(
+            tx,
+            Bytes::from(sig(&sk, sender_hash)),
+            auth_blob(K1, &sig(&pk, payer_hash)),
+        );
+
+        // Open payer authorized by its inline k1 self.
+        let ok = key(0x5a);
+        let open_account = addr(&ok);
+        let tx = base_tx(None, Some(Eip8130Constants::OPEN_PAYER));
+        let sender_hash = tx.sender_signature_hash();
+        let payer_hash = tx.payer_signature_hash(sender_account);
+        let open = Eip8130Signed::new(
+            tx,
+            Bytes::from(sig(&sk, sender_hash)),
+            Bytes::from(sig(&ok, payer_hash)),
+        );
+
+        with_storage(|acc| {
+            acc.actors.at_mut(&pid).at_mut(&payer_account).write(pack(K1, gated, 0)).unwrap();
+            acc.set_policy(payer_account, pid, manager, B256::ZERO).unwrap();
+            acc.account_state.at_mut(&open_account).write(pack_self_scope(gated)).unwrap();
+            acc.set_policy(open_account, actor_id(open_account), manager, B256::ZERO).unwrap();
+
+            for (signed, account) in [(&named, payer_account), (&open, open_account)] {
+                let payer = ActorTxVerifier::verify(signed, acc, NOW)
+                    .unwrap()
+                    .payer
+                    .expect("payer present");
+                assert_eq!(payer.account, account);
+                assert_eq!(payer.resolved.scope, gated);
+                assert_eq!(payer.resolved.policy_target, Address::ZERO);
+            }
         });
     }
 
