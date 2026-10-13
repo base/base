@@ -35,6 +35,7 @@ where
         block_env: &BlockEnv,
         ex_result: &BlockExecutionResult<BaseReceiptEnvelope>,
         bundle: BundleState,
+        block_access_list_hash: Option<B256>,
     ) -> ExecutorResult<Sealed<Header>> {
         let timestamp = block_env.timestamp.saturating_to::<u64>();
 
@@ -111,7 +112,7 @@ where
             excess_blob_gas: excess_blob_gas.and_then(|x| x.try_into().ok()),
             parent_beacon_block_root: attrs.payload_attributes.parent_beacon_block_root,
             extra_data: encoded_base_fee_params,
-            block_access_list_hash: None,
+            block_access_list_hash,
             slot_number: None,
         }
         .seal_slow();
