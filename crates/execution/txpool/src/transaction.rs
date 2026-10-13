@@ -351,6 +351,13 @@ impl<Cons: InMemorySize, Pooled> InMemorySize for BasePooledTransaction<Cons, Po
     fn size(&self) -> usize {
         let watch_keys_size =
             self.watch_set.get().map_or(0, |watch_set| core::mem::size_of_val(watch_set.keys()));
+        // The admission guard's index keeps its own copy of the watch set.
+        let invalidation_index_size =
+            self.watch_set.get().map_or(0, crate::InvalidationIndex::registration_size);
+        // Counted at its full length even before it is filled: subpools subtract
+        // a transaction's size on removal exactly as they added it, so the size
+        // must not change while the transaction is pooled.
+        let encoding_size = core::mem::size_of::<OnceLock<Bytes>>() + self.inner.encoded_length;
         let manifest_slots_size = self
             .watch_manifest
             .get()
@@ -364,6 +371,8 @@ impl<Cons: InMemorySize, Pooled> InMemorySize for BasePooledTransaction<Cons, Po
             + core::mem::size_of::<Vec<crate::ValidityPredicate>>()
             + core::mem::size_of::<OnceLock<crate::WatchSet>>()
             + watch_keys_size
+            + invalidation_index_size
+            + encoding_size
             + core::mem::size_of::<OnceLock<crate::LimitClass>>()
             + core::mem::size_of::<OnceLock<crate::WatchManifest>>()
             + manifest_slots_size
@@ -777,8 +786,7 @@ mod tests {
         max_priority_fee_per_gas: u128,
         max_fee_per_gas: u128,
     ) -> BasePooledTransaction {
-        let signer = signer();
-        let tx = TxEip8130 {
+        sign_eip8130(TxEip8130 {
             chain_id: ChainConfig::mainnet().chain_id,
             sender: None,
             nonce_key,
@@ -792,7 +800,11 @@ mod tests {
             calls: Vec::new(),
             metadata: Bytes::new(),
             payer: None,
-        };
+        })
+    }
+
+    fn sign_eip8130(tx: TxEip8130) -> BasePooledTransaction {
+        let signer = signer();
         let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
         let signed =
             Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
@@ -931,7 +943,10 @@ mod tests {
 
         transaction.set_watch_set(watch_set);
 
-        assert_eq!(transaction.size(), size_without_keys + keys_size);
+        assert!(
+            transaction.size() >= size_without_keys + 2 * keys_size,
+            "the keys are held by the transaction and again by the invalidation index"
+        );
     }
 
     #[test]
@@ -956,6 +971,31 @@ mod tests {
         transaction.set_watch_manifest(manifest);
 
         assert_eq!(transaction.size(), size_without_slots + slots_size);
+    }
+
+    #[test]
+    fn in_memory_size_includes_the_cached_encoding() {
+        const METADATA_LEN: usize = 1_024;
+        let small = eip8130_pooled(U256::ZERO);
+        let large = sign_eip8130(TxEip8130 {
+            metadata: Bytes::from(vec![0xAB; METADATA_LEN]),
+            ..small.as_eip8130().unwrap().tx().clone()
+        });
+
+        assert!(
+            large.size() >= small.size() + 2 * METADATA_LEN,
+            "metadata is held decoded and again in the cached encoding"
+        );
+    }
+
+    #[test]
+    fn in_memory_size_is_unchanged_when_the_encoding_is_cached() {
+        let transaction = eip8130_pooled(U256::ZERO);
+        let size = transaction.size();
+
+        assert!(!transaction.encoded_2718().is_empty());
+
+        assert_eq!(transaction.size(), size, "pooled size must not change while pooled");
     }
 
     #[test]
