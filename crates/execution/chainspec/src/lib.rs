@@ -16,11 +16,10 @@ pub use basefee::*;
 mod builder;
 pub use builder::BaseChainSpecBuilder;
 
-mod upgrades;
-pub use upgrades::ChainUpgradesExt;
 mod engine;
 pub use engine::BaseEngineApiForks;
-
+mod upgrades;
+pub use upgrades::ChainUpgradesExt;
 
 mod spec;
 pub use spec::{BaseChainSpec, BaseChainSpecError, GenesisInfo};

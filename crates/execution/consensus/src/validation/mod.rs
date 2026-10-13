@@ -918,4 +918,60 @@ mod tests {
         validate_block_access_list(&header, &chainspec, None)
             .expect("a pre-Amsterdam header without a commitment must be accepted");
     }
+
+    /// The commitment must be enforced by the full post-execution validation, not only by the
+    /// helper, so a block that reaches import with the wrong list is rejected.
+    #[test]
+    fn validate_block_post_execution_rejects_mismatched_block_access_list_commitment() {
+        let chainspec = amsterdam_chainspec();
+        let committed = B256::repeat_byte(0x11);
+        let recomputed = B256::repeat_byte(0x22);
+        let header = Header {
+            blob_gas_used: Some(0),
+            ..bal_header(AMSTERDAM_TIMESTAMP, Some(committed))
+        };
+        let result = BlockExecutionResult::<BaseReceipt> {
+            blob_gas_used: 0,
+            receipts: vec![],
+            requests: Requests::default(),
+            gas_used: 0,
+        };
+
+        let error = validate_block_post_execution(
+            &header,
+            &chainspec,
+            &result,
+            None,
+            Some(recomputed),
+        )
+        .expect_err("import must reject a mismatched block access list commitment");
+        assert!(
+            matches!(
+                error,
+                ConsensusError::BlockAccessListHashMismatch(ref diff)
+                    if diff.got == committed && diff.expected == recomputed
+            ),
+            "expected a mismatch error, got {error:?}"
+        );
+    }
+
+    /// The same path accepts a block whose commitment matches what execution recomputed.
+    #[test]
+    fn validate_block_post_execution_accepts_matching_block_access_list_commitment() {
+        let chainspec = amsterdam_chainspec();
+        let committed = B256::repeat_byte(0x11);
+        let header = Header {
+            blob_gas_used: Some(0),
+            ..bal_header(AMSTERDAM_TIMESTAMP, Some(committed))
+        };
+        let result = BlockExecutionResult::<BaseReceipt> {
+            blob_gas_used: 0,
+            receipts: vec![],
+            requests: Requests::default(),
+            gas_used: 0,
+        };
+
+        validate_block_post_execution(&header, &chainspec, &result, None, Some(committed))
+            .expect("import must accept a matching block access list commitment");
+    }
 }
