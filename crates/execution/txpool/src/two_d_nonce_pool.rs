@@ -1220,7 +1220,7 @@ mod tests {
     }
 
     #[test]
-    fn validity_transaction_replaces_with_only_a_higher_max_fee() {
+    fn validity_transaction_replacement_requires_the_price_bump() {
         let mut pool = TwoDNoncePool::new(PriceBumpConfig::default());
         let signer = signer();
         let predicate = ValidityPredicate::Balance {
@@ -1231,10 +1231,16 @@ mod tests {
         let original = signed_nonce_free_tx(&signer, 1, 10, 100)
             .with_validity_predicates(vec![predicate.clone()]);
         let original = valid_pool_transaction(original);
+        let underpriced = signed_nonce_free_tx(&signer, 1, 0, 101)
+            .with_validity_predicates(vec![predicate.clone()]);
         let replacement =
-            signed_nonce_free_tx(&signer, 1, 0, 101).with_validity_predicates(vec![predicate]);
+            signed_nonce_free_tx(&signer, 1, 11, 110).with_validity_predicates(vec![predicate]);
 
         pool.insert_validated(original, 0).unwrap();
+        assert!(matches!(
+            pool.insert_validated(valid_pool_transaction(underpriced), 0).unwrap_err().kind,
+            PoolErrorKind::ReplacementUnderpriced
+        ));
         assert!(
             pool.insert_validated(valid_pool_transaction(replacement), 0)
                 .unwrap()

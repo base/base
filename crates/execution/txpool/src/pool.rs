@@ -2482,7 +2482,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn protocol_validity_transaction_replaces_with_only_a_higher_max_fee() {
+    async fn protocol_eip8130_validity_replacement_requires_the_price_bump() {
         let (pool, client) = build_integration_pool();
         let signer = signer();
         fund(&client, signer.address());
@@ -2493,12 +2493,20 @@ mod tests {
         let original_hash = *original.hash();
         pool.add_transaction(TransactionOrigin::Local, original).await.unwrap();
 
-        let replacement = self_paid_eoa_8130(&signer, U256::ZERO, 0, 0, 1_001)
+        let underpriced = self_paid_eoa_8130(&signer, U256::ZERO, 0, 0, 1_001)
+            .with_validity_predicates(vec![predicate.clone()]);
+        let err = pool
+            .add_transaction(TransactionOrigin::Local, underpriced)
+            .await
+            .expect_err("an EIP-8130 validity replacement still needs the price bump");
+        assert!(matches!(err.kind, PoolErrorKind::ReplacementUnderpriced), "got {err:?}");
+
+        let replacement = self_paid_eoa_8130(&signer, U256::ZERO, 0, 0, 1_100)
             .with_validity_predicates(vec![predicate]);
         let replacement_hash = *replacement.hash();
         pool.add_transaction(TransactionOrigin::Local, replacement)
             .await
-            .expect("validity replacement only requires a higher max fee");
+            .expect("a bumped EIP-8130 validity replacement is accepted");
 
         assert!(pool.get(&original_hash).is_none());
         assert!(pool.get(&replacement_hash).is_some());

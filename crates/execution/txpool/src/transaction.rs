@@ -204,20 +204,21 @@ where
         replacement: &Self,
         price_bumps: &PriceBumpConfig,
     ) -> bool {
-        if !self.validity_predicates().is_empty() && !replacement.validity_predicates().is_empty() {
-            return replacement.max_fee_per_gas() <= self.max_fee_per_gas();
-        }
         if self.ty() == EIP8130_TX_TYPE_ID || replacement.ty() == EIP8130_TX_TYPE_ID {
             // EIP-8130 requires both fee fields to rise by the bump, including
             // when the replacement's priority fee is zero (which the default
-            // check exempts). The bump is keyed on the existing transaction's
-            // type, as in the default check, so a non-8130 transaction replaced
-            // by an 8130 one uses the non-8130 bump.
+            // check exempts) and when both sides carry validity predicates. The
+            // bump is keyed on the existing transaction's type, as in the
+            // default check, so a non-8130 transaction replaced by an 8130 one
+            // uses the non-8130 bump.
             let bump = price_bumps.price_bump(self.ty());
             let bumped = |fee: u128| fee.saturating_mul(100 + bump).div_ceil(100);
             return replacement.max_fee_per_gas() < bumped(self.max_fee_per_gas())
                 || replacement.max_priority_fee_per_gas().unwrap_or_default()
                     < bumped(self.max_priority_fee_per_gas().unwrap_or_default());
+        }
+        if !self.validity_predicates().is_empty() && !replacement.validity_predicates().is_empty() {
+            return replacement.max_fee_per_gas() <= self.max_fee_per_gas();
         }
         price_bumps.is_replacement_underpriced(self, replacement)
     }
@@ -820,21 +821,18 @@ mod tests {
     }
 
     #[test]
-    fn eip8130_with_validity_predicates_uses_relaxed_replacement_rule() {
-        let existing = eip8130_pooled_with_fees(U256::ZERO, 10, 100)
-            .with_validity_predicates(vec![balance_predicate()]);
-        // Zero tip and a higher max fee is accepted: both transactions carry
-        // validity predicates, so the relaxed rule runs before the EIP-8130
-        // bump that requires both fee fields to rise.
-        let replacement = eip8130_pooled_with_fees(U256::ZERO, 0, 101)
-            .with_validity_predicates(vec![balance_predicate()]);
-        assert!(!existing.is_replacement_underpriced(&replacement, &PriceBumpConfig::default()));
+    fn eip8130_with_validity_predicates_requires_both_fees_to_rise() {
+        let bumps = PriceBumpConfig::default();
+        let with_predicates = |max_priority_fee_per_gas, max_fee_per_gas| {
+            eip8130_pooled_with_fees(U256::ZERO, max_priority_fee_per_gas, max_fee_per_gas)
+                .with_validity_predicates(vec![balance_predicate()])
+        };
+        let existing = with_predicates(10, 100);
 
-        let unchanged_max_fee = eip8130_pooled_with_fees(U256::ZERO, 100, 100)
-            .with_validity_predicates(vec![balance_predicate()]);
-        assert!(
-            existing.is_replacement_underpriced(&unchanged_max_fee, &PriceBumpConfig::default())
-        );
+        assert!(existing.is_replacement_underpriced(&with_predicates(0, 101), &bumps));
+        assert!(existing.is_replacement_underpriced(&with_predicates(10, 110), &bumps));
+        assert!(existing.is_replacement_underpriced(&with_predicates(11, 109), &bumps));
+        assert!(!existing.is_replacement_underpriced(&with_predicates(11, 110), &bumps));
     }
 
     #[test]
