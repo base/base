@@ -258,7 +258,9 @@ where
                 suggested_fee_recipient: Predeploys::SEQUENCER_FEE_VAULT,
                 parent_beacon_block_root: parent_beacon_root,
                 withdrawals,
-                slot_number: None,
+                // EIP-7843: from Denim/Amsterdam on, the payload attributes carry the L2 block
+                // number as the slot number.
+                slot_number: base_time_active.then_some(target_l2_number),
                 target_gas_limit: None,
             },
             transactions: Some(txs),

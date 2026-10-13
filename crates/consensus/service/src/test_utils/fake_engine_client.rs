@@ -25,7 +25,8 @@ use base_common_network::{Base, BaseEngineApi};
 use base_common_rpc_types::{BaseBlockResponse, Transaction as BaseTransaction};
 use base_common_rpc_types_engine::{
     BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5,
-    BaseExecutionPayloadV4, BasePayloadAttributes,
+    BaseExecutionPayloadEnvelopeV6, BaseExecutionPayloadV4, BaseExecutionPayloadV5,
+    BasePayloadAttributes,
 };
 use base_consensus_engine::{EngineClient, EngineClientError};
 use base_protocol::L2BlockInfo;
@@ -264,6 +265,16 @@ impl BaseEngineApi for FakeEngineClient {
         )))
     }
 
+    async fn new_payload_v5(
+        &self,
+        _payload: BaseExecutionPayloadV5,
+        _parent_beacon_block_root: B256,
+    ) -> TransportResult<PayloadStatus> {
+        Err(TransportError::from(TransportErrorKind::custom_str(
+            "new_payload_v5 is not scripted in FakeEngineClient",
+        )))
+    }
+
     async fn fork_choice_updated_v2(
         &self,
         fork_choice_state: ForkchoiceState,
@@ -301,6 +312,16 @@ impl BaseEngineApi for FakeEngineClient {
         }
     }
 
+    async fn fork_choice_updated_v4(
+        &self,
+        _fork_choice_state: ForkchoiceState,
+        _payload_attributes: Option<BasePayloadAttributes>,
+    ) -> TransportResult<ForkchoiceUpdated> {
+        Err(TransportError::from(TransportErrorKind::custom_str(
+            "fork_choice_updated_v4 is not scripted in FakeEngineClient",
+        )))
+    }
+
     async fn get_payload_v2(
         &self,
         _payload_id: PayloadId,
@@ -336,6 +357,15 @@ impl BaseEngineApi for FakeEngineClient {
     ) -> TransportResult<BaseExecutionPayloadEnvelopeV5> {
         Err(TransportError::from(TransportErrorKind::custom_str(
             "get_payload_v5 is not scripted in FakeEngineClient",
+        )))
+    }
+
+    async fn get_payload_v6(
+        &self,
+        _payload_id: PayloadId,
+    ) -> TransportResult<BaseExecutionPayloadEnvelopeV6> {
+        Err(TransportError::from(TransportErrorKind::custom_str(
+            "get_payload_v6 is not scripted in FakeEngineClient",
         )))
     }
 

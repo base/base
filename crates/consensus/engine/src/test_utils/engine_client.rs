@@ -19,7 +19,8 @@ use base_common_network::{Base, BaseEngineApi};
 use base_common_rpc_types::Transaction as BaseTransaction;
 use base_common_rpc_types_engine::{
     BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5,
-    BaseExecutionPayloadV4, BasePayloadAttributes,
+    BaseExecutionPayloadEnvelopeV6, BaseExecutionPayloadV4, BaseExecutionPayloadV5,
+    BasePayloadAttributes,
 };
 use base_protocol::L2BlockInfo;
 use tokio::sync::RwLock;
@@ -68,6 +69,8 @@ pub struct MockEngineStorage {
     pub new_payload_v3_response: Option<PayloadStatus>,
     /// Storage for `new_payload_v4` responses.
     pub new_payload_v4_response: Option<PayloadStatus>,
+    /// Storage for `new_payload_v5` responses.
+    pub new_payload_v5_response: Option<PayloadStatus>,
 
     // Version-specific fork_choice_updated responses
     /// Storage for `fork_choice_updated_v2` responses.
@@ -78,6 +81,10 @@ pub struct MockEngineStorage {
     pub fork_choice_updated_v3_response: Option<ForkchoiceUpdated>,
     /// Storage for `fork_choice_updated_v3` requests and whether they included payload attributes.
     pub fork_choice_updated_v3_requests: Vec<(ForkchoiceState, bool)>,
+    /// Storage for `fork_choice_updated_v4` responses.
+    pub fork_choice_updated_v4_response: Option<ForkchoiceUpdated>,
+    /// Storage for `fork_choice_updated_v4` requests and whether they included payload attributes.
+    pub fork_choice_updated_v4_requests: Vec<(ForkchoiceState, bool)>,
 
     // Version-specific fork_choice_updated error overrides
     /// Error to return for `fork_choice_updated_v2` instead of a response.
@@ -94,6 +101,8 @@ pub struct MockEngineStorage {
     pub execution_payload_v4: Option<BaseExecutionPayloadEnvelopeV4>,
     /// Storage for Base execution payload envelope v5 responses.
     pub execution_payload_v5: Option<BaseExecutionPayloadEnvelopeV5>,
+    /// Storage for Base execution payload envelope v6 responses.
+    pub execution_payload_v6: Option<BaseExecutionPayloadEnvelopeV6>,
 
     // Version-specific get_payload_bodies responses
     /// Storage for `get_payload_bodies_by_hash_v1` responses.
@@ -202,6 +211,12 @@ impl MockEngineClientBuilder {
         self
     }
 
+    /// Sets the `new_payload_v5` response.
+    pub fn with_new_payload_v5_response(mut self, status: PayloadStatus) -> Self {
+        self.storage.new_payload_v5_response = Some(status);
+        self
+    }
+
     /// Sets the `fork_choice_updated_v2` response.
     pub fn with_fork_choice_updated_v2_response(mut self, response: ForkchoiceUpdated) -> Self {
         self.storage.fork_choice_updated_v2_response = Some(response);
@@ -211,6 +226,12 @@ impl MockEngineClientBuilder {
     /// Sets the `fork_choice_updated_v3` response.
     pub fn with_fork_choice_updated_v3_response(mut self, response: ForkchoiceUpdated) -> Self {
         self.storage.fork_choice_updated_v3_response = Some(response);
+        self
+    }
+
+    /// Sets the `fork_choice_updated_v4` response.
+    pub fn with_fork_choice_updated_v4_response(mut self, response: ForkchoiceUpdated) -> Self {
+        self.storage.fork_choice_updated_v4_response = Some(response);
         self
     }
 
@@ -247,6 +268,12 @@ impl MockEngineClientBuilder {
     /// Sets the execution payload v5 response.
     pub fn with_execution_payload_v5(mut self, payload: BaseExecutionPayloadEnvelopeV5) -> Self {
         self.storage.execution_payload_v5 = Some(payload);
+        self
+    }
+
+    /// Sets the execution payload v6 response.
+    pub fn with_execution_payload_v6(mut self, payload: BaseExecutionPayloadEnvelopeV6) -> Self {
+        self.storage.execution_payload_v6 = Some(payload);
         self
     }
 
@@ -394,6 +421,11 @@ impl MockEngineClient {
         self.storage.write().await.new_payload_v4_response = Some(status);
     }
 
+    /// Sets the `new_payload_v5` response.
+    pub async fn set_new_payload_v5_response(&self, status: PayloadStatus) {
+        self.storage.write().await.new_payload_v5_response = Some(status);
+    }
+
     /// Sets the `fork_choice_updated_v2` response.
     pub async fn set_fork_choice_updated_v2_response(&self, response: ForkchoiceUpdated) {
         self.storage.write().await.fork_choice_updated_v2_response = Some(response);
@@ -402,6 +434,11 @@ impl MockEngineClient {
     /// Sets the `fork_choice_updated_v3` response.
     pub async fn set_fork_choice_updated_v3_response(&self, response: ForkchoiceUpdated) {
         self.storage.write().await.fork_choice_updated_v3_response = Some(response);
+    }
+
+    /// Sets the `fork_choice_updated_v4` response.
+    pub async fn set_fork_choice_updated_v4_response(&self, response: ForkchoiceUpdated) {
+        self.storage.write().await.fork_choice_updated_v4_response = Some(response);
     }
 
     /// Sets the execution payload v2 response.
@@ -422,6 +459,11 @@ impl MockEngineClient {
     /// Sets the execution payload v5 response.
     pub async fn set_execution_payload_v5(&self, payload: BaseExecutionPayloadEnvelopeV5) {
         self.storage.write().await.execution_payload_v5 = Some(payload);
+    }
+
+    /// Sets the execution payload v6 response.
+    pub async fn set_execution_payload_v6(&self, payload: BaseExecutionPayloadEnvelopeV6) {
+        self.storage.write().await.execution_payload_v6 = Some(payload);
     }
 
     /// Sets the `get_payload_bodies_by_hash_v1` response.
@@ -619,6 +661,20 @@ impl BaseEngineApi for MockEngineClient {
         })
     }
 
+    async fn new_payload_v5(
+        &self,
+        _payload: BaseExecutionPayloadV5,
+        _parent_beacon_block_root: B256,
+    ) -> TransportResult<PayloadStatus> {
+        let storage = self.storage.read().await;
+        storage.new_payload_v5_response.clone().ok_or_else(|| {
+            TransportError::from(TransportErrorKind::custom_str(
+                "new_payload_v5 was called but no v5 response configured. \
+                 Use with_new_payload_v5_response() or set_new_payload_v5_response() to set a response."
+            ))
+        })
+    }
+
     async fn fork_choice_updated_v2(
         &self,
         fork_choice_state: ForkchoiceState,
@@ -655,6 +711,23 @@ impl BaseEngineApi for MockEngineClient {
             TransportError::from(TransportErrorKind::custom_str(
                 "fork_choice_updated_v3 was called but no v3 response configured. \
                  Use with_fork_choice_updated_v3_response() or set_fork_choice_updated_v3_response() to set a response."
+            ))
+        })
+    }
+
+    async fn fork_choice_updated_v4(
+        &self,
+        fork_choice_state: ForkchoiceState,
+        payload_attributes: Option<BasePayloadAttributes>,
+    ) -> TransportResult<ForkchoiceUpdated> {
+        let mut storage = self.storage.write().await;
+        storage
+            .fork_choice_updated_v4_requests
+            .push((fork_choice_state, payload_attributes.is_some()));
+        storage.fork_choice_updated_v4_response.clone().ok_or_else(|| {
+            TransportError::from(TransportErrorKind::custom_str(
+                "fork_choice_updated_v4 was called but no v4 response configured. \
+                 Use with_fork_choice_updated_v4_response() or set_fork_choice_updated_v4_response() to set a response."
             ))
         })
     }
@@ -703,6 +776,18 @@ impl BaseEngineApi for MockEngineClient {
         storage.execution_payload_v5.clone().ok_or_else(|| {
             TransportError::from(TransportErrorKind::custom_str(
                 "No execution payload v5 set in mock",
+            ))
+        })
+    }
+
+    async fn get_payload_v6(
+        &self,
+        _payload_id: PayloadId,
+    ) -> TransportResult<BaseExecutionPayloadEnvelopeV6> {
+        let storage = self.storage.read().await;
+        storage.execution_payload_v6.clone().ok_or_else(|| {
+            TransportError::from(TransportErrorKind::custom_str(
+                "No execution payload v6 set in mock",
             ))
         })
     }
