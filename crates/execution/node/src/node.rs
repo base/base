@@ -486,22 +486,13 @@ where
         self,
         engine_api_builder: T,
     ) -> BaseAddOns<N, EthB, PVB, T, EVB, RpcMiddleware> {
-        let Self {
-            rpc_add_ons,
-            da_config,
-            gas_limit_config,
-            sequencer_url,
-            sequencer_headers,
-            min_suggested_priority_fee,
-            ..
-        } = self;
         BaseAddOns::new(
-            rpc_add_ons.with_engine_api(engine_api_builder),
-            da_config,
-            gas_limit_config,
-            sequencer_url,
-            sequencer_headers,
-            min_suggested_priority_fee,
+            self.rpc_add_ons.with_engine_api(engine_api_builder),
+            self.da_config,
+            self.gas_limit_config,
+            self.sequencer_url,
+            self.sequencer_headers,
+            self.min_suggested_priority_fee,
         )
     }
 
@@ -510,22 +501,13 @@ where
         self,
         payload_validator_builder: T,
     ) -> BaseAddOns<N, EthB, T, EB, EVB, RpcMiddleware> {
-        let Self {
-            rpc_add_ons,
-            da_config,
-            gas_limit_config,
-            sequencer_url,
-            sequencer_headers,
-            min_suggested_priority_fee,
-            ..
-        } = self;
         BaseAddOns::new(
-            rpc_add_ons.with_payload_validator(payload_validator_builder),
-            da_config,
-            gas_limit_config,
-            sequencer_url,
-            sequencer_headers,
-            min_suggested_priority_fee,
+            self.rpc_add_ons.with_payload_validator(payload_validator_builder),
+            self.da_config,
+            self.gas_limit_config,
+            self.sequencer_url,
+            self.sequencer_headers,
+            self.min_suggested_priority_fee,
         )
     }
 
@@ -537,22 +519,13 @@ where
     ///
     /// See also [`RpcAddOns::with_rpc_middleware`].
     pub fn with_rpc_middleware<T>(self, rpc_middleware: T) -> BaseAddOns<N, EthB, PVB, EB, EVB, T> {
-        let Self {
-            rpc_add_ons,
-            da_config,
-            gas_limit_config,
-            sequencer_url,
-            sequencer_headers,
-            min_suggested_priority_fee,
-            ..
-        } = self;
         BaseAddOns::new(
-            rpc_add_ons.with_rpc_middleware(rpc_middleware),
-            da_config,
-            gas_limit_config,
-            sequencer_url,
-            sequencer_headers,
-            min_suggested_priority_fee,
+            self.rpc_add_ons.with_rpc_middleware(rpc_middleware),
+            self.da_config,
+            self.gas_limit_config,
+            self.sequencer_url,
+            self.sequencer_headers,
+            self.min_suggested_priority_fee,
         )
     }
 
