@@ -26,7 +26,7 @@ use std::{
 use alloy_consensus::SignableTransaction;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_genesis::GenesisAccount;
-use alloy_network::TransactionBuilder;
+use alloy_network::{Network, TransactionBuilder};
 use alloy_primitives::{Bytes, TxHash, U256, keccak256};
 use alloy_provider::Provider;
 use alloy_signer::SignerSync;
@@ -45,8 +45,9 @@ use reth_transaction_pool::{TransactionListenerKind, TransactionPool};
 use tokio::time::{sleep, timeout};
 use url::Url;
 
-const SENDERS: usize = 2_000;
 const ISOLATED: usize = 200;
+const BURST: usize = 2_000;
+const SENDERS: usize = 20 + 2 * ISOLATED + BURST;
 const WAIT_TIMEOUT: Duration = Duration::from_secs(30);
 
 type Stamps = Arc<Mutex<HashMap<TxHash, Instant>>>;
@@ -187,6 +188,29 @@ async fn wait_for(stamps: &Stamps, hashes: impl IntoIterator<Item = TxHash>) -> 
     .map_err(|_| eyre::eyre!("transactions did not reach the builder pool"))
 }
 
+/// Sends `raws` one at a time, waiting for each to be pending on the builder, and reports hops.
+///
+/// Sends are jittered so arrivals do not phase-lock with any polling interval on the path.
+async fn measure_isolated<N: Network>(
+    label: &str,
+    provider: &impl Provider<N>,
+    probes: &Probes,
+    raws: &[Bytes],
+    hashes: &[TxHash],
+) -> Result<()> {
+    let mut submitted = Vec::with_capacity(raws.len());
+    for (index, (raw, hash)) in raws.iter().zip(hashes).enumerate() {
+        let at = Instant::now();
+        let _ = provider.send_raw_transaction(raw).await?;
+        submitted.push((*hash, at));
+        wait_for(&probes.builder_pending, [*hash]).await?;
+        sleep(Duration::from_micros((index as u64 * 7_919) % 5_000)).await;
+    }
+    println!("\n== {label} ({} txs, one in flight) ==", raws.len());
+    report_hops(probes, &submitted);
+    Ok(())
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[ignore = "latency measurement; run explicitly with --ignored --nocapture"]
 async fn ingestion_latency() -> Result<()> {
@@ -224,23 +248,23 @@ async fn ingestion_latency() -> Result<()> {
     }
     wait_for(&probes.builder_pending, hashes[..20].iter().copied()).await?;
 
-    // Isolated: one transaction in flight at a time, jittered so arrivals do not phase-lock
-    // with any polling interval on the path.
-    let mut submitted = Vec::with_capacity(ISOLATED);
-    for (index, raw) in raws[20..20 + ISOLATED].iter().enumerate() {
-        let hash = hashes[20 + index];
-        let at = Instant::now();
-        let _ = provider.send_raw_transaction(raw).await?;
-        submitted.push((hash, at));
-        wait_for(&probes.builder_pending, [hash]).await?;
-        sleep(Duration::from_micros((index as u64 * 7_919) % 5_000)).await;
-    }
-    println!("\n== isolated ({ISOLATED} txs, one in flight) ==");
-    report_hops(&probes, &submitted);
+    let isolated_idle = 20..20 + ISOLATED;
+    let burst_range = isolated_idle.end..isolated_idle.end + BURST;
+    let isolated_backlog = burst_range.end..burst_range.end + ISOLATED;
 
-    // Burst: every remaining transaction submitted concurrently from 32 clients.
-    let burst = &raws[20 + ISOLATED..];
-    let burst_hashes = &hashes[20 + ISOLATED..];
+    measure_isolated(
+        "isolated, empty pool",
+        &provider,
+        &probes,
+        &raws[isolated_idle.clone()],
+        &hashes[isolated_idle],
+    )
+    .await?;
+
+    // Burst: transactions submitted concurrently from 32 clients. They stay pending afterwards,
+    // since neither node builds blocks, so the next isolated run sees a mainnet-sized backlog.
+    let burst = &raws[burst_range.clone()];
+    let burst_hashes = &hashes[burst_range];
     let started = Instant::now();
     let submitted = Arc::new(Mutex::new(Vec::with_capacity(burst.len())));
     let mut clients = Vec::new();
@@ -270,6 +294,15 @@ async fn ingestion_latency() -> Result<()> {
         burst.len() as f64 / drained.as_secs_f64(),
     );
     report_hops(&probes, &submitted.lock().unwrap());
+
+    measure_isolated(
+        &format!("isolated, {BURST} already pending"),
+        &provider,
+        &probes,
+        &raws[isolated_backlog.clone()],
+        &hashes[isolated_backlog],
+    )
+    .await?;
 
     drop(mempool);
     drop(builder);
