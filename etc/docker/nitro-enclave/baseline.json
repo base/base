@@ -1,0 +1,40 @@
+{
+  "hosts": [
+    {
+      "architecture": "x86_64",
+      "buildkit": "moby/buildkit:v0.23.2@sha256:e39f6119f134b4811af19fd5c20f495a6a264a85c1b6920daf569b23009dd42c",
+      "ci": {
+        "attempt": "128588312494473:1:build:first",
+        "job": "build:first"
+      },
+      "docker_id": "2e467ca7-ca10-47ef-b528-d421035f88a5",
+      "name": "depot-worker-cml8kp85rgn869vrvmgm"
+    },
+    {
+      "architecture": "x86_64",
+      "buildkit": "moby/buildkit:v0.23.2@sha256:e39f6119f134b4811af19fd5c20f495a6a264a85c1b6920daf569b23009dd42c",
+      "ci": {
+        "attempt": "128588312494473:1:build:second",
+        "job": "build:second"
+      },
+      "docker_id": "2e467ca7-ca10-47ef-b528-d421035f88a5",
+      "name": "depot-worker-gtlvp2c23gr131plwnx8"
+    }
+  ],
+  "measurements": {
+    "eif_sha256": "ef5c11d71053996a39a0a1bd55d6a5a216ea779d9c5a40d762a41e166b694bca",
+    "pcr0": "46d4170264baf1c1d33d622925690b648a5c1fe233b16261093b1ea17b9e51ac9002faef23afe974c59adcc6d306f7bb",
+    "sha256": {
+      "base-prover-nitro-enclave": "db01f450762ee345630f1a5fba5f8c0a286a1985dc8f54e8750970c019dcb317",
+      "bootstrap/bzImage": "16a90b65a2920f51462f4e4a71217efd5b7fc63b93bd72a2ad3c759160d472ab",
+      "bootstrap/bzImage.config": "fab17e49df1b621dfe8584ede8124712116b24c6d3b61cd91dc209ddf7da2b2c",
+      "cmdline": "10e182738c73d88854c480aa22032474cfc9e82443d39ce92bf5fa1684fee68d",
+      "eif.bin": "ef5c11d71053996a39a0a1bd55d6a5a216ea779d9c5a40d762a41e166b694bca",
+      "eif_build": "f1f7c3123533f229b94511f4bd17d0cff851e97eca83c2016c6d4ae103381d28",
+      "init-ramdisk-initrd.img": "e8ad119967e623804566ccc9da24a1d0739f691d0644be6b0254fcf33721077b",
+      "user-ramdisk-initrd.img": "ab7419618543893bc1a75ec9cf233072e5f35b812eb74e7fce4f7367f8d2e672"
+    },
+    "source_identity": "8f6c55411fc4f7ac69a86b6c4b9850b17197a24d0cdf3f397f47ace4eeb12da9"
+  },
+  "source_tree": "ee5704f3286444485303eec54080fc08d6685782"
+}
