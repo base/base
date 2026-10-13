@@ -5,9 +5,7 @@ use alloc::vec::Vec;
 use alloy_consensus::{Receipt, ReceiptWithBloom, TxReceipt};
 use alloy_primitives::{Address, Bytes};
 use alloy_serde::OtherFields;
-use base_common_consensus::{
-    BaseReceipt, BaseReceiptEnvelope, DepositReceipt, DepositReceiptWithBloom,
-};
+use base_common_consensus::{BaseReceipt, BaseReceiptEnvelope, DepositReceipt};
 use serde::{Deserialize, Serialize};
 
 use crate::BaseLogResponse;
@@ -327,21 +325,13 @@ impl From<BaseTransactionReceipt> for BaseReceiptEnvelope {
                 Self::Eip8130(convert_standard_receipt(receipt.inner, logs_bloom))
             }
             BaseReceipt::Deposit(receipt) => {
-                let consensus_logs =
-                    receipt.inner.logs.into_iter().map(|log| log.inner.inner).collect();
-                let consensus_receipt = DepositReceiptWithBloom {
-                    receipt: DepositReceipt {
-                        inner: Receipt {
-                            status: receipt.inner.status,
-                            cumulative_gas_used: receipt.inner.cumulative_gas_used,
-                            logs: consensus_logs,
-                        },
+                Self::Deposit(convert_standard_receipt(receipt.inner, logs_bloom).map_receipt(
+                    |inner| DepositReceipt {
+                        inner,
                         deposit_nonce: receipt.deposit_nonce,
                         deposit_receipt_version: receipt.deposit_receipt_version,
                     },
-                    logs_bloom,
-                };
-                Self::Deposit(consensus_receipt)
+                ))
             }
         }
     }

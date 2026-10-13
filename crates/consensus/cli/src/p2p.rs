@@ -2,7 +2,7 @@
 
 use std::{
     fs,
-    net::{IpAddr, SocketAddr, ToSocketAddrs},
+    net::{IpAddr, SocketAddr},
     num::{NonZeroUsize, ParseIntError},
     ops::{Deref, DerefMut},
     path::PathBuf,
@@ -32,33 +32,10 @@ use tokio::time::Duration;
 use tracing::{error, info, warn};
 use url::Url;
 
-use crate::signer::{SignerArgs, SignerArgsParseError};
-
-/// Resolves a hostname or IP address string to an [`IpAddr`].
-///
-/// Accepts either:
-/// - A valid IP address string (e.g., "127.0.0.1", "`::1`")
-/// - A DNS hostname (e.g., "node1.example.com")
-///
-/// For DNS hostnames, this performs synchronous DNS resolution and returns the first
-/// resolved IP address.
-fn resolve_host(host: &str) -> Result<IpAddr, String> {
-    // First, try to parse as a direct IP address
-    if let Ok(ip) = host.parse::<IpAddr>() {
-        return Ok(ip);
-    }
-
-    // If that fails, try DNS resolution
-    // We append a port to make it a valid socket address for resolution
-    let socket_addr = format!("{host}:0");
-    match socket_addr.to_socket_addrs() {
-        Ok(mut addrs) => addrs
-            .next()
-            .map(|addr| addr.ip())
-            .ok_or_else(|| format!("DNS resolution for '{host}' returned no addresses")),
-        Err(e) => Err(format!("Failed to resolve '{host}': {e}")),
-    }
-}
+use crate::{
+    resolve_host,
+    signer::{SignerArgs, SignerArgsParseError},
+};
 
 fn parse_nonzero_usize(arg: &str) -> Result<NonZeroUsize, String> {
     let value = arg.parse::<usize>().map_err(|err| err.to_string())?;
