@@ -11,13 +11,18 @@ async fn main() {
     // `verdict` matches the field the per-phase logs use, so one Datadog query
     // covers both the run and its phases: `@data.message.fields.verdict:fail`.
     if let Err(e) = base_challenger_e2e::ChallengerE2e::run().await {
+        // `infra` separates "a dependency was down" from "the challenger
+        // regressed"; the distinct exit code lets the Workflow retry only the
+        // former.
+        let infra = base_challenger_e2e::is_infra(&e);
         tracing::error!(
             verdict = "fail",
+            infra,
             error = %e,
             error_debug = ?e,
             "challenger E2E test failed"
         );
-        std::process::exit(1);
+        std::process::exit(if infra { base_challenger_e2e::INFRA_EXIT_CODE } else { 1 });
     }
 
     tracing::info!(verdict = "pass", "challenger E2E test passed");

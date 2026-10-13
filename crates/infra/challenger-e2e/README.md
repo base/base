@@ -78,7 +78,8 @@ delta on B. Both are generated per run and never leave the pod.
 One process, one fork, two TEE-only in-progress games (newest-first, lookback
 50, ≥1 intermediate root, all above the anchor game). Game A is Path 1 / Path 2
 skip. Game B is Path 4, followed by Path 3 only when the TEE proof is removed
-first. The run bails if fewer than two such games exist.
+first. The run bails if fewer than two such games exist, as an infrastructure
+failure (see [When a dependency is down](#when-a-dependency-is-down)).
 
 Games are also filtered on their **aggregation program**. Every hash on an
 `AggregateVerifier` is `immutable`, so a verification-key rotation deploys a new
@@ -321,6 +322,7 @@ answerable without reading the whole stream. Note the prefix: the driver's
 | Where a run is, phase by phase | `"started" OR "finished" OR "failed" OR "skipped"` with `@data.message.fields.phase:*` |
 | Which phase a failed run died in | `"failed" @data.message.fields.verdict:fail` — has `phase`, and `elapsed_ms` unless the error came between two phases (charged to the next one) |
 | Every planned phase of one run, with timings | `"run summary"` — has `results`, e.g. `setup=pass(41.2s) quiet-window=pass(95.0s) path3=pass(22.4s) bystanders=pass(1.8s)` |
+| A failure that was not the challenger's | `@data.message.fields.infra:true` — on both `failed` and `challenger E2E test failed` |
 | A wait that is taking long | `"still waiting for"` — has `waiting_for`, `elapsed_s`, `budget_s` |
 | One step of a phase | `@data.message.fields.what:"waiting for two challenger scans"` — with `phase`, `step`, `steps` |
 | A quiet window in progress | `"still observing"` — has `observing`, `elapsed_s`, `window_s` |
@@ -351,6 +353,30 @@ Two fields worth knowing:
   proof runs. A `tee-first` run reaches Path 3 in situ instead, tagged
   `reached=in-situ`; the staged Path 3 on game C runs either way.
 
+## When a dependency is down
+
+A run depends on two things outside the pod: the L2 RPC, for canonical roots,
+and the chain's recent games, to corrupt. When either is unavailable the run
+cannot test anything, and failing it as if the challenger had regressed sends
+whoever triages it after the wrong component. The driver keeps the two apart:
+
+- **It checks the L2 RPC before it needs it.** Setup reads the state proof
+  behind each selected game's final root — the read every path makes to compute
+  the canonical root it corrupts — and so does every path, right before its
+  patch. A read that fails the way an unavailable node does (`no state found`, a
+  refused connection, a 502/503/504) is retried for
+  `CHALLENGER_E2E_L2_RETRY_BUDGET`, which covers a node restart.
+- **It reads L2 state once at every dispute timeout.** The challenger validates
+  against the same node, so a timeout while that node serves no state is the
+  node's failure.
+- **Too few eligible games is not the challenger's failure either**, whether
+  the proposer is stalled or the implementation has just rotated.
+
+These failures carry `infra=true`, and the binary exits with **2** instead of 1,
+so the Workflow can retry them without retrying a real regression. Any other
+failure, including an L2 read that fails for another reason (a header hash or
+state proof that does not verify), stays a plain failure.
+
 ## Required environment
 
 `BASE_CHALLENGER_*` is shared with the challenger under test — both read the
@@ -376,6 +402,7 @@ is pointed at and talks to the same prover-service.
 | `CHALLENGER_E2E_QUIET_WINDOW` | No (default `90s`) | Positive-case (and Path 2 skip) observation window |
 | `CHALLENGER_E2E_DISPUTE_TIMEOUT` | No (default `45m`) | Budget for each SNARK / dispute; sized for a real proof, generous in `mock` mode |
 | `CHALLENGER_E2E_POLL_INTERVAL` | No (default `5s`) | Driver poll interval |
+| `CHALLENGER_E2E_L2_RETRY_BUDGET` | No (default `10m`) | How long an L2 read that fails like an unavailable node is retried before the run fails as an infrastructure failure (exit code 2) |
 
 `anvil` must be on `PATH`. The challenger under test must be reachable on
 `CHALLENGER_E2E_CHALLENGER_METRICS_URL` and must be configured with a local

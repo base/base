@@ -34,6 +34,7 @@ use url::Url;
 
 use crate::{
     config::{Config, ProverMode, Scenario},
+    infra,
     metrics::Scrape,
     mock_prover::MockProver,
     mock_verifier,
@@ -278,7 +279,7 @@ impl ChallengerE2e {
         );
         progress.start(Phase::Setup);
         let stages_dual_proof = matches!(config.scenario, Scenario::All | Scenario::Path3);
-        let setup_steps = if stages_dual_proof { 5 } else { 4 };
+        let setup_steps = if stages_dual_proof { 6 } else { 5 };
 
         // Held until the end of run(); the fork dies with this binding.
         progress::step(Phase::Setup, 1, setup_steps, "forking L1 and funding both keys");
@@ -323,6 +324,17 @@ impl ChallengerE2e {
             Self::select_games(&config, &factory, &verifier, &anchor_registry, wanted).await?;
         let under_test: Vec<Address> = games.iter().map(|game| game.address).collect();
         let (game_a, game_b) = (games[0], games[1]);
+
+        // Every path corrupts a root by computing the canonical one from the
+        // L2 RPC first. Checked here, before the challenger exists, so a node
+        // that has no state to serve fails the run as an infrastructure failure
+        // instead of surfacing mid-path as a failure of the challenger.
+        progress::step(Phase::Setup, 3, setup_steps, "checking the L2 RPC serves the games");
+        for game in &games {
+            let fork_config = Self::fork_config(&config, &fork_url, &driver, *game);
+            Self::await_l2_state(&config, &verifier, &fork_config, *game).await?;
+        }
+
         if config.prover == ProverMode::Mock {
             Self::install_mock_verifiers(&config, &provider, &verifier, &under_test).await?;
         }
@@ -330,14 +342,14 @@ impl ChallengerE2e {
         // Taken before the challenger boots. Every dispute assertion below is
         // scoped to the games under test, so without this a challenger that also
         // disputes games it was never given would pass the run.
-        progress::step(Phase::Setup, 3, setup_steps, "snapshotting bystander games");
+        progress::step(Phase::Setup, 4, setup_steps, "snapshotting bystander games");
         let bystanders =
             Self::snapshot_bystanders(&config, &factory, &verifier, &under_test).await?;
 
         // B carries Path 4 in `all` and Path 3 in `path3`; C carries Path 3 in
         // `all`. Every game after A starts as a valid dual-proof game.
         if stages_dual_proof {
-            progress::step(Phase::Setup, 4, setup_steps, "staging the dual-proof games");
+            progress::step(Phase::Setup, 5, setup_steps, "staging the dual-proof games");
             for game in &games[1..] {
                 Self::stage_dual_proof(&config, &fork_url, &verifier, &provider, &driver, *game)
                     .await?;
@@ -797,24 +809,29 @@ impl ChallengerE2e {
         if selected.len() == wanted {
             return Ok(selected);
         }
-        ensure!(
-            stale == 0,
-            "found {} candidate game(s) pinned to an aggregation program other than the \
-             implementation's {expected_hash}, and only {} usable; the factory's implementation \
-             has changed and the proposer has not yet created enough games against it. Proving \
-             against the older clones would spend a SNARK and then revert InvalidProof(), so this \
-             run stops here instead",
-            stale,
-            selected.len()
-        );
-        bail!(
-            "need {wanted} in-progress, uncountered games of type {} above the anchor in the \
-             newest {} factory indices, found {}; the fork source may be behind, the proposer \
-             may be stalled, or the anchor may have advanced past them",
-            config.game_type,
-            game_count - floor,
-            selected.len()
-        )
+        // Neither is the challenger's doing: the chain has too few games the
+        // run can use, so both are infrastructure failures.
+        let error = if stale == 0 {
+            eyre!(
+                "need {wanted} in-progress, uncountered games of type {} above the anchor in the \
+                 newest {} factory indices, found {}; the fork source may be behind, the proposer \
+                 may be stalled, or the anchor may have advanced past them",
+                config.game_type,
+                game_count - floor,
+                selected.len()
+            )
+        } else {
+            eyre!(
+                "found {} candidate game(s) pinned to an aggregation program other than the \
+                 implementation's {expected_hash}, and only {} usable; the factory's \
+                 implementation has changed and the proposer has not yet created enough games \
+                 against it. Proving against the older clones would spend a SNARK and then revert \
+                 InvalidProof(), so this run stops here instead",
+                stale,
+                selected.len()
+            )
+        };
+        Err(infra::mark(error, "too few eligible games on the chain"))
     }
 
     /// Attaches a real SNARK of B's canonical roots via `verifyProposalProof`.
@@ -1058,8 +1075,10 @@ impl ChallengerE2e {
         // Only now does the game become invalid, and every scan from here on
         // classifies it from its ZK-only shape.
         progress::step(Phase::Path3, 3, 5, "corrupting a root of the ZK-only game");
+        Self::await_l2_state(config, verifier, &fork_config, game).await?;
         let checkpoint = Checkpoint::patch(&fork_config, verifier)
             .await
+            .map_err(|error| infra::classify(error, "the L2 RPC"))
             .context("failed to corrupt the ZK-only game on the fork")?;
 
         info!(
@@ -1581,8 +1600,10 @@ impl ChallengerE2e {
         // meant to precede, and its correct dispute would read as nobody's.
         let nonce = provider.get_transaction_count(challenger.address()).await?;
         progress::step(Phase::Path1, 1, 3, "corrupting a root of game A");
+        Self::await_l2_state(config, verifier, &fork_config, game).await?;
         let checkpoint = Checkpoint::patch(&fork_config, verifier)
             .await
+            .map_err(|error| infra::classify(error, "the L2 RPC"))
             .context("failed to corrupt an intermediate output root on the fork")?;
         info!(
             game = %game.address,
@@ -1881,8 +1902,10 @@ impl ChallengerE2e {
         // Sampled before the patch for the reason given in `run_path1`.
         let nonce = provider.get_transaction_count(challenger.address()).await?;
         progress::step(Phase::Path4, 1, 3, "corrupting a root of dual-proof game B");
+        Self::await_l2_state(config, verifier, &fork_config, game).await?;
         let checkpoint = Checkpoint::patch(&fork_config, verifier)
             .await
+            .map_err(|error| infra::classify(error, "the L2 RPC"))
             .context("failed to corrupt the dual-proof game on the fork")?;
         info!(
             game = %game.address,
@@ -2085,7 +2108,19 @@ impl ChallengerE2e {
 
     /// Appends the challenger's failure counters to a dispute timeout, which is
     /// otherwise indistinguishable from "nothing happened".
+    ///
+    /// Also reads L2 state once. The challenger validates every root against
+    /// the same L2 RPC, so a timeout while that node serves no state is the
+    /// node's failure, and is marked as one.
     async fn annotate_timeout(error: eyre::Report, config: &Config) -> eyre::Report {
+        let l2 = L2HttpProvider::new_http(config.l2_eth_rpc.clone());
+        let error = match infra::probe_l2_state(&l2).await {
+            Err(probe) if infra::looks_transient(&probe) => infra::mark(
+                error.wrap_err(format!("the L2 RPC failed a state read at timeout: {probe:#}")),
+                "the L2 RPC at timeout",
+            ),
+            _ => error,
+        };
         let Ok(scrape) = Scrape::fetch(&config.challenger_metrics_url).await else {
             return error;
         };
@@ -2101,6 +2136,28 @@ impl ChallengerE2e {
             scrape.label_sum("base_challenger_challenge_tx_outcome_total", "reverted"),
             scrape.sum("base_challenger_pending_proofs"),
         ))
+    }
+
+    /// Waits, for up to `l2_retry_budget`, until the L2 RPC serves the state
+    /// behind `game`'s final root, the one every path corrupts.
+    ///
+    /// The same read `Checkpoint::patch` makes before it touches the fork, so
+    /// a patch that follows this rarely meets a node that cannot answer.
+    async fn await_l2_state(
+        config: &Config,
+        verifier: &AggregateVerifierContractClient,
+        fork_config: &ForkConfig,
+        game: Candidate,
+    ) -> Result<()> {
+        let block = verifier.game_info(game.address).await?.l2_block_number;
+        infra::retry(config.l2_retry_budget, config.poll_interval, "the L2 RPC", || {
+            fork_config.output_root_at_block(block)
+        })
+        .await
+        .with_context(|| {
+            format!("the L2 RPC serves no state for game {} at block {block}", game.address)
+        })?;
+        Ok(())
     }
 
     fn fork_config(

@@ -24,6 +24,7 @@ alloy-primitives.workspace = true
 alloy-signer-local.workspace = true
 alloy-node-bindings.workspace = true
 base-proof-rpc.workspace = true
+base-common-consensus.workspace = true
 base-tx-manager.workspace = true
 base-proof-contracts.workspace = true
 base-zk-fork-dispute.workspace = true

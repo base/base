@@ -10,6 +10,9 @@ mod mock_verifier;
 
 mod progress;
 
+mod infra;
+pub use infra::{INFRA_EXIT_CODE, is_infra};
+
 mod metrics;
 pub use metrics::Scrape;
 

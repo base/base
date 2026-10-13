@@ -152,6 +152,20 @@ pub struct Config {
     )]
     pub dispute_timeout: Duration,
 
+    /// How long the driver keeps retrying an L2 RPC read that fails the way an
+    /// unavailable node does (`no state found`, a refused connection, a 503),
+    /// before it gives up and fails the run as an infrastructure failure.
+    ///
+    /// Covers a node restart. The challenger reads the same node, so while it
+    /// is down no dispute can be expected of the challenger either.
+    #[arg(
+        long = "l2-retry-budget",
+        env = "CHALLENGER_E2E_L2_RETRY_BUDGET",
+        default_value = "10m",
+        value_parser = humantime::parse_duration
+    )]
+    pub l2_retry_budget: Duration,
+
     /// Interval between driver polls of the fork and the metrics endpoint.
     #[arg(
         long = "poll-interval",
