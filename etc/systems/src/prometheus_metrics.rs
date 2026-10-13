@@ -343,12 +343,16 @@ impl PrometheusBlockCollector {
         Ok(PrometheusSnapshot::parse(&response.text().await?))
     }
 
-    /// Returns whether a flattened metric is rendered by the benchmark visualizer.
+    /// Returns whether a flattened metric is kept in per-block benchmark samples.
     ///
-    /// This intentionally uses exact metric names rather than broad metric-family prefixes. The
-    /// latter pull in one sample for every flashblock, gas bucket, and label combination, even
-    /// though the report UI cannot display them. Keep this list in sync with the metrics rendered
+    /// Visualizer metrics use exact names rather than broad metric-family prefixes, which would
+    /// pull in one sample for every flashblock, gas bucket, and label combination even though the
+    /// report UI cannot display them. Keep `VISUALIZER_METRICS` in sync with the metrics rendered
     /// by `base/benchmark`'s `ChartGrid`, including its compatibility aliases.
+    ///
+    /// Persistence diagnostics are also kept for result analysis even though `ChartGrid` does not
+    /// render them. They are exact names plus the per-segment pruner prefixes, which add one
+    /// sample per prune segment (a small, fixed set).
     pub fn is_visualizer_metric(name: &str) -> bool {
         VISUALIZER_METRICS.contains(&name)
             || PERSISTENCE_DIAGNOSTIC_METRICS.contains(&name)
