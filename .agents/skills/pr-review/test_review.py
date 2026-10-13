@@ -13,6 +13,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import diagnose
 import render
 import review
 
@@ -861,9 +862,9 @@ class WorktreeTests(unittest.TestCase):
         (self.upstream / "a.txt").write_text("a newer push\n")
         git_in(self.upstream, "commit", "-qam", "newer")
         git_in(self.upstream, "update-ref", "refs/pull/7/head", git_in(self.upstream, "rev-parse", "HEAD"))
-        with self.remote_for("o/r"), self.assertRaises(review.ReviewError) as caught:
-            with review.pr_worktree(7, "o/r", gone):
-                self.fail("a worktree must not be made for a commit that could not be fetched")
+        with self.remote_for("o/r"), self.assertRaises(review.ReviewError) as caught, \
+                review.pr_worktree(7, "o/r", gone):
+            self.fail("a worktree must not be made for a commit that could not be fetched")
         self.assertIn("could not fetch commit", str(caught.exception))
         self.assertIn("force-pushed", str(caught.exception))
         self.assertEqual(len(git_in(self.mine, "worktree", "list").splitlines()), 1)
@@ -946,6 +947,193 @@ class WorktreeTests(unittest.TestCase):
                 review, "load_agents", return_value=[]):
             review.main(["--pr", "7"])
         self.assertEqual(seen["cwd"], Path("/the/worktree"))
+
+
+class SetupFailureTests(unittest.TestCase):
+    """A contributor without the maintainers' gateway must be told what is wrong, in words, quickly."""
+
+    def raw(self, result: str, stdout: str | None = None) -> str:
+        return stdout if stdout is not None else json.dumps({"is_error": True, "result": result})
+
+    def explain(self, result: str, base_url: str | None = "https://gateway.example.com/v1") -> str:
+        with mock.patch.dict(os.environ, {"ANTHROPIC_BASE_URL": base_url or ""}, clear=False):
+            if base_url is None:
+                os.environ.pop("ANTHROPIC_BASE_URL", None)
+            return review.explain_model_failure(result) or ""
+
+    def test_every_failure_the_cli_was_seen_to_print_has_a_specific_explanation(self) -> None:
+        # The first column is the CLI's own words, recorded from real runs against a fake server.
+        cases = {
+            "Not logged in · Please run /login": "is not signed in",
+            "Invalid API key · Fix external API key": "rejected your credentials",
+            "Failed to authenticate. API Error: 403 Your API key does not have permission to use the specified resource.":
+                "will not let your key use",
+            "Failed to authenticate. API Error: 403 litellm.PermissionDeniedError: Access denied to restricted model 'grok-4.7'":
+                "will not let your key use",
+            "There's an issue with the selected model (m404). It may not exist or you may not have access to it.":
+                "does not exist on",
+            "Credit balance is too low": "no usable credit",
+            "API Error: Connection refused — a firewall or proxy may be blocking it (ECONNREFUSED)": "connection was refused",
+            "API Error: Can't reach the API server — check your internet or DNS (ENOTFOUND)": "address does not resolve",
+            "API Error: 500 Internal server error. This is a server-side issue, usually temporary": "busy or having a problem",
+            "API Error: 529 Overloaded. This is a server-side issue, usually temporary": "busy or having a problem",
+            "API Error: Request rejected (429) · Number of request tokens has exceeded your per-minute rate limit":
+                "busy or having a problem",
+        }
+        for raw, expected in cases.items():
+            with self.subTest(raw=raw[:60]):
+                self.assertIn(expected, self.explain(raw))
+
+    def test_the_service_is_named_by_host_and_never_by_the_whole_url(self) -> None:
+        text = self.explain("API Error: Connection refused (ECONNREFUSED)", "https://user:s3cret@gw.internal:8443/v1?token=abc")
+        self.assertIn("gw.internal", text)
+        for secret in ("s3cret", "user:", "token=abc", "8443", "/v1"):
+            self.assertNotIn(secret, text)
+
+    def test_without_a_gateway_the_anthropic_api_is_named(self) -> None:
+        self.assertIn("api.anthropic.com", self.explain("Invalid API key", None))
+        self.assertIn("gateway.example.com", self.explain("Invalid API key"))
+
+    def test_a_base_url_that_cannot_be_read_does_not_break_the_message(self) -> None:
+        for odd in ("not a url", "http://", "//", ":::", "http://[bad"):
+            with self.subTest(url=odd):
+                self.assertTrue(diagnose.model_service_host(odd))
+
+    def test_an_unknown_error_is_passed_through_not_swallowed(self) -> None:
+        self.assertEqual(self.explain("The flux capacitor is misconfigured"), "")
+        self.assertIsNone(diagnose.explain_model_error("The flux capacitor is misconfigured"))
+
+    def test_the_credit_and_quota_rule_does_not_swallow_a_rate_limit(self) -> None:
+        self.assertIn("busy", self.explain("API Error: 429 rate limit exceeded"))
+        self.assertIn("no usable credit", self.explain("Your credit balance is too low"))
+
+    def test_each_explanation_says_what_to_do_next(self) -> None:
+        for _, diagnosis in (*diagnose.MODEL_RULES, *diagnose.GITHUB_RULES):
+            with self.subTest(summary=diagnosis.summary[:50]):
+                self.assertGreater(len(diagnosis.next_step), 20)
+
+    def test_every_model_explanation_names_the_service_it_is_about(self) -> None:
+        # "Can't connect to XYZ" is the point: a contributor needs to know which service, not just that one failed.
+        for _, diagnosis in diagnose.MODEL_RULES:
+            with self.subTest(summary=diagnosis.summary[:50]):
+                self.assertIn("{target}", diagnosis.summary)
+
+    def test_a_missing_claude_cli_is_explained(self) -> None:
+        with mock.patch.object(review.shutil, "which", return_value=None), self.assertRaises(review.SetupError) as caught:
+            review.preflight()
+        self.assertIn("not installed", str(caught.exception))
+        self.assertIn("claude", str(caught.exception))
+
+    def preflight_with(self, auth_stdout: str, call: subprocess.CompletedProcess | Exception):
+        def fake_run(cmd, **kwargs):
+            if cmd[:3] == ["claude", "auth", "status"]:
+                return subprocess.CompletedProcess(cmd, 0, auth_stdout, "")
+            if isinstance(call, Exception):
+                raise call
+            return call
+
+        with mock.patch.object(review.shutil, "which", return_value="/usr/bin/claude"), mock.patch.object(
+                review.subprocess, "run", side_effect=fake_run) as run:
+            review.preflight()
+        return run
+
+    def test_signed_out_is_reported_before_any_model_call(self) -> None:
+        calls: list[list[str]] = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append(cmd)
+            return subprocess.CompletedProcess(cmd, 1, json.dumps({"loggedIn": False}), "")
+
+        with mock.patch.object(review.shutil, "which", return_value="/usr/bin/claude"), mock.patch.object(
+                review.subprocess, "run", side_effect=fake_run), self.assertRaises(review.SetupError) as caught:
+            review.preflight()
+        self.assertIn("not signed in", str(caught.exception))
+        self.assertIn("claude auth login", str(caught.exception))
+        self.assertEqual([c[:3] for c in calls], [["claude", "auth", "status"]])  # no paid call was made
+
+    def test_a_refused_connection_is_reported_by_the_preflight(self) -> None:
+        failure = subprocess.CompletedProcess(
+            [], 1, json.dumps({"is_error": True, "result": "API Error: Connection refused (ECONNREFUSED)"}), "")
+        with self.assertRaises(review.SetupError) as caught:
+            self.preflight_with(json.dumps({"loggedIn": True}), failure)
+        self.assertIn("connection was refused", str(caught.exception))
+
+    def test_a_preflight_that_gets_no_answer_says_how_long_it_waited(self) -> None:
+        with self.assertRaises(review.SetupError) as caught:
+            self.preflight_with(json.dumps({"loggedIn": True}), subprocess.TimeoutExpired("claude", 60))
+        self.assertIn(f"{review.PREFLIGHT_TIMEOUT_SECONDS} s", str(caught.exception))
+
+    def test_an_error_we_do_not_recognise_still_names_the_service_and_shows_the_raw_text(self) -> None:
+        failure = subprocess.CompletedProcess([], 1, json.dumps({"is_error": True, "result": "Something odd happened"}), "")
+        with mock.patch.dict(os.environ, {"ANTHROPIC_BASE_URL": "https://gateway.example.com"}), \
+                self.assertRaises(review.SetupError) as caught:
+            self.preflight_with(json.dumps({"loggedIn": True}), failure)
+        self.assertIn("Something odd happened", str(caught.exception))
+        self.assertIn("gateway.example.com", str(caught.exception))
+
+    def test_a_working_setup_passes_and_the_call_is_capped_and_cheap(self) -> None:
+        ok = subprocess.CompletedProcess([], 0, json.dumps({"is_error": False, "result": "ok"}), "")
+        run = self.preflight_with(json.dumps({"loggedIn": True}), ok)
+        call = next(c for c in run.call_args_list if c.args[0][:2] == ["claude", "-p"])
+        self.assertEqual(call.kwargs["env"]["CLAUDE_CODE_MAX_RETRIES"], "1")  # the CLI otherwise retries ~3 minutes
+        self.assertEqual(call.kwargs["timeout"], review.PREFLIGHT_TIMEOUT_SECONDS)
+        self.assertIn("--tools", call.args[0])
+        self.assertNotIn("GH_TOKEN", call.kwargs["env"])
+
+    def test_the_preflight_never_runs_for_a_posting_run_or_when_skipped(self) -> None:
+        for argv in (["--pr", "7", "--post"], ["--pr", "7", "--skip-preflight"]):
+            with self.subTest(argv=argv), mock.patch.object(review, "preflight") as pre, mock.patch.object(
+                    review, "load_agents", return_value=[]), mock.patch.object(
+                    review, "pr_context", side_effect=review.ReviewError("stop")):
+                review.main(argv)
+            pre.assert_not_called()
+        with mock.patch.object(review, "preflight") as pre, mock.patch.object(
+                review, "load_agents", return_value=[]), mock.patch.object(
+                review, "pr_context", side_effect=review.ReviewError("stop")):
+            review.main(["--pr", "7"])
+        pre.assert_called_once()
+
+    def test_a_setup_problem_exits_with_its_own_status_and_no_traceback(self) -> None:
+        with mock.patch.object(review, "load_agents", return_value=[]), mock.patch.object(
+                review, "preflight", side_effect=review.SetupError("The `claude` CLI is not installed.")), \
+                mock.patch.object(review, "log") as log:
+            self.assertEqual(review.main(["--pr", "7"]), review.EXIT_SETUP)
+        message = " ".join(str(c.args[0]) for c in log.call_args_list)
+        self.assertIn("The review could not run.", message)
+        self.assertIn("not installed", message)
+        self.assertIn("Nothing was posted.", message)
+        self.assertNotIn("Traceback", message)
+
+    def test_a_github_failure_is_explained_with_the_service_named(self) -> None:
+        cases = {
+            "To get started with GitHub CLI, please run:  gh auth login": "not signed in",
+            "HTTP 401: Bad credentials (https://api.github.com/graphql)\nTry authenticating with:  gh auth login": "rejected your token",
+            "GraphQL: Could not resolve to a PullRequest with the number of 99. (repository.pullRequest)": "pull request does not exist",
+            "GraphQL: Could not resolve to a Repository with the name 'base/x'. (repository)": "cannot find that repository",
+            "error connecting to api.github.com\ncheck your internet connection or https://githubstatus.com": "Can't connect to",
+            "API rate limit exceeded for user": "limiting your requests",
+        }
+        for raw, expected in cases.items():
+            with self.subTest(raw=raw[:50]):
+                self.assertIn(expected, diagnose.explain_github_error(raw).text("GitHub"))
+
+    def test_a_bad_token_is_not_reported_as_a_missing_login(self) -> None:
+        # Both messages mention `gh auth login`; the more specific one must win.
+        found = diagnose.explain_github_error("HTTP 401: Bad credentials\nTry authenticating with:  gh auth login")
+        self.assertIn("rejected your token", found.summary)
+
+    def test_a_failed_gh_call_raises_the_explained_error(self) -> None:
+        done = subprocess.CompletedProcess([], 1, "", "HTTP 401: Bad credentials (https://api.github.com/graphql)")
+        with mock.patch.object(review.subprocess, "run", return_value=done), self.assertRaises(review.SetupError) as caught:
+            review.run(["gh", "pr", "view", "1"])
+        self.assertIn("rejected your token", str(caught.exception))
+
+    def test_other_commands_keep_their_plain_error(self) -> None:
+        done = subprocess.CompletedProcess([], 1, "", "fatal: not a git repository")
+        with mock.patch.object(review.subprocess, "run", return_value=done), self.assertRaises(review.ReviewError) as caught:
+            review.run(["git", "status"])
+        self.assertNotIsInstance(caught.exception, review.SetupError)
+        self.assertIn("not a git repository", str(caught.exception))
 
 
 class StatusTests(unittest.TestCase):

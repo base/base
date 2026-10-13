@@ -1,11 +1,26 @@
 ---
 name: pr-review
-description: "Runs Base's multi-model pull request review. Use before pushing to review your branch locally (`just review`), or to change which models, prompts, reviewers, or comment formats the PR review workflow uses."
+description: "Runs Base's multi-model pull request review. Use it when you are addressing review comments, to check that every comment is properly addressed before you ask for another look (`just review`, `just review-pr`). Do not run it on every push: it is expensive and not needed. Also use it to change which models, prompts, reviewers, or comment formats the review uses."
 ---
 
 # PR review
 
 One pipeline reviews a pull request in CI, once, and your local branch before you push. Each stage is a prompt file you can edit.
+
+## When to use it
+
+**Use it when you are addressing review comments.** After you have worked through the comments on your pull request, run it to check that each one is properly addressed. It reads the pull request's existing threads and says, for each, whether the code now fixes it, whether a reply is owed, or whether the problem is still there. That is the job it is best at, and what you should get out of it before you ask a person to look again.
+
+```bash
+just review                  # your branch, with your uncommitted changes
+just review-pr 1234          # a pull request by number or URL, without checking it out
+```
+
+**Do not run it on every push.** A review costs about $2.50 for a standard change and $6-7 for a deep one, and most pushes do not need one. CI does the same: it reviews a pull request once, when it is opened or marked ready, and a member of the organization can ask for another with `/review`. Pushing to a branch only updates a line in the summary that counts the commits not yet reviewed.
+
+Other good moments: before you mark a draft ready, if the change is risky (consensus, block production, access control) and you want a second opinion first, and after a large rework.
+
+Not needed for: a typo, a rename, a dependency bump, a comment or docs change, or a fix you have already tested and that a reviewer asked for in exactly those words.
 
 ```
 triage ─► review ──────────────────────► decide (findings) ─► comments ─┐
@@ -78,9 +93,29 @@ just review --model claude-sonnet-5-5   # use one model for every stage
 just review --artifacts-dir /tmp/review # keep the exact prompts and raw results
 ```
 
-It needs the `claude` CLI, signed in or with `ANTHROPIC_API_KEY` (and `ANTHROPIC_BASE_URL` if you use the LLM gateway). Uncommitted changes to tracked files are included. A deep change runs the council and costs noticeably more than a standard one. Local runs have no existing threads, so the decider only chooses what to comment on.
+It needs the `claude` CLI, signed in or with `ANTHROPIC_API_KEY` (and `ANTHROPIC_BASE_URL` if you use the LLM gateway), and, to review a pull request, the `gh` CLI signed in. Uncommitted changes to tracked files are included. A deep change runs the council and costs noticeably more than a standard one. Local runs have no existing threads, so the decider only chooses what to comment on.
 
 To preview what CI would do on an open PR, run `just review --pr 1234`. It reads the PR's real threads but still posts nothing without `--post`.
+
+### Reviewing a pull request that is not checked out
+
+`just review-pr 1234` (or `just review-pr https://github.com/base/base/pull/1234`) reviews that pull request without checking it out. The agents read its files from a temporary git worktree at the pull request's head commit, removed afterwards, so your branch and uncommitted changes are untouched. The pull request's own code is only read, never run. A URL names the repository too; otherwise the repository comes from `--repo` or `base/base`. `--no-worktree` reads your current checkout instead.
+
+### If it cannot run
+
+This is an open-source project, so the review works out of the box only for someone whose machine can reach a model service. Before any real work, `just review` makes one tiny call (about a cent) to check that the setup works, with the CLI's retries capped, so a wrong setting fails in a couple of seconds and not after about three minutes of retrying. When something is wrong it says what and what to do, and exits with status 4, without a traceback:
+
+```
+The review could not run.
+  Can't find llm-gateway.example.com: its address does not resolve.
+  Check your internet connection, any VPN, and that ANTHROPIC_BASE_URL (if set) is spelled correctly.
+
+Nothing was posted.
+```
+
+It names the service by host only (never the full URL, which can carry a password or token), and covers: the `claude` CLI missing or signed out, credentials rejected, a model your key may not use, a connection refused or timed out, a host that does not resolve, a certificate error, and a busy service; and for GitHub, the `gh` CLI signed out, a bad token, a pull request or repository that does not exist, and a rate limit. The wording is in `diagnose.py`. An error that is not one of these is shown as the CLI printed it.
+
+Contributors without the maintainers' gateway can use their own key (`claude auth login`, or `ANTHROPIC_API_KEY`), and `--model <name>` runs every stage on a model they have. `--skip-preflight` skips the check.
 
 ## Change a model or a prompt
 
