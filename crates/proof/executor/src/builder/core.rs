@@ -153,6 +153,7 @@ where
             parent_beacon_block_root: attrs.payload_attributes.parent_beacon_block_root,
             // This field is unused for individual block building jobs.
             extra_data: Default::default(),
+            slot_number: attrs.payload_attributes.slot_number,
         };
         let mut executor = self.factory.create_executor(evm, ctx);
 
