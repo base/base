@@ -5205,6 +5205,7 @@ dependencies = [
  "alloy-primitives",
  "base-metrics",
  "chrono",
+ "criterion",
  "eyre",
  "hex",
  "metrics",

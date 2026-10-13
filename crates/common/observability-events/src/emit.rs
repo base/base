@@ -254,6 +254,14 @@ impl TransactionEventBuilder {
 /// Emits a transaction event through the process-global writer.
 #[macro_export]
 macro_rules! transaction_event {
+    // Builds the event only once a writer is known to exist. Without one, the event ID hashing
+    // and the formatted ID and data arguments would be computed and then discarded.
+    (@lazy $writer:expr, $builder:expr) => {
+        match $writer {
+            Some(writer) => $builder.emit_to(writer),
+            None => Ok($crate::TransactionEventEmitOutcome::NotConfigured),
+        }
+    };
     (
         producer: $producer:expr,
         event_type: $event_type:expr
@@ -269,18 +277,20 @@ macro_rules! transaction_event {
         $(, data: { $( $data_name:expr => $data_value:expr ),* $(,)? })?
         $(,)?
     ) => {{
-        let builder = $crate::TransactionEventBuilder::new($producer, $event_type)
-            $(.tx_hash($tx_hash))?
-            $(.maybe_tx_hash($maybe_tx_hash))?
-            $(.block_hash($block_hash))?
-            $(.maybe_block_hash($maybe_block_hash))?
-            $(.block_number($block_number))?
-            $(.maybe_block_number($maybe_block_number))?
-            $(.payload_id($payload_id))?
-            $(.request_id($request_id))?
-            $($(.id_part($id_name, $id_value))*)?
-            $($(.data_field($data_name, $crate::__private::json!($data_value)))*)?;
-        builder.emit_global()
+        $crate::transaction_event!(
+            @lazy $crate::GlobalTransactionEventWriter::get(),
+            $crate::TransactionEventBuilder::new($producer, $event_type)
+                $(.tx_hash($tx_hash))?
+                $(.maybe_tx_hash($maybe_tx_hash))?
+                $(.block_hash($block_hash))?
+                $(.maybe_block_hash($maybe_block_hash))?
+                $(.block_number($block_number))?
+                $(.maybe_block_number($maybe_block_number))?
+                $(.payload_id($payload_id))?
+                $(.request_id($request_id))?
+                $($(.id_part($id_name, $id_value))*)?
+                $($(.data_field($data_name, $crate::__private::json!($data_value)))*)?
+        )
     }};
     (
         producer: $producer:expr,
@@ -297,18 +307,20 @@ macro_rules! transaction_event {
         , data: $data:expr
         $(,)?
     ) => {{
-        let builder = $crate::TransactionEventBuilder::new($producer, $event_type)
-            $(.tx_hash($tx_hash))?
-            $(.maybe_tx_hash($maybe_tx_hash))?
-            $(.block_hash($block_hash))?
-            $(.maybe_block_hash($maybe_block_hash))?
-            $(.block_number($block_number))?
-            $(.maybe_block_number($maybe_block_number))?
-            $(.payload_id($payload_id))?
-            $(.request_id($request_id))?
-            $($(.id_part($id_name, $id_value))*)?
-            .data($data);
-        builder.emit_global()
+        $crate::transaction_event!(
+            @lazy $crate::GlobalTransactionEventWriter::get(),
+            $crate::TransactionEventBuilder::new($producer, $event_type)
+                $(.tx_hash($tx_hash))?
+                $(.maybe_tx_hash($maybe_tx_hash))?
+                $(.block_hash($block_hash))?
+                $(.maybe_block_hash($maybe_block_hash))?
+                $(.block_number($block_number))?
+                $(.maybe_block_number($maybe_block_number))?
+                $(.payload_id($payload_id))?
+                $(.request_id($request_id))?
+                $($(.id_part($id_name, $id_value))*)?
+                .data($data)
+        )
     }};
     (
         writer: $writer:expr,
@@ -326,21 +338,20 @@ macro_rules! transaction_event {
         $(, data: { $( $data_name:expr => $data_value:expr ),* $(,)? })?
         $(,)?
     ) => {{
-        let builder = $crate::TransactionEventBuilder::new($producer, $event_type)
-            $(.tx_hash($tx_hash))?
-            $(.maybe_tx_hash($maybe_tx_hash))?
-            $(.block_hash($block_hash))?
-            $(.maybe_block_hash($maybe_block_hash))?
-            $(.block_number($block_number))?
-            $(.maybe_block_number($maybe_block_number))?
-            $(.payload_id($payload_id))?
-            $(.request_id($request_id))?
-            $($(.id_part($id_name, $id_value))*)?
-            $($(.data_field($data_name, $crate::__private::json!($data_value)))*)?;
-        match $writer {
-            Some(writer) => builder.emit_to(writer),
-            None => Ok($crate::TransactionEventEmitOutcome::NotConfigured),
-        }
+        $crate::transaction_event!(
+            @lazy $writer,
+            $crate::TransactionEventBuilder::new($producer, $event_type)
+                $(.tx_hash($tx_hash))?
+                $(.maybe_tx_hash($maybe_tx_hash))?
+                $(.block_hash($block_hash))?
+                $(.maybe_block_hash($maybe_block_hash))?
+                $(.block_number($block_number))?
+                $(.maybe_block_number($maybe_block_number))?
+                $(.payload_id($payload_id))?
+                $(.request_id($request_id))?
+                $($(.id_part($id_name, $id_value))*)?
+                $($(.data_field($data_name, $crate::__private::json!($data_value)))*)?
+        )
     }};
     (
         writer: $writer:expr,
@@ -358,21 +369,20 @@ macro_rules! transaction_event {
         , data: $data:expr
         $(,)?
     ) => {{
-        let builder = $crate::TransactionEventBuilder::new($producer, $event_type)
-            $(.tx_hash($tx_hash))?
-            $(.maybe_tx_hash($maybe_tx_hash))?
-            $(.block_hash($block_hash))?
-            $(.maybe_block_hash($maybe_block_hash))?
-            $(.block_number($block_number))?
-            $(.maybe_block_number($maybe_block_number))?
-            $(.payload_id($payload_id))?
-            $(.request_id($request_id))?
-            $($(.id_part($id_name, $id_value))*)?
-            .data($data);
-        match $writer {
-            Some(writer) => builder.emit_to(writer),
-            None => Ok($crate::TransactionEventEmitOutcome::NotConfigured),
-        }
+        $crate::transaction_event!(
+            @lazy $writer,
+            $crate::TransactionEventBuilder::new($producer, $event_type)
+                $(.tx_hash($tx_hash))?
+                $(.maybe_tx_hash($maybe_tx_hash))?
+                $(.block_hash($block_hash))?
+                $(.maybe_block_hash($maybe_block_hash))?
+                $(.block_number($block_number))?
+                $(.maybe_block_number($maybe_block_number))?
+                $(.payload_id($payload_id))?
+                $(.request_id($request_id))?
+                $($(.id_part($id_name, $id_value))*)?
+                .data($data)
+        )
     }};
 }
 
@@ -526,6 +536,28 @@ mod tests {
         );
 
         assert_eq!(result.unwrap(), TransactionEventEmitOutcome::NotConfigured);
+    }
+
+    /// Without a writer the event is never built, so callers' ID and data arguments, which may
+    /// format hashes or build JSON, cost nothing.
+    #[test]
+    fn macro_skips_arguments_without_a_writer() {
+        let evaluated = std::cell::Cell::new(0);
+        let count = || {
+            evaluated.set(evaluated.get() + 1);
+            "value"
+        };
+
+        let result = transaction_event!(
+            writer: Option::<&TransactionEventWriter>::None,
+            producer: TransactionEventProducer::BaseRethNode,
+            event_type: TransactionEventType::Pending,
+            id: { "part" => count() },
+            data: { "field" => count() },
+        );
+
+        assert_eq!(result.unwrap(), TransactionEventEmitOutcome::NotConfigured);
+        assert_eq!(evaluated.get(), 0);
     }
 
     #[test]

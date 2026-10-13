@@ -27,6 +27,11 @@ tracing = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
 tempfile.workspace = true
+criterion.workspace = true
+
+[[bench]]
+name = "emit"
+harness = false
 
 [features]
 default = [ "metrics" ]
