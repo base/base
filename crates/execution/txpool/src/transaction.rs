@@ -454,6 +454,12 @@ pub trait BasePooledTx: PoolTransaction + DataAvailabilitySized {
         None
     }
 
+    /// Returns whether this is a nonce-free EIP-8130 transaction, i.e. whether
+    /// [`Self::eip8130_replay_id`] returns `Some`, without computing the identifier.
+    fn is_eip8130_nonce_free(&self) -> bool {
+        self.eip8130_replay_id().is_some()
+    }
+
     /// Returns the invalidation watch set computed during validation, if set.
     ///
     /// Defaults to `None` for implementers that do not track invalidation
@@ -507,7 +513,7 @@ pub trait BasePooledTx: PoolTransaction + DataAvailabilitySized {
 
     /// Returns whether this transaction belongs in the EIP-8130 sidecar.
     fn is_eip8130_sidecar_transaction(&self) -> bool {
-        self.eip8130_nonce_channel_key().is_some() || self.eip8130_replay_id().is_some()
+        self.eip8130_nonce_channel_key().is_some() || self.is_eip8130_nonce_free()
     }
 }
 
@@ -543,10 +549,15 @@ where
         // `(sender, nonce_key, nonce_sequence)` under the standard nonce rules,
         // so they must not be tracked by `replay_id` (which excludes fees and
         // would otherwise block legitimate replace-by-fee at the same sequence).
-        if signed.tx().nonce_key != Eip8130Constants::NONCE_KEY_MAX {
+        if !self.is_eip8130_nonce_free() {
             return None;
         }
         Some(signed.tx().replay_id(self.sender()))
+    }
+
+    fn is_eip8130_nonce_free(&self) -> bool {
+        self.as_eip8130()
+            .is_some_and(|signed| signed.tx().nonce_key == Eip8130Constants::NONCE_KEY_MAX)
     }
 
     fn watch_set(&self) -> Option<&crate::WatchSet> {
@@ -743,6 +754,19 @@ mod tests {
             _ => panic!("Expected invalid transaction"),
         };
         assert_eq!(err.to_string(), "transaction type not supported");
+    }
+
+    #[test]
+    fn only_max_nonce_key_eip8130_is_nonce_free() {
+        for (tx, nonce_free) in [
+            (eip1559_pooled_with_fees(1, 2), false),
+            (eip8130_pooled(U256::ZERO), false),
+            (eip8130_pooled(U256::from(1)), false),
+            (eip8130_pooled(Eip8130Constants::NONCE_KEY_MAX), true),
+        ] {
+            assert_eq!(tx.is_eip8130_nonce_free(), nonce_free);
+            assert_eq!(tx.eip8130_replay_id().is_some(), nonce_free);
+        }
     }
 
     #[test]

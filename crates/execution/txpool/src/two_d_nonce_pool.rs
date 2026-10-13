@@ -666,7 +666,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             if self
                 .hashes
                 .get(hash)
-                .is_some_and(|transaction| transaction.transaction.eip8130_replay_id().is_some())
+                .is_some_and(|transaction| transaction.transaction.is_eip8130_nonce_free())
             {
                 if let Some(transaction) = self.remove_hash(*hash) {
                     removed.push(transaction);
@@ -702,7 +702,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             if self
                 .hashes
                 .get(hash)
-                .is_some_and(|transaction| transaction.transaction.eip8130_replay_id().is_some())
+                .is_some_and(|transaction| transaction.transaction.is_eip8130_nonce_free())
                 && let Some(transaction) = self.remove_hash(*hash)
             {
                 removed.push(transaction);
