@@ -146,7 +146,10 @@ impl AttributesBuilder for StandaloneAttributesBuilder {
                     .rollup_config
                     .is_ecotone_active(next_l2_time)
                     .then_some(B256::ZERO),
-                slot_number: None,
+                slot_number: self
+                    .rollup_config
+                    .is_denim_active(next_l2_time)
+                    .then_some(next_l2_block_number),
                 target_gas_limit: None,
             },
             transactions: Some(transactions),
