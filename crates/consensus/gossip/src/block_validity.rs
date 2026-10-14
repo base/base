@@ -259,27 +259,26 @@ impl BlockHandler {
             block.header.timestamp,
         )?;
 
+        let amsterdam = self.rollup_config.is_denim_active(envelope.payload.timestamp());
         if let Some(seen_hashes_at_height) =
             self.seen_hashes.get_mut(&envelope.payload.block_number())
         {
+            // Before Amsterdam the per-height quota is checked before the duplicate, exactly as it
+            // was before block access lists existed: a full pre-fork cache plus an already-seen
+            // hash is rejected as `TooManyBlocks` rather than ignored.
+            if !amsterdam && seen_hashes_at_height.len() >= Self::MAX_BLOCKS_TO_KEEP {
+                return Err(BlockInvalidError::TooManyBlocks {
+                    height: envelope.payload.block_number(),
+                });
+            }
+
             // CHECK: If the block has already been seen, ignore it.
             if seen_hashes_at_height.contains(&envelope.payload.block_hash()) {
                 return Err(BlockInvalidError::BlockSeen {
                     block_hash: envelope.payload.block_hash(),
                 });
             }
-        }
 
-        let seen_hashes_at_height =
-            self.seen_hashes.entry(envelope.payload.block_number()).or_default();
-        if seen_hashes_at_height.len() >= Self::MAX_BLOCKS_TO_KEEP {
-            // Before Amsterdam the quota rejects the newest block exactly as it always has, so
-            // pre-fork gossip behaviour is unchanged.
-            if !self.rollup_config.is_denim_active(envelope.payload.timestamp()) {
-                return Err(BlockInvalidError::TooManyBlocks {
-                    height: envelope.payload.block_number(),
-                });
-            }
             // From Amsterdam on, evict the oldest hash rather than rejecting the newest block.
             // The recorded hashes are pre-execution candidates the CL cannot tell apart, so
             // rejecting the newest would let a signer fill the per-height quota with well-formed
@@ -288,8 +287,13 @@ impl BlockHandler {
             // until the execution layer runs it, which is why the eviction starts at Amsterdam.
             // The per-height bound still holds, and a re-broadcast evicted hash is only
             // re-forwarded once, which the execution layer deduplicates by block hash.
-            seen_hashes_at_height.pop_front();
+            if amsterdam && seen_hashes_at_height.len() >= Self::MAX_BLOCKS_TO_KEEP {
+                seen_hashes_at_height.pop_front();
+            }
         }
+
+        let seen_hashes_at_height =
+            self.seen_hashes.entry(envelope.payload.block_number()).or_default();
         seen_hashes_at_height.push_back(envelope.payload.block_hash());
 
         // Mark the block as seen.
@@ -901,6 +905,45 @@ pub(crate) mod tests {
         );
     }
 
+    /// Before Denim the per-height quota is checked before the duplicate, so a full cache rejects an
+    /// already-seen hash as `TooManyBlocks` (a rejection) instead of ignoring it, which is the
+    /// behaviour the cache had before block access lists existed.
+    #[test]
+    fn test_full_pre_fork_cache_rejects_an_already_seen_hash() {
+        let first = v1_envelope_at_height(v1_valid_block().header.number);
+        let height = first.payload.block_number();
+
+        let mut handler = handler_for(&first);
+        assert!(handler.block_valid(&first).is_ok(), "the first block must be accepted");
+
+        let fillers = (0..BlockHandler::MAX_BLOCKS_TO_KEEP - 1)
+            .map(|_| v1_envelope_at_height(height))
+            .collect::<Vec<_>>();
+        for (i, filler) in fillers.iter().enumerate() {
+            assert!(
+                handler.block_valid(filler).is_ok(),
+                "every distinct block below the per-height bound must be accepted (filler {i})"
+            );
+        }
+        assert_eq!(
+            handler.seen_hashes.get(&height).map(|hashes| hashes.len()),
+            Some(BlockHandler::MAX_BLOCKS_TO_KEEP),
+            "the per-height cache must be full before the duplicate is checked"
+        );
+
+        // The first block is already in the full cache, so only the check order decides the outcome.
+        let result = handler.block_valid(&first);
+        assert!(
+            matches!(result, Err(BlockInvalidError::TooManyBlocks { height: h }) if h == height),
+            "a full pre-fork cache must reject an already-seen hash with TooManyBlocks, got \
+             {result:?}"
+        );
+        assert!(
+            matches!(MessageAcceptance::from(result.unwrap_err()), MessageAcceptance::Reject),
+            "the pre-fork quota rejection must classify as Reject, not Ignore"
+        );
+    }
+
     /// From Denim on the per-height cache evicts its oldest hash instead of rejecting the newest
     /// block, so a signer cannot starve the honest block for a height.
     #[test]
@@ -921,6 +964,19 @@ pub(crate) mod tests {
                 "every distinct block below the per-height bound must be accepted (filler {i})"
             );
         }
+
+        // A duplicate at a full cache is checked before the eviction, so it is reported as already
+        // seen and no older hash is evicted.
+        let duplicate = handler.block_valid(&fillers[0]);
+        assert!(
+            matches!(duplicate, Err(BlockInvalidError::BlockSeen { .. })),
+            "a post-fork duplicate must be reported as already seen, got {duplicate:?}"
+        );
+        assert_eq!(
+            handler.seen_hashes.get(&height).map(|hashes| hashes.len()),
+            Some(BlockHandler::MAX_BLOCKS_TO_KEEP),
+            "a duplicate must not evict an entry from the per-height cache"
+        );
 
         // A further distinct block is admitted: the cache evicts its oldest hash instead of
         // rejecting the newest block.

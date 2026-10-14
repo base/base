@@ -117,11 +117,20 @@ impl ExecutionNodeConfigArgs {
             db,
             dev,
             pruning,
-            engine,
+            mut engine,
             era,
             static_files,
             storage,
         } = self;
+
+        // Base always imports serially. reth's BAL-parallel ordered commit applies only Ethereum's
+        // block gas tracker, so it skips Base's cumulative post-refund gas ledger, the Jovian DA
+        // budget and the EIP-8130 payer-auth reservation: the parallel path would accept blocks
+        // serial import rejects (DA budget) and reject blocks serial import accepts (gas refunds).
+        // The block access list is still validated on the serial path. This is forced rather than
+        // defaulted so the divergent path cannot be enabled from configuration; a Base-aware
+        // ordered admission hook is the follow-up that would let it be re-enabled.
+        engine.bal_parallel_execution_disabled = true;
 
         let mut node_config = NodeConfig {
             datadir,
@@ -394,6 +403,32 @@ mod tests {
         let runtime = args.into_runtime_config(Arc::new(BaseChainSpec::devnet()));
         assert_eq!(runtime.node_config.rpc.auth_ipc_path, "/tmp/engine.ipc");
         assert!(!runtime.node_config.rpc.auth_ipc);
+    }
+
+    #[test]
+    fn bal_parallel_execution_is_disabled_in_the_engine_tree_config() {
+        let args = CommandParser::<ExecutionNodeConfigArgs>::parse_from(["reth"]).args;
+        let runtime = args.into_runtime_config(Arc::new(BaseChainSpec::devnet()));
+
+        assert!(
+            runtime.node_config.tree_config().disable_bal_parallel_execution(),
+            "Base must import serially: reth's BAL-parallel ordered commit does not apply Base's \
+             cumulative gas, Jovian DA or payer-auth admission rules"
+        );
+    }
+
+    #[test]
+    fn bal_parallel_execution_cannot_be_reenabled_by_configuration() {
+        let mut args = CommandParser::<ExecutionNodeConfigArgs>::parse_from(["reth"]).args;
+        // Whatever a configuration source sets the flag to, Base must keep importing serially.
+        args.engine.bal_parallel_execution_disabled = false;
+        let runtime = args.into_runtime_config(Arc::new(BaseChainSpec::devnet()));
+
+        assert!(
+            runtime.node_config.tree_config().disable_bal_parallel_execution(),
+            "the divergent BAL-parallel import path must stay disabled even when configuration \
+             asks for it, because it disagrees with Base's serial admission in both directions"
+        );
     }
 
     #[test]

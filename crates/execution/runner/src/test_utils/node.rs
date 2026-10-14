@@ -97,6 +97,10 @@ impl LocalNode {
         // that reth 2.3.0 now consults during state-root/proof work.
         node_config.engine.persistence_threshold = 0;
 
+        // Match production: Base's admission rules are not implemented in reth's BAL-parallel
+        // ordered commit, so the harness must exercise the serial import path too.
+        node_config.engine.bal_parallel_execution_disabled = true;
+
         let datadir_path = MaybePlatformPath::<DataDirPath>::from(db_path.clone());
         node_config = node_config
             .with_datadir_args(DatadirArgs { datadir: datadir_path, ..Default::default() });
