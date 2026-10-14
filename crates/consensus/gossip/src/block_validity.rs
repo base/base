@@ -2,7 +2,7 @@ use std::time::SystemTime;
 
 use alloy_consensus::Block;
 use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
-use alloy_primitives::{Address, B256};
+use alloy_primitives::{Address, B256, keccak256};
 use alloy_rpc_types_engine::{ExecutionPayloadV3, PayloadError};
 use base_common_consensus::BaseTxEnvelope;
 use base_common_genesis::RollupConfig;
@@ -66,6 +66,24 @@ pub enum BlockInvalidError {
     /// The block has an invalid withdrawals root.
     #[error("Payload is on v4+ topic, but has non-empty withdrawals root")]
     WithdrawalsRoot,
+    /// The carried block access list does not hash to the header's `block_access_list_hash`.
+    #[error("Block access list hash mismatch. Header: {header}, Carried: {carried}")]
+    BlockAccessListHashMismatch {
+        /// The `block_access_list_hash` committed to by the header.
+        header: B256,
+        /// The `keccak256` hash of the block access list carried by the payload.
+        carried: B256,
+    },
+    /// The payload and the header disagree on whether a block access list is present.
+    #[error(
+        "Block access list presence mismatch. Payload carries list: {payload_has_list}, header has commitment: {header_has_commitment}"
+    )]
+    BlockAccessListPresence {
+        /// Whether the payload version carries a block access list (V5 only).
+        payload_has_list: bool,
+        /// Whether the header carries a `block_access_list_hash`.
+        header_has_commitment: bool,
+    },
     /// Too many blocks were validated for the same height.
     #[error("Too many blocks seen for height {height}")]
     TooManyBlocks {
@@ -157,6 +175,10 @@ impl BlockHandler {
                     BlockInvalidError::BlobGasUsed => "blob_gas_used",
                     BlockInvalidError::ExcessBlobGas => "excess_blob_gas",
                     BlockInvalidError::WithdrawalsRoot => "withdrawals_root",
+                    BlockInvalidError::BlockAccessListHashMismatch { .. } => {
+                        "block_access_list_hash"
+                    }
+                    BlockInvalidError::BlockAccessListPresence { .. } => "block_access_list_presence",
                 };
                 Metrics::block_validation_failed(reason).increment(1);
             }
@@ -209,6 +231,10 @@ impl BlockHandler {
         if self.rollup_config.is_isthmus_active(envelope.payload.timestamp()) {
             block.header.requests_hash = Some(EMPTY_REQUESTS_HASH);
         }
+
+        // CHECK: The block access list carried by the payload matches the header commitment.
+        Self::validate_block_access_list(&envelope.payload, block.header.block_access_list_hash)?;
+
         let received = block.header.hash_slow();
         if received != expected {
             return Err(BlockInvalidError::BlockHash { expected, received });
@@ -255,6 +281,41 @@ impl BlockHandler {
         }
 
         Ok(())
+    }
+
+    /// Validates the EIP-7928 block access list carried by `payload` against `header_commitment`,
+    /// the `block_access_list_hash` of the header reconstructed from that payload.
+    ///
+    /// Only V5 payloads carry a list, and they must be paired with a header commitment equal to
+    /// the `keccak256` of the carried bytes. Earlier payload versions must not have a commitment.
+    /// Validates the block access list a payload carries against a header commitment.
+    ///
+    /// A V5 payload must carry a list and commit to it, and any other version must not, so a
+    /// payload whose list disagrees with `header_commitment` is rejected here.
+    ///
+    /// The commitment passed by [`Self::block_valid`] is the one the rebuilt header derives from
+    /// the carried bytes, so it cannot disagree with them: the guarantee that a peer cannot swap
+    /// the list out of a gossiped block comes from the block hash comparison that follows (the
+    /// commitment is part of the hashed header). This check is defence in depth for the case where
+    /// the commitment comes from elsewhere, such as a header derived from L1 batch data.
+    pub fn validate_block_access_list(
+        payload: &BaseExecutionPayload,
+        header_commitment: Option<B256>,
+    ) -> Result<(), BlockInvalidError> {
+        match (payload.as_v5(), header_commitment) {
+            (Some(payload), Some(header)) => {
+                let carried = keccak256(&payload.block_access_list);
+                if carried != header {
+                    return Err(BlockInvalidError::BlockAccessListHashMismatch { header, carried });
+                }
+                Ok(())
+            }
+            (None, None) => Ok(()),
+            (payload, header) => Err(BlockInvalidError::BlockAccessListPresence {
+                payload_has_list: payload.is_some(),
+                header_has_commitment: header.is_some(),
+            }),
+        }
     }
 
     /// Validate version specific contents of the payload.
@@ -340,7 +401,9 @@ pub(crate) mod tests {
     use arbitrary::{Arbitrary, Unstructured};
     use base_common_consensus::BaseTxEnvelope;
     use base_common_genesis::RollupConfig;
-    use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadV4, PayloadHash};
+    use base_common_rpc_types_engine::{
+        BaseExecutionPayload, BaseExecutionPayloadV4, BaseExecutionPayloadV5, PayloadHash,
+    };
 
     use super::*;
 
@@ -433,6 +496,165 @@ pub(crate) mod tests {
     /// Make the block v4 compatible
     pub fn v4_valid_block() -> Block<BaseTxEnvelope> {
         v3_valid_block()
+    }
+
+    /// The block access list bytes carried by [`v5_valid_block`].
+    pub const V5_BLOCK_ACCESS_LIST: &[u8] = &[0xc0, 0xde, 0xba, 0xbe];
+
+    /// Make the block v5 compatible: it commits to [`V5_BLOCK_ACCESS_LIST`] and carries the L2
+    /// block number as the slot number.
+    pub fn v5_valid_block() -> Block<BaseTxEnvelope> {
+        let mut block = v4_valid_block();
+        block.header.block_access_list_hash = Some(keccak256(V5_BLOCK_ACCESS_LIST));
+        block.header.slot_number = Some(block.header.number);
+        block
+    }
+
+    /// Builds the V5 payload for a block produced by [`v5_valid_block`].
+    pub fn v5_payload(block: &Block<BaseTxEnvelope>, block_access_list: Bytes) -> BaseExecutionPayloadV5 {
+        let v4 = BaseExecutionPayloadV4::from_v3_with_withdrawals_root(
+            ExecutionPayloadV3::from_block_slow(block),
+            block.withdrawals_root.unwrap(),
+        );
+        BaseExecutionPayloadV5::new(v4, block_access_list, block.header.slot_number.unwrap())
+    }
+
+    /// Wraps a V5 payload into an unsigned-hash envelope for `block`.
+    pub fn v5_envelope(
+        block: &Block<BaseTxEnvelope>,
+        payload: BaseExecutionPayloadV5,
+    ) -> NetworkPayloadEnvelope {
+        NetworkPayloadEnvelope {
+            payload: BaseExecutionPayload::V5(payload),
+            signature: Signature::test_signature(),
+            payload_hash: PayloadHash(B256::ZERO),
+            parent_beacon_block_root: Some(
+                block.header.parent_beacon_block_root.unwrap_or_default(),
+            ),
+        }
+    }
+
+    /// Creates a handler whose unsafe signer is the signer of `envelope`.
+    fn handler_for(envelope: &NetworkPayloadEnvelope) -> BlockHandler {
+        let msg = envelope.payload_hash.signature_message(8453);
+        let signer = envelope.signature.recover_address_from_prehash(&msg).unwrap();
+        let (_, unsafe_signer) = tokio::sync::watch::channel(signer);
+        BlockHandler::new(
+            RollupConfig { l2_chain_id: Chain::base_mainnet(), ..Default::default() },
+            unsafe_signer,
+        )
+    }
+
+    /// A V5 payload whose carried list hashes to the header commitment is accepted.
+    #[test]
+    fn test_v5_block_with_matching_block_access_list() {
+        let block = v5_valid_block();
+        let envelope = v5_envelope(&block, v5_payload(&block, Bytes::from_static(V5_BLOCK_ACCESS_LIST)));
+        let mut handler = handler_for(&envelope);
+
+        assert!(
+            handler.block_valid(&envelope).is_ok(),
+            "a V5 payload carrying the committed block access list must be accepted"
+        );
+    }
+
+    /// Swapping the carried list for different bytes while keeping the signed block hash is
+    /// rejected at the CL: the reconstructed header commits to the carried list, so the block
+    /// hash no longer matches.
+    #[test]
+    fn test_v5_block_with_tampered_block_access_list_is_rejected() {
+        let block = v5_valid_block();
+        let envelope = v5_envelope(&block, v5_payload(&block, Bytes::from_static(&[0xde, 0xad])));
+        let mut handler = handler_for(&envelope);
+
+        let result = handler.block_valid(&envelope);
+        assert!(
+            matches!(
+                result,
+                Err(BlockInvalidError::BlockHash { expected, received })
+                    if expected == envelope.payload.block_hash() && received != expected
+            ),
+            "a tampered block access list must be rejected with a block hash mismatch, got {result:?}"
+        );
+    }
+
+    /// A carried list that does not hash to the header commitment is rejected with both hashes.
+    #[test]
+    fn test_block_access_list_hash_mismatch() {
+        let block = v5_valid_block();
+        let payload = v5_payload(&block, Bytes::from_static(&[0xde, 0xad]));
+        let committed = keccak256(V5_BLOCK_ACCESS_LIST);
+
+        let result = BlockHandler::validate_block_access_list(
+            &BaseExecutionPayload::V5(payload),
+            Some(committed),
+        );
+        assert!(
+            matches!(
+                result,
+                Err(BlockInvalidError::BlockAccessListHashMismatch { header, carried })
+                    if header == committed && carried == keccak256([0xde, 0xad])
+            ),
+            "carried list must be reported against the header commitment, got {result:?}"
+        );
+    }
+
+    /// A matching V5 list, and a V4 payload with no commitment, are accepted.
+    #[test]
+    fn test_block_access_list_accepts_matching_and_pre_amsterdam() {
+        let block = v5_valid_block();
+        let v5 = BaseExecutionPayload::V5(v5_payload(&block, Bytes::from_static(V5_BLOCK_ACCESS_LIST)));
+        assert!(
+            BlockHandler::validate_block_access_list(&v5, Some(keccak256(V5_BLOCK_ACCESS_LIST)))
+                .is_ok(),
+            "a V5 payload whose list hashes to the commitment must pass"
+        );
+
+        let block = v4_valid_block();
+        let v4 = BaseExecutionPayload::V4(BaseExecutionPayloadV4::from_v3_with_withdrawals_root(
+            ExecutionPayloadV3::from_block_slow(&block),
+            block.withdrawals_root.unwrap(),
+        ));
+        assert!(
+            BlockHandler::validate_block_access_list(&v4, None).is_ok(),
+            "a pre-Amsterdam V4 payload without a commitment must be unchanged"
+        );
+    }
+
+    /// V5 without a header commitment, and V4 with one, are both rejected.
+    #[test]
+    fn test_block_access_list_presence_mismatch() {
+        let block = v5_valid_block();
+        let v5 = BaseExecutionPayload::V5(v5_payload(&block, Bytes::from_static(V5_BLOCK_ACCESS_LIST)));
+        let result = BlockHandler::validate_block_access_list(&v5, None);
+        assert!(
+            matches!(
+                result,
+                Err(BlockInvalidError::BlockAccessListPresence {
+                    payload_has_list: true,
+                    header_has_commitment: false
+                })
+            ),
+            "V5 payload without a header commitment must be rejected, got {result:?}"
+        );
+
+        let block = v4_valid_block();
+        let v4 = BaseExecutionPayload::V4(BaseExecutionPayloadV4::from_v3_with_withdrawals_root(
+            ExecutionPayloadV3::from_block_slow(&block),
+            block.withdrawals_root.unwrap(),
+        ));
+        let result =
+            BlockHandler::validate_block_access_list(&v4, Some(keccak256(V5_BLOCK_ACCESS_LIST)));
+        assert!(
+            matches!(
+                result,
+                Err(BlockInvalidError::BlockAccessListPresence {
+                    payload_has_list: false,
+                    header_has_commitment: true
+                })
+            ),
+            "V4 payload with a header commitment must be rejected, got {result:?}"
+        );
     }
 
     /// Generates a random valid block and ensure it is v1 compatible

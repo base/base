@@ -779,6 +779,124 @@ mod tests {
         assert_eq!(data, encoded);
     }
 
+    /// Builds a V5 envelope carrying `block_access_list` and `slot_number`.
+    #[cfg(feature = "std")]
+    fn v5_envelope(block_access_list: &'static [u8], slot_number: u64) -> NetworkPayloadEnvelope {
+        use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV2};
+
+        let v3 = ExecutionPayloadV3 {
+            payload_inner: ExecutionPayloadV2 {
+                payload_inner: ExecutionPayloadV1 {
+                    parent_hash: B256::repeat_byte(0x01),
+                    fee_recipient: Default::default(),
+                    state_root: B256::repeat_byte(0x02),
+                    receipts_root: B256::repeat_byte(0x03),
+                    logs_bloom: Default::default(),
+                    prev_randao: B256::repeat_byte(0x04),
+                    block_number: slot_number,
+                    gas_limit: 30_000_000,
+                    gas_used: 0,
+                    timestamp: 1_741_842_007,
+                    extra_data: Bytes::new(),
+                    base_fee_per_gas: alloy_primitives::U256::from(7),
+                    block_hash: B256::repeat_byte(0x05),
+                    transactions: Vec::new(),
+                },
+                withdrawals: Vec::new(),
+            },
+            blob_gas_used: 0,
+            excess_blob_gas: 0,
+        };
+        let v4 = BaseExecutionPayloadV4::from_v3_with_withdrawals_root(v3, B256::repeat_byte(0x06));
+        let payload = BaseExecutionPayloadV5::new(v4, Bytes::from_static(block_access_list), slot_number);
+
+        NetworkPayloadEnvelope {
+            payload: BaseExecutionPayload::V5(payload),
+            signature: Signature::test_signature(),
+            payload_hash: PayloadHash(B256::ZERO),
+            parent_beacon_block_root: Some(B256::repeat_byte(0x07)),
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn test_roundtrip_encode_envelope_v5() {
+        const LIST: &[u8] = &[0xc2, 0x01, 0x02, 0xde, 0xad, 0xbe, 0xef];
+        let envelope = v5_envelope(LIST, 42);
+
+        let encoded = envelope.encode_v5().unwrap();
+        let decoded = NetworkPayloadEnvelope::decode_v5(&encoded).unwrap();
+
+        let payload = decoded.payload.as_v5().expect("decoded payload must be V5");
+        assert_eq!(
+            payload.block_access_list,
+            Bytes::from_static(LIST),
+            "the block access list bytes must survive the v5 round trip"
+        );
+        assert_eq!(payload.slot_number, 42, "the slot number must survive the v5 round trip");
+        assert_eq!(
+            decoded.payload, envelope.payload,
+            "the whole payload must survive the v5 round trip"
+        );
+        assert_eq!(decoded.signature, envelope.signature, "the signature must be preserved");
+        assert_eq!(
+            decoded.parent_beacon_block_root, envelope.parent_beacon_block_root,
+            "the parent beacon block root must be preserved"
+        );
+        assert_eq!(
+            decoded.encode_v5().unwrap(),
+            encoded,
+            "re-encoding the decoded envelope must be byte-identical"
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn test_encode_v5_rejects_other_payload_versions() {
+        let mut envelope = v5_envelope(&[0x01], 1);
+        let v5 = envelope.payload.as_v5().unwrap().clone();
+        envelope.payload = BaseExecutionPayload::V4(v5.payload_inner);
+        assert_eq!(
+            envelope.encode_v5(),
+            Err(PayloadEnvelopeEncodeError::WrongVersion),
+            "a V4 payload must not be encodable as v5"
+        );
+    }
+
+    /// The payload hash covers the block access list and slot number, so tampering with either
+    /// changes the message the signature is verified against. Signer recovery for the tampered
+    /// message is exercised by the gossip handler tests.
+    #[test]
+    #[cfg(feature = "std")]
+    fn test_v5_payload_hash_covers_block_access_list_and_slot_number() {
+        let original = NetworkPayloadEnvelope::decode_v5(
+            &v5_envelope(&[0xaa, 0xbb, 0xcc], 42).encode_v5().unwrap(),
+        )
+        .unwrap();
+        let chain_id = 8453;
+        // Same payload, different list byte.
+        let tampered_list = NetworkPayloadEnvelope::decode_v5(
+            &v5_envelope(&[0xaa, 0xbb, 0xcd], 42).encode_v5().unwrap(),
+        )
+        .unwrap();
+        // Same payload, different slot number (the block number is kept equal to the original).
+        let mut tampered_slot = v5_envelope(&[0xaa, 0xbb, 0xcc], 42);
+        tampered_slot.payload.as_v5_mut().unwrap().slot_number = 43;
+        let tampered_slot = NetworkPayloadEnvelope::decode_v5(&tampered_slot.encode_v5().unwrap()).unwrap();
+
+        for (name, tampered) in [("list", tampered_list), ("slot number", tampered_slot)] {
+            assert_ne!(
+                tampered.payload_hash, original.payload_hash,
+                "tampering with the {name} must change the payload hash"
+            );
+            assert_ne!(
+                tampered.payload_hash.signature_message(chain_id),
+                original.payload_hash.signature_message(chain_id),
+                "the signed message must differ, so the original signature cannot verify a payload with a tampered {name}"
+            );
+        }
+    }
+
     #[test]
     #[cfg(feature = "std")]
     fn test_decode_rejects_oversized_decompressed_payload() {

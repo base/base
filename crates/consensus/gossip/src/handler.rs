@@ -226,17 +226,22 @@ mod tests {
     use alloy_chains::Chain;
     use alloy_consensus::proofs::calculate_transaction_root;
     use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
-    use alloy_primitives::{B256, Signature};
+    use alloy_primitives::{B256, Bytes, Signature};
     use alloy_rpc_types_engine::{ExecutionPayloadV2, ExecutionPayloadV3};
     use base_common_consensus::{BaseTxEnvelope, TxDeposit};
     use base_common_genesis::{BaseUpgradeConfig, ChainGenesis, UpgradeConfig};
-    use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadV4, PayloadHash};
+    use base_common_rpc_types_engine::{
+        BaseExecutionPayload, BaseExecutionPayloadV4, PayloadEnvelopeEncodeError, PayloadHash,
+    };
     use base_protocol::BaseTimeUpdateTx;
     #[cfg(feature = "metrics")]
     use metrics_exporter_prometheus::PrometheusBuilder;
 
     use super::*;
-    use crate::{v2_valid_block, v3_valid_block, v4_valid_block};
+    use crate::{
+        V5_BLOCK_ACCESS_LIST, v2_valid_block, v3_valid_block, v4_valid_block, v5_envelope,
+        v5_payload, v5_valid_block,
+    };
 
     #[test]
     fn topics_retire_after_each_forks_gossip_age_window() {
@@ -323,7 +328,26 @@ mod tests {
         // A Denim activation moves the newest topic to V5; V4 retires once its gossip age
         // window has elapsed.
         handler.rollup_config.upgrades.base.denim = Some(1_000);
-        assert_eq!(handler.topic(1_000).hash(), handler.blocks_v5_topic.hash());
+        assert_eq!(
+            handler.topic(999).hash(),
+            handler.blocks_v4_topic.hash(),
+            "the V4 topic must be used for the last timestamp before Denim"
+        );
+        assert_eq!(
+            handler.topics_at(999),
+            [handler.blocks_v4_topic.hash(), handler.blocks_v5_topic.hash()],
+            "V5 must be subscribed ahead of the Denim activation"
+        );
+        assert_eq!(
+            handler.topic(1_000).hash(),
+            handler.blocks_v5_topic.hash(),
+            "the V5 topic must be used at the Denim activation timestamp"
+        );
+        assert_eq!(
+            handler.topic(u64::MAX).hash(),
+            handler.blocks_v5_topic.hash(),
+            "the V5 topic must be used long after Denim"
+        );
         assert_eq!(
             handler.topics_at(1_000),
             [handler.blocks_v4_topic.hash(), handler.blocks_v5_topic.hash()]
@@ -831,5 +855,117 @@ mod tests {
         };
 
         assert!(matches!(handler.handle(message).0, MessageAcceptance::Accept));
+    }
+
+    /// Builds a handler (Denim unscheduled, so the V5 topic is subscribed) whose unsafe signer is
+    /// the signer recovered from `encoded` after the V5 decode recomputes the payload hash.
+    fn v5_handler_for(encoded: &[u8]) -> BlockHandler {
+        let decoded = NetworkPayloadEnvelope::decode_v5(encoded).unwrap();
+        let msg = decoded.payload_hash.signature_message(8453);
+        let signer = decoded.signature.recover_address_from_prehash(&msg).unwrap();
+        let (_, signer_recv) = tokio::sync::watch::channel(signer);
+        BlockHandler::new(
+            RollupConfig { l2_chain_id: Chain::base_mainnet(), ..Default::default() },
+            signer_recv,
+        )
+    }
+
+    /// A signed V5 block on the V5 topic is accepted and forwarded with its list intact.
+    #[test]
+    fn test_valid_decode_v5() {
+        let block = v5_valid_block();
+        let envelope =
+            v5_envelope(&block, v5_payload(&block, Bytes::from_static(V5_BLOCK_ACCESS_LIST)));
+        let probe = BlockHandler::new(RollupConfig::default(), tokio::sync::watch::channel(Address::ZERO).1);
+        let encoded = probe.encode(probe.blocks_v5_topic.clone(), envelope).unwrap();
+
+        let mut handler = v5_handler_for(&encoded);
+        let message = Message {
+            source: None,
+            sequence_number: None,
+            topic: handler.blocks_v5_topic.clone().into(),
+            data: encoded,
+        };
+
+        let (acceptance, forwarded) = handler.handle(message);
+        assert!(matches!(acceptance, MessageAcceptance::Accept), "got {acceptance:?}");
+        let forwarded = forwarded.expect("accepted V5 block must be forwarded");
+        let payload = forwarded.payload.as_v5().expect("forwarded payload must be V5");
+        assert_eq!(
+            payload.block_access_list,
+            Bytes::from_static(V5_BLOCK_ACCESS_LIST),
+            "the forwarded payload must carry the block access list"
+        );
+        assert_eq!(
+            Some(payload.slot_number),
+            block.header.slot_number,
+            "the forwarded payload must carry the slot number"
+        );
+    }
+
+    /// A V5 payload cannot be published on, nor decoded from, the V4 topic.
+    #[test]
+    fn test_v5_payload_on_v4_topic_is_rejected() {
+        let block = v5_valid_block();
+        let envelope =
+            v5_envelope(&block, v5_payload(&block, Bytes::from_static(V5_BLOCK_ACCESS_LIST)));
+        let probe = BlockHandler::new(RollupConfig::default(), tokio::sync::watch::channel(Address::ZERO).1);
+
+        assert!(
+            matches!(
+                probe.encode(probe.blocks_v4_topic.clone(), envelope.clone()),
+                Err(HandlerEncodeError::PayloadEncodeError(PayloadEnvelopeEncodeError::WrongVersion))
+            ),
+            "encoding a V5 payload for the V4 topic must fail with WrongVersion"
+        );
+
+        let encoded = probe.encode(probe.blocks_v5_topic.clone(), envelope).unwrap();
+        let mut handler = v5_handler_for(&encoded);
+        let message = Message {
+            source: None,
+            sequence_number: None,
+            topic: handler.blocks_v4_topic.clone().into(),
+            data: encoded,
+        };
+        assert!(
+            matches!(handler.handle(message).0, MessageAcceptance::Reject),
+            "V5 bytes delivered on the V4 topic must be rejected"
+        );
+    }
+
+    /// Flipping a bit inside the block access list bytes of a signed V5 message changes the
+    /// payload hash the signature is checked against, so the message is rejected.
+    #[test]
+    fn test_v5_tampered_block_access_list_fails_signature() {
+        let block = v5_valid_block();
+        let envelope =
+            v5_envelope(&block, v5_payload(&block, Bytes::from_static(V5_BLOCK_ACCESS_LIST)));
+        let probe = BlockHandler::new(RollupConfig::default(), tokio::sync::watch::channel(Address::ZERO).1);
+        let encoded = probe.encode(probe.blocks_v5_topic.clone(), envelope).unwrap();
+        let mut handler = v5_handler_for(&encoded);
+
+        // Decompress, flip the last byte of the list, and recompress.
+        let mut raw = snap::raw::Decoder::new().decompress_vec(&encoded).unwrap();
+        let list_end = raw.len();
+        assert_eq!(
+            &raw[list_end - V5_BLOCK_ACCESS_LIST.len()..list_end],
+            V5_BLOCK_ACCESS_LIST,
+            "the list is the last variable-length SSZ field, so it ends the message"
+        );
+        raw[list_end - 1] ^= 0x01;
+        let tampered = snap::raw::Encoder::new().compress_vec(&raw).unwrap();
+
+        let message = Message {
+            source: None,
+            sequence_number: None,
+            topic: handler.blocks_v5_topic.clone().into(),
+            data: tampered,
+        };
+        let (acceptance, forwarded) = handler.handle(message);
+        assert!(
+            matches!(acceptance, MessageAcceptance::Reject),
+            "a tampered block access list must be rejected, got {acceptance:?}"
+        );
+        assert!(forwarded.is_none(), "a rejected block must not be forwarded");
     }
 }
