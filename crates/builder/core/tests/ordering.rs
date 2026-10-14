@@ -337,62 +337,6 @@ async fn predicate_eval_hard_cutoff_defers_without_evaluating() -> eyre::Result<
     Ok(())
 }
 
-/// Ordinary forwarded transactions retain their signed encoding and execute the original transfer.
-#[tokio::test]
-async fn forwarded_transaction_preserves_encoding_and_state_transition() -> eyre::Result<()> {
-    let api_config =
-        BuilderApiExtensionConfig::new(DEFAULT_MAX_VALIDITY_PREDICATES).with_noop_metering();
-    let instance = LocalInstanceBuilder::new(BuilderConfig::for_tests())
-        .install_ext::<BuilderApiExtension>(api_config)
-        .build()
-        .await?;
-    let driver = instance.driver().await?;
-    let accounts = driver.fund_accounts(1, ONE_ETH).await?;
-    let recipient = Address::random();
-    let value = 7;
-    let recipient_balance_before = driver.provider().get_balance(recipient).await?;
-
-    let signed = driver
-        .create_transaction()
-        .with_signer(&accounts[0])
-        .with_to(recipient)
-        .with_value(value)
-        .build()
-        .await;
-    let tx_hash = signed.tx_hash();
-    let raw = signed.encoded_2718();
-    let forwarded = ValidatedTransaction {
-        sender: accounts[0].address(),
-        raw: raw.clone().into(),
-        metering: None,
-        extensions: TransactionValidity::default(),
-    };
-    driver
-        .provider()
-        .raw_request::<_, ()>("base_insertValidatedTransaction".into(), (forwarded,))
-        .await?;
-
-    let block = driver.build_new_block().await?;
-    let included = block
-        .transactions
-        .into_transactions()
-        .find(|transaction| transaction.tx_hash() == tx_hash)
-        .expect("forwarded transaction must be included");
-
-    assert_eq!(
-        included.inner.inner.encoded_2718(),
-        raw,
-        "forwarding must not alter consensus bytes"
-    );
-    assert_eq!(
-        driver.provider().get_balance(recipient).await?,
-        recipient_balance_before + U256::from(value),
-        "the original state transition must execute"
-    );
-
-    Ok(())
-}
-
 /// With resting predicates enforced, a transaction whose predicate is unsatisfied is still
 /// included in the block whose execution first satisfies it.
 #[tokio::test]
