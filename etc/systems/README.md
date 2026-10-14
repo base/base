@@ -2,7 +2,9 @@
 
 System-test and development-network infrastructure for Base nodes. In addition to the fresh
 L1/L2 stack used by system tests, this crate can continue a Base mainnet execution snapshot with
-real builder and client execution and consensus components in one managed launcher process.
+real builder and client execution and consensus components in one managed launcher process. To test
+applications against a snapshot, use `base dev` instead; see
+[docs/guides/DEVNET.md](../../docs/guides/DEVNET.md).
 
 ## Snapshot devnet topology
 
