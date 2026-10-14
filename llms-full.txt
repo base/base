@@ -53,6 +53,7 @@ Find a doc through the index below instead of grepping the tree. After adding, m
 ## Guides and specs
 
 - [docs/guides/BLOCK_PRODUCTION_REVIEW.md](docs/guides/BLOCK_PRODUCTION_REVIEW.md): Review guide for block-production-sensitive PRs: mandatory payload size-limit gate across I/O boundaries, taxonomy of halt/stall scenarios (precompiles, builder, flashblocks), and a checklist.
+- [docs/guides/BUILDER_BENCHMARKS.md](docs/guides/BUILDER_BENCHMARKS.md): Advisory per-PR base-vs-head benchmarks for the flashblocks and native (Denim) builders: workload matrix, Callgrind instruction counts, per-deferral cost, event-count diffs, CI cost, exclusions.
 - [docs/guides/P2P.md](docs/guides/P2P.md): Explains the Base P2P stack for newcomers: consensus-layer discv5 and libp2p gossipsub versus execution-layer reth networking, how they interact via Engine API, key files, flags, and glossary.
 - [docs/guides/RELEASE.md](docs/guides/RELEASE.md): Release process: Start Release creates releases/vX.Y.Z, version sync PR, automatic RC tags and builds per commit, then Publish Release for the final tag, Docker images and binaries.
 - [docs/guides/SNAPSHOT_BENCHMARKS.md](docs/guides/SNAPSHOT_BENCHMARKS.md): How to run repeatable base-bench snapshot benchmarks on an L1-free Base snapshot devnet, aggregate selected runs, and publish to base/benchmark. Use when measuring performance on restored datadirs.
