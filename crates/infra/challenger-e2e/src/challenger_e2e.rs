@@ -16,8 +16,9 @@ use alloy_rpc_types_eth::BlockNumberOrTag;
 use alloy_signer_local::PrivateKeySigner;
 use base_proof_contracts::{
     AggregateVerifierClient, AggregateVerifierContractClient, AnchorStateRegistryClient,
-    AnchorStateRegistryContractClient, DisputeGameFactoryClient, DisputeGameFactoryContractClient,
-    GameStatus, decode_dispute_calldata, describe_revert, encode_nullify_calldata,
+    AnchorStateRegistryContractClient, DelayedWETHClient, DelayedWETHContractClient,
+    DisputeGameFactoryClient, DisputeGameFactoryContractClient, GameStatus,
+    decode_dispute_calldata, describe_revert, encode_nullify_calldata,
 };
 use base_proof_rpc::L2HttpProvider;
 use base_proof_submission::{AggregateProofSubmitter, ProofSubmissionError};
@@ -33,7 +34,7 @@ use tracing::{debug, info, warn};
 use url::Url;
 
 use crate::{
-    Unavailable,
+    BondStorage, Unavailable,
     config::{Config, MockFault, ProverMode, Scenario},
     metrics::Scrape,
     mock_prover::MockProver,
@@ -52,6 +53,10 @@ const PATH3_STAGING_ROOT: B256 = B256::repeat_byte(0xde);
 
 /// How often a wait or an observation window logs that it is still going.
 const HEARTBEAT: Duration = Duration::from_secs(30);
+
+/// How often the challenger scans for bonds to claim during a run. Production
+/// uses the 300s default; the bonds phase would wait that long per step.
+const BOND_DISCOVERY_INTERVAL: &str = "5s";
 
 /// Counters that must stay at zero for as long as every game on the fork is
 /// valid. Checked absolutely at the baseline and as a delta over the window.
@@ -80,6 +85,8 @@ const VALIDATION_ERRORS: &str = "base_challenger_validation_errors_total";
 #[derive(Debug, Clone, Copy)]
 struct Candidate {
     address: Address,
+    /// Factory index; the bond scan's lookback is sized to reach it.
+    index: u64,
     root_count: u64,
 }
 
@@ -161,6 +168,8 @@ pub enum Phase {
     Path4,
     /// The collateral-damage check over games never under test.
     Bystanders,
+    /// The challenger resolves the game it won and claims the bond.
+    Bonds,
 }
 
 impl Phase {
@@ -177,6 +186,7 @@ impl Phase {
             Self::Path3 => "path3",
             Self::Path4 => "path4",
             Self::Bystanders => "bystanders",
+            Self::Bonds => "bonds",
         }
     }
 
@@ -193,6 +203,7 @@ impl Phase {
             Self::Path3 => "Path 3",
             Self::Path4 => "Path 4",
             Self::Bystanders => "Bystanders",
+            Self::Bonds => "Bonds",
         }
     }
 }
@@ -400,9 +411,19 @@ impl ChallengerE2e {
             setup_steps,
             "releasing the challenger and waiting for its first scan",
         );
+        // The bond scan covers every game from the oldest one under test to
+        // the newest, so the bonds phase finds the game the challenger won.
+        let bond_lookback = factory.game_count().await?
+            - games.iter().map(|game| game.index).min().unwrap_or_default();
         // Set first: a failure from here on can be the challenger's.
         *challenger_released = true;
-        Self::release_challenger(&config.env_file, &fork_url, &config.zk_rpc_url, &challenger)?;
+        Self::release_challenger(
+            &config.env_file,
+            &fork_url,
+            &config.zk_rpc_url,
+            &challenger,
+            bond_lookback,
+        )?;
         Self::await_first_scan(&config).await?;
         Self::log_challenger_build(&config).await;
         progress.pass();
@@ -589,8 +610,195 @@ impl ChallengerE2e {
             asserted.extend([Phase::Path2Skip, Phase::Path2Dispute]);
         }
         asserted.extend([Phase::Path4, Phase::Path3, Phase::Bystanders]);
+
+        // Last: it patches the won game's parent, which can be a bystander.
+        progress.start(Phase::Bonds);
+        match Self::won_game(&verifier, challenger.address(), &games).await? {
+            Some(game) => {
+                Self::run_bonds(&config, &fork_url, &provider, &verifier, &challenger, game)
+                    .await?;
+                progress.pass();
+                asserted.push(Phase::Bonds);
+            }
+            None => progress.skip(
+                Phase::Bonds,
+                "the challenger won no game under test, so there is no bond to claim",
+            ),
+        }
         Self::log_scenario_complete(&config, &asserted);
         Ok(())
+    }
+
+    /// The first game under test the challenger won: still in progress,
+    /// challenged, with the challenger as its ZK prover. `resolve` pays such a
+    /// game's bond to its ZK prover.
+    async fn won_game(
+        verifier: &AggregateVerifierContractClient,
+        challenger: Address,
+        games: &[Candidate],
+    ) -> Result<Option<Address>> {
+        for game in games {
+            if verifier.status(game.address).await? == GameStatus::InProgress
+                && verifier.countered_index(game.address).await? > 0
+                && verifier.zk_prover(game.address).await? == challenger
+            {
+                return Ok(Some(game.address));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Bonds: the challenger must resolve the game it won, unlock the bond,
+    /// and withdraw it once the `DelayedWETH` delay has passed — the two
+    /// `claimCredit` calls production relies on to recover what it staked.
+    ///
+    /// The deadlines are moved to now instead of waited out (see
+    /// [`BondStorage`] for why time is not warped). Every patch is read back
+    /// through the contract before the run relies on it. The parent is set
+    /// to `DEFENDER_WINS` because `resolve` requires a resolved parent and
+    /// the challenger, claiming for its own key only, never resolves a game
+    /// whose bond is someone else's.
+    async fn run_bonds(
+        config: &Config,
+        fork_url: &Url,
+        provider: &RootProvider,
+        verifier: &AggregateVerifierContractClient,
+        challenger: &PrivateKeySigner,
+        game: Address,
+    ) -> Result<()> {
+        progress::step(Phase::Bonds, 1, 4, "making the won game due for resolution");
+        // Path 3's nullify left the shared ZK verifier nullified. `resolve`
+        // checks both verifiers first and refutes the proof of a nullified one,
+        // which here is the challenger's own winning challenge, so the game
+        // would fall back to in progress with nothing to claim.
+        Self::revive_verifiers(provider, verifier, game).await?;
+        let due = Self::fork_time(provider).await?.saturating_sub(1);
+        let word =
+            BondStorage::storage(provider, game, BondStorage::EXPECTED_RESOLUTION_SLOT).await?;
+        BondStorage::set_storage(
+            provider,
+            game,
+            BondStorage::EXPECTED_RESOLUTION_SLOT,
+            BondStorage::with_expected_resolution(word, due),
+        )
+        .await?;
+        ensure!(
+            verifier.expected_resolution(game).await? == due && verifier.game_over(game).await?,
+            "patched expectedResolution of game {game} to {due}, but the game does not read as \
+             over; the AggregateVerifier storage layout has drifted from the bonds module"
+        );
+        let parent = verifier.game_info(game).await?.parent_address;
+        if parent != config.anchor_state_registry_addr
+            && verifier.status(parent).await? == GameStatus::InProgress
+        {
+            let word = BondStorage::storage(provider, parent, BondStorage::STATUS_SLOT).await?;
+            BondStorage::set_storage(
+                provider,
+                parent,
+                BondStorage::STATUS_SLOT,
+                BondStorage::with_status(word, GameStatus::DefenderWins),
+            )
+            .await?;
+            ensure!(
+                verifier.status(parent).await? == GameStatus::DefenderWins,
+                "patched the status of game {game}'s parent {parent}, but it does not read as \
+                 DEFENDER_WINS; the AggregateVerifier storage layout has drifted from the bonds \
+                 module"
+            );
+        }
+        info!(phase = %Phase::Bonds, game = %game, parent = %parent, "the won game is due");
+        let balance_before = provider.get_balance(challenger.address()).await?;
+
+        progress::step(Phase::Bonds, 2, 4, "waiting for the challenger to resolve and unlock");
+        Self::poll_until(
+            config,
+            config.dispute_timeout,
+            "the challenger to resolve the game it won and unlock the bond",
+            || async { Ok(verifier.bond_unlocked(game).await?.then_some(())) },
+        )
+        .await?;
+        let (status, recipient) =
+            tokio::try_join!(verifier.status(game), verifier.bond_recipient(game))?;
+        ensure!(
+            status == GameStatus::ChallengerWins && recipient == challenger.address(),
+            "game {game} resolved as {status:?} with bond recipient {recipient}, but the \
+             challenger {} won it",
+            challenger.address()
+        );
+        info!(
+            phase = %Phase::Bonds,
+            game = %game,
+            status = ?status,
+            "the challenger resolved the game it won and unlocked the bond"
+        );
+
+        progress::step(Phase::Bonds, 3, 4, "ending the DelayedWETH delay early");
+        let weth_address = verifier.delayed_weth(game).await?;
+        let weth = DelayedWETHContractClient::new(weth_address, fork_url.clone())?;
+        let delay = weth.delay().await?;
+        let unlocked_at = weth.withdrawal_timestamp(game, challenger.address()).await?;
+        let slot = BondStorage::find_withdrawal_slot(
+            provider,
+            weth_address,
+            game,
+            challenger.address(),
+            unlocked_at,
+        )
+        .await?;
+        let started = Self::fork_time(provider).await?.saturating_sub(delay.as_secs() + 1);
+        BondStorage::set_storage(
+            provider,
+            weth_address,
+            slot + U256::from(1),
+            U256::from(started).into(),
+        )
+        .await?;
+        ensure!(
+            weth.withdrawal_timestamp(game, challenger.address()).await? == started,
+            "patched the DelayedWETH withdrawal of game {game} to start at {started}, but it does \
+             not read back"
+        );
+        info!(
+            phase = %Phase::Bonds,
+            game = %game,
+            delayed_weth = %weth_address,
+            delay_s = delay.as_secs(),
+            unlocked_at,
+            "the DelayedWETH delay is over"
+        );
+
+        progress::step(Phase::Bonds, 4, 4, "waiting for the challenger to withdraw the bond");
+        Self::poll_until(
+            config,
+            config.dispute_timeout,
+            "the challenger to withdraw the bond it won",
+            || async { Ok(verifier.bond_claimed(game).await?.then_some(())) },
+        )
+        .await?;
+        // Net of the gas for `resolve` and both `claimCredit` calls, which is
+        // far below any bond.
+        let balance_after = provider.get_balance(challenger.address()).await?;
+        ensure!(
+            balance_after > balance_before,
+            "game {game}'s bond reads as claimed, but the challenger's balance went from \
+             {balance_before} to {balance_after}"
+        );
+        info!(
+            phase = %Phase::Bonds,
+            game = %game,
+            net_gain_wei = %(balance_after - balance_before),
+            "the challenger withdrew the bond it won"
+        );
+        Ok(())
+    }
+
+    /// Timestamp of the fork's latest block.
+    async fn fork_time(provider: &RootProvider) -> Result<u64> {
+        let block = provider
+            .get_block_by_number(BlockNumberOrTag::Latest)
+            .await?
+            .ok_or_else(|| eyre!("the fork has no latest block"))?;
+        Ok(block.header.timestamp)
     }
 
     /// Path 3 on a dual-proof `game`: stage it as an invalid ZK-only proposal,
@@ -841,7 +1049,7 @@ impl ChallengerE2e {
                 slot = ["a", "b", "c"].get(selected.len()).copied().unwrap_or("extra"),
                 "selected game"
             );
-            selected.push(Candidate { address: game.proxy, root_count });
+            selected.push(Candidate { address: game.proxy, index, root_count });
             if selected.len() == wanted {
                 break;
             }
@@ -1525,11 +1733,16 @@ impl ChallengerE2e {
     /// blocked on this file appearing.
     ///
     /// Written via a rename so the sidecar can never source a partial file.
+    ///
+    /// The challenger claims bonds for its own key only, as production claims
+    /// for its own. The scan interval is short so the bonds phase takes
+    /// seconds; the bond scan is skipped until a game it can claim exists.
     fn release_challenger(
         path: &Path,
         fork_url: &Url,
         zk_rpc_url: &Url,
         signer: &PrivateKeySigner,
+        bond_lookback: u64,
     ) -> Result<()> {
         // Sourced after /envmapper/mapping.env, so these override the
         // config-service values for the run.
@@ -1543,10 +1756,16 @@ impl ChallengerE2e {
              unset BASE_CHALLENGER_SIGNER_ADDRESS\n\
              export BASE_CHALLENGER_L1_ETH_RPC={}\n\
              export BASE_CHALLENGER_ZK_RPC_URL={}\n\
-             export BASE_CHALLENGER_PRIVATE_KEY={}\n",
+             export BASE_CHALLENGER_PRIVATE_KEY={}\n\
+             export BASE_CHALLENGER_BOND_CLAIM_ADDRESSES={}\n\
+             export BASE_CHALLENGER_BOND_DISCOVERY_INTERVAL={}\n\
+             export BASE_CHALLENGER_BOND_DISCOVERY_LOOKBACK_GAMES={}\n",
             shell_quote(fork_url.as_str()),
             shell_quote(zk_rpc_url.as_str()),
-            shell_quote(&hex::encode_prefixed(signer.to_bytes()))
+            shell_quote(&hex::encode_prefixed(signer.to_bytes())),
+            signer.address(),
+            BOND_DISCOVERY_INTERVAL,
+            bond_lookback.max(1),
         );
 
         let staging = path.with_extension("tmp");
@@ -2476,6 +2695,7 @@ mod tests {
         assert_eq!(Phase::Path3.as_str(), "path3");
         assert_eq!(Phase::Path4.as_str(), "path4");
         assert_eq!(Phase::Bystanders.as_str(), "bystanders");
+        assert_eq!(Phase::Bonds.as_str(), "bonds");
         assert_eq!(Verdict::Pass.as_str(), "pass");
         assert_eq!(Verdict::Skip.as_str(), "skip");
         assert_eq!(Verdict::Fail.as_str(), "fail");
