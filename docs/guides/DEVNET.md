@@ -46,8 +46,8 @@ just anvil-nitro-local down
 
 ## Snapshot Devnet
 
-Builds `base` natively with Cargo; Docker is not required. A mainnet download is about 830 GiB and
-about 1.4 TB on disk.
+Builds `base` natively with Cargo; Docker is not required. In October 2026 a mainnet download was
+about 830 GiB and about 1.4 TB on disk; add `--print-plan-json` to `download` to see current sizes.
 
 ```sh
 just devnet snapshot download --dir "$HOME/data/my-devnet"
