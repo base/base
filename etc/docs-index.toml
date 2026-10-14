@@ -664,7 +664,7 @@ digest = "dbf3e3e8de"
 
 ["docs/guides/SNAPSHOT_BENCHMARKS.md"]
 summary = "How to run repeatable base-bench snapshot benchmarks on an L1-free Base snapshot devnet, aggregate selected runs, and publish to base/benchmark. Use when measuring performance on restored datadirs."
-digest = "25c60e4705"
+digest = "15eae291e2"
 
 ["docs/guides/STANDALONE_PROVING.md"]
 summary = "Guide to running the prover stack standalone (just prover up) with your own RPCs and a funded Succinct Prover Network key: ZK backends, range sizing, requester key, restart behavior, troubleshooting."

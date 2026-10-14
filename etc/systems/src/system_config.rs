@@ -193,6 +193,11 @@ pub struct DevnetSnapshotConfig {
     /// modify the captured snapshot's system configuration.
     #[serde(default)]
     pub eip1559_elasticity_override: Option<u32>,
+    /// Optional Engine API persistence-backpressure threshold for both snapshot nodes.
+    ///
+    /// When omitted, the threshold is selected from [`Self::block_interval`].
+    #[serde(default)]
+    pub persistence_backpressure_threshold: Option<u64>,
 }
 
 /// Initial execution state used by a devnet stack.
@@ -370,6 +375,7 @@ impl DevnetConfig {
                 block_interval: DevnetBlockInterval::default(),
                 block_gas_limit: None,
                 eip1559_elasticity_override: None,
+                persistence_backpressure_threshold: None,
             })),
             stable: StableSystemTestConfig::standard(),
             use_stable_ports: false,
@@ -404,6 +410,10 @@ impl DevnetConfig {
         ensure!(
             snapshot.eip1559_elasticity_override != Some(0),
             "snapshot EIP-1559 elasticity override must be greater than zero"
+        );
+        ensure!(
+            snapshot.persistence_backpressure_threshold != Some(0),
+            "snapshot persistence-backpressure threshold must be greater than zero"
         );
 
         let builder_datadir = std::fs::canonicalize(&snapshot.builder_datadir)

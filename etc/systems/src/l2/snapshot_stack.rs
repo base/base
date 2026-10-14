@@ -59,6 +59,7 @@ pub struct SnapshotL2Stack {
     follow_config: Option<InProcessFollowConsensusConfig>,
     block_interval: DevnetBlockInterval,
     block_gas_limit: u64,
+    persistence_backpressure_threshold: u64,
     rollup_config: Arc<RollupConfig>,
     chain_id: u64,
 }
@@ -80,6 +81,10 @@ impl SnapshotL2Stack {
             .prefund
             .map(|value| StandalonePrefund { address: value.address, amount: value.amount });
         let block_interval = config.snapshot.block_interval;
+        let persistence_backpressure_threshold = config
+            .snapshot
+            .persistence_backpressure_threshold
+            .unwrap_or_else(|| snapshot_persistence_backpressure_threshold(block_interval));
         let chain = config.snapshot.chain.resolve()?;
         let canonical_rollup_config = Arc::clone(&chain.rollup_config);
         let first_block_timestamp = Self::schedule_anchor(SystemTime::now())?;
@@ -106,9 +111,7 @@ impl SnapshotL2Stack {
             extra_extensions: Vec::new(),
             validity_signature_mode: ValiditySignatureMode::Off,
             persistence_threshold: Some(0),
-            persistence_backpressure_threshold: Some(snapshot_persistence_backpressure_threshold(
-                block_interval,
-            )),
+            persistence_backpressure_threshold: Some(persistence_backpressure_threshold),
             txpool_max_transactions: Some(150_000),
             txpool_max_size_mb: Some(1_024),
             txpool_max_account_slots: Some(1_024),
@@ -156,9 +159,7 @@ impl SnapshotL2Stack {
             p2p_port: container.and_then(|value| value.client_p2p_port),
             metrics_port: None,
             persistence_threshold: Some(0),
-            persistence_backpressure_threshold: Some(snapshot_persistence_backpressure_threshold(
-                block_interval,
-            )),
+            persistence_backpressure_threshold: Some(persistence_backpressure_threshold),
             tx_forwarding_config: None,
             upgrade_signal: None,
             extra_extensions: Vec::new(),
@@ -223,6 +224,7 @@ impl SnapshotL2Stack {
             follow_config: Some(follow_config),
             block_interval,
             block_gas_limit,
+            persistence_backpressure_threshold,
             rollup_config: canonical_rollup_config,
             chain_id: chain.l2_chain_id,
         })
@@ -383,6 +385,11 @@ impl SnapshotL2Stack {
     /// Returns the block gas limit for locally produced descendants.
     pub const fn block_gas_limit(&self) -> u64 {
         self.block_gas_limit
+    }
+
+    /// Returns the Engine API persistence-backpressure threshold used by both nodes.
+    pub const fn persistence_backpressure_threshold(&self) -> u64 {
+        self.persistence_backpressure_threshold
     }
 
     /// Returns the L2 chain ID of the continued snapshot.

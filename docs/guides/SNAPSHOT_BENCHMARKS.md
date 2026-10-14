@@ -81,6 +81,15 @@ The local sequencer defaults to a 10 Ggas block limit for 2s workloads and a 1 G
 `--block-gas-limit <gas>` to override the cadence default for a benchmark run. The load-test YAML's
 `block_gas_limit` setting only controls load-generator pacing and does not change produced blocks.
 
+Both snapshot nodes persist every canonical block immediately and stall Engine API intake once 16
+(2s) or 160 (200ms) blocks are waiting to be persisted. Pass
+`--persistence-backpressure-threshold <blocks>` to override that cadence default; the value is
+recorded as the `PersistenceBackpressureThreshold` report tag. Pruning follows the datadir's
+`reth.toml`, so a full-node snapshot prunes history on both nodes during the run. Each block's
+Prometheus sample includes persistence and pruner timings (`*_avg` per call and `*_sum_per_block`,
+which sums to total seconds over the window), the in-memory block backlog, and per-segment pruner
+durations.
+
 Each `--output-dir` is a self-contained `base/benchmark` input directory:
 
 ```text
