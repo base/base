@@ -37,8 +37,10 @@ const POLL_TIMEOUT_SECS: u64 = 14400; // 4 hours
 const SEQUENCE_WINDOW: u64 = 100;
 
 /// When L1 hasn't finalized far enough for the target L2 block, step back
-/// this many L2 blocks at a time and recheck.
-const L2_BLOCK_STEP_BACK: u64 = 10;
+/// this many L2 blocks at a time and recheck. With `MAX_STEP_BACKS` this
+/// reaches 30,000 blocks back, 100 minutes at a 200ms block time, enough to
+/// cover L1 finality plus `SEQUENCE_WINDOW` L1 blocks.
+const L2_BLOCK_STEP_BACK: u64 = 100;
 
 /// Maximum number of times we step back before giving up.
 const MAX_STEP_BACKS: u64 = 300;
