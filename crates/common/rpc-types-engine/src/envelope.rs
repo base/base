@@ -183,7 +183,13 @@ impl ExecutionData {
         T: Encodable2718 + Transaction,
         H: BlockHeader,
     {
-        let (payload, sidecar) = BaseExecutionPayload::from_block_unchecked(block_hash, block);
+        // A block that commits to a list rebuilds an Amsterdam (V5) payload, so every consumer that
+        // reconstructs the block from it derives the same header.
+        let (payload, sidecar) = BaseExecutionPayload::from_block_unchecked_with_extras(
+            block_hash,
+            block,
+            block_access_list.clone(),
+        );
 
         Self::new(payload, sidecar, block_access_list)
     }

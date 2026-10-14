@@ -214,4 +214,84 @@ mod tests {
         validate_block_access_list(None, None)
             .expect("an absent list and commitment must be accepted");
     }
+
+    /// An Amsterdam payload must rebuild the header it came from, commitment and slot number
+    /// included, so every consumer that reconstructs a block from a payload derives the same
+    /// block hash.
+    #[test]
+    fn amsterdam_payload_round_trips_the_header_commitment() {
+        use alloy_consensus::Header;
+        use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
+        use base_common_chains::BaseUpgrade;
+        use base_common_consensus::BaseTxEnvelope;
+        use base_common_rpc_types_engine::BaseExecutionPayload;
+        use base_execution_chainspec::BaseChainSpecBuilder;
+        use reth_ethereum_forks::{EthereumHardfork, ForkCondition};
+
+        // Base mainnet activates Isthmus before this, so every upgrade the payload shape depends
+        // on is active as well.
+        const TIMESTAMP: u64 = 1_800_000_000;
+
+        let chain_spec = BaseChainSpecBuilder::base_mainnet()
+            .with_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(TIMESTAMP))
+            .with_fork(EthereumHardfork::Amsterdam, ForkCondition::Timestamp(TIMESTAMP))
+            .build();
+
+        let (bytes, committed) = empty_block_access_list();
+        let block = Block::<BaseTxEnvelope> {
+            header: Header {
+                number: 1,
+                timestamp: TIMESTAMP,
+                withdrawals_root: Some(B256::ZERO),
+                requests_hash: Some(EMPTY_REQUESTS_HASH),
+                blob_gas_used: Some(0),
+                excess_blob_gas: Some(0),
+                parent_beacon_block_root: Some(B256::repeat_byte(0x22)),
+                block_access_list_hash: Some(committed),
+                slot_number: Some(1),
+                ..Default::default()
+            },
+            body: Default::default(),
+        };
+
+        // A payload carries the hash of the block it reconstructs, so derive it the way a
+        // consumer would: rebuild the block from the payload, then commit to its hash.
+        let (probe, sidecar) = BaseExecutionPayload::from_block_unchecked_with_extras(
+            B256::ZERO,
+            &block,
+            Some(bytes.clone()),
+        );
+        let derived_hash = probe
+            .try_into_block_with_sidecar::<BaseTxEnvelope>(&sidecar)
+            .expect("the payload must reconstruct the block")
+            .seal_slow()
+            .hash();
+
+        let (payload, _) = BaseExecutionPayload::from_block_unchecked_with_extras(
+            derived_hash,
+            &block,
+            Some(bytes.clone()),
+        );
+        let sealed: SealedBlock<Block<BaseTxEnvelope>> = ensure_well_formed_payload(
+            &chain_spec,
+            ExecutionData::new(payload, sidecar, Some(bytes)),
+        )
+        .expect("an Amsterdam payload must round trip through payload validation");
+
+        assert_eq!(
+            sealed.hash(),
+            derived_hash,
+            "the rebuilt block must hash to the hash the payload commits to"
+        );
+        assert_eq!(
+            sealed.block_access_list_hash(),
+            Some(committed),
+            "the rebuilt header must commit to the carried block access list"
+        );
+        assert_eq!(
+            sealed.slot_number(),
+            Some(1),
+            "the rebuilt header must carry the slot number from the payload"
+        );
+    }
 }
