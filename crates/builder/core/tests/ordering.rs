@@ -627,8 +627,8 @@ async fn fill_immediately_or_kill_fills_when_woken_without_competition() -> eyre
 }
 
 /// A competitor committed in an earlier flashblock of the block still claims its state. The killed
-/// transaction is evicted rather than retried, so it does not land in the next block even though its
-/// predicates still hold; it is not cached as rejected, so resubmitting it is admitted again.
+/// transaction is evicted and cached as rejected, so neither the next block nor a mempool re-forward
+/// of the same transaction lands it, even though its predicates still hold.
 #[tokio::test]
 async fn fill_immediately_or_kill_evicts_after_competitor_in_earlier_flashblock() -> eyre::Result<()>
 {
@@ -691,9 +691,10 @@ async fn fill_immediately_or_kill_evicts_after_competitor_in_earlier_flashblock(
     let next = driver.build_new_block().await?;
     assert!(!next.transactions.hashes().any(|hash| hash == searcher));
 
+    // A mempool node re-forwards transactions it still holds.
     insert(vec![block_bound, untouched_slot(pool, 1)]).await?;
-    let resubmitted = driver.build_new_block().await?;
-    assert!(resubmitted.transactions.hashes().any(|hash| hash == searcher));
+    let reforwarded = driver.build_new_block().await?;
+    assert!(!reforwarded.transactions.hashes().any(|hash| hash == searcher));
     Ok(())
 }
 

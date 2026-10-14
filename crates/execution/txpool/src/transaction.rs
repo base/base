@@ -64,7 +64,7 @@ pub struct BasePooledTransaction<
     validity_predicates: Vec<crate::ValidityPredicate>,
     /// Sender authorization retained for builder forwarding.
     validity_signature: Option<Signature>,
-    /// Whether a builder evicts this transaction once a committed validity
+    /// Whether a builder evicts and rejects this transaction once a committed validity
     /// transaction claimed state its predicates read.
     fill_immediately_or_kill: bool,
     /// The set of on-chain state surfaces whose change invalidates this

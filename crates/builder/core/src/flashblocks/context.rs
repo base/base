@@ -116,9 +116,6 @@ pub struct FlashblockDiagnostics {
     pub min_priority_fee: Option<u64>,
     /// Transaction hashes permanently rejected due to per-tx intrinsic limits.
     pub permanently_rejected_txs: Vec<TxHash>,
-    /// Fill-immediately-or-kill transactions that lost their opportunity; evicted from the pool
-    /// without entering the rejection cache.
-    pub killed_txs: Vec<TxHash>,
 }
 
 impl FlashblockDiagnostics {
@@ -947,9 +944,9 @@ impl BasePayloadBuilderCtx {
             }
             // Checked only once the predicates hold: until then the transaction stays parked, and a
             // later commit may still leave its state unclaimed. A kill is final, since the
-            // predicates would keep holding after the opportunity is gone, so the transaction is
-            // evicted. It is not cached as rejected: a re-signed bid on the same predicates may
-            // still be valid.
+            // predicates would keep holding after the opportunity is gone: the transaction is
+            // evicted and cached as rejected when the block is finalized, so a mempool re-forward
+            // cannot bring it back.
             if tx.fill_immediately_or_kill()
                 && info.claimed_predicate_keys.contended(tx.validity_predicates())
             {
@@ -969,14 +966,23 @@ impl BasePayloadBuilderCtx {
                     "fill_immediately_or_kill_contended",
                 )
                 .increment(1);
-                diag.killed_txs.push(tx_hash);
-                self.emit_builder_decision_event(
-                    cx.payload_id,
-                    TransactionEventType::BuilderExpired,
-                    tx_hash,
-                    Some(ordering_position),
-                    || BuilderExpiredEventData::new(cx.reason, cx.detail, cx.info, cx.limits, None),
-                );
+                // Later flashblocks re-yield the killed transaction until the block is finalized;
+                // report and record the kill once.
+                let first_kill = !info.killed_txs.contains(&tx_hash);
+                if first_kill {
+                    self.emit_builder_decision_event(
+                        cx.payload_id,
+                        TransactionEventType::BuilderExpired,
+                        tx_hash,
+                        Some(ordering_position),
+                        || {
+                            BuilderExpiredEventData::new(
+                                cx.reason, cx.detail, cx.info, cx.limits, None,
+                            )
+                        },
+                    );
+                    info.killed_txs.push(tx_hash);
+                }
                 diag.txs_rejected_other += 1;
                 Self::skip_pooled_current(best_txs, &tx);
                 validity_handling +=

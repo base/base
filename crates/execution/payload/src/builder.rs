@@ -358,6 +358,14 @@ impl<'a, Txs> Builder<'a, Txs> {
 }
 
 impl<Txs> Builder<'_, Txs> {
+    /// Records `hashes` in the shared rejection cache and drops their metering data.
+    fn reject_permanently(config: &BaseBuilderConfig, hashes: &[TxHash]) {
+        config.rejection_cache.mark_rejected(hashes);
+        RejectionCacheMetrics::insertions().increment(hashes.len() as u64);
+        RejectionCacheMetrics::size().set(config.rejection_cache.entry_count() as f64);
+        MeteringProvider::remove(config.resource_metering.provider.as_ref(), hashes);
+    }
+
     /// Builds the payload on top of the state.
     pub fn build<Evm, ChainSpec, N, Attrs>(
         self,
@@ -402,42 +410,38 @@ impl<Txs> Builder<'_, Txs> {
 
         // 2. execute sequencer transactions
         let mut info = ctx.execute_sequencer_transactions(&mut builder)?;
+        // Hashes to evict from the pool once this payload is returned for use. If sealing fails,
+        // they are dropped: permanent rejections are already cached, and kills must not apply to a
+        // payload that is never used.
+        let mut pending_eviction = Vec::new();
 
         // 3. if mem pool transactions are requested we execute them
         if !ctx.attributes().no_tx_pool() {
             let best_txs = best(ctx.best_transaction_attributes(builder.evm_mut().block()));
             let cancelled = ctx.execute_best_transactions(&mut info, &mut builder, best_txs)?;
-            let killed = std::mem::take(&mut info.killed_txs);
-            if !info.permanently_rejected_txs.is_empty() {
-                let mut rejected = std::mem::take(&mut info.permanently_rejected_txs);
-                let count = rejected.len();
-                ctx.builder_config.rejection_cache.mark_rejected(&rejected);
-                RejectionCacheMetrics::insertions().increment(count as u64);
-                RejectionCacheMetrics::size()
-                    .set(ctx.builder_config.rejection_cache.entry_count() as f64);
-                MeteringProvider::remove(
-                    ctx.builder_config.resource_metering.provider.as_ref(),
-                    &rejected,
-                );
-                rejected.extend(killed);
-                evict_permanently_rejected(rejected);
+            // Permanent rejections do not depend on the built state, so they are applied even if
+            // this attempt is discarded. Kills do: they wait until the payload is returned below.
+            let rejected = std::mem::take(&mut info.permanently_rejected_txs);
+            if !rejected.is_empty() {
+                Self::reject_permanently(&ctx.builder_config, &rejected);
                 info!(
                     target: "payload_builder",
-                    count,
+                    count = rejected.len(),
                     "evicted permanently rejected transactions from pool",
                 );
-            } else if !killed.is_empty() {
-                evict_permanently_rejected(killed);
             }
             if cancelled.is_some() {
+                evict_permanently_rejected(rejected);
                 return Ok(BuildOutcomeKind::Cancelled);
             }
 
             // check if the new payload is even more valuable
             if !ctx.is_denim_active() && !ctx.is_better_payload(info.total_fees) {
+                evict_permanently_rejected(rejected);
                 // can skip building the block
                 return Ok(BuildOutcomeKind::Aborted { fees: info.total_fees });
             }
+            pending_eviction = rejected;
         }
 
         let block_num = ctx.parent().number().saturating_add(1);
@@ -499,6 +503,16 @@ impl<Txs> Builder<'_, Txs> {
             block_access_list.map(|bal| alloy_rlp::encode(bal).into()),
         );
         BuilderMetrics::record_inclusion(&info.inclusion);
+
+        // This payload is returned for use, so kills decided against its committed state apply.
+        // They are cached as rejected so a mempool re-forward cannot bring one back.
+        if !info.killed_txs.is_empty() {
+            Self::reject_permanently(&ctx.builder_config, &info.killed_txs);
+            pending_eviction.append(&mut info.killed_txs);
+        }
+        if !pending_eviction.is_empty() {
+            evict_permanently_rejected(pending_eviction);
+        }
 
         if no_tx_pool || ctx.is_denim_active() {
             // if `no_tx_pool` is set only transactions from the payload attributes will be included
@@ -594,8 +608,8 @@ pub struct ExecutionInfo {
     /// Transaction hashes that exceeded a per-transaction resource limit and should be
     /// permanently removed from the pool and recorded in the shared rejection cache.
     pub permanently_rejected_txs: Vec<TxHash>,
-    /// Fill-immediately-or-kill transactions that lost their opportunity and should be removed
-    /// from the pool, but not cached as rejected: a fresh, re-signed bid may still be valid.
+    /// Fill-immediately-or-kill transactions that lost their opportunity. They are evicted and
+    /// cached as rejected only if this payload is returned for use.
     pub killed_txs: Vec<TxHash>,
 }
 
@@ -1068,8 +1082,8 @@ where
                             tx_hash = ?tx_hash,
                             "dropping fill-immediately-or-kill transaction whose predicate state was already claimed"
                         );
-                        // The opportunity is gone, so the transaction is evicted. It is not cached as
-                        // rejected: a re-signed bid on the same predicates may still be valid.
+                        // The opportunity is gone, so the transaction is evicted and cached as
+                        // rejected once this payload is returned for use.
                         info.killed_txs.push(tx_hash);
                         Self::skip_current(
                             &mut best_txs,
@@ -2242,12 +2256,21 @@ mod tests {
         assert_eq!(included_hashes, vec![trigger_hash, gated_hash]);
     }
 
-    /// Builds a competitor and a lower-priority searcher whose predicates read `searcher_slot`, and
-    /// returns whether the searcher was included and whether it was evicted from the pool.
+    /// Outcome of building a competitor and a lower-priority searcher on the same opportunity.
+    #[derive(Debug, PartialEq, Eq)]
+    struct SearcherOutcome {
+        included: bool,
+        evicted: bool,
+        cached: bool,
+    }
+
+    /// Builds a competitor and a lower-priority searcher whose predicates read `searcher_slot`.
+    /// With `best_payload`, a pre-Denim build that fails to beat it is discarded as `Aborted`.
     fn native_searcher_after_competitor(
         searcher_slot: u64,
         fill_immediately_or_kill: bool,
-    ) -> (bool, bool) {
+        best_payload: Option<crate::BaseBuiltPayload<BasePrimitives>>,
+    ) -> (SearcherOutcome, BuildOutcomeKind<crate::BaseBuiltPayload<BasePrimitives>>) {
         let untouched_slot = |slot: u64| ValidityPredicate::Storage {
             address: Address::repeat_byte(0x44),
             slot: U256::from(slot),
@@ -2255,9 +2278,12 @@ mod tests {
             op: ValidityOperator::Equal,
             value: U256::ZERO,
         };
-        let competitor = pool_transaction_to(0, Address::repeat_byte(0x55), U256::ZERO)
+        // Test-signed transactions recover a sender from their contents, so distinct recipients
+        // give distinct senders. Event capture is process-global, so these hashes must not be
+        // shared with other tests.
+        let competitor = pool_transaction_to(0, Address::repeat_byte(0x71), U256::ZERO)
             .with_validity_predicates(vec![untouched_slot(1)]);
-        let searcher = pool_transaction_to(0, Address::repeat_byte(0x66), U256::ZERO)
+        let searcher = pool_transaction_to(0, Address::repeat_byte(0x72), U256::ZERO)
             .with_validity(TransactionValidity {
                 validity: vec![untouched_slot(searcher_slot)],
                 validity_signature: None,
@@ -2266,11 +2292,13 @@ mod tests {
         let funded_senders = [competitor.sender(), searcher.sender()];
         let competitor_hash = *competitor.hash();
         let searcher_hash = *searcher.hash();
-        let ctx = pool_payload_context(DENIM_TIMESTAMP);
+        let timestamp = if best_payload.is_some() { DENIM_TIMESTAMP - 1 } else { DENIM_TIMESTAMP };
+        let mut ctx = pool_payload_context(timestamp);
+        ctx.best_payload = best_payload;
         let cache = ctx.builder_config.rejection_cache.clone();
         let evicted = Arc::new(Mutex::new(Vec::new()));
 
-        let BuildOutcomeKind::Freeze(payload) = build_parkable_pool_payload_with(
+        let outcome = build_parkable_pool_payload_with(
             ctx,
             TestParkableTransactions::new(vec![competitor, searcher]),
             &funded_senders,
@@ -2278,32 +2306,52 @@ mod tests {
                 let evicted = Arc::clone(&evicted);
                 move |hashes| evicted.lock().unwrap().extend(hashes)
             },
-        ) else {
-            panic!("Denim payload must freeze")
+        );
+        let included = match &outcome {
+            BuildOutcomeKind::Freeze(payload) | BuildOutcomeKind::Better { payload } => {
+                let hashes = payload
+                    .block()
+                    .body()
+                    .transactions
+                    .iter()
+                    .map(|transaction| *transaction.tx_hash())
+                    .collect::<Vec<_>>();
+                assert_eq!(hashes[0], competitor_hash, "the winning bid must land first");
+                hashes.contains(&searcher_hash)
+            }
+            _ => false,
         };
-        let included = payload
-            .block()
-            .body()
-            .transactions
-            .iter()
-            .map(|transaction| *transaction.tx_hash())
-            .collect::<Vec<_>>();
-        assert_eq!(included[0], competitor_hash, "the winning bid must land first");
-        // A killed bid is evicted, but a re-signed bid on the same predicates stays admissible.
-        assert!(!cache.is_rejected(&searcher_hash));
         let evicted = evicted.lock().unwrap().contains(&searcher_hash);
-        (included.contains(&searcher_hash), evicted)
+        (SearcherOutcome { included, evicted, cached: cache.is_rejected(&searcher_hash) }, outcome)
     }
 
     #[test]
-    fn native_builder_evicts_fill_immediately_or_kill_after_competitor_claims_its_state() {
-        assert_eq!(native_searcher_after_competitor(1, false), (true, false));
-        assert_eq!(native_searcher_after_competitor(1, true), (false, true));
+    fn native_builder_evicts_and_caches_fill_immediately_or_kill_after_competitor_claims_its_state()
+    {
+        let unflagged = SearcherOutcome { included: true, evicted: false, cached: false };
+        let killed = SearcherOutcome { included: false, evicted: true, cached: true };
+        assert_eq!(native_searcher_after_competitor(1, false, None).0, unflagged);
+        assert_eq!(native_searcher_after_competitor(1, true, None).0, killed);
     }
 
     #[test]
     fn native_builder_keeps_fill_immediately_or_kill_after_unrelated_validity_commit() {
-        assert_eq!(native_searcher_after_competitor(2, true), (true, false));
+        let included = SearcherOutcome { included: true, evicted: false, cached: false };
+        assert_eq!(native_searcher_after_competitor(2, true, None).0, included);
+    }
+
+    #[test]
+    fn native_builder_does_not_kill_from_a_discarded_payload() {
+        // A first build with the same transactions becomes the payload to beat.
+        let BuildOutcomeKind::Freeze(best) = native_searcher_after_competitor(2, false, None).1
+        else {
+            panic!("Denim payload must freeze")
+        };
+
+        let (searcher, outcome) = native_searcher_after_competitor(1, true, Some(best));
+
+        assert!(matches!(outcome, BuildOutcomeKind::Aborted { .. }), "got {outcome:?}");
+        assert_eq!(searcher, SearcherOutcome { included: false, evicted: false, cached: false });
     }
 
     #[test]
