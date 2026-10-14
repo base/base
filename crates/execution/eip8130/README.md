@@ -49,7 +49,7 @@ The crate keeps the protocol stages explicit while avoiding crate sprawl:
 - **Authorize** binds resolved actors to account config, expiry, scope, and policy.
 - **Transaction auth** applies sender, payer, and config-change operation gates.
 - **Nonce validation** checks protocol, 2D-channel, and nonce-free replay state.
-- **Gas and fees** compute the EIP-8130 intrinsic gas and validate the fee caps
+- **Gas and fees** compute the EIP-8130 intrinsic gas and validate the fee budget
   and the payer's balance (see below).
 - **Orchestration** composes the final sender/payer signatures with the
   transaction's ordered account-configuration changes — advancing each channel
@@ -138,14 +138,26 @@ caught here rather than silently diverging.
 
 ## Fees and balance
 
-`FeeCheck` validates the EIP-1559 fee caps against the block base fee and bounds
-the payer's worst-case ETH debit at `(gas_limit + payer_auth_cost) ·
-max_fee_per_gas` — `payer_auth_cost` is added because payer authentication is
-charged on top of `gas_limit`. For self-pay the payer is the sender and
-`payer_auth_cost` is `0`. `validate_gas_and_tip` extends that check with a
-declared coinbase tip: self-pay must cover gas and tip from one balance, while
-sponsored payment requires the payer to cover gas and the sender to cover the
-tip.
+Following [EIP-7999](https://eips.ethereum.org/EIPS/eip-7999), the transaction
+carries one total fee budget, `max_fee` (wei), instead of a per-gas cap; the
+priority fee stays per gas. The budget covers execution gas, the L1 data fee, and
+the operator fee, so the payer's worst-case ETH debit is exactly `max_fee`.
+`FeeCheck::effective_gas_price` rejects a budget below the worst-case cost at the
+block base fee and caps the tip so the full reservation fits:
+
+```text
+max_gas   = gas_limit + payer_auth_cost
+required  = max_gas · base_fee + l1_fee + operator_fee(max_gas)
+effective = base_fee + min(max_priority_fee_per_gas, (max_fee − required) / max_gas)
+```
+
+`payer_auth_cost` is added because payer authentication is charged on top of
+`gas_limit`; for self-pay the payer is the sender and `payer_auth_cost` is `0`.
+Settlement refunds unused gas and operator fee at `effective`, so the billed cost
+never exceeds `max_fee`. `validate_fee_and_tip` extends the balance check with a
+declared coinbase tip: self-pay must cover `max_fee` and tip from one balance,
+while sponsored payment requires the payer to cover `max_fee` and the sender to
+cover the tip.
 
 The gas and fee layer is pure accounting: it reads no state and runs no EVM. The
 state-derived inputs (whether the nonce channel is first-use and whether

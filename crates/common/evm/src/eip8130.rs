@@ -860,8 +860,17 @@ impl Eip8130Executor {
             IntrinsicGas::max_payer_auth_cost(signed).map_err(BaseTransactionError::eip8130)?;
         let gas_limit =
             tx.gas_limit.min(ctx.cfg().tx_gas_limit_cap().saturating_sub(payer_auth_ceiling));
-        let max_fee = tx.max_fee_per_gas;
-        let max_priority = tx.max_priority_fee_per_gas;
+        // Estimation neither checks the fee budget nor charges fees, so the
+        // effective price ignores the L1 and operator fees and falls back to the
+        // base fee for a request whose `max_fee` cannot cover the gas.
+        let effective = FeeCheck::effective_gas_price(
+            tx.max_fee,
+            tx.max_priority_fee_per_gas,
+            base_fee,
+            gas_limit,
+            U256::ZERO,
+        )
+        .unwrap_or(base_fee);
         // Use the declared payer (sponsor) so the payer published to the
         // `TxContext` precompile matches a real execution: a call that reads it
         // must see the same address it would on-chain, or it could take a
@@ -966,7 +975,7 @@ impl Eip8130Executor {
                 payer_auth: intrinsic.payer_auth,
                 payer_auth_standard: intrinsic.payer_auth_standard,
                 execution_gas_available,
-                effective: FeeCheck::effective_gas_price(max_fee, max_priority, base_fee),
+                effective,
                 base_fee,
                 bump_protocol_nonce: false,
             })
@@ -1003,7 +1012,7 @@ impl Eip8130Executor {
     }
 
     /// Runs the storage-backed pre-call pipeline (authorize, nonce, intrinsic
-    /// gas, fee-cap check, account-change apply) over a gas-free
+    /// gas, fee-budget check, account-change apply) over a gas-free
     /// journal view and publishes the transaction context, returning the resolved
     /// [`Eip8130Outcome`]. Storage writes land on the journal directly; the
     /// caller discards the transaction on error.
@@ -1029,9 +1038,16 @@ impl Eip8130Executor {
         let tx = signed.tx();
         let nonce_key = tx.nonce_key;
         let gas_limit = tx.gas_limit;
-        let max_fee = tx.max_fee_per_gas;
+        let max_fee = tx.max_fee;
         let max_priority = tx.max_priority_fee_per_gas;
         let tx_gas_limit_cap = ctx.cfg().tx_gas_limit_cap();
+        // The L1 data fee and operator fee count against `max_fee`. The journal
+        // is borrowed for the storage pipeline below, so the L1 fee is priced
+        // here and the fee parameters are copied for the operator fee, which
+        // depends on the payer-authentication gas resolved inside it.
+        let spec = ctx.cfg().spec();
+        let l1_cost = ctx.chain_mut().calculate_tx_l1_cost(encoded, spec);
+        let fee_params = ctx.chain().clone();
         // Validity bounds are normalized to Unix milliseconds (seconds bounds are
         // scaled by 1000 per EIP-8130 Timestamp Normalization); `0` stays `0`
         // (disabled). The nonce-free replay ring records this normalized upper
@@ -1177,19 +1193,36 @@ impl Eip8130Executor {
                 ));
             }
 
-            // 5. Fee caps and payer balance.
-            FeeCheck::validate_fees(max_fee, max_priority, base_fee)
-                .map_err(BaseTransactionError::eip8130)?;
+            // 5. Fee budget and payer balance. The worst case is the full gas
+            //    reservation plus the L1 fee and the operator fee on that
+            //    reservation; the effective price is capped so it fits `max_fee`.
+            let max_gas = FeeCheck::max_chargeable_gas(gas_limit, intrinsic.payer_auth);
+            let additional_fees = l1_cost.saturating_add(fee_params.operator_fee_charge(
+                encoded,
+                U256::from(max_gas),
+                spec,
+            ));
+            let effective = FeeCheck::effective_gas_price(
+                max_fee,
+                max_priority,
+                base_fee,
+                max_gas,
+                additional_fees,
+            )
+            .map_err(BaseTransactionError::eip8130)?;
             let payer_balance = sctx
                 .with_account_info(payer, |info| Ok(info.balance))
                 .map_err(BaseTransactionError::eip8130)?;
-            FeeCheck::validate_balance(payer_balance, gas_limit, intrinsic.payer_auth, max_fee)
-                .map_err(|error| match error {
-                    FeeError::InsufficientBalance { balance, required } => {
-                        Self::payer_cannot_pay(balance, required)
-                    }
-                    error => BaseTransactionError::eip8130(error),
-                })?;
+            FeeCheck::validate_balance(
+                payer_balance,
+                FeeCheck::max_fee_charge(max_gas, effective, additional_fees),
+            )
+            .map_err(|error| match error {
+                FeeError::InsufficientBalance { balance, required } => {
+                    Self::payer_cannot_pay(balance, required)
+                }
+                error => BaseTransactionError::eip8130(error),
+            })?;
 
             // 6. Publish the transaction context (sender / payer / actor id) so it
             //    is readable by the `TxContext` precompile during `calls`.
@@ -1209,7 +1242,7 @@ impl Eip8130Executor {
                 payer_auth: intrinsic.payer_auth,
                 payer_auth_standard: intrinsic.payer_auth_standard,
                 execution_gas_available,
-                effective: FeeCheck::effective_gas_price(max_fee, max_priority, base_fee),
+                effective,
                 base_fee,
                 bump_protocol_nonce,
             })
@@ -1239,7 +1272,9 @@ impl Eip8130Executor {
     /// worst-case operator fee — so the `calls` cannot spend gas money; the
     /// surplus is refunded in [`Self::settle_fees`]. Also overwrites the
     /// placeholder `TxEnv` caller with the resolved sender so `tx.origin`
-    /// (the `ORIGIN` opcode) reads correctly during `calls`.
+    /// (the `ORIGIN` opcode) reads correctly during `calls`, and its fee fields
+    /// with the resolved effective price so `GASPRICE` reports what the payer
+    /// is charged per gas.
     fn prepay<DB>(
         ctx: &mut BaseContext<DB>,
         outcome: &Eip8130Outcome,
@@ -1252,6 +1287,8 @@ impl Eip8130Executor {
             BaseContextTr + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv>,
     {
         ctx.tx.base.caller = outcome.sender;
+        ctx.tx.base.gas_price = outcome.effective;
+        ctx.tx.base.gas_priority_fee = Some(outcome.effective.saturating_sub(outcome.base_fee));
 
         if outcome.bump_protocol_nonce {
             let mut sender_acc =
@@ -2106,7 +2143,7 @@ mod tests {
             valid_after: 0,
             valid_before: 0,
             max_priority_fee_per_gas: 1_000_000_000,
-            max_fee_per_gas: 5_000_000_000,
+            max_fee: 5_000_000_000_000_000,
             gas_limit: 1_000_000,
             account_changes: Vec::new(),
             calls: Vec::new(),
@@ -2399,7 +2436,7 @@ mod tests {
         tx.calls = vec![vec![Call { to: recipient, value: transfer, data: Bytes::new() }]];
         let signed = eoa_signed(tx, &key);
 
-        // 1e16 wei covers worst-case gas (gas_limit 1e6 * max_fee 5e9 = 5e15) but
+        // 1e16 wei covers the 5e15 wei fee budget but
         // is far below the 1e18 call value, so the value transfer cannot succeed.
         let initial_balance = U256::from(10u64).pow(U256::from(16u64));
         let mut evm = evm_with_accounts(initial_balance, sender, &[(recipient, bytes!("00"))]);
@@ -3146,7 +3183,7 @@ mod tests {
         let sender = eoa_address(&key);
         let signed = eoa_signed(base_tx(), &key);
 
-        // Far below the worst-case charge (gas_limit · max_fee_per_gas).
+        // Far below the worst-case charge, which tops out at `max_fee`.
         let mut evm = evm_with(U256::from(1_000u64), sender);
         let err = evm.transact_raw(into_base_tx(&signed)).unwrap_err();
         assert!(
@@ -3426,12 +3463,12 @@ mod tests {
         // Tx 1 already bumped the protocol nonce (0 -> 1) (committed above), so
         // tx 2 is a second-use transaction:
         // base AA_BASE_COST 15_000
-        // payload EIP-2028 DA over the tx 1_716
+        // payload EIP-2028 DA over the tx 1_736
         // nonce_key protocol nonce (key 0) 0
         // sender_auth ECRECOVER 3_000 + cold SLOAD 2_100 5_100
         // access cold loader account (COLD_ACCOUNT_ACCESS_COST)
         // call JUMPDEST pad (WARMTH_PROBE_PAD_GAS) + PUSH1 (3) + COLD SLOAD (2_100) + STOP
-        // total 23_919 + COLD_ACCOUNT_ACCESS_COST + WARMTH_PROBE_PAD_GAS (the call's
+        // total 23_939 + COLD_ACCOUNT_ACCESS_COST + WARMTH_PROBE_PAD_GAS (the call's
         // zero value adds one 0x80 calldata byte)
         let mut load_tx = base_tx();
         load_tx.nonce_sequence = 1;
@@ -3443,7 +3480,7 @@ mod tests {
 
         assert_eq!(
             load_outcome.result.gas().tx_gas_used(),
-            23_919 + COLD_ACCOUNT_ACCESS_COST + WARMTH_PROBE_PAD_GAS,
+            23_939 + COLD_ACCOUNT_ACCESS_COST + WARMTH_PROBE_PAD_GAS,
             "loader SLOAD must be COLD (2_100); a warm read (100) would be 2_000 \
              less, meaning tx 1's warmth leaked across the transaction boundary",
         );
@@ -3483,18 +3520,18 @@ mod tests {
 
         // First-use, single-tx, two phases each calling `loader`:
         // base AA_BASE_COST 15_000
-        // payload EIP-2028 DA over the two-phase tx 1_888
+        // payload EIP-2028 DA over the two-phase tx 1_920
         // nonce_key protocol nonce (key 0), even on first use 0
         // sender_auth ECRECOVER 3_000 + cold SLOAD 2_100 5_100
         // access cold loader account in phase 0 only (COLD_ACCOUNT_ACCESS_COST)
         // call phase 0 JUMPDEST pad + PUSH1 (3) + COLD SLOAD (2_100) + STOP
         // call phase 1 JUMPDEST pad + PUSH1 (3) + WARM SLOAD (100) + STOP
-        // total 24_194 + COLD_ACCOUNT_ACCESS_COST + 2 * WARMTH_PROBE_PAD_GAS (the pad
+        // total 24_226 + COLD_ACCOUNT_ACCESS_COST + 2 * WARMTH_PROBE_PAD_GAS (the pad
         // runs once per phase; the two calls each carry a value word, adding one
         // 0x80 calldata byte per call)
         assert_eq!(
             outcome.result.gas().tx_gas_used(),
-            24_194 + COLD_ACCOUNT_ACCESS_COST + 2 * WARMTH_PROBE_PAD_GAS,
+            24_226 + COLD_ACCOUNT_ACCESS_COST + 2 * WARMTH_PROBE_PAD_GAS,
             "phase 1's SLOAD must be WARM (100): committed phase 0 warmed \
              (loader, slot 0). A cold read (2_100) would be 2_000 more, meaning \
              the committed phase's warmth failed to carry across phases",
@@ -3538,19 +3575,19 @@ mod tests {
 
         // `load_tx` is a self-paying EOA transaction with one phase calling
         // `loader` (PUSH1 0, SLOAD, STOP). Its gas splits into the EIP-8130
-        // sender-intrinsic charge (21_816) plus the loader's cold access and the
+        // sender-intrinsic charge (21_848) plus the loader's cold access and the
         // dispatched call (2_103):
         // base AA_BASE_COST 15_000
-        // payload EIP-2028 DA over the 123-byte tx 1_716
+        // payload EIP-2028 DA over the 125-byte tx 1_748
         // nonce_key protocol nonce (key 0), even on first use 0
         // sender_auth ECRECOVER 3_000 + cold SLOAD 2_100 5_100
         // access cold loader account (COLD_ACCOUNT_ACCESS_COST)
         // call JUMPDEST pad (WARMTH_PROBE_PAD_GAS) + PUSH1 (3) + COLD SLOAD (2_100) + STOP
-        // total 23_919 + COLD_ACCOUNT_ACCESS_COST + WARMTH_PROBE_PAD_GAS (the call's
+        // total 23_951 + COLD_ACCOUNT_ACCESS_COST + WARMTH_PROBE_PAD_GAS (the call's
         // zero value adds one 0x80 calldata byte)
         assert_eq!(
             load_outcome.result.gas().tx_gas_used(),
-            23_919 + COLD_ACCOUNT_ACCESS_COST + WARMTH_PROBE_PAD_GAS,
+            23_951 + COLD_ACCOUNT_ACCESS_COST + WARMTH_PROBE_PAD_GAS,
             "loader SLOAD must be COLD (2_100); a warm read (100) would be 2_000 \
              less, meaning the discarded invalid tx leaked warmth",
         );

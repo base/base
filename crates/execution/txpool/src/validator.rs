@@ -1215,23 +1215,25 @@ where
             .basic_account(&payer)
             .map_err(|error| Self::state_read_error(error, "payer account read failed"))?
             .unwrap_or_default();
-        FeeCheck::validate_balance(
-            payer_account.balance,
-            signed.tx().gas_limit,
-            intrinsic.payer_auth,
-            signed.tx().max_fee_per_gas,
-        )
-        .map_err(|_| {
+        // The budget must already cover the L1 and operator fees at the current
+        // L1 parameters; the base-fee part is left to the pool's base-fee
+        // partitioning, and execution re-checks the whole budget at inclusion.
+        if self.requires_l1_data_gas_fee() {
+            let mut info = self.block_info.l1_block_info.read().clone();
+            let spec_id = BaseSpecId::from_timestamp(self.chain_spec(), now);
+            let max_gas = FeeCheck::max_chargeable_gas(signed.tx().gas_limit, intrinsic.payer_auth);
+            let additional_fees = info.tx_cost(&encoded, U256::from(max_gas), spec_id);
+            if U256::from(signed.tx().max_fee) < additional_fees {
+                return Err(InvalidTransactionError::FeeCapTooLow.into());
+            }
+        }
+        // `max_fee` bounds every charge, so admission requires the payer to hold
+        // it in full. `call.value` is not reserved: a call whose value the sender
+        // cannot cover reverts at execution, and the fees are still paid.
+        let payer_max_cost = U256::from(signed.tx().max_fee);
+        FeeCheck::validate_balance(payer_account.balance, payer_max_cost).map_err(|_| {
             InvalidPoolTransactionError::from(InvalidTransactionError::InsufficientFunds(
-                GotExpected {
-                    got: payer_account.balance,
-                    expected: FeeCheck::max_fee_charge(
-                        signed.tx().gas_limit,
-                        intrinsic.payer_auth,
-                        signed.tx().max_fee_per_gas,
-                    ),
-                }
-                .into(),
+                GotExpected { got: payer_account.balance, expected: payer_max_cost }.into(),
             ))
         })?;
 
@@ -1332,35 +1334,6 @@ where
             watch_set.push(InvalidationKey::CodeHash(payer));
         }
 
-        let gas_charge = FeeCheck::max_fee_charge(
-            signed.tx().gas_limit,
-            intrinsic.payer_auth,
-            signed.tx().max_fee_per_gas,
-        );
-        let additional_fee = if self.requires_l1_data_gas_fee() {
-            let mut info = self.block_info.l1_block_info.read().clone();
-            let spec_id = BaseSpecId::from_timestamp(self.chain_spec(), now);
-            info.tx_cost(
-                &encoded,
-                U256::from(FeeCheck::max_chargeable_gas(
-                    signed.tx().gas_limit,
-                    intrinsic.payer_auth,
-                )),
-                spec_id,
-            )
-        } else {
-            U256::ZERO
-        };
-        // Admission only requires the payer to cover the transaction's fees.
-        // `call.value` is not reserved: a call whose value the sender cannot
-        // cover reverts at execution, and the fees are still paid.
-        let payer_max_cost = gas_charge.saturating_add(additional_fee);
-        if payer_account.balance < payer_max_cost {
-            return Err(InvalidTransactionError::InsufficientFunds(
-                GotExpected { got: payer_account.balance, expected: payer_max_cost }.into(),
-            )
-            .into());
-        }
         // All three predicates are now inclusive block-timestamp *second* bounds
         // (`now <= bound`): the transaction's millisecond window is folded onto
         // the seconds axis by `tx_valid_before_secs`, which is nonce-mode-aware
@@ -2383,7 +2356,7 @@ mod tests {
             valid_after: 0,
             valid_before: 0,
             max_priority_fee_per_gas: 0,
-            max_fee_per_gas: 1_000,
+            max_fee: 1_000,
             gas_limit: 50_000,
             account_changes: Vec::new(),
             calls: Vec::new(),
@@ -2418,17 +2391,6 @@ mod tests {
                 InvalidTransactionError::ChainIdMismatch,
             )) => {}
             other => panic!("expected ChainIdMismatch, got {other:?}"),
-        }
-    }
-
-    /// Helper: assert structural validation returns `Invalid` with `TipAboveFeeCap`.
-    #[track_caller]
-    fn assert_tip_above_fee_cap(result: Result<(), InvalidPoolTransactionError>) {
-        match result {
-            Err(InvalidPoolTransactionError::Consensus(
-                InvalidTransactionError::TipAboveFeeCap,
-            )) => {}
-            other => panic!("expected TipAboveFeeCap, got {other:?}"),
         }
     }
 
@@ -2562,18 +2524,6 @@ mod tests {
     }
 
     #[test]
-    fn rejects_eip8130_with_tip_above_fee_cap() {
-        let validator = build_test_validator();
-        let tx = TxEip8130 {
-            max_fee_per_gas: 100,
-            max_priority_fee_per_gas: 200,
-            ..minimal_valid_eoa_tx()
-        };
-        let signed = sign_eoa_eip8130(tx);
-        assert_tip_above_fee_cap(validator.validate_eip8130_structural(&signed));
-    }
-
-    #[test]
     fn rejects_eip8130_with_zero_gas_limit() {
         let validator = build_test_validator();
         let tx = TxEip8130 { gas_limit: 0, ..minimal_valid_eoa_tx() };
@@ -2584,7 +2534,7 @@ mod tests {
     #[test]
     fn rejects_eip8130_with_zero_fee_cap() {
         let validator = build_test_validator();
-        let tx = TxEip8130 { max_fee_per_gas: 0, ..minimal_valid_eoa_tx() };
+        let tx = TxEip8130 { max_fee: 0, ..minimal_valid_eoa_tx() };
         let signed = sign_eoa_eip8130(tx);
         assert_unsupported(validator.validate_eip8130_structural(&signed));
     }
@@ -3510,17 +3460,24 @@ mod tests {
     }
 
     #[test]
-    fn eip8130_payer_max_cost_includes_l1_and_operator_fees() {
+    fn eip8130_budget_must_cover_l1_and_operator_fees() {
         let chain_config = ChainConfig::mainnet();
         let chain_spec = everest_chain_spec();
         let signer = PrivateKeySigner::random();
         let sender = signer.address();
+        let sign = |tx: TxEip8130| {
+            let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
+            Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new())
+        };
         // Headroom above the worst-case intrinsic: admission pins the sender policy
         // gate on, which the tight 50k fixture limit no longer covers.
-        let tx = TxEip8130 { gas_limit: 100_000, ..minimal_valid_eoa_tx() };
-        let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
-        let signed =
-            Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
+        let signed = sign(TxEip8130 {
+            gas_limit: 100_000,
+            max_fee: 1_000_000_000_000_000,
+            ..minimal_valid_eoa_tx()
+        });
+        let underpriced =
+            sign(TxEip8130 { gas_limit: 100_000, max_fee: 1, ..minimal_valid_eoa_tx() });
 
         let client = MockEthProvider::<BasePrimitives>::new()
             .with_chain_spec(Arc::clone(&chain_spec))
@@ -3554,18 +3511,23 @@ mod tests {
         validator.update_l1_block_info(&header, &[l1_info_tx]);
 
         let state = validator.validate_eip8130_full(&signed).expect("valid funded EIP-8130 tx");
-        let encoded = validator.eip8130_encoded(&signed);
+        assert_eq!(state.payer_max_cost, U256::from(signed.tx().max_fee));
+        assert_eq!(state.manifest.payer_max_cost(), state.payer_max_cost);
+
+        let encoded = validator.eip8130_encoded(&underpriced);
         // Self-pay: no payer authentication gas.
-        let max_gas = FeeCheck::max_chargeable_gas(signed.tx().gas_limit, 0);
-        let gas_charge =
-            FeeCheck::max_fee_charge(signed.tx().gas_limit, 0, signed.tx().max_fee_per_gas);
+        let max_gas = FeeCheck::max_chargeable_gas(underpriced.tx().gas_limit, 0);
         let spec_id = BaseSpecId::from_timestamp(&chain_spec, chain_config.isthmus_timestamp);
         let mut l1_block_info = base_execution_evm::parse_l1_info(&isthmus_data).unwrap();
         let additional_fees = l1_block_info.tx_cost(&encoded, U256::from(max_gas), spec_id);
-
-        assert!(!additional_fees.is_zero(), "fixture must charge L1/operator fees");
-        assert_eq!(state.payer_max_cost, gas_charge.saturating_add(additional_fees));
-        assert_eq!(state.manifest.payer_max_cost(), state.payer_max_cost);
+        assert!(
+            additional_fees > U256::from(underpriced.tx().max_fee),
+            "fixture L1/operator fees must exceed the underpriced budget"
+        );
+        assert!(matches!(
+            validator.validate_eip8130_full(&underpriced),
+            Err(InvalidPoolTransactionError::Consensus(InvalidTransactionError::FeeCapTooLow))
+        ));
     }
 
     /// Before Zenith, admitting an EOA transaction reads no Keystore state, so
@@ -3744,7 +3706,7 @@ mod tests {
             valid_after: 0,
             valid_before: 0,
             max_priority_fee_per_gas: 0,
-            max_fee_per_gas: 100,
+            max_fee: 100,
             gas_limit: 1_000_000,
             account_changes: vec![AccountChange::Delegation(Delegation {
                 target: Address::repeat_byte(0x22),
@@ -3820,7 +3782,7 @@ mod tests {
             valid_after: 0,
             valid_before: 0,
             max_priority_fee_per_gas: 0,
-            max_fee_per_gas: 100,
+            max_fee: 100,
             gas_limit: 1_000_000,
             account_changes: vec![
                 AccountChange::Create(create),

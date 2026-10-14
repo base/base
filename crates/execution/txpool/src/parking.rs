@@ -439,7 +439,7 @@ mod tests {
             valid_after: 0,
             valid_before: u64::from(nonce_key == Eip8130Constants::NONCE_KEY_MAX),
             max_priority_fee_per_gas: priority_fee,
-            max_fee_per_gas: priority_fee + 10,
+            max_fee: priority_fee + 10,
             gas_limit: 50_000,
             account_changes: Vec::new(),
             calls: Vec::new(),

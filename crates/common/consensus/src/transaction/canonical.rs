@@ -105,7 +105,7 @@ mod tests {
                     valid_after: 0,
                     valid_before: 1,
                     max_priority_fee_per_gas: 1,
-                    max_fee_per_gas: 2,
+                    max_fee: 2,
                     gas_limit: 50_000,
                     account_changes: vec![],
                     calls: vec![],

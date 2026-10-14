@@ -185,7 +185,7 @@ impl BaseTransactionRequest {
             valid_after: aa.valid_after.unwrap_or_default(),
             valid_before: aa.valid_before.unwrap_or_default(),
             max_priority_fee_per_gas: req.max_priority_fee_per_gas.unwrap_or_default(),
-            max_fee_per_gas: req.max_fee_per_gas.unwrap_or_default(),
+            max_fee: aa.max_fee.unwrap_or_default(),
             gas_limit: req.gas.map_or(gas_limit_cap, |gas| gas.min(gas_limit_cap)),
             account_changes: aa.account_changes.clone().unwrap_or_default(),
             calls: self.eip8130_calls(aa.calls.as_ref())?,

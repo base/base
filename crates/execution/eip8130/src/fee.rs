@@ -1,4 +1,11 @@
-//! EIP-8130 fee-cap and gas-payer balance validation.
+//! EIP-8130 fee-budget and gas-payer balance validation.
+//!
+//! An EIP-8130 transaction carries one total `max_fee` in wei, as in
+//! [EIP-7999], instead of a per-gas cap. The budget covers every protocol fee
+//! the payer is charged: L2 gas at the base fee, the priority fee, the L1 data
+//! fee, and the operator fee.
+//!
+//! [EIP-7999]: https://eips.ethereum.org/EIPS/eip-7999
 
 use alloy_primitives::U256;
 
@@ -6,26 +13,17 @@ use alloy_primitives::U256;
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum FeeError {
-    /// `max_priority_fee_per_gas` exceeds `max_fee_per_gas`.
-    #[error("max_priority_fee_per_gas {tip} exceeds max_fee_per_gas {max_fee}")]
-    TipAboveFeeCap {
-        /// The transaction's priority fee cap.
-        tip: u128,
-        /// The transaction's total fee cap.
+    /// `max_fee` cannot cover the worst-case cost at the block base fee: the
+    /// full gas reservation at the base fee plus the L1 and operator fees.
+    #[error("max_fee {max_fee} is below the required {required}")]
+    BudgetBelowRequired {
+        /// The cost the budget must cover.
+        required: U256,
+        /// The transaction's total fee budget.
         max_fee: u128,
     },
 
-    /// `max_fee_per_gas` is below the block base fee, so the transaction cannot
-    /// be included at the current base fee.
-    #[error("max_fee_per_gas {max_fee} is below the base fee {base_fee}")]
-    FeeCapBelowBaseFee {
-        /// The block's base fee per gas.
-        base_fee: u128,
-        /// The transaction's total fee cap.
-        max_fee: u128,
-    },
-
-    /// The gas payer's balance cannot cover the worst-case gas charge.
+    /// The gas payer's balance cannot cover the worst-case fee charge.
     #[error("gas payer balance {balance} is below the required {required}")]
     InsufficientBalance {
         /// The payer's available balance.
@@ -41,19 +39,6 @@ pub enum FeeError {
 pub struct FeeCheck;
 
 impl FeeCheck {
-    /// EIP-1559 effective gas price: `min(max_fee, base_fee + tip)`.
-    #[must_use]
-    pub const fn effective_gas_price(
-        max_fee: u128,
-        max_priority_fee: u128,
-        base_fee: u128,
-    ) -> u128 {
-        // `<u128 as Ord>::min` is not yet const-stable, so take the min by hand
-        // to keep this `const fn` (consistent with the other `FeeCheck` helpers).
-        let cap = base_fee.saturating_add(max_priority_fee);
-        if max_fee < cap { max_fee } else { cap }
-    }
-
     /// Maximum gas the payer can be charged: `gas_limit + payer_auth_cost`. Payer
     /// authentication is metered on top of `gas_limit`, so the payer reimburses
     /// it in addition to the sender-signed budget. For self-pay
@@ -63,86 +48,85 @@ impl FeeCheck {
         gas_limit.saturating_add(payer_auth_cost)
     }
 
-    /// Upper bound on the payer's ETH debit:
-    /// `(gas_limit + payer_auth_cost) · max_fee_per_gas`.
+    /// Worst-case cost at `gas_price`: `max_gas · gas_price + additional_fees`,
+    /// where `additional_fees` is the L1 data fee plus the operator fee charged
+    /// on `max_gas`.
     #[must_use]
-    pub fn max_fee_charge(gas_limit: u64, payer_auth_cost: u64, max_fee: u128) -> U256 {
-        U256::from(Self::max_chargeable_gas(gas_limit, payer_auth_cost))
-            .saturating_mul(U256::from(max_fee))
+    pub fn max_fee_charge(max_gas: u64, gas_price: u128, additional_fees: U256) -> U256 {
+        U256::from(max_gas).saturating_mul(U256::from(gas_price)).saturating_add(additional_fees)
     }
 
-    /// Validates the EIP-1559 fee caps against the block base fee.
+    /// Validates that `max_fee` covers the worst-case cost at the base fee and
+    /// returns the effective gas price.
+    ///
+    /// The priority fee per gas is the transaction's tip, capped so the full
+    /// reservation still fits the budget:
+    ///
+    /// ```text
+    /// required  = max_gas · base_fee + additional_fees
+    /// effective = base_fee + min(max_priority_fee, (max_fee − required) / max_gas)
+    /// ```
+    ///
+    /// so [`Self::max_fee_charge`] at the returned price never exceeds
+    /// `max_fee`. EIP-7999 caps the priority fee as a wei total; flooring it to a
+    /// per-gas price forgoes less than `max_gas` wei of tip and keeps a single
+    /// per-gas price for receipts, `GASPRICE`, and settlement.
     ///
     /// # Errors
-    /// - [`FeeError::TipAboveFeeCap`] — the priority fee cap exceeds the total cap.
-    /// - [`FeeError::FeeCapBelowBaseFee`] — the total cap is below the base fee.
-    #[must_use = "discarding the result silently skips the fee-cap check"]
-    pub const fn validate_fees(
+    /// - [`FeeError::BudgetBelowRequired`] — `max_fee` is below `required`.
+    pub fn effective_gas_price(
         max_fee: u128,
         max_priority_fee: u128,
         base_fee: u128,
-    ) -> Result<(), FeeError> {
-        if max_priority_fee > max_fee {
-            return Err(FeeError::TipAboveFeeCap { tip: max_priority_fee, max_fee });
-        }
-        if max_fee < base_fee {
-            return Err(FeeError::FeeCapBelowBaseFee { base_fee, max_fee });
-        }
-        Ok(())
+        max_gas: u64,
+        additional_fees: U256,
+    ) -> Result<u128, FeeError> {
+        let required = Self::max_fee_charge(max_gas, base_fee, additional_fees);
+        let headroom = U256::from(max_fee)
+            .checked_sub(required)
+            .ok_or(FeeError::BudgetBelowRequired { required, max_fee })?;
+        // `headroom <= max_fee`, so the per-gas share fits in `u128`.
+        let tip_room = headroom.checked_div(U256::from(max_gas)).unwrap_or_default().to::<u128>();
+        Ok(base_fee.saturating_add(max_priority_fee.min(tip_room)))
     }
 
     /// Validates that the gas payer (a sponsor, or the sender for self-pay) can
-    /// cover the worst-case gas charge at `max_fee_per_gas`.
+    /// cover `required`, the worst-case fee charge.
     ///
     /// # Errors
-    /// - [`FeeError::InsufficientBalance`] — the balance is below the maximum charge.
+    /// - [`FeeError::InsufficientBalance`] — the balance is below `required`.
     #[must_use = "discarding the result silently skips the balance check"]
-    pub fn validate_balance(
-        balance: U256,
-        gas_limit: u64,
-        payer_auth_cost: u64,
-        max_fee: u128,
-    ) -> Result<(), FeeError> {
-        let required = Self::max_fee_charge(gas_limit, payer_auth_cost, max_fee);
+    pub fn validate_balance(balance: U256, required: U256) -> Result<(), FeeError> {
         if balance < required {
             return Err(FeeError::InsufficientBalance { balance, required });
         }
         Ok(())
     }
 
-    /// Validates that worst-case gas and a declared coinbase tip are payable.
+    /// Validates that the full fee budget and a declared coinbase tip are
+    /// payable.
     ///
-    /// Self-pay (`payer_is_sender`) requires one balance to cover
-    /// `max_fee_charge + tip`. Sponsored payment requires the payer to cover
-    /// gas and the sender to cover the tip.
+    /// The payer can be charged at most `max_fee`. Self-pay
+    /// (`payer_is_sender`) requires one balance to cover `max_fee + tip`.
+    /// Sponsored payment requires the payer to cover `max_fee` and the sender to
+    /// cover the tip.
     ///
     /// # Errors
     /// - [`FeeError::InsufficientBalance`] — a required balance is below its charge.
-    #[must_use = "discarding the result silently skips the gas-and-tip check"]
-    pub fn validate_gas_and_tip(
+    #[must_use = "discarding the result silently skips the fee-and-tip check"]
+    pub fn validate_fee_and_tip(
         payer_balance: U256,
         sender_balance: U256,
         payer_is_sender: bool,
-        gas_limit: u64,
-        payer_auth_cost: u64,
         max_fee: u128,
         tip: U256,
     ) -> Result<(), FeeError> {
-        let gas = Self::max_fee_charge(gas_limit, payer_auth_cost, max_fee);
+        let fee = U256::from(max_fee);
         if payer_is_sender {
-            let required = gas.saturating_add(tip);
-            if payer_balance < required {
-                return Err(FeeError::InsufficientBalance { balance: payer_balance, required });
-            }
-            return Ok(());
+            return Self::validate_balance(payer_balance, fee.saturating_add(tip));
         }
-        if payer_balance < gas {
-            return Err(FeeError::InsufficientBalance { balance: payer_balance, required: gas });
-        }
-        if sender_balance < tip {
-            return Err(FeeError::InsufficientBalance { balance: sender_balance, required: tip });
-        }
-        Ok(())
+        Self::validate_balance(payer_balance, fee)?;
+        Self::validate_balance(sender_balance, tip)
     }
 }
 
@@ -151,72 +135,73 @@ mod tests {
     use super::*;
 
     #[test]
-    fn effective_gas_price_is_capped_by_fee_cap() {
-        // base + tip below the cap -> base + tip.
-        assert_eq!(FeeCheck::effective_gas_price(100, 5, 80), 85);
-        // base + tip above the cap -> capped at max_fee.
-        assert_eq!(FeeCheck::effective_gas_price(100, 50, 80), 100);
+    fn tip_is_paid_in_full_when_the_budget_has_room() {
+        // required = 100 * 10 + 500 = 1_500; tip room = (10_000 - 1_500) / 100 = 85.
+        assert_eq!(FeeCheck::effective_gas_price(10_000, 5, 10, 100, U256::from(500u64)), Ok(15));
     }
 
     #[test]
-    fn validate_fees_rules() {
-        assert_eq!(FeeCheck::validate_fees(100, 10, 50), Ok(()));
+    fn tip_is_capped_by_the_remaining_budget() {
+        // required = 1_500; tip room = (2_000 - 1_500) / 100 = 5.
+        assert_eq!(FeeCheck::effective_gas_price(2_000, 50, 10, 100, U256::from(500u64)), Ok(15));
+        // Exactly the required amount leaves no tip.
+        assert_eq!(FeeCheck::effective_gas_price(1_500, 50, 10, 100, U256::from(500u64)), Ok(10));
+    }
+
+    #[test]
+    fn budget_below_base_cost_is_rejected() {
+        // The L1 and operator fees count against the budget.
         assert_eq!(
-            FeeCheck::validate_fees(100, 150, 50),
-            Err(FeeError::TipAboveFeeCap { tip: 150, max_fee: 100 })
-        );
-        assert_eq!(
-            FeeCheck::validate_fees(40, 10, 50),
-            Err(FeeError::FeeCapBelowBaseFee { base_fee: 50, max_fee: 40 })
+            FeeCheck::effective_gas_price(1_499, 0, 10, 100, U256::from(500u64)),
+            Err(FeeError::BudgetBelowRequired { required: U256::from(1_500u64), max_fee: 1_499 })
         );
     }
 
     #[test]
-    fn max_fee_charge_includes_payer_auth_on_top_of_gas_limit() {
-        // self-pay: gas_limit * max_fee.
-        assert_eq!(FeeCheck::max_fee_charge(21_000, 0, 2), U256::from(42_000u64));
-        // sponsored: (gas_limit + payer_auth_cost) * max_fee.
-        assert_eq!(FeeCheck::max_fee_charge(21_000, 5_100, 2), U256::from(52_200u64));
+    fn worst_case_charge_at_effective_price_fits_the_budget() {
+        for (max_fee, tip, base_fee, max_gas, additional) in [
+            (10_000u128, 5u128, 10u128, 100u64, 500u64),
+            (2_001, 50, 10, 100, 500),
+            (1_000_003, u128::MAX, 7, 333, 12_345),
+            (u128::MAX, u128::MAX, 1, 30_000_000, 1),
+        ] {
+            let additional = U256::from(additional);
+            let effective =
+                FeeCheck::effective_gas_price(max_fee, tip, base_fee, max_gas, additional).unwrap();
+            assert!(
+                FeeCheck::max_fee_charge(max_gas, effective, additional) <= U256::from(max_fee),
+                "max_fee={max_fee} effective={effective}"
+            );
+        }
+    }
+
+    #[test]
+    fn max_fee_charge_adds_l1_and_operator_fees_to_gas() {
+        assert_eq!(FeeCheck::max_fee_charge(21_000, 2, U256::from(7u64)), U256::from(42_007u64));
     }
 
     #[test]
     fn validate_balance_rules() {
-        // required = 21_000 * 2 = 42_000.
-        assert_eq!(FeeCheck::validate_balance(U256::from(42_000u64), 21_000, 0, 2), Ok(()));
+        assert_eq!(FeeCheck::validate_balance(U256::from(42u64), U256::from(42u64)), Ok(()));
         assert_eq!(
-            FeeCheck::validate_balance(U256::from(41_999u64), 21_000, 0, 2),
+            FeeCheck::validate_balance(U256::from(41u64), U256::from(42u64)),
             Err(FeeError::InsufficientBalance {
-                balance: U256::from(41_999u64),
-                required: U256::from(42_000u64),
+                balance: U256::from(41u64),
+                required: U256::from(42u64),
             })
         );
     }
 
     #[test]
-    fn self_pay_requires_gas_plus_tip_from_one_balance() {
-        // gas = 21_000 * 2 = 42_000; tip = 1_000; required = 43_000.
+    fn self_pay_requires_budget_plus_tip_from_one_balance() {
+        let tip = U256::from(1_000u64);
+        let both = |balance: u64| U256::from(balance);
         assert_eq!(
-            FeeCheck::validate_gas_and_tip(
-                U256::from(43_000u64),
-                U256::from(43_000u64),
-                true,
-                21_000,
-                0,
-                2,
-                U256::from(1_000u64),
-            ),
+            FeeCheck::validate_fee_and_tip(both(43_000), both(43_000), true, 42_000, tip),
             Ok(())
         );
         assert_eq!(
-            FeeCheck::validate_gas_and_tip(
-                U256::from(42_999u64),
-                U256::from(42_999u64),
-                true,
-                21_000,
-                0,
-                2,
-                U256::from(1_000u64),
-            ),
+            FeeCheck::validate_fee_and_tip(both(42_999), both(42_999), true, 42_000, tip),
             Err(FeeError::InsufficientBalance {
                 balance: U256::from(42_999u64),
                 required: U256::from(43_000u64),
@@ -225,50 +210,18 @@ mod tests {
     }
 
     #[test]
-    fn sponsored_checks_payer_gas_and_sender_tip_separately() {
+    fn sponsored_checks_payer_budget_and_sender_tip_separately() {
+        let tip = U256::from(1_000u64);
         let payer = U256::from(42_000u64);
         let sender = U256::from(1_000u64);
+        assert_eq!(FeeCheck::validate_fee_and_tip(payer, sender, false, 42_000, tip), Ok(()));
         assert_eq!(
-            FeeCheck::validate_gas_and_tip(
-                payer,
-                sender,
-                false,
-                21_000,
-                0,
-                2,
-                U256::from(1_000u64)
-            ),
-            Ok(())
+            FeeCheck::validate_fee_and_tip(U256::from(41_999u64), sender, false, 42_000, tip),
+            Err(FeeError::InsufficientBalance { balance: U256::from(41_999u64), required: payer })
         );
         assert_eq!(
-            FeeCheck::validate_gas_and_tip(
-                U256::from(41_999u64),
-                sender,
-                false,
-                21_000,
-                0,
-                2,
-                U256::from(1_000u64),
-            ),
-            Err(FeeError::InsufficientBalance {
-                balance: U256::from(41_999u64),
-                required: U256::from(42_000u64),
-            })
-        );
-        assert_eq!(
-            FeeCheck::validate_gas_and_tip(
-                payer,
-                U256::from(999u64),
-                false,
-                21_000,
-                0,
-                2,
-                U256::from(1_000u64),
-            ),
-            Err(FeeError::InsufficientBalance {
-                balance: U256::from(999u64),
-                required: U256::from(1_000u64),
-            })
+            FeeCheck::validate_fee_and_tip(payer, U256::from(999u64), false, 42_000, tip),
+            Err(FeeError::InsufficientBalance { balance: U256::from(999u64), required: tip })
         );
     }
 }

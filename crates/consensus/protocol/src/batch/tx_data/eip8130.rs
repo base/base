@@ -28,8 +28,8 @@ pub struct SpanBatchEip8130TransactionData {
     pub valid_before: u64,
     /// Max priority fee per gas (tip).
     pub max_priority_fee_per_gas: u128,
-    /// Max total fee per gas.
-    pub max_fee_per_gas: u128,
+    /// Maximum total fee in wei.
+    pub max_fee: u128,
     /// Optional explicit payer; `None` means the resolved sender pays gas.
     pub payer: Option<Address>,
     /// Account-mutation entries applied before calls execute.
@@ -89,7 +89,7 @@ impl SpanBatchEip8130TransactionData {
             + self.valid_after.length()
             + self.valid_before.length()
             + self.max_priority_fee_per_gas.length()
-            + self.max_fee_per_gas.length()
+            + self.max_fee.length()
             + Self::address_opt_encoded_length(&self.payer)
             + self.account_changes.length()
             + self.calls.length()
@@ -176,7 +176,7 @@ impl SpanBatchEip8130TransactionData {
             valid_after: self.valid_after,
             valid_before: self.valid_before,
             max_priority_fee_per_gas: self.max_priority_fee_per_gas,
-            max_fee_per_gas: self.max_fee_per_gas,
+            max_fee: self.max_fee,
             gas_limit: gas,
             account_changes: self.account_changes.clone(),
             calls: self.calls.clone(),
@@ -195,7 +195,7 @@ impl Encodable for SpanBatchEip8130TransactionData {
         self.valid_after.encode(out);
         self.valid_before.encode(out);
         self.max_priority_fee_per_gas.encode(out);
-        self.max_fee_per_gas.encode(out);
+        self.max_fee.encode(out);
         Self::encode_address_opt(&self.payer, out);
         self.account_changes.encode(out);
         self.calls.encode(out);
@@ -218,7 +218,7 @@ impl Decodable for SpanBatchEip8130TransactionData {
             valid_after: Decodable::decode(buf)?,
             valid_before: Decodable::decode(buf)?,
             max_priority_fee_per_gas: Decodable::decode(buf)?,
-            max_fee_per_gas: Decodable::decode(buf)?,
+            max_fee: Decodable::decode(buf)?,
             payer: Self::decode_address_opt(buf)?,
             account_changes: Decodable::decode(buf)?,
             calls: TxEip8130::decode_calls(buf)?,
@@ -257,7 +257,7 @@ mod tests {
             valid_after: 42,
             valid_before: 99,
             max_priority_fee_per_gas: 1_000_000_000,
-            max_fee_per_gas: 5_000_000_000,
+            max_fee: 5_000_000_000,
             payer: Some(address!("0x00000000000000000000000000000000000000bb")),
             account_changes: vec![AccountChange::Delegation(Delegation {
                 target: address!("0x00000000000000000000000000000000000000cc"),
@@ -337,7 +337,7 @@ mod tests {
             valid_after: 0,
             valid_before: 0,
             max_priority_fee_per_gas: 0,
-            max_fee_per_gas: 0,
+            max_fee: 0,
             payer: None,
             account_changes: vec![],
             calls: vec![],
@@ -382,7 +382,7 @@ mod tests {
             valid_after: 0,
             valid_before: 0,
             max_priority_fee_per_gas: 1,
-            max_fee_per_gas: 1,
+            max_fee: 1,
             payer: None,
             account_changes: Vec::new(),
             calls: vec![Vec::new(); phases],

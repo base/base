@@ -114,7 +114,7 @@ impl TryFrom<&BaseTxEnvelope> for SpanBatchTransactionData {
                     valid_after: tx.valid_after,
                     valid_before: tx.valid_before,
                     max_priority_fee_per_gas: tx.max_priority_fee_per_gas,
-                    max_fee_per_gas: tx.max_fee_per_gas,
+                    max_fee: tx.max_fee,
                     payer: tx.payer,
                     account_changes: tx.account_changes.clone(),
                     calls: tx.calls.clone(),
