@@ -33,14 +33,19 @@ where
         && !chain_spec.is_canyon_active_at_timestamp(timestamp.saturating_sub(2))
     {
         // Load the create2 deployer account from the cache.
-        let mut acc_info = db.basic(CREATE_2_DEPLOYER_ADDR)?.unwrap_or_default();
+        let acc_info = db.basic(CREATE_2_DEPLOYER_ADDR)?.unwrap_or_default();
+
+        // Convert the cache account back into a revm account. Conversion must precede the
+        // code write: `Account::from` snapshots the `AccountInfo` it is given as the
+        // account's `original_info`, so writing to `revm_acc.info` afterwards is what
+        // registers the code change with the BAL builder.
+        let mut revm_acc: revm::state::Account = acc_info.into();
 
         // Update the account info with the create2 deployer codehash and bytecode.
-        acc_info.code_hash = CREATE_2_DEPLOYER_CODEHASH;
-        acc_info.code = Some(Bytecode::new_raw(Bytes::from_static(&CREATE_2_DEPLOYER_BYTECODE)));
+        revm_acc.info.code_hash = CREATE_2_DEPLOYER_CODEHASH;
+        revm_acc.info.code =
+            Some(Bytecode::new_raw(Bytes::from_static(&CREATE_2_DEPLOYER_BYTECODE)));
 
-        // Convert the cache account back into a revm account and mark it as touched.
-        let mut revm_acc: revm::state::Account = acc_info.into();
         revm_acc.mark_touch();
 
         // Commit the create2 deployer account to the database.
@@ -49,4 +54,89 @@ where
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use base_common_genesis::{BaseUpgrade, RollupConfig};
+    use revm::{Database as _, database::{InMemoryDB, State}};
+
+    use super::*;
+
+    const ADDR: Address = CREATE_2_DEPLOYER_ADDR;
+
+    /// Canyon activation must describe the create2 deployer force-deploy in the
+    /// EIP-7928 block access list: the untouched account is converted first, so
+    /// the installed code is recorded as a code change.
+    #[test]
+    fn canyon_activation_records_deployer_code_change_in_bal() {
+        let mut state =
+            State::builder().with_database(InMemoryDB::default()).with_bal_builder().build();
+
+        ensure_create2_deployer(canyon(Some(100)), 100, &mut state).unwrap();
+
+        let bal = state.take_built_alloy_bal().expect("the BAL builder must produce a list");
+        assert_eq!(bal.len(), 1, "exactly one account must be described by the activation BAL");
+
+        let account = &bal[0];
+        assert_eq!(account.address, ADDR, "the create2 deployer must be the described account");
+        assert_eq!(
+            account.code_changes.len(),
+            1,
+            "the force-deploy must be recorded as exactly one code change",
+        );
+        assert_eq!(
+            account.code_changes[0].new_code,
+            Bytes::from_static(&CREATE_2_DEPLOYER_BYTECODE),
+            "the recorded code change must carry the create2 deployer bytecode",
+        );
+        assert_eq!(
+            account.code_changes[0].block_access_index,
+            revm::state::bal::BlockAccessIndex::PRE_EXECUTION,
+            "the force-deploy must be recorded at the block's initial access index",
+        );
+
+        let installed = state.basic(ADDR).unwrap().expect("the create2 deployer must exist");
+        assert_eq!(
+            installed.code_hash,
+            CREATE_2_DEPLOYER_CODEHASH,
+            "the installed code hash must be the create2 deployer hash",
+        );
+    }
+
+    /// The transition only fires on the first Canyon-active block: a block where
+    /// Canyon was already active two seconds earlier records no changes.
+    #[test]
+    fn canyon_already_active_records_no_code_change_in_bal() {
+        let mut state =
+            State::builder().with_database(InMemoryDB::default()).with_bal_builder().build();
+
+        ensure_create2_deployer(canyon(Some(100)), 100, &mut state).unwrap();
+        let first = state.take_built_alloy_bal().expect("the first activation builds a list");
+        assert_eq!(first.len(), 1, "the first activation must describe the force-deploy");
+        assert_eq!(
+            first[0].code_changes.len(),
+            1,
+            "the first activation must record exactly one code change",
+        );
+
+        // Re-arm the builder so the second block's writes are observed in isolation.
+        state.bal_state.bal_builder = Some(revm::state::bal::Bal::new());
+
+        ensure_create2_deployer(canyon(Some(100)), 102, &mut state).unwrap();
+        let second = state.take_built_alloy_bal().expect("the BAL builder must produce a list");
+        assert!(
+            second.is_empty(),
+            "a block where Canyon was already active must record no account changes",
+        );
+    }
+
+    /// Builds a schedule that activates Canyon at `timestamp` (when provided).
+    fn canyon(timestamp: Option<u64>) -> RollupConfig {
+        let mut config = RollupConfig::default();
+        if let Some(timestamp) = timestamp {
+            config.set_upgrade_activation_timestamp(BaseUpgrade::Canyon, timestamp);
+        }
+        config
+    }
 }
