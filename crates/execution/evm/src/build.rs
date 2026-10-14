@@ -67,12 +67,8 @@ impl<ChainSpec: Upgrades> BaseBlockAssembler<ChainSpec> {
         let number = evm_env.block_env.number().saturating_to();
 
         // EIP-7843: from Amsterdam on, the header carries a slot number. Base pins it to the L2
-        // block number, so the value the consensus layer supplied in the payload attributes must
-        // not influence the header.
-        // EIP-7843: from Amsterdam on, the header carries a slot number. Base puts the L2 block
-        // number here. The value the consensus layer supplied in the payload attributes is not
-        // used, so an attribute cannot make this path assemble a header that header validation
-        // rejects.
+        // block number, so a value the consensus layer supplied in the payload attributes can
+        // never make this path assemble a header that header validation rejects.
         let slot_number = expected_slot_number(&*self.chain_spec, timestamp, number);
 
         let withdrawals_root =
