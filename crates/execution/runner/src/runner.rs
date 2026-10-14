@@ -153,11 +153,6 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
     /// Applies all Base-specific wiring to the supplied builder and returns a launched node
     /// handle without waiting for shutdown.
     pub async fn launch(self, builder: BaseNodeBuilder) -> Result<LaunchedBaseNode> {
-        let handle = self.launch_node(builder).await?;
-        Ok(LaunchedBaseNode { handle })
-    }
-
-    async fn launch_node(self, builder: BaseNodeBuilder) -> Result<NodeHandleFor<BaseNode>> {
         info!(target: "base-runner", "starting custom Base node");
 
         let Self {
@@ -198,7 +193,7 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
             .into_iter()
             .fold(hooks, |hooks, callback| hooks.add_node_started_hook(move |_| callback()));
 
-        hooks.apply_to(builder).launch().await
+        Ok(LaunchedBaseNode { handle: hooks.apply_to(builder).launch().await? })
     }
 }
 
