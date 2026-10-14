@@ -383,14 +383,6 @@ where
             + Duration::from_millis(self.rollup_config.l2_block_timestamp_millis(block_number))
     }
 
-    fn next_block_seal_target(
-        &self,
-        block_number: u64,
-        last_seal_duration: Duration,
-    ) -> SystemTime {
-        self.block_seal_target(block_number.saturating_add(1), last_seal_duration)
-    }
-
     /// Handles one admin API query received while the main loop is running, applying any
     /// resulting shadow-cycle reset and active-state bookkeeping.
     async fn handle_admin_query_tick(
@@ -618,8 +610,10 @@ where
             Some((new_sealer, dur)) => {
                 pipeline.last_seal_duration = dur;
                 self.sealer = Some(new_sealer);
-                let target =
-                    self.next_block_seal_target(handle_block_number, pipeline.last_seal_duration);
+                let target = self.block_seal_target(
+                    handle_block_number.saturating_add(1),
+                    pipeline.last_seal_duration,
+                );
                 // Do not call build() here. The next payload is built after the engine
                 // acknowledges insertion of the sealed payload.
                 build_ticker.reset_at(target);
