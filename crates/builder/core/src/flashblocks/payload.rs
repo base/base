@@ -1437,7 +1437,9 @@ mod tests {
 
     use alloy_consensus::{Header, Receipt};
     use alloy_primitives::{Address, B256, Log, U256, map::foldhash::HashMap};
+    use alloy_consensus::BlockHeader as _;
     use base_common_consensus::BaseReceipt;
+    use reth_payload_primitives::BuiltPayload as _;
     use base_common_flashblocks::{FlashblockId, Metadata};
     use base_execution_chainspec::BaseChainSpec;
     use reth_chainspec::ChainSpec;
@@ -1592,6 +1594,74 @@ mod tests {
             state.bal_state.bal_index,
             alloy_eips::eip7928::BlockAccessIndex(1),
             "exactly the pre-execution changes must advance the block access index"
+        );
+    }
+
+    /// Verify that an Amsterdam block commits to the block access list it carried.
+    ///
+    /// The header commitment is what every validator recomputes and compares, so a flashblocks
+    /// block that carries a list but no longer commits to it in the header would be rejected by
+    /// the node's own `newPayload` and by every follower.
+    #[test]
+    fn build_block_commits_to_the_block_access_list() {
+        let chain_spec = amsterdam_chain_spec();
+        let parent = genesis_header();
+        let ctx = BasePayloadBuilderCtx::for_test(chain_spec, Arc::clone(&parent));
+
+        let db = StateProviderDatabase::new(NoopProvider::default().into_evm_state_provider());
+        let mut state =
+            State::builder().with_database(db).with_bundle_update().with_bal_builder_if(true).build();
+        let mut info = ExecutionInfo::default();
+
+        let (payload, _, _) = build_block::<_, NoopProvider>(
+            &mut state,
+            &NoopProvider::default(),
+            &ctx,
+            &mut info,
+            FlashblockId::default(),
+            false,
+        )
+        .expect("build_block should succeed for an empty Amsterdam block");
+
+        let block_access_list = payload.block_access_list()
+            .cloned()
+            .expect("an Amsterdam block must carry the block access list it commits to");
+        assert_eq!(
+            payload.block().block_access_list_hash(),
+            Some(alloy_primitives::keccak256(&block_access_list)),
+            "the header must commit to the block access list the block carries"
+        );
+    }
+
+    /// Verify that a pre-Amsterdam block keeps its commitment-free header and carries no list.
+    #[test]
+    fn build_block_omits_the_block_access_list_before_amsterdam() {
+        let chain_spec = minimal_chain_spec();
+        let parent = genesis_header();
+        let ctx = BasePayloadBuilderCtx::for_test(chain_spec, Arc::clone(&parent));
+
+        let db = StateProviderDatabase::new(NoopProvider::default().into_evm_state_provider());
+        let mut state = State::builder().with_database(db).with_bundle_update().build();
+        let mut info = ExecutionInfo::default();
+
+        let (payload, _, _) = build_block::<_, NoopProvider>(
+            &mut state,
+            &NoopProvider::default(),
+            &ctx,
+            &mut info,
+            FlashblockId::default(),
+            false,
+        )
+        .expect("build_block should succeed for an empty pre-Amsterdam block");
+
+        assert_eq!(
+            payload.block().block_access_list_hash(),
+            None,
+            "a pre-Amsterdam header must not commit to a block access list"
+        );
+        assert!(
+            payload.block_access_list().is_none(),
+            "a pre-Amsterdam block must not carry a block access list"
         );
     }
 
