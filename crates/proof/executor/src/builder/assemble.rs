@@ -112,6 +112,7 @@ where
             excess_blob_gas: excess_blob_gas.and_then(|x| x.try_into().ok()),
             parent_beacon_block_root: attrs.payload_attributes.parent_beacon_block_root,
             extra_data: encoded_base_fee_params,
+            block_access_list_hash,
             slot_number: attrs.payload_attributes.slot_number,
         }
         .seal_slow();
