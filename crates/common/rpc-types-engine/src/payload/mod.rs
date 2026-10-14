@@ -412,6 +412,46 @@ impl BaseExecutionPayload {
         (execution_payload, sidecar)
     }
 
+    /// Conversion from [`alloy_consensus::Block`] together with the encoded Amsterdam block
+    /// access list.
+    ///
+    /// A header only commits to the `keccak256` hash of the list, never to the encoded list
+    /// itself, so the caller must supply the bytes. When the block commits to a list this yields a
+    /// [`V5`](Self::V5) payload carrying the list and the header's slot number; otherwise it
+    /// yields the payload [`Self::from_block_unchecked`] would.
+    pub fn from_block_unchecked_with_extras<T, H>(
+        block_hash: B256,
+        block: &Block<T, H>,
+        block_access_list: Option<Bytes>,
+    ) -> (Self, BaseExecutionPayloadSidecar)
+    where
+        T: Encodable2718 + Transaction,
+        H: BlockHeader,
+    {
+        let (payload, sidecar) = Self::from_block_unchecked(block_hash, block);
+
+        let Some(block_access_list) = block_access_list else { return (payload, sidecar) };
+        if block.block_access_list_hash().is_none() {
+            return (payload, sidecar);
+        }
+
+        match payload {
+            Self::V4(payload_inner) => {
+                // Base has no beacon slots, so the slot number is the L2 block number.
+                let slot_number = block.slot_number().unwrap_or_default();
+                (
+                    Self::V5(BaseExecutionPayloadV5::new(
+                        payload_inner,
+                        block_access_list,
+                        slot_number,
+                    )),
+                    sidecar,
+                )
+            }
+            payload => (payload, sidecar),
+        }
+    }
+
     /// Creates a new instance from `newPayloadV2` payload, i.e. [`V1`](Self::V1) or
     /// [`V2`](Self::V2) variant.
     ///
