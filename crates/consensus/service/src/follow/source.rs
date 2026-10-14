@@ -1,11 +1,13 @@
-use std::fmt::Debug;
+use std::{fmt::Debug, sync::Arc};
 
 use alloy_consensus::Block;
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::{B256, Bytes, keccak256};
 use alloy_provider::{Provider, RootProvider};
 use async_trait::async_trait;
+use base_common_chains::Upgrades;
 use base_common_consensus::BaseTxEnvelope;
+use base_common_genesis::RollupConfig;
 use base_common_network::Base;
 use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
 use base_protocol::BlockInfo;
@@ -61,6 +63,25 @@ pub enum RemoteL2ClientError {
     /// The header commits to a block access list but lacks the fields an Amsterdam payload needs.
     #[error("block {0} commits to a block access list but is not a complete Amsterdam block")]
     IncompleteAmsterdamBlock(B256),
+
+    /// A post-Amsterdam source header carries no block access list commitment.
+    #[error("block {0} is post-Amsterdam but its header carries no block access list commitment")]
+    MissingBlockAccessListCommitment(B256),
+
+    /// A pre-Amsterdam source header carries a block access list commitment.
+    #[error("block {0} carries a block access list commitment before Amsterdam")]
+    UnexpectedBlockAccessListCommitment(B256),
+
+    /// The source header's slot number is not its block number.
+    #[error("block {block_hash} carries slot number {got} but must carry its block number {expected}")]
+    SlotNumberMismatch {
+        /// The hash of the block whose header was fetched.
+        block_hash: B256,
+        /// The block number, which is the expected slot number.
+        expected: u64,
+        /// The slot number the header carries.
+        got: u64,
+    },
 }
 
 /// Trait for fetching L2 block data from the remote node.
@@ -86,13 +107,18 @@ pub trait RemoteClient: Debug + Send + Sync {
 #[derive(Debug, Clone)]
 pub struct RemoteL2Client {
     provider: RootProvider<Base>,
+    rollup_config: Arc<RollupConfig>,
 }
 
 impl RemoteL2Client {
     /// Creates a new [`RemoteL2Client`] from a source L2 node URL.
-    pub fn new(url: Url) -> Self {
+    ///
+    /// The rollup config is this node's own schedule, so the payload version for a block is
+    /// chosen from the local fork activation rather than from what the source node's header
+    /// happens to carry.
+    pub fn new(url: Url, rollup_config: Arc<RollupConfig>) -> Self {
         let provider = RootProvider::<Base>::new_http(url);
-        Self { provider }
+        Self { provider, rollup_config }
     }
 
     /// Fetches the RLP-encoded block access list of the block with the given hash through
@@ -187,14 +213,34 @@ impl RemoteClient for RemoteL2Client {
         };
 
         // A header only carries the hash of the block access list, so an Amsterdam block needs the
-        // list fetched separately to be rebuilt as a V5 payload. Pre-Amsterdam blocks have no
-        // commitment and are converted exactly as before.
+        // list fetched separately to be rebuilt as a V5 payload. Which payload version is produced
+        // is decided by this node's own fork schedule, not by what the source header carries: a
+        // source that is behind or malformed must not make an Amsterdam block convert to a
+        // listless V4 payload. Denim is Base's Amsterdam activation in this branch, so the Denim
+        // gate is the local Amsterdam schedule.
+        let is_amsterdam = self
+            .rollup_config
+            .is_denim_active_at_timestamp(consensus_block.header.timestamp);
         let (execution_payload, _sidecar) = match consensus_block.header.block_access_list_hash {
             Some(expected_hash) => {
+                if !is_amsterdam {
+                    return Err(RemoteL2ClientError::UnexpectedBlockAccessListCommitment(
+                        block_hash,
+                    ));
+                }
                 // The conversion defaults a missing slot number to zero, which would fabricate
-                // a value the EL then rejects, so a header without one is malformed.
-                if consensus_block.header.slot_number.is_none() {
-                    return Err(RemoteL2ClientError::MissingSlotNumber(block_hash));
+                // a value the EL then rejects, so a header without one is malformed. Base puts the
+                // L2 block number in the slot, so any other value is rejected as well.
+                match consensus_block.header.slot_number {
+                    Some(slot) if slot == consensus_block.header.number => {}
+                    Some(got) => {
+                        return Err(RemoteL2ClientError::SlotNumberMismatch {
+                            block_hash,
+                            expected: consensus_block.header.number,
+                            got,
+                        });
+                    }
+                    None => return Err(RemoteL2ClientError::MissingSlotNumber(block_hash)),
                 }
                 let block_access_list =
                     self.get_block_access_list(block_hash, expected_hash).await?;
@@ -209,6 +255,9 @@ impl RemoteClient for RemoteL2Client {
                     return Err(RemoteL2ClientError::IncompleteAmsterdamBlock(block_hash));
                 }
                 (payload, sidecar)
+            }
+            None if is_amsterdam => {
+                return Err(RemoteL2ClientError::MissingBlockAccessListCommitment(block_hash));
             }
             None => BaseExecutionPayload::from_block_unchecked(block_hash, &consensus_block),
         };
@@ -229,6 +278,7 @@ mod tests {
     use alloy_rpc_types_engine::{CancunPayloadFields, PraguePayloadFields};
     use alloy_rpc_types_eth::{BlockTransactions, Header as RpcHeader};
     use base_common_rpc_types::{BaseBlockResponse, BaseHeaderResponse};
+    use base_common_genesis::{BaseUpgradeConfig, UpgradeConfig};
     use base_common_rpc_types_engine::BaseExecutionPayloadSidecar;
     use httpmock::{Mock, MockServer, prelude::*};
     use serde_json::{Value, json};
@@ -323,8 +373,37 @@ mod tests {
             .await
     }
 
+    /// A rollup config with Amsterdam active at the fixture header's timestamp.
+    fn amsterdam_config() -> Arc<RollupConfig> {
+        Arc::new(RollupConfig {
+            upgrades: UpgradeConfig {
+                base: BaseUpgradeConfig { denim: Some(1_699_999_999), ..Default::default() },
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+    }
+
+    /// A rollup config with Amsterdam not yet active at the fixture header's timestamp.
+    fn pre_amsterdam_config() -> Arc<RollupConfig> {
+        Arc::new(RollupConfig {
+            upgrades: UpgradeConfig {
+                base: BaseUpgradeConfig { denim: Some(1_700_000_001), ..Default::default() },
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+    }
+
+    fn client_with(server: &MockServer, rollup_config: Arc<RollupConfig>) -> RemoteL2Client {
+        RemoteL2Client::new(
+            server.url("/").parse().expect("mock server URL is valid"),
+            rollup_config,
+        )
+    }
+
     fn client(server: &MockServer) -> RemoteL2Client {
-        RemoteL2Client::new(server.url("/").parse().expect("mock server URL is valid"))
+        client_with(server, amsterdam_config())
     }
 
     /// Rebuilds the block the way the insert task does, from the envelope alone.
@@ -382,7 +461,8 @@ mod tests {
         let block_mock = mock_block(&server, &header).await;
         let list_mock = mock_block_access_list(&server, source_hash, Value::Null).await;
 
-        let envelope = client(&server).get_payload_by_number(BLOCK_NUMBER).await.unwrap();
+        let envelope =
+            client_with(&server, pre_amsterdam_config()).get_payload_by_number(BLOCK_NUMBER).await.unwrap();
 
         block_mock.assert_calls_async(1).await;
         list_mock.assert_calls_async(0).await;
@@ -394,6 +474,76 @@ mod tests {
         let rebuilt = rebuild(envelope);
         assert_eq!(rebuilt.header, header, "the payload must rebuild the exact source header");
         assert_eq!(rebuilt.header.hash_slow(), source_hash, "the rebuilt block hash must match");
+    }
+
+    /// An Amsterdam block whose source header carries no commitment is rejected instead of
+    /// falling back to a listless V4 payload, and no list is requested.
+    #[tokio::test]
+    async fn post_amsterdam_header_without_commitment_is_rejected() {
+        let server = MockServer::start_async().await;
+        let header = header(None);
+        let source_hash = header.hash_slow();
+        let block_mock = mock_block(&server, &header).await;
+        let list_mock = mock_block_access_list(&server, source_hash, Value::Null).await;
+
+        let error = client(&server).get_payload_by_number(BLOCK_NUMBER).await.unwrap_err();
+
+        block_mock.assert_calls_async(1).await;
+        list_mock.assert_calls_async(0).await;
+        assert!(
+            matches!(error, RemoteL2ClientError::MissingBlockAccessListCommitment(hash) if hash == source_hash),
+            "a missing commitment on an Amsterdam block must be reported, got {error:?}"
+        );
+    }
+
+    /// A committed Amsterdam header whose slot is not the block number is rejected before any
+    /// list is fetched, so the source cannot inject a slot the EL would reject.
+    #[tokio::test]
+    async fn slot_number_mismatch_is_rejected() {
+        let server = MockServer::start_async().await;
+        let list = block_access_list();
+        let mut header = header(Some(&list));
+        header.slot_number = Some(BLOCK_NUMBER + 1);
+        let source_hash = header.hash_slow();
+        let block_mock = mock_block(&server, &header).await;
+        let list_mock = mock_block_access_list(&server, source_hash, json!(list)).await;
+
+        let error = client(&server).get_payload_by_number(BLOCK_NUMBER).await.unwrap_err();
+
+        block_mock.assert_calls_async(1).await;
+        list_mock.assert_calls_async(0).await;
+        match error {
+            RemoteL2ClientError::SlotNumberMismatch { block_hash, expected, got } => {
+                assert_eq!(block_hash, source_hash, "the error must name the block");
+                assert_eq!(expected, BLOCK_NUMBER, "the expected slot is the block number");
+                assert_eq!(got, BLOCK_NUMBER + 1, "the reported slot is the header's");
+            }
+            other => panic!("a wrong slot must be reported as a mismatch, got {other:?}"),
+        }
+    }
+
+    /// A pre-Amsterdam header carrying a commitment is rejected, because converting it would
+    /// silently drop the list.
+    #[tokio::test]
+    async fn pre_amsterdam_header_with_commitment_is_rejected() {
+        let server = MockServer::start_async().await;
+        let list = block_access_list();
+        let header = header(Some(&list));
+        let source_hash = header.hash_slow();
+        let block_mock = mock_block(&server, &header).await;
+        let list_mock = mock_block_access_list(&server, source_hash, json!(list)).await;
+
+        let error = client_with(&server, pre_amsterdam_config())
+            .get_payload_by_number(BLOCK_NUMBER)
+            .await
+            .unwrap_err();
+
+        block_mock.assert_calls_async(1).await;
+        list_mock.assert_calls_async(0).await;
+        assert!(
+            matches!(error, RemoteL2ClientError::UnexpectedBlockAccessListCommitment(hash) if hash == source_hash),
+            "a pre-Amsterdam commitment must be reported, got {error:?}"
+        );
     }
 
     /// A committed block whose list the source node cannot return is an error, never a V4 payload.
