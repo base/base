@@ -1146,9 +1146,8 @@ where
         .map_err(PayloadBuilderError::other)?
         .apply_pre_execution_changes()?;
 
-    // Pre-execution changes are attributed to the pre-execution block access index;
-    // subsequent transactions start at index 1 (no-op unless a BAL builder is active).
-    state.bump_bal_index();
+    // Reth's block builder advances the block access index after the pre-execution changes, so
+    // the first sequencer transaction's writes are attributed to index 1.
 
     // 2. execute sequencer transactions
     let info = ctx.execute_sequencer_transactions(state)?;
@@ -1447,7 +1446,7 @@ mod tests {
     use reth_provider::{EvmStateProviderBox, StateProvider, noop::NoopProvider};
     use reth_revm::{State, database::StateProviderDatabase};
 
-    use super::{FlashblocksMetadata, build_block};
+    use super::{FlashblocksMetadata, build_block, execute_pre_steps};
     use crate::{ExecutionInfo, flashblocks::context::BasePayloadBuilderCtx};
 
     /// Creates a minimal [`BaseChainSpec`] with all L1 upgrades through Cancun
@@ -1466,6 +1465,28 @@ mod tests {
 
         let inner =
             ChainSpec::builder().chain(901.into()).genesis(genesis).cancun_activated().build();
+
+        Arc::new(BaseChainSpec::from(inner))
+    }
+
+    /// Same as [`minimal_chain_spec`], with Amsterdam active at genesis so the block access list
+    /// builder is installed.
+    fn amsterdam_chain_spec() -> Arc<BaseChainSpec> {
+        let genesis: serde_json::Value = serde_json::json!({
+            "config": { "chainId": 901 },
+            "gasLimit": "0x1C9C380",
+            "timestamp": "0x0"
+        });
+        let genesis = serde_json::from_value(genesis).expect("valid genesis");
+
+        let inner = ChainSpec::builder()
+            .chain(901.into())
+            .genesis(genesis)
+            .cancun_activated()
+            .prague_activated()
+            .osaka_activated()
+            .amsterdam_activated()
+            .build();
 
         Arc::new(BaseChainSpec::from(inner))
     }
@@ -1546,6 +1567,32 @@ mod tests {
         // The flashblocks payload must reference the same block.
         assert_eq!(fb_payload.diff.block_hash, payload.block().hash(), "hash mismatch");
         assert!(state_diff.is_empty(), "empty block must produce no invalidation diff");
+    }
+
+    /// Verify that the pre-execution changes advance the block access index exactly once.
+    ///
+    /// [`execute_pre_steps`] delegates them to reth's block builder, which already advances the
+    /// index. A second bump would shift every sequencer transaction's writes by one, so the block
+    /// access list the header commits to would disagree with the list a validator recomputes and
+    /// the block would be rejected.
+    #[test]
+    fn pre_execution_changes_advance_the_block_access_index_once() {
+        let chain_spec = amsterdam_chain_spec();
+        let parent = genesis_header();
+        let ctx = BasePayloadBuilderCtx::for_test(chain_spec, Arc::clone(&parent));
+
+        let db = StateProviderDatabase::new(NoopProvider::default().into_evm_state_provider());
+        // The caller installs the block access list builder for Amsterdam, exactly as
+        // `try_build` does.
+        let mut state =
+            State::builder().with_database(db).with_bundle_update().with_bal_builder_if(true).build();
+        execute_pre_steps(&mut state, &ctx).expect("pre-execution should succeed");
+
+        assert_eq!(
+            state.bal_state.bal_index,
+            alloy_eips::eip7928::BlockAccessIndex(1),
+            "exactly the pre-execution changes must advance the block access index"
+        );
     }
 
     /// Verify that [`build_block`] exercises the state root calculation path
