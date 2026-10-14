@@ -233,6 +233,30 @@ pub fn validate_block_access_list(
     Ok(())
 }
 
+/// Returns the `slot_number` a block at `number` and `timestamp` must carry in its header.
+///
+/// Base pins the EIP-7843 header field to the L2 block number, so from Amsterdam on the expected
+/// value is `Some(number)`; before Amsterdam the field must be absent, so the expected value is
+/// `None`.
+pub fn expected_slot_number(chain_spec: impl Upgrades, timestamp: u64, number: u64) -> Option<u64> {
+    chain_spec.is_amsterdam_active_at_timestamp(timestamp).then_some(number)
+}
+
+/// Returns whether `slot_number` satisfies the EIP-7843 rule for a block at `number` and
+/// `timestamp`.
+///
+/// This is the single statement of the rule. It returns a value rather than an error so each
+/// call site (header validation, Engine attribute validation, block assembly) maps a mismatch to
+/// its own error type.
+pub fn is_slot_number_valid(
+    chain_spec: impl Upgrades,
+    timestamp: u64,
+    number: u64,
+    slot_number: Option<u64>,
+) -> bool {
+    slot_number == expected_slot_number(chain_spec, timestamp, number)
+}
+
 /// Verify the calculated receipts root against the expected receipts root.
 fn verify_receipts<R: DepositReceiptExt>(
     expected_receipts_root: B256,

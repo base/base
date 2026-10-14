@@ -36,8 +36,8 @@ pub use proof::{calculate_receipt_root, calculate_receipt_root_no_memo};
 
 pub mod validation;
 pub use validation::{
-    canyon, holocene, isthmus, validate_base_time_metadata, validate_block_access_list,
-    validate_block_post_execution,
+    canyon, expected_slot_number, holocene, is_slot_number_valid, isthmus,
+    validate_base_time_metadata, validate_block_access_list, validate_block_post_execution,
 };
 
 pub mod error;
@@ -249,6 +249,33 @@ impl HeaderValidator<Header> for BaseBeaconConsensus {
             return Err(ConsensusError::RequestsHashUnexpected);
         }
 
+        // From Amsterdam on, every block header must carry `slot_number` equal to the L2 block
+        // number (EIP-7843), and pre-Amsterdam headers must omit the field entirely. Base derives
+        // both from the same block number when it assembles a block, so any other value is a
+        // header it could never have produced.
+        //
+        // The Engine API path re-validates the header it builds through this same function, but
+        // raw header/block import paths (e.g. `import_blocks_from_file`, historical/range sync)
+        // only flow through `HeaderValidator::validate_header`. Without the check here, an
+        // imported post-Amsterdam header carrying an arbitrary `slot_number` would be accepted
+        // and persisted while the Engine path rejects it — a block-validity differential that
+        // could lead to a chain split.
+        if !is_slot_number_valid(
+            &self.chain_spec,
+            header.timestamp(),
+            header.number(),
+            header.slot_number(),
+        ) {
+            return Err(ConsensusError::other(BaseConsensusError::SlotNumberMismatch {
+                expected: expected_slot_number(
+                    &self.chain_spec,
+                    header.timestamp(),
+                    header.number(),
+                ),
+                got: header.slot_number(),
+            }));
+        }
+
         Ok(())
     }
 
@@ -328,12 +355,12 @@ mod tests {
     use base_common_genesis::BaseUpgrade;
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_protocol::{BaseTimeScheduleError, BaseTimeUpdateTx};
-    use reth_chainspec::{BaseFeeParams, EthChainSpec, ForkCondition};
+    use reth_chainspec::{BaseFeeParams, EthChainSpec, EthereumHardfork, ForkCondition};
     use reth_consensus::{Consensus, ConsensusError, FullConsensus, HeaderValidator};
     use reth_primitives_traits::{RecoveredBlock, SealedBlock, SealedHeader, proofs};
     use reth_provider::BlockExecutionResult;
 
-    use crate::BaseBeaconConsensus;
+    use crate::{BaseBeaconConsensus, BaseConsensusError};
 
     fn timestamp_schedule_consensus() -> BaseBeaconConsensus {
         let mut chain_spec = BaseChainSpec::mainnet();
@@ -1126,5 +1153,100 @@ mod tests {
             beacon_consensus.validate_header(&header).unwrap_err(),
             ConsensusError::RequestsHashUnexpected,
         ));
+    }
+
+    /// The Denim timestamp-schedule fixture with the paired Ethereum `Amsterdam` fork active from
+    /// the same timestamp: genesis is block 7 at 100, so block 9 at 104 is pre-Amsterdam and the
+    /// first Amsterdam block is block 10 at 106.
+    fn amsterdam_slot_consensus() -> BaseBeaconConsensus {
+        let mut chain_spec = timestamp_schedule_consensus().chain_spec.as_ref().clone();
+        // `Amsterdam` is the Ethereum fork paired with Denim and is what gates EIP-7843; the
+        // fixture above only schedules the Base-side accessor.
+        chain_spec.set_fork(EthereumHardfork::Amsterdam, ForkCondition::Timestamp(105));
+        BaseBeaconConsensus::new(Arc::new(chain_spec))
+    }
+
+    /// Builds a header that satisfies every `validate_header` check other than the EIP-7843
+    /// slot-number rule under test.
+    fn slot_header(number: u64, timestamp: u64, slot_number: Option<u64>) -> SealedHeader<Header> {
+        SealedHeader::seal_slow(Header {
+            number,
+            timestamp,
+            base_fee_per_gas: Some(1),
+            slot_number,
+            ..Default::default()
+        })
+    }
+
+    /// Asserts `validate_header` rejects `header` with a slot-number mismatch reporting `expected`
+    /// and `got`.
+    fn assert_slot_number_mismatch(
+        consensus: &BaseBeaconConsensus,
+        header: &SealedHeader<Header>,
+        expected: Option<u64>,
+        got: Option<u64>,
+    ) {
+        let ConsensusError::Other(error) = consensus.validate_header(header).unwrap_err() else {
+            panic!("expected a slot number mismatch, got a different consensus error");
+        };
+        let Some(BaseConsensusError::SlotNumberMismatch { expected: reported, got: actual }) =
+            error.downcast_ref::<BaseConsensusError>()
+        else {
+            panic!("expected a slot number mismatch, got {error:?}");
+        };
+        assert_eq!(*reported, expected, "the mismatch must report the expected slot number");
+        assert_eq!(*actual, got, "the mismatch must report the slot number the header carried");
+    }
+
+    /// EIP-7843: after Amsterdam the header slot number is the L2 block number.
+    #[test]
+    fn test_amsterdam_validate_header_accepts_block_number_slot() {
+        let consensus = amsterdam_slot_consensus();
+
+        consensus
+            .validate_header(&slot_header(10, 106, Some(10)))
+            .expect("the first Amsterdam block must accept slot_number == block number");
+    }
+
+    /// Regression: a post-Amsterdam header without a slot number must be rejected by the raw
+    /// header import path, matching the Engine API's `NoSlotNumberPostAmsterdam` enforcement.
+    #[test]
+    fn test_amsterdam_validate_header_rejects_missing_slot_number() {
+        let consensus = amsterdam_slot_consensus();
+
+        assert_slot_number_mismatch(&consensus, &slot_header(10, 106, None), Some(10), None);
+    }
+
+    /// Regression: a post-Amsterdam header whose slot number is not its block number must be
+    /// rejected by the raw header import path, so `import_blocks_from_file` and range sync cannot
+    /// persist a header the Engine path rejects.
+    #[test]
+    fn test_amsterdam_validate_header_rejects_foreign_slot_number() {
+        let consensus = amsterdam_slot_consensus();
+
+        assert_slot_number_mismatch(
+            &consensus,
+            &slot_header(10, 106, Some(11)),
+            Some(10),
+            Some(11),
+        );
+    }
+
+    /// EIP-7843: before Amsterdam the header must omit the slot number entirely.
+    #[test]
+    fn test_pre_amsterdam_validate_header_rejects_slot_number() {
+        let consensus = amsterdam_slot_consensus();
+
+        assert_slot_number_mismatch(&consensus, &slot_header(9, 104, Some(9)), None, Some(9));
+    }
+
+    /// Pre-Amsterdam headers keep their slot-number-free shape.
+    #[test]
+    fn test_pre_amsterdam_validate_header_accepts_absent_slot_number() {
+        let consensus = amsterdam_slot_consensus();
+
+        consensus
+            .validate_header(&slot_header(9, 104, None))
+            .expect("a pre-Amsterdam header without a slot number must be accepted");
     }
 }
