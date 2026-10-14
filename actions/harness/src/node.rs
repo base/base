@@ -726,6 +726,12 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
                     .await
                     .expect("TestRollupNode: fork_choice_updated_v3 failed");
             }
+            EngineForkchoiceVersion::V4 => {
+                self.engine
+                    .fork_choice_updated_v4(fcu, None)
+                    .await
+                    .expect("TestRollupNode: fork_choice_updated_v4 failed");
+            }
         }
     }
 
