@@ -161,7 +161,7 @@ and account/storage history, rounded outward to archive chunk boundaries. That i
 pre-Denim 2s blocks, not archive history. `--full` keeps 13,392,000 blocks, which is 31 days at
 Denim's 200ms cadence but about 310 days of 2s blocks: a mainnet `--full` download needs about
 1.9 TB and unpacks to about 3.7 TB. The recipe's mainnet download in October 2026 was about
-830 GiB and about 1.4 TB on disk. It stops after downloading; it does not create a validator copy,
+890 GB and about 1.4 TB on disk. It stops after downloading; it does not create a validator copy,
 start nodes or configure a fork. The recipe allows up to 16 simultaneous HTTP downloads
 (`--download-concurrency 16`).
 
