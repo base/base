@@ -204,6 +204,7 @@ impl ssz::Encode for BaseExecutionPayloadV5 {
 
     fn ssz_bytes_len(&self) -> usize {
         <BaseExecutionPayloadV4 as ssz::Encode>::ssz_bytes_len(&self.payload_inner)
+            + ssz::BYTES_PER_LENGTH_OFFSET
             + <Bytes as ssz::Encode>::ssz_bytes_len(&self.block_access_list)
             + <u64 as ssz::Encode>::ssz_fixed_len()
     }
