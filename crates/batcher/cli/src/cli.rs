@@ -165,56 +165,56 @@ pub struct BatcherArgs {
     )]
     pub publish_retry_delay: Duration,
 
-    /// DA backlog in bytes from which the batcher throttles, lowering the DA limits it pushes
-    /// to the `--sequencer-urls` endpoints.
+    /// DA backlog in estimated compressed bytes from which the batcher throttles, lowering the
+    /// DA limits it pushes to the `--sequencer-urls` endpoints.
     #[arg(
         long = "throttle-start-threshold",
-        default_value = "1000000",
+        default_value_t = ThrottleConfig::DEFAULT_START_THRESHOLD_BYTES,
         env = "BASE_BATCHER_THROTTLE_START_THRESHOLD"
     )]
     pub throttle_start_threshold: u64,
 
-    /// DA backlog in bytes from which the batcher throttles the most, with the lowest DA
-    /// limits. Must be above `--throttle-start-threshold`.
+    /// DA backlog in estimated compressed bytes from which the batcher throttles the most,
+    /// with the lowest DA limits. Must be above `--throttle-start-threshold`.
     #[arg(
         long = "throttle-full-threshold",
-        default_value = "2000000",
+        default_value_t = ThrottleConfig::DEFAULT_FULL_THRESHOLD_BYTES,
         env = "BASE_BATCHER_THROTTLE_FULL_THRESHOLD"
     )]
     pub throttle_full_threshold: u64,
 
-    /// DA bytes allowed per block while not throttling. Throttling lowers it towards
-    /// `--throttle-block-size-lower-limit`.
+    /// Estimated compressed DA bytes allowed per block while not throttling. Throttling lowers
+    /// it towards `--throttle-block-size-lower-limit`.
     #[arg(
         long = "throttle-block-size-upper-limit",
-        default_value = "130000",
+        default_value_t = ThrottleConfig::DEFAULT_BLOCK_SIZE_UPPER_LIMIT,
         env = "BASE_BATCHER_THROTTLE_BLOCK_SIZE_UPPER_LIMIT"
     )]
     pub throttle_block_size_upper_limit: u64,
 
-    /// DA bytes allowed per block at full throttle intensity. Must be above 0 and at most
-    /// `--throttle-block-size-upper-limit`.
+    /// Estimated compressed DA bytes allowed per block at full throttle intensity. Must be
+    /// above 0 and at most `--throttle-block-size-upper-limit`.
     #[arg(
         long = "throttle-block-size-lower-limit",
-        default_value = "2000",
+        default_value_t = ThrottleConfig::DEFAULT_BLOCK_SIZE_LOWER_LIMIT,
         env = "BASE_BATCHER_THROTTLE_BLOCK_SIZE_LOWER_LIMIT"
     )]
     pub throttle_block_size_lower_limit: u64,
 
-    /// DA bytes allowed per transaction while not throttling. Throttling lowers it towards
-    /// `--throttle-tx-size-lower-limit`.
+    /// Estimated compressed DA bytes allowed per transaction while not throttling. Throttling
+    /// lowers it towards `--throttle-tx-size-lower-limit`.
     #[arg(
         long = "throttle-tx-size-upper-limit",
-        default_value = "20000",
+        default_value_t = ThrottleConfig::DEFAULT_TX_SIZE_UPPER_LIMIT,
         env = "BASE_BATCHER_THROTTLE_TX_SIZE_UPPER_LIMIT"
     )]
     pub throttle_tx_size_upper_limit: u64,
 
-    /// DA bytes allowed per transaction at full throttle intensity. Must be above 0 and at
-    /// most `--throttle-tx-size-upper-limit`.
+    /// Estimated compressed DA bytes allowed per transaction at full throttle intensity. Must
+    /// be above 0 and at most `--throttle-tx-size-upper-limit`.
     #[arg(
         long = "throttle-tx-size-lower-limit",
-        default_value = "150",
+        default_value_t = ThrottleConfig::DEFAULT_TX_SIZE_LOWER_LIMIT,
         env = "BASE_BATCHER_THROTTLE_TX_SIZE_LOWER_LIMIT"
     )]
     pub throttle_tx_size_lower_limit: u64,
