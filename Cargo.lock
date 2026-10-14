@@ -4544,6 +4544,7 @@ dependencies = [
  "reth-primitives-traits",
  "reth-provider",
  "reth-trie",
+ "rstest",
  "tempfile",
  "tokio",
  "tracing",
