@@ -1,7 +1,7 @@
 //! Block Handler
 
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::{BTreeMap, VecDeque},
     time::SystemTime,
 };
 
@@ -45,9 +45,10 @@ pub struct BlockHandler {
     pub blocks_v4_topic: IdentTopic,
     /// The libp2p topic for V5 (Denim/Amsterdam) blocks, which carry the block access list.
     pub blocks_v5_topic: IdentTopic,
-    /// A map of seen block height to block hash set.
+    /// A map of seen block height to the block hashes seen at that height, oldest first.
+    /// Each per-height list is bounded and evicts its oldest hash once it is full.
     /// This map is pruned when it contains more than [`Self::SEEN_HASH_CACHE_SIZE`] entries.
-    pub seen_hashes: BTreeMap<u64, HashSet<B256>>,
+    pub seen_hashes: BTreeMap<u64, VecDeque<B256>>,
 }
 
 impl Handler for BlockHandler {
