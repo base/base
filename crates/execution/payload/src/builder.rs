@@ -413,10 +413,13 @@ impl<Txs> Builder<'_, Txs> {
         let mut info = ctx.execute_sequencer_transactions(&mut builder)?;
 
         // Bound the block access list before pool transactions grow it, seeded with what the
-        // pre-execution changes and committed sequencer transactions already built. Sequencer
-        // transactions cannot be dropped, so a seed that already crosses a bound fails the build
-        // rather than sealing a block every node would reject. Pre-Amsterdam blocks build no list
-        // and keep their unbounded pool scan.
+        // pre-execution changes and committed sequencer transactions already built. The item bound
+        // is the EIP-7928 validity rule and sequencer transactions cannot be dropped, so a seed
+        // that already crosses it fails the build rather than sealing a block every node would
+        // reject. The gossip size bound is a transport limit, applied to the pool transactions
+        // this scan may refuse and not to the seed, so a derived block whose mandatory content
+        // alone exceeds it still builds. Pre-Amsterdam blocks build no list and keep their
+        // unbounded pool scan.
         let header_gas_limit = builder.evm_mut().block().gas_limit();
         if let Some(built) = builder.evm_mut().db_mut().bal_state.bal_builder.as_ref() {
             let budget = BlockAccessListBudget::for_block(
@@ -429,7 +432,7 @@ impl<Txs> Builder<'_, Txs> {
                     target: "payload_builder",
                     id = %ctx.payload_id(),
                     %limit,
-                    "sequencer transactions exceed the block access list bounds, refusing to seal"
+                    "sequencer transactions exceed the block access list item bound, refusing to seal"
                 );
                 PayloadBuilderError::other(BasePayloadBuilderError::SequencerBlockAccessListLimit(
                     limit,
@@ -3379,7 +3382,7 @@ mod tests {
         };
         assert_eq!(payload.block().body().transactions.len(), 1, "the sequencer tx is included");
         let seed_items = alloy_eips::eip7928::bal::DecodedBal::from_rlp_bytes(
-            payload.block_access_list.clone().expect("an Amsterdam payload carries its list"),
+            payload.block_access_list.expect("an Amsterdam payload carries its list"),
         )
         .expect("the carried list must decode")
         .as_bal()

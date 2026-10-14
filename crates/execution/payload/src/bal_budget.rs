@@ -1,11 +1,14 @@
 //! Builder-side preflight for the EIP-7928 block access list bounds.
 //!
-//! reth rejects a payload whose block access list holds more than
-//! `gas_limit / ITEM_COST` items before executing it, and the gossip layer drops a payload
-//! envelope whose decoded size exceeds 10 MiB. Gas metering keeps ordinary blocks well inside
-//! both bounds, but the builder must never seal a block that fails either one, so
-//! [`BlockAccessListBudget`] tracks the list as transactions are committed and refuses a
-//! transaction whose committed state would cross a bound.
+//! Two different rules bound the list, and they fail differently. reth rejects a payload whose
+//! block access list holds more than `gas_limit / ITEM_COST` items before executing it, so a list
+//! over that bound is invalid on every node: the builder must never seal one, whether its items
+//! come from pool transactions or from the pre-execution changes and sequencer transactions it
+//! cannot drop. The gossip layer drops a payload envelope whose decoded size exceeds `10 MiB`, which
+//! is a transport limit rather than a validity rule: on the derived path the builder has no
+//! alternative content to choose, so [`BlockAccessListBudget`] applies the size bound only to the
+//! pool transactions it is free to refuse, and a derived block above the cap is built and simply
+//! may not gossip. Gas metering keeps ordinary blocks well inside both bounds.
 
 use alloy_eips::eip7928::ITEM_COST;
 use alloy_primitives::{
@@ -64,7 +67,7 @@ impl BlockAccessListBudget {
     /// Ceiling on the outer RLP list header of the block access list.
     pub const LIST_HEADER_BYTES: u64 = 9;
     /// Ceiling on an account entry without its changes: the 21-byte address, five inner list
-    /// headers and the account list header, each header at most 4 bytes under 16 MiB.
+    /// headers and the account list header, each header at most 4 bytes under `16 MiB`.
     pub const ACCOUNT_BYTES: u64 = 21 + 5 * 4 + 4;
     /// Ceiling on a storage slot entry without its writes: a 33-byte key plus the slot list
     /// header and the write list header.
@@ -85,8 +88,11 @@ impl BlockAccessListBudget {
     /// already built (pre-execution changes and sequencer transactions) and the encoded bytes,
     /// SSZ offsets included, of the transactions already committed.
     ///
-    /// Fails when the seed alone already exceeds a bound: the block would be invalid whatever
-    /// pool transactions follow.
+    /// Fails when the seed alone already exceeds the item bound: the list would be invalid on every
+    /// node whatever pool transactions follow, and the seeded transactions cannot be dropped. The
+    /// size bound is deliberately not applied to the seed, because it is a transport limit rather
+    /// than a validity rule and the derived path has no other content to build; it is enforced on
+    /// the pool transactions the caller is free to refuse.
     pub fn for_block(
         gas_limit: u64,
         built: &Bal,
@@ -98,7 +104,7 @@ impl BlockAccessListBudget {
             built,
             included_tx_bytes,
         );
-        budget.check_limits()?;
+        budget.check_items()?;
         Ok(budget)
     }
 
@@ -135,18 +141,12 @@ impl BlockAccessListBudget {
         Self { max_items, items, max_bytes, bytes, accessed }
     }
 
-    /// Fails when the list built so far already exceeds the item or the size limit.
-    pub const fn check_limits(&self) -> Result<(), BlockAccessListLimit> {
+    /// Fails when the list built so far already holds more items than the block gas limit allows.
+    pub const fn check_items(&self) -> Result<(), BlockAccessListLimit> {
         if self.items > self.max_items {
             return Err(BlockAccessListLimit::Items {
                 items: self.items,
                 max_items: self.max_items,
-            });
-        }
-        if self.bytes > self.max_bytes {
-            return Err(BlockAccessListLimit::Size {
-                bytes: self.bytes,
-                max_bytes: self.max_bytes,
             });
         }
         Ok(())
@@ -441,7 +441,7 @@ mod tests {
         );
     }
 
-    /// The block budget enforces the 10 MiB decoded gossip envelope limit at both configs.
+    /// The block budget enforces the `10 MiB` decoded gossip envelope limit at both configs.
     #[test]
     fn block_budget_uses_the_gossip_envelope_limit() {
         for gas_limit in [GAS_LIMIT_400M, GAS_LIMIT_40M] {
@@ -450,6 +450,62 @@ mod tests {
             assert_eq!(budget.max_bytes(), 10 * (1 << 20), "the envelope limit is 10 MiB");
             assert_eq!(budget.items(), 0, "an empty list holds no items");
         }
+    }
+
+    /// The item bound is the EIP-7928 validity rule, so a seed over it still fails the build: the
+    /// block would be rejected by every node, and the seeded transactions cannot be dropped.
+    #[test]
+    fn seed_over_the_item_limit_fails_the_build_for_both_configs() {
+        for (gas_limit, max_items) in [(GAS_LIMIT_400M, 200_000_u64), (GAS_LIMIT_40M, 20_000_u64)] {
+            assert_eq!(
+                BlockAccessListBudget::for_block(
+                    gas_limit,
+                    &built_list_with_items(max_items + 1),
+                    0,
+                )
+                .unwrap_err(),
+                BlockAccessListLimit::Items { items: max_items + 1, max_items },
+                "a seed one item past the limit must fail for gas limit {gas_limit}"
+            );
+        }
+    }
+
+    /// A derived block (`no_tx_pool`) whose mandatory content alone pushes the envelope estimate
+    /// past the gossip cap must still build: refusing content derivation cannot replace would stall
+    /// the safe head on every retry, while the same block is derived and accepted by peers that
+    /// build it from L1.
+    #[test]
+    fn seed_above_the_envelope_limit_still_builds_when_the_items_fit() {
+        let included_tx_bytes = 11 * (1 << 20);
+        let mut budget = BlockAccessListBudget::for_block(
+            GAS_LIMIT_400M,
+            &built_list_with_items(1),
+            included_tx_bytes,
+        )
+        .expect("a seed inside the item bound must be accepted whatever its size estimate");
+        assert_eq!(budget.items(), 1, "the seed holds one item");
+        assert_eq!(budget.max_items(), 200_000, "the item bound follows the gas limit");
+        assert_eq!(budget.max_bytes(), 10 * (1 << 20), "the size bound stays the gossip cap");
+        assert!(
+            budget.bytes() > budget.max_bytes(),
+            "the fixture must seed the estimate above the cap, got {} bytes",
+            budget.bytes()
+        );
+
+        // The transport bound still holds for the pool transactions the builder may refuse.
+        let bytes_before = budget.bytes();
+        let added =
+            100 + BlockAccessListBudget::TX_OFFSET_BYTES + BlockAccessListBudget::ACCOUNT_BYTES;
+        assert_eq!(
+            budget.admit(&read_state(Address::repeat_byte(0x01), []), 100),
+            Err(BlockAccessListLimit::Size {
+                bytes: bytes_before + added,
+                max_bytes: 10 * (1 << 20),
+            }),
+            "a pool transaction that grows an over-cap envelope must be refused"
+        );
+        assert_eq!(budget.bytes(), bytes_before, "a refusal must not change the size");
+        assert_eq!(budget.items(), 1, "a refusal must not change the item count");
     }
 
     /// Commits `transactions` in order, once through the budget and once through revm's own
@@ -510,7 +566,7 @@ mod tests {
     }
 
     /// Lists straddling every RLP header width: an account with one read (short lists), one
-    /// whose reads exceed 55 bytes, one whose reads exceed 64 KiB, and one with thousands of
+    /// whose reads exceed 55 bytes, one whose reads exceed `64 KiB`, and one with thousands of
     /// written slots.
     #[test]
     fn bound_covers_long_list_header_boundaries() {
