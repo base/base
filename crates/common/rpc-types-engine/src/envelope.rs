@@ -550,8 +550,7 @@ impl NetworkPayloadEnvelope {
             [parent_beacon_block_root.as_slice(), block_data].concat().as_slice(),
         );
 
-        let payload =
-            BaseExecutionPayload::V5(BaseExecutionPayloadV5::from_ssz_bytes(block_data)?);
+        let payload = BaseExecutionPayload::V5(BaseExecutionPayloadV5::from_ssz_bytes(block_data)?);
 
         Ok(Self {
             payload,
@@ -808,7 +807,8 @@ mod tests {
             excess_blob_gas: 0,
         };
         let v4 = BaseExecutionPayloadV4::from_v3_with_withdrawals_root(v3, B256::repeat_byte(0x06));
-        let payload = BaseExecutionPayloadV5::new(v4, Bytes::from_static(block_access_list), slot_number);
+        let payload =
+            BaseExecutionPayloadV5::new(v4, Bytes::from_static(block_access_list), slot_number);
 
         NetworkPayloadEnvelope {
             payload: BaseExecutionPayload::V5(payload),
@@ -882,7 +882,8 @@ mod tests {
         // Same payload, different slot number (the block number is kept equal to the original).
         let mut tampered_slot = v5_envelope(&[0xaa, 0xbb, 0xcc], 42);
         tampered_slot.payload.as_v5_mut().unwrap().slot_number = 43;
-        let tampered_slot = NetworkPayloadEnvelope::decode_v5(&tampered_slot.encode_v5().unwrap()).unwrap();
+        let tampered_slot =
+            NetworkPayloadEnvelope::decode_v5(&tampered_slot.encode_v5().unwrap()).unwrap();
 
         for (name, tampered) in [("list", tampered_list), ("slot number", tampered_slot)] {
             assert_ne!(

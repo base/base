@@ -12,8 +12,8 @@ use alloy_eips::{
 use alloy_primitives::{Address, B64, B256, Bytes, U256};
 use alloy_rpc_types_engine::{
     BlobsBundleV1, BlobsBundleV2, ExecutionPayloadEnvelopeV2, ExecutionPayloadFieldV2,
-    ExecutionPayloadV1, ExecutionPayloadV3, PayloadAttributes as EthPayloadAttributes, PayloadError,
-    PayloadId,
+    ExecutionPayloadV1, ExecutionPayloadV3, PayloadAttributes as EthPayloadAttributes,
+    PayloadError, PayloadId,
 };
 use base_common_chains::Upgrades;
 use base_common_consensus::{
@@ -23,7 +23,8 @@ use base_common_consensus::{
 pub use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_common_rpc_types_engine::{
     BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5,
-    BaseExecutionPayloadEnvelopeV6, BaseExecutionPayloadV4, BaseExecutionPayloadV5, BasePayloadError,
+    BaseExecutionPayloadEnvelopeV6, BaseExecutionPayloadV4, BaseExecutionPayloadV5,
+    BasePayloadError,
 };
 use base_execution_evm::BaseNextBlockEnvAttributes;
 use reth_chainspec::EthChainSpec;
@@ -477,7 +478,8 @@ where
 
         // Amsterdam payloads must carry the block access list the header commits to, along with
         // the slot number (EIP-7843).
-        let block_access_list = block_access_list.ok_or(PayloadError::PostAmsterdamBlockWithoutBlockAccessList)?;
+        let block_access_list =
+            block_access_list.ok_or(PayloadError::PostAmsterdamBlockWithoutBlockAccessList)?;
         let slot_number =
             block.slot_number.ok_or(PayloadError::PostAmsterdamBlockWithoutSlotNumber)?;
 
