@@ -73,7 +73,9 @@ pub enum RemoteL2ClientError {
     UnexpectedBlockAccessListCommitment(B256),
 
     /// The source header's slot number is not its block number.
-    #[error("block {block_hash} carries slot number {got} but must carry its block number {expected}")]
+    #[error(
+        "block {block_hash} carries slot number {got} but must carry its block number {expected}"
+    )]
     SlotNumberMismatch {
         /// The hash of the block whose header was fetched.
         block_hash: B256,
@@ -218,9 +220,8 @@ impl RemoteClient for RemoteL2Client {
         // source that is behind or malformed must not make an Amsterdam block convert to a
         // listless V4 payload. Denim is Base's Amsterdam activation in this branch, so the Denim
         // gate is the local Amsterdam schedule.
-        let is_amsterdam = self
-            .rollup_config
-            .is_denim_active_at_timestamp(consensus_block.header.timestamp);
+        let is_amsterdam =
+            self.rollup_config.is_denim_active_at_timestamp(consensus_block.header.timestamp);
         let (execution_payload, _sidecar) = match consensus_block.header.block_access_list_hash {
             Some(expected_hash) => {
                 if !is_amsterdam {
@@ -277,8 +278,8 @@ mod tests {
     use alloy_rlp::Decodable;
     use alloy_rpc_types_engine::{CancunPayloadFields, PraguePayloadFields};
     use alloy_rpc_types_eth::{BlockTransactions, Header as RpcHeader};
-    use base_common_rpc_types::{BaseBlockResponse, BaseHeaderResponse};
     use base_common_genesis::{BaseUpgradeConfig, UpgradeConfig};
+    use base_common_rpc_types::{BaseBlockResponse, BaseHeaderResponse};
     use base_common_rpc_types_engine::BaseExecutionPayloadSidecar;
     use httpmock::{Mock, MockServer, prelude::*};
     use serde_json::{Value, json};
@@ -461,8 +462,10 @@ mod tests {
         let block_mock = mock_block(&server, &header).await;
         let list_mock = mock_block_access_list(&server, source_hash, Value::Null).await;
 
-        let envelope =
-            client_with(&server, pre_amsterdam_config()).get_payload_by_number(BLOCK_NUMBER).await.unwrap();
+        let envelope = client_with(&server, pre_amsterdam_config())
+            .get_payload_by_number(BLOCK_NUMBER)
+            .await
+            .unwrap();
 
         block_mock.assert_calls_async(1).await;
         list_mock.assert_calls_async(0).await;

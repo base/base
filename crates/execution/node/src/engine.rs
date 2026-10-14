@@ -764,9 +764,8 @@ mod tests {
         chain_spec.inner.genesis_header =
             SealedHeader::seal_slow(Header { number: 7, timestamp: 100, ..Default::default() });
         chain_spec.set_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(AMSTERDAM_TIMESTAMP));
-        chain_spec.set_fork(
-            EthereumHardfork::Amsterdam, ForkCondition::Timestamp(AMSTERDAM_TIMESTAMP),
-        );
+        chain_spec
+            .set_fork(EthereumHardfork::Amsterdam, ForkCondition::Timestamp(AMSTERDAM_TIMESTAMP));
         validator_with_chain_spec(chain_spec)
     }
 
@@ -828,8 +827,7 @@ mod tests {
         attributes.payload_attributes.slot_number = Some(FIRST_AMSTERDAM_BLOCK);
         // The parent is two seconds further back, so the timestamp ordering check is satisfied
         // and only the slot-number rule can reject these attributes.
-        let header =
-            Header { number: 8, timestamp: AMSTERDAM_TIMESTAMP - 4, ..Default::default() };
+        let header = Header { number: 8, timestamp: AMSTERDAM_TIMESTAMP - 4, ..Default::default() };
 
         let error = <engine::BaseEngineValidator<_, _> as PayloadValidator<BaseEngineTypes>>::
             validate_payload_attributes_against_header(&validator, &attributes, &header)
@@ -852,7 +850,9 @@ mod tests {
 
         let engine_error = <engine::BaseEngineValidator<_, _> as PayloadValidator<
             BaseEngineTypes,
-        >>::validate_payload_attributes_against_header(&validator, &attributes, &header)
+        >>::validate_payload_attributes_against_header(
+            &validator, &attributes, &header
+        )
         .expect_err("the Engine attribute path must reject a foreign slot number");
         assert_eq!(
             engine_error.to_string(),
