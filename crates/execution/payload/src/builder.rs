@@ -6,6 +6,7 @@ use std::{
 };
 
 use alloy_consensus::{BlockHeader, Transaction, Typed2718, transaction::TxHashRef};
+use alloy_eips::eip2718::Encodable2718;
 use alloy_evm::{
     Evm as AlloyEvm,
     block::{CommitChanges, TxResult},
@@ -49,10 +50,10 @@ use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction, Transac
 use reth_trie_common::ExecutionWitnessMode;
 use reth_trie_parallel::state_root_task::PayloadStateRootHandle;
 use revm::context::{Block, BlockEnv};
-use tracing::{debug, debug_span, info, instrument, trace, warn};
+use tracing::{debug, debug_span, error, info, instrument, trace, warn};
 
 use crate::{
-    Attributes, BasePayloadBuilderAttributes, BlockDeferrals, BuilderMetrics,
+    Attributes, BasePayloadBuilderAttributes, BlockAccessListBudget, BlockDeferrals, BuilderMetrics,
     CoinbaseTipAffordability, InclusionTracker, MeteringProvider, ParkableBestPayloadTransactions,
     ParkablePayloadTransactions, ParkedPredicateIndex, PayloadPrimitives, PredicateLoadTracker,
     PredicateReadRecorder, RejectionCacheMetrics, StateChangeEffects, ValidityMetrics,
@@ -410,6 +411,32 @@ impl<Txs> Builder<'_, Txs> {
         // 2. execute sequencer transactions
         let mut info = ctx.execute_sequencer_transactions(&mut builder)?;
 
+        // Bound the block access list before pool transactions grow it, seeded with what the
+        // pre-execution changes and committed sequencer transactions already built. Sequencer
+        // transactions cannot be dropped, so a seed that already crosses a bound fails the build
+        // rather than sealing a block every node would reject. Pre-Amsterdam blocks build no list
+        // and keep their unbounded pool scan.
+        let header_gas_limit = builder.evm_mut().block().gas_limit();
+        if let Some(built) = builder.evm_mut().db_mut().bal_state.bal_builder.as_ref() {
+            let budget = BlockAccessListBudget::for_block(
+                header_gas_limit,
+                built,
+                info.sequencer_tx_bytes,
+            )
+            .map_err(|limit| {
+                error!(
+                    target: "payload_builder",
+                    id = %ctx.payload_id(),
+                    %limit,
+                    "sequencer transactions exceed the block access list bounds, refusing to seal"
+                );
+                PayloadBuilderError::other(BasePayloadBuilderError::SequencerBlockAccessListLimit(
+                    limit,
+                ))
+            })?;
+            info.bal_budget = Some(budget);
+        }
+
         // 3. if mem pool transactions are requested we execute them
         if !ctx.attributes().no_tx_pool() {
             let best_txs = best(ctx.best_transaction_attributes(builder.evm_mut().block()));
@@ -597,6 +624,11 @@ pub struct ExecutionInfo {
     /// Transaction hashes that exceeded a per-transaction resource limit and should be
     /// permanently removed from the pool and recorded in the shared rejection cache.
     pub permanently_rejected_txs: Vec<TxHash>,
+    /// Encoded bytes of the committed sequencer transactions, each plus its SSZ offset.
+    pub sequencer_tx_bytes: u64,
+    /// EIP-7928 item and envelope-size budget for the block access list. Set once Amsterdam is
+    /// active; pool transactions that would cross it are not committed.
+    pub bal_budget: Option<BlockAccessListBudget>,
 }
 
 impl ExecutionInfo {
@@ -609,6 +641,8 @@ impl ExecutionInfo {
             inclusion: InclusionTracker::default(),
             resource_metering_usage: Vec::new(),
             permanently_rejected_txs: Vec::new(),
+            sequencer_tx_bytes: 0,
+            bal_budget: None,
         }
     }
 
@@ -814,6 +848,8 @@ where
                 ));
             }
 
+            let encoded_len = sequencer_tx.encoded_bytes().len() as u64;
+
             // Convert the transaction to a [RecoveredTx]. This is
             // purely for the purposes of utilizing the `evm_config.tx_env`` function.
             // Deposit transactions do not have signatures, so if the tx is a deposit, this
@@ -867,6 +903,11 @@ where
             };
 
             info.cumulative_gas_used += gas_output.tx_gas_used();
+            // Only committed transactions reach the payload, so skipped pre-includes must not
+            // consume the envelope budget.
+            info.sequencer_tx_bytes = info.sequencer_tx_bytes.saturating_add(
+                encoded_len.saturating_add(BlockAccessListBudget::TX_OFFSET_BYTES),
+            );
             if let Some(usage) = pending_resource_usage {
                 resource_metering.apply_accounted_usage(
                     &tx_hash,
@@ -1300,6 +1341,9 @@ where
             let mut state_change_effects = StateChangeEffects::default();
             let mut pending_resource_usage = None;
             let mut executed_decision = None;
+            let mut bal_limit = None;
+            let tx_bytes = tx.encode_2718_len() as u64;
+            let bal_budget = &mut info.bal_budget;
             let gas_output = match builder.execute_transaction_with_commit_condition(
                 tx.clone(),
                 |result| {
@@ -1313,20 +1357,46 @@ where
                     );
                     if decision.should_exclude() {
                         executed_decision = Some(decision);
-                        CommitChanges::No
-                    } else {
-                        pending_resource_usage = decision.committed_usage();
-                        if !predicate_index.is_empty() {
-                            state_change_effects =
-                                predicate_index.affected_by_state(&result_and_state.state);
-                            predicate_bucket_wakeups += state_change_effects.woken_buckets as u64;
-                        }
-                        CommitChanges::Yes
+                        return CommitChanges::No;
                     }
+                    // Admitting records the transaction's accesses, so it must be the last check
+                    // before committing.
+                    if let Some(budget) = bal_budget.as_mut()
+                        && let Err(limit) = budget.admit(&result_and_state.state, tx_bytes)
+                    {
+                        bal_limit = Some(limit);
+                        return CommitChanges::No;
+                    }
+                    pending_resource_usage = decision.committed_usage();
+                    if !predicate_index.is_empty() {
+                        state_change_effects =
+                            predicate_index.affected_by_state(&result_and_state.state);
+                        predicate_bucket_wakeups += state_change_effects.woken_buckets as u64;
+                    }
+                    CommitChanges::Yes
                 },
             ) {
                 Ok(Some(gas_output)) => gas_output,
                 Ok(None) => {
+                    if let Some(limit) = bal_limit {
+                        trace!(
+                            target: "payload_builder",
+                            tx_hash = %tx_hash,
+                            %limit,
+                            "skipping transaction that would exceed the block access list bounds"
+                        );
+                        if has_validity_predicates {
+                            self.emit_validity_rejection(
+                                tx_hash,
+                                validity_consideration_index,
+                                "block_access_list_limit_exceeded",
+                                "transaction does not fit the remaining block access list budget",
+                                false,
+                            );
+                        }
+                        Self::skip_current(&mut best_txs, tx.signer(), tx.nonce(), replay_independent);
+                        continue;
+                    }
                     resource_throttled += 1;
                     if executed_decision.as_ref().is_some_and(|decision| decision.is_permanent()) {
                         info.permanently_rejected_txs.push(tx_hash);
@@ -1585,9 +1655,11 @@ mod tests {
     };
     use revm::{Database, state::EvmState};
 
-    use super::{BasePayloadBuilderCtx, Builder, ExecutionInfo};
+    use super::{
+        BasePayloadBuilderCtx, BasePayloadBuilderError, Builder, ExecutionInfo, PayloadBuilderError,
+    };
     use crate::{
-        BasePayloadBuilderAttributes, MeteringProvider, NoopMeteringProvider,
+        BasePayloadBuilderAttributes, BlockAccessListBudget, BlockAccessListLimit, MeteringProvider, NoopMeteringProvider,
         ParkablePayloadTransactions, ResourceMeteringConfig, ResourceMeteringDimension,
         ResourceMeteringOperation, ResourceMeteringSchedule, SharedMeteringProvider,
         config::BaseBuilderConfig, payload::EthPayloadBuilderAttributes,
@@ -1686,6 +1758,13 @@ mod tests {
     const DENIM_TIMESTAMP: u64 = 1;
 
     fn pool_payload_context(timestamp: u64) -> BasePayloadBuilderCtx<BaseEvmConfig, BaseChainSpec> {
+        pool_payload_context_with_gas_limit(timestamp, 30_000_000)
+    }
+
+    fn pool_payload_context_with_gas_limit(
+        timestamp: u64,
+        gas_limit: u64,
+    ) -> BasePayloadBuilderCtx<BaseEvmConfig, BaseChainSpec> {
         let chain_spec = Arc::new(
             BaseChainSpecBuilder::base_mainnet()
                 .with_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(DENIM_TIMESTAMP))
@@ -1694,10 +1773,8 @@ mod tests {
                 .with_fork(EthereumHardfork::Amsterdam, ForkCondition::Timestamp(DENIM_TIMESTAMP))
                 .build(),
         );
-        let parent = Arc::new(SealedHeader::seal_slow(Header {
-            gas_limit: 30_000_000,
-            ..Default::default()
-        }));
+        let parent =
+            Arc::new(SealedHeader::seal_slow(Header { gas_limit, ..Default::default() }));
         let payload_id = PayloadId::new([0; 8]);
         let attributes = BasePayloadBuilderAttributes::<BaseTxEnvelope> {
             payload_attributes: EthPayloadBuilderAttributes {
@@ -3039,6 +3116,311 @@ mod tests {
             payload.block().slot_number,
             Some(42),
             "the attribute slot number must win over the block number fallback"
+        );
+    }
+
+    /// Today's Base block gas limit (2 s blocks).
+    const GAS_LIMIT_400M: u64 = 400_000_000;
+    /// The 200 ms block gas limit (20M target, 40M limit).
+    const GAS_LIMIT_40M: u64 = 40_000_000;
+
+    /// Result of an Amsterdam pool scan driven by [`amsterdam_bal_scan`].
+    struct BalScan {
+        /// Hashes of the transactions the sealed block includes.
+        included: Vec<TxHash>,
+        /// The block access list budget after the scan.
+        budget: BlockAccessListBudget,
+        /// Item count of the list the sealed block carries.
+        sealed_items: u64,
+        /// `(sender, nonce)` pairs the scan marked invalid.
+        invalid: Vec<(Address, u64)>,
+    }
+
+    /// Runs the Amsterdam pool scan over `transactions`, with every sender funded, using the budget
+    /// `budget` builds from the list seeded by the pre-execution changes, then seals the block.
+    fn amsterdam_bal_scan(
+        ctx: &BasePayloadBuilderCtx<BaseEvmConfig, BaseChainSpec>,
+        transactions: Vec<BasePooledTransaction>,
+        budget: impl FnOnce(&revm::state::bal::Bal) -> BlockAccessListBudget,
+    ) -> BalScan {
+        let mut provider = test_state_provider();
+        for transaction in &transactions {
+            provider.insert_account(
+                transaction.sender(),
+                Account { balance: U256::MAX, ..Default::default() },
+                None,
+                HashMap::default(),
+            );
+        }
+        let mut db = State::builder()
+            .with_database(StateProviderDatabase::new((&provider).into_evm_state_provider()))
+            .with_bundle_update()
+            .with_bal_builder()
+            .build();
+        db.load_cache_account(Predeploys::L1_BLOCK_INFO).expect("L1 block info must load");
+        let mut builder = ctx.block_builder(&mut db).expect("block builder");
+        builder.apply_pre_execution_changes().expect("pre-execution changes");
+        let mut info = ctx.execute_sequencer_transactions(&mut builder).expect("sequencer");
+        let seeded = budget(
+            builder
+                .evm_mut()
+                .db_mut()
+                .bal_state
+                .bal_builder
+                .as_ref()
+                .expect("an Amsterdam block builds a list"),
+        );
+        info.bal_budget = Some(seeded);
+
+        let invalid = Arc::new(Mutex::new(Vec::new()));
+        let transactions = TestParkableTransactions::recording(transactions, Arc::clone(&invalid));
+        ctx.execute_best_transactions(&mut info, &mut builder, transactions).expect("mempool scan");
+        let outcome = builder
+            .finish(&provider, Some((B256::ZERO, TrieUpdates::default())))
+            .expect("block must seal");
+        let included = outcome
+            .block
+            .sealed_block()
+            .body()
+            .transactions
+            .iter()
+            .map(|tx| tx.trie_hash())
+            .collect();
+        let sealed_list =
+            outcome.block_access_list.expect("an Amsterdam block must carry a block access list");
+        let invalid = invalid.lock().unwrap().clone();
+        BalScan {
+            included,
+            budget: info.bal_budget.expect("the scan must keep the budget"),
+            sealed_items: sealed_list.as_bal().total_bal_items(),
+            invalid,
+        }
+    }
+
+    /// The test signature recovers a different sender for every transaction, so these three
+    /// transactions come from three senders. `listed_only` is sent by `first`'s recipient to the
+    /// base fee vault, so once `first` is committed it touches only listed accounts and adds no
+    /// items. `fresh` brings a new sender and a new recipient.
+    fn zero_item_follow_up() -> [BasePooledTransaction; 3] {
+        let listed_only = pool_transaction_to(0, Predeploys::BASE_FEE_VAULT, U256::ZERO);
+        let first = pool_transaction_to(0, listed_only.sender(), U256::ZERO);
+        let fresh = pool_transaction_to(0, Address::repeat_byte(0x22), U256::ZERO);
+        [first, listed_only, fresh]
+    }
+
+    /// The scan's running item count must equal the item count of the list the block seals, so
+    /// the preflight bounds exactly the list reth validates. Checked at both block gas limits.
+    #[test]
+    fn amsterdam_bal_budget_matches_the_sealed_list_for_both_configs() {
+        for gas_limit in [GAS_LIMIT_400M, GAS_LIMIT_40M] {
+            let ctx = pool_payload_context_with_gas_limit(DENIM_TIMESTAMP, gas_limit);
+            let first = pool_transaction(0);
+            let second = pool_transaction_to(0, Address::repeat_byte(0x22), U256::from(1));
+            let scan = amsterdam_bal_scan(&ctx, vec![first.clone(), second.clone()], |built| {
+                BlockAccessListBudget::for_block(gas_limit, built, 0)
+                    .expect("the seed fits both configs")
+            });
+
+            assert_eq!(
+                scan.included,
+                vec![*first.hash(), *second.hash()],
+                "both transactions fit far inside the bounds at gas limit {gas_limit}"
+            );
+            assert!(scan.invalid.is_empty(), "no transaction may be refused");
+            assert_eq!(scan.budget.max_items(), gas_limit / 2_000, "EIP-7928 item limit");
+            assert_eq!(
+                scan.budget.items(),
+                scan.sealed_items,
+                "the running count must equal the sealed list at gas limit {gas_limit}"
+            );
+        }
+    }
+
+    /// With the list filled to its item limit, the scan still commits a transaction that adds
+    /// no items, refuses the next one that would add an item, and seals a list exactly at the
+    /// limit.
+    #[test]
+    fn amsterdam_pool_scan_stops_at_the_block_access_list_item_limit() {
+        let ctx = pool_payload_context(DENIM_TIMESTAMP);
+        let [first, listed_only, fresh] = zero_item_follow_up();
+        let unbounded = |built: &revm::state::bal::Bal| {
+            BlockAccessListBudget::new(u64::MAX, u64::MAX, built, 0)
+        };
+
+        let after_first = amsterdam_bal_scan(&ctx, vec![first.clone()], unbounded).budget.items();
+        let after_listed_only =
+            amsterdam_bal_scan(&ctx, vec![first.clone(), listed_only.clone()], unbounded);
+        assert_eq!(
+            after_listed_only.included.len(),
+            2,
+            "both transactions must commit without a limit"
+        );
+        assert_eq!(
+            after_listed_only.budget.items(),
+            after_first,
+            "the follow-up transaction must add no items"
+        );
+
+        let scan = amsterdam_bal_scan(
+            &ctx,
+            vec![first.clone(), listed_only.clone(), fresh.clone()],
+            |built| BlockAccessListBudget::new(after_first, u64::MAX, built, 0),
+        );
+        assert_eq!(
+            scan.included,
+            vec![*first.hash(), *listed_only.hash()],
+            "the transaction adding new accounts past the limit must be left out"
+        );
+        assert_eq!(scan.invalid, vec![(fresh.sender(), 0)], "only the refused transaction is skipped");
+        assert_eq!(scan.budget.items(), after_first, "the list must stop exactly at the limit");
+        assert_eq!(scan.sealed_items, after_first, "the sealed list must sit exactly at the limit");
+    }
+
+    /// With the envelope bound filled, the scan refuses the next transaction's bytes and keeps
+    /// the transactions that fit.
+    #[test]
+    fn amsterdam_pool_scan_stops_at_the_envelope_size_limit() {
+        let ctx = pool_payload_context(DENIM_TIMESTAMP);
+        let [first, listed_only, fresh] = zero_item_follow_up();
+        let filled = amsterdam_bal_scan(&ctx, vec![first.clone(), listed_only.clone()], |built| {
+            BlockAccessListBudget::new(u64::MAX, u64::MAX, built, 0)
+        })
+        .budget
+        .bytes();
+
+        let scan = amsterdam_bal_scan(
+            &ctx,
+            vec![first.clone(), listed_only.clone(), fresh.clone()],
+            |built| BlockAccessListBudget::new(u64::MAX, filled, built, 0),
+        );
+        assert_eq!(
+            scan.included,
+            vec![*first.hash(), *listed_only.hash()],
+            "the transaction past the envelope limit must be left out"
+        );
+        assert_eq!(scan.invalid, vec![(fresh.sender(), 0)], "only the refused transaction is skipped");
+        assert_eq!(scan.budget.bytes(), filled, "the envelope bound must stop exactly at the limit");
+        assert_eq!(scan.sealed_items, scan.budget.items(), "the refused transaction left no items");
+    }
+
+    /// A sequencer-only transfer to a fresh account that needs exactly its `gas_limit`.
+    fn sequencer_transfer(gas_limit: u64) -> BasePooledTransaction {
+        let envelope = BaseTxEnvelope::Eip1559(
+            TxEip1559 {
+                chain_id: 8_453,
+                nonce: 0,
+                gas_limit,
+                max_fee_per_gas: 2_000_000_000,
+                max_priority_fee_per_gas: 1,
+                to: TxKind::Call(Address::repeat_byte(0x44)),
+                ..Default::default()
+            }
+            .into_signed(Signature::test_signature()),
+        );
+        let encoded_len = envelope.encode_2718_len();
+        BasePooledTransaction::new(
+            envelope.try_into_recovered().expect("test signature must recover"),
+            encoded_len,
+        )
+    }
+
+    /// Builds a `no_tx_pool` payload whose only attribute transaction is `sequencer`, with its
+    /// sender funded, at `gas_limit`.
+    fn build_sequencer_only_payload(
+        gas_limit: u64,
+        sequencer: &BasePooledTransaction,
+    ) -> Result<BuildOutcomeKind<crate::BaseBuiltPayload<BasePrimitives>>, PayloadBuilderError>
+    {
+        let mut ctx = pool_payload_context_with_gas_limit(DENIM_TIMESTAMP, gas_limit);
+        ctx.config.attributes.transactions = vec![sequencer_attribute_tx(sequencer)];
+        ctx.config.attributes.no_tx_pool = true;
+        let mut provider = test_state_provider();
+        provider.insert_account(
+            sequencer.sender(),
+            Account { balance: U256::MAX, ..Default::default() },
+            None,
+            HashMap::default(),
+        );
+        Builder::new(|_| NoopPayloadTransactions::<BasePooledTransaction>::default()).build(
+            StateProviderDatabase::new((&provider).into_evm_state_provider()),
+            &provider,
+            Some(state_root_handle()),
+            ctx,
+        )
+    }
+
+    /// When the required sequencer transactions alone push the list past the EIP-7928 item limit
+    /// the build must fail with an explicit error instead of sealing a block every node rejects,
+    /// even under `no_tx_pool`, where the pool preflight never runs.
+    #[test]
+    fn oversized_sequencer_seed_fails_instead_of_sealing() {
+        // A plain transfer under Amsterdam costs 12,000 base + 3,000 for the recipient.
+        const TRANSFER_GAS: u64 = 15_000;
+        let sequencer = sequencer_transfer(TRANSFER_GAS);
+
+        let outcome = build_sequencer_only_payload(GAS_LIMIT_40M, &sequencer)
+            .expect("the same seed must seal under a 40M gas limit");
+        let BuildOutcomeKind::Freeze(payload) = outcome else {
+            panic!("a no-tx-pool payload must freeze")
+        };
+        assert_eq!(payload.block().body().transactions.len(), 1, "the sequencer tx is included");
+        let seed_items = alloy_eips::eip7928::bal::DecodedBal::from_rlp_bytes(
+            payload.block_access_list.clone().expect("an Amsterdam payload carries its list"),
+        )
+        .expect("the carried list must decode")
+        .as_bal()
+        .total_bal_items();
+        let max_items = BlockAccessListBudget::max_items_for_gas_limit(TRANSFER_GAS);
+        assert!(
+            seed_items > max_items,
+            "fixture: the seed ({seed_items} items) must exceed the {max_items}-item limit of a \
+             {TRANSFER_GAS}-gas block"
+        );
+
+        let error = build_sequencer_only_payload(TRANSFER_GAS, &sequencer)
+            .expect_err("an oversized sequencer seed must fail the build");
+        let PayloadBuilderError::Other(error) = error else {
+            panic!("the failure must be a Base payload builder error, got {error:?}")
+        };
+        assert!(
+            matches!(
+                error.downcast_ref::<BasePayloadBuilderError>(),
+                Some(BasePayloadBuilderError::SequencerBlockAccessListLimit(
+                    BlockAccessListLimit::Items { items, max_items: limit },
+                )) if *items == seed_items && *limit == max_items
+            ),
+            "the error must report the seed item count against the limit, got {error}"
+        );
+    }
+
+    /// A pre-include that is skipped never reaches the payload, so only committed sequencer
+    /// transactions may consume the envelope budget.
+    #[test]
+    fn skipped_sequencer_pre_include_consumes_no_envelope_budget() {
+        let funded = pool_transaction(0);
+        // Its sender is not funded, so it fails with `InvalidTx` and is skipped.
+        let unfunded = pool_transaction_to(0, Address::repeat_byte(0x33), U256::ZERO);
+        assert_ne!(unfunded.sender(), funded.sender(), "fixture: distinct senders");
+        let mut ctx = pool_payload_context(DENIM_TIMESTAMP);
+        ctx.config.attributes.transactions =
+            vec![sequencer_attribute_tx(&unfunded), sequencer_attribute_tx(&funded)];
+
+        let provider = test_state_provider();
+        let mut db = State::builder()
+            .with_database(StateProviderDatabase::new((&provider).into_evm_state_provider()))
+            .with_bundle_update()
+            .with_bal_builder()
+            .build();
+        db.load_cache_account(Predeploys::L1_BLOCK_INFO).expect("L1 block info must load");
+        let mut builder = ctx.block_builder(&mut db).expect("block builder");
+        builder.apply_pre_execution_changes().expect("pre-execution changes");
+        let info = ctx.execute_sequencer_transactions(&mut builder).expect("sequencer");
+
+        let funded_len = sequencer_attribute_tx(&funded).encoded_bytes().len() as u64;
+        assert_eq!(
+            info.sequencer_tx_bytes,
+            funded_len + BlockAccessListBudget::TX_OFFSET_BYTES,
+            "only the committed pre-include may count against the envelope budget"
         );
     }
 }
