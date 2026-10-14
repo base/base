@@ -306,4 +306,22 @@ mod tests {
 
         assert_eq!(decoded, payload);
     }
+
+    /// The SSZ length must count the block access list's variable-size offset, so it has to match
+    /// the length of the bytes actually encoded for every list size.
+    #[cfg(feature = "std")]
+    #[test]
+    fn ssz_bytes_len_matches_encoded_length_for_every_block_access_list_size() {
+        for list_len in [0_usize, 3, 255, 256, 300, 4_096] {
+            let payload = sample_payload(Bytes::from(vec![0xab; list_len]), 42);
+
+            let encoded = ssz::Encode::as_ssz_bytes(&payload);
+
+            assert_eq!(
+                ssz::Encode::ssz_bytes_len(&payload),
+                encoded.len(),
+                "ssz_bytes_len must equal the encoded length for a {list_len}-byte block access list"
+            );
+        }
+    }
 }

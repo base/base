@@ -558,6 +558,63 @@ mod tests {
         }
     }
 
+    /// Denim headers carry a slot number, and the execution layer rejects Denim attributes
+    /// without one, so every Denim block's attributes must carry its own L2 block number.
+    #[tokio::test]
+    async fn denim_attributes_carry_the_l2_block_number_as_slot_number() {
+        let (l1_info, parent) = snapshot_boundary();
+        let mut rollup = anchored_rollup(parent, 2_002);
+        rollup.set_upgrade_activation_timestamp(BaseUpgrade::Denim, 2_002);
+        let mut builder = StandaloneAttributesBuilder::new(
+            std::sync::Arc::new(rollup),
+            l1_info,
+            SystemConfig { gas_limit: 30_000_000, ..Default::default() },
+            None,
+        );
+
+        for offset in [1, 2, 6] {
+            let block_parent = L2BlockInfo {
+                block_info: BlockInfo {
+                    number: parent.block_info.number + offset - 1,
+                    ..parent.block_info
+                },
+                seq_num: parent.seq_num + offset - 1,
+                ..parent
+            };
+            let expected_block_number = parent.block_info.number + offset;
+
+            let attributes =
+                builder.prepare_payload_attributes(block_parent, l1_info.id()).await.unwrap();
+
+            assert_eq!(
+                attributes.payload_attributes.slot_number,
+                Some(expected_block_number),
+                "Denim attributes for L2 block {expected_block_number} must carry it as the slot number"
+            );
+        }
+    }
+
+    /// Before Denim there is no slot number in the header, so the attributes must not carry one.
+    #[tokio::test]
+    async fn pre_denim_attributes_carry_no_slot_number() {
+        let (l1_info, parent) = snapshot_boundary();
+        let rollup = anchored_rollup(parent, 2_002);
+        assert!(!rollup.is_denim_active(2_002), "the fixture must be pre-Denim");
+        let mut builder = StandaloneAttributesBuilder::new(
+            std::sync::Arc::new(rollup),
+            l1_info,
+            SystemConfig { gas_limit: 30_000_000, ..Default::default() },
+            None,
+        );
+
+        let attributes = builder.prepare_payload_attributes(parent, l1_info.id()).await.unwrap();
+
+        assert_eq!(
+            attributes.payload_attributes.slot_number, None,
+            "pre-Denim attributes must not carry a slot number"
+        );
+    }
+
     #[tokio::test]
     async fn fixed_origin_rejects_another_epoch() {
         let (l1_info, mut parent) = snapshot_boundary();
