@@ -77,6 +77,14 @@ impl Progress {
         self.plan.iter().position(|p| *p == phase).map_or(0, |i| i + 1)
     }
 
+    /// The phase running now, if any.
+    pub(crate) const fn phase(&self) -> Option<Phase> {
+        match self.current {
+            Some((phase, _)) => Some(phase),
+            None => None,
+        }
+    }
+
     /// Marks `phase` as running.
     pub(crate) fn start(&mut self, phase: Phase) {
         let step = self.position(phase);
@@ -231,6 +239,16 @@ mod tests {
         let rendered = progress.render();
         assert!(rendered.contains("path2-dispute=fail "), "{rendered}");
         assert!(rendered.ends_with("bystanders=not-run"), "{rendered}");
+    }
+
+    #[test]
+    fn phase_is_the_running_one() {
+        let mut progress = Progress::new(Scenario::Path3);
+        assert_eq!(progress.phase(), None);
+        progress.start(Phase::Setup);
+        assert_eq!(progress.phase(), Some(Phase::Setup));
+        progress.pass();
+        assert_eq!(progress.phase(), None);
     }
 
     #[test]

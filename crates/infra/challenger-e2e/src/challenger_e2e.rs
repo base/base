@@ -248,7 +248,18 @@ impl ChallengerE2e {
     pub async fn run() -> Result<()> {
         let config = Config::parse();
         let mut progress = Progress::new(config.scenario);
-        let result = Self::run_scenario(config, &mut progress).await;
+        let result = Self::run_scenario(config, &mut progress).await.map_err(|error| {
+            // Setup only reads the chain into a fork of its own, and a retried
+            // pod starts over on a fresh fork, so a transient RPC failure there
+            // (most often Anvil's upstream L1 RPC resetting a connection) cannot
+            // be the challenger's. Later phases are not excused this way: a
+            // dispute timeout can carry a transport error from a dead fork.
+            if progress.phase() == Some(Phase::Setup) {
+                Unavailable::classify(error, "an RPC during setup")
+            } else {
+                error
+            }
+        });
         if let Err(error) = &result {
             progress.fail(error);
         }

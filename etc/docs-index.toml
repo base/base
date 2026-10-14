@@ -436,7 +436,7 @@ digest = "1e4810a82c"
 
 ["crates/infra/challenger-e2e/README.md"]
 summary = "Behavioural e2e test of the challenger: forks L1 into Anvil, patches real games; the default `all` scenario covers Paths 1-4 on one fork by reviving nullified verifiers. Lists scenarios and env vars."
-digest = "dee969f1aa"
+digest = "7b77172c1c"
 
 ["crates/infra/load-tests/README.md"]
 summary = "Load testing: devnet/sepolia profiles, YAML workloads, calibration, adaptive or proactive validity signing, resource pacing, benchmark/report tools, and rollout limitations."

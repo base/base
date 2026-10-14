@@ -371,6 +371,11 @@ whoever triages it after the wrong component. The driver keeps the two apart:
   node's failure.
 - **Too few eligible games is not the challenger's failure either**, whether
   the proposer is stalled or the implementation has just rotated.
+- **Setup is excused for any transient RPC failure**, such as the fork's
+  upstream L1 RPC resetting a connection. Setup only reads the chain into a fork
+  of its own, and a retried pod starts over on a fresh one. Later phases are not
+  excused this way, because a dispute timeout can carry a transport error from
+  a fork that died.
 
 These failures carry `infra=true`, and the binary exits with **2** instead of 1,
 so the Workflow can retry them without retrying a real regression. Any other
