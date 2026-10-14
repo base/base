@@ -1,0 +1,44 @@
+name: Proof Build Recipes
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'etc/docker/proof-builds/**'
+      - '.github/workflows/proof-build-recipes.yml'
+  pull_request:
+    paths:
+      - 'etc/docker/proof-builds/**'
+      - '.github/workflows/proof-build-recipes.yml'
+  merge_group:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: proof-build-recipes-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  proof-build-recipes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+
+      - name: Check shell scripts
+        run: |
+          shellcheck etc/docker/proof-builds/*.sh
+          for script in etc/docker/proof-builds/*.sh; do
+            sh -n "$script"
+          done
+
+      - name: Test recipes
+        run: python3 etc/docker/proof-builds/test_recipes.py
