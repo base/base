@@ -115,7 +115,8 @@ pub trait BatchPipeline: Send {
     /// Estimated DA bytes still awaiting confirmation.
     ///
     /// Unencoded queued blocks plus channels that are not fully confirmed.
-    /// Deposits are excluded.
+    /// Deposits are excluded. Each transaction counts its `FastLZ` DA size
+    /// estimate, the same unit the block builder's DA limits use.
     fn da_backlog_bytes(&self) -> u64;
 
     /// Force blob DA on later submissions. No-op unless `da_type` is calldata.
