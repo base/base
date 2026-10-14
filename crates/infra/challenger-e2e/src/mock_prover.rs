@@ -16,7 +16,8 @@
 //! With [`MockFault::FailFirst`], the first attempt of every SNARK session the
 //! fault target (the challenger) requests reports `Failed`. The real service
 //! keeps a failed session failed until the same session is re-sent with
-//! `retry_failed`, and so does this mock, so a dispute only lands if the
+//! `retry_failed`, rejecting a resend without it, and so does this mock. A
+//! dispute therefore only lands if the
 //! challenger notices the failure and re-requests the proof. The driver's own
 //! staging requests carry a different prover address and are never failed.
 //!
@@ -55,6 +56,9 @@ use crate::config::MockFault;
 
 /// `NOT_FOUND`, as the real prover-service and its client use it.
 const ERROR_NOT_FOUND: i32 = -32004;
+
+/// `FAILED_PRECONDITION`, as the real prover-service and its client use it.
+const ERROR_FAILED_PRECONDITION: i32 = -32017;
 
 /// Leading four bytes of the mock receipt's PLONK verifying-key hash.
 ///
@@ -116,6 +120,10 @@ impl MockProverService {
         ErrorObjectOwned::owned(ErrorCode::InvalidParams.code(), message.into(), None::<()>)
     }
 
+    fn failed_precondition(message: impl Into<String>) -> ErrorObjectOwned {
+        ErrorObjectOwned::owned(ERROR_FAILED_PRECONDITION, message.into(), None::<()>)
+    }
+
     fn not_found(message: impl Into<String>) -> ErrorObjectOwned {
         ErrorObjectOwned::owned(ERROR_NOT_FOUND, message.into(), None::<()>)
     }
@@ -174,8 +182,15 @@ impl MockProverService {
                 )));
             }
             // Idempotent on an identical request, as the real service is: a
-            // failed session starts a new attempt only when the caller allows it.
-            if existing.failed && request.retry_failed {
+            // failed session starts a new attempt only when the caller allows
+            // it, and a resend that does not is rejected, not ignored.
+            if existing.failed {
+                if !request.retry_failed {
+                    return Err(Self::failed_precondition(format!(
+                        "session_id {session_id} already failed; set retry_failed to true to \
+                         requeue it"
+                    )));
+                }
                 existing.failed = false;
                 existing.submitted_at = Instant::now();
                 existing.requeues += 1;
@@ -465,10 +480,12 @@ mod tests {
         mock.prove(snark("s", 100)).expect("accepted");
         assert_eq!(mock.status("s").expect("known").status, ProofStatus::Failed);
 
-        // Stays failed until re-sent with retry_failed, as the real service does.
+        // A resend without retry_failed is rejected and leaves the session
+        // failed, as the real service does.
         let mut resend = snark("s", 100);
         resend.retry_failed = false;
-        mock.prove(resend).expect("idempotent");
+        let error = mock.prove(resend).expect_err("retry not allowed");
+        assert_eq!(error.code(), ERROR_FAILED_PRECONDITION);
         assert_eq!(mock.status("s").expect("known").status, ProofStatus::Failed);
 
         mock.prove(snark("s", 100)).expect("requeued");

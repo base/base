@@ -36,7 +36,8 @@ anyway, because the throwaway challenger key is not a registered TEE proposer.
 By default the mock also fails the first attempt of every proof session the
 challenger requests (`CHALLENGER_E2E_MOCK_FAULT=fail-first`). Like the real
 service, it keeps a failed session failed until the same session is re-sent
-with `retry_failed`, and only then proves it. A dispute can therefore only land
+with `retry_failed` (a resend without it is rejected with `FAILED_PRECONDITION`),
+and only then proves it. A dispute can therefore only land
 if the challenger noticed the failure and re-requested the proof, and each
 dispute assertion also checks the mock's record: the session behind the
 challenger's proof shows one injected failure and at least one requeue. The
