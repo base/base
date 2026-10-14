@@ -183,6 +183,42 @@ pub struct BatcherArgs {
     )]
     pub throttle_full_threshold: u64,
 
+    /// DA bytes allowed per block while not throttling. Throttling lowers it towards
+    /// `--throttle-block-size-lower-limit`.
+    #[arg(
+        long = "throttle-block-size-upper-limit",
+        default_value = "130000",
+        env = "BASE_BATCHER_THROTTLE_BLOCK_SIZE_UPPER_LIMIT"
+    )]
+    pub throttle_block_size_upper_limit: u64,
+
+    /// DA bytes allowed per block at full throttle intensity. Must be above 0 and at most
+    /// `--throttle-block-size-upper-limit`.
+    #[arg(
+        long = "throttle-block-size-lower-limit",
+        default_value = "2000",
+        env = "BASE_BATCHER_THROTTLE_BLOCK_SIZE_LOWER_LIMIT"
+    )]
+    pub throttle_block_size_lower_limit: u64,
+
+    /// DA bytes allowed per transaction while not throttling. Throttling lowers it towards
+    /// `--throttle-tx-size-lower-limit`.
+    #[arg(
+        long = "throttle-tx-size-upper-limit",
+        default_value = "20000",
+        env = "BASE_BATCHER_THROTTLE_TX_SIZE_UPPER_LIMIT"
+    )]
+    pub throttle_tx_size_upper_limit: u64,
+
+    /// DA bytes allowed per transaction at full throttle intensity. Must be above 0 and at
+    /// most `--throttle-tx-size-upper-limit`.
+    #[arg(
+        long = "throttle-tx-size-lower-limit",
+        default_value = "150",
+        env = "BASE_BATCHER_THROTTLE_TX_SIZE_LOWER_LIMIT"
+    )]
+    pub throttle_tx_size_lower_limit: u64,
+
     /// How the throttle intensity, from 0 (highest DA limits) to 1 (lowest), grows with
     /// the DA backlog between `--throttle-start-threshold` and `--throttle-full-threshold`.
     ///
@@ -349,7 +385,10 @@ impl BatcherArgs {
                     start_threshold_bytes: self.throttle_start_threshold,
                     full_threshold_bytes: self.throttle_full_threshold,
                     max_intensity: 1.0,
-                    ..Default::default()
+                    block_size_lower_limit: self.throttle_block_size_lower_limit,
+                    block_size_upper_limit: self.throttle_block_size_upper_limit,
+                    tx_size_lower_limit: self.throttle_tx_size_lower_limit,
+                    tx_size_upper_limit: self.throttle_tx_size_upper_limit,
                 })
             },
             throttle_strategy: self.throttle_strategy,
@@ -571,6 +610,14 @@ mod tests {
             "800000",
             "--throttle-strategy",
             "linear",
+            "--throttle-block-size-upper-limit",
+            "900000",
+            "--throttle-block-size-lower-limit",
+            "40000",
+            "--throttle-tx-size-upper-limit",
+            "300000",
+            "--throttle-tx-size-lower-limit",
+            "3000",
             "--check-recent-txs-depth",
             "16",
             "--wait-node-sync-timeout",
@@ -602,6 +649,10 @@ mod tests {
         let throttle = config.throttle.expect("the throttle is on");
         assert_eq!(throttle.start_threshold_bytes, 500_000);
         assert_eq!(throttle.full_threshold_bytes, 800_000);
+        assert_eq!(throttle.block_size_upper_limit, 900_000);
+        assert_eq!(throttle.block_size_lower_limit, 40_000);
+        assert_eq!(throttle.tx_size_upper_limit, 300_000);
+        assert_eq!(throttle.tx_size_lower_limit, 3_000);
         assert_eq!(config.throttle_strategy, ThrottleStrategy::Linear);
         assert_eq!(config.check_recent_txs_depth, 16);
         assert_eq!(config.wait_node_sync_timeout, Duration::from_secs(60));
