@@ -1,7 +1,10 @@
 use core::fmt::Debug;
 use std::{
     borrow::Cow,
-    sync::{Arc, OnceLock},
+    sync::{
+        Arc, OnceLock,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use alloy_consensus::{
@@ -36,6 +39,38 @@ pub fn unix_time_millis() -> u128 {
             tracing::warn!(error = %err, "system clock before Unix epoch, using 0 as timestamp");
             0
         }
+    }
+}
+
+/// Whether a pooled transaction's declared coinbase tip is backed by its
+/// sender's balance, and so may rank it.
+///
+/// Starts backed: the protocol pool backs tips through `cost()`, so only the
+/// EIP-8130 sidecar ever clears it. Cloning copies the current value.
+#[derive(Debug)]
+pub struct CoinbaseTipBacking(AtomicBool);
+
+impl CoinbaseTipBacking {
+    /// Returns whether the tip is backed.
+    pub fn is_backed(&self) -> bool {
+        self.0.load(Ordering::Relaxed)
+    }
+
+    /// Records whether the tip is backed.
+    pub fn set(&self, backed: bool) {
+        self.0.store(backed, Ordering::Relaxed);
+    }
+}
+
+impl Default for CoinbaseTipBacking {
+    fn default() -> Self {
+        Self(AtomicBool::new(true))
+    }
+}
+
+impl Clone for CoinbaseTipBacking {
+    fn clone(&self) -> Self {
+        Self(AtomicBool::new(self.is_backed()))
     }
 }
 
@@ -75,6 +110,10 @@ pub struct BasePooledTransaction<
     limit_class: OnceLock<crate::LimitClass>,
     /// Sender policy gate target resolved during validation, when gated.
     sender_policy_target: OnceLock<Address>,
+    /// The classified EIP-8130 sender's obligation reported by `cost()`.
+    sender_cost: OnceLock<U256>,
+    /// Whether the sender's balance currently backs the declared coinbase tip.
+    coinbase_tip_backing: CoinbaseTipBacking,
     /// The authorization read-set and build-time predicates captured during
     /// EIP-8130 validation. Unset for other transaction types; see
     /// [`crate::WatchManifest`].
@@ -89,6 +128,17 @@ pub struct BasePooledTransaction<
 }
 
 impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
+    /// The most a classified EIP-8130 transaction reports from `cost()`,
+    /// 2^224 - 1 wei.
+    ///
+    /// Reth sums a sender's costs with wrapping `U256` addition, so an
+    /// uncapped declared tip could wrap the cumulative cost back under the
+    /// balance. The cap exceeds any reachable balance (the total ether supply
+    /// is below 2^87 wei), so a capped cost is never backed, and summing up to
+    /// 2^32 capped costs per sender cannot wrap. Real fees stay below 2^192
+    /// (`u64` gas limit times `u128` fee cap) and are never capped.
+    pub const MAX_POOL_COST: U256 = U256::MAX.wrapping_shr(32);
+
     /// Create new instance of [Self].
     pub fn new(transaction: Recovered<Cons>, encoded_length: usize) -> Self {
         Self::new_with_received_at(transaction, encoded_length, unix_time_millis())
@@ -113,6 +163,8 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
             watch_set: OnceLock::new(),
             limit_class: OnceLock::new(),
             sender_policy_target: OnceLock::new(),
+            sender_cost: OnceLock::new(),
+            coinbase_tip_backing: CoinbaseTipBacking::default(),
             watch_manifest: OnceLock::new(),
             metering: None,
         }
@@ -204,20 +256,21 @@ where
         replacement: &Self,
         price_bumps: &PriceBumpConfig,
     ) -> bool {
-        if !self.validity_predicates().is_empty() && !replacement.validity_predicates().is_empty() {
-            return replacement.max_fee_per_gas() <= self.max_fee_per_gas();
-        }
         if self.ty() == EIP8130_TX_TYPE_ID || replacement.ty() == EIP8130_TX_TYPE_ID {
             // EIP-8130 requires both fee fields to rise by the bump, including
             // when the replacement's priority fee is zero (which the default
-            // check exempts). The bump is keyed on the existing transaction's
-            // type, as in the default check, so a non-8130 transaction replaced
-            // by an 8130 one uses the non-8130 bump.
+            // check exempts) and when both sides carry validity predicates. The
+            // bump is keyed on the existing transaction's type, as in the
+            // default check, so a non-8130 transaction replaced by an 8130 one
+            // uses the non-8130 bump.
             let bump = price_bumps.price_bump(self.ty());
             let bumped = |fee: u128| fee.saturating_mul(100 + bump).div_ceil(100);
             return replacement.max_fee_per_gas() < bumped(self.max_fee_per_gas())
                 || replacement.max_priority_fee_per_gas().unwrap_or_default()
                     < bumped(self.max_priority_fee_per_gas().unwrap_or_default());
+        }
+        if !self.validity_predicates().is_empty() && !replacement.validity_predicates().is_empty() {
+            return replacement.max_fee_per_gas() <= self.max_fee_per_gas();
         }
         price_bumps.is_replacement_underpriced(self, replacement)
     }
@@ -256,8 +309,27 @@ where
         self.inner.transaction.signer_ref()
     }
 
+    /// The most a classified EIP-8130 transaction can debit its sender: the
+    /// fees plus the declared coinbase tip when self-paid, and only the tip
+    /// when sponsored, since the payer covers the fees. Reth checks the
+    /// sender's cumulative cost against its balance on insert and on every
+    /// account change, so a tip the sender cannot cover parks the transaction
+    /// as queued instead of ranking it. Admission does not require the tip,
+    /// so the cost is capped at [`BasePooledTransaction::MAX_POOL_COST`].
+    ///
+    /// Computed once classified; validation sets the sender policy target,
+    /// which [`BasePooledTx::coinbase_tip`] reads, before the classification,
+    /// so the value is fixed while the transaction is pooled.
     fn cost(&self) -> &U256 {
-        &self.inner.cost
+        let Some(class) = self.limit_class.get() else {
+            return &self.inner.cost;
+        };
+        self.sender_cost.get_or_init(|| {
+            let tip = self.coinbase_tip().unwrap_or_default();
+            let cost =
+                if class.payer == class.sender { self.inner.cost.saturating_add(tip) } else { tip };
+            cost.min(Self::MAX_POOL_COST)
+        })
     }
 
     fn encoded_length(&self) -> usize {
@@ -279,6 +351,13 @@ impl<Cons: InMemorySize, Pooled> InMemorySize for BasePooledTransaction<Cons, Po
     fn size(&self) -> usize {
         let watch_keys_size =
             self.watch_set.get().map_or(0, |watch_set| core::mem::size_of_val(watch_set.keys()));
+        // The admission guard's index keeps its own copy of the watch set.
+        let invalidation_index_size =
+            self.watch_set.get().map_or(0, crate::InvalidationIndex::registration_size);
+        // Counted at its full length even before it is filled: subpools subtract
+        // a transaction's size on removal exactly as they added it, so the size
+        // must not change while the transaction is pooled.
+        let encoding_size = core::mem::size_of::<OnceLock<Bytes>>() + self.inner.encoded_length;
         let manifest_slots_size = self
             .watch_manifest
             .get()
@@ -292,6 +371,8 @@ impl<Cons: InMemorySize, Pooled> InMemorySize for BasePooledTransaction<Cons, Po
             + core::mem::size_of::<Vec<crate::ValidityPredicate>>()
             + core::mem::size_of::<OnceLock<crate::WatchSet>>()
             + watch_keys_size
+            + invalidation_index_size
+            + encoding_size
             + core::mem::size_of::<OnceLock<crate::LimitClass>>()
             + core::mem::size_of::<OnceLock<crate::WatchManifest>>()
             + manifest_slots_size
@@ -443,6 +524,19 @@ pub trait BasePooledTx: PoolTransaction + DataAvailabilitySized {
             .then_some(tip)
     }
 
+    /// Returns whether the sender's balance currently backs
+    /// [`Self::coinbase_tip`], so ordering may rank by it. Defaults to `true`.
+    ///
+    /// The protocol pool backs tips through `cost()`; the EIP-8130 sidecar
+    /// records its per-sender backing here.
+    fn coinbase_tip_backed(&self) -> bool {
+        true
+    }
+
+    /// Records whether the sender's balance backs [`Self::coinbase_tip`].
+    /// Defaults to a no-op.
+    fn set_coinbase_tip_backed(&self, _backed: bool) {}
+
     /// Returns the EIP-8130 `nonce_key` when this transaction belongs to a
     /// finite non-zero nonce channel handled by the 2D nonce pool.
     fn eip8130_nonce_channel_key(&self) -> Option<U256> {
@@ -592,6 +686,14 @@ where
         let _ = self.sender_policy_target.set(target);
     }
 
+    fn coinbase_tip_backed(&self) -> bool {
+        self.coinbase_tip_backing.is_backed()
+    }
+
+    fn set_coinbase_tip_backed(&self, backed: bool) {
+        self.coinbase_tip_backing.set(backed);
+    }
+
     fn metering(&self) -> Option<&MeterBundleResponse> {
         self.metering.as_deref()
     }
@@ -695,8 +797,7 @@ mod tests {
         max_priority_fee_per_gas: u128,
         max_fee_per_gas: u128,
     ) -> BasePooledTransaction {
-        let signer = signer();
-        let tx = TxEip8130 {
+        sign_eip8130(TxEip8130 {
             chain_id: ChainConfig::mainnet().chain_id,
             sender: None,
             nonce_key,
@@ -710,7 +811,11 @@ mod tests {
             calls: Vec::new(),
             metadata: Bytes::new(),
             payer: None,
-        };
+        })
+    }
+
+    fn sign_eip8130(tx: TxEip8130) -> BasePooledTransaction {
+        let signer = signer();
         let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
         let signed =
             Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
@@ -837,21 +942,18 @@ mod tests {
     }
 
     #[test]
-    fn eip8130_with_validity_predicates_uses_relaxed_replacement_rule() {
-        let existing = eip8130_pooled_with_fees(U256::ZERO, 10, 100)
-            .with_validity_predicates(vec![balance_predicate()]);
-        // Zero tip and a higher max fee is accepted: both transactions carry
-        // validity predicates, so the relaxed rule runs before the EIP-8130
-        // bump that requires both fee fields to rise.
-        let replacement = eip8130_pooled_with_fees(U256::ZERO, 0, 101)
-            .with_validity_predicates(vec![balance_predicate()]);
-        assert!(!existing.is_replacement_underpriced(&replacement, &PriceBumpConfig::default()));
+    fn eip8130_with_validity_predicates_requires_both_fees_to_rise() {
+        let bumps = PriceBumpConfig::default();
+        let with_predicates = |max_priority_fee_per_gas, max_fee_per_gas| {
+            eip8130_pooled_with_fees(U256::ZERO, max_priority_fee_per_gas, max_fee_per_gas)
+                .with_validity_predicates(vec![balance_predicate()])
+        };
+        let existing = with_predicates(10, 100);
 
-        let unchanged_max_fee = eip8130_pooled_with_fees(U256::ZERO, 100, 100)
-            .with_validity_predicates(vec![balance_predicate()]);
-        assert!(
-            existing.is_replacement_underpriced(&unchanged_max_fee, &PriceBumpConfig::default())
-        );
+        assert!(existing.is_replacement_underpriced(&with_predicates(0, 101), &bumps));
+        assert!(existing.is_replacement_underpriced(&with_predicates(10, 110), &bumps));
+        assert!(existing.is_replacement_underpriced(&with_predicates(11, 109), &bumps));
+        assert!(!existing.is_replacement_underpriced(&with_predicates(11, 110), &bumps));
     }
 
     #[test]
@@ -865,7 +967,10 @@ mod tests {
 
         transaction.set_watch_set(watch_set);
 
-        assert_eq!(transaction.size(), size_without_keys + keys_size);
+        assert!(
+            transaction.size() >= size_without_keys + 2 * keys_size,
+            "the keys are held by the transaction and again by the invalidation index"
+        );
     }
 
     #[test]
@@ -890,6 +995,31 @@ mod tests {
         transaction.set_watch_manifest(manifest);
 
         assert_eq!(transaction.size(), size_without_slots + slots_size);
+    }
+
+    #[test]
+    fn in_memory_size_includes_the_cached_encoding() {
+        const METADATA_LEN: usize = 1_024;
+        let small = eip8130_pooled(U256::ZERO);
+        let large = sign_eip8130(TxEip8130 {
+            metadata: Bytes::from(vec![0xAB; METADATA_LEN]),
+            ..small.as_eip8130().unwrap().tx().clone()
+        });
+
+        assert!(
+            large.size() >= small.size() + 2 * METADATA_LEN,
+            "metadata is held decoded and again in the cached encoding"
+        );
+    }
+
+    #[test]
+    fn in_memory_size_is_unchanged_when_the_encoding_is_cached() {
+        let transaction = eip8130_pooled(U256::ZERO);
+        let size = transaction.size();
+
+        assert!(!transaction.encoded_2718().is_empty());
+
+        assert_eq!(transaction.size(), size, "pooled size must not change while pooled");
     }
 
     #[test]

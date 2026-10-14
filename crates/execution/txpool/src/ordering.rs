@@ -151,8 +151,10 @@ impl Ord for UnifiedTipPriority {
 /// EIP-8130 coinbase tip; otherwise ranks by `effective_tip_per_gas`. Returns
 /// [`Priority::None`] when `max_fee_per_gas < base_fee`, including for a
 /// decoded coinbase tip. A policy-gated sender's tip only counts when the fee
-/// vault is its policy target. Same bid prefers fewer validity predicates, so
-/// standard transactions beat equally priced advanced transactions.
+/// vault is its policy target, and any tip only counts while
+/// [`BasePooledTx::coinbase_tip_backed`] holds. Same bid prefers fewer
+/// validity predicates, so standard transactions beat equally priced advanced
+/// transactions.
 #[derive(Debug)]
 #[non_exhaustive]
 pub struct UnifiedTipOrdering<T = BasePooledTransaction>(PhantomData<T>);
@@ -185,7 +187,8 @@ where
             return Priority::None;
         };
         let predicates = transaction.validity_predicates().len();
-        if let Some(tip) = transaction.coinbase_tip() {
+        if let Some(tip) = transaction.coinbase_tip().filter(|_| transaction.coinbase_tip_backed())
+        {
             return Priority::Value(UnifiedTipPriority::new(
                 tip,
                 transaction.gas_limit(),
