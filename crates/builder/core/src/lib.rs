@@ -52,13 +52,7 @@ pub use flashblocks::{
 mod extension;
 pub use extension::{
     BuilderApiExtension, BuilderApiExtensionArgs, BuilderApiExtensionConfig,
-    DEFAULT_MAX_VALIDITY_PREDICATES, ValiditySignatureMode,
-};
-
-mod shadow_validity;
-pub use shadow_validity::{
-    MAX_SHADOW_VALIDITY_SAMPLE_RATE_BPS, ShadowValidityBuilderApi, ShadowValidityConfig,
-    ShadowValidityConfigError,
+    DEFAULT_MAX_VALIDITY_PREDICATES, InsertMeteringAdapter, ValiditySignatureMode,
 };
 
 /// Shared test infrastructure: local node instances, chain drivers, transaction builders, and pool observers.
