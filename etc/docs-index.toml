@@ -656,7 +656,7 @@ digest = "393c4961d6"
 
 ["docs/guides/DEVNET.md"]
 summary = "Chooser for local environments: Docker and HA devnets, Anvil + local Nitro proving, snapshot devnet (base dev), snapshot benchmark harness, with quickstarts, data-reset behavior, and owning docs."
-digest = "6e0214725d"
+digest = "dbe3ca8b19"
 
 ["docs/guides/P2P.md"]
 summary = "Explains the Base P2P stack for newcomers: consensus-layer discv5 and libp2p gossipsub versus execution-layer reth networking, how they interact via Engine API, key files, flags, and glossary."

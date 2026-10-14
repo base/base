@@ -10,7 +10,7 @@ owning doc for details. App developers can start from the
 | Docker HA devnet | Conductor leadership and failover | `just devnet up` | Same as above with three conductor-managed sequencers |
 | Anvil + local Nitro proving | Proof generation and proposer integration without Nitro hardware | `just devnet build-anvil-image`, then `just anvil-nitro-local up` | Fresh `.devnet/`; Base-Anvil L1; contracts bypass attestation |
 | Snapshot devnet (`base dev`) | Real Base Mainnet or Sepolia contracts and state, impersonating any account, 200ms Denim blocks | `just devnet snapshot download --dir D`, then `just devnet snapshot run --dir D` | One disposable snapshot datadir; no L1 |
-| Snapshot benchmark harness | Builder/follow-client experiments and snapshot performance work | `base-devnet snapshot --builder-datadir B --client-datadir C` | Two writable copies of one snapshot; no L1 |
+| Snapshot benchmark harness | Builder/follow-client experiments and snapshot performance work | `cargo run -p base-system-tests --bin base-devnet -- snapshot --builder-datadir B --client-datadir C` | Two writable copies of one snapshot; no L1 |
 
 Snapshot environments have no L1 derivation, bridges, safe/finalized heads, or proofs. Use a Docker
 devnet to test those.
