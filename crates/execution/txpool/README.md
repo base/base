@@ -59,12 +59,26 @@ transaction in the same block, the builder drops it rather than including it. Th
 because the predicates would otherwise keep holding in later blocks after the opportunity is
 gone: once the block is finalized, the builder evicts the transaction and records it in its
 rejection cache, so mempool nodes re-forwarding the same transaction cannot re-admit it. Submit
-a new, separately signed transaction to bid again. A kill decided in a build attempt that is
-discarded is not applied.
+a new, separately signed transaction to bid again.
+
+Known limitations:
+
+- The native builder applies kills only from a payload it returns (not a cancelled or out-bid
+  attempt), but a pre-Denim payload can still be superseded by a later one without the
+  competitor. The flashblocks builder applies a block's kills whenever it finalizes the block,
+  including a block abandoned at its deadline or by a new forkchoice update, so a searcher can
+  be killed by a competitor that never landed. Validity lifetimes are bounded (60 seconds by
+  default), which bounds the harm.
+- The rejection cache is local to each builder, so a re-forward to another builder (failover or
+  multiple forwarding targets) can still land a killed transaction.
+- The cache is keyed by transaction hash. While validity signatures are not required, anyone
+  holding the raw transaction can resubmit it with the flag and a contended predicate to have it
+  killed and blocked for the cache lifetime.
+
 Block-number and flashblock-index predicates never claim a location. Matching is by location
 only, so two searchers conditioning on the same slot exclude each other whatever values
 they compare. Every committed validity transaction claims, including one that reverted and the
-sender's own earlier transaction, so a flagged follow-up on the same state is skipped too. The check needs no execution or rollback; it is not revert protection, and it
+sender's own earlier transaction, so a flagged follow-up on the same state is killed too. The check needs no execution or rollback; it is not revert protection, and it
 does not react to ordinary transactions that change the same state.
 
 ### Signed validity predicates

@@ -175,6 +175,70 @@ async fn blocked_transaction_emits_one_builder_deferred_per_block() -> eyre::Res
     Ok(())
 }
 
+/// A killed fill-immediately-or-kill transaction is re-yielded by every later flashblock of the
+/// block, but is reported with one `BUILDER_EXPIRED`.
+#[tokio::test]
+async fn killed_transaction_emits_one_builder_expired_per_block() -> eyre::Result<()> {
+    let capture = TransactionEventCapture::install();
+    let instance = validity_instance().build().await?;
+    let driver = instance.driver().await?;
+    let accounts = driver.fund_accounts(2, ONE_ETH).await?;
+    let slot = ValidityPredicate::Storage {
+        address: Address::random(),
+        slot: U256::from(1),
+        mask: U256::MAX,
+        op: ValidityOperator::Equal,
+        value: U256::ZERO,
+    };
+
+    let mut insert = Vec::new();
+    for (signer, priority_fee, fill_immediately_or_kill) in
+        [(&accounts[0], 100, false), (&accounts[1], 50, true)]
+    {
+        let tx = driver
+            .create_transaction()
+            .with_signer(signer)
+            .with_nonce(0)
+            .with_to(Address::random())
+            .with_max_priority_fee_per_gas(priority_fee)
+            .build()
+            .await;
+        insert.push(tx.tx_hash());
+        driver
+            .provider()
+            .raw_request::<_, ()>(
+                "base_insertValidatedTransaction".into(),
+                (ValidatedTransaction {
+                    sender: signer.address(),
+                    raw: tx.encoded_2718().into(),
+                    metering: None,
+                    extensions: TransactionValidity {
+                        validity: vec![slot.clone()],
+                        validity_signature: None,
+                        fill_immediately_or_kill,
+                    },
+                },),
+            )
+            .await?;
+    }
+    let searcher_hash = insert[1];
+
+    let block = driver.build_new_block().await?;
+    assert!(!block.transactions.into_transactions().any(|tx| tx.tx_hash() == searcher_hash));
+
+    let expired = capture
+        .events()
+        .into_iter()
+        .filter(|event| {
+            event.tx_hash == Some(searcher_hash)
+                && event.event_type == TransactionEventType::BuilderExpired
+        })
+        .map(|event| event.data["expire_reason"].clone())
+        .collect::<Vec<_>>();
+    assert_eq!(expired, [serde_json::json!("fill_immediately_or_kill_contended")]);
+    Ok(())
+}
+
 #[tokio::test]
 async fn expired_position_predicate_emits_builder_expired() -> eyre::Result<()> {
     let capture = TransactionEventCapture::install();

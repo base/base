@@ -16,6 +16,9 @@ pub const REJECTION_CACHE_TTL: Duration = Duration::from_secs(30 * 60);
 
 /// Shared, cross-job cache of permanently rejected transaction hashes.
 ///
+/// Holds both intrinsically invalid transactions and fill-immediately-or-kill transactions whose
+/// opportunity was claimed, whose predicates may still hold but must never be included.
+///
 /// Backed by [`moka::sync::Cache`] with a TTL so entries expire if metering
 /// predictions or operator limits change. Native payload jobs skip cached
 /// hashes even if the transaction is re-gossiped into the pool. Nonce-lane

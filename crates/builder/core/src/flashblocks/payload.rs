@@ -994,7 +994,15 @@ where
         }
         let killed = std::mem::take(&mut info.killed_txs);
         self.config.rejection_cache.mark_rejected(&killed);
+        BuilderMetrics::rejection_cache_insertions().increment(killed.len() as u64);
+        BuilderMetrics::rejection_cache_size()
+            .set(self.config.rejection_cache.entry_count() as f64);
         self.config.metering_provider.remove(&killed);
+        info!(
+            target: "payload_builder",
+            count = killed.len(),
+            "evicted fill-immediately-or-kill transactions from pool",
+        );
         self.pool.remove_transactions(killed);
     }
 
