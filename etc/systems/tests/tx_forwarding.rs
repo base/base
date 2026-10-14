@@ -56,6 +56,9 @@ async fn wait_for_pending_transaction(provider: &RootProvider<Base>, tx_hash: B2
 }
 
 /// Builds the bounded block-number expiry required for validity transaction ingress.
+///
+/// `current_block` must be the latest block of the node receiving the submission: ingress measures
+/// the validity window from its own head, which can lag the builder's by a few blocks.
 fn block_expiry_bound(current_block: u64) -> ValidityPredicate {
     ValidityPredicate::BlockNumber {
         op: ValidityOperator::LessThanOrEqual,
@@ -424,7 +427,7 @@ async fn test_matching_validity_predicates_are_forwarded_and_included() -> Resul
     let recipient_balance_before = builder_provider.get_balance(recipient).await?;
     let (_, raw_tx, expected_tx_hash) =
         create_signed_eip1559_tx(&signer, L2_CHAIN_ID, nonce, recipient)?;
-    let current_block = builder_provider.get_block_number().await?;
+    let current_block = client_provider.get_block_number().await?;
     let validity = vec![
         ValidityPredicate::Balance {
             address: sender,
@@ -734,7 +737,7 @@ async fn test_validity_block_predicates_defer_and_expire_transactions() -> Resul
     client_provider.wait_for_balance(expiring_signer.address(), Duration::from_secs(15)).await?;
     client_provider.wait_for_balance(storage_signer.address(), Duration::from_secs(15)).await?;
 
-    let current_block = builder_provider.get_block_number().await?;
+    let current_block = client_provider.get_block_number().await?;
     // Native Denim blocks advance every 200 ms, so leave enough time to submit and observe all
     // three transactions before the future predicate becomes true.
     let target_block = current_block + 50;
