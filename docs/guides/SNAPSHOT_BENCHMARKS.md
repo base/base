@@ -2,7 +2,8 @@
 
 This guide covers repeatable performance measurements on an L1-free Base
 snapshot devnet. It explains how to run `base-bench snapshot`, publish its output
-to `base/benchmark`, and select the exact runs to compare.
+to `base/benchmark`, and select the exact runs to compare. To test applications
+against a snapshot, use `base dev` instead; see [DEVNET.md](DEVNET.md).
 
 The snapshot benchmark is for local performance investigation. It mutates its
 builder and validator datadirs, so every attempt needs a fresh writable datadir pair.

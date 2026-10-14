@@ -15,8 +15,8 @@ summary = "Contribution policy: open an issue first, work only on assigned issue
 digest = "c0dafd9de5"
 
 ["README.md"]
-summary = "Top-level Base overview: what Base is, docs and specs links, installing binaries with baseup, running a node via docker compose, and the base-anvil GHCR package."
-digest = "e04696c133"
+summary = "Top-level Base overview: docs and specs links, installing binaries with baseup, running a node via docker compose, choosing a Docker or snapshot local devnet, and the base-anvil GHCR package."
+digest = "8e25401080"
 
 ["SECURITY.md"]
 summary = "Security policy: HackerOne and Cantina bug bounty programs, where to report offchain versus smart contract vulnerabilities, and the security contact email."
@@ -654,6 +654,10 @@ digest = "fd4c93a6fc"
 summary = "Review guide for block-production-sensitive PRs: mandatory payload size-limit gate across I/O boundaries, taxonomy of halt/stall scenarios (precompiles, builder, flashblocks), and a checklist."
 digest = "393c4961d6"
 
+["docs/guides/DEVNET.md"]
+summary = "Chooser for local environments: Docker and HA devnets, Anvil + local Nitro proving, snapshot devnet (base dev), snapshot benchmark harness, with quickstarts, data-reset behavior, and owning docs."
+digest = "0951b41580"
+
 ["docs/guides/P2P.md"]
 summary = "Explains the Base P2P stack for newcomers: consensus-layer discv5 and libp2p gossipsub versus execution-layer reth networking, how they interact via Engine API, key files, flags, and glossary."
 digest = "2407f38ac8"
@@ -663,8 +667,8 @@ summary = "Release process: Start Release creates releases/vX.Y.Z, version sync 
 digest = "dbf3e3e8de"
 
 ["docs/guides/SNAPSHOT_BENCHMARKS.md"]
-summary = "How to run repeatable base-bench snapshot benchmarks on an L1-free Base snapshot devnet, aggregate selected runs, and publish to base/benchmark. Use when measuring performance on restored datadirs."
-digest = "25c60e4705"
+summary = "How to run repeatable base-bench snapshot benchmarks on the snapshot benchmark harness, aggregate selected runs, and publish to base/benchmark. Use when measuring performance on restored datadirs."
+digest = "c30436cd89"
 
 ["docs/guides/STANDALONE_PROVING.md"]
 summary = "Guide to running the prover stack standalone (just prover up) with your own RPCs and a funded Succinct Prover Network key: ZK backends, range sizing, requester key, restart behavior, troubleshooting."
@@ -688,11 +692,11 @@ digest = "49f6748dde"
 
 ["etc/docker/README.md"]
 summary = "Dockerfiles, Bake targets, published images (ghcr.io/base/node and single-binary images), and Compose setup for the local devnet and Rust services, including batcher topology and build profiles."
-digest = "12c930d703"
+digest = "1b26e226ad"
 
 ["etc/systems/README.md"]
-summary = "Docs for base-system-tests: running the snapshot-backed mainnet devnet (builder and follow client), snapshot and transfer benchmarks, workload suite, 2s vs 200ms comparison, cleanup."
-digest = "261a5e39c4"
+summary = "Docs for base-system-tests: running the snapshot benchmark harness (builder and follow client), snapshot and transfer benchmarks, workload suite, 2s vs 200ms comparison, cleanup."
+digest = "c93564343c"
 
 ["etc/tools/witness-diff/README.md"]
 summary = "witness-diff tool that compares two execution witnesses (from debug_executionWitness) to find differing trie nodes, bytecodes, or preimages. Use when debugging state root mismatches between nodes."
