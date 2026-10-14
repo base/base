@@ -205,6 +205,20 @@ impl InvalidationIndex {
         Self::default()
     }
 
+    /// Upper bound on the bytes the index holds for one transaction registered
+    /// with `watch`: its stored watch set and, for each key, the transaction's
+    /// hash plus a key bucket in case no other transaction shares the key.
+    #[must_use]
+    pub fn registration_size(watch: &WatchSet) -> usize {
+        let watch_set = core::mem::size_of::<TxHash>()
+            + core::mem::size_of::<WatchSet>()
+            + core::mem::size_of_val(watch.keys());
+        let per_key = core::mem::size_of::<TxHash>()
+            + core::mem::size_of::<InvalidationKey>()
+            + core::mem::size_of::<HashSet<TxHash>>();
+        watch_set + watch.len() * per_key
+    }
+
     /// Registers `hash` under every key in `watch`. If `hash` is already present
     /// its previous watch set is removed first, so the index always reflects the
     /// latest registration. Returns `true` if this was a fresh insertion (i.e.
