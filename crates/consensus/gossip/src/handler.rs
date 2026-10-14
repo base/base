@@ -876,7 +876,10 @@ mod tests {
         let block = v5_valid_block();
         let envelope =
             v5_envelope(&block, v5_payload(&block, Bytes::from_static(V5_BLOCK_ACCESS_LIST)));
-        let probe = BlockHandler::new(RollupConfig::default(), tokio::sync::watch::channel(Address::ZERO).1);
+        let probe = BlockHandler::new(
+            RollupConfig::default(),
+            tokio::sync::watch::channel(Address::ZERO).1,
+        );
         let encoded = probe.encode(probe.blocks_v5_topic.clone(), envelope).unwrap();
 
         let mut handler = v5_handler_for(&encoded);
@@ -909,12 +912,17 @@ mod tests {
         let block = v5_valid_block();
         let envelope =
             v5_envelope(&block, v5_payload(&block, Bytes::from_static(V5_BLOCK_ACCESS_LIST)));
-        let probe = BlockHandler::new(RollupConfig::default(), tokio::sync::watch::channel(Address::ZERO).1);
+        let probe = BlockHandler::new(
+            RollupConfig::default(),
+            tokio::sync::watch::channel(Address::ZERO).1,
+        );
 
         assert!(
             matches!(
                 probe.encode(probe.blocks_v4_topic.clone(), envelope.clone()),
-                Err(HandlerEncodeError::PayloadEncodeError(PayloadEnvelopeEncodeError::WrongVersion))
+                Err(HandlerEncodeError::PayloadEncodeError(
+                    PayloadEnvelopeEncodeError::WrongVersion
+                ))
             ),
             "encoding a V5 payload for the V4 topic must fail with WrongVersion"
         );
@@ -940,7 +948,10 @@ mod tests {
         let block = v5_valid_block();
         let envelope =
             v5_envelope(&block, v5_payload(&block, Bytes::from_static(V5_BLOCK_ACCESS_LIST)));
-        let probe = BlockHandler::new(RollupConfig::default(), tokio::sync::watch::channel(Address::ZERO).1);
+        let probe = BlockHandler::new(
+            RollupConfig::default(),
+            tokio::sync::watch::channel(Address::ZERO).1,
+        );
         let encoded = probe.encode(probe.blocks_v5_topic.clone(), envelope).unwrap();
         let mut handler = v5_handler_for(&encoded);
 

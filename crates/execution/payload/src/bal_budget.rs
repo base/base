@@ -138,10 +138,16 @@ impl BlockAccessListBudget {
     /// Fails when the list built so far already exceeds the item or the size limit.
     pub const fn check_limits(&self) -> Result<(), BlockAccessListLimit> {
         if self.items > self.max_items {
-            return Err(BlockAccessListLimit::Items { items: self.items, max_items: self.max_items });
+            return Err(BlockAccessListLimit::Items {
+                items: self.items,
+                max_items: self.max_items,
+            });
         }
         if self.bytes > self.max_bytes {
-            return Err(BlockAccessListLimit::Size { bytes: self.bytes, max_bytes: self.max_bytes });
+            return Err(BlockAccessListLimit::Size {
+                bytes: self.bytes,
+                max_bytes: self.max_bytes,
+            });
         }
         Ok(())
     }
@@ -276,10 +282,10 @@ mod tests {
 
     /// An alloy list holding exactly `items` items, as reth sees it.
     fn alloy_list_with_items(items: u64) -> AlloyBal {
-        let account = (0..items - 1).fold(
-            AccountChanges::new(Address::repeat_byte(0xaa)),
-            |account, slot| account.with_storage_read(U256::from(slot)),
-        );
+        let account = (0..items - 1)
+            .fold(AccountChanges::new(Address::repeat_byte(0xaa)), |account, slot| {
+                account.with_storage_read(U256::from(slot))
+            });
         AlloyBal::new(vec![account])
     }
 
@@ -289,7 +295,10 @@ mod tests {
     fn item_limit_matches_reth_gas_limit_check_for_both_configs() {
         for (gas_limit, expected_max) in [(GAS_LIMIT_400M, 200_000), (GAS_LIMIT_40M, 20_000)] {
             let max_items = BlockAccessListBudget::max_items_for_gas_limit(gas_limit);
-            assert_eq!(max_items, expected_max, "gas limit {gas_limit} allows {expected_max} items");
+            assert_eq!(
+                max_items, expected_max,
+                "gas limit {gas_limit} allows {expected_max} items"
+            );
 
             let at_limit = alloy_list_with_items(max_items);
             assert_eq!(at_limit.total_bal_items(), max_items, "fixture must hold the limit");
@@ -313,9 +322,12 @@ mod tests {
     fn admits_up_to_the_item_limit_and_refuses_one_past_it_for_both_configs() {
         for gas_limit in [GAS_LIMIT_400M, GAS_LIMIT_40M] {
             let max_items = BlockAccessListBudget::max_items_for_gas_limit(gas_limit);
-            let mut budget =
-                BlockAccessListBudget::for_block(gas_limit, &built_list_with_items(max_items - 2), 0)
-                    .expect("a seed under the limits must be accepted");
+            let mut budget = BlockAccessListBudget::for_block(
+                gas_limit,
+                &built_list_with_items(max_items - 2),
+                0,
+            )
+            .expect("a seed under the limits must be accepted");
             assert_eq!(budget.items(), max_items - 2, "seed must count every built item");
             assert_eq!(budget.max_items(), max_items);
 
@@ -353,9 +365,10 @@ mod tests {
     /// more, without changing the budget.
     #[test]
     fn admits_up_to_the_size_limit_and_refuses_one_byte_past_it() {
-        let overhead =
-            BlockAccessListBudget::ENVELOPE_OVERHEAD_BYTES + BlockAccessListBudget::LIST_HEADER_BYTES;
-        let tx_cost = 100 + BlockAccessListBudget::TX_OFFSET_BYTES + BlockAccessListBudget::ACCOUNT_BYTES;
+        let overhead = BlockAccessListBudget::ENVELOPE_OVERHEAD_BYTES
+            + BlockAccessListBudget::LIST_HEADER_BYTES;
+        let tx_cost =
+            100 + BlockAccessListBudget::TX_OFFSET_BYTES + BlockAccessListBudget::ACCOUNT_BYTES;
         let max_bytes = overhead + 50 + tx_cost;
         let mut budget = BlockAccessListBudget::new(u64::MAX, max_bytes, &Bal::new(), 50);
         assert_eq!(budget.bytes(), overhead + 50, "seed must count the included transactions");
@@ -407,10 +420,10 @@ mod tests {
         );
 
         let mut seeded = AccountBal::default();
-        seeded.storage.storage.insert(
-            U256::from(1),
-            BalWrites::new(vec![(BlockAccessIndex::new(1), U256::from(5))]),
-        );
+        seeded
+            .storage
+            .storage
+            .insert(U256::from(1), BalWrites::new(vec![(BlockAccessIndex::new(1), U256::from(5))]));
         seeded.account_info.balance = BalWrites::new(vec![
             (BlockAccessIndex::new(1), U256::from(2)),
             (BlockAccessIndex::new(2), U256::from(3)),

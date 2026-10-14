@@ -97,10 +97,7 @@ where
         chain_spec.is_prague_active_at_timestamp(sealed_block.timestamp),
     )?;
 
-    validate_block_access_list(
-        block_access_list,
-        sealed_block.block_access_list_hash(),
-    )?;
+    validate_block_access_list(block_access_list, sealed_block.block_access_list_hash())?;
 
     Ok(sealed_block)
 }

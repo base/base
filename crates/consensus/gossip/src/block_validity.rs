@@ -178,7 +178,9 @@ impl BlockHandler {
                     BlockInvalidError::BlockAccessListHashMismatch { .. } => {
                         "block_access_list_hash"
                     }
-                    BlockInvalidError::BlockAccessListPresence { .. } => "block_access_list_presence",
+                    BlockInvalidError::BlockAccessListPresence { .. } => {
+                        "block_access_list_presence"
+                    }
                 };
                 Metrics::block_validation_failed(reason).increment(1);
             }
@@ -506,7 +508,10 @@ pub(crate) mod tests {
     }
 
     /// Builds the V5 payload for a block produced by [`v5_valid_block`].
-    pub fn v5_payload(block: &Block<BaseTxEnvelope>, block_access_list: Bytes) -> BaseExecutionPayloadV5 {
+    pub fn v5_payload(
+        block: &Block<BaseTxEnvelope>,
+        block_access_list: Bytes,
+    ) -> BaseExecutionPayloadV5 {
         let v4 = BaseExecutionPayloadV4::from_v3_with_withdrawals_root(
             ExecutionPayloadV3::from_block_slow(block),
             block.withdrawals_root.unwrap(),
@@ -544,7 +549,8 @@ pub(crate) mod tests {
     #[test]
     fn test_v5_block_with_matching_block_access_list() {
         let block = v5_valid_block();
-        let envelope = v5_envelope(&block, v5_payload(&block, Bytes::from_static(V5_BLOCK_ACCESS_LIST)));
+        let envelope =
+            v5_envelope(&block, v5_payload(&block, Bytes::from_static(V5_BLOCK_ACCESS_LIST)));
         let mut handler = handler_for(&envelope);
 
         assert!(
@@ -598,7 +604,8 @@ pub(crate) mod tests {
     #[test]
     fn test_block_access_list_accepts_matching_and_pre_amsterdam() {
         let block = v5_valid_block();
-        let v5 = BaseExecutionPayload::V5(v5_payload(&block, Bytes::from_static(V5_BLOCK_ACCESS_LIST)));
+        let v5 =
+            BaseExecutionPayload::V5(v5_payload(&block, Bytes::from_static(V5_BLOCK_ACCESS_LIST)));
         assert!(
             BlockHandler::validate_block_access_list(&v5, Some(keccak256(V5_BLOCK_ACCESS_LIST)))
                 .is_ok(),
@@ -620,7 +627,8 @@ pub(crate) mod tests {
     #[test]
     fn test_block_access_list_presence_mismatch() {
         let block = v5_valid_block();
-        let v5 = BaseExecutionPayload::V5(v5_payload(&block, Bytes::from_static(V5_BLOCK_ACCESS_LIST)));
+        let v5 =
+            BaseExecutionPayload::V5(v5_payload(&block, Bytes::from_static(V5_BLOCK_ACCESS_LIST)));
         let result = BlockHandler::validate_block_access_list(&v5, None);
         assert!(
             matches!(

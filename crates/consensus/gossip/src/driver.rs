@@ -702,19 +702,12 @@ mod tests {
             // peer must learn the unsubscribe over the wire, not by shared state.
             assert_eq!(pair.retiring.retire_block_topics(now + 60), 3);
             loop {
-                if pair
-                    .legacy
-                    .swarm
-                    .behaviour()
-                    .gossipsub
-                    .all_peers()
-                    .any(|(peer, topics)| {
-                        peer == pair.retiring.local_peer_id()
-                            && topics.contains(&&v4)
-                            && topics.contains(&&v5)
-                            && !topics.contains(&&v3)
-                    })
-                {
+                if pair.legacy.swarm.behaviour().gossipsub.all_peers().any(|(peer, topics)| {
+                    peer == pair.retiring.local_peer_id()
+                        && topics.contains(&&v4)
+                        && topics.contains(&&v5)
+                        && !topics.contains(&&v3)
+                }) {
                     break;
                 }
                 pair.poll().await;

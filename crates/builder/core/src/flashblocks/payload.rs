@@ -1259,10 +1259,8 @@ where
     // EIP-7843: from Amsterdam on, the header carries a slot number. Base puts the L2 block
     // number here, preferring the value the consensus layer supplied in the payload attributes
     // and falling back to the block number being built.
-    let slot_number = ctx
-        .chain_spec
-        .is_amsterdam_active_at_timestamp(ctx.attributes().timestamp())
-        .then_some(
+    let slot_number =
+        ctx.chain_spec.is_amsterdam_active_at_timestamp(ctx.attributes().timestamp()).then_some(
             ctx.attributes()
                 .payload_attributes
                 .slot_number
@@ -1435,15 +1433,14 @@ where
 mod tests {
     use std::sync::Arc;
 
-    use alloy_consensus::{Header, Receipt};
+    use alloy_consensus::{BlockHeader as _, Header, Receipt};
     use alloy_primitives::{Address, B256, Log, U256, map::foldhash::HashMap};
-    use alloy_consensus::BlockHeader as _;
     use base_common_consensus::BaseReceipt;
-    use reth_payload_primitives::BuiltPayload as _;
     use base_common_flashblocks::{FlashblockId, Metadata};
     use base_execution_chainspec::BaseChainSpec;
     use reth_chainspec::ChainSpec;
     use reth_execution_cache::{CachedStateProvider, CachedStatus, ExecutionCache, SavedCache};
+    use reth_payload_primitives::BuiltPayload as _;
     use reth_primitives_traits::SealedHeader;
     use reth_provider::{EvmStateProviderBox, StateProvider, noop::NoopProvider};
     use reth_revm::{State, database::StateProviderDatabase};
@@ -1586,8 +1583,11 @@ mod tests {
         let db = StateProviderDatabase::new(NoopProvider::default().into_evm_state_provider());
         // The caller installs the block access list builder for Amsterdam, exactly as
         // `try_build` does.
-        let mut state =
-            State::builder().with_database(db).with_bundle_update().with_bal_builder_if(true).build();
+        let mut state = State::builder()
+            .with_database(db)
+            .with_bundle_update()
+            .with_bal_builder_if(true)
+            .build();
         execute_pre_steps(&mut state, &ctx).expect("pre-execution should succeed");
 
         assert_eq!(
@@ -1609,8 +1609,11 @@ mod tests {
         let ctx = BasePayloadBuilderCtx::for_test(chain_spec, Arc::clone(&parent));
 
         let db = StateProviderDatabase::new(NoopProvider::default().into_evm_state_provider());
-        let mut state =
-            State::builder().with_database(db).with_bundle_update().with_bal_builder_if(true).build();
+        let mut state = State::builder()
+            .with_database(db)
+            .with_bundle_update()
+            .with_bal_builder_if(true)
+            .build();
         let mut info = ExecutionInfo::default();
 
         let (payload, _, _) = build_block::<_, NoopProvider>(
@@ -1623,7 +1626,8 @@ mod tests {
         )
         .expect("build_block should succeed for an empty Amsterdam block");
 
-        let block_access_list = payload.block_access_list()
+        let block_access_list = payload
+            .block_access_list()
             .cloned()
             .expect("an Amsterdam block must carry the block access list it commits to");
         assert_eq!(

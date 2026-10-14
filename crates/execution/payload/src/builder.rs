@@ -53,12 +53,12 @@ use revm::context::{Block, BlockEnv};
 use tracing::{debug, debug_span, error, info, instrument, trace, warn};
 
 use crate::{
-    Attributes, BasePayloadBuilderAttributes, BlockAccessListBudget, BlockDeferrals, BuilderMetrics,
-    CoinbaseTipAffordability, InclusionTracker, MeteringProvider, ParkableBestPayloadTransactions,
-    ParkablePayloadTransactions, ParkedPredicateIndex, PayloadPrimitives, PredicateLoadTracker,
-    PredicateReadRecorder, RejectionCacheMetrics, StateChangeEffects, ValidityMetrics,
-    ValidityPredicateEvaluation, config::BaseBuilderConfig, error::BasePayloadBuilderError,
-    payload::BaseBuiltPayload,
+    Attributes, BasePayloadBuilderAttributes, BlockAccessListBudget, BlockDeferrals,
+    BuilderMetrics, CoinbaseTipAffordability, InclusionTracker, MeteringProvider,
+    ParkableBestPayloadTransactions, ParkablePayloadTransactions, ParkedPredicateIndex,
+    PayloadPrimitives, PredicateLoadTracker, PredicateReadRecorder, RejectionCacheMetrics,
+    StateChangeEffects, ValidityMetrics, ValidityPredicateEvaluation, config::BaseBuilderConfig,
+    error::BasePayloadBuilderError, payload::BaseBuiltPayload,
 };
 
 macro_rules! emit_native_validity_event {
@@ -384,7 +384,8 @@ impl<Txs> Builder<'_, Txs> {
 
         // Enable BAL building only once Amsterdam is active so pre-fork blocks keep their exact
         // header and payload shape.
-        let is_amsterdam = ctx.chain_spec.is_amsterdam_active_at_timestamp(ctx.attributes().timestamp());
+        let is_amsterdam =
+            ctx.chain_spec.is_amsterdam_active_at_timestamp(ctx.attributes().timestamp());
         let mut db = State::builder()
             .with_database(db)
             .with_bundle_update()
@@ -905,9 +906,9 @@ where
             info.cumulative_gas_used += gas_output.tx_gas_used();
             // Only committed transactions reach the payload, so skipped pre-includes must not
             // consume the envelope budget.
-            info.sequencer_tx_bytes = info.sequencer_tx_bytes.saturating_add(
-                encoded_len.saturating_add(BlockAccessListBudget::TX_OFFSET_BYTES),
-            );
+            info.sequencer_tx_bytes = info
+                .sequencer_tx_bytes
+                .saturating_add(encoded_len.saturating_add(BlockAccessListBudget::TX_OFFSET_BYTES));
             if let Some(usage) = pending_resource_usage {
                 resource_metering.apply_accounted_usage(
                     &tx_hash,
@@ -1394,7 +1395,12 @@ where
                                 false,
                             );
                         }
-                        Self::skip_current(&mut best_txs, tx.signer(), tx.nonce(), replay_independent);
+                        Self::skip_current(
+                            &mut best_txs,
+                            tx.signer(),
+                            tx.nonce(),
+                            replay_independent,
+                        );
                         continue;
                     }
                     resource_throttled += 1;
@@ -1659,10 +1665,11 @@ mod tests {
         BasePayloadBuilderCtx, BasePayloadBuilderError, Builder, ExecutionInfo, PayloadBuilderError,
     };
     use crate::{
-        BasePayloadBuilderAttributes, BlockAccessListBudget, BlockAccessListLimit, MeteringProvider, NoopMeteringProvider,
-        ParkablePayloadTransactions, ResourceMeteringConfig, ResourceMeteringDimension,
-        ResourceMeteringOperation, ResourceMeteringSchedule, SharedMeteringProvider,
-        config::BaseBuilderConfig, payload::EthPayloadBuilderAttributes,
+        BasePayloadBuilderAttributes, BlockAccessListBudget, BlockAccessListLimit,
+        MeteringProvider, NoopMeteringProvider, ParkablePayloadTransactions,
+        ResourceMeteringConfig, ResourceMeteringDimension, ResourceMeteringOperation,
+        ResourceMeteringSchedule, SharedMeteringProvider, config::BaseBuilderConfig,
+        payload::EthPayloadBuilderAttributes,
     };
 
     #[derive(Debug)]
@@ -1773,8 +1780,7 @@ mod tests {
                 .with_fork(EthereumHardfork::Amsterdam, ForkCondition::Timestamp(DENIM_TIMESTAMP))
                 .build(),
         );
-        let parent =
-            Arc::new(SealedHeader::seal_slow(Header { gas_limit, ..Default::default() }));
+        let parent = Arc::new(SealedHeader::seal_slow(Header { gas_limit, ..Default::default() }));
         let payload_id = PayloadId::new([0; 8]);
         let attributes = BasePayloadBuilderAttributes::<BaseTxEnvelope> {
             payload_attributes: EthPayloadBuilderAttributes {
@@ -2994,10 +3000,8 @@ mod tests {
     #[test]
     fn amsterdam_payload_commits_to_block_access_list() {
         let ctx = pool_payload_context(DENIM_TIMESTAMP);
-        let outcome = build_pool_payload(
-            ctx,
-            NoopPayloadTransactions::<BasePooledTransaction>::default(),
-        );
+        let outcome =
+            build_pool_payload(ctx, NoopPayloadTransactions::<BasePooledTransaction>::default());
         let BuildOutcomeKind::Freeze(payload) = outcome else {
             panic!("a Denim-active payload must freeze")
         };
@@ -3063,7 +3067,8 @@ mod tests {
         };
 
         assert_eq!(
-            payload.block().block_access_list_hash, None,
+            payload.block().block_access_list_hash,
+            None,
             "a pre-Amsterdam block must not commit to a block access list"
         );
         assert!(
@@ -3078,13 +3083,12 @@ mod tests {
     fn amsterdam_payload_defaults_slot_number_to_block_number() {
         let ctx = pool_payload_context(DENIM_TIMESTAMP);
         assert_eq!(
-            ctx.attributes().payload_attributes.slot_number, None,
+            ctx.attributes().payload_attributes.slot_number,
+            None,
             "the default attributes must not carry a slot number"
         );
-        let outcome = build_pool_payload(
-            ctx,
-            NoopPayloadTransactions::<BasePooledTransaction>::default(),
-        );
+        let outcome =
+            build_pool_payload(ctx, NoopPayloadTransactions::<BasePooledTransaction>::default());
         let BuildOutcomeKind::Freeze(payload) = outcome else {
             panic!("a Denim-active payload must freeze")
         };
@@ -3104,10 +3108,8 @@ mod tests {
     fn amsterdam_payload_prefers_attribute_slot_number() {
         let mut ctx = pool_payload_context(DENIM_TIMESTAMP);
         ctx.config.attributes.payload_attributes.slot_number = Some(42);
-        let outcome = build_pool_payload(
-            ctx,
-            NoopPayloadTransactions::<BasePooledTransaction>::default(),
-        );
+        let outcome =
+            build_pool_payload(ctx, NoopPayloadTransactions::<BasePooledTransaction>::default());
         let BuildOutcomeKind::Freeze(payload) = outcome else {
             panic!("a Denim-active payload must freeze")
         };
@@ -3271,7 +3273,11 @@ mod tests {
             vec![*first.hash(), *listed_only.hash()],
             "the transaction adding new accounts past the limit must be left out"
         );
-        assert_eq!(scan.invalid, vec![(fresh.sender(), 0)], "only the refused transaction is skipped");
+        assert_eq!(
+            scan.invalid,
+            vec![(fresh.sender(), 0)],
+            "only the refused transaction is skipped"
+        );
         assert_eq!(scan.budget.items(), after_first, "the list must stop exactly at the limit");
         assert_eq!(scan.sealed_items, after_first, "the sealed list must sit exactly at the limit");
     }
@@ -3298,8 +3304,16 @@ mod tests {
             vec![*first.hash(), *listed_only.hash()],
             "the transaction past the envelope limit must be left out"
         );
-        assert_eq!(scan.invalid, vec![(fresh.sender(), 0)], "only the refused transaction is skipped");
-        assert_eq!(scan.budget.bytes(), filled, "the envelope bound must stop exactly at the limit");
+        assert_eq!(
+            scan.invalid,
+            vec![(fresh.sender(), 0)],
+            "only the refused transaction is skipped"
+        );
+        assert_eq!(
+            scan.budget.bytes(),
+            filled,
+            "the envelope bound must stop exactly at the limit"
+        );
         assert_eq!(scan.sealed_items, scan.budget.items(), "the refused transaction left no items");
     }
 

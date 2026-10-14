@@ -188,7 +188,8 @@ impl ssz::Encode for BaseExecutionPayloadV5 {
         encoder.append(&self.payload_inner.payload_inner.payload_inner.payload_inner.gas_used);
         encoder.append(&self.payload_inner.payload_inner.payload_inner.payload_inner.timestamp);
         encoder.append(&self.payload_inner.payload_inner.payload_inner.payload_inner.extra_data);
-        encoder.append(&self.payload_inner.payload_inner.payload_inner.payload_inner.base_fee_per_gas);
+        encoder
+            .append(&self.payload_inner.payload_inner.payload_inner.payload_inner.base_fee_per_gas);
         encoder.append(&self.payload_inner.payload_inner.payload_inner.payload_inner.block_hash);
         encoder.append(&self.payload_inner.payload_inner.payload_inner.payload_inner.transactions);
         encoder.append(&self.payload_inner.payload_inner.payload_inner.withdrawals);
@@ -291,10 +292,7 @@ mod tests {
         let block = payload.into_block_raw().unwrap();
         assert_eq!(block.header.block_access_list_hash, Some(keccak256(&block_access_list)));
         assert_eq!(block.header.slot_number, Some(slot_number));
-        assert_eq!(
-            block.header.withdrawals_root,
-            Some(alloy_primitives::B256::repeat_byte(0xaa))
-        );
+        assert_eq!(block.header.withdrawals_root, Some(alloy_primitives::B256::repeat_byte(0xaa)));
     }
 
     #[cfg(feature = "std")]
