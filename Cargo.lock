@@ -3105,6 +3105,7 @@ dependencies = [
  "alloy-rlp",
  "base-blobs",
  "base-common-consensus",
+ "base-common-flz",
  "base-common-genesis",
  "base-comp",
  "base-consensus-derive",
