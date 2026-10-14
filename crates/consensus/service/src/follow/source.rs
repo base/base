@@ -1,7 +1,8 @@
 use std::fmt::Debug;
 
 use alloy_consensus::Block;
-use alloy_eips::BlockNumberOrTag;
+use alloy_eips::{BlockId, BlockNumberOrTag};
+use alloy_primitives::{B256, Bytes, keccak256};
 use alloy_provider::{Provider, RootProvider};
 use async_trait::async_trait;
 use base_common_consensus::BaseTxEnvelope;
@@ -26,6 +27,40 @@ pub enum RemoteL2ClientError {
     /// Block not found at the requested tag.
     #[error("block not found at {0}")]
     BlockNotFound(String),
+
+    /// Failed to fetch the block access list of an Amsterdam block from the L2 EL.
+    #[error("failed to fetch block access list of block {block_hash}: {source}")]
+    FetchBlockAccessList {
+        /// The hash of the block whose list was requested.
+        block_hash: B256,
+        /// The underlying transport error.
+        source: alloy_transport::TransportError,
+    },
+
+    /// The L2 EL has no block access list for a block whose header commits to one.
+    #[error("block access list of block {0} is not available from the source node")]
+    BlockAccessListUnavailable(B256),
+
+    /// The fetched block access list does not hash to the header's commitment.
+    #[error(
+        "block access list of block {block_hash} hashes to {actual}, header commits to {expected}"
+    )]
+    BlockAccessListMismatch {
+        /// The hash of the block whose list was requested.
+        block_hash: B256,
+        /// The `block_access_list_hash` committed to by the header.
+        expected: B256,
+        /// The `keccak256` hash of the list the source node returned.
+        actual: B256,
+    },
+
+    /// The header commits to a block access list but carries no slot number.
+    #[error("block {0} commits to a block access list but its header has no slot number")]
+    MissingSlotNumber(B256),
+
+    /// The header commits to a block access list but lacks the fields an Amsterdam payload needs.
+    #[error("block {0} commits to a block access list but is not a complete Amsterdam block")]
+    IncompleteAmsterdamBlock(B256),
 }
 
 /// Trait for fetching L2 block data from the remote node.
@@ -58,6 +93,38 @@ impl RemoteL2Client {
     pub fn new(url: Url) -> Self {
         let provider = RootProvider::<Base>::new_http(url);
         Self { provider }
+    }
+
+    /// Fetches the RLP-encoded block access list of the block with the given hash through
+    /// `eth_getBlockAccessListRaw` and checks it against the header's commitment.
+    ///
+    /// The block is addressed by hash so a reorg on the source node cannot return the list of a
+    /// different block.
+    pub async fn get_block_access_list(
+        &self,
+        block_hash: B256,
+        expected_hash: B256,
+    ) -> Result<Bytes, RemoteL2ClientError> {
+        let block_access_list = self
+            .provider
+            .raw_request::<_, Option<Bytes>>(
+                "eth_getBlockAccessListRaw".into(),
+                (BlockId::hash(block_hash),),
+            )
+            .await
+            .map_err(|source| RemoteL2ClientError::FetchBlockAccessList { block_hash, source })?
+            .ok_or(RemoteL2ClientError::BlockAccessListUnavailable(block_hash))?;
+
+        let actual = keccak256(&block_access_list);
+        if actual != expected_hash {
+            return Err(RemoteL2ClientError::BlockAccessListMismatch {
+                block_hash,
+                expected: expected_hash,
+                actual,
+            });
+        }
+
+        Ok(block_access_list)
     }
 }
 
@@ -119,9 +186,335 @@ impl RemoteClient for RemoteL2Client {
             },
         };
 
-        let (execution_payload, _sidecar) =
-            BaseExecutionPayload::from_block_unchecked(block_hash, &consensus_block);
+        // A header only carries the hash of the block access list, so an Amsterdam block needs the
+        // list fetched separately to be rebuilt as a V5 payload. Pre-Amsterdam blocks have no
+        // commitment and are converted exactly as before.
+        let (execution_payload, _sidecar) = match consensus_block.header.block_access_list_hash {
+            Some(expected_hash) => {
+                // The conversion defaults a missing slot number to zero, which would fabricate
+                // a value the EL then rejects, so a header without one is malformed.
+                if consensus_block.header.slot_number.is_none() {
+                    return Err(RemoteL2ClientError::MissingSlotNumber(block_hash));
+                }
+                let block_access_list =
+                    self.get_block_access_list(block_hash, expected_hash).await?;
+                let (payload, sidecar) = BaseExecutionPayload::from_block_unchecked_with_extras(
+                    block_hash,
+                    &consensus_block,
+                    Some(block_access_list),
+                );
+                // A header lacking a field an earlier fork requires (e.g. `requests_hash`)
+                // converts to an older payload that silently drops the list.
+                if payload.as_v5().is_none() {
+                    return Err(RemoteL2ClientError::IncompleteAmsterdamBlock(block_hash));
+                }
+                (payload, sidecar)
+            }
+            None => BaseExecutionPayload::from_block_unchecked(block_hash, &consensus_block),
+        };
 
         Ok(BaseExecutionPayloadEnvelope { parent_beacon_block_root, execution_payload })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_consensus::Header;
+    use alloy_eips::{
+        eip7685::EMPTY_REQUESTS_HASH,
+        eip7928::{AccountChanges, BalanceChange, BlockAccessIndex},
+    };
+    use alloy_primitives::{Address, Sealable, U256};
+    use alloy_rlp::Decodable;
+    use alloy_rpc_types_eth::{BlockTransactions, Header as RpcHeader};
+    use alloy_rpc_types_engine::{CancunPayloadFields, PraguePayloadFields};
+    use base_common_rpc_types::{BaseBlockResponse, BaseHeaderResponse};
+    use base_common_rpc_types_engine::BaseExecutionPayloadSidecar;
+    use httpmock::{Mock, MockServer, prelude::*};
+    use serde_json::{Value, json};
+
+    use super::*;
+
+    const BLOCK_NUMBER: u64 = 42;
+    const PARENT_BEACON_BLOCK_ROOT: B256 = B256::new([0x22; 32]);
+
+    /// Encodes a minimal but structurally valid EIP-7928 list: one touched account.
+    fn block_access_list() -> Bytes {
+        let mut account = AccountChanges::new(Address::repeat_byte(0xaa));
+        account.storage_reads.push(U256::from(7));
+        account.balance_changes.push(BalanceChange::new(BlockAccessIndex::new(1), U256::from(9)));
+        alloy_rlp::encode(vec![account]).into()
+    }
+
+    /// A coherent Isthmus-shaped header, committing to `block_access_list` as an Amsterdam
+    /// header does (with the L2 block number as slot) when one is given.
+    fn header(block_access_list: Option<&Bytes>) -> Header {
+        Header {
+            parent_hash: B256::repeat_byte(0x11),
+            beneficiary: Address::repeat_byte(0x33),
+            state_root: B256::repeat_byte(0x44),
+            number: BLOCK_NUMBER,
+            gas_limit: 30_000_000,
+            timestamp: 1_700_000_000,
+            base_fee_per_gas: Some(7),
+            withdrawals_root: Some(B256::repeat_byte(0x55)),
+            blob_gas_used: Some(0),
+            excess_blob_gas: Some(0),
+            parent_beacon_block_root: Some(PARENT_BEACON_BLOCK_ROOT),
+            requests_hash: Some(EMPTY_REQUESTS_HASH),
+            block_access_list_hash: block_access_list.map(keccak256),
+            slot_number: block_access_list.map(|_| BLOCK_NUMBER),
+            ..Default::default()
+        }
+    }
+
+    /// The JSON-RPC response of the source node for `header`, whose hash is computed from the
+    /// header itself rather than chosen.
+    fn block_response(header: &Header) -> String {
+        let block: BaseBlockResponse = alloy_rpc_types_eth::Block {
+            header: BaseHeaderResponse::new(RpcHeader::from_consensus(
+                header.clone().seal_slow(),
+                None,
+                None,
+            )),
+            uncles: vec![],
+            transactions: BlockTransactions::Full(vec![]),
+            withdrawals: Some(Default::default()),
+        };
+        json!({ "jsonrpc": "2.0", "id": 0, "result": block }).to_string()
+    }
+
+    /// Parses a JSON-RPC request body so matchers can compare method and params exactly.
+    fn rpc_request(body: String) -> Value {
+        serde_json::from_str(&body).expect("the client must send valid JSON")
+    }
+
+    /// Mocks exactly the `eth_getBlockByNumber(<BLOCK_NUMBER>, full = true)` request.
+    async fn mock_block<'a>(server: &'a MockServer, header: &Header) -> Mock<'a> {
+        let response = block_response(header);
+        server
+            .mock_async(|when, then| {
+                when.method(POST).path("/").is_true(|req| {
+                    let request = rpc_request(req.body_string());
+                    request["method"] == "eth_getBlockByNumber"
+                        && request["params"] == json!([format!("{BLOCK_NUMBER:#x}"), true])
+                });
+                then.status(200).header("content-type", "application/json").body(response);
+            })
+            .await
+    }
+
+    /// Mocks exactly the `eth_getBlockAccessListRaw` request addressed by `block_hash`.
+    async fn mock_block_access_list<'a>(
+        server: &'a MockServer,
+        block_hash: B256,
+        result: Value,
+    ) -> Mock<'a> {
+        let response = json!({ "jsonrpc": "2.0", "id": 0, "result": result }).to_string();
+        server
+            .mock_async(|when, then| {
+                when.method(POST).path("/").is_true(move |req| {
+                    let request = rpc_request(req.body_string());
+                    request["method"] == "eth_getBlockAccessListRaw"
+                        && request["params"] == json!([block_hash])
+                });
+                then.status(200).header("content-type", "application/json").body(response);
+            })
+            .await
+    }
+
+    fn client(server: &MockServer) -> RemoteL2Client {
+        RemoteL2Client::new(server.url("/").parse().expect("mock server URL is valid"))
+    }
+
+    /// Rebuilds the block the way the insert task does, from the envelope alone.
+    fn rebuild(envelope: BaseExecutionPayloadEnvelope) -> Block<BaseTxEnvelope> {
+        envelope
+            .execution_payload
+            .try_into_block_with_sidecar(&BaseExecutionPayloadSidecar::v4(
+                CancunPayloadFields::new(envelope.parent_beacon_block_root.unwrap(), vec![]),
+                PraguePayloadFields::new(EMPTY_REQUESTS_HASH),
+            ))
+            .expect("the payload must rebuild into a block")
+    }
+
+    /// An Amsterdam block is rebuilt as a V5 payload carrying the fetched list and the header's
+    /// slot, which reconstructs the source block exactly, hash included.
+    #[tokio::test]
+    async fn amsterdam_block_yields_v5_payload_with_block_access_list() {
+        let server = MockServer::start_async().await;
+        let list = block_access_list();
+        let header = header(Some(&list));
+        let source_hash = header.hash_slow();
+        let block_mock = mock_block(&server, &header).await;
+        let list_mock = mock_block_access_list(&server, source_hash, json!(list)).await;
+
+        let envelope = client(&server).get_payload_by_number(BLOCK_NUMBER).await.unwrap();
+
+        block_mock.assert_calls_async(1).await;
+        list_mock.assert_calls_async(1).await;
+        assert_eq!(
+            envelope.parent_beacon_block_root,
+            Some(PARENT_BEACON_BLOCK_ROOT),
+            "the envelope must carry the header's parent beacon block root"
+        );
+        assert_eq!(envelope.execution_payload.block_hash(), source_hash, "block hash is kept");
+        let payload = envelope.execution_payload.as_v5().expect("an Amsterdam block is V5");
+        assert_eq!(payload.block_access_list, list, "the payload carries the fetched list");
+        assert_eq!(payload.slot_number, BLOCK_NUMBER, "the payload carries the header's slot");
+        assert_eq!(
+            Vec::<AccountChanges>::decode(&mut payload.block_access_list.as_ref()).unwrap().len(),
+            1,
+            "the carried list must be a valid EIP-7928 encoding"
+        );
+
+        let rebuilt = rebuild(envelope);
+        assert_eq!(rebuilt.header, header, "the payload must rebuild the exact source header");
+        assert_eq!(rebuilt.header.hash_slow(), source_hash, "the rebuilt block hash must match");
+    }
+
+    /// A block without a commitment is converted as before, without requesting a list.
+    #[tokio::test]
+    async fn pre_amsterdam_block_yields_v4_payload_without_block_access_list() {
+        let server = MockServer::start_async().await;
+        let header = header(None);
+        let source_hash = header.hash_slow();
+        let block_mock = mock_block(&server, &header).await;
+        let list_mock = mock_block_access_list(&server, source_hash, Value::Null).await;
+
+        let envelope = client(&server).get_payload_by_number(BLOCK_NUMBER).await.unwrap();
+
+        block_mock.assert_calls_async(1).await;
+        list_mock.assert_calls_async(0).await;
+        assert_eq!(envelope.parent_beacon_block_root, Some(PARENT_BEACON_BLOCK_ROOT));
+        assert!(
+            matches!(envelope.execution_payload, BaseExecutionPayload::V4(_)),
+            "a block without a commitment must stay a V4 payload"
+        );
+        let rebuilt = rebuild(envelope);
+        assert_eq!(rebuilt.header, header, "the payload must rebuild the exact source header");
+        assert_eq!(rebuilt.header.hash_slow(), source_hash, "the rebuilt block hash must match");
+    }
+
+    /// A committed block whose list the source node cannot return is an error, never a V4 payload.
+    #[tokio::test]
+    async fn missing_block_access_list_is_an_error() {
+        let server = MockServer::start_async().await;
+        let list = block_access_list();
+        let header = header(Some(&list));
+        let source_hash = header.hash_slow();
+        let block_mock = mock_block(&server, &header).await;
+        let list_mock = mock_block_access_list(&server, source_hash, Value::Null).await;
+
+        let error = client(&server).get_payload_by_number(BLOCK_NUMBER).await.unwrap_err();
+
+        block_mock.assert_calls_async(1).await;
+        list_mock.assert_calls_async(1).await;
+        assert!(
+            matches!(error, RemoteL2ClientError::BlockAccessListUnavailable(hash) if hash == source_hash),
+            "a null list must be reported as unavailable, got {error:?}"
+        );
+    }
+
+    /// An RPC failure while fetching the list is an error, never a V4 payload.
+    #[tokio::test]
+    async fn block_access_list_rpc_failure_is_an_error() {
+        let server = MockServer::start_async().await;
+        let list = block_access_list();
+        let header = header(Some(&list));
+        let source_hash = header.hash_slow();
+        let block_mock = mock_block(&server, &header).await;
+        let failure = json!({
+            "jsonrpc": "2.0",
+            "id": 0,
+            "error": { "code": -32601, "message": "method not found" }
+        })
+        .to_string();
+        let list_mock = server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path("/")
+                    .json_body_includes(r#"{"method":"eth_getBlockAccessListRaw"}"#);
+                then.status(200).header("content-type", "application/json").body(failure);
+            })
+            .await;
+
+        let error = client(&server).get_payload_by_number(BLOCK_NUMBER).await.unwrap_err();
+
+        block_mock.assert_calls_async(1).await;
+        list_mock.assert_calls_async(1).await;
+        assert!(
+            matches!(error, RemoteL2ClientError::FetchBlockAccessList { block_hash, .. } if block_hash == source_hash),
+            "an RPC failure must be reported as a list fetch error, got {error:?}"
+        );
+    }
+
+    /// A list that does not hash to the header's commitment is rejected.
+    #[tokio::test]
+    async fn mismatched_block_access_list_is_an_error() {
+        let server = MockServer::start_async().await;
+        let list = block_access_list();
+        let header = header(Some(&list));
+        let source_hash = header.hash_slow();
+        let wrong = Bytes::from_static(&[0xc0]);
+        let block_mock = mock_block(&server, &header).await;
+        let list_mock = mock_block_access_list(&server, source_hash, json!(wrong)).await;
+
+        let error = client(&server).get_payload_by_number(BLOCK_NUMBER).await.unwrap_err();
+
+        block_mock.assert_calls_async(1).await;
+        list_mock.assert_calls_async(1).await;
+        match error {
+            RemoteL2ClientError::BlockAccessListMismatch { block_hash, expected, actual } => {
+                assert_eq!(block_hash, source_hash, "the error must name the block");
+                assert_eq!(expected, keccak256(&list), "expected is the header commitment");
+                assert_eq!(actual, keccak256(&wrong), "actual is the hash of the returned list");
+            }
+            other => panic!("a wrong list must be reported as a mismatch, got {other:?}"),
+        }
+    }
+
+    /// A header that commits to a list but has no slot number is rejected before any list is
+    /// fetched, instead of defaulting the slot to zero.
+    #[tokio::test]
+    async fn committed_block_without_slot_number_is_an_error() {
+        let server = MockServer::start_async().await;
+        let list = block_access_list();
+        let mut header = header(Some(&list));
+        header.slot_number = None;
+        let source_hash = header.hash_slow();
+        let block_mock = mock_block(&server, &header).await;
+        let list_mock = mock_block_access_list(&server, source_hash, json!(list)).await;
+
+        let error = client(&server).get_payload_by_number(BLOCK_NUMBER).await.unwrap_err();
+
+        block_mock.assert_calls_async(1).await;
+        list_mock.assert_calls_async(0).await;
+        assert!(
+            matches!(error, RemoteL2ClientError::MissingSlotNumber(hash) if hash == source_hash),
+            "a missing slot must be reported, got {error:?}"
+        );
+    }
+
+    /// A header that commits to a list but lacks `requests_hash` would convert to a V3 payload
+    /// that drops the list, so it is rejected instead.
+    #[tokio::test]
+    async fn committed_block_without_requests_hash_is_an_error() {
+        let server = MockServer::start_async().await;
+        let list = block_access_list();
+        let mut header = header(Some(&list));
+        header.requests_hash = None;
+        let source_hash = header.hash_slow();
+        let block_mock = mock_block(&server, &header).await;
+        let list_mock = mock_block_access_list(&server, source_hash, json!(list)).await;
+
+        let error = client(&server).get_payload_by_number(BLOCK_NUMBER).await.unwrap_err();
+
+        block_mock.assert_calls_async(1).await;
+        list_mock.assert_calls_async(1).await;
+        assert!(
+            matches!(error, RemoteL2ClientError::IncompleteAmsterdamBlock(hash) if hash == source_hash),
+            "an incomplete header must be reported, got {error:?}"
+        );
     }
 }

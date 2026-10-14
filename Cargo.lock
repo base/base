@@ -4091,6 +4091,7 @@ dependencies = [
  "alloy-network 2.5.0",
  "alloy-primitives",
  "alloy-provider",
+ "alloy-rlp",
  "alloy-rpc-client",
  "alloy-rpc-types-engine",
  "alloy-rpc-types-eth 2.5.0",
