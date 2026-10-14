@@ -408,7 +408,7 @@ digest = "559e8e9f95"
 
 ["crates/execution/tx-forwarding/README.md"]
 summary = "base-tx-forwarding: forwards mempool txs to builder RPCs via per-destination queues fed by FIFO and tip-priority lanes; dedup, batching, resend; spawn_requests for custom ForwardRequest; CLI flags."
-digest = "b72a1536e1"
+digest = "824cdc212c"
 
 ["crates/execution/txpool-rpc/README.md"]
 summary = "Txpool RPC admin/status APIs and validity submissions; shared staged signature modes, signature rejection metrics, predicate forwarding and sequencer proxy behavior."
@@ -420,7 +420,7 @@ digest = "e58f6b44fb"
 
 ["crates/execution/txpool/PROPAGATION_PIPELINE.md"]
 summary = "Plan to forward mempool txs to builders via base_insertValidatedTransaction in 4 PRs (consumer, forwarder, builder endpoint, node integration). Only PR 1 is marked done. Names a crates/txpool/ path."
-digest = "2e785bfe9d"
+digest = "ce42872576"
 
 ["crates/execution/txpool/README.md"]
 summary = "Base txpool validation/ordering, builder wire extensions, staged EIP-712 predicate authorization, wallet signing contract, rejection metrics, and rollout/security limits."
@@ -656,7 +656,7 @@ digest = "393c4961d6"
 
 ["docs/guides/P2P.md"]
 summary = "Explains the Base P2P stack for newcomers: consensus-layer discv5 and libp2p gossipsub versus execution-layer reth networking, how they interact via Engine API, key files, flags, and glossary."
-digest = "2407f38ac8"
+digest = "0a50fafb9b"
 
 ["docs/guides/RELEASE.md"]
 summary = "Release process: Start Release creates releases/vX.Y.Z, version sync PR, automatic RC tags and builds per commit, then Publish Release for the final tag, Docker images and binaries."

@@ -434,6 +434,13 @@ pub struct RpcStandardNodeArgs {
     )]
     pub tx_forwarding_queue_capacity: Option<usize>,
 
+    /// Send each forwarding batch as one `base_insertValidatedTransactions` call.
+    ///
+    /// The builder admits the batch as one pool batch instead of one call per transaction. Every
+    /// builder in `--builder-rpc-urls` must serve that method before this is enabled.
+    #[arg(long = "tx-forwarding-batched-insert", requires = "enable_tx_forwarding")]
+    pub tx_forwarding_batched_insert: bool,
+
     /// Run `meter_bundle` on the mempool node before inserting into the forwarding pool.
     ///
     /// Has no effect until the sim-worker path is wired; keep off in production.
@@ -586,6 +593,7 @@ impl From<&StandardNodeArgs> for TxForwardingConfig {
             .with_max_rps(args.rpc.tx_forwarding_max_rps)
             .with_fifo_percent(args.rpc.tx_forwarding_fifo_percent)
             .with_queue_capacity(args.rpc.tx_forwarding_queue_capacity)
+            .with_batched_insert(args.rpc.tx_forwarding_batched_insert)
             .with_inline_simulation(args.rpc.enable_inline_simulation)
             .with_inline_simulation_workers(args.rpc.inline_simulation_workers)
             .with_inline_simulation_queue_capacity(args.rpc.inline_simulation_queue_capacity)
@@ -1017,6 +1025,7 @@ mod tests {
             tx_forwarding_max_rps: DEFAULT_MAX_RPS,
             tx_forwarding_fifo_percent: DEFAULT_FIFO_PERCENT,
             tx_forwarding_queue_capacity: None,
+            tx_forwarding_batched_insert: false,
             enable_inline_simulation: false,
             inline_simulation_workers: DEFAULT_INLINE_SIMULATION_WORKERS,
             inline_simulation_queue_capacity: DEFAULT_INLINE_SIMULATION_QUEUE_CAPACITY,
@@ -1291,14 +1300,17 @@ mod tests {
                 "35",
                 "--tx-forwarding-queue-capacity",
                 "64",
+                "--tx-forwarding-batched-insert",
             ])
             .args,
         );
 
         assert_eq!(defaults.fifo_percent, DEFAULT_FIFO_PERCENT);
         assert_eq!(defaults.queue_capacity, None);
+        assert!(!defaults.batched_insert);
         assert_eq!(configured.fifo_percent, 35);
         assert_eq!(configured.queue_capacity, Some(64));
+        assert!(configured.batched_insert);
     }
 
     #[test]
