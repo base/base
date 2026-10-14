@@ -1,7 +1,7 @@
 #![doc = include_str!("../README.md")]
 
 mod config;
-pub use config::{Config, ProverMode, Scenario};
+pub use config::{Config, MockFault, ProverMode, Scenario};
 
 mod mock_prover;
 pub use mock_prover::{MockProofRequests, MockProver};
