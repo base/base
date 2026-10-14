@@ -39,6 +39,10 @@ const CODELESS_SYSTEM_ACCOUNTS: [Address; 1] = [NonceManagerStorage::ADDRESS];
 /// overwrites a real deployment, and it is idempotent: it fires on the first
 /// Everest block and is a no-op thereafter.
 ///
+/// The account is converted from its untouched database info before the stub is
+/// written, so the install is described as a code change in the block access
+/// list (EIP-7928) rather than hidden as the account's own original state.
+///
 /// [`ensure_create2_deployer`]: crate::ensure_create2_deployer
 pub fn ensure_eip8130_system_accounts<DB>(
     chain_spec: impl Upgrades,
@@ -57,7 +61,7 @@ where
 
     let mut updates = HashMap::default();
     for address in CODELESS_SYSTEM_ACCOUNTS {
-        let mut acc_info = db.basic(address)?.unwrap_or_default();
+        let acc_info = db.basic(address)?.unwrap_or_default();
 
         // Skip if the account already carries code (real deployment, or the stub
         // planted on a previous block); only an empty-code account needs it.
@@ -65,10 +69,14 @@ where
             continue;
         }
 
-        acc_info.code_hash = stub_hash;
-        acc_info.code = Some(stub.clone());
-
+        // Convert the *untouched* database account first: `Account::from` snapshots the
+        // `AccountInfo` it is given as the account's `original_info`, so mutating `info`
+        // afterwards is what registers the stub as a code change in the block access list.
+        // Mutating before the conversion would make the stub its own "original" and hide
+        // the transition from the BAL builder.
         let mut revm_acc: revm::state::Account = acc_info.into();
+        revm_acc.info.code_hash = stub_hash;
+        revm_acc.info.code = Some(stub.clone());
         revm_acc.mark_touch();
         updates.insert(address, revm_acc);
     }
@@ -83,7 +91,7 @@ where
 #[cfg(test)]
 mod tests {
     use base_common_genesis::{BaseUpgrade, RollupConfig};
-    use revm::{Database as _, database::InMemoryDB, state::AccountInfo};
+    use revm::{Database as _, database::{InMemoryDB, State}, state::AccountInfo};
 
     use super::*;
 
@@ -133,6 +141,75 @@ mod tests {
 
         let acc = db.basic(ADDR).unwrap().unwrap();
         assert_eq!(acc.code_hash, real.hash_slow(), "a real deployment must not be overwritten");
+    }
+
+    /// Everest activation must describe the stub install in the EIP-7928 block
+    /// access list: the code-less nonce manager is converted from its untouched
+    /// database info, so the `0xEF` stub is recorded as a code change instead of
+    /// being snapshotted as the account's own original state (which would leave
+    /// the transition invisible to the BAL builder).
+    #[test]
+    fn everest_activation_records_stub_code_change_in_bal() {
+        let mut state =
+            State::builder().with_database(InMemoryDB::default()).with_bal_builder().build();
+
+        ensure_eip8130_system_accounts(everest(Some(0)), 100, &mut state).unwrap();
+
+        let stub = Bytecode::new_legacy(Bytes::from_static(&SYSTEM_ACCOUNT_STUB));
+        let bal = state.take_built_alloy_bal().expect("the BAL builder must produce a list");
+        assert_eq!(bal.len(), 1, "exactly one account must be described by the activation BAL");
+
+        let account = &bal[0];
+        assert_eq!(account.address, ADDR, "the nonce manager must be the described account");
+        assert_eq!(
+            account.code_changes.len(),
+            1,
+            "the stub install must be recorded as exactly one code change",
+        );
+        assert_eq!(
+            account.code_changes[0].new_code,
+            Bytes::from_static(&SYSTEM_ACCOUNT_STUB),
+            "the recorded code change must carry the 0xEF stub bytes",
+        );
+        assert_eq!(
+            account.code_changes[0].block_access_index,
+            revm::state::bal::BlockAccessIndex::PRE_EXECUTION,
+            "the stub install must be recorded at the block's initial access index",
+        );
+
+        let installed = state.basic(ADDR).unwrap().expect("system account must exist");
+        assert_eq!(
+            installed.code_hash,
+            stub.hash_slow(),
+            "the installed code hash must be the stub's hash",
+        );
+    }
+
+    /// The stub install is idempotent: a later Everest activation block, where the
+    /// stub is already installed, must add no code change for the account.
+    #[test]
+    fn everest_stub_install_is_idempotent_in_bal() {
+        let mut state =
+            State::builder().with_database(InMemoryDB::default()).with_bal_builder().build();
+
+        ensure_eip8130_system_accounts(everest(Some(0)), 100, &mut state).unwrap();
+        let first = state.take_built_alloy_bal().expect("the first activation builds a list");
+        assert_eq!(first.len(), 1, "the first activation must describe the stub install");
+        assert_eq!(
+            first[0].code_changes.len(),
+            1,
+            "the first activation must record exactly one code change",
+        );
+
+        // Re-arm the builder so the second activation's writes are observed in isolation.
+        state.bal_state.bal_builder = Some(revm::state::bal::Bal::new());
+
+        ensure_eip8130_system_accounts(everest(Some(0)), 200, &mut state).unwrap();
+        let second = state.take_built_alloy_bal().expect("the BAL builder must produce a list");
+        assert!(
+            second.is_empty(),
+            "a block whose stub is already installed must record no account changes",
+        );
     }
 
     fn everest(timestamp: Option<u64>) -> RollupConfig {
