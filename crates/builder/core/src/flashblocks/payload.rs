@@ -1247,14 +1247,14 @@ where
     // execution. `bal_builder()` is only `Some` once Amsterdam is active, so pre-fork blocks
     // keep an empty commitment.
     let block_access_list = state.bal_state.bal_builder().map(|bal| bal.into_alloy_bal());
-    let (block_access_list_hash, block_access_list_bytes) = match &block_access_list {
-        Some(bal) => {
+    let (block_access_list_hash, block_access_list_bytes) = block_access_list.as_ref().map_or_else(
+        || (None, None),
+        |bal| {
             let mut raw = Vec::new();
             let hash = compute_block_access_list_hash_with_buf(bal, &mut raw);
             (Some(hash), Some(Bytes::from(raw)))
-        }
-        None => (None, None),
-    };
+        },
+    );
 
     // EIP-7843: from Amsterdam on, the header carries a slot number. Base puts the L2 block
     // number here, preferring the value the consensus layer supplied in the payload attributes

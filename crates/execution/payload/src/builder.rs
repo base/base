@@ -2931,7 +2931,6 @@ mod tests {
             .expect("an Amsterdam block must commit to a block access list");
         let bytes = payload
             .block_access_list
-            .clone()
             .expect("an Amsterdam payload must carry the committed block access list");
 
         let decoded = alloy_eips::eip7928::bal::DecodedBal::from_rlp_bytes(bytes)
