@@ -29,6 +29,11 @@ pub enum BasePayloadBuilderError {
     /// executor.
     #[error("sequencer transaction commit was refused")]
     SequencerTransactionCommitRefused,
+    /// Thrown when the pre-execution changes and the committed sequencer transactions alone
+    /// already exceed the EIP-7928 block access list bounds. Sequencer transactions cannot be
+    /// dropped, so the build fails instead of sealing a block every node would reject.
+    #[error("sequencer transactions exceed the block access list bounds: {0}")]
+    SequencerBlockAccessListLimit(crate::BlockAccessListLimit),
     /// Thrown when the job was cancelled, e.g. because the requesting client went away.
     #[error("payload job cancelled")]
     Cancelled,
