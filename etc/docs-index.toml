@@ -15,8 +15,8 @@ summary = "Contribution policy: open an issue first, work only on assigned issue
 digest = "c0dafd9de5"
 
 ["README.md"]
-summary = "Top-level Base overview: what Base is, docs and specs links, installing binaries with baseup, running a node via docker compose, and the base-anvil GHCR package."
-digest = "e04696c133"
+summary = "Top-level Base overview: docs and specs links, installing binaries with baseup, running a node via docker compose, choosing a Docker or snapshot local devnet, and the base-anvil GHCR package."
+digest = "8e25401080"
 
 ["SECURITY.md"]
 summary = "Security policy: HackerOne and Cantina bug bounty programs, where to report offchain versus smart contract vulnerabilities, and the security contact email."
@@ -56,11 +56,11 @@ digest = "6d0de36199"
 
 ["bin/base/README.md"]
 summary = "Unified base commands, tracing and chain selection; native snapshot download/run, history retention, dev impersonation and signed RPC examples, restart and timing limits, and container usage."
-digest = "9cf77aec37"
+digest = "bcfe6bea9c"
 
 ["bin/basectl/README.md"]
 summary = "basectl operator console reference: global options, TUI and scriptable commands (block, sync-status, p2p, txpool, conductor, sequencer, batcher, doctor, proofs), JSON output and examples."
-digest = "dede2cd58a"
+digest = "78a08a9f7a"
 
 ["bin/builder/README.md"]
 summary = "Stub README for the base-builder block builder binary, which runs base-builder-core. Minimal, no usage details."
@@ -152,7 +152,7 @@ digest = "d1525977c0"
 
 ["crates/batcher/cli/README.md"]
 summary = "base-batcher-cli: base batcher flags and startup, with sequencer endpoints and leader search, channel and DA config, and shadow mode posting to the inbox a parity validator derives its chain from."
-digest = "876305aea7"
+digest = "1ccdbc3fb7"
 
 ["crates/batcher/comp/README.md"]
 summary = "base-comp: incremental Brotli channel compression (CompressionStream, BrotliLevel) producing protocol-compatible channels; batch encoding and framing live in batcher-encoder."
@@ -160,7 +160,7 @@ digest = "ce9421e523"
 
 ["crates/batcher/core/README.md"]
 summary = "base-batcher-core: async BatchDriver, SubmissionQueue for L1 transactions, and the DA throttle (Off, Step, Linear, Quadratic strategies) that publishes the DA limits the block builders apply."
-digest = "356adfd066"
+digest = "de7352c3a8"
 
 ["crates/batcher/encoder/README.md"]
 summary = "base-batcher-encoder: synchronous, no-I/O encoder from L2 blocks to L1 submissions. Covers channel closing rules, blob framing, metric labels, and BatchEncoder usage."
@@ -344,7 +344,7 @@ digest = "9c987d9934"
 
 ["crates/execution/eip8130/README.md"]
 summary = "Native EIP-8130 account abstraction validation: enshrined authenticators (not precompiles) needing parity with contracts, validation layers, intrinsic gas formula, EIP-7623 floor, fee checks."
-digest = "38c1df7bcf"
+digest = "96d10d28d3"
 
 ["crates/execution/evm/README.md"]
 summary = "BaseEvmConfig implementing reth ConfigureEvm, mapping timestamps to SpecId for upgrade-aware EVM environments, and re-exporting executor types. Use when changing Base EVM setup or fork specs."
@@ -512,7 +512,7 @@ digest = "dc8e161148"
 
 ["crates/proof/primitives/README.md"]
 summary = "base-proof-primitives: shared proof wire types (Proposal, ProofBundle, ProofResult with Tee and Zk variants) exchanged among proposer, enclave, provers and on-chain verifiers."
-digest = "274b61e6c7"
+digest = "b8cdb98d76"
 
 ["crates/proof/proof/README.md"]
 summary = "base-proof SDK: oracle-backed derivation and execution pieces (OraclePipeline, Oracle L1/L2 providers, CachingOracle, BaseExecutor), boot info and EIP-2935 lookups for fault proof generation."
@@ -654,6 +654,10 @@ digest = "fd4c93a6fc"
 summary = "Review guide for block-production-sensitive PRs: mandatory payload size-limit gate across I/O boundaries, taxonomy of halt/stall scenarios (precompiles, builder, flashblocks), and a checklist."
 digest = "393c4961d6"
 
+["docs/guides/DEVNET.md"]
+summary = "Chooser for local environments: Docker and HA devnets, Anvil + local Nitro proving, snapshot devnet (base dev), snapshot benchmark harness, with quickstarts, data-reset behavior, and owning docs."
+digest = "0951b41580"
+
 ["docs/guides/P2P.md"]
 summary = "Explains the Base P2P stack for newcomers: consensus-layer discv5 and libp2p gossipsub versus execution-layer reth networking, how they interact via Engine API, key files, flags, and glossary."
 digest = "2407f38ac8"
@@ -663,8 +667,8 @@ summary = "Release process: Start Release creates releases/vX.Y.Z, version sync 
 digest = "dbf3e3e8de"
 
 ["docs/guides/SNAPSHOT_BENCHMARKS.md"]
-summary = "How to run repeatable base-bench snapshot benchmarks on an L1-free Base snapshot devnet, aggregate selected runs, and publish to base/benchmark. Use when measuring performance on restored datadirs."
-digest = "25c60e4705"
+summary = "How to run repeatable base-bench snapshot benchmarks on the snapshot benchmark harness, aggregate selected runs, and publish to base/benchmark. Use when measuring performance on restored datadirs."
+digest = "c30436cd89"
 
 ["docs/guides/STANDALONE_PROVING.md"]
 summary = "Guide to running the prover stack standalone (just prover up) with your own RPCs and a funded Succinct Prover Network key: ZK backends, range sizing, requester key, restart behavior, troubleshooting."
@@ -688,11 +692,11 @@ digest = "49f6748dde"
 
 ["etc/docker/README.md"]
 summary = "Dockerfiles, Bake targets, published images (ghcr.io/base/node and single-binary images), and Compose setup for the local devnet and Rust services, including batcher topology and build profiles."
-digest = "12c930d703"
+digest = "1b26e226ad"
 
 ["etc/systems/README.md"]
-summary = "Docs for base-system-tests: running the snapshot-backed mainnet devnet (builder and follow client), snapshot and transfer benchmarks, workload suite, 2s vs 200ms comparison, cleanup."
-digest = "261a5e39c4"
+summary = "Docs for base-system-tests: running the snapshot benchmark harness (builder and follow client), snapshot and transfer benchmarks, workload suite, 2s vs 200ms comparison, cleanup."
+digest = "c93564343c"
 
 ["etc/tools/witness-diff/README.md"]
 summary = "witness-diff tool that compares two execution witnesses (from debug_executionWitness) to find differing trie nodes, bytecodes, or preimages. Use when debugging state root mismatches between nodes."

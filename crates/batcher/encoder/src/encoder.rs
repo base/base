@@ -2,17 +2,16 @@
 
 use std::{collections::VecDeque, fmt, sync::Arc};
 
-use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::B256;
-use base_common_consensus::{BaseBlock, BaseTxEnvelope};
+use base_common_consensus::BaseBlock;
 use base_common_genesis::RollupConfig;
 use base_protocol::{BlockInfo, ChannelId};
 use rand::{RngCore, SeedableRng, rngs::SmallRng};
 use tracing::{debug, warn};
 
 use crate::{
-    ArtifactId, BatchComposer, BatchPipeline, BatchSubmission, BatcherMetrics, Channel,
-    ChannelAddOutcome, ChannelCloseReason, DaEgress, DaType, DerivationReconciliation,
+    ArtifactId, BatchComposer, BatchPipeline, BatchSubmission, BatcherMetrics, BufferedBlock,
+    Channel, ChannelAddOutcome, ChannelCloseReason, DaEgress, DaType, DerivationReconciliation,
     EncoderConfig, EncoderConfigError, ReorgError, StepError, StepResult, SubmissionId,
 };
 
@@ -28,7 +27,7 @@ pub struct BatchEncoder {
     /// Current L1 head block number (for channel duration tracking).
     l1_head: u64,
     /// Buffered L2 blocks above the latest observed safe head.
-    blocks: VecDeque<BaseBlock>,
+    blocks: VecDeque<BufferedBlock>,
     /// Index into `blocks`: next block not yet appended to the writable channel tail.
     block_cursor: usize,
     /// Hash of the last accepted block or safe-head anchor.
@@ -88,17 +87,6 @@ impl BatchEncoder {
             blob_override: false,
             deferred_step_error: None,
         })
-    }
-
-    /// Estimate the DA bytes represented by non-deposit transactions in `block`.
-    fn block_da_backlog_bytes(block: &BaseBlock) -> u64 {
-        block
-            .body
-            .transactions
-            .iter()
-            .filter(|tx| !matches!(tx, BaseTxEnvelope::Deposit(_)))
-            .map(|tx| tx.encode_2718_len() as u64)
-            .sum()
     }
 
     /// Steps until idle, flushes the writable channel, and drains all ready submissions.
@@ -356,7 +344,7 @@ impl BatchEncoder {
             return true;
         };
 
-        let oldest_number = oldest.header.number;
+        let oldest_number = oldest.block().header.number;
         let next_safe = safe_l2.number + 1;
         if next_safe < oldest_number {
             return false;
@@ -368,9 +356,9 @@ impl BatchEncoder {
         }
 
         if prune_count == 0 {
-            return oldest.header.parent_hash == safe_l2.hash;
+            return oldest.block().header.parent_hash == safe_l2.hash;
         }
-        if self.blocks[prune_count - 1].header.hash_slow() != safe_l2.hash {
+        if self.blocks[prune_count - 1].block().header.hash_slow() != safe_l2.hash {
             return false;
         }
 
@@ -426,7 +414,7 @@ impl BatchEncoder {
                 .end
                 .checked_sub(1)
                 .and_then(|last_block_index| self.blocks.get(last_block_index))
-                .is_some_and(|last_block| safe_l2.number < last_block.header.number)
+                .is_some_and(|last_block| safe_l2.number < last_block.block().header.number)
         })
     }
 
@@ -454,7 +442,7 @@ impl BatchPipeline for BatchEncoder {
         let number = block.header.number;
         let hash = block.header.hash_slow();
         self.tip = Some(hash);
-        self.blocks.push_back(block);
+        self.blocks.push_back(BufferedBlock::new(block));
         BatcherMetrics::pending_blocks().increment(1.0);
 
         debug!(block = %number, pending_blocks = %self.blocks.len(), "block added to encoder queue");
@@ -476,11 +464,11 @@ impl BatchPipeline for BatchEncoder {
             return Ok(StepResult::Idle);
         }
 
-        let block = &self.blocks[self.block_cursor];
-        let block_da_backlog_bytes = Self::block_da_backlog_bytes(block);
+        let buffered = &self.blocks[self.block_cursor];
+        let block_da_backlog_bytes = buffered.estimated_da_bytes();
 
         // Composition failure is fatal: skipping the block would gap the L2 sequence.
-        let single_batch = BatchComposer::block_to_single_batch(block)
+        let single_batch = BatchComposer::block_to_single_batch(buffered.block())
             .map_err(|source| StepError::CompositionFailed { cursor: self.block_cursor, source })?;
 
         if !self.channels.back().is_some_and(Channel::is_open) {
@@ -648,7 +636,7 @@ impl BatchPipeline for BatchEncoder {
 
     fn da_backlog_bytes(&self) -> u64 {
         let pending_blocks: u64 =
-            self.blocks.iter().skip(self.block_cursor).map(Self::block_da_backlog_bytes).sum();
+            self.blocks.iter().skip(self.block_cursor).map(BufferedBlock::estimated_da_bytes).sum();
         let channels: u64 = self
             .channels
             .iter()

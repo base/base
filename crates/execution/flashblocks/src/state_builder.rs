@@ -15,7 +15,8 @@ use alloy_rpc_types_eth::state::StateOverride;
 use base_common_chains::Upgrades;
 use base_common_consensus::{BasePrimitives, BaseReceipt, BaseTxEnvelope, Predeploys};
 use base_common_evm::{
-    BaseHaltReason, L1BlockInfo, ensure_create2_deployer, ensure_eip8130_system_accounts,
+    BaseHaltReason, Eip8130PhaseStatuses, L1BlockInfo, ensure_create2_deployer,
+    ensure_eip8130_system_accounts,
 };
 use base_common_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
 use base_common_rpc_types::{BaseTransactionReceipt, Transaction};
@@ -310,6 +311,7 @@ where
         let start = Instant::now();
         let transact_result = self.evm.transact(&transaction);
         let elapsed_us = start.elapsed().as_micros();
+        let eip8130_phase_statuses = Eip8130PhaseStatuses::take();
 
         match transact_result {
             Ok(ResultAndState { state, result }) => {
@@ -347,6 +349,7 @@ where
                     &result,
                     self.cumulative_gas_used,
                     self.pending_block.timestamp,
+                    eip8130_phase_statuses,
                 )?;
 
                 let meta = TransactionMeta {

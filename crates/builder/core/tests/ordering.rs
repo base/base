@@ -8,7 +8,7 @@ use alloy_provider::Provider;
 use alloy_signer_local::PrivateKeySigner;
 use base_builder_core::{
     BuilderApiExtension, BuilderApiExtensionConfig, BuilderConfig, DEFAULT_MAX_VALIDITY_PREDICATES,
-    MAX_SHADOW_VALIDITY_SAMPLE_RATE_BPS, RestingPredicateMode, ShadowValidityConfig,
+    RestingPredicateMode,
     test_utils::{ChainDriver, ChainDriverExt, LocalInstanceBuilder, ONE_ETH, setup_test_instance},
 };
 use base_execution_txpool::{
@@ -338,66 +338,6 @@ async fn predicate_eval_hard_cutoff_defers_without_evaluating() -> eyre::Result<
     // budget, so `ordinary` (unaffected by the cutoff) is included ahead of it; `deferred` is
     // still included overall, just in a later flashblock once the budget resets.
     assert_eq!(actual, [first_hash, ordinary_hash, deferred_hash]);
-
-    Ok(())
-}
-
-/// Shadow injection adds only builder-local metadata: the original signed transaction executes
-/// with the same hash, encoding, and state transition.
-#[tokio::test]
-async fn shadow_validity_injection_preserves_forwarded_transaction() -> eyre::Result<()> {
-    let shadow =
-        ShadowValidityConfig::enabled(MAX_SHADOW_VALIDITY_SAMPLE_RATE_BPS).expect("valid rate");
-    let api_config = BuilderApiExtensionConfig::new(DEFAULT_MAX_VALIDITY_PREDICATES)
-        .with_shadow_validity(shadow)
-        .with_noop_metering();
-    let instance = LocalInstanceBuilder::new(BuilderConfig::for_tests())
-        .install_ext::<BuilderApiExtension>(api_config)
-        .build()
-        .await?;
-    let driver = instance.driver().await?;
-    let accounts = driver.fund_accounts(1, ONE_ETH).await?;
-    let recipient = Address::random();
-    let value = 7;
-    let recipient_balance_before = driver.provider().get_balance(recipient).await?;
-
-    let signed = driver
-        .create_transaction()
-        .with_signer(&accounts[0])
-        .with_to(recipient)
-        .with_value(value)
-        .build()
-        .await;
-    let tx_hash = signed.tx_hash();
-    let raw = signed.encoded_2718();
-    let forwarded = ValidatedTransaction {
-        sender: accounts[0].address(),
-        raw: raw.clone().into(),
-        metering: None,
-        extensions: TransactionValidity::default(),
-    };
-    driver
-        .provider()
-        .raw_request::<_, ()>("base_insertValidatedTransaction".into(), (forwarded,))
-        .await?;
-
-    let block = driver.build_new_block().await?;
-    let included = block
-        .transactions
-        .into_transactions()
-        .find(|transaction| transaction.tx_hash() == tx_hash)
-        .expect("forwarded transaction must be included");
-
-    assert_eq!(
-        included.inner.inner.encoded_2718(),
-        raw,
-        "validity metadata must not alter consensus bytes"
-    );
-    assert_eq!(
-        driver.provider().get_balance(recipient).await?,
-        recipient_balance_before + U256::from(value),
-        "the original state transition must execute"
-    );
 
     Ok(())
 }

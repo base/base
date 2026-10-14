@@ -156,21 +156,27 @@ the [snapshot benchmark harness](../../etc/systems/README.md) for benchmarks.
 
 ### Download selection and interruptions
 
-`download` uses `--full`: full current state and headers with 13,392,000 blocks of transactions,
-receipts, and account/storage history, rounded outward to archive chunk boundaries. That is 31 days
-at Denim's 200ms cadence, not archive history. It stops after downloading;
-it does not create a validator copy, start nodes or configure a fork. The recipe allows up to 16
-simultaneous HTTP downloads (`--download-concurrency 16`).
+`download` fetches full current state and headers with 1,339,200 blocks of transactions, receipts,
+and account/storage history, rounded outward to archive chunk boundaries. That is 31 days of
+pre-Denim 2s blocks, not archive history. `--full` keeps 13,392,000 blocks, which is 31 days at
+Denim's 200ms cadence but about 310 days of 2s blocks: a mainnet `--full` download needs about
+1.9 TB and unpacks to about 3.7 TB. The recipe's mainnet download in October 2026 was about
+890 GB and about 1.4 TB on disk. It stops after downloading; it does not create a validator copy,
+start nodes or configure a fork. The recipe allows up to 16 simultaneous HTTP downloads
+(`--download-concurrency 16`).
 
-Fresh downloads generate `reth.toml` with the persisted transaction-hash index enabled and block
-bodies, receipts, and account/storage history at pruning distance 13,392,000. Indices rebuild on
-startup; this takes more disk space and startup work than `--minimal`. Pruning follows persisted
+Fresh downloads generate `reth.toml` with block bodies, receipts, and account/storage history at
+pruning distance 1,339,200. The recipe removes the generated `transaction_lookup = "full"` line so
+the persisted transaction-hash index is kept. The snapshot does not ship that index or the history
+indices, so the first `run` rebuilds them before sequencing starts: RPC answers within seconds, but
+no blocks are produced until the rebuild finishes (about 22 minutes for a mainnet download in
+testing). This takes more disk space and startup work than `--minimal`. Pruning follows persisted
 blocks and static-file boundaries, not an exact wall-clock expiry. Hash-based lookups still require
 the corresponding transaction bodies and receipts to be retained.
 
-An existing `reth.toml` is not overwritten. Switching the recipe to `--full` does not upgrade a
-previous minimal datadir's pruning or rebuild its missing transaction-hash index. Use a fresh
-directory for a full download; never download over a datadir that has produced development blocks.
+An existing `reth.toml` is not overwritten. Rerunning the recipe does not upgrade a previous
+minimal datadir's pruning or rebuild its missing transaction-hash index. Use a fresh directory for
+a new download; never download over a datadir that has produced development blocks.
 
 Pin a manifest when resuming an interrupted download. Verified, unchanged archive outputs are
 reused; an interrupted large archive may restart from the beginning. Do not rerun download over a
@@ -180,8 +186,9 @@ datadir that has already produced development blocks; resume it with `run` inste
 # Inspect the exact archives and sizes without creating a datadir or downloading archives.
 just devnet snapshot download --dir "$HOME/data/my-devnet" --print-plan-json
 # Add --manifest-url <published-manifest-url> to pin a particular snapshot for download/resume.
-# Equivalent direct binary download:
-target/release/base snapshot download --full --download-concurrency 16 --dir "$HOME/data/my-devnet"
+# Equivalent direct binary download; afterwards delete `transaction_lookup = "full"` from reth.toml.
+target/release/base snapshot download --download-concurrency 16 --with-txs-distance 1339200 \
+  --with-receipts-distance 1339200 --with-state-history-distance 1339200 --dir "$HOME/data/my-devnet"
 ```
 
 ### `dev_impersonateTransaction`
@@ -196,7 +203,15 @@ dev_impersonateTransaction({from, to?, input?, value?, gas, mint?}) -> txHash
 `from` and `gas` are required. `input` defaults to empty, and `value` and `mint` to zero. `mint` wei
 is credited to `from` before the call. Omitting `to` creates a contract. The request becomes a
 deposit transaction, not a signed one: it skips signature, nonce, and fee checks, and pays no fees.
-Use signed transactions to test admission and fees.
+Its receipt has type `0x7e`, `effectiveGasPrice` zero, and `from` set to the impersonated account,
+and each request increments that account's nonce. Use signed transactions to test admission and
+fees. The dev chain keeps the snapshot's chain ID, so a transaction signed here is also valid on that
+network: act as real accounts through impersonation and sign only with throwaway keys.
+
+**The receipt's `contractAddress` is wrong for impersonated contract creations.** The code is
+deployed at `create(from, nonce)`, using the sender's nonce before the request, but the receipt
+reports the address for nonce zero. Read the nonce first (`cast nonce <from>`), then compute the
+address with `cast compute-address <from> --nonce <nonce>`.
 
 A returned hash means the request is queued, not mined. Requests are added in order after the
 system deposits of the next block with enough gas, alongside ordinary pool transactions. Poll

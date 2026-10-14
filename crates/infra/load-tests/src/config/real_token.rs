@@ -80,7 +80,7 @@ pub enum RealTokenAcquisitionConfig {
         /// WETH input amount per sender.
         amount_in: U256,
         /// Minimum pair-token output amount.
-        #[serde(default = "default_zero_amount")]
+        #[serde(default)]
         min_amount_out: U256,
     },
     /// Aerodrome Slipstream `exactInputSingle` route.
@@ -96,7 +96,7 @@ pub enum RealTokenAcquisitionConfig {
         /// WETH input amount per sender.
         amount_in: U256,
         /// Minimum pair-token output amount.
-        #[serde(default = "default_zero_amount")]
+        #[serde(default)]
         min_amount_out: U256,
     },
 }
@@ -286,10 +286,6 @@ fn parse_real_token_acquisition(
             })
         }
     }
-}
-
-const fn default_zero_amount() -> U256 {
-    U256::ZERO
 }
 
 const fn default_uniswap_v3_fee() -> u32 {

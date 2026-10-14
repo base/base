@@ -6,6 +6,7 @@ use alloy_json_rpc::ErrorPayload;
 use alloy_primitives::Bytes;
 use alloy_rpc_types_eth::{BlockError, error::EthRpcErrorCode};
 use alloy_transport::{RpcError, TransportErrorKind};
+use base_common_consensus::Eip8130PhaseStatusesError;
 use base_common_evm::{BaseHaltReason, BaseTransactionError};
 use base_common_rpc_types::BaseTxEnvError;
 use base_execution_evm::BaseBlockExecutionError;
@@ -40,6 +41,9 @@ pub enum BaseEthApiError {
     /// Sequencer client error.
     #[error(transparent)]
     Sequencer(#[from] SequencerClientError),
+    /// A stored EIP-8130 receipt carries phase statuses that violate the receipt invariant.
+    #[error("invalid EIP-8130 receipt: {0}")]
+    Eip8130PhaseStatuses(#[from] Eip8130PhaseStatusesError),
 }
 
 impl AsEthApiError for BaseEthApiError {
@@ -58,7 +62,8 @@ impl From<BaseEthApiError> for jsonrpsee_types::error::ErrorObject<'static> {
             BaseEthApiError::InvalidTransaction(err) => err.into(),
             BaseEthApiError::Evm(_)
             | BaseEthApiError::L1BlockFeeError
-            | BaseEthApiError::L1BlockGasError => internal_rpc_err(err.to_string()),
+            | BaseEthApiError::L1BlockGasError
+            | BaseEthApiError::Eip8130PhaseStatuses(_) => internal_rpc_err(err.to_string()),
             BaseEthApiError::Sequencer(err) => err.into(),
         }
     }

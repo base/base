@@ -20,6 +20,10 @@ pub(crate) const STUB_AUTH_FILL: u8 = 0xff;
 /// Length of the authenticator selector on a prefixed authentication blob.
 const AUTHENTICATOR_SELECTOR_LEN: usize = 20;
 
+/// Leading bytes of a delegate authentication blob that select what is priced:
+/// the delegate selector, the delegate account, and the nested selector.
+const DELEGATE_AUTH_PREFIX_LEN: usize = 3 * AUTHENTICATOR_SELECTOR_LEN;
+
 /// Why an EIP-8130 `eth_estimateGas` / `eth_call` request cannot be simulated.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum Eip8130SimulationRequestError {
@@ -138,7 +142,7 @@ impl BaseTransactionRequest {
                 let prefixed = Self::is_prefixed_auth(blob);
                 Self::check_auth_len(blob, prefixed)
                     .ok_or(Eip8130SimulationRequestError::SenderAuthTooLarge)?;
-                (prefixed.then_some(account), blob.clone())
+                (prefixed.then_some(account), Self::stub_supplied_auth(blob, prefixed))
             }
             None if sender_declared => (Some(account), Self::default_prefixed_auth()),
             None => (None, Self::default_bare_auth()),
@@ -157,7 +161,9 @@ impl BaseTransactionRequest {
                         }
                         Self::check_auth_len(blob, named)
                             .ok_or(Eip8130SimulationRequestError::PayerAuthTooLarge)?;
-                        blob.clone()
+                        // An open payer is whoever its signature recovers to, so
+                        // its bytes are kept to publish that payer.
+                        if named { Self::stub_supplied_auth(blob, true) } else { blob.clone() }
                     }
                     None if named => Self::default_prefixed_auth(),
                     // The sender estimates before any payer has signed, so an
@@ -261,6 +267,28 @@ impl BaseTransactionRequest {
         })
     }
 
+    /// A supplied blob is used for its shape and length only: the bytes that
+    /// select the priced authenticator are kept and every other byte becomes
+    /// [`STUB_AUTH_FILL`]. Calldata prices a zero byte below a non-zero one, so
+    /// this keeps a zero-filled placeholder from estimating less gas than the
+    /// real authentication of the same length.
+    fn stub_supplied_auth(blob: &Bytes, prefixed: bool) -> Bytes {
+        let kept = if !prefixed {
+            0
+        } else if Self::authenticator_selector(blob)
+            == Some(Eip8130Contracts::DELEGATE_AUTHENTICATOR)
+        {
+            DELEGATE_AUTH_PREFIX_LEN
+        } else {
+            AUTHENTICATOR_SELECTOR_LEN
+        };
+        let mut stub = blob.to_vec();
+        if let Some(data) = stub.get_mut(kept..) {
+            data.fill(STUB_AUTH_FILL);
+        }
+        Bytes::from(stub)
+    }
+
     /// A canonical k1 authenticator selector followed by k1-signature-sized
     /// filler, standing in for auth the request does not carry.
     fn default_prefixed_auth() -> Bytes {
@@ -272,9 +300,17 @@ impl BaseTransactionRequest {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{address, b256};
+    use alloy_evm::Evm;
+    use alloy_primitives::{address, b256, hex};
     use alloy_rpc_types_eth::state::AccountOverride;
     use base_common_consensus::{Eip8130Constants, Eip8130Signed};
+    use base_common_evm::{BaseSpecId, BaseUpgrade, Builder, DefaultBase};
+    use k256::ecdsa::SigningKey;
+    use revm::{
+        context::{BlockEnv, CfgEnv, Context},
+        database::InMemoryDB,
+        inspector::NoOpInspector,
+    };
     use serde_json::json;
 
     use super::*;
@@ -291,6 +327,76 @@ mod tests {
 
     fn signed(tx: &BaseRevm<TxEnv>) -> &Eip8130Signed {
         &tx.eip8130.as_ref().unwrap().signed
+    }
+
+    /// Gas the simulation of `request` uses, which `eth_estimateGas` searches for.
+    fn estimated_gas(request: serde_json::Value) -> u64 {
+        let mut evm = Context::base()
+            .with_db(InMemoryDB::default())
+            .with_cfg(
+                CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Everest))
+                    .with_chain_id(CHAIN_ID),
+            )
+            .with_block(BlockEnv::default())
+            .build_with_inspector(NoOpInspector);
+        let outcome = evm.transact_raw(simulation(request)).expect("simulation runs");
+        assert!(outcome.result.is_success(), "expected success, got {:?}", outcome.result);
+        outcome.result.tx_gas_used()
+    }
+
+    /// A real 65-byte `r || s || v` secp256k1 signature.
+    fn real_k1_signature() -> Vec<u8> {
+        let key = SigningKey::from_slice(&[0x5a; 32]).unwrap();
+        let (signature, recid) = key.sign_prehash_recoverable(&[0x42; 32]).unwrap();
+        let mut out = signature.to_bytes().to_vec();
+        out.push(recid.to_byte() + 27);
+        out
+    }
+
+    /// A zero-filled placeholder for `senderAuth` or a named `payerAuth` must
+    /// never estimate less gas than the real signature it stands in for, even
+    /// though zero calldata bytes are cheaper than non-zero ones.
+    #[test]
+    fn zero_filled_auth_placeholder_does_not_underestimate() {
+        let payer = address!("00000000000000000000000000000000000000b2");
+        let prefixed = |data: &[u8]| {
+            let mut blob = Eip8130Constants::K1_AUTHENTICATOR.to_vec();
+            blob.extend_from_slice(data);
+            hex::encode_prefixed(blob)
+        };
+        let real = real_k1_signature();
+        let zero = [0u8; 65];
+        assert!(real.iter().filter(|&&byte| byte == 0).count() < real.len());
+
+        let bare_sender = |auth: &[u8]| json!({ "from": FROM, "calls": [], "senderAuth": hex::encode_prefixed(auth) });
+        assert!(estimated_gas(bare_sender(&zero)) >= estimated_gas(bare_sender(&real)));
+
+        let configured_sender =
+            |auth: &[u8]| json!({ "sender": SENDER, "calls": [], "senderAuth": prefixed(auth) });
+        assert!(estimated_gas(configured_sender(&zero)) >= estimated_gas(configured_sender(&real)));
+
+        let named_payer = |auth: &[u8]| json!({ "from": FROM, "calls": [], "payer": payer, "payerAuth": prefixed(auth) });
+        assert!(estimated_gas(named_payer(&zero)) >= estimated_gas(named_payer(&real)));
+    }
+
+    /// A supplied delegate blob keeps the bytes that choose the priced nested
+    /// authenticator and the delegate account; only the signature is replaced.
+    #[test]
+    fn supplied_delegate_auth_keeps_its_structure() {
+        let delegate_account = address!("00000000000000000000000000000000000000d4");
+        let mut blob = Eip8130Contracts::DELEGATE_AUTHENTICATOR.to_vec();
+        blob.extend_from_slice(delegate_account.as_slice());
+        blob.extend_from_slice(Eip8130Constants::K1_AUTHENTICATOR.as_slice());
+        blob.extend_from_slice(&[0u8; 65]);
+        let tx = simulation(json!({
+            "sender": SENDER,
+            "calls": [],
+            "senderAuth": hex::encode_prefixed(&blob),
+        }));
+        let auth = signed(&tx).sender_auth();
+        assert_eq!(auth.len(), blob.len());
+        assert_eq!(auth[..DELEGATE_AUTH_PREFIX_LEN], blob[..DELEGATE_AUTH_PREFIX_LEN]);
+        assert!(auth[DELEGATE_AUTH_PREFIX_LEN..].iter().all(|&byte| byte == STUB_AUTH_FILL));
     }
 
     #[test]
@@ -410,21 +516,17 @@ mod tests {
         );
     }
 
-    /// The structural limits enforced at pool admission also bound simulation.
+    /// The structural limits enforced at pool admission also bound simulation;
+    /// over JSON the phase cap already applies while decoding.
     #[test]
     fn too_many_call_phases_are_rejected() {
         let calls: Vec<Vec<Call>> = vec![vec![]; Eip8130Constants::MAX_CALL_PHASES_PER_TX + 1];
-        let request = serde_json::from_value::<BaseTransactionRequest>(json!({
+        let decoded = serde_json::from_value::<BaseTransactionRequest>(json!({
             "sender": SENDER,
             "calls": calls,
-        }))
-        .unwrap();
-        assert_eq!(
-            request.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).err(),
-            Some(Eip8130SimulationRequestError::Structural(
-                Eip8130StructuralError::TooManyCallPhases
-            ))
-        );
+        }));
+        let error = decoded.unwrap_err().to_string();
+        assert!(error.contains("`calls` with at most 1024 entries"), "{error}");
     }
 
     #[test]

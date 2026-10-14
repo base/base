@@ -314,6 +314,7 @@ where
 #[cfg(test)]
 mod tests {
     use std::{
+        num::NonZeroU64,
         sync::{Arc, Mutex},
         time::Duration,
     };
@@ -454,6 +455,7 @@ mod tests {
                     sequence_window: None,
                     l1_head: None,
                     schedule_l2_block_number: None,
+                    intermediate_block_interval: NonZeroU64::MIN,
                     zk_vm: ZkVm::Sp1,
                     zk_backend: ZkBackend::Cluster,
                 }),

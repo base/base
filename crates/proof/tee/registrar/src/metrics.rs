@@ -24,6 +24,10 @@ base_metrics::define_metrics! {
     #[describe("Total number of CRL checks performed")]
     crl_checks_total: counter,
 
+    #[describe("CRL chain checks by outcome; partial failures with revocation record both revoked and indeterminate")]
+    #[label(name = "outcome", default = ["clean", "revoked", "indeterminate"])]
+    crl_check_outcomes_total: counter,
+
     #[describe("Total number of certificate revocations detected via CRL")]
     crl_revocations_detected: counter,
 
@@ -93,6 +97,13 @@ base_metrics::define_metrics! {
 }
 
 impl RegistrarMetrics {
+    /// All applicable CRL checks succeeded without revocation.
+    pub const CRL_OUTCOME_CLEAN: &'static str = "clean";
+    /// At least one certificate was confirmed revoked.
+    pub const CRL_OUTCOME_REVOKED: &'static str = "revoked";
+    /// At least one CRL check failed to determine revocation status.
+    pub const CRL_OUTCOME_INDETERMINATE: &'static str = "indeterminate";
+
     /// Signer-registration task completed successfully.
     pub const PROOF_TASK_OUTCOME_SUCCEEDED: &'static str = "succeeded";
     /// Signer-registration task completed with an error.

@@ -16,6 +16,41 @@ use alloy_consensus::{
 use alloy_primitives::Log;
 use alloy_rlp::{BufMut, Decodable, Encodable};
 
+/// Reason an [`Eip8130Receipt`]'s `phase_statuses` violate the receipt invariant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum Eip8130PhaseStatusesError {
+    /// The number of statuses differs from the transaction's number of call phases.
+    #[error("{actual} phase statuses for a transaction with {expected} call phases")]
+    CountMismatch {
+        /// Number of call phases in the transaction.
+        expected: usize,
+        /// Number of statuses on the receipt.
+        actual: usize,
+    },
+    /// A status byte is neither committed (`0x01`) nor reverted (`0x00`).
+    #[error("phase {index} has unknown status {value:#04x}")]
+    UnknownStatus {
+        /// Index of the offending phase.
+        index: usize,
+        /// The status byte found.
+        value: u8,
+    },
+    /// A phase is reported committed after an earlier phase reverted, but phases
+    /// after a revert are skipped.
+    #[error("phase {index} is reported committed after an earlier phase reverted")]
+    CommittedAfterRevert {
+        /// Index of the offending phase.
+        index: usize,
+    },
+    /// The receipt status disagrees with the phase statuses: a successful
+    /// receipt has every phase committed, a reverted one has a reverted phase.
+    #[error("receipt status {status} disagrees with the phase statuses")]
+    StatusMismatch {
+        /// The receipt's overall status.
+        status: bool,
+    },
+}
+
 /// EIP-8130 account-abstraction receipt: a standard [`Receipt`] plus the
 /// per-phase execution statuses.
 ///
@@ -24,6 +59,17 @@ use alloy_rlp::{BufMut, Decodable, Encodable};
 /// when the transaction carried no `calls`. The overall [`Receipt::status`]
 /// reports `true` only when every phase succeeded (or `calls` was empty),
 /// matching the EIP-8130 receipt `status` semantics.
+///
+/// # Invariant
+///
+/// Non-empty `phase_statuses` hold exactly one entry per call phase of the
+/// transaction, in phase order, shaped as zero or more `0x01` followed by zero or
+/// more `0x00`, with [`Receipt::status`] `true` iff no entry is `0x00`. Empty
+/// `phase_statuses` are always accepted: besides a transaction with no `calls`,
+/// they mean the statuses are unavailable, since they are not part of the
+/// consensus encoding (a receipt decoded from RLP, or one stored before the
+/// field was persisted, carries none). [`Self::validate_phase_statuses`] checks
+/// the invariant; it is enforced where receipts are served over RPC.
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
@@ -42,6 +88,42 @@ pub struct Eip8130Receipt<T = Log> {
 impl<T> Eip8130Receipt<T> {
     /// Status byte recorded for a phase that committed.
     pub const PHASE_COMMITTED: u8 = 0x01;
+
+    /// Status byte recorded for a phase that reverted or was skipped.
+    pub const PHASE_REVERTED: u8 = 0x00;
+
+    /// Checks `phase_statuses` against the [invariant](Self#invariant) for a
+    /// transaction with `phase_count` call phases.
+    pub fn validate_phase_statuses(
+        &self,
+        phase_count: usize,
+    ) -> Result<(), Eip8130PhaseStatusesError> {
+        if self.phase_statuses.is_empty() {
+            return Ok(());
+        }
+        if self.phase_statuses.len() != phase_count {
+            return Err(Eip8130PhaseStatusesError::CountMismatch {
+                expected: phase_count,
+                actual: self.phase_statuses.len(),
+            });
+        }
+        let mut reverted = false;
+        for (index, &value) in self.phase_statuses.iter().enumerate() {
+            match value {
+                Self::PHASE_COMMITTED if reverted => {
+                    return Err(Eip8130PhaseStatusesError::CommittedAfterRevert { index });
+                }
+                Self::PHASE_COMMITTED => {}
+                Self::PHASE_REVERTED => reverted = true,
+                value => return Err(Eip8130PhaseStatusesError::UnknownStatus { index, value }),
+            }
+        }
+        let status = self.inner.status.coerce_status();
+        if status == reverted {
+            return Err(Eip8130PhaseStatusesError::StatusMismatch { status });
+        }
+        Ok(())
+    }
 
     /// Returns whether the phase at `index` committed. Phases past the end of
     /// `phase_statuses` did not run and report `false`.
@@ -148,5 +230,85 @@ where
             },
             phase_statuses: Vec::<u8>::arbitrary(u)?,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::vec;
+
+    use rstest::rstest;
+
+    use super::*;
+
+    fn receipt(status: bool, phase_statuses: Vec<u8>) -> Eip8130Receipt {
+        Eip8130Receipt::new(
+            Receipt { status: status.into(), cumulative_gas_used: 21_000, logs: vec![] },
+            phase_statuses,
+        )
+    }
+
+    #[rstest]
+    #[case::no_calls(true, vec![], 0)]
+    #[case::unavailable_on_success(true, vec![], 2)]
+    #[case::unavailable_on_revert(false, vec![], 2)]
+    #[case::all_committed(true, vec![0x01, 0x01], 2)]
+    #[case::later_phase_reverted(false, vec![0x01, 0x00, 0x00], 3)]
+    #[case::first_phase_reverted(false, vec![0x00, 0x00], 2)]
+    fn accepts_well_formed_phase_statuses(
+        #[case] status: bool,
+        #[case] phase_statuses: Vec<u8>,
+        #[case] phase_count: usize,
+    ) {
+        assert_eq!(receipt(status, phase_statuses).validate_phase_statuses(phase_count), Ok(()));
+    }
+
+    #[rstest]
+    #[case::too_few(
+        true,
+        vec![0x01],
+        2,
+        Eip8130PhaseStatusesError::CountMismatch { expected: 2, actual: 1 },
+    )]
+    #[case::too_many(
+        true,
+        vec![0x01, 0x01, 0x01],
+        2,
+        Eip8130PhaseStatusesError::CountMismatch { expected: 2, actual: 3 },
+    )]
+    #[case::unknown_status(
+        false,
+        vec![0x01, 0xff],
+        2,
+        Eip8130PhaseStatusesError::UnknownStatus { index: 1, value: 0xff },
+    )]
+    #[case::committed_after_revert(
+        false,
+        vec![0x00, 0x01],
+        2,
+        Eip8130PhaseStatusesError::CommittedAfterRevert { index: 1 },
+    )]
+    #[case::success_with_reverted_phase(
+        true,
+        vec![0x01, 0x00],
+        2,
+        Eip8130PhaseStatusesError::StatusMismatch { status: true },
+    )]
+    #[case::revert_with_every_phase_committed(
+        false,
+        vec![0x01, 0x01],
+        2,
+        Eip8130PhaseStatusesError::StatusMismatch { status: false },
+    )]
+    fn rejects_malformed_phase_statuses(
+        #[case] status: bool,
+        #[case] phase_statuses: Vec<u8>,
+        #[case] phase_count: usize,
+        #[case] expected: Eip8130PhaseStatusesError,
+    ) {
+        assert_eq!(
+            receipt(status, phase_statuses).validate_phase_statuses(phase_count),
+            Err(expected)
+        );
     }
 }

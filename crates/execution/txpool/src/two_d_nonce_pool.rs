@@ -8,8 +8,8 @@ use std::{
 };
 
 use alloy_primitives::{
-    Address, TxHash, U256,
-    map::{B256Map, HashMap},
+    Address, TxHash, U256, U512,
+    map::{AddressMap, B256Map, HashMap},
 };
 use base_common_consensus::Eip8130Constants;
 use reth_primitives_traits::transaction::error::InvalidTransactionError;
@@ -17,7 +17,7 @@ use reth_transaction_pool::{
     AddedTransactionOutcome, BestTransactions, LocalTransactionConfig, PoolConfig, PoolResult,
     PriceBumpConfig, SubPoolLimit, TransactionOrdering, ValidPoolTransaction,
     error::{InvalidPoolTransactionError, PoolError, PoolErrorKind},
-    identifier::{SenderIdentifiers, TransactionId},
+    identifier::{SenderId, TransactionId},
     pool::{AddedTransactionState, QueuedReason},
 };
 
@@ -146,32 +146,142 @@ impl SidecarLimits {
     }
 }
 
-/// Running totals checked against [`SidecarLimits`].
+/// Running totals checked against [`SidecarLimits`], the sender ids held by
+/// live transactions, and each sender's summed `cost()` against its balance for
+/// coinbase tip backing.
 #[derive(Debug, Default)]
 struct SidecarUsage {
     size: usize,
     per_sender: HashMap<Address, usize>,
+    sender_ids: SidecarSenderIds,
+    /// Exact sum of each sender's `cost()`s. Fewer than 2^64 values below
+    /// 2^256 cannot overflow 512 bits, so additions and removals never saturate.
+    sender_costs: HashMap<Address, U512>,
+    /// Each sender's balance, `None` when unknown, and the balance epoch it was
+    /// recorded at. Kept only for senders with sidecar transactions; an unknown
+    /// or missing balance backs nothing.
+    sender_balances: HashMap<Address, (Option<U256>, u64)>,
+    /// Advanced by every batch of balance updates, so a balance read during
+    /// validation can be ordered against them.
+    balance_epoch: u64,
 }
 
 impl SidecarUsage {
     fn add<T: BasePooledTx>(&mut self, transaction: &ValidPoolTransaction<T>) {
         self.size += transaction.transaction.size();
-        *self.per_sender.entry(transaction.sender()).or_default() += 1;
+        let sender = transaction.sender();
+        *self.per_sender.entry(sender).or_default() += 1;
+        *self.sender_costs.entry(sender).or_default() +=
+            U512::from(*transaction.transaction.cost());
     }
 
     fn remove<T: BasePooledTx>(&mut self, transaction: &ValidPoolTransaction<T>) {
         self.size = self.size.saturating_sub(transaction.transaction.size());
         let sender = transaction.sender();
+        if let Some(cost) = self.sender_costs.get_mut(&sender) {
+            *cost -= U512::from(*transaction.transaction.cost());
+        }
         if let Some(count) = self.per_sender.get_mut(&sender) {
             *count -= 1;
             if *count == 0 {
                 self.per_sender.remove(&sender);
+                self.sender_costs.remove(&sender);
+                self.sender_balances.remove(&sender);
+            }
+        }
+        self.sender_ids.release(transaction.sender_id());
+        for id in transaction.authority_ids.iter().flatten() {
+            self.sender_ids.release(*id);
+        }
+    }
+
+    fn apply_balance_updates(&mut self, updates: impl IntoIterator<Item = (Address, U256)>) {
+        self.balance_epoch += 1;
+        for (sender, balance) in updates {
+            if self.per_sender.contains_key(&sender) {
+                self.sender_balances.insert(sender, (Some(balance), self.balance_epoch));
             }
         }
     }
 
+    fn record_validated_balance(&mut self, sender: Address, balance: U256, epoch: u64) {
+        if !self.per_sender.contains_key(&sender) {
+            return;
+        }
+        let recorded = match self.sender_balances.get(&sender) {
+            Some((_, recorded_epoch)) if *recorded_epoch > epoch => return,
+            Some(_) => (Some(balance), epoch),
+            None if epoch == self.balance_epoch => (Some(balance), epoch),
+            // A newer update may have been dropped while the sender had no entry.
+            None => (None, self.balance_epoch),
+        };
+        self.sender_balances.insert(sender, recorded);
+    }
+
+    /// Whether `sender`'s balance covers the summed `cost()` of all its sidecar
+    /// transactions, which then all rank by their coinbase tips.
+    fn tip_backed(&self, sender: &Address) -> bool {
+        let cost = self.sender_costs.get(sender).copied().unwrap_or_default();
+        self.sender_balances
+            .get(sender)
+            .and_then(|(balance, _)| *balance)
+            .is_some_and(|balance| cost <= U512::from(balance))
+    }
+
     fn sender_count(&self, sender: &Address) -> usize {
         self.per_sender.get(sender).copied().unwrap_or_default()
+    }
+}
+
+/// Sender ids for sidecar transactions, counted by the live transactions that
+/// reference each address as their sender or payer.
+///
+/// Reth's `SenderIdentifiers` never releases an id, so it would keep an entry
+/// for every address the sidecar has ever seen. Here an id is released with
+/// its last reference, and a returning address gets a fresh id.
+#[derive(Debug, Default)]
+pub struct SidecarSenderIds {
+    next_id: u64,
+    ids: AddressMap<(SenderId, usize)>,
+    addresses: HashMap<SenderId, Address>,
+}
+
+impl SidecarSenderIds {
+    /// Returns the id for `address` and records one more reference to it.
+    pub fn acquire(&mut self, address: Address) -> SenderId {
+        let (id, references) = self.ids.entry(address).or_insert_with(|| {
+            let id = SenderId::from(self.next_id);
+            self.next_id = self.next_id.wrapping_add(1);
+            self.addresses.insert(id, address);
+            (id, 0)
+        });
+        *references += 1;
+        *id
+    }
+
+    /// Drops one reference to `id`, releasing the id with its last reference.
+    pub fn release(&mut self, id: SenderId) {
+        let Some(address) = self.addresses.get(&id).copied() else {
+            return;
+        };
+        let Some((_, references)) = self.ids.get_mut(&address) else {
+            return;
+        };
+        *references -= 1;
+        if *references == 0 {
+            self.ids.remove(&address);
+            self.addresses.remove(&id);
+        }
+    }
+
+    /// Returns the number of addresses that currently hold an id.
+    pub fn len(&self) -> usize {
+        self.ids.len()
+    }
+
+    /// Returns `true` when no address holds an id.
+    pub fn is_empty(&self) -> bool {
+        self.ids.is_empty()
     }
 }
 
@@ -197,7 +307,6 @@ pub(crate) struct TwoDNoncePool<T: BasePooledTx> {
     lanes: HashMap<LaneId, NonceLane<T>>,
     nonce_free: B256Map<Arc<ValidPoolTransaction<T>>>,
     hashes: B256Map<Arc<ValidPoolTransaction<T>>>,
-    senders: SenderIdentifiers,
     price_bump_config: PriceBumpConfig,
     limits: SidecarLimits,
     usage: SidecarUsage,
@@ -215,7 +324,6 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             lanes: HashMap::default(),
             nonce_free: B256Map::default(),
             hashes: B256Map::default(),
-            senders: SenderIdentifiers::default(),
             price_bump_config,
             limits: SidecarLimits::unlimited(),
             usage: SidecarUsage::default(),
@@ -440,19 +548,30 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             .collect()
     }
 
-    /// Returns or creates the sender id for the given address.
-    pub(crate) fn sender_id_or_create(
-        &mut self,
-        address: Address,
-    ) -> reth_transaction_pool::identifier::SenderId {
-        self.senders.sender_id_or_create(address)
+    /// Assigns the transaction's sender id and, for a sponsored transaction,
+    /// its payer's authority id, each holding a reference until the transaction
+    /// leaves the sidecar.
+    ///
+    /// The payer is the one admission resolved, matching the authorities the
+    /// validator reports. Ids already on the transaction are replaced, so a
+    /// re-inserted transaction never carries ids that were released.
+    fn acquire_ids(&mut self, transaction: &mut ValidPoolTransaction<T>) {
+        let sender = transaction.sender();
+        let sender_id = self.usage.sender_ids.acquire(sender);
+        transaction.transaction_id = TransactionId::new(sender_id, transaction.nonce());
+        transaction.authority_ids = transaction
+            .transaction
+            .limit_class()
+            .filter(|class| class.payer != sender)
+            .map(|class| vec![self.usage.sender_ids.acquire(class.payer)]);
     }
 
     /// Inserts a validated sidecar EIP-8130 transaction.
     ///
     /// Nonce-free transactions replace only another transaction with the same
     /// replay id. Finite-channel transactions retain their lane-local sequence
-    /// replacement semantics.
+    /// replacement semantics. The sidecar assigns the transaction's sender and
+    /// authority ids.
     pub(crate) fn insert_validated(
         &mut self,
         mut transaction: ValidPoolTransaction<T>,
@@ -465,9 +584,6 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
 
         if let Some(replay_id) = transaction.transaction.eip8130_replay_id() {
             self.ensure_admissible(&transaction, self.nonce_free.contains_key(&replay_id), false)?;
-            let sender_id = self.senders.sender_id_or_create(transaction.sender());
-            transaction.transaction_id = TransactionId::new(sender_id, transaction.nonce());
-            let transaction = Arc::new(transaction);
             let replaced = if let Some(existing) = self.nonce_free.get(&replay_id) {
                 if existing.is_replacement_underpriced(&transaction, &self.price_bump_config) {
                     return Err(PoolError::new(hash, PoolErrorKind::ReplacementUnderpriced));
@@ -476,6 +592,8 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             } else {
                 None
             };
+            self.acquire_ids(&mut transaction);
+            let transaction = Arc::new(transaction);
             if let Some(existing) = &replaced {
                 self.hashes.remove(existing.hash());
                 self.usage.remove(existing);
@@ -505,9 +623,6 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             existing_lane.is_some_and(|lane| lane.transactions.contains_key(&nonce));
         let fills_existing_lane_head = existing_lane.is_some() && nonce == state_nonce;
         self.ensure_admissible(&transaction, is_replacement, fills_existing_lane_head)?;
-        let sender_id = self.senders.sender_id_or_create(sender);
-        transaction.transaction_id = TransactionId::new(sender_id, nonce);
-        let transaction = Arc::new(transaction);
         if nonce < state_nonce {
             return Err(PoolError::new(
                 hash,
@@ -528,6 +643,8 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
                 }
             })
             .transpose()?;
+        self.acquire_ids(&mut transaction);
+        let transaction = Arc::new(transaction);
 
         // Keep the lane anchored to the state view used by validation. This may
         // move backward after a reorg lowers the on-chain channel nonce, allowing
@@ -666,7 +783,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             if self
                 .hashes
                 .get(hash)
-                .is_some_and(|transaction| transaction.transaction.eip8130_replay_id().is_some())
+                .is_some_and(|transaction| transaction.transaction.is_eip8130_nonce_free())
             {
                 if let Some(transaction) = self.remove_hash(*hash) {
                     removed.push(transaction);
@@ -702,7 +819,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             if self
                 .hashes
                 .get(hash)
-                .is_some_and(|transaction| transaction.transaction.eip8130_replay_id().is_some())
+                .is_some_and(|transaction| transaction.transaction.is_eip8130_nonce_free())
                 && let Some(transaction) = self.remove_hash(*hash)
             {
                 removed.push(transaction);
@@ -782,7 +899,40 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         self.remove_transactions(&hashes)
     }
 
+    /// Returns the current balance epoch. Read it before validating a
+    /// transaction and pass it to [`Self::record_validated_balance`].
+    pub(crate) const fn balance_epoch(&self) -> u64 {
+        self.usage.balance_epoch
+    }
+
+    /// Records a batch of current account balances, which back the coinbase
+    /// tips of the senders' sidecar transactions, and advances the balance
+    /// epoch. Senders with no sidecar transactions are ignored.
+    pub(crate) fn apply_balance_updates(
+        &mut self,
+        updates: impl IntoIterator<Item = (Address, U256)>,
+    ) {
+        self.usage.apply_balance_updates(updates);
+    }
+
+    /// Records the sender balance a validation read after observing balance
+    /// epoch `epoch`.
+    ///
+    /// A balance recorded by a later update wins. A sender with no recorded
+    /// balance takes the validation's balance only when no update has run since
+    /// `epoch`, because an update for a sender without sidecar transactions is
+    /// dropped; otherwise its balance is unknown, and backs nothing, until the
+    /// next update or validation.
+    pub(crate) fn record_validated_balance(&mut self, sender: Address, balance: U256, epoch: u64) {
+        self.usage.record_validated_balance(sender, balance, epoch);
+    }
+
     /// Returns a best-transactions iterator snapshot.
+    ///
+    /// Unlike the protocol pool, the sidecar never queues a transaction on its
+    /// sender's balance, so a sender's coinbase tips rank its transactions only
+    /// while its balance covers the summed `cost()` of all its sidecar
+    /// transactions.
     pub(crate) fn best_transactions<O>(
         &self,
         ordering: O,
@@ -791,6 +941,16 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     where
         O: TransactionOrdering<Transaction = T>,
     {
+        for transaction in self
+            .lanes
+            .values()
+            .flat_map(NonceLane::consecutive_pending_transactions)
+            .chain(self.nonce_free.values())
+        {
+            transaction
+                .transaction
+                .set_coinbase_tip_backed(self.usage.tip_backed(&transaction.sender()));
+        }
         BestTwoDTransactions::new(&self.lanes, &self.nonce_free, ordering, base_fee)
     }
 
@@ -983,7 +1143,9 @@ mod tests {
     use reth_transaction_pool::{PoolTransaction, PriceBumpConfig, Priority, TransactionOrigin};
 
     use super::*;
-    use crate::{BaseOrdering, BasePooledTransaction, ValidityOperator, ValidityPredicate};
+    use crate::{
+        BaseOrdering, BasePooledTransaction, LimitClass, ValidityOperator, ValidityPredicate,
+    };
 
     #[derive(Clone, Debug, Default)]
     struct CountingOrdering {
@@ -1220,7 +1382,7 @@ mod tests {
     }
 
     #[test]
-    fn validity_transaction_replaces_with_only_a_higher_max_fee() {
+    fn validity_transaction_replacement_requires_the_price_bump() {
         let mut pool = TwoDNoncePool::new(PriceBumpConfig::default());
         let signer = signer();
         let predicate = ValidityPredicate::Balance {
@@ -1231,10 +1393,16 @@ mod tests {
         let original = signed_nonce_free_tx(&signer, 1, 10, 100)
             .with_validity_predicates(vec![predicate.clone()]);
         let original = valid_pool_transaction(original);
+        let underpriced = signed_nonce_free_tx(&signer, 1, 0, 101)
+            .with_validity_predicates(vec![predicate.clone()]);
         let replacement =
-            signed_nonce_free_tx(&signer, 1, 0, 101).with_validity_predicates(vec![predicate]);
+            signed_nonce_free_tx(&signer, 1, 11, 110).with_validity_predicates(vec![predicate]);
 
         pool.insert_validated(original, 0).unwrap();
+        assert!(matches!(
+            pool.insert_validated(valid_pool_transaction(underpriced), 0).unwrap_err().kind,
+            PoolErrorKind::ReplacementUnderpriced
+        ));
         assert!(
             pool.insert_validated(valid_pool_transaction(replacement), 0)
                 .unwrap()
@@ -1986,5 +2154,134 @@ mod tests {
         assert_eq!(pool.remove_transactions(&[removed_hash]).len(), 1);
 
         assert_eq!(evicted_hashes(&mut pool), vec![cheapest_hash, replacement_hash, richest_hash]);
+    }
+
+    fn sponsored_by(
+        transaction: BasePooledTransaction,
+        payer: Address,
+    ) -> ValidPoolTransaction<BasePooledTransaction> {
+        transaction.set_limit_class(LimitClass {
+            sender: transaction.sender(),
+            payer,
+            classification_generation: 0,
+            sender_locked: false,
+            payer_locked: false,
+            payer_trusted: false,
+            payer_allowlisted: false,
+            payer_balance: U256::MAX,
+            max_cost: U256::ZERO,
+        });
+        valid_pool_transaction(transaction)
+    }
+
+    #[test]
+    fn sender_ids_are_released_when_transactions_are_removed_or_mined() {
+        const NOW_MS: u64 = 1_700_000_000_000;
+        let mut pool = TwoDNoncePool::new(PriceBumpConfig::default());
+        let [removed, mined, expired] = std::array::from_fn(|_| signer());
+        let payer = Address::repeat_byte(0xA5);
+        pool.insert_validated(
+            sponsored_by(signed_channel_tx(&removed, U256::from(1), 0, 1_000), payer),
+            0,
+        )
+        .unwrap();
+        let mined_tx = valid_pool_transaction(signed_channel_tx(&mined, U256::from(2), 0, 1_000));
+        let mined_hash = *mined_tx.hash();
+        pool.insert_validated(mined_tx, 0).unwrap();
+        pool.insert_validated(
+            valid_pool_transaction(signed_nonce_free_tx(&expired, NOW_MS, 0, 1_000)),
+            0,
+        )
+        .unwrap();
+        assert_eq!(pool.usage.sender_ids.len(), 4, "three senders and one payer");
+
+        pool.remove_transactions_by_sender(removed.address());
+        assert_eq!(pool.usage.sender_ids.len(), 2, "the sender and its payer are released");
+        pool.prune_mined(&[mined_hash]);
+        pool.remove_expired_nonce_free(NOW_MS);
+
+        assert!(pool.all_transactions().is_empty());
+        assert_eq!(pool.usage.sender_ids.len(), 0);
+    }
+
+    #[test]
+    fn sender_ids_are_released_when_transactions_are_replaced_or_evicted() {
+        let mut pool = TwoDNoncePool::new(PriceBumpConfig::default()).with_limits(SidecarLimits {
+            capacity: SubPoolLimit::new(1, usize::MAX),
+            ..SidecarLimits::unlimited()
+        });
+        let [sender, evicted] = std::array::from_fn(|_| signer());
+        let [first_payer, second_payer] = [Address::repeat_byte(0xA1), Address::repeat_byte(0xA2)];
+        pool.insert_validated(
+            sponsored_by(signed_channel_tx(&sender, U256::from(1), 0, 1_000), first_payer),
+            0,
+        )
+        .unwrap();
+        pool.insert_validated(
+            sponsored_by(signed_channel_tx(&sender, U256::from(1), 0, 2_000), second_payer),
+            0,
+        )
+        .unwrap();
+        assert_eq!(pool.usage.sender_ids.len(), 2, "the replaced transaction's payer is released");
+
+        let underpriced = signed_channel_tx(&evicted, U256::from(1), 0, 1);
+        pool.insert_validated(valid_pool_transaction(underpriced), 0).unwrap();
+        pool.evict_over_capacity();
+        assert_eq!(pool.usage.sender_ids.len(), 2, "the evicted sender is released");
+
+        pool.set_lane_nonce((sender.address(), U256::from(1)), 1);
+        assert!(pool.all_transactions().is_empty());
+        assert_eq!(
+            pool.usage.sender_ids.len(),
+            0,
+            "a transaction below the lane cursor is released"
+        );
+    }
+
+    #[test]
+    fn removal_releases_sender_ids_and_tip_backing_together() {
+        let mut pool = TwoDNoncePool::new(PriceBumpConfig::default());
+        let sender = signer();
+        let payer = Address::repeat_byte(0xA5);
+        let self_paid = valid_pool_transaction(signed_channel_tx(&sender, U256::from(1), 0, 1_000));
+        let self_paid_hash = *self_paid.hash();
+        let self_paid_cost = *self_paid.transaction.cost();
+        pool.insert_validated(self_paid, 0).unwrap();
+        let sponsored = sponsored_by(signed_channel_tx(&sender, U256::from(2), 0, 1_000), payer);
+        let sponsored_hash = *sponsored.hash();
+        pool.insert_validated(sponsored, 0).unwrap();
+        pool.apply_balance_updates([(sender.address(), self_paid_cost - U256::from(1))]);
+        assert!(!pool.usage.tip_backed(&sender.address()));
+
+        pool.remove_transactions(&[self_paid_hash]);
+        assert!(pool.usage.tip_backed(&sender.address()), "the removed cost is released");
+        assert_eq!(pool.usage.sender_ids.len(), 2, "the sponsored transaction keeps both ids");
+
+        pool.remove_transactions(&[sponsored_hash]);
+        assert_eq!(pool.usage.sender_ids.len(), 0);
+        let returning = valid_pool_transaction(signed_channel_tx(&sender, U256::from(1), 0, 1_000));
+        pool.insert_validated(returning, 0).unwrap();
+        assert!(
+            !pool.usage.tip_backed(&sender.address()),
+            "a returning sender does not inherit its released balance"
+        );
+    }
+
+    #[test]
+    fn rejected_insert_allocates_no_sender_id() {
+        let mut pool = TwoDNoncePool::new(PriceBumpConfig::default());
+        let [existing, rejected] = std::array::from_fn(|_| signer());
+        pool.insert_validated(
+            valid_pool_transaction(signed_channel_tx(&existing, U256::from(1), 0, 1_000)),
+            0,
+        )
+        .unwrap();
+
+        let below_cursor = signed_channel_tx(&rejected, U256::from(1), 0, 1_000);
+        assert!(pool.insert_validated(valid_pool_transaction(below_cursor), 1).is_err());
+        let underpriced = signed_channel_tx(&existing, U256::from(1), 0, 1_001);
+        assert!(pool.insert_validated(valid_pool_transaction(underpriced), 0).is_err());
+
+        assert_eq!(pool.usage.sender_ids.len(), 1);
     }
 }

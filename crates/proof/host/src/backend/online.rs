@@ -236,7 +236,7 @@ mod tests {
 
     fn test_cfg() -> HostConfig {
         HostConfig {
-            request: ProofRequest::default(),
+            request: ProofRequest::for_tests(600, 30),
             prover: ProverConfig {
                 l1_eth_url: "http://127.0.0.1:1".to_string(),
                 l2_eth_url: "http://127.0.0.1:1".to_string(),

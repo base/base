@@ -362,8 +362,14 @@ impl BaseReceiptBuilder {
         // `Some` (possibly empty) marks an EIP-8130 receipt so an empty-`calls`
         // transaction still surfaces `"phaseStatuses": []`; `None` omits the field
         // entirely for non-EIP-8130 receipts.
+        // Stored statuses that violate the receipt invariant are rejected rather than served.
         let phase_statuses = match &input.receipt {
-            BaseReceipt::Eip8130(receipt) => Some(receipt.phase_statuses.clone()),
+            BaseReceipt::Eip8130(receipt) => {
+                if let Some(signed) = tx_signed.as_eip8130() {
+                    receipt.validate_phase_statuses(signed.tx().calls.len())?;
+                }
+                Some(receipt.phase_statuses.clone())
+            }
             _ => None,
         };
 
@@ -433,7 +439,10 @@ mod tests {
     use alloy_eips::eip2718::Decodable2718;
     use alloy_primitives::{Address, Bytes, Signature, U256, hex};
     use base_common_chains::ChainConfig;
-    use base_common_consensus::{BasePrimitives, BaseTransactionSigned, BaseTypedTransaction};
+    use base_common_consensus::{
+        BasePrimitives, BaseTransactionSigned, BaseTxEnvelope, BaseTypedTransaction, Call,
+        Eip8130PhaseStatusesError, Eip8130Receipt, Eip8130Signed, TxEip8130,
+    };
     use base_execution_chainspec::BaseChainSpec;
     use reth_primitives_traits::Recovered;
 
@@ -807,5 +816,56 @@ mod tests {
         .unwrap();
 
         assert_eq!(receipt.core_receipt.blob_gas_used, None);
+    }
+
+    /// Builds the RPC receipt for a two-phase EIP-8130 transaction whose stored
+    /// receipt has the given status and phase statuses.
+    fn two_phase_eip8130_receipt(
+        status: bool,
+        phase_statuses: Vec<u8>,
+    ) -> Result<BaseReceiptBuilder, BaseEthApiError> {
+        let call =
+            Call { to: Address::with_last_byte(0xc1), value: U256::ZERO, data: Bytes::new() };
+        let tx = BaseTxEnvelope::Eip8130(Eip8130Signed::new(
+            TxEip8130 { calls: vec![vec![call.clone()], vec![call]], ..Default::default() },
+            Bytes::new(),
+            Bytes::new(),
+        ));
+        BaseReceiptBuilder::new(
+            &BaseChainSpec::mainnet(),
+            ConvertReceiptInput::<BasePrimitives> {
+                tx: Recovered::new_unchecked(&tx, Address::with_last_byte(0x22)),
+                receipt: BaseReceipt::Eip8130(Eip8130Receipt::new(
+                    Receipt {
+                        status: Eip658Value::Eip658(status),
+                        cumulative_gas_used: 100,
+                        logs: vec![],
+                    },
+                    phase_statuses,
+                )),
+                gas_used: 100,
+                next_log_index: 0,
+                meta: TransactionMeta::default(),
+            },
+            &mut base_common_evm::L1BlockInfo::default(),
+        )
+    }
+
+    #[test]
+    fn eip8130_receipt_serves_valid_phase_statuses() {
+        let receipt = two_phase_eip8130_receipt(false, vec![0x01, 0x00]).unwrap();
+        assert_eq!(receipt.phase_statuses, Some(vec![0x01, 0x00]));
+    }
+
+    #[test]
+    fn eip8130_receipt_rejects_invalid_phase_statuses() {
+        let err = two_phase_eip8130_receipt(true, vec![0x01]).unwrap_err();
+        assert!(matches!(
+            err,
+            BaseEthApiError::Eip8130PhaseStatuses(Eip8130PhaseStatusesError::CountMismatch {
+                expected: 2,
+                actual: 1,
+            })
+        ));
     }
 }
