@@ -283,11 +283,6 @@ impl BlockHandler {
         Ok(())
     }
 
-    /// Validates the EIP-7928 block access list carried by `payload` against `header_commitment`,
-    /// the `block_access_list_hash` of the header reconstructed from that payload.
-    ///
-    /// Only V5 payloads carry a list, and they must be paired with a header commitment equal to
-    /// the `keccak256` of the carried bytes. Earlier payload versions must not have a commitment.
     /// Validates the block access list a payload carries against a header commitment.
     ///
     /// A V5 payload must carry a list and commit to it, and any other version must not, so a
