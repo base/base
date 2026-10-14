@@ -39,6 +39,18 @@ pub enum ProverMode {
     Real,
 }
 
+/// A failure the mock prover injects into the challenger's proof sessions.
+#[derive(Debug, Clone, Copy, Default, Eq, PartialEq, ValueEnum)]
+pub enum MockFault {
+    /// Every session succeeds after the proving time.
+    None,
+    /// The first attempt of each of the challenger's sessions reports
+    /// `Failed`, so every dispute also proves the challenger re-requests a
+    /// failed proof. The driver's own staging requests are never failed.
+    #[default]
+    FailFirst,
+}
+
 /// Runtime configuration for [`crate::ChallengerE2e`].
 #[derive(Debug, Parser)]
 #[command(name = "challenger-e2e", version, about, long_about = None)]
@@ -68,6 +80,11 @@ pub struct Config {
         value_parser = humantime::parse_duration
     )]
     pub mock_proving_time: Duration,
+
+    /// Failure the mock prover injects into the challenger's proof sessions.
+    /// `mock` mode only.
+    #[arg(long = "mock-fault", env = "CHALLENGER_E2E_MOCK_FAULT", default_value = "fail-first")]
+    pub mock_fault: MockFault,
 
     /// Prover-service JSON-RPC. In `real` mode, the live service the driver and
     /// the challenger both use; in `mock` mode it is replaced at startup by the
@@ -216,6 +233,8 @@ mod tests {
         ])
         .expect("parses");
         assert_eq!(config.prover, ProverMode::Mock);
+        assert_eq!(config.mock_fault, MockFault::FailFirst);
+        assert_eq!(MockFault::from_str("none", false), Ok(MockFault::None));
         assert_eq!(ProverMode::from_str("real", false), Ok(ProverMode::Real));
     }
 }

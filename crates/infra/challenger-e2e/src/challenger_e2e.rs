@@ -34,7 +34,7 @@ use url::Url;
 
 use crate::{
     Unavailable,
-    config::{Config, ProverMode, Scenario},
+    config::{Config, MockFault, ProverMode, Scenario},
     metrics::Scrape,
     mock_prover::MockProver,
     mock_verifier,
@@ -328,7 +328,12 @@ impl ChallengerE2e {
         // staging and the challenger's env file — now points at the mock.
         let _mock_prover = match config.prover {
             ProverMode::Mock => {
-                let mock = MockProver::start(config.mock_proving_time).await?;
+                let mock = MockProver::start(
+                    config.mock_proving_time,
+                    config.mock_fault,
+                    challenger.address(),
+                )
+                .await?;
                 config.zk_rpc_url = mock.url().clone();
                 config.mock_requests = Some(mock.requests());
                 Some(mock)
@@ -1302,6 +1307,26 @@ impl ChallengerE2e {
                 schedule_l2_block_number = schedule,
                 "the challenger requested the proof a real dispute would need"
             );
+
+            // The dispute landed, so the proof it carried came from a session
+            // the mock served. Under `fail-first` that session's first attempt
+            // failed, and only a re-request could have produced the proof.
+            if config.mock_fault == MockFault::FailFirst {
+                let (failures, requeues) = requests.faults_of(&expected).unwrap_or_default();
+                ensure!(
+                    failures >= 1 && requeues >= 1,
+                    "the mock prover was set to fail the challenger's first attempt at the proof \
+                     for game {game}, but its session shows {failures} injected failure(s) and \
+                     {requeues} requeue(s); the dispute cannot have come from a recovered session"
+                );
+                info!(
+                    phase = %phase,
+                    game = %game,
+                    injected_failures = failures,
+                    requeues,
+                    "the challenger recovered from a failed proof session"
+                );
+            }
         }
         Ok(())
     }
