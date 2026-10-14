@@ -239,6 +239,33 @@ A and B are added to the collateral-damage set once their phases finish, so
 Path 3 must leave them alone too. Path 2 skip and Path 2 dispute need Path 1
 to land as a ZK challenge; after a TEE nullify they are logged as skipped.
 
+`all` ends with **Bonds**, after the bystander check because it patches a game
+outside the ones under test. The challenger is released with
+`BASE_CHALLENGER_BOND_CLAIM_ADDRESSES` set to its own key, as production claims
+for its own, and a 5s bond scan over the games from the oldest one under test.
+Bonds takes the game the challenger won — in progress, challenged, with the
+challenger as ZK prover; B after Path 4's follow-up — and requires the full
+claim:
+
+1. The driver makes the game due. It revives the shared verifiers Path 3
+   nullified, because `resolve` refutes the proof of a nullified verifier,
+   here the challenger's winning challenge. The game's `expectedResolution`
+   (5 days after the challenge) is set to now, and its parent, if still in
+   progress, to `DEFENDER_WINS`. `resolve` requires a resolved parent, and the challenger
+   never resolves a game whose bond is someone else's.
+2. The challenger must `resolve` the game (`CHALLENGER_WINS`, bond recipient =
+   the challenger) and send the first `claimCredit`, which unlocks the bond.
+3. The driver moves the `DelayedWETH` withdrawal's start back by the delay
+   (1 day on zeronet).
+4. The challenger must send the second `claimCredit`: the bond reads as claimed
+   and its balance has grown.
+
+Time is not warped: the challenger compares the `DelayedWETH` unlock timestamp
+against its own wall clock, so on a warped fork it would wait out the delay for
+real. Each patch is read back through the contract's getter, so a storage
+layout that drifts fails the run at the patch (`src/bonds.rs`). With no game
+won, Bonds is logged as skipped.
+
 `path1-path2` and `path3` remain as cheaper subsets for `real` prover runs,
 where every dispute and staged game costs a SNARK on the shared cluster.
 
@@ -349,7 +376,7 @@ hung one. The run ends with one `run summary` that lists every planned phase,
 `not-run` included.
 
 `phase` values: `setup`, `quiet-window`, `path1`, `path2-skip`, `path2-dispute`,
-`path3`, `path4`, `bystanders`. `verdict` values: `pass`, `skip`, `fail` on a
+`path3`, `path4`, `bystanders`, `bonds`. `verdict` values: `pass`, `skip`, `fail` on a
 phase; `pass`, `fail` on the run. They are asserted by a unit test because dashboards
 filter on them.
 
