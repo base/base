@@ -11,7 +11,7 @@ mod mock_verifier;
 mod progress;
 
 mod infra;
-pub use infra::{INFRA_EXIT_CODE, is_infra};
+pub use infra::{INFRA_EXIT_CODE, Unavailable};
 
 mod metrics;
 pub use metrics::Scrape;

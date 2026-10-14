@@ -33,8 +33,8 @@ use tracing::{debug, info, warn};
 use url::Url;
 
 use crate::{
+    Unavailable,
     config::{Config, ProverMode, Scenario},
-    infra,
     metrics::Scrape,
     mock_prover::MockProver,
     mock_verifier,
@@ -831,7 +831,7 @@ impl ChallengerE2e {
                 selected.len()
             )
         };
-        Err(infra::mark(error, "too few eligible games on the chain"))
+        Err(Unavailable::mark(error, "too few eligible games on the chain"))
     }
 
     /// Attaches a real SNARK of B's canonical roots via `verifyProposalProof`.
@@ -1078,7 +1078,7 @@ impl ChallengerE2e {
         Self::await_l2_state(config, verifier, &fork_config, game).await?;
         let checkpoint = Checkpoint::patch(&fork_config, verifier)
             .await
-            .map_err(|error| infra::classify(error, "the L2 RPC"))
+            .map_err(|error| Unavailable::classify(error, "the L2 RPC"))
             .context("failed to corrupt the ZK-only game on the fork")?;
 
         info!(
@@ -1603,7 +1603,7 @@ impl ChallengerE2e {
         Self::await_l2_state(config, verifier, &fork_config, game).await?;
         let checkpoint = Checkpoint::patch(&fork_config, verifier)
             .await
-            .map_err(|error| infra::classify(error, "the L2 RPC"))
+            .map_err(|error| Unavailable::classify(error, "the L2 RPC"))
             .context("failed to corrupt an intermediate output root on the fork")?;
         info!(
             game = %game.address,
@@ -1905,7 +1905,7 @@ impl ChallengerE2e {
         Self::await_l2_state(config, verifier, &fork_config, game).await?;
         let checkpoint = Checkpoint::patch(&fork_config, verifier)
             .await
-            .map_err(|error| infra::classify(error, "the L2 RPC"))
+            .map_err(|error| Unavailable::classify(error, "the L2 RPC"))
             .context("failed to corrupt the dual-proof game on the fork")?;
         info!(
             game = %game.address,
@@ -2114,8 +2114,8 @@ impl ChallengerE2e {
     /// node's failure, and is marked as one.
     async fn annotate_timeout(error: eyre::Report, config: &Config) -> eyre::Report {
         let l2 = L2HttpProvider::new_http(config.l2_eth_rpc.clone());
-        let error = match infra::probe_l2_state(&l2).await {
-            Err(probe) if infra::looks_transient(&probe) => infra::mark(
+        let error = match Unavailable::probe_l2_state(&l2).await {
+            Err(probe) if Unavailable::looks_transient(&probe) => Unavailable::mark(
                 error.wrap_err(format!("the L2 RPC failed a state read at timeout: {probe:#}")),
                 "the L2 RPC at timeout",
             ),
@@ -2150,7 +2150,7 @@ impl ChallengerE2e {
         game: Candidate,
     ) -> Result<()> {
         let block = verifier.game_info(game.address).await?.l2_block_number;
-        infra::retry(config.l2_retry_budget, config.poll_interval, "the L2 RPC", || {
+        Unavailable::retry(config.l2_retry_budget, config.poll_interval, "the L2 RPC", || {
             fork_config.output_root_at_block(block)
         })
         .await

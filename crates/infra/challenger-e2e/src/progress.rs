@@ -135,7 +135,7 @@ impl Progress {
             phase = %phase,
             verdict = %Verdict::Fail,
             elapsed_ms,
-            infra = crate::infra::is_infra(cause),
+            infra = crate::Unavailable::is_infra(cause),
             error = %cause,
             "{} failed",
             phase.label()
