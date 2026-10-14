@@ -18,6 +18,7 @@ mod forwarder;
 pub use forwarder::{ForwardRequest, InsertValidatedTransaction};
 
 mod reader;
+pub use reader::SnapshotMetrics;
 
 mod service;
 pub use service::{ForwardingSetupError, ShutdownReport, TxForwardingHandle, TxForwardingService};

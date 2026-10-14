@@ -13,7 +13,7 @@ use reth_provider::providers::BlockchainProvider;
 use tracing::info;
 
 use crate::{
-    BaseNodeBuilder, BaseNodeExtension, FromExtensionConfig, NodeHooks,
+    BaseNodeBuilder, BaseNodeExtension, FromExtensionConfig, NodeHooks, RuntimeMetricsSampler,
     node::BaseNode,
     service::{DefaultPayloadServiceBuilder, PayloadServiceBuilder},
 };
@@ -188,7 +188,12 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
             .with_add_ons(base_node.add_ons())
             .on_component_initialized(move |_ctx| Ok(()));
 
-        let hooks = extensions.into_iter().fold(NodeHooks::new(), |hooks, ext| ext.apply(hooks));
+        let hooks = NodeHooks::new().add_node_started_hook(|node| {
+            let sampler = RuntimeMetricsSampler::new(&tokio::runtime::Handle::current());
+            node.task_executor.spawn_task(Box::pin(sampler.run()));
+            Ok(())
+        });
+        let hooks = extensions.into_iter().fold(hooks, |hooks, ext| ext.apply(hooks));
         let hooks = started_callbacks
             .into_iter()
             .fold(hooks, |hooks, callback| hooks.add_node_started_hook(move |_| callback()));

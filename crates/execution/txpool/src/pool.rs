@@ -1,6 +1,6 @@
 //! Base transaction-pool wrapper that combines the protocol pool with a 2D nonce sidecar.
 
-use std::{collections::HashMap, fmt, sync::Arc};
+use std::{collections::HashMap, fmt, sync::Arc, time::Instant};
 
 use alloy_eips::{
     eip4844::{BlobAndProofV1, BlobAndProofV2, BlobCellsAndProofsV1},
@@ -28,9 +28,9 @@ use tracing::debug;
 
 use crate::{
     Admission, BasePooledTx, BaseTransactionValidator, FlashblockExpiry, GuardLimits, GuardMetrics,
-    InvalidationCause, InvalidationKey, LimitRejection, MempoolGuard, ParkableBestTransactions,
-    ParkableTransactionPool, ParkedBestTransactions, PredicateContext, StateDiffInvalidation,
-    ValidityPoolMetrics, ValidityPredicate,
+    InsertHistograms, InvalidationCause, InvalidationKey, LimitRejection, MempoolGuard,
+    ParkableBestTransactions, ParkableTransactionPool, ParkedBestTransactions, PredicateContext,
+    StateDiffInvalidation, ValidityPoolMetrics, ValidityPredicate,
     best::MergeBestTransactions,
     two_d_nonce_pool::{InsertOutcome, LaneId, LaneUpdate, SidecarLimits, TwoDNoncePool},
 };
@@ -122,6 +122,8 @@ pub struct BaseTransactionPool<
     /// deadline eviction, so a same-nonce submission cannot race the sweep.
     /// Validation itself remains outside this lock.
     protocol_admission_lock: Arc<Mutex<()>>,
+    /// Insert-stage timings, registered once.
+    insert_histograms: InsertHistograms,
 }
 
 impl<Client, S, Evm, T, O> fmt::Debug for BaseTransactionPool<Client, S, Evm, T, O>
@@ -157,6 +159,7 @@ where
             block_expiry: Arc::clone(&self.block_expiry),
             published_flashblock: Arc::clone(&self.published_flashblock),
             protocol_admission_lock: Arc::clone(&self.protocol_admission_lock),
+            insert_histograms: self.insert_histograms.clone(),
         }
     }
 }
@@ -202,6 +205,7 @@ where
             block_expiry: Arc::new(RwLock::new(crate::BlockExpiryIndex::new())),
             published_flashblock: Arc::new(RwLock::new(None)),
             protocol_admission_lock: Arc::new(Mutex::new(())),
+            insert_histograms: InsertHistograms::default(),
         }
     }
 
@@ -673,7 +677,9 @@ where
         nonce: u64,
         validated: TransactionValidationOutcome<T>,
     ) -> PoolResult<AddedTransactionOutcome> {
+        let lock_requested = Instant::now();
         let _admission_guard = self.protocol_admission_lock.lock();
+        self.insert_histograms.admission_wait.record(lock_requested.elapsed());
         // Reject stale validation before reth can replace the currently pooled transaction.
         self.ensure_protocol_classification_current(hash, &validated)?;
         self.ensure_not_published_expired(hash, &validated)?;
@@ -687,8 +693,10 @@ where
         let block_expiry_bound = Self::validity_block_expiry_bound(&validated);
         let flashblock_expiry_bound = Self::validity_flashblock_expiry_bound(&validated);
         let is_validity = Self::has_validity_predicates(&validated);
+        let insert_started = Instant::now();
         let mut outcomes =
             self.protocol_pool.inner().add_transactions(origin, std::iter::once(validated));
+        self.insert_histograms.pool_insert.record(insert_started.elapsed());
         let outcome = match outcomes.pop() {
             Some(Ok(outcome)) => outcome,
             Some(Err(error)) => {
@@ -1156,7 +1164,9 @@ where
             let hash = *transaction.hash();
             let sender = transaction.sender();
             let nonce = transaction.nonce();
+            let validation_requested = Instant::now();
             let validated = self.validator().validate_transaction(origin, transaction).await;
+            self.insert_histograms.validation_call.record(validation_requested.elapsed());
             self.add_validated_protocol_transaction(origin, hash, sender, nonce, validated)
         }
     }
@@ -2485,6 +2495,44 @@ mod tests {
             assert!(result.is_ok(), "standard transaction {nonce} was guard-rejected: {result:?}");
         }
         assert!(pool.guard.read().is_empty());
+    }
+
+    /// An ordinary insert records how long it waited for validation, for the admission lock, and
+    /// for the inner pool insert.
+    #[tokio::test]
+    async fn insert_records_validation_admission_and_pool_insert_times() {
+        let recorder = metrics_util::debugging::DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        // Installed before the pool is built, as the node does, so the pool's handles record here.
+        // A current-thread test runtime keeps every record on this thread's local recorder.
+        let _guard = metrics::set_default_local_recorder(&recorder);
+        let (pool, client) = build_integration_pool();
+        let signer = signer();
+        fund(&client, signer.address());
+
+        pool.add_transaction(TransactionOrigin::External, signed_1559(&signer, 0)).await.unwrap();
+
+        let recorded: Vec<_> = snapshotter
+            .snapshot()
+            .into_vec()
+            .into_iter()
+            .filter_map(|(key, _, _, value)| match value {
+                metrics_util::debugging::DebugValue::Histogram(values) => {
+                    Some((key.key().name().to_string(), values.len()))
+                }
+                _ => None,
+            })
+            .collect();
+        for name in [
+            "txpool.insert.validation_call_seconds",
+            "txpool.insert.admission_wait_seconds",
+            "txpool.insert.pool_insert_seconds",
+        ] {
+            assert!(
+                recorded.contains(&(name.to_string(), 1)),
+                "{name} not recorded once: {recorded:?}"
+            );
+        }
     }
 
     #[tokio::test]

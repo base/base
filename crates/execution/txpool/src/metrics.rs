@@ -127,6 +127,48 @@ base_metrics::define_metrics! {
 }
 
 base_metrics::define_metrics! {
+    txpool.insert,
+    struct = InsertMetrics,
+    #[describe("Time an ordinary insert awaits its validation result, including the wait for a validation worker; compare with txpool.validator.validate_seconds to estimate validation queue and dispatch overhead")]
+    validation_call_seconds: histogram,
+    #[describe("Time an ordinary insert waits to acquire the protocol admission lock")]
+    admission_wait_seconds: histogram,
+    #[describe("Time the inner pool takes to insert one validated transaction, including its pool write-lock wait")]
+    pool_insert_seconds: histogram,
+}
+
+/// A histogram handle that is registered once; recording into it neither registers nor allocates.
+#[cfg(feature = "metrics")]
+pub type HistogramHandle = metrics::Histogram;
+/// A histogram handle that is registered once; a no-op without the `metrics` feature.
+#[cfg(not(feature = "metrics"))]
+pub type HistogramHandle = base_metrics::NoopMetric;
+
+/// [`InsertMetrics`] histogram handles, registered when the pool is built so the insert path never
+/// registers a metric or allocates.
+///
+/// Built after the node installs its metrics recorder; handles taken earlier would record nowhere.
+#[derive(Debug, Clone)]
+pub struct InsertHistograms {
+    /// See [`InsertMetrics::validation_call_seconds`].
+    pub validation_call: HistogramHandle,
+    /// See [`InsertMetrics::admission_wait_seconds`].
+    pub admission_wait: HistogramHandle,
+    /// See [`InsertMetrics::pool_insert_seconds`].
+    pub pool_insert: HistogramHandle,
+}
+
+impl Default for InsertHistograms {
+    fn default() -> Self {
+        Self {
+            validation_call: InsertMetrics::validation_call_seconds(),
+            admission_wait: InsertMetrics::admission_wait_seconds(),
+            pool_insert: InsertMetrics::pool_insert_seconds(),
+        }
+    }
+}
+
+base_metrics::define_metrics! {
     txpool.validator,
     struct = ValidatorMetrics,
     #[describe("End-to-end mempool validation wall time by transaction kind")]

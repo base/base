@@ -16,6 +16,9 @@ pub use extension::{BaseNodeExtension, FromExtensionConfig};
 mod runner;
 pub use runner::{BaseNodeRunner, LaunchedBaseNode};
 
+mod runtime_metrics;
+pub use runtime_metrics::{RuntimeMetricsSampler, TokioRuntimeMetrics};
+
 mod service;
 pub use service::{DefaultPayloadServiceBuilder, PayloadServiceBuilder};
 
