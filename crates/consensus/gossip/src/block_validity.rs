@@ -86,10 +86,11 @@ pub enum BlockInvalidError {
     },
     /// Too many blocks were validated for the same height.
     ///
-    /// No longer emitted: the per-height seen-hash cache evicts its oldest entry and admits the
-    /// newest block instead of rejecting it, so earlier candidates cannot starve the honest block
-    /// for a height. The variant and its `too_many_blocks` metric label remain part of the public
-    /// error and metric surface.
+    /// Emitted before Amsterdam, where the per-height seen-hash cache rejects the newest block
+    /// once it holds `MAX_BLOCKS_TO_KEEP` entries. From Amsterdam on the cache instead evicts its
+    /// oldest entry and admits the newest block, so earlier candidates cannot starve the honest
+    /// block for a height. The variant and its `too_many_blocks` metric label remain part of the
+    /// public error and metric surface.
     #[error("Too many blocks seen for height {height}")]
     TooManyBlocks {
         /// The height of the block.
@@ -271,13 +272,22 @@ impl BlockHandler {
 
         let seen_hashes_at_height =
             self.seen_hashes.entry(envelope.payload.block_number()).or_default();
-        // Evict the oldest hash rather than rejecting the newest block. The recorded hashes are
-        // pre-execution candidates the CL cannot tell apart, so rejecting the newest would let a
-        // signer fill the per-height quota with well-formed but EL-invalid blocks and starve the
-        // honest block for that height. The per-height bound still holds, and a re-broadcast
-        // evicted hash is only re-forwarded once, which the execution layer deduplicates by block
-        // hash.
         if seen_hashes_at_height.len() >= Self::MAX_BLOCKS_TO_KEEP {
+            // Before Amsterdam the quota rejects the newest block exactly as it always has, so
+            // pre-fork gossip behaviour is unchanged.
+            if !self.rollup_config.is_denim_active(envelope.payload.timestamp()) {
+                return Err(BlockInvalidError::TooManyBlocks {
+                    height: envelope.payload.block_number(),
+                });
+            }
+            // From Amsterdam on, evict the oldest hash rather than rejecting the newest block.
+            // The recorded hashes are pre-execution candidates the CL cannot tell apart, so
+            // rejecting the newest would let a signer fill the per-height quota with well-formed
+            // but EL-invalid blocks and starve the honest block for that height. A block access
+            // list makes a well-formed wrong-list block indistinguishable from an honest one
+            // until the execution layer runs it, which is why the eviction starts at Amsterdam.
+            // The per-height bound still holds, and a re-broadcast evicted hash is only
+            // re-forwarded once, which the execution layer deduplicates by block hash.
             seen_hashes_at_height.pop_front();
         }
         seen_hashes_at_height.push_back(envelope.payload.block_hash());
@@ -402,14 +412,14 @@ pub(crate) mod tests {
     use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3};
     use arbitrary::{Arbitrary, Unstructured};
     use base_common_consensus::BaseTxEnvelope;
-    use base_common_genesis::RollupConfig;
+    use base_common_genesis::{BaseUpgradeConfig, RollupConfig, UpgradeConfig};
     use base_common_rpc_types_engine::{
         BaseExecutionPayload, BaseExecutionPayloadV4, BaseExecutionPayloadV5, PayloadHash,
     };
     use libp2p::gossipsub::Message;
 
-    use crate::Handler;
     use super::*;
+    use crate::Handler;
 
     fn valid_block() -> Block<BaseTxEnvelope> {
         // Simulate some random data
@@ -548,6 +558,44 @@ pub(crate) mod tests {
         let (_, unsafe_signer) = tokio::sync::watch::channel(signer);
         BlockHandler::new(
             RollupConfig { l2_chain_id: Chain::base_mainnet(), ..Default::default() },
+            unsafe_signer,
+        )
+    }
+
+    /// Builds a V1 envelope for a fresh random block pinned to `height`.
+    fn v1_envelope_at_height(height: u64) -> NetworkPayloadEnvelope {
+        let mut block = v1_valid_block();
+        block.header.number = height;
+
+        NetworkPayloadEnvelope {
+            payload: BaseExecutionPayload::V1(ExecutionPayloadV1::from_block_slow(&block)),
+            signature: Signature::test_signature(),
+            payload_hash: PayloadHash(B256::ZERO),
+            parent_beacon_block_root: None,
+        }
+    }
+
+    /// Creates a handler whose unsafe signer is the signer of `envelope`, with Denim active from
+    /// `denim_activation` on.
+    ///
+    /// The fixture config has a zero `block_time`, so no Denim timestamp schedule is derived and
+    /// the absolute-schedule check does not interfere with these tests.
+    fn handler_for_with_denim(
+        envelope: &NetworkPayloadEnvelope,
+        denim_activation: u64,
+    ) -> BlockHandler {
+        let msg = envelope.payload_hash.signature_message(8453);
+        let signer = envelope.signature.recover_address_from_prehash(&msg).unwrap();
+        let (_, unsafe_signer) = tokio::sync::watch::channel(signer);
+        BlockHandler::new(
+            RollupConfig {
+                l2_chain_id: Chain::base_mainnet(),
+                upgrades: UpgradeConfig {
+                    base: BaseUpgradeConfig { denim: Some(denim_activation), ..Default::default() },
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             unsafe_signer,
         )
     }
@@ -803,97 +851,103 @@ pub(crate) mod tests {
         assert!(matches!(handler.block_valid(&envelope), Err(BlockInvalidError::BlockSeen { .. })));
     }
 
-    /// A height accepts more distinct blocks than [`BlockHandler::MAX_BLOCKS_TO_KEEP`]: the
-    /// per-height cache evicts its oldest hash instead of rejecting the newest block.
+    /// Before Denim the per-height quota rejects the newest block once the cache is full, which is
+    /// the byte-identical pre-fork behaviour the eviction change must preserve.
     #[test]
-    fn test_per_height_cache_evicts_the_oldest_block() {
-        let first_block = v1_valid_block();
+    fn test_per_height_cache_rejects_the_newest_block_before_denim() {
+        let first = v1_envelope_at_height(v1_valid_block().header.number);
+        let height = first.payload.block_number();
 
-        let initial_height = first_block.header.number;
-
-        let v1 = ExecutionPayloadV1::from_block_slow(&first_block);
-
-        let payload = BaseExecutionPayload::V1(v1);
-        let envelope = NetworkPayloadEnvelope {
-            payload,
-            signature: Signature::test_signature(),
-            payload_hash: PayloadHash(B256::ZERO),
-            parent_beacon_block_root: None,
-        };
-
-        let msg = envelope.payload_hash.signature_message(8453);
-        let signer = envelope.signature.recover_address_from_prehash(&msg).unwrap();
-        let (_, unsafe_signer) = tokio::sync::watch::channel(signer);
-        let mut handler = BlockHandler::new(
-            RollupConfig { l2_chain_id: Chain::base_mainnet(), ..Default::default() },
-            unsafe_signer,
-        );
-
-        assert!(handler.block_valid(&envelope).is_ok());
+        // The default fixture config has no Denim activation, so this exercises the pre-fork path.
+        let mut handler = handler_for(&first);
+        assert!(handler.block_valid(&first).is_ok(), "the first block must be accepted");
 
         // Fill the per-height cache with `MAX_BLOCKS_TO_KEEP` distinct hashes.
-        let next_payloads = (0..BlockHandler::MAX_BLOCKS_TO_KEEP - 1)
-            .map(|_| {
-                let mut block = v1_valid_block();
-                // The blocks have the same height
-                block.header.number = initial_height;
-
-                let v1 = ExecutionPayloadV1::from_block_slow(&block);
-
-                let payload = BaseExecutionPayload::V1(v1);
-                NetworkPayloadEnvelope {
-                    payload,
-                    signature: Signature::test_signature(),
-                    payload_hash: PayloadHash(B256::ZERO),
-                    parent_beacon_block_root: None,
-                }
-            })
+        let fillers = (0..BlockHandler::MAX_BLOCKS_TO_KEEP - 1)
+            .map(|_| v1_envelope_at_height(height))
             .collect::<Vec<_>>();
-
-        for candidate in &next_payloads {
+        for (i, filler) in fillers.iter().enumerate() {
             assert!(
-                handler.block_valid(candidate).is_ok(),
-                "every distinct block below the per-height bound must be accepted"
+                handler.block_valid(filler).is_ok(),
+                "every distinct block below the per-height bound must be accepted (filler {i})"
             );
         }
 
-        // A further distinct block is admitted: the cache evicts its oldest hash instead of
-        // rejecting the newest block.
-        let mut newest_block = v1_valid_block();
-        newest_block.header.number = initial_height;
-        let newest_envelope = NetworkPayloadEnvelope {
-            payload: BaseExecutionPayload::V1(ExecutionPayloadV1::from_block_slow(&newest_block)),
-            signature: Signature::test_signature(),
-            payload_hash: PayloadHash(B256::ZERO),
-            parent_beacon_block_root: None,
-        };
-
+        // A further distinct block is rejected: before Denim the quota does not evict.
+        let newest = v1_envelope_at_height(height);
+        let result = handler.block_valid(&newest);
         assert!(
-            handler.block_valid(&newest_envelope).is_ok(),
-            "the newest block must be admitted once the per-height cache is full"
+            matches!(result, Err(BlockInvalidError::TooManyBlocks { height: h }) if h == height),
+            "before Denim the per-height quota must reject the newest block, got {result:?}"
         );
 
         let seen = handler
             .seen_hashes
-            .get(&initial_height)
+            .get(&height)
             .expect("the height must still be recorded in the seen-hash cache");
         assert_eq!(
             seen.len(),
             BlockHandler::MAX_BLOCKS_TO_KEEP,
             "the per-height cache must stay bounded by MAX_BLOCKS_TO_KEEP"
         );
-        assert!(
-            !seen.contains(&envelope.payload.block_hash()),
-            "the oldest hash must be evicted"
-        );
         assert_eq!(
             seen.front(),
-            Some(&next_payloads[0].payload.block_hash()),
+            Some(&first.payload.block_hash()),
+            "the oldest hash must be retained before Denim"
+        );
+        assert!(
+            !seen.contains(&newest.payload.block_hash()),
+            "the rejected block must not be recorded as seen"
+        );
+    }
+
+    /// From Denim on the per-height cache evicts its oldest hash instead of rejecting the newest
+    /// block, so a signer cannot starve the honest block for a height.
+    #[test]
+    fn test_per_height_cache_evicts_the_oldest_block_from_denim() {
+        let first = v1_envelope_at_height(v1_valid_block().header.number);
+        let height = first.payload.block_number();
+
+        let mut handler = handler_for_with_denim(&first, first.payload.timestamp());
+        assert!(handler.block_valid(&first).is_ok(), "the first block must be accepted");
+
+        // Fill the per-height cache with `MAX_BLOCKS_TO_KEEP` distinct hashes.
+        let fillers = (0..BlockHandler::MAX_BLOCKS_TO_KEEP - 1)
+            .map(|_| v1_envelope_at_height(height))
+            .collect::<Vec<_>>();
+        for (i, filler) in fillers.iter().enumerate() {
+            assert!(
+                handler.block_valid(filler).is_ok(),
+                "every distinct block below the per-height bound must be accepted (filler {i})"
+            );
+        }
+
+        // A further distinct block is admitted: the cache evicts its oldest hash instead of
+        // rejecting the newest block.
+        let newest = v1_envelope_at_height(height);
+        assert!(
+            handler.block_valid(&newest).is_ok(),
+            "the newest block must be admitted once the per-height cache is full"
+        );
+
+        let seen = handler
+            .seen_hashes
+            .get(&height)
+            .expect("the height must still be recorded in the seen-hash cache");
+        assert_eq!(
+            seen.len(),
+            BlockHandler::MAX_BLOCKS_TO_KEEP,
+            "the per-height cache must stay bounded by MAX_BLOCKS_TO_KEEP"
+        );
+        assert!(!seen.contains(&first.payload.block_hash()), "the oldest hash must be evicted");
+        assert_eq!(
+            seen.front(),
+            Some(&fillers[0].payload.block_hash()),
             "the hash recorded second must now be the oldest"
         );
         assert_eq!(
             seen.back(),
-            Some(&newest_envelope.payload.block_hash()),
+            Some(&newest.payload.block_hash()),
             "the newest hash must be recorded"
         );
     }
@@ -902,7 +956,7 @@ pub(crate) mod tests {
     /// publishing `MAX_BLOCKS_TO_KEEP` well-formed, correctly signed V5 envelopes whose block
     /// access lists are malformed. The CL cannot execute them, so it accepts all of them; the
     /// honest block must still be admitted and forwarded rather than rejected with
-    /// `TooManyBlocks`.
+    /// `TooManyBlocks`. Denim is active here, which is the fork that gates the eviction.
     #[test]
     fn test_malformed_block_access_lists_cannot_starve_the_honest_block() {
         let height = v5_valid_block().header.number;
@@ -921,7 +975,10 @@ pub(crate) mod tests {
             })
             .collect::<Vec<_>>();
 
-        let mut handler = handler_for(&attacker_envelopes[0]);
+        let mut handler = handler_for_with_denim(
+            &attacker_envelopes[0],
+            attacker_envelopes[0].payload.timestamp(),
+        );
 
         for (i, envelope) in attacker_envelopes.iter().enumerate() {
             assert!(
@@ -959,17 +1016,13 @@ pub(crate) mod tests {
         );
 
         // ...and it must reach the execution layer.
-        let probe =
-            BlockHandler::new(RollupConfig::default(), tokio::sync::watch::channel(Address::ZERO).1);
+        let probe = BlockHandler::new(
+            RollupConfig::default(),
+            tokio::sync::watch::channel(Address::ZERO).1,
+        );
         let encoded = probe.encode(probe.blocks_v5_topic.clone(), honest).unwrap();
         let decoded = NetworkPayloadEnvelope::decode_v5(&encoded).unwrap();
-        let msg = decoded.payload_hash.signature_message(8453);
-        let signer = decoded.signature.recover_address_from_prehash(&msg).unwrap();
-        let (_, unsafe_signer) = tokio::sync::watch::channel(signer);
-        let mut forwarding_handler = BlockHandler::new(
-            RollupConfig { l2_chain_id: Chain::base_mainnet(), ..Default::default() },
-            unsafe_signer,
-        );
+        let mut forwarding_handler = handler_for_with_denim(&decoded, decoded.payload.timestamp());
         let message = Message {
             source: None,
             sequence_number: None,

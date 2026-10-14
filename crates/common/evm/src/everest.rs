@@ -91,7 +91,11 @@ where
 #[cfg(test)]
 mod tests {
     use base_common_genesis::{BaseUpgrade, RollupConfig};
-    use revm::{Database as _, database::{InMemoryDB, State}, state::AccountInfo};
+    use revm::{
+        Database as _,
+        database::{InMemoryDB, State},
+        state::AccountInfo,
+    };
 
     use super::*;
 

@@ -59,7 +59,10 @@ where
 #[cfg(test)]
 mod tests {
     use base_common_genesis::{BaseUpgrade, RollupConfig};
-    use revm::{Database as _, database::{InMemoryDB, State}};
+    use revm::{
+        Database as _,
+        database::{InMemoryDB, State},
+    };
 
     use super::*;
 
@@ -98,8 +101,7 @@ mod tests {
 
         let installed = state.basic(ADDR).unwrap().expect("the create2 deployer must exist");
         assert_eq!(
-            installed.code_hash,
-            CREATE_2_DEPLOYER_CODEHASH,
+            installed.code_hash, CREATE_2_DEPLOYER_CODEHASH,
             "the installed code hash must be the create2 deployer hash",
         );
     }
