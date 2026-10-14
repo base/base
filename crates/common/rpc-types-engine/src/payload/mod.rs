@@ -217,9 +217,7 @@ impl<'de> serde::Deserialize<'de> for BaseExecutionPayload {
                             excess_blob_gas = Some(raw.to());
                         }
                         Fields::WithdrawalsRoot => withdrawals_root = Some(map.next_value()?),
-                        Fields::BlockAccessList => {
-                            block_access_list = Some(map.next_value()?)
-                        }
+                        Fields::BlockAccessList => block_access_list = Some(map.next_value()?),
                         Fields::SlotNumber => {
                             let raw = map.next_value::<U64>()?;
                             slot_number = Some(raw.to());
@@ -267,9 +265,7 @@ impl<'de> serde::Deserialize<'de> for BaseExecutionPayload {
 
                 // `slotNumber` is only defined alongside `blockAccessList` (EIP-7843).
                 if slot_number.is_some() && block_access_list.is_none() {
-                    return Err(serde::de::Error::custom(
-                        "slotNumber requires blockAccessList",
-                    ));
+                    return Err(serde::de::Error::custom("slotNumber requires blockAccessList"));
                 }
 
                 // Construct base V2 payload
@@ -289,9 +285,8 @@ impl<'de> serde::Deserialize<'de> for BaseExecutionPayload {
                         match (block_access_list, withdrawals_root) {
                             // Amsterdam adds `blockAccessList` and `slotNumber` on top of V4.
                             (Some(block_access_list), Some(withdrawals_root)) => {
-                                let slot_number = slot_number.ok_or_else(|| {
-                                    serde::de::Error::missing_field("slotNumber")
-                                })?;
+                                let slot_number = slot_number
+                                    .ok_or_else(|| serde::de::Error::missing_field("slotNumber"))?;
                                 Ok(BaseExecutionPayload::V5(BaseExecutionPayloadV5 {
                                     payload_inner: BaseExecutionPayloadV4 {
                                         payload_inner: payload_v3,
@@ -923,7 +918,10 @@ mod tests {
         let payload: BaseExecutionPayload = serde_json::from_str(response_v5).unwrap();
         assert!(payload.as_v5().is_some());
         assert_eq!(payload.as_v5().unwrap().slot_number, 42);
-        assert_eq!(payload.as_v5().unwrap().block_access_list, Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef]));
+        assert_eq!(
+            payload.as_v5().unwrap().block_access_list,
+            Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef])
+        );
         assert_eq!(serde_json::to_string(&payload).unwrap(), response_v5);
     }
 

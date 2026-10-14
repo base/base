@@ -699,8 +699,7 @@ mod tests {
             requests: Requests::default(),
             gas_used: GAS_USED,
         };
-        validate_block_post_execution(&header, &chainspec, &result, None, Some(bal_hash))
-            .unwrap();
+        validate_block_post_execution(&header, &chainspec, &result, None, Some(bal_hash)).unwrap();
     }
 
     #[test]
@@ -819,7 +818,8 @@ mod tests {
     fn amsterdam_chainspec() -> BaseChainSpec {
         let mut chainspec = BaseChainSpec::sepolia();
         chainspec.set_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(AMSTERDAM_TIMESTAMP));
-        chainspec.set_fork(EthereumHardfork::Amsterdam, ForkCondition::Timestamp(AMSTERDAM_TIMESTAMP));
+        chainspec
+            .set_fork(EthereumHardfork::Amsterdam, ForkCondition::Timestamp(AMSTERDAM_TIMESTAMP));
         chainspec
     }
 
@@ -926,10 +926,8 @@ mod tests {
         let chainspec = amsterdam_chainspec();
         let committed = B256::repeat_byte(0x11);
         let recomputed = B256::repeat_byte(0x22);
-        let header = Header {
-            blob_gas_used: Some(0),
-            ..bal_header(AMSTERDAM_TIMESTAMP, Some(committed))
-        };
+        let header =
+            Header { blob_gas_used: Some(0), ..bal_header(AMSTERDAM_TIMESTAMP, Some(committed)) };
         let result = BlockExecutionResult::<BaseReceipt> {
             blob_gas_used: 0,
             receipts: vec![],
@@ -937,14 +935,9 @@ mod tests {
             gas_used: 0,
         };
 
-        let error = validate_block_post_execution(
-            &header,
-            &chainspec,
-            &result,
-            None,
-            Some(recomputed),
-        )
-        .expect_err("import must reject a mismatched block access list commitment");
+        let error =
+            validate_block_post_execution(&header, &chainspec, &result, None, Some(recomputed))
+                .expect_err("import must reject a mismatched block access list commitment");
         assert!(
             matches!(
                 error,
@@ -960,10 +953,8 @@ mod tests {
     fn validate_block_post_execution_accepts_matching_block_access_list_commitment() {
         let chainspec = amsterdam_chainspec();
         let committed = B256::repeat_byte(0x11);
-        let header = Header {
-            blob_gas_used: Some(0),
-            ..bal_header(AMSTERDAM_TIMESTAMP, Some(committed))
-        };
+        let header =
+            Header { blob_gas_used: Some(0), ..bal_header(AMSTERDAM_TIMESTAMP, Some(committed)) };
         let result = BlockExecutionResult::<BaseReceipt> {
             blob_gas_used: 0,
             receipts: vec![],

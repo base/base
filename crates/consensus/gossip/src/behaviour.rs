@@ -154,8 +154,7 @@ mod tests {
             },
             recv,
         );
-        let mut expected =
-            vec![handler.blocks_v4_topic.hash(), handler.blocks_v5_topic.hash()];
+        let mut expected = vec![handler.blocks_v4_topic.hash(), handler.blocks_v5_topic.hash()];
         expected.sort();
         let behaviour =
             Behaviour::new(key.public(), config::default_config(), &[Box::new(handler)]).unwrap();

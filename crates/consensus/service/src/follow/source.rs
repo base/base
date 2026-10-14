@@ -226,8 +226,8 @@ mod tests {
     };
     use alloy_primitives::{Address, Sealable, U256};
     use alloy_rlp::Decodable;
-    use alloy_rpc_types_eth::{BlockTransactions, Header as RpcHeader};
     use alloy_rpc_types_engine::{CancunPayloadFields, PraguePayloadFields};
+    use alloy_rpc_types_eth::{BlockTransactions, Header as RpcHeader};
     use base_common_rpc_types::{BaseBlockResponse, BaseHeaderResponse};
     use base_common_rpc_types_engine::BaseExecutionPayloadSidecar;
     use httpmock::{Mock, MockServer, prelude::*};
