@@ -891,6 +891,62 @@ mod tests {
         );
     }
 
+    /// The derivation path must carry the L2 block number as the slot number once Denim is active,
+    /// because the EL rejects V4 attributes without a slot number at an Amsterdam timestamp.
+    #[tokio::test]
+    async fn test_prepare_payload_carries_the_l2_block_number_as_slot_number_at_denim() {
+        let block_time = 2_u64;
+        let timestamp = 100_u64;
+        let cfg = Arc::new(RollupConfig {
+            block_time,
+            genesis: ChainGenesis {
+                l2_time: timestamp.saturating_sub(block_time),
+                ..Default::default()
+            },
+            l2_chain_id: 9_100_005.into(),
+            upgrades: UpgradeConfig {
+                ecotone_time: Some(102),
+                jovian_time: Some(0),
+                base: BaseUpgradeConfig { denim: Some(102), ..Default::default() },
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        let l1_cfg = Arc::new(Sepolia::l1_config());
+        let l2_number = 2;
+        let mut fetcher = TestSystemConfigL2Fetcher::default();
+        fetcher.insert(B256::ZERO, SystemConfig::default());
+        let mut provider = TestChainProvider::default();
+        let header = Header { timestamp, ..Default::default() };
+        let hash = header.hash_slow();
+        provider.insert_header(hash, header);
+        let mut builder =
+            StatefulAttributesBuilder::new(Arc::clone(&cfg), l1_cfg, fetcher, provider);
+        let epoch = BlockNumHash { hash, number: l2_number };
+        let l2_parent = L2BlockInfo {
+            block_info: BlockInfo {
+                hash: B256::ZERO,
+                number: l2_number,
+                timestamp: 102,
+                parent_hash: hash,
+            },
+            l1_origin: BlockNumHash { hash, number: l2_number },
+            seq_num: 0,
+        };
+
+        let next_l2_block_number = l2_parent.block_info.number + 1;
+        assert!(
+            cfg.is_denim_active(cfg.l2_block_timestamp(next_l2_block_number)),
+            "the next block must be built after Denim activates"
+        );
+        let payload = builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap();
+        assert_eq!(
+            payload.payload_attributes.slot_number,
+            Some(next_l2_block_number),
+            "the derived attributes must carry the L2 block number as the slot number"
+        );
+    }
+
     #[tokio::test]
     async fn test_denim_gas_transition_applies_after_l1_system_config_updates() {
         let timestamp = 100;
