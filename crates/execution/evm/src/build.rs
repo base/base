@@ -10,8 +10,7 @@ use alloy_primitives::logs_bloom;
 use base_common_chains::Upgrades;
 use base_common_consensus::DepositReceiptExt;
 use base_common_evm::BaseBlockExecutionCtx;
-use base_execution_consensus::{calculate_receipt_root_no_memo, isthmus};
-use reth_chainspec::EthereumHardforks;
+use base_execution_consensus::{calculate_receipt_root_no_memo, expected_slot_number, isthmus};
 use reth_evm::execute::{BlockAssembler, BlockAssemblerInput};
 use reth_execution_errors::BlockExecutionError;
 use reth_execution_types::BlockExecutionResult;
@@ -67,14 +66,14 @@ impl<ChainSpec: Upgrades> BaseBlockAssembler<ChainSpec> {
 
         let number = evm_env.block_env.number().saturating_to();
 
+        // EIP-7843: from Amsterdam on, the header carries a slot number. Base pins it to the L2
+        // block number, so the value the consensus layer supplied in the payload attributes must
+        // not influence the header.
         // EIP-7843: from Amsterdam on, the header carries a slot number. Base puts the L2 block
-        // number here, preferring the value the consensus layer supplied in the payload
-        // attributes and falling back to the block number being built (e.g. the `--dev`
-        // instant-seal path, which sends no slot number).
-        let slot_number = self
-            .chain_spec
-            .is_amsterdam_active_at_timestamp(timestamp)
-            .then_some(ctx.slot_number.unwrap_or(number));
+        // number here. The value the consensus layer supplied in the payload attributes is not
+        // used, so an attribute cannot make this path assemble a header that header validation
+        // rejects.
+        let slot_number = expected_slot_number(&*self.chain_spec, timestamp, number);
 
         let withdrawals_root =
             if Upgrades::is_isthmus_active_at_timestamp(&*self.chain_spec, timestamp) {

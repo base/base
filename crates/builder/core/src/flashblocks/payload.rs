@@ -25,7 +25,7 @@ use base_common_flashblocks::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashblockId, FlashblocksPayloadV1,
     Metadata,
 };
-use base_execution_consensus::{calculate_receipt_root_no_memo, isthmus};
+use base_execution_consensus::{calculate_receipt_root_no_memo, expected_slot_number, isthmus};
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
 use base_execution_payload_builder::{
     BaseBuiltPayload, BasePayloadBuilderAttributes, BuilderMetrics as SharedBuilderMetrics,
@@ -1256,16 +1256,15 @@ where
         },
     );
 
-    // EIP-7843: from Amsterdam on, the header carries a slot number. Base puts the L2 block
-    // number here, preferring the value the consensus layer supplied in the payload attributes
-    // and falling back to the block number being built.
-    let slot_number =
-        ctx.chain_spec.is_amsterdam_active_at_timestamp(ctx.attributes().timestamp()).then_some(
-            ctx.attributes()
-                .payload_attributes
-                .slot_number
-                .unwrap_or_else(|| ctx.parent().number + 1),
-        );
+    // EIP-7843: from Amsterdam on, the header carries a slot number, which Base sets to the L2
+    // block number being built. The consensus-supplied attribute value is deliberately not used:
+    // header validation rejects a header whose slot is not the block number, so an attribute could
+    // otherwise make this path assemble a block the execution layer refuses.
+    let slot_number = expected_slot_number(
+        &*ctx.chain_spec,
+        ctx.attributes().timestamp(),
+        ctx.parent().number + 1,
+    );
 
     // create the block header
     let transactions_root = proofs::calculate_transaction_root(&info.executed_transactions);

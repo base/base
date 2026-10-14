@@ -42,6 +42,17 @@ pub enum BaseConsensusError {
         /// Storage root of pre-deploy loaded from local state.
         exec_res: B256,
     },
+    /// Block header `slot_number` does not match the value Base requires for the block.
+    ///
+    /// Base pins the EIP-7843 field to the L2 block number from Amsterdam on and omits it before,
+    /// so `expected` is `Some(block_number)` or `None` respectively.
+    #[error("invalid slot number: expected {expected:?}, got {got:?}")]
+    SlotNumberMismatch {
+        /// The slot number Base requires for the block.
+        expected: Option<u64>,
+        /// The slot number the block carried.
+        got: Option<u64>,
+    },
     /// L1 [`ConsensusError`], that also occurs on L2.
     #[error(transparent)]
     Eth(#[from] ConsensusError),

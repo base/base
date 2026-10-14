@@ -3105,10 +3105,10 @@ mod tests {
         );
     }
 
-    /// EIP-7843: when the payload attributes carry a slot number, an Amsterdam block must use it
-    /// verbatim instead of the block number.
+    /// EIP-7843: Base pins the header slot number to the L2 block number, so a slot number in the
+    /// payload attributes must not reach the header.
     #[test]
-    fn amsterdam_payload_prefers_attribute_slot_number() {
+    fn amsterdam_payload_ignores_attribute_slot_number() {
         let mut ctx = pool_payload_context(DENIM_TIMESTAMP);
         ctx.config.attributes.payload_attributes.slot_number = Some(42);
         let outcome =
@@ -3117,10 +3117,12 @@ mod tests {
             panic!("a Denim-active payload must freeze")
         };
 
+        let block = payload.block();
+        assert_eq!(block.number, 1, "the parent header is block 0, so this is block 1");
         assert_eq!(
-            payload.block().slot_number,
-            Some(42),
-            "the attribute slot number must win over the block number fallback"
+            block.slot_number,
+            Some(block.number),
+            "the header slot number must be the block number, not the attribute value"
         );
     }
 

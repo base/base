@@ -73,7 +73,9 @@ impl<H: alloy_consensus::BlockHeader> reth_rpc_eth_api::helpers::pending_block::
             gas_limit: parent.gas_limit(),
             parent_beacon_block_root: parent.parent_beacon_block_root(),
             extra_data: parent.extra_data().clone(),
-            slot_number: parent.slot_number(),
+            // EIP-7843: Base pins the header slot number to the L2 block number, so the pending
+            // block's slot number is the next block number rather than the parent's.
+            slot_number: Some(parent.number().saturating_add(1)),
         }
     }
 }
@@ -358,6 +360,30 @@ mod tests {
             assert_eq!(env.cfg_env.spec, BaseSpecId::new(upgrade), "override {time:?}");
             assert_eq!(env.block_env.basefee, base_fee, "override {time:?}");
         }
+    }
+
+    #[cfg(feature = "rpc")]
+    #[test]
+    fn pending_env_slot_number_is_next_block_number() {
+        use reth_primitives_traits::SealedHeader;
+        use reth_rpc_eth_api::helpers::pending_block::BuildPendingEnv;
+
+        use super::BaseNextBlockEnvAttributes;
+
+        let parent = SealedHeader::seal_slow(Header {
+            number: 41,
+            timestamp: 1,
+            slot_number: Some(41),
+            ..Default::default()
+        });
+
+        let attributes = BaseNextBlockEnvAttributes::build_pending_env(&parent, None);
+
+        assert_eq!(
+            attributes.slot_number,
+            Some(42),
+            "the pending block's slot number must be the next block number, not the parent's"
+        );
     }
 
     #[test]
