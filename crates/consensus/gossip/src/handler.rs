@@ -46,7 +46,9 @@ pub struct BlockHandler {
     /// The libp2p topic for V5 (Denim/Amsterdam) blocks, which carry the block access list.
     pub blocks_v5_topic: IdentTopic,
     /// A map of seen block height to the block hashes seen at that height, oldest first.
-    /// Each per-height list is bounded and evicts its oldest hash once it is full.
+    /// Each per-height list is bounded: before Amsterdam it rejects the newest block once it is
+    /// full, and from Amsterdam on it evicts its oldest hash instead, so an execution-invalid
+    /// candidate cannot starve the honest block for that height.
     /// This map is pruned when it contains more than [`Self::SEEN_HASH_CACHE_SIZE`] entries.
     pub seen_hashes: BTreeMap<u64, VecDeque<B256>>,
 }
