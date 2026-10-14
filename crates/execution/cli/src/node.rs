@@ -144,13 +144,8 @@ impl ExecutionNodeConfigArgs {
             jit: Default::default(),
         };
 
-        if node_config.network.max_inbound_peers.is_none() {
-            node_config.network.max_inbound_peers = Some(DEFAULT_BASE_MAX_INBOUND_EL_PEERS);
-        }
-
-        if node_config.network.max_outbound_peers.is_none() {
-            node_config.network.max_outbound_peers = Some(DEFAULT_BASE_MAX_OUTBOUND_EL_PEERS);
-        }
+        node_config.network.max_inbound_peers.get_or_insert(DEFAULT_BASE_MAX_INBOUND_EL_PEERS);
+        node_config.network.max_outbound_peers.get_or_insert(DEFAULT_BASE_MAX_OUTBOUND_EL_PEERS);
 
         ExecutionNodeRuntimeConfig {
             node_config,
@@ -214,19 +209,18 @@ impl ExecutionNodeRuntimeConfig {
 
     /// Configures the embedded execution node auth endpoint used by unified Base binaries.
     pub fn configure_unified_auth_endpoint(node_config: &mut NodeConfig<BaseChainSpec>) {
-        let auth_ipc_path = if node_config.rpc.auth_ipc_path == DEFAULT_ENGINE_API_IPC_ENDPOINT {
-            Some(node_config.datadir().data_dir().join(DEFAULT_UNIFIED_AUTH_IPC_FILENAME))
-        } else {
-            None
-        };
+        if node_config.rpc.auth_ipc_path == DEFAULT_ENGINE_API_IPC_ENDPOINT {
+            node_config.rpc.auth_ipc_path = node_config
+                .datadir()
+                .data_dir()
+                .join(DEFAULT_UNIFIED_AUTH_IPC_FILENAME)
+                .to_string_lossy()
+                .into_owned();
+        }
 
         node_config.rpc.auth_ipc = true;
         node_config.rpc.auth_port = 0;
         node_config.rpc.auth_addr = Ipv4Addr::LOCALHOST.into();
-
-        if let Some(auth_ipc_path) = auth_ipc_path {
-            node_config.rpc.auth_ipc_path = auth_ipc_path.to_string_lossy().into_owned();
-        }
     }
 
     /// Returns the configured authenticated Engine API IPC path from the supplied node config.
