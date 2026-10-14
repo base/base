@@ -288,7 +288,7 @@ mod tests {
         let slot_number = 42;
         let payload = sample_payload(block_access_list.clone(), slot_number);
 
-        let block = payload.clone().into_block_raw().unwrap();
+        let block = payload.into_block_raw().unwrap();
         assert_eq!(block.header.block_access_list_hash, Some(keccak256(&block_access_list)));
         assert_eq!(block.header.slot_number, Some(slot_number));
         assert_eq!(
