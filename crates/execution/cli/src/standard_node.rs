@@ -7,6 +7,7 @@ use base_builder_metering::{
     MeteringStoreExtension,
 };
 use base_execution_eip8130_rpc_node::{Eip8130RpcExtension, Eip8130RpcMode};
+use base_execution_payer_rpc::{PayerRpcConfig, PayerRpcExtension};
 use base_execution_payload_builder::{
     NoopMeteringProvider, REJECTION_CACHE_MAX_CAPACITY, REJECTION_CACHE_TTL, RejectionCache,
     ResourceMeteringConfig, SharedMeteringProvider,
@@ -373,6 +374,18 @@ pub struct RpcStandardNodeArgs {
     )]
     pub validity_max_expiry_secs: u64,
 
+    /// Payer service URL for `payer_getTerms` and `payer_sendTransaction`.
+    ///
+    /// When unset, nodes that have `--rollup.sequencer` forward those methods there.
+    #[arg(long = "rollup.payer", value_name = "PAYER_URL")]
+    pub payer_url: Option<String>,
+
+    /// Cache successful `payer_getTerms` responses as one shared token catalog.
+    ///
+    /// Leave this off unless the payer returns the same terms for every request.
+    #[arg(long = "rollup.payer-cache")]
+    pub payer_cache: bool,
+
     /// Builder RPC endpoints for transaction forwarding (one forwarder per URL), used by mempool nodes
     #[arg(
         long = "builder-rpc-urls",
@@ -466,6 +479,20 @@ pub struct RpcStandardNodeArgs {
         requires = "enable_inline_simulation"
     )]
     pub inline_simulation_timeout_ms: u64,
+}
+
+impl RpcStandardNodeArgs {
+    /// Payer proxy target. `--rollup.payer` wins; otherwise the sequencer URL is used.
+    fn payer_upstream(&self) -> Option<PayerRpcConfig> {
+        let sequencer = self.rollup_args.sequencer.clone();
+        let upstream_url = self.payer_url.clone().or_else(|| sequencer.clone())?;
+        let upstream_headers = if self.payer_url.is_none() || self.payer_url == sequencer {
+            self.rollup_args.sequencer_headers.clone()
+        } else {
+            Vec::new()
+        };
+        Some(PayerRpcConfig { upstream_url, upstream_headers, cache_get_terms: self.payer_cache })
+    }
 }
 
 impl From<RpcStandardNodeArgs> for StandardNodeArgs {
@@ -809,11 +836,18 @@ impl StandardBaseRethNode {
                         .sequencer
                         .clone()
                         .filter(|_| !args.rpc.enable_tx_forwarding),
-                    sequencer_headers: args.rpc.rollup_args.sequencer_headers,
+                    sequencer_headers: args.rpc.rollup_args.sequencer_headers.clone(),
                 },
             );
         }
         runner.install_ext::<TxForwardingExtension>(tx_forwarding_config);
+        if let Some(payer) = args.rpc.payer_upstream() {
+            runner.install_ext::<PayerRpcExtension>(payer);
+        } else if args.rpc.payer_cache {
+            warn!(
+                "--rollup.payer-cache has no effect without --rollup.payer or --rollup.sequencer"
+            );
+        }
         runner.install_ext::<ProofsHistoryExtension>(rollup_args.clone());
         Self::install_upgrade_signal_runtime_extension(&mut runner, &rollup_args)?;
         let eip8130_rpc_mode = if flashblocks_config.is_some() {
@@ -1021,7 +1055,33 @@ mod tests {
             inline_simulation_workers: DEFAULT_INLINE_SIMULATION_WORKERS,
             inline_simulation_queue_capacity: DEFAULT_INLINE_SIMULATION_QUEUE_CAPACITY,
             inline_simulation_timeout_ms: DEFAULT_INLINE_SIMULATION_TIMEOUT_MS,
+            payer_url: None,
+            payer_cache: false,
         }
+    }
+
+    #[test]
+    fn payer_upstream_defaults_to_the_sequencer_and_cache_is_opt_in() {
+        let mut args = default_rpc_standard_node_args();
+        assert!(args.payer_upstream().is_none());
+
+        args.rollup_args.sequencer = Some("http://sequencer".into());
+        args.rollup_args.sequencer_headers = vec!["X-Demo=1".into()];
+        args.payer_cache = true;
+        assert_eq!(
+            args.payer_upstream(),
+            Some(PayerRpcConfig {
+                upstream_url: "http://sequencer".into(),
+                upstream_headers: vec!["X-Demo=1".into()],
+                cache_get_terms: true,
+            })
+        );
+
+        args.payer_url = Some("http://payer".into());
+        let upstream = args.payer_upstream().expect("payer url");
+        assert_eq!(upstream.upstream_url, "http://payer");
+        assert!(upstream.upstream_headers.is_empty());
+        assert!(upstream.cache_get_terms);
     }
 
     #[test]

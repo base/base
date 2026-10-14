@@ -1,0 +1,48 @@
+[package]
+name = "base-execution-payer-rpc"
+description = "RPC proxy for the network payer service"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# base
+base-execution-rpc.workspace = true
+base-common-chains.workspace = true
+base-node-runner.workspace = true
+
+# reth
+reth-storage-api.workspace = true
+reth-chainspec.workspace = true
+
+# alloy
+alloy-primitives.workspace = true
+alloy-consensus.workspace = true
+
+# rpc
+jsonrpsee.workspace = true
+
+# misc
+thiserror = { workspace = true, features = ["std"] }
+serde_json.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+# base
+base-execution-chainspec.workspace = true
+base-common-consensus.workspace = true
+base-test-utils.workspace = true
+
+# reth
+reth-provider = { workspace = true, features = ["test-utils"] }
+
+# misc
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+httpmock.workspace = true

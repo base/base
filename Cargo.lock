@@ -4325,6 +4325,7 @@ dependencies = [
  "base-execution-consensus",
  "base-execution-eip8130-rpc-node",
  "base-execution-evm",
+ "base-execution-payer-rpc",
  "base-execution-payload-builder",
  "base-execution-trie",
  "base-flashblocks",
@@ -4545,6 +4546,29 @@ dependencies = [
  "reth-provider",
  "reth-trie",
  "tempfile",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "base-execution-payer-rpc"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus 2.4.1",
+ "alloy-primitives",
+ "base-common-chains",
+ "base-common-consensus",
+ "base-execution-chainspec",
+ "base-execution-rpc",
+ "base-node-runner",
+ "base-test-utils",
+ "httpmock",
+ "jsonrpsee",
+ "reth-chainspec",
+ "reth-provider",
+ "reth-storage-api",
+ "serde_json",
+ "thiserror 2.0.19",
  "tokio",
  "tracing",
 ]
