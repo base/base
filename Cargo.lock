@@ -6684,6 +6684,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-withdrawer"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "clap",
+ "coins-bip32",
+ "coins-bip39",
+ "humantime",
+ "thiserror 2.0.19",
+ "url",
+]
+
+[[package]]
 name = "base-witness-diff"
 version = "0.0.0"
 dependencies = [
