@@ -56,7 +56,7 @@ impl WithdrawalRpc {
         .map_err(|_| WithdrawalRpcError::Timeout)?
     }
 
-    /// Broadcasts a signed envelope; `Timeout` is ambiguous: check `tx.tx_hash()` with `wait_for_receipt` before resubmitting.
+    /// Broadcasts a signed envelope; any error is ambiguous because an earlier attempt may have landed, so check `tx.tx_hash()` with `wait_for_receipt` before re-signing.
     pub async fn broadcast(&self, tx: &TxEnvelope) -> Result<B256, WithdrawalRpcError> {
         let hash = *tx.tx_hash();
         let bytes = Bytes::from(tx.encoded_2718());
