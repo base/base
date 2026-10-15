@@ -63,6 +63,43 @@ impl ValidityBounds {
         self.max
     }
 
+    /// Returns the first failed normalized comparison, without materializing predicates.
+    ///
+    /// Impossible strict endpoints precede the lower bound, upper bound, and exclusions.
+    pub fn first_unsatisfied(&self, value: U256) -> Option<(ValidityOperator, U256)> {
+        if self.below_zero {
+            return Some((ValidityOperator::LessThan, U256::ZERO));
+        }
+        if self.above_max {
+            return Some((ValidityOperator::GreaterThan, U256::MAX));
+        }
+        if let Some(min) = self.min
+            && value < min
+        {
+            return Some((ValidityOperator::GreaterThanOrEqual, min));
+        }
+        if let Some(max) = self.max
+            && value > max
+        {
+            return Some((ValidityOperator::LessThanOrEqual, max));
+        }
+        self.excluded.contains(&value).then_some((ValidityOperator::NotEqual, value))
+    }
+
+    /// Whether a comparison is part of this conjunction's normalized representation.
+    ///
+    /// This checks blocker identity, not whether the comparison is implied by the bounds.
+    pub fn contains(&self, op: ValidityOperator, value: U256) -> bool {
+        match op {
+            ValidityOperator::LessThan => self.below_zero && value == U256::ZERO,
+            ValidityOperator::GreaterThan => self.above_max && value == U256::MAX,
+            ValidityOperator::GreaterThanOrEqual => self.min == Some(value),
+            ValidityOperator::LessThanOrEqual => self.max == Some(value),
+            ValidityOperator::NotEqual => self.excluded.contains(&value),
+            ValidityOperator::Equal => false,
+        }
+    }
+
     /// Returns comparisons equivalent to the ingested conjunction.
     pub fn comparisons(&self) -> impl Iterator<Item = (ValidityOperator, U256)> + '_ {
         self.below_zero
@@ -84,7 +121,7 @@ impl ValidityBounds {
 
     /// Heap bytes used by exclusions.
     pub const fn heap_size(&self) -> usize {
-        core::mem::size_of_val(self.excluded.as_slice())
+        self.excluded.capacity() * core::mem::size_of::<U256>()
     }
 }
 
@@ -107,7 +144,33 @@ pub struct ValidityConditions {
 impl ValidityConditions {
     /// Compiles submitted predicates without modifying the wire representation.
     pub fn new(predicates: Vec<ValidityPredicate>) -> Self {
+        // Count partitions before cloning large predicates so larger batches do not
+        // repeatedly grow buffers, and small partitions do not retain minimum Vec capacity.
+        let mut balance_count = 0;
+        let mut nonce_count = 0;
+        let mut storage_count = 0;
+        let mut block_exclusions = 0;
+        let mut flashblock_exclusions = 0;
+        for predicate in &predicates {
+            match predicate {
+                ValidityPredicate::Balance { .. } => balance_count += 1,
+                ValidityPredicate::Nonce { .. } => nonce_count += 1,
+                ValidityPredicate::Storage { .. } => storage_count += 1,
+                ValidityPredicate::BlockNumber { op: ValidityOperator::NotEqual, .. } => {
+                    block_exclusions += 1;
+                }
+                ValidityPredicate::FlashblockIndex { op: ValidityOperator::NotEqual, .. } => {
+                    flashblock_exclusions += 1;
+                }
+                _ => {}
+            }
+        }
         let mut conditions = Self { submitted: predicates, ..Self::default() };
+        conditions.balance.reserve_exact(balance_count);
+        conditions.nonce.reserve_exact(nonce_count);
+        conditions.storage.reserve_exact(storage_count);
+        conditions.block.excluded.reserve_exact(block_exclusions);
+        conditions.flashblock.excluded.reserve_exact(flashblock_exclusions);
         for predicate in &conditions.submitted {
             match predicate {
                 ValidityPredicate::BlockNumber { op, value } => {
@@ -178,7 +241,15 @@ impl ValidityConditions {
 
     /// Whether these conditions contain the normalized predicate recorded by a resting iterator.
     pub fn contains(&self, predicate: &ValidityPredicate) -> bool {
-        self.iter().any(|candidate| candidate.as_ref() == predicate)
+        match predicate {
+            ValidityPredicate::BlockNumber { op, value } => self.block.contains(*op, *value),
+            ValidityPredicate::FlashblockIndex { op, value } => {
+                self.flashblock.contains(*op, *value)
+            }
+            ValidityPredicate::Balance { .. } => self.balance.contains(predicate),
+            ValidityPredicate::Nonce { .. } => self.nonce.contains(predicate),
+            ValidityPredicate::Storage { .. } => self.storage.contains(predicate),
+        }
     }
 
     /// Whether a passed timing upper bound proves permanent expiry.
@@ -201,10 +272,11 @@ impl ValidityConditions {
     pub const fn heap_size(&self) -> usize {
         self.block.heap_size()
             + self.flashblock.heap_size()
-            + core::mem::size_of_val(self.balance.as_slice())
-            + core::mem::size_of_val(self.nonce.as_slice())
-            + core::mem::size_of_val(self.storage.as_slice())
-            + core::mem::size_of_val(self.submitted.as_slice())
+            + (self.balance.capacity()
+                + self.nonce.capacity()
+                + self.storage.capacity()
+                + self.submitted.capacity())
+                * core::mem::size_of::<ValidityPredicate>()
     }
 }
 
@@ -216,7 +288,151 @@ mod tests {
     use revm::database::InMemoryDB;
 
     use super::{ValidityBounds, ValidityConditions};
-    use crate::{PredicateContext, ValidityOperator, ValidityPredicate};
+    use crate::{
+        PredicateContext, ValidityOperator,
+        ValidityOperator::{
+            Equal, GreaterThan, GreaterThanOrEqual, LessThan, LessThanOrEqual, NotEqual,
+        },
+        ValidityPredicate,
+    };
+
+    #[test]
+    fn compiled_comparisons_cover_operators_and_full_width_boundaries() {
+        let beyond_context = U256::from(u64::MAX) + U256::ONE;
+        for (op, threshold, positions, expected) in [
+            (LessThan, U256::from(2), [1, 2, 3], [true, false, false]),
+            (LessThanOrEqual, U256::from(2), [1, 2, 3], [true, true, false]),
+            (Equal, U256::from(2), [1, 2, 3], [false, true, false]),
+            (NotEqual, U256::from(2), [1, 2, 3], [true, false, true]),
+            (GreaterThan, U256::from(2), [1, 2, 3], [false, false, true]),
+            (GreaterThanOrEqual, U256::from(2), [1, 2, 3], [false, true, true]),
+            (LessThan, U256::ZERO, [0, 1, u64::MAX], [false; 3]),
+            (LessThanOrEqual, U256::ZERO, [0, 1, u64::MAX], [true, false, false]),
+            (GreaterThan, U256::MAX, [0, 1, u64::MAX], [false; 3]),
+            (GreaterThanOrEqual, U256::MAX, [0, 1, u64::MAX], [false; 3]),
+            (Equal, beyond_context, [0, 1, u64::MAX], [false; 3]),
+            (GreaterThanOrEqual, beyond_context, [0, 1, u64::MAX], [false; 3]),
+            (LessThan, beyond_context, [0, 1, u64::MAX], [true; 3]),
+            (LessThanOrEqual, U256::MAX, [0, 1, u64::MAX], [true; 3]),
+            (NotEqual, U256::MAX, [0, 1, u64::MAX], [true; 3]),
+        ] {
+            let mut bounds = ValidityBounds::default();
+            bounds.insert(op, threshold);
+            for (position, matches) in positions.into_iter().zip(expected) {
+                assert_eq!(
+                    bounds.first_unsatisfied(U256::from(position)).is_none(),
+                    matches,
+                    "{op:?} {threshold} at {position}"
+                );
+            }
+        }
+        let mut bounds = ValidityBounds::default();
+        assert_eq!(bounds.first_unsatisfied(U256::ZERO), None);
+        assert_eq!(bounds.first_unsatisfied(U256::MAX), None);
+        bounds.insert(Equal, U256::MAX);
+        assert_eq!(bounds.first_unsatisfied(U256::MAX), None);
+    }
+
+    #[test]
+    fn normalized_membership_is_exact_not_logical_implication() {
+        for flashblock in [false, true] {
+            let predicate = |op, value| {
+                if flashblock {
+                    ValidityPredicate::FlashblockIndex { op, value }
+                } else {
+                    ValidityPredicate::BlockNumber { op, value }
+                }
+            };
+            let conditions = ValidityConditions::new(vec![
+                predicate(GreaterThan, U256::from(9)),
+                predicate(LessThan, U256::from(21)),
+                predicate(Equal, U256::from(15)),
+                predicate(NotEqual, U256::from(15)),
+                predicate(NotEqual, U256::from(15)),
+                predicate(LessThan, U256::ZERO),
+                predicate(GreaterThan, U256::MAX),
+            ]);
+            for (op, value) in [
+                (GreaterThanOrEqual, U256::from(15)),
+                (LessThanOrEqual, U256::from(15)),
+                (NotEqual, U256::from(15)),
+                (LessThan, U256::ZERO),
+                (GreaterThan, U256::MAX),
+            ] {
+                assert!(conditions.contains(&predicate(op, value)));
+            }
+            for (op, value) in [
+                (Equal, U256::from(15)),
+                (GreaterThan, U256::from(9)),
+                (LessThan, U256::from(21)),
+                (GreaterThanOrEqual, U256::from(10)),
+                (LessThanOrEqual, U256::from(20)),
+                (NotEqual, U256::from(14)),
+            ] {
+                assert!(!conditions.contains(&predicate(op, value)));
+            }
+            // The other timing partition is absent, even at the same threshold.
+            assert!(!conditions.contains(&if flashblock {
+                ValidityPredicate::BlockNumber { op: NotEqual, value: U256::from(15) }
+            } else {
+                ValidityPredicate::FlashblockIndex { op: NotEqual, value: U256::from(15) }
+            }));
+        }
+    }
+
+    #[test]
+    fn first_blocker_preserves_impossible_bound_and_exclusion_order() {
+        let mut bounds = ValidityBounds::default();
+        bounds.insert(NotEqual, U256::from(5));
+        bounds.insert(NotEqual, U256::from(5));
+        bounds.insert(GreaterThanOrEqual, U256::from(5));
+        bounds.insert(LessThanOrEqual, U256::from(3));
+        assert_eq!(
+            bounds.first_unsatisfied(U256::from(4)),
+            Some((GreaterThanOrEqual, U256::from(5)))
+        );
+        assert_eq!(bounds.first_unsatisfied(U256::from(5)), Some((LessThanOrEqual, U256::from(3))));
+        bounds.insert(GreaterThan, U256::MAX);
+        assert_eq!(bounds.first_unsatisfied(U256::from(4)), Some((GreaterThan, U256::MAX)));
+        bounds.insert(LessThan, U256::ZERO);
+        assert_eq!(bounds.first_unsatisfied(U256::from(4)), Some((LessThan, U256::ZERO)));
+
+        let mut exclusions = ValidityBounds::default();
+        exclusions.insert(NotEqual, U256::from(5));
+        exclusions.insert(NotEqual, U256::from(5));
+        exclusions.insert(NotEqual, U256::from(6));
+        assert_eq!(exclusions.first_unsatisfied(U256::from(5)), Some((NotEqual, U256::from(5))));
+        assert_eq!(exclusions.first_unsatisfied(U256::from(6)), Some((NotEqual, U256::from(6))));
+        assert_eq!(exclusions.first_unsatisfied(U256::from(7)), None);
+    }
+
+    #[test]
+    fn heap_size_counts_spare_capacity_in_every_backing_vector() {
+        let mut conditions = ValidityConditions {
+            balance: Vec::with_capacity(3),
+            nonce: Vec::with_capacity(5),
+            storage: Vec::with_capacity(7),
+            submitted: Vec::with_capacity(11),
+            ..Default::default()
+        };
+        conditions.block.excluded.reserve_exact(4);
+        conditions.flashblock.excluded.reserve_exact(6);
+        conditions.block.insert(ValidityOperator::NotEqual, U256::ONE);
+        conditions.flashblock.insert(ValidityOperator::NotEqual, U256::ONE);
+        assert_eq!(
+            conditions.heap_size(),
+            26 * core::mem::size_of::<ValidityPredicate>() + 10 * core::mem::size_of::<U256>()
+        );
+
+        let mut submitted = Vec::with_capacity(13);
+        submitted.push(ValidityPredicate::BlockNumber {
+            op: ValidityOperator::GreaterThan,
+            value: U256::ZERO,
+        });
+        let conditions = ValidityConditions::new(submitted);
+        assert_eq!(conditions.heap_size(), 13 * core::mem::size_of::<ValidityPredicate>());
+        assert_eq!(conditions.len(), 1);
+    }
 
     #[test]
     fn normalized_iteration_borrows_state_and_preserves_membership() {
@@ -335,6 +551,15 @@ mod tests {
                                     .iter()
                                     .all(|predicate| predicate.matches(&mut db, &context).unwrap());
                                 assert_eq!(actual, expected, "{raw:?} at {context:?}");
+                                let direct = conditions
+                                    .block()
+                                    .first_unsatisfied(U256::from(position))
+                                    .is_none()
+                                    && conditions
+                                        .flashblock()
+                                        .first_unsatisfied(U256::from(position))
+                                        .is_none();
+                                assert_eq!(direct, expected, "compiled {raw:?} at {context:?}");
                                 assert_eq!(
                                     conditions.is_expired(&context),
                                     ValidityPredicate::is_batch_expired(&raw, &context)

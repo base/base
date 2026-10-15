@@ -55,6 +55,8 @@ mod types;
 pub use types::BasePayloadTypes;
 
 mod validity;
+#[cfg(test)]
+pub use validity::test_utils;
 pub use validity::{
     DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, ParkedPredicateIndex, StateChangeEffects,
     ValidityPredicateEvaluation, ValidityPredicateKey,

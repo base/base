@@ -959,6 +959,43 @@ mod tests {
     }
 
     #[test]
+    fn validity_clones_share_lossless_batch_count_and_allocated_size() {
+        let transaction = eip8130_pooled(U256::ZERO);
+        let bare_size = transaction.size();
+        let balance = ValidityPredicate::Balance {
+            address: Address::ZERO,
+            op: ValidityOperator::Equal,
+            value: U256::ZERO,
+        };
+        let block = ValidityPredicate::BlockNumber {
+            op: ValidityOperator::GreaterThan,
+            value: U256::from(9),
+        };
+        let mut submitted = Vec::with_capacity(17);
+        submitted.extend([balance.clone(), block.clone(), block, balance]);
+        let expected = submitted.clone();
+        let transaction = transaction.with_validity_predicates(submitted);
+        let cloned = transaction.clone();
+        assert!(core::ptr::eq(transaction.validity_conditions(), cloned.validity_conditions()));
+        assert_eq!(cloned.validity_predicates(), expected);
+        assert_eq!(BasePooledTx::validity_predicates(&cloned), expected);
+        assert_eq!(cloned.validity_conditions().len(), 4);
+        assert_eq!(cloned.validity_conditions().block().min(), Some(U256::from(10)));
+        assert_eq!(transaction.size(), cloned.size());
+        assert_eq!(
+            transaction.size(),
+            bare_size
+                + core::mem::size_of::<crate::ValidityConditions>()
+                + transaction.validity_conditions().heap_size()
+        );
+        assert!(
+            transaction.validity_conditions().heap_size()
+                >= 19 * core::mem::size_of::<ValidityPredicate>(),
+            "submitted spare capacity plus the two state predicates must be counted"
+        );
+    }
+
+    #[test]
     fn retains_validity_predicates() {
         let predicate = ValidityPredicate::Balance {
             address: Address::repeat_byte(1),
