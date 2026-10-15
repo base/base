@@ -385,11 +385,7 @@ where
             _ => MAX_TIMEOUT_SEND_RAW_TX_SYNC_MS,
         };
 
-        let tx_hash = match EthTransactions::send_raw_transaction(&self.eth_api, transaction).await
-        {
-            Ok(hash) => hash,
-            Err(e) => return Err(e.into()),
-        };
+        let tx_hash = EthTransactions::send_raw_transaction(&self.eth_api, transaction).await?;
 
         debug!(
             message = "rpc::send_raw_transaction_sync::sent_transaction",
