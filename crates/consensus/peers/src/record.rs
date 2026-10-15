@@ -33,57 +33,6 @@ pub struct NodeRecord {
 }
 
 impl NodeRecord {
-    /// Converts the `address` into an [`core::net::Ipv4Addr`] if the `address` is a mapped
-    /// [`Ipv6Addr`](std::net::Ipv6Addr).
-    ///
-    /// Returns `true` if the address was converted.
-    ///
-    /// See also [`std::net::Ipv6Addr::to_ipv4_mapped`]
-    pub fn convert_ipv4_mapped(&mut self) -> bool {
-        // convert IPv4 mapped IPv6 address
-        if let IpAddr::V6(v6) = self.address
-            && let Some(v4) = v6.to_ipv4_mapped()
-        {
-            self.address = v4.into();
-            return true;
-        }
-        false
-    }
-
-    /// Same as [`Self::convert_ipv4_mapped`] but consumes the type
-    pub fn into_ipv4_mapped(mut self) -> Self {
-        self.convert_ipv4_mapped();
-        self
-    }
-
-    /// Sets the tcp port
-    pub const fn with_tcp_port(mut self, port: u16) -> Self {
-        self.tcp_port = port;
-        self
-    }
-
-    /// Sets the udp port
-    pub const fn with_udp_port(mut self, port: u16) -> Self {
-        self.udp_port = port;
-        self
-    }
-
-    /// Creates a new record from a socket addr and peer id.
-    pub const fn new(addr: SocketAddr, id: PeerId) -> Self {
-        Self { address: addr.ip(), tcp_port: addr.port(), udp_port: addr.port(), id }
-    }
-
-    /// Creates a new record from an ip address and ports.
-    pub fn new_with_ports(
-        ip_addr: IpAddr,
-        tcp_port: u16,
-        udp_port: Option<u16>,
-        id: PeerId,
-    ) -> Self {
-        let udp_port = udp_port.unwrap_or(tcp_port);
-        Self { address: ip_addr, tcp_port, udp_port, id }
-    }
-
     /// The TCP socket address of this node
     #[must_use]
     pub const fn tcp_addr(&self) -> SocketAddr {
