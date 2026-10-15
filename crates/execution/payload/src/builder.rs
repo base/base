@@ -977,9 +977,6 @@ where
                         result_and_state.result.tx_gas_used(),
                         &result_and_state.state,
                     );
-                    if let Some(resting) = resting.as_deref() {
-                        resting_woken = resting.woken_by_state(&result_and_state.state);
-                    }
                     CommitChanges::Yes
                 },
             ) {
@@ -1513,7 +1510,7 @@ where
                             predicate_index.affected_by_state(&result_and_state.state);
                         predicate_bucket_wakeups += state_change_effects.woken_buckets as u64;
                     }
-                    if let Some(resting) = resting {
+                    if let Some(resting) = resting.as_deref() {
                         resting_woken = resting.wake_by_state(&result_and_state.state);
                     }
                     CommitChanges::Yes
@@ -3469,7 +3466,7 @@ mod tests {
     fn amsterdam_payload_commits_to_block_access_list() {
         let ctx = pool_payload_context(DENIM_TIMESTAMP);
         let outcome =
-            build_pool_payload(ctx, NoopPayloadTransactions::<BasePooledTransaction>::default());
+            build_pool_payload(ctx, NoopPayloadTransactions::<PooledCandidate>::default());
         let BuildOutcomeKind::Freeze(payload) = outcome else {
             panic!("a Denim-active payload must freeze")
         };
@@ -3521,7 +3518,7 @@ mod tests {
             best_payload: None,
         };
         let provider = NoopProvider::default();
-        let builder = Builder::new(|_| NoopPayloadTransactions::<BasePooledTransaction>::default());
+        let builder = Builder::new(|_, _| NoopPayloadTransactions::<PooledCandidate>::default());
         let outcome = builder
             .build(
                 StateProviderDatabase::new((&provider).into_evm_state_provider()),
@@ -3556,7 +3553,7 @@ mod tests {
             "the default attributes must not carry a slot number"
         );
         let outcome =
-            build_pool_payload(ctx, NoopPayloadTransactions::<BasePooledTransaction>::default());
+            build_pool_payload(ctx, NoopPayloadTransactions::<PooledCandidate>::default());
         let BuildOutcomeKind::Freeze(payload) = outcome else {
             panic!("a Denim-active payload must freeze")
         };
@@ -3577,7 +3574,7 @@ mod tests {
         let mut ctx = pool_payload_context(DENIM_TIMESTAMP);
         ctx.config.attributes.payload_attributes.slot_number = Some(42);
         let outcome =
-            build_pool_payload(ctx, NoopPayloadTransactions::<BasePooledTransaction>::default());
+            build_pool_payload(ctx, NoopPayloadTransactions::<PooledCandidate>::default());
         let BuildOutcomeKind::Freeze(payload) = outcome else {
             panic!("a Denim-active payload must freeze")
         };
@@ -3646,7 +3643,7 @@ mod tests {
 
         let invalid = Arc::new(Mutex::new(Vec::new()));
         let transactions = TestParkableTransactions::recording(transactions, Arc::clone(&invalid));
-        ctx.execute_best_transactions(&mut info, &mut builder, transactions).expect("mempool scan");
+        ctx.execute_best_transactions(&mut info, &mut builder, transactions, None).expect("mempool scan");
         let outcome = builder
             .finish(&provider, Some((B256::ZERO, TrieUpdates::default())))
             .expect("block must seal");
@@ -3825,7 +3822,7 @@ mod tests {
             None,
             HashMap::default(),
         );
-        Builder::new(|_| NoopPayloadTransactions::<BasePooledTransaction>::default()).build(
+        Builder::new(|_, _| NoopPayloadTransactions::<PooledCandidate>::default()).build(
             StateProviderDatabase::new((&provider).into_evm_state_provider()),
             &provider,
             Some(state_root_handle()),

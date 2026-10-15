@@ -17,6 +17,10 @@ pub use args::{
     ProofsHistoryRocksdbArgs, RollupArgs, TxpoolOrdering,
 };
 
+/// Base's node launch policy.
+pub mod launch;
+pub use launch::BaseLaunchPolicy;
+
 /// Exports Base-specific implementations of the [`EngineTypes`](reth_node_api::EngineTypes)
 /// trait.
 pub mod engine;

@@ -3,6 +3,7 @@
 use std::{net::Ipv4Addr, path::PathBuf, sync::Arc};
 
 use base_execution_chainspec::BaseChainSpec;
+use base_node_core::BaseLaunchPolicy;
 use base_node_runner::{BaseNodeBuilder, LaunchedBaseNode};
 use base_upgrade_signal::UpgradeSignalStartupMode;
 use clap::{Args, value_parser};
@@ -120,14 +121,9 @@ impl ExecutionNodeConfigArgs {
             storage,
         } = self;
 
-        // Base always imports serially. reth's BAL-parallel ordered commit applies only Ethereum's
-        // block gas tracker, so it skips Base's cumulative post-refund gas ledger, the Jovian DA
-        // budget and the EIP-8130 payer-auth reservation: the parallel path would accept blocks
-        // serial import rejects (DA budget) and reject blocks serial import accepts (gas refunds).
-        // The block access list is still validated on the serial path. This is forced rather than
-        // defaulted so the divergent path cannot be enabled from configuration; a Base-aware
-        // ordered admission hook is the follow-up that would let it be re-enabled.
-        engine.bal_parallel_execution_disabled = true;
+        // Base always imports serially; see [`BaseLaunchPolicy`] for why the divergent path is
+        // forced off rather than defaulted.
+        BaseLaunchPolicy::force_serial_import(&mut engine);
 
         let mut node_config = NodeConfig {
             datadir,
