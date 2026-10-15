@@ -800,20 +800,7 @@ impl UpgradesView {
             selected_chain: 0,
             selected_check_upgrades: [None; 4],
             tick_count: 0,
-            checks: ChecksPanel {
-                chain_idx: None,
-                upgrade: None,
-                mode: None,
-                rpc_url: String::new(),
-                current: None,
-                results: HashMap::new(),
-                running: false,
-                rx: None,
-                handle: None,
-                last_run_at: None,
-                cursor: None,
-                scroll: 0,
-            },
+            checks: ChecksPanel::default(),
             admin_activity: std::array::from_fn(|_| AdminActivityChainState::default()),
             admin_activity_watcher: AdminActivityWatcher::default(),
             auto_refresh: true,
@@ -1040,7 +1027,7 @@ impl View for UpgradesView {
         match upcoming {
             Some((name, ts)) => {
                 let remaining = ts as i64 - now as i64;
-                render_countdown(frame, outer[1], name, ts, remaining, now, self.tick_count);
+                render_countdown(frame, outer[1], name, ts, remaining, now);
             }
             None => match latest_activated {
                 Some((name, ts)) => {
@@ -1120,7 +1107,6 @@ fn render_countdown(
     ts: u64,
     remaining: i64,
     now: u64,
-    _tick: u64,
 ) {
     let color = zone_color(remaining);
     let msg = zone_message(remaining);
