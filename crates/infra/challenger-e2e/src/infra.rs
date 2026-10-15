@@ -137,7 +137,7 @@ impl Unavailable {
                     error = %error,
                     elapsed_s = elapsed.as_secs(),
                     budget_s = budget.as_secs(),
-                    "{what} is unavailable; retrying"
+                    "dependency unavailable; retrying"
                 );
                 last_log = Some(Instant::now());
             }
