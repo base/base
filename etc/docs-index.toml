@@ -55,8 +55,8 @@ summary = "base-telemetry backend: CLI and env config, per-IP rate limiting, and
 digest = "6d0de36199"
 
 ["bin/base/README.md"]
-summary = "Unified base commands, tracing and chain selection; native snapshot download/run, history retention, dev impersonation and signed RPC examples, restart and timing limits, and container usage."
-digest = "bcfe6bea9c"
+summary = "Unified base commands and chain selection; execution-only and consensus-only modes over Engine API; native snapshot dev mode, history retention, impersonation, timing limits, and container usage."
+digest = "e0fcc0f289"
 
 ["bin/basectl/README.md"]
 summary = "basectl operator console reference: global options, TUI and scriptable commands (block, sync-status, p2p, txpool, conductor, sequencer, batcher, doctor, proofs), JSON output and examples."

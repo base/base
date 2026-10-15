@@ -255,6 +255,35 @@ docker run --rm -it --network host --user "$(id -u):$(id -g)" \
   "ghcr.io/base/node:<tag-containing-dev>" dev --dir /data
 ```
 
+## `base execution` and `base consensus`
+
+`base execution` runs only the execution layer, and `base consensus` runs only the consensus layer.
+Use them to pair one Base half with the other, or with a third-party counterpart, over the standard
+JWT-authenticated Engine API. Base's own fleets use the integrated `rpc` and `sequencer` commands.
+
+`base execution` accepts the same execution flags as `base rpc`. It serves the Engine API on
+`--authrpc.addr`/`--authrpc.port` (default `127.0.0.1:8551`). Pass `--authrpc.jwtsecret <path>`
+to use a shared secret; without it, a secret is generated at `<datadir>/jwt.hex`. A configured
+`--upgrade-signal.contract` requires `--upgrade-signal.l1-rpc`. For chains without a built-in
+chainspec, pass a genesis file with `--execution-chain <genesis.json>`.
+
+`base consensus` accepts the standalone consensus flags, including `--mode` (default `validator`). It
+requires `--l1-eth-rpc`, `--l1-beacon`, and `--l2-engine-rpc`. Pass the execution client's secret
+with `--l2-engine-jwt-secret <path>` or `--l2-engine-jwt-encoded <hex>`.
+
+Pair the two halves:
+
+```text
+openssl rand -hex 32 > /tmp/jwt.hex
+base --chain sepolia execution --datadir ./el --authrpc.jwtsecret /tmp/jwt.hex
+base --chain sepolia consensus --l1-eth-rpc <url> --l1-beacon <url> \
+  --l2-engine-rpc http://127.0.0.1:8551 --l2-engine-jwt-secret /tmp/jwt.hex
+```
+
+To use a third-party consensus client, point it at the `base execution` auth endpoint and JWT
+secret. To use a third-party execution client, point `base consensus --l2-engine-rpc` at that
+client's authenticated Engine API and pass its JWT secret.
+
 ## `base update`
 
 `base update` updates the installed `base` binary by running `baseup --bin base` against the same
