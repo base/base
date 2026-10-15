@@ -41,6 +41,9 @@ impl WithdrawalRpc {
     /// Fixed delay between receipt requests.
     pub const RECEIPT_POLL_INTERVAL: Duration = Duration::from_secs(2);
 
+    /// Geth error for receipt lookups while the transaction index is rebuilt; the transaction may still be pending or included.
+    pub const TX_INDEXING_IN_PROGRESS: &str = "transaction indexing is in progress";
+
     /// Connects both configured endpoints using bounded reqwest HTTP transports.
     pub async fn new(config: &WithdrawerConfig) -> Result<Self, WithdrawalRpcError> {
         tokio::time::timeout(config.timeout, async {
@@ -128,7 +131,15 @@ impl WithdrawalRpc {
                         return Ok(receipt);
                     }
                     Ok(None) => {}
-                    Err(error) if WithdrawalRpcTransport::should_retry(&error) => {
+                    Err(error)
+                        if WithdrawalRpcTransport::should_retry(&error)
+                            || error.as_error_resp().is_some_and(|payload| {
+                                payload
+                                    .message
+                                    .to_ascii_lowercase()
+                                    .contains(Self::TX_INDEXING_IN_PROGRESS)
+                            }) =>
+                    {
                         warn!(transaction_hash = %hash, "receipt request failed transiently");
                     }
                     Err(error) => {
@@ -672,7 +683,16 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn receipt_status_distinguishes_revert_from_success_after_a_transient_failure() {
-        for status in ["0x0", "0x1"] {
+        let transient_failures = [
+            (StatusCode::SERVICE_UNAVAILABLE, json!("unavailable")),
+            (
+                StatusCode::OK,
+                json!({"jsonrpc":"2.0", "error":{"code":-32000,"message":WithdrawalRpc::TX_INDEXING_IN_PROGRESS}}),
+            ),
+        ];
+        for (status, transient) in
+            ["0x0", "0x1"].into_iter().flat_map(|s| transient_failures.clone().map(|t| (s, t)))
+        {
             let receipt = json!({
                 "transactionHash":B256::ZERO,"transactionIndex":"0x0", "blockHash":B256::ZERO,
                 "blockNumber":"0x1","from":Address::ZERO,"to":Address::ZERO,
@@ -681,7 +701,7 @@ mod tests {
                 "effectiveGasPrice":"0x1","type":"0x0"
             });
             let server = Server::new(vec![
-                (StatusCode::SERVICE_UNAVAILABLE, json!("unavailable")),
+                transient,
                 (StatusCode::OK, json!({"jsonrpc":"2.0","result":receipt})),
             ])
             .await;
