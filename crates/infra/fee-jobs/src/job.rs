@@ -31,7 +31,7 @@ pub enum FeeJobOutcome {
 #[derive(Debug, Error)]
 pub enum FeeJobError {
     /// A precondition could not be read.
-    #[error("failed to read fee job precondition: {0}")]
+    #[error("failed to read fee job precondition: {0:#}")]
     Read(eyre::Report),
     /// Transaction submission or confirmation failed.
     #[error(transparent)]
@@ -274,9 +274,15 @@ mod tests {
     #[tokio::test]
     async fn failed_precondition_read_fails_without_send() {
         let mut reader = MockFeeReader::new();
-        reader.expect_balance().returning(|_| Err(eyre::eyre!("RPC unavailable")));
+        reader.expect_balance().returning(|_| {
+            Err(eyre::eyre!("RPC unavailable").wrap_err("failed to read contract balance"))
+        });
         let sender = MockFeeSender::new();
         let job = FeeJob { kind: FeeJobKind::Sweep, contract: Address::ZERO };
-        assert!(matches!(job.run(&reader, &sender).await, Err(FeeJobError::Read(_))));
+        let error = job.run(&reader, &sender).await.unwrap_err();
+        assert!(matches!(&error, FeeJobError::Read(_)));
+        let output = format!("Error: {:?}", eyre::Report::new(error));
+        assert!(output.contains("failed to read contract balance"));
+        assert!(output.contains("RPC unavailable"));
     }
 }

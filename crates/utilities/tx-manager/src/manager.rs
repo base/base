@@ -309,6 +309,12 @@ where
         })
     }
 
+    /// Uses the `pending` block tag for nonce initialization and after nonce resets.
+    pub fn with_pending_nonce(mut self) -> Self {
+        self.nonce_manager = self.nonce_manager.with_pending_tag();
+        self
+    }
+
     /// Returns a reference to the RPC provider.
     pub const fn provider(&self) -> &P {
         &self.provider
@@ -1744,8 +1750,8 @@ mod tests {
     use alloy_network::EthereumWallet;
     use alloy_node_bindings::Anvil;
     use alloy_primitives::{Address, B256, Bloom, Bytes, TxKind, U256};
-    use alloy_provider::{ProviderBuilder, RootProvider};
-    use alloy_rpc_types_eth::{Block, TransactionReceipt};
+    use alloy_provider::{Provider, ProviderBuilder, RootProvider};
+    use alloy_rpc_types_eth::{Block, TransactionReceipt, TransactionRequest};
     use alloy_signer_local::PrivateKeySigner;
     use alloy_transport::mock::Asserter;
     use base_runtime::{
@@ -1778,6 +1784,38 @@ mod tests {
         .await
         .expect("should create manager");
         (manager, anvil)
+    }
+
+    #[rstest]
+    #[case::latest_by_default(false, 0)]
+    #[case::pending_opt_in(true, 1)]
+    #[tokio::test]
+    async fn nonce_initialization_block_tag(#[case] pending: bool, #[case] expected_nonce: u64) {
+        let anvil = Anvil::new().arg("--no-mining").spawn();
+        let provider = RootProvider::new_http(anvil.endpoint_url());
+        let signer: PrivateKeySigner = anvil.keys()[0].clone().into();
+        let _pending = provider
+            .send_transaction(
+                TransactionRequest::default()
+                    .from(signer.address())
+                    .to(Address::with_last_byte(0x42))
+                    .value(U256::from(1))
+                    .gas_limit(21_000),
+            )
+            .await
+            .expect("transaction should enter the mempool");
+        let manager = SimpleTxManager::from_wallet(
+            provider,
+            EthereumWallet::from(signer),
+            TxManagerConfig::default(),
+            anvil.chain_id(),
+            Arc::new(NoopTxMetrics),
+        )
+        .await
+        .unwrap();
+        let manager = if pending { manager.with_pending_nonce() } else { manager };
+
+        assert_eq!(manager.nonce_manager().next_nonce().await.unwrap().nonce(), expected_nonce);
     }
 
     #[tokio::test]

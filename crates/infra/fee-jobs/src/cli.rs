@@ -142,7 +142,8 @@ impl Cli {
             Arc::new(NoopTxMetrics),
         )
         .await
-        .wrap_err("failed to initialize transaction manager")?;
+        .wrap_err("failed to initialize transaction manager")?
+        .with_pending_nonce();
         let result = FeeJob { kind, contract }.run(&reader, &manager).await;
         manager.close();
         result?;
