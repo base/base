@@ -2,9 +2,12 @@
 
 use std::time::Duration;
 
-use base_batcher_core::test_utils::{
-    BlockStub, DriverFixture, PipelineCall, ScriptedTxManager, SubmissionStub, TrackingPipeline,
-    TrackingSource,
+use base_batcher_core::{
+    DerivationStatus,
+    test_utils::{
+        BlockStub, DriverFixture, PipelineCall, ScriptedTxManager, SubmissionStub,
+        TrackingPipeline, TrackingSource,
+    },
 };
 use base_batcher_source::{L2BlockEvent, test_utils::ChannelBlockSource};
 use base_runtime::{
@@ -26,7 +29,10 @@ fn test_add_block_reorg_resets_pipeline_and_source() {
         let (driver, _handles) =
             DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::confirming_at(1))
                 .source(source)
-                .safe_head(BlockStub::info(10))
+                .derivation_status(DerivationStatus {
+                    safe_l2: BlockStub::info(10),
+                    ..Default::default()
+                })
                 .build();
         let handle = ctx.spawn(driver.run());
         ctx.sleep(Duration::from_millis(10)).await;
@@ -53,7 +59,10 @@ fn test_l2_reorg_event_resets_pipeline_and_source() {
         let (driver, _handles) =
             DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::confirming_at(1))
                 .source(source.with_events([L2BlockEvent::Reorg]))
-                .safe_head(BlockStub::info(10))
+                .derivation_status(DerivationStatus {
+                    safe_l2: BlockStub::info(10),
+                    ..Default::default()
+                })
                 .build();
         let handle = ctx.spawn(driver.run());
         ctx.sleep(Duration::from_millis(10)).await;

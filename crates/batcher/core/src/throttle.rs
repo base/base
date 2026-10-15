@@ -9,44 +9,55 @@ use tracing::info;
 /// limit of 0 as no limit at all.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ThrottleConfig {
-    /// Backlog in bytes from which throttling starts.
-    /// Default: 1,000,000 bytes (1 MB).
+    /// Backlog in estimated DA bytes from which throttling starts.
     pub start_threshold_bytes: u64,
-    /// Backlog in bytes from which the intensity is `max_intensity`.
-    /// Default: 2,000,000 bytes (2 MB).
+    /// Backlog in estimated DA bytes from which the intensity is `max_intensity`.
     pub full_threshold_bytes: u64,
     /// Maximum throttle intensity (0.0 to 1.0).
-    /// Default: 1.0 (full throttle).
     pub max_intensity: f64,
     /// Maximum block DA bytes allowed at full throttle intensity.
-    /// Default: 2,000 bytes.
     pub block_size_lower_limit: u64,
     /// Maximum block DA bytes allowed when not throttling.
-    /// Default: 130,000 bytes.
     pub block_size_upper_limit: u64,
     /// Maximum transaction DA bytes allowed at full throttle intensity.
-    /// Default: 150 bytes.
     pub tx_size_lower_limit: u64,
     /// Maximum transaction DA bytes allowed when not throttling.
-    /// Default: 20,000 bytes.
     pub tx_size_upper_limit: u64,
 }
 
 impl Default for ThrottleConfig {
     fn default() -> Self {
         Self {
-            start_threshold_bytes: 1_000_000,
-            full_threshold_bytes: 2_000_000,
+            start_threshold_bytes: Self::DEFAULT_START_THRESHOLD_BYTES,
+            full_threshold_bytes: Self::DEFAULT_FULL_THRESHOLD_BYTES,
             max_intensity: 1.0,
-            block_size_lower_limit: 2_000,
-            block_size_upper_limit: 130_000,
-            tx_size_lower_limit: 150,
-            tx_size_upper_limit: 20_000,
+            block_size_lower_limit: Self::DEFAULT_BLOCK_SIZE_LOWER_LIMIT,
+            block_size_upper_limit: Self::DEFAULT_BLOCK_SIZE_UPPER_LIMIT,
+            tx_size_lower_limit: Self::DEFAULT_TX_SIZE_LOWER_LIMIT,
+            tx_size_upper_limit: Self::DEFAULT_TX_SIZE_UPPER_LIMIT,
         }
     }
 }
 
 impl ThrottleConfig {
+    /// Default backlog from which throttling starts, in estimated DA bytes.
+    pub const DEFAULT_START_THRESHOLD_BYTES: u64 = 120_000_000;
+
+    /// Default backlog from which the intensity is maximal, in estimated DA bytes.
+    pub const DEFAULT_FULL_THRESHOLD_BYTES: u64 = 360_000_000;
+
+    /// Default block DA limit while not throttling, in estimated DA bytes.
+    pub const DEFAULT_BLOCK_SIZE_UPPER_LIMIT: u64 = 1_900_000;
+
+    /// Default block DA limit at full intensity, in estimated DA bytes.
+    pub const DEFAULT_BLOCK_SIZE_LOWER_LIMIT: u64 = 42_000;
+
+    /// Default transaction DA limit while not throttling, in estimated DA bytes.
+    pub const DEFAULT_TX_SIZE_UPPER_LIMIT: u64 = 390_000;
+
+    /// Default transaction DA limit at full intensity, in estimated DA bytes.
+    pub const DEFAULT_TX_SIZE_LOWER_LIMIT: u64 = 3_500;
+
     /// Checks that the full threshold is above the start threshold, and that every limit the
     /// throttle can produce stays within its `[lower, upper]` range and above zero.
     pub fn validate(&self) -> Result<(), ThrottleConfigError> {
@@ -396,7 +407,10 @@ mod tests {
             start_threshold_bytes: 1000,
             full_threshold_bytes: 3000,
             max_intensity: 0.8,
-            ..Default::default()
+            block_size_lower_limit: 2_000,
+            block_size_upper_limit: 130_000,
+            tx_size_lower_limit: 150,
+            tx_size_upper_limit: 20_000,
         };
         let controller = ThrottleController::new(config, strategy);
 
@@ -414,11 +428,11 @@ mod tests {
     #[rstest]
     #[case::default(ThrottleConfig::default(), Ok(()))]
     #[case::full_threshold_equal_to_start(
-        ThrottleConfig { full_threshold_bytes: 1_000_000, ..Default::default() },
-        Err("full_threshold_bytes (1000000) must be above start_threshold_bytes (1000000)")
+        ThrottleConfig { full_threshold_bytes: 120_000_000, ..Default::default() },
+        Err("full_threshold_bytes (120000000) must be above start_threshold_bytes (120000000)")
     )]
     #[case::equal_limits(
-        ThrottleConfig { block_size_lower_limit: 130_000, ..Default::default() },
+        ThrottleConfig { block_size_lower_limit: 1_900_000, ..Default::default() },
         Ok(())
     )]
     #[case::intensity_above_one(
@@ -442,12 +456,12 @@ mod tests {
         Err("tx_size_lower_limit must be greater than zero")
     )]
     #[case::block_lower_above_upper(
-        ThrottleConfig { block_size_lower_limit: 130_001, ..Default::default() },
-        Err("block_size_lower_limit (130001) must not exceed block_size_upper_limit (130000)")
+        ThrottleConfig { block_size_lower_limit: 1_900_001, ..Default::default() },
+        Err("block_size_lower_limit (1900001) must not exceed block_size_upper_limit (1900000)")
     )]
     #[case::tx_lower_above_upper(
-        ThrottleConfig { tx_size_lower_limit: 20_001, ..Default::default() },
-        Err("tx_size_lower_limit (20001) must not exceed tx_size_upper_limit (20000)")
+        ThrottleConfig { tx_size_lower_limit: 390_001, ..Default::default() },
+        Err("tx_size_lower_limit (390001) must not exceed tx_size_upper_limit (390000)")
     )]
     fn validate_rejects_each_broken_rule(
         #[case] config: ThrottleConfig,

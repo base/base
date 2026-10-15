@@ -1,11 +1,6 @@
 //! Batcher service startup and wiring.
 
-use std::{
-    future::{Future, pending},
-    sync::Arc,
-    task::Poll,
-    time::Duration,
-};
+use std::{future::Future, sync::Arc, task::Poll, time::Duration};
 
 use alloy_provider::{Provider, ProviderBuilder, ProviderLayer, RootProvider};
 use backon::Retryable;
@@ -16,7 +11,6 @@ use base_batcher_encoder::{BatchEncoder, BatcherMetrics};
 use base_batcher_source::{HybridL1HeadSource, PollingBlockSource};
 use base_common_network::Base;
 use base_consensus_rpc::RollupNodeApiClient;
-use base_protocol::BlockInfo;
 use base_retry::{DEFAULT_UNBOUNDED_MAX_DELAY, RetryConfig};
 use base_runtime::TokioRuntime;
 use base_tx_manager::{BaseTxMetrics, SimpleTxManager};
@@ -33,8 +27,8 @@ use url::Url;
 use crate::{
     BatcherConfig, DerivationStatusPoller, DerivationStatusProvider, L2BlockParityMonitor,
     L2BlockParityMonitorConfig, MAX_CHECK_RECENT_TXS_DEPTH, RecentTxSyncTarget, RollupNode,
-    RpcL1HeadPollingSource, RpcL2BlockProvider, RpcPollingSource, Sequencers, SystemConfigBatcher,
-    ThrottlePusher,
+    RpcClientBuilder, RpcL1HeadPollingSource, RpcL2BlockProvider, RpcPollingSource, Sequencers,
+    SystemConfigBatcher, ThrottlePusher,
 };
 
 const WEI_PER_ETHER: f64 = 1_000_000_000_000_000_000.0;
@@ -71,25 +65,34 @@ pub struct ReadyBatcher {
 
 impl ReadyBatcher {
     /// Run the batch submission loop until the runtime is cancelled.
+    ///
+    /// The driver and the background tasks run until either exits, which cancels the others.
+    /// All are then awaited, so the driver always completes its shutdown drain. A background
+    /// task exiting is an error; the driver error takes precedence.
     pub async fn run(self) -> eyre::Result<()> {
         info!("batcher driver running");
         let Self { driver, admin_server, background_tasks, cancellation } = self;
-        let background_cancellation = cancellation.clone();
-        let background_task_exit = async move {
+        let run_driver = async {
+            let result = driver.run().await;
+            cancellation.cancel();
+            result
+        };
+        let watch_background_tasks = async {
             let mut background_tasks = background_tasks
                 .into_iter()
                 .map(|(task_name, task)| async move { (task_name, task.await) })
                 .collect::<FuturesUnordered<_>>();
-            tokio::select! {
+            let result = tokio::select! {
                 biased;
-                () = background_cancellation.cancelled() => {}
+                () = cancellation.cancelled() => Ok(()),
                 Some((task_name, result)) = background_tasks.next(), if !background_tasks.is_empty() => {
                     match result {
-                        Ok(()) => eyre::bail!("{task_name} exited unexpectedly"),
-                        Err(error) => eyre::bail!("{task_name} failed: {error}"),
+                        Ok(()) => Err(eyre::eyre!("{task_name} exited unexpectedly")),
+                        Err(error) => Err(eyre::eyre!("{task_name} failed: {error}")),
                     }
                 }
-            }
+            };
+            cancellation.cancel();
 
             while let Some((task_name, result)) = background_tasks.next().await {
                 if let Err(error) = result {
@@ -100,43 +103,22 @@ impl ReadyBatcher {
                     );
                 }
             }
-
-            Ok::<_, eyre::Report>(())
+            result
         };
-        tokio::pin!(background_task_exit);
-        let driver_run = driver.run();
-        tokio::pin!(driver_run);
-        let admin_stopped = async {
-            match admin_server.as_ref() {
-                Some(admin) => admin.stopped().await,
-                None => pending().await,
-            }
-        };
-        tokio::pin!(admin_stopped);
-        let mut admin_active = admin_server.is_some();
-
-        loop {
+        let watch_admin = async {
+            let Some(admin) = admin_server.as_ref() else { return };
             tokio::select! {
-                r = &mut driver_run => {
-                    cancellation.cancel();
-                    let driver_result = r;
-                    let background_result = background_task_exit.as_mut().await;
-                    driver_result?;
-                    background_result?;
-                    break;
-                }
-                r = &mut background_task_exit => {
-                    cancellation.cancel();
-                    r?;
-                    driver_run.await?;
-                    break;
-                }
-                () = &mut admin_stopped, if admin_active => {
-                    admin_active = false;
+                () = admin.stopped() => {
                     warn!("admin server stopped unexpectedly; batcher continues without admin API");
                 }
+                () = cancellation.cancelled() => {}
             }
-        }
+        };
+
+        let (driver_result, background_result, ()) =
+            tokio::join!(run_driver, watch_background_tasks, watch_admin);
+        driver_result?;
+        background_result?;
         info!("batcher service shutting down");
         Ok(())
     }
@@ -165,12 +147,16 @@ impl BatcherService {
     /// block headers and streams their block numbers. The stream owns the provider, so
     /// the connection lives as long as the stream does.
     ///
-    /// When `url` is `None`, or if connecting or subscribing fails, returns a stream that
-    /// never yields so that [`HybridL1HeadSource`] relies on polling alone.
+    /// When `url` is `None`, or if connecting or subscribing fails or outlasts
+    /// `network_timeout`, returns a stream that never yields so that [`HybridL1HeadSource`]
+    /// relies on polling alone.
     ///
     /// `l1_head_subscription_active` is 1 while the subscription streams heads, and 0 once
     /// the batcher relies on polling alone.
-    async fn build_l1_head_stream(url: Option<&Url>) -> BoxStream<'static, u64> {
+    async fn build_l1_head_stream(
+        url: Option<&Url>,
+        network_timeout: Duration,
+    ) -> BoxStream<'static, u64> {
         let active = BatcherMetrics::l1_head_subscription_active();
         active.set(0.0);
 
@@ -178,18 +164,30 @@ impl BatcherService {
             return stream::pending().boxed();
         };
 
-        let ws_provider = match ProviderBuilder::new().connect(url.as_str()).await {
-            Ok(p) => p,
-            Err(e) => {
-                warn!(error = %e, l1_ws = %url, "failed to connect L1 WS provider; falling back to polling");
+        // The origin only: a hosted endpoint carries its API key in the path.
+        let origin = url.origin().ascii_serialization();
+        let connect = ProviderBuilder::new().connect(url.as_str());
+        let ws_provider = match tokio::time::timeout(network_timeout, connect).await {
+            Ok(Ok(provider)) => provider,
+            Ok(Err(error)) => {
+                warn!(error = %error, l1_ws = %origin, "failed to connect L1 WS provider; falling back to polling");
+                return stream::pending().boxed();
+            }
+            Err(_) => {
+                warn!(l1_ws = %origin, timeout = ?network_timeout, "L1 WS provider did not connect in time; falling back to polling");
                 return stream::pending().boxed();
             }
         };
 
-        let sub = match ws_provider.subscribe_blocks().await {
-            Ok(s) => s,
-            Err(e) => {
-                warn!(error = %e, "failed to subscribe to new L1 blocks; falling back to polling");
+        let subscribe = ws_provider.subscribe_blocks();
+        let sub = match tokio::time::timeout(network_timeout, subscribe).await {
+            Ok(Ok(sub)) => sub,
+            Ok(Err(error)) => {
+                warn!(error = %error, l1_ws = %origin, "failed to subscribe to new L1 blocks; falling back to polling");
+                return stream::pending().boxed();
+            }
+            Err(_) => {
+                warn!(l1_ws = %origin, timeout = ?network_timeout, "L1 WS provider did not subscribe in time; falling back to polling");
                 return stream::pending().boxed();
             }
         };
@@ -297,11 +295,12 @@ impl BatcherService {
         sequencer_urls: &[Url],
         throttle: &DaThrottle,
         runtime: &TokioRuntime,
+        client_builder: RpcClientBuilder,
     ) -> eyre::Result<Vec<BackgroundTask>> {
         sequencer_urls
             .iter()
             .map(|url| {
-                let pusher = ThrottlePusher::new(url, throttle.subscribe())?;
+                let pusher = ThrottlePusher::new(url, throttle.subscribe(), client_builder)?;
                 let handle = tokio::spawn(pusher.run(runtime.clone()));
                 Ok(("throttle pusher", handle.err_into().map(Result::flatten).boxed()))
             })
@@ -312,7 +311,7 @@ impl BatcherService {
     ///
     /// Requires a signer, finds the leader among the sequencers, fetches the rollup config,
     /// whose batch inbox the batcher posts to and must be the shadow inbox in shadow mode,
-    /// connects to L1, checks outside shadow mode that the signer is the batcher the L1
+    /// checks outside shadow mode that the signer is the batcher the L1
     /// `SystemConfig` authorizes, and constructs the driver. One-shot startup RPCs retry with
     /// exponential backoff until [`BatcherConfig::wait_node_sync_timeout`]. Returns an error if
     /// any of those steps fail.
@@ -324,6 +323,8 @@ impl BatcherService {
         let cancel_on_failure = runtime.token().clone().drop_guard();
         let mut background_tasks = Vec::new();
         self.config.encoder_config.validate()?;
+        let tx_manager_config = self.config.tx_manager_config();
+        tx_manager_config.validate()?;
         if let Some(throttle) = &self.config.throttle {
             throttle.validate()?;
         }
@@ -360,10 +361,12 @@ impl BatcherService {
             );
         }
 
-        let sequencers = Arc::new(Sequencers::new(&self.config.sequencer_urls).await?);
+        let client_builder = RpcClientBuilder::new(self.config.network_timeout);
+        let sequencers = Arc::new(Sequencers::new(&self.config.sequencer_urls, client_builder)?);
         // A canonical batcher follows the leader's rollup node, a shadow batcher the parity
         // validator's.
-        let rollup_node = RollupNode::new(self.config.shadow.as_ref(), Arc::clone(&sequencers))?;
+        let rollup_node =
+            RollupNode::new(self.config.shadow.as_ref(), Arc::clone(&sequencers), client_builder)?;
 
         let signer_config = self
             .config
@@ -373,7 +376,7 @@ impl BatcherService {
         let signer_address = signer_config.address();
 
         info!(
-            l1_ws = self.config.l1_ws_url.as_ref().map(|u| u.as_str()),
+            l1_ws = self.config.l1_ws_url.as_ref().map(|url| url.origin().ascii_serialization()),
             "starting batcher service"
         );
 
@@ -415,26 +418,14 @@ impl BatcherService {
         }
 
         let validator_provider = if let Some(shadow) = &self.config.shadow {
-            let provider = Self::rpc_retry("shadow.validator-l2-rpc", retry, rpc_timeout, || {
-                ProviderBuilder::new()
-                    .disable_recommended_fillers()
-                    .network::<Base>()
-                    .connect(shadow.validator_l2_rpc.as_str())
-            })
-            .await?;
-            let provider: Arc<dyn Provider<Base> + Send + Sync> = Arc::new(provider);
+            let provider: Arc<dyn Provider<Base> + Send + Sync> =
+                Arc::new(client_builder.provider::<Base>(&shadow.validator_l2_rpc)?);
             Some(RpcL2BlockProvider::new(provider))
         } else {
             None
         };
 
-        // Connect to L1 before the optional node-sync gate.
-        let l1_provider: RootProvider = Self::rpc_retry("l1-rpc", retry, rpc_timeout, || {
-            ProviderBuilder::new()
-                .disable_recommended_fillers()
-                .connect(self.config.l1_rpc_url.as_str())
-        })
-        .await?;
+        let l1_provider: RootProvider = client_builder.provider(&self.config.l1_rpc_url)?;
 
         // Derivation ignores batches from any other sender, so a wrong signer would only burn L1
         // fees. The shadow batcher posts with its own key on purpose.
@@ -485,14 +476,16 @@ impl BatcherService {
                 .await?;
 
         let initial_derivation_status =
-            Self::rpc_retry("optimism_syncStatus", retry, rpc_timeout, || {
-                rollup_node.derivation_status()
+            Self::rpc_retry("optimism_syncStatus", retry, rpc_timeout, || async {
+                match rollup_node.derivation_status().await {
+                    Ok(status) if status.lacks_safe_head_or_l1_block() => {
+                        Err("sync status without a safe L2 head or an L1 block".into())
+                    }
+                    result => result,
+                }
             })
             .await?;
         let safe_l2 = initial_derivation_status.safe_l2;
-        if safe_l2 == BlockInfo::default() {
-            eyre::bail!("safe L2 head is empty");
-        }
         let next_l2_timestamp = safe_l2.timestamp.saturating_add(rollup_config.block_time);
         self.config.encoder_config.validate_for_rollup_config(&rollup_config, next_l2_timestamp)?;
         info!(safe_l2 = %safe_l2.number, "fetched safe L2 head");
@@ -557,7 +550,9 @@ impl BatcherService {
         let throttle = DaThrottle::new(self.config.throttle_controller());
 
         // Build the L1 head source: a hybrid of optional WS subscription + polling.
-        let l1_head_stream = Self::build_l1_head_stream(self.config.l1_ws_url.as_ref()).await;
+        let l1_head_stream =
+            Self::build_l1_head_stream(self.config.l1_ws_url.as_ref(), self.config.network_timeout)
+                .await;
         let l1_head_poller = RpcL1HeadPollingSource::new(Arc::new(l1_provider.clone()));
         let l1_head_source = HybridL1HeadSource::new(
             TokioRuntime::new(),
@@ -570,11 +565,11 @@ impl BatcherService {
         let l1_chain_id =
             Self::rpc_retry("l1-chain-id", retry, rpc_timeout, || l1_provider.get_chain_id())
                 .await?;
-        let drain_timeout = self.config.tx_manager.resubmission_timeout * 2;
+        let drain_timeout = self.config.resubmission_timeout * 2;
         let tx_manager = SimpleTxManager::new(
             l1_provider,
             signer_config,
-            self.config.tx_manager,
+            tx_manager_config,
             l1_chain_id,
             Arc::new(BaseTxMetrics::new("batcher")),
         )
@@ -587,6 +582,7 @@ impl BatcherService {
                 &self.config.sequencer_urls,
                 &throttle,
                 &runtime,
+                client_builder,
             )?);
         }
 
@@ -622,7 +618,7 @@ impl BatcherService {
                 source,
                 l1_head_source,
                 initial_l1_head,
-                initial_safe_head: safe_l2,
+                initial_derivation_status,
                 derivation_status_rx,
                 admin_rx,
             },
@@ -645,13 +641,16 @@ impl BatcherService {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicU8, Ordering};
+    use std::{
+        net::TcpListener,
+        sync::atomic::{AtomicU8, Ordering},
+    };
 
     use alloy_node_bindings::Anvil;
     use alloy_primitives::Address;
     use base_batcher_core::{ThrottleConfig, ThrottleController};
     use base_common_genesis::RollupConfig;
-    use base_protocol::SyncStatus;
+    use base_protocol::{BlockInfo, L2BlockInfo, SyncStatus};
     use base_runtime::Cancellation;
     use base_tx_manager::SignerConfig;
     use httpmock::{Mock, prelude::*};
@@ -661,7 +660,7 @@ mod tests {
     use super::*;
     use crate::{
         ShadowConfig,
-        test_utils::{Activity, FakeSequencer},
+        test_utils::{Activity, FakeSequencer, rpc_client_builder},
     };
 
     /// The `SystemConfig` address of the mocked rollup config.
@@ -752,6 +751,10 @@ mod tests {
     #[case::zero_poll_interval(
         BatcherConfig { poll_interval: Duration::ZERO, ..BatcherConfig::default() },
         "poll_interval must be greater than zero"
+    )]
+    #[case::zero_network_timeout(
+        BatcherConfig { network_timeout: Duration::ZERO, ..BatcherConfig::default() },
+        "network_timeout must be > 0, got 0s"
     )]
     #[case::zero_max_pending_transactions(
         BatcherConfig { max_pending_transactions: 0, ..BatcherConfig::default() },
@@ -868,6 +871,51 @@ mod tests {
         );
     }
 
+    /// Setup reads the sync status again until it carries a safe head and an L1 block, instead of
+    /// failing on the first answer without them.
+    #[tokio::test]
+    async fn setup_waits_for_a_sync_status_with_a_safe_head_and_an_l1_block() {
+        let server = MockServer::start_async().await;
+        let signer = Address::repeat_byte(0x51);
+        mock_system_config(&server, signer).await;
+        mock_rpc(&server, r#"{"method":"eth_blockNumber"}"#, r#""0x1""#.into()).await;
+        let status = |current_l1| SyncStatus {
+            current_l1: BlockInfo { number: current_l1, ..Default::default() },
+            local_safe_l2: L2BlockInfo {
+                block_info: BlockInfo { number: 5, ..Default::default() },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        // The rollup node client numbers its requests, `optimism_rollupConfig` being 0, and
+        // rejects an answer under another id, so its first two sync status reads are mocked as 1
+        // and 2.
+        let mut reads = Vec::new();
+        for (id, status) in [(1, status(0)), (2, status(7))] {
+            let response = format!(
+                r#"{{"jsonrpc":"2.0","id":{id},"result":{}}}"#,
+                serde_json::to_string(&status).unwrap()
+            );
+            let request = format!(r#"{{"method":"optimism_syncStatus","id":{id}}}"#);
+            reads.push(
+                server
+                    .mock_async(|when, then| {
+                        when.method(POST).path("/").json_body_includes(request);
+                        then.status(200).header("content-type", "application/json").body(response);
+                    })
+                    .await,
+            );
+        }
+
+        // Setup fails later, on the encoder check against the mocked rollup config.
+        let _ =
+            BatcherService::new(mocked_config(&server, signer)).setup(TokioRuntime::new()).await;
+
+        for read in &reads {
+            read.assert_calls_async(1).await;
+        }
+    }
+
     /// Setup goes past the batcher check when the signer is the one the `SystemConfig` authorizes.
     #[tokio::test]
     async fn setup_accepts_the_signer_the_system_config_authorizes() {
@@ -966,8 +1014,13 @@ mod tests {
         let throttle = DaThrottle::new(ThrottleController::disabled());
         let runtime = TokioRuntime::new();
 
-        let pushers =
-            BatcherService::spawn_throttle_pushers(&sequencer_urls, &throttle, &runtime).unwrap();
+        let pushers = BatcherService::spawn_throttle_pushers(
+            &sequencer_urls,
+            &throttle,
+            &runtime,
+            rpc_client_builder(),
+        )
+        .unwrap();
 
         tokio::time::timeout(Duration::from_secs(5), async {
             for push in &pushes {
@@ -992,7 +1045,11 @@ mod tests {
     #[tokio::test]
     async fn l1_head_stream_outlives_its_builder() {
         let anvil = Anvil::new().spawn();
-        let mut heads = BatcherService::build_l1_head_stream(Some(&anvil.ws_endpoint_url())).await;
+        let mut heads = BatcherService::build_l1_head_stream(
+            Some(&anvil.ws_endpoint_url()),
+            BatcherConfig::default().network_timeout,
+        )
+        .await;
 
         // The builder has returned, so the stream alone must keep the WS provider alive.
         let miner = RootProvider::<Base>::new_http(anvil.endpoint_url());
@@ -1001,5 +1058,25 @@ mod tests {
             let head = tokio::time::timeout(Duration::from_secs(5), heads.next()).await;
             assert_eq!(head.unwrap(), Some(expected));
         }
+    }
+
+    /// An L1 WS endpoint that accepts the connection but never completes the handshake does not
+    /// hold the startup. Once the network timeout elapses the batcher falls back to polling.
+    #[tokio::test(start_paused = true)]
+    async fn l1_head_stream_falls_back_to_polling_when_the_ws_endpoint_never_answers() {
+        let silent = TcpListener::bind("127.0.0.1:0").unwrap();
+        let silent_url = format!("ws://{}", silent.local_addr().unwrap()).parse().unwrap();
+        let network_timeout = Duration::from_secs(10);
+        let started = tokio::time::Instant::now();
+
+        let _heads = tokio::time::timeout(
+            network_timeout * 2,
+            BatcherService::build_l1_head_stream(Some(&silent_url), network_timeout),
+        )
+        .await
+        .expect("the build must give up instead of hanging");
+
+        // The fallback came from the timeout, not from a fast error.
+        assert!(started.elapsed() >= network_timeout);
     }
 }
