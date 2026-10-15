@@ -675,7 +675,7 @@ impl ChallengerE2e {
         let due = Self::fork_time(provider).await?.saturating_sub(1);
         let word =
             BondStorage::storage(provider, game, BondStorage::EXPECTED_RESOLUTION_SLOT).await?;
-        BondStorage::set_storage(
+        mock_verifier::set_storage(
             provider,
             game,
             BondStorage::EXPECTED_RESOLUTION_SLOT,
@@ -692,7 +692,7 @@ impl ChallengerE2e {
             && verifier.status(parent).await? == GameStatus::InProgress
         {
             let word = BondStorage::storage(provider, parent, BondStorage::STATUS_SLOT).await?;
-            BondStorage::set_storage(
+            mock_verifier::set_storage(
                 provider,
                 parent,
                 BondStorage::STATUS_SLOT,
@@ -746,7 +746,7 @@ impl ChallengerE2e {
         )
         .await?;
         let started = Self::fork_time(provider).await?.saturating_sub(delay.as_secs() + 1);
-        BondStorage::set_storage(
+        mock_verifier::set_storage(
             provider,
             weth_address,
             slot + U256::from(1),
