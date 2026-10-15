@@ -48,26 +48,6 @@ pub struct SealTask<EngineClient_: EngineClient> {
 }
 
 impl<EngineClient_: EngineClient> SealTask<EngineClient_> {
-    /// Seals the execution payload in the EL, returning the execution envelope.
-    ///
-    /// ## Engine Method Selection
-    /// The method used to fetch the payload from the EL is determined by the payload timestamp. The
-    /// method used to import the payload into the engine is determined by the payload version.
-    ///
-    /// - `engine_getPayloadV2` is used for payloads with a timestamp before the Ecotone fork.
-    /// - `engine_getPayloadV3` is used for payloads with a timestamp after the Ecotone fork.
-    /// - `engine_getPayloadV4` is used for Isthmus/Jovian payloads before Base Azul.
-    /// - `engine_getPayloadV5` is used for Base Azul / Osaka payloads.
-    async fn seal_payload(
-        &self,
-        cfg: &RollupConfig,
-        engine: &EngineClient_,
-        payload_id: PayloadId,
-        payload_attrs: AttributesWithParent,
-    ) -> Result<BaseExecutionPayloadEnvelope, SealTaskError> {
-        Engine::<EngineClient_>::fetch_payload(cfg, engine, payload_id, &payload_attrs).await
-    }
-
     /// Inserts a payload into the engine with Holocene fallback support.
     ///
     /// This function handles:
@@ -157,9 +137,13 @@ impl<EngineClient_: EngineClient> SealTask<EngineClient_> {
     ) -> Result<BaseExecutionPayloadEnvelope, SealTaskError> {
         // Fetch the payload just inserted from the EL and import it into the engine.
         let block_import_start_time = Instant::now();
-        let new_payload = self
-            .seal_payload(&self.cfg, &self.engine, self.payload_id, self.attributes.clone())
-            .await?;
+        let new_payload = Engine::<EngineClient_>::fetch_payload(
+            &self.cfg,
+            &self.engine,
+            self.payload_id,
+            &self.attributes,
+        )
+        .await?;
 
         let new_block_ref = L2BlockInfo::from_payload_and_genesis(
             new_payload.execution_payload.clone(),

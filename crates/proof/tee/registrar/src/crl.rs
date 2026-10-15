@@ -1,8 +1,8 @@
 //! CRL (Certificate Revocation List) checking for AWS Nitro intermediate
 //! certificates.
 //!
-//! Fetch and parse failures are fail-open; onchain expiry tracking and
-//! periodic re-checks bound the remaining exposure window.
+//! Enabled checks block registration on fetch or parse failures while retaining
+//! confirmed revocations from other certificates in the chain.
 
 use alloy_primitives::B256;
 use tracing::{debug, warn};
@@ -91,21 +91,28 @@ fn is_allowed_crl_host(url: &str) -> bool {
     })
 }
 
-/// Checks intermediate certificates against their CRL distribution points.
-///
-/// **Fail-open policy**: CRL fetch or parse failures are logged as warnings
-/// but do not abort the check. Only confirmed revocations are reported.
-///
-/// # Arguments
-///
-/// * `cert_infos` - Pre-parsed cert chain info, typically produced by
-///   [`CertCrlInfo::from_cert_plans`].
-/// * `http_client` - HTTP client for fetching CRLs.
+/// CRL evidence from a chain, including failures alongside confirmed revocations.
+#[derive(Debug, Default)]
+pub struct CrlCheckResult<'a> {
+    /// Certificates confirmed revoked by a successfully parsed CRL.
+    pub revoked: Vec<&'a CertCrlInfo>,
+    /// Checks that could not determine certificate revocation status.
+    pub errors: Vec<CrlError>,
+}
+
+impl CrlCheckResult<'_> {
+    /// Whether every applicable CRL check succeeded without detecting revocation.
+    pub const fn is_clean(&self) -> bool {
+        self.revoked.is_empty() && self.errors.is_empty()
+    }
+}
+
+/// Checks all intermediate CRL distribution points without discarding partial evidence.
 pub async fn check_chain_against_crls<'a>(
     cert_infos: &'a [CertCrlInfo],
     http_client: &reqwest::Client,
-) -> Vec<&'a CertCrlInfo> {
-    let mut revoked = Vec::new();
+) -> CrlCheckResult<'a> {
+    let mut result = CrlCheckResult::default();
 
     for info in cert_infos {
         let Some(ref crl_url) = info.crl_url else {
@@ -122,9 +129,9 @@ pub async fn check_chain_against_crls<'a>(
                     url = %crl_url,
                     serial = %hex::encode(&info.serial_number),
                     revocation_id = %info.revocation_id,
-                    "certificate found on CRL — REVOKED"
+                    "certificate found on CRL"
                 );
-                revoked.push(info);
+                result.revoked.push(info);
             }
             Ok(false) => {
                 debug!(cert_index = info.index, "certificate not on CRL");
@@ -134,13 +141,14 @@ pub async fn check_chain_against_crls<'a>(
                     cert_index = info.index,
                     url = %crl_url,
                     error = %e,
-                    "CRL check failed (fail-open, proceeding)"
+                    "CRL check indeterminate, blocking registration"
                 );
+                result.errors.push(e);
             }
         }
     }
 
-    revoked
+    result
 }
 
 async fn fetch_and_check_crl(
@@ -221,6 +229,45 @@ mod tests {
     use hex_literal::hex;
 
     use super::*;
+    use crate::test_utils::CrlTestServer;
+
+    #[tokio::test]
+    async fn partial_failure_cannot_report_a_clean_chain() {
+        let server = CrlTestServer::new(vec![
+            CrlTestServer::ok(&CrlTestServer::der(None)),
+            CrlTestServer::ok(b"invalid DER"),
+        ]);
+        let infos = [0, 1].map(|index| CertCrlInfo {
+            index,
+            serial_number: vec![1],
+            crl_url: Some(server.url(index)),
+            revocation_id: B256::repeat_byte(index as u8),
+        });
+        let result = check_chain_against_crls(&infos, &server.client).await;
+        assert!(!result.is_clean(), "partial CRL failure must not become a clean result");
+        assert!(result.revoked.is_empty());
+        assert_eq!(result.errors.len(), 1, "{result:?}");
+    }
+
+    #[tokio::test]
+    async fn chain_check_retains_revocation_evidence_in_either_failure_order() {
+        for revoked_index in 0..2 {
+            let mut responses = vec![CrlTestServer::ok(b"invalid DER"); 2];
+            responses[revoked_index] = CrlTestServer::ok(&CrlTestServer::der(Some(&[0x80])));
+            let server = CrlTestServer::new(responses);
+            let infos = [0, 1].map(|index| CertCrlInfo {
+                index,
+                serial_number: vec![0x80],
+                crl_url: Some(server.url(index)),
+                revocation_id: B256::repeat_byte(index as u8),
+            });
+            let result = check_chain_against_crls(&infos, &server.client).await;
+            assert!(!result.is_clean());
+            assert_eq!(result.errors.len(), 1, "{result:?}");
+            assert_eq!(result.revoked.len(), 1);
+            assert_eq!(result.revoked[0].revocation_id, infos[revoked_index].revocation_id);
+        }
+    }
 
     const INTER1_EXPECTED_CRL_URL: &str = "http://aws-nitro-enclaves-crl.s3.amazonaws.com/crl/ab4960cc-7d63-42bd-9e9f-59338cb67f84.crl";
 

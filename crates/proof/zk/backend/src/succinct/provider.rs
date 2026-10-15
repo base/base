@@ -1,6 +1,6 @@
 //! Witness generation for Succinct ZK proving backends.
 
-use std::{error::Error as StdError, fmt, sync::Arc};
+use std::{error::Error as StdError, fmt, num::NonZeroU64, sync::Arc};
 
 use alloy_primitives::{Address, B256};
 use base_l1_head::{L1HeadCalculator, L1HeadError};
@@ -24,6 +24,8 @@ pub struct WitnessParams<'a> {
     pub l1_head: L1HeadSource<'a>,
     /// L2 block number whose timestamp determines the activated upgrade schedule.
     pub schedule_l2_block_number: Option<u64>,
+    /// Number of L2 blocks between two intermediate output roots of the proven game.
+    pub intermediate_block_interval: NonZeroU64,
 }
 
 /// Source used to select the L1 head hash for witness generation.
@@ -210,20 +212,29 @@ impl OpSuccinctWitnessProvider {
         &self,
         params: WitnessParams<'_>,
     ) -> Result<SP1Stdin, WitnessError> {
-        let WitnessParams { start_block, end_block, l1_head, schedule_l2_block_number } = params;
+        let start_block = params.start_block;
+        let end_block = params.end_block;
 
         info!(
             start_block = start_block,
             end_block = end_block,
-            l1_head_source = l1_head.variant_name(),
+            l1_head_source = params.l1_head.variant_name(),
+            intermediate_block_interval = params.intermediate_block_interval,
             "starting witness generation"
         );
 
-        let host_args = match l1_head {
+        let host_args = match params.l1_head {
             L1HeadSource::Pinned(hash) => {
                 info!(hash = %hash, "using caller-provided l1_head");
                 self.host
-                    .fetch(start_block, end_block, Some(hash), false, schedule_l2_block_number)
+                    .fetch(
+                        start_block,
+                        end_block,
+                        Some(hash),
+                        false,
+                        params.schedule_l2_block_number,
+                        params.intermediate_block_interval,
+                    )
                     .await
                     .map_err(|source| WitnessError::PinnedHostFetch {
                         source: source.into_boxed_dyn_error(),
@@ -250,7 +261,8 @@ impl OpSuccinctWitnessProvider {
                         end_block,
                         Some(l1_head_hash),
                         false,
-                        schedule_l2_block_number,
+                        params.schedule_l2_block_number,
+                        params.intermediate_block_interval,
                     )
                     .await
                     .map_err(|source| WitnessError::SequenceWindowHostFetch {

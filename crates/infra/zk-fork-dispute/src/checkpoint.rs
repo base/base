@@ -1,5 +1,7 @@
 //! Invalid intermediate-root checkpoint selection, Anvil patching, and proving.
 
+use std::num::NonZeroU64;
+
 use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
 use alloy_provider::{Provider, RootProvider};
 use base_challenger::ChallengerProofAdapter;
@@ -199,6 +201,8 @@ impl Checkpoint {
             "requesting SNARK PLONK proof"
         );
 
+        let intermediate_block_interval = NonZeroU64::new(self.interval)
+            .ok_or_else(|| eyre!("intermediate root interval must be nonzero"))?;
         let snark_request = SnarkPlonkProofRequest {
             proof: ZkProofRequest {
                 start_block_number: self.start_block,
@@ -206,6 +210,7 @@ impl Checkpoint {
                 sequence_window: None,
                 l1_head: Some(l1_head),
                 schedule_l2_block_number: Some(game_l2_block_number),
+                intermediate_block_interval,
                 zk_vm: ZkVm::Sp1,
                 zk_backend: config.zk_backend,
             },

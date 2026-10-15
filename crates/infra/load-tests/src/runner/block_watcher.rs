@@ -207,7 +207,7 @@ impl BlockWatcher {
             let mut availability_miss_logged = false;
             let mut required_retry = false;
             let latest = loop {
-                match self.fetch_latest_block_with_timeout(BLOCK_RPC_TIMEOUT).await {
+                match self.fetch_block(BlockNumberOrTag::Latest, BLOCK_RPC_TIMEOUT).await {
                     Ok(block) => {
                         if let Some(block) = block
                             && last_seen_block.is_none_or(|seen| block.observation.number > seen)
@@ -429,7 +429,7 @@ impl BlockWatcher {
         let mut backoff = Duration::from_millis(100);
 
         while !self.cancel_token.is_cancelled() && started.elapsed() < budget {
-            match self.fetch_latest_block().await {
+            match self.fetch_block(BlockNumberOrTag::Latest, BLOCK_RPC_TIMEOUT).await {
                 Ok(Some(block)) => {
                     info!(tip = block.observation.number, "block watcher tip baseline established");
                     return Some(block);
@@ -454,17 +454,6 @@ impl BlockWatcher {
 
         warn!("block watcher proceeding without tip baseline");
         None
-    }
-
-    async fn fetch_latest_block(&self) -> std::result::Result<Option<ObservedBlock>, String> {
-        self.fetch_block(BlockNumberOrTag::Latest, BLOCK_RPC_TIMEOUT).await
-    }
-
-    async fn fetch_latest_block_with_timeout(
-        &self,
-        timeout: Duration,
-    ) -> std::result::Result<Option<ObservedBlock>, String> {
-        self.fetch_block(BlockNumberOrTag::Latest, timeout).await
     }
 
     async fn fetch_block(

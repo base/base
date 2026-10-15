@@ -32,6 +32,9 @@ pub use egress::DaEgress;
 mod pipeline;
 pub use pipeline::{BatchPipeline, DerivationReconciliation, ReorgError, StepError, StepResult};
 
+mod buffered_block;
+pub use buffered_block::BufferedBlock;
+
 mod encoder;
 pub use encoder::BatchEncoder;
 

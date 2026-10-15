@@ -47,8 +47,12 @@ selects blobs or calldata; `--max-channel-duration` and `--sub-safety-margin`
 control channel lifetime. `--throttle-start-threshold` sets the DA backlog from
 which the batcher throttles, `--throttle-full-threshold` the one from which it
 throttles the most, and `--throttle-strategy` how the intensity grows between
-them: `off`, `step`, `linear` or `quadratic` (default). Unlike
-`--no-throttle`, `off` keeps pushing the DA limits, at their highest. For
+them: `off`, `step`, `linear` or `quadratic` (default). The DA limits pushed to
+the sequencers go from `--throttle-block-size-upper-limit` and
+`--throttle-tx-size-upper-limit` while not throttling down to
+`--throttle-block-size-lower-limit` and `--throttle-tx-size-lower-limit` at
+full intensity. Unlike `--no-throttle`, `off` keeps pushing the DA limits, at
+their highest. For
 calldata configurations, `--no-force-blobs-when-throttling` disables the
 throttle-driven blob override. `--network-timeout` bounds the RPC calls to L1,
 the sequencers and the parity validator, so an endpoint that stops answering

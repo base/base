@@ -13,7 +13,7 @@ use alloy_primitives::{Address, BlockHash, Bytes, TxHash, U256};
 use alloy_rpc_types_eth::Withdrawals;
 use base_common_chains::Upgrades;
 use base_common_consensus::{BaseReceipt, BaseTransactionSigned, DepositReceipt, OpTxType};
-use base_common_evm::{BaseReceiptBuilder, BaseSpecId, L1BlockInfo};
+use base_common_evm::{BaseReceiptBuilder, BaseSpecId, Eip8130PhaseStatuses, L1BlockInfo};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_eip8130::IntrinsicGas;
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
@@ -479,13 +479,17 @@ pub(crate) struct DecisionContext<'a> {
 
 impl BasePayloadBuilderCtx {
     /// Constructs a receipt for the given transaction.
+    ///
+    /// `eip8130_phase_statuses` are the statuses taken from [`Eip8130PhaseStatuses`] right after
+    /// the transaction executed; they are only used for EIP-8130 receipts.
     pub fn build_receipt<E: Evm>(
         &self,
         ctx: ReceiptBuilderCtx<'_, OpTxType, E>,
         deposit_nonce: Option<u64>,
+        eip8130_phase_statuses: Vec<u8>,
     ) -> BaseReceipt {
         let receipt_builder = self.evm_config.block_executor_factory().receipt_builder();
-        match receipt_builder.build_receipt(ctx) {
+        match receipt_builder.build_receipt(ctx, eip8130_phase_statuses) {
             Ok(receipt) => receipt,
             Err(ctx) => {
                 let receipt = alloy_consensus::Receipt {
@@ -578,6 +582,7 @@ impl BasePayloadBuilderCtx {
                     return Err(PayloadBuilderError::EvmExecutionError(Box::new(err)));
                 }
             };
+            let eip8130_phase_statuses = Eip8130PhaseStatuses::take();
 
             // add gas used by the transaction to cumulative gas used, before creating the receipt
             let gas_used = result.tx_gas_used();
@@ -598,7 +603,7 @@ impl BasePayloadBuilderCtx {
                 cumulative_gas_used: info.cumulative_gas_used,
             };
 
-            info.receipts.push(self.build_receipt(ctx, depositor_nonce));
+            info.receipts.push(self.build_receipt(ctx, depositor_nonce, eip8130_phase_statuses));
 
             // commit changes
             evm.db_mut().commit(state);
@@ -652,7 +657,7 @@ impl BasePayloadBuilderCtx {
 
     /// [`Self::skip_current`] using the pooled transaction's sender, nonce, and replay ID.
     fn skip_pooled_current<B: PayloadTxsBounds>(best_txs: &mut B, tx: &B::Transaction) {
-        Self::skip_current(best_txs, tx.sender(), tx.nonce(), tx.eip8130_replay_id().is_some());
+        Self::skip_current(best_txs, tx.sender(), tx.nonce(), tx.is_eip8130_nonce_free());
     }
 
     /// Emits rejected, counts an "other" rejection, and closes the current iterator candidate.
@@ -793,7 +798,7 @@ impl BasePayloadBuilderCtx {
             num_txs_considered += 1;
             let ordering_position = num_txs_considered;
             let tx_hash = *tx.hash();
-            let replay_independent = tx.eip8130_replay_id().is_some();
+            let replay_independent = tx.is_eip8130_nonce_free();
             let has_validity_predicates = !tx.validity_conditions().is_empty();
             let validity_handling_start = has_validity_predicates.then(Instant::now);
             let coinbase_tip = tx.coinbase_tip();
@@ -976,8 +981,9 @@ impl BasePayloadBuilderCtx {
 
             // EIP-8130 meters payer authentication gas on top of the declared gas limit, so it must
             // be reserved against the block gas budget in addition to `gas_limit`. Reserve a
-            // conservative upper bound (worst-case payer policy gate) derived from the payer auth
-            // blob (`0` for non-8130 / self-pay); see `IntrinsicGas::max_payer_auth_cost`.
+            // conservative upper bound (the payer auth bytes at the EIP-7623 floor rate) derived
+            // from the payer auth blob (`0` for non-8130 / self-pay); see
+            // `IntrinsicGas::max_payer_auth_cost`.
             let tx_payer_auth = match tx.as_eip8130() {
                 Some(signed) => match IntrinsicGas::max_payer_auth_cost(signed) {
                     Ok(payer_auth) => payer_auth,
@@ -1290,6 +1296,7 @@ impl BasePayloadBuilderCtx {
                     return Err(PayloadBuilderError::evm(err));
                 }
             };
+            let eip8130_phase_statuses = Eip8130PhaseStatuses::take();
 
             let execution_time = execution_start_time.elapsed();
 
@@ -1391,7 +1398,7 @@ impl BasePayloadBuilderCtx {
                 state: &state,
                 cumulative_gas_used: info.cumulative_gas_used,
             };
-            info.receipts.push(self.build_receipt(ctx, None));
+            info.receipts.push(self.build_receipt(ctx, None, eip8130_phase_statuses));
             // The tip is a phase-0 transfer, so it is revenue only if that phase
             // committed; a reverted or policy-blocked phase pays nothing.
             let coinbase_tip = coinbase_tip.filter(|_| {

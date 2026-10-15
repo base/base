@@ -71,10 +71,21 @@ impl NonceManagerStorage<'_> {
     /// (`REPLAY_BUFFER_CAPACITY` in the EIP-8130 constant table).
     ///
     /// A consensus chain parameter: identical for every node on the chain, not a
-    /// per-node choice. Sized together with [`Self::NONCE_FREE_EXPIRY_WINDOW`] so
-    /// that `peak accepted nonce-free throughput × NONCE_FREE_EXPIRY_WINDOW` stays
-    /// within capacity (~10k TPS for ~30s), so that by the time the write pointer
-    /// wraps back to a slot, the entry it holds has expired and can be reclaimed.
+    /// per-node choice. An entry recorded at block time `t` expires by
+    /// `t + NONCE_FREE_EXPIRY_WINDOW`, so the slot the write pointer reaches is
+    /// reclaimable as long as no more than this many nonce-free transactions are
+    /// included within one window.
+    ///
+    /// The cheapest nonce-free transaction costs at least 31,000 gas
+    /// (`AA_BASE_COST` 15,000, `NONCE_FREE_COST` 13,000, K1 sender auth 3,000),
+    /// rounded down to 30,000. The buffer is sized for blocks of up to 600M gas
+    /// every 2 s (equivalently 60M gas per 200 ms Denim block, since Denim scales
+    /// the gas limit down with the block interval): 300M gas/s, or 10,000
+    /// nonce-free transactions per second. Over the 30 s window that is
+    /// `10,000 × 30 = 300,000` live entries. Sustained nonce-free throughput above
+    /// 300M gas/s fails with [`INonceManager::ExpiringNonceSetFull`] rather than
+    /// admitting a replay. `replay_buffer_covers_peak_nonce_free_throughput` pins
+    /// this sizing.
     pub const REPLAY_BUFFER_CAPACITY: u32 = 300_000;
 
     /// Maximum validity-window span accepted for a nonce-free transaction, in
@@ -85,6 +96,9 @@ impl NonceManagerStorage<'_> {
     /// [`Self::REPLAY_BUFFER_CAPACITY`]. A transaction's `valid_before` (Unix
     /// milliseconds) must fall in `(now_ms, now_ms + this]`, where `now_ms` is the
     /// including block's millisecond timestamp.
+    ///
+    /// This is the consensus bound only. Mempools may admit nonce-free
+    /// transactions against a tighter window, and must never use a wider one.
     pub const NONCE_FREE_EXPIRY_WINDOW: u64 = 30_000;
 
     /// Nonce key reserved for the protocol nonce, which is held in account state.

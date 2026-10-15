@@ -1,6 +1,6 @@
 //! In-process runner for the standalone L1-free sequencer node.
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use alloy_rpc_types_engine::JwtSecret;
 use base_common_genesis::{RollupConfig, SystemConfig};
@@ -28,6 +28,8 @@ pub struct InProcessStandaloneSequencerConfig {
     pub system_config: SystemConfig,
     /// Optional one-time funding for a benchmark account.
     pub prefund: Option<StandalonePrefund>,
+    /// Delay added to chain timestamps to obtain local scheduling deadlines.
+    pub schedule_delay: Duration,
 }
 
 /// A running L1-free snapshot sequencer.
@@ -64,13 +66,14 @@ impl InProcessStandaloneSequencer {
                 .map_err(eyre::Report::from)
                 .wrap_err("failed to build standalone engine client")?,
         );
-        let node = StandaloneSequencerNode::new(
+        let mut node = StandaloneSequencerNode::new(
             rollup_config,
             engine_client,
             config.l1_info,
             config.system_config,
             config.prefund,
         );
+        node.schedule_delay = config.schedule_delay;
         let cancellation = CancellationToken::new();
         let node_cancellation = cancellation.clone();
         let (error_tx, error_rx) = mpsc::channel(1);

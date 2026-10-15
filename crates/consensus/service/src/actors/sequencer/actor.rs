@@ -502,6 +502,9 @@ where
                             "Failed to cache acknowledged parent system config"
                         ),
                     }
+                    self.builder.attributes_builder.acknowledge_inserted_transactions(
+                        sealer.envelope.execution_payload.transactions(),
+                    );
                 }
 
                 if let Some(sealer) = self.sealer.take() {
@@ -1047,6 +1050,9 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(actor.builder.attributes_builder.parent_system_configs, vec![(head, config)]);
+        let inserted = actor.builder.attributes_builder.inserted_transactions.clone();
+        assert_eq!(inserted.len(), 1);
+        assert_eq!(inserted[0].len(), 1);
 
         let (sealer, mut mismatched_head, _) = valid_sealer();
         mismatched_head.block_info.hash = B256::left_padding_from(&[1]);
@@ -1062,6 +1068,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(actor.builder.attributes_builder.parent_system_configs.len(), 1);
+        assert_eq!(actor.builder.attributes_builder.inserted_transactions, inserted);
 
         let (mut sealer, head, _) = valid_sealer();
         sealer.envelope.execution_payload.transactions_mut().clear();

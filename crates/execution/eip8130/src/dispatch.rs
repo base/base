@@ -41,6 +41,9 @@ const WEBAUTHN_CHALLENGE_PREFIX: &[u8] = b"\"challenge\":\"";
 const FLAG_USER_PRESENT: u8 = 0x01;
 const FLAG_BACKUP_ELIGIBLE: u8 = 0x08;
 const FLAG_BACKUP_STATE: u8 = 0x10;
+/// The only accepted value of the reserved trailing `pre_hash` byte of a P-256
+/// authenticator blob.
+const P256_CANONICAL_PRE_HASH: u8 = 0;
 
 /// Enshrined dispatch over the EIP-8130 canonical authenticator set.
 ///
@@ -116,11 +119,15 @@ impl AuthenticatorDispatch {
     /// The trailing `pre_hash` byte (`data[128]`) is **reserved**: the deployed
     /// `P256Authenticator` requires it to be present (it enforces `length == 129`)
     /// but never reads it — it exists only so the contract wire format matches the
-    /// native-authenticator form. We mirror that exactly: require the byte, ignore
-    /// its value, and verify directly over `hash`. If the contract ever begins
-    /// interpreting `pre_hash`, this must change in lockstep to preserve parity.
+    /// native-authenticator form. Verification is always directly over `hash`.
+    /// The byte sits inside `sender_auth` / `payer_auth`, which the signature does
+    /// not cover, so any value other than [`P256_CANONICAL_PRE_HASH`] is rejected:
+    /// otherwise a relayer could re-wrap one signature under 256 different
+    /// transaction hashes. Every result accepted here is still byte-identical to
+    /// the deployed contract's. If the contract ever begins interpreting
+    /// `pre_hash`, this must change in lockstep to preserve parity.
     fn p256(hash: B256, data: &[u8]) -> Result<B256, AuthError> {
-        if data.len() != 129 {
+        if data.len() != 129 || data[128] != P256_CANONICAL_PRE_HASH {
             return Err(AuthError::MalformedAuth);
         }
         let (r, s, x, y) = (&data[0..32], &data[32..64], &data[64..96], &data[96..128]);
@@ -402,6 +409,33 @@ mod tests {
             ),
             Err(AuthError::InvalidSignature),
         );
+    }
+
+    /// The reserved `pre_hash` byte is not covered by the signature, so only the
+    /// canonical value authenticates; any other value would mint a second
+    /// transaction hash for the same signed intent.
+    #[test]
+    fn p256_rejects_non_canonical_pre_hash() {
+        let key = p256_key();
+        let (data, expected) = p256_blob(&key, HASH);
+        assert_eq!(data[128], P256_CANONICAL_PRE_HASH);
+        assert_eq!(
+            AuthenticatorDispatch::authenticate(HASH, Eip8130Contracts::P256_AUTHENTICATOR, &data),
+            Ok(DispatchOutcome::Authenticated { actor_id: expected }),
+        );
+        for pre_hash in (0..=u8::MAX).filter(|&byte| byte != P256_CANONICAL_PRE_HASH) {
+            let mut malleated = data.clone();
+            malleated[128] = pre_hash;
+            assert_eq!(
+                AuthenticatorDispatch::authenticate(
+                    HASH,
+                    Eip8130Contracts::P256_AUTHENTICATOR,
+                    &malleated,
+                ),
+                Err(AuthError::MalformedAuth),
+                "pre_hash {pre_hash:#04x} must be rejected",
+            );
+        }
     }
 
     #[test]

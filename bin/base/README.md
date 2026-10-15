@@ -97,6 +97,164 @@ Useful sequencer-specific flags include:
 - `--conductor.binary-commit` uses the conductor binary commit endpoint.
 - `--flashblocks.port` selects the Flashblocks websocket port.
 
+## `base dev`
+
+From a checkout, download a snapshot once (optional if you already have a disposable copy), then
+run it in the foreground:
+
+```sh
+just devnet snapshot download --dir "$HOME/data/my-devnet"
+just devnet snapshot run --dir "$HOME/data/my-devnet"
+```
+
+These native recipes incrementally build `base` with Cargo; Docker is not required. Install the
+repository's [Rust toolchain](../../rust-toolchain.toml), `just`, Go, a C/C++ compiler, libclang,
+`OpenSSL` development headers, pkg-config, `CMake`, and protoc. The RPC examples below additionally use
+Foundry `cast` and `jq`. See [CONTRIBUTING.md](../../CONTRIBUTING.md) for development tooling;
+bare `just devnet snapshot` lists the commands.
+
+**Use disposable data, never a running node's datadir or your only mainnet copy.** Development blocks
+and minted balances permanently diverge from mainnet. To return to mainnet, restore a clean backup;
+deleting `base-dev.json` does not undo execution. Only one process may open the database for writing.
+
+`base dev` continues an existing snapshot datadir as a local chain: an embedded execution node and
+an L1-free standalone sequencer in one process, connected over Engine IPC. It never creates,
+downloads, or reinitializes data. Discovery and peers are disabled, and HTTP and WS RPC listen on
+loopback. A pre-Denim head gets Denim at its next block; the schedule and snapshot head are saved to
+`base-dev.json` in the datadir before the first block and restored on restart. Block timestamps
+continue from the snapshot.
+
+HTTP defaults to `http://127.0.0.1:8545`, WS to `ws://127.0.0.1:8546`; both expose ordinary `eth_*`,
+`debug_*`, and `trace_*` methods. Keep these unauthenticated endpoints private: impersonation can act
+as any account. Startup prints endpoints and the starting head; database repair and history-index
+rebuilds can take time before sequencing starts.
+
+```sh
+just devnet snapshot run --dir "$HOME/data/my-devnet" --http.port 9545 --ws.port 9546
+# Direct binary usage; mainnet is the default.
+target/release/base dev --dir "$HOME/data/my-devnet"
+# For another supported chain, select the same chain for download and run.
+env -u BASE_CHAIN just devnet snapshot download --chain sepolia --dir "$HOME/data/sepolia-devnet"
+BASE_CHAIN=sepolia just devnet snapshot run --dir "$HOME/data/sepolia-devnet"
+```
+
+Download has its own `--chain` flag and rejects the root `BASE_CHAIN` selector; keep it unset when
+downloading. Run accepts `BASE_CHAIN`, or root `--chain` before `dev` in direct binary usage.
+
+Stop with Ctrl+C, then rerun the same command to resume. Head, state, storage layout and pruning
+settings stay in the same datadir. Downtime does not produce catch-up blocks or advance logical time.
+Denim targets 200ms slots, but disk/CPU load can delay arrivals and transaction inclusion. Header
+timestamps have whole-second resolution; `BaseTime` deposits carry the 200ms progression. A ten-block
+wait becomes roughly two logical seconds instead of twenty; a twenty-second timestamp lock remains
+twenty header seconds, with up to one second of rounding relative to `BaseTime`. Neither is a
+guarantee about wall-clock latency. A receipt confirms canonical execution, not a disk flush:
+forced termination can lose recent in-memory blocks as well as pending requests.
+
+This mode tests local execution, not L1-backed derivation, bridges, safe/finalized advancement or
+proofs. Use the existing [Docker/Anvil devnets](../../etc/docker/README.md) for full-stack tests and
+the [snapshot benchmark harness](../../etc/systems/README.md) for benchmarks.
+
+### Download selection and interruptions
+
+`download` fetches full current state and headers with 1,339,200 blocks of transactions, receipts,
+and account/storage history, rounded outward to archive chunk boundaries. That is 31 days of
+pre-Denim 2s blocks, not archive history. `--full` keeps 13,392,000 blocks, which is 31 days at
+Denim's 200ms cadence but about 310 days of 2s blocks: a mainnet `--full` download needs about
+1.9 TB and unpacks to about 3.7 TB. The recipe's mainnet download in October 2026 was about
+890 GB and about 1.4 TB on disk. It stops after downloading; it does not create a validator copy,
+start nodes or configure a fork. The recipe allows up to 16 simultaneous HTTP downloads
+(`--download-concurrency 16`).
+
+Fresh downloads generate `reth.toml` with block bodies, receipts, and account/storage history at
+pruning distance 1,339,200. The recipe removes the generated `transaction_lookup = "full"` line so
+the persisted transaction-hash index is kept. The snapshot does not ship that index or the history
+indices, so the first `run` rebuilds them before sequencing starts: RPC answers within seconds, but
+no blocks are produced until the rebuild finishes (about 22 minutes for a mainnet download in
+testing). This takes more disk space and startup work than `--minimal`. Pruning follows persisted
+blocks and static-file boundaries, not an exact wall-clock expiry. Hash-based lookups still require
+the corresponding transaction bodies and receipts to be retained.
+
+An existing `reth.toml` is not overwritten. Rerunning the recipe does not upgrade a previous
+minimal datadir's pruning or rebuild its missing transaction-hash index. Use a fresh directory for
+a new download; never download over a datadir that has produced development blocks.
+
+Pin a manifest when resuming an interrupted download. Verified, unchanged archive outputs are
+reused; an interrupted large archive may restart from the beginning. Do not rerun download over a
+datadir that has already produced development blocks; resume it with `run` instead.
+
+```sh
+# Inspect the exact archives and sizes without creating a datadir or downloading archives.
+just devnet snapshot download --dir "$HOME/data/my-devnet" --print-plan-json
+# Add --manifest-url <published-manifest-url> to pin a particular snapshot for download/resume.
+# Equivalent direct binary download; afterwards delete `transaction_lookup = "full"` from reth.toml.
+target/release/base snapshot download --download-concurrency 16 --with-txs-distance 1339200 \
+  --with-receipts-distance 1339200 --with-state-history-distance 1339200 --dir "$HOME/data/my-devnet"
+```
+
+### `dev_impersonateTransaction`
+
+Only `base dev` serves this method on its HTTP and WS RPC. It executes a call as any account
+without its key, so it can fund accounts and make privileged calls:
+
+```text
+dev_impersonateTransaction({from, to?, input?, value?, gas, mint?}) -> txHash
+```
+
+`from` and `gas` are required. `input` defaults to empty, and `value` and `mint` to zero. `mint` wei
+is credited to `from` before the call. Omitting `to` creates a contract. The request becomes a
+deposit transaction, not a signed one: it skips signature, nonce, and fee checks, and pays no fees.
+Its receipt has type `0x7e`, `effectiveGasPrice` zero, and `from` set to the impersonated account,
+and each request increments that account's nonce. Use signed transactions to test admission and
+fees. The dev chain keeps the snapshot's chain ID, so a transaction signed here is also valid on that
+network: act as real accounts through impersonation and sign only with throwaway keys.
+
+**The receipt's `contractAddress` is wrong for impersonated contract creations.** The code is
+deployed at `create(from, nonce)`, using the sender's nonce before the request, but the receipt
+reports the address for nonce zero. Read the nonce first (`cast nonce <from>`), then compute the
+address with `cast compute-address <from> --nonce <nonce>`.
+
+A returned hash means the request is queued, not mined. Requests are added in order after the
+system deposits of the next block with enough gas, alongside ordinary pool transactions. Poll
+`eth_getTransactionReceipt` for the hash to confirm inclusion. A call
+that reverts or runs out of gas is still included, with status `0`; minted ETH is kept even then.
+Each request is a distinct transaction, so repeating it runs it again.
+
+Requests that fail validation return error `-32602`: gas below the intrinsic or calldata floor cost,
+gas above the block gas limit minus 2,000,000 for system deposits, calldata over 131,072 bytes, or
+init code over 49,152 bytes. Error `-32000` means retry later: the chain has not started sequencing,
+or 256 requests are already pending. Pending requests are held in memory and are lost if the process stops before
+they are included.
+
+Fund a newly generated throwaway key, wait for inclusion, then submit a normal signed transfer:
+
+```sh
+RPC=http://127.0.0.1:8545
+DEV_KEY=$(cast wallet new --json | jq -er '(if type == "array" then . else .data end)[0].private_key')
+ACCOUNT=$(cast wallet address --private-key "$DEV_KEY")
+HASH=$(cast rpc --rpc-url "$RPC" dev_impersonateTransaction \
+  "{\"from\":\"$ACCOUNT\",\"to\":\"$ACCOUNT\",\"gas\":\"0x5208\",\"mint\":\"0xde0b6b3a7640000\"}" | jq -r .)
+cast receipt --rpc-url "$RPC" "$HASH"
+cast send --rpc-url "$RPC" --private-key "$DEV_KEY" \
+  0x000000000000000000000000000000000000dEaD --value 1wei
+```
+
+For a privileged contract call, set `from` to its authorized account, `to` to the contract, and
+`input` to ABI calldata (for example, `cast calldata 'setValue(uint256)' 42`). Set an adequate `gas`
+limit, submit through the same method, and inspect the receipt's `status`. Application-level
+signature checks inside contracts are not bypassed. Do not resubmit just because a receipt is not
+available yet: a second request executes again.
+
+### Optional container usage
+
+An image containing this version of `base` runs the same command. On Linux, host networking keeps
+the default RPC bindings on host loopback. Stop the native node before opening the same datadir:
+
+```sh
+docker run --rm -it --network host --user "$(id -u):$(id -g)" \
+  -v "$HOME/data/my-devnet:/data" --entrypoint /app/base \
+  "ghcr.io/base/node:<tag-containing-dev>" dev --dir /data
+```
+
 ## `base update`
 
 `base update` updates the installed `base` binary by running `baseup --bin base` against the same

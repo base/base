@@ -8,8 +8,8 @@ use std::{
 };
 
 use alloy_consensus::BlockHeader;
-use alloy_primitives::{Address, B64, B256, Bytes, bytes::BytesMut, map::AddressSet};
-use alloy_rlp::Encodable;
+use alloy_primitives::{Address, B64, B256, Bytes, map::AddressSet};
+use alloy_rlp::encode;
 use base_common_chains::Upgrades;
 use base_common_consensus::{BasePrimitives, BaseTransaction, BaseTxEnvelope};
 use base_common_rpc_types_engine::{BasePayloadAttributes, ExecutionData};
@@ -486,22 +486,13 @@ where
         self,
         engine_api_builder: T,
     ) -> BaseAddOns<N, EthB, PVB, T, EVB, RpcMiddleware> {
-        let Self {
-            rpc_add_ons,
-            da_config,
-            gas_limit_config,
-            sequencer_url,
-            sequencer_headers,
-            min_suggested_priority_fee,
-            ..
-        } = self;
         BaseAddOns::new(
-            rpc_add_ons.with_engine_api(engine_api_builder),
-            da_config,
-            gas_limit_config,
-            sequencer_url,
-            sequencer_headers,
-            min_suggested_priority_fee,
+            self.rpc_add_ons.with_engine_api(engine_api_builder),
+            self.da_config,
+            self.gas_limit_config,
+            self.sequencer_url,
+            self.sequencer_headers,
+            self.min_suggested_priority_fee,
         )
     }
 
@@ -510,22 +501,13 @@ where
         self,
         payload_validator_builder: T,
     ) -> BaseAddOns<N, EthB, T, EB, EVB, RpcMiddleware> {
-        let Self {
-            rpc_add_ons,
-            da_config,
-            gas_limit_config,
-            sequencer_url,
-            sequencer_headers,
-            min_suggested_priority_fee,
-            ..
-        } = self;
         BaseAddOns::new(
-            rpc_add_ons.with_payload_validator(payload_validator_builder),
-            da_config,
-            gas_limit_config,
-            sequencer_url,
-            sequencer_headers,
-            min_suggested_priority_fee,
+            self.rpc_add_ons.with_payload_validator(payload_validator_builder),
+            self.da_config,
+            self.gas_limit_config,
+            self.sequencer_url,
+            self.sequencer_headers,
+            self.min_suggested_priority_fee,
         )
     }
 
@@ -537,22 +519,13 @@ where
     ///
     /// See also [`RpcAddOns::with_rpc_middleware`].
     pub fn with_rpc_middleware<T>(self, rpc_middleware: T) -> BaseAddOns<N, EthB, PVB, EB, EVB, T> {
-        let Self {
-            rpc_add_ons,
-            da_config,
-            gas_limit_config,
-            sequencer_url,
-            sequencer_headers,
-            min_suggested_priority_fee,
-            ..
-        } = self;
         BaseAddOns::new(
-            rpc_add_ons.with_rpc_middleware(rpc_middleware),
-            da_config,
-            gas_limit_config,
-            sequencer_url,
-            sequencer_headers,
-            min_suggested_priority_fee,
+            self.rpc_add_ons.with_rpc_middleware(rpc_middleware),
+            self.da_config,
+            self.gas_limit_config,
+            self.sequencer_url,
+            self.sequencer_headers,
+            self.min_suggested_priority_fee,
         )
     }
 
@@ -1329,18 +1302,8 @@ impl BaseDiscoveryConfig {
     /// Encodes the NAT-discovered external IP as an ENR key-value pair.
     pub fn enr_ip_kv_pair(external_addr: Option<IpAddr>) -> Option<(&'static [u8], Bytes)> {
         match external_addr {
-            Some(IpAddr::V4(addr)) => {
-                let addr = addr.octets();
-                let mut out = BytesMut::with_capacity(addr.length());
-                addr.encode(&mut out);
-                Some((IP_ENR_KEY, Bytes::from(out.freeze())))
-            }
-            Some(IpAddr::V6(addr)) => {
-                let addr = addr.octets();
-                let mut out = BytesMut::with_capacity(addr.length());
-                addr.encode(&mut out);
-                Some((IP6_ENR_KEY, Bytes::from(out.freeze())))
-            }
+            Some(IpAddr::V4(addr)) => Some((IP_ENR_KEY, Bytes::from(encode(addr.octets())))),
+            Some(IpAddr::V6(addr)) => Some((IP6_ENR_KEY, Bytes::from(encode(addr.octets())))),
             None => None,
         }
     }

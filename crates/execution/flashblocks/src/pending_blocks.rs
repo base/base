@@ -96,46 +96,31 @@ impl PendingBlocksBuilder {
 
     /// Creates a builder pre-populated from an existing snapshot.
     pub fn from_previous(pending_blocks: &PendingBlocks) -> Self {
-        let flashblocks = pending_blocks.flashblocks.clone();
-        let headers =
-            vec![pending_blocks.earliest_header.clone(), pending_blocks.latest_header.clone()];
-        let transactions = pending_blocks.transactions.clone();
-        let account_balances = pending_blocks.account_balances.clone();
-        let transaction_count = pending_blocks.transaction_count.clone();
-        let transaction_receipts = pending_blocks.transaction_receipts.clone();
-        let transactions_by_hash = pending_blocks.transactions_by_hash.clone();
-        let transaction_position = pending_blocks.transaction_position.clone();
-        let transaction_state = pending_blocks.transaction_state.clone();
-        let transaction_senders = pending_blocks.transaction_senders.clone();
-        let transaction_results = pending_blocks.transaction_results.clone();
-        let execution_times = pending_blocks.execution_times.clone();
-        let next_position_per_block = pending_blocks.next_position_per_block.clone();
-        let bundle_state = Arc::clone(&pending_blocks.bundle_state);
-
-        let state_overrides = pending_blocks.state_overrides.clone();
-
         Self {
-            flashblocks,
-            headers,
+            flashblocks: pending_blocks.flashblocks.clone(),
+            headers: vec![
+                pending_blocks.earliest_header.clone(),
+                pending_blocks.latest_header.clone(),
+            ],
             latest_flashblock_tx_start: Some(pending_blocks.latest_flashblock_tx_start),
             latest_block_base: Some(pending_blocks.latest_block_base.clone()),
             latest_block_l1_block_info: Some(pending_blocks.latest_block_l1_block_info.clone()),
             latest_block_transaction_count: Some(pending_blocks.latest_block_transaction_count),
             latest_block_cumulative_gas_used: Some(pending_blocks.latest_block_cumulative_gas_used),
             latest_block_next_log_index: Some(pending_blocks.latest_block_next_log_index),
-            transactions,
-            account_balances,
-            transaction_count,
-            transaction_receipts,
-            transactions_by_hash,
-            transaction_position,
-            next_position_per_block,
-            transaction_state,
-            transaction_senders,
-            state_overrides,
-            transaction_results,
-            execution_times,
-            bundle_state: Some(bundle_state),
+            transactions: pending_blocks.transactions.clone(),
+            account_balances: pending_blocks.account_balances.clone(),
+            transaction_count: pending_blocks.transaction_count.clone(),
+            transaction_receipts: pending_blocks.transaction_receipts.clone(),
+            transactions_by_hash: pending_blocks.transactions_by_hash.clone(),
+            transaction_position: pending_blocks.transaction_position.clone(),
+            next_position_per_block: pending_blocks.next_position_per_block.clone(),
+            transaction_state: pending_blocks.transaction_state.clone(),
+            transaction_senders: pending_blocks.transaction_senders.clone(),
+            state_overrides: pending_blocks.state_overrides.clone(),
+            transaction_results: pending_blocks.transaction_results.clone(),
+            execution_times: pending_blocks.execution_times.clone(),
+            bundle_state: Some(Arc::clone(&pending_blocks.bundle_state)),
             deferred_error: None,
         }
     }
@@ -614,7 +599,16 @@ impl PendingBlocks {
             })
             .flatten();
 
-        let base_tx_result = BaseTxResult { inner: eth_tx_result, is_deposit, sender, depositor };
+        let eip8130_phase_statuses =
+            self.get_receipt(*tx_hash).and_then(|r| r.phase_statuses.clone()).unwrap_or_default();
+
+        let base_tx_result = BaseTxResult {
+            inner: eth_tx_result,
+            is_deposit,
+            sender,
+            depositor,
+            eip8130_phase_statuses,
+        };
 
         Some(base_tx_result)
     }
@@ -697,22 +691,15 @@ impl PendingBlocks {
         self.transactions.iter().map(|tx| tx.tx_hash()).collect()
     }
 
-    /// Returns the number of transactions in all flashblocks except the latest one.
-    /// This is used to compute the delta (transactions only in the latest flashblock).
-    const fn previous_flashblocks_tx_count(&self) -> usize {
-        self.latest_flashblock_tx_start
-    }
-
     /// Returns logs matching the filter from only the latest flashblock (delta).
     ///
     /// Unlike `get_pending_logs`, this returns only logs from transactions
     /// that were added in the most recent flashblock, avoiding duplicates
     /// when streaming via WebSocket subscriptions.
     pub fn get_latest_flashblock_logs(&self, filter: &Filter) -> Vec<Log> {
-        let prev_count = self.previous_flashblocks_tx_count();
         let mut logs = Vec::new();
 
-        for tx in self.transactions.iter().skip(prev_count) {
+        for tx in self.transactions.iter().skip(self.latest_flashblock_tx_start) {
             if let Some(receipt) = self.transaction_receipts.get(&tx.tx_hash()) {
                 for log in receipt.inner.logs() {
                     if filter.matches(log.as_ref()) {
@@ -731,11 +718,9 @@ impl PendingBlocks {
     /// that were added in the most recent flashblock, avoiding duplicates
     /// when streaming via WebSocket subscriptions.
     pub fn get_latest_flashblock_transactions_with_logs(&self) -> Vec<TransactionWithLogs> {
-        let prev_count = self.previous_flashblocks_tx_count();
-
         self.transactions
             .iter()
-            .skip(prev_count)
+            .skip(self.latest_flashblock_tx_start)
             .filter_map(|tx| {
                 self.transaction_receipts
                     .get(&tx.tx_hash())
@@ -753,11 +738,9 @@ impl PendingBlocks {
         &self,
         filter: &Filter,
     ) -> Vec<TransactionWithLogs> {
-        let prev_count = self.previous_flashblocks_tx_count();
-
         self.transactions
             .iter()
-            .skip(prev_count)
+            .skip(self.latest_flashblock_tx_start)
             .filter_map(|tx| {
                 let receipt = self.transaction_receipts.get(&tx.tx_hash())?;
                 let logs = receipt.inner.logs();
@@ -778,8 +761,11 @@ impl PendingBlocks {
     /// of transactions that were added in the most recent flashblock,
     /// avoiding duplicates when streaming via WebSocket subscriptions.
     pub fn get_latest_flashblock_transaction_hashes(&self) -> Vec<B256> {
-        let prev_count = self.previous_flashblocks_tx_count();
-        self.transactions.iter().skip(prev_count).map(|tx| tx.tx_hash()).collect()
+        self.transactions
+            .iter()
+            .skip(self.latest_flashblock_tx_start)
+            .map(|tx| tx.tx_hash())
+            .collect()
     }
 }
 

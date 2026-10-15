@@ -15,7 +15,8 @@ use alloy_rpc_types_eth::state::StateOverride;
 use base_common_chains::Upgrades;
 use base_common_consensus::{BasePrimitives, BaseReceipt, BaseTxEnvelope, Predeploys};
 use base_common_evm::{
-    BaseHaltReason, L1BlockInfo, ensure_create2_deployer, ensure_eip8130_system_accounts,
+    BaseHaltReason, Eip8130PhaseStatuses, L1BlockInfo, ensure_create2_deployer,
+    ensure_eip8130_system_accounts,
 };
 use base_common_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
 use base_common_rpc_types::{BaseTransactionReceipt, Transaction};
@@ -246,9 +247,10 @@ where
         self.next_log_index += receipt.inner.logs().len();
 
         for address in state.keys() {
-            self.evm.db_mut().basic(*address).map_err(|err| {
-                StateProcessorError::Execution(ExecutionError::EvmEnv(err.to_string()))
-            })?;
+            self.evm
+                .db_mut()
+                .basic(*address)
+                .map_err(|err| ExecutionError::EvmEnv(err.to_string()))?;
         }
         self.evm.db_mut().commit(state.clone());
 
@@ -271,16 +273,13 @@ where
 
         // Load the L1 block contract into the cache. If the L1 block contract is not pre-loaded the
         // database will panic when trying to fetch the DA footprint gas scalar.
-        self.evm.db_mut().basic(Predeploys::L1_BLOCK_INFO).map_err(|err| {
-            StateProcessorError::Execution(ExecutionError::DaFootprintEstimation(err.to_string()))
-        })?;
+        self.evm
+            .db_mut()
+            .basic(Predeploys::L1_BLOCK_INFO)
+            .map_err(|err| ExecutionError::DaFootprintEstimation(err.to_string()))?;
 
         let da_footprint_gas_scalar = L1BlockInfo::fetch_da_footprint_gas_scalar(self.evm.db_mut())
-            .map_err(|err| {
-                StateProcessorError::Execution(ExecutionError::DaFootprintEstimation(
-                    err.to_string(),
-                ))
-            })?
+            .map_err(|err| ExecutionError::DaFootprintEstimation(err.to_string()))?
             .into();
 
         Ok(encoded.saturating_mul(da_footprint_gas_scalar))
@@ -310,6 +309,7 @@ where
         let start = Instant::now();
         let transact_result = self.evm.transact(&transaction);
         let elapsed_us = start.elapsed().as_micros();
+        let eip8130_phase_statuses = Eip8130PhaseStatuses::take();
 
         match transact_result {
             Ok(ResultAndState { state, result }) => {
@@ -347,6 +347,7 @@ where
                     &result,
                     self.cumulative_gas_used,
                     self.pending_block.timestamp,
+                    eip8130_phase_statuses,
                 )?;
 
                 let meta = TransactionMeta {

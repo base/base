@@ -47,15 +47,16 @@ Find a doc through the index below instead of grepping the tree. After adding, m
 
 - [CLAUDE.md](CLAUDE.md): Repo coding conventions for agents: crate naming, lib.rs and module layout, Cargo manifest rules, doc and lint policy, tracing style, testing and mocking rules, review expectations.
 - [CONTRIBUTING.md](CONTRIBUTING.md): Contribution policy: open an issue first, work only on assigned issues, no typo or refactor PRs, dev setup (Rust, just, Foundry), run just ci, PR and bug report expectations.
-- [README.md](README.md): Top-level Base overview: what Base is, docs and specs links, installing binaries with baseup, running a node via docker compose, and the base-anvil GHCR package.
+- [README.md](README.md): Top-level Base overview: docs and specs links, installing binaries with baseup, running a node via docker compose, choosing a Docker or snapshot local devnet, and the base-anvil GHCR package.
 - [SECURITY.md](SECURITY.md): Security policy: HackerOne and Cantina bug bounty programs, where to report offchain versus smart contract vulnerabilities, and the security contact email.
 
 ## Guides and specs
 
 - [docs/guides/BLOCK_PRODUCTION_REVIEW.md](docs/guides/BLOCK_PRODUCTION_REVIEW.md): Review guide for block-production-sensitive PRs: mandatory payload size-limit gate across I/O boundaries, taxonomy of halt/stall scenarios (precompiles, builder, flashblocks), and a checklist.
+- [docs/guides/DEVNET.md](docs/guides/DEVNET.md): Chooser for local environments: Docker and HA devnets, Anvil + local Nitro proving, snapshot devnet (base dev), snapshot benchmark harness, with quickstarts, data-reset behavior, and owning docs.
 - [docs/guides/P2P.md](docs/guides/P2P.md): Explains the Base P2P stack for newcomers: consensus-layer discv5 and libp2p gossipsub versus execution-layer reth networking, how they interact via Engine API, key files, flags, and glossary.
 - [docs/guides/RELEASE.md](docs/guides/RELEASE.md): Release process: Start Release creates releases/vX.Y.Z, version sync PR, automatic RC tags and builds per commit, then Publish Release for the final tag, Docker images and binaries.
-- [docs/guides/SNAPSHOT_BENCHMARKS.md](docs/guides/SNAPSHOT_BENCHMARKS.md): How to run repeatable base-bench snapshot benchmarks on an L1-free Base snapshot devnet, aggregate selected runs, and publish to base/benchmark. Use when measuring performance on restored datadirs.
+- [docs/guides/SNAPSHOT_BENCHMARKS.md](docs/guides/SNAPSHOT_BENCHMARKS.md): How to run repeatable base-bench snapshot benchmarks on the snapshot benchmark harness, aggregate selected runs, and publish to base/benchmark. Use when measuring performance on restored datadirs.
 - [docs/guides/STANDALONE_PROVING.md](docs/guides/STANDALONE_PROVING.md): Guide to running the prover stack standalone (just prover up) with your own RPCs and a funded Succinct Prover Network key: ZK backends, range sizing, requester key, restart behavior, troubleshooting.
 - [docs/guides/TESTING.md](docs/guides/TESTING.md): Testing overview: what just ci and just pr run, the four tiers (unit, action, system, fuzz), other checks, the CI pipeline, and guidelines. Use to decide which command or test tier covers your change.
 - [docs/guides/UPGRADES.md](docs/guides/UPGRADES.md): Step-by-step guide to adding a network upgrade (Azul as example): BaseUpgrade enum, RollupConfig activation, timestamps, plus BaseSpecId and precompile routing if EVM rules change, and a checklist.
@@ -67,7 +68,7 @@ Find a doc through the index below instead of grepping the tree. After adding, m
 - [bin/acceptance/README.md](bin/acceptance/README.md): base-acceptance CLI entry point for the acceptance system: lists subcommands (validate, plan, run, check, report, cleanup) and example cargo invocations, deferring to acceptance/README.md.
 - [bin/audit-archiver/README.md](bin/audit-archiver/README.md): audit-archiver service: NDJSON ingest into Postgres, JSON-RPC queries, retention classes and partition maintenance, BRIN summary worker, event_seq extraction split, env vars, S3 removal rollout.
 - [bin/base-telemetry/README.md](bin/base-telemetry/README.md): base-telemetry backend: CLI and env config, per-IP rate limiting, and on-demand P2P reachability probes for execution-layer (enode) and consensus-layer (ENR or multiaddr) nodes.
-- [bin/base/README.md](bin/base/README.md): Unified base node binary: OTLP tracing options plus the batcher, rpc, sequencer and update subcommands, their flags and env vars, and chain selection.
+- [bin/base/README.md](bin/base/README.md): Unified base commands, tracing and chain selection; native snapshot download/run, history retention, dev impersonation and signed RPC examples, restart and timing limits, and container usage.
 - [bin/basectl/README.md](bin/basectl/README.md): basectl operator console reference: global options, TUI and scriptable commands (block, sync-status, p2p, txpool, conductor, sequencer, batcher, doctor, proofs), JSON output and examples.
 - [bin/builder/README.md](bin/builder/README.md): Stub README for the base-builder block builder binary, which runs base-builder-core. Minimal, no usage details.
 - [bin/challenger-e2e/README.md](bin/challenger-e2e/README.md): Challenger end-to-end test binary: forks L1 into a pod-local Anvil and checks the challenger scans valid games without disputing; intended as a K8s Job.
@@ -250,7 +251,7 @@ Find a doc through the index below instead of grepping the tree. After adding, m
 - [audits/azul/README.md](audits/azul/README.md): Pointer to the Immunefi audit competition for the Azul hardfork (21 April to 4 May 2026) and where the public reports are hosted.
 - [baseup/README.md](baseup/README.md): baseup installer for Base release binaries: install commands and flags, binaries installed, checksum, GPG and SLSA verification, verify-release, and supported targets.
 - [etc/docker/README.md](etc/docker/README.md): Dockerfiles, Bake targets, published images (ghcr.io/base/node and single-binary images), and Compose setup for the local devnet and Rust services, including batcher topology and build profiles.
-- [etc/systems/README.md](etc/systems/README.md): Docs for base-system-tests: running the snapshot-backed mainnet devnet (builder and follow client), snapshot and transfer benchmarks, workload suite, 2s vs 200ms comparison, cleanup.
+- [etc/systems/README.md](etc/systems/README.md): Docs for base-system-tests: running the snapshot benchmark harness (builder and follow client), snapshot and transfer benchmarks, workload suite, 2s vs 200ms comparison, cleanup.
 - [etc/tools/witness-diff/README.md](etc/tools/witness-diff/README.md): witness-diff tool that compares two execution witnesses (from debug_executionWitness) to find differing trie nodes, bytecodes, or preimages. Use when debugging state root mismatches between nodes.
 - [etc/upstream-pins/README.md](etc/upstream-pins/README.md): Reth workspace pin: reth.toml is the source of truth for reth-* git deps. Covers pin-reth, check-reth-pin, pin-reth-test, reth-prepare-release, patch PR handling, and backport tag protection.
 

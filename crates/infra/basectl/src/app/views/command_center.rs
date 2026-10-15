@@ -259,11 +259,7 @@ impl View for CommandCenterView {
                 Action::None
             }
             KeyCode::Up | KeyCode::Char('k') => {
-                let state = match self.focused_panel {
-                    Panel::Flashblocks => &mut self.flash_table_state,
-                    Panel::Da | Panel::Txns => &mut self.da_table_state,
-                    Panel::L1Blocks => &mut self.l1_table_state,
-                };
+                let state = self.active_table_state();
                 if let Some(selected) = state.selected()
                     && selected > 0
                 {

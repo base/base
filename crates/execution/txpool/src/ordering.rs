@@ -151,8 +151,10 @@ impl Ord for UnifiedTipPriority {
 /// EIP-8130 coinbase tip; otherwise ranks by `effective_tip_per_gas`. Returns
 /// [`Priority::None`] when `max_fee_per_gas < base_fee`, including for a
 /// decoded coinbase tip. A policy-gated sender's tip only counts when the fee
-/// vault is its policy target. Same bid prefers fewer validity predicates, so
-/// standard transactions beat equally priced advanced transactions.
+/// vault is its policy target, and any tip only counts while
+/// [`BasePooledTx::coinbase_tip_backed`] holds. Same bid prefers fewer
+/// validity predicates, so standard transactions beat equally priced advanced
+/// transactions.
 #[derive(Debug)]
 #[non_exhaustive]
 pub struct UnifiedTipOrdering<T = BasePooledTransaction>(PhantomData<T>);
@@ -185,7 +187,8 @@ where
             return Priority::None;
         };
         let predicates = transaction.validity_conditions().len();
-        if let Some(tip) = transaction.coinbase_tip() {
+        if let Some(tip) = transaction.coinbase_tip().filter(|_| transaction.coinbase_tip_backed())
+        {
             return Priority::Value(UnifiedTipPriority::new(
                 tip,
                 transaction.gas_limit(),
@@ -620,6 +623,37 @@ mod tests {
 
         assert!(ordering.priority(&standard, 0) > ordering.priority(&one_predicate, 0));
         assert!(ordering.priority(&one_predicate, 0) > ordering.priority(&two_predicates, 0));
+    }
+
+    #[test]
+    fn unbacked_coinbase_tip_preserves_submitted_predicate_tiebreak() {
+        let ordering = UnifiedTipOrdering::<BasePooledTransaction>::default();
+        let predicates = vec![block_number_predicate(), block_number_predicate()];
+        let transaction = eip8130_pooled(10, 2, 21_000, Some(U256::from(63_000)))
+            .with_validity_predicates(predicates.clone());
+        let same_fee_and_count =
+            eip1559_pooled(1, 10, 2, 21_000).with_validity_predicates(predicates);
+        let fewer_predicates = eip1559_pooled(2, 10, 2, 21_000)
+            .with_validity_predicates(vec![block_number_predicate()]);
+
+        assert!(ordering.priority(&transaction, 0) > ordering.priority(&fewer_predicates, 0));
+
+        transaction.set_coinbase_tip_backed(false);
+        let cloned = transaction.clone();
+        assert_eq!(
+            ordering.priority(&cloned, 0),
+            ordering.priority(&same_fee_and_count, 0),
+            "an unbacked tip must fall back to its fee bid without losing duplicate predicates"
+        );
+        assert!(ordering.priority(&fewer_predicates, 0) > ordering.priority(&cloned, 0));
+
+        transaction.set_coinbase_tip_backed(true);
+        assert!(ordering.priority(&transaction, 0) > ordering.priority(&fewer_predicates, 0));
+        assert_eq!(
+            ordering.priority(&cloned, 0),
+            ordering.priority(&same_fee_and_count, 0),
+            "backing is a per-clone snapshot even though compiled conditions are shared"
+        );
     }
 
     #[test]
