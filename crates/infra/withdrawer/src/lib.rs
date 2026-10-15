@@ -6,5 +6,8 @@ pub use config::{ConfigError, Fees, SignerSource, WithdrawerArgs, WithdrawerConf
 mod network;
 pub use network::{Network, NetworkPreset, ProofSystem};
 
+mod signer;
+pub use signer::{WithdrawalSigner, WithdrawalSignerError};
+
 mod secret;
 pub use secret::{Secret, SecretValueParser};
