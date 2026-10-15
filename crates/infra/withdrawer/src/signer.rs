@@ -8,7 +8,7 @@ use alloy_primitives::{Address, Signature};
 #[cfg(feature = "ledger")]
 use alloy_primitives::{B256, normalize_v};
 #[cfg(feature = "ledger")]
-use alloy_signer_ledger::{HDPath, LedgerSigner};
+use alloy_signer_ledger::{HDPath, LedgerError, LedgerSigner};
 use alloy_signer_local::PrivateKeySigner;
 use async_trait::async_trait;
 use thiserror::Error;
@@ -34,7 +34,7 @@ impl fmt::Debug for WithdrawalSigner {
 }
 
 /// Redacted signer construction and validation errors.
-#[derive(Debug, Error, PartialEq, Eq)]
+#[derive(Debug, Error)]
 pub enum WithdrawalSignerError {
     /// The private key is not a nonzero secp256k1 scalar.
     #[error("invalid private key; expected a nonzero secp256k1 scalar")]
@@ -45,11 +45,11 @@ pub enum WithdrawalSignerError {
     /// The Ledger could not be opened or queried for its address.
     #[cfg(feature = "ledger")]
     #[error("could not connect to Ledger; connect and unlock it, then open the Ethereum app")]
-    LedgerConnection,
+    LedgerConnection(#[source] LedgerError),
     /// The Ledger could not sign the transaction.
     #[cfg(feature = "ledger")]
     #[error("Ledger transaction signing failed")]
-    LedgerSigning,
+    LedgerSigning(#[source] alloy_signer::Error),
     /// Signature recovery did not yield the expected signing address.
     #[cfg(feature = "ledger")]
     #[error("Ledger signature does not recover to the signing address")]
@@ -82,7 +82,7 @@ impl WithdrawalSigner {
                 LedgerSigner::new(HDPath::Other(path.derivation_string()), None)
                     .await
                     .map(Self::Ledger)
-                    .map_err(|_| WithdrawalSignerError::LedgerConnection)
+                    .map_err(WithdrawalSignerError::LedgerConnection)
             }
         }
     }
@@ -147,8 +147,8 @@ impl TxSigner<Signature> for WithdrawalSigner {
                     Self::check_ledger_legacy_chain(chain_id)
                         .map_err(alloy_signer::Error::other)?;
                 }
-                let signature = signer.sign_transaction(transaction).await.map_err(|_| {
-                    alloy_signer::Error::other(WithdrawalSignerError::LedgerSigning)
+                let signature = signer.sign_transaction(transaction).await.map_err(|error| {
+                    alloy_signer::Error::other(WithdrawalSignerError::LedgerSigning(error))
                 })?;
                 Self::verify_signature(&signature, &transaction.signature_hash(), self.address())
                     .map_err(alloy_signer::Error::other)?;
