@@ -119,9 +119,13 @@ impl WithdrawerArgs {
         })
     }
 
-    /// Parses a BIP-32 path with 31-bit component indices.
+    /// Parses a BIP-32 path with 31-bit component indices and at most 255 components.
     pub fn parse_hd_path(value: &str) -> Result<DerivationPath, &'static str> {
-        for component in value.split('/').filter(|component| *component != "m") {
+        for (depth, component) in value.split('/').filter(|component| *component != "m").enumerate()
+        {
+            if depth >= SignerSource::MAX_DERIVATION_DEPTH {
+                return Err("derivation path must have at most 255 components");
+            }
             let index = component.strip_suffix(['\'', 'h']).unwrap_or(component);
             if index.parse::<u32>().map_or(true, |index| index >= coins_bip32::BIP32_HARDEN) {
                 return Err("derivation path indices must be between 0 and 2147483647");
@@ -244,6 +248,11 @@ pub enum SignerSource {
         /// BIP-32 derivation path.
         path: DerivationPath,
     },
+}
+
+impl SignerSource {
+    /// Maximum BIP-32 path depth, bounded by the one-byte depth field of extended keys.
+    pub const MAX_DERIVATION_DEPTH: usize = u8::MAX as usize;
 }
 
 /// Transaction fee selection in wei per gas.
