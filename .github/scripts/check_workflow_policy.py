@@ -4,6 +4,8 @@
 All workflows:
   - must not use `pull_request_target` or `workflow_run` triggers
   - must pin third-party actions to a full commit SHA
+  - must reference secrets by literal name (no `toJSON(secrets)`,
+    `secrets[format(...)]` or bare `secrets`)
 
 Workflows that use the Amp bot key (`secrets.AMP_API_KEY`) must also:
   - only trigger on `issue_comment`, `workflow_dispatch` or `pull_request`
@@ -30,7 +32,13 @@ import yaml
 AMP_SECRET = "AMP_API_KEY"
 BANNED_TRIGGERS = {"pull_request_target", "workflow_run"}
 AMP_ALLOWED_TRIGGERS = {"issue_comment", "workflow_dispatch", "pull_request"}
-SECRET_REF = re.compile(r"secrets\.([A-Za-z_][A-Za-z0-9_]*)")
+# Matches secrets.NAME and secrets['NAME'] / secrets["NAME"].
+SECRET_REF = re.compile(
+    r"""secrets\s*(?:\.\s*([A-Za-z_][A-Za-z0-9_]*)|\[\s*['"]([A-Za-z_][A-Za-z0-9_]*)['"]\s*\])"""
+)
+# Any other use of the secrets context (toJSON(secrets), secrets[format(...)],
+# bare secrets) could expose the Amp key without naming it.
+DYNAMIC_SECRETS = re.compile(r"""\bsecrets\b(?!\s*\.\s*[A-Za-z_]|\s*\[\s*['"][A-Za-z_][A-Za-z0-9_]*['"]\s*\])""")
 PINNED = re.compile(r"^[^@\s]+@[0-9a-f]{40}$")
 
 
@@ -61,8 +69,15 @@ def secrets_used(node) -> set[str]:
     found: set[str] = set()
     for value in walk(node):
         if isinstance(value, str):
-            found.update(SECRET_REF.findall(value))
+            for dotted, indexed in SECRET_REF.findall(value):
+                found.add(dotted or indexed)
     return found
+
+
+def expressions(node):
+    for value in walk(node):
+        if isinstance(value, str):
+            yield from re.findall(r"\$\{\{(.*?)\}\}", value, re.S)
 
 
 def uses_refs(workflow: dict):
@@ -113,7 +128,7 @@ def check_amp_workflow(workflow: dict, errors: list[str]) -> None:
             errors.append(f"{where} uses Amp with 'secrets: inherit'")
         other = used - {AMP_SECRET}
         if other:
-            errors.append(f"{where} uses Amp with other secrets: {sorted(other)}")
+            errors.append(f"{where} uses Amp alongside {len(other)} other secret(s)")
         if not is_read_only(job.get("permissions")):
             errors.append(f"{where} uses Amp without explicit read-only permissions")
         for step in job.get("steps") or []:
@@ -134,6 +149,9 @@ def check_file(path: Path) -> list[str]:
     banned = triggers(workflow) & BANNED_TRIGGERS
     if banned:
         errors.append(f"uses banned triggers: {sorted(banned)}")
+
+    if any(DYNAMIC_SECRETS.search(expr) for expr in expressions(workflow)):
+        errors.append("references secrets dynamically; use secrets.NAME")
 
     for ref in uses_refs(workflow):
         if ref.startswith(("./", "docker://")):

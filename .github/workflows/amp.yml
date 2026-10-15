@@ -16,7 +16,7 @@
 #   mints a GitHub App token, and it never executes code from the PR.
 #
 # Changes to any workflow that uses AMP_API_KEY are checked by
-# .github/workflows/amp-workflow-policy.yml.
+# .github/workflows/workflow-policy.yml.
 
 name: Amp
 
@@ -40,10 +40,6 @@ on:
 
 permissions:
   contents: read
-
-concurrency:
-  group: amp-${{ github.event.issue.number || inputs.pr_number }}
-  cancel-in-progress: false
 
 jobs:
   authorize:
@@ -156,6 +152,10 @@ jobs:
     # Depot runners only. Never self-hosted runners.
     runs-on: depot-ubuntu-24.04-16
     timeout-minutes: 60
+    # Job-level so only authorized runs queue; one Amp run per PR at a time.
+    concurrency:
+      group: amp-${{ needs.authorize.outputs.pr_number }}
+      cancel-in-progress: false
     permissions:
       contents: read
     steps:
@@ -230,7 +230,7 @@ jobs:
             > "$out/summary.md"
 
           git add -A
-          git diff --cached --binary > "$out/changes.patch"
+          git diff --cached --binary --no-renames > "$out/changes.patch"
           echo "Patch size: $(wc -c < "$out/changes.patch") bytes"
 
       - name: Upload result
@@ -249,6 +249,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    concurrency:
+      group: amp-publish-${{ needs.authorize.outputs.pr_number }}
+      cancel-in-progress: false
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -291,7 +294,8 @@ jobs:
             echo "status=no-changes" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          if grep -qE '^diff --git a/\.github/' "$patch"; then
+          # Reject any path under .github/ on either side, including renames.
+          if grep -qE '^(diff --git .*[ab]/\.github/|(\+\+\+|---) [ab]/\.github/|(rename|copy) (from|to) \.github/)' "$patch"; then
             echo "status=blocked-github-dir" >> "$GITHUB_OUTPUT"
             exit 0
           fi
