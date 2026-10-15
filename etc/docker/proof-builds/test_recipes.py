@@ -84,21 +84,75 @@ class InstallTests(unittest.TestCase):
                 if failure == "checksum":
                     self.assertIn("FAILED", result.stdout)
 
-    def test_failed_toolchain_fetch_cannot_run_installer(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            for tool, command in {
-                "apt-get": "exit 0", "rm": "exit 0", "curl": "exit 37",
-                "sh": 'touch "$INSTALLED"',
-            }.items():
-                path = root / tool
-                path.write_text("#!/bin/sh\n" + command + "\n")
-                path.chmod(0o755)
-            env = dict(os.environ, PATH=f"{root}:{os.environ['PATH']}",
-                       INSTALLED=str(root / "installed"))
-            result = run("/bin/sh", str(RECIPES / "install.sh"), "nitro-cli", env=env)
-            self.assertNotEqual(result.returncode, 0)
-            self.assertFalse((root / "installed").exists())
+    def test_nitro_installer_requires_verified_download_and_pinned_compiler(self):
+        payload = (b'#!/bin/sh\ncase "${0##*/}" in rustup-init*) ;;\n'
+                   b'*) echo "installer requires a rustup-init basename" >&2; exit 91 ;; esac\n'
+                   b'printf "%s\\n" "$@" > "$INSTALLED"\n')
+        checksum = hashlib.sha256(payload).hexdigest()
+        for scenario, arch, download_exit, digest, compiler, expected_exit in (
+            ("checksum", "x86_64", 0, "0" * 64, "1.99.0", 1),
+            ("download", "x86_64", 37, checksum, "1.99.0", 37),
+            ("valid", "x86_64", 0, checksum, "1.99.0", 0),
+            ("valid", "aarch64", 0, checksum, "1.99.0", 0),
+            ("valid", "arm64", 0, checksum, "1.99.0", 0),
+            ("unsupported", "riscv64", 0, checksum, "1.99.0", 1),
+            ("compiler", "x86_64", 0, checksum, "1.98.0", 1),
+        ):
+            with self.subTest(scenario=scenario, arch=arch), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "payload").write_bytes(payload)
+                cargo_bin = root / ".cargo" / "bin"
+                cargo_bin.mkdir(parents=True)
+                rustc = cargo_bin / "rustc"
+                rustc.write_text('#!/bin/sh\nprintf "rustc %s (fixture)\\n" "$COMPILER"\n')
+                rustc.chmod(0o755)
+                for tool, command in {
+                    "apt-get": "exit 0",
+                    "uname": 'echo "$ARCH"',
+                    "curl": 'printf "%s\\n" "$@" > "$HOME/download"\n'
+                            'for arg do destination=$arg; done\n'
+                            'cp "$HOME/payload" "$destination"\nexit "$DOWNLOAD_EXIT"',
+                    "chmod": 'touch "$HOME/chmod-called"; /bin/chmod "$@"',
+                    "rm": 'if [ "$1" = -rf ]; then exit 0; fi\n'
+                          'for arg do installer=$arg; done\n'
+                          'if [ -x "$installer" ]; then touch "$HOME/executable"; fi\n'
+                          'touch "$HOME/cleaned"; /bin/rm "$@"',
+                }.items():
+                    path = root / tool
+                    path.write_text("#!/bin/sh\n" + command + "\n")
+                    path.chmod(0o755)
+                env = dict(os.environ, PATH=f"{root}:{os.environ['PATH']}", HOME=str(root),
+                           ARCH=arch, DOWNLOAD_EXIT=str(download_exit), COMPILER=compiler,
+                           TMPDIR=str(root), INSTALLED=str(root / "installed"),
+                           RUSTUP_SHA256_AMD64=digest, RUSTUP_SHA256_ARM64=digest)
+                for variable in ("RUST_TOOLCHAIN", "RUSTUP_VERSION"):
+                    env.pop(variable, None)
+                result = run("/bin/sh", str(RECIPES / "install.sh"), "nitro-cli", env=env)
+                self.assertEqual(result.returncode, expected_exit, result.stderr)
+                if (root / "download").exists():
+                    installer = Path((root / "download").read_text().splitlines()[-1])
+                    self.assertFalse(installer.exists(), "temporary installer was not removed")
+                if scenario in ("download", "checksum", "unsupported"):
+                    self.assertFalse((root / "installed").exists(), "unverified installer ran")
+                    self.assertFalse((root / "chmod-called").exists(), "unverified installer reached chmod")
+                    self.assertFalse((root / "executable").exists(), "unverified installer was executable")
+                    if scenario == "download":
+                        self.assertEqual(result.stdout, "", "failed download reached verification")
+                    elif scenario == "checksum":
+                        self.assertIn("FAILED", result.stdout)
+                    else:
+                        self.assertIn("unsupported architecture", result.stderr)
+                        self.assertFalse((root / "download").exists())
+                else:
+                    self.assertEqual((root / "installed").read_text().splitlines(),
+                                     ["-y", "--default-toolchain", "1.99.0"])
+                    target = "x86_64" if arch == "x86_64" else "aarch64"
+                    self.assertIn(f"https://static.rust-lang.org/rustup/archive/1.29.1/"
+                                  f"{target}-unknown-linux-gnu/rustup-init",
+                                  (root / "download").read_text().splitlines())
+                    self.assertIn(f"rustc {compiler}", result.stdout)
+                if scenario != "unsupported":
+                    self.assertTrue((root / "cleaned").exists())
 
     def test_bad_download_hash_stops_before_extraction(self):
         with tempfile.TemporaryDirectory() as directory:

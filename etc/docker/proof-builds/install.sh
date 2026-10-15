@@ -32,10 +32,32 @@ rm -rf /var/lib/apt/lists/*
 
 case "$component" in
     nitro-cli)
-        installer=$(mktemp)
+        rustup_version=${RUSTUP_VERSION:-1.29.1}
+        rust_toolchain=${RUST_TOOLCHAIN:-1.99.0}
+        case "$(uname -m)" in
+            x86_64)
+                rustup_target=x86_64-unknown-linux-gnu
+                rustup_sha256=${RUSTUP_SHA256_AMD64:-dda7234360b7f578ca8b0ddcb80145646fa61a67c1720a5abc7051b35c9fcb71} ;;
+            aarch64|arm64)
+                rustup_target=aarch64-unknown-linux-gnu
+                rustup_sha256=${RUSTUP_SHA256_ARM64:-15f6e4ce9f583b929c996c91562bad6d4454f3281de858b02cdfdef615fac433} ;;
+            *) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;;
+        esac
+        # rustup-init dispatches by executable basename.
+        installer=$(mktemp "${TMPDIR:-/tmp}/rustup-init.XXXXXX")
         trap 'rm -f "$installer"' EXIT
-        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o "$installer"
-        sh "$installer" -y ;;
+        curl --proto '=https' --tlsv1.2 -sSf \
+            "https://static.rust-lang.org/rustup/archive/${rustup_version}/${rustup_target}/rustup-init" \
+            -o "$installer"
+        echo "${rustup_sha256}  ${installer}" | sha256sum -c -
+        chmod +x "$installer"
+        "$installer" -y --default-toolchain "$rust_toolchain"
+        rust_version=$("$HOME/.cargo/bin/rustc" --version)
+        echo "$rust_version"
+        case "$rust_version" in
+            "rustc $rust_toolchain "*) ;;
+            *) echo "unexpected Rust compiler version: $rust_version" >&2; exit 1 ;;
+        esac ;;
     prover-service)
         cargo install sqlx-cli --version "${SQLX_CLI_VERSION:-0.8.6}" --locked \
             --no-default-features --features postgres,native-tls ;;
