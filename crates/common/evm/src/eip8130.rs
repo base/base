@@ -87,8 +87,8 @@ use revm::{
 
 use crate::{
     BaseContext, BaseContextTr, BaseEvm, BaseHaltReason, BaseSpecId, BaseTime, BaseTransaction,
-    BaseTransactionError, BaseTxTr, BaseUpgrade, Eip8130PhaseStatuses, L1BlockInfo,
-    handler::BaseHandler,
+    BaseTransactionError, BaseTxTr, BaseUpgrade, Eip8130ExecutionMode, Eip8130PhaseStatuses,
+    L1BlockInfo, handler::BaseHandler,
 };
 
 /// EIP-3529 maximum gas refund quotient: refunds are capped at `gas_used / 5`.
@@ -468,6 +468,11 @@ impl Eip8130Executor {
     /// authenticator the caller declared is priced from the synthesized
     /// `sender_auth` / `payer_auth` blob shape. No signature is ever verified, so
     /// the declared authenticator only selects which schedule entry is charged.
+    ///
+    /// In [`Eip8130ExecutionMode::Call`] the calls run once at the
+    /// transaction's gas limit and the reported gas is that run's metered gas.
+    /// In [`Eip8130ExecutionMode::Simulate`] the reported gas is the searched
+    /// gas limit at which the calls succeed.
     pub fn simulate<DB, I, P>(
         evm: &mut BaseEvm<DB, I, P>,
     ) -> Result<ExecutionResult<BaseHaltReason>, EVMError<DB::Error, BaseTransactionError>>
@@ -485,11 +490,11 @@ impl Eip8130Executor {
     {
         // Clone the envelope + optional acting-actor hint before taking a mutable
         // borrow of `ctx` (same pattern as `execute`).
-        let (signed, acting_actor_hint) = evm
+        let (signed, acting_actor_hint, mode) = evm
             .ctx()
             .tx()
             .eip8130_parts()
-            .map(|parts| (parts.signed.clone(), parts.simulation_sender_actor_id))
+            .map(|parts| (parts.signed.clone(), parts.simulation_sender_actor_id, parts.mode))
             .ok_or_else(|| {
                 BaseTransactionError::eip8130("transaction is not an EIP-8130 transaction")
             })?;
@@ -549,6 +554,11 @@ impl Eip8130Executor {
         let inspection =
             Self::start_inspection(evm, outcome.sender, encoded.clone(), outcome.gas_limit);
 
+        let ceiling_pool = outcome.execution_gas_available;
+        if mode == Eip8130ExecutionMode::Call {
+            return Self::simulate_single_run(evm, &signed, &outcome, inspection, ceiling_pool);
+        }
+
         // The estimate must return a gas *limit* that guarantees execution
         // succeeds, not the net charge. Two effects make that more than the gas a
         // single happy-path run consumes:
@@ -569,8 +579,7 @@ impl Eip8130Executor {
         // applied account changes, and warmed accounts above are shared by every
         // probe, so only the call pool varies. Determinism of the EIP-8130 schedule
         // keeps the search to a handful of iterations.
-        let ceiling_pool = outcome.execution_gas_available;
-
+        //
         // First run at the request's full pool: measures the baseline call spend
         // and decides whether the transaction can succeed at all. Probed under a
         // nested checkpoint so its writes (and logs) are rolled back before the
@@ -604,42 +613,7 @@ impl Eip8130Executor {
         // and any logs the committed phases emitted before the failing phase.
         if ceiling.reverted {
             evm.inspect = inspect;
-            let final_calls = match Self::execute_calls(evm, &signed, &outcome, ceiling_pool) {
-                Ok(final_calls) => final_calls,
-                Err(err) => {
-                    Self::end_inspection(
-                        evm,
-                        inspection,
-                        true,
-                        Bytes::new(),
-                        outcome.gas_limit,
-                        outcome.gas_limit,
-                    );
-                    Self::discard_transaction_state(evm);
-                    return Err(err);
-                }
-            };
-            let logs = evm.ctx_mut().journal_mut().take_logs();
-            // EIP-7623: the sender portion is floored at the calldata floor even
-            // on a revert, so the reported gas reflects the minimum a data-heavy
-            // transaction is metered.
-            let gross = outcome
-                .metered_gas(outcome.sender_intrinsic.saturating_add(final_calls.call_gas_spent));
-            Self::end_inspection(
-                evm,
-                inspection,
-                true,
-                final_calls.output.clone(),
-                outcome.gas_limit,
-                gross,
-            );
-            Self::discard_transaction_state(evm);
-            let result_gas = ResultGas::new_with_state_gas(gross, 0, 0, 0);
-            return Ok(ExecutionResult::Revert {
-                gas: result_gas,
-                logs,
-                output: final_calls.output,
-            });
+            return Self::simulate_single_run(evm, &signed, &outcome, inspection, ceiling_pool);
         }
 
         let feasible_pool = match Self::search_estimate_pool(
@@ -713,6 +687,69 @@ impl Eip8130Executor {
                 gas: result_gas,
                 logs,
                 output: Output::Call(final_calls.output),
+            })
+        }
+    }
+
+    /// Runs the phased `calls` once at `pool` (un-reverted, so the output and
+    /// logs are captured), closes the trace root, and discards all simulated
+    /// state. Reports the metered gas of that run, with the EIP-7623 sender
+    /// floor applied, as a success or a revert.
+    fn simulate_single_run<DB, I, P>(
+        evm: &mut BaseEvm<DB, I, P>,
+        signed: &base_common_consensus::Eip8130Signed,
+        outcome: &Eip8130Outcome,
+        inspection: Option<CallInputs>,
+        pool: u64,
+    ) -> Result<ExecutionResult<BaseHaltReason>, EVMError<DB::Error, BaseTransactionError>>
+    where
+        DB: AlloyDatabase,
+        I: Inspector<BaseContext<DB>>,
+        P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
+        BaseContext<DB>: BaseContextTr
+            + ContextTr<
+                Db = DB,
+                Tx = BaseTransaction<TxEnv>,
+                Block = BlockEnv,
+                Journal: core::fmt::Debug + JournalExt,
+            >,
+    {
+        let calls = match Self::execute_calls(evm, signed, outcome, pool) {
+            Ok(calls) => calls,
+            Err(err) => {
+                Self::end_inspection(
+                    evm,
+                    inspection,
+                    true,
+                    Bytes::new(),
+                    outcome.gas_limit,
+                    outcome.gas_limit,
+                );
+                Self::discard_transaction_state(evm);
+                return Err(err);
+            }
+        };
+        let logs = evm.ctx_mut().journal_mut().take_logs();
+        let gross =
+            outcome.metered_gas(outcome.sender_intrinsic.saturating_add(calls.call_gas_spent));
+        Self::end_inspection(
+            evm,
+            inspection,
+            calls.reverted,
+            calls.output.clone(),
+            outcome.gas_limit,
+            gross,
+        );
+        Self::discard_transaction_state(evm);
+        let gas = ResultGas::new_with_state_gas(gross, 0, 0, 0);
+        if calls.reverted {
+            Ok(ExecutionResult::Revert { gas, logs, output: calls.output })
+        } else {
+            Ok(ExecutionResult::Success {
+                reason: SuccessReason::Return,
+                gas,
+                logs,
+                output: Output::Call(calls.output),
             })
         }
     }
@@ -2034,7 +2071,13 @@ impl Eip8130Executor {
 
 #[cfg(test)]
 mod tests {
-    use alloy_evm::{Evm, EvmError, FromTxWithEncoded, precompiles::PrecompilesMap};
+    use alloc::sync::Arc;
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
+    use alloy_evm::{
+        Evm, EvmError, FromTxWithEncoded,
+        precompiles::{DynPrecompile, PrecompileInput, PrecompilesMap},
+    };
     use alloy_primitives::{Address, B256, Bytes, U256, address, bytes, keccak256};
     use alloy_sol_types::{SolValue, sol};
     use base_common_consensus::{
@@ -2052,6 +2095,7 @@ mod tests {
         database::InMemoryDB,
         database_interface::DBErrorMarker,
         inspector::NoOpInspector,
+        precompile::PrecompileOutput,
         state::AccountInfo,
     };
 
@@ -4551,5 +4595,46 @@ mod tests {
         evm.ctx_mut().tx = sim;
         let err = Eip8130Executor::simulate(&mut evm).unwrap_err();
         assert!(err.to_string().contains("below the EIP-7623 calldata floor"), "got {err}");
+    }
+
+    /// Installs a precompile at `address` that succeeds without output and
+    /// counts how many times it is invoked.
+    fn install_counting_precompile(
+        evm: &mut BaseEvm<InMemoryDB, NoOpInspector, PrecompilesMap>,
+        address: Address,
+    ) -> Arc<AtomicUsize> {
+        let runs = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&runs);
+        evm.precompiles_mut().apply_precompile(&address, move |_| {
+            Some(DynPrecompile::from(move |_: PrecompileInput<'_>| {
+                counter.fetch_add(1, Ordering::SeqCst);
+                Ok(PrecompileOutput::new(0, Bytes::new(), 0))
+            }))
+        });
+        runs
+    }
+
+    /// An `eth_call` simulation runs the phased calls exactly once instead of
+    /// repeating them for the gas-limit search.
+    #[test]
+    fn simulate_call_mode_executes_the_calls_once() {
+        let key = signing_key(0xe8);
+        let sender = eoa_address(&key);
+        let counted = address!("0x00000000000000000000000000000000000000e8");
+        let mut tx = base_tx();
+        tx.calls = vec![vec![Call { to: counted, value: U256::ZERO, data: Bytes::new() }]];
+        let signed = eoa_signed(tx, &key);
+
+        let mut evm = evm_with(U256::from(10u64).pow(U256::from(18u64)), sender);
+        let runs = install_counting_precompile(&mut evm, counted);
+        let mut call = into_base_tx(&signed);
+        call.base.caller = sender;
+        if let Some(parts) = call.eip8130.as_mut() {
+            parts.mode = Eip8130ExecutionMode::Call;
+        }
+
+        let outcome = evm.transact_raw(call).expect("call simulation runs");
+        assert!(outcome.result.is_success(), "expected success, got {:?}", outcome.result);
+        assert_eq!(runs.load(Ordering::SeqCst), 1, "eth_call must execute the calls once");
     }
 }

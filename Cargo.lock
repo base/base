@@ -4486,6 +4486,7 @@ dependencies = [
  "base-protocol",
  "base-test-utils",
  "eyre",
+ "reth-rpc-eth-api",
  "serde_json",
  "tokio",
  "tracing",
