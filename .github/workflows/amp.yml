@@ -1,0 +1,358 @@
+# Runs the Amp coding agent on a pull request, on request from a Base engineer.
+#
+# Security model (see the Amp security review):
+# - Amp only runs on code Base has approved:
+#   - `/amp <instructions>` comments from base org members (OWNER/MEMBER) on
+#     same-repo PRs, which only employees can push.
+#   - Fork PRs require the engineer to approve one exact commit:
+#     `/amp @<full-sha> <instructions>`. The run fails if the PR head moved.
+#   - `workflow_dispatch` (write access required) with an explicit PR and SHA.
+#   Both triggers always use this file from the default branch, so a PR can't
+#   change what runs.
+# - Nothing internal is available to Amp. The `amp` job holds exactly one
+#   secret, the Amp bot user's access key (`AMP_API_KEY`). It has no Coinbase
+#   credentials, no GitHub write token, and runs only on Depot runners.
+# - Amp's changes are handed to the `publish` job as a patch. Only `publish`
+#   mints a GitHub App token, and it never executes code from the PR.
+#
+# Changes to any workflow that uses AMP_API_KEY are checked by
+# .github/workflows/amp-workflow-policy.yml.
+
+name: Amp
+
+on:
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number
+        required: true
+        type: number
+      sha:
+        description: Full commit SHA you reviewed and approve Amp to run on (must be the PR head)
+        required: true
+        type: string
+      prompt:
+        description: Instructions for Amp
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: amp-${{ github.event.issue.number || inputs.pr_number }}
+  cancel-in-progress: false
+
+jobs:
+  authorize:
+    name: Authorize request
+    # Comment trigger: only PR comments starting with /amp from base org members.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.issue.pull_request &&
+       startsWith(github.event.comment.body, '/amp') &&
+       contains(fromJSON('["OWNER", "MEMBER"]'), github.event.comment.author_association))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      pr_number: ${{ steps.resolve.outputs.pr_number }}
+      sha: ${{ steps.resolve.outputs.sha }}
+      head_ref: ${{ steps.resolve.outputs.head_ref }}
+      is_fork: ${{ steps.resolve.outputs.is_fork }}
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Resolve PR and approved commit
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+          COMMENT_PR: ${{ github.event.issue.number }}
+          INPUT_PR: ${{ inputs.pr_number }}
+          INPUT_SHA: ${{ inputs.sha }}
+          INPUT_PROMPT: ${{ inputs.prompt }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            pr_number="$INPUT_PR"
+            approved_sha="$INPUT_SHA"
+            prompt="$INPUT_PROMPT"
+          else
+            pr_number="$COMMENT_PR"
+            # Format: /amp [@<full-sha>] <instructions>
+            body="${COMMENT_BODY#/amp}"
+            approved_sha=""
+            if [[ "$body" =~ ^[[:space:]]*@([0-9a-f]{40})(.*)$ ]]; then
+              approved_sha="${BASH_REMATCH[1]}"
+              body="${BASH_REMATCH[2]}"
+            fi
+            prompt="$(printf '%s' "$body" | sed -e 's/^[[:space:]]*//')"
+          fi
+
+          if [[ -z "${prompt//[[:space:]]/}" ]]; then
+            echo "::error::No instructions given. Usage: /amp [@<full-sha>] <instructions>"
+            exit 1
+          fi
+          if [[ -n "$approved_sha" && ! "$approved_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::The approved SHA must be a full 40-character commit SHA."
+            exit 1
+          fi
+
+          pr="$(gh api "repos/$GH_REPO/pulls/$pr_number")"
+          state="$(jq -r .state <<<"$pr")"
+          head_sha="$(jq -r .head.sha <<<"$pr")"
+          head_repo="$(jq -r .head.repo.full_name <<<"$pr")"
+          head_ref="$(jq -r .head.ref <<<"$pr")"
+
+          if [[ "$state" != "open" ]]; then
+            echo "::error::PR #$pr_number is not open."
+            exit 1
+          fi
+
+          is_fork=false
+          [[ "$head_repo" != "$GH_REPO" ]] && is_fork=true
+
+          if [[ "$is_fork" == "true" && -z "$approved_sha" ]]; then
+            echo "::error::PR #$pr_number is from a fork. Review it, then approve one commit: /amp @<full-sha> <instructions>"
+            exit 1
+          fi
+          if [[ -n "$approved_sha" && "$approved_sha" != "$head_sha" ]]; then
+            echo "::error::Approved SHA $approved_sha is not the PR head ($head_sha). Review the new commits and approve the current head."
+            exit 1
+          fi
+
+          {
+            echo "pr_number=$pr_number"
+            echo "sha=$head_sha"
+            echo "head_ref=$head_ref"
+            echo "is_fork=$is_fork"
+          } >> "$GITHUB_OUTPUT"
+
+          mkdir -p "$RUNNER_TEMP/amp-request"
+          printf '%s\n' "$prompt" > "$RUNNER_TEMP/amp-request/prompt.txt"
+          echo "Amp approved for PR #$pr_number at $head_sha (fork: $is_fork)"
+
+      - name: Upload request
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: amp-request
+          path: ${{ runner.temp }}/amp-request/
+          retention-days: 7
+
+  amp:
+    name: Run Amp
+    needs: authorize
+    # Depot runners only. Never self-hosted runners.
+    runs-on: depot-ubuntu-24.04-16
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Check out the approved commit
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ needs.authorize.outputs.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Download request
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: amp-request
+          path: ${{ runner.temp }}/amp-request
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+
+      - name: Install Amp CLI
+        id: install-amp
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --prefix "$RUNNER_TEMP/amp-cli" --no-save --no-package-lock --no-audit --no-fund @ampcode/cli@0.0.1792065649-g5a30fc
+          amp_path="$RUNNER_TEMP/amp-cli/node_modules/.bin/amp"
+          "$amp_path" --version
+          echo "amp_path=$amp_path" >> "$GITHUB_OUTPUT"
+
+      - name: Run Amp
+        env:
+          AMP_API_KEY: ${{ secrets.AMP_API_KEY }}
+          AMP_PATH: ${{ steps.install-amp.outputs.amp_path }}
+          PR_NUMBER: ${{ needs.authorize.outputs.pr_number }}
+          REPOSITORY: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/amp-result"
+          mkdir -p "$out"
+
+          # Tools run without prompts. Amp has no GitHub credentials, so it
+          # can only change the working tree.
+          settings="$RUNNER_TEMP/amp-settings.json"
+          printf '{"amp.dangerouslyAllowAll": true}\n' > "$settings"
+
+          {
+            echo "You are working on pull request #$PR_NUMBER in $REPOSITORY, checked out at the PR head."
+            echo "Make the requested changes in the working tree. Do not commit, push, or call the GitHub API; you have no GitHub credentials."
+            echo "A workflow step will push your changes to the PR branch (or attach them for fork PRs) and post your final message as a PR comment."
+            echo "End with a short summary of what you changed and anything a reviewer should check."
+            echo
+            echo "Instructions from a Base engineer:"
+            cat "$RUNNER_TEMP/amp-request/prompt.txt"
+          } > "$RUNNER_TEMP/amp-prompt.txt"
+
+          # Start Amp with a minimal environment so runner variables are not
+          # passed to the agent. AMP_API_KEY is the only secret it receives.
+          env -i \
+            HOME="$HOME" PATH="$PATH" LANG=C.UTF-8 TERM=dumb \
+            AMP_API_KEY="$AMP_API_KEY" \
+            AMP_SETTINGS_FILE="$settings" \
+            "$AMP_PATH" --visibility workspace --no-ide --no-notifications \
+              --title "base#$PR_NUMBER" \
+              -x "$(cat "$RUNNER_TEMP/amp-prompt.txt")" \
+            > "$out/summary.md"
+
+          git add -A
+          git diff --cached --binary > "$out/changes.patch"
+          echo "Patch size: $(wc -c < "$out/changes.patch") bytes"
+
+      - name: Upload result
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: amp-result
+          path: ${{ runner.temp }}/amp-result/
+          retention-days: 7
+
+  publish:
+    name: Publish result
+    needs: [authorize, amp]
+    if: ${{ !cancelled() && needs.authorize.result == 'success' }}
+    # Never runs code from the PR: it only applies a patch, pushes, and comments.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Download result
+        id: download
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: amp-result
+          path: ${{ runner.temp }}/amp-result
+
+      - name: Mint GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.AMP_GITHUB_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AMP_GITHUB_APP_PRIVATE_KEY }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-issues: write
+
+      - name: Push changes (same-repo PRs only)
+        id: push
+        if: ${{ needs.amp.result == 'success' && needs.authorize.outputs.is_fork == 'false' }}
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          HEAD_REF: ${{ needs.authorize.outputs.head_ref }}
+          APPROVED_SHA: ${{ needs.authorize.outputs.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          patch="$RUNNER_TEMP/amp-result/changes.patch"
+          if [[ ! -s "$patch" ]]; then
+            echo "status=no-changes" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if grep -qE '^diff --git a/\.github/' "$patch"; then
+            echo "status=blocked-github-dir" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git init -q work && cd work
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GH_REPO}.git"
+          git fetch -q --depth=1 origin "refs/heads/${HEAD_REF}"
+          if [[ "$(git rev-parse FETCH_HEAD)" != "$APPROVED_SHA" ]]; then
+            echo "status=branch-moved" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git checkout -q FETCH_HEAD
+          git apply --index "$patch"
+
+          bot_id="$(gh api "users/${APP_SLUG}%5Bbot%5D" --jq .id)"
+          git -c user.name="${APP_SLUG}[bot]" \
+              -c user.email="${bot_id}+${APP_SLUG}[bot]@users.noreply.github.com" \
+              commit -q -m "chore: apply Amp changes (AI-generated)"
+          git push -q origin "HEAD:refs/heads/${HEAD_REF}"
+          echo "status=pushed" >> "$GITHUB_OUTPUT"
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Comment on PR
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ needs.authorize.outputs.pr_number }}
+          IS_FORK: ${{ needs.authorize.outputs.is_fork }}
+          AMP_RESULT: ${{ needs.amp.result }}
+          PUSH_STATUS: ${{ steps.push.outputs.status }}
+          PUSH_COMMIT: ${{ steps.push.outputs.commit }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          result="$RUNNER_TEMP/amp-result"
+          body="$RUNNER_TEMP/comment.md"
+          {
+            echo "<!-- AMP_RESULT -->"
+            echo "**Amp** (AI-generated) · [workflow run]($RUN_URL)"
+            echo
+            if [[ "$AMP_RESULT" != "success" ]]; then
+              echo "Amp did not finish successfully. See the workflow run for details."
+            else
+              if [[ -s "$result/summary.md" ]]; then
+                head -c 60000 "$result/summary.md"
+                echo
+              fi
+              echo
+              case "${PUSH_STATUS:-}" in
+                pushed) echo "Pushed changes in $PUSH_COMMIT. Review them before merging." ;;
+                no-changes) echo "No file changes." ;;
+                blocked-github-dir) echo "Changes touch \`.github/\`, so they were not pushed. The patch is attached to the workflow run." ;;
+                branch-moved) echo "The branch changed while Amp was running, so changes were not pushed. The patch is attached to the workflow run." ;;
+                *)
+                  if [[ "$IS_FORK" == "true" && -s "$result/changes.patch" ]]; then
+                    echo "This PR is from a fork, so changes were not pushed. The patch is attached to the workflow run."
+                  fi
+                  ;;
+              esac
+            fi
+          } > "$body"
+          gh pr comment "$PR_NUMBER" --body-file "$body"
