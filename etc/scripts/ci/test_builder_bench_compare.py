@@ -123,6 +123,44 @@ class RenderTest(unittest.TestCase):
         )
         self.assertIn("| native | `transfers` | 500,000 | **missing** | **missing** |", body)
 
+    def test_empty_base_without_event_lines(self):
+        body = self.render({}, baseline())
+        self.assertEqual(
+            headline(body),
+            "**Builder benchmarks:** the base commit has no instruction counts (the benchmarks are "
+            "new or failed to build there), so this run only reports head counts. 3 scenario(s) "
+            "are new on the head commit. Event counts could not be compared because the base run "
+            "produced no event lines. Advisory; does not block merge.",
+        )
+
+    def test_empty_base_with_event_lines(self):
+        base = {
+            key: Measurement(deferrals=m.deferrals, events=m.events, has_events=True)
+            for key, m in baseline().items()
+        }
+        body = self.render(base, baseline())
+        self.assertEqual(
+            headline(body),
+            "**Builder benchmarks:** the base commit has no instruction counts (the benchmarks are "
+            "new or failed to build there), so this run only reports head counts. 3 scenario(s) "
+            "are new on the head commit. Advisory; does not block merge.",
+        )
+
+    def test_event_only_head_scenario_is_new_when_base_has_no_events(self):
+        base = {key: measured(m.instructions, m.deferrals) for key, m in baseline().items()}
+        head = baseline()
+        head["native/wake_rescan"] = Measurement(
+            deferrals=10, events={"BUILDER_DEFERRED": 1}, has_events=True
+        )
+        body = self.render(base, head)
+        self.assertEqual(
+            headline(body),
+            "**Builder benchmarks:** 1 scenario(s) are new on the head commit. Event counts could "
+            "not be compared because the base run produced no event lines. Advisory; does not "
+            "block merge.",
+        )
+        self.assertIn("| native | `wake_rescan` | new | missing | **new** |", body)
+
 
 if __name__ == "__main__":
     unittest.main()

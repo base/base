@@ -197,7 +197,13 @@ class BuilderBenchCompare:
             missing_instructions = row.base.instructions is not None and row.head.instructions is None
             missing_events = row.base.has_events and not row.head.has_events
             new_instructions = row.base.instructions is None and row.head.instructions is not None
-            new_events = base_has_events and row.head.has_events and not row.base.has_events
+            # Head event lines are new where base has none to compare against: the base run produced
+            # event lines but not this one, or this scenario has no base results at all.
+            new_events = (
+                row.head.has_events
+                and not row.base.has_events
+                and (base_has_events or row.base.instructions is None)
+            )
             is_moved = (
                 (change is not None and abs(change) > self.threshold_pct)
                 or (marginal_change is not None and abs(marginal_change) > self.threshold_pct)
@@ -224,7 +230,7 @@ class BuilderBenchCompare:
             if missing_instructions:
                 head_cell = f"**{head_cell}**"
                 change_cell = "missing"
-            elif new_instructions:
+            elif is_new:
                 change_cell = "new"
             else:
                 change_cell = self.fmt_pct(change)
@@ -241,12 +247,13 @@ class BuilderBenchCompare:
 
         no_events = "Event counts could not be compared because the base run produced no event lines."
         if not any(row.head.instructions is not None for row in rows):
-            headline = "no head results were produced. See the run log."
+            sentences = ["no head results were produced. See the run log."]
         elif not any(row.base.instructions is not None for row in rows):
-            headline = (
-                "the base commit has no results (the benchmarks are new or failed to build there), "
+            sentences = [
+                "the base commit has no instruction counts (the benchmarks are new or failed to build "
+                "there), "
                 "so this run only reports head counts."
-            )
+            ]
         elif moved or missing or new:
             sentences = []
             if missing:
@@ -258,18 +265,21 @@ class BuilderBenchCompare:
                     f"{moved} scenario(s) changed by more than {self.threshold_pct:g}% or changed "
                     "event counts."
                 )
-            if new:
-                sentences.append(f"{new} scenario(s) are new on the head commit.")
-            if not base_has_events:
-                sentences.append(no_events)
-            headline = " ".join(sentences) + " Advisory; does not block merge."
         elif base_has_events:
-            headline = (
+            sentences = [
                 f"every scenario is within {self.threshold_pct:g}% of the base commit, with "
                 "unchanged event counts."
-            )
+            ]
         else:
-            headline = f"every scenario is within {self.threshold_pct:g}% of the base commit. {no_events}"
+            sentences = [f"every scenario is within {self.threshold_pct:g}% of the base commit."]
+        # These apply whichever case above described the run.
+        if new:
+            sentences.append(f"{new} scenario(s) are new on the head commit.")
+        if not base_has_events:
+            sentences.append(no_events)
+        if moved or missing or new:
+            sentences.append("Advisory; does not block merge.")
+        headline = " ".join(sentences)
 
         lines = [MARKER, "", f"**Builder benchmarks:** {headline}", ""]
         commits = self.compared_commits(base_sha, head_sha, pr_head_sha)

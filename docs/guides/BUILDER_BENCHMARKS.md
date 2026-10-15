@@ -70,9 +70,9 @@ The comment names the compared commits: the base commit (the base branch tip on 
 
 - Its instruction count or per-deferral cost moves by more than 2%, or any event count changes.
 - The base commit has an instruction count or event line that the head lacks, which is how a head benchmark or event-test case that fails shows up.
-- It is new on the head commit, so it has nothing to be compared against.
+- It is new on the head commit: head has an instruction count or event line, and base has nothing to compare it against. When the base run produced no event lines, a head event line is new only for a scenario with no base instruction count.
 
-The headline counts each kind separately, and says the scenarios are within 2% only when every scenario was measured on both commits. When the base run produced no event lines, the headline says event counts could not be compared. When nothing is flagged, the table is collapsed. `etc/scripts/ci/test_builder_bench_compare.py` tests these cases and runs in the workflow before the comment is rendered.
+The headline counts each kind separately, and says the scenarios are within 2% only when every scenario was measured on both commits. When the base commit has no instruction counts at all, the headline says so instead. In every case it also states how many scenarios are new on the head commit, and says event counts could not be compared when the base run produced no event lines. When nothing is flagged, the table is collapsed. `etc/scripts/ci/test_builder_bench_compare.py` tests these cases and runs in the workflow before the comment is rendered.
 
 Instruction counts are deterministic for a fixed toolchain, dependency set, target, and Valgrind version, so base and head measured in the same job are directly comparable on shared runners. Wall-clock measurement on shared runners is too noisy for per-PR comparison, which is why `bench-pr.yml` is manual only. Wall-clock control flow inside the loop would make counts nondeterministic under Valgrind, so the fixture disables the predicate evaluation cutoff (`predicate_eval_hard_cutoff = Duration::MAX`) and sizes the event writer's lossy queue so it never drops.
 
