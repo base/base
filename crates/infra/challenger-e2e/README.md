@@ -366,19 +366,25 @@ whoever triages it after the wrong component. The driver keeps the two apart:
   patch. A read that fails the way an unavailable node does (`no state found`, a
   refused connection, a 502/503/504) is retried for
   `CHALLENGER_E2E_L2_RETRY_BUDGET`, which covers a node restart.
-- **It reads L2 state once at every dispute timeout.** The challenger validates
+- **It reads L2 state at every dispute timeout.** The challenger validates
   against the same node, so a timeout while that node serves no state is the
-  node's failure.
+  node's failure. The read is 64 blocks below the head, so a backend that has
+  not caught up to it is not mistaken for an outage, and the timeout is only
+  excused if 3 reads 5s apart all fail.
 - **Too few eligible games is not the challenger's failure either**, whether
   the proposer is stalled or the implementation has just rotated.
-- **Setup is excused for any transient RPC failure**, such as the fork's
-  upstream L1 RPC resetting a connection. Setup only reads the chain into a fork
-  of its own, and a retried pod starts over on a fresh one. Later phases are not
-  excused this way, because a dispute timeout can carry a transport error from
-  a fork that died.
+- **Setup is excused for any transient RPC failure until the challenger is
+  released**, such as the fork's upstream L1 RPC resetting a connection. Until
+  then the run has only read the chain into a fork of its own, and a retried
+  pod starts over on a fresh one. From the release on it is not: a challenger
+  that crashes on start fails the wait for its first scan with `connection
+  refused`. Later phases are not excused either, because a dispute timeout can
+  carry a transport error from a fork that died.
 
-These failures carry `infra=true`, and the binary exits with **2** instead of 1,
-so the Workflow can retry them without retrying a real regression. Any other
+These failures carry `infra=true`, and the binary exits with **75**
+(`EX_TEMPFAIL`) instead of 1, so the Workflow can retry them without retrying a
+real regression. Clap's `2` stays a usage error, so a misconfigured Job is not
+retried as an outage either. Any other
 failure, including an L2 read that fails for another reason (a header hash or
 state proof that does not verify), stays a plain failure.
 
@@ -407,7 +413,7 @@ is pointed at and talks to the same prover-service.
 | `CHALLENGER_E2E_QUIET_WINDOW` | No (default `90s`) | Positive-case (and Path 2 skip) observation window |
 | `CHALLENGER_E2E_DISPUTE_TIMEOUT` | No (default `45m`) | Budget for each SNARK / dispute; sized for a real proof, generous in `mock` mode |
 | `CHALLENGER_E2E_POLL_INTERVAL` | No (default `5s`) | Driver poll interval |
-| `CHALLENGER_E2E_L2_RETRY_BUDGET` | No (default `10m`) | How long an L2 read that fails like an unavailable node is retried before the run fails as an infrastructure failure (exit code 2) |
+| `CHALLENGER_E2E_L2_RETRY_BUDGET` | No (default `10m`) | How long an L2 read that fails like an unavailable node is retried before the run fails as an infrastructure failure (exit code 75) |
 
 `anvil` must be on `PATH`. The challenger under test must be reachable on
 `CHALLENGER_E2E_CHALLENGER_METRICS_URL` and must be configured with a local

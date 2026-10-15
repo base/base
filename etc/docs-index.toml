@@ -68,7 +68,7 @@ digest = "4be70960df"
 
 ["bin/challenger-e2e/README.md"]
 summary = "Challenger end-to-end test binary: forks L1 into a pod-local Anvil and checks the challenger scans valid games without disputing; intended as a K8s Job."
-digest = "394fbf49d7"
+digest = "194a67b022"
 
 ["bin/challenger/README.md"]
 summary = "ZK-proof dispute game challenger binary: parses CLI arguments, builds a validated config, and delegates to base_challenger::run(). Very short README."
@@ -436,7 +436,7 @@ digest = "1e4810a82c"
 
 ["crates/infra/challenger-e2e/README.md"]
 summary = "Behavioural e2e test of the challenger: forks L1 into Anvil, patches real games; the default `all` scenario covers Paths 1-4 on one fork by reviving nullified verifiers. Lists scenarios and env vars."
-digest = "7b77172c1c"
+digest = "3ae3aeb094"
 
 ["crates/infra/load-tests/README.md"]
 summary = "Load testing: devnet/sepolia profiles, YAML workloads, calibration, adaptive or proactive validity signing, resource pacing, benchmark/report tools, and rollout limitations."

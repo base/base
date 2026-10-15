@@ -18,11 +18,24 @@ use tracing::warn;
 
 /// Exit code of a run that failed because a dependency was unavailable.
 ///
-/// Distinct from the generic `1` so the Workflow can retry these and only these.
-pub const INFRA_EXIT_CODE: i32 = 2;
+/// `EX_TEMPFAIL` from `sysexits.h`. Distinct from the generic `1` so the
+/// Workflow can retry these and only these, and from clap's `2`, which a
+/// misconfigured Job exits with before the run starts.
+pub const INFRA_EXIT_CODE: i32 = 75;
 
 /// How often a retry loop logs while a dependency stays unavailable.
 const RETRY_LOG_EVERY: Duration = Duration::from_secs(30);
+
+/// How far below the L2 head [`Unavailable::probe_l2_state`] reads. A block the
+/// node has just reported can still be unknown to another backend behind the
+/// same load balancer, or gone after a reorg; one this deep cannot.
+const PROBE_DEPTH: u64 = 64;
+
+/// Probes [`Unavailable::l2_state_unavailable`] makes before it blames the node.
+const PROBE_ATTEMPTS: u32 = 3;
+
+/// Pause between those probes.
+const PROBE_SPACING: Duration = Duration::from_secs(5);
 
 /// Longest one read of a dependency may take before it counts as failed.
 ///
@@ -132,7 +145,8 @@ impl Unavailable {
         }
     }
 
-    /// Reads the state proof a canonical output root needs, at the L2 head.
+    /// Reads the state proof a canonical output root needs, [`PROBE_DEPTH`]
+    /// blocks below the L2 head.
     ///
     /// The same `eth_getProof` the driver and the challenger make for every root,
     /// so it fails the same way when the node has no state to serve.
@@ -141,15 +155,35 @@ impl Unavailable {
     pub async fn probe_l2_state(l2: &L2HttpProvider) -> Result<()> {
         let probe = async {
             let head = l2.get_block_number().await.wrap_err("failed to read the L2 head")?;
+            let block = head.saturating_sub(PROBE_DEPTH);
             l2.get_proof(Predeploys::L2_TO_L1_MESSAGE_PASSER, Vec::new())
-                .number(head)
+                .number(block)
                 .await
-                .wrap_err_with(|| format!("failed to read L2 state at the head, block {head}"))?;
+                .wrap_err_with(|| format!("failed to read L2 state at block {block}"))?;
             Ok(())
         };
         tokio::time::timeout(ATTEMPT_TIMEOUT, probe)
             .await
             .unwrap_or_else(|_| Err(Self::no_answer("the L2 RPC")))
+    }
+
+    /// The last probe error if [`Self::probe_l2_state`] failed like an
+    /// unavailable node [`PROBE_ATTEMPTS`] times in a row, [`PROBE_SPACING`]
+    /// apart; `None` as soon as one probe succeeds or fails another way.
+    ///
+    /// Used to excuse a timeout, so one blip must not be enough.
+    pub async fn l2_state_unavailable(l2: &L2HttpProvider) -> Option<eyre::Report> {
+        let mut last = None;
+        for attempt in 0..PROBE_ATTEMPTS {
+            if attempt > 0 {
+                tokio::time::sleep(PROBE_SPACING).await;
+            }
+            match Self::probe_l2_state(l2).await {
+                Err(error) if Self::looks_transient(&error) => last = Some(error),
+                _ => return None,
+            }
+        }
+        last
     }
 
     /// The error for an attempt cut off by [`ATTEMPT_TIMEOUT`]; it

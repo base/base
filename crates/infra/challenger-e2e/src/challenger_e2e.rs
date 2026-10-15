@@ -248,18 +248,10 @@ impl ChallengerE2e {
     pub async fn run() -> Result<()> {
         let config = Config::parse();
         let mut progress = Progress::new(config.scenario);
-        let result = Self::run_scenario(config, &mut progress).await.map_err(|error| {
-            // Setup only reads the chain into a fork of its own, and a retried
-            // pod starts over on a fresh fork, so a transient RPC failure there
-            // (most often Anvil's upstream L1 RPC resetting a connection) cannot
-            // be the challenger's. Later phases are not excused this way: a
-            // dispute timeout can carry a transport error from a dead fork.
-            if progress.phase() == Some(Phase::Setup) {
-                Unavailable::classify(error, "an RPC during setup")
-            } else {
-                error
-            }
-        });
+        let mut challenger_released = false;
+        let result = Self::run_scenario(config, &mut progress, &mut challenger_released)
+            .await
+            .map_err(|error| Self::classify_failure(error, progress.phase(), challenger_released));
         if let Err(error) = &result {
             progress.fail(error);
         }
@@ -267,7 +259,33 @@ impl ChallengerE2e {
         result
     }
 
-    async fn run_scenario(mut config: Config, progress: &mut Progress) -> Result<()> {
+    /// Marks a transient RPC failure as [`Unavailable`] if it happened during
+    /// Setup and before the challenger was released.
+    ///
+    /// Until then the run has only read the chain into a fork of its own, and a
+    /// retried pod starts over on a fresh fork, so such a failure (most often
+    /// Anvil's upstream L1 RPC resetting a connection) cannot be the
+    /// challenger's. From the release on it can: a challenger that crashes on
+    /// start fails `await_first_scan` with `connection refused` from its own
+    /// metrics endpoint. Later phases are not excused either, since a dispute
+    /// timeout can carry a transport error from a dead fork.
+    fn classify_failure(
+        error: eyre::Report,
+        phase: Option<Phase>,
+        challenger_released: bool,
+    ) -> eyre::Report {
+        if phase == Some(Phase::Setup) && !challenger_released {
+            Unavailable::classify(error, "an RPC during setup")
+        } else {
+            error
+        }
+    }
+
+    async fn run_scenario(
+        mut config: Config,
+        progress: &mut Progress,
+        challenger_released: &mut bool,
+    ) -> Result<()> {
         // Two distinct accounts: A (driver) signs setup only, B is the
         // challenger. Both are generated per run and never leave the pod.
         let driver = PrivateKeySigner::random();
@@ -373,6 +391,8 @@ impl ChallengerE2e {
             setup_steps,
             "releasing the challenger and waiting for its first scan",
         );
+        // Set first: a failure from here on can be the challenger's.
+        *challenger_released = true;
         Self::release_challenger(&config.env_file, &fork_url, &config.zk_rpc_url, &challenger)?;
         Self::await_first_scan(&config).await?;
         progress.pass();
@@ -2125,8 +2145,8 @@ impl ChallengerE2e {
     /// node's failure, and is marked as one.
     async fn annotate_timeout(error: eyre::Report, config: &Config) -> eyre::Report {
         let l2 = L2HttpProvider::new_http(config.l2_eth_rpc.clone());
-        let error = match Unavailable::probe_l2_state(&l2).await {
-            Err(probe) if Unavailable::looks_transient(&probe) => Unavailable::mark(
+        let error = match Unavailable::l2_state_unavailable(&l2).await {
+            Some(probe) => Unavailable::mark(
                 error.wrap_err(format!("the L2 RPC failed a state read at timeout: {probe:#}")),
                 "the L2 RPC at timeout",
             ),
@@ -2356,6 +2376,25 @@ mod tests {
         let report = format!("{:#}", ChallengerE2e::name_revert(TxManagerError::NonceTooLow));
         assert!(report.contains("nonce too low"), "{report}");
         assert!(!report.contains("reverted with"), "{report}");
+    }
+
+    #[test]
+    fn transient_failures_are_excused_only_in_setup_before_the_release() {
+        let transient = || eyre::eyre!("error sending request for url (http://localhost:18545/)");
+        let infra = |phase, released| {
+            Unavailable::is_infra(&ChallengerE2e::classify_failure(transient(), phase, released))
+        };
+        assert!(infra(Some(Phase::Setup), false));
+        // A challenger that never starts fails `await_first_scan` this way.
+        assert!(!infra(Some(Phase::Setup), true));
+        assert!(!infra(Some(Phase::Path1), true));
+        assert!(!infra(None, true));
+        let assertion = eyre::eyre!("selected game has no intermediate roots");
+        assert!(!Unavailable::is_infra(&ChallengerE2e::classify_failure(
+            assertion,
+            Some(Phase::Setup),
+            false
+        )));
     }
 
     /// These strings are what Datadog facets, dashboards and monitors filter
