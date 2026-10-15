@@ -7,7 +7,11 @@
 //! `eth_estimateGas` path, by exercising the full RPC stack against a test
 //! harness. Both the channel read and the estimate are gated on the Everest fork.
 
-use std::{collections::BTreeMap, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    sync::{Arc, OnceLock},
+    time::Duration,
+};
 
 use alloy_eips::Encodable2718;
 use alloy_genesis::{Genesis, GenesisAccount};
@@ -18,10 +22,15 @@ use base_common_evm::BaseTime;
 use base_common_precompiles::NonceManagerStorage;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_eip8130_rpc_node::{Eip8130RpcExtension, Eip8130RpcMode};
-use base_node_runner::test_utils::{L1_BLOCK_INFO_DEPOSIT_TX, TestHarness};
+use base_node_runner::{
+    BaseNodeExtension, NodeHooks,
+    test_utils::{L1_BLOCK_INFO_DEPOSIT_TX, TestHarness},
+};
 use base_protocol::BaseTimeUpdateTx;
 use base_test_utils::{Account, build_test_genesis_cobalt, build_test_genesis_everest};
+use reth_rpc_eth_api::helpers::SpawnBlocking;
 use serde_json::json;
+use tokio::sync::Semaphore;
 
 /// Launches a harness with the standalone EIP-8130 override registered over the
 /// supplied genesis.
@@ -549,5 +558,54 @@ async fn estimate_gas_treats_type_0x79_as_eip8130() -> eyre::Result<()> {
     let request = json!({ "type": "0x79", "from": alice, "to": bob, "value": "0x1" });
     let gas: U256 = client.request("eth_estimateGas", (request, "latest")).await?;
     assert_ne!(gas, U256::from(21_000u64), "priced under the EIP-8130 schedule, not as a transfer");
+    Ok(())
+}
+
+/// Captures the node's blocking-IO semaphore, the bound reth's `eth_call` uses
+/// for concurrent EVM execution, so a test can hold every permit.
+#[derive(Debug, Clone, Default)]
+struct BlockingIoProbe(Arc<OnceLock<Arc<Semaphore>>>);
+
+impl BaseNodeExtension for BlockingIoProbe {
+    fn apply(self: Box<Self>, hooks: NodeHooks) -> NodeHooks {
+        hooks.add_rpc_module(move |ctx| {
+            let _ = self.0.set(Arc::clone(ctx.registry.eth_api().blocking_io_task_guard()));
+            Ok(())
+        })
+    }
+}
+
+/// How long a request must stay pending while every blocking-IO permit is held.
+const PERMIT_WAIT: Duration = Duration::from_millis(500);
+
+/// EIP-8130 `eth_call` and `eth_estimateGas` wait for a blocking-IO permit like
+/// the standard `eth_call`, so they cannot run beyond the node's concurrency
+/// bound, and they complete once a permit is released.
+#[tokio::test]
+async fn eip8130_call_and_estimate_wait_for_a_blocking_io_permit() -> eyre::Result<()> {
+    let probe = BlockingIoProbe::default();
+    let harness = TestHarness::builder()
+        .with_chain_spec(Arc::new(BaseChainSpec::from_genesis(build_test_genesis_everest())))
+        .with_ext::<Eip8130RpcExtension>(Eip8130RpcMode::Register)
+        .with_extension(probe.clone())
+        .build()
+        .await?;
+    let client = harness.rpc_client()?;
+    let semaphore = Arc::clone(probe.0.get().expect("the RPC hook captured the semaphore"));
+    let all_permits = u32::try_from(semaphore.available_permits())?;
+    let held = Arc::clone(&semaphore).acquire_many_owned(all_permits).await?;
+
+    let request = json!({ "from": Account::Alice.address(), "calls": [] });
+    let call = tokio::spawn(
+        client.request::<_, alloy_primitives::Bytes>("eth_call", (request.clone(), "latest")),
+    );
+    let estimate = tokio::spawn(client.request::<_, U256>("eth_estimateGas", (request, "latest")));
+    tokio::time::sleep(PERMIT_WAIT).await;
+    assert!(!call.is_finished(), "EIP-8130 eth_call must wait for a blocking-IO permit");
+    assert!(!estimate.is_finished(), "EIP-8130 eth_estimateGas must wait for a blocking-IO permit");
+
+    drop(held);
+    call.await??;
+    assert!(estimate.await?? > U256::ZERO);
     Ok(())
 }

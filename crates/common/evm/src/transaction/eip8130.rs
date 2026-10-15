@@ -20,16 +20,23 @@ pub enum Eip8130ExecutionMode {
     /// simulation path.
     #[default]
     Verified,
-    /// Read-only RPC simulation (`eth_estimateGas` / `eth_call`): no signature
-    /// verification, no fee settlement, all state reverted. Reachable only from
-    /// the RPC call path.
+    /// Read-only RPC gas estimation (`eth_estimateGas`): no signature
+    /// verification, no fee settlement, all state reverted. The calls are
+    /// re-run at candidate gas pools to find the minimum gas limit that
+    /// succeeds. Reachable only from the RPC call path.
     Simulate,
+    /// Read-only RPC call (`eth_call`): the same unverified, reverted pipeline
+    /// as [`Self::Simulate`], but the calls run exactly once at the
+    /// transaction's gas limit, with no gas-limit search. Reachable only from
+    /// the RPC call path.
+    Call,
 }
 
 impl Eip8130ExecutionMode {
-    /// Whether this is the read-only simulation mode.
+    /// Whether this is a read-only simulation mode ([`Self::Simulate`] or
+    /// [`Self::Call`]).
     pub const fn is_simulate(self) -> bool {
-        matches!(self, Self::Simulate)
+        matches!(self, Self::Simulate | Self::Call)
     }
 }
 
