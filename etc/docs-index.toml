@@ -438,6 +438,10 @@ digest = "1e4810a82c"
 summary = "Behavioural e2e test of the challenger: forks L1 into Anvil, patches real games; the default `all` scenario covers Paths 1-4 on one fork by reviving nullified verifiers. Lists scenarios and env vars."
 digest = "a085a1e104"
 
+["crates/infra/fee-jobs/README.md"]
+summary = "Run disburse, process, and sweep fee jobs with per-command environment variables, preconditions, and transaction manager settings."
+digest = "5442382052"
+
 ["crates/infra/load-tests/README.md"]
 summary = "Load testing: devnet/sepolia profiles, YAML workloads, calibration, adaptive or proactive validity signing, resource pacing, benchmark/report tools, and rollout limitations."
 digest = "a5633d6f46"

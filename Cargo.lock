@@ -4787,6 +4787,41 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-fee-jobs"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-rpc-types-eth 2.4.1",
+ "alloy-signer-local 2.4.1",
+ "alloy-sol-types",
+ "async-trait",
+ "base-cli-utils",
+ "base-tx-manager",
+ "clap",
+ "eyre",
+ "humantime",
+ "mockall",
+ "rstest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
+name = "base-fee-jobs-bin"
+version = "0.0.0"
+dependencies = [
+ "base-cli-utils",
+ "base-fee-jobs",
+ "clap",
+ "tokio",
+]
+
+[[package]]
 name = "base-flashblocks"
 version = "0.0.0"
 dependencies = [
