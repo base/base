@@ -12,4 +12,6 @@ Each subcommand also requires `JOB_RUNNER_KEY`, a local signing key in hex, with
 
 The transaction manager estimates gas and fees and resubmits with bumped fees. Its optional flags and `FEE_JOBS_TX_MANAGER_*` environment variables configure confirmations and timeouts. The default is ten confirmations and a ten-minute overall send timeout. A timeout does not cancel a transaction already published to the network.
 
+Each run takes its first nonce from the `pending` block tag, so jobs that share `JOB_RUNNER_KEY` on one chain and overlap queue behind each other instead of replacing each other's transactions. The trade-off: if a run times out and leaves its transaction stuck in the mempool, later runs sign the next nonce and queue behind it, so they also time out until the stuck transaction is mined or evicted. To recover sooner, replace or cancel the stuck nonce by hand.
+
 Run `fee-jobs <subcommand> --help` for configuration, including logging options under `FEE_JOBS_LOG_*`.

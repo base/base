@@ -440,7 +440,7 @@ digest = "a085a1e104"
 
 ["crates/infra/fee-jobs/README.md"]
 summary = "Run disburse, process, and sweep fee jobs with per-command environment variables, preconditions, and transaction manager settings."
-digest = "5442382052"
+digest = "63f18e304f"
 
 ["crates/infra/load-tests/README.md"]
 summary = "Load testing: devnet/sepolia profiles, YAML workloads, calibration, adaptive or proactive validity signing, resource pacing, benchmark/report tools, and rollout limitations."
