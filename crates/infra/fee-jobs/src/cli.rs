@@ -4,7 +4,9 @@ use alloy_primitives::Address;
 use alloy_provider::{Provider, ProviderBuilder};
 use alloy_signer_local::PrivateKeySigner;
 use base_cli_utils::{CliStyles, LogConfig};
-use base_tx_manager::{NoopTxMetrics, SignerConfig, SimpleTxManager, TxManagerConfig};
+use base_tx_manager::{
+    NoopTxMetrics, RpcErrorClassifier, SignerConfig, SimpleTxManager, TxManagerConfig,
+};
 use clap::{Args, Parser, Subcommand};
 use eyre::{WrapErr, ensure};
 use tokio::time::timeout;
@@ -131,7 +133,8 @@ impl Cli {
         let provider = ProviderBuilder::new().connect_http(rpc_url);
         let chain_id = timeout(config.network_timeout, provider.get_chain_id())
             .await
-            .wrap_err("chain ID read timed out")??;
+            .wrap_err("chain ID read timed out")?
+            .map_err(|e| RpcErrorClassifier::classify_rpc_error(&e))?;
         let reader =
             AlloyFeeReader { provider: provider.clone(), network_timeout: config.network_timeout };
         let manager = SimpleTxManager::new(
