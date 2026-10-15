@@ -84,11 +84,21 @@ impl Eip8130Nonce {
         slot: B256,
     ) -> Option<U256> {
         let account_override = state_overrides?.get(&address)?;
-        let value = match &account_override.state {
-            Some(state) => state.get(&slot).copied().unwrap_or_default(),
-            None => *account_override.state_diff.as_ref()?.get(&slot)?,
-        };
-        Some(U256::from_be_bytes(value.0))
+        if let Some(state) = account_override.state.as_ref() {
+            return Some(
+                state
+                    .get(&slot)
+                    .copied()
+                    .map(|value| U256::from_be_bytes(value.0))
+                    .unwrap_or_default(),
+            );
+        }
+        account_override
+            .state_diff
+            .as_ref()?
+            .get(&slot)
+            .copied()
+            .map(|value| U256::from_be_bytes(value.0))
     }
 
     /// Decodes the Solidity-packed `u64` channel nonce from an EVM storage word.

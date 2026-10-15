@@ -7,6 +7,11 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
+use alloy_primitives as _;
+
+#[allow(dead_code)]
+const _ALLOY_PRIMITIVES_USED: alloy_primitives::Address = alloy_primitives::Address::ZERO;
+
 mod base;
 pub use base::Base;
 
@@ -15,3 +20,6 @@ pub use builder::Eip8130BuildError;
 
 mod engine;
 pub use engine::BaseEngineApi;
+
+#[cfg(feature = "reth")]
+mod reth;

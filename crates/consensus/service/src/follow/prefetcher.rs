@@ -52,7 +52,7 @@ where
             if next_fetch > source_latest {
                 source_latest = self.refresh_source_latest(source_latest).await;
                 if next_fetch > source_latest {
-                    time::sleep(SOURCE_HEAD_BACKOFF).await;
+                    self.backoff_at_source_head().await;
                     continue;
                 }
             }
@@ -86,7 +86,7 @@ where
                             "Failed to prefetch source payload"
                         );
                     }
-                    time::sleep(SOURCE_HEAD_BACKOFF).await;
+                    self.backoff_at_source_head().await;
                 }
             }
         }
@@ -100,5 +100,9 @@ where
                 current
             }
         }
+    }
+
+    async fn backoff_at_source_head(&self) {
+        time::sleep(SOURCE_HEAD_BACKOFF).await;
     }
 }

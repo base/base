@@ -262,9 +262,11 @@ impl LoadRunner {
                 continue;
             }
 
+            let mut sample_config = self.config.clone();
+            sample_config.transactions = vec![tx_config.clone()];
             let mut generator = WorkloadGenerator::from_tx_configs(
                 self.workload_config(),
-                std::slice::from_ref(tx_config),
+                &sample_config.transactions,
                 self.b20_run_salt,
             )?;
             let sender_index = type_index % accounts.len();

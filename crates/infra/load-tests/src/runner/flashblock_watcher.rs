@@ -169,12 +169,7 @@ impl FlashblockWatcher {
             }
         };
 
-        let inclusions = flashblock
-            .diff
-            .transactions
-            .iter()
-            .map(|tx_bytes| FlashblockInclusion { tx_hash: keccak256(tx_bytes), included_at: now })
-            .collect();
+        let inclusions = Self::parse_broadcast_inclusions(&flashblock, now);
         self.publish_inclusions(inclusions, now).await;
     }
 
@@ -186,6 +181,18 @@ impl FlashblockWatcher {
                 .send(InclusionPulse::flashblock(observed_at, block_match.released_gas))
                 .await;
         }
+    }
+
+    fn parse_broadcast_inclusions(
+        flashblock: &Flashblock,
+        included_at: Instant,
+    ) -> Vec<FlashblockInclusion> {
+        flashblock
+            .diff
+            .transactions
+            .iter()
+            .map(|tx_bytes| FlashblockInclusion { tx_hash: keccak256(tx_bytes), included_at })
+            .collect()
     }
 }
 

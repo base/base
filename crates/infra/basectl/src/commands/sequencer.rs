@@ -158,14 +158,18 @@ async fn run_start(
         sequencer_active = ?status.and_then(|status| status.sequencer_active),
         "resolved sequencer start target"
     );
-    let leadership_status = ensure_start_allowed(&snapshot, node, status).inspect_err(|error| {
-        warn!(
-            error = %error,
-            node = %node.name,
-            cl_rpc = %node.cl_rpc,
-            "sequencer start preflight failed"
-        );
-    })?;
+    let leadership_status = match ensure_start_allowed(&snapshot, node, status) {
+        Ok(leadership_status) => leadership_status,
+        Err(error) => {
+            warn!(
+                error = %error,
+                node = %node.name,
+                cl_rpc = %node.cl_rpc,
+                "sequencer start preflight failed"
+            );
+            return Err(error.into());
+        }
+    };
     if matches!(leadership_status, LeadershipStatus::Unknown) {
         warn!(
             node = %node.name,
@@ -174,25 +178,31 @@ async fn run_start(
         );
     }
     let (unsafe_head, unsafe_head_source) =
-        resolve_start_hash(&snapshot, node, args.unsafe_head.as_deref()).inspect_err(|error| {
-            warn!(
-                error = %error,
-                node = %node.name,
-                cl_rpc = %node.cl_rpc,
-                "failed to resolve sequencer start unsafe head"
-            );
-        })?;
-    ensure_start_request_matches_observed_head(status, unsafe_head, unsafe_head_source)
-        .inspect_err(|error| {
-            warn!(
-                error = %error,
-                node = %node.name,
-                cl_rpc = %node.cl_rpc,
-                unsafe_head = %unsafe_head,
-                unsafe_head_source = %unsafe_head_source.as_str(),
-                "sequencer start unsafe head validation failed"
-            );
-        })?;
+        match resolve_start_hash(&snapshot, node, args.unsafe_head.as_deref()) {
+            Ok(value) => value,
+            Err(error) => {
+                warn!(
+                    error = %error,
+                    node = %node.name,
+                    cl_rpc = %node.cl_rpc,
+                    "failed to resolve sequencer start unsafe head"
+                );
+                return Err(error.into());
+            }
+        };
+    if let Err(error) =
+        ensure_start_request_matches_observed_head(status, unsafe_head, unsafe_head_source)
+    {
+        warn!(
+            error = %error,
+            node = %node.name,
+            cl_rpc = %node.cl_rpc,
+            unsafe_head = %unsafe_head,
+            unsafe_head_source = %unsafe_head_source.as_str(),
+            "sequencer start unsafe head validation failed"
+        );
+        return Err(error.into());
+    }
     let prompt =
         format!("Start sequencer on {} ({}) at {}? [y/N] ", node.name, node.cl_rpc, unsafe_head);
     if !Confirm::prompt_or_abort(&prompt, args.yes)? {
@@ -247,14 +257,15 @@ async fn run_stop(
         sequencer_active = ?status.and_then(|status| status.sequencer_active),
         "resolved sequencer stop target"
     );
-    ensure_stop_allowed(node, status).inspect_err(|error| {
+    if let Err(error) = ensure_stop_allowed(node, status) {
         warn!(
             error = %error,
             node = %node.name,
             cl_rpc = %node.cl_rpc,
             "sequencer stop preflight failed"
         );
-    })?;
+        return Err(error.into());
+    }
     let prompt = format!("Stop sequencer on {} ({})? [y/N] ", node.name, node.cl_rpc);
     if !Confirm::prompt_or_abort(&prompt, args.yes)? {
         debug!(node = %node.name, cl_rpc = %node.cl_rpc, "sequencer stop confirmation declined");

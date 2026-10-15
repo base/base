@@ -333,7 +333,7 @@ impl SnapshotGenerator {
             for i in 0..num_chunks {
                 let start = i * blocks_per_file;
                 let end = start.checked_add(blocks_per_file - 1).context("block range overflow")?;
-                let source_files = filter_source_files(&dir_listing, segment_name, start, end)?;
+                let source_files = filter_source_files(&dir_listing, segment_name, start, end);
 
                 if source_files.is_empty() {
                     if found_any {
@@ -353,7 +353,12 @@ impl SnapshotGenerator {
                             previous_manifest.chunk_output_files_for_file(&archive_name)
                     {
                         reuse_candidates.push(ReuseCandidate {
-                            chunk: PlannedChunk { chunk_idx: i, archive_name, source_files },
+                            chunk: PlannedChunk {
+                                chunk_idx: i,
+                                archive_name: archive_name.clone(),
+                                source_files,
+                            },
+                            archive_name,
                             remote_size,
                             previous_output_files,
                         });
@@ -370,11 +375,8 @@ impl SnapshotGenerator {
                 let checked_candidates = reuse_candidates
                     .into_par_iter()
                     .map(|candidate| {
-                        let output_files = compute_output_files_and_archive(
-                            &candidate.chunk.source_files,
-                            None,
-                            None,
-                        )?;
+                        let output_files =
+                            chunk_output_files_for_source_files(&candidate.chunk.source_files)?;
                         Ok((candidate, output_files))
                     })
                     .collect::<Result<Vec<_>>>()?;
@@ -384,7 +386,7 @@ impl SnapshotGenerator {
                         chunk_sizes[idx] = candidate.remote_size;
                         chunk_decompressed[idx] = output_files.iter().map(|file| file.size).sum();
                         chunk_output_files[idx] = output_files;
-                        info!(archive = %candidate.chunk.archive_name, "reusing existing snapshot archive");
+                        info!(archive = %candidate.archive_name, "reusing existing snapshot archive");
                     } else {
                         planned.push(candidate.chunk);
                     }
@@ -393,14 +395,8 @@ impl SnapshotGenerator {
                 let packaged: Vec<PackagedChunk> = planned
                     .into_par_iter()
                     .map(|p| {
-                        let packaged = write_archive_from_planned_files(
-                            archive_sink,
-                            &p.archive_name,
-                            &p.source_files,
-                            None,
-                            Arc::new(AtomicU64::new(0)),
-                            0,
-                        )?;
+                        let packaged =
+                            write_chunk_archive(archive_sink, &p.archive_name, &p.source_files)?;
                         Ok(PackagedChunk {
                             chunk_idx: p.chunk_idx,
                             size: packaged.size,
@@ -610,11 +606,12 @@ fn parse_headers_range(file_name: &str) -> Option<(u64, u64)> {
 struct PlannedChunk {
     chunk_idx: u64,
     archive_name: String,
-    source_files: Vec<PlannedFile>,
+    source_files: Vec<PathBuf>,
 }
 
 struct ReuseCandidate {
     chunk: PlannedChunk,
+    archive_name: String,
     remote_size: u64,
     previous_output_files: Vec<OutputFileChecksum>,
 }
@@ -656,21 +653,13 @@ fn filter_source_files(
     segment_name: &str,
     start: u64,
     end: u64,
-) -> Result<Vec<PlannedFile>> {
+) -> Vec<PathBuf> {
     let prefix = format!("static_file_{segment_name}_{start}_{end}");
     dir_listing
         .iter()
         .filter(|(name, _)| name.starts_with(&prefix))
-        .map(|(_, path)| {
-            let file_name = path
-                .file_name()
-                .ok_or_else(|| anyhow::anyhow!("invalid path: {}", path.display()))?;
-            Ok(PlannedFile {
-                source_path: path.clone(),
-                relative_path: PathBuf::from("static_files").join(file_name),
-            })
-        })
-        .collect::<Result<Vec<_>>>()
+        .map(|(_, path)| path.clone())
+        .collect()
 }
 
 fn state_source_files(source_datadir: &Path) -> Result<Vec<PlannedFile>> {
@@ -785,6 +774,51 @@ fn package_single_component(
     Ok((packaged.size, packaged.output_files))
 }
 
+fn write_chunk_archive(
+    archive_sink: &dyn SnapshotArchiveSink,
+    archive_name: &str,
+    source_files: &[PathBuf],
+) -> Result<PackagedArchive> {
+    let planned: Vec<PlannedFile> = source_files
+        .iter()
+        .map(|p| {
+            let file_name =
+                p.file_name().ok_or_else(|| anyhow::anyhow!("invalid path: {}", p.display()))?;
+            Ok(PlannedFile {
+                source_path: p.clone(),
+                relative_path: PathBuf::from("static_files").join(file_name),
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    write_archive_from_planned_files(
+        archive_sink,
+        archive_name,
+        &planned,
+        None,
+        Arc::new(AtomicU64::new(0)),
+        0,
+    )
+}
+
+fn chunk_output_files_for_source_files(
+    source_files: &[PathBuf],
+) -> Result<Vec<OutputFileChecksum>> {
+    let planned: Vec<PlannedFile> = source_files
+        .iter()
+        .map(|p| {
+            let file_name =
+                p.file_name().ok_or_else(|| anyhow::anyhow!("invalid path: {}", p.display()))?;
+            Ok(PlannedFile {
+                source_path: p.clone(),
+                relative_path: PathBuf::from("static_files").join(file_name),
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    compute_output_files_for_planned_files(&planned)
+}
+
 fn write_archive_from_planned_files(
     archive_sink: &dyn SnapshotArchiveSink,
     archive_name: &str,
@@ -848,6 +882,12 @@ impl<W: Write> Write for CountingWriter<W> {
     fn flush(&mut self) -> std::io::Result<()> {
         self.inner.flush()
     }
+}
+
+fn compute_output_files_for_planned_files(
+    files: &[PlannedFile],
+) -> Result<Vec<OutputFileChecksum>> {
+    compute_output_files_and_archive(files, None, None)
 }
 
 fn compute_output_files_and_archive(

@@ -280,25 +280,32 @@ impl App {
     where
         F: FnMut(ViewId) -> Box<dyn View>,
     {
-        let Some(rx) = self.pending_network.as_mut() else { return };
-        match rx.try_recv() {
-            Ok(result) => {
-                self.pending_network = None;
-                match result {
-                    Ok(cfg) => self.apply_network_switch(cfg, current_view, view_factory),
-                    Err(e) => self
-                        .resources
-                        .toasts
-                        .push(Toast::warning(format!("Network switch failed: {e}"))),
+        let outcome = match self.pending_network {
+            None => return,
+            Some(ref mut rx) => match rx.try_recv() {
+                Ok(result) => {
+                    self.pending_network = None;
+                    Some(result)
                 }
+                Err(oneshot::error::TryRecvError::Empty) => None,
+                Err(oneshot::error::TryRecvError::Closed) => {
+                    self.pending_network = None;
+                    self.resources
+                        .toasts
+                        .push(Toast::warning("Network switch failed: task dropped".to_string()));
+                    None
+                }
+            },
+        };
+
+        match outcome {
+            Some(Ok(new_config)) => {
+                self.apply_network_switch(new_config, current_view, view_factory);
             }
-            Err(oneshot::error::TryRecvError::Empty) => {}
-            Err(oneshot::error::TryRecvError::Closed) => {
-                self.pending_network = None;
-                self.resources
-                    .toasts
-                    .push(Toast::warning("Network switch failed: task dropped".to_string()));
+            Some(Err(e)) => {
+                self.resources.toasts.push(Toast::warning(format!("Network switch failed: {e}")));
             }
+            None => {}
         }
     }
 
