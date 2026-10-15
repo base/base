@@ -1,17 +1,17 @@
 # Runs the Amp coding agent on a pull request, on request from a Base engineer.
 #
 # Security model (see the Amp security review):
-# - Amp only runs on code Base has approved:
-#   - `/amp <instructions>` comments from base org members (OWNER/MEMBER) on
-#     same-repo PRs, which only employees can push.
-#   - Fork PRs require the engineer to approve one exact commit:
-#     `/amp @<full-sha> <instructions>`. The run fails if the PR head moved.
+# - Amp only runs on PRs from branches pushed to this repo, which only
+#   employees with write access can push. Fork PRs are rejected.
+#   - `/amp <instructions>` comments from base org members (OWNER/MEMBER).
 #   - `workflow_dispatch` (write access required) with an explicit PR and SHA.
 #   Both triggers always use this file from the default branch, so a PR can't
-#   change what runs.
+#   change what runs. Amp checks out the exact head commit it authorized.
+# - Both secrets live in the `amp` GitHub Environment, which only the default
+#   branch can use, so workflows on other branches can't read them.
 # - Nothing internal is available to Amp. The `amp` job runs only on Depot
 #   runners and has no Coinbase credentials. Amp gets two credentials:
-#   - the Amp bot user's access key (`AMP_API_KEY`), capped by its weekly quota
+#   - the Amp CI bot user's access key (`AMP_API_KEY`), capped by its weekly quota
 #   - a 1-hour token for the Base Amp GitHub App, scoped to this repo with
 #     contents, pull requests and issues permissions only. The app has no
 #     `workflows` or admin permissions, and rulesets keep it off `main`,
@@ -20,9 +20,11 @@
 #   before the token is minted, so Amp can't read the runner's memory.
 #
 # Changes to any workflow that uses AMP_API_KEY are checked by
-# .github/workflows/workflow-policy.yml.
+# .github/workflows/workflow-policy.yml. The run name records the PR so
+# .github/workflows/amp-independent-review.yml can find who requested Amp.
 
 name: Amp
+run-name: "Amp: PR #${{ github.event.issue.number || inputs.pr_number }}"
 
 on:
   issue_comment:
@@ -62,7 +64,6 @@ jobs:
       pr_number: ${{ steps.resolve.outputs.pr_number }}
       sha: ${{ steps.resolve.outputs.sha }}
       head_ref: ${{ steps.resolve.outputs.head_ref }}
-      is_fork: ${{ steps.resolve.outputs.is_fork }}
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -90,18 +91,13 @@ jobs:
             prompt="$INPUT_PROMPT"
           else
             pr_number="$COMMENT_PR"
-            # Format: /amp [@<full-sha>] <instructions>
-            body="${COMMENT_BODY#/amp}"
+            # Format: /amp <instructions>
             approved_sha=""
-            if [[ "$body" =~ ^[[:space:]]*@([0-9a-f]{40})(.*)$ ]]; then
-              approved_sha="${BASH_REMATCH[1]}"
-              body="${BASH_REMATCH[2]}"
-            fi
-            prompt="$(printf '%s' "$body" | sed -e 's/^[[:space:]]*//')"
+            prompt="$(printf '%s' "${COMMENT_BODY#/amp}" | sed -e 's/^[[:space:]]*//')"
           fi
 
           if [[ -z "${prompt//[[:space:]]/}" ]]; then
-            echo "::error::No instructions given. Usage: /amp [@<full-sha>] <instructions>"
+            echo "::error::No instructions given. Usage: /amp <instructions>"
             exit 1
           fi
           if [[ -n "$approved_sha" && ! "$approved_sha" =~ ^[0-9a-f]{40}$ ]]; then
@@ -120,11 +116,9 @@ jobs:
             exit 1
           fi
 
-          is_fork=false
-          [[ "$head_repo" != "$GH_REPO" ]] && is_fork=true
-
-          if [[ "$is_fork" == "true" && -z "$approved_sha" ]]; then
-            echo "::error::PR #$pr_number is from a fork. Review it, then approve one commit: /amp @<full-sha> <instructions>"
+          # Only branches pushed to this repo. Fork PRs are never run.
+          if [[ "$head_repo" != "$GH_REPO" ]]; then
+            echo "::error::PR #$pr_number is from a fork. Amp only runs on branches pushed to $GH_REPO."
             exit 1
           fi
           if [[ -n "$approved_sha" && "$approved_sha" != "$head_sha" ]]; then
@@ -136,12 +130,11 @@ jobs:
             echo "pr_number=$pr_number"
             echo "sha=$head_sha"
             echo "head_ref=$head_ref"
-            echo "is_fork=$is_fork"
           } >> "$GITHUB_OUTPUT"
 
           mkdir -p "$RUNNER_TEMP/amp-request"
           printf '%s\n' "$prompt" > "$RUNNER_TEMP/amp-request/prompt.txt"
-          echo "Amp approved for PR #$pr_number at $head_sha (fork: $is_fork)"
+          echo "Amp approved for PR #$pr_number at $head_sha"
 
       - name: Upload request
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -155,6 +148,9 @@ jobs:
     needs: authorize
     # Depot runners only. Never self-hosted runners.
     runs-on: depot-ubuntu-24.04-16
+    # Holds AMP_API_KEY and AMP_GITHUB_APP_PRIVATE_KEY. Limited to the default
+    # branch, so branch workflows can't read them.
+    environment: amp
     timeout-minutes: 60
     # Job-level so only authorized runs queue; one Amp run per PR at a time.
     concurrency:
@@ -229,7 +225,6 @@ jobs:
           AMP_PATH: ${{ steps.install-amp.outputs.amp_path }}
           PR_NUMBER: ${{ needs.authorize.outputs.pr_number }}
           HEAD_REF: ${{ needs.authorize.outputs.head_ref }}
-          IS_FORK: ${{ needs.authorize.outputs.is_fork }}
           REPOSITORY: ${{ github.repository }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         shell: bash
@@ -240,16 +235,11 @@ jobs:
           settings="$RUNNER_TEMP/amp-settings.json"
           printf '{"amp.dangerouslyAllowAll": true}\n' > "$settings"
 
-          if [[ "$IS_FORK" == "true" ]]; then
-            where="This PR is from a fork, so you can't push to its branch. To propose changes, push a new branch named amp/pr-$PR_NUMBER-<short-description> and open a PR against the PR's base branch that links to #$PR_NUMBER."
-          else
-            where="To change the PR, commit and push to its branch: git push origin HEAD:refs/heads/$HEAD_REF"
-          fi
-
           {
             echo "You are working on pull request #$PR_NUMBER in $REPOSITORY, checked out at the PR head (detached)."
             echo "You can act on GitHub with git and the gh CLI. Your token is limited to this repo: contents, pull requests and issues."
-            echo "$where"
+            echo "To change the PR, commit and push to its branch: git push origin HEAD:refs/heads/$HEAD_REF"
+            echo "Push only to that branch. Don't push other branches, open new PRs, or delete or edit comments you didn't write."
             echo "Never push to main, release branches or tags, and don't change files under .github/."
             echo "Mark every commit message and comment as AI-generated."
             echo "When you finish, post a comment on PR #$PR_NUMBER summarizing what you did and anything a reviewer should check. Include this link: $RUN_URL"

@@ -1,0 +1,59 @@
+# Blocks merging a PR that Amp changed until someone who didn't ask Amp to
+# work on it approves the current head commit. Without this, one engineer could
+# instruct Amp and then approve Amp's work alone.
+# See .github/scripts/amp_review.py for the rules. Make this a required status
+# check on main.
+#
+# The script is loaded from the base commit, so a PR can't change the check.
+# The Base Amp GitHub App has no `workflows` permission, so Amp can't change
+# this file either.
+
+name: Amp Independent Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  pull_request_review:
+    types: [submitted, edited, dismissed]
+  merge_group:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: amp-independent-review-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Independent review of Amp changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: read
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      # Reviews are checked on the PR. The merge queue only re-runs the build.
+      - name: Check out the check script from the base commit
+        if: github.event_name != 'merge_group'
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          sparse-checkout: .github/scripts
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Check independent review
+        if: github.event_name != 'merge_group'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          AMP_APP_SLUG: ${{ vars.AMP_GITHUB_APP_SLUG }}
+          AMP_APP_CLIENT_ID: ${{ vars.AMP_GITHUB_APP_CLIENT_ID }}
+        run: python3 .github/scripts/amp_review.py independent-review
