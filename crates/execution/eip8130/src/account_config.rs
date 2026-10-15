@@ -1049,7 +1049,7 @@ mod tests {
     }
 
     #[test]
-    fn actor_config_reserved_bits_are_detected_and_cleared_on_write() {
+    fn actor_config_reserved_bits_are_cleared_on_write() {
         // Reserved region is the top 4 bytes (bits 224..256), above the uint16
         // scope (bits 208..224).
         let word = pack_actor_config(ACCOUNT, 0xAB, 42) | (U256::from(1) << 224);
