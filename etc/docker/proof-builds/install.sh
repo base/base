@@ -52,7 +52,7 @@ case "$component" in
         echo "${rustup_sha256}  ${installer}" | sha256sum -c -
         chmod +x "$installer"
         "$installer" -y --default-toolchain "$rust_toolchain"
-        rust_version=$("$HOME/.cargo/bin/rustc" --version)
+        rust_version=$("${CARGO_HOME:-$HOME/.cargo}/bin/rustc" --version)
         echo "$rust_version"
         case "$rust_version" in
             "rustc $rust_toolchain "*) ;;

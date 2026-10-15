@@ -95,13 +95,14 @@ class InstallTests(unittest.TestCase):
             ("valid", "x86_64", 0, checksum, "1.99.0", 0),
             ("valid", "aarch64", 0, checksum, "1.99.0", 0),
             ("valid", "arm64", 0, checksum, "1.99.0", 0),
+            ("cargo-home", "x86_64", 0, checksum, "1.99.0", 0),
             ("unsupported", "riscv64", 0, checksum, "1.99.0", 1),
             ("compiler", "x86_64", 0, checksum, "1.98.0", 1),
         ):
             with self.subTest(scenario=scenario, arch=arch), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 (root / "payload").write_bytes(payload)
-                cargo_bin = root / ".cargo" / "bin"
+                cargo_bin = root / ("custom-cargo" if scenario == "cargo-home" else ".cargo") / "bin"
                 cargo_bin.mkdir(parents=True)
                 rustc = cargo_bin / "rustc"
                 rustc.write_text('#!/bin/sh\nprintf "rustc %s (fixture)\\n" "$COMPILER"\n')
@@ -125,8 +126,10 @@ class InstallTests(unittest.TestCase):
                            ARCH=arch, DOWNLOAD_EXIT=str(download_exit), COMPILER=compiler,
                            TMPDIR=str(root), INSTALLED=str(root / "installed"),
                            RUSTUP_SHA256_AMD64=digest, RUSTUP_SHA256_ARM64=digest)
-                for variable in ("RUST_TOOLCHAIN", "RUSTUP_VERSION"):
+                for variable in ("RUST_TOOLCHAIN", "RUSTUP_VERSION", "CARGO_HOME"):
                     env.pop(variable, None)
+                if scenario == "cargo-home":
+                    env["CARGO_HOME"] = str(cargo_bin.parent)
                 result = run("/bin/sh", str(RECIPES / "install.sh"), "nitro-cli", env=env)
                 self.assertEqual(result.returncode, expected_exit, result.stderr)
                 if (root / "download").exists():
@@ -144,6 +147,8 @@ class InstallTests(unittest.TestCase):
                         self.assertIn("unsupported architecture", result.stderr)
                         self.assertFalse((root / "download").exists())
                 else:
+                    self.assertTrue((root / "executable").exists())
+                    self.assertTrue((root / "chmod-called").exists())
                     self.assertEqual((root / "installed").read_text().splitlines(),
                                      ["-y", "--default-toolchain", "1.99.0"])
                     target = "x86_64" if arch == "x86_64" else "aarch64"
