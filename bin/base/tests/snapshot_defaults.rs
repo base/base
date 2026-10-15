@@ -147,6 +147,11 @@ async fn snapshot_plan_fetches_only_manifest(
                 })]).collect::<Vec<_>>(),
             });
         }
+        manifest["components"]["rocksdb_indices"] = json!({
+            "file": "rocksdb_indices.tar.zst",
+            "size": 17,
+            "output_files": [{"path": "rocksdb/000001.sst", "size": 19, "blake3": "0".repeat(64)}],
+        });
         args = vec!["--full", "--download-concurrency", "16"];
     }
     let requests = Arc::new(Mutex::new(Vec::new()));
@@ -184,7 +189,15 @@ async fn snapshot_plan_fetches_only_manifest(
         if dev_full {
             // Retain 13,392,000 history blocks, rounded out to the chunk starting at 1,500,000.
             assert_eq!(plan["block"], 15_000_000);
-            assert_eq!(archives.len(), 139);
+            assert_eq!(archives.len(), 140);
+            assert_eq!(
+                archives
+                    .iter()
+                    .filter(|archive| archive["component"] == "rocksdb_indices")
+                    .map(|archive| archive["fileName"].as_str().unwrap())
+                    .collect::<Vec<_>>(),
+                ["rocksdb_indices.tar.zst"]
+            );
             for component in
                 ["headers", "transactions", "receipts", "account_changesets", "storage_changesets"]
             {
