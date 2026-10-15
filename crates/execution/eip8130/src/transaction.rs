@@ -71,7 +71,8 @@ impl TransactionAuthorizer {
     ///    earlier change therefore fails the final sender check, exactly as the
     ///    contract would revert. A recorded delegation then requires that final
     ///    sender to be an admin (unrestricted) actor on the unlocked account,
-    ///    via any canonical authenticator.
+    ///    via any canonical authenticator. A create's final sender must also be
+    ///    one of its `initial_actors`.
     ///
     /// Returns the [`AppliedTransaction`] (with every `AccountConfiguration`
     /// storage transition already written to `storage`), or the first
@@ -187,6 +188,16 @@ impl TransactionAuthorizer {
         //    reusing the EOA sender token recovered above (no second ecrecover).
         let actors =
             ActorTxVerifier::verify_with_recovered_sender(signed, storage, now, recovered_sender)?;
+        // A create's sender must be one of its initial actors, not an actor a
+        // later change in the same transaction granted.
+        if let Some(AccountChange::Create(entry)) = signed.tx().account_changes.first()
+            && !entry
+                .initial_actors
+                .iter()
+                .any(|actor| actor.actor_id == actors.sender.resolved.actor_id)
+        {
+            return Err(TxAuthError::CreateSenderNotInitialActor(actors.sender.resolved.actor_id));
+        }
 
         if applied.delegation.is_some() {
             Self::authorize_delegation(storage, now, &actors.sender)?;
@@ -1172,6 +1183,63 @@ mod tests {
             // flag; the single multichain config change then advances the
             // multichain channel to 1 — hence `(multichain, local) == (1, 1)`.
             assert_eq!(acc.get_change_sequences(derived).unwrap(), (1, 1));
+        });
+    }
+
+    #[test]
+    fn create_sender_granted_by_a_later_change_is_rejected() {
+        // A create's sender must be one of its initial actors. An operator that a
+        // same-transaction config change grants passes the final post-apply
+        // sender check, so it must be rejected separately.
+        let owner = key(0xd1);
+        let operator = key(0xd2);
+        let initial_actors = vec![InitialActor::owner(actor_id(addr(&owner)), K1)];
+        let create = CreateEntry {
+            user_salt: B256::ZERO,
+            code: Bytes::from_static(&[0x60, 0x00]),
+            initial_actors: initial_actors.clone(),
+        };
+        let derived = AccountChangeApplier::compute_address(
+            create.user_salt,
+            create.code.as_ref(),
+            &initial_actors,
+        )
+        .expect("address derivation");
+
+        let operator_id = actor_id(addr(&operator));
+        let grant = SignedChange {
+            change_type: ChangeType::AuthorizeActor,
+            payload: Bytes::from(
+                (
+                    operator_id,
+                    TestActorConfigAbi {
+                        authenticator: K1,
+                        expiry: alloy_primitives::aliases::U48::ZERO,
+                        scope: Eip8130Constants::SCOPE_OPERATOR
+                            | Eip8130Constants::SCOPE_SELF_PAYER,
+                    },
+                    Bytes::new(),
+                )
+                    .abi_encode_params(),
+            ),
+        };
+        let cc =
+            signed_change(derived, K1, &owner, AccountChangeChannel::Multichain, 0, vec![grant]);
+        let mut tx = tx_with(
+            Some(derived),
+            None,
+            vec![AccountChange::Create(create), AccountChange::ConfigChange(cc)],
+        );
+        tx.nonce_key = Eip8130Constants::NONCE_KEY_MAX;
+        tx.valid_before = NOW + 1;
+        let hash = tx.sender_signature_hash();
+        let signed = Eip8130Signed::new(tx, auth_blob(K1, &sig(&operator, hash)), Bytes::new());
+
+        with_storage(|acc| {
+            assert_eq!(
+                TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW),
+                Err(TxAuthError::CreateSenderNotInitialActor(operator_id)),
+            );
         });
     }
 
