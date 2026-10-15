@@ -263,11 +263,6 @@ impl AccountConfigurationStorage<'_> {
         Ok(self.get_account_state(account)?.is_locked(now))
     }
 
-    /// Mirrors `AccountConfiguration.getLockStatus`.
-    pub fn get_lock_status(&self, account: Address, now: u64) -> Result<LockStatus> {
-        Ok(self.get_account_state(account)?.lock_status(now))
-    }
-
     /// The implicit-EOA self-actor id for `account`:
     /// `bytes32(uint256(uint160(account)))`, i.e. the address right-aligned in the
     /// low 20 bytes (matches the finalized `Keystore.ActorId.fromAddress`).
@@ -349,12 +344,6 @@ pub struct ActorConfig {
 impl ActorConfig {
     /// The empty (unset) actor config: a zeroed storage slot.
     pub const EMPTY: Self = Self { authenticator: Address::ZERO, expiry: 0, scope: 0 };
-
-    /// Returns whether the reserved high 32 bits of a packed word are non-zero.
-    #[must_use]
-    pub fn has_nonzero_reserved(word: U256) -> bool {
-        word.to_be_bytes::<32>()[..4].iter().any(|&byte| byte != 0)
-    }
 
     /// Unpacks a raw `ActorConfig` storage word.
     #[must_use]
@@ -1016,7 +1005,7 @@ mod tests {
                 .write(pack_account_state(0, 1, Eip8130Constants::FLAG_LOCKED, delay as u64, 0, 0))
                 .unwrap();
             assert!(acc.is_locked(ACCOUNT, 1_000).unwrap());
-            let status = acc.get_lock_status(ACCOUNT, 1_000).unwrap();
+            let status = acc.get_account_state(ACCOUNT).unwrap().lock_status(1_000);
             assert!(status.locked);
             assert!(!status.has_initiated_unlock);
             assert_eq!(status.unlocks_at, AccountState::UNLOCKS_AT_MAX);
@@ -1036,7 +1025,7 @@ mod tests {
                 .unwrap();
             assert!(acc.is_locked(ACCOUNT, 1_000).unwrap()); // before unlocks_at
             assert!(!acc.is_locked(ACCOUNT, 2_000).unwrap()); // at/after unlocks_at
-            let status = acc.get_lock_status(ACCOUNT, 1_000).unwrap();
+            let status = acc.get_account_state(ACCOUNT).unwrap().lock_status(1_000);
             assert!(status.locked);
             assert!(status.has_initiated_unlock);
             assert_eq!(status.unlocks_at, 2_000);
@@ -1044,7 +1033,7 @@ mod tests {
             // Never locked: no lock flags set.
             acc.account_state.at_mut(&ACCOUNT).write(pack_account_state(0, 1, 0, 0, 0, 0)).unwrap();
             assert!(!acc.is_locked(ACCOUNT, 0).unwrap());
-            assert!(!acc.get_lock_status(ACCOUNT, 0).unwrap().has_initiated_unlock);
+            assert!(!acc.get_account_state(ACCOUNT).unwrap().lock_status(0).has_initiated_unlock);
         });
     }
 
@@ -1064,9 +1053,7 @@ mod tests {
         // Reserved region is the top 4 bytes (bits 224..256), above the uint16
         // scope (bits 208..224).
         let word = pack_actor_config(ACCOUNT, 0xAB, 42) | (U256::from(1) << 224);
-        assert!(ActorConfig::has_nonzero_reserved(word));
         let config = ActorConfig::from_word(word);
-        assert!(!ActorConfig::has_nonzero_reserved(config.to_word()));
         assert_eq!(config.to_word(), pack_actor_config(ACCOUNT, 0xAB, 42));
     }
 
