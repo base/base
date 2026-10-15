@@ -3,7 +3,7 @@ use std::{fmt, sync::Arc};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::BaseExecutorProvider;
-use base_node_core::BaseNode;
+use base_node_core::{BaseLaunchPolicy, BaseNode};
 use eyre::{Result, eyre};
 use reth_cli_commands::launcher::Launcher;
 use reth_cli_runner::CliRunner;
@@ -81,7 +81,11 @@ where
         };
 
         match self.cli.command {
-            Commands::Node(command) => {
+            Commands::Node(mut command) => {
+                // The standalone node and builder binaries build their config through reth's
+                // node command, so Base's launch policy has to be applied here as well.
+                BaseLaunchPolicy::force_serial_import(&mut command.engine);
+
                 // Validate RPC modules using the configured validator
                 if let Some(http_api) = &command.rpc.http_api {
                     Rpc::validate_selection(http_api, "http.api").map_err(|e| eyre!("{e}"))?;
@@ -168,5 +172,71 @@ where
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+
+    use clap::Parser;
+    use tempfile::TempDir;
+
+    use crate::{Cli, Commands, StandardNodeArgs};
+
+    /// Runs the real standalone `base-reth-node` / `base-builder` command path with a launcher
+    /// that captures the tree config the node would import with, then stops before it starts.
+    ///
+    /// `configured` overrides `engine.bal_parallel_execution_disabled` on the parsed command, so
+    /// a caller can simulate any configuration source asking for the divergent parallel path.
+    fn standalone_command_disables_bal_parallel_execution(configured: Option<bool>) -> bool {
+        // clap validates environment-provided values even when the flag is absent, and a
+        // developer environment may set a protocol this build does not accept.
+        // SAFETY: single-test context; no other thread reads this variable concurrently.
+        unsafe { std::env::set_var("OTEL_EXPORTER_OTLP_PROTOCOL", "http") };
+
+        let datadir = TempDir::new().expect("temporary datadir");
+        let datadir_arg = format!("--datadir={}", datadir.path().display());
+        let mut cli = Cli::<StandardNodeArgs>::parse_from(["base-reth", "node", &datadir_arg]);
+        if let Some(configured) = configured {
+            match &mut cli.command {
+                Commands::Node(command) => {
+                    command.engine.bal_parallel_execution_disabled = configured;
+                }
+                other => panic!("expected the node command, got {other:?}"),
+            }
+        }
+
+        let captured = Arc::new(AtomicBool::new(false));
+        let observed = Arc::clone(&captured);
+
+        let result = cli.run(move |builder, _args| async move {
+            observed.store(
+                builder.config().tree_config().disable_bal_parallel_execution(),
+                Ordering::SeqCst,
+            );
+            Err(eyre::eyre!("stop before the node starts"))
+        });
+
+        assert!(result.is_err(), "the launcher must stop the node before it starts");
+        captured.load(Ordering::SeqCst)
+    }
+
+    #[test]
+    fn standalone_node_imports_serially_by_default() {
+        assert!(
+            standalone_command_disables_bal_parallel_execution(None),
+            "the standalone base-reth-node/base-builder launch path must import serially: \
+             reth's BAL-parallel ordered commit does not apply Base's cumulative gas, Jovian DA \
+             or payer-auth admission rules"
+        );
+    }
+
+    #[test]
+    fn standalone_node_imports_serially_when_configuration_asks_for_the_parallel_path() {
+        assert!(
+            standalone_command_disables_bal_parallel_execution(Some(false)),
+            "configuration must not be able to re-enable the divergent BAL-parallel import path"
+        );
     }
 }

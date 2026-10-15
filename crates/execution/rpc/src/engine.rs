@@ -10,7 +10,7 @@ use alloy_rpc_types_engine::{
 use alloy_transport::{TransportError, TransportErrorKind, TransportResult};
 use base_common_rpc_types_engine::{
     BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5,
-    BaseExecutionPayloadV4, BaseExecutionPayloadV5, BasePayloadAttributes, ExecutionData,
+    BaseExecutionPayloadEnvelopeV6, BaseExecutionPayloadV4, BaseExecutionPayloadV5, BasePayloadAttributes, ExecutionData,
 };
 use base_execution_payload_builder::Attributes;
 use derive_more::Constructor;
@@ -559,6 +559,7 @@ where
             ExecutionPayloadEnvelopeV3 = BaseExecutionPayloadEnvelopeV3,
             ExecutionPayloadEnvelopeV4 = BaseExecutionPayloadEnvelopeV4,
             ExecutionPayloadEnvelopeV5 = BaseExecutionPayloadEnvelopeV5,
+            ExecutionPayloadEnvelopeV6 = BaseExecutionPayloadEnvelopeV6,
         >,
 {
     async fn new_payload_v2(
@@ -601,6 +602,24 @@ where
         .await
     }
 
+    async fn new_payload_v5(
+        &self,
+        payload: BaseExecutionPayloadV5,
+        parent_beacon_block_root: B256,
+    ) -> TransportResult<PayloadStatus> {
+        self.spawn_call(move |api| async move {
+            BaseEngineApiServer::new_payload_v5(
+                &api,
+                payload,
+                Vec::new(),
+                parent_beacon_block_root,
+                Requests::default(),
+            )
+            .await
+        })
+        .await
+    }
+
     async fn fork_choice_updated_v2(
         &self,
         fork_choice_state: ForkchoiceState,
@@ -622,6 +641,19 @@ where
         let payload_attributes = Self::builder_attributes(payload_attributes)?;
         self.spawn_call(move |api| async move {
             BaseEngineApiServer::fork_choice_updated_v3(&api, fork_choice_state, payload_attributes)
+                .await
+        })
+        .await
+    }
+
+    async fn fork_choice_updated_v4(
+        &self,
+        fork_choice_state: ForkchoiceState,
+        payload_attributes: Option<BasePayloadAttributes>,
+    ) -> TransportResult<ForkchoiceUpdated> {
+        let payload_attributes = Self::builder_attributes(payload_attributes)?;
+        self.spawn_call(move |api| async move {
+            BaseEngineApiServer::fork_choice_updated_v4(&api, fork_choice_state, payload_attributes)
                 .await
         })
         .await
@@ -663,6 +695,16 @@ where
     ) -> TransportResult<BaseExecutionPayloadEnvelopeV5> {
         self.spawn_call(move |api| async move {
             BaseEngineApiServer::get_payload_v5(&api, payload_id).await
+        })
+        .await
+    }
+
+    async fn get_payload_v6(
+        &self,
+        payload_id: PayloadId,
+    ) -> TransportResult<BaseExecutionPayloadEnvelopeV6> {
+        self.spawn_call(move |api| async move {
+            BaseEngineApiServer::get_payload_v6(&api, payload_id).await
         })
         .await
     }
