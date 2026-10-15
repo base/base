@@ -1109,8 +1109,7 @@ struct FlashblocksMetadata {
     new_account_balances: Option<HashMap<Address, U256>>,
 }
 
-/// Applies the production system calls and forced transactions before pool selection.
-pub fn execute_pre_steps<DB>(
+pub(crate) fn execute_pre_steps<DB>(
     state: &mut State<DB>,
     ctx: &BasePayloadBuilderCtx,
 ) -> Result<ExecutionInfo, PayloadBuilderError>
@@ -1129,9 +1128,7 @@ where
     Ok(info)
 }
 
-/// Assembles a payload and Flashblock message from accumulated execution state.
-/// When `calculate_state_root` is false, the state root is a placeholder until finalization.
-pub fn build_block<DB, P>(
+pub(crate) fn build_block<DB, P>(
     state: &mut State<DB>,
     ctx: &BasePayloadBuilderCtx,
     info: &mut ExecutionInfo,

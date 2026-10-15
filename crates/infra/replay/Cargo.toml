@@ -46,12 +46,11 @@ reth-provider.workspace = true
 reth-trie-common.workspace = true
 reth-transaction-pool.workspace = true
 reth-primitives-traits.workspace = true
+reth-payload-primitives.workspace = true
 reth-basic-payload-builder.workspace = true
 
-base-builder-core.workspace = true
 base-execution-evm.workspace = true
 base-execution-txpool.workspace = true
-base-common-flashblocks.workspace = true
 base-execution-chainspec.workspace = true
 base-execution-payload-builder.workspace = true
 

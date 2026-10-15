@@ -141,7 +141,8 @@ inputs, not an authentication protocol for untrusted peers.
 ### Sequencer block-building components
 
 The builder's `mainnet_build` benchmark consumes the same full execution fixtures,
-but calls the **production Flashblocks builder**, not the proof stateless builder:
+but calls the **native full-block builder** in `base-execution-payload-builder`,
+not the Flashblocks or proof stateless builder:
 
 ```sh
 CARGO_PROFILE_BENCH_DEBUG=0 cargo bench --locked -p base-replay \
@@ -163,55 +164,39 @@ RPC, or zero state. This substitutes storage, not the builder's EVM.
 The real pending pool uses FIFO arrival timestamps to preserve canonical order;
 deposits enter through payload attributes. This is not a historical mempool trace:
 admission/signature validation is prepared, and competing/rejected transactions,
-metering-service enforcement, arrival timing and Flashblock deadlines are absent.
+metering-service enforcement, arrival timing and deadlines are absent.
 Only fixtures with leading deposits followed by ordinary pool transactions are
 supported; unsupported ordering fails explicitly.
 
 Before timing, gas, transaction count/order, and the entire assembled header are
 checked against mainnet, **except the deliberately uncomputed state root**.
-The message-passer withdrawals root is a captured constant. The checks also cover
-a later Flashblock's transaction suffix and reject a missing account read.
+The message-passer withdrawals root is a captured constant. A missing account
+read must fail. The isolated execution path's merged state and hashed state must
+match the native full-block builder's output.
 
-Criterion writes raw samples under `target/criterion/sequencer_mainnet_*`:
+Criterion writes raw samples under `target/criterion/sequencer_full-block_*`:
 
+- `build-mocked-roots`: the production native `Builder::build` including system
+  calls, forced transactions, pool selection, EVM execution, transition merging,
+  state-key hashing, receipt/transaction commitments and final payload packaging.
+  Only state-root computation and the withdrawals-root lookup are mocked. The
+  zero state root makes the benchmark output unsuitable for submission to a node.
 - `select-execute-flat-state`: pre-block/system calls, deposits, pool iteration,
-  resource checks, EVM execution and state transitions with flat captured reads.
-- `build-no-roots`: selection/execution followed by real payload and Flashblock
-  assembly. It does not include publication encoding or final root computation.
-- `build-progressive-10-no-roots`: a deposit-only fallback followed by ten
-  evenly sized chunks of the real pool transactions, executing each transaction
-  once and retaining state and receipts between assemblies. Chunk pools are
-  populated outside timing; selection, execution, eleven assemblies and disposal
-  of intermediate payloads are timed. Every published suffix is checked and the
-  final header must match the one-shot build. These are synthetic arrival
-  boundaries, not historical Flashblocks or a deadline/metering simulation.
+  resource checks, EVM execution and state transitions through native builder
+  methods with flat captured reads, stopping before payload finalization.
 - `pool-select-commit`: the production pending-pool snapshot and lane-aware
-  iterator, marking each transaction committed without EVM execution. Checks
-  exact canonical user-transaction order before timing; no competing pool load.
-- `pre-steps-flat-state`: system calls and forced deposits against a fresh flat
-  state, without pool transactions. State construction is outside timing.
+  iterator over the block's pool transactions, marking each transaction committed
+  without EVM execution; no competing pool load.
 - `transition-merge`: production transition merging with revert retention from
   the real executed block. Snapshot cloning is outside timing.
 - `state-key-hashing`: the production Keccak account/storage-key hashing used
   before state-root calculation, on the real merged bundle. This is not a trie
   root benchmark and does not access disk.
-- `intra-block-state-diff`: production balance/code/storage invalidation-diff
-  collection from the real merged bundle, excluding the pool's invalidation index.
-- `assemble-no-roots`: transition merging, receipts/transaction commitments,
-  bloom, header sealing, executed-block packaging and Flashblock construction.
-  Cloning the starting state and receipts is outside timing; production copies
-  inside `build_block` remain timed. Criterion excludes returned-value destruction.
-- `assemble-tail-no-roots`: the same accumulated block, publishing only the final
-  tenth of transactions (rounded up). The split is synthetic, not the historical
-  Flashblock boundary; commitments still cover the entire block.
-- `publication-json`: serializing the all-transactions Flashblock message, with
-  no websocket, subscriber fanout or network delivery.
 
-Use the progressive and single-build totals when evaluating work moved between
-execution and assembly (for example, precomputing receipt blooms). An isolated
-assembly speedup does not establish a net improvement. Stages overlap and their
-timings must not be added. The full suite has eleven stages; a Criterion filter
-such as `build-progressive` runs just that workload after the correctness checks.
+Stages overlap and their timings must not be added. The suite has five stages;
+a Criterion filter such as `build-mocked-roots` runs only the full build after
+correctness checks. There are no progressive Flashblock, suffix-publication,
+intra-Flashblock invalidation or Flashblock JSON benchmarks.
 
 These are **CPU/component measurements with mocked storage**, not production
 block latency. Actual sequencer `state_root_with_updates`, MDBX/RocksDB access,
@@ -228,8 +213,7 @@ stages below measure these execution components, not TEE attestation, signing,
 oracle transport, or the entire prover pipeline. Running `base-replay` on a
 normal host measures host performance, not latency inside a TEE.
 
-The sequencer's critical path uses the stateful Flashblocks payload builder in
-`crates/builder/core/src/flashblocks/payload.rs`; its root calculation calls
+The native full-block builder in `crates/execution/payload/src/builder.rs` calls
 `StateRootProvider::state_root_with_updates`. It does **not** use `base-proof-mpt`.
 The `mainnet_build` benchmark above measures builder components with flat mock
 state, but excludes root calculation. An MPT improvement is a proof-path

@@ -1,54 +1,47 @@
-//! Mainnet inputs through the actual Flashblocks selection/execution and assembly code.
+//! Mainnet inputs through the native full-block payload builder, not the Flashblocks builder.
 //!
-//! The proof witness is used ONLY during untimed preparation to record flat database reads.
-//! Timed runs cannot fall back to it: missing reads fail. FIFO is the production pool ordering
-//! configured to reproduce canonical transaction order, not a reconstruction of the historical
-//! mempool. State-root calculation and the message-passer storage root are explicitly excluded;
-//! the latter is a fixed captured value. Publication measures JSON encoding, not network delivery.
-//! The hand-written database is a read-through recorder during preparation and a strict replay
-//! afterward; an automock cannot express that stateful generic read-through behavior.
+//! Witness traversal only records flat reads during untimed preparation. Missing replay reads
+//! fail. State-root computation is explicitly mocked to zero and the withdrawals root to its
+//! captured value; production state-key hashing and full-block assembly still run.
+//! The hand-written database records stateful read-through accesses that automock cannot model.
+//! The root boundary implements external provider traits and rejects every unexpected read.
 
 use std::{
-    cell::RefCell,
-    collections::BTreeMap,
-    fmt::Debug,
-    hint::black_box,
-    io,
-    sync::Arc,
-    time::{Duration, Instant},
+    cell::RefCell, collections::BTreeMap, fmt::Debug, hint::black_box, io, sync::Arc, time::Instant,
 };
 
 use alloy_consensus::Transaction;
-use alloy_primitives::{Address, B256, U256, address};
-use base_builder_core::{
-    BasePayloadBuilderCtx, BestFlashblocksTxs, BlockDeferrals, BuilderConfig, ExecutionInfo,
-    FlashblocksExtraCtx, ParkableBestPayloadTransactions, RejectionCache, ResourceLimits,
-    build_block, execute_pre_steps,
-};
-use base_common_consensus::BaseTransactionSigned;
-use base_common_flashblocks::{FlashblockId, FlashblocksPayloadV1};
+use alloy_eips::Encodable2718;
+use alloy_primitives::{Address, B256, Bytes, U256};
+use base_common_consensus::{BaseTransactionSigned, Predeploys};
 use base_execution_chainspec::BaseChainSpec;
-use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
-use base_execution_payload_builder::{BaseBuiltPayload, BasePayloadBuilderAttributes};
+use base_execution_evm::BaseEvmConfig;
+use base_execution_payload_builder::{
+    BaseBuiltPayload, BasePayloadBuilderAttributes, ParkableBestPayloadTransactions,
+    builder::{BasePayloadBuilderCtx, Builder, ExecutionInfo},
+    config::BaseBuilderConfig,
+};
 use base_execution_txpool::{
-    AccountStateDiff, BaseOrdering, BasePooledTransaction, ParkableBestTransactions,
-    ParkedBestTransactions,
+    BaseOrdering, BasePooledTransaction, ParkableBestTransactions, ParkedBestTransactions,
 };
 use base_proof_executor::TrieDB;
 use base_replay::{ExecutionWitness, Fixture};
 use criterion::{BatchSize, Criterion, Throughput, criterion_group, criterion_main};
-use reth_basic_payload_builder::PayloadConfig;
-use reth_evm::ConfigureEvm;
-use reth_primitives_traits::{Recovered, SealedHeader};
+use reth_basic_payload_builder::{BuildOutcomeKind, PayloadConfig};
+use reth_evm::execute::BlockBuilder;
+use reth_payload_primitives::BuiltPayload;
+use reth_primitives_traits::{Account, Recovered, SealedHeader};
 use reth_provider::{
-    HashedPostStateProvider, ProviderError, StateRootProvider, StorageRootProvider,
+    AccountReader, BlockHashReader, BytecodeReader, HashedPostStateProvider, ProviderError,
+    StateProofProvider, StateProvider, StateRootProvider, StorageRootProvider,
 };
 use reth_transaction_pool::{
     BestTransactions, TransactionOrigin, ValidPoolTransaction, identifier::TransactionId,
     pool::PendingPool,
 };
 use reth_trie_common::{
-    HashedPostState, HashedStorage, KeccakKeyHasher, StorageMultiProof, StorageProof, TrieInput,
+    AccountProof, ExecutionWitnessMode, HashedPostState, HashedStorage, KeccakKeyHasher,
+    MultiProof, MultiProofTargets, StorageMultiProof, StorageProof, TrieInput,
     updates::TrieUpdates,
 };
 use revm::{
@@ -58,16 +51,18 @@ use revm::{
     state::AccountInfo,
 };
 
-/// The real pending-pool iterator, with captured arrival order for deterministic replay.
+/// Native full-block builder context.
+pub type Context = BasePayloadBuilderCtx<BaseEvmConfig, BaseChainSpec>;
+/// Production pending pool ordered to reproduce canonical transaction order.
 pub type Pool = PendingPool<BaseOrdering<BasePooledTransaction>>;
 
-/// Explicit storage boundary for assembly-only timings. Computing a state root is forbidden.
+/// Explicit mocked root boundary. Execution reads must use the captured database instead.
 #[derive(Debug)]
-pub struct ExcludedRoots {
+pub struct MockRoots {
     withdrawals_root: B256,
 }
 
-impl StateRootProvider for ExcludedRoots {
+impl StateRootProvider for MockRoots {
     fn state_root(&self, _: HashedPostState) -> Result<B256, ProviderError> {
         Err(ProviderError::UnsupportedProvider)
     }
@@ -78,7 +73,7 @@ impl StateRootProvider for ExcludedRoots {
         &self,
         _: HashedPostState,
     ) -> Result<(B256, TrieUpdates), ProviderError> {
-        Err(ProviderError::UnsupportedProvider)
+        Ok((B256::ZERO, TrieUpdates::default()))
     }
     fn state_root_from_nodes_with_updates(
         &self,
@@ -88,15 +83,15 @@ impl StateRootProvider for ExcludedRoots {
     }
 }
 
-impl HashedPostStateProvider for ExcludedRoots {
-    fn hashed_post_state(&self, _: &BundleState) -> Result<HashedPostState, ProviderError> {
-        Err(ProviderError::UnsupportedProvider)
+impl HashedPostStateProvider for MockRoots {
+    fn hashed_post_state(&self, bundle: &BundleState) -> Result<HashedPostState, ProviderError> {
+        Ok(HashedPostState::from_bundle_state::<KeccakKeyHasher>(bundle.state()))
     }
 }
 
-impl StorageRootProvider for ExcludedRoots {
+impl StorageRootProvider for MockRoots {
     fn storage_root(&self, address: Address, _: HashedStorage) -> Result<B256, ProviderError> {
-        assert_eq!(address, address!("4200000000000000000000000000000000000016"));
+        assert_eq!(address, Predeploys::L2_TO_L1_MESSAGE_PASSER);
         Ok(self.withdrawals_root)
     }
     fn storage_proof(
@@ -117,6 +112,49 @@ impl StorageRootProvider for ExcludedRoots {
     }
 }
 
+impl AccountReader for MockRoots {
+    fn basic_account(&self, _: &Address) -> Result<Option<Account>, ProviderError> {
+        Err(ProviderError::UnsupportedProvider)
+    }
+}
+impl BytecodeReader for MockRoots {
+    fn bytecode_by_hash(
+        &self,
+        _: &B256,
+    ) -> Result<Option<reth_primitives_traits::Bytecode>, ProviderError> {
+        Err(ProviderError::UnsupportedProvider)
+    }
+}
+impl BlockHashReader for MockRoots {
+    fn block_hash(&self, _: u64) -> Result<Option<B256>, ProviderError> {
+        Err(ProviderError::UnsupportedProvider)
+    }
+    fn canonical_hashes_range(&self, _: u64, _: u64) -> Result<Vec<B256>, ProviderError> {
+        Err(ProviderError::UnsupportedProvider)
+    }
+}
+impl StateProofProvider for MockRoots {
+    fn proof(&self, _: TrieInput, _: Address, _: &[B256]) -> Result<AccountProof, ProviderError> {
+        Err(ProviderError::UnsupportedProvider)
+    }
+    fn multiproof(&self, _: TrieInput, _: MultiProofTargets) -> Result<MultiProof, ProviderError> {
+        Err(ProviderError::UnsupportedProvider)
+    }
+    fn witness(
+        &self,
+        _: TrieInput,
+        _: HashedPostState,
+        _: ExecutionWitnessMode,
+    ) -> Result<Vec<Bytes>, ProviderError> {
+        Err(ProviderError::UnsupportedProvider)
+    }
+}
+impl StateProvider for MockRoots {
+    fn storage(&self, _: Address, _: B256) -> Result<Option<U256>, ProviderError> {
+        Err(ProviderError::UnsupportedProvider)
+    }
+}
+
 /// Captured prestate reads. Only the preparation pass has a witness-backed source.
 #[derive(Debug)]
 pub struct CapturedDb<'a> {
@@ -125,7 +163,6 @@ pub struct CapturedDb<'a> {
     storage: RefCell<BTreeMap<(Address, U256), U256>>,
     code: RefCell<BTreeMap<B256, Bytecode>>,
     hashes: RefCell<BTreeMap<u64, B256>>,
-    roots: ExcludedRoots,
 }
 
 impl<'a> CapturedDb<'a> {
@@ -169,14 +206,8 @@ impl Database for &CapturedDb<'_> {
     }
 }
 
-impl AsRef<ExcludedRoots> for CapturedDb<'_> {
-    fn as_ref(&self) -> &ExcludedRoots {
-        &self.roots
-    }
-}
-
-/// Prepares the real builder context and FIFO pool from a complete captured block.
-pub fn prepare(fixture: &Fixture) -> (BasePayloadBuilderCtx, Pool) {
+/// Prepares native attributes and the FIFO pool from a complete captured block.
+pub fn prepare(fixture: &Fixture) -> (Context, Pool) {
     let chain_spec = Arc::new(BaseChainSpec::mainnet());
     let parent = Arc::new(SealedHeader::seal_slow(fixture.parent.clone()));
     let mut attributes = BasePayloadBuilderAttributes::<BaseTransactionSigned>::try_new(
@@ -216,120 +247,84 @@ pub fn prepare(fixture: &Fixture) -> (BasePayloadBuilderCtx, Pool) {
             fixture.header.base_fee_per_gas.unwrap(),
         );
     }
-    let block_env_attributes = BaseNextBlockEnvAttributes {
-        timestamp: fixture.header.timestamp,
-        suggested_fee_recipient: fixture.header.beneficiary,
-        prev_randao: fixture.header.mix_hash,
-        gas_limit: fixture.header.gas_limit,
-        parent_beacon_block_root: fixture.header.parent_beacon_block_root,
-        extra_data: fixture.header.extra_data.clone(),
-    };
-    let evm_config = BaseEvmConfig::base(Arc::clone(&chain_spec));
-    let evm_env = evm_config.next_evm_env(&parent, &block_env_attributes).unwrap();
     let id = attributes.payload_attributes.id;
-    let ctx = BasePayloadBuilderCtx {
-        evm_config,
+    let ctx = Context {
+        evm_config: BaseEvmConfig::base(Arc::clone(&chain_spec)),
         chain_spec,
         config: PayloadConfig::new(parent, attributes, id),
-        evm_env,
-        block_env_attributes,
         cancel: Default::default(),
-        extra: FlashblocksExtraCtx::default(),
-        builder_config: BuilderConfig::default(),
+        best_payload: None,
+        builder_config: BaseBuilderConfig::default(),
     };
     (ctx, pool)
 }
 
-/// Real pool selection and execution, excluding payload assembly and database population.
+/// Native selection and EVM execution over a complete block, without finishing the payload.
 pub fn execute<'a, 'w>(
-    ctx: &BasePayloadBuilderCtx,
+    ctx: &Context,
     pool: &Pool,
     db: &'a CapturedDb<'w>,
+    base_fee: u64,
 ) -> (State<&'a CapturedDb<'w>>, ExecutionInfo) {
     let mut state = State::builder().with_database(db).with_bundle_update().build();
-    let mut info = execute_pre_steps(&mut state, ctx).unwrap();
-    execute_pool(ctx, pool, &mut state, &mut info);
+    state.load_cache_account(Predeploys::L1_BLOCK_INFO).unwrap();
+    let mut builder = ctx.block_builder(&mut state).unwrap();
+    builder.apply_pre_execution_changes().unwrap();
+    let mut info = ctx.execute_sequencer_transactions(&mut builder).unwrap();
+    let mut best = pool.best();
+    best.no_updates();
+    let txs = ParkableBestPayloadTransactions::new(Box::new(ParkedBestTransactions::new(
+        best,
+        BaseOrdering::timestamp(),
+        base_fee,
+    )));
+    assert!(ctx.execute_best_transactions(&mut info, &mut builder, txs).unwrap().is_none());
+    drop(builder);
     (state, info)
 }
 
-/// Executes one captured arrival chunk against the accumulated block state.
-pub fn execute_pool(
-    ctx: &BasePayloadBuilderCtx,
+/// Calls the actual native full-block builder including its finish/assembly path.
+pub fn build(
+    ctx: &Context,
     pool: &Pool,
-    state: &mut State<&CapturedDb<'_>>,
-    info: &mut ExecutionInfo,
-) {
-    let mut best = pool.best();
-    best.no_updates();
-    let mut txs = BestFlashblocksTxs::new(
+    db: &CapturedDb<'_>,
+    roots: &MockRoots,
+    base_fee: u64,
+) -> BaseBuiltPayload {
+    let ctx = Context {
+        evm_config: ctx.evm_config.clone(),
+        chain_spec: Arc::clone(&ctx.chain_spec),
+        config: ctx.config.clone(),
+        builder_config: ctx.builder_config.clone(),
+        cancel: Default::default(),
+        best_payload: None,
+    };
+    let outcome = Builder::new(|_| {
+        let mut best = pool.best();
+        best.no_updates();
         ParkableBestPayloadTransactions::new(Box::new(ParkedBestTransactions::new(
             best,
             BaseOrdering::timestamp(),
-            ctx.evm_env.block_env.basefee,
-        ))),
-        RejectionCache::new(1_000, Duration::from_secs(60)),
-    );
-    let limits = ResourceLimits { block_gas_limit: ctx.block_gas_limit(), ..Default::default() };
-    ctx.execute_best_transactions(info, &mut BlockDeferrals::default(), state, &mut txs, &limits)
-        .unwrap();
-}
-
-/// Builds the deposit-only fallback and ten synthetic arrival chunks, retaining EVM state.
-/// The callback checks each publication outside timing; timed runs black-box each output.
-pub fn progressive_build(
-    ctx: &mut BasePayloadBuilderCtx,
-    chunks: &[Pool],
-    db: &CapturedDb<'_>,
-    mut inspect: impl FnMut(&BaseBuiltPayload, &FlashblocksPayloadV1),
-) -> BaseBuiltPayload {
-    ctx.extra.flashblock_index = 0;
-    let mut state = State::builder().with_database(db).with_bundle_update().build();
-    let mut info = execute_pre_steps(&mut state, ctx).unwrap();
-    let (mut payload, message, _) =
-        build_block(&mut state, ctx, &mut info, FlashblockId::default(), false).unwrap();
-    inspect(&payload, &message);
-    black_box(message);
-    for (index, pool) in chunks.iter().enumerate() {
-        ctx.extra.flashblock_index = index as u64 + 1;
-        execute_pool(ctx, pool, &mut state, &mut info);
-        let (next, message, diff) = build_block(
-            &mut state,
-            ctx,
-            &mut info,
-            FlashblockId { block_number: ctx.block_number(), index: index as u64 },
-            false,
-        )
-        .unwrap();
-        inspect(&next, &message);
-        black_box((message, diff));
-        payload = next;
-    }
-    ctx.extra.flashblock_index = 0;
-    payload
-}
-
-/// Copies only assembly inputs, outside assembly-only timing.
-pub fn assembly_info(info: &ExecutionInfo) -> ExecutionInfo {
-    ExecutionInfo {
-        executed_transactions: info.executed_transactions.clone(),
-        executed_senders: info.executed_senders.clone(),
-        receipts: info.receipts.clone(),
-        cumulative_gas_used: info.cumulative_gas_used,
-        cumulative_da_bytes_used: info.cumulative_da_bytes_used,
-        total_fees: info.total_fees,
-        da_footprint_scalar: info.da_footprint_scalar,
-        ..Default::default()
+            base_fee,
+        )))
+    })
+    .build(db, roots, None, ctx)
+    .unwrap();
+    match outcome {
+        BuildOutcomeKind::Better { payload } | BuildOutcomeKind::Freeze(payload) => payload,
+        _ => panic!("complete captured block must produce a payload"),
     }
 }
 
-/// Runs checks before measuring production selection, assembly and publication encoding.
+/// Checks mainnet commitments before measuring only full-block workloads.
 pub fn mainnet_build(c: &mut Criterion) {
     let path = std::env::var("BASE_REPLAY_FIXTURE").unwrap_or_else(|_| {
         concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/mainnet-execution.json.zst").into()
     });
     let fixture = Fixture::read(path).unwrap();
     fixture.validate().unwrap();
-    let (mut ctx, pool) = prepare(&fixture);
+    let (ctx, pool) = prepare(&fixture);
+    let base_fee = fixture.header.base_fee_per_gas.unwrap();
     let witness = fixture.execution.as_ref().expect("execution witness required");
     let db = CapturedDb {
         source: RefCell::new(Some(TrieDB::new(
@@ -341,129 +336,74 @@ pub fn mainnet_build(c: &mut Criterion) {
         storage: Default::default(),
         code: Default::default(),
         hashes: Default::default(),
-        roots: ExcludedRoots { withdrawals_root: fixture.header.withdrawals_root.unwrap() },
     };
-    // Capture reads through the actual builder, then physically remove the proof database.
-    let _ = execute(&ctx, &pool, &db);
+    let roots = MockRoots { withdrawals_root: fixture.header.withdrawals_root.unwrap() };
+    let _ = build(&ctx, &pool, &db, &roots, base_fee);
     drop(db.source.borrow_mut().take());
-    let (mut state, info) = execute(&ctx, &pool, &db);
-    // Check the exact snapshot used by assembly-only timing, not just the full execution output.
-    let mut info = assembly_info(&info);
-    assert_eq!(info.cumulative_gas_used, fixture.header.gas_used);
-    assert_eq!(info.executed_transactions.len(), fixture.transactions.len());
-    let (payload, message, _) =
-        build_block(&mut state, &ctx, &mut info, FlashblockId::default(), false).unwrap();
+    let payload = build(&ctx, &pool, &db, &roots, base_fee);
     let mut expected = fixture.header.clone();
-    expected.state_root = B256::ZERO; // Deliberately uncomputed for intermediate Flashblocks.
+    expected.state_root = B256::ZERO; // Explicit mock, not a valid block for submission.
     assert_eq!(payload.block().header(), &expected);
     assert_eq!(
-        message.diff.transactions,
+        payload
+            .block()
+            .body()
+            .transactions
+            .iter()
+            .map(|tx| Bytes::from(tx.encoded_2718()))
+            .collect::<Vec<_>>(),
         fixture.transactions.iter().map(|tx| tx.encoded.clone()).collect::<Vec<_>>()
     );
-    // A later Flashblock publishes only its suffix, but retains whole-block commitments.
-    let tail_start = fixture.transactions.len() - fixture.transactions.len().div_ceil(10);
-    info.extra.last_flashblock_index = tail_start;
-    let (tail_payload, tail_message, _) =
-        build_block(&mut state, &ctx, &mut info, FlashblockId::default(), false).unwrap();
-    assert_eq!(tail_payload.block().header(), &expected);
-    assert_eq!(tail_message.diff.transactions, message.diff.transactions[tail_start..]);
-
-    // Real transactions and state, synthetic evenly sized arrival chunks. No copying or
-    // re-executing the earlier prefix between publications. Pool population is untimed.
+    let (mut executed, info) = execute(&ctx, &pool, &db, base_fee);
+    assert_eq!(info.cumulative_gas_used, fixture.header.gas_used);
+    let transitions = executed.transition_state.clone();
+    executed.merge_transitions(BundleRetention::Reverts);
+    let canonical = payload.executed_block().unwrap();
+    assert_eq!(executed.bundle_state.state, canonical.execution_output.state.state);
+    assert_eq!(roots.hashed_post_state(&executed.bundle_state).unwrap(), *canonical.hashed_state);
     let mut best = pool.best();
     best.no_updates();
-    let users = best.collect::<Vec<_>>();
-    let chunks = (0..10)
-        .map(|index| {
-            let mut chunk = Pool::new(BaseOrdering::timestamp());
-            for tx in &users[users.len() * index / 10..users.len() * (index + 1) / 10] {
-                chunk.add_transaction(Arc::clone(tx), ctx.evm_env.block_env.basefee);
-            }
-            chunk
-        })
-        .collect::<Vec<_>>();
-    let mut published = Vec::new();
-    let progressive = progressive_build(&mut ctx, &chunks, &db, |payload, message| {
-        published.extend_from_slice(&message.diff.transactions);
-        assert_eq!(
-            published,
-            fixture.transactions[..published.len()]
-                .iter()
-                .map(|tx| tx.encoded.clone())
-                .collect::<Vec<_>>()
-        );
-        assert_eq!(payload.block().body().transactions.len(), published.len());
-    });
-    assert_eq!(progressive.block().header(), &expected);
-    assert_eq!(published, message.diff.transactions);
-
-    let mut best = pool.best();
-    best.no_updates();
-    let mut selected =
-        ParkedBestTransactions::new(best, BaseOrdering::timestamp(), ctx.evm_env.block_env.basefee);
-    for expected in &users {
+    let mut selected = ParkedBestTransactions::new(best, BaseOrdering::timestamp(), base_fee);
+    for expected in &fixture.transactions[ctx.config.attributes.transactions.len()..] {
         let actual = selected.next().expect("every captured pool transaction is eligible");
-        assert_eq!(actual.hash(), expected.hash());
+        assert_eq!(*actual.hash(), expected.hash);
         selected.mark_committed(&actual);
     }
     assert!(selected.next().is_none());
-    // Negative control: a missing captured account must fail, not turn into an empty account.
     let first = fixture.transactions[0].sender;
     let account = db.accounts.borrow_mut().remove(&first).unwrap();
     assert!((&db).basic(first).is_err());
     db.accounts.borrow_mut().insert(first, account);
     eprintln!(
-        "mainnet builder: block={}, txs={}, gas={}, captured_accounts={}, captured_slots={}; FIFO/flat-state, roots and network excluded",
+        "native full-block builder: block={}, txs={}, gas={}; FIFO/flat-state, roots mocked, network excluded",
         fixture.header.number,
         fixture.transactions.len(),
-        info.cumulative_gas_used,
-        db.accounts.borrow().len(),
-        db.storage.borrow().len()
+        info.cumulative_gas_used
     );
-    let (executed, info) = execute(&ctx, &pool, &db);
-    let mut group = c.benchmark_group(format!("sequencer/mainnet/{}", fixture.header.number));
+    let mut group = c.benchmark_group(format!("sequencer/full-block/{}", fixture.header.number));
     group.sample_size(10);
     group.throughput(Throughput::Elements(fixture.transactions.len() as u64));
+    group.bench_function("build-mocked-roots", |b| {
+        b.iter(|| black_box(build(&ctx, &pool, &db, &roots, base_fee)))
+    });
     group.bench_function("select-execute-flat-state", |b| {
-        b.iter(|| black_box(execute(&ctx, &pool, &db)))
-    });
-    group.bench_function("build-no-roots", |b| {
-        b.iter(|| {
-            let (mut state, mut info) = execute(&ctx, &pool, &db);
-            black_box(
-                build_block(&mut state, &ctx, &mut info, FlashblockId::default(), false).unwrap(),
-            )
-        })
-    });
-    group.bench_function("build-progressive-10-no-roots", |b| {
-        b.iter(|| black_box(progressive_build(&mut ctx, &chunks, &db, |_, _| {})))
+        b.iter(|| black_box(execute(&ctx, &pool, &db, base_fee)))
     });
     group.bench_function("pool-select-commit", |b| {
         b.iter(|| {
             let mut best = pool.best();
             best.no_updates();
-            let mut best = ParkedBestTransactions::new(
-                best,
-                BaseOrdering::timestamp(),
-                ctx.evm_env.block_env.basefee,
-            );
+            let mut best = ParkedBestTransactions::new(best, BaseOrdering::timestamp(), base_fee);
             while let Some(tx) = best.next() {
                 best.mark_committed(black_box(&tx));
             }
         })
     });
-    group.bench_function("pre-steps-flat-state", |b| {
-        b.iter_batched(
-            || State::builder().with_database(&db).with_bundle_update().build(),
-            |mut state| black_box(execute_pre_steps(&mut state, &ctx).unwrap()),
-            BatchSize::SmallInput,
-        )
-    });
     group.bench_function("transition-merge", |b| {
         b.iter_batched(
             || {
                 let mut state = State::builder().with_database(&db).with_bundle_update().build();
-                state.transition_state = executed.transition_state.clone();
+                state.transition_state = transitions.clone();
                 state
             },
             |mut state| {
@@ -473,42 +413,8 @@ pub fn mainnet_build(c: &mut Criterion) {
             BatchSize::SmallInput,
         )
     });
-    let mut merged = State::builder().with_database(&db).with_bundle_update().build();
-    merged.transition_state = executed.transition_state.clone();
-    merged.merge_transitions(BundleRetention::Reverts);
     group.bench_function("state-key-hashing", |b| {
-        b.iter(|| {
-            black_box(HashedPostState::from_bundle_state::<KeccakKeyHasher>(
-                merged.bundle_state.state(),
-            ))
-        })
-    });
-    group.bench_function("intra-block-state-diff", |b| {
-        b.iter(|| black_box(AccountStateDiff::collect_for_intra_block(&merged.bundle_state)))
-    });
-    for (name, start) in [("assemble-no-roots", 0), ("assemble-tail-no-roots", tail_start)] {
-        group.bench_function(name, |b| {
-            b.iter_batched(
-                || {
-                    let mut state =
-                        State::builder().with_database(&db).with_bundle_update().build();
-                    state.transition_state = executed.transition_state.clone();
-                    let mut info = assembly_info(&info);
-                    info.extra.last_flashblock_index = start;
-                    (state, info)
-                },
-                |(mut state, mut info)| {
-                    black_box(
-                        build_block(&mut state, &ctx, &mut info, FlashblockId::default(), false)
-                            .unwrap(),
-                    )
-                },
-                BatchSize::SmallInput,
-            )
-        });
-    }
-    group.bench_function("publication-json", |b| {
-        b.iter(|| black_box(serde_json::to_vec(&message).unwrap()))
+        b.iter(|| black_box(roots.hashed_post_state(&executed.bundle_state).unwrap()))
     });
     group.finish();
 }

@@ -27,7 +27,6 @@ pub use context::{
 };
 
 mod payload;
-pub use payload::{build_block, execute_pre_steps};
 
 mod resting;
 pub use resting::{RestingPayloadTransactions, RestingStats};
