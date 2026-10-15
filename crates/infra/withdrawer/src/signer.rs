@@ -42,6 +42,9 @@ pub enum WithdrawalSignerError {
     /// Mnemonic key derivation failed.
     #[error("could not derive mnemonic signing key")]
     Mnemonic,
+    /// The derivation path exceeds the BIP-32 depth limit.
+    #[error("derivation path must have at most {} components", SignerSource::MAX_DERIVATION_DEPTH)]
+    DerivationPathTooDeep,
     /// The Ledger could not be opened or queried for its address.
     #[cfg(feature = "ledger")]
     #[error("could not connect to Ledger; connect and unlock it, then open the Ethereum app")]
@@ -73,12 +76,18 @@ impl WithdrawalSigner {
                 .map(Self::Local)
                 .map_err(|_| WithdrawalSignerError::InvalidPrivateKey),
             SignerSource::Mnemonic { phrase, path } => {
+                if path.len() > SignerSource::MAX_DERIVATION_DEPTH {
+                    return Err(WithdrawalSignerError::DerivationPathTooDeep);
+                }
                 let key =
                     phrase.0.derive_key(path, None).map_err(|_| WithdrawalSignerError::Mnemonic)?;
                 Ok(Self::Local(PrivateKeySigner::from_signing_key(Clone::clone(key.as_ref()))))
             }
             #[cfg(feature = "ledger")]
             SignerSource::Ledger { path } => {
+                if path.len() > SignerSource::MAX_DERIVATION_DEPTH {
+                    return Err(WithdrawalSignerError::DerivationPathTooDeep);
+                }
                 LedgerSigner::new(HDPath::Other(path.derivation_string()), None)
                     .await
                     .map(Self::Ledger)
@@ -170,7 +179,7 @@ mod tests {
     #[cfg(feature = "ledger")]
     use alloy_signer_local::PrivateKeySigner;
 
-    use crate::{Secret, SignerSource, WithdrawalSigner};
+    use crate::{Secret, SignerSource, WithdrawalSigner, WithdrawalSignerError, WithdrawerArgs};
 
     const PHRASE: &str = "test test test test test test test test test test test junk";
 
@@ -199,6 +208,28 @@ mod tests {
         WithdrawalSigner::new(&mnemonic("m/321'/0'"))
             .await
             .expect("a short hardened BIP-32 path must derive successfully");
+    }
+
+    #[tokio::test]
+    async fn derivation_depth_accepts_255_and_rejects_256() {
+        let path = format!("m{}", "/0".repeat(255));
+        WithdrawerArgs::parse_hd_path(&path).expect("255 components must parse");
+        WithdrawalSigner::new(&mnemonic(&path)).await.expect("255 levels must derive");
+
+        let path = format!("{path}/0");
+        assert_eq!(
+            WithdrawerArgs::parse_hd_path(&path).unwrap_err(),
+            "derivation path must have at most 255 components"
+        );
+        assert!(matches!(
+            WithdrawalSigner::new(&mnemonic(&path)).await,
+            Err(WithdrawalSignerError::DerivationPathTooDeep)
+        ));
+        #[cfg(feature = "ledger")]
+        assert!(matches!(
+            WithdrawalSigner::new(&SignerSource::Ledger { path: path.parse().unwrap() }).await,
+            Err(WithdrawalSignerError::DerivationPathTooDeep)
+        ));
     }
 
     #[tokio::test]
