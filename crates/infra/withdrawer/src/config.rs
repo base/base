@@ -251,7 +251,7 @@ pub enum SignerSource {
 }
 
 impl SignerSource {
-    /// Maximum path depth supported by BIP-32 and Ledger's one-byte depth encoding.
+    /// Maximum BIP-32 path depth, bounded by the one-byte depth field of extended keys.
     pub const MAX_DERIVATION_DEPTH: usize = u8::MAX as usize;
 }
 

@@ -42,9 +42,12 @@ pub enum WithdrawalSignerError {
     /// Mnemonic key derivation failed.
     #[error("could not derive mnemonic signing key")]
     Mnemonic,
-    /// The derivation path exceeds the BIP-32 depth limit.
-    #[error("derivation path must have at most {} components", SignerSource::MAX_DERIVATION_DEPTH)]
-    DerivationPathTooDeep,
+    /// The derivation path is deeper than the signer supports.
+    #[error("derivation path must have at most {max} components")]
+    DerivationPathTooDeep {
+        /// Maximum supported path depth.
+        max: usize,
+    },
     /// The Ledger could not be opened or queried for its address.
     #[cfg(feature = "ledger")]
     #[error("could not connect to Ledger; connect and unlock it, then open the Ethereum app")]
@@ -69,6 +72,10 @@ pub enum WithdrawalSignerError {
 }
 
 impl WithdrawalSigner {
+    /// Maximum path depth accepted by the Ledger Ethereum app.
+    #[cfg(feature = "ledger")]
+    pub const MAX_LEDGER_DERIVATION_DEPTH: usize = 10;
+
     /// Creates a signer, deriving a local key or connecting to a Ledger without RPC.
     pub async fn new(source: &SignerSource) -> Result<Self, WithdrawalSignerError> {
         match source {
@@ -77,7 +84,9 @@ impl WithdrawalSigner {
                 .map_err(|_| WithdrawalSignerError::InvalidPrivateKey),
             SignerSource::Mnemonic { phrase, path } => {
                 if path.len() > SignerSource::MAX_DERIVATION_DEPTH {
-                    return Err(WithdrawalSignerError::DerivationPathTooDeep);
+                    return Err(WithdrawalSignerError::DerivationPathTooDeep {
+                        max: SignerSource::MAX_DERIVATION_DEPTH,
+                    });
                 }
                 let key =
                     phrase.0.derive_key(path, None).map_err(|_| WithdrawalSignerError::Mnemonic)?;
@@ -85,8 +94,10 @@ impl WithdrawalSigner {
             }
             #[cfg(feature = "ledger")]
             SignerSource::Ledger { path } => {
-                if path.len() > SignerSource::MAX_DERIVATION_DEPTH {
-                    return Err(WithdrawalSignerError::DerivationPathTooDeep);
+                if path.len() > Self::MAX_LEDGER_DERIVATION_DEPTH {
+                    return Err(WithdrawalSignerError::DerivationPathTooDeep {
+                        max: Self::MAX_LEDGER_DERIVATION_DEPTH,
+                    });
                 }
                 LedgerSigner::new(HDPath::Other(path.derivation_string()), None)
                     .await
@@ -223,12 +234,17 @@ mod tests {
         );
         assert!(matches!(
             WithdrawalSigner::new(&mnemonic(&path)).await,
-            Err(WithdrawalSignerError::DerivationPathTooDeep)
+            Err(WithdrawalSignerError::DerivationPathTooDeep { max: 255 })
         ));
-        #[cfg(feature = "ledger")]
+    }
+
+    #[cfg(feature = "ledger")]
+    #[tokio::test]
+    async fn ledger_rejects_paths_deeper_than_the_app_supports_before_connecting() {
+        let path = format!("m{}", "/0".repeat(WithdrawalSigner::MAX_LEDGER_DERIVATION_DEPTH + 1));
         assert!(matches!(
             WithdrawalSigner::new(&SignerSource::Ledger { path: path.parse().unwrap() }).await,
-            Err(WithdrawalSignerError::DerivationPathTooDeep)
+            Err(WithdrawalSignerError::DerivationPathTooDeep { max: 10 })
         ));
     }
 
