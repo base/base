@@ -43,14 +43,6 @@ impl RemoteSigner {
         Ok(Self { client, address })
     }
 
-    /// Creates a new [`RemoteSigner`] with a pre-configured [`HttpClient`].
-    ///
-    /// Use this constructor when you need custom HTTP client settings
-    /// (e.g. custom TLS configuration, timeouts, or middleware).
-    pub const fn with_client(client: HttpClient, address: Address) -> Self {
-        Self { client, address }
-    }
-
     /// Builds a [`TransactionRequest`] from a [`SignableTransaction`] for submission
     /// to the remote signer's `eth_signTransaction` endpoint.
     pub fn build_tx_request(&self, tx: &dyn SignableTransaction<Signature>) -> TransactionRequest {
