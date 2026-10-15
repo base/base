@@ -64,15 +64,13 @@ where
             // request sends its response through a oneshot channel that the caller
             // has likely already dropped, so the worst case is wasted work.
             tokio::spawn(async move {
-                if let Err(e) = handler.handle_rpc_request(query).await {
-                    error!(target: "engine", error = %e, "engine rpc request failed");
-                }
+                handler.handle_rpc_request(query).await;
                 drop(permit);
             });
         }
     }
 
-    async fn handle_rpc_request(&self, request: EngineRpcRequest) -> Result<(), EngineError> {
+    async fn handle_rpc_request(&self, request: EngineRpcRequest) {
         match request {
             EngineRpcRequest::EngineQuery(req) => {
                 trace!(target: "engine", ?req, "Received engine query.");
@@ -90,8 +88,6 @@ where
                 }
             }
         }
-
-        Ok(())
     }
 }
 
