@@ -1115,8 +1115,12 @@ where
             let hash = *transaction.hash();
             let sender = transaction.sender();
             let nonce = transaction.nonce();
+            let validation_requested = Instant::now();
             let validated = self.validator().validate_transaction(origin, transaction).await;
+            self.insert_histograms.validation_call.record(validation_requested.elapsed());
+            let lock_requested = Instant::now();
             let _admission_guard = self.protocol_admission_lock.lock();
+            self.insert_histograms.admission_wait.record(lock_requested.elapsed());
             self.ensure_protocol_classification_current(hash, &validated)?;
             self.ensure_not_published_expired(hash, &validated)?;
             let replaced = self.protocol_replacement_hash(sender, nonce);
@@ -1126,16 +1130,19 @@ where
             let block_expiry_bound = Self::validity_block_expiry_bound(&validated);
             let flashblock_expiry_bound = Self::validity_flashblock_expiry_bound(&validated);
             let is_validity = Self::has_validity_predicates(&validated);
-            let events =
-                match self.protocol_pool.inner().add_transaction_and_subscribe(origin, validated) {
-                    Ok(events) => events,
-                    Err(error) => {
-                        if pre_admitted {
-                            self.guard.write().release(&hash);
-                        }
-                        return Err(error);
+            let insert_started = Instant::now();
+            let inserted =
+                self.protocol_pool.inner().add_transaction_and_subscribe(origin, validated);
+            self.insert_histograms.pool_insert.record(insert_started.elapsed());
+            let events = match inserted {
+                Ok(events) => events,
+                Err(error) => {
+                    if pre_admitted {
+                        self.guard.write().release(&hash);
                     }
-                };
+                    return Err(error);
+                }
+            };
             self.gate_protocol_admission(hash, replaced, pre_admitted)?;
             self.register_block_expiry(hash, block_expiry_bound, flashblock_expiry_bound, replaced);
             if is_validity {
