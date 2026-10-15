@@ -109,6 +109,7 @@ mod tests {
 
         metrics::with_local_recorder(&recorder, || {
             let mut sampler = RuntimeMetricsSampler::new(runtime.handle());
+            let initial_busy = sampler.busy;
             runtime.block_on(async {
                 tokio::spawn(async {
                     let end = Instant::now() + Duration::from_millis(100);
@@ -119,6 +120,14 @@ mod tests {
                 .await
                 .unwrap();
             });
+            // Tokio publishes a worker's busy time only when it parks or runs maintenance, which
+            // can lag the join handle resolving.
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while RuntimeMetricsSampler::total_busy(&sampler.metrics) == initial_busy
+                && Instant::now() < deadline
+            {
+                std::thread::sleep(Duration::from_millis(1));
+            }
             sampler.sample();
         });
 
