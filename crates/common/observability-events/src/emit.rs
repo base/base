@@ -252,63 +252,17 @@ impl TransactionEventBuilder {
 }
 
 /// Emits a transaction event through the process-global writer.
+///
+/// Event fields are evaluated only when a writer is configured. Keep expressions free of
+/// side effects that are needed when event logging is off.
 #[macro_export]
 macro_rules! transaction_event {
-    (
-        producer: $producer:expr,
-        event_type: $event_type:expr
-        $(, tx_hash: $tx_hash:expr)?
-        $(, maybe_tx_hash: $maybe_tx_hash:expr)?
-        $(, block_hash: $block_hash:expr)?
-        $(, maybe_block_hash: $maybe_block_hash:expr)?
-        $(, block_number: $block_number:expr)?
-        $(, maybe_block_number: $maybe_block_number:expr)?
-        $(, payload_id: $payload_id:expr)?
-        $(, request_id: $request_id:expr)?
-        $(, id: { $( $id_name:expr => $id_value:expr ),* $(,)? })?
-        $(, data: { $( $data_name:expr => $data_value:expr ),* $(,)? })?
-        $(,)?
-    ) => {{
-        let builder = $crate::TransactionEventBuilder::new($producer, $event_type)
-            $(.tx_hash($tx_hash))?
-            $(.maybe_tx_hash($maybe_tx_hash))?
-            $(.block_hash($block_hash))?
-            $(.maybe_block_hash($maybe_block_hash))?
-            $(.block_number($block_number))?
-            $(.maybe_block_number($maybe_block_number))?
-            $(.payload_id($payload_id))?
-            $(.request_id($request_id))?
-            $($(.id_part($id_name, $id_value))*)?
-            $($(.data_field($data_name, $crate::__private::json!($data_value)))*)?;
-        builder.emit_global()
-    }};
-    (
-        producer: $producer:expr,
-        event_type: $event_type:expr
-        $(, tx_hash: $tx_hash:expr)?
-        $(, maybe_tx_hash: $maybe_tx_hash:expr)?
-        $(, block_hash: $block_hash:expr)?
-        $(, maybe_block_hash: $maybe_block_hash:expr)?
-        $(, block_number: $block_number:expr)?
-        $(, maybe_block_number: $maybe_block_number:expr)?
-        $(, payload_id: $payload_id:expr)?
-        $(, request_id: $request_id:expr)?
-        $(, id: { $( $id_name:expr => $id_value:expr ),* $(,)? })?
-        , data: $data:expr
-        $(,)?
-    ) => {{
-        let builder = $crate::TransactionEventBuilder::new($producer, $event_type)
-            $(.tx_hash($tx_hash))?
-            $(.maybe_tx_hash($maybe_tx_hash))?
-            $(.block_hash($block_hash))?
-            $(.maybe_block_hash($maybe_block_hash))?
-            $(.block_number($block_number))?
-            $(.maybe_block_number($maybe_block_number))?
-            $(.payload_id($payload_id))?
-            $(.request_id($request_id))?
-            $($(.id_part($id_name, $id_value))*)?
-            .data($data);
-        builder.emit_global()
+    (producer: $producer:expr, $($fields:tt)*) => {{
+        $crate::transaction_event!(
+            writer: $crate::GlobalTransactionEventWriter::get(),
+            producer: $producer,
+            $($fields)*
+        )
     }};
     (
         writer: $writer:expr,
@@ -326,19 +280,21 @@ macro_rules! transaction_event {
         $(, data: { $( $data_name:expr => $data_value:expr ),* $(,)? })?
         $(,)?
     ) => {{
-        let builder = $crate::TransactionEventBuilder::new($producer, $event_type)
-            $(.tx_hash($tx_hash))?
-            $(.maybe_tx_hash($maybe_tx_hash))?
-            $(.block_hash($block_hash))?
-            $(.maybe_block_hash($maybe_block_hash))?
-            $(.block_number($block_number))?
-            $(.maybe_block_number($maybe_block_number))?
-            $(.payload_id($payload_id))?
-            $(.request_id($request_id))?
-            $($(.id_part($id_name, $id_value))*)?
-            $($(.data_field($data_name, $crate::__private::json!($data_value)))*)?;
         match $writer {
-            Some(writer) => builder.emit_to(writer),
+            Some(writer) => {
+                let builder = $crate::TransactionEventBuilder::new($producer, $event_type)
+                    $(.tx_hash($tx_hash))?
+                    $(.maybe_tx_hash($maybe_tx_hash))?
+                    $(.block_hash($block_hash))?
+                    $(.maybe_block_hash($maybe_block_hash))?
+                    $(.block_number($block_number))?
+                    $(.maybe_block_number($maybe_block_number))?
+                    $(.payload_id($payload_id))?
+                    $(.request_id($request_id))?
+                    $($(.id_part($id_name, $id_value))*)?
+                    $($(.data_field($data_name, $crate::__private::json!($data_value)))*)?;
+                builder.emit_to(writer)
+            }
             None => Ok($crate::TransactionEventEmitOutcome::NotConfigured),
         }
     }};
@@ -358,19 +314,21 @@ macro_rules! transaction_event {
         , data: $data:expr
         $(,)?
     ) => {{
-        let builder = $crate::TransactionEventBuilder::new($producer, $event_type)
-            $(.tx_hash($tx_hash))?
-            $(.maybe_tx_hash($maybe_tx_hash))?
-            $(.block_hash($block_hash))?
-            $(.maybe_block_hash($maybe_block_hash))?
-            $(.block_number($block_number))?
-            $(.maybe_block_number($maybe_block_number))?
-            $(.payload_id($payload_id))?
-            $(.request_id($request_id))?
-            $($(.id_part($id_name, $id_value))*)?
-            .data($data);
         match $writer {
-            Some(writer) => builder.emit_to(writer),
+            Some(writer) => {
+                let builder = $crate::TransactionEventBuilder::new($producer, $event_type)
+                    $(.tx_hash($tx_hash))?
+                    $(.maybe_tx_hash($maybe_tx_hash))?
+                    $(.block_hash($block_hash))?
+                    $(.maybe_block_hash($maybe_block_hash))?
+                    $(.block_number($block_number))?
+                    $(.maybe_block_number($maybe_block_number))?
+                    $(.payload_id($payload_id))?
+                    $(.request_id($request_id))?
+                    $($(.id_part($id_name, $id_value))*)?
+                    .data($data);
+                builder.emit_to(writer)
+            }
             None => Ok($crate::TransactionEventEmitOutcome::NotConfigured),
         }
     }};
@@ -514,18 +472,46 @@ mod tests {
     }
 
     #[test]
-    fn macro_noops_when_global_writer_is_not_configured() {
-        let result = transaction_event!(
-            writer: Option::<&TransactionEventWriter>::None,
-            producer: TransactionEventProducer::BaseRethNode,
-            event_type: TransactionEventType::Pending,
-            tx_hash: TxHash::repeat_byte(0x11),
-            data: {
-                "source" => "txpool",
-            },
-        );
-
-        assert_eq!(result.unwrap(), TransactionEventEmitOutcome::NotConfigured);
+    fn macro_only_evaluates_fields_when_a_writer_is_configured() {
+        let recorder = TransactionEventRecorder::new();
+        let writer = TransactionEventWriter::in_memory("base-devnet", recorder.clone());
+        let tx_hash = TxHash::repeat_byte(0x11);
+        for writer in [None, Some(&writer)] {
+            let mut evaluations = 0;
+            let inline = transaction_event!(
+                writer: writer,
+                producer: TransactionEventProducer::BaseRethNode,
+                event_type: TransactionEventType::Pending,
+                tx_hash: { evaluations += 1; tx_hash },
+                data: {
+                    "source" => { evaluations += 1; "txpool" },
+                },
+            );
+            let map = transaction_event!(
+                writer: writer,
+                producer: TransactionEventProducer::BaseRethNode,
+                event_type: TransactionEventType::Pending,
+                maybe_tx_hash: { evaluations += 1; Some(tx_hash) },
+                data: {
+                    evaluations += 1;
+                    Map::from_iter([("source".to_string(), json!("txpool"))])
+                },
+            );
+            let expected = if writer.is_some() {
+                TransactionEventEmitOutcome::Emitted
+            } else {
+                TransactionEventEmitOutcome::NotConfigured
+            };
+            assert_eq!(inline.unwrap(), expected);
+            assert_eq!(map.unwrap(), expected);
+            assert_eq!(evaluations, if writer.is_some() { 4 } else { 0 });
+        }
+        let events = recorder.events();
+        assert_eq!(events.len(), 2);
+        for event in events {
+            assert_eq!(event.tx_hash, Some(tx_hash));
+            assert_eq!(event.data["source"], "txpool");
+        }
     }
 
     #[test]
