@@ -16,10 +16,19 @@ url.workspace = true
 humantime.workspace = true
 thiserror.workspace = true
 coins-bip32.workspace = true
+async-trait.workspace = true
+alloy-signer.workspace = true
+alloy-network.workspace = true
+alloy-signer-local.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }
+alloy-consensus = { workspace = true, features = ["std"] }
 coins-bip39 = { workspace = true, features = ["english"] }
+alloy-signer-ledger = { workspace = true, optional = true }
 alloy-primitives = { workspace = true, features = ["std"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }
 
 [features]
 default = []
-ledger = []
+ledger = [ "dep:alloy-signer-ledger" ]
