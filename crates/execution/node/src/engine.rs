@@ -8,9 +8,11 @@ use base_common_consensus::{BaseBlock, BaseTransaction, Predeploys};
 use base_common_evm::BaseTime;
 use base_common_rpc_types_engine::{
     BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5,
-    ExecutionData,
+    BaseExecutionPayloadEnvelopeV6, ExecutionData,
 };
-use base_execution_consensus::{BaseConsensusError, isthmus};
+use base_execution_consensus::{
+    BaseConsensusError, expected_slot_number, is_slot_number_valid, isthmus,
+};
 use base_execution_payload_builder::{
     Attributes, BaseExecutionPayloadValidator, BasePayloadBuilderAttributes, BasePayloadTypes,
 };
@@ -23,7 +25,8 @@ use reth_node_api::{
     payload::{
         EngineApiMessageVersion, EngineObjectValidationError, MessageValidationKind,
         NewPayloadError, PayloadOrAttributes, PayloadTypes, VersionSpecificValidationError,
-        validate_parent_beacon_block_root_presence,
+        validate_block_access_list_presence, validate_parent_beacon_block_root_presence,
+        validate_slot_number_presence,
     },
     validate_version_specific_fields,
 };
@@ -70,14 +73,15 @@ where
         + TryInto<ExecutionPayloadEnvelopeV2>
         + TryInto<BaseExecutionPayloadEnvelopeV3>
         + TryInto<BaseExecutionPayloadEnvelopeV4>
-        + TryInto<BaseExecutionPayloadEnvelopeV5>,
+        + TryInto<BaseExecutionPayloadEnvelopeV5>
+        + TryInto<BaseExecutionPayloadEnvelopeV6>,
 {
     type ExecutionPayloadEnvelopeV1 = ExecutionPayloadV1;
     type ExecutionPayloadEnvelopeV2 = ExecutionPayloadEnvelopeV2;
     type ExecutionPayloadEnvelopeV3 = BaseExecutionPayloadEnvelopeV3;
     type ExecutionPayloadEnvelopeV4 = BaseExecutionPayloadEnvelopeV4;
     type ExecutionPayloadEnvelopeV5 = BaseExecutionPayloadEnvelopeV5;
-    type ExecutionPayloadEnvelopeV6 = BaseExecutionPayloadEnvelopeV5;
+    type ExecutionPayloadEnvelopeV6 = BaseExecutionPayloadEnvelopeV6;
 }
 
 /// Validator for Base engine API.
@@ -227,6 +231,25 @@ where
         header: &<Self::Block as Block>::Header,
     ) -> Result<(), InvalidPayloadAttributesError> {
         let timestamp = attributes.timestamp();
+        let child_number = header.number() + 1;
+
+        // EIP-7843: the attribute slot number must be the L2 block number of the block being
+        // built, and must be absent before Amsterdam. This runs before the Denim branch below so
+        // a pre-Amsterdam attribute carrying a slot number is rejected too.
+        if !is_slot_number_valid(
+            self.chain_spec(),
+            timestamp,
+            child_number,
+            attributes.slot_number(),
+        ) {
+            return Err(InvalidPayloadAttributesError::InvalidParams(Box::new(
+                BaseConsensusError::SlotNumberMismatch {
+                    expected: expected_slot_number(self.chain_spec(), timestamp, child_number),
+                    got: attributes.slot_number(),
+                },
+            )));
+        }
+
         if !self.chain_spec().is_denim_active_at_timestamp(timestamp) {
             return (timestamp > header.timestamp())
                 .then_some(())
@@ -280,6 +303,22 @@ where
             payload_or_attrs.message_validation_kind(),
             payload_or_attrs.timestamp(),
             payload_or_attrs.withdrawals().is_some(),
+        )?;
+        // EIP-7928 / EIP-7843: Amsterdam payloads must carry a block access list and a slot
+        // number, and pre-Amsterdam payloads must not.
+        validate_block_access_list_presence(
+            self.chain_spec(),
+            version,
+            payload_or_attrs.message_validation_kind(),
+            payload_or_attrs.timestamp(),
+            payload_or_attrs.block_access_list().is_some(),
+        )?;
+        validate_slot_number_presence(
+            self.chain_spec(),
+            version,
+            payload_or_attrs.message_validation_kind(),
+            payload_or_attrs.timestamp(),
+            payload_or_attrs.slot_number().is_some(),
         )?;
         validate_parent_beacon_block_root_presence(
             self.chain_spec(),
@@ -403,8 +442,9 @@ mod tests {
     use base_common_consensus::{BasePrimitives, BaseTxEnvelope, TxDeposit};
     use base_common_rpc_types_engine::BasePayloadAttributes;
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
-    use base_execution_consensus::BaseConsensusError;
-    use reth_ethereum_forks::ForkCondition;
+    use base_execution_consensus::{BaseBeaconConsensus, BaseConsensusError};
+    use reth_consensus::HeaderValidator;
+    use reth_ethereum_forks::{EthereumHardfork, ForkCondition};
     use reth_primitives_traits::WithEncoded;
     use reth_provider::{
         noop::NoopProvider,
@@ -704,6 +744,140 @@ mod tests {
         assert_eq!(
             result.unwrap_err().to_string(),
             "Invalid params: invalid BaseTime metadata source hash"
+        );
+    }
+
+    /// The timestamp Denim and its paired Ethereum `Amsterdam` fork activate at in
+    /// [`amsterdam_schedule_validator`]. The legacy 2s block interval puts block 9 there.
+    const AMSTERDAM_TIMESTAMP: u64 = 104;
+
+    /// The first Amsterdam block: genesis is block 7 at 100, so the legacy 2s interval puts block
+    /// 9 at [`AMSTERDAM_TIMESTAMP`].
+    const FIRST_AMSTERDAM_BLOCK: u64 = 9;
+
+    /// Mainnet with the Denim timestamp schedule pinned to a genesis of block 7 at 100 and Denim,
+    /// together with its paired Ethereum `Amsterdam` fork, active from [`AMSTERDAM_TIMESTAMP`].
+    /// Every later fork stays unscheduled, so a block at that timestamp only has to satisfy the
+    /// Denim and Amsterdam rules.
+    fn amsterdam_schedule_validator() -> BaseEngineValidator<BaseTxEnvelope, BaseChainSpec> {
+        let mut chain_spec = BaseChainSpec::mainnet();
+        chain_spec.inner.genesis_header =
+            SealedHeader::seal_slow(Header { number: 7, timestamp: 100, ..Default::default() });
+        chain_spec.set_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(AMSTERDAM_TIMESTAMP));
+        chain_spec
+            .set_fork(EthereumHardfork::Amsterdam, ForkCondition::Timestamp(AMSTERDAM_TIMESTAMP));
+        validator_with_chain_spec(chain_spec)
+    }
+
+    /// The parent of the first Amsterdam block: block 8 is the last pre-Amsterdam block.
+    fn first_amsterdam_parent() -> Header {
+        Header { number: 8, timestamp: AMSTERDAM_TIMESTAMP - 2, ..Default::default() }
+    }
+
+    /// Attributes for the first Amsterdam block carrying `slot_number`.
+    fn first_amsterdam_attributes(
+        slot_number: Option<u64>,
+    ) -> BasePayloadBuilderAttributes<BaseTxEnvelope> {
+        let mut attributes = denim_attributes(AMSTERDAM_TIMESTAMP);
+        add_base_time_transaction(&mut attributes, 0);
+        attributes.payload_attributes.slot_number = slot_number;
+        attributes
+    }
+
+    /// EIP-7843: the first Amsterdam block must carry its own block number as the slot number.
+    #[test]
+    fn test_payload_attributes_first_amsterdam_block_accepts_block_number_slot() {
+        let validator = amsterdam_schedule_validator();
+        let attributes = first_amsterdam_attributes(Some(FIRST_AMSTERDAM_BLOCK));
+        let header = first_amsterdam_parent();
+
+        let result = <engine::BaseEngineValidator<_, _> as PayloadValidator<BaseEngineTypes>>::
+            validate_payload_attributes_against_header(&validator, &attributes, &header);
+
+        assert!(
+            result.is_ok(),
+            "the first Amsterdam block must accept slot_number == block number, got {result:?}"
+        );
+    }
+
+    /// EIP-7843: the first Amsterdam block must reject a slot number that is not its block number.
+    #[test]
+    fn test_payload_attributes_first_amsterdam_block_rejects_foreign_slot_number() {
+        let validator = amsterdam_schedule_validator();
+        let attributes = first_amsterdam_attributes(Some(FIRST_AMSTERDAM_BLOCK + 1));
+        let header = first_amsterdam_parent();
+
+        let error = <engine::BaseEngineValidator<_, _> as PayloadValidator<BaseEngineTypes>>::
+            validate_payload_attributes_against_header(&validator, &attributes, &header)
+            .expect_err("the first Amsterdam block must reject slot_number != block number");
+
+        assert_eq!(
+            error.to_string(),
+            "Invalid params: invalid slot number: expected Some(9), got Some(10)",
+            "the Engine path must report the expected and supplied slot numbers"
+        );
+    }
+
+    /// EIP-7843: a pre-Amsterdam attribute must not carry a slot number. The slot check runs
+    /// before the pre-Denim early return, which would otherwise accept these attributes.
+    #[test]
+    fn test_payload_attributes_pre_amsterdam_reject_slot_number() {
+        let validator = amsterdam_schedule_validator();
+        let mut attributes = denim_attributes(AMSTERDAM_TIMESTAMP - 2);
+        attributes.payload_attributes.slot_number = Some(FIRST_AMSTERDAM_BLOCK);
+        // The parent is two seconds further back, so the timestamp ordering check is satisfied
+        // and only the slot-number rule can reject these attributes.
+        let header = Header { number: 8, timestamp: AMSTERDAM_TIMESTAMP - 4, ..Default::default() };
+
+        let error = <engine::BaseEngineValidator<_, _> as PayloadValidator<BaseEngineTypes>>::
+            validate_payload_attributes_against_header(&validator, &attributes, &header)
+            .expect_err("a pre-Amsterdam attribute must not carry a slot number");
+
+        assert_eq!(
+            error.to_string(),
+            "Invalid params: invalid slot number: expected None, got Some(9)",
+            "a pre-Amsterdam slot number must be reported as unexpected"
+        );
+    }
+
+    /// The Engine attribute path and the raw header import path must reject the same slot number.
+    /// A block-validity differential between them could let a chain split.
+    #[test]
+    fn test_slot_number_mismatch_rejected_by_engine_and_raw_import() {
+        let validator = amsterdam_schedule_validator();
+        let attributes = first_amsterdam_attributes(Some(999));
+        let header = first_amsterdam_parent();
+
+        let engine_error = <engine::BaseEngineValidator<_, _> as PayloadValidator<
+            BaseEngineTypes,
+        >>::validate_payload_attributes_against_header(
+            &validator, &attributes, &header
+        )
+        .expect_err("the Engine attribute path must reject a foreign slot number");
+        assert_eq!(
+            engine_error.to_string(),
+            "Invalid params: invalid slot number: expected Some(9), got Some(999)",
+            "the Engine attribute path must report the expected and supplied slot numbers"
+        );
+
+        // The same slot number in a header must be rejected by the raw import path.
+        let consensus = BaseBeaconConsensus::new(Arc::new(validator.chain_spec().clone()));
+        let child = SealedHeader::seal_slow(Header {
+            number: FIRST_AMSTERDAM_BLOCK,
+            timestamp: AMSTERDAM_TIMESTAMP,
+            base_fee_per_gas: Some(1),
+            slot_number: Some(999),
+            ..Default::default()
+        });
+        let ConsensusError::Other(inner) = consensus.validate_header(&child).unwrap_err() else {
+            panic!("expected the raw header path to report a slot number mismatch");
+        };
+        assert!(
+            matches!(
+                inner.downcast_ref::<BaseConsensusError>(),
+                Some(BaseConsensusError::SlotNumberMismatch { expected: Some(9), got: Some(999) })
+            ),
+            "the raw header path must report the same mismatch as the Engine path, got {inner:?}"
         );
     }
 

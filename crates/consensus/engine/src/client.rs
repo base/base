@@ -22,7 +22,8 @@ use base_common_genesis::RollupConfig;
 use base_common_network::{Base, BaseEngineApi};
 use base_common_rpc_types_engine::{
     BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5,
-    BaseExecutionPayloadV4, BasePayloadAttributes,
+    BaseExecutionPayloadEnvelopeV6, BaseExecutionPayloadV4, BaseExecutionPayloadV5,
+    BasePayloadAttributes,
 };
 use base_consensus_providers::L1RpcProvider;
 use base_protocol::{FromBlockError, L2BlockInfo};
@@ -308,12 +309,40 @@ where
         record_call_time(call, Metrics::FORKCHOICE_UPDATE_METHOD).await
     }
 
+    async fn new_payload_v5(
+        &self,
+        payload: BaseExecutionPayloadV5,
+        parent_beacon_block_root: B256,
+    ) -> TransportResult<PayloadStatus> {
+        let call = <L2Provider as BaseEngineApi>::new_payload_v5(
+            &self.engine,
+            payload,
+            parent_beacon_block_root,
+        );
+
+        record_call_time(call, Metrics::NEW_PAYLOAD_METHOD).await
+    }
+
     async fn fork_choice_updated_v3(
         &self,
         fork_choice_state: ForkchoiceState,
         payload_attributes: Option<BasePayloadAttributes>,
     ) -> TransportResult<ForkchoiceUpdated> {
         let call = <L2Provider as BaseEngineApi>::fork_choice_updated_v3(
+            &self.engine,
+            fork_choice_state,
+            payload_attributes,
+        );
+
+        record_call_time(call, Metrics::FORKCHOICE_UPDATE_METHOD).await
+    }
+
+    async fn fork_choice_updated_v4(
+        &self,
+        fork_choice_state: ForkchoiceState,
+        payload_attributes: Option<BasePayloadAttributes>,
+    ) -> TransportResult<ForkchoiceUpdated> {
+        let call = <L2Provider as BaseEngineApi>::fork_choice_updated_v4(
             &self.engine,
             fork_choice_state,
             payload_attributes,
@@ -354,6 +383,15 @@ where
         payload_id: PayloadId,
     ) -> TransportResult<BaseExecutionPayloadEnvelopeV5> {
         let call = <L2Provider as BaseEngineApi>::get_payload_v5(&self.engine, payload_id);
+
+        record_call_time(call, Metrics::GET_PAYLOAD_METHOD).await
+    }
+
+    async fn get_payload_v6(
+        &self,
+        payload_id: PayloadId,
+    ) -> TransportResult<BaseExecutionPayloadEnvelopeV6> {
+        let call = <L2Provider as BaseEngineApi>::get_payload_v6(&self.engine, payload_id);
 
         record_call_time(call, Metrics::GET_PAYLOAD_METHOD).await
     }

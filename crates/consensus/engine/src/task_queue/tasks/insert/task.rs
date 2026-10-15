@@ -260,6 +260,12 @@ impl<EngineClient_: EngineClient> InsertTask<EngineClient_> {
                     PraguePayloadFields::new(EMPTY_REQUESTS_HASH),
                 ))
                 .map_err(InsertTaskError::FromBlockError)?,
+            BaseExecutionPayload::V5(payload) => BaseExecutionPayload::V5(payload.clone())
+                .try_into_block_with_sidecar(&BaseExecutionPayloadSidecar::v4(
+                    CancunPayloadFields::new(parent_beacon_block_root, vec![]),
+                    PraguePayloadFields::new(EMPTY_REQUESTS_HASH),
+                ))
+                .map_err(InsertTaskError::FromBlockError)?,
         };
 
         let new_block_ref =
@@ -297,6 +303,9 @@ impl<EngineClient_: EngineClient> InsertTask<EngineClient_> {
             }
             BaseExecutionPayload::V4(payload) => {
                 self.client.new_payload_v4(payload, parent_beacon_block_root).await
+            }
+            BaseExecutionPayload::V5(payload) => {
+                self.client.new_payload_v5(payload, parent_beacon_block_root).await
             }
         };
 

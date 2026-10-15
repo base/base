@@ -99,7 +99,10 @@ fn create_signed_eip1559_tx(
         .to(recipient)
         .value(U256::from(1_000_000_000u64))
         .transaction_type(2)
-        .with_gas_limit(21000)
+        // These transfers target fresh accounts. With Denim active (SpecId::AMSTERDAM), a value
+        // transfer that creates an account costs EIP-8037 state creation (183,600 gas) on top of
+        // the base cost, so 21,000 gas would exceed the limit and the tx would be rejected.
+        .with_gas_limit(300_000)
         .with_max_fee_per_gas(1_000_000_000)
         .with_max_priority_fee_per_gas(1_000_000)
         .with_chain_id(chain_id)

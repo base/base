@@ -3,6 +3,7 @@
 use std::{net::Ipv4Addr, path::PathBuf, sync::Arc};
 
 use base_execution_chainspec::BaseChainSpec;
+use base_node_core::BaseLaunchPolicy;
 use base_node_runner::{BaseNodeBuilder, LaunchedBaseNode};
 use base_upgrade_signal::UpgradeSignalStartupMode;
 use clap::{Args, value_parser};
@@ -117,11 +118,15 @@ impl ExecutionNodeConfigArgs {
             db,
             dev,
             pruning,
-            engine,
+            mut engine,
             era,
             static_files,
             storage,
         } = self;
+
+        // Base always imports serially; see [`BaseLaunchPolicy`] for why the divergent path is
+        // forced off rather than defaulted.
+        BaseLaunchPolicy::force_serial_import(&mut engine);
 
         let mut node_config = NodeConfig {
             datadir,
@@ -394,6 +399,32 @@ mod tests {
         let runtime = args.into_runtime_config(Arc::new(BaseChainSpec::devnet()));
         assert_eq!(runtime.node_config.rpc.auth_ipc_path, "/tmp/engine.ipc");
         assert!(!runtime.node_config.rpc.auth_ipc);
+    }
+
+    #[test]
+    fn bal_parallel_execution_is_disabled_in_the_engine_tree_config() {
+        let args = CommandParser::<ExecutionNodeConfigArgs>::parse_from(["reth"]).args;
+        let runtime = args.into_runtime_config(Arc::new(BaseChainSpec::devnet()));
+
+        assert!(
+            runtime.node_config.tree_config().disable_bal_parallel_execution(),
+            "Base must import serially: reth's BAL-parallel ordered commit does not apply Base's \
+             cumulative gas, Jovian DA or payer-auth admission rules"
+        );
+    }
+
+    #[test]
+    fn bal_parallel_execution_cannot_be_reenabled_by_configuration() {
+        let mut args = CommandParser::<ExecutionNodeConfigArgs>::parse_from(["reth"]).args;
+        // Whatever a configuration source sets the flag to, Base must keep importing serially.
+        args.engine.bal_parallel_execution_disabled = false;
+        let runtime = args.into_runtime_config(Arc::new(BaseChainSpec::devnet()));
+
+        assert!(
+            runtime.node_config.tree_config().disable_bal_parallel_execution(),
+            "the divergent BAL-parallel import path must stay disabled even when configuration \
+             asks for it, because it disagrees with Base's serial admission in both directions"
+        );
     }
 
     #[test]

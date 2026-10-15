@@ -85,6 +85,7 @@ impl ChainUpgradesExt for ChainUpgrades {
 
         let denim = self[BaseUpgrade::Denim];
         if !matches!(denim, ForkCondition::Never) {
+            forks.push((EthereumHardfork::Amsterdam.boxed(), denim));
             forks.push((BaseUpgrade::Denim.boxed(), denim));
         }
 

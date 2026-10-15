@@ -50,6 +50,10 @@ pub struct BaseNextBlockEnvAttributes {
     pub parent_beacon_block_root: Option<B256>,
     /// Encoded EIP-1559 parameters to include into block's `extra_data` field.
     pub extra_data: RevmBytes,
+    /// The Amsterdam slot number for the next block (EIP-7843), when known.
+    ///
+    /// Base carries the L2 block number in this field.
+    pub slot_number: Option<u64>,
 }
 
 #[cfg(feature = "rpc")]
@@ -69,6 +73,9 @@ impl<H: alloy_consensus::BlockHeader> reth_rpc_eth_api::helpers::pending_block::
             gas_limit: parent.gas_limit(),
             parent_beacon_block_root: parent.parent_beacon_block_root(),
             extra_data: parent.extra_data().clone(),
+            // EIP-7843: Base pins the header slot number to the L2 block number, so the pending
+            // block's slot number is the next block number rather than the parent's.
+            slot_number: Some(parent.number().saturating_add(1)),
         }
     }
 }
@@ -198,6 +205,7 @@ where
             parent_hash: block.header().parent_hash(),
             parent_beacon_block_root: block.header().parent_beacon_block_root(),
             extra_data: block.header().extra_data().clone(),
+            slot_number: block.header().slot_number(),
         })
     }
 
@@ -210,6 +218,7 @@ where
             parent_hash: parent.hash(),
             parent_beacon_block_root: attributes.parent_beacon_block_root,
             extra_data: attributes.extra_data,
+            slot_number: attributes.slot_number,
         })
     }
 }
@@ -241,6 +250,7 @@ where
             parent_hash: payload.parent_hash(),
             parent_beacon_block_root: payload.sidecar.parent_beacon_block_root(),
             extra_data: payload.payload.as_v1().extra_data.clone(),
+            slot_number: payload.payload.as_v5().map(|payload| payload.slot_number),
         })
     }
 
@@ -350,6 +360,30 @@ mod tests {
             assert_eq!(env.cfg_env.spec, BaseSpecId::new(upgrade), "override {time:?}");
             assert_eq!(env.block_env.basefee, base_fee, "override {time:?}");
         }
+    }
+
+    #[cfg(feature = "rpc")]
+    #[test]
+    fn pending_env_slot_number_is_next_block_number() {
+        use reth_primitives_traits::SealedHeader;
+        use reth_rpc_eth_api::helpers::pending_block::BuildPendingEnv;
+
+        use super::BaseNextBlockEnvAttributes;
+
+        let parent = SealedHeader::seal_slow(Header {
+            number: 41,
+            timestamp: 1,
+            slot_number: Some(41),
+            ..Default::default()
+        });
+
+        let attributes = BaseNextBlockEnvAttributes::build_pending_env(&parent, None);
+
+        assert_eq!(
+            attributes.slot_number,
+            Some(42),
+            "the pending block's slot number must be the next block number, not the parent's"
+        );
     }
 
     #[test]

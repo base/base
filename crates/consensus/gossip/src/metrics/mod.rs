@@ -34,7 +34,7 @@ base_metrics::define_metrics! {
     gossip_peer_count: gauge,
 
     #[describe("Whether the local node is subscribed to a block topic (0 or 1)")]
-    #[label(name = "version", default = ["v1", "v2", "v3", "v4"])]
+    #[label(name = "version", default = ["v1", "v2", "v3", "v4", "v5"])]
     block_topic_subscribed: gauge,
 
     #[describe("Number of connected peers advertising a block topic")]
@@ -136,7 +136,9 @@ base_metrics::define_metrics! {
             "parent_beacon_root",
             "blob_gas_used",
             "excess_blob_gas",
-            "withdrawals_root"
+            "withdrawals_root",
+            "block_access_list_hash",
+            "block_access_list_presence"
         ]
     )]
     block_validation_failed: counter,

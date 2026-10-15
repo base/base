@@ -35,6 +35,7 @@ where
         block_env: &BlockEnv,
         ex_result: &BlockExecutionResult<BaseReceiptEnvelope>,
         bundle: BundleState,
+        block_access_list_hash: Option<B256>,
     ) -> ExecutorResult<Sealed<Header>> {
         let timestamp = block_env.timestamp.saturating_to::<u64>();
 
@@ -111,8 +112,15 @@ where
             excess_blob_gas: excess_blob_gas.and_then(|x| x.try_into().ok()),
             parent_beacon_block_root: attrs.payload_attributes.parent_beacon_block_root,
             extra_data: encoded_base_fee_params,
-            block_access_list_hash: None,
-            slot_number: None,
+            block_access_list_hash,
+            // EIP-7843: from Amsterdam on the header carries the slot number, which Base sets to the
+            // L2 block number. This mirrors the shared `expected_slot_number` rule that header
+            // validation enforces, and uses the same Denim gate this executor already gates the
+            // block access list on, so a proof is never built for a header the EL would reject.
+            slot_number: self
+                .config
+                .is_denim_active(timestamp)
+                .then_some(block_env.number.saturating_to::<u64>()),
         }
         .seal_slow();
 

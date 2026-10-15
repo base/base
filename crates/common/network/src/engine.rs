@@ -7,7 +7,8 @@ use alloy_rpc_types_engine::{
 use alloy_transport::TransportResult;
 use base_common_rpc_types_engine::{
     BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5,
-    BaseExecutionPayloadV4, BasePayloadAttributes,
+    BaseExecutionPayloadEnvelopeV6, BaseExecutionPayloadV4, BaseExecutionPayloadV5,
+    BasePayloadAttributes,
 };
 
 use crate::Base;
@@ -62,6 +63,22 @@ pub trait BaseEngineApi {
         parent_beacon_block_root: B256,
     ) -> TransportResult<PayloadStatus>;
 
+    /// Sends the given payload to the execution layer client, as specified for the Amsterdam fork.
+    ///
+    /// See also <https://github.com/ethereum/execution-apis/blob/main/src/engine/amsterdam.md#engine_newpayloadv5>
+    ///
+    /// Rollup modifications:
+    /// - expected versioned hashes MUST be an empty array.
+    /// - parent beacon block root MUST be the parent beacon block root from the L1 origin block of
+    ///   the L2 block.
+    /// - execution requests MUST be an empty array.
+    /// - the payload carries the Amsterdam block access list and slot number.
+    async fn new_payload_v5(
+        &self,
+        payload: BaseExecutionPayloadV5,
+        parent_beacon_block_root: B256,
+    ) -> TransportResult<PayloadStatus>;
+
     /// Updates the execution layer client with the given fork choice, as specified for the Shanghai
     /// fork.
     ///
@@ -89,6 +106,22 @@ pub trait BaseEngineApi {
     /// - The `payload_attributes` parameter is extended with the [`BasePayloadAttributes`] type
     ///   as described in <https://specs.base.org/protocol/execution#extended-payloadattributesv2>
     async fn fork_choice_updated_v3(
+        &self,
+        fork_choice_state: ForkchoiceState,
+        payload_attributes: Option<BasePayloadAttributes>,
+    ) -> TransportResult<ForkchoiceUpdated>;
+
+    /// Updates the execution layer client with the given fork choice, as specified for the
+    /// Amsterdam fork.
+    ///
+    /// See also <https://github.com/ethereum/execution-apis/blob/main/src/engine/amsterdam.md#engine_forkchoiceupdatedv4>
+    ///
+    /// Rollup modifications:
+    /// - The `payload_attributes` parameter is extended with the [`BasePayloadAttributes`] type
+    ///   as described in <https://specs.base.org/protocol/execution#extended-payloadattributesv2>
+    /// - When attributes are provided they carry the EIP-7843 `slotNumber` (the L2 block number
+    ///   on Base).
+    async fn fork_choice_updated_v4(
         &self,
         fork_choice_state: ForkchoiceState,
         payload_attributes: Option<BasePayloadAttributes>,
@@ -151,6 +184,20 @@ pub trait BaseEngineApi {
         &self,
         payload_id: PayloadId,
     ) -> TransportResult<BaseExecutionPayloadEnvelopeV5>;
+
+    /// Returns the most recent version of the payload that is available in the corresponding
+    /// payload build process at the time of receiving this call, as specified for the Amsterdam
+    /// fork.
+    ///
+    /// See also <https://github.com/ethereum/execution-apis/blob/main/src/engine/amsterdam.md#engine_getpayloadv6>
+    ///
+    /// Rollup modifications:
+    /// - the response type is [`BaseExecutionPayloadEnvelopeV6`], which carries the Amsterdam
+    ///   block access list and slot number.
+    async fn get_payload_v6(
+        &self,
+        payload_id: PayloadId,
+    ) -> TransportResult<BaseExecutionPayloadEnvelopeV6>;
 
     /// Returns the execution payload bodies by the given hash.
     ///
@@ -239,6 +286,22 @@ where
             .await
     }
 
+    async fn new_payload_v5(
+        &self,
+        payload: BaseExecutionPayloadV5,
+        parent_beacon_block_root: B256,
+    ) -> TransportResult<PayloadStatus> {
+        let versioned_hashes: Vec<B256> = vec![];
+        let execution_requests: Vec<Bytes> = vec![];
+
+        self.client()
+            .request(
+                "engine_newPayloadV5",
+                (payload, versioned_hashes, parent_beacon_block_root, execution_requests),
+            )
+            .await
+    }
+
     async fn fork_choice_updated_v2(
         &self,
         fork_choice_state: ForkchoiceState,
@@ -256,6 +319,16 @@ where
     ) -> TransportResult<ForkchoiceUpdated> {
         self.client()
             .request("engine_forkchoiceUpdatedV3", (fork_choice_state, payload_attributes))
+            .await
+    }
+
+    async fn fork_choice_updated_v4(
+        &self,
+        fork_choice_state: ForkchoiceState,
+        payload_attributes: Option<BasePayloadAttributes>,
+    ) -> TransportResult<ForkchoiceUpdated> {
+        self.client()
+            .request("engine_forkchoiceUpdatedV4", (fork_choice_state, payload_attributes))
             .await
     }
 
@@ -285,6 +358,13 @@ where
         payload_id: PayloadId,
     ) -> TransportResult<BaseExecutionPayloadEnvelopeV5> {
         self.client().request("engine_getPayloadV5", (payload_id,)).await
+    }
+
+    async fn get_payload_v6(
+        &self,
+        payload_id: PayloadId,
+    ) -> TransportResult<BaseExecutionPayloadEnvelopeV6> {
+        self.client().request("engine_getPayloadV6", (payload_id,)).await
     }
 
     async fn get_payload_bodies_by_hash_v1(

@@ -279,6 +279,9 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
         );
         let attrs = attributes_envelope.attributes;
         let update = match forkchoice_version {
+            EngineForkchoiceVersion::V4 => {
+                engine_client.fork_choice_updated_v4(new_forkchoice, Some(attrs)).await
+            }
             EngineForkchoiceVersion::V3 => {
                 engine_client.fork_choice_updated_v3(new_forkchoice, Some(attrs)).await
             }
@@ -346,6 +349,20 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
         };
 
         let payload_envelope = match get_payload_version {
+            EngineGetPayloadVersion::V6 => {
+                let payload = engine.get_payload_v6(payload_id).await.map_err(|e| {
+                    error!(target: "engine", error = %e, "Payload fetch failed");
+                    SealTaskError::GetPayloadFailed(e)
+                })?;
+
+                BaseExecutionPayloadEnvelope {
+                    parent_beacon_block_root: payload_attrs
+                        .attributes()
+                        .payload_attributes
+                        .parent_beacon_block_root,
+                    execution_payload: BaseExecutionPayload::V5(payload.execution_payload),
+                }
+            }
             EngineGetPayloadVersion::V5 => {
                 let payload =
                     engine.get_payload_v5(payload_id).await.map_err(get_payload_failed)?;

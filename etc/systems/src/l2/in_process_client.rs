@@ -13,7 +13,7 @@ use base_execution_cli::{
 use base_execution_txpool::ValiditySignatureMode;
 use base_flashblocks::FlashblocksConfig;
 use base_flashblocks_node::FlashblocksExtension;
-use base_node_core::args::RollupArgs;
+use base_node_core::{BaseLaunchPolicy, args::RollupArgs};
 use base_node_runner::{BaseNode, BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use base_tx_forwarding::{TxForwardingConfig, TxForwardingExtension};
 use base_txpool_rpc::{
@@ -219,6 +219,10 @@ impl InProcessClient {
         let mut node_config = NodeConfig::new(Arc::clone(&chain_spec))
             .with_network(network_config)
             .with_rpc(rpc_args);
+        // The in-process node must import the same way production does: Base always imports
+        // serially, because reth's BAL-parallel ordered commit does not apply Base's admission
+        // rules.
+        BaseLaunchPolicy::force_serial_import(&mut node_config.engine);
         if config.datadir.is_some() {
             node_config.debug.startup_sync_state_idle = true;
         }

@@ -112,6 +112,8 @@ where
 ///
 /// - Compares the receipts root in the block header to the block body
 /// - Compares the gas used in the block header to the actual gas usage after execution
+/// - Compares the block access list commitment in the block header to the list recomputed
+///   during execution when Amsterdam is active
 ///
 /// If `receipt_root_bloom` is provided, the pre-computed receipt root and logs bloom are used
 /// instead of computing them from the receipts.
@@ -120,8 +122,10 @@ pub fn validate_block_post_execution<R: DepositReceiptExt>(
     chain_spec: impl Upgrades,
     result: &BlockExecutionResult<R>,
     receipt_root_bloom: Option<(B256, Bloom)>,
+    block_access_list_hash: Option<B256>,
 ) -> Result<(), ConsensusError> {
     let timestamp = header.timestamp();
+    validate_block_access_list(&header, &chain_spec, block_access_list_hash)?;
     let trust_precomputed_receipt_root =
         should_trust_precomputed_receipt_root(&chain_spec, timestamp);
 
@@ -198,6 +202,61 @@ pub fn validate_block_post_execution<R: DepositReceiptExt>(
     Ok(())
 }
 
+/// Verifies the header's block access list commitment against the list recomputed during
+/// execution.
+///
+/// Amsterdam requires every header to commit to the block access list its execution produced.
+/// The commitment is the hash of the list's RLP encoding, so a validator that recomputes the
+/// list while executing the block can reject a block that advertised a different one. Pre-fork
+/// headers must not carry a commitment at all.
+pub fn validate_block_access_list(
+    header: impl BlockHeader,
+    chain_spec: impl Upgrades,
+    computed_block_access_list_hash: Option<B256>,
+) -> Result<(), ConsensusError> {
+    if chain_spec.is_amsterdam_active_at_timestamp(header.timestamp()) {
+        let Some(computed) = computed_block_access_list_hash else {
+            return Err(ConsensusError::BlockAccessListHashMissing);
+        };
+        let Some(header_hash) = header.block_access_list_hash() else {
+            return Err(ConsensusError::BlockAccessListHashMissing);
+        };
+        if header_hash != computed {
+            return Err(ConsensusError::BlockAccessListHashMismatch(
+                GotExpected::new(header_hash, computed).into(),
+            ));
+        }
+    } else if header.block_access_list_hash().is_some() {
+        return Err(ConsensusError::BlockAccessListHashUnexpected);
+    }
+
+    Ok(())
+}
+
+/// Returns the `slot_number` a block at `number` and `timestamp` must carry in its header.
+///
+/// Base pins the EIP-7843 header field to the L2 block number, so from Amsterdam on the expected
+/// value is `Some(number)`; before Amsterdam the field must be absent, so the expected value is
+/// `None`.
+pub fn expected_slot_number(chain_spec: impl Upgrades, timestamp: u64, number: u64) -> Option<u64> {
+    chain_spec.is_amsterdam_active_at_timestamp(timestamp).then_some(number)
+}
+
+/// Returns whether `slot_number` satisfies the EIP-7843 rule for a block at `number` and
+/// `timestamp`.
+///
+/// This is the single statement of the rule. It returns a value rather than an error so each
+/// call site (header validation, Engine attribute validation, block assembly) maps a mismatch to
+/// its own error type.
+pub fn is_slot_number_valid(
+    chain_spec: impl Upgrades,
+    timestamp: u64,
+    number: u64,
+    slot_number: Option<u64>,
+) -> bool {
+    slot_number == expected_slot_number(chain_spec, timestamp, number)
+}
+
 /// Verify the calculated receipts root against the expected receipts root.
 fn verify_receipts<R: DepositReceiptExt>(
     expected_receipts_root: B256,
@@ -258,7 +317,7 @@ mod tests {
     use base_common_genesis::BaseUpgrade;
     use base_execution_chainspec::BaseChainSpec;
     use base_protocol::{BaseTimeMetadataError, BaseTimeScheduleError, BaseTimeUpdateTx};
-    use reth_chainspec::{BaseFeeParams, EthChainSpec, ForkCondition};
+    use reth_chainspec::{BaseFeeParams, EthChainSpec, EthereumHardfork, ForkCondition};
 
     use super::*;
 
@@ -647,10 +706,14 @@ mod tests {
         const BLOB_GAS_USED: u64 = 1000;
         const GAS_USED: u64 = 5000;
 
+        // Amsterdam is active at this timestamp, so the header must commit to a block access
+        // list and execution must have produced a matching one.
+        let bal_hash = B256::repeat_byte(0x11);
         let chainspec = jovian_chainspec();
         let header = Header {
             timestamp: JOVIAN_TIMESTAMP,
             blob_gas_used: Some(BLOB_GAS_USED),
+            block_access_list_hash: Some(bal_hash),
             ..Default::default()
         };
 
@@ -660,7 +723,7 @@ mod tests {
             requests: Requests::default(),
             gas_used: GAS_USED,
         };
-        validate_block_post_execution(&header, &chainspec, &result, None).unwrap();
+        validate_block_post_execution(&header, &chainspec, &result, None, Some(bal_hash)).unwrap();
     }
 
     #[test]
@@ -668,10 +731,14 @@ mod tests {
         const BLOB_GAS_USED: u64 = 1000;
         const GAS_USED: u64 = 5000;
 
+        // Amsterdam is active at this timestamp, so the header must commit to a block access
+        // list and execution must have produced a matching one.
+        let bal_hash = B256::repeat_byte(0x11);
         let chainspec = jovian_chainspec();
         let header = Header {
             timestamp: JOVIAN_TIMESTAMP,
             blob_gas_used: Some(BLOB_GAS_USED + 1),
+            block_access_list_hash: Some(bal_hash),
             ..Default::default()
         };
 
@@ -682,7 +749,8 @@ mod tests {
             gas_used: GAS_USED,
         };
         assert!(matches!(
-            validate_block_post_execution(&header, &chainspec, &result, None).unwrap_err(),
+            validate_block_post_execution(&header, &chainspec, &result, None, Some(bal_hash))
+                .unwrap_err(),
             ConsensusError::BlobGasUsedDiff(diff)
                 if diff.got == BLOB_GAS_USED && diff.expected == BLOB_GAS_USED + 1
         ));
@@ -714,6 +782,7 @@ mod tests {
             BaseChainSpec::sepolia(),
             &result,
             Some(plain_precomputed_receipt_root_bloom(&receipts)),
+            None,
         )
         .expect(
             "Pre-Canyon blocks should recompute receipt roots instead of trusting the fast path",
@@ -739,6 +808,7 @@ mod tests {
                 BaseChainSpec::sepolia(),
                 &result,
                 Some((invalid_receipts_root, logs_bloom)),
+                None,
             )
             .unwrap_err(),
             ConsensusError::BodyReceiptRootDiff(_)
@@ -761,7 +831,162 @@ mod tests {
             BaseChainSpec::sepolia(),
             &result,
             Some(plain_precomputed_receipt_root_bloom(&receipts)),
+            None,
         )
         .expect("Canyon blocks should keep using the precomputed receipt root fast path");
+    }
+
+    const AMSTERDAM_TIMESTAMP: u64 = 1_900_000_000;
+
+    /// Sepolia with Amsterdam (Denim) active from [`AMSTERDAM_TIMESTAMP`].
+    fn amsterdam_chainspec() -> BaseChainSpec {
+        let mut chainspec = BaseChainSpec::sepolia();
+        chainspec.set_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(AMSTERDAM_TIMESTAMP));
+        chainspec
+            .set_fork(EthereumHardfork::Amsterdam, ForkCondition::Timestamp(AMSTERDAM_TIMESTAMP));
+        chainspec
+    }
+
+    /// Sepolia with Amsterdam (Denim) scheduled beyond any timestamp used in tests.
+    fn pre_amsterdam_chainspec() -> BaseChainSpec {
+        let mut chainspec = BaseChainSpec::sepolia();
+        // Denim and Amsterdam are two accessors for the same fork, so both must be moved.
+        chainspec.set_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(u64::MAX));
+        chainspec.set_fork(EthereumHardfork::Amsterdam, ForkCondition::Timestamp(u64::MAX));
+        chainspec
+    }
+
+    fn bal_header(timestamp: u64, block_access_list_hash: Option<B256>) -> Header {
+        Header { timestamp, block_access_list_hash, ..Default::default() }
+    }
+
+    /// A header committing to exactly the list execution recomputed must be accepted.
+    #[test]
+    fn accepts_matching_block_access_list_commitment() {
+        let chainspec = amsterdam_chainspec();
+        let committed = B256::repeat_byte(0x11);
+        let header = bal_header(AMSTERDAM_TIMESTAMP, Some(committed));
+
+        validate_block_access_list(&header, &chainspec, Some(committed))
+            .expect("matching commitment must be accepted");
+    }
+
+    /// A header advertising a list other than the one execution produced must be rejected.
+    #[test]
+    fn rejects_mismatched_block_access_list_commitment() {
+        let chainspec = amsterdam_chainspec();
+        let committed = B256::repeat_byte(0x11);
+        let recomputed = B256::repeat_byte(0x22);
+        let header = bal_header(AMSTERDAM_TIMESTAMP, Some(committed));
+
+        let error = validate_block_access_list(&header, &chainspec, Some(recomputed))
+            .expect_err("mismatched commitment must be rejected");
+        assert!(
+            matches!(
+                error,
+                ConsensusError::BlockAccessListHashMismatch(ref diff)
+                    if diff.got == committed && diff.expected == recomputed
+            ),
+            "mismatch must report the committed and recomputed hashes, got {error:?}"
+        );
+    }
+
+    /// Amsterdam requires the commitment in the header.
+    #[test]
+    fn rejects_missing_block_access_list_commitment_after_amsterdam() {
+        let chainspec = amsterdam_chainspec();
+        let header = bal_header(AMSTERDAM_TIMESTAMP, None);
+
+        let error = validate_block_access_list(&header, &chainspec, Some(B256::repeat_byte(0x11)))
+            .expect_err("a missing commitment must be rejected after Amsterdam");
+        assert!(
+            matches!(error, ConsensusError::BlockAccessListHashMissing),
+            "expected a missing-commitment error, got {error:?}"
+        );
+    }
+
+    /// Amsterdam also requires execution to have produced a list to commit to.
+    #[test]
+    fn rejects_missing_recomputed_block_access_list_after_amsterdam() {
+        let chainspec = amsterdam_chainspec();
+        let header = bal_header(AMSTERDAM_TIMESTAMP, Some(B256::repeat_byte(0x11)));
+
+        let error = validate_block_access_list(&header, &chainspec, None)
+            .expect_err("a missing recomputed list must be rejected after Amsterdam");
+        assert!(
+            matches!(error, ConsensusError::BlockAccessListHashMissing),
+            "expected a missing-commitment error, got {error:?}"
+        );
+    }
+
+    /// Pre-Amsterdam blocks must not carry a commitment at all.
+    #[test]
+    fn rejects_block_access_list_commitment_before_amsterdam() {
+        let chainspec = pre_amsterdam_chainspec();
+        let header = bal_header(AMSTERDAM_TIMESTAMP - 1, Some(B256::repeat_byte(0x11)));
+
+        let error = validate_block_access_list(&header, &chainspec, Some(B256::repeat_byte(0x11)))
+            .expect_err("a pre-Amsterdam commitment must be rejected");
+        assert!(
+            matches!(error, ConsensusError::BlockAccessListHashUnexpected),
+            "expected an unexpected-commitment error, got {error:?}"
+        );
+    }
+
+    /// Pre-Amsterdam blocks keep their commitment-free header shape.
+    #[test]
+    fn accepts_absent_block_access_list_commitment_before_amsterdam() {
+        let chainspec = pre_amsterdam_chainspec();
+        let header = bal_header(AMSTERDAM_TIMESTAMP - 1, None);
+
+        validate_block_access_list(&header, &chainspec, None)
+            .expect("a pre-Amsterdam header without a commitment must be accepted");
+    }
+
+    /// The commitment must be enforced by the full post-execution validation, not only by the
+    /// helper, so a block that reaches import with the wrong list is rejected.
+    #[test]
+    fn validate_block_post_execution_rejects_mismatched_block_access_list_commitment() {
+        let chainspec = amsterdam_chainspec();
+        let committed = B256::repeat_byte(0x11);
+        let recomputed = B256::repeat_byte(0x22);
+        let header =
+            Header { blob_gas_used: Some(0), ..bal_header(AMSTERDAM_TIMESTAMP, Some(committed)) };
+        let result = BlockExecutionResult::<BaseReceipt> {
+            blob_gas_used: 0,
+            receipts: vec![],
+            requests: Requests::default(),
+            gas_used: 0,
+        };
+
+        let error =
+            validate_block_post_execution(&header, &chainspec, &result, None, Some(recomputed))
+                .expect_err("import must reject a mismatched block access list commitment");
+        assert!(
+            matches!(
+                error,
+                ConsensusError::BlockAccessListHashMismatch(ref diff)
+                    if diff.got == committed && diff.expected == recomputed
+            ),
+            "expected a mismatch error, got {error:?}"
+        );
+    }
+
+    /// The same path accepts a block whose commitment matches what execution recomputed.
+    #[test]
+    fn validate_block_post_execution_accepts_matching_block_access_list_commitment() {
+        let chainspec = amsterdam_chainspec();
+        let committed = B256::repeat_byte(0x11);
+        let header =
+            Header { blob_gas_used: Some(0), ..bal_header(AMSTERDAM_TIMESTAMP, Some(committed)) };
+        let result = BlockExecutionResult::<BaseReceipt> {
+            blob_gas_used: 0,
+            receipts: vec![],
+            requests: Requests::default(),
+            gas_used: 0,
+        };
+
+        validate_block_post_execution(&header, &chainspec, &result, None, Some(committed))
+            .expect("import must accept a matching block access list commitment");
     }
 }

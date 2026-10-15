@@ -253,6 +253,7 @@ impl BaseUpgrade {
             Self::Ecotone => Some(EthereumHardfork::Cancun),
             Self::Isthmus => Some(EthereumHardfork::Prague),
             Self::Azul => Some(EthereumHardfork::Osaka),
+            Self::Denim => Some(EthereumHardfork::Amsterdam),
             _ => None,
         }
     }
@@ -264,6 +265,7 @@ impl BaseUpgrade {
             EthereumHardfork::Cancun => Some(Self::Ecotone),
             EthereumHardfork::Prague => Some(Self::Isthmus),
             EthereumHardfork::Osaka => Some(Self::Azul),
+            EthereumHardfork::Amsterdam => Some(Self::Denim),
             _ => None,
         }
     }
@@ -285,7 +287,7 @@ impl BaseUpgrade {
             "osaka" | "azul" | "baseazul" | "v1" => Self::Azul,
             "beryl" | "baseberyl" | "v2" => Self::Beryl,
             "cobalt" | "basecobalt" | "v3" => Self::Cobalt,
-            "denim" | "basedenim" => Self::Denim,
+            "amsterdam" | "denim" | "basedenim" => Self::Denim,
             "everest" | "baseeverest" => Self::Everest,
             // Zenith is not contract-backed: even though `contract_id` emits "zenith", it is
             // deliberately not resolvable here, so the L1 upgrade signal can never address it.
