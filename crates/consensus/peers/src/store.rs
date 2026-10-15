@@ -127,15 +127,6 @@ impl BootStore {
         self.add_rotate(enr);
     }
 
-    /// Returns the number of peers in the bootstore that
-    /// have the [`crate::BaseEnr::OPSTACK_ENR_KEY`] in the ENR.
-    pub fn valid_peers(&self) -> Vec<&Enr> {
-        self.peers
-            .iter()
-            .filter(|enr| enr.get_raw_rlp(crate::BaseEnr::OPSTACK_ENR_KEY.as_bytes()).is_some())
-            .collect()
-    }
-
     /// Returns the number of peers that contain the
     /// [`crate::BaseEnr::OPSTACK_ENR_KEY`] in the ENR *and*
     /// have the correct chain id and version.
@@ -172,24 +163,6 @@ impl BootStore {
             serde_json::to_writer(file, &self.peers)?;
         }
         Ok(())
-    }
-
-    /// Returns all available bootstores for the given data directory.
-    pub fn available(datadir: Option<PathBuf>) -> Vec<u64> {
-        let mut bootstores = Vec::new();
-        let path = datadir.unwrap_or_else(|| {
-            let mut home = dirs::home_dir().expect("Failed to get home directory");
-            home.push(".base");
-            home
-        });
-        if let Ok(entries) = std::fs::read_dir(path) {
-            for entry in entries.flatten() {
-                if let Ok(chain_id) = entry.file_name().to_string_lossy().parse::<u64>() {
-                    bootstores.push(chain_id);
-                }
-            }
-        }
-        bootstores
     }
 
     /// Adds an [`Enr`] to the store, rotating the oldest peer out if necessary.
