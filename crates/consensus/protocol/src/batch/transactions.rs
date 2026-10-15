@@ -605,7 +605,7 @@ mod tests {
             valid_after: 0,
             valid_before: 0,
             max_priority_fee_per_gas: 0,
-            max_fee_per_gas: 0,
+            max_fee: 0,
             gas_limit: 21_000,
             account_changes: vec![],
             calls: vec![],
@@ -642,7 +642,7 @@ mod tests {
             let mut tx = eip8130_body();
             tx.nonce_sequence = 7;
             tx.max_priority_fee_per_gas = 1_000_000_000;
-            tx.max_fee_per_gas = 5_000_000_000;
+            tx.max_fee = 5_000_000_000_000_000;
             tx.calls = vec![vec![Call {
                 to: address!("00000000000000000000000000000000000000dd"),
                 value: U256::ZERO,
@@ -743,7 +743,7 @@ mod tests {
             tx.nonce_key = Eip8130Constants::NONCE_KEY_MAX;
             tx.valid_before = 1_900_000_020_000;
             tx.max_priority_fee_per_gas = 1_000_000;
-            tx.max_fee_per_gas = 2_000_000_000;
+            tx.max_fee = 240_000_000_000_000;
             tx.gas_limit = 120_000;
             tx.calls = vec![vec![Call {
                 to: address!("00000000000000000000000000000000000000dd"),

@@ -1014,7 +1014,7 @@ impl BasePayloadBuilderCtx {
                 None => 0,
             };
 
-            if CoinbaseTipAffordability::unaffordable(&tx, tx_payer_auth, evm.db_mut()) {
+            if CoinbaseTipAffordability::unaffordable(&tx, evm.db_mut()) {
                 trace!(
                     target: "payload_builder",
                     tx_hash = ?tx_hash,

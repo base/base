@@ -127,7 +127,7 @@ impl EverestTestEnv {
             valid_after: 0,
             valid_before: 0,
             max_priority_fee_per_gas: 0,
-            max_fee_per_gas: 1_000_000_000,
+            max_fee: 1_000_000_000_000_000,
             gas_limit: 200_000,
             account_changes: Vec::new(),
             calls: vec![vec![Call {

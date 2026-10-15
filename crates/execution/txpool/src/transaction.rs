@@ -262,10 +262,16 @@ where
             // check exempts) and when both sides carry validity predicates. The
             // bump is keyed on the existing transaction's type, as in the
             // default check, so a non-8130 transaction replaced by an 8130 one
-            // uses the non-8130 bump.
+            // uses the non-8130 bump. Between two EIP-8130 transactions the
+            // signed `max_fee` budget is bumped rather than the per-gas cap it
+            // implies, which also moves with `gas_limit`.
             let bump = price_bumps.price_bump(self.ty());
             let bumped = |fee: u128| fee.saturating_mul(100 + bump).div_ceil(100);
-            return replacement.max_fee_per_gas() < bumped(self.max_fee_per_gas())
+            let fee_underpriced = match (self.as_eip8130(), replacement.as_eip8130()) {
+                (Some(current), Some(next)) => next.tx().max_fee < bumped(current.tx().max_fee),
+                _ => replacement.max_fee_per_gas() < bumped(self.max_fee_per_gas()),
+            };
+            return fee_underpriced
                 || replacement.max_priority_fee_per_gas().unwrap_or_default()
                     < bumped(self.max_priority_fee_per_gas().unwrap_or_default());
         }
@@ -805,7 +811,7 @@ mod tests {
             valid_after: 0,
             valid_before: if nonce_key == Eip8130Constants::NONCE_KEY_MAX { 5 } else { 0 },
             max_priority_fee_per_gas,
-            max_fee_per_gas,
+            max_fee: max_fee_per_gas * 50_000,
             gas_limit: 50_000,
             account_changes: Vec::new(),
             calls: Vec::new(),

@@ -134,6 +134,11 @@ pub struct Eip8130RequestFields {
     /// means no expiry). Required (non-zero) for nonce-free transactions.
     #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
     pub valid_before: Option<u64>,
+    /// Maximum total fee in wei, covering L2 gas, the priority fee, the L1 data
+    /// fee, and the operator fee. EIP-8130 carries this in place of
+    /// `maxFeePerGas`, which is ignored for an EIP-8130 request.
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
+    pub max_fee: Option<u128>,
     /// Opaque, non-executed transaction metadata.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Bytes>,
@@ -220,6 +225,7 @@ impl Eip8130RequestFields {
             || self.calls.is_some()
             || self.valid_after.is_some()
             || self.valid_before.is_some()
+            || self.max_fee.is_some()
             || self.metadata.is_some()
             || self.sender.is_some()
             || self.sender_auth.is_some()
@@ -363,6 +369,8 @@ impl<'de> Deserialize<'de> for BaseTransactionRequest {
             valid_after: Option<u64>,
             #[serde(default, with = "alloy_serde::quantity::opt")]
             valid_before: Option<u64>,
+            #[serde(default, with = "alloy_serde::quantity::opt")]
+            max_fee: Option<u128>,
             #[serde(default)]
             metadata: Option<Bytes>,
             #[serde(default)]
@@ -411,6 +419,7 @@ impl<'de> Deserialize<'de> for BaseTransactionRequest {
             calls: wire.calls,
             valid_after: wire.valid_after,
             valid_before: wire.valid_before,
+            max_fee: wire.max_fee,
             metadata: wire.metadata,
             sender: wire.sender,
             sender_auth: wire.sender_auth,
@@ -820,6 +829,7 @@ mod tests {
             }]]),
             valid_after: Some(9),
             valid_before: Some(10),
+            max_fee: Some(11),
             metadata: Some(Bytes::from_static(&[0xef])),
             sender: Some(SENDER),
             sender_auth: Some(Bytes::from_static(&[0x01])),

@@ -5,21 +5,19 @@ use base_execution_eip8130::FeeCheck;
 use base_execution_txpool::BasePooledTx;
 use revm::Database;
 
-/// Whether a statically decoded coinbase tip can be paid with worst-case gas.
+/// Whether a statically decoded coinbase tip can be paid with the full fee budget.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CoinbaseTipAffordability;
 
 impl CoinbaseTipAffordability {
-    /// Returns `true` when `sender` and `payer` cannot cover worst-case gas plus
-    /// `tip` from the balances currently in `db`.
+    /// Returns `true` when `sender` and `payer` cannot cover the full `max_fee`
+    /// budget plus `tip` from the balances currently in `db`.
     ///
     /// A failed account read is treated as affordable so a transient DB error
     /// does not drop an otherwise-valid candidate.
     pub fn unaffordable_tip<DB: Database>(
         sender: Address,
         payer: Address,
-        gas_limit: u64,
-        payer_auth: u64,
         max_fee: u128,
         tip: U256,
         db: &mut DB,
@@ -36,23 +34,15 @@ impl CoinbaseTipAffordability {
             };
             sender_info.map_or(U256::ZERO, |info| info.balance)
         };
-        FeeCheck::validate_gas_and_tip(
-            payer_balance,
-            sender_balance,
-            payer == sender,
-            gas_limit,
-            payer_auth,
-            max_fee,
-            tip,
-        )
-        .is_err()
+        FeeCheck::validate_fee_and_tip(payer_balance, sender_balance, payer == sender, max_fee, tip)
+            .is_err()
     }
 
     /// Returns `true` when the transaction declares a static coinbase tip that
-    /// the sender and gas payer cannot cover together with worst-case gas.
+    /// the sender and gas payer cannot cover together with the full fee budget.
     ///
     /// Transactions without a statically decoded tip are treated as affordable.
-    pub fn unaffordable<T, DB>(tx: &T, payer_auth: u64, db: &mut DB) -> bool
+    pub fn unaffordable<T, DB>(tx: &T, db: &mut DB) -> bool
     where
         T: BasePooledTx,
         DB: Database,
@@ -77,15 +67,7 @@ impl CoinbaseTipAffordability {
                 payer
             }
         };
-        Self::unaffordable_tip(
-            sender,
-            payer,
-            tx.gas_limit(),
-            payer_auth,
-            tx.max_fee_per_gas(),
-            tip,
-            db,
-        )
+        Self::unaffordable_tip(sender, payer, signed.tx().max_fee, tip, db)
     }
 }
 
@@ -148,30 +130,24 @@ mod tests {
     }
 
     #[test]
-    fn missing_account_cannot_cover_gas_plus_tip() {
+    fn missing_account_cannot_cover_fee_plus_tip() {
         let mut db = InMemoryDB::default();
-        assert!(CoinbaseTipAffordability::unaffordable_tip(
-            SENDER, SENDER, 21_000, 0, 2, TIP, &mut db
-        ));
+        assert!(CoinbaseTipAffordability::unaffordable_tip(SENDER, SENDER, 42_000, TIP, &mut db));
     }
 
     #[test]
-    fn funded_self_pay_covers_gas_plus_tip() {
+    fn funded_self_pay_covers_fee_plus_tip() {
         let mut db = InMemoryDB::default();
-        // gas = 21_000 * 2 = 42_000; tip = 1_000.
+        // max_fee = 42_000; tip = 1_000.
         fund(&mut db, SENDER, 43_000);
-        assert!(!CoinbaseTipAffordability::unaffordable_tip(
-            SENDER, SENDER, 21_000, 0, 2, TIP, &mut db
-        ));
+        assert!(!CoinbaseTipAffordability::unaffordable_tip(SENDER, SENDER, 42_000, TIP, &mut db));
     }
 
     #[test]
     fn self_pay_short_one_wei_is_unaffordable() {
         let mut db = InMemoryDB::default();
         fund(&mut db, SENDER, 42_999);
-        assert!(CoinbaseTipAffordability::unaffordable_tip(
-            SENDER, SENDER, 21_000, 0, 2, TIP, &mut db
-        ));
+        assert!(CoinbaseTipAffordability::unaffordable_tip(SENDER, SENDER, 42_000, TIP, &mut db));
     }
 
     #[test]
@@ -179,19 +155,15 @@ mod tests {
         let mut db = InMemoryDB::default();
         fund(&mut db, PAYER, 42_000);
         fund(&mut db, SENDER, 999);
-        assert!(CoinbaseTipAffordability::unaffordable_tip(
-            SENDER, PAYER, 21_000, 0, 2, TIP, &mut db
-        ));
+        assert!(CoinbaseTipAffordability::unaffordable_tip(SENDER, PAYER, 42_000, TIP, &mut db));
     }
 
     #[test]
-    fn sponsored_gas_and_tip_are_affordable_when_split() {
+    fn sponsored_fee_and_tip_are_affordable_when_split() {
         let mut db = InMemoryDB::default();
         fund(&mut db, PAYER, 42_000);
         fund(&mut db, SENDER, 1_000);
-        assert!(!CoinbaseTipAffordability::unaffordable_tip(
-            SENDER, PAYER, 21_000, 0, 2, TIP, &mut db
-        ));
+        assert!(!CoinbaseTipAffordability::unaffordable_tip(SENDER, PAYER, 42_000, TIP, &mut db));
     }
 
     /// An open-payer transaction tipping the fee vault, whose `payer_auth` is
@@ -199,7 +171,7 @@ mod tests {
     fn unrecoverable_open_payer_tip() -> BasePooledTransaction {
         let tx = TxEip8130 {
             gas_limit: 21_000,
-            max_fee_per_gas: 2,
+            max_fee: 42_000,
             payer: Some(Eip8130Constants::OPEN_PAYER),
             calls: vec![vec![Call {
                 to: Predeploys::SEQUENCER_FEE_VAULT,
@@ -227,7 +199,7 @@ mod tests {
         fund(&mut db, SENDER, 1_000);
         let tx = unrecoverable_open_payer_tip();
         assert!(
-            CoinbaseTipAffordability::unaffordable(&tx, 0, &mut db),
+            CoinbaseTipAffordability::unaffordable(&tx, &mut db),
             "an unclassified open payer that does not recover is unaffordable"
         );
 
@@ -243,8 +215,8 @@ mod tests {
             max_cost: U256::from(42_000u64),
         });
         assert!(
-            !CoinbaseTipAffordability::unaffordable(&tx, 0, &mut db),
-            "the classified payer covers gas and the sender covers the tip"
+            !CoinbaseTipAffordability::unaffordable(&tx, &mut db),
+            "the classified payer covers the fee and the sender covers the tip"
         );
     }
 
@@ -267,13 +239,13 @@ mod tests {
             max_cost: U256::from(42_000u64),
         });
         assert!(
-            CoinbaseTipAffordability::unaffordable(&tx, 0, &mut db),
-            "an ungated sender short of gas plus the tip is unaffordable"
+            CoinbaseTipAffordability::unaffordable(&tx, &mut db),
+            "an ungated sender short of the fee plus the tip is unaffordable"
         );
 
         tx.set_sender_policy_target(Address::repeat_byte(0x77));
         assert!(
-            !CoinbaseTipAffordability::unaffordable(&tx, 0, &mut db),
+            !CoinbaseTipAffordability::unaffordable(&tx, &mut db),
             "a gated sender's reverting tip is not priced"
         );
     }
@@ -283,9 +255,7 @@ mod tests {
         assert!(!CoinbaseTipAffordability::unaffordable_tip(
             SENDER,
             SENDER,
-            21_000,
-            0,
-            2,
+            42_000,
             TIP,
             &mut FailingDatabase
         ));

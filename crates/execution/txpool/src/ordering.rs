@@ -436,7 +436,7 @@ mod tests {
             valid_after: 0,
             valid_before: 0,
             max_priority_fee_per_gas,
-            max_fee_per_gas,
+            max_fee: max_fee_per_gas * u128::from(gas_limit),
             gas_limit,
             account_changes: Vec::new(),
             calls,

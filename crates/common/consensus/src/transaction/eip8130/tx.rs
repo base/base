@@ -78,12 +78,18 @@ pub struct TxEip8130 {
     /// cannot actually be included exactly at `valid_before`.
     #[cfg_attr(feature = "serde", serde(with = "alloy_serde::quantity"))]
     pub valid_before: u64,
-    /// Max priority fee per gas (tip) the sender is willing to pay.
+    /// Max priority fee per gas (tip) the sender is willing to pay, bounded in
+    /// total by whatever of [`Self::max_fee`] remains after the base costs.
     #[cfg_attr(feature = "serde", serde(with = "alloy_serde::quantity"))]
     pub max_priority_fee_per_gas: u128,
-    /// Max total fee per gas (base + tip cap) the sender is willing to pay.
+    /// Maximum total fee in wei the payer can be charged for this transaction,
+    /// as in [EIP-7999]: L2 gas at the base fee, the priority fee, the L1 data
+    /// fee, and the operator fee together never exceed it. The transaction is
+    /// invalid when the worst-case base cost at inclusion exceeds this budget.
+    ///
+    /// [EIP-7999]: https://eips.ethereum.org/EIPS/eip-7999
     #[cfg_attr(feature = "serde", serde(with = "alloy_serde::quantity"))]
-    pub max_fee_per_gas: u128,
+    pub max_fee: u128,
     /// Gas limit for the entire AA transaction execution. Named `gas` in JSON,
     /// like every other transaction type; `gasLimit` is also accepted.
     #[cfg_attr(
@@ -258,7 +264,7 @@ impl TxEip8130 {
             + self.valid_after.length()
             + self.valid_before.length()
             + self.max_priority_fee_per_gas.length()
-            + self.max_fee_per_gas.length()
+            + self.max_fee.length()
             + self.gas_limit.length()
             + self.account_changes.length()
             + Self::calls_encoded_length(&self.calls)
@@ -276,7 +282,7 @@ impl TxEip8130 {
         self.valid_after.encode(out);
         self.valid_before.encode(out);
         self.max_priority_fee_per_gas.encode(out);
-        self.max_fee_per_gas.encode(out);
+        self.max_fee.encode(out);
         self.gas_limit.encode(out);
         self.account_changes.encode(out);
         Self::encode_calls(&self.calls, out);
@@ -304,7 +310,7 @@ impl TxEip8130 {
             valid_after: Decodable::decode(buf)?,
             valid_before: Decodable::decode(buf)?,
             max_priority_fee_per_gas: Decodable::decode(buf)?,
-            max_fee_per_gas: Decodable::decode(buf)?,
+            max_fee: Decodable::decode(buf)?,
             gas_limit: Decodable::decode(buf)?,
             account_changes: Decodable::decode(buf)?,
             calls: Self::decode_calls(buf)?,
@@ -510,7 +516,7 @@ struct CompactTxEip8130Head {
     valid_after: u64,
     valid_before: u64,
     max_priority_fee_per_gas: u128,
-    max_fee_per_gas: u128,
+    max_fee: u128,
     gas_limit: u64,
     payer: Option<Address>,
     tail_len: u64,
@@ -531,7 +537,7 @@ impl Compact for TxEip8130 {
             valid_after: self.valid_after,
             valid_before: self.valid_before,
             max_priority_fee_per_gas: self.max_priority_fee_per_gas,
-            max_fee_per_gas: self.max_fee_per_gas,
+            max_fee: self.max_fee,
             gas_limit: self.gas_limit,
             payer: self.payer,
             tail_len: tail.len() as u64,
@@ -552,7 +558,7 @@ impl Compact for TxEip8130 {
             valid_after,
             valid_before,
             max_priority_fee_per_gas,
-            max_fee_per_gas,
+            max_fee,
             gas_limit,
             payer,
             tail_len,
@@ -575,7 +581,7 @@ impl Compact for TxEip8130 {
                 valid_after,
                 valid_before,
                 max_priority_fee_per_gas,
-                max_fee_per_gas,
+                max_fee,
                 gas_limit,
                 account_changes,
                 calls,
@@ -622,8 +628,16 @@ impl Transaction for TxEip8130 {
         None
     }
 
+    /// Upper bound on the per-gas price implied by [`TxEip8130::max_fee`]:
+    /// `max_fee / gas_limit`.
+    ///
+    /// The budget also pays the L1 data fee, the operator fee, and payer
+    /// authentication gas, none of which the body alone determines, so the true
+    /// per-gas cap at inclusion is lower. Per-gas consumers (pool base-fee
+    /// partitioning, tip ordering) therefore see an optimistic value, and
+    /// inclusion re-checks the full budget.
     fn max_fee_per_gas(&self) -> u128 {
-        self.max_fee_per_gas
+        self.max_fee.checked_div(u128::from(self.gas_limit)).unwrap_or_default()
     }
 
     fn max_priority_fee_per_gas(&self) -> Option<u128> {
@@ -639,8 +653,9 @@ impl Transaction for TxEip8130 {
     }
 
     fn effective_gas_price(&self, base_fee: Option<u64>) -> u128 {
-        base_fee.map_or(self.max_fee_per_gas, |bf| {
-            (bf as u128).saturating_add(self.max_priority_fee_per_gas).min(self.max_fee_per_gas)
+        let max_fee_per_gas = self.max_fee_per_gas();
+        base_fee.map_or(max_fee_per_gas, |bf| {
+            (bf as u128).saturating_add(self.max_priority_fee_per_gas).min(max_fee_per_gas)
         })
     }
 
@@ -711,7 +726,7 @@ mod tests {
             valid_after: 0,
             valid_before: 0,
             max_priority_fee_per_gas: 1_000_000_000,
-            max_fee_per_gas: 5_000_000_000,
+            max_fee: 1_000_000_000_000_000,
             gas_limit: 200_000,
             account_changes: vec![AccountChange::Delegation(Delegation {
                 target: address!("0x00000000000000000000000000000000000000bb"),
@@ -751,6 +766,22 @@ mod tests {
         tx.valid_before = 1_700_000_020_000;
         assert_eq!(tx.valid_after_ms(), 1_700_000_000_000);
         assert_eq!(tx.valid_before_ms(), 1_700_000_020_000);
+    }
+
+    #[test]
+    fn per_gas_fee_cap_is_budget_over_gas_limit() {
+        let tx = TxEip8130 {
+            max_fee: 1_000_000,
+            max_priority_fee_per_gas: 2,
+            gas_limit: 300,
+            ..Default::default()
+        };
+        assert_eq!(tx.max_fee_per_gas(), 3_333);
+        assert_eq!(tx.effective_gas_price(Some(100)), 102);
+        assert_eq!(tx.effective_gas_price(Some(3_333)), 3_333);
+
+        let no_gas = TxEip8130 { max_fee: 1_000_000, ..Default::default() };
+        assert_eq!(no_gas.max_fee_per_gas(), 0);
     }
 
     #[test]
@@ -924,7 +955,7 @@ mod tests {
         let sender = tx.sender.unwrap();
         let mut other = tx.clone();
         other.max_priority_fee_per_gas += 1;
-        other.max_fee_per_gas += 2;
+        other.max_fee += 2;
         other.gas_limit += 3;
         assert_eq!(tx.replay_id(sender), other.replay_id(sender));
     }
@@ -1094,7 +1125,7 @@ mod tests {
             "validAfter": "0x0",
             "validBefore": "0x0",
             "maxPriorityFeePerGas": "0x3b9aca00",
-            "maxFeePerGas": "0x3b9aca00",
+            "maxFee": "0x3b9aca00",
             "gas": "0x5208",
             "accountChanges": [],
             "calls": [],

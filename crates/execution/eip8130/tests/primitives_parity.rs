@@ -95,7 +95,7 @@ fn payload_token_count_matches_evm_reference() {
     let tx = TxEip8130 {
         chain_id: 8453,
         gas_limit: 1_000_000,
-        max_fee_per_gas: 1,
+        max_fee: 1,
         metadata: Bytes::from(metadata),
         payer: Some(Address::repeat_byte(0x22)),
         ..Default::default()

@@ -134,11 +134,8 @@ pub enum Eip8130StaticError {
     /// Transaction chain ID differs from the local chain.
     #[error("transaction chain ID does not match the local chain")]
     ChainIdMismatch,
-    /// Priority fee exceeds the maximum fee.
-    #[error("max priority fee per gas exceeds max fee per gas")]
-    TipAboveFeeCap,
     /// Gas limit or maximum fee is zero.
-    #[error("gas limit and max fee per gas must be non-zero")]
+    #[error("gas limit and max fee must be non-zero")]
     ZeroGasOrFee,
 }
 
@@ -233,10 +230,7 @@ impl Eip8130Signed {
         if tx.chain_id != local_chain_id {
             return Err(Eip8130StaticError::ChainIdMismatch);
         }
-        if tx.max_fee_per_gas < tx.max_priority_fee_per_gas {
-            return Err(Eip8130StaticError::TipAboveFeeCap);
-        }
-        if tx.gas_limit == 0 || tx.max_fee_per_gas == 0 {
+        if tx.gas_limit == 0 || tx.max_fee == 0 {
             return Err(Eip8130StaticError::ZeroGasOrFee);
         }
         Ok(())
@@ -253,7 +247,6 @@ impl Eip8130Signed {
             Err(Eip8130StaticError::ChainIdMismatch) => {
                 Err(InvalidTransactionError::ChainIdMismatch)
             }
-            Err(Eip8130StaticError::TipAboveFeeCap) => Err(InvalidTransactionError::TipAboveFeeCap),
             Err(Eip8130StaticError::ZeroGasOrFee) => {
                 Err(InvalidTransactionError::TxTypeNotSupported)
             }
@@ -848,7 +841,7 @@ mod tests {
             valid_after: 0,
             valid_before: 0,
             max_priority_fee_per_gas: 1_000_000_000,
-            max_fee_per_gas: 5_000_000_000,
+            max_fee: 1_250_000_000_000_000,
             gas_limit: 250_000,
             account_changes: vec![AccountChange::Delegation(Delegation { target: Address::ZERO })],
             calls: vec![vec![Call {
@@ -976,10 +969,18 @@ mod tests {
         );
 
         let mut tx = signed.clone().into_tx();
-        tx.max_priority_fee_per_gas = tx.max_fee_per_gas + 1;
+        tx.max_priority_fee_per_gas = tx.max_fee + 1;
         assert_eq!(
             Eip8130Signed::new(tx, Bytes::new(), Bytes::new()).validate_admission_static(8453),
-            Err(Eip8130StaticError::TipAboveFeeCap)
+            Ok(()),
+            "a per-gas tip is not compared against the total budget"
+        );
+
+        let mut tx = signed.clone().into_tx();
+        tx.max_fee = 0;
+        assert_eq!(
+            Eip8130Signed::new(tx, Bytes::new(), Bytes::new()).validate_admission_static(8453),
+            Err(Eip8130StaticError::ZeroGasOrFee)
         );
 
         let mut tx = signed.into_tx();

@@ -304,9 +304,12 @@ impl FromTxWithEncoded<BaseTxEnvelope> for BaseTransaction<TxEnv> {
                 // env that have no EIP-8130 analogue — `kind`, `value`, and
                 // `input` — return `TxEnv` defaults (a zero-address call, zero
                 // value, empty input) for an 8130 transaction and must not be
-                // relied on for execution. `gas_price` carries the fee cap, and
-                // `BaseTransaction::effective_gas_price` prices it as EIP-1559
-                // (what the `GASPRICE` opcode reports). The handler routes
+                // relied on for execution. `gas_price` carries the per-gas
+                // upper bound implied by `max_fee`, and
+                // `BaseTransaction::effective_gas_price` prices it as EIP-1559;
+                // the executor overwrites both fee fields with the resolved
+                // effective price before `calls` run, so `GASPRICE` reports the
+                // price actually charged. The handler routes
                 // 8130 transactions to the executor before any of these are hit
                 // (see `BaseEvm::transact_raw`).
                 //
@@ -318,7 +321,7 @@ impl FromTxWithEncoded<BaseTxEnvelope> for BaseTransaction<TxEnv> {
                 let base = TxEnv {
                     caller,
                     gas_limit: inner.gas_limit,
-                    gas_price: inner.max_fee_per_gas,
+                    gas_price: alloy_consensus::Transaction::max_fee_per_gas(inner),
                     gas_priority_fee: Some(inner.max_priority_fee_per_gas),
                     chain_id: Some(inner.chain_id),
                     nonce: inner.nonce_sequence,
@@ -404,7 +407,7 @@ mod tests {
         let inner = TxEip8130 {
             chain_id: 8453,
             gas_limit: 250_000,
-            max_fee_per_gas: 5_000_000_000,
+            max_fee: 1_250_000_000_000_000,
             max_priority_fee_per_gas: 1_000_000_000,
             nonce_sequence: 7,
             ..Default::default()
@@ -428,15 +431,32 @@ mod tests {
         assert_eq!(tx.base.nonce(), 7);
     }
 
-    /// `GASPRICE` inside an EIP-8130 call reports the EIP-1559 effective gas
-    /// price `min(max_fee, base_fee + max_priority_fee)` that the payer is
-    /// charged, not the `max_fee_per_gas` cap.
+    /// `GASPRICE` inside an EIP-8130 call reports the effective gas price the
+    /// payer is charged: `base_fee + max_priority_fee` when the `max_fee` budget
+    /// has room for the whole tip, and the budget-capped price when it does not.
     #[cfg(feature = "std")]
     #[test]
     fn eip8130_gasprice_opcode_reports_effective_gas_price() {
         const BASE_FEE: u64 = 1_000_000_000;
         const MAX_PRIORITY_FEE: u128 = 7;
-        const MAX_FEE: u128 = 5_000_000_000;
+        const GAS_LIMIT: u64 = 1_000_000;
+
+        let roomy_budget = 5_000_000_000 * u128::from(GAS_LIMIT);
+        assert_eq!(
+            gasprice_seen(BASE_FEE, MAX_PRIORITY_FEE, roomy_budget, GAS_LIMIT),
+            U256::from(u128::from(BASE_FEE) + MAX_PRIORITY_FEE)
+        );
+
+        let tight_budget = (u128::from(BASE_FEE) + 3) * u128::from(GAS_LIMIT);
+        assert_eq!(
+            gasprice_seen(BASE_FEE, MAX_PRIORITY_FEE, tight_budget, GAS_LIMIT),
+            U256::from(u128::from(BASE_FEE) + 3)
+        );
+    }
+
+    /// Executes a self-paid EIP-8130 call that stores `GASPRICE` and returns it.
+    #[cfg(feature = "std")]
+    fn gasprice_seen(base_fee: u64, max_priority_fee: u128, max_fee: u128, gas_limit: u64) -> U256 {
         let probe = address!("0x00000000000000000000000000000000000000e1");
         // GASPRICE PUSH1 0 SSTORE STOP
         let probe_code = bytes!("3a60005500");
@@ -446,9 +466,9 @@ mod tests {
         let sender = Address::from_slice(&keccak256(&point.as_bytes()[1..])[12..]);
         let tx = TxEip8130 {
             chain_id: 8453,
-            max_priority_fee_per_gas: MAX_PRIORITY_FEE,
-            max_fee_per_gas: MAX_FEE,
-            gas_limit: 1_000_000,
+            max_priority_fee_per_gas: max_priority_fee,
+            max_fee,
+            gas_limit,
             calls: vec![vec![Call { to: probe, value: U256::ZERO, data: Bytes::new() }]],
             ..Default::default()
         };
@@ -477,14 +497,13 @@ mod tests {
             .with_cfg(
                 CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Everest)).with_chain_id(8453),
             )
-            .with_block(BlockEnv { basefee: BASE_FEE, ..Default::default() })
+            .with_block(BlockEnv { basefee: base_fee, ..Default::default() })
             .build_with_inspector(NoOpInspector);
         let outcome = evm
             .transact_raw(BaseTransaction::from_recovered_tx(&envelope, sender))
             .expect("8130 tx should execute");
 
         assert!(outcome.result.is_success(), "expected success, got {:?}", outcome.result);
-        let seen = outcome.state[&probe].storage[&U256::ZERO].present_value;
-        assert_eq!(seen, U256::from(u128::from(BASE_FEE) + MAX_PRIORITY_FEE));
+        outcome.state[&probe].storage[&U256::ZERO].present_value
     }
 }
