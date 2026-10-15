@@ -10,7 +10,10 @@ use base_common_consensus::BaseBlock;
 use base_common_evm::L1BlockInfo;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::extract_l1_info_from_tx;
-use jsonrpsee::core::{RpcResult, async_trait};
+use jsonrpsee::{
+    core::{RpcResult, async_trait},
+    types::{ErrorCode, ErrorObjectOwned},
+};
 use reth_provider::{
     BlockReader, BlockReaderIdExt, ChainSpecProvider, HeaderProvider, StateProviderFactory,
 };
@@ -75,37 +78,18 @@ where
             .provider
             .sealed_header_by_number_or_tag(BlockNumberOrTag::Latest)
             .map_err(|e| {
-                jsonrpsee::types::ErrorObjectOwned::owned(
-                    jsonrpsee::types::ErrorCode::InternalError.code(),
-                    format!("Failed to get canonical block header: {e}"),
-                    None::<()>,
-                )
+                Self::internal_error(format!("Failed to get canonical block header: {e}"))
             })?
-            .ok_or_else(|| {
-                jsonrpsee::types::ErrorObjectOwned::owned(
-                    jsonrpsee::types::ErrorCode::InternalError.code(),
-                    "Canonical block not found".to_string(),
-                    None::<()>,
-                )
-            })?;
+            .ok_or_else(|| Self::internal_error("Canonical block not found".to_string()))?;
 
         debug!(canonical_block = header.number, "Using canonical block state for metering");
 
-        let parsed_bundle = ParsedBundle::try_from(bundle).map_err(|e| {
-            jsonrpsee::types::ErrorObjectOwned::owned(
-                jsonrpsee::types::ErrorCode::InvalidParams.code(),
-                format!("Failed to parse bundle: {e}"),
-                None::<()>,
-            )
-        })?;
+        let parsed_bundle = ParsedBundle::try_from(bundle)
+            .map_err(|e| Self::invalid_params(format!("Failed to parse bundle: {e}")))?;
 
         let state_provider = self.provider.state_by_block_hash(header.hash()).map_err(|e| {
             error!(error = %e, block_hash = %header.hash(), "Failed to get state provider");
-            jsonrpsee::types::ErrorObjectOwned::owned(
-                jsonrpsee::types::ErrorCode::InternalError.code(),
-                format!("Failed to get state provider: {e}"),
-                None::<()>,
-            )
+            Self::internal_error(format!("Failed to get state provider: {e}"))
         })?;
 
         let l1_block_info = self.get_l1_block_info(header.hash())?;
@@ -128,11 +112,7 @@ where
             } else {
                 info!(error = %e, "Bundle metering failed");
             }
-            jsonrpsee::types::ErrorObjectOwned::owned(
-                jsonrpsee::types::ErrorCode::InternalError.code(),
-                format!("Bundle metering failed: {e}"),
-                None::<()>,
-            )
+            Self::internal_error(format!("Bundle metering failed: {e}"))
         })?;
 
         // Calculate average gas price
@@ -176,19 +156,9 @@ where
             .block_by_hash(hash)
             .map_err(|e| {
                 error!(error = %e, "Failed to get block by hash");
-                jsonrpsee::types::ErrorObjectOwned::owned(
-                    jsonrpsee::types::ErrorCode::InternalError.code(),
-                    format!("Failed to get block: {e}"),
-                    None::<()>,
-                )
+                Self::internal_error(format!("Failed to get block: {e}"))
             })?
-            .ok_or_else(|| {
-                jsonrpsee::types::ErrorObjectOwned::owned(
-                    jsonrpsee::types::ErrorCode::InvalidParams.code(),
-                    format!("Block not found: {hash}"),
-                    None::<()>,
-                )
-            })?;
+            .ok_or_else(|| Self::invalid_params(format!("Block not found: {hash}")))?;
 
         let response = self.meter_block_internal(&block)?;
 
@@ -214,19 +184,9 @@ where
             .block_by_number_or_tag(number)
             .map_err(|e| {
                 error!(error = %e, "Failed to get block by number");
-                jsonrpsee::types::ErrorObjectOwned::owned(
-                    jsonrpsee::types::ErrorCode::InternalError.code(),
-                    format!("Failed to get block: {e}"),
-                    None::<()>,
-                )
+                Self::internal_error(format!("Failed to get block: {e}"))
             })?
-            .ok_or_else(|| {
-                jsonrpsee::types::ErrorObjectOwned::owned(
-                    jsonrpsee::types::ErrorCode::InvalidParams.code(),
-                    format!("Block not found: {number:?}"),
-                    None::<()>,
-                )
-            })?;
+            .ok_or_else(|| Self::invalid_params(format!("Block not found: {number:?}")))?;
 
         let response = self.meter_block_internal(&block)?;
 
@@ -255,6 +215,14 @@ where
         + Sync
         + 'static,
 {
+    fn internal_error(message: String) -> ErrorObjectOwned {
+        ErrorObjectOwned::owned(ErrorCode::InternalError.code(), message, None::<()>)
+    }
+
+    fn invalid_params(message: String) -> ErrorObjectOwned {
+        ErrorObjectOwned::owned(ErrorCode::InvalidParams.code(), message, None::<()>)
+    }
+
     /// Get L1 block info from the first transaction of a canonical block.
     fn get_l1_block_info(&self, block_hash: B256) -> RpcResult<L1BlockInfo> {
         let first_tx = self
@@ -262,37 +230,19 @@ where
             .block_by_hash(block_hash)
             .map_err(|e| {
                 error!(error = %e, block_hash = %block_hash, "Failed to get block");
-                jsonrpsee::types::ErrorObjectOwned::owned(
-                    jsonrpsee::types::ErrorCode::InternalError.code(),
-                    format!("Failed to get block: {e}"),
-                    None::<()>,
-                )
+                Self::internal_error(format!("Failed to get block: {e}"))
             })?
-            .ok_or_else(|| {
-                jsonrpsee::types::ErrorObjectOwned::owned(
-                    jsonrpsee::types::ErrorCode::InvalidParams.code(),
-                    format!("Block not found: {block_hash}"),
-                    None::<()>,
-                )
-            })?
+            .ok_or_else(|| Self::invalid_params(format!("Block not found: {block_hash}")))?
             .body
             .transactions
             .first()
             .ok_or_else(|| {
-                jsonrpsee::types::ErrorObjectOwned::owned(
-                    jsonrpsee::types::ErrorCode::InvalidParams.code(),
-                    format!("Block has no transactions: {block_hash}"),
-                    None::<()>,
-                )
+                Self::invalid_params(format!("Block has no transactions: {block_hash}"))
             })?
             .clone();
 
         extract_l1_info_from_tx(&first_tx).map_err(|e| {
-            jsonrpsee::types::ErrorObjectOwned::owned(
-                jsonrpsee::types::ErrorCode::InvalidParams.code(),
-                format!("Failed to extract L1 block info from transaction: {e}"),
-                None::<()>,
-            )
+            Self::invalid_params(format!("Failed to extract L1 block info from transaction: {e}"))
         })
     }
 
@@ -300,11 +250,7 @@ where
     fn meter_block_internal(&self, block: &BaseBlock) -> RpcResult<MeterBlockResponse> {
         meter_block(self.provider.clone(), self.provider.chain_spec(), block).map_err(|e| {
             error!(error = %e, "Block metering failed");
-            jsonrpsee::types::ErrorObjectOwned::owned(
-                jsonrpsee::types::ErrorCode::InternalError.code(),
-                format!("Block metering failed: {e}"),
-                None::<()>,
-            )
+            Self::internal_error(format!("Block metering failed: {e}"))
         })
     }
 }
