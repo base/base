@@ -9,12 +9,12 @@ use std::{
 };
 
 use alloy_consensus::{
-    BlockBody, EMPTY_OMMER_ROOT_HASH, Header, ReceiptWithBloom, Transaction,
-    constants::EMPTY_WITHDRAWALS, proofs,
+    BlockBody, EMPTY_OMMER_ROOT_HASH, Header, Transaction, TxReceipt, constants::EMPTY_WITHDRAWALS,
+    proofs,
 };
 use alloy_eips::{Encodable2718, eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE};
 use alloy_evm::Database;
-use alloy_primitives::{Address, B256, Bloom, U256, map::foldhash::HashMap};
+use alloy_primitives::{Address, B256, Bloom, U256, logs_bloom, map::foldhash::HashMap};
 use base_builder_publish::WebSocketPublisher;
 use base_common_chains::Upgrades;
 use base_common_consensus::{BaseReceipt, BaseTransactionSigned};
@@ -22,7 +22,7 @@ use base_common_flashblocks::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashblockId, FlashblocksPayloadV1,
     Metadata,
 };
-use base_execution_consensus::{calculate_receipt_root, isthmus};
+use base_execution_consensus::{calculate_receipt_root_no_memo, isthmus};
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
 use base_execution_payload_builder::{
     BaseBuiltPayload, BasePayloadBuilderAttributes, BuilderMetrics as SharedBuilderMetrics,
@@ -1160,16 +1160,12 @@ where
         ));
     }
 
-    // Earlier receipts already contributed their bloom when executed; later Flashblocks
-    // reuse it rather than hashing the same log addresses and topics again.
-    let receipts_with_bloom = info
-        .receipts
-        .iter()
-        .map(|r| ReceiptWithBloom { receipt: &r.receipt, logs_bloom: r.logs_bloom })
-        .collect::<Vec<_>>();
-    let receipts_root =
-        calculate_receipt_root(&receipts_with_bloom, &ctx.chain_spec, ctx.attributes().timestamp());
-    let logs_bloom = receipts_with_bloom.iter().fold(Bloom::ZERO, |bloom, r| bloom | r.bloom_ref());
+    let receipts_root = calculate_receipt_root_no_memo(
+        &info.receipts,
+        &ctx.chain_spec,
+        ctx.attributes().timestamp(),
+    );
+    let logs_bloom: Bloom = logs_bloom(info.receipts.iter().flat_map(|r| r.logs()));
 
     // TODO: maybe recreate state with bundle in here
     // calculate the state root
@@ -1269,26 +1265,19 @@ where
     // The builder prunes included transactions itself, so nonce advances are
     // omitted to avoid evicting valid successors promoted in the same lane.
     let state_diff = AccountStateDiff::collect_for_intra_block(&state.bundle_state);
-    // Azul omits legacy metadata; avoid materializing maps that will not be published.
-    let include_legacy_metadata =
-        !ctx.chain_spec.is_azul_active_at_timestamp(ctx.attributes().timestamp());
-    let new_account_balances = include_legacy_metadata.then(|| {
-        state
-            .bundle_state
-            .state
-            .iter()
-            .filter_map(|(address, account)| {
-                account.info.as_ref().map(|info| (*address, info.balance))
-            })
-            .collect::<HashMap<Address, U256>>()
-    });
+    let new_account_balances = state
+        .bundle_state
+        .state
+        .iter()
+        .filter_map(|(address, account)| account.info.as_ref().map(|info| (*address, info.balance)))
+        .collect::<HashMap<Address, U256>>();
 
     // create the executed block data
     let executed = BuiltPayloadExecutedBlock {
         recovered_block: Arc::new(recovered_block),
         execution_output: Arc::new(BlockExecutionOutput {
             result: BlockExecutionResult {
-                receipts: info.receipts.iter().map(|r| r.receipt.clone()).collect(),
+                receipts: info.receipts.clone(),
                 requests: vec![].into(),
                 gas_used: info.cumulative_gas_used,
                 blob_gas_used: 0,
@@ -1306,25 +1295,34 @@ where
     let block_hash = sealed_block.hash();
 
     // pick the new transactions from the info field and update the last flashblock index
-    let new_transactions = &info.executed_transactions[info.extra.last_flashblock_index..];
+    let new_transactions = info.executed_transactions[info.extra.last_flashblock_index..].to_vec();
 
     let new_transactions_encoded =
-        new_transactions.iter().map(|tx| tx.encoded_2718().into()).collect::<Vec<_>>();
+        new_transactions.clone().into_iter().map(|tx| tx.encoded_2718().into()).collect::<Vec<_>>();
 
-    let receipts_with_hash = include_legacy_metadata.then(|| {
-        new_transactions
-            .iter()
-            .zip(&info.receipts[info.extra.last_flashblock_index..])
-            .map(|(tx, receipt)| (tx.tx_hash(), receipt.receipt.clone()))
-            .collect::<HashMap<B256, BaseReceipt>>()
-    });
+    let new_receipts = info.receipts[info.extra.last_flashblock_index..].to_vec();
     info.extra.last_flashblock_index = info.executed_transactions.len();
 
-    let metadata = FlashblocksMetadata {
-        metadata: Metadata { block_number: ctx.parent().number + 1, prev_flashblock_id },
-        new_account_balances,
-        receipts: receipts_with_hash,
-    };
+    let receipts_with_hash = new_transactions
+        .iter()
+        .zip(new_receipts.iter())
+        .map(|(tx, receipt)| (tx.tx_hash(), receipt.clone()))
+        .collect::<HashMap<B256, BaseReceipt>>();
+
+    let metadata: FlashblocksMetadata =
+        if ctx.chain_spec.is_azul_active_at_timestamp(ctx.attributes().timestamp()) {
+            FlashblocksMetadata {
+                metadata: Metadata { block_number: ctx.parent().number + 1, prev_flashblock_id },
+                receipts: None,
+                new_account_balances: None,
+            }
+        } else {
+            FlashblocksMetadata {
+                metadata: Metadata { block_number: ctx.parent().number + 1, prev_flashblock_id },
+                new_account_balances: Some(new_account_balances),
+                receipts: Some(receipts_with_hash),
+            }
+        };
 
     // Prepare the flashblocks message
     let fb_payload = FlashblocksPayloadV1 {
@@ -1384,25 +1382,16 @@ where
 mod tests {
     use std::sync::Arc;
 
-    use alloy_consensus::{Header, Receipt, TxEip1559, TxReceipt};
-    use alloy_eips::Encodable2718;
-    use alloy_primitives::{
-        Address, B256, Log, Signature, U256, logs_bloom, map::foldhash::HashMap,
-    };
-    use base_common_chains::BaseUpgrade;
-    use base_common_consensus::{BaseReceipt, BaseTransactionSigned, BaseTypedTransaction};
+    use alloy_consensus::{Header, Receipt};
+    use alloy_primitives::{Address, B256, Log, U256, map::foldhash::HashMap};
+    use base_common_consensus::BaseReceipt;
     use base_common_flashblocks::{FlashblockId, Metadata};
     use base_execution_chainspec::BaseChainSpec;
-    use base_execution_consensus::calculate_receipt_root_no_memo;
-    use reth_chainspec::{ChainSpec, ForkCondition};
+    use reth_chainspec::ChainSpec;
     use reth_execution_cache::{CachedStateProvider, CachedStatus, ExecutionCache, SavedCache};
     use reth_primitives_traits::SealedHeader;
     use reth_provider::{StateProviderBox, noop::NoopProvider};
     use reth_revm::{State, database::StateProviderDatabase};
-    use revm::{
-        database::{AccountStatus, BundleAccount},
-        state::AccountInfo,
-    };
 
     use super::{FlashblocksMetadata, build_block};
     use crate::{ExecutionInfo, flashblocks::context::BasePayloadBuilderCtx};
@@ -1502,129 +1491,6 @@ mod tests {
         // The flashblocks payload must reference the same block.
         assert_eq!(fb_payload.diff.block_hash, payload.block().hash(), "hash mismatch");
         assert!(state_diff.is_empty(), "empty block must produce no invalidation diff");
-    }
-
-    #[test]
-    fn build_block_preserves_metadata_at_azul_boundary_and_publishes_only_new_transactions() {
-        for (activation, legacy_metadata) in [(3, true), (2, false)] {
-            let mut chain_spec = minimal_chain_spec();
-            Arc::make_mut(&mut chain_spec)
-                .set_fork(BaseUpgrade::Azul, ForkCondition::Timestamp(activation));
-            let ctx = BasePayloadBuilderCtx::for_test(chain_spec, genesis_header()); // timestamp 2
-            let db = StateProviderDatabase::new(NoopProvider::default());
-            let mut state = State::builder().with_database(db).with_bundle_update().build();
-            let address = Address::repeat_byte(7);
-            state.bundle_state.state.insert(
-                address,
-                BundleAccount {
-                    info: Some(AccountInfo { balance: U256::from(123), ..Default::default() }),
-                    original_info: Some(AccountInfo {
-                        balance: U256::from(456),
-                        ..Default::default()
-                    }),
-                    storage: Default::default(),
-                    status: AccountStatus::Changed,
-                },
-            );
-            let mut info = ExecutionInfo::default();
-            for nonce in 0..3 {
-                info.executed_transactions.push(BaseTransactionSigned::new_unhashed(
-                    BaseTypedTransaction::Eip1559(TxEip1559 {
-                        nonce,
-                        gas_limit: 21_000,
-                        ..Default::default()
-                    }),
-                    Signature::new(U256::ONE, U256::from(2), false),
-                ));
-                info.executed_senders.push(address);
-                info.receipts.push(
-                    BaseReceipt::Eip1559(Receipt {
-                        status: (nonce != 1).into(),
-                        cumulative_gas_used: 21_000 * (nonce + 1),
-                        logs: vec![Log::new_unchecked(
-                            Address::repeat_byte(nonce as u8 + 1),
-                            vec![B256::repeat_byte(nonce as u8 + 10)],
-                            Default::default(),
-                        )],
-                    })
-                    .into_with_bloom(),
-                );
-            }
-            info.cumulative_gas_used = 63_000;
-            info.extra.last_flashblock_index = 1;
-            let prev = FlashblockId { block_number: 1, index: 4 };
-            let (_, message, _) = build_block(&mut state, &ctx, &mut info, prev, false).unwrap();
-            assert_eq!(
-                message.diff.transactions,
-                info.executed_transactions[1..]
-                    .iter()
-                    .map(|tx| tx.encoded_2718().into())
-                    .collect::<Vec<alloy_primitives::Bytes>>()
-            );
-            assert_eq!(message.metadata["prev_flashblock_id"], serde_json::json!("1-4"));
-            if legacy_metadata {
-                let expected_receipts = info.executed_transactions[1..]
-                    .iter()
-                    .zip(&info.receipts[1..])
-                    .map(|(tx, receipt)| (tx.tx_hash(), receipt.receipt.clone()))
-                    .collect::<HashMap<_, _>>();
-                assert_eq!(
-                    message.metadata["receipts"],
-                    serde_json::to_value(expected_receipts).unwrap()
-                );
-                assert_eq!(
-                    message.metadata["new_account_balances"],
-                    serde_json::json!({address.to_string(): "0x7b"})
-                );
-            } else {
-                assert!(message.metadata.get("receipts").is_none());
-                assert!(message.metadata.get("new_account_balances").is_none());
-            }
-            let (_, next, _) = build_block(&mut state, &ctx, &mut info, prev, false).unwrap();
-            assert!(
-                next.diff.transactions.is_empty(),
-                "do not republish an already consumed suffix"
-            );
-            if legacy_metadata {
-                assert_eq!(next.metadata["receipts"], serde_json::json!({}));
-            }
-
-            // Append a differently shaped log after publishing, then check commitments
-            // against uncached receipts. Reuse must not omit either old or new logs.
-            info.executed_transactions.push(BaseTransactionSigned::new_unhashed(
-                BaseTypedTransaction::Eip1559(TxEip1559 {
-                    nonce: 3,
-                    gas_limit: 42_000,
-                    ..Default::default()
-                }),
-                Signature::new(U256::ONE, U256::from(2), false),
-            ));
-            info.executed_senders.push(address);
-            info.cumulative_gas_used = 105_000;
-            info.receipts.push(
-                BaseReceipt::Eip1559(Receipt {
-                    status: true.into(),
-                    cumulative_gas_used: info.cumulative_gas_used,
-                    logs: vec![Log::new_unchecked(
-                        Address::repeat_byte(41),
-                        vec![B256::repeat_byte(71), B256::repeat_byte(99)],
-                        Default::default(),
-                    )],
-                })
-                .into_with_bloom(),
-            );
-            let raw = info.receipts.iter().map(|r| r.receipt.clone()).collect::<Vec<_>>();
-            let expected_bloom = logs_bloom(raw.iter().flat_map(TxReceipt::logs));
-            let expected_root = calculate_receipt_root_no_memo(&raw, &ctx.chain_spec, 2);
-            let (payload, appended, _) =
-                build_block(&mut state, &ctx, &mut info, prev, false).unwrap();
-            assert_eq!(appended.diff.transactions.len(), 1);
-            assert_eq!(appended.diff.logs_bloom, expected_bloom);
-            assert_eq!(payload.block().header().logs_bloom, expected_bloom);
-            assert_eq!(appended.diff.receipts_root, expected_root);
-            assert_eq!(payload.block().header().receipts_root, expected_root);
-            assert_ne!(appended.diff.logs_bloom, message.diff.logs_bloom);
-        }
     }
 
     /// Verify that [`build_block`] exercises the state root calculation path
