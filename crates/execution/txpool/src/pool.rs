@@ -3213,6 +3213,45 @@ mod tests {
         assert!(pool.get(&hash).is_none(), "the payer's balance still bounds a sponsored tx");
     }
 
+    /// More of a payer's own transactions than reth's EIP-7702 delegation
+    /// slot limit allows a delegated account.
+    fn over_delegation_slot_limit() -> u64 {
+        PoolConfig::default().max_inflight_delegated_slot_limit as u64 + 1
+    }
+
+    #[tokio::test]
+    async fn sponsoring_a_key0_transaction_does_not_limit_the_payers_own_transactions() {
+        let (pool, client) = build_integration_pool();
+        let [sender, payer] = std::array::from_fn(|_| signer());
+        fund(&client, payer.address());
+        let sponsored = sponsored_eoa_8130(&sender, &payer, U256::ZERO, 1_000);
+        pool.add_transaction(TransactionOrigin::External, sponsored).await.unwrap();
+
+        for nonce in 0..over_delegation_slot_limit() {
+            let result =
+                pool.add_transaction(TransactionOrigin::External, signed_1559(&payer, nonce)).await;
+            assert!(result.is_ok(), "payer transaction {nonce} was rejected: {result:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_payer_with_pending_transactions_can_sponsor_a_key0_transaction() {
+        let (pool, client) = build_integration_pool();
+        let [sender, payer] = std::array::from_fn(|_| signer());
+        fund(&client, payer.address());
+        for nonce in 0..over_delegation_slot_limit() {
+            pool.add_transaction(TransactionOrigin::External, signed_1559(&payer, nonce))
+                .await
+                .unwrap();
+        }
+
+        let sponsored = sponsored_eoa_8130(&sender, &payer, U256::ZERO, 1_000);
+        let hash = *sponsored.hash();
+        let result = pool.add_transaction(TransactionOrigin::External, sponsored).await;
+        assert!(result.is_ok(), "the sponsored transaction was rejected: {result:?}");
+        assert!(is_pending(&pool, hash));
+    }
+
     #[tokio::test]
     async fn self_paid_key0_transaction_leaves_pending_when_sender_balance_drops() {
         let (pool, client) = build_integration_pool();
