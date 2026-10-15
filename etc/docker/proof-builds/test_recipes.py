@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -122,6 +123,124 @@ class InstallTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("FAILED", result.stdout)
             self.assertFalse((root / "extracted").exists())
+
+
+
+class LockfileTests(unittest.TestCase):
+    def test_builds_reject_missing_and_stale_lockfiles(self):
+        components = {
+            "nitro-host": ("base-prover-nitro-host", "base-prover-nitro-host"),
+            "proposer": ("base-proposer-bin", "base-proposer"),
+            "challenger": ("base-challenger-bin", "base-challenger"),
+            "registrar": ("base-proof-tee-registrar-bin", "base-proof-tee-registrar"),
+            "prover-service": ("base-prover-service-bin", "base-prover-service"),
+            "zk-host": ("base-prover-zk-host", "base-prover-zk-host"),
+            "snark-e2e": ("base-snark-e2e-bin", "base-snark-e2e"),
+            "challenger-e2e": ("base-challenger-e2e-bin", "base-challenger-e2e"),
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            tools = root / "tools"
+            tools.mkdir()
+            fixture = root / "fixture"
+            fixture.mkdir()
+            packages = list(components.values()) + [("range", "range"),
+                                                     ("aggregation", "aggregation")]
+            (fixture / "Cargo.toml").write_text(
+                '[workspace]\nresolver = "2"\nmembers = ["shared", '
+                + ", ".join(json.dumps("packages/" + package) for package, _ in packages) + "]\n")
+            shared = fixture / "shared"
+            shared.mkdir()
+            (shared / "Cargo.toml").write_text(
+                '[package]\nname = "shared"\nversion = "0.1.0"\nedition = "2021"\n[lib]\npath = "lib.rs"\n')
+            (shared / "lib.rs").write_text("pub fn value() {}\n")
+            for package, binary in packages:
+                member = fixture / "packages" / package
+                member.mkdir(parents=True)
+                (member / "Cargo.toml").write_text(
+                    f'[package]\nname = "{package}"\nversion = "0.1.0"\nedition = "2021"\n'
+                    f'[[bin]]\nname = "{binary}"\npath = "main.rs"\n'
+                    '[dependencies]\nshared = { path = "../../shared" }\n')
+                (member / "main.rs").write_text("fn main() { shared::value(); }\n")
+            result = run("cargo", "generate-lockfile", "--offline", cwd=fixture)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            lock = fixture / "Cargo.lock"
+            (fixture / "valid.lock").write_bytes(lock.read_bytes())
+            cargo = tools / "cargo"
+            # Only the guest target and toolchain need translation for stock Cargo.
+            cargo.write_text(f"#!{os.sys.executable}\n" + '''import json, os, pathlib, shutil, subprocess, sys
+root = pathlib.Path(os.environ["FIXTURE"])
+args = sys.argv[1:]
+guest = "--target" in args
+package = ("range" if pathlib.Path.cwd().name == "ethereum" else "aggregation") if guest else args[args.index("--package") + 1]
+state = os.environ["LOCK_STATE"] if package == os.environ["SELECTED_PACKAGE"] else "valid"
+lock = root / "Cargo.lock"
+lock.write_bytes((root / "valid.lock").read_bytes())
+manifest = root / "shared/Cargo.toml"
+manifest.write_text(manifest.read_text().replace('0.2.0', '0.1.0'))
+if state == "absent":
+    lock.unlink()
+elif state == "stale":
+    manifest.write_text(manifest.read_text().replace('0.1.0', '0.2.0'))
+before = lock.read_bytes() if lock.exists() else None
+original = args.copy()
+if guest:
+    args[args.index("--target") + 1] = os.environ["HOST_TARGET"]
+    args += ["--package", package]
+env = dict(os.environ, CARGO_TARGET_DIR=str(root / "target"), RUSTC=os.environ["REAL_RUSTC"])
+for key in ("RUSTUP_TOOLCHAIN", "CARGO_ENCODED_RUSTFLAGS", "RUSTC_BOOTSTRAP"):
+    env.pop(key, None)
+result = subprocess.run([os.environ["REAL_CARGO"], *args, "--offline"], cwd=root, env=env)
+after = lock.read_bytes() if lock.exists() else None
+with open(os.environ["BUILD_LOG"], "a") as log:
+    log.write(json.dumps([package, original, result.returncode, before == after]) + "\\n")
+if result.returncode == 0 and guest:
+    target = pathlib.Path(os.environ["CARGO_TARGET_DIR"]) / "riscv64im-succinct-zkvm-elf/release"
+    target.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(root / "target" / os.environ["HOST_TARGET"] / "release" / package, target / package)
+sys.exit(result.returncode)
+''')
+            cargo.chmod(0o755)
+            rustc = tools / "rustc"
+            rustc.write_text('#!/bin/sh\nunset RUSTUP_TOOLCHAIN\nexec "$REAL_RUSTC" "$@"\n')
+            rustc.chmod(0o755)
+            version = run("rustc", "-vV").stdout
+            host = next(line.split(": ", 1)[1] for line in version.splitlines()
+                        if line.startswith("host: "))
+            env = dict(os.environ, PATH=f"{tools}:{os.environ['PATH']}",
+                       FIXTURE=str(fixture), REAL_CARGO=shutil.which("cargo"),
+                       REAL_RUSTC=shutil.which("rustc"), HOST_TARGET=host,
+                       BUILD_LOG=str(root / "build.log"))
+            for recipe in ("build.sh", "elf.sh"):
+                (root / recipe).write_text((RECIPES / recipe).read_text()
+                                          .replace("/app", str(fixture))
+                                          .replace("/root/program", str(root)))
+            for guest in ("range/ethereum", "aggregation"):
+                (root / "crates/proof/zk/programs/succinct" / guest).mkdir(parents=True)
+            cases = [(component, package, binary)
+                     for component, (package, binary) in components.items()]
+            cases += [("elf", guest, guest) for guest in ("range", "aggregation")]
+            for component, package, binary in cases:
+                for state in ("valid", "absent", "stale"):
+                    with self.subTest(component=component, package=package, state=state):
+                        Path(env["BUILD_LOG"]).write_text("")
+                        env.update(SELECTED_PACKAGE=package, LOCK_STATE=state)
+                        args = ["/bin/sh", str(root / ("elf.sh" if component == "elf" else "build.sh"))]
+                        if component != "elf":
+                            args += [component, "dev"]
+                        result = run(*args, cwd=fixture, env=env)
+                        calls = [json.loads(line) for line in Path(env["BUILD_LOG"]).read_text().splitlines()]
+                        selected = next(call for call in calls if call[0] == package)
+                        detail = f"argv={selected[1]}\n{result.stderr}"
+                        if state == "valid":
+                            self.assertEqual(result.returncode, 0, detail)
+                            self.assertTrue(selected[3], "valid lockfile changed: " + detail)
+                            if component != "elf":
+                                self.assertTrue((fixture / binary).is_file())
+                        else:
+                            self.assertNotEqual(result.returncode, 0, detail)
+                            self.assertIn("--locked", result.stderr)
+                            self.assertTrue(selected[3], "rejected lockfile changed: " + detail)
 
 
 

@@ -12,11 +12,11 @@ export RUSTC_BOOTSTRAP=1
 export CFLAGS_riscv32im_succinct_zkvm_elf=-D__ILP32__
 
 cd crates/proof/zk/programs/succinct/range/ethereum
-cargo build --release --ignore-rust-version --target riscv64im-succinct-zkvm-elf
+cargo build --release --locked --ignore-rust-version --target riscv64im-succinct-zkvm-elf
 mkdir -p /root/program/crates/proof/zk/programs/succinct/elf
 cp "$CARGO_TARGET_DIR/riscv64im-succinct-zkvm-elf/release/range" \
     /root/program/crates/proof/zk/programs/succinct/elf/range-elf-embedded
 cd /root/program/crates/proof/zk/programs/succinct/aggregation
-cargo build --release --ignore-rust-version --target riscv64im-succinct-zkvm-elf
+cargo build --release --locked --ignore-rust-version --target riscv64im-succinct-zkvm-elf
 cp "$CARGO_TARGET_DIR/riscv64im-succinct-zkvm-elf/release/aggregation" \
     /root/program/crates/proof/zk/programs/succinct/elf/aggregation-elf
