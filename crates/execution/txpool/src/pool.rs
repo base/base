@@ -2076,8 +2076,10 @@ mod tests {
     use base_common_chains::ChainConfig;
     use base_common_consensus::{
         BaseBlock, BasePooledTransaction as ConsensusPooledTransaction, BasePrimitives,
-        BaseTxEnvelope, Call, Eip8130Constants, Eip8130Signed, Predeploys, TxEip8130,
+        BaseTransactionSigned, BaseTxEnvelope, Call, Eip8130Constants, Eip8130Signed, Predeploys,
+        TxDeposit, TxEip8130,
     };
+    use base_common_evm::BaseSpecId;
     use base_execution_chainspec::BaseChainSpec;
     use base_execution_evm::BaseEvmConfig;
     use base_test_utils::build_test_genesis_everest;
@@ -2361,24 +2363,32 @@ mod tests {
 
     fn build_integration_pool()
     -> (IntegrationPool, MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>) {
-        build_integration_pool_at(false, PoolConfig::default())
+        build_integration_pool_at(false, PoolConfig::default(), false)
     }
 
     /// [`build_integration_pool`] with the Keystore active (Zenith at genesis).
     fn build_zenith_integration_pool()
     -> (IntegrationPool, MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>) {
-        build_integration_pool_at(true, PoolConfig::default())
+        build_integration_pool_at(true, PoolConfig::default(), false)
     }
 
     fn build_integration_pool_with_config(
         config: PoolConfig,
     ) -> (IntegrationPool, MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>) {
-        build_integration_pool_at(false, config)
+        build_integration_pool_at(false, config, false)
+    }
+
+    /// [`build_integration_pool`] charging the L1 data and operator fees of
+    /// [`ISTHMUS_L1_INFO_CALLDATA`].
+    fn build_integration_pool_with_l1_fees()
+    -> (IntegrationPool, MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>) {
+        build_integration_pool_at(false, PoolConfig::default(), true)
     }
 
     fn build_integration_pool_at(
         zenith: bool,
         config: PoolConfig,
+        l1_fees: bool,
     ) -> (IntegrationPool, MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>) {
         let mut genesis = build_test_genesis_everest();
         genesis.config.chain_id = test_chain_id();
@@ -2410,14 +2420,16 @@ mod tests {
                 // clock writer rather than a second, unsynchronized setter.
                 let validator =
                     BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default())
-                        .require_l1_data_gas_fee(false);
-                validator.update_l1_block_info::<_, TxEip1559>(
-                    &alloy_consensus::Header {
-                        timestamp: INTEGRATION_POOL_NOW_SECS,
-                        ..Default::default()
-                    },
-                    &[],
-                );
+                        .require_l1_data_gas_fee(l1_fees);
+                let header = alloy_consensus::Header {
+                    timestamp: INTEGRATION_POOL_NOW_SECS,
+                    ..Default::default()
+                };
+                if l1_fees {
+                    validator.update_l1_block_info(&header, &[l1_info_deposit()]);
+                } else {
+                    validator.update_l1_block_info::<_, TxEip1559>(&header, &[]);
+                }
                 validator
             });
         let ordering = BaseOrdering::default();
@@ -3465,6 +3477,63 @@ mod tests {
 
         set_balance(&pool, sender.address(), backed);
         assert!(is_pending(&pool, hash));
+    }
+
+    /// Isthmus L1 attributes calldata with non-zero L1 data and operator fee
+    /// parameters.
+    const ISTHMUS_L1_INFO_CALLDATA: [u8; 176] = alloy_primitives::hex!(
+        "098999be00000558000c5fc500000000000000030000000067a9f765"
+        "0000000000000029000000000000000000000000000000000000000000000000"
+        "00000000006a6d090000000000000000000000000000000000000000000000000000000000000001"
+        "72fcc8e8886636bdbe96ba0e4baab67ea7e7811633f52b52e8cf7a5123213b6f"
+        "000000000000000000000000d3f2c5afb2d76f5579f326b0cd7da5f5a4126c35"
+        "00004e2000000000000001f4"
+    );
+
+    fn l1_info_deposit() -> BaseTransactionSigned {
+        TxDeposit {
+            to: TxKind::Create,
+            input: Bytes::from_static(&ISTHMUS_L1_INFO_CALLDATA),
+            ..Default::default()
+        }
+        .into()
+    }
+
+    /// The L1 data and operator fees a self-paid transaction prepays under
+    /// [`ISTHMUS_L1_INFO_CALLDATA`].
+    fn l1_and_operator_fees(pool: &IntegrationPool, transaction: &BasePooledTransaction) -> U256 {
+        let mut l1_block_info = base_execution_evm::parse_l1_info(&ISTHMUS_L1_INFO_CALLDATA)
+            .expect("valid L1 info fixture");
+        let spec = BaseSpecId::from_timestamp(
+            pool.validator().validator().chain_spec(),
+            INTEGRATION_POOL_NOW_SECS,
+        );
+        l1_block_info.tx_cost(transaction.encoded_2718(), U256::from(transaction.gas_limit()), spec)
+    }
+
+    /// A self-paid tip is prepaid after the L1 data and operator fees, so a
+    /// balance of exactly gas plus the tip does not back it.
+    #[tokio::test]
+    async fn self_paid_coinbase_tip_is_backed_only_after_l1_and_operator_fees() {
+        let (pool, client) = build_integration_pool_with_l1_fees();
+        let [short, funded] = std::array::from_fn(|_| signer());
+        let tip = U256::from(10u64).pow(U256::from(18u64));
+
+        let short_tx = tipping_eoa_8130(&short, None, 0, tip);
+        let short_hash = *short_tx.hash();
+        assert!(!l1_and_operator_fees(&pool, &short_tx).is_zero(), "fixture must charge fees");
+        client.add_account(short.address(), ExtendedAccount::new(0, tipping_fees() + tip));
+        pool.add_transaction(TransactionOrigin::External, short_tx).await.unwrap();
+        assert!(pool.get(&short_hash).is_some(), "the balance still covers the fees");
+        assert!(!is_pending(&pool, short_hash), "gas plus the tip must not back the tip");
+        assert!(!is_best(&pool, short_hash));
+
+        let funded_tx = tipping_eoa_8130(&funded, None, 0, tip);
+        let funded_hash = *funded_tx.hash();
+        let balance = tipping_fees() + l1_and_operator_fees(&pool, &funded_tx) + tip;
+        client.add_account(funded.address(), ExtendedAccount::new(0, balance));
+        pool.add_transaction(TransactionOrigin::External, funded_tx).await.unwrap();
+        assert!(is_pending(&pool, funded_hash));
     }
 
     #[tokio::test]

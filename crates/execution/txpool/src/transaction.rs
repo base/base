@@ -310,8 +310,10 @@ where
     }
 
     /// The most a classified EIP-8130 transaction can debit its sender: the
-    /// fees plus the declared coinbase tip when self-paid, and only the tip
-    /// when sponsored, since the payer covers the fees. Reth checks the
+    /// fees admission charged the payer (gas, L1 data fee and operator fee,
+    /// all prepaid before the calls run) plus the declared coinbase tip when
+    /// self-paid, and only the tip when sponsored, since the payer covers the
+    /// fees. Reth checks the
     /// sender's cumulative cost against its balance on insert and on every
     /// account change, so a tip the sender cannot cover parks the transaction
     /// as queued instead of ranking it. Admission does not require the tip,
@@ -327,7 +329,7 @@ where
         self.sender_cost.get_or_init(|| {
             let tip = self.coinbase_tip().unwrap_or_default();
             let cost =
-                if class.payer == class.sender { self.inner.cost.saturating_add(tip) } else { tip };
+                if class.payer == class.sender { class.max_cost.saturating_add(tip) } else { tip };
             cost.min(Self::MAX_POOL_COST)
         })
     }
