@@ -1,0 +1,25 @@
+[package]
+name = "base-withdrawer"
+description = "Withdrawal proving and finalization for OP Stack networks"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+url.workspace = true
+humantime.workspace = true
+thiserror.workspace = true
+coins-bip32.workspace = true
+clap = { workspace = true, features = ["derive", "env"] }
+coins-bip39 = { workspace = true, features = ["english"] }
+alloy-primitives = { workspace = true, features = ["std"] }
+
+[features]
+default = []
+ledger = []

@@ -190,6 +190,7 @@ Find a doc through the index below instead of grepping the tree. After adding, m
 - [crates/infra/snark-e2e/README.md](crates/infra/snark-e2e/README.md): base-snark-e2e library: submits a one-block SNARK PLONK prove request, verifies the receipt, and checks its vkeys match the on-chain verifier. Lists env vars and the integration test command.
 - [crates/infra/telemetry/README.md](crates/infra/telemetry/README.md): base-telemetry-service Axum API with EL (devp2p) and CL (libp2p) P2P reachability probe endpoints: request/response shapes, limits, rate limiting, trusted proxies, IPv4 target rules.
 - [crates/infra/websocket-proxy/README.md](crates/infra/websocket-proxy/README.md): Alpha WebSocket proxy fanning out Flashblocks from rollup-boost to downstream RPC nodes, with optional Brotli and trusted-proxy CIDR client IP handling. Use for its CLI flags and deployment.
+- [crates/infra/withdrawer/README.md](crates/infra/withdrawer/README.md): Typed withdrawer CLI configuration, signer selection, fee validation, and OP Stack network presets without RPC or transaction submission.
 - [crates/infra/zk-benchmarks/README.md](crates/infra/zk-benchmarks/README.md): One-line stub: ZK proof benchmarking utilities for Base load-test runs; no usage or detail beyond that.
 - [crates/infra/zk-fork-dispute/README.md](crates/infra/zk-fork-dispute/README.md): base-zk-fork-dispute: Anvil fork workflow that patches an invalid dispute-game root, gets a SNARK PLONK proof from prover-service, and submits challenge()/nullify(). Needs a running prover-service.
 

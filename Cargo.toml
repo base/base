@@ -231,6 +231,7 @@ base-sidecrush = { path = "crates/infra/sidecrush" }
 audit-archiver-lib = { path = "crates/infra/audit" }
 base-snark-e2e = { path = "crates/infra/snark-e2e" }
 base-load-tests = { path = "crates/infra/load-tests" }
+base-withdrawer = { path = "crates/infra/withdrawer" }
 base-snapshotter = { path = "crates/infra/snapshotter" }
 websocket-proxy = { path = "crates/infra/websocket-proxy" }
 base-telemetry-service = { path = "crates/infra/telemetry" }
@@ -491,6 +492,8 @@ sha2 = { version = "0.10", default-features = false }
 c-kzg = { version = "2.1.5", default-features = false }
 kzg-rs = { version = "0.2.8", default-features = false }
 ark-ff = { version = "0.6.0", default-features = false }
+coins-bip32 = { version = "0.12", default-features = false }
+coins-bip39 = { version = "0.12", default-features = false }
 ark-bls12-381 = { version = "0.6.0", default-features = false }
 
 # http
