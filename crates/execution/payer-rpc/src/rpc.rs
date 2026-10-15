@@ -4,7 +4,7 @@ use std::{fmt, sync::Arc};
 
 use alloy_consensus::BlockHeader;
 use base_common_chains::Upgrades;
-use base_execution_rpc::SequencerClient;
+use base_execution_rpc::{SequencerClient, SequencerClientError};
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
@@ -65,7 +65,8 @@ where
         self.provider.chain_spec().chain().id()
     }
 
-    fn ensure_everest(&self) -> RpcResult<()> {
+    /// Returns the latest block number once EIP-8430 is active.
+    fn ensure_everest(&self) -> RpcResult<u64> {
         let header = self.provider.latest_header().map_err(|error| {
             warn!(error = %error, "failed to read latest header for payer fork gate");
             ErrorObjectOwned::owned(
@@ -74,14 +75,49 @@ where
                 None::<()>,
             )
         })?;
-        let active = header.is_some_and(|header| {
-            self.provider.chain_spec().is_everest_active_at_timestamp(header.timestamp())
-        });
-        if active { Ok(()) } else { Err(invalid_params(PAYER_PRE_EVEREST_RPC_ERROR)) }
+        header
+            .filter(|header| {
+                self.provider.chain_spec().is_everest_active_at_timestamp(header.timestamp())
+            })
+            .map(|header| header.number())
+            .ok_or_else(|| invalid_params(PAYER_PRE_EVEREST_RPC_ERROR))
     }
 
     async fn forward(&self, method: &'static str, request: &Value) -> RpcResult<Value> {
         self.client.request(method, (request,)).await.map_err(ErrorObjectOwned::from)
+    }
+
+    /// Serves `payer_getTerms` from `cache`, refetching once per block with
+    /// concurrent misses sharing one upstream call.
+    async fn cached_terms(
+        &self,
+        cache: &TermsCache,
+        block: u64,
+        request: &Value,
+    ) -> RpcResult<Value> {
+        if let Some(cached) = cache.get(block) {
+            return Ok(TermsCache::order_for(request, cached));
+        }
+        let _refreshing = cache.refreshing().await;
+        if let Some(cached) = cache.get(block) {
+            return Ok(TermsCache::order_for(request, cached));
+        }
+        match self.client.request::<_, Value>("payer_getTerms", (request,)).await {
+            Ok(response) => {
+                cache.insert(block, &response);
+                Ok(response)
+            }
+            Err(error) => {
+                let SequencerClientError::HttpError(inner) = &error;
+                if inner.is_error_resp() {
+                    cache.clear();
+                } else if let Some(stale) = cache.get_stale() {
+                    warn!(error = %error, block, "payer unreachable; serving cached payer_getTerms");
+                    return Ok(TermsCache::order_for(request, stale));
+                }
+                Err(error.into())
+            }
+        }
     }
 }
 
@@ -92,29 +128,29 @@ where
     Provider::ChainSpec: Upgrades + EthChainSpec,
 {
     async fn get_terms(&self, request: Value) -> RpcResult<Value> {
-        self.ensure_everest()?;
+        let block = self.ensure_everest()?;
         PayerRequestFilter::validate_get_terms(&request, self.chain_id()).map_err(|error| {
             debug!(error = %error, "rejected payer_getTerms before forward");
             invalid_params(error)
         })?;
-        if let Some(cached) = self.cache.as_ref().and_then(|cache| cache.get()) {
-            return Ok(cached);
+        match &self.cache {
+            Some(cache) => self.cached_terms(cache, block, &request).await,
+            None => self.forward("payer_getTerms", &request).await,
         }
-
-        let response = self.forward("payer_getTerms", &request).await?;
-        if let Some(cache) = &self.cache {
-            cache.insert(&response);
-        }
-        Ok(response)
     }
 
     async fn send_transaction(&self, request: Value) -> RpcResult<Value> {
-        self.ensure_everest()?;
+        let block = self.ensure_everest()?;
         PayerRequestFilter::validate_send_transaction(&request).map_err(|error| {
             debug!(error = %error, "rejected payer_sendTransaction before forward");
             invalid_params(error)
         })?;
-        self.forward("payer_sendTransaction", &request).await
+        let result = self.forward("payer_sendTransaction", &request).await;
+        if let (Err(error), Some(cache)) = (&result, &self.cache) {
+            let data = error.data().and_then(|data| serde_json::from_str(data.get()).ok());
+            cache.invalidate(block, data.as_ref());
+        }
+        result
     }
 }
 
@@ -213,6 +249,122 @@ mod tests {
 
         assert_eq!(first, response);
         assert_eq!(second, response);
+        mock.assert_calls(1);
+    }
+
+    fn rpc_result(then: httpmock::Then, result: Value) {
+        then.status(200)
+            .header("content-type", "application/json")
+            .json_body(json!({ "jsonrpc": "2.0", "id": 0, "result": result }));
+    }
+
+    fn rpc_error(then: httpmock::Then, code: &str) {
+        then.status(200).header("content-type", "application/json").json_body(json!({
+            "jsonrpc": "2.0",
+            "id": 0,
+            "error": { "code": -32000, "message": "PAYER_REJECTED", "data": { "code": code, "message": "rejected" } }
+        }));
+    }
+
+    /// Rejects one `payer_sendTransaction` with `code`.
+    async fn reject_send(
+        api: &PayerApiImpl<
+            impl BlockReaderIdExt
+            + ChainSpecProvider<ChainSpec = Arc<BaseChainSpec>>
+            + Clone
+            + 'static,
+        >,
+        sequencer: &MockServer,
+        code: &str,
+    ) {
+        let mut mock = sequencer.mock(|when, then| {
+            when.method(POST).body_includes("payer_sendTransaction");
+            rpc_error(then, code);
+        });
+        api.send_transaction(json!({ "transaction": "0x02" })).await.expect_err("rejected");
+        mock.delete();
+    }
+
+    #[tokio::test]
+    async fn refetches_terms_after_a_requote_and_serves_them_while_the_payer_is_unreachable() {
+        let sequencer = MockServer::start();
+        let mut terms = sequencer.mock(|when, then| {
+            when.method(POST).body_includes("payer_getTerms");
+            rpc_result(then, terms_response());
+        });
+        let client = SequencerClient::new_http_with_headers(sequencer.base_url(), vec![]).unwrap();
+        let api = PayerApiImpl::new(everest_provider(), client, true);
+        api.get_terms(terms_request(1)).await.unwrap();
+
+        reject_send(&api, &sequencer, "PAYMENT_INSUFFICIENT").await;
+        api.get_terms(terms_request(1)).await.unwrap();
+        terms.assert_calls(2);
+
+        terms.delete();
+        let unreachable = sequencer.mock(|when, then| {
+            when.method(POST).body_includes("payer_getTerms");
+            then.status(502).body("bad gateway");
+        });
+        reject_send(&api, &sequencer, "TEMPORARILY_UNAVAILABLE").await;
+        assert_eq!(api.get_terms(terms_request(1)).await.unwrap(), terms_response());
+        unreachable.assert_calls(0);
+    }
+
+    #[tokio::test]
+    async fn stops_serving_cached_terms_once_the_payer_rejects_get_terms() {
+        let sequencer = MockServer::start();
+        let mut terms = sequencer.mock(|when, then| {
+            when.method(POST).body_includes("payer_getTerms");
+            rpc_result(then, terms_response());
+        });
+        let client = SequencerClient::new_http_with_headers(sequencer.base_url(), vec![]).unwrap();
+        let api = PayerApiImpl::new(everest_provider(), client, true);
+        api.get_terms(terms_request(1)).await.unwrap();
+        terms.delete();
+
+        let mut paused = sequencer.mock(|when, then| {
+            when.method(POST).body_includes("payer_getTerms");
+            rpc_error(then, "TEMPORARILY_UNAVAILABLE");
+        });
+        reject_send(&api, &sequencer, "TEMPORARILY_UNAVAILABLE").await;
+        let error = api.get_terms(terms_request(1)).await.expect_err("paused");
+        assert_eq!(error.code(), -32000);
+        paused.delete();
+
+        sequencer.mock(|when, then| {
+            when.method(POST).body_includes("payer_getTerms");
+            then.status(502).body("bad gateway");
+        });
+        assert!(api.get_terms(terms_request(1)).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn orders_cached_tokens_by_each_request_preference() {
+        let sequencer = MockServer::start();
+        let usdc = "0x00000000000000000000000000000000000000aa";
+        let response = json!({
+            "options": [{
+                "kind": "token",
+                "ttl": 60,
+                "tokens": [
+                    { "token": "native", "symbol": "ETH", "decimals": 18, "rate": "0x1" },
+                    { "token": usdc, "symbol": "USDC", "decimals": 6, "rate": "0x2" }
+                ]
+            }]
+        });
+        let mock = sequencer.mock(|when, then| {
+            when.method(POST).body_includes("payer_getTerms");
+            rpc_result(then, response.clone());
+        });
+        let client = SequencerClient::new_http_with_headers(sequencer.base_url(), vec![]).unwrap();
+        let api = PayerApiImpl::new(everest_provider(), client, true);
+        api.get_terms(terms_request(1)).await.unwrap();
+
+        let mut request = terms_request(2);
+        request["preferredTokens"] = json!([usdc]);
+        let ordered = api.get_terms(request).await.unwrap();
+
+        assert_eq!(ordered["options"][0]["tokens"][0]["symbol"], "USDC");
         mock.assert_calls(1);
     }
 
