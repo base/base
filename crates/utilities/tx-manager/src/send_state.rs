@@ -1,9 +1,8 @@
 //! Transaction send state tracking.
 //!
-//! [`SendState`] is the state machine the send loop uses to decide whether to
-//! continue retrying, bump fees, or abort. All mutable fields are behind a
-//! [`std::sync::Mutex`] (not `tokio`) since critical sections are CPU-bound
-//! with no `.await` points.
+//! [`SendState`] tracks publication progress and critical errors for the send
+//! loop. All mutable fields use a [`std::sync::Mutex`] since critical sections
+//! are CPU-bound with no `.await` points.
 
 use std::{
     sync::Mutex,
@@ -30,7 +29,6 @@ struct SendStateInner {
     mined_txs: Vec<B256>,
     has_published: bool,
     nonce_too_low_count: u64,
-    bump_fees: bool,
     bump_count: u64,
     mempool_deadline: Option<MempoolDeadline>,
     assigned_nonce: Option<u64>,
@@ -60,7 +58,6 @@ impl SendState {
                 mined_txs: Vec::new(),
                 has_published: false,
                 nonce_too_low_count: 0,
-                bump_fees: false,
                 bump_count: 0,
                 mempool_deadline: None,
                 assigned_nonce: None,
@@ -72,27 +69,11 @@ impl SendState {
     /// Processes a send error, updating internal state accordingly.
     ///
     /// - [`TxManagerError::NonceTooLow`] increments the nonce-too-low counter.
-    /// - [`TxManagerError::NonceTooHigh`] is transient and leaves no state.
-    /// - Any other [retryable](TxManagerError::is_retryable) error sets the
-    ///   bump-fees flag for the next send attempt.
-    /// - Other critical errors are no-ops (handled at a higher level).
-    ///
-    /// Note: `NonceTooLow` is not retryable, so the nonce-too-low branch and
-    /// the bump-fees branch are mutually exclusive.
+    /// - Other errors leave state unchanged and are handled by the send loop.
     pub fn process_send_error(&self, err: &TxManagerError) {
-        let mut inner = self.inner.lock().expect("SendState mutex poisoned");
-        match err {
-            TxManagerError::NonceTooLow => {
-                inner.nonce_too_low_count += 1;
-            }
-            // A higher nonce can reach an RPC before a lower concurrent
-            // publication has propagated. Retrying the same signed
-            // transaction requires no persistent state change.
-            TxManagerError::NonceTooHigh => {}
-            e if e.is_retryable() => {
-                inner.bump_fees = true;
-            }
-            _ => {}
+        if matches!(err, TxManagerError::NonceTooLow) {
+            let mut inner = self.inner.lock().expect("SendState mutex poisoned");
+            inner.nonce_too_low_count += 1;
         }
     }
 
@@ -201,21 +182,6 @@ impl SendState {
         inner.bump_count
     }
 
-    /// Atomically reads and clears the bump-fees flag. Returns `true` if
-    /// fees should be bumped.
-    ///
-    /// Clearing eagerly prevents a failed bump attempt (e.g. RPC timeout)
-    /// from immediately re-triggering on the next loop iteration. If a new
-    /// retryable error occurs later, [`process_send_error`] will re-set the
-    /// flag.
-    ///
-    /// [`process_send_error`]: Self::process_send_error
-    #[must_use]
-    pub fn take_bump_fees(&self) -> bool {
-        let mut inner = self.inner.lock().expect("SendState mutex poisoned");
-        std::mem::take(&mut inner.bump_fees)
-    }
-
     /// Sets the runtime-relative mempool inclusion deadline.
     ///
     /// `absolute_deadline` is an absolute timestamp from the runtime clock,
@@ -292,12 +258,6 @@ mod tests {
     fn fresh_state_is_not_waiting_for_confirmation() {
         let state = SendState::new(3).unwrap();
         assert!(!state.is_waiting_for_confirmation());
-    }
-
-    #[test]
-    fn fresh_state_should_not_bump_fees() {
-        let state = SendState::new(3).unwrap();
-        assert!(!state.take_bump_fees());
     }
 
     #[test]
@@ -503,7 +463,6 @@ mod tests {
             state.critical_error(),
             Some(TxManagerError::RuntimeMempoolDeadlineMissingTimestamp),
         );
-        assert!(!state.take_bump_fees(), "state remains usable after the configuration error",);
         assert!(state.critical_error_at(Duration::ZERO).is_none());
         assert_eq!(
             state.critical_error_at(Duration::from_secs(1)),
@@ -549,13 +508,6 @@ mod tests {
         assert!(state.critical_error().is_none());
     }
 
-    #[test]
-    fn nonce_too_high_does_not_set_bump_fees() {
-        let state = SendState::new(3).unwrap();
-        state.process_send_error(&TxManagerError::NonceTooHigh);
-        assert!(!state.take_bump_fees());
-    }
-
     // ── Priority ordering ────────────────────────────────────────────────
 
     #[test]
@@ -587,61 +539,11 @@ mod tests {
         assert!(!state.is_waiting_for_confirmation());
     }
 
-    // ── Fee bump flags ──────────────────────────────────────────────────
-
-    #[rstest]
-    #[case::underpriced(TxManagerError::Underpriced)]
-    #[case::replacement_underpriced(TxManagerError::ReplacementUnderpriced)]
-    #[case::fee_too_low(TxManagerError::FeeTooLow)]
-    #[case::max_fee_too_low(TxManagerError::MaxFeePerGasTooLow)]
-    #[case::already_known(TxManagerError::AlreadyKnown)]
-    #[case::rpc(TxManagerError::Rpc("any rpc error".to_string()))]
-    fn retryable_error_sets_bump_fees(#[case] err: TxManagerError) {
-        let state = SendState::new(3).unwrap();
-        assert!(!state.take_bump_fees());
-        state.process_send_error(&err);
-        assert!(state.take_bump_fees());
-    }
-
     #[test]
     fn record_fee_bump_increments_and_returns_count() {
         let state = SendState::new(3).unwrap();
         assert_eq!(state.record_fee_bump(), 1);
         assert_eq!(state.record_fee_bump(), 2);
-    }
-
-    #[test]
-    fn nonce_too_low_does_not_set_bump_fees() {
-        let state = SendState::new(3).unwrap();
-        state.process_send_error(&TxManagerError::NonceTooLow);
-        assert!(!state.take_bump_fees());
-    }
-
-    #[test]
-    fn non_retryable_error_does_not_set_bump_fees() {
-        let state = SendState::new(3).unwrap();
-        state.process_send_error(&TxManagerError::InsufficientFunds);
-        assert!(!state.take_bump_fees());
-    }
-
-    #[test]
-    fn take_bump_fees_clears_flag() {
-        let state = SendState::new(3).unwrap();
-        state.process_send_error(&TxManagerError::Underpriced);
-
-        assert!(state.take_bump_fees());
-        assert!(!state.take_bump_fees());
-    }
-
-    #[test]
-    fn take_bump_fees_allows_flag_to_be_re_set() {
-        let state = SendState::new(3).unwrap();
-        state.process_send_error(&TxManagerError::Underpriced);
-        assert!(state.take_bump_fees());
-
-        // A new retryable error re-sets the flag.
-        state.process_send_error(&TxManagerError::ReplacementUnderpriced);
-        assert!(state.take_bump_fees());
     }
 
     // ── has_published ───────────────────────────────────────────────────
