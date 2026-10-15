@@ -344,7 +344,7 @@ digest = "9c987d9934"
 
 ["crates/execution/eip8130/README.md"]
 summary = "Native EIP-8130 account abstraction validation: enshrined authenticators (not precompiles) needing parity with contracts, validation layers, intrinsic gas formula, EIP-7623 floor, fee checks."
-digest = "96d10d28d3"
+digest = "314b8c4376"
 
 ["crates/execution/evm/README.md"]
 summary = "BaseEvmConfig implementing reth ConfigureEvm, mapping timestamps to SpecId for upgrade-aware EVM environments, and re-exporting executor types. Use when changing Base EVM setup or fork specs."

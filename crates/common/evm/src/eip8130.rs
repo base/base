@@ -33,8 +33,9 @@
 //! call that halts exceptionally (anything but `REVERT`) consumes all of it.
 //!
 //! Dispatching a call draws EIP-2929 account-access gas from the pool as a
-//! `CALL` would: the cold account access cost for a cold `call.to`, and again
-//! for a cold EIP-7702 delegation target. The precompiles, the coinbase, the
+//! `CALL` would: the cold account access cost for a cold `call.to` or the warm
+//! access cost for a warm one, and the same again for the target of an EIP-7702
+//! delegation at `call.to`. The precompiles, the coinbase, the
 //! sender, the payer, and every account the pre-call pipeline touched start
 //! warm.
 //!
@@ -75,8 +76,10 @@ use revm::{
     inspector::{InspectorEvmTr, InspectorHandler, JournalExt},
     interpreter::{
         CallInput, CallInputs, CallOutcome, CallScheme, CallValue, FrameInput, Gas,
-        InstructionResult, InterpreterResult, SharedMemory, gas::COLD_ACCOUNT_ACCESS_COST,
-        interpreter::EthInterpreter, interpreter_action::FrameInit,
+        InstructionResult, InterpreterResult, SharedMemory,
+        gas::{COLD_ACCOUNT_ACCESS_COST, WARM_STORAGE_READ_COST},
+        interpreter::EthInterpreter,
+        interpreter_action::FrameInit,
     },
     primitives::{KECCAK_EMPTY, hardfork::SpecId},
     state::Bytecode,
@@ -1510,10 +1513,10 @@ impl Eip8130Executor {
 
     /// EIP-2929 account-access gas for dispatching a root call to `to`, as the
     /// `CALL` opcode would charge it: [`COLD_ACCOUNT_ACCESS_COST`] if `to` is
-    /// cold, plus the same again if `to` carries an EIP-7702 delegation whose
-    /// target is cold. Warm accounts cost nothing here, since a root call has no
-    /// opcode base cost. Loading warms both accounts, so a repeated target and
-    /// later accesses inside the call pay the warm rate.
+    /// cold or [`WARM_STORAGE_READ_COST`] if it is warm, plus the same again
+    /// for the delegation target if `to` carries an EIP-7702 delegation.
+    /// Loading warms both accounts, so a repeated target and later accesses
+    /// inside the call pay the warm rate.
     fn root_call_access_gas<DB, I, P>(
         evm: &mut BaseEvm<DB, I, P>,
         to: Address,
@@ -1522,15 +1525,17 @@ impl Eip8130Executor {
         DB: AlloyDatabase,
         BaseContext<DB>: ContextTr<Db = DB, Journal: JournalExt>,
     {
+        let access_cost =
+            |is_cold: bool| if is_cold { COLD_ACCOUNT_ACCESS_COST } else { WARM_STORAGE_READ_COST };
         let journal = evm.ctx_mut().journal_mut();
         let target = journal.load_account_with_code(to).map_err(EVMError::Database)?;
-        let mut cold_accounts = u64::from(target.is_cold);
+        let mut gas = access_cost(target.is_cold);
         let delegate = target.data.info.code.as_ref().and_then(Bytecode::eip7702_address);
         if let Some(delegate) = delegate {
             let delegate = journal.load_account_with_code(delegate).map_err(EVMError::Database)?;
-            cold_accounts += u64::from(delegate.is_cold);
+            gas += access_cost(delegate.is_cold);
         }
-        Ok(cold_accounts * COLD_ACCOUNT_ACCESS_COST)
+        Ok(gas)
     }
 
     /// Whether a call moving `value` from `sender` to `to` creates `to`, so it
@@ -3486,15 +3491,16 @@ mod tests {
         // payload EIP-2028 DA over the two-phase tx 1_888
         // nonce_key protocol nonce (key 0), even on first use 0
         // sender_auth ECRECOVER 3_000 + cold SLOAD 2_100 5_100
-        // access cold loader account in phase 0 only (COLD_ACCOUNT_ACCESS_COST)
+        // access cold loader account in phase 0 (COLD_ACCOUNT_ACCESS_COST),
+        //        warm in phase 1 (WARM_STORAGE_READ_COST)
         // call phase 0 JUMPDEST pad + PUSH1 (3) + COLD SLOAD (2_100) + STOP
         // call phase 1 JUMPDEST pad + PUSH1 (3) + WARM SLOAD (100) + STOP
-        // total 24_194 + COLD_ACCOUNT_ACCESS_COST + 2 * WARMTH_PROBE_PAD_GAS (the pad
-        // runs once per phase; the two calls each carry a value word, adding one
-        // 0x80 calldata byte per call)
+        // total 24_194 + COLD_ACCOUNT_ACCESS_COST + WARM_STORAGE_READ_COST
+        // + 2 * WARMTH_PROBE_PAD_GAS (the pad runs once per phase; the two calls
+        // each carry a value word, adding one 0x80 calldata byte per call)
         assert_eq!(
             outcome.result.gas().tx_gas_used(),
-            24_194 + COLD_ACCOUNT_ACCESS_COST + 2 * WARMTH_PROBE_PAD_GAS,
+            24_194 + COLD_ACCOUNT_ACCESS_COST + WARM_STORAGE_READ_COST + 2 * WARMTH_PROBE_PAD_GAS,
             "phase 1's SLOAD must be WARM (100): committed phase 0 warmed \
              (loader, slot 0). A cold read (2_100) would be 2_000 more, meaning \
              the committed phase's warmth failed to carry across phases",
@@ -4269,6 +4275,28 @@ mod tests {
         outcome.result.tx_gas_used()
     }
 
+    /// Call-pool gas the floor burner spends ahead of the targets: its cold
+    /// access plus its `JUMPDEST` padding.
+    const FLOOR_BURNER_CALL_GAS: u64 = COLD_ACCOUNT_ACCESS_COST + WARMTH_PROBE_PAD_GAS;
+
+    /// Gas `signed` draws from the call pool when executed with `coinbase` as
+    /// the block beneficiary: the gas used minus its sender intrinsic gas.
+    fn call_pool_gas_with_coinbase(
+        signed: &Eip8130Signed,
+        sender: Address,
+        accounts: &[(Address, Bytes)],
+        coinbase: Address,
+    ) -> u64 {
+        let envelope = BaseTxEnvelope::Eip8130(signed.clone());
+        let encoded: Bytes = alloy_eips::eip2718::Encodable2718::encoded_2718(&envelope).into();
+        let intrinsic =
+            IntrinsicGas::compute(signed, &encoded, &IntrinsicGasInput::new(sender, true))
+                .expect("intrinsic gas");
+        let gas_used = gas_used_with_coinbase(signed, sender, accounts, coinbase);
+        assert!(gas_used > intrinsic.sender_floor(), "gas used must bill above the calldata floor");
+        gas_used - intrinsic.sender_intrinsic()
+    }
+
     #[test]
     fn root_call_to_cold_target_charges_cold_account_access() {
         let key = signing_key(0xe1);
@@ -4276,27 +4304,44 @@ mod tests {
         let target = address!("0x00000000000000000000000000000000000000cc");
         let signed = signed_root_calls(&key, &[target]);
 
-        let cold = gas_used_with_coinbase(&signed, sender, &[], BENEFICIARY);
-        let warm = gas_used_with_coinbase(&signed, sender, &[], target);
-        assert_eq!(cold - warm, COLD_ACCOUNT_ACCESS_COST);
+        assert_eq!(
+            call_pool_gas_with_coinbase(&signed, sender, &[], BENEFICIARY),
+            FLOOR_BURNER_CALL_GAS + COLD_ACCOUNT_ACCESS_COST
+        );
     }
 
+    /// A root call to a warm target pays the warm access cost, as a `CALL` does.
     #[test]
-    fn repeated_root_call_target_pays_cold_access_once() {
+    fn root_call_to_warm_target_charges_warm_account_access() {
+        let key = signing_key(0xe5);
+        let sender = eoa_address(&key);
+        let target = address!("0x00000000000000000000000000000000000000cc");
+        let signed = signed_root_calls(&key, &[target]);
+
+        assert_eq!(
+            call_pool_gas_with_coinbase(&signed, sender, &[], target),
+            FLOOR_BURNER_CALL_GAS + WARM_STORAGE_READ_COST
+        );
+    }
+
+    /// A repeated target pays the cold access once and the warm access after.
+    #[test]
+    fn repeated_root_call_target_pays_cold_then_warm_access() {
         let key = signing_key(0xe2);
         let sender = eoa_address(&key);
         let target = address!("0x00000000000000000000000000000000000000cc");
         let signed = signed_root_calls(&key, &[target, target]);
 
-        let cold = gas_used_with_coinbase(&signed, sender, &[], BENEFICIARY);
-        let warm = gas_used_with_coinbase(&signed, sender, &[], target);
-        assert_eq!(cold - warm, COLD_ACCOUNT_ACCESS_COST);
+        assert_eq!(
+            call_pool_gas_with_coinbase(&signed, sender, &[], BENEFICIARY),
+            FLOOR_BURNER_CALL_GAS + COLD_ACCOUNT_ACCESS_COST + WARM_STORAGE_READ_COST
+        );
     }
 
-    /// A root call into an EIP-7702 delegated account also pays the cold
-    /// access of the delegation target, as a `CALL` does.
+    /// A root call into an EIP-7702 delegated account also pays the access of
+    /// the delegation target, cold or warm, as a `CALL` does.
     #[test]
-    fn root_call_to_delegated_account_charges_cold_delegate_access() {
+    fn root_call_to_delegated_account_charges_delegate_access() {
         let key = signing_key(0xe3);
         let sender = eoa_address(&key);
         let delegated = address!("0x00000000000000000000000000000000000000cc");
@@ -4304,17 +4349,34 @@ mod tests {
         let accounts = [(delegated, Bytecode::new_eip7702(delegate).original_bytes())];
         let signed = signed_root_calls(&key, &[delegated]);
 
-        let both_cold = gas_used_with_coinbase(&signed, sender, &accounts, BENEFICIARY);
-        let delegate_warm = gas_used_with_coinbase(&signed, sender, &accounts, delegate);
-        let delegated_warm = gas_used_with_coinbase(&signed, sender, &accounts, delegated);
-        assert_eq!(both_cold - delegate_warm, COLD_ACCOUNT_ACCESS_COST);
-        assert_eq!(both_cold - delegated_warm, COLD_ACCOUNT_ACCESS_COST);
+        let call_gas = |coinbase| call_pool_gas_with_coinbase(&signed, sender, &accounts, coinbase);
+        let one_cold = FLOOR_BURNER_CALL_GAS + COLD_ACCOUNT_ACCESS_COST + WARM_STORAGE_READ_COST;
+        assert_eq!(call_gas(BENEFICIARY), FLOOR_BURNER_CALL_GAS + 2 * COLD_ACCOUNT_ACCESS_COST);
+        assert_eq!(call_gas(delegate), one_cold);
+        assert_eq!(call_gas(delegated), one_cold);
     }
 
-    /// The estimate includes the cold access charge, so it still equals the
-    /// execution charge for a call to a cold target.
+    /// Once a delegated account and its delegation target are both warm, a
+    /// root call to it pays the warm access cost for each.
     #[test]
-    fn simulate_estimate_includes_root_call_cold_access() {
+    fn root_call_to_warm_delegated_account_charges_two_warm_accesses() {
+        let key = signing_key(0xe6);
+        let sender = eoa_address(&key);
+        let delegated = address!("0x00000000000000000000000000000000000000cc");
+        let delegate = address!("0x00000000000000000000000000000000000000cd");
+        let accounts = [(delegated, Bytecode::new_eip7702(delegate).original_bytes())];
+        let signed = signed_root_calls(&key, &[delegated, delegated]);
+
+        assert_eq!(
+            call_pool_gas_with_coinbase(&signed, sender, &accounts, BENEFICIARY),
+            FLOOR_BURNER_CALL_GAS + 2 * COLD_ACCOUNT_ACCESS_COST + 2 * WARM_STORAGE_READ_COST
+        );
+    }
+
+    /// The estimate includes the root call access charge, so it equals the
+    /// execution charge for a call to a cold or a warm target.
+    #[test]
+    fn simulate_estimate_includes_root_call_access() {
         let key = signing_key(0xe4);
         let sender = eoa_address(&key);
         let target = address!("0x00000000000000000000000000000000000000cc");
@@ -4335,8 +4397,13 @@ mod tests {
         };
 
         let cold_estimate = estimate(BENEFICIARY);
-        assert_eq!(cold_estimate - estimate(target), COLD_ACCOUNT_ACCESS_COST);
+        let warm_estimate = estimate(target);
+        assert_eq!(
+            cold_estimate - warm_estimate,
+            COLD_ACCOUNT_ACCESS_COST - WARM_STORAGE_READ_COST
+        );
         assert_eq!(cold_estimate, gas_used_with_coinbase(&signed, sender, &[], BENEFICIARY));
+        assert_eq!(warm_estimate, gas_used_with_coinbase(&signed, sender, &[], target));
     }
 
     /// Executes and estimates a single-call transaction into a contract running
