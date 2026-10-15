@@ -364,13 +364,15 @@ whoever triages it after the wrong component. The driver keeps the two apart:
   behind each selected game's final root — the read every path makes to compute
   the canonical root it corrupts — and so does every path, right before its
   patch. A read that fails the way an unavailable node does (`no state found`, a
-  refused connection, a 502/503/504) is retried for
+  missing block, a refused connection, a 502/503/504) is retried for
   `CHALLENGER_E2E_L2_RETRY_BUDGET`, which covers a node restart.
-- **It reads L2 state at every dispute timeout.** The challenger validates
-  against the same node, so a timeout while that node serves no state is the
-  node's failure. The read is 64 blocks below the head, so a backend that has
-  not caught up to it is not mistaken for an outage, and the timeout is only
-  excused if 3 reads 5s apart all fail.
+- **It reads L2 state at every dispute timeout, and when a patch fails.** The
+  challenger validates against the same node, so a timeout while that node
+  serves no state is the node's failure. A patch also reads and writes the fork,
+  so its failure is the node's only if the node is down then too. The read is 64
+  blocks below the head, so a backend that has not caught up to it is not
+  mistaken for an outage, and the failure is only excused if 3 reads 5s apart
+  all fail.
 - **Too few eligible games is not the challenger's failure either**, whether
   the proposer is stalled or the implementation has just rotated.
 - **Setup is excused for any transient RPC failure until the challenger is

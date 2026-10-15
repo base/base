@@ -1107,10 +1107,14 @@ impl ChallengerE2e {
         // classifies it from its ZK-only shape.
         progress::step(Phase::Path3, 3, 5, "corrupting a root of the ZK-only game");
         Self::await_l2_state(config, verifier, &fork_config, game).await?;
-        let checkpoint = Checkpoint::patch(&fork_config, verifier)
-            .await
-            .map_err(|error| Unavailable::classify(error, "the L2 RPC"))
-            .context("failed to corrupt the ZK-only game on the fork")?;
+        let checkpoint = match Checkpoint::patch(&fork_config, verifier).await {
+            Ok(checkpoint) => checkpoint,
+            Err(error) => {
+                return Err(Self::blame_l2_if_down(error, config, "the L2 RPC")
+                    .await
+                    .wrap_err("failed to corrupt the ZK-only game on the fork"));
+            }
+        };
 
         info!(
             phase = %Phase::Path3,
@@ -1632,10 +1636,14 @@ impl ChallengerE2e {
         let nonce = provider.get_transaction_count(challenger.address()).await?;
         progress::step(Phase::Path1, 1, 3, "corrupting a root of game A");
         Self::await_l2_state(config, verifier, &fork_config, game).await?;
-        let checkpoint = Checkpoint::patch(&fork_config, verifier)
-            .await
-            .map_err(|error| Unavailable::classify(error, "the L2 RPC"))
-            .context("failed to corrupt an intermediate output root on the fork")?;
+        let checkpoint = match Checkpoint::patch(&fork_config, verifier).await {
+            Ok(checkpoint) => checkpoint,
+            Err(error) => {
+                return Err(Self::blame_l2_if_down(error, config, "the L2 RPC")
+                    .await
+                    .wrap_err("failed to corrupt an intermediate output root on the fork"));
+            }
+        };
         info!(
             game = %game.address,
             invalid_index = checkpoint.index,
@@ -1934,10 +1942,14 @@ impl ChallengerE2e {
         let nonce = provider.get_transaction_count(challenger.address()).await?;
         progress::step(Phase::Path4, 1, 3, "corrupting a root of dual-proof game B");
         Self::await_l2_state(config, verifier, &fork_config, game).await?;
-        let checkpoint = Checkpoint::patch(&fork_config, verifier)
-            .await
-            .map_err(|error| Unavailable::classify(error, "the L2 RPC"))
-            .context("failed to corrupt the dual-proof game on the fork")?;
+        let checkpoint = match Checkpoint::patch(&fork_config, verifier).await {
+            Ok(checkpoint) => checkpoint,
+            Err(error) => {
+                return Err(Self::blame_l2_if_down(error, config, "the L2 RPC")
+                    .await
+                    .wrap_err("failed to corrupt the dual-proof game on the fork"));
+            }
+        };
         info!(
             game = %game.address,
             invalid_index = checkpoint.index,
@@ -2144,14 +2156,7 @@ impl ChallengerE2e {
     /// the same L2 RPC, so a timeout while that node serves no state is the
     /// node's failure, and is marked as one.
     async fn annotate_timeout(error: eyre::Report, config: &Config) -> eyre::Report {
-        let l2 = L2HttpProvider::new_http(config.l2_eth_rpc.clone());
-        let error = match Unavailable::l2_state_unavailable(&l2).await {
-            Some(probe) => Unavailable::mark(
-                error.wrap_err(format!("the L2 RPC failed a state read at timeout: {probe:#}")),
-                "the L2 RPC at timeout",
-            ),
-            _ => error,
-        };
+        let error = Self::blame_l2_if_down(error, config, "the L2 RPC at timeout").await;
         let Ok(scrape) = Scrape::fetch(&config.challenger_metrics_url).await else {
             return error;
         };
@@ -2167,6 +2172,16 @@ impl ChallengerE2e {
             scrape.label_sum("base_challenger_challenge_tx_outcome_total", "reverted"),
             scrape.sum("base_challenger_pending_proofs"),
         ))
+    }
+
+    /// [`Unavailable::blame_l2`] with a fresh probe of `config`'s L2 RPC.
+    ///
+    /// `Checkpoint::patch` reads the fork, then the L2 RPC, then writes the
+    /// fork, so its failure is the node's only if the node is down now. A fork
+    /// that died after the challenger was released stays a plain failure.
+    async fn blame_l2_if_down(error: eyre::Report, config: &Config, what: &str) -> eyre::Report {
+        let l2 = L2HttpProvider::new_http(config.l2_eth_rpc.clone());
+        Unavailable::blame_l2(error, Unavailable::l2_state_unavailable(&l2).await, what)
     }
 
     /// Waits, for up to `l2_retry_budget`, until the L2 RPC serves the state

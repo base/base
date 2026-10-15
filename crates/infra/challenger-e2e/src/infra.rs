@@ -92,6 +92,35 @@ impl Unavailable {
     pub fn looks_transient(error: &eyre::Report) -> bool {
         let rendered = format!("{error:#}").to_ascii_lowercase();
         TRANSIENT_PATTERNS.iter().any(|pattern| rendered.contains(pattern))
+            || Self::missing_l2_block(&rendered)
+    }
+
+    /// Whether a lowercased error chain has `output_root_at_block`'s
+    /// `L2 block {n} not found`: the node returned no block for a number it
+    /// should have, as a restarting node or a lagging backend does. Matched as
+    /// that shape, because `not found` alone also covers driver errors.
+    fn missing_l2_block(rendered: &str) -> bool {
+        rendered.split("l2 block ").skip(1).any(|rest| {
+            let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+            digits > 0 && rest[digits..].starts_with(" not found")
+        })
+    }
+
+    /// Marks `error` as [`Unavailable`] when `probe` holds the error of an L2
+    /// state read that failed like an unavailable node, from
+    /// [`Self::l2_state_unavailable`]; returns it unchanged otherwise.
+    ///
+    /// For failures that may or may not be the L2 node's, such as a timeout or
+    /// a fork patch that also reads the fork: only a node that is down right
+    /// now gets the blame.
+    pub fn blame_l2(error: eyre::Report, probe: Option<eyre::Report>, what: &str) -> eyre::Report {
+        match probe {
+            Some(probe) => Self::mark(
+                error.wrap_err(format!("the L2 RPC failed a state read: {probe:#}")),
+                what,
+            ),
+            None => error,
+        }
     }
 
     /// Marks `error` as [`Unavailable`] if it [`Self::looks_transient`].
@@ -210,6 +239,27 @@ mod tests {
             let error = eyre::eyre!("{message}").wrap_err("failed to fetch proof");
             assert!(Unavailable::looks_transient(&error), "{message}");
         }
+    }
+
+    #[test]
+    fn a_missing_l2_block_is_transient() {
+        let error = eyre::eyre!("L2 block 4788534 not found").wrap_err("failed to read the root");
+        assert!(Unavailable::looks_transient(&error));
+        for other in [
+            "session_id 0xab not found",
+            "L2 block hash mismatch: not found",
+            "L2 block  not found",
+        ] {
+            assert!(!Unavailable::looks_transient(&eyre::eyre!("{other}")), "{other}");
+        }
+    }
+
+    #[test]
+    fn only_a_failed_probe_blames_the_l2_node() {
+        let error = || eyre::eyre!("error sending request for url (http://localhost:18545/)");
+        assert!(!Unavailable::is_infra(&Unavailable::blame_l2(error(), None, "the L2 RPC")));
+        let probe = eyre::eyre!("no state found for block number 1");
+        assert!(Unavailable::is_infra(&Unavailable::blame_l2(error(), Some(probe), "the L2 RPC")));
     }
 
     #[test]
