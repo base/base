@@ -15,7 +15,7 @@
 use alloy_primitives::{Address, B256, U256, keccak256};
 use alloy_provider::{Provider, RootProvider};
 use base_proof_contracts::GameStatus;
-use eyre::{Context, Result, bail, ensure};
+use eyre::{Result, bail};
 
 /// The storage slots and patches the bonds phase relies on.
 #[derive(Debug, Clone, Copy)]
@@ -88,22 +88,6 @@ impl BondStorage {
     /// Reads one storage word.
     pub async fn storage(provider: &RootProvider, address: Address, slot: U256) -> Result<B256> {
         Ok(provider.get_storage_at(address, slot).await?.into())
-    }
-
-    /// Writes one storage word on the fork.
-    pub async fn set_storage(
-        provider: &RootProvider,
-        address: Address,
-        slot: U256,
-        value: B256,
-    ) -> Result<()> {
-        let updated = provider
-            .client()
-            .request::<_, bool>("anvil_setStorageAt", (address, B256::from(slot), value))
-            .await
-            .with_context(|| format!("anvil_setStorageAt failed for {address}"))?;
-        ensure!(updated, "anvil_setStorageAt returned false for {address}");
-        Ok(())
     }
 }
 
