@@ -13,21 +13,35 @@ workspace = true
 
 [dependencies]
 url.workspace = true
+reqwest.workspace = true
 humantime.workspace = true
 thiserror.workspace = true
+alloy-eips.workspace = true
 coins-bip32.workspace = true
 async-trait.workspace = true
 alloy-signer.workspace = true
 alloy-network.workspace = true
+alloy-provider.workspace = true
+alloy-json-rpc.workspace = true
+alloy-transport.workspace = true
+alloy-rpc-client.workspace = true
 alloy-signer-local.workspace = true
+tokio = { workspace = true, features = ["time"] }
+tower = { workspace = true, features = ["util"] }
+tracing = { workspace = true, features = ["std"] }
+serde = { workspace = true, features = ["derive"] }
 clap = { workspace = true, features = ["derive", "env"] }
 alloy-consensus = { workspace = true, features = ["std"] }
 coins-bip39 = { workspace = true, features = ["english"] }
 alloy-signer-ledger = { workspace = true, optional = true }
 alloy-primitives = { workspace = true, features = ["std"] }
+alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["macros", "rt"] }
+serde_json.workspace = true
+tracing-subscriber = { workspace = true, features = ["fmt"] }
+axum = { workspace = true, features = ["http1", "json", "tokio"] }
+tokio = { workspace = true, features = ["macros", "rt", "test-util"] }
 
 [features]
 default = []
