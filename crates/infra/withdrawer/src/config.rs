@@ -1,7 +1,9 @@
-use std::time::Duration;
+use std::{env, ffi::OsString, time::Duration};
 
 use alloy_primitives::{Address, B256};
-use clap::{ArgGroup, Parser};
+use clap::{
+    ArgGroup, ArgMatches, Args, Command, CommandFactory, FromArgMatches, Parser, error::ErrorKind,
+};
 use coins_bip32::path::DerivationPath;
 use coins_bip39::{English, Mnemonic};
 use thiserror::Error;
@@ -10,7 +12,7 @@ use url::Url;
 use crate::{Network, NetworkPreset, ProofSystem, Secret, SecretValueParser};
 
 /// Command-line withdrawal settings before cross-field validation.
-#[derive(Debug, Clone, Parser)]
+#[derive(Debug, Clone, Args)]
 #[command(name = "withdrawer")]
 #[command(group(ArgGroup::new("signer").required(true).multiple(false)))]
 #[command(group(ArgGroup::new("proofs").args(["dispute_game_factory", "l2_output_oracle"])))]
@@ -43,14 +45,14 @@ pub struct WithdrawerArgs {
     #[arg(long, env = "WITHDRAWER_PRIVATE_KEY", hide_env_values = true, group = "signer", allow_hyphen_values = true, value_parser = SecretValueParser::<B256>::default())]
     pub private_key: Option<Secret<B256>>,
     /// English BIP-39 mnemonic phrase.
-    #[arg(long, env = "WITHDRAWER_MNEMONIC", hide_env_values = true, group = "signer", allow_hyphen_values = true, value_parser = SecretValueParser::<Mnemonic<English>>::default())]
-    pub mnemonic: Option<Secret<Mnemonic<English>>>,
+    #[arg(long, env = "WITHDRAWER_MNEMONIC", hide_env_values = true, group = "signer", num_args = 1.., value_parser = SecretValueParser::<String>::default())]
+    pub mnemonic: Vec<Secret<String>>,
     /// Use a Ledger device.
     #[cfg(feature = "ledger")]
     #[arg(long, group = "signer")]
     pub ledger: bool,
     /// Mnemonic or Ledger derivation path.
-    #[arg(long, default_value = "m/44'/60'/0'/0/0", conflicts_with = "private_key")]
+    #[arg(long, default_value = "m/44'/60'/0'/0/0", conflicts_with = "private_key", value_parser = Self::parse_hd_path)]
     pub hd_path: DerivationPath,
     /// Explicit gas limit, bypassing estimation.
     #[arg(long, conflicts_with = "gas_multiplier", value_parser = clap::value_parser!(u64).range(1..))]
@@ -85,8 +87,63 @@ pub struct WithdrawerArgs {
 }
 
 impl WithdrawerArgs {
+    /// Parses arguments without echoing tokens when signing secrets are present.
+    pub fn parse_matches<I, T>(command: Command, itr: I) -> Result<ArgMatches, clap::Error>
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<OsString> + Clone,
+    {
+        let args = itr.into_iter().map(Into::into).collect::<Vec<OsString>>();
+        let has_secret = args.iter().any(|arg| {
+            arg == "--mnemonic"
+                || arg == "--private-key"
+                || arg.as_encoded_bytes().starts_with(b"--mnemonic=")
+                || arg.as_encoded_bytes().starts_with(b"--private-key=")
+        });
+        command.try_get_matches_from(args).map_err(|error| {
+            if has_secret
+                && matches!(
+                    error.kind(),
+                    ErrorKind::UnknownArgument
+                        | ErrorKind::InvalidSubcommand
+                        | ErrorKind::InvalidValue
+                        | ErrorKind::ValueValidation
+                        | ErrorKind::TooManyValues
+                        | ErrorKind::InvalidUtf8
+                )
+            {
+                clap::Error::raw(error.kind(), "invalid arguments; signing secrets are redacted")
+            } else {
+                error
+            }
+        })
+    }
+
+    /// Parses a BIP-32 path with 31-bit component indices.
+    pub fn parse_hd_path(value: &str) -> Result<DerivationPath, &'static str> {
+        for component in value.split('/').filter(|component| *component != "m") {
+            let index = component.strip_suffix(['\'', 'h']).unwrap_or(component);
+            if index.parse::<u32>().map_or(true, |index| index >= coins_bip32::BIP32_HARDEN) {
+                return Err("derivation path indices must be between 0 and 2147483647");
+            }
+        }
+        value.parse().map_err(|_| "invalid derivation path")
+    }
+
     /// Resolves either a preset or one complete custom proof system.
     pub fn resolve_network(&self) -> Result<Network, ConfigError> {
+        if [
+            self.portal,
+            self.dispute_game_factory,
+            self.anchor_state_registry,
+            self.l2_output_oracle,
+        ]
+        .into_iter()
+        .flatten()
+        .any(|address| address == Address::ZERO)
+        {
+            return Err(ConfigError::ZeroAddress);
+        }
         match (
             self.network,
             &self.l2_rpc_url,
@@ -111,6 +168,61 @@ impl WithdrawerArgs {
             }),
             _ => Err(ConfigError::Network),
         }
+    }
+}
+
+impl CommandFactory for WithdrawerArgs {
+    fn command() -> Command {
+        Self::augment_args(Command::new("withdrawer"))
+    }
+
+    fn command_for_update() -> Command {
+        Self::augment_args_for_update(Command::new("withdrawer"))
+    }
+}
+
+// clap can echo stray secret words before any value parser gets to redact them.
+impl Parser for WithdrawerArgs {
+    fn parse() -> Self {
+        Self::parse_from(env::args_os())
+    }
+
+    fn try_parse() -> Result<Self, clap::Error> {
+        Self::try_parse_from(env::args_os())
+    }
+
+    fn parse_from<I, T>(itr: I) -> Self
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<OsString> + Clone,
+    {
+        Self::try_parse_from(itr).unwrap_or_else(|error| error.exit())
+    }
+
+    fn try_parse_from<I, T>(itr: I) -> Result<Self, clap::Error>
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<OsString> + Clone,
+    {
+        let mut matches = Self::parse_matches(Self::command(), itr)?;
+        Self::from_arg_matches_mut(&mut matches)
+    }
+
+    fn update_from<I, T>(&mut self, itr: I)
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<OsString> + Clone,
+    {
+        self.try_update_from(itr).unwrap_or_else(|error| error.exit());
+    }
+
+    fn try_update_from<I, T>(&mut self, itr: I) -> Result<(), clap::Error>
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<OsString> + Clone,
+    {
+        let mut matches = Self::parse_matches(Self::command_for_update(), itr)?;
+        self.update_from_arg_matches_mut(&mut matches)
     }
 }
 
@@ -191,6 +303,12 @@ pub enum ConfigError {
     /// Custom network contracts are incomplete, mixed, or combined with a preset.
     #[error("supply one complete custom network without --network, or select a preset")]
     Network,
+    /// A custom contract address is zero.
+    #[error("custom contract addresses must not be zero")]
+    ZeroAddress,
+    /// The mnemonic is not a valid English BIP-39 phrase.
+    #[error("invalid signing secret; check its format")]
+    Mnemonic,
     /// Gas estimation multiplier is not finite or is below one.
     #[error("--gas-multiplier must be finite and at least 1.0")]
     GasMultiplier,
@@ -259,17 +377,23 @@ impl TryFrom<WithdrawerArgs> for WithdrawerConfig {
             return Err(ConfigError::FeeCap);
         }
         let signer_count =
-            usize::from(args.private_key.is_some()) + usize::from(args.mnemonic.is_some());
+            usize::from(args.private_key.is_some()) + usize::from(!args.mnemonic.is_empty());
         #[cfg(feature = "ledger")]
         let signer_count = signer_count + usize::from(args.ledger);
         if signer_count != 1 {
             return Err(ConfigError::Signer);
         }
-        let signer = match (args.private_key, args.mnemonic) {
-            (Some(key), None) => SignerSource::PrivateKey(key),
-            (None, Some(phrase)) => SignerSource::Mnemonic { phrase, path: args.hd_path },
+        let signer = match (args.private_key, args.mnemonic.is_empty()) {
+            (Some(key), true) => SignerSource::PrivateKey(key),
+            (None, false) => {
+                let phrase = Secret(
+                    args.mnemonic.iter().map(|word| word.0.as_str()).collect::<Vec<_>>().join(" "),
+                );
+                let phrase = phrase.0.parse().map(Secret).map_err(|_| ConfigError::Mnemonic)?;
+                SignerSource::Mnemonic { phrase, path: args.hd_path }
+            }
             #[cfg(feature = "ledger")]
-            (None, None) if args.ledger => SignerSource::Ledger { path: args.hd_path },
+            (None, true) if args.ledger => SignerSource::Ledger { path: args.hd_path },
             _ => return Err(ConfigError::Signer),
         };
         Ok(Self {
@@ -293,7 +417,7 @@ impl TryFrom<WithdrawerArgs> for WithdrawerConfig {
 mod tests {
     use std::{env, process::Command, time::Duration};
 
-    use clap::Parser;
+    use clap::{Parser, error::ErrorKind};
 
     use crate::{Fees, NetworkPreset, ProofSystem, SignerSource, WithdrawerArgs, WithdrawerConfig};
 
@@ -405,6 +529,27 @@ mod tests {
     }
 
     #[test]
+    fn derivation_path_indices_preserve_hardening_at_the_boundary() {
+        let mnemonic = format!("--mnemonic={PHRASE}");
+        for suffix in ["", "'", "h"] {
+            let valid = format!("--hd-path=m/2147483647{suffix}");
+            let SignerSource::Mnemonic { path, .. } = config(&[&mnemonic, &valid]).unwrap().signer
+            else {
+                panic!("expected mnemonic")
+            };
+            let expected = if suffix.is_empty() { "m/2147483647" } else { "m/2147483647'" };
+            assert_eq!(path.derivation_string(), expected);
+            for index in ["2147483648", "4294967295", "4294967296"] {
+                let invalid = format!("--hd-path=m/{index}{suffix}");
+                assert_eq!(
+                    args(&[&mnemonic, &invalid]).unwrap_err().kind(),
+                    ErrorKind::ValueValidation
+                );
+            }
+        }
+    }
+
+    #[test]
     fn secrets_can_come_from_the_environment() {
         if env::var_os("WITHDRAWER_TEST_CHILD").is_some() {
             let parsed = args(&[]).unwrap();
@@ -437,9 +582,10 @@ mod tests {
     }
 
     #[test]
-    fn malformed_hashes_and_every_custom_address_are_rejected() {
+    fn malformed_hashes_and_invalid_custom_addresses_are_rejected() {
         assert!(signed(&[]).is_ok());
         for bad in [
+            "0x0000000000000000000000000000000000000000",
             "0xgg",
             "0x1",
             "0x111111111111111111111111111111111111111111",
@@ -600,12 +746,15 @@ mod tests {
                 assert!(debug.contains("[REDACTED]"));
             }
         }
-        for flag in
-            ["--private-key=private-secret-not-hex", "--mnemonic=private secret not a mnemonic"]
-        {
-            let value = flag.split_once('=').unwrap().1;
-            let error = args(&[flag]).unwrap_err().to_string();
-            assert!(!error.contains(value), "parse error exposed signing secret");
+        for flags in [
+            vec!["--private-key=private-secret-not-hex"],
+            vec!["--mnemonic=alpha bravo charlie"],
+            vec!["--mnemonic", "alpha", "bravo", "charlie"],
+        ] {
+            let error = config(&flags).unwrap_err();
+            for word in ["private-secret-not-hex", "alpha", "bravo", "charlie"] {
+                assert!(!error.contains(word), "parse error exposed signing secret");
+            }
         }
         for name in ["--private-key", "--mnemonic"] {
             let error = args(&[name, "--secret-leading-hyphens"]).unwrap_err().to_string();
@@ -614,6 +763,31 @@ mod tests {
                 "parse error exposed a hyphenated secret"
             );
         }
+        for (flags, kind) in [
+            (vec!["--mnemonic", "alpha", "bravo", "--charlie"], ErrorKind::UnknownArgument),
+            (vec!["--mnemonic=alpha", "bravo", "--charlie"], ErrorKind::UnknownArgument),
+            (vec!["--mnemonic", "alpha", "--network=bravo"], ErrorKind::InvalidValue),
+            (vec!["--private-key", KEY, "bravo"], ErrorKind::UnknownArgument),
+            (vec![&format!("--private-key={KEY}"), "bravo"], ErrorKind::UnknownArgument),
+        ] {
+            let error = args(&flags).unwrap_err();
+            assert_eq!(error.kind(), kind);
+            assert_eq!(error.exit_code(), 2);
+            for word in ["alpha", "bravo", "charlie", KEY] {
+                assert!(!error.to_string().contains(word), "parse error exposed signing secret");
+            }
+        }
+        let unquoted = ["--mnemonic"]
+            .into_iter()
+            .chain(PHRASE.split_whitespace())
+            .chain(["--hd-path=m/1"])
+            .collect::<Vec<_>>();
+        let SignerSource::Mnemonic { path, .. } = config(&unquoted).unwrap().signer else {
+            panic!("expected mnemonic")
+        };
+        assert_eq!(path.derivation_string(), "m/1");
+        let unknown = args(&["--unknown-without-secret"]).unwrap_err().to_string();
+        assert!(unknown.contains("--unknown-without-secret"));
         let conflict = args(&[&format!("--private-key={KEY}"), &format!("--mnemonic={PHRASE}")])
             .unwrap_err()
             .to_string();

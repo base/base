@@ -472,7 +472,7 @@ digest = "63043098db"
 
 ["crates/infra/withdrawer/README.md"]
 summary = "Typed withdrawer CLI configuration, signer selection, fee validation, and OP Stack network presets without RPC or transaction submission."
-digest = "7657875c17"
+digest = "10c7e32a4f"
 
 ["crates/infra/zk-benchmarks/README.md"]
 summary = "One-line stub: ZK proof benchmarking utilities for Base load-test runs; no usage or detail beyond that."
