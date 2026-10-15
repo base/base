@@ -1315,7 +1315,7 @@ where
     /// Broadcasts a raw transaction to the network.
     ///
     /// On success, records a successful publish on the [`SendState`] and
-    /// returns the transaction hash. On [`TxManagerError::AlreadyKnown`]
+    /// returns the locally computed transaction hash. On [`TxManagerError::AlreadyKnown`]
     /// after a prior successful publish, treats it as success — records
     /// another successful publish and returns `Ok(last_tx_hash)` so
     /// callers do not need to special-case this variant. All other errors
@@ -1324,6 +1324,15 @@ where
     /// The `last_tx_hash` parameter is the hash from the most recent
     /// successful publish. When the network returns `AlreadyKnown` on
     /// resubmission, this hash is returned as the successful result.
+    ///
+    /// The returned hash never comes from the RPC. It is the decoded envelope's
+    /// [`TxEnvelope::tx_hash`], which excludes any EIP-4844 blob sidecar. If `raw_tx`
+    /// does not decode as a known envelope, it falls back to `keccak256(raw_tx)`, the
+    /// EIP-2718 hash of any typed transaction whose network encoding equals its
+    /// consensus encoding; a well-formed RPC hash is not preferred, because the RPC
+    /// reply is advisory. A different or undecodable hash in a valid JSON-RPC success
+    /// response only logs a warning; only a transport failure, an invalid response
+    /// envelope, or a JSON-RPC error response is a publication error.
     ///
     /// # Errors
     ///
