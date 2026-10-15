@@ -56,7 +56,7 @@ impl WithdrawalRpc {
         .map_err(|_| WithdrawalRpcError::Timeout)?
     }
 
-    /// Broadcasts an already signed envelope without invoking a signer.
+    /// Broadcasts a signed envelope; `Timeout` is ambiguous: check `tx.tx_hash()` with `wait_for_receipt` before resubmitting.
     pub async fn broadcast(&self, tx: &TxEnvelope) -> Result<B256, WithdrawalRpcError> {
         let hash = *tx.tx_hash();
         let bytes = Bytes::from(tx.encoded_2718());
@@ -120,15 +120,22 @@ impl WithdrawalRpc {
     ) -> Result<TransactionReceipt, WithdrawalRpcError> {
         tokio::time::timeout(self.timeout, async {
             loop {
-                if let Some(receipt) =
-                    self.l1.get_transaction_receipt(hash).await.map_err(|error| {
-                        WithdrawalRpcError::Request(WithdrawalRpcTransport::redact(error))
-                    })?
-                {
-                    if !receipt.status() {
-                        return Err(WithdrawalRpcError::Reverted(hash));
+                match self.l1.get_transaction_receipt(hash).await {
+                    Ok(Some(receipt)) => {
+                        if !receipt.status() {
+                            return Err(WithdrawalRpcError::Reverted(hash));
+                        }
+                        return Ok(receipt);
                     }
-                    return Ok(receipt);
+                    Ok(None) => {}
+                    Err(error) if WithdrawalRpcTransport::should_retry(&error) => {
+                        warn!(transaction_hash = %hash, "receipt request failed transiently");
+                    }
+                    Err(error) => {
+                        return Err(WithdrawalRpcError::Request(WithdrawalRpcTransport::redact(
+                            error,
+                        )));
+                    }
                 }
                 tokio::time::sleep(Self::RECEIPT_POLL_INTERVAL).await;
             }
@@ -178,6 +185,7 @@ mod tests {
     struct Script {
         requests: Arc<Mutex<Vec<(Value, tokio::time::Instant)>>>,
         responses: Vec<(StatusCode, Value)>,
+        hung_attempts: usize,
     }
 
     #[derive(Clone)]
@@ -202,8 +210,15 @@ mod tests {
 
     impl Server {
         async fn new(responses: Vec<(StatusCode, Value)>) -> Self {
+            Self::with_hung_attempts(responses, 0).await
+        }
+
+        async fn with_hung_attempts(
+            responses: Vec<(StatusCode, Value)>,
+            hung_attempts: usize,
+        ) -> Self {
             let requests = Arc::new(Mutex::new(Vec::new()));
-            let state = Script { requests: Arc::clone(&requests), responses };
+            let state = Script { requests: Arc::clone(&requests), responses, hung_attempts };
             let router = Router::new()
                 .fallback(post(
                     |State(script): State<Script>, Json(request): Json<Value>| async move {
@@ -213,11 +228,12 @@ mod tests {
                             log.push((request.clone(), tokio::time::Instant::now()));
                             index
                         };
-                        if script.responses.is_empty() {
+                        if script.responses.is_empty() || index < script.hung_attempts {
                             pending::<()>().await;
                         }
-                        let (status, mut response) =
-                            script.responses[index.min(script.responses.len() - 1)].clone();
+                        let (status, mut response) = script.responses
+                            [(index - script.hung_attempts).min(script.responses.len() - 1)]
+                        .clone();
                         if let Some(object) = response.as_object_mut() {
                             object.insert("id".into(), request["id"].clone());
                         }
@@ -309,6 +325,23 @@ mod tests {
             assert_eq!(requests.len(), 3, "max_retries counts attempts after the first");
             assert!(requests[1].1.duration_since(requests[0].1) >= config.retry_delay);
             assert!(requests[2].1.duration_since(requests[1].1) >= config.retry_delay * 2);
+        }
+    }
+
+    #[tokio::test]
+    async fn retryable_http_status_overrides_json_rpc_error_body() {
+        for status in [StatusCode::TOO_MANY_REQUESTS, StatusCode::SERVICE_UNAVAILABLE] {
+            let server = Server::new(vec![
+                (
+                    status,
+                    json!({"jsonrpc":"2.0", "error":{"code":-32603,"message":"upstream unavailable"}}),
+                ),
+                (StatusCode::OK, json!({"jsonrpc":"2.0", "result":"0x2a"})),
+            ])
+            .await;
+            let rpc = WithdrawalRpc::new(&server.config()).await.unwrap();
+            assert_eq!(rpc.l1.get_block_number().await.unwrap(), 42);
+            assert_eq!(server.count(), 2);
         }
     }
 
@@ -467,6 +500,21 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn broadcast_retries_a_hung_attempt_before_the_operation_deadline() {
+        let tx = Server::signed();
+        let server = Server::with_hung_attempts(
+            vec![(StatusCode::OK, json!({"jsonrpc":"2.0", "result":tx.tx_hash()}))],
+            1,
+        )
+        .await;
+        let mut config = server.config();
+        config.timeout = Duration::from_millis(500);
+        let rpc = WithdrawalRpc::new(&config).await.unwrap();
+        assert_eq!(rpc.broadcast(&tx).await.unwrap(), *tx.tx_hash());
+        assert_eq!(server.count(), 2);
+    }
+
+    #[tokio::test]
     async fn provider_requests_time_out_and_retry_when_server_never_responds() {
         let server = Server::new(vec![]).await;
         let mut config = server.config();
@@ -513,6 +561,28 @@ mod tests {
             assert!(rpc.broadcast(&Server::signed()).await.is_err());
             assert_eq!(server.count(), 1);
         }
+    }
+
+    #[tokio::test]
+    async fn deserialization_errors_do_not_echo_response_credentials() {
+        let body = serde_json::to_string(
+            "https://rpc-user:rpc-password@example.com/path-secret?key=query-secret",
+        )
+        .unwrap();
+        let server = Server::new(vec![(StatusCode::OK, Value::String(body))]).await;
+        let rpc = WithdrawalRpc::new(&server.config()).await.unwrap();
+        let error = rpc.l1.get_block_number().await.unwrap_err();
+        let mut rendered = format!("{error} {error:?}");
+        let mut source = error.source();
+        while let Some(cause) = source {
+            rendered.push_str(&format!(" {cause} {cause:?}"));
+            source = cause.source();
+        }
+        assert!(rendered.contains("Data error at line"), "{rendered}");
+        for secret in ["rpc-user", "rpc-password", "path-secret", "query-secret"] {
+            assert!(!rendered.contains(secret), "RPC credential leaked: {rendered}");
+        }
+        assert_eq!(server.count(), 1);
     }
 
     #[tokio::test]
@@ -600,8 +670,8 @@ mod tests {
         assert_eq!(server.count(), 4);
     }
 
-    #[tokio::test]
-    async fn receipt_status_distinguishes_revert_from_success() {
+    #[tokio::test(start_paused = true)]
+    async fn receipt_status_distinguishes_revert_from_success_after_a_transient_failure() {
         for status in ["0x0", "0x1"] {
             let receipt = json!({
                 "transactionHash":B256::ZERO,"transactionIndex":"0x0", "blockHash":B256::ZERO,
@@ -610,11 +680,19 @@ mod tests {
                 "logs":[],"logsBloom":format!("0x{}", "00".repeat(256)),"status":status,
                 "effectiveGasPrice":"0x1","type":"0x0"
             });
-            let server =
-                Server::new(vec![(StatusCode::OK, json!({"jsonrpc":"2.0","result":receipt}))])
-                    .await;
-            let rpc = WithdrawalRpc::new(&server.config()).await.unwrap();
-            let result = rpc.wait_for_receipt(B256::ZERO).await;
+            let server = Server::new(vec![
+                (StatusCode::SERVICE_UNAVAILABLE, json!("unavailable")),
+                (StatusCode::OK, json!({"jsonrpc":"2.0","result":receipt})),
+            ])
+            .await;
+            let mut config = server.config();
+            config.max_retries = 0;
+            let rpc = WithdrawalRpc::new(&config).await.unwrap();
+            let task = tokio::spawn(async move { rpc.wait_for_receipt(B256::ZERO).await });
+            server.wait_for_requests(1).await;
+            advance(WithdrawalRpc::RECEIPT_POLL_INTERVAL).await;
+            server.wait_for_requests(2).await;
+            let result = task.await.unwrap();
             if status == "0x0" {
                 assert!(
                     matches!(result, Err(WithdrawalRpcError::Reverted(_))),
@@ -624,6 +702,21 @@ mod tests {
                 assert!(result.unwrap().status());
             }
         }
+    }
+
+    #[tokio::test]
+    async fn receipt_polling_stops_on_deterministic_errors() {
+        let server = Server::new(vec![(
+            StatusCode::OK,
+            json!({"jsonrpc":"2.0", "error":{"code":-32602,"message":"invalid params"}}),
+        )])
+        .await;
+        let rpc = WithdrawalRpc::new(&server.config()).await.unwrap();
+        assert!(matches!(
+            rpc.wait_for_receipt(B256::ZERO).await,
+            Err(WithdrawalRpcError::Request(_))
+        ));
+        assert_eq!(server.count(), 1);
     }
 
     #[tokio::test]

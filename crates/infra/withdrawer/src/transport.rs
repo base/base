@@ -1,4 +1,5 @@
 use std::{
+    fmt,
     task::{Context, Poll},
     time::Duration,
 };
@@ -6,22 +7,36 @@ use std::{
 use alloy_json_rpc::{RequestPacket, ResponsePacket};
 use alloy_provider::RootProvider;
 use alloy_rpc_client::ClientBuilder;
-use alloy_transport::{BoxTransport, TransportError, TransportErrorKind, TransportFut};
-use tower::{Service, ServiceExt, layer::layer_fn};
+use alloy_transport::{TransportError, TransportErrorKind, TransportFut, utils::guess_local_url};
+use serde::de::Error as _;
+use tower::Service;
 use tracing::{instrument::WithSubscriber, subscriber::NoSubscriber};
 use url::Url;
 
 use crate::WithdrawerConfig;
 
-/// Bounded exponential retries and credential-safe errors over alloy transports.
-#[derive(Debug, Clone)]
+/// Bounded exponential retries and credential-safe errors over reqwest HTTP.
+#[derive(Clone)]
 pub struct WithdrawalRpcTransport {
-    inner: BoxTransport,
+    client: reqwest::Client,
+    url: Url,
     max_retries: u32,
     retry_delay: Duration,
 }
 
+impl fmt::Debug for WithdrawalRpcTransport {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("WithdrawalRpcTransport")
+            .field("max_retries", &self.max_retries)
+            .field("retry_delay", &self.retry_delay)
+            .finish_non_exhaustive()
+    }
+}
+
 impl WithdrawalRpcTransport {
+    /// Maximum duration of one HTTP attempt, further capped at half the operation timeout.
+    pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
     /// Builds a typed HTTP provider with bounded reqwest requests and retries.
     pub async fn connect(
         url: &Url,
@@ -31,18 +46,18 @@ impl WithdrawalRpcTransport {
             return Err(TransportErrorKind::non_retryable_str("RPC URL must use HTTP(S)"));
         }
         let client = reqwest::Client::builder()
-            .timeout(config.timeout)
+            .timeout(Self::REQUEST_TIMEOUT.min(config.timeout / 2))
             .build()
             .map_err(|error| Self::redact(TransportErrorKind::custom(error)))?;
-        Ok(RootProvider::new(
-            ClientBuilder::default()
-                .layer(layer_fn(|inner| Self {
-                    inner: BoxTransport::new(inner),
-                    max_retries: config.max_retries,
-                    retry_delay: config.retry_delay,
-                }))
-                .http_with_client(client, url.clone()),
-        ))
+        Ok(RootProvider::new(ClientBuilder::default().transport(
+            Self {
+                client,
+                url: url.clone(),
+                max_retries: config.max_retries,
+                retry_delay: config.retry_delay,
+            },
+            guess_local_url(url),
+        )))
     }
 
     /// Retries alloy rate-limit responses, HTTP 429/5xx and connection failures, not EVM errors.
@@ -91,7 +106,16 @@ impl WithdrawalRpcTransport {
                 )
             }
             TransportError::DeserError { err, .. } => {
-                TransportError::DeserError { err, text: "[redacted RPC response]".into() }
+                let diagnostic = format!(
+                    "{:?} error at line {} column {}",
+                    err.classify(),
+                    err.line(),
+                    err.column()
+                );
+                TransportError::DeserError {
+                    err: serde_json::Error::custom(diagnostic),
+                    text: "[redacted RPC response]".into(),
+                }
             }
             error => error,
         }
@@ -108,14 +132,40 @@ impl Service<RequestPacket> for WithdrawalRpcTransport {
     }
 
     fn call(&mut self, request: RequestPacket) -> Self::Future {
-        let mut this = self.clone();
+        let this = self.clone();
         Box::pin(async move {
             let mut delay = this.retry_delay;
             for attempt in 0..=this.max_retries {
-                // Alloy transport spans include the complete endpoint URL, including API keys.
-                let result = async { this.inner.ready().await?.call(request.clone()).await }
-                    .with_subscriber(NoSubscriber::default())
-                    .await;
+                // HTTP client spans can include endpoint credentials.
+                let result = async {
+                    let response = this
+                        .client
+                        .post(this.url.clone())
+                        .json(&request)
+                        .headers(request.headers())
+                        .send()
+                        .await
+                        .map_err(TransportErrorKind::custom)?;
+                    let status = response.status();
+                    if status.as_u16() == 429 || status.is_server_error() {
+                        return Err(TransportErrorKind::http_error(status.as_u16(), String::new()));
+                    }
+                    let body = response.bytes().await.map_err(|error| {
+                        if status.is_success() {
+                            TransportErrorKind::custom(error)
+                        } else {
+                            TransportErrorKind::http_error(status.as_u16(), String::new())
+                        }
+                    })?;
+                    let parsed = serde_json::from_slice::<ResponsePacket>(&body);
+                    if !status.is_success() && !parsed.as_ref().is_ok_and(ResponsePacket::is_error)
+                    {
+                        return Err(TransportErrorKind::http_error(status.as_u16(), String::new()));
+                    }
+                    parsed.map_err(|err| TransportError::DeserError { err, text: String::new() })
+                }
+                .with_subscriber(NoSubscriber::default())
+                .await;
                 let error = match result {
                     Ok(ResponsePacket::Single(response)) if response.is_error() => {
                         TransportError::ErrorResp(
