@@ -1141,42 +1141,32 @@ where
                 return Ok(receipt);
             }
 
-            // Skip the select to respond immediately to the bump-fees flag set by
-            // process_send_error on retryable errors, rather than waiting for the
-            // next timer tick. take_bump_fees clears the flag atomically so a
-            // failed bump does not re-trigger.
-            if !send_state.take_bump_fees() {
-                // Determine which event fired. handle_fee_bump (and
-                // transitively prepare()) is NOT cancellation-safe, so it
-                // must not run inside tokio::select!. The select block only
-                // captures which arm won; fee bump work runs to completion
-                // outside the select block.
-                tokio::select! {
-                    biased;
-                    result = receipt_rx.recv() => {
-                        match result {
-                            Some(receipt) => {
-                                info!(
-                                    tx_hash = %receipt.transaction_hash,
-                                    block = ?receipt.block_number,
-                                    status = %receipt.inner.status(),
-                                    "transaction receipt received",
-                                );
-                                return Ok(receipt);
-                            }
-                            None => {
-                                // All senders dropped — should not happen in normal flow.
-                                return Err(TxManagerError::ChannelClosed);
-                            }
+            // Preparation is not cancellation-safe, so fee bump work must run
+            // to completion outside the select block.
+            tokio::select! {
+                biased;
+                result = receipt_rx.recv() => {
+                    match result {
+                        Some(receipt) => {
+                            info!(
+                                tx_hash = %receipt.transaction_hash,
+                                block = ?receipt.block_number,
+                                status = %receipt.inner.status(),
+                                "transaction receipt received",
+                            );
+                            return Ok(receipt);
+                        }
+                        None => {
+                            // All senders dropped — should not happen in normal flow.
+                            return Err(TxManagerError::ChannelClosed);
                         }
                     }
-                    _ = bump_ticker.next() => {}
-                };
-            }
+                }
+                _ = bump_ticker.next() => {}
+            };
 
-            // Fee bump work stays outside the select because preparation is not cancellation-safe.
             self.try_fee_bump(candidate, send_state, &receipt_tx, &mut bump).await;
-            // Reset the bump ticker so we get a full interval before the next timer-driven bump.
+            // Even a failed publication must wait a full interval before another bump.
             bump_ticker = self.runtime.interval(self.config.resubmission_timeout);
             bump_ticker.next().await;
         }
@@ -1763,8 +1753,8 @@ mod tests {
 
     use super::{PreparedTx, SimpleTxManager, TxEnvelope};
     use crate::{
-        GasPriceCaps, NonceManager, NoopTxMetrics, SendState, TxCandidate, TxManagerConfig,
-        TxManagerError,
+        GasPriceCaps, NonceManager, NoopTxMetrics, SendState, TxCandidate, TxManager,
+        TxManagerConfig, TxManagerError,
     };
 
     async fn setup() -> (SimpleTxManager<RootProvider>, alloy_node_bindings::AnvilInstance) {
@@ -2106,6 +2096,75 @@ mod tests {
 
             ctx.sleep(Duration::from_secs(10)).await;
             assert_eq!(asserter.read_q().len(), unused_responses);
+        });
+    }
+
+    #[rstest]
+    #[case::replacement_underpriced("replacement transaction underpriced")]
+    #[case::rpc("service unavailable")]
+    fn failed_fee_bumps_wait_for_resubmission_timeout(#[case] publish_error: &'static str) {
+        Runner::start(Config::seeded(0), move |ctx| async move {
+            let resubmission_timeout = Duration::from_secs(10);
+            let bump_intervals = 3;
+            let rpc_calls_per_bump = 4;
+            let asserter = Asserter::new();
+            let mut block: Block = Block::default();
+            block.header.base_fee_per_gas = Some(1_000_000_000);
+            asserter.push_success(&1u64);
+            asserter.push_success(&1_000_000_000u128);
+            asserter.push_success(&Some(&block));
+            asserter.push_success(&21_000u64);
+            asserter.push_success(&0u64);
+            asserter.push_success(&B256::with_last_byte(1));
+            asserter.push_success(&1u64);
+            asserter.push_success(&Option::<TransactionReceipt>::None);
+            for _ in 0..=bump_intervals {
+                asserter.push_success(&1_000_000_000u128);
+                asserter.push_success(&Some(&block));
+                asserter.push_success(&21_000u64);
+                asserter.push_failure_msg(publish_error);
+            }
+            let provider = ProviderBuilder::new().connect_mocked_client(asserter.clone());
+            let config = TxManagerConfig {
+                resubmission_timeout,
+                receipt_query_interval: Duration::from_secs(60),
+                safe_abort_nonce_too_low_count: 10,
+                ..TxManagerConfig::default()
+            };
+            let manager = SimpleTxManager::from_wallet_with_runtime(
+                ctx.clone(),
+                provider,
+                EthereumWallet::from(PrivateKeySigner::random()),
+                config,
+                1,
+                Arc::new(NoopTxMetrics),
+            )
+            .await
+            .expect("should construct manager");
+            let candidate =
+                TxCandidate { to: Some(Address::with_last_byte(0x42)), ..Default::default() };
+            let mut send = Box::pin(manager.send(candidate));
+            assert!(futures::poll!(&mut send).is_pending());
+            ctx.sleep(Duration::from_nanos(1)).await;
+            assert_eq!(asserter.read_q().len(), (bump_intervals + 1) * rpc_calls_per_bump);
+
+            for attempts in 1..=bump_intervals {
+                ctx.sleep(resubmission_timeout - Duration::from_nanos(2)).await;
+                assert!(futures::poll!(&mut send).is_pending());
+                assert_eq!(
+                    asserter.read_q().len(),
+                    (bump_intervals + 2 - attempts) * rpc_calls_per_bump,
+                    "fee-bump RPC calls must not run before a full resubmission timeout"
+                );
+                ctx.sleep(Duration::from_nanos(1)).await;
+                assert!(futures::poll!(&mut send).is_pending());
+                assert_eq!(
+                    asserter.read_q().len(),
+                    (bump_intervals + 1 - attempts) * rpc_calls_per_bump,
+                    "fee-bump RPC calls must run at most once per resubmission interval"
+                );
+                ctx.sleep(Duration::from_nanos(1)).await;
+            }
         });
     }
 
