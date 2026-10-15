@@ -1,7 +1,7 @@
 //! Sender authorization for off-chain validity predicates.
 
 use alloy_consensus::Transaction;
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, B256, Keccak256, U256, keccak256};
 use alloy_sol_types::{SolStruct, eip712_domain};
 use reth_transaction_pool::PoolTransaction;
 
@@ -81,15 +81,29 @@ impl ValidityAuthorization {
         transaction_hash: B256,
         predicates: &[ValidityPredicate],
     ) -> B256 {
-        let message = Eip712ValidityAuthorization {
-            transactionHash: transaction_hash,
-            validity: Self::canonical_predicates(predicates),
-        };
-        message.eip712_signing_hash(&eip712_domain! {
+        // EIP-712 encodes a struct array as the hash of its concatenated struct hashes.
+        // Reuse the ordering keys instead of hashing every predicate again after sorting.
+        let mut hashes: Vec<_> = predicates
+            .iter()
+            .map(|predicate| Self::predicate_data(predicate).eip712_hash_struct().0)
+            .collect();
+        hashes.sort_unstable();
+        let message =
+            Eip712ValidityAuthorization { transactionHash: transaction_hash, validity: Vec::new() };
+        let message_hash = keccak256(
+            [message.eip712_type_hash().0, transaction_hash.0, keccak256(hashes.as_flattened()).0]
+                .as_flattened(),
+        );
+        let domain = eip712_domain! {
             name: "Base Transaction Validity",
             version: "1",
             chain_id: chain_id,
-        })
+        };
+        let mut digest = Keccak256::new();
+        digest.update([0x19, 0x01]);
+        digest.update(domain.separator());
+        digest.update(message_hash);
+        digest.finalize()
     }
 
     /// Returns wallet-facing predicates sorted by their EIP-712 struct hashes.
@@ -225,6 +239,35 @@ mod tests {
             ValidityAuthorization::signing_hash(8453, B256::repeat_byte(0x44), &predicates()),
             expected,
         );
+    }
+
+    #[test]
+    fn signing_hash_matches_wallet_typed_data_for_array_boundaries() {
+        let mut source = predicates();
+        source.push(ValidityPredicate::Nonce {
+            address: Address::repeat_byte(0x55),
+            op: ValidityOperator::NotEqual,
+            value: U256::from(17),
+        });
+        for count in [0, 1, 2, 5, 64] {
+            // The full batch contains duplicates, which must remain in the signed array.
+            let predicates: Vec<_> = source.iter().cycle().take(count).cloned().collect();
+            let transaction_hash = B256::repeat_byte(0x44);
+            let message = Eip712ValidityAuthorization {
+                transactionHash: transaction_hash,
+                validity: ValidityAuthorization::canonical_predicates(&predicates),
+            };
+            let expected = message.eip712_signing_hash(&eip712_domain! {
+                name: "Base Transaction Validity",
+                version: "1",
+                chain_id: 8453,
+            });
+            assert_eq!(
+                ValidityAuthorization::signing_hash(8453, transaction_hash, &predicates),
+                expected,
+                "wallet encoding must match for {count} predicates",
+            );
+        }
     }
 
     #[test]
