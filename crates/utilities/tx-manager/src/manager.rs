@@ -50,7 +50,7 @@ use alloy_network::{
     Ethereum, EthereumWallet, Network, NetworkTransactionBuilder, NetworkWallet,
     TransactionBuilder, TransactionBuilderError,
 };
-use alloy_primitives::{Address, B256, Bytes};
+use alloy_primitives::{Address, B256, Bytes, keccak256};
 use alloy_provider::Provider;
 use alloy_rpc_types_eth::{TransactionReceipt, TransactionRequest};
 use alloy_transport::TransportError;
@@ -1344,6 +1344,7 @@ where
         raw_tx: &Bytes,
         last_tx_hash: Option<B256>,
     ) -> TxManagerResult<B256> {
+        let local_tx_hash = keccak256(raw_tx);
         let result = RuntimeTimeout::run(
             &self.runtime,
             self.config.network_timeout,
@@ -1353,13 +1354,29 @@ where
 
         match result {
             Ok(Ok(pending)) => {
-                let tx_hash = *pending.tx_hash();
+                let rpc_tx_hash = *pending.tx_hash();
+                if rpc_tx_hash != local_tx_hash {
+                    warn!(
+                        local_tx_hash = %local_tx_hash,
+                        rpc_tx_hash = %rpc_tx_hash,
+                        "RPC returned a different transaction hash, using locally computed hash"
+                    );
+                }
                 send_state.record_successful_publish();
-                info!(tx_hash = %tx_hash, "transaction published");
-                Ok(tx_hash)
+                info!(tx_hash = %local_tx_hash, "transaction published");
+                Ok(local_tx_hash)
             }
             Ok(Err(e)) => {
                 let classified = self.classify_and_record_rpc(&e);
+                if e.is_deser_error() {
+                    warn!(
+                        error = %classified,
+                        local_tx_hash = %local_tx_hash,
+                        "RPC returned an undecodable transaction hash, treating publication as successful"
+                    );
+                    send_state.record_successful_publish();
+                    return Ok(local_tx_hash);
+                }
 
                 // AlreadyKnown on resubmission is a success — the tx is in
                 // the mempool from a prior publish. Return the previous hash.
@@ -1741,6 +1758,9 @@ where
 
 #[cfg(test)]
 mod tests {
+    //! The receipt-checking provider wraps Alloy's concrete RPC builders, which automock
+    //! cannot construct, to reject confirmation under an RPC-supplied hash.
+
     use std::{
         sync::{Arc, atomic::AtomicBool},
         time::Duration,
@@ -1749,8 +1769,8 @@ mod tests {
     use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom, TxEip1559};
     use alloy_network::EthereumWallet;
     use alloy_node_bindings::Anvil;
-    use alloy_primitives::{Address, B256, Bloom, Bytes, TxKind, U256};
-    use alloy_provider::{Provider, ProviderBuilder, RootProvider};
+    use alloy_primitives::{Address, B256, Bloom, Bytes, TxKind, U256, keccak256};
+    use alloy_provider::{Provider, ProviderBuilder, ProviderCall, RootProvider};
     use alloy_rpc_types_eth::{Block, TransactionReceipt, TransactionRequest};
     use alloy_signer_local::PrivateKeySigner;
     use alloy_transport::mock::Asserter;
@@ -1818,10 +1838,109 @@ mod tests {
         assert_eq!(manager.nonce_manager().next_nonce().await.unwrap().nonce(), expected_nonce);
     }
 
+    #[derive(Debug, Clone)]
+    struct ReceiptHashProvider {
+        inner: RootProvider,
+        local_tx_hash: B256,
+    }
+
+    impl Provider for ReceiptHashProvider {
+        fn root(&self) -> &RootProvider {
+            &self.inner
+        }
+
+        fn get_transaction_receipt(
+            &self,
+            hash: B256,
+        ) -> ProviderCall<(B256,), Option<TransactionReceipt>> {
+            assert_eq!(hash, self.local_tx_hash, "receipt polling must use the local hash");
+            self.inner.get_transaction_receipt(hash)
+        }
+    }
+
+    #[tokio::test]
+    async fn publish_tx_confirms_local_hash_when_rpc_hash_differs() {
+        let raw_tx = Bytes::from_static(&[0x02]);
+        let local_tx_hash = keccak256(&raw_tx);
+        let rpc_tx_hash = B256::with_last_byte(0x42);
+        let (receipt, block) = mined_receipt(local_tx_hash, 10);
+        let asserter = Asserter::new();
+        asserter.push_success(&1u64);
+        asserter.push_success(&rpc_tx_hash);
+        asserter.push_success(&10u64);
+        asserter.push_success(&Some(&receipt));
+        asserter.push_success(&Some(&block));
+        let provider = ReceiptHashProvider {
+            inner: ProviderBuilder::default().connect_mocked_client(asserter),
+            local_tx_hash,
+        };
+        let manager = SimpleTxManager::from_wallet(
+            provider,
+            EthereumWallet::from(PrivateKeySigner::random()),
+            TxManagerConfig { num_confirmations: 1, ..TxManagerConfig::default() },
+            1,
+            Arc::new(NoopTxMetrics),
+        )
+        .await
+        .expect("should construct manager");
+        let send_state = SendState::new(3).expect("should construct send state");
+
+        let tx_hash = manager
+            .publish_tx(&send_state, &raw_tx, None)
+            .await
+            .expect("an unexpected RPC hash must not fail publication");
+        let confirmed = tokio::time::timeout(
+            Duration::from_secs(1),
+            SimpleTxManager::<ReceiptHashProvider>::wait_mined(
+                &send_state,
+                manager.provider(),
+                tx_hash,
+                manager.config(),
+                &AtomicBool::new(false),
+            ),
+        )
+        .await
+        .expect("local transaction should confirm")
+        .expect("should return a confirmed receipt");
+
+        assert_eq!(tx_hash, local_tx_hash);
+        assert_eq!(confirmed.transaction_hash, local_tx_hash);
+        assert_ne!(confirmed.transaction_hash, rpc_tx_hash);
+        assert!(send_state.has_published());
+    }
+
+    #[tokio::test]
+    async fn publish_tx_succeeds_when_rpc_hash_is_undecodable() {
+        let raw_tx = Bytes::from_static(&[0x02]);
+        let asserter = Asserter::new();
+        asserter.push_success(&1u64);
+        asserter.push_success(&"0xnot-a-hash");
+        let provider = ProviderBuilder::new().connect_mocked_client(asserter);
+        let manager = SimpleTxManager::from_wallet(
+            provider,
+            EthereumWallet::from(PrivateKeySigner::random()),
+            TxManagerConfig::default(),
+            1,
+            Arc::new(NoopTxMetrics),
+        )
+        .await
+        .expect("should construct manager");
+        let send_state = SendState::new(3).expect("should construct send state");
+
+        let tx_hash = manager
+            .publish_tx(&send_state, &raw_tx, None)
+            .await
+            .expect("an undecodable RPC hash must not fail publication");
+
+        assert_eq!(tx_hash, keccak256(&raw_tx));
+        assert!(send_state.has_published());
+        assert!(!send_state.take_bump_fees());
+    }
+
     #[tokio::test]
     async fn publish_tx_retries_nonce_too_high() {
         let asserter = Asserter::new();
-        let expected_hash = B256::with_last_byte(0x42);
+        let expected_hash = keccak256([0x02]);
         asserter.push_success(&1u64);
         asserter.push_failure_msg("nonce too high");
         asserter.push_success(&expected_hash);
@@ -1887,7 +2006,7 @@ mod tests {
     fn publish_retry_uses_injected_runtime_sleep() {
         Runner::start(Config::seeded(0), |ctx| async move {
             let asserter = Asserter::new();
-            let expected_hash = B256::with_last_byte(0x42);
+            let expected_hash = keccak256([0x02]);
             asserter.push_success(&1u64);
             asserter.push_failure_msg("nonce too high");
             asserter.push_success(&expected_hash);
