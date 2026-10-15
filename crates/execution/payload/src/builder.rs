@@ -15,7 +15,7 @@ use alloy_rpc_types_debug::ExecutionWitness;
 use alloy_rpc_types_engine::PayloadId;
 use base_common_chains::Upgrades;
 use base_common_consensus::{BaseTransaction, DepositReceiptExt, Predeploys};
-use base_common_evm::L1BlockInfo;
+use base_common_evm::{BaseSpecId, L1BlockInfo};
 use base_execution_eip8130::IntrinsicGas;
 use base_execution_txpool::{
     BasePooledTx, GuardMetrics, ParkableTransactionPool, PredicateContext, ValidityPredicate,
@@ -924,6 +924,12 @@ where
         let mut predicate_eval_cutoff_hit = false;
 
         let block_timestamp = self.attributes().timestamp();
+        let mut coinbase_tip_affordability = CoinbaseTipAffordability::load(
+            builder.evm_mut().db_mut(),
+            block_number,
+            BaseSpecId::from_timestamp(&*self.chain_spec, block_timestamp),
+            u128::from(base_fee),
+        );
         let can_finalize_early = self.is_denim_active();
         let resource_metering = &self.builder_config.resource_metering;
         let mut resource_throttled = 0u64;
@@ -1185,7 +1191,7 @@ where
                 None => 0,
             };
 
-            if CoinbaseTipAffordability::unaffordable(
+            if coinbase_tip_affordability.unaffordable(
                 &tx,
                 tx_payer_auth,
                 builder.evm_mut().db_mut(),

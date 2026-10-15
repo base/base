@@ -552,9 +552,9 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     /// its payer's authority id, each holding a reference until the transaction
     /// leaves the sidecar.
     ///
-    /// The payer is the one admission resolved, matching the authorities the
-    /// validator reports. Ids already on the transaction are replaced, so a
-    /// re-inserted transaction never carries ids that were released.
+    /// The payer is the one admission resolved. Ids already on the transaction
+    /// are replaced, so a re-inserted transaction never carries ids that were
+    /// released.
     fn acquire_ids(&mut self, transaction: &mut ValidPoolTransaction<T>) {
         let sender = transaction.sender();
         let sender_id = self.usage.sender_ids.acquire(sender);
