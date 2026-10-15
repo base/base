@@ -3,6 +3,9 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 #![cfg_attr(not(test), allow(unused_crate_dependencies))]
 
+mod block_stream;
+pub use block_stream::BlockStreamPublisher;
+
 mod config;
 pub use config::RoutingConfig;
 

@@ -2,17 +2,24 @@
 
 ## Overview
 
-WebSocket proxy that subscribes to new Flashblocks from
-[rollup-boost](https://github.com/flashbots/rollup-boost) on the sequencer and broadcasts them
-to downstream RPC nodes, minimizing connections to the sequencer and restricting access.
-Supports optional Brotli compression for downstream clients.
+WebSocket proxy that subscribes to the sequencer builder's block stream and broadcasts each
+sealed block to downstream clients, minimizing connections to the sequencer and restricting
+access. Supports optional Brotli compression for downstream clients.
 
-> **Warning**
->
-> This is currently alpha software -- deploy at your own risk!
->
-> Currently, this project is a one-directional generic websocket proxy. It doesn't inspect any data or validate clients.
-> This may not always be the case.
+Each message is a `BlockStreamPayloadV1` (see `base-common-rpc-types`): the block number, the
+RPC-format header with `timestampMs`, the EIP-2718 encoded transactions, and the consensus
+receipts. The proxy forwards messages unchanged. It reads `blockNumber` to resume after
+reconnecting upstream, and it reads receipt logs and transactions for the `/ws/{api_key}/filter`
+endpoint.
+
+Each message is a single WebSocket frame of at most `16 MiB`, which matches common client defaults.
+The builder skips a block whose message would exceed that limit, so clients that see a gap in
+`blockNumber` should fetch the missing block over RPC.
+
+Blocks are published when the sequencer seals them, before they become canonical. A failed
+insert, a sequencer failover, or an unsafe reorg can produce a second message with the same
+`blockNumber` and a different hash. Key blocks on `header.hash` and `header.parentHash`, not on
+`blockNumber`, and treat a repeated number as a replacement.
 
 ## Usage
 
@@ -60,7 +67,7 @@ cargo test --all-features
 ### Deployment
 
 Builds of the websocket proxy are provided.
-The only configuration required is the rollup-boost URL to proxy. You can set this via an env var `UPSTREAM_WS` or a flag `--upstream-ws`.
+The only configuration required is the builder block stream URL to proxy. You can set this via an env var `UPSTREAM_WS` or a flag `--upstream-ws`.
 
 You can see a full list of parameters by running:
 

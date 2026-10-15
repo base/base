@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use base_builder_core::{BuilderConfig, FlashblocksServiceBuilder, NodeBounds, PoolBounds};
+use base_builder_publish::WebSocketPublisher;
 use base_execution_evm::BaseEvmConfig;
 use base_execution_payload_builder::{ResourceMeteringConfig, config::BaseBuilderConfig};
 use base_node_core::{
@@ -21,7 +22,7 @@ use reth_provider::CanonStateSubscriptions;
 use tokio::sync::mpsc;
 use tracing::{error, info};
 
-use crate::{HealthState, MultiplexRouter, RoutingConfig};
+use crate::{BlockStreamPublisher, HealthState, MultiplexRouter, RoutingConfig};
 
 /// Spawns flashblocks + basic payload services and returns one routing handle.
 #[derive(Debug, Clone)]
@@ -139,10 +140,23 @@ where
             );
 
         if self.basic_only {
+            let ws_pub =
+                Arc::new(WebSocketPublisher::new(self.builder_config.flashblocks_ws_addr)?);
             ctx.task_executor().spawn_critical_task(
                 "basic payload builder service",
                 Box::pin(basic_payload_service),
             );
+            let events_handle = basic_handle.clone();
+            let publisher = BlockStreamPublisher::new(ws_pub, ctx.chain_spec());
+            // Not critical: the stream is an auxiliary feed and must never stop block production.
+            ctx.task_executor().spawn_task(Box::pin(async move {
+                match events_handle.subscribe().await {
+                    Ok(events) => publisher.run(events.receiver).await,
+                    Err(error) => {
+                        error!(error = %error, "failed to subscribe block stream publisher");
+                    }
+                }
+            }));
             info!("basic payload builder service started");
             return Ok(basic_handle);
         }

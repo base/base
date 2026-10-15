@@ -84,6 +84,8 @@ pub struct L2StackConfig {
     pub validity_signature_mode: ValiditySignatureMode,
     /// Whether the active builder cuts over from flashblocks to basic at Denim.
     pub payload_builder_cutover: bool,
+    /// Whether the active builder runs only the basic payload builder.
+    pub basic_payload_builder: bool,
     /// Number of L1 blocks to keep distance from the L1 head for the client (validator)
     /// consensus node's derivation pipeline.
     pub verifier_l1_confs: u64,
@@ -228,6 +230,7 @@ impl L2Stack {
             flashblocks_port: container_config.and_then(|c| c.builder_flashblocks_port),
             metrics_port: None,
             payload_builder_cutover: config.payload_builder_cutover,
+            basic_payload_builder: config.basic_payload_builder,
             validity_signature_mode: config.validity_signature_mode,
             extra_extensions: config.extra_builder_extensions,
             block_time: Duration::from_secs(rollup_config.block_time),

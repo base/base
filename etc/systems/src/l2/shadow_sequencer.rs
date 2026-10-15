@@ -96,6 +96,7 @@ impl ShadowSequencer {
             flashblocks_port: None,
             metrics_port: None,
             payload_builder_cutover: false,
+            basic_payload_builder: false,
             extra_extensions: Vec::new(),
             validity_signature_mode: ValiditySignatureMode::Off,
             block_time: Duration::from_secs(config.rollup_config.block_time),

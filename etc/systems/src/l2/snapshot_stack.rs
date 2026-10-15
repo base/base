@@ -103,6 +103,7 @@ impl SnapshotL2Stack {
             metrics_port: None,
             block_time: block_interval.duration(),
             payload_builder_cutover: block_interval == DevnetBlockInterval::TwoHundredMilliseconds,
+            basic_payload_builder: false,
             extra_extensions: Vec::new(),
             validity_signature_mode: ValiditySignatureMode::Off,
             persistence_threshold: Some(0),

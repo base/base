@@ -141,98 +141,52 @@ impl FilterType {
     }
 
     fn contains_any_address(&self, json: &Value, addresses: &HashSet<String>) -> bool {
-        // Optimized search: early return on first match
-
-        // Check new_account_balances first (most direct lookup)
-        if let Some(found) = json
-            .get("metadata")
-            .and_then(|m| m.get("new_account_balances"))
-            .and_then(|b| b.as_object())
-        {
-            for account in found.keys() {
-                if addresses.contains(&account.to_lowercase()) {
-                    debug!(account = %account, "Found address in new_account_balances");
-                    return true;
-                }
-            }
-        }
-
-        // Check logs in receipts (most common case for filtering)
-        if let Some(receipts) =
-            json.get("metadata").and_then(|m| m.get("receipts")).and_then(|r| r.as_object())
-        {
-            for receipt_value in receipts.values() {
-                if let Some(receipt_obj) = receipt_value.as_object() {
-                    for receipt_data in receipt_obj.values() {
-                        if let Some(logs) =
-                            receipt_data.get("logs").and_then(|logs| logs.as_array())
-                        {
-                            for log in logs {
-                                if let Some(addr_str) =
-                                    log.get("address").and_then(|addr| addr.as_str())
-                                    && addresses.contains(&addr_str.to_lowercase())
-                                {
-                                    debug!(addr = %addr_str, "Found address in logs");
-                                    return true;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+        // Check logs in receipts first (most common case for filtering)
+        let in_logs = Self::logs(json)
+            .filter_map(|log| log.get("address").and_then(Value::as_str))
+            .find(|addr| addresses.contains(&addr.to_lowercase()));
+        if let Some(addr) = in_logs {
+            debug!(addr = %addr, "Found address in logs");
+            return true;
         }
 
         // Check transactions (least efficient, check last)
-        if let Some(transactions) =
-            json.get("diff").and_then(|d| d.get("transactions")).and_then(|t| t.as_array())
-        {
-            for tx in transactions {
-                if let Some(tx_str) = tx.as_str() {
-                    let tx_lower = tx_str.to_lowercase();
-                    for address in addresses {
-                        if tx_lower.contains(address) {
-                            debug!(tx = %tx_str, "Found address in transaction");
-                            return true;
-                        }
-                    }
-                }
-            }
+        let in_transactions = json
+            .get("transactions")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .any(|tx| {
+                let tx = tx.to_lowercase();
+                addresses.iter().any(|address| tx.contains(address.as_str()))
+            });
+        if in_transactions {
+            debug!("Found address in transactions");
         }
-
-        false
+        in_transactions
     }
 
     fn contains_any_topic(&self, json: &Value, topics: &HashSet<String>) -> bool {
-        // Check logs in receipts for topics
-        if let Some(receipts) =
-            json.get("metadata").and_then(|m| m.get("receipts")).and_then(|r| r.as_object())
-        {
-            for receipt_value in receipts.values() {
-                if let Some(receipt_obj) = receipt_value.as_object() {
-                    for receipt_data in receipt_obj.values() {
-                        if let Some(logs) =
-                            receipt_data.get("logs").and_then(|logs| logs.as_array())
-                        {
-                            for log in logs {
-                                if let Some(log_topics) =
-                                    log.get("topics").and_then(|topics| topics.as_array())
-                                {
-                                    for topic_value in log_topics {
-                                        if let Some(topic_str) = topic_value.as_str()
-                                            && topics.contains(&topic_str.to_lowercase())
-                                        {
-                                            debug!(topic = %topic_str, "Found topic in logs");
-                                            return true;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+        let found = Self::logs(json)
+            .filter_map(|log| log.get("topics").and_then(Value::as_array))
+            .flatten()
+            .filter_map(Value::as_str)
+            .find(|topic| topics.contains(&topic.to_lowercase()));
+        if let Some(topic) = found {
+            debug!(topic = %topic, "Found topic in logs");
         }
-        false
+        found.is_some()
+    }
+
+    /// Iterates every log across the receipts of a block stream message.
+    fn logs(json: &Value) -> impl Iterator<Item = &Value> {
+        json.get("receipts")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|receipt| receipt.get("logs").and_then(Value::as_array))
+            .flatten()
     }
 }
 
@@ -243,29 +197,23 @@ mod tests {
     fn get_test_payload() -> Vec<u8> {
         let data = r#"
   {
-    "payload_id": "0x0307de8ff1df8ed8",
-    "index": 0,
-    "metadata": {
-      "block_number": 26600873,
-      "new_account_balances": {
-        "0x4200000000000000000000000000000000000010": "0x13fbe85edc90000"
-      },
-      "receipts": {
-        "0x3fb39b336c13a09d04a34f72cd88a7b0066d65dcf246288ac5bdbba33376eb41": {
-          "Deposit": {
-            "logs": [
-              {
-                "address": "0x4200000000000000000000000000000000000010",
-                "topics": [
-                  "0xb0444523268717a02698be47d0803aa7468c00acbed2f8bd93a0459cde61dd89",
-                  "0x0000000000000000000000000000000000000000000000000000000000000000"
-                ]
-              }
+    "blockNumber": 26600873,
+    "header": { "number": "0x195e4a9" },
+    "transactions": [],
+    "receipts": [
+      {
+        "type": "0x7e",
+        "logs": [
+          {
+            "address": "0x4200000000000000000000000000000000000010",
+            "topics": [
+              "0xb0444523268717a02698be47d0803aa7468c00acbed2f8bd93a0459cde61dd89",
+              "0x0000000000000000000000000000000000000000000000000000000000000000"
             ]
           }
-        }
+        ]
       }
-    }
+    ]
   }
 "#;
         data.as_bytes().to_vec()
@@ -361,74 +309,6 @@ mod tests {
         let topics =
             vec!["0xb0444523268717a02698be47d0803aa7468c00acbed2f8bd93a0459cde61dd89".to_string()];
         let filter = FilterType::new_combined_with_mode(addresses, topics, MatchMode::All);
-        assert!(!filter.matches(&payload, false));
-    }
-
-    #[test]
-    fn test_with_real_data() {
-        // Test against real flashblocks payload data structure
-        let payload = r#"
-  {
-    "payload_id": "0x0307de8ff1df8ed8",
-    "index": 0,
-    "diff": {
-      "transactions": [
-        "0x7ef90104a0799b8b5182a2612920c032590217fd987cdcf1e07a2de17907e02eea535cc30694deaddeaddeaddeaddeaddeaddeaddeaddead00019442000000000000000000000000000000000000158080830f424080b8b0098999be0000044d000a118b000000000000000000000000683f28fc0000000000813aea000000000000000000000000000000000000000000000000000000000000094a0000000000000000000000000000000000000000000000000000000000000001f10c9d7f8fab954891476f8daa9189f45ee736b02bc43cb190e4f891c82e7edf000000000000000000000000fc56e7272eebbba5bc6c544e159483c4a38f8ba3000000000000000000000000"
-      ]
-    },
-    "metadata": {
-      "block_number": 26600873,
-      "new_account_balances": {
-        "0x336f495c2d3d764f541426228178a2369c9b78db": "0x13fbe85edc90000",
-        "0x4200000000000000000000000000000000000007": "0xf61bc4ad468f1bd"
-      },
-      "receipts": {
-        "0x3fb39b336c13a09d04a34f72cd88a7b0066d65dcf246288ac5bdbba33376eb41": {
-          "Deposit": {
-            "logs": [
-              {
-                "address": "0x4200000000000000000000000000000000000010",
-                "topics": [
-                  "0xb0444523268717a02698be47d0803aa7468c00acbed2f8bd93a0459cde61dd89",
-                  "0x0000000000000000000000000000000000000000000000000000000000000000"
-                ]
-              }
-            ]
-          }
-        }
-      }
-    }
-  }
-"#.to_string().into_bytes();
-
-        // Test address filter that should match (in logs)
-        let filter = FilterType::new_addresses(vec![
-            "0x4200000000000000000000000000000000000010".to_string(),
-        ]);
-        assert!(filter.matches(&payload, false));
-
-        // Test address filter that should match (in account balances)
-        let filter = FilterType::new_addresses(vec![
-            "0x4200000000000000000000000000000000000007".to_string(),
-        ]);
-        assert!(filter.matches(&payload, false));
-
-        // Test address filter that should not match
-        let filter = FilterType::new_addresses(vec![
-            "0x1111111111111111111111111111111111111111".to_string(),
-        ]);
-        assert!(!filter.matches(&payload, false));
-
-        // Test topic filter that should match
-        let filter = FilterType::new_topics(vec![
-            "0xb0444523268717a02698be47d0803aa7468c00acbed2f8bd93a0459cde61dd89".to_string(),
-        ]);
-        assert!(filter.matches(&payload, false));
-
-        // Test topic filter that should not match
-        let filter = FilterType::new_topics(vec![
-            "0x1111111111111111111111111111111111111111111111111111111111111111".to_string(),
-        ]);
         assert!(!filter.matches(&payload, false));
     }
 }

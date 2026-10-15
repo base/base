@@ -106,6 +106,7 @@ async fn standalone_dev_chain_persists_and_restores_schedule() -> Result<()> {
         flashblocks_port: None,
         metrics_port: None,
         payload_builder_cutover: true,
+        basic_payload_builder: false,
         validity_signature_mode: ValiditySignatureMode::Off,
         extra_extensions: vec![Box::new(ImpersonationRpcExtension(queue.clone()))],
         block_time: Duration::from_millis(200),

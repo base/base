@@ -467,8 +467,8 @@ summary = "base-telemetry-service Axum API with EL (devp2p) and CL (libp2p) P2P 
 digest = "333f88c3b6"
 
 ["crates/infra/websocket-proxy/README.md"]
-summary = "Alpha WebSocket proxy fanning out Flashblocks from rollup-boost to downstream RPC nodes, with optional Brotli and trusted-proxy CIDR client IP handling. Use for its CLI flags and deployment."
-digest = "63043098db"
+summary = "WebSocket proxy fanning out the builder's BlockStreamPayloadV1 native-block stream (16 MiB message limit) to clients, with Brotli and trusted-proxy CIDRs. Use for its CLI flags and deployment."
+digest = "2c2a5aaad3"
 
 ["crates/infra/zk-benchmarks/README.md"]
 summary = "One-line stub: ZK proof benchmarking utilities for Base load-test runs; no usage or detail beyond that."
