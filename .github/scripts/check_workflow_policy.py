@@ -2,7 +2,8 @@
 """Checks GitHub Actions workflows against Base's security policy.
 
 All workflows:
-  - must not use `pull_request_target` or `workflow_run` triggers
+  - must not use `workflow_run`, or `pull_request_target` outside an Amp
+    workflow that passes every Amp rule below
   - must pin third-party actions to a full commit SHA
   - must reference secrets by literal name (no `toJSON(secrets)`,
     `secrets[format(...)]` or bare `secrets`)
@@ -18,10 +19,17 @@ All workflows:
     `.github/scripts/amp_review.py has-amp-changes`
 
 Workflows that use the Amp bot key (`secrets.AMP_API_KEY`) must also:
-  - only trigger on `issue_comment` or `workflow_dispatch`, which always run
-    the workflow from the default branch
+  - only trigger on `issue_comment`, `workflow_dispatch` or
+    `pull_request_target`, which run the workflow from the default or base
+    branch, never the PR branch
   - set top-level `permissions`
   - gate `issue_comment` runs behind a job that checks `author_association`
+  - with `pull_request_target`, also:
+      - gate runs behind a job whose `if` checks the PR author's
+        `author_association` and that the head repo is this repo
+      - give every job explicit read-only permissions
+      - check out code only in jobs that use the Amp key (rules below)
+      - use secrets only in jobs that need the authorization job
   - run each job that uses the key:
       - with `environment: amp` (secrets limited to the default branch)
       - on a Depot runner (`depot-*`), never a self-hosted runner
@@ -32,11 +40,12 @@ Workflows that use the Amp bot key (`secrets.AMP_API_KEY`) must also:
         step, if it mints a GitHub App token (keeps the private key out of reach)
       - with `persist-credentials: false` on every checkout
       - checking out only `${{ needs.<job>.outputs.sha }}`, where <job> is a
-        needed job that compares the PR's head repo to this repo
+        needed job whose steps compare the PR's head repo to this repo
         (`head.repo.full_name`), so fork code and moved heads can't run
       - with no caches (cache actions, `cache:` inputs or cache env vars), so
         Amp can't poison caches that main-branch workflows read
-      - only after the authorization job, when `issue_comment` is a trigger
+      - only after the authorization job, when `issue_comment` or
+        `pull_request_target` is a trigger
 
 Usage: check_workflow_policy.py [WORKFLOW_DIR]
 """
@@ -54,8 +63,12 @@ APP_KEY_SECRET = "AMP_GITHUB_APP_PRIVATE_KEY"
 APP_TOKEN_ACTION = "actions/create-github-app-token@"
 HARDEN_RUNNER = "step-security/harden-runner@"
 ALLOWED_APP_PERMISSIONS = {"contents", "pull-requests", "issues"}
-BANNED_TRIGGERS = {"pull_request_target", "workflow_run"}
-AMP_ALLOWED_TRIGGERS = {"issue_comment", "workflow_dispatch"}
+BANNED_TRIGGERS = {"workflow_run"}
+AMP_ALLOWED_TRIGGERS = {"issue_comment", "workflow_dispatch", "pull_request_target"}
+GATED_TRIGGERS = {"issue_comment", "pull_request_target"}
+PRT_SAME_REPO = re.compile(
+    r"github\.event\.pull_request\.head\.repo\.full_name\s*==\s*github\.repository"
+)
 AMP_ENVIRONMENT = "amp"
 CACHE_ACTIONS = (
     "actions/cache@",
@@ -160,6 +173,8 @@ def check_amp_workflow(workflow: dict, errors: list[str]) -> None:
     }
     if "issue_comment" in on and not authorize_jobs:
         errors.append("issue_comment trigger without a job that checks author_association")
+    if "pull_request_target" in on:
+        check_pull_request_target(jobs, authorize_jobs, errors)
 
     for name, job in jobs.items():
         used = secrets_used(job)
@@ -204,7 +219,9 @@ def check_amp_workflow(workflow: dict, errors: list[str]) -> None:
                         f"{where} checks out code other than ${{{{ needs.<job>.outputs.sha }}}} "
                         "from a needed authorization job"
                     )
-                elif "head.repo.full_name" not in str(jobs.get(source, {})):
+                # The step script must check the live PR, not just the event
+                # payload: comment and dispatch events have no PR head in it.
+                elif "head.repo.full_name" not in str(jobs.get(source, {}).get("steps")):
                     errors.append(
                         f"{where} checks out a SHA from job '{source}', which does not check "
                         "the PR's head repo (head.repo.full_name)"
@@ -220,9 +237,35 @@ def check_amp_workflow(workflow: dict, errors: list[str]) -> None:
                     f"{where} mints an app token next to Amp without harden-runner "
                     "disable-sudo-and-containers: true as its first step"
                 )
-        if "issue_comment" in on:
+        if on & GATED_TRIGGERS:
             if not authorize_jobs.intersection(job_needs):
                 errors.append(f"{where} uses Amp without needing an author_association check")
+
+
+def check_pull_request_target(jobs: dict, authorize_jobs: set[str], errors: list[str]) -> None:
+    gates = {
+        name
+        for name in authorize_jobs
+        if "github.event.pull_request.author_association" in str(jobs[name].get("if", ""))
+        and PRT_SAME_REPO.search(str(jobs[name].get("if", "")))
+    }
+    if not gates:
+        errors.append(
+            "pull_request_target without a job whose if checks "
+            "github.event.pull_request.author_association and "
+            "github.event.pull_request.head.repo.full_name == github.repository"
+        )
+    for name, job in jobs.items():
+        where = f"job '{name}'"
+        if not is_read_only(job.get("permissions")):
+            errors.append(f"{where} in a pull_request_target workflow lacks explicit read-only permissions")
+        used = secrets_used(job)
+        if used and not authorize_jobs.intersection(needs_of(job)):
+            errors.append(f"{where} uses secrets in a pull_request_target workflow without needing authorization")
+        if AMP_SECRET not in used:
+            for step in job.get("steps") or []:
+                if str(step.get("uses", "")).startswith("actions/checkout@"):
+                    errors.append(f"{where} checks out code in a pull_request_target workflow")
 
 
 def check_app_key(workflow: dict, errors: list[str]) -> None:
@@ -308,6 +351,8 @@ def check_file(path: Path) -> list[str]:
     banned = triggers(workflow) & BANNED_TRIGGERS
     if banned:
         errors.append(f"uses banned triggers: {sorted(banned)}")
+    if "pull_request_target" in triggers(workflow) and AMP_SECRET not in secrets_used(workflow):
+        errors.append("uses pull_request_target, which is only allowed in the Amp workflow")
 
     if any(DYNAMIC_SECRETS.search(expr) for expr in expressions(workflow)):
         errors.append("references secrets dynamically; use secrets.NAME")
