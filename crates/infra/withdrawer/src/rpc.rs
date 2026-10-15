@@ -44,19 +44,13 @@ impl WithdrawalRpc {
     /// Geth error for receipt lookups while the transaction index is rebuilt; the transaction may still be pending or included.
     pub const TX_INDEXING_IN_PROGRESS: &str = "transaction indexing is in progress";
 
-    /// Connects both configured endpoints using bounded reqwest HTTP transports.
-    pub async fn new(config: &WithdrawerConfig) -> Result<Self, WithdrawalRpcError> {
-        tokio::time::timeout(config.timeout, async {
-            let l1 = WithdrawalRpcTransport::connect(&config.l1_rpc_url, config)
-                .await
-                .map_err(WithdrawalRpcError::Request)?;
-            let l2 = WithdrawalRpcTransport::connect(&config.network.l2_rpc_url, config)
-                .await
-                .map_err(WithdrawalRpcError::Request)?;
-            Ok(Self { l1, l2, timeout: config.timeout })
-        })
-        .await
-        .map_err(|_| WithdrawalRpcError::Timeout)?
+    /// Builds providers for both configured endpoints without network I/O.
+    pub fn new(config: &WithdrawerConfig) -> Result<Self, WithdrawalRpcError> {
+        let l1 = WithdrawalRpcTransport::connect(&config.l1_rpc_url, config)
+            .map_err(WithdrawalRpcError::Request)?;
+        let l2 = WithdrawalRpcTransport::connect(&config.network.l2_rpc_url, config)
+            .map_err(WithdrawalRpcError::Request)?;
+        Ok(Self { l1, l2, timeout: config.timeout })
     }
 
     /// Broadcasts a signed envelope; any error is ambiguous because an earlier attempt may have landed, so check `tx.tx_hash()` with `wait_for_receipt` before re-signing.
@@ -140,7 +134,7 @@ impl WithdrawalRpc {
                                     .contains(Self::TX_INDEXING_IN_PROGRESS)
                             }) =>
                     {
-                        warn!(transaction_hash = %hash, "receipt request failed transiently");
+                        warn!(transaction_hash = %hash, error = %error, "receipt request failed transiently");
                     }
                     Err(error) => {
                         return Err(WithdrawalRpcError::Request(WithdrawalRpcTransport::redact(
@@ -330,7 +324,7 @@ mod tests {
         ] {
             let server = Server::new(vec![response]).await;
             let config = server.config();
-            let rpc = WithdrawalRpc::new(&config).await.unwrap();
+            let rpc = WithdrawalRpc::new(&config).unwrap();
             assert!(rpc.l1.get_block_number().await.is_err());
             let requests = server.requests.lock().unwrap();
             assert_eq!(requests.len(), 3, "max_retries counts attempts after the first");
@@ -350,7 +344,7 @@ mod tests {
                 (StatusCode::OK, json!({"jsonrpc":"2.0", "result":"0x2a"})),
             ])
             .await;
-            let rpc = WithdrawalRpc::new(&server.config()).await.unwrap();
+            let rpc = WithdrawalRpc::new(&server.config()).unwrap();
             assert_eq!(rpc.l1.get_block_number().await.unwrap(), 42);
             assert_eq!(server.count(), 2);
         }
@@ -363,7 +357,7 @@ mod tests {
             json!({"jsonrpc":"2.0", "error":{"code":3,"message":"execution reverted"}}),
         )])
         .await;
-        let rpc = WithdrawalRpc::new(&server.config()).await.unwrap();
+        let rpc = WithdrawalRpc::new(&server.config()).unwrap();
         let error = rpc.l1.call(Default::default()).await.unwrap_err();
         assert!(error.to_string().contains("execution reverted"));
         assert_eq!(server.count(), 1);
@@ -379,7 +373,7 @@ mod tests {
             ]),
         )])
         .await;
-        let rpc = WithdrawalRpc::new(&server.config()).await.unwrap();
+        let rpc = WithdrawalRpc::new(&server.config()).unwrap();
         let mut batch = BatchRequest::new(rpc.l1.client());
         let reverted = batch.add_call::<_, Bytes>("eth_call", &(json!({}), "latest")).unwrap();
         let successful = batch.add_call::<_, U256>("eth_blockNumber", &()).unwrap();
@@ -404,7 +398,7 @@ mod tests {
                 (StatusCode::OK, json!({"jsonrpc":"2.0", "result":null})),
             ])
             .await;
-            let rpc = WithdrawalRpc::new(&server.config()).await.unwrap();
+            let rpc = WithdrawalRpc::new(&server.config()).unwrap();
             assert!(
                 rpc.broadcast(&Server::signed()).await.is_err(),
                 "a rejection is not acceptance"
@@ -421,7 +415,7 @@ mod tests {
                 json!({"jsonrpc":"2.0", "error":{"code":-32000,"message":message}}),
             )])
             .await;
-            let rpc = WithdrawalRpc::new(&server.config()).await.unwrap();
+            let rpc = WithdrawalRpc::new(&server.config()).unwrap();
             let tx = Server::signed();
             let result = rpc.broadcast(&tx).await;
             assert!(result.is_ok(), "already-known broadcast must succeed: {result:?}");
@@ -441,7 +435,7 @@ mod tests {
                 ),
             ])
             .await;
-            let rpc = WithdrawalRpc::new(&server.config()).await.unwrap();
+            let rpc = WithdrawalRpc::new(&server.config()).unwrap();
             let tx = Server::signed();
             let result = rpc.broadcast(&tx).await;
             assert!(result.is_ok(), "already-known broadcast must succeed: {result:?}");
@@ -478,7 +472,7 @@ mod tests {
                 (StatusCode::OK, lookup),
             ])
             .await;
-            let rpc = WithdrawalRpc::new(&server.config()).await.unwrap();
+            let rpc = WithdrawalRpc::new(&server.config()).unwrap();
             let result = rpc.broadcast(&tx).await;
             if found {
                 assert_eq!(result.unwrap(), *tx.tx_hash());
@@ -502,7 +496,7 @@ mod tests {
         let server = Server::new(vec![]).await;
         let mut config = server.config();
         config.timeout = Duration::from_millis(100);
-        let rpc = WithdrawalRpc::new(&config).await.unwrap();
+        let rpc = WithdrawalRpc::new(&config).unwrap();
         let result = tokio::time::timeout(Duration::from_secs(2), rpc.broadcast(&Server::signed()))
             .await
             .expect("broadcast must not hang");
@@ -520,7 +514,7 @@ mod tests {
         .await;
         let mut config = server.config();
         config.timeout = Duration::from_millis(500);
-        let rpc = WithdrawalRpc::new(&config).await.unwrap();
+        let rpc = WithdrawalRpc::new(&config).unwrap();
         assert_eq!(rpc.broadcast(&tx).await.unwrap(), *tx.tx_hash());
         assert_eq!(server.count(), 2);
     }
@@ -531,7 +525,7 @@ mod tests {
         let mut config = server.config();
         config.timeout = Duration::from_millis(100);
         config.max_retries = 1;
-        let rpc = WithdrawalRpc::new(&config).await.unwrap();
+        let rpc = WithdrawalRpc::new(&config).unwrap();
         let error = tokio::time::timeout(Duration::from_secs(2), rpc.l1.get_block_number())
             .await
             .expect("each HTTP attempt must be bounded")
@@ -552,7 +546,7 @@ mod tests {
             let server =
                 Server::new(vec![(StatusCode::OK, json!({"jsonrpc":"2.0", "result":result}))])
                     .await;
-            let rpc = WithdrawalRpc::new(&server.config()).await.unwrap();
+            let rpc = WithdrawalRpc::new(&server.config()).unwrap();
             let tx = Server::signed();
             assert_eq!(rpc.broadcast(&tx).await.unwrap(), *tx.tx_hash());
             assert_eq!(server.count(), 1);
@@ -568,7 +562,7 @@ mod tests {
             json!({}),
         ] {
             let server = Server::new(vec![(StatusCode::OK, body)]).await;
-            let rpc = WithdrawalRpc::new(&server.config()).await.unwrap();
+            let rpc = WithdrawalRpc::new(&server.config()).unwrap();
             assert!(rpc.broadcast(&Server::signed()).await.is_err());
             assert_eq!(server.count(), 1);
         }
@@ -581,7 +575,7 @@ mod tests {
         )
         .unwrap();
         let server = Server::new(vec![(StatusCode::OK, Value::String(body))]).await;
-        let rpc = WithdrawalRpc::new(&server.config()).await.unwrap();
+        let rpc = WithdrawalRpc::new(&server.config()).unwrap();
         let error = rpc.l1.get_block_number().await.unwrap_err();
         let mut rendered = format!("{error} {error:?}");
         let mut source = error.source();
@@ -607,7 +601,7 @@ mod tests {
         ] {
             let mut config = server.config();
             config.l1_rpc_url = url.parse().unwrap();
-            let error = WithdrawalRpc::new(&config).await.unwrap_err();
+            let error = WithdrawalRpc::new(&config).unwrap_err();
             let rendered = format!("{error} {error:?}");
             assert!(
                 rendered.contains("HTTP(S)"),
@@ -639,7 +633,7 @@ mod tests {
             .with_writer(move || writer.clone())
             .finish();
         let error = async {
-            let rpc = WithdrawalRpc::new(&config).await.unwrap();
+            let rpc = WithdrawalRpc::new(&config).unwrap();
             rpc.l1.get_block_number().await.unwrap_err()
         }
         .with_subscriber(subscriber)
@@ -662,7 +656,7 @@ mod tests {
     async fn receipt_polling_waits_between_requests_and_times_out() {
         let server =
             Server::new(vec![(StatusCode::OK, json!({"jsonrpc":"2.0","result":null}))]).await;
-        let rpc = WithdrawalRpc::new(&server.config()).await.unwrap();
+        let rpc = WithdrawalRpc::new(&server.config()).unwrap();
         let task = tokio::spawn(async move { rpc.wait_for_receipt(B256::ZERO).await });
         server.wait_for_requests(1).await;
         for second in 1..=6 {
@@ -707,12 +701,34 @@ mod tests {
             .await;
             let mut config = server.config();
             config.max_retries = 0;
-            let rpc = WithdrawalRpc::new(&config).await.unwrap();
-            let task = tokio::spawn(async move { rpc.wait_for_receipt(B256::ZERO).await });
+            config.l1_rpc_url.set_username("rpc-user").unwrap();
+            config.l1_rpc_url.set_password(Some("rpc-password")).unwrap();
+            config.l1_rpc_url.set_path("/path-secret");
+            config.l1_rpc_url.set_query(Some("key=query-secret"));
+            let rpc = WithdrawalRpc::new(&config).unwrap();
+            let capture = LogCapture(Arc::new(Mutex::new(Vec::new())));
+            let writer = capture.clone();
+            let subscriber = tracing_subscriber::fmt()
+                .with_ansi(false)
+                .with_writer(move || writer.clone())
+                .finish();
+            let task = tokio::spawn(
+                async move { rpc.wait_for_receipt(B256::ZERO).await }.with_subscriber(subscriber),
+            );
             server.wait_for_requests(1).await;
             advance(WithdrawalRpc::RECEIPT_POLL_INTERVAL).await;
             server.wait_for_requests(2).await;
             let result = task.await.unwrap();
+            let logs = String::from_utf8(capture.0.lock().unwrap().clone()).unwrap();
+            assert!(logs.contains("receipt request failed transiently"), "{logs}");
+            assert!(logs.contains("error="), "{logs}");
+            assert!(
+                logs.contains("503") || logs.contains(WithdrawalRpc::TX_INDEXING_IN_PROGRESS),
+                "{logs}"
+            );
+            for secret in ["rpc-user", "rpc-password", "path-secret", "query-secret"] {
+                assert!(!logs.contains(secret), "RPC credential leaked: {logs}");
+            }
             if status == "0x0" {
                 assert!(
                     matches!(result, Err(WithdrawalRpcError::Reverted(_))),
@@ -731,7 +747,7 @@ mod tests {
             json!({"jsonrpc":"2.0", "error":{"code":-32602,"message":"invalid params"}}),
         )])
         .await;
-        let rpc = WithdrawalRpc::new(&server.config()).await.unwrap();
+        let rpc = WithdrawalRpc::new(&server.config()).unwrap();
         assert!(matches!(
             rpc.wait_for_receipt(B256::ZERO).await,
             Err(WithdrawalRpcError::Request(_))
@@ -743,7 +759,7 @@ mod tests {
     async fn pending_nonce_uses_the_typed_provider() {
         let server =
             Server::new(vec![(StatusCode::OK, json!({"jsonrpc":"2.0","result":"0x5"}))]).await;
-        let rpc = WithdrawalRpc::new(&server.config()).await.unwrap();
+        let rpc = WithdrawalRpc::new(&server.config()).unwrap();
         assert_eq!(rpc.l1.get_transaction_count(Address::ZERO).pending().await.unwrap(), 5);
         assert_eq!(server.requests.lock().unwrap()[0].0["params"][1], "pending");
         assert_eq!(rpc.l2.get_block_number().await.unwrap(), 5);

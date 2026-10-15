@@ -37,11 +37,8 @@ impl WithdrawalRpcTransport {
     /// Maximum duration of one HTTP attempt, further capped at half the operation timeout.
     pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
-    /// Builds a typed HTTP provider with bounded reqwest requests and retries.
-    pub async fn connect(
-        url: &Url,
-        config: &WithdrawerConfig,
-    ) -> Result<RootProvider, TransportError> {
+    /// Builds a typed HTTP provider with bounded requests and retries, without network I/O.
+    pub fn connect(url: &Url, config: &WithdrawerConfig) -> Result<RootProvider, TransportError> {
         if !matches!(url.scheme(), "http" | "https") {
             return Err(TransportErrorKind::non_retryable_str("RPC URL must use HTTP(S)"));
         }
