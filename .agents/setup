@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Native prerequisites shared with .depot/actions/setup/action.yml.
+packages=(build-essential clang libclang-dev libprotobuf-dev libsqlite3-dev llvm llvm-dev pkg-config protobuf-compiler)
+missing=()
+for package in "${packages[@]}"; do
+  dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -q 'install ok installed' || missing+=("$package")
+done
+if ((${#missing[@]})); then
+  sudo apt-get update
+  sudo apt-get install -y --no-install-recommends "${missing[@]}"
+fi
+
+if [[ ! -x "$HOME/.cargo/bin/rustup" ]]; then
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
+fi
+source "$HOME/.cargo/env"
+# rustup reads the repository's pinned toolchain and components.
+rustup toolchain install

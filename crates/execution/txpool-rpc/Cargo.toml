@@ -43,6 +43,7 @@ tracing.workspace = true
 [dev-dependencies]
 # workspace
 base-observability-events = { workspace = true, features = ["test-utils"] }
+base-node-runner = { workspace = true, features = ["test-utils"] }
 base-common-consensus = { workspace = true, features = ["reth"] }
 base-execution-chainspec.workspace = true
 base-test-utils.workspace = true
@@ -51,6 +52,7 @@ eyre.workspace = true
 rstest.workspace = true
 metrics.workspace = true
 httpmock.workspace = true
+criterion.workspace = true
 alloy-eips.workspace = true
 serde_json.workspace = true
 alloy-signer.workspace = true
@@ -58,3 +60,7 @@ alloy-signer-local.workspace = true
 metrics-util = { workspace = true, features = ["debugging"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
 reth-transaction-pool = { workspace = true, features = ["test-utils"] }
+
+[[bench]]
+name = "send_validity"
+harness = false
