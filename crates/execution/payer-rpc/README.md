@@ -4,7 +4,7 @@ RPC proxy for the network payer service (ERC-8168).
 
 Query nodes expose `payer_getTerms` and `payer_sendTransaction` on the execution RPC and forward them to the payer. The upstream defaults to `--rollup.sequencer`. `--rollup.payer` selects a different URL. `payer_signTransaction` and `payer_getSponsorshipBalance` are not registered.
 
-Requests are rejected locally when EIP-8430 (Everest) is inactive, when `chainId` does not match this node, or when the body is malformed. `--rollup.payer-cache` caches successful `payer_getTerms` responses as one shared entry for the offer `ttl` (capped at five minutes). Leave it off unless the payer returns the same token catalog for every request. `payer_sendTransaction` is never cached.
+Requests are rejected locally when EIP-8430 (Everest) is inactive, when `chainId` does not match this node, or when the body is malformed. `--rollup.payer-cache` serves `payer_getTerms` from one shared entry, refetched once per block, with concurrent misses sharing one upstream call. Each served offer's `ttl` is reduced by the entry's age, and its `tokens` are reordered by the request's `preferredTokens`. A `PAYMENT_INSUFFICIENT` or `TEMPORARILY_UNAVAILABLE` rejection from `payer_sendTransaction` refetches the entry within the block, at most once per block. When the payer cannot be reached, the last entry is served while its `ttl` holds; when the payer answers `payer_getTerms` with an error or no offers, the entry is dropped. Leave the flag off unless the payer returns the same terms for every request. `payer_sendTransaction` is never cached.
 
 ## Usage
 
