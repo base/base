@@ -4,7 +4,7 @@ use derive_more::From;
 use discv5::{Enr, enr::EnrPublicKey};
 use libp2p::swarm::dial_opts::DialOpts;
 
-use super::utils::PeerUtils;
+use super::utils::{PeerIdConversionError, PeerUtils};
 use crate::{NodeRecord, PeerId};
 
 /// A peer that can come in [`Enr`] or [`NodeRecord`] form.
@@ -41,19 +41,11 @@ impl AnyNode {
 
     /// Converts the [`AnyNode`] into [`DialOpts`].
     pub fn as_dial_opts(&self) -> Result<DialOpts, DialOptsError> {
-        let pub_key = &PeerUtils::peer_id_to_secp256k1_pubkey(self.peer_id())
-            .map_err(DialOptsError::InvalidPeerId)?
-            .serialize();
-
-        // codecov:ignore-start
-        // We ignore the code coverage because in theory, the serialization of the public key
-        // should never fail, but we don't want to panic in case of a bug.
-        let pub_key: discv5::libp2p_identity::PublicKey =
-            discv5::libp2p_identity::secp256k1::PublicKey::try_from_bytes(pub_key)?.into();
-        // codecov:ignore-end
-
-        let libp2p_id = libp2p::PeerId::from_public_key(&pub_key);
-        Ok(libp2p_id.into())
+        let peer_id = PeerUtils::local_id_to_p2p_id(self.peer_id()).map_err(|e| match e {
+            PeerIdConversionError::InvalidPeerId(e) => DialOptsError::InvalidPeerId(e),
+            PeerIdConversionError::InvalidPublicKey(e) => DialOptsError::InvalidPublicKey(e),
+        })?;
+        Ok(peer_id.into())
     }
 }
 
