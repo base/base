@@ -11,7 +11,7 @@
 //!
 //! Tests are marked `#[ignore]` so they're skipped by default.
 
-use std::{net::SocketAddr, time::Duration};
+use std::{net::SocketAddr, num::NonZeroU64, time::Duration};
 
 use base_prover_service::{ProverServiceServer, ServerConfig, WorkerApiConfig, WorkerQueueConfig};
 use base_prover_service_db::{
@@ -129,6 +129,7 @@ fn compressed_request(session_id: &str, start_block_number: u64) -> CreateProofR
             sequence_window: None,
             l1_head: None,
             schedule_l2_block_number: None,
+            intermediate_block_interval: NonZeroU64::new(1).unwrap(),
             zk_vm: ZkVm::Sp1,
             zk_backend: ZkBackend::Cluster,
         }),

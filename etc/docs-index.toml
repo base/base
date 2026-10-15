@@ -60,7 +60,7 @@ digest = "b67d590f7d"
 
 ["bin/basectl/README.md"]
 summary = "basectl operator console reference: global options, TUI and scriptable commands (block, sync-status, p2p, txpool, conductor, sequencer, batcher, doctor, proofs), JSON output and examples."
-digest = "dede2cd58a"
+digest = "78a08a9f7a"
 
 ["bin/builder/README.md"]
 summary = "Stub README for the base-builder block builder binary, which runs base-builder-core. Minimal, no usage details."
@@ -512,7 +512,7 @@ digest = "dc8e161148"
 
 ["crates/proof/primitives/README.md"]
 summary = "base-proof-primitives: shared proof wire types (Proposal, ProofBundle, ProofResult with Tee and Zk variants) exchanged among proposer, enclave, provers and on-chain verifiers."
-digest = "274b61e6c7"
+digest = "b8cdb98d76"
 
 ["crates/proof/proof/README.md"]
 summary = "base-proof SDK: oracle-backed derivation and execution pieces (OraclePipeline, Oracle L1/L2 providers, CachingOracle, BaseExecutor), boot info and EIP-2935 lookups for fault proof generation."

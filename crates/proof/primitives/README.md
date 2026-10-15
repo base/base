@@ -11,7 +11,7 @@ on-chain verifiers:
 - **`Proposal`** — An output root proposal with its ECDSA signature and L1/L2 context.
 - **`ProofBundle`** — Request plus preimage key-value pairs sent to a prover.
 - **`ProofResult`** — The output of a proof computation, with one variant per backend:
-  - `Tee` — aggregated and per-block `Proposal`s.
+  - `Tee` — the signed aggregate `Proposal` and the intermediate output roots it commits to.
   - `Zk` — opaque proof bytes.
 
 ## Usage

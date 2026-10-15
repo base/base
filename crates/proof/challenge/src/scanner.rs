@@ -32,7 +32,7 @@
 //! Games that are not `IN_PROGRESS` or have been fully nullified (both
 //! provers zero) are skipped.
 
-use std::sync::Arc;
+use std::{num::NonZeroU64, sync::Arc};
 
 use alloy_primitives::{Address, B256};
 use base_proof_contracts::{
@@ -95,8 +95,8 @@ pub struct CandidateGame {
     pub info: GameInfo,
     /// The starting block number for this game.
     pub starting_block_number: u64,
-    /// The intermediate block interval for this game's type.
-    pub intermediate_block_interval: u64,
+    /// The number of L2 blocks between two of this game's intermediate output roots.
+    pub intermediate_block_interval: NonZeroU64,
     /// The L1 head block hash stored at game creation time.
     pub l1_head: B256,
     /// Address of the TEE prover for this game (`Address::ZERO` if none registered).
@@ -110,6 +110,7 @@ impl CandidateGame {
     pub fn checkpoint_start_block(&self, index: u64) -> eyre::Result<u64> {
         let offset = self
             .intermediate_block_interval
+            .get()
             .checked_mul(index)
             .ok_or_else(|| eyre::eyre!("checkpoint offset overflow"))?;
         self.starting_block_number
@@ -397,6 +398,8 @@ impl GameScanner {
             .verifier_client
             .read_intervals_for_starting_block(factory.proxy, starting_block_number)
             .await?;
+        let intermediate_block_interval = NonZeroU64::new(intermediate_block_interval)
+            .ok_or_else(|| eyre::eyre!("game {} has a zero intermediate block interval", index))?;
 
         Ok(Some(CandidateGame {
             index,
@@ -1081,10 +1084,11 @@ mod tests {
 
         assert_eq!(candidates.len(), 2);
         assert_eq!(candidates[0].starting_block_number, 90);
-        assert_eq!(candidates[0].intermediate_block_interval, 5, "slow-cadence game");
+        assert_eq!(candidates[0].intermediate_block_interval.get(), 5, "slow-cadence game");
         assert_eq!(candidates[1].starting_block_number, 390);
         assert_eq!(
-            candidates[1].intermediate_block_interval, 2,
+            candidates[1].intermediate_block_interval.get(),
+            2,
             "fast-cadence game must not inherit the slow-cadence interval"
         );
     }

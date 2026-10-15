@@ -6,7 +6,7 @@
 //! [`OutputRoot`](base_protocol::OutputRoot), and compares them against the
 //! onchain claims.
 
-use std::sync::Arc;
+use std::{num::NonZeroU64, sync::Arc};
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{Address, B256, keccak256};
@@ -42,10 +42,6 @@ pub enum ValidatorError {
         /// The hash computed from the consensus header.
         computed_hash: B256,
     },
-
-    /// The intermediate block interval is zero, which would cause an infinite loop.
-    #[error("intermediate block interval must be non-zero")]
-    InvalidInterval,
 
     /// The block range is degenerate (`starting_block_number >= l2_block_number`).
     #[error(
@@ -118,7 +114,7 @@ pub struct IntermediateValidationParams<'a> {
     /// The L2 block number at the end of this game's range.
     pub l2_block_number: u64,
     /// The block interval between intermediate output root checkpoints.
-    pub intermediate_block_interval: u64,
+    pub intermediate_block_interval: NonZeroU64,
     /// The final output root claimed by this dispute game.
     pub claimed_root: B256,
     /// The intermediate output roots to validate, one per checkpoint.
@@ -322,8 +318,7 @@ impl<L2: L2Provider + ?Sized> OutputValidator<L2> {
     ///
     /// # Errors
     ///
-    /// Returns [`ValidatorError::InvalidInterval`] if `intermediate_block_interval`
-    /// is zero, [`ValidatorError::InvalidBlockRange`] if
+    /// Returns [`ValidatorError::InvalidBlockRange`] if
     /// `starting_block_number >= l2_block_number` (degenerate block range),
     /// [`ValidatorError::CheckpointCountMismatch`] if the provided
     /// `intermediate_roots` length does not match the expected checkpoint count,
@@ -341,10 +336,7 @@ impl<L2: L2Provider + ?Sized> OutputValidator<L2> {
             claimed_root,
             intermediate_roots,
         } = params;
-
-        if intermediate_block_interval == 0 {
-            return Err(ValidatorError::InvalidInterval);
-        }
+        let intermediate_block_interval = intermediate_block_interval.get();
 
         if starting_block_number >= l2_block_number {
             return Err(ValidatorError::InvalidBlockRange {
@@ -401,7 +393,7 @@ impl<L2: L2Provider + ?Sized> OutputValidator<L2> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::{num::NonZeroU64, sync::Arc};
 
     use alloy_consensus::Header as ConsensusHeader;
     use alloy_primitives::{Address, B256};
@@ -476,7 +468,7 @@ mod tests {
                 game_address,
                 starting_block_number: 90,
                 l2_block_number: 100,
-                intermediate_block_interval: 5,
+                intermediate_block_interval: NonZeroU64::new(5).unwrap(),
                 claimed_root: final_claimed,
                 intermediate_roots: &roots,
             })
@@ -508,7 +500,7 @@ mod tests {
                 game_address,
                 starting_block_number: 90,
                 l2_block_number: 100,
-                intermediate_block_interval: 5,
+                intermediate_block_interval: NonZeroU64::new(5).unwrap(),
                 claimed_root: B256::ZERO,
                 intermediate_roots: &roots,
             })
@@ -543,7 +535,7 @@ mod tests {
                 game_address,
                 starting_block_number: 90,
                 l2_block_number: 100,
-                intermediate_block_interval: 5,
+                intermediate_block_interval: NonZeroU64::new(5).unwrap(),
                 claimed_root: roots[1],
                 intermediate_roots: &intermediate_roots,
             })
@@ -576,31 +568,6 @@ mod tests {
         );
     }
 
-    /// Zero intermediate block interval returns `ValidatorError::InvalidInterval`.
-    #[tokio::test]
-    async fn test_zero_intermediate_interval() {
-        let provider = MockL2Provider::default();
-        let validator = OutputValidator::new(Arc::new(provider));
-        let game_address = Address::repeat_byte(0x07);
-
-        let result = validator
-            .validate_intermediate_roots(IntermediateValidationParams {
-                game_address,
-                starting_block_number: 90,
-                l2_block_number: 100,
-                intermediate_block_interval: 0,
-                claimed_root: B256::ZERO,
-                intermediate_roots: &[],
-            })
-            .await;
-
-        assert!(result.is_err());
-        assert!(
-            matches!(result.unwrap_err(), ValidatorError::InvalidInterval),
-            "expected InvalidInterval"
-        );
-    }
-
     #[rstest]
     #[case::too_few(vec![B256::ZERO], 2, 1)]
     #[case::too_many(vec![B256::ZERO; 3], 2, 3)]
@@ -619,7 +586,7 @@ mod tests {
                 game_address,
                 starting_block_number: 90,
                 l2_block_number: 100,
-                intermediate_block_interval: 5,
+                intermediate_block_interval: NonZeroU64::new(5).unwrap(),
                 claimed_root: B256::ZERO,
                 intermediate_roots: &intermediate_roots,
             })
@@ -649,7 +616,7 @@ mod tests {
                 game_address,
                 starting_block_number: u64::MAX - 1,
                 l2_block_number: u64::MAX,
-                intermediate_block_interval: u64::MAX, // Would overflow: (u64::MAX-1) + u64::MAX, but no checkpoints needed
+                intermediate_block_interval: NonZeroU64::MAX, // Would overflow: (u64::MAX-1) + u64::MAX, but no checkpoints needed
                 claimed_root: B256::ZERO,
                 intermediate_roots: &roots,
             })
@@ -666,7 +633,7 @@ mod tests {
     async fn test_no_overflow_when_all_checkpoints_collected() {
         let starting = u64::MAX - 20;
         let l2 = u64::MAX;
-        let interval = 10;
+        let interval = NonZeroU64::new(10).unwrap();
         // Checkpoints: (u64::MAX - 20) + 10 = u64::MAX - 10, then u64::MAX - 10 + 10 = u64::MAX
         let checkpoint_blocks = [u64::MAX - 10, u64::MAX];
 
@@ -706,7 +673,7 @@ mod tests {
                 game_address,
                 starting_block_number,
                 l2_block_number,
-                intermediate_block_interval: 10,
+                intermediate_block_interval: NonZeroU64::new(10).unwrap(),
                 claimed_root: B256::ZERO,
                 intermediate_roots: &[],
             })
@@ -749,7 +716,7 @@ mod tests {
                 game_address,
                 starting_block_number: 90,
                 l2_block_number: 100,
-                intermediate_block_interval: 5,
+                intermediate_block_interval: NonZeroU64::new(5).unwrap(),
                 claimed_root: B256::ZERO,
                 intermediate_roots: &[root_95, B256::ZERO],
             })

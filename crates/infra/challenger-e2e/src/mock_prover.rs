@@ -281,6 +281,8 @@ impl Drop for MockProver {
 
 #[cfg(test)]
 mod tests {
+    use std::num::NonZeroU64;
+
     use alloy_primitives::{Address, B256};
     use base_proof_primitives::ProofRequest as TeeRequest;
     use base_proof_submission::SnarkReceiptEncoder;
@@ -305,6 +307,7 @@ mod tests {
                         sequence_window: None,
                         l1_head: Some(B256::repeat_byte(0x11)),
                         schedule_l2_block_number: Some(start_block_number + 600),
+                        intermediate_block_interval: NonZeroU64::new(30).unwrap(),
                         zk_vm: ZkVm::Sp1,
                         zk_backend: ZkBackend::Cluster,
                     },
@@ -368,6 +371,7 @@ mod tests {
                         proposer: Address::repeat_byte(5),
                         l1_head_number: 1200,
                         schedule_l2_block_number: None,
+                        intermediate_block_interval: NonZeroU64::new(30).unwrap(),
                     },
                     tee_kind: TeeKind::AwsNitro,
                 }),

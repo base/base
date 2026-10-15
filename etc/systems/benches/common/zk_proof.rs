@@ -1,6 +1,9 @@
 //! ZK proof request helpers for system benchmarks.
 
-use std::time::{Duration, Instant};
+use std::{
+    num::NonZeroU64,
+    time::{Duration, Instant},
+};
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::B256;
@@ -111,6 +114,9 @@ impl ZkProofBench {
             .checked_sub(1)
             .ok_or_else(|| eyre::eyre!("cannot prove genesis block with one-block range"))?;
         let number_of_blocks_to_prove = last_block_number - first_block_number + 1;
+        // The workload range is not a dispute game, so commit only its final root.
+        let intermediate_block_interval = NonZeroU64::new(number_of_blocks_to_prove)
+            .ok_or_else(|| eyre::eyre!("workload block range is empty"))?;
         let client_config = ProverServiceClientConfig::new(prover_url.as_str())
             .with_request_timeout(Duration::from_secs(30));
         let client = ProofRequesterClient::connect(&client_config)?;
@@ -125,6 +131,7 @@ impl ZkProofBench {
                         sequence_window: None,
                         l1_head: Some(l1_head),
                         schedule_l2_block_number: None,
+                        intermediate_block_interval,
                         zk_vm: ZkVm::Sp1,
                         zk_backend: ZkBackend::DryRun,
                     }),
