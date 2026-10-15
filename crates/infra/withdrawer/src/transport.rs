@@ -22,7 +22,7 @@ pub struct WithdrawalRpcTransport {
 }
 
 impl WithdrawalRpcTransport {
-    /// Builds a typed provider with the configured retry policy and built-in connection handling.
+    /// Builds a typed HTTP provider with bounded reqwest requests and retries.
     pub async fn connect(
         url: &Url,
         config: &WithdrawerConfig,
@@ -30,17 +30,19 @@ impl WithdrawalRpcTransport {
         if !matches!(url.scheme(), "http" | "https") {
             return Err(TransportErrorKind::non_retryable_str("RPC URL must use HTTP(S)"));
         }
-        ClientBuilder::default()
-            .layer(layer_fn(|inner| Self {
-                inner,
-                max_retries: config.max_retries,
-                retry_delay: config.retry_delay,
-            }))
-            .connect(url.as_str())
-            .with_subscriber(NoSubscriber::default())
-            .await
-            .map(RootProvider::new)
-            .map_err(Self::redact)
+        let client = reqwest::Client::builder()
+            .timeout(config.timeout)
+            .build()
+            .map_err(|error| Self::redact(TransportErrorKind::custom(error)))?;
+        Ok(RootProvider::new(
+            ClientBuilder::default()
+                .layer(layer_fn(|inner| Self {
+                    inner: BoxTransport::new(inner),
+                    max_retries: config.max_retries,
+                    retry_delay: config.retry_delay,
+                }))
+                .http_with_client(client, url.clone()),
+        ))
     }
 
     /// Retries alloy rate-limit responses, HTTP 429/5xx and connection failures, not EVM errors.
@@ -115,10 +117,12 @@ impl Service<RequestPacket> for WithdrawalRpcTransport {
                     .with_subscriber(NoSubscriber::default())
                     .await;
                 let error = match result {
-                    Ok(response) => match response.as_error() {
-                        Some(error) => TransportError::ErrorResp(error.clone()),
-                        None => return Ok(response),
-                    },
+                    Ok(ResponsePacket::Single(response)) if response.is_error() => {
+                        TransportError::ErrorResp(
+                            response.payload.as_error().expect("error response").clone(),
+                        )
+                    }
+                    Ok(response) => return Ok(response),
                     Err(error) => error,
                 };
                 if attempt == this.max_retries || !Self::should_retry(&error) {

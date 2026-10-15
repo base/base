@@ -33,7 +33,7 @@ pub struct WithdrawalRpc {
     pub l1: RootProvider,
     /// L2 state reads, including storage proofs.
     pub l2: RootProvider,
-    /// Deadline for receipt waiting.
+    /// Deadline for broadcast and receipt waiting.
     pub timeout: Duration,
 }
 
@@ -41,7 +41,7 @@ impl WithdrawalRpc {
     /// Fixed delay between receipt requests.
     pub const RECEIPT_POLL_INTERVAL: Duration = Duration::from_secs(2);
 
-    /// Connects both configured endpoints using alloy's built-in transports.
+    /// Connects both configured endpoints using bounded reqwest HTTP transports.
     pub async fn new(config: &WithdrawerConfig) -> Result<Self, WithdrawalRpcError> {
         tokio::time::timeout(config.timeout, async {
             let l1 = WithdrawalRpcTransport::connect(&config.l1_rpc_url, config)
@@ -60,37 +60,57 @@ impl WithdrawalRpc {
     pub async fn broadcast(&self, tx: &TxEnvelope) -> Result<B256, WithdrawalRpcError> {
         let hash = *tx.tx_hash();
         let bytes = Bytes::from(tx.encoded_2718());
-        let result = self
-            .l1
-            .client()
-            .request::<_, BroadcastResult>("eth_sendRawTransaction", (bytes,))
-            .await;
-        match result {
-            Ok(BroadcastResult::Hash(remote)) if remote == hash => {}
-            Ok(BroadcastResult::Hash(remote)) => {
-                warn!(local_hash = %hash, remote_hash = %remote, "node returned a different transaction hash");
+        tokio::time::timeout(self.timeout, async {
+            let result = self
+                .l1
+                .client()
+                .request::<_, BroadcastResult>("eth_sendRawTransaction", (bytes,))
+                .await;
+            match result {
+                Ok(BroadcastResult::Hash(remote)) if remote == hash => {}
+                Ok(BroadcastResult::Hash(remote)) => {
+                    warn!(
+                        local_hash = %hash,
+                        remote_hash = %remote,
+                        "node returned a different transaction hash"
+                    );
+                }
+                Ok(BroadcastResult::Unexpected(_)) => {
+                    warn!(
+                        local_hash = %hash,
+                        "node accepted transaction with an unexpected result"
+                    );
+                }
+                Err(error)
+                    if error.as_error_resp().is_some_and(|payload| {
+                        let message = payload.message.trim().to_ascii_lowercase();
+                        payload.code != 3
+                            && (message == "known transaction"
+                                || [
+                                    "already known",
+                                    "transaction already imported",
+                                    "transaction already in pool",
+                                ]
+                                .iter()
+                                .any(|known| message.starts_with(known)))
+                    }) => {}
+                Err(error) => {
+                    if error.as_error_resp().is_some()
+                        && matches!(self.l1.get_transaction_by_hash(hash).await, Ok(Some(_)))
+                    {
+                        warn!(
+                            local_hash = %hash,
+                            "node knows transaction after broadcast rejection"
+                        );
+                        return Ok(hash);
+                    }
+                    return Err(WithdrawalRpcError::Request(WithdrawalRpcTransport::redact(error)));
+                }
             }
-            Ok(BroadcastResult::Unexpected(_)) => {
-                warn!(local_hash = %hash, "node accepted transaction with an unexpected result");
-            }
-            Err(error)
-                if error.as_error_resp().is_some_and(|payload| {
-                    let message = payload.message.trim().to_ascii_lowercase();
-                    payload.code != 3
-                        && (message == "known transaction"
-                            || [
-                                "already known",
-                                "transaction already imported",
-                                "transaction already in pool",
-                            ]
-                            .iter()
-                            .any(|known| message.starts_with(known)))
-                }) => {}
-            Err(error) => {
-                return Err(WithdrawalRpcError::Request(WithdrawalRpcTransport::redact(error)));
-            }
-        }
-        Ok(hash)
+            Ok(hash)
+        })
+        .await
+        .map_err(|_| WithdrawalRpcError::Timeout)?
     }
 
     /// Waits for L1 inclusion, distinguishing a revert from a deadline.
@@ -132,13 +152,16 @@ pub enum BroadcastResult {
 mod tests {
     use std::{
         error::Error,
+        future::pending,
         io::{self, Write},
         sync::{Arc, Mutex},
         time::Instant,
     };
 
-    use alloy_consensus::{SignableTransaction, TxEip1559};
+    use alloy_consensus::{SignableTransaction, TxEip1559, transaction::Recovered};
     use alloy_primitives::{Address, Signature, U256};
+    use alloy_rpc_client::BatchRequest;
+    use alloy_rpc_types_eth::Transaction;
     use axum::{
         Json, Router, extract::State, http::StatusCode, response::IntoResponse, routing::post,
     };
@@ -190,10 +213,20 @@ mod tests {
                             log.push((request.clone(), tokio::time::Instant::now()));
                             index
                         };
+                        if script.responses.is_empty() {
+                            pending::<()>().await;
+                        }
                         let (status, mut response) =
                             script.responses[index.min(script.responses.len() - 1)].clone();
                         if let Some(object) = response.as_object_mut() {
                             object.insert("id".into(), request["id"].clone());
+                        }
+                        if let (Some(responses), Some(requests)) =
+                            (response.as_array_mut(), request.as_array())
+                        {
+                            for (response, request) in responses.iter_mut().zip(requests) {
+                                response["id"] = request["id"].clone();
+                            }
                         }
                         match response {
                             Value::String(body) => (status, body).into_response(),
@@ -293,23 +326,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn batch_delivers_success_when_another_call_reverts() {
+        let server = Server::new(vec![(
+            StatusCode::OK,
+            json!([
+                {"jsonrpc":"2.0", "error":{"code":3,"message":"execution reverted"}},
+                {"jsonrpc":"2.0", "result":"0x2a"}
+            ]),
+        )])
+        .await;
+        let rpc = WithdrawalRpc::new(&server.config()).await.unwrap();
+        let mut batch = BatchRequest::new(rpc.l1.client());
+        let reverted = batch.add_call::<_, Bytes>("eth_call", &(json!({}), "latest")).unwrap();
+        let successful = batch.add_call::<_, U256>("eth_blockNumber", &()).unwrap();
+        batch.send().await.unwrap();
+        assert_eq!(successful.await.unwrap(), U256::from(42));
+        assert_eq!(reverted.await.unwrap_err().as_error_resp().unwrap().code, 3);
+        assert_eq!(server.count(), 1);
+    }
+
+    #[tokio::test]
     async fn deterministic_broadcast_rejections_are_not_retried_or_accepted() {
         for message in [
             "execution reverted: rate limit exceeded",
             "execution reverted: already known",
             "unknown transaction",
         ] {
-            let server = Server::new(vec![(
-                StatusCode::OK,
-                json!({"jsonrpc":"2.0", "error":{"code":-32000,"message":message}}),
-            )])
+            let server = Server::new(vec![
+                (
+                    StatusCode::OK,
+                    json!({"jsonrpc":"2.0", "error":{"code":-32000,"message":message}}),
+                ),
+                (StatusCode::OK, json!({"jsonrpc":"2.0", "result":null})),
+            ])
             .await;
             let rpc = WithdrawalRpc::new(&server.config()).await.unwrap();
             assert!(
                 rpc.broadcast(&Server::signed()).await.is_err(),
                 "a rejection is not acceptance"
             );
-            assert_eq!(server.count(), 1, "a deterministic rejection must not be retried");
+            assert_eq!(server.count(), 2, "a rejection gets one lookup, not another submission");
         }
     }
 
@@ -350,6 +406,80 @@ mod tests {
             assert_eq!(requests.len(), 2);
             assert_eq!(requests[0].0["params"], requests[1].0["params"]);
         }
+    }
+
+    #[tokio::test]
+    async fn broadcast_reconciles_rejection_by_local_hash_and_preserves_unknown_failure() {
+        let tx = Server::signed();
+        let transaction = Transaction {
+            inner: Recovered::new_unchecked(tx.clone(), Address::ZERO),
+            block_hash: None,
+            block_number: None,
+            transaction_index: None,
+            effective_gas_price: None,
+            block_timestamp: None,
+        };
+        for lookup in [
+            json!({"jsonrpc":"2.0", "result":transaction}),
+            json!({"jsonrpc":"2.0", "result":null}),
+            json!({"jsonrpc":"2.0", "error":{"code":-32603,"message":"lookup failed"}}),
+        ] {
+            let found = lookup.get("result").is_some_and(Value::is_object);
+            let server = Server::new(vec![
+                (StatusCode::SERVICE_UNAVAILABLE, json!("unavailable")),
+                (
+                    StatusCode::OK,
+                    json!({"jsonrpc":"2.0", "error":{"code":-32000,"message":"nonce too low"}}),
+                ),
+                (StatusCode::OK, lookup),
+            ])
+            .await;
+            let rpc = WithdrawalRpc::new(&server.config()).await.unwrap();
+            let result = rpc.broadcast(&tx).await;
+            if found {
+                assert_eq!(result.unwrap(), *tx.tx_hash());
+            } else {
+                let error = result.unwrap_err();
+                let source = error.source().unwrap().downcast_ref::<TransportError>().unwrap();
+                let payload = source.as_error_resp().unwrap();
+                assert_eq!(payload.code, -32000);
+                assert_eq!(payload.message, "nonce too low");
+            }
+            let requests = server.requests.lock().unwrap();
+            assert_eq!(requests.len(), 3);
+            assert_eq!(requests[0].0["params"], requests[1].0["params"]);
+            assert_eq!(requests[2].0["method"], "eth_getTransactionByHash");
+            assert_eq!(requests[2].0["params"], json!([tx.tx_hash()]));
+        }
+    }
+
+    #[tokio::test]
+    async fn broadcast_times_out_when_server_never_responds() {
+        let server = Server::new(vec![]).await;
+        let mut config = server.config();
+        config.timeout = Duration::from_millis(100);
+        let rpc = WithdrawalRpc::new(&config).await.unwrap();
+        let result = tokio::time::timeout(Duration::from_secs(2), rpc.broadcast(&Server::signed()))
+            .await
+            .expect("broadcast must not hang");
+        assert!(matches!(result, Err(WithdrawalRpcError::Timeout)), "{result:?}");
+        assert!(server.count() >= 1);
+    }
+
+    #[tokio::test]
+    async fn provider_requests_time_out_and_retry_when_server_never_responds() {
+        let server = Server::new(vec![]).await;
+        let mut config = server.config();
+        config.timeout = Duration::from_millis(100);
+        config.max_retries = 1;
+        let rpc = WithdrawalRpc::new(&config).await.unwrap();
+        let error = tokio::time::timeout(Duration::from_secs(2), rpc.l1.get_block_number())
+            .await
+            .expect("each HTTP attempt must be bounded")
+            .unwrap_err();
+        let source = error.source().unwrap().downcast_ref::<reqwest::Error>().unwrap();
+        assert!(source.is_timeout());
+        assert_eq!(server.count(), 2);
     }
 
     #[tokio::test]
