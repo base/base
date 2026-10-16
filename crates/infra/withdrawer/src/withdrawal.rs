@@ -1,8 +1,10 @@
 use alloy_primitives::{B256, Bytes, U256, keccak256};
+use alloy_rlp::Decodable;
 use alloy_rpc_types_eth::{EIP1186AccountProofResponse, Header};
 use alloy_sol_types::{SolEvent, SolValue, sol};
 use alloy_trie::{
     Nibbles, TrieAccount,
+    nodes::TrieNode,
     proof::{ProofVerificationError, verify_proof},
 };
 use base_common_consensus::Predeploys;
@@ -199,6 +201,17 @@ impl Withdrawal {
         if storage.value != U256::from(1) {
             return Err(WithdrawalError::StorageValueMismatch);
         }
+        // The output root check binds the state and storage roots to the onchain claim before
+        // walking attacker-supplied proof nodes: Alloy's verifier panics on some malformed
+        // inline nodes that a self-consistent fake header could otherwise reach.
+        let output_root = OutputRoot::from_parts(header.state_root, proof.storage_hash, block_hash);
+        let computed = output_root.hash();
+        if computed != expected_output_root {
+            return Err(WithdrawalError::OutputRootMismatch {
+                expected: expected_output_root,
+                computed,
+            });
+        }
         let account = TrieAccount {
             nonce: proof.nonce,
             balance: proof.balance,
@@ -212,21 +225,17 @@ impl Withdrawal {
             &proof.account_proof,
         )
         .map_err(WithdrawalError::AccountProof)?;
+        let storage_key = Nibbles::unpack(keccak256(slot));
         verify_proof(
             proof.storage_hash,
-            Nibbles::unpack(keccak256(slot)),
+            storage_key,
             Some(alloy_rlp::encode(storage.value)),
             &storage.proof,
         )
         .map_err(WithdrawalError::StorageProof)?;
-        let output_root = OutputRoot::from_parts(header.state_root, proof.storage_hash, block_hash);
-        let computed = output_root.hash();
-        if computed != expected_output_root {
-            return Err(WithdrawalError::OutputRootMismatch {
-                expected: expected_output_root,
-                computed,
-            });
-        }
+        let storage_proof =
+            VerifiedWithdrawalProof::expand_inline_nodes(&storage.proof, &storage_key)
+                .map_err(|error| WithdrawalError::StorageProof(error.into()))?;
         Ok(VerifiedWithdrawalProof {
             output_root_proof: OutputRootProof {
                 version: output_root.version(),
@@ -234,8 +243,60 @@ impl Withdrawal {
                 messagePasserStorageRoot: output_root.bridge_storage_root,
                 latestBlockhash: output_root.block_hash,
             },
-            storage_proof: storage.proof.clone(),
+            storage_proof,
         })
+    }
+}
+
+impl VerifiedWithdrawalProof {
+    /// Appends nodes embedded in the proof's final node as separate proof elements.
+    ///
+    /// Trie nodes shorter than 32 bytes are inlined in their parent. Alloy verifies such proofs,
+    /// but the portal's `MerkleTrie` expects every node on the path as its own proof element and
+    /// reverts otherwise. Inlined nodes can only appear at the tail of a path.
+    pub fn expand_inline_nodes(
+        proof: &[Bytes],
+        key: &Nibbles,
+    ) -> Result<Vec<Bytes>, alloy_rlp::Error> {
+        let mut expanded = proof.to_vec();
+        let Some((last, parents)) = proof.split_last() else {
+            return Ok(expanded);
+        };
+        let mut depth = 0;
+        for node in parents {
+            match TrieNode::decode(&mut &node[..])? {
+                TrieNode::Branch(_) => depth += 1,
+                TrieNode::Extension(extension) => depth += extension.key.len(),
+                TrieNode::Leaf(_) | TrieNode::EmptyRoot => return Ok(expanded),
+            }
+        }
+        let mut node = last.clone();
+        loop {
+            let child = match TrieNode::decode(&mut &node[..])? {
+                TrieNode::Branch(branch) => {
+                    let Some(nibble) = key.get(depth) else { break };
+                    depth += 1;
+                    branch
+                        .as_ref()
+                        .children()
+                        .find_map(|(index, child)| (index == nibble).then_some(child).flatten())
+                        .cloned()
+                }
+                TrieNode::Extension(extension) => {
+                    depth += extension.key.len();
+                    Some(extension.child)
+                }
+                TrieNode::Leaf(_) | TrieNode::EmptyRoot => None,
+            };
+            match child {
+                Some(child) if !child.is_hash() => {
+                    node = Bytes::copy_from_slice(&child);
+                    expanded.push(node.clone());
+                }
+                _ => break,
+            }
+        }
+        Ok(expanded)
     }
 }
 
@@ -246,12 +307,13 @@ mod tests {
     use alloy_consensus::TxReceipt;
     use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
     use alloy_sol_types::{SolEvent, SolValue};
+    use alloy_trie::{HashBuilder, proof::ProofRetainer};
     use base_common_consensus::Predeploys;
     use serde::Deserialize;
 
     use super::{
-        EIP1186AccountProofResponse, Header, MessagePassed, Withdrawal, WithdrawalError,
-        WithdrawalTransaction,
+        EIP1186AccountProofResponse, Header, MessagePassed, Nibbles, VerifiedWithdrawalProof,
+        Withdrawal, WithdrawalError, WithdrawalTransaction, verify_proof,
     };
 
     #[derive(Deserialize)]
@@ -357,6 +419,34 @@ mod tests {
             .unwrap();
         assert_eq!(keccak256(verified.output_root_proof.abi_encode()), fixture.game.root_claim);
         assert_eq!(verified.storage_proof, fixture.proof.storage_proof[0].proof);
+    }
+
+    #[test]
+    fn expands_inline_nodes_into_separate_proof_elements() {
+        let mut keys = [Nibbles::unpack(B256::ZERO), Nibbles::unpack(B256::ZERO)];
+        keys[1].set_at(63, 1);
+        let value = alloy_rlp::encode(U256::from(1));
+        let mut builder =
+            HashBuilder::default().with_proof_retainer(ProofRetainer::from_iter([keys[1]]));
+        for key in keys {
+            builder.add_leaf(key, &value);
+        }
+        let root = builder.root();
+        let portal_proof: Vec<Bytes> = builder
+            .take_proof_nodes()
+            .into_nodes_sorted()
+            .into_iter()
+            .map(|(_, node)| node)
+            .collect();
+        // eth_getProof omits nodes embedded in their parent.
+        let rpc_proof: Vec<Bytes> =
+            portal_proof.iter().filter(|node| node.len() >= 32).cloned().collect();
+        verify_proof(root, keys[1], Some(value), &rpc_proof).unwrap();
+        assert_eq!((rpc_proof.len(), portal_proof.len()), (1, 3));
+        assert_eq!(
+            VerifiedWithdrawalProof::expand_inline_nodes(&rpc_proof, &keys[1]).unwrap(),
+            portal_proof
+        );
     }
 
     #[test]
