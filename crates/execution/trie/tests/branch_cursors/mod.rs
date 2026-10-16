@@ -340,7 +340,7 @@ fn test_current_after_operations<S: BaseProofsStore + BaseProofsInitialStateStor
 #[case::mdbx(create_mdbx_proofs_storage())]
 #[case::rocksdb(create_rocksdb_proofs_storage())]
 #[serial]
-fn test_same_path_different_blocks<S: BaseProofsStore + BaseProofsInitialStateStore>(
+fn test_rewriting_same_path_keeps_latest_node<S: BaseProofsStore + BaseProofsInitialStateStore>(
     #[case] storage: S,
 ) -> Result<(), BaseProofsStorageError> {
     let path = nibbles_from(vec![1, 2]);
