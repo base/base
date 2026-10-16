@@ -605,11 +605,10 @@ impl FlashState {
 
     /// Sets the watch receiver used to detect flashblocks endpoint changes.
     ///
-    /// When the watched URL changes because `ConductorState::poll` pushes
-    /// the new Raft leader's endpoint, `poll` resets
-    /// `last_flashblock` so the first flashblock from the new leader is not
-    /// compared against the previous leader's index, preventing spurious
-    /// missed-flashblock counts.
+    /// When the watched URL changes because `ConductorState::poll` pushes the
+    /// new Raft leader's endpoint, `FlashState::poll` resets `last_flashblock`
+    /// so the first flashblock from the new leader is not compared against the
+    /// previous leader's index, preventing spurious missed-flashblock counts.
     pub fn set_url_rx(&mut self, rx: watch::Receiver<String>) {
         self.url_rx = Some(rx);
     }
