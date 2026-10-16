@@ -183,8 +183,8 @@ summary = "base-builder-core: flashblocks payload builder library producing sub-
 digest = "21cbb6ed7f"
 
 ["crates/builder/metering/README.md"]
-summary = "base-builder-metering covers MeteringStore backed by a moka cache with bounded LRU eviction and TTL, its MeteringProvider implementation, JSON-RPC extensions, and a wiring example."
-digest = "d563ca4c37"
+summary = "base-builder-metering covers MeteringStore's moka cache with a configured max capacity, LRU eviction policy, and TTL, its MeteringProvider implementation, JSON-RPC extensions, and a wiring example."
+digest = "fe08cca8b3"
 
 ["crates/builder/multiplex/README.md"]
 summary = "Runs flashblocks and basic payload builders in parallel behind one handle, selecting basic at Denim; cutover mode is off by default and a separate basic-only mode runs just the basic builder."
