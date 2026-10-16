@@ -199,8 +199,8 @@ summary = "Types for transaction bundles used in resource metering (Bundle, Pars
 digest = "279c9afeab"
 
 ["crates/common/chains/README.md"]
-summary = "Single source of truth for Base chain config (BaseChainConfig consts: chain IDs, upgrade timestamps, genesis) and the BaseUpgrade enum/traits. Use when you need upgrade timestamps or chain params."
-digest = "5ffbd5d04c"
+summary = "Base chain parameters and upgrade timestamps via ChainConfig, upgrade schedules via ChainUpgrades and Upgrades, and the BaseUpgrade re-export with BaseUpgradeExt execution helpers."
+digest = "9ad08c2366"
 
 ["crates/common/consensus/README.md"]
 summary = "Base EL consensus types that differ from alloy-consensus, notably BaseTxEnvelope with deposit txs and receipts with deposit_nonce. Use when handling Base transactions and receipts."
@@ -688,7 +688,7 @@ digest = "261c1fa398"
 
 ["docs/guides/UPGRADES.md"]
 summary = "Step-by-step guide to adding a network upgrade (Azul as example): BaseUpgrade enum, RollupConfig activation, timestamps, plus BaseSpecId and precompile routing if EVM rules change, and a checklist."
-digest = "e87f3373b8"
+digest = "8df3320197"
 
 ["docs/transaction-events/README.md"]
 summary = "Spec for transaction-event/v1, the JSONL business event journal for transaction observability: config fields, envelope, event vocabulary, Vector to audit-archiver ingest, Postgres retention, examples."
