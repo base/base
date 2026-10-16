@@ -1,40 +1,18 @@
 //! Integration tests for the base-metrics macros and types.
 
+mod common;
+
+use common::{SnapEntry, find_metric, find_metric_labeled};
 use metrics_util::{
-    CompositeKey, MetricKind,
+    MetricKind,
     debugging::{DebugValue, DebuggingRecorder, Snapshotter},
 };
 use ordered_float::OrderedFloat;
-
-type SnapEntry = (CompositeKey, Option<metrics::Unit>, Option<metrics::SharedString>, DebugValue);
 
 fn with_recorder(f: impl FnOnce(Snapshotter)) {
     let recorder = DebuggingRecorder::new();
     let snapshotter = recorder.snapshotter();
     metrics::with_local_recorder(&recorder, || f(snapshotter));
-}
-
-fn find_metric<'a>(snap: &'a [SnapEntry], kind: MetricKind, name: &str) -> Option<&'a DebugValue> {
-    snap.iter()
-        .find(|(ck, _, _, _)| ck.kind() == kind && ck.key().name() == name)
-        .map(|(_, _, _, v)| v)
-}
-
-fn find_metric_labeled<'a>(
-    snap: &'a [SnapEntry],
-    kind: MetricKind,
-    name: &str,
-    labels: &[(&str, &str)],
-) -> Option<&'a DebugValue> {
-    snap.iter()
-        .find(|(ck, _, _, _)| {
-            ck.kind() == kind
-                && ck.key().name() == name
-                && labels
-                    .iter()
-                    .all(|(k, v)| ck.key().labels().any(|l| l.key() == *k && l.value() == *v))
-        })
-        .map(|(_, _, _, v)| v)
 }
 
 fn find_description(snap: &[SnapEntry], kind: MetricKind, name: &str) -> Option<String> {

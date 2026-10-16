@@ -1,36 +1,13 @@
 //! Integration test for static metric initializer registration.
 
+mod common;
+
+use common::{find_metric, find_metric_labeled};
 use metrics_util::{
     MetricKind,
     debugging::{DebugValue, DebuggingRecorder},
 };
 use ordered_float::OrderedFloat;
-
-type SnapEntry =
-    (metrics_util::CompositeKey, Option<metrics::Unit>, Option<metrics::SharedString>, DebugValue);
-
-fn find_metric<'a>(snap: &'a [SnapEntry], kind: MetricKind, name: &str) -> Option<&'a DebugValue> {
-    snap.iter()
-        .find(|(ck, _, _, _)| ck.kind() == kind && ck.key().name() == name)
-        .map(|(_, _, _, v)| v)
-}
-
-fn find_metric_labeled<'a>(
-    snap: &'a [SnapEntry],
-    kind: MetricKind,
-    name: &str,
-    labels: &[(&str, &str)],
-) -> Option<&'a DebugValue> {
-    snap.iter()
-        .find(|(ck, _, _, _)| {
-            ck.kind() == kind
-                && ck.key().name() == name
-                && labels
-                    .iter()
-                    .all(|(k, v)| ck.key().labels().any(|l| l.key() == *k && l.value() == *v))
-        })
-        .map(|(_, _, _, v)| v)
-}
 
 base_metrics::define_metrics! {
     registry_test,
