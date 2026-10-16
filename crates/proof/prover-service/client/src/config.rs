@@ -79,16 +79,6 @@ impl ProverServiceClientConfig {
         }
     }
 
-    /// Return the prover-service HTTP endpoint.
-    pub fn endpoint(&self) -> &str {
-        &self.endpoint
-    }
-
-    /// Return the configured per-request timeout.
-    pub const fn request_timeout(&self) -> Duration {
-        self.request_timeout
-    }
-
     /// Return the retry configuration applied by [`crate::ProofRequesterClient`] and
     /// idempotent [`crate::ProverWorkerClient`] JSON-RPC methods.
     pub const fn retry_config(&self) -> RetryConfig {
