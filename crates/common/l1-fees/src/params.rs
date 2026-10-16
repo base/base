@@ -171,9 +171,10 @@ impl L1FeeParams {
         calldata_cost_per_byte.saturating_add(blob_cost_per_byte)
     }
 
-    /// Calculates the Isthmus operator fee for `input` at gas budget `gas_limit`.
+    /// Calculates the operator fee for `input` at gas budget `gas_limit`.
     ///
-    /// Deposit and empty transactions are exempt; pre-Isthmus this is zero.
+    /// Deposit and empty transactions are exempt. Other charges use stored operator parameters, with
+    /// missing values defaulting to zero. Callers, not this method, apply the Isthmus activation gate.
     pub fn operator_fee_charge(&self, input: &[u8], gas_limit: U256, upgrade: BaseUpgrade) -> U256 {
         if Self::is_fee_exempt(input) {
             return U256::ZERO;
