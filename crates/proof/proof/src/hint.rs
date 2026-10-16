@@ -31,11 +31,6 @@ where
         Self { ty, data: data.into() }
     }
 
-    /// Splits the [Hint] into its components.
-    pub fn split(self) -> (HT, Bytes) {
-        (self.ty, self.data)
-    }
-
     /// Appends more data to [`Hint::data`].
     pub fn with_data<T: AsRef<[u8]>>(self, data: T) -> Self {
         // No-op if the data is empty.
