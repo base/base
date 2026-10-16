@@ -26,8 +26,8 @@ const fn cumulative_gas(receipt: &BaseReceiptEnvelope) -> u64 {
         BaseReceiptEnvelope::Legacy(r)
         | BaseReceiptEnvelope::Eip2930(r)
         | BaseReceiptEnvelope::Eip1559(r)
-        | BaseReceiptEnvelope::Eip7702(r)
-        | BaseReceiptEnvelope::Eip8130(r) => r.receipt.cumulative_gas_used,
+        | BaseReceiptEnvelope::Eip7702(r) => r.receipt.cumulative_gas_used,
+        BaseReceiptEnvelope::Eip8130(r) => r.receipt.inner.cumulative_gas_used,
     }
 }
 

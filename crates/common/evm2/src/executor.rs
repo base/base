@@ -3,7 +3,7 @@
 use alloy_consensus::{Eip658Value, Receipt, transaction::Recovered};
 use alloy_eips::eip2718::Typed2718;
 use alloy_primitives::{B256, Bytes};
-use base_common_consensus::{BaseReceiptEnvelope, DepositReceipt};
+use base_common_consensus::{BaseReceiptEnvelope, DepositReceipt, Eip8130Receipt};
 use base_common_genesis::BaseUpgrade;
 use evm2::{
     BlockStateAccumulator, Evm, SpecId,
@@ -341,8 +341,11 @@ impl<'a> BaseBlockExecutor<'a> {
                 1 => BaseReceiptEnvelope::Eip2930(receipt),
                 2 => BaseReceiptEnvelope::Eip1559(receipt),
                 4 => BaseReceiptEnvelope::Eip7702(receipt),
-                // 0x79 is the enshrined EIP-8130 account-abstraction transaction.
-                0x79 => BaseReceiptEnvelope::Eip8130(receipt),
+                // 0x79 is the enshrined EIP-8130 account-abstraction transaction. This engine
+                // does not run its call phases yet, so no phase count is available to commit.
+                0x79 => BaseReceiptEnvelope::Eip8130(
+                    receipt.map_receipt(|receipt| Eip8130Receipt::new(receipt, 0)),
+                ),
                 // Legacy (type 0) uses the legacy receipt shape. These type bytes mirror the
                 // handlers registered in tx_registry(); the assert flags any registered type that
                 // gains a handler but not a receipt arm here (which would mis-type its receipt).

@@ -313,8 +313,8 @@ impl BaseReceiptBuilder {
 
         // EIP-8130 RPC-only fields, derived before `input` is consumed below. The payer is
         // the sender for self-pay, the named payer for sponsored transactions, or the
-        // recovered signer in open payer mode; the per-phase statuses are persisted on the
-        // receipt and surfaced only at RPC.
+        // recovered signer in open payer mode; the per-phase statuses are expanded at RPC from
+        // the receipt's committed phase count.
         // Recovery of an included open-payer transaction succeeds, since
         // inclusion required it. If it somehow does not, omit the payer rather
         // than report an address that did not pay.
@@ -339,13 +339,10 @@ impl BaseReceiptBuilder {
         // `Some` (possibly empty) marks an EIP-8130 receipt so an empty-`calls`
         // transaction still surfaces `"phaseStatuses": []`; `None` omits the field
         // entirely for non-EIP-8130 receipts.
-        // Stored statuses that violate the receipt invariant are rejected rather than served.
-        let phase_statuses = match &input.receipt {
-            BaseReceipt::Eip8130(receipt) => {
-                if let Some(signed) = tx_signed.as_eip8130() {
-                    receipt.validate_phase_statuses(signed.tx().calls.len())?;
-                }
-                Some(receipt.phase_statuses.clone())
+        // A stored count that violates the receipt invariant is rejected rather than served.
+        let phase_statuses = match (&input.receipt, tx_signed.as_eip8130()) {
+            (BaseReceipt::Eip8130(receipt), Some(signed)) => {
+                Some(receipt.phase_statuses(signed.tx().calls.len())?)
             }
             _ => None,
         };
@@ -418,7 +415,7 @@ mod tests {
     use base_common_chains::ChainConfig;
     use base_common_consensus::{
         BasePrimitives, BaseTransactionSigned, BaseTxEnvelope, BaseTypedTransaction, Call,
-        Eip8130PhaseStatusesError, Eip8130Receipt, Eip8130Signed, TxEip8130,
+        Eip8130CommittedPhasesError, Eip8130Receipt, Eip8130Signed, TxEip8130,
     };
     use base_execution_chainspec::BaseChainSpec;
     use reth_primitives_traits::Recovered;
@@ -796,10 +793,10 @@ mod tests {
     }
 
     /// Builds the RPC receipt for a two-phase EIP-8130 transaction whose stored
-    /// receipt has the given status and phase statuses.
+    /// receipt has the given status and committed phase count.
     fn two_phase_eip8130_receipt(
         status: bool,
-        phase_statuses: Vec<u8>,
+        committed_phases: u64,
     ) -> Result<BaseReceiptBuilder, BaseEthApiError> {
         let call =
             Call { to: Address::with_last_byte(0xc1), value: U256::ZERO, data: Bytes::new() };
@@ -818,7 +815,7 @@ mod tests {
                         cumulative_gas_used: 100,
                         logs: vec![],
                     },
-                    phase_statuses,
+                    committed_phases,
                 )),
                 gas_used: 100,
                 next_log_index: 0,
@@ -829,19 +826,18 @@ mod tests {
     }
 
     #[test]
-    fn eip8130_receipt_serves_valid_phase_statuses() {
-        let receipt = two_phase_eip8130_receipt(false, vec![0x01, 0x00]).unwrap();
+    fn eip8130_receipt_serves_phase_statuses_from_committed_count() {
+        let receipt = two_phase_eip8130_receipt(false, 1).unwrap();
         assert_eq!(receipt.phase_statuses, Some(vec![0x01, 0x00]));
     }
 
     #[test]
-    fn eip8130_receipt_rejects_invalid_phase_statuses() {
-        let err = two_phase_eip8130_receipt(true, vec![0x01]).unwrap_err();
+    fn eip8130_receipt_rejects_inconsistent_committed_count() {
+        let err = two_phase_eip8130_receipt(true, 1).unwrap_err();
         assert!(matches!(
             err,
-            BaseEthApiError::Eip8130PhaseStatuses(Eip8130PhaseStatusesError::CountMismatch {
-                expected: 2,
-                actual: 1,
+            BaseEthApiError::Eip8130CommittedPhases(Eip8130CommittedPhasesError::StatusMismatch {
+                status: true
             })
         ));
     }
