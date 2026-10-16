@@ -40,9 +40,6 @@ mod frame_queue;
 pub use base_protocol::test_utils::{CollectingLayer, TraceStorage};
 pub use frame_queue::TestFrameQueueProvider;
 
-mod sys_config_fetcher;
-pub use sys_config_fetcher::{TestSystemConfigL2Fetcher, TestSystemConfigL2FetcherError};
-
 mod frames;
 pub use frames::{FrameQueueAsserter, FrameQueueBuilder};
 
