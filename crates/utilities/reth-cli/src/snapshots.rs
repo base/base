@@ -23,9 +23,13 @@ pub struct Snapshots;
 impl Snapshots {
     /// Snapshot sources advertised in `--help`, each labelled with the `--chain` name
     /// that selects it.
+    ///
+    /// The full preset downloads `RocksDB` indices because rebuilding them takes over a day.
     pub fn download_defaults() -> DownloadDefaults {
-        DownloadDefaults::default().with_snapshot_source_url(SNAPSHOT_SOURCE_URL).with_snapshots(
-            vec![
+        DownloadDefaults::default()
+            .with_full_preset_rocksdb_indices()
+            .with_snapshot_source_url(SNAPSHOT_SOURCE_URL)
+            .with_snapshots(vec![
                 Cow::Owned(format!(
                     "{MAINNET_SNAPSHOT_URL} (--chain {})",
                     ChainConfig::MAINNET_SELECTOR
@@ -38,8 +42,7 @@ impl Snapshots {
                     "{ZERONET_SNAPSHOT_URL} (--chain {})",
                     ChainConfig::ZERONET_SELECTOR
                 )),
-            ],
-        )
+            ])
     }
 
     /// Initializes Reth's global snapshot download URLs and pruning defaults.

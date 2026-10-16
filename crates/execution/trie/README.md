@@ -20,10 +20,28 @@ base-execution-trie = { workspace = true }
 ```
 
 ```rust,ignore
-use base_execution_trie::{BaseProofStoragePruner, RocksdbProofsStorage};
+use std::{path::Path, sync::Arc, time::Duration};
 
-let storage = RocksdbProofsStorage::new(db_path)?;
-let pruner = BaseProofStoragePruner::new(storage.clone(), retention_blocks);
+use base_execution_trie::{
+    BaseProofStoragePrunerTask, BaseProofsStorage, BaseProofsStorageError, RocksdbProofsStorage,
+};
+use reth_provider::BlockHashReader;
+use reth_tasks::shutdown::GracefulShutdown;
+
+async fn run_pruner<H: BlockHashReader + Send + Sync + 'static>(
+    db_path: &Path,
+    hash_reader: H,
+    retention_blocks: u64,
+    interval: Duration,
+    signal: GracefulShutdown,
+) -> Result<(), BaseProofsStorageError> {
+    let provider: BaseProofsStorage<Arc<RocksdbProofsStorage>> =
+        Arc::new(RocksdbProofsStorage::new(db_path)?).into();
+    BaseProofStoragePrunerTask::new(provider, hash_reader, retention_blocks, interval)
+        .run(signal)
+        .await;
+    Ok(())
+}
 ```
 
 ## License

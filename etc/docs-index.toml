@@ -300,7 +300,7 @@ digest = "f89e210ad5"
 
 ["crates/consensus/rpc/README.md"]
 summary = "jsonrpsee trait definitions for the rollup node RPC, chiefly optimism_syncStatus, with a security note that the endpoint is internal-only. Use when implementing or calling consensus RPC."
-digest = "969c4d6125"
+digest = "d382650c29"
 
 ["crates/consensus/safedb/README.md"]
 summary = "redb-backed persistent safe head tracking (SafeDB, SafeHeadListener, SafeDBReader) serving optimism_safeHeadAtL1; not multi-process safe. Use when working on safe head history."
@@ -400,7 +400,7 @@ digest = "5c43615d49"
 
 ["crates/execution/trie/README.md"]
 summary = "base-execution-trie: BaseProofsStore traits and backends (e.g. RocksdbProofsStorage) holding per-block trie diffs for fault-proof generation, with cursors, pruner and startup init job."
-digest = "b641655b32"
+digest = "e842faecd7"
 
 ["crates/execution/trie/src/db/schema.md"]
 summary = "MDBX proof-history DB schema: versioned DupSort tables, tombstones, BlockChangeSet reverse index, proof window keys, cursor reads, append-only writes, block 0 backfill. For eth_getProof storage."
@@ -476,7 +476,7 @@ digest = "63043098db"
 
 ["crates/infra/withdrawer/README.md"]
 summary = "Withdrawer configuration, signers, retrying RPC clients, capped L1 transaction preparation and signing, withdrawal extraction, and inclusion proof verification against onchain output claims."
-digest = "40cc2a03ee"
+digest = "93f46fb900"
 
 ["crates/infra/zk-benchmarks/README.md"]
 summary = "One-line stub: ZK proof benchmarking utilities for Base load-test runs; no usage or detail beyond that."
@@ -665,6 +665,7 @@ digest = "393c4961d6"
 ["docs/guides/DEVNET.md"]
 summary = "Chooser for local environments: Docker and HA devnets, Anvil + local Nitro proving, snapshot devnet (base dev), snapshot benchmark harness, with quickstarts, data-reset behavior, and owning docs."
 digest = "0951b41580"
+
 ["docs/guides/GLAMSTERDAM.md"]
 summary = "Scopes Base's Glamsterdam EIPs with BAL and SLOTNUM designs, plus calldata and access-list pricing proposals for transaction costs, P2P block sizes, and storage growth."
 digest = "5934f501aa"

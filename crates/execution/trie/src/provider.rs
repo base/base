@@ -264,3 +264,26 @@ impl<'a, Storage: BaseProofsStore> BytecodeReader for BaseProofsStateProviderRef
         self.latest.bytecode_by_hash(code_hash)
     }
 }
+
+#[cfg(all(test, not(feature = "metrics")))]
+mod tests {
+    use alloy_primitives::U256;
+    use reth_provider::noop::NoopProvider;
+
+    use super::*;
+    use crate::{BaseProofsInitialStateStore, InMemoryProofsStorage};
+
+    #[test]
+    fn basic_account_reads_from_proofs_storage() {
+        let address = Address::repeat_byte(0x42);
+        let account = Account { nonce: 7, balance: U256::from(1_000), bytecode_hash: None };
+        let storage = InMemoryProofsStorage::new();
+        storage.store_hashed_accounts(vec![(keccak256(address), Some(account))]).unwrap();
+
+        let latest: Box<dyn StateProvider + Send> = Box::<NoopProvider>::default();
+        let provider = BaseProofsStateProviderRef::new(latest, &storage, 42);
+
+        assert_eq!(provider.basic_account(&address).unwrap(), Some(account));
+        assert_eq!(provider.basic_account(&Address::repeat_byte(0x43)).unwrap(), None);
+    }
+}

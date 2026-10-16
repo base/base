@@ -28,12 +28,16 @@ impl<T: FromStr + Clone + Send + Sync + 'static> TypedValueParser for SecretValu
     fn parse_ref(
         &self,
         _cmd: &Command,
-        _arg: Option<&Arg>,
+        arg: Option<&Arg>,
         value: &OsStr,
     ) -> Result<Self::Value, Error> {
         // clap's FromStr adapter echoes the raw value on error, even if T's error is redacted.
         value.to_str().and_then(|s| s.parse().ok()).map(Secret).ok_or_else(|| {
-            Error::raw(ErrorKind::ValueValidation, "invalid signing secret; check its format")
+            let message = arg.and_then(Arg::get_long).map_or_else(
+                || "invalid signing secret; check its format".to_owned(),
+                |flag| format!("invalid signing secret for --{flag}; check its format"),
+            );
+            Error::raw(ErrorKind::ValueValidation, message)
         })
     }
 }
