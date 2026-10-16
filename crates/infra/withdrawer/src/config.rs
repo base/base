@@ -1,8 +1,13 @@
-use std::{env, ffi::OsString, time::Duration};
+use std::{
+    env,
+    ffi::{OsStr, OsString},
+    time::Duration,
+};
 
 use alloy_primitives::{Address, B256};
 use clap::{
-    ArgGroup, ArgMatches, Args, Command, CommandFactory, FromArgMatches, Parser, error::ErrorKind,
+    Arg, ArgGroup, ArgMatches, Args, Command, CommandFactory, FromArgMatches, Parser,
+    builder::TypedValueParser, error::ErrorKind,
 };
 use coins_bip32::path::DerivationPath;
 use coins_bip39::{English, Mnemonic};
@@ -11,6 +16,25 @@ use url::Url;
 
 use crate::{Network, NetworkPreset, ProofSystem, Secret, SecretValueParser};
 
+/// Parses RPC endpoints without including rejected values in clap errors.
+#[derive(Debug, Clone)]
+pub struct RpcUrlValueParser;
+
+impl TypedValueParser for RpcUrlValueParser {
+    type Value = Url;
+
+    fn parse_ref(
+        &self,
+        _cmd: &Command,
+        _arg: Option<&Arg>,
+        value: &OsStr,
+    ) -> Result<Self::Value, clap::Error> {
+        value.to_str().and_then(|value| Url::parse(value).ok()).ok_or_else(|| {
+            clap::Error::raw(ErrorKind::ValueValidation, "invalid RPC URL; check its format")
+        })
+    }
+}
+
 /// Command-line withdrawal settings before cross-field validation.
 #[derive(Debug, Clone, Args)]
 #[command(name = "withdrawer")]
@@ -18,7 +42,7 @@ use crate::{Network, NetworkPreset, ProofSystem, Secret, SecretValueParser};
 #[command(group(ArgGroup::new("proofs").args(["dispute_game_factory", "l2_output_oracle"])))]
 pub struct WithdrawerArgs {
     /// L1 RPC endpoint.
-    #[arg(long)]
+    #[arg(long, value_parser = RpcUrlValueParser)]
     pub l1_rpc_url: Url,
     /// L2 withdrawal transaction hash.
     #[arg(long)]
@@ -27,7 +51,7 @@ pub struct WithdrawerArgs {
     #[arg(long, value_enum, conflicts_with_all = ["l2_rpc_url", "portal", "dispute_game_factory", "anchor_state_registry", "l2_output_oracle"])]
     pub network: Option<NetworkPreset>,
     /// Custom L2 RPC endpoint.
-    #[arg(long, requires = "portal")]
+    #[arg(long, requires = "portal", value_parser = RpcUrlValueParser)]
     pub l2_rpc_url: Option<Url>,
     /// Custom Optimism portal.
     #[arg(long, requires_all = ["l2_rpc_url", "proofs"])]
@@ -179,11 +203,11 @@ impl WithdrawerArgs {
 
 impl CommandFactory for WithdrawerArgs {
     fn command() -> Command {
-        Self::augment_args(Command::new("withdrawer"))
+        Self::augment_args(Command::new("withdrawer").version(env!("CARGO_PKG_VERSION")))
     }
 
     fn command_for_update() -> Command {
-        Self::augment_args_for_update(Command::new("withdrawer"))
+        Self::augment_args_for_update(Command::new("withdrawer").version(env!("CARGO_PKG_VERSION")))
     }
 }
 
@@ -557,6 +581,22 @@ mod tests {
                     ErrorKind::ValueValidation
                 );
             }
+        }
+    }
+
+    #[test]
+    fn invalid_rpc_urls_do_not_echo_credentials() {
+        for flag in ["--l1-rpc-url", "--l2-rpc-url"] {
+            let mut argv = base();
+            if flag == "--l1-rpc-url" {
+                argv.remove(1);
+            }
+            argv.extend([flag.into(), "https://user:example-password@".into()]);
+            let error = WithdrawerArgs::try_parse_from(argv).unwrap_err();
+            assert_eq!(error.kind(), ErrorKind::ValueValidation);
+            let diagnostic = format!("{error} {error:?}");
+            assert!(diagnostic.contains("invalid RPC URL"));
+            assert!(!diagnostic.contains("example-password"), "credentials leaked: {diagnostic}");
         }
     }
 

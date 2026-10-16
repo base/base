@@ -6,7 +6,9 @@ pub use contracts::{
 };
 
 mod config;
-pub use config::{ConfigError, Fees, SignerSource, WithdrawerArgs, WithdrawerConfig};
+pub use config::{
+    ConfigError, Fees, RpcUrlValueParser, SignerSource, WithdrawerArgs, WithdrawerConfig,
+};
 
 mod network;
 pub use network::{Network, NetworkPreset, ProofSystem};
