@@ -6111,7 +6111,6 @@ dependencies = [
  "eyre",
  "reth-node-core",
  "serde",
- "tokio",
  "tokio-util",
  "tracing",
  "url",
