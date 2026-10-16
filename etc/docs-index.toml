@@ -475,8 +475,8 @@ summary = "Alpha WebSocket proxy fanning out Flashblocks from rollup-boost to do
 digest = "63043098db"
 
 ["crates/infra/withdrawer/README.md"]
-summary = "Typed withdrawer CLI configuration, local and optional Ledger transaction signers, fee validation, and OP Stack network presets without RPC or submission."
-digest = "f6754156ab"
+summary = "Typed withdrawer CLI configuration, local and optional Ledger signers, OP Stack network presets, and HTTP(S) RPC clients with bounded retries, signed submission, and receipt waiting."
+digest = "5de53bf36c"
 
 ["crates/infra/zk-benchmarks/README.md"]
 summary = "One-line stub: ZK proof benchmarking utilities for Base load-test runs; no usage or detail beyond that."
