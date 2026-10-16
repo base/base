@@ -4281,7 +4281,6 @@ dependencies = [
  "notify",
  "rustls 0.23.43",
  "serde",
- "serde_json",
  "thiserror 2.0.19",
  "tokio",
  "tracing",

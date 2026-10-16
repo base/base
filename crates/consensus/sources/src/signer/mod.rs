@@ -39,9 +39,6 @@ pub enum BlockSignerHandler {
 /// Errors that can occur when starting a block signer.
 #[derive(Debug, thiserror::Error)]
 pub enum BlockSignerStartError {
-    /// An error that can occur when signing a block with a local signer.
-    #[error(transparent)]
-    Local(#[from] alloy_signer::Error),
     /// An error that can occur when signing a block with a remote signer.
     #[error(transparent)]
     Remote(#[from] RemoteSignerStartError),
