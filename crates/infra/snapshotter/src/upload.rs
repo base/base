@@ -310,15 +310,14 @@ impl io::Write for StreamingMultipartUpload {
     }
 }
 
+/// Maps a generated archive filename to its S3 object key.
+type StreamingArchiveDestination = dyn Fn(&str) -> Result<String> + Send + Sync;
+
 /// Bridges Base's synchronous snapshot archive sink to direct S3 multipart uploads.
 ///
 /// Reth archive generation invokes the sink from Rayon workers. The supplied Tokio runtime handle
 /// starts and awaits S3 work from those synchronous workers; the limiter bounds concurrent archive
 /// writers while the uploader's global part permits bound compressed-buffer memory.
-/// Maps a generated archive filename to its S3 object key.
-type StreamingArchiveDestination = dyn Fn(&str) -> Result<String> + Send + Sync;
-
-/// Bridges Base's synchronous snapshot archive sink to direct S3 multipart uploads.
 pub struct StreamingS3ArchiveSink {
     uploader: SnapshotUploader,
     runtime: Handle,
