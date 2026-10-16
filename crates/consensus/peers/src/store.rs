@@ -118,16 +118,27 @@ impl<'de> serde::Deserialize<'de> for BootStore {
 }
 
 impl BootStore {
-    /// Adds an [`Enr`] to the store.
+    /// Adds an [`Enr`] to the store, rotating the oldest peer out if necessary.
     ///
-    /// This method will **note** panic on failure to write to disk. Instead, it is the
+    /// This method will **not** panic on failure to write to disk. Instead, it is the
     /// responsibility of the caller to ensure the store is written to disk by calling
     /// [`BootStore::sync`] prior to dropping the store.
     pub fn add_enr(&mut self, enr: Enr) {
-        self.add_rotate(enr);
+        if self.peers.contains(&enr) {
+            return;
+        }
+
+        debug!(target: "bootstore", enr = %enr, "Adding enr to the boot store");
+        self.peers.push_back(enr);
+
+        // Prune the oldest peer if we exceed the maximum number of peers.
+        if self.peers.len() > MAX_PEERS {
+            debug!(target: "bootstore", "Boot store exceeded maximum peers, removing oldest peer");
+            self.peers.pop_front();
+        }
     }
 
-    /// Returns the number of peers in the bootstore that
+    /// Returns the peers that
     /// have the [`crate::BaseEnr::OPSTACK_ENR_KEY`] in the ENR.
     pub fn valid_peers(&self) -> Vec<&Enr> {
         self.peers
@@ -136,7 +147,7 @@ impl BootStore {
             .collect()
     }
 
-    /// Returns the number of peers that contain the
+    /// Returns the peers that contain the
     /// [`crate::BaseEnr::OPSTACK_ENR_KEY`] in the ENR *and*
     /// have the correct chain id and version.
     pub fn valid_peers_with_chain_id(&self, chain_id: u64) -> Vec<&Enr> {
@@ -158,14 +169,13 @@ impl BootStore {
 
     /// Merges the given list of [`Enr`]s with the current list of peers.
     pub fn merge(&mut self, peers: impl IntoIterator<Item = Enr>) {
-        peers.into_iter().for_each(|peer| self.add_rotate(peer));
+        peers.into_iter().for_each(|peer| self.add_enr(peer));
     }
 
     /// Syncs the [`BootStore`] with the contents on disk.
     pub fn sync(&mut self) -> Result<(), std::io::Error> {
         if let Some(file) = &mut self.file {
-            // Reset the file pointer to the beginning of the file to overwrite the file.
-            // Reset file pointer AND truncate
+            // Reset the file pointer and truncate so the write overwrites the old contents.
             file.seek(SeekFrom::Start(0))?;
             file.set_len(0)?;
 
@@ -190,21 +200,5 @@ impl BootStore {
             }
         }
         bootstores
-    }
-
-    /// Adds an [`Enr`] to the store, rotating the oldest peer out if necessary.
-    fn add_rotate(&mut self, enr: Enr) {
-        if self.peers.contains(&enr) {
-            return;
-        }
-
-        debug!(target: "bootstore", enr = %enr, "Adding enr to the boot store");
-        self.peers.push_back(enr);
-
-        // Prune the oldest peer if we exceed the maximum number of peers.
-        if self.peers.len() > MAX_PEERS {
-            debug!(target: "bootstore", "Boot store exceeded maximum peers, removing oldest peer");
-            self.peers.pop_front();
-        }
     }
 }
