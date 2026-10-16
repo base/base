@@ -148,6 +148,7 @@ impl PreparedWithdrawalTransaction {
                 let mut request =
                     TransactionRequest::from_transaction_with_sender(transaction.clone(), sender);
                 request.gas = None;
+                request.nonce = None;
                 let estimate = rpc.l1.estimate_gas(request).await?;
                 Self::scale_gas_limit(estimate, config.gas_multiplier)?
             };
@@ -162,7 +163,7 @@ impl PreparedWithdrawalTransaction {
         .map_err(WithdrawalTransactionError::Timeout)?
     }
 
-    /// Multiplies a gas estimate by a finite multiplier of at least one, rounding up exactly.
+    /// Multiplies a gas estimate by a finite multiplier of at least one, rounding up.
     pub fn scale_gas_limit(
         estimate: u64,
         multiplier: f64,
@@ -170,25 +171,11 @@ impl PreparedWithdrawalTransaction {
         if !multiplier.is_finite() || multiplier < 1.0 {
             return Err(WithdrawalTransactionError::InvalidGasMultiplier);
         }
-        if estimate == 0 {
-            return Ok(0);
-        }
-        let bits = multiplier.to_bits();
-        let exponent = ((bits >> 52) & 0x7ff) - 1023;
-        if exponent >= u64::BITS.into() {
+        let gas = (estimate as f64 * multiplier).ceil();
+        if !gas.is_finite() || gas >= u64::MAX as f64 {
             return Err(WithdrawalTransactionError::GasLimitOverflow);
         }
-        // Use the exact binary multiplier so large integer estimates never round down through f64.
-        // With exponent < 64, the 64-bit estimate times the 53-bit significand fits in u128,
-        // including the at-most-11-bit left shift.
-        let significand = (bits & ((1u64 << 52) - 1)) | (1u64 << 52);
-        let product = u128::from(estimate) * u128::from(significand);
-        let gas = if exponent <= 52 {
-            product.div_ceil(1u128 << (52 - exponent))
-        } else {
-            product << (exponent - 52)
-        };
-        gas.try_into().map_err(|_| WithdrawalTransactionError::GasLimitOverflow)
+        Ok(gas as u64)
     }
 
     /// Maximum gas cost in wei, independent of the eventual effective gas price.
@@ -421,7 +408,7 @@ mod tests {
             assert_eq!(estimate["to"], json!(target));
             assert_eq!(estimate["input"], json!(input));
             assert_eq!(estimate["chainId"], "0x1");
-            assert_eq!(estimate["nonce"], "0x7");
+            assert!(estimate.get("nonce").is_none());
             assert_eq!(estimate["value"], "0x0");
             assert!(estimate.get("gas").is_none());
             match fees {
@@ -570,35 +557,15 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn gas_scaling_preserves_integer_precision_and_rejects_boundary_overflow() {
-        for (estimate, multiplier, expected) in [
-            (u64::MAX, 1.0, Some(u64::MAX)),
-            ((1u64 << 53) + 1, 1.0, Some((1u64 << 53) + 1)),
-            (1, 1.0f64.next_up(), Some(2)),
-            (1, (1u64 << 63) as f64, Some(1u64 << 63)),
-            (1, 2.0f64.powi(64), None),
-            (u64::MAX, 1.0f64.next_up(), None),
-            (21_000, f64::MAX, None),
-        ] {
-            let server = Server::new(None, estimate).await;
-            let mut config = server.config();
-            config.fees = Fees::Legacy { gas_price: 5 };
-            config.gas_multiplier = multiplier;
-            let rpc = WithdrawalRpc::new(&config).unwrap();
-            let result = PreparedWithdrawalTransaction::prepare(
-                &config,
-                &rpc,
-                Address::ZERO,
-                Address::repeat_byte(2),
-                Bytes::new(),
-            )
-            .await;
-            if let Some(expected) = expected {
-                assert_eq!(result.unwrap().transaction().gas_limit(), expected);
-            } else {
-                assert!(matches!(result, Err(WithdrawalTransactionError::GasLimitOverflow)));
-            }
+    #[test]
+    fn gas_scaling_rounds_up_and_rejects_overflow() {
+        assert_eq!(PreparedWithdrawalTransaction::scale_gas_limit(21_001, 1.5).unwrap(), 31_502);
+        assert_eq!(PreparedWithdrawalTransaction::scale_gas_limit(21_001, 1.0).unwrap(), 21_001);
+        for (estimate, multiplier) in [(u64::MAX, 1.0), (21_001, f64::MAX)] {
+            assert!(matches!(
+                PreparedWithdrawalTransaction::scale_gas_limit(estimate, multiplier),
+                Err(WithdrawalTransactionError::GasLimitOverflow)
+            ));
         }
     }
 

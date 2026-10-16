@@ -34,7 +34,7 @@ pub struct WithdrawalRpc {
     pub l1: RootProvider,
     /// Base L2 state reads, including deposit receipts and storage proofs.
     pub l2: RootProvider<Base>,
-    /// Deadline for broadcast and receipt waiting.
+    /// Deadline for transaction preparation, broadcast, and receipt waiting.
     pub timeout: Duration,
 }
 
