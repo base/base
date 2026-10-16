@@ -3,7 +3,7 @@
 //! Uses the `metrics` crate facade (`counter!`, `histogram!`) so the exporter
 //! backend is determined by the binary (e.g. Prometheus, `DogStatsD`).
 
-use base_prover_service_db::{ApiProofType, ProofJob, ProofType};
+use base_prover_service_db::{ApiProofType, ProofJob};
 use metrics::{counter, describe_counter, describe_histogram, histogram};
 
 // ---------------------------------------------------------------------------
@@ -152,14 +152,6 @@ pub fn record_terminal_proof_job(status: &str, job: &ProofJob) {
 // ---------------------------------------------------------------------------
 // Utilities
 // ---------------------------------------------------------------------------
-
-/// Map proof type to a short string for metric tags.
-pub const fn proof_type_label(proof_type: ProofType) -> &'static str {
-    match proof_type {
-        ProofType::OpSuccinctSp1ClusterCompressed => "compressed",
-        ProofType::OpSuccinctSp1ClusterSnarkPlonk => "snark_plonk",
-    }
-}
 
 /// Map API proof type to a short string for metric tags.
 pub const fn api_proof_type_label(proof_type: ApiProofType) -> &'static str {
