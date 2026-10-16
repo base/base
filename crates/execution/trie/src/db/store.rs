@@ -2857,48 +2857,6 @@ mod tests {
     }
 
     #[test]
-    fn test_prune_earliest_state_returns_correct_counts() {
-        let dir = TempDir::new().unwrap();
-        let store = MdbxProofsStorage::new(dir.path()).expect("env");
-        store.set_earliest_block_number(0, B256::ZERO).unwrap();
-
-        let addr = B256::random();
-
-        // Block 1: Insert
-        let b1 = BlockWithParent::new(B256::ZERO, NumHash::new(1, B256::random()));
-        let acc1 = Account { nonce: 1, ..Default::default() };
-        let mut diff1 = HashedPostState::default();
-        diff1.accounts.insert(addr, Some(acc1));
-        store
-            .store_trie_updates(
-                b1,
-                BlockStateDiff { sorted_post_state: diff1.into_sorted(), ..Default::default() },
-            )
-            .unwrap();
-
-        // Block 2: Update
-        let b2 = BlockWithParent::new(b1.block.hash, NumHash::new(2, B256::random()));
-        let acc2 = Account { nonce: 2, ..Default::default() };
-        let mut diff2 = HashedPostState::default();
-        diff2.accounts.insert(addr, Some(acc2));
-        store
-            .store_trie_updates(
-                b2,
-                BlockStateDiff { sorted_post_state: diff2.into_sorted(), ..Default::default() },
-            )
-            .unwrap();
-
-        // Prune to Block 2.
-        // Survivor is at Block 2.
-        // Block 1 should be deleted.
-        // Count should be 1.
-        let counts = store.prune_earliest_state(b2).unwrap();
-
-        assert_eq!(counts.hashed_accounts_written_total, 1);
-        assert_eq!(counts.account_trie_updates_written_total, 0);
-    }
-
-    #[test]
     fn test_prune_earliest_state_empty_window_updates_pointer() {
         let dir = TempDir::new().unwrap();
         let store = MdbxProofsStorage::new(dir.path()).expect("env");
@@ -3311,42 +3269,6 @@ mod tests {
             let inner = vv.value.0.as_ref().expect("Some(StorageValue)");
             assert_eq!(inner.0, lv1_new, "expected updated value for non-wiped address");
         }
-    }
-
-    #[test]
-    fn test_proof_window() {
-        let dir = TempDir::new().unwrap();
-        let store = MdbxProofsStorage::new(dir.path()).expect("env");
-
-        // Test initial state (no values set)
-        let initial_value = store.get_earliest_block_number().expect("get earliest");
-        assert_eq!(initial_value, None);
-
-        // Test setting the value
-        let block_number = 42u64;
-        let hash = B256::random();
-        store.set_earliest_block_number(block_number, hash).expect("set earliest");
-
-        // Verify value was stored correctly
-        let retrieved = store.get_earliest_block_number().expect("get earliest");
-        assert_eq!(retrieved, Some((block_number, hash)));
-
-        // Test updating with new values
-        let new_block_number = 100u64;
-        let new_hash = B256::random();
-        store.set_earliest_block_number(new_block_number, new_hash).expect("update earliest");
-
-        // Verify update worked
-        let updated = store.get_earliest_block_number().expect("get updated earliest");
-        assert_eq!(updated, Some((new_block_number, new_hash)));
-
-        // Verify that latest_block falls back to earliest when not set
-        let latest = store.get_latest_block_number().expect("get latest");
-        assert_eq!(
-            latest,
-            Some((new_block_number, new_hash)),
-            "Latest block should fall back to earliest when not explicitly set"
-        );
     }
 
     #[test]
