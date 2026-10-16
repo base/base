@@ -5,8 +5,7 @@
 
 use alloc::collections::{btree_map::BTreeMap, vec_deque::VecDeque};
 
-use alloy_consensus::{Header, Sealed};
-use alloy_primitives::{B256, map::HashMap};
+use alloy_primitives::map::HashMap;
 use base_protocol::{BlockInfo, L2BlockInfo};
 
 use crate::TipCursor;
@@ -57,16 +56,6 @@ impl PipelineCursor {
         &self.tip().l2_safe_head
     }
 
-    /// Returns the sealed header of the current L2 safe head.
-    pub fn l2_safe_head_header(&self) -> &Sealed<Header> {
-        &self.tip().l2_safe_head_header
-    }
-
-    /// Returns the output root of the current L2 safe head.
-    pub fn l2_safe_head_output_root(&self) -> &B256 {
-        &self.tip().l2_safe_head_output_root
-    }
-
     /// Returns the current L2 tip cursor containing safe head information.
     ///
     /// # Panics
@@ -91,31 +80,5 @@ impl PipelineCursor {
         self.origins.push_back(origin.number);
         self.origin_infos.insert(origin.number, origin);
         self.tips.insert(origin.number, l2_tip_block);
-    }
-
-    /// Resets the cursor state due to an L1 reorganization.
-    ///
-    /// # Panics
-    /// This method panics if no suitable reset target is found in the cache.
-    pub fn reset(&mut self, fork_block: u64) -> (TipCursor, BlockInfo) {
-        let channel_start = fork_block - self.channel_timeout;
-
-        match self.tips.get(&channel_start) {
-            Some(l2_safe_tip) => {
-                // The channel start block is in the cache, we can use it to reset the cursor.
-                (l2_safe_tip.clone(), self.origin_infos[&channel_start])
-            }
-            None => {
-                // If the channel start block is not in the cache, we reset the cursor
-                // to the closest known L1 block for which we have a corresponding L2 block.
-                let (last_l1_known_tip, l2_known_tip) = self
-                    .tips
-                    .range(..=channel_start)
-                    .next_back()
-                    .expect("walked back to genesis without finding anchor origin block");
-
-                (l2_known_tip.clone(), self.origin_infos[last_l1_known_tip])
-            }
-        }
     }
 }
