@@ -41,17 +41,11 @@ impl TxPoolExtension {
 impl BaseNodeExtension for TxPoolExtension {
     /// Applies the extension to the supplied builder.
     fn apply(self: Box<Self>, builder: NodeHooks) -> NodeHooks {
-        let config = self.config;
-
-        let tracing_enabled = config.tracing_enabled;
-        let logs_enabled = config.tracing_logs_enabled;
-        let node_role = config.transaction_event_node_role;
-        let flashblocks_config = config.flashblocks_config;
-
-        // Start tracing subscription if enabled
-        if !tracing_enabled {
+        if !self.config.tracing_enabled {
             return builder;
         }
+
+        let config = self.config;
 
         builder.add_rpc_module(move |ctx| {
             info!(message = "Starting transaction tracing subscription");
@@ -59,14 +53,16 @@ impl BaseNodeExtension for TxPoolExtension {
                 BroadcastStream::new(ctx.provider().subscribe_to_canonical_state());
             let pool = ctx.pool().clone();
 
-            // Get flashblocks state from config, or create a default one if not configured
             let fb_state: Arc<FlashblocksState> =
-                flashblocks_config.as_ref().map(|cfg| Arc::clone(&cfg.state)).unwrap_or_default();
+                config.flashblocks_config.map(|cfg| cfg.state).unwrap_or_default();
 
-            tokio::spawn(async move {
-                tracex_subscription(canonical_stream, fb_state, pool, logs_enabled, node_role)
-                    .await;
-            });
+            tokio::spawn(tracex_subscription(
+                canonical_stream,
+                fb_state,
+                pool,
+                config.tracing_logs_enabled,
+                config.transaction_event_node_role,
+            ));
 
             Ok(())
         })
