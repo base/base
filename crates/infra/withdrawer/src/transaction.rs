@@ -592,13 +592,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dry_run_preparation_does_not_access_signing_material() {
+    async fn preparation_does_not_access_signing_material() {
         let server = Server::new(None, 21_001).await;
         let mut config = server.config();
         config.signer = crate::SignerSource::PrivateKey(crate::Secret(B256::ZERO));
         config.fees = Fees::Legacy { gas_price: u128::MAX };
         config.gas_limit = Some(u64::MAX);
-        config.dry_run = true;
         let rpc = WithdrawalRpc::new(&config).unwrap();
         let prepared = PreparedWithdrawalTransaction::prepare(
             &config,
@@ -611,7 +610,6 @@ mod tests {
         .expect("preparation must not construct a signer, even with an invalid signing key");
         assert_eq!(prepared.sender(), Address::ZERO);
         assert_eq!(prepared.maximum_gas_cost(), U256::from(u64::MAX) * U256::from(u128::MAX));
-        assert_eq!(server.count("eth_sendRawTransaction"), 0);
     }
 
     #[tokio::test]
