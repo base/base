@@ -319,6 +319,26 @@ fn eip8130_block_gas_reservation_includes_payer_auth() {
 }
 
 #[test]
+fn rejects_eip8130_transaction_before_execution() {
+    use base_common_consensus::{Eip8130Constants, Eip8130Signed, TxEip8130};
+
+    let signed = Eip8130Signed::new(
+        TxEip8130 { gas_limit: 100_000, sender: Some(SENDER), ..Default::default() },
+        Bytes::from(Eip8130Constants::K1_AUTHENTICATOR.to_vec()),
+        Bytes::new(),
+    );
+    let mut executor =
+        executor_with_block_gas_limit(BaseSpecId::new(BaseUpgrade::Cobalt), 30_000_000);
+    let err = executor
+        .execute_transaction(&Recovered::new_unchecked(BaseTxEnvelope::Eip8130(signed), SENDER))
+        .expect_err("EIP-8130 execution is not supported by this engine");
+    assert!(
+        format!("{err}").contains("EIP-8130 transaction execution is not supported"),
+        "got: {err}"
+    );
+}
+
+#[test]
 fn exempts_pre_regolith_deposit_from_block_gas_limit() {
     // Pre-Regolith (Bedrock) deposits are exempt from the block-gas check.
     let mut executor = executor_with_block_gas_limit(BaseSpecId::new(BaseUpgrade::Bedrock), 50_000);

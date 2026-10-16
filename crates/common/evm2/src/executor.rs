@@ -3,7 +3,7 @@
 use alloy_consensus::{Eip658Value, Receipt, transaction::Recovered};
 use alloy_eips::eip2718::Typed2718;
 use alloy_primitives::{B256, Bytes};
-use base_common_consensus::{BaseReceiptEnvelope, DepositReceipt, Eip8130Receipt};
+use base_common_consensus::{BaseReceiptEnvelope, DepositReceipt};
 use base_common_genesis::BaseUpgrade;
 use evm2::{
     BlockStateAccumulator, Evm, SpecId,
@@ -110,6 +110,23 @@ impl core::fmt::Display for DaFootprintAboveGasLimit {
 }
 
 impl core::error::Error for DaFootprintAboveGasLimit {}
+
+/// Error returned for an EIP-8130 transaction, whose enshrined execution path this engine does not
+/// implement yet.
+///
+/// The `0x79` receipt commits to the number of call phases that committed, which only the
+/// enshrined execution path can produce, so the transaction is rejected before execution rather
+/// than included with a receipt that disagrees with the reference executor.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Eip8130ExecutionUnsupported;
+
+impl core::fmt::Display for Eip8130ExecutionUnsupported {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("EIP-8130 transaction execution is not supported by this engine")
+    }
+}
+
+impl core::error::Error for Eip8130ExecutionUnsupported {}
 
 /// Block-boundary context for pre-execution system calls.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -295,6 +312,10 @@ impl<'a> BaseBlockExecutor<'a> {
             0
         };
 
+        if tx.as_eip8130().is_some() {
+            return Err(HandlerError::external(Eip8130ExecutionUnsupported));
+        }
+
         // The deposit receipt records the depositor's nonce *before* the deposit executes (and
         // bumps it), read untracked so it does not perturb execution. Matches the reference.
         let deposit_nonce = if is_deposit {
@@ -341,11 +362,6 @@ impl<'a> BaseBlockExecutor<'a> {
                 1 => BaseReceiptEnvelope::Eip2930(receipt),
                 2 => BaseReceiptEnvelope::Eip1559(receipt),
                 4 => BaseReceiptEnvelope::Eip7702(receipt),
-                // 0x79 is the enshrined EIP-8130 account-abstraction transaction. This engine
-                // does not run its call phases yet, so no phase count is available to commit.
-                0x79 => BaseReceiptEnvelope::Eip8130(
-                    receipt.map_receipt(|receipt| Eip8130Receipt::new(receipt, 0)),
-                ),
                 // Legacy (type 0) uses the legacy receipt shape. These type bytes mirror the
                 // handlers registered in tx_registry(); the assert flags any registered type that
                 // gains a handler but not a receipt arm here (which would mis-type its receipt).
