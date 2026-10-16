@@ -91,13 +91,6 @@ impl GossipDriverBuilder {
         self
     }
 
-    /// Sets the [`RollupConfig`] for the network.
-    /// This is used to determine the topic to publish to.
-    pub const fn with_rollup_config(mut self, rollup_config: RollupConfig) -> Self {
-        self.rollup_config = rollup_config;
-        self
-    }
-
     /// Sets topic scoring.
     /// This is disabled by default.
     pub const fn with_topic_scoring(mut self, topic_scoring: bool) -> Self {
@@ -114,18 +107,6 @@ impl GossipDriverBuilder {
     /// Sets the [`PeerMonitoring`] configuration for the gossip driver.
     pub const fn with_peer_monitoring(mut self, peer_monitoring: Option<PeerMonitoring>) -> Self {
         self.peer_monitoring = peer_monitoring;
-        self
-    }
-
-    /// Sets the unsafe block signer [`Address`].
-    pub const fn with_unsafe_block_signer_receiver(mut self, signer: Address) -> Self {
-        self.signer = signer;
-        self
-    }
-
-    /// Sets the [`Keypair`] for the node.
-    pub fn with_keypair(mut self, keypair: Keypair) -> Self {
-        self.keypair = keypair;
         self
     }
 

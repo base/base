@@ -17,18 +17,8 @@ use snap::raw::Decoder;
 /// Limits the total size of gossip RPC containers as well as decompressed individual messages.
 pub const MAX_GOSSIP_SIZE: usize = 10 * (1 << 20);
 
-/// The minimum gossip size.
-/// Used to make sure that there is at least some data to validate the signature against.
-pub const MIN_GOSSIP_SIZE: usize = 66;
-
 /// The maximum outbound queue.
 pub const MAX_OUTBOUND_QUEUE: usize = 256;
-
-/// The maximum validate queue.
-pub const MAX_VALIDATE_QUEUE: usize = 256;
-
-/// The global validate throttle.
-pub const GLOBAL_VALIDATE_THROTTLE: usize = 512;
 
 /// The default mesh D.
 pub const DEFAULT_MESH_D: usize = 8;
@@ -70,11 +60,6 @@ pub const DEFAULT_MAX_IDENTIFY_PEERSTORE_PEERS: NonZeroUsize =
 
 /// The gossip heartbeat.
 pub const GOSSIP_HEARTBEAT: Duration = Duration::from_millis(500);
-
-/// The seen messages TTL.
-/// Limits the duration that message IDs are remembered for gossip deduplication purposes.
-pub const SEEN_MESSAGES_TTL: Duration =
-    Duration::from_millis(130 * GOSSIP_HEARTBEAT.as_millis() as u64);
 
 /// The peer score inspect frequency.
 /// The frequency at which peer scores are inspected.
