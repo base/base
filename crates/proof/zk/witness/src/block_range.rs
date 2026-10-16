@@ -3,8 +3,8 @@ use std::{
     collections::HashSet,
 };
 
-use anyhow::{Result, bail};
-use futures::StreamExt;
+use anyhow::{Context, Result, bail};
+use futures::{StreamExt, TryStreamExt};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -131,12 +131,12 @@ pub async fn split_range_based_on_safe_heads(
                     vec![l1_block_hex.into()],
                 )
                 .await
-                .expect("Failed to fetch safe head");
-            result.safe_head.number
+                .with_context(|| format!("Failed to fetch safe head at L1 block {block}"))?;
+            anyhow::Ok(result.safe_head.number)
         })
         .buffered(15)
-        .collect::<HashSet<_>>()
-        .await;
+        .try_collect::<HashSet<_>>()
+        .await?;
 
     // Collect and sort the safe heads.
     let mut safe_heads: Vec<_> = safe_heads.into_iter().collect();
