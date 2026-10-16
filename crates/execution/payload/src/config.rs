@@ -8,6 +8,7 @@ use std::{
 };
 
 use alloy_primitives::TxHash;
+use base_execution_validity_metadata::ValidityMetadataRecorder;
 use reth_engine_tree::tree::instrumented_state::{InstrumentedStateProvider, StateProviderStats};
 use reth_execution_cache::{
     CachedStateMetrics, CachedStateMetricsSource, CachedStateProvider, ExecutionCache,
@@ -53,6 +54,12 @@ pub struct BaseBuilderConfig {
     /// label. Adds overhead to every state read, so it follows reth's
     /// `--engine.state-provider-metrics` and stays off by default.
     pub state_provider_metrics: bool,
+    /// Recorder receiving one validity classification record per sealed pool-built block.
+    ///
+    /// Disabled by default. Recording never affects the built payload: the record is handed off
+    /// without blocking after the block is sealed, and dropped records only make the
+    /// classification unavailable.
+    pub validity_metadata: ValidityMetadataRecorder,
 }
 
 impl Default for BaseBuilderConfig {
@@ -66,6 +73,7 @@ impl Default for BaseBuilderConfig {
             resource_metering: ResourceMeteringConfig::default(),
             rejection_cache: RejectionCache::default(),
             state_provider_metrics: false,
+            validity_metadata: ValidityMetadataRecorder::default(),
         }
     }
 }
@@ -86,6 +94,7 @@ impl BaseBuilderConfig {
             resource_metering: ResourceMeteringConfig::default(),
             rejection_cache: RejectionCache::default(),
             state_provider_metrics: false,
+            validity_metadata: ValidityMetadataRecorder::default(),
         }
     }
 
@@ -93,6 +102,13 @@ impl BaseBuilderConfig {
     #[must_use]
     pub const fn with_state_provider_metrics(mut self, enabled: bool) -> Self {
         self.state_provider_metrics = enabled;
+        self
+    }
+
+    /// Sets the recorder for per-block validity classification records.
+    #[must_use]
+    pub fn with_validity_metadata(mut self, recorder: ValidityMetadataRecorder) -> Self {
+        self.validity_metadata = recorder;
         self
     }
 

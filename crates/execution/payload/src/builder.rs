@@ -21,6 +21,7 @@ use base_execution_txpool::{
     BasePooledTx, GuardMetrics, ParkableTransactionPool, PredicateContext, ValidityPredicate,
     estimated_da_size::DataAvailabilitySized,
 };
+use base_execution_validity_metadata::ValidityBlockRecord;
 use base_observability_events::{
     GlobalTransactionEventWriter, TransactionEventProducer, TransactionEventType, transaction_event,
 };
@@ -40,7 +41,8 @@ use reth_payload_builder_primitives::PayloadBuilderError;
 use reth_payload_primitives::{BuildNextEnv, BuiltPayloadExecutedBlock};
 use reth_payload_util::{NoopPayloadTransactions, PayloadTransactions};
 use reth_primitives_traits::{
-    HeaderTy, NodePrimitives, SealedHeader, SealedHeaderFor, SignedTransaction, TxTy,
+    BlockBody as _, HeaderTy, NodePrimitives, SealedHeader, SealedHeaderFor, SignedTransaction,
+    TxTy,
 };
 use reth_revm::{
     cancelled::CancelOnDrop, database::StateProviderDatabase, db::State,
@@ -474,6 +476,17 @@ impl<Txs> Builder<'_, Txs> {
         let sealed_block = Arc::new(block.sealed_block().clone());
         debug!(target: "payload_builder", id=%ctx.payload_id(), sealed_block_header = ?sealed_block.header(), "sealed built block");
 
+        // Only pool-built blocks are classified: `no_tx_pool` blocks are re-executions of
+        // derived attributes whose transactions were never selected from this builder's pool.
+        if !ctx.attributes().no_tx_pool() {
+            ctx.record_validity_metadata(
+                sealed_block.hash(),
+                sealed_block.number(),
+                sealed_block.body().transaction_count(),
+                std::mem::take(&mut info.validity_transactions),
+            );
+        }
+
         let execution_outcome =
             BlockExecutionOutput { state: db.take_bundle(), result: execution_result };
 
@@ -590,6 +603,11 @@ pub struct ExecutionInfo {
     /// Transaction hashes that exceeded a per-transaction resource limit and should be
     /// permanently removed from the pool and recorded in the shared rejection cache.
     pub permanently_rejected_txs: Vec<TxHash>,
+    /// Hashes, in block order, of committed pool transactions that carried nonempty validity
+    /// predicates, including transactions whose EVM execution reverted.
+    ///
+    /// Collected only while validity metadata recording is enabled.
+    pub validity_transactions: Vec<TxHash>,
 }
 
 impl ExecutionInfo {
@@ -602,6 +620,7 @@ impl ExecutionInfo {
             inclusion: InclusionTracker::default(),
             resource_metering_usage: Vec::new(),
             permanently_rejected_txs: Vec::new(),
+            validity_transactions: Vec::new(),
         }
     }
 
@@ -707,6 +726,40 @@ where
     /// Returns true if the fees are higher than the previous payload.
     pub fn is_better_payload(&self, total_fees: U256) -> bool {
         is_better_payload(self.best_payload.as_ref(), total_fees)
+    }
+
+    /// Hands the validity classification of a sealed pool-built block to the metadata recorder.
+    ///
+    /// No-op when recording is disabled. The hand-off never blocks, performs no I/O and leaves
+    /// sorting to the writer thread; its outcome is reported only through the recorder's metrics
+    /// and logs, so it cannot affect the payload.
+    pub fn record_validity_metadata(
+        &self,
+        block_hash: B256,
+        block_number: u64,
+        transaction_count: usize,
+        validity_transactions: Vec<TxHash>,
+    ) {
+        let recorder = &self.builder_config.validity_metadata;
+        if !recorder.is_enabled() {
+            return;
+        }
+        let Ok(transaction_count) = u32::try_from(transaction_count) else {
+            warn!(
+                target: "payload_builder",
+                block = %block_hash,
+                block_number,
+                transaction_count,
+                "skipping validity metadata for block with too many transactions"
+            );
+            return;
+        };
+        let _status = recorder.record(ValidityBlockRecord {
+            block_hash,
+            block_number,
+            transaction_count,
+            validity_transactions,
+        });
     }
 
     /// Prepares a [`BlockBuilder`] for the next block.
@@ -1497,6 +1550,9 @@ where
                 miner_fee as f64,
             );
             if has_validity_predicates {
+                if self.builder_config.validity_metadata.is_enabled() {
+                    info.validity_transactions.push(tx_hash);
+                }
                 emit_native_validity_event!(
                     self,
                     TransactionEventType::BuilderAccepted,
@@ -1547,6 +1603,7 @@ mod tests {
     use std::{
         collections::{HashMap, VecDeque},
         mem::ManuallyDrop,
+        num::NonZeroUsize,
         sync::{Arc, Mutex},
         time::Duration,
     };
@@ -1561,13 +1618,20 @@ mod tests {
     use base_common_evm::BaseTime;
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_execution_evm::BaseEvmConfig;
-    use base_execution_txpool::{BasePooledTransaction, ValidityOperator, ValidityPredicate};
+    use base_execution_txpool::{
+        BasePooledTransaction, TransactionValidity, ValidityOperator, ValidityPredicate,
+    };
+    use base_execution_validity_metadata::{
+        ValidityBlockRecord, ValidityMetadataRecorder, ValidityMetadataStore, ValidityRecordStatus,
+    };
     use base_observability_events::{TransactionEventCapture, TransactionEventType};
+    use redb::{StorageBackend, backends::InMemoryBackend};
     use reth_basic_payload_builder::{BuildOutcomeKind, PayloadConfig};
     use reth_chainspec::ChainSpec;
     use reth_ethereum_forks::ForkCondition;
     use reth_evm::execute::BlockBuilder;
     use reth_payload_builder::PayloadId;
+    use reth_payload_primitives::BuiltPayload;
     use reth_payload_util::{NoopPayloadTransactions, PayloadTransactions};
     use reth_primitives_traits::{Account, SealedHeader, SignedTransaction, WithEncoded};
     use reth_provider::noop::NoopProvider;
@@ -2890,5 +2954,440 @@ mod tests {
             "the cache hit must be timed as well as the read-through; recording only the \
              read-through would hide the benefit of a warm cache"
         );
+    }
+
+    const REVERTER: Address = Address::repeat_byte(0x7d);
+    const VALIDITY_QUEUE_CAPACITY: NonZeroUsize = NonZeroUsize::new(1).unwrap();
+    const WRITER_TIMEOUT: Duration = Duration::from_secs(30);
+
+    /// How the next write to a [`ScriptedBackend`] behaves.
+    #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+    enum WriteMode {
+        #[default]
+        Pass,
+        Block,
+        Fail,
+        PanicOnce,
+    }
+
+    /// Shared write script of a [`ScriptedBackend`].
+    #[derive(Debug, Default)]
+    struct WriteScript {
+        mode: Mutex<WriteMode>,
+        released: std::sync::Condvar,
+        entered: Mutex<Option<std::sync::mpsc::Sender<()>>>,
+    }
+
+    impl WriteScript {
+        fn set(&self, mode: WriteMode) {
+            *self.mode.lock().unwrap() = mode;
+            self.released.notify_all();
+        }
+
+        /// Blocks writes and returns a receiver signalled when a write starts blocking.
+        fn block(&self) -> std::sync::mpsc::Receiver<()> {
+            let (sender, receiver) = std::sync::mpsc::channel();
+            *self.entered.lock().unwrap() = Some(sender);
+            self.set(WriteMode::Block);
+            receiver
+        }
+    }
+
+    /// In-memory redb backend whose writes follow a [`WriteScript`].
+    ///
+    /// Hand-rolled because it implements redb's foreign `StorageBackend` trait, delegates to a
+    /// working in-memory backend, and must hold a write in flight until the test releases it so
+    /// the recorder queue can be filled deterministically.
+    #[derive(Debug, Default)]
+    struct ScriptedBackend {
+        inner: InMemoryBackend,
+        script: Arc<WriteScript>,
+    }
+
+    impl StorageBackend for ScriptedBackend {
+        fn len(&self) -> std::io::Result<u64> {
+            self.inner.len()
+        }
+
+        fn read(&self, offset: u64, len: usize) -> std::io::Result<Vec<u8>> {
+            self.inner.read(offset, len)
+        }
+
+        fn set_len(&self, len: u64) -> std::io::Result<()> {
+            self.inner.set_len(len)
+        }
+
+        fn sync_data(&self, eventual: bool) -> std::io::Result<()> {
+            self.inner.sync_data(eventual)
+        }
+
+        fn write(&self, offset: u64, data: &[u8]) -> std::io::Result<()> {
+            let mut mode = self.script.mode.lock().unwrap();
+            match *mode {
+                WriteMode::Pass => {}
+                WriteMode::Block => {
+                    if let Some(entered) = self.script.entered.lock().unwrap().take() {
+                        let _ = entered.send(());
+                    }
+                    while *mode == WriteMode::Block {
+                        mode = self.script.released.wait(mode).unwrap();
+                    }
+                }
+                WriteMode::Fail => return Err(std::io::Error::other("injected write failure")),
+                WriteMode::PanicOnce => {
+                    *mode = WriteMode::Fail;
+                    drop(mode);
+                    panic!("injected validity metadata writer panic");
+                }
+            }
+            drop(mode);
+            self.inner.write(offset, data)
+        }
+    }
+
+    fn scripted_store() -> (ValidityMetadataStore, Arc<WriteScript>) {
+        let backend = ScriptedBackend::default();
+        let script = Arc::clone(&backend.script);
+        let db = redb::Database::builder()
+            .create_with_backend(backend)
+            .expect("in-memory validity metadata database");
+        (ValidityMetadataStore::from_database(db).expect("validity metadata tables"), script)
+    }
+
+    fn spawn_recorder(
+        store: &ValidityMetadataStore,
+    ) -> (ValidityMetadataRecorder, std::thread::JoinHandle<()>) {
+        ValidityMetadataRecorder::spawn(store.clone(), VALIDITY_QUEUE_CAPACITY)
+            .expect("spawn validity metadata writer")
+    }
+
+    fn filler_record(n: u8) -> ValidityBlockRecord {
+        ValidityBlockRecord {
+            block_hash: B256::repeat_byte(0xf0 | n),
+            block_number: u64::from(n),
+            transaction_count: 0,
+            validity_transactions: Vec::new(),
+        }
+    }
+
+    /// Pool and attribute transactions covering every validity classification outcome.
+    struct ClassificationFixture {
+        forced: BasePooledTransaction,
+        matched: BasePooledTransaction,
+        reverted: BasePooledTransaction,
+        plain: BasePooledTransaction,
+        signature_only: BasePooledTransaction,
+        deferred: BasePooledTransaction,
+        expired: BasePooledTransaction,
+        rejected: BasePooledTransaction,
+    }
+
+    impl ClassificationFixture {
+        fn new() -> Self {
+            let block_number =
+                |op, value: u64| ValidityPredicate::BlockNumber { op, value: U256::from(value) };
+            Self {
+                forced: pool_transaction_to(0, Address::repeat_byte(0x71), U256::ZERO),
+                matched: pool_transaction_to(0, Address::repeat_byte(0x72), U256::ZERO)
+                    .with_validity_predicates(vec![block_number(ValidityOperator::Equal, 1)]),
+                reverted: pool_transaction_to(0, REVERTER, U256::ZERO).with_validity_predicates(
+                    vec![block_number(ValidityOperator::LessThanOrEqual, 10)],
+                ),
+                plain: pool_transaction_to(0, Address::repeat_byte(0x74), U256::ZERO),
+                signature_only: pool_transaction_to(0, Address::repeat_byte(0x75), U256::ZERO)
+                    .with_validity(TransactionValidity {
+                        validity: Vec::new(),
+                        validity_signature: Some(Signature::test_signature()),
+                    }),
+                deferred: pool_transaction_to(0, Address::repeat_byte(0x76), U256::ZERO)
+                    .with_validity_predicates(vec![ValidityPredicate::Balance {
+                        address: Address::repeat_byte(0x7e),
+                        op: ValidityOperator::Equal,
+                        value: U256::ONE,
+                    }]),
+                expired: pool_transaction_to(0, Address::repeat_byte(0x77), U256::ZERO)
+                    .with_validity_predicates(vec![block_number(ValidityOperator::Equal, 0)]),
+                // Nonce 5 fails EVM validation after its predicate matched.
+                rejected: pool_transaction_to(5, Address::repeat_byte(0x78), U256::ZERO)
+                    .with_validity_predicates(vec![block_number(ValidityOperator::Equal, 1)]),
+            }
+        }
+
+        fn pool(&self) -> Vec<BasePooledTransaction> {
+            vec![
+                self.matched.clone(),
+                self.reverted.clone(),
+                self.plain.clone(),
+                self.signature_only.clone(),
+                self.deferred.clone(),
+                self.expired.clone(),
+                self.rejected.clone(),
+            ]
+        }
+
+        fn provider(&self) -> StateProviderTest {
+            let mut provider = test_state_provider();
+            provider.insert_account(
+                REVERTER,
+                Account::default(),
+                // PUSH1 0 PUSH1 0 REVERT
+                Some(alloy_primitives::Bytes::from_static(&[0x60, 0x00, 0x60, 0x00, 0xfd])),
+                HashMap::default(),
+            );
+            for transaction in std::iter::once(&self.forced).chain(&self.pool()) {
+                provider.insert_account(
+                    transaction.sender(),
+                    Account { balance: U256::MAX, ..Default::default() },
+                    None,
+                    HashMap::default(),
+                );
+            }
+            provider
+        }
+
+        fn ctx(
+            &self,
+            timestamp: u64,
+            recorder: &ValidityMetadataRecorder,
+        ) -> BasePayloadBuilderCtx<BaseEvmConfig, BaseChainSpec> {
+            let mut ctx = pool_payload_context(timestamp);
+            ctx.config.attributes.transactions = vec![sequencer_attribute_tx(&self.forced)];
+            ctx.builder_config.validity_metadata = recorder.clone();
+            ctx
+        }
+
+        fn build_with(
+            &self,
+            ctx: BasePayloadBuilderCtx<BaseEvmConfig, BaseChainSpec>,
+        ) -> BuildOutcomeKind<crate::BaseBuiltPayload<BasePrimitives>> {
+            let provider = self.provider();
+            Builder::new(|_| TestParkableTransactions::new(self.pool()))
+                .build(
+                    StateProviderDatabase::new(&provider),
+                    &provider,
+                    Some(state_root_handle()),
+                    ctx,
+                )
+                .expect("payload must build")
+        }
+
+        /// Builds the Denim fixture block with `recorder`, returning the frozen payload.
+        fn build(
+            &self,
+            recorder: &ValidityMetadataRecorder,
+        ) -> crate::BaseBuiltPayload<BasePrimitives> {
+            let BuildOutcomeKind::Freeze(payload) =
+                self.build_with(self.ctx(DENIM_TIMESTAMP, recorder))
+            else {
+                panic!("Denim pool payload must freeze")
+            };
+            payload
+        }
+
+        /// Asserts `payload` is byte-for-byte the payload built with recording disabled.
+        fn assert_matches_disabled_build(&self, payload: &crate::BaseBuiltPayload<BasePrimitives>) {
+            let disabled = self.build(&ValidityMetadataRecorder::default());
+            assert_eq!(payload.block(), disabled.block(), "recording must not change the block");
+            assert_eq!(payload.fees(), disabled.fees(), "recording must not change fees");
+        }
+    }
+
+    fn block_hashes(payload: &crate::BaseBuiltPayload<BasePrimitives>) -> Vec<TxHash> {
+        payload
+            .block()
+            .body()
+            .transactions
+            .iter()
+            .map(|tx| *alloy_consensus::transaction::TxHashRef::tx_hash(tx))
+            .collect()
+    }
+
+    #[test]
+    fn validity_metadata_records_committed_predicate_transactions_of_sealed_block() {
+        let fixture = ClassificationFixture::new();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("validity.redb");
+        let store = ValidityMetadataStore::open(&path).unwrap();
+        let (recorder, writer) = spawn_recorder(&store);
+
+        let payload = fixture.build(&recorder);
+        fixture.assert_matches_disabled_build(&payload);
+
+        // Forced, matched, reverted, plain and signature-only transactions are included; the
+        // deferred, expired and rejected candidates are not.
+        let included = block_hashes(&payload);
+        assert_eq!(
+            included,
+            vec![
+                *fixture.forced.hash(),
+                *fixture.matched.hash(),
+                *fixture.reverted.hash(),
+                *fixture.plain.hash(),
+                *fixture.signature_only.hash(),
+            ]
+        );
+        let executed = payload.executed_block().expect("executed block");
+        let statuses = executed
+            .execution_output
+            .result
+            .receipts
+            .iter()
+            .map(alloy_consensus::TxReceipt::status)
+            .collect::<Vec<_>>();
+        assert_eq!(statuses, vec![true, true, false, true, true], "reverted tx must revert");
+
+        drop(recorder);
+        writer.join().unwrap();
+        drop(store);
+
+        let reopened = ValidityMetadataStore::open(&path).unwrap();
+        let record = reopened.get(payload.block().hash()).unwrap().expect("sealed block record");
+        assert_eq!(record.block_hash, payload.block().hash());
+        assert_eq!(record.block_number, 1);
+        assert_eq!(record.transaction_count, 5);
+        let mut expected = vec![*fixture.matched.hash(), *fixture.reverted.hash()];
+        expected.sort();
+        assert_eq!(record.validity_transactions, expected);
+        for not_validity in [
+            &fixture.forced,
+            &fixture.plain,
+            &fixture.signature_only,
+            &fixture.deferred,
+            &fixture.expired,
+            &fixture.rejected,
+        ] {
+            assert!(!record.contains(not_validity.hash()));
+        }
+    }
+
+    #[test]
+    fn validity_metadata_records_empty_set_for_pool_build_without_validity_transactions() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ValidityMetadataStore::open(dir.path().join("validity.redb")).unwrap();
+        let (recorder, writer) = spawn_recorder(&store);
+        let mut ctx = pool_payload_context(DENIM_TIMESTAMP);
+        ctx.builder_config.validity_metadata = recorder.clone();
+
+        let BuildOutcomeKind::Freeze(payload) =
+            build_pool_payload(ctx, TestParkableTransactions::new(vec![pool_transaction(0)]))
+        else {
+            panic!("Denim pool payload must freeze")
+        };
+        drop(recorder);
+        writer.join().unwrap();
+
+        let record = store.get(payload.block().hash()).unwrap().expect("record for empty set");
+        assert_eq!(record.transaction_count, 1);
+        assert!(record.validity_transactions.is_empty());
+        assert!(!record.contains(&block_hashes(&payload)[0]));
+    }
+
+    #[test]
+    fn validity_metadata_skips_no_tx_pool_witness_aborted_and_cancelled_builds() {
+        let fixture = ClassificationFixture::new();
+        let (store, script) = scripted_store();
+        let (recorder, writer) = spawn_recorder(&store);
+        // Park the writer on a filler record so the queue's single slot reveals any enqueue.
+        let entered = script.block();
+        assert_eq!(recorder.record(filler_record(0)), ValidityRecordStatus::Queued);
+        entered.recv_timeout(WRITER_TIMEOUT).expect("writer must block on its first write");
+
+        let mut derived = fixture.ctx(DENIM_TIMESTAMP, &recorder);
+        derived.config.attributes.no_tx_pool = true;
+        let BuildOutcomeKind::Freeze(derived_payload) = fixture.build_with(derived) else {
+            panic!("no-tx-pool payload must freeze")
+        };
+        assert_eq!(block_hashes(&derived_payload), vec![*fixture.forced.hash()]);
+
+        // The witness path executes the attribute transactions with the recording-enabled
+        // config. `StateProviderTest` cannot produce the final witness and panics only after
+        // execution, which is where a block would otherwise have been sealed and recorded.
+        let witness_ctx = fixture.ctx(DENIM_TIMESTAMP, &recorder);
+        let witness =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                Builder::new(|_| NoopPayloadTransactions::<BasePooledTransaction>::default())
+                    .witness(fixture.provider(), NoopProvider::default(), &witness_ctx)
+            }));
+        assert!(witness.is_err(), "test provider cannot finish witness generation");
+
+        let BuildOutcomeKind::Better { payload: best } = fixture
+            .build_with(fixture.ctx(DENIM_TIMESTAMP - 1, &ValidityMetadataRecorder::default()))
+        else {
+            panic!("pre-Denim payload must remain improvable")
+        };
+        let mut aborted = fixture.ctx(DENIM_TIMESTAMP - 1, &recorder);
+        aborted.best_payload = Some(best);
+        assert!(matches!(fixture.build_with(aborted), BuildOutcomeKind::Aborted { .. }));
+
+        let cancelled = fixture.ctx(DENIM_TIMESTAMP, &recorder);
+        drop(cancelled.cancel.clone());
+        assert!(matches!(fixture.build_with(cancelled), BuildOutcomeKind::Cancelled));
+
+        assert_eq!(
+            recorder.record(filler_record(1)),
+            ValidityRecordStatus::Queued,
+            "no skipped build may enqueue a record"
+        );
+        drop(witness_ctx);
+        script.set(WriteMode::Pass);
+        drop(recorder);
+        writer.join().unwrap();
+        assert!(store.get(derived_payload.block().hash()).unwrap().is_none());
+        assert!(store.get(filler_record(1).block_hash).unwrap().is_some());
+    }
+
+    #[test]
+    fn full_validity_metadata_queue_does_not_change_or_block_payload() {
+        let fixture = ClassificationFixture::new();
+        let (store, script) = scripted_store();
+        let (recorder, writer) = spawn_recorder(&store);
+        let entered = script.block();
+        assert_eq!(recorder.record(filler_record(0)), ValidityRecordStatus::Queued);
+        entered.recv_timeout(WRITER_TIMEOUT).expect("writer must block on its first write");
+        assert_eq!(recorder.record(filler_record(1)), ValidityRecordStatus::Queued);
+
+        // The writer stays blocked for the whole build, so a blocking hand-off would hang here.
+        let payload = fixture.build(&recorder);
+        fixture.assert_matches_disabled_build(&payload);
+        assert_eq!(recorder.record(filler_record(2)), ValidityRecordStatus::QueueFull);
+
+        script.set(WriteMode::Pass);
+        drop(recorder);
+        writer.join().unwrap();
+        assert!(store.get(payload.block().hash()).unwrap().is_none(), "dropped record");
+        assert!(store.get(filler_record(1).block_hash).unwrap().is_some());
+    }
+
+    #[test]
+    fn closed_validity_metadata_writer_does_not_change_payload() {
+        let fixture = ClassificationFixture::new();
+        let (store, script) = scripted_store();
+        let (recorder, writer) = spawn_recorder(&store);
+        script.set(WriteMode::PanicOnce);
+        assert_eq!(recorder.record(filler_record(0)), ValidityRecordStatus::Queued);
+        assert!(writer.join().is_err(), "writer thread must have stopped");
+
+        let payload = fixture.build(&recorder);
+        fixture.assert_matches_disabled_build(&payload);
+        assert_eq!(recorder.record(filler_record(1)), ValidityRecordStatus::Closed);
+        // The injected panic poisoned redb's internal locks, so dropping the database would
+        // panic; the in-memory store is leaked instead.
+        std::mem::forget(store);
+    }
+
+    #[test]
+    fn failed_validity_metadata_write_does_not_change_payload() {
+        let fixture = ClassificationFixture::new();
+        let (store, script) = scripted_store();
+        let (recorder, writer) = spawn_recorder(&store);
+        script.set(WriteMode::Fail);
+
+        let payload = fixture.build(&recorder);
+        fixture.assert_matches_disabled_build(&payload);
+
+        drop(recorder);
+        writer.join().unwrap();
+        script.set(WriteMode::Pass);
+        assert!(!matches!(store.get(payload.block().hash()), Ok(Some(_))));
     }
 }

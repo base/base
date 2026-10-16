@@ -69,6 +69,10 @@ records the metadata can answer, and only for blocks it built while recording wa
 Public deployments should route only this method to that producer rather than exposing the
 producer's other RPC methods.
 
+`base-builder` and `base sequencer` register this method with the store opened from
+`--builder.validity-metadata.path`; see the [builder CLI](../../builder/cli/README.md#validity-metadata)
+for coverage, failure behavior, retention and routing.
+
 ## Usage
 
 Add the dependency to your `Cargo.toml`:

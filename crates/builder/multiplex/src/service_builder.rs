@@ -3,6 +3,7 @@ use std::sync::Arc;
 use base_builder_core::{BuilderConfig, FlashblocksServiceBuilder, NodeBounds, PoolBounds};
 use base_execution_evm::BaseEvmConfig;
 use base_execution_payload_builder::{ResourceMeteringConfig, config::BaseBuilderConfig};
+use base_execution_validity_metadata::ValidityMetadataRecorder;
 use base_node_core::{
     BaseConsensusBuilder, BaseEngineTypes, BaseExecutorBuilder, BaseNetworkBuilder,
     node::BasePoolBuilder,
@@ -32,12 +33,21 @@ pub struct MultiplexingServiceBuilder {
     pub routing_config: RoutingConfig,
     /// Whether to run only the basic payload builder.
     pub basic_only: bool,
+    /// Recorder for validity classification of blocks built by the basic payload builder.
+    ///
+    /// Flashblocks builds are never recorded, so only cutover and basic-only modes record.
+    pub validity_metadata: ValidityMetadataRecorder,
 }
 
 impl MultiplexingServiceBuilder {
     /// Creates a new multiplexing service builder.
     pub fn new(builder_config: BuilderConfig) -> Self {
-        Self { builder_config, routing_config: RoutingConfig::default(), basic_only: false }
+        Self {
+            builder_config,
+            routing_config: RoutingConfig::default(),
+            basic_only: false,
+            validity_metadata: ValidityMetadataRecorder::default(),
+        }
     }
 
     /// Configures multiplexer runtime config.
@@ -55,6 +65,12 @@ impl MultiplexingServiceBuilder {
     /// Configures the service to run only the basic payload builder.
     pub const fn with_basic_only(mut self, basic_only: bool) -> Self {
         self.basic_only = basic_only;
+        self
+    }
+
+    /// Sets the recorder for validity classification of basic-builder blocks.
+    pub fn with_validity_metadata(mut self, recorder: ValidityMetadataRecorder) -> Self {
+        self.validity_metadata = recorder;
         self
     }
 
@@ -79,6 +95,7 @@ impl MultiplexingServiceBuilder {
             },
             rejection_cache: self.builder_config.rejection_cache.clone(),
             state_provider_metrics,
+            validity_metadata: self.validity_metadata.clone(),
         }
     }
 }
@@ -208,6 +225,7 @@ impl BasePayloadServiceBuilder for MultiplexingServiceBuilder {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::TxHash;
+    use base_execution_validity_metadata::ValidityMetadataStore;
 
     use super::*;
 
@@ -221,5 +239,22 @@ mod tests {
         let native = MultiplexingServiceBuilder::new(builder_config).native_payload_config(false);
         assert!(native.rejection_cache.contains_key(&hash));
         assert!(Arc::ptr_eq(&native.resource_metering.provider, &provider));
+        assert!(!native.validity_metadata.is_enabled());
+    }
+
+    #[test]
+    fn native_payload_config_shares_validity_metadata_recorder() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ValidityMetadataStore::open(dir.path().join("validity.redb")).unwrap();
+        let (recorder, _writer) = ValidityMetadataRecorder::spawn(
+            store,
+            base_execution_validity_metadata::DEFAULT_VALIDITY_METADATA_QUEUE_CAPACITY,
+        )
+        .unwrap();
+
+        let native = MultiplexingServiceBuilder::new(BuilderConfig::default())
+            .with_validity_metadata(recorder)
+            .native_payload_config(false);
+        assert!(native.validity_metadata.is_enabled());
     }
 }

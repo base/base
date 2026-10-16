@@ -175,8 +175,8 @@ summary = "base-batcher-source: L2 unsafe block source for the batcher with orde
 digest = "04c3f5864b"
 
 ["crates/builder/cli/README.md"]
-summary = "One-line README for base-builder-cli: reusable CLI arguments and config conversion helpers for Base builder nodes."
-digest = "95723e8f5d"
+summary = "base-builder-cli args and config helpers, plus --builder.validity-metadata.path: shared store/recorder, coverage, failure handling, lifecycle, retention, pruning and producer-only routing."
+digest = "972697ae67"
 
 ["crates/builder/core/README.md"]
 summary = "base-builder-core: flashblocks payload builder library producing sub-second block chunks, with launcher and metering trait modules, cargo features, and usage."
@@ -187,8 +187,8 @@ summary = "base-builder-metering: MeteringStore (DashMap with LRU eviction) impl
 digest = "89c5698c36"
 
 ["crates/builder/multiplex/README.md"]
-summary = "Runs flashblocks and basic payload builders in parallel behind one handle, selecting basic at Denim; cutover mode is off by default and a separate basic-only mode runs just the basic builder."
-digest = "76c9d91a5c"
+summary = "Runs flashblocks and basic payload builders behind one handle, selecting basic at Denim; cutover off by default, basic-only mode, and validity metadata recording for basic-builder blocks."
+digest = "1b311660a1"
 
 ["crates/builder/publish/README.md"]
 summary = "WebSocket broadcast publisher for the block builder (WebSocketPublisher, Listener, BroadcastLoop, metrics traits). Use when changing how serialized payloads are pushed to connected subscribers."
@@ -375,8 +375,8 @@ summary = "base-node-core: core Base execution node types and builders (BaseEngi
 digest = "7df2c6bbab"
 
 ["crates/execution/payload/README.md"]
-summary = "Payload builder crate: BasePayloadBuilder assembles payloads from pool and CL attributes, BaseExecutionPayloadValidator checks them, BaseDAConfig provides DA config for fee calculation."
-digest = "61927fc218"
+summary = "Payload builder crate: BasePayloadBuilder, BaseExecutionPayloadValidator, BaseDAConfig, and which committed pool transactions the native builder records as validity metadata per sealed block."
+digest = "3534d7dc98"
 
 ["crates/execution/proofs/README.md"]
 summary = "base-proofs-extension: node extension storing historical Merkle proofs in MDBX with retention window, pruning, verification and eth_getProof RPC; lists the RollupArgs proofs_history config flags."
@@ -412,7 +412,7 @@ digest = "b72a1536e1"
 
 ["crates/execution/txpool-rpc/README.md"]
 summary = "Txpool RPC admin/status APIs, validity submissions with staged signature modes and sequencer proxying, and builder-local base_getValidityTransactionStatus semantics, limits and operator prerequisites."
-digest = "609d036fd9"
+digest = "0fe1ec5740"
 
 ["crates/execution/txpool-tracing/README.md"]
 summary = "Txpool tracing extension: tracks mempool lifecycle events, txpool_transactionStatus RPC, enabling CLI flags, and reth_transaction_tracing_tx_event histogram. Use to debug tx latency or drops."

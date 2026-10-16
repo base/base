@@ -13,3 +13,6 @@ Runs Base flashblocks and Base basic payload builders in parallel behind a singl
   cutover is complete,
 - defaults cutover mode to disabled so startup behavior is identical to plain
   `FlashblocksServiceBuilder`.
+- with `MultiplexingServiceBuilder::with_validity_metadata`, hands the recorder to the basic
+  payload builder so its pool-built blocks are recorded for `base_getValidityTransactionStatus`;
+  Flashblocks builds are never recorded.

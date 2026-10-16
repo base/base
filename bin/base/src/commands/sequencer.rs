@@ -18,7 +18,7 @@ use base_node_runner::BaseNodeRunner;
 use base_shadow_indexer::{ShadowIndexerConfig, ShadowIndexerExtension};
 use base_txpool_rpc::{
     SendRawTransactionValidityConfig, SendRawTransactionValidityExtension, TxPoolRpcConfig,
-    TxPoolRpcExtension,
+    TxPoolRpcExtension, ValidityTransactionStatusConfig, ValidityTransactionStatusExtension,
 };
 use base_upgrade_signal::UpgradeSignalStartupMode;
 use clap::Args;
@@ -78,6 +78,8 @@ impl SequencerCommand {
         let shadow_indexer_config = ShadowIndexerConfig::try_from(&builder.shadow_indexer)?;
         let payload_builder_cutover = builder.payload_builder_cutover;
         let basic_payload_builder = builder.basic_payload_builder;
+        // One store and recorder shared by the native builder and the status RPC.
+        let validity_metadata = builder.validity_metadata();
         let builder_config = builder.into_builder_config(Arc::clone(&metering_provider))?;
         let da_config = builder_config.da_config.clone();
         let gas_limit_config = builder_config.gas_limit_config.clone();
@@ -103,6 +105,12 @@ impl SequencerCommand {
 
             let task_executor = ctx.task_executor.clone();
             let builder = execution.into_default_node_builder(ctx)?;
+            if let Some(prune) = builder.config().prune_config() {
+                validity_metadata.warn_on_pruned_history(
+                    prune.segments.transaction_lookup.is_some(),
+                    prune.segments.bodies_history.is_some(),
+                );
+            }
             let mut runner = BaseNodeRunner::new(rollup_args.clone())
                 .with_da_config(da_config)
                 .with_gas_limit_config(gas_limit_config)
@@ -110,7 +118,8 @@ impl SequencerCommand {
                 .with_service_builder(
                     MultiplexingServiceBuilder::new(builder_config)
                         .with_cutover_enabled(payload_builder_cutover)
-                        .with_basic_only(basic_payload_builder),
+                        .with_basic_only(basic_payload_builder)
+                        .with_validity_metadata(validity_metadata.recorder),
                 );
             runner.install_ext::<MeteringStoreExtension>(Arc::clone(&metering_provider));
             runner.install_ext::<TxPoolRpcExtension>(TxPoolRpcConfig { sequencer_rpc });
@@ -123,6 +132,10 @@ impl SequencerCommand {
                     validity_signature_mode: builder_api_config.validity_signature_mode,
                     ..Default::default()
                 },
+            );
+            // Registered even when disabled so canonical transactions report `not_recorded`.
+            runner.install_ext::<ValidityTransactionStatusExtension>(
+                ValidityTransactionStatusConfig { store: validity_metadata.store },
             );
             runner.install_ext::<ShadowIndexerExtension>(shadow_indexer_config);
             StandardBaseRethNode::install_upgrade_signal_runtime_extension(
@@ -286,6 +299,28 @@ mod tests {
         };
 
         assert!(!sequencer.builder.shadow_indexer.enable_shadow_indexer);
+    }
+
+    #[test]
+    fn parses_validity_metadata_path() {
+        let cli = BaseCli::parse_from(sequencer_args(&[
+            "base",
+            "sequencer",
+            "--p2p.sequencer.key",
+            SEQUENCER_KEY,
+            "--builder.basic-payload-builder",
+            "--builder.validity-metadata.path",
+            "/var/lib/base/validity.redb",
+        ]));
+
+        let BaseCommand::Sequencer(sequencer) = cli.command else {
+            panic!("expected sequencer command");
+        };
+
+        assert_eq!(
+            sequencer.builder.validity_metadata_path.as_deref(),
+            Some(std::path::Path::new("/var/lib/base/validity.redb"))
+        );
     }
 
     #[test]

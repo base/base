@@ -1155,6 +1155,8 @@ where
                     resource_metering: self.resource_metering,
                     rejection_cache: self.rejection_cache,
                     state_provider_metrics: ctx.config().engine.state_provider_metrics,
+                    // Validity metadata is recorded only by the builder binaries' native builder.
+                    validity_metadata: Default::default(),
                 },
             );
         Ok(payload_builder)

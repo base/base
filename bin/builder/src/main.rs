@@ -15,7 +15,7 @@ use base_observability_events::GlobalTransactionEventWriter;
 use base_shadow_indexer::{ShadowIndexerConfig, ShadowIndexerExtension};
 use base_txpool_rpc::{
     SendRawTransactionValidityConfig, SendRawTransactionValidityExtension, TxPoolRpcConfig,
-    TxPoolRpcExtension,
+    TxPoolRpcExtension, ValidityTransactionStatusConfig, ValidityTransactionStatusExtension,
 };
 
 type BuilderCli = Cli<Args>;
@@ -50,6 +50,14 @@ fn main() {
         let shadow_indexer_config = ShadowIndexerConfig::try_from(&builder_args.shadow_indexer)?;
         let payload_builder_cutover = builder_args.payload_builder_cutover;
         let basic_payload_builder = builder_args.basic_payload_builder;
+        // One store and recorder shared by the native builder and the status RPC.
+        let validity_metadata = builder_args.validity_metadata();
+        if let Some(prune) = builder.config().prune_config() {
+            validity_metadata.warn_on_pruned_history(
+                prune.segments.transaction_lookup.is_some(),
+                prune.segments.bodies_history.is_some(),
+            );
+        }
         let builder_config = builder_args
             .into_builder_config(Arc::clone(&metering_provider))
             .expect("Failed to convert rollup args to builder config");
@@ -64,7 +72,8 @@ fn main() {
             .with_service_builder(
                 MultiplexingServiceBuilder::new(builder_config)
                     .with_cutover_enabled(payload_builder_cutover)
-                    .with_basic_only(basic_payload_builder),
+                    .with_basic_only(basic_payload_builder)
+                    .with_validity_metadata(validity_metadata.recorder),
             );
         runner.install_ext::<MeteringStoreExtension>(Arc::clone(&metering_provider));
         runner.install_ext::<TxPoolRpcExtension>(TxPoolRpcConfig::default());
@@ -78,6 +87,10 @@ fn main() {
                 ..Default::default()
             },
         );
+        // Registered even when disabled so canonical transactions report `not_recorded`.
+        runner.install_ext::<ValidityTransactionStatusExtension>(ValidityTransactionStatusConfig {
+            store: validity_metadata.store,
+        });
         runner.install_ext::<ShadowIndexerExtension>(shadow_indexer_config);
         StandardBaseRethNode::install_upgrade_signal_runtime_extension(&mut runner, &rollup_args)?;
         runner.add_started_callback(|| {

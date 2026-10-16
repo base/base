@@ -104,10 +104,10 @@ Find a doc through the index below instead of grepping the tree. After adding, m
 
 ## Crates: builder
 
-- [crates/builder/cli/README.md](crates/builder/cli/README.md): One-line README for base-builder-cli: reusable CLI arguments and config conversion helpers for Base builder nodes.
+- [crates/builder/cli/README.md](crates/builder/cli/README.md): base-builder-cli args and config helpers, plus --builder.validity-metadata.path: shared store/recorder, coverage, failure handling, lifecycle, retention, pruning and producer-only routing.
 - [crates/builder/core/README.md](crates/builder/core/README.md): base-builder-core: flashblocks payload builder library producing sub-second block chunks, with launcher and metering trait modules, cargo features, and usage.
 - [crates/builder/metering/README.md](crates/builder/metering/README.md): base-builder-metering: MeteringStore (DashMap with LRU eviction) implementing MeteringProvider, plus base_setMeteringInformation style JSON-RPC extensions, with wiring example.
-- [crates/builder/multiplex/README.md](crates/builder/multiplex/README.md): Runs flashblocks and basic payload builders in parallel behind one handle, selecting basic at Denim; cutover mode is off by default and a separate basic-only mode runs just the basic builder.
+- [crates/builder/multiplex/README.md](crates/builder/multiplex/README.md): Runs flashblocks and basic payload builders behind one handle, selecting basic at Denim; cutover off by default, basic-only mode, and validity metadata recording for basic-builder blocks.
 - [crates/builder/publish/README.md](crates/builder/publish/README.md): WebSocket broadcast publisher for the block builder (WebSocketPublisher, Listener, BroadcastLoop, metrics traits). Use when changing how serialized payloads are pushed to connected subscribers.
 
 ## Crates: common
@@ -163,7 +163,7 @@ Find a doc through the index below instead of grepping the tree. After adding, m
 - [crates/execution/flashblocks/README.md](crates/execution/flashblocks/README.md): Flashblocks pending-state management: StateProcessor, subscriber, reconciler, the staleness invariant and depth limit, canonical reconciliation, and pending-aware RPC methods and subscriptions.
 - [crates/execution/metering/README.md](crates/execution/metering/README.md): Metering RPC: base_meterBundle, base_meterBlockByHash and base_meterBlockByNumber, plus the pseudo-opcode vocabulary for meteredOpcodes filters. Use to profile tx or block execution timing and gas.
 - [crates/execution/node/README.md](crates/execution/node/README.md): base-node-core: core Base execution node types and builders (BaseEngineTypes, BaseEngineApiBuilder) wiring engine, RPC and payload subsystems. Use when assembling or modifying the node.
-- [crates/execution/payload/README.md](crates/execution/payload/README.md): Payload builder crate: BasePayloadBuilder assembles payloads from pool and CL attributes, BaseExecutionPayloadValidator checks them, BaseDAConfig provides DA config for fee calculation.
+- [crates/execution/payload/README.md](crates/execution/payload/README.md): Payload builder crate: BasePayloadBuilder, BaseExecutionPayloadValidator, BaseDAConfig, and which committed pool transactions the native builder records as validity metadata per sealed block.
 - [crates/execution/proofs/README.md](crates/execution/proofs/README.md): base-proofs-extension: node extension storing historical Merkle proofs in MDBX with retention window, pruning, verification and eth_getProof RPC; lists the RollupArgs proofs_history config flags.
 - [crates/execution/rpc/README.md](crates/execution/rpc/README.md): base-execution-rpc: BaseEthApi, BaseEngineApi, debug, miner, sequencer and witness RPC implementations plus SequencerClient for tx forwarding. Use when changing Base JSON-RPC behavior.
 - [crates/execution/runner/README.md](crates/execution/runner/README.md): base-node-runner: BaseNodeExtension and FromExtensionConfig traits plus the NodeHooks accumulator for modular node extensions, with an example custom extension. Use to add node extensions.

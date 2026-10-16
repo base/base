@@ -39,6 +39,7 @@ base-execution-evm.workspace = true
 base-execution-txpool.workspace = true
 base-execution-eip8130.workspace = true
 base-observability-events.workspace = true
+base-execution-validity-metadata.workspace = true
 
 # ethereum
 revm.workspace = true
@@ -63,6 +64,8 @@ moka = { workspace = true, features = ["sync"] }
 metrics = { workspace = true, optional = true }
 
 [dev-dependencies]
+redb.workspace = true
+tempfile.workspace = true
 reth-provider.workspace = true
 reth-ethereum-forks.workspace = true
 metrics-exporter-prometheus.workspace = true

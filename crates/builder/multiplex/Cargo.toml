@@ -20,6 +20,7 @@ base-common-chains.workspace = true
 base-execution-evm.workspace = true
 base-execution-chainspec.workspace = true
 base-execution-payload-builder.workspace = true
+base-execution-validity-metadata.workspace = true
 
 # reth
 reth-provider.workspace = true
@@ -69,3 +70,15 @@ reth-node-core.workspace = true
 reth-tasks.workspace = true
 reth-ethereum-forks.workspace = true
 tokio = { workspace = true, features = ["macros"] }
+
+# validity metadata integration
+tempfile.workspace = true
+serde_json.workspace = true
+alloy-signer.workspace = true
+alloy-genesis.workspace = true
+base-test-utils.workspace = true
+base-txpool-rpc.workspace = true
+alloy-rpc-client.workspace = true
+alloy-signer-local.workspace = true
+base-execution-txpool.workspace = true
+base-node-runner = { workspace = true, features = ["test-utils"] }

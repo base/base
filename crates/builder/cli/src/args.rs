@@ -17,6 +17,8 @@ use base_observability_events::{
 };
 use tracing::warn;
 
+use crate::ValidityMetadataService;
+
 /// Parameters for Flashblocks configuration.
 ///
 /// The names in the struct are prefixed with `flashblocks` to avoid conflicts
@@ -283,6 +285,13 @@ pub struct Args {
     )]
     pub basic_payload_builder: bool,
 
+    /// Path of the builder-local validity metadata database served by
+    /// `base_getValidityTransactionStatus`. Unset disables recording.
+    ///
+    /// Only blocks built by the basic payload builder (cutover or basic-only mode) are recorded.
+    #[arg(long = "builder.validity-metadata.path", env = "BASE_BUILDER_VALIDITY_METADATA_PATH")]
+    pub validity_metadata_path: Option<PathBuf>,
+
     /// Transaction event journal configuration
     #[command(flatten)]
     pub transaction_events: TransactionEventsArgs,
@@ -299,6 +308,23 @@ impl HasRollupArgs for Args {
 }
 
 impl Args {
+    /// Opens the validity metadata store and recorder configured by
+    /// `--builder.validity-metadata.path`.
+    ///
+    /// Open failures disable metadata instead of failing startup; see
+    /// [`ValidityMetadataService::open`]. Warns when Flashblocks-only mode means no block will
+    /// ever be recorded.
+    pub fn validity_metadata(&self) -> ValidityMetadataService {
+        let path = self.validity_metadata_path.as_deref();
+        if path.is_some() && !self.payload_builder_cutover && !self.basic_payload_builder {
+            warn!(
+                "validity metadata is recorded only by the basic payload builder; enable \
+                 --builder.payload-builder-cutover or --builder.basic-payload-builder"
+            );
+        }
+        ValidityMetadataService::open(path)
+    }
+
     /// Creates a [`MeteringStore`] from the CLI arguments.
     pub fn build_metering_store(&self) -> MeteringStore {
         MeteringStore::new(
@@ -339,6 +365,7 @@ impl Default for Args {
             flashblocks: FlashblocksArgs::default(),
             payload_builder_cutover: false,
             basic_payload_builder: false,
+            validity_metadata_path: None,
             transaction_events: TransactionEventsArgs::default(),
             shadow_indexer: ShadowIndexerArgs::default(),
         }
@@ -518,6 +545,32 @@ mod tests {
     fn basic_payload_builder_requires_explicit_opt_in() {
         let parsed = CommandParser::parse_from(["test", "--builder.basic-payload-builder"]);
         assert!(parsed.args.basic_payload_builder);
+    }
+
+    #[test]
+    fn validity_metadata_path_defaults_to_disabled() {
+        let parsed = CommandParser::parse_from(["test"]);
+        assert!(parsed.args.validity_metadata_path.is_none());
+        let service = parsed.args.validity_metadata();
+        assert!(service.store.is_none());
+        assert!(!service.recorder.is_enabled());
+    }
+
+    #[test]
+    fn validity_metadata_path_flag_opens_store_and_recorder() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("validity.redb");
+        let parsed = CommandParser::parse_from([
+            "test",
+            "--builder.basic-payload-builder",
+            "--builder.validity-metadata.path",
+            path.to_str().unwrap(),
+        ]);
+        assert_eq!(parsed.args.validity_metadata_path.as_deref(), Some(path.as_path()));
+        let service = parsed.args.validity_metadata();
+        assert!(service.store.is_some());
+        assert!(service.recorder.is_enabled());
+        assert!(path.exists());
     }
 
     #[test]

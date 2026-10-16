@@ -5,3 +5,6 @@
 
 mod args;
 pub use args::{Args, FlashblocksArgs, TransactionEventsArgs};
+
+mod validity_metadata;
+pub use validity_metadata::ValidityMetadataService;
