@@ -648,7 +648,7 @@ impl SnapshotUploader {
         match result {
             Ok(bytes_uploaded) => Ok(bytes_uploaded),
             Err(error) => {
-                self.abort_streaming_multipart_upload(&key, &upload_id).await;
+                self.abort_multipart_upload(&key, &upload_id).await;
                 Err(error)
             }
         }
@@ -764,7 +764,7 @@ impl SnapshotUploader {
         .await
     }
 
-    async fn abort_streaming_multipart_upload(&self, key: &str, upload_id: &str) {
+    async fn abort_multipart_upload(&self, key: &str, upload_id: &str) {
         match self
             .client
             .abort_multipart_upload()
@@ -775,14 +775,14 @@ impl SnapshotUploader {
             .await
         {
             Ok(_) => {
-                warn!(key = %key, upload_id, "aborted streaming multipart upload after failure")
+                warn!(key = %key, upload_id, "aborted multipart upload after failure")
             }
             Err(error) => error!(
                 key = %key,
                 upload_id,
                 error = %error,
                 error_debug = ?error,
-                "failed to abort streaming multipart upload after failure"
+                "failed to abort multipart upload after failure"
             ),
         }
     }
@@ -1384,29 +1384,7 @@ impl SnapshotUploader {
                 .await
             }
             Err(e) => {
-                match self
-                    .client
-                    .abort_multipart_upload()
-                    .bucket(&self.bucket)
-                    .key(key)
-                    .upload_id(&upload_id)
-                    .send()
-                    .await
-                {
-                    Ok(_) => {
-                        warn!(key = %key, upload_id, "aborted multipart upload after failure")
-                    }
-                    Err(abort_error) => {
-                        error!(
-                            key = %key,
-                            upload_id,
-                            error = %abort_error,
-                            error_debug = ?abort_error,
-                            "failed to abort multipart upload after failure"
-                        );
-                    }
-                }
-
+                self.abort_multipart_upload(key, &upload_id).await;
                 Err(e)
             }
         }
