@@ -121,6 +121,25 @@ impl WithdrawalRpcTransport {
             error => error,
         }
     }
+
+    /// Redacts server messages and data for reporting after retry classification.
+    pub fn redact_diagnostic(error: TransportError) -> TransportError {
+        let mut error = Self::redact(error);
+        if let TransportError::ErrorResp(payload) = &mut error {
+            let message = payload.message.trim_start().to_ascii_lowercase();
+            payload.message = if payload.code == 3 || message.starts_with("execution reverted") {
+                "execution reverted"
+            } else if message.contains(crate::WithdrawalRpc::TX_INDEXING_IN_PROGRESS) {
+                crate::WithdrawalRpc::TX_INDEXING_IN_PROGRESS
+            } else {
+                "RPC server rejected request"
+            }
+            .into();
+            // Provider diagnostics can echo authenticated endpoints or request secrets.
+            payload.data = None;
+        }
+        error
+    }
 }
 
 impl Service<RequestPacket> for WithdrawalRpcTransport {

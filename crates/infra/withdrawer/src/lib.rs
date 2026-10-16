@@ -5,6 +5,11 @@ pub use contracts::{
     FaultProofPortal, LegacyWithdrawalPortal, WithdrawalDisputeGame, WithdrawalOutputOracle,
 };
 
+mod operation;
+pub use operation::{
+    WithdrawalOutcome, WithdrawalProvingOutput, WithdrawalStatus, Withdrawer, WithdrawerError,
+};
+
 mod config;
 pub use config::{
     ConfigError, Fees, HdPathValueParser, RpcUrlValueParser, SignerSource, WithdrawerArgs,
