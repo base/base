@@ -380,7 +380,7 @@ pub struct RpcStandardNodeArgs {
     #[arg(long = "rollup.payer", value_name = "PAYER_URL")]
     pub payer_url: Option<String>,
 
-    /// Serve `payer_getTerms` from one shared entry, refetched once per block.
+    /// Serve `payer_getTerms` from one shared entry, refetched at most once a second.
     ///
     /// Leave this off unless the payer returns the same terms for every request.
     #[arg(long = "rollup.payer-cache")]

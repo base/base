@@ -65,8 +65,7 @@ where
         self.provider.chain_spec().chain().id()
     }
 
-    /// Returns the latest block number once EIP-8430 is active.
-    fn ensure_everest(&self) -> RpcResult<u64> {
+    fn ensure_everest(&self) -> RpcResult<()> {
         let header = self.provider.latest_header().map_err(|error| {
             warn!(error = %error, "failed to read latest header for payer fork gate");
             ErrorObjectOwned::owned(
@@ -75,36 +74,29 @@ where
                 None::<()>,
             )
         })?;
-        header
-            .filter(|header| {
-                self.provider.chain_spec().is_everest_active_at_timestamp(header.timestamp())
-            })
-            .map(|header| header.number())
-            .ok_or_else(|| invalid_params(PAYER_PRE_EVEREST_RPC_ERROR))
+        let active = header.is_some_and(|header| {
+            self.provider.chain_spec().is_everest_active_at_timestamp(header.timestamp())
+        });
+        if active { Ok(()) } else { Err(invalid_params(PAYER_PRE_EVEREST_RPC_ERROR)) }
     }
 
     async fn forward(&self, method: &'static str, request: &Value) -> RpcResult<Value> {
         self.client.request(method, (request,)).await.map_err(ErrorObjectOwned::from)
     }
 
-    /// Serves `payer_getTerms` from `cache`, refetching once per block with
+    /// Serves `payer_getTerms` from `cache`, refetching it on demand with
     /// concurrent misses sharing one upstream call.
-    async fn cached_terms(
-        &self,
-        cache: &TermsCache,
-        block: u64,
-        request: &Value,
-    ) -> RpcResult<Value> {
-        if let Some(cached) = cache.get(block) {
+    async fn cached_terms(&self, cache: &TermsCache, request: &Value) -> RpcResult<Value> {
+        if let Some(cached) = cache.get() {
             return Ok(TermsCache::order_for(request, cached));
         }
         let _refreshing = cache.refreshing().await;
-        if let Some(cached) = cache.get(block) {
+        if let Some(cached) = cache.get() {
             return Ok(TermsCache::order_for(request, cached));
         }
         match self.client.request::<_, Value>("payer_getTerms", (request,)).await {
             Ok(response) => {
-                cache.insert(block, &response);
+                cache.insert(&response);
                 Ok(response)
             }
             Err(error) => {
@@ -112,7 +104,7 @@ where
                 if inner.is_error_resp() {
                     cache.clear();
                 } else if let Some(stale) = cache.get_stale() {
-                    warn!(error = %error, block, "payer unreachable; serving cached payer_getTerms");
+                    warn!(error = %error, "payer unreachable; serving cached payer_getTerms");
                     return Ok(TermsCache::order_for(request, stale));
                 }
                 Err(error.into())
@@ -128,19 +120,19 @@ where
     Provider::ChainSpec: Upgrades + EthChainSpec,
 {
     async fn get_terms(&self, request: Value) -> RpcResult<Value> {
-        let block = self.ensure_everest()?;
+        self.ensure_everest()?;
         PayerRequestFilter::validate_get_terms(&request, self.chain_id()).map_err(|error| {
             debug!(error = %error, "rejected payer_getTerms before forward");
             invalid_params(error)
         })?;
         match &self.cache {
-            Some(cache) => self.cached_terms(cache, block, &request).await,
+            Some(cache) => self.cached_terms(cache, &request).await,
             None => self.forward("payer_getTerms", &request).await,
         }
     }
 
     async fn send_transaction(&self, request: Value) -> RpcResult<Value> {
-        let block = self.ensure_everest()?;
+        self.ensure_everest()?;
         PayerRequestFilter::validate_send_transaction(&request).map_err(|error| {
             debug!(error = %error, "rejected payer_sendTransaction before forward");
             invalid_params(error)
@@ -148,7 +140,7 @@ where
         let result = self.forward("payer_sendTransaction", &request).await;
         if let (Err(error), Some(cache)) = (&result, &self.cache) {
             let data = error.data().and_then(|data| serde_json::from_str(data.get()).ok());
-            cache.invalidate(block, data.as_ref());
+            cache.invalidate(data.as_ref());
         }
         result
     }
@@ -269,10 +261,7 @@ mod tests {
     /// Rejects one `payer_sendTransaction` with `code`.
     async fn reject_send(
         api: &PayerApiImpl<
-            impl BlockReaderIdExt
-            + ChainSpecProvider<ChainSpec = Arc<BaseChainSpec>>
-            + Clone
-            + 'static,
+            impl BlockReaderIdExt + ChainSpecProvider<ChainSpec = Arc<BaseChainSpec>> + Clone + 'static,
         >,
         sequencer: &MockServer,
         code: &str,

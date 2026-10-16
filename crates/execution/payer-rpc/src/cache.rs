@@ -11,13 +11,17 @@ use tokio::sync::{Mutex as AsyncMutex, MutexGuard};
 /// Upper bound on a cached `payer_getTerms` response, in seconds.
 pub const MAX_GET_TERMS_CACHE_SECS: u64 = 300;
 
+/// How long a fetched response is served before the next request refetches
+/// it: about the payer's market poll, so faster blocks add no upstream calls.
+pub const GET_TERMS_FRESH_FOR: Duration = Duration::from_secs(1);
+
 /// Payer rejection codes that mean cached terms may be stale.
 const STALE_TERMS_CODES: [&str; 2] = ["PAYMENT_INSUFFICIENT", "TEMPORARILY_UNAVAILABLE"];
 
-/// One shared `payer_getTerms` body, refetched once per block.
+/// One shared `payer_getTerms` body, refetched on demand at most every
+/// [`GET_TERMS_FRESH_FOR`].
 ///
-/// An entry is fresh for the block it was fetched at. Past that block it is
-/// served only while its offer `ttl` holds and the payer cannot be reached,
+/// Past that it is served only while its offer `ttl` holds and the payer cannot be reached,
 /// with every offer `ttl` reduced by the entry's age so a wallet never holds
 /// a rate longer than the payer honors it.
 #[derive(Debug)]
@@ -29,17 +33,20 @@ pub struct TermsCache {
 #[derive(Debug, Clone)]
 struct CachedTerms {
     response: Value,
-    block: u64,
     fetched_at: Instant,
     ttl: Duration,
-    /// Set by [`TermsCache::invalidate`]; refetched even within `block`.
+    /// Set by [`TermsCache::invalidate`]; refetched while still fresh.
     stale: bool,
-    /// Fetched within `block` after an invalidation, so further
-    /// invalidations in `block` are ignored.
+    /// Fetched after an invalidation, so invalidations are ignored while it
+    /// is fresh.
     forced: bool,
 }
 
 impl CachedTerms {
+    fn fresh(&self, now: Instant) -> bool {
+        now.saturating_duration_since(self.fetched_at) < GET_TERMS_FRESH_FOR
+    }
+
     /// The response with every offer `ttl` reduced by the entry's age, or
     /// `None` once the shortest has run out.
     fn served(&self, now: Instant) -> Option<Value> {
@@ -68,23 +75,22 @@ impl TermsCache {
         Self { entry: Mutex::new(None), refresh: AsyncMutex::new(()) }
     }
 
-    /// Returns the response fetched at `block`, unless it was invalidated or
-    /// its `ttl` ran out.
-    pub fn get(&self, block: u64) -> Option<Value> {
-        self.get_at(block, Instant::now())
+    /// Returns the response while it is fresh and was not invalidated.
+    pub fn get(&self) -> Option<Value> {
+        self.get_at(Instant::now())
     }
 
-    /// Returns the cached response from any block while its `ttl` holds, for
+    /// Returns the cached response, fresh or not, while its `ttl` holds, for
     /// when the payer cannot be reached.
     pub fn get_stale(&self) -> Option<Value> {
         self.lock().as_ref()?.served(Instant::now())
     }
 
-    /// Stores `response` as fetched at `block`, until the shortest offer
-    /// `ttl`, capped at [`MAX_GET_TERMS_CACHE_SECS`]. A response with no
-    /// positive `ttl`, such as one with no offers, clears the cache.
-    pub fn insert(&self, block: u64, response: &Value) {
-        self.insert_at(block, response, Instant::now());
+    /// Stores `response` until the shortest offer `ttl`, capped at
+    /// [`MAX_GET_TERMS_CACHE_SECS`]. A response with no positive `ttl`, such
+    /// as one with no offers, clears the cache.
+    pub fn insert(&self, response: &Value) {
+        self.insert_at(response, Instant::now());
     }
 
     /// Drops the cached response, for when the payer answers with an error.
@@ -94,18 +100,10 @@ impl TermsCache {
 
     /// Marks the response stale after `rejection`, a `payer_sendTransaction`
     /// error's `data`, says the payer requoted or paused, so the next request
-    /// refetches. Ignored for a response already refetched for that reason
-    /// at `block`, so rejections refetch at most once per block.
-    pub fn invalidate(&self, block: u64, rejection: Option<&Value>) {
-        let code = rejection.and_then(|data| data.get("code")).and_then(Value::as_str);
-        if !code.is_some_and(|code| STALE_TERMS_CODES.contains(&code)) {
-            return;
-        }
-        if let Some(entry) =
-            self.lock().as_mut().filter(|entry| !(entry.forced && entry.block == block))
-        {
-            entry.stale = true;
-        }
+    /// refetches. Ignored while a response refetched for that reason is
+    /// fresh, so rejections refetch at most once per [`GET_TERMS_FRESH_FOR`].
+    pub fn invalidate(&self, rejection: Option<&Value>) {
+        self.invalidate_at(rejection, Instant::now());
     }
 
     /// Waits for any other refetch to finish, so concurrent misses share one
@@ -142,22 +140,33 @@ impl TermsCache {
         response
     }
 
-    fn get_at(&self, block: u64, now: Instant) -> Option<Value> {
+    fn get_at(&self, now: Instant) -> Option<Value> {
         let entry = self.lock();
-        let entry = entry.as_ref().filter(|entry| entry.block == block && !entry.stale)?;
+        let entry = entry.as_ref().filter(|entry| entry.fresh(now) && !entry.stale)?;
         entry.served(now)
     }
 
-    fn insert_at(&self, block: u64, response: &Value, now: Instant) {
+    fn invalidate_at(&self, rejection: Option<&Value>, now: Instant) {
+        let code = rejection.and_then(|data| data.get("code")).and_then(Value::as_str);
+        if !code.is_some_and(|code| STALE_TERMS_CODES.contains(&code)) {
+            return;
+        }
+        if let Some(entry) =
+            self.lock().as_mut().filter(|entry| !(entry.forced && entry.fresh(now)))
+        {
+            entry.stale = true;
+        }
+    }
+
+    fn insert_at(&self, response: &Value, now: Instant) {
         let mut entry = self.lock();
         let Some(ttl_secs) = Self::ttl_secs(response) else {
             *entry = None;
             return;
         };
-        let forced = entry.as_ref().is_some_and(|entry| entry.stale && entry.block == block);
+        let forced = entry.as_ref().is_some_and(|entry| entry.stale);
         *entry = Some(CachedTerms {
             response: response.clone(),
-            block,
             fetched_at: now,
             ttl: Duration::from_secs(ttl_secs),
             stale: false,
@@ -190,8 +199,6 @@ mod tests {
 
     use super::*;
 
-    const BLOCK: u64 = 7;
-
     fn terms(ttl: u64) -> Value {
         json!({
             "options": [{
@@ -210,48 +217,47 @@ mod tests {
     }
 
     #[test]
-    fn serves_a_response_only_for_its_block() {
+    fn serves_a_response_only_while_it_is_fresh() {
         let cache = TermsCache::new();
-        assert!(cache.get(BLOCK).is_none());
+        let fetched_at = Instant::now();
+        assert!(cache.get_at(fetched_at).is_none());
 
-        cache.insert(BLOCK, &terms(60));
+        cache.insert_at(&terms(60), fetched_at);
 
-        assert_eq!(cache.get(BLOCK), Some(terms(60)));
-        assert!(cache.get(BLOCK + 1).is_none());
+        assert_eq!(cache.get_at(fetched_at + Duration::from_millis(999)), Some(terms(60)));
+        assert!(cache.get_at(fetched_at + GET_TERMS_FRESH_FOR).is_none());
     }
 
     #[test]
     fn reduces_each_ttl_by_the_entry_age() {
         let cache = TermsCache::new();
-        let fetched_at = Instant::now();
-        cache.insert_at(BLOCK, &terms(60), fetched_at);
+        let fetched_at = Instant::now() - Duration::from_millis(45_500);
+        cache.insert_at(&terms(60), fetched_at);
 
-        let served = cache.get_at(BLOCK, fetched_at + Duration::from_millis(45_500)).unwrap();
+        let served = cache.get_stale().unwrap();
 
         assert_eq!(served["options"][0]["ttl"], 15);
-        assert!(cache.get_at(BLOCK, fetched_at + Duration::from_secs(60)).is_none());
+        let expired = TermsCache::new();
+        expired.insert_at(&terms(1), Instant::now() - Duration::from_secs(1));
+        assert!(expired.get_stale().is_none());
     }
 
     #[test]
-    fn serves_a_stale_block_only_while_its_ttl_holds() {
+    fn serves_an_invalidated_response_only_as_stale() {
         let cache = TermsCache::new();
-        cache.insert(BLOCK, &terms(60));
-        cache.invalidate(BLOCK, Some(&rejection("PAYMENT_INSUFFICIENT")));
+        cache.insert(&terms(60));
+        cache.invalidate(Some(&rejection("PAYMENT_INSUFFICIENT")));
 
-        assert!(cache.get(BLOCK).is_none());
+        assert!(cache.get().is_none());
         assert_eq!(cache.get_stale(), Some(terms(60)));
-
-        let expired = TermsCache::new();
-        expired.insert_at(BLOCK, &terms(1), Instant::now() - Duration::from_secs(1));
-        assert!(expired.get_stale().is_none());
     }
 
     #[test]
     fn clears_on_a_response_without_offers() {
         let cache = TermsCache::new();
-        cache.insert(BLOCK, &terms(60));
+        cache.insert(&terms(60));
 
-        cache.insert(BLOCK + 1, &json!({ "options": [] }));
+        cache.insert(&json!({ "options": [] }));
 
         assert!(cache.get_stale().is_none());
     }
@@ -259,45 +265,45 @@ mod tests {
     #[test]
     fn skips_responses_without_a_positive_ttl() {
         let cache = TermsCache::new();
-        cache.insert(BLOCK, &json!({ "options": [{ "kind": "token" }] }));
-        cache.insert(BLOCK, &terms(0));
+        cache.insert(&json!({ "options": [{ "kind": "token" }] }));
+        cache.insert(&terms(0));
 
-        assert!(cache.get(BLOCK).is_none());
+        assert!(cache.get_stale().is_none());
     }
 
     #[test]
     fn uses_the_shortest_offer_ttl_capped() {
         let cache = TermsCache::new();
-        let fetched_at = Instant::now();
         let response = json!({
             "options": [{ "kind": "token", "ttl": 60 }, { "kind": "token", "ttl": 15 }]
         });
-        cache.insert_at(BLOCK, &response, fetched_at);
-        assert!(cache.get_at(BLOCK, fetched_at + Duration::from_secs(15)).is_none());
+        cache.insert_at(&response, Instant::now() - Duration::from_secs(15));
+        assert!(cache.get_stale().is_none());
 
-        cache.insert_at(BLOCK, &terms(3_600), fetched_at);
-        let capped = fetched_at + Duration::from_secs(MAX_GET_TERMS_CACHE_SECS);
-        assert!(cache.get_at(BLOCK, capped).is_none());
+        let capped = Duration::from_secs(MAX_GET_TERMS_CACHE_SECS);
+        cache.insert_at(&terms(3_600), Instant::now() - capped);
+        assert!(cache.get_stale().is_none());
     }
 
     #[test]
-    fn refetches_at_most_once_per_block_after_rejections() {
+    fn refetches_at_most_once_per_freshness_window_after_rejections() {
         let cache = TermsCache::new();
-        cache.insert(BLOCK, &terms(60));
+        let now = Instant::now();
+        cache.insert_at(&terms(60), now);
 
-        cache.invalidate(BLOCK, Some(&rejection("SENDER_BALANCE_INSUFFICIENT")));
-        cache.invalidate(BLOCK, None);
-        assert!(cache.get(BLOCK).is_some());
+        cache.invalidate_at(Some(&rejection("SENDER_BALANCE_INSUFFICIENT")), now);
+        cache.invalidate_at(None, now);
+        assert!(cache.get_at(now).is_some());
 
-        cache.invalidate(BLOCK, Some(&rejection("PAYMENT_INSUFFICIENT")));
-        assert!(cache.get(BLOCK).is_none());
-        cache.insert(BLOCK, &terms(60));
-        cache.invalidate(BLOCK, Some(&rejection("TEMPORARILY_UNAVAILABLE")));
-        assert!(cache.get(BLOCK).is_some());
+        cache.invalidate_at(Some(&rejection("PAYMENT_INSUFFICIENT")), now);
+        assert!(cache.get_at(now).is_none());
+        cache.insert_at(&terms(60), now);
+        cache.invalidate_at(Some(&rejection("TEMPORARILY_UNAVAILABLE")), now);
+        assert!(cache.get_at(now).is_some());
 
-        cache.insert(BLOCK + 1, &terms(60));
-        cache.invalidate(BLOCK + 1, Some(&rejection("PAYMENT_INSUFFICIENT")));
-        assert!(cache.get(BLOCK + 1).is_none());
+        let later = now + GET_TERMS_FRESH_FOR;
+        cache.invalidate_at(Some(&rejection("PAYMENT_INSUFFICIENT")), later);
+        assert!(cache.get_at(now).is_none());
     }
 
     #[test]
