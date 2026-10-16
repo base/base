@@ -144,8 +144,7 @@ const L1_FEE_SCALAR_DIVISOR: f64 = 1_000_000.0;
 /// Fixed-point scale of the Fjord `FastLZ` transaction size estimate.
 const FJORD_TX_SIZE_SCALE: u64 = 1_000_000;
 
-/// L1 fee and data gas for a non-deposit transaction, or deposit nonce and receipt version for a
-/// deposit transaction.
+/// L1 fee and data gas fields for a transaction receipt.
 #[derive(Debug, Clone)]
 pub struct ReceiptFieldsBuilder {
     /// Block timestamp.
@@ -159,12 +158,6 @@ pub struct ReceiptFieldsBuilder {
     /* ---------------------------------------- Bedrock ---------------------------------------- */
     /// The base fee of the L1 origin block.
     pub l1_base_fee: Option<u128>,
-    /* --------------------------------------- Regolith ---------------------------------------- */
-    /// Deposit nonce, if this is a deposit transaction.
-    pub deposit_nonce: Option<u64>,
-    /* ---------------------------------------- Canyon ----------------------------------------- */
-    /// Deposit receipt version, if this is a deposit transaction.
-    pub deposit_receipt_version: Option<u64>,
     /* ---------------------------------------- Ecotone ---------------------------------------- */
     /// The current L1 fee scalar.
     pub l1_base_fee_scalar: Option<u128>,
@@ -191,8 +184,6 @@ impl ReceiptFieldsBuilder {
             l1_data_gas: None,
             l1_fee_scalar: None,
             l1_base_fee: None,
-            deposit_nonce: None,
-            deposit_receipt_version: None,
             l1_base_fee_scalar: None,
             l1_blob_base_fee: None,
             l1_blob_base_fee_scalar: None,
@@ -255,18 +246,6 @@ impl ReceiptFieldsBuilder {
         Ok(self)
     }
 
-    /// Applies deposit transaction metadata: deposit nonce.
-    pub const fn deposit_nonce(mut self, nonce: Option<u64>) -> Self {
-        self.deposit_nonce = nonce;
-        self
-    }
-
-    /// Applies deposit transaction metadata: deposit receipt version.
-    pub const fn deposit_version(mut self, version: Option<u64>) -> Self {
-        self.deposit_receipt_version = version;
-        self
-    }
-
     /// Builds the [`TransactionReceiptFields`] object.
     pub const fn build(self) -> TransactionReceiptFields {
         let Self {
@@ -275,8 +254,6 @@ impl ReceiptFieldsBuilder {
             l1_data_gas: l1_gas_used,
             l1_fee_scalar,
             l1_base_fee: l1_gas_price,
-            deposit_nonce,
-            deposit_receipt_version,
             l1_base_fee_scalar,
             l1_blob_base_fee,
             l1_blob_base_fee_scalar,
@@ -298,8 +275,8 @@ impl ReceiptFieldsBuilder {
                 operator_fee_constant,
                 da_footprint_gas_scalar,
             },
-            deposit_nonce,
-            deposit_receipt_version,
+            deposit_nonce: None,
+            deposit_receipt_version: None,
         }
     }
 }

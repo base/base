@@ -6,7 +6,7 @@ use serde::{Deserialize, Deserializer, Serialize, de::Error as SerdeError};
 use url::Url;
 
 use super::{
-    parsing::validate_swap_amounts,
+    parsing::{require_address, validate_swap_amounts},
     precompile::PrecompileTarget,
     real_token::{RealTokenSetupConfig, parse_real_token_setup},
     validity::ValidityConfig,
@@ -778,24 +778,9 @@ impl TestConfig {
                     reverse_max_amount,
                     "uniswap_v3 reverse",
                 )?;
-                let router = router.ok_or_else(|| {
-                    BaselineError::Config(
-                        "uniswap_v3 router is required (set deploy_devnet_swap_harness for fresh-devnet auto-deploy)"
-                            .into(),
-                    )
-                })?;
-                let token_in = token_in.ok_or_else(|| {
-                    BaselineError::Config(
-                        "uniswap_v3 token_in is required (set deploy_devnet_swap_harness for fresh-devnet auto-deploy)"
-                            .into(),
-                    )
-                })?;
-                let token_out = token_out.ok_or_else(|| {
-                    BaselineError::Config(
-                        "uniswap_v3 token_out is required (set deploy_devnet_swap_harness for fresh-devnet auto-deploy)"
-                            .into(),
-                    )
-                })?;
+                let router = require_address(*router, "uniswap_v3 router")?;
+                let token_in = require_address(*token_in, "uniswap_v3 token_in")?;
+                let token_out = require_address(*token_out, "uniswap_v3 token_out")?;
                 TxType::UniswapV3 {
                     router,
                     token_in,
@@ -830,24 +815,9 @@ impl TestConfig {
                         "aerodrome_cl tick_spacing {tick_spacing} exceeds i24 range"
                     )));
                 }
-                let router = router.ok_or_else(|| {
-                    BaselineError::Config(
-                        "aerodrome_cl router is required (set deploy_devnet_swap_harness for fresh-devnet auto-deploy)"
-                            .into(),
-                    )
-                })?;
-                let token_in = token_in.ok_or_else(|| {
-                    BaselineError::Config(
-                        "aerodrome_cl token_in is required (set deploy_devnet_swap_harness for fresh-devnet auto-deploy)"
-                            .into(),
-                    )
-                })?;
-                let token_out = token_out.ok_or_else(|| {
-                    BaselineError::Config(
-                        "aerodrome_cl token_out is required (set deploy_devnet_swap_harness for fresh-devnet auto-deploy)"
-                            .into(),
-                    )
-                })?;
+                let router = require_address(*router, "aerodrome_cl router")?;
+                let token_in = require_address(*token_in, "aerodrome_cl token_in")?;
+                let token_out = require_address(*token_out, "aerodrome_cl token_out")?;
                 TxType::AerodromeCl {
                     router,
                     token_in,

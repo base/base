@@ -20,12 +20,6 @@ sol! {
         /// Returns the current anchor game.
         function anchorGame() external view returns (address);
 
-        /// Returns the address of the `DisputeGameFactory`.
-        function disputeGameFactory() external view returns (address);
-
-        /// Returns the respected game type.
-        function respectedGameType() external view returns (uint32);
-
         /// Returns whether a game is finalized.
         function isGameFinalized(address game) external view returns (bool);
 

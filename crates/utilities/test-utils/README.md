@@ -7,8 +7,7 @@ Shared test utilities for integration testing across Base crates.
 Provides hardcoded test accounts, genesis configuration, and Solidity contract bindings for use
 in integration tests. Exports `build_test_genesis` for constructing a dev genesis state,
 pre-funded `Account` instances, and ABI-generated factories for test contracts (`MockERC20`,
-`SimpleStorage`, `Proxy`, `TransparentUpgradeableProxy`, `Logic`, `AccessListContract`, and
-others).
+`SimpleStorage`, `TransparentUpgradeableProxy`, and others).
 
 ## Usage
 

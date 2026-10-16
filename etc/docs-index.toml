@@ -475,8 +475,8 @@ summary = "Alpha WebSocket proxy fanning out Flashblocks from rollup-boost to do
 digest = "63043098db"
 
 ["crates/infra/withdrawer/README.md"]
-summary = "Typed withdrawer CLI configuration, local and optional Ledger transaction signers, fee validation, and OP Stack network presets without RPC or submission."
-digest = "f6754156ab"
+summary = "Typed withdrawer CLI configuration, local and optional Ledger signers, OP Stack network presets, and HTTP(S) RPC clients with bounded retries, signed submission, and receipt waiting."
+digest = "5de53bf36c"
 
 ["crates/infra/zk-benchmarks/README.md"]
 summary = "One-line stub: ZK proof benchmarking utilities for Base load-test runs; no usage or detail beyond that."
@@ -607,8 +607,8 @@ summary = "Health utilities: a healthz JSON-RPC method (HealthzRpc) for jsonrpse
 digest = "b842a480e4"
 
 ["crates/utilities/jwt/README.md"]
-summary = "JWT secret handling for Base nodes: loading, generating and resolving secrets (file, encoded, default) and optionally validating them against an Engine API via the engine-validation feature."
-digest = "826664fe2d"
+summary = "JwtSecretReader reads, writes, generates and resolves JWT secrets for Base nodes. JwtValidator optionally validates secrets against an Engine API with the engine-validation feature."
+digest = "8054bcba99"
 
 ["crates/utilities/l1-head/README.md"]
 summary = "One-line crate description: shared L1 head calculation helpers for proof services. No usage details in the README."
@@ -640,7 +640,7 @@ digest = "9b7117ade3"
 
 ["crates/utilities/test-utils/README.md"]
 summary = "Shared integration-test utilities: build_test_genesis, pre-funded test Accounts, and Solidity contract bindings (MockERC20, proxies, etc.). Use as a dev-dependency in Base integration tests."
-digest = "200a2d2b84"
+digest = "60c6c414f2"
 
 ["crates/utilities/test-utils/contracts/README.md"]
 summary = "Upstream Foundry boilerplate README for the test contracts project, plus one Base-specific section on deploying the WETH/USDC real-token swap devnet harness used by the load-test Justfile."
@@ -656,7 +656,7 @@ digest = "ffbb152cb0"
 
 ["crates/utilities/upgrade-signal/README.md"]
 summary = "Reads upgrade activation timestamps and minimum protocol version from the L1 ProtocolVersions contract; covers modes (metrics-only, startup-apply, runtime-admin), CLI flags, defaults, metrics."
-digest = "fd4c93a6fc"
+digest = "e38e07a646"
 
 ["docs/guides/BLOCK_PRODUCTION_REVIEW.md"]
 summary = "Review guide for block-production-sensitive PRs: mandatory payload size-limit gate across I/O boundaries, taxonomy of halt/stall scenarios (precompiles, builder, flashblocks), and a checklist."

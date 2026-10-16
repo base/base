@@ -1,4 +1,4 @@
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::KeyEvent;
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     prelude::*,
@@ -14,14 +14,11 @@ use crate::{
 const KEYBINDINGS: &[Keybinding] = &[
     Keybinding { key: "Esc", description: "Back to home" },
     Keybinding { key: "?", description: "Toggle help" },
-    Keybinding { key: "r", description: "Refresh config" },
 ];
 
 /// View displaying chain configuration and L1 system config parameters.
 #[derive(Debug)]
-pub struct ConfigView {
-    needs_refresh: bool,
-}
+pub struct ConfigView;
 
 impl Default for ConfigView {
     fn default() -> Self {
@@ -32,7 +29,7 @@ impl Default for ConfigView {
 impl ConfigView {
     /// Creates a new config view.
     pub const fn new() -> Self {
-        Self { needs_refresh: true }
+        Self
     }
 }
 
@@ -41,14 +38,8 @@ impl View for ConfigView {
         KEYBINDINGS
     }
 
-    fn handle_key(&mut self, key: KeyEvent, _resources: &mut Resources) -> Action {
-        match key.code {
-            KeyCode::Char('r') => {
-                self.needs_refresh = true;
-                Action::None
-            }
-            _ => Action::None,
-        }
+    fn handle_key(&mut self, _key: KeyEvent, _resources: &mut Resources) -> Action {
+        Action::None
     }
 
     fn render(&mut self, frame: &mut Frame<'_>, area: Rect, resources: &Resources) {

@@ -42,12 +42,6 @@ pub enum RemoteSignerError {
     /// JSON-RPC transport error
     #[error("JSON-RPC transport error: {0}")]
     SigningRPCError(#[from] alloy_transport::TransportError),
-    /// JSON serialization error
-    #[error("JSON serialization error: {0}")]
-    JsonError(#[from] serde_json::Error),
-    /// Failed to ping signer
-    #[error("Failed to ping signer: {0}")]
-    PingError(alloy_transport::TransportError),
     /// Invalid signature hex encoding
     #[error("Invalid signature hex encoding: {0}")]
     InvalidSignatureHex(alloy_primitives::hex::FromHexError),

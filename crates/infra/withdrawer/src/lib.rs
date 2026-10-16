@@ -6,6 +6,12 @@ pub use config::{ConfigError, Fees, SignerSource, WithdrawerArgs, WithdrawerConf
 mod network;
 pub use network::{Network, NetworkPreset, ProofSystem};
 
+mod rpc;
+pub use rpc::{BroadcastResult, WithdrawalRpc, WithdrawalRpcError};
+
+mod transport;
+pub use transport::WithdrawalRpcTransport;
+
 mod signer;
 pub use signer::{WithdrawalSigner, WithdrawalSignerError};
 
