@@ -27,10 +27,10 @@ use std::sync::Arc;
 use alloy_provider::RootProvider;
 use base_common_genesis::RollupConfig;
 use base_common_network::Base;
-use base_consensus_providers::{AlloyChainProvider, AlloyL2ChainProvider};
+use base_consensus_providers::{AlloyChainProvider, AlloyL2ChainProvider, L1RpcProvider};
 
 let cache_size = 1024;
-let l1_rpc = RootProvider::new_http(l1_rpc_url);
+let l1_rpc = L1RpcProvider::new_http(l1_rpc_url);
 let l2_rpc = RootProvider::<Base>::new_http(l2_rpc_url);
 let rollup_config: Arc<RollupConfig> = Arc::new(rollup_config);
 

@@ -296,7 +296,7 @@ digest = "b6430af020"
 
 ["crates/consensus/providers/README.md"]
 summary = "Alloy-backed data providers for derivation (AlloyChainProvider, AlloyL2ChainProvider, beacon client, blob provider) and OnlinePipeline. Use when wiring derivation to live L1/L2 nodes."
-digest = "e21f4103b6"
+digest = "f89e210ad5"
 
 ["crates/consensus/rpc/README.md"]
 summary = "jsonrpsee trait definitions for the rollup node RPC, chiefly optimism_syncStatus, with a security note that the endpoint is internal-only. Use when implementing or calling consensus RPC."
