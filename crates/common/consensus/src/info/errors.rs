@@ -9,18 +9,6 @@ pub enum BlockInfoError {
     /// Failed to parse the base fee scalar.
     #[error("Failed to parse the base fee scalar")]
     BaseFeeScalar,
-    /// Failed to parse the EIP-1559 denominator.
-    #[error("Failed to parse the EIP-1559 denominator")]
-    Eip1559Denominator,
-    /// Failed to parse the EIP-1559 elasticity parameter.
-    #[error("Failed to parse the EIP-1559 elasticity parameter")]
-    Eip1559Elasticity,
-    /// Failed to parse the Operator Fee Scalar.
-    #[error("Failed to parse the Operator fee scalar parameter")]
-    OperatorFeeScalar,
-    /// Failed to parse the Operator Fee Constant.
-    #[error("Failed to parse the Operator fee constant parameter")]
-    OperatorFeeConstant,
 }
 
 /// An error decoding an L1 block info transaction.
