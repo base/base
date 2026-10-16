@@ -13,7 +13,6 @@ workspace = true
 
 [dependencies]
 # workspace
-base-cli-utils.workspace = true
 base-common-network.workspace = true
 base-jwt = { workspace = true, features = ["engine-validation"] }
 base-upgrade-signal = { workspace = true, features = ["metrics"] }
@@ -30,7 +29,6 @@ base-common-genesis.workspace = true
 base-consensus-disc = { workspace = true, features = ["metrics"] }
 base-consensus-node = { workspace = true, features = ["metrics"] }
 base-consensus-providers = { workspace = true, features = ["metrics"] }
-reth-node-core.workspace = true
 
 # retry
 backon.workspace = true
@@ -66,7 +64,6 @@ eyre.workspace = true
 dirs.workspace = true
 strum.workspace = true
 metrics.workspace = true
-serde.workspace = true
 
 thiserror = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
@@ -76,7 +73,3 @@ rstest.workspace = true
 httpmock.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
-
-[features]
-default = [ "otlp" ]
-otlp = [ "base-cli-utils/otlp", "reth-node-core/otlp" ]

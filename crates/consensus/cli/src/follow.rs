@@ -3,7 +3,6 @@
 use std::{num::ParseIntError, sync::Arc, time::Duration};
 
 use alloy_provider::{Provider, RootProvider};
-use base_cli_utils::{LogConfig, RuntimeManager};
 use base_common_genesis::RollupConfig;
 use base_common_network::Base;
 use base_consensus_node::{
@@ -12,14 +11,13 @@ use base_consensus_node::{
 use base_consensus_providers::{L1RpcProvider, OnlineBeaconClient};
 use base_consensus_rpc::RpcBuilder;
 use clap::Args;
-use reth_node_core::args::TraceArgs;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 use url::Url;
 
 use crate::{
     ConsensusChainArgs, EmbeddedL2ClientArgs, EmbeddedRpcArgs, L1ClientArgs, L1ConfigFile,
-    L2ClientArgs, L2ConfigFile, LogArgs, MetricsArgs, RpcArgs, metrics::CliMetrics,
+    L2ClientArgs, L2ConfigFile, RpcArgs,
 };
 
 /// Overrides supplied by callers that embed a follow node alongside an execution node.
@@ -36,64 +34,6 @@ impl FollowNodeOverrides {
     /// Creates overrides for a follow node embedded alongside an execution node.
     pub const fn embedded_execution(l2_engine_rpc: Url) -> Self {
         Self { l2_engine_rpc: Some(l2_engine_rpc) }
-    }
-}
-
-/// Standalone consensus follow-node command.
-#[derive(Args, Clone, Debug)]
-pub struct ConsensusFollowNodeCommand {
-    /// Logging configuration.
-    #[command(flatten)]
-    pub logging: LogArgs,
-
-    /// Metrics configuration.
-    #[command(flatten)]
-    pub metrics: MetricsArgs,
-
-    /// `OpenTelemetry` tracing export configuration.
-    #[command(flatten)]
-    pub traces: TraceArgs,
-
-    /// Follow-node arguments.
-    #[command(flatten)]
-    pub args: ConsensusFollowNodeConfigArgs,
-}
-
-impl ConsensusFollowNodeCommand {
-    /// Runs the standalone consensus follow-node command.
-    pub fn run(self, chain: ConsensusChainArgs) -> eyre::Result<()> {
-        base_cli_utils::MetricsConfig::from(self.metrics.clone()).init_with(|| {
-            base_cli_utils::register_version_metrics!();
-        })?;
-
-        let args = ConsensusFollowNodeArgs::new(chain, self.args);
-        let metrics_config = if self.metrics.enabled {
-            let cfg = args.load_rollup_config()?;
-            CliMetrics::init_rollup_config(&cfg);
-            Some(cfg)
-        } else {
-            None
-        };
-
-        let rt = RuntimeManager::new().tokio_runtime()?;
-        rt.block_on(async {
-            LogConfig::from(self.logging.clone())
-                .init_with_trace_args(&self.traces, &["libp2p_gossipsub=error"])
-        })?;
-        rt.block_on(async move {
-            tokio::select! {
-                biased;
-                _ = tokio::signal::ctrl_c() => {
-                    tracing::info!(target: "cli", "Received Ctrl-C, shutting down...");
-                    Ok(())
-                }
-                res = async move {
-                    let _upgrade_countdown_metrics =
-                        metrics_config.map(CliMetrics::spawn_upgrade_countdown_recorder);
-                    args.start().await
-                } => res,
-            }
-        })
     }
 }
 
