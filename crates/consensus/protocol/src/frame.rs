@@ -239,13 +239,6 @@ impl Frame {
         Ok((Self::ENCODED_OVERHEAD + data_len, Self { id, number, data, is_last }))
     }
 
-    /// Parses a single frame from the given data at the given starting position,
-    /// returning the frame and the number of bytes consumed.
-    pub fn parse_frame(data: &[u8], start: usize) -> Result<(usize, Self), FrameDecodingError> {
-        let (frame_len, frame) = Self::decode(&data[start..])?;
-        Ok((frame_len, frame))
-    }
-
     /// Parse the on-chain serialization of frame(s) in an L1 transaction. Currently
     /// only version 0 of the serialization format is supported. All frames must be parsed
     /// without error, there must not be any leftover data, and there must be at least one

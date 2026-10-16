@@ -5,7 +5,7 @@ use alloc::{vec, vec::Vec};
 use alloy_primitives::bytes;
 
 use crate::{
-    BatchType, SpanBatch, SpanBatchElement, SpanBatchError, SpanBatchPayload, SpanBatchPrefix,
+    SpanBatch, SpanBatchElement, SpanBatchError, SpanBatchPayload, SpanBatchPrefix,
     SpanDecodingError,
 };
 
@@ -19,18 +19,13 @@ pub struct RawSpanBatch {
 }
 
 impl RawSpanBatch {
-    /// Returns the batch type
-    pub const fn get_batch_type(&self) -> BatchType {
-        BatchType::Span
-    }
-
     /// Encodes the [`RawSpanBatch`] into a writer.
     pub fn encode(&self, w: &mut dyn bytes::BufMut) -> Result<(), SpanBatchError> {
         self.prefix.encode_prefix(w);
         self.payload.encode_payload(w)
     }
 
-    /// Decodes the [`RawSpanBatch`] from a reader.]
+    /// Decodes the [`RawSpanBatch`] from a reader.
     pub fn decode(r: &mut &[u8]) -> Result<Self, SpanBatchError> {
         let prefix = SpanBatchPrefix::decode_prefix(r)?;
         let payload = SpanBatchPayload::decode_payload(r)?;
