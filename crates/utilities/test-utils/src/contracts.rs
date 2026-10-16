@@ -38,12 +38,6 @@ sol!(
 
 sol!(
     #[sol(rpc)]
-    AccessListContract,
-    concat!(env!("CARGO_MANIFEST_DIR"), "/contracts/out/AccessList.sol/AccessList.json")
-);
-
-sol!(
-    #[sol(rpc)]
     ContractFactory,
     concat!(env!("CARGO_MANIFEST_DIR"), "/contracts/out/ContractFactory.sol/ContractFactory.json")
 );
@@ -52,12 +46,6 @@ sol!(
     #[sol(rpc)]
     SimpleStorage,
     concat!(env!("CARGO_MANIFEST_DIR"), "/contracts/out/ContractFactory.sol/SimpleStorage.json")
-);
-
-sol!(
-    #[sol(rpc)]
-    Proxy,
-    concat!(env!("CARGO_MANIFEST_DIR"), "/contracts/out/Proxy.sol/Proxy.json")
 );
 
 sol!(
@@ -76,16 +64,4 @@ sol!(
         env!("CARGO_MANIFEST_DIR"),
         "/contracts/out/ParentBlockhashGuard.sol/ParentBlockhashGuard.json"
     )
-);
-
-sol!(
-    #[sol(rpc)]
-    Logic,
-    concat!(env!("CARGO_MANIFEST_DIR"), "/contracts/out/Proxy.sol/Logic.json")
-);
-
-sol!(
-    #[sol(rpc)]
-    Logic2,
-    concat!(env!("CARGO_MANIFEST_DIR"), "/contracts/out/Proxy.sol/Logic2.json")
 );

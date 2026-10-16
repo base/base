@@ -640,7 +640,7 @@ digest = "9b7117ade3"
 
 ["crates/utilities/test-utils/README.md"]
 summary = "Shared integration-test utilities: build_test_genesis, pre-funded test Accounts, and Solidity contract bindings (MockERC20, proxies, etc.). Use as a dev-dependency in Base integration tests."
-digest = "200a2d2b84"
+digest = "60c6c414f2"
 
 ["crates/utilities/test-utils/contracts/README.md"]
 summary = "Upstream Foundry boilerplate README for the test contracts project, plus one Base-specific section on deploying the WETH/USDC real-token swap devnet harness used by the load-test Justfile."
