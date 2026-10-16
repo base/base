@@ -71,8 +71,9 @@ pub fn start_background_services(
     // Create a watch channel seeded with the configured flashblocks URL.
     // For statically configured conductor clusters with at least one
     // flashblocks_ws endpoint, `ConductorState::poll` pushes the current
-    // leader's URL into this channel whenever leadership changes to a node
-    // with an endpoint, so both subscriber tasks switch over.
+    // leader's URL into this channel whenever the leader has an endpoint that
+    // differs from the current value, so both subscriber tasks switch to the
+    // leader.
     let (fb_url_tx, fb_url_rx) = watch::channel(config.flashblocks_ws.to_string());
 
     // Give FlashState a clone so it can detect URL changes and reset its
