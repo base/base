@@ -63,7 +63,7 @@
 
 ## Crates: builder
 
-- [crates/builder/cli/README.md](crates/builder/cli/README.md): base-builder-cli args and config helpers, plus --builder.validity-metadata.path: shared store/recorder, coverage, failure handling, lifecycle, retention, pruning and producer-only routing.
+- [crates/builder/cli/README.md](crates/builder/cli/README.md): base-builder-cli args plus --builder.validity-metadata.path: coverage, failures, lifecycle, retention, queue memory, CLI-only prune warning, routing, and RPC vs protocol-marker design.
 - [crates/builder/core/README.md](crates/builder/core/README.md): base-builder-core: flashblocks payload builder library producing sub-second block chunks, with launcher and metering trait modules, cargo features, and usage.
 - [crates/builder/metering/README.md](crates/builder/metering/README.md): base-builder-metering: MeteringStore (DashMap with LRU eviction) implementing MeteringProvider, plus base_setMeteringInformation style JSON-RPC extensions, with wiring example.
 - [crates/builder/multiplex/README.md](crates/builder/multiplex/README.md): Runs flashblocks and basic payload builders behind one handle, selecting basic at Denim; cutover off by default, basic-only mode, and validity metadata recording for basic-builder blocks.
