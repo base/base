@@ -71,8 +71,8 @@ summary = "Challenger end-to-end test binary: forks L1 into a pod-local Anvil an
 digest = "9d88297895"
 
 ["bin/challenger/README.md"]
-summary = "ZK-proof dispute game challenger binary: parses CLI arguments, builds a validated config, and delegates to base_challenger::run(). Very short README."
-digest = "8dcfdcfb7b"
+summary = "ZK-proof dispute game challenger binary that parses CLI arguments, builds a validated config, and delegates to base_challenger::ChallengerService::run()."
+digest = "887edd2713"
 
 ["bin/consensus/README.md"]
 summary = "Stub README for base-consensus, the canonical consensus node entrypoint for the Base Stack. Minimal, no usage details."
@@ -595,8 +595,8 @@ summary = "Host-side witness capture for ZK proving: fetches L1/L2 data over RPC
 digest = "c2ed1875a8"
 
 ["crates/utilities/balance-monitor/README.md"]
-summary = "Describes BalanceMonitorLayer, an alloy ProviderLayer that polls an account balance on each new block and publishes it through a tokio watch channel. Use for onchain balance monitoring in services."
-digest = "4db9619278"
+summary = "Describes BalanceMonitorLayer, an alloy ProviderLayer that polls an account balance at a fixed interval and publishes it through a tokio watch channel for onchain balance monitoring in services."
+digest = "cbf93709e9"
 
 ["crates/utilities/cli/README.md"]
 summary = "Overview of base-cli-utils: parse_cli!, register_version_metrics!, define_log_args!, define_metrics_args! macros and RuntimeManager (tokio runtime, signal shutdown). Use when building Base binaries."
