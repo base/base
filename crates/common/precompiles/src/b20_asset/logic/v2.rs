@@ -1066,6 +1066,7 @@ mod tests {
     use alloy_sol_types::SolEvent;
     use base_precompile_storage::{BasePrecompileError, Result};
     use k256::ecdsa::SigningKey;
+    use rstest::rstest;
 
     use crate::{
         Asset, AssetAccounting, AssetV2, B20_MAX_SUPPLY_CAP, B20AssetStorage, B20AssetToken,
@@ -1582,15 +1583,54 @@ mod tests {
         );
     }
 
-    #[test]
-    fn mint_unprivileged_requires_mint_role() {
+    // --- access control ---
+
+    fn unauthorized_mint(tok: &mut Tok) -> Result<()> {
+        LOGIC.mint(tok, ALICE, BOB, U256::from(1u64), false)
+    }
+
+    fn unauthorized_seize(tok: &mut Tok) -> Result<()> {
+        LOGIC.seize_with_memo(tok, ADMIN, ALICE, BOB, U256::from(1u64), MEMO)
+    }
+
+    fn unauthorized_update_multiplier(tok: &mut Tok) -> Result<()> {
+        LOGIC.update_multiplier(tok, ALICE, B20AssetStorage::WAD, false)
+    }
+
+    fn unauthorized_batch_mint(tok: &mut Tok) -> Result<()> {
+        LOGIC.batch_mint(tok, ALICE, vec![BOB], vec![U256::from(1u64)], false)
+    }
+
+    fn unauthorized_update_extra_metadata(tok: &mut Tok) -> Result<()> {
+        LOGIC.update_extra_metadata(tok, ALICE, "k".to_string(), "v".to_string(), false)
+    }
+
+    fn unauthorized_begin_announce(tok: &mut Tok) -> Result<()> {
+        LOGIC.begin_announce(tok, ALICE, "id".to_string(), String::new(), String::new(), false)
+    }
+
+    /// Every privileged entry point rejects a caller lacking the required role with the same
+    /// `AccessControlUnauthorizedAccount` revert.
+    #[rstest]
+    #[case(ALICE, B20TokenRole::Mint.id(), unauthorized_mint)]
+    #[case(ADMIN, B20TokenRole::Seize.id(), unauthorized_seize)]
+    #[case(ALICE, AssetV2::OPERATOR_ROLE, unauthorized_update_multiplier)]
+    #[case(ALICE, B20TokenRole::Mint.id(), unauthorized_batch_mint)]
+    #[case(ALICE, B20TokenRole::Metadata.id(), unauthorized_update_extra_metadata)]
+    #[case(ALICE, AssetV2::OPERATOR_ROLE, unauthorized_begin_announce)]
+    fn privileged_calls_require_role(
+        #[case] account: Address,
+        #[case] needed_role: B256,
+        #[case] call: fn(&mut Tok) -> Result<()>,
+    ) {
         let mut tok = token();
-        let err = LOGIC.mint(&mut tok, ALICE, BOB, U256::from(1u64), false).unwrap_err();
+        make_seizable(&mut tok);
+        let err = call(&mut tok).unwrap_err();
         assert_eq!(
             err,
             BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
-                account: ALICE,
-                neededRole: B20TokenRole::Mint.id(),
+                account,
+                neededRole: needed_role,
             })
         );
     }
@@ -1734,71 +1774,52 @@ mod tests {
         );
     }
 
-    #[test]
-    fn seize_ignores_receiver_policy_on_to() {
+    #[rstest]
+    #[case::transfer_receiver_policy_ignored_on_to(
+        Some((B20PolicyType::TransferReceiver, PolicyRegistryStorage::ALWAYS_BLOCK_ID)),
+        50,
+        None
+    )]
+    #[case::seize_receiver_policy_forbids(
+        Some((B20PolicyType::SeizeReceiver, PolicyRegistryStorage::ALWAYS_BLOCK_ID)),
+        1,
+        Some(PolicyRegistryStorage::ALWAYS_BLOCK_ID)
+    )]
+    #[case::unset_receiver_policy_allows_any_destination(None, 50, None)]
+    #[case::seize_receiver_policy_allows(
+        Some((B20PolicyType::SeizeReceiver, PolicyRegistryStorage::ALWAYS_ALLOW_ID)),
+        50,
+        None
+    )]
+    fn seize_receiver_policy(
+        #[case] policy: Option<(B20PolicyType, u64)>,
+        #[case] amount: u64,
+        #[case] forbidden_policy_id: Option<u64>,
+    ) {
         let mut tok = token();
         fund(&mut tok, ALICE, U256::from(50u64));
         make_seizable(&mut tok);
         grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
-        // A normal transfer to BOB would revert on this; seize does not consult it.
-        tok.accounting_mut()
-            .set_policy_id(
-                B20PolicyType::TransferReceiver.id(),
-                PolicyRegistryStorage::ALWAYS_BLOCK_ID,
-            )
-            .unwrap();
-        LOGIC.seize_with_memo(&mut tok, ADMIN, ALICE, BOB, U256::from(50u64), MEMO).unwrap();
-        assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(50u64));
-    }
+        if let Some((policy_type, policy_id)) = policy {
+            // A transfer-receiver policy must not affect seize; a seize-receiver policy must.
+            tok.accounting_mut().set_policy_id(policy_type.id(), policy_id).unwrap();
+        }
 
-    #[test]
-    fn seize_reverts_when_receiver_policy_forbids() {
-        let mut tok = token();
-        fund(&mut tok, ALICE, U256::from(50u64));
-        make_seizable(&mut tok);
-        grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
-        tok.accounting_mut()
-            .set_policy_id(
-                B20PolicyType::SeizeReceiver.id(),
-                PolicyRegistryStorage::ALWAYS_BLOCK_ID,
-            )
-            .unwrap();
-        let err =
-            LOGIC.seize_with_memo(&mut tok, ADMIN, ALICE, BOB, U256::from(1u64), MEMO).unwrap_err();
-        assert_eq!(
-            err,
-            BasePrecompileError::revert(IB20::PolicyForbids {
-                policyScope: B20PolicyType::SeizeReceiver.id(),
-                policyId: PolicyRegistryStorage::ALWAYS_BLOCK_ID,
-            })
-        );
-    }
+        let result = LOGIC.seize_with_memo(&mut tok, ADMIN, ALICE, BOB, U256::from(amount), MEMO);
 
-    #[test]
-    fn seize_unset_receiver_policy_allows_any_destination() {
-        let mut tok = token();
-        fund(&mut tok, ALICE, U256::from(50u64));
-        make_seizable(&mut tok);
-        grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
-        // SEIZE_RECEIVER_POLICY left unset => ALWAYS_ALLOW => any destination is allowed.
-        LOGIC.seize_with_memo(&mut tok, ADMIN, ALICE, BOB, U256::from(50u64), MEMO).unwrap();
-        assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(50u64));
-    }
-
-    #[test]
-    fn seize_succeeds_with_configured_receiver_policy_allow() {
-        let mut tok = token();
-        fund(&mut tok, ALICE, U256::from(50u64));
-        make_seizable(&mut tok);
-        grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
-        tok.accounting_mut()
-            .set_policy_id(
-                B20PolicyType::SeizeReceiver.id(),
-                PolicyRegistryStorage::ALWAYS_ALLOW_ID,
-            )
-            .unwrap();
-        LOGIC.seize_with_memo(&mut tok, ADMIN, ALICE, BOB, U256::from(50u64), MEMO).unwrap();
-        assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(50u64));
+        match forbidden_policy_id {
+            Some(policy_id) => assert_eq!(
+                result.unwrap_err(),
+                BasePrecompileError::revert(IB20::PolicyForbids {
+                    policyScope: B20PolicyType::SeizeReceiver.id(),
+                    policyId: policy_id,
+                })
+            ),
+            None => {
+                result.unwrap();
+                assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(amount));
+            }
+        }
     }
 
     #[test]
@@ -1836,21 +1857,6 @@ mod tests {
             BasePrecompileError::revert(IB20::PolicyForbids {
                 policyScope: B20PolicyType::SeizeReceiver.id(),
                 policyId: PolicyRegistryStorage::ALWAYS_BLOCK_ID,
-            })
-        );
-    }
-
-    #[test]
-    fn seize_requires_role() {
-        let mut tok = token();
-        make_seizable(&mut tok);
-        let err =
-            LOGIC.seize_with_memo(&mut tok, ADMIN, ALICE, BOB, U256::from(1u64), MEMO).unwrap_err();
-        assert_eq!(
-            err,
-            BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
-                account: ADMIN,
-                neededRole: B20TokenRole::Seize.id(),
             })
         );
     }
@@ -2044,20 +2050,6 @@ mod tests {
     }
 
     #[test]
-    fn update_multiplier_requires_operator_role() {
-        let mut tok = token();
-        let err =
-            LOGIC.update_multiplier(&mut tok, ALICE, B20AssetStorage::WAD, false).unwrap_err();
-        assert_eq!(
-            err,
-            BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
-                account: ALICE,
-                neededRole: AssetV2::OPERATOR_ROLE,
-            })
-        );
-    }
-
-    #[test]
     fn update_multiplier_rejects_zero() {
         let mut tok = token();
         let err = LOGIC.update_multiplier(&mut tok, ADMIN, U256::ZERO, true).unwrap_err();
@@ -2099,21 +2091,6 @@ mod tests {
         assert_eq!(tok.accounting().balance_of(ALICE).unwrap(), U256::from(100u64));
         assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(200u64));
         assert_eq!(tok.accounting().total_supply().unwrap(), U256::from(300u64));
-    }
-
-    #[test]
-    fn batch_mint_requires_mint_role() {
-        let mut tok = token();
-        let err = LOGIC
-            .batch_mint(&mut tok, ALICE, vec![BOB], vec![U256::from(1u64)], false)
-            .unwrap_err();
-        assert_eq!(
-            err,
-            BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
-                account: ALICE,
-                neededRole: B20TokenRole::Mint.id(),
-            })
-        );
     }
 
     #[test]
@@ -2189,21 +2166,6 @@ mod tests {
         assert_eq!(err, BasePrecompileError::revert(IB20Asset::InvalidMetadataKey {}));
     }
 
-    #[test]
-    fn update_extra_metadata_requires_metadata_role() {
-        let mut tok = token();
-        let err = LOGIC
-            .update_extra_metadata(&mut tok, ALICE, "k".to_string(), "v".to_string(), false)
-            .unwrap_err();
-        assert_eq!(
-            err,
-            BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
-                account: ALICE,
-                neededRole: B20TokenRole::Metadata.id(),
-            })
-        );
-    }
-
     // --- asset: announcements ---
 
     #[test]
@@ -2227,21 +2189,6 @@ mod tests {
             .begin_announce(&mut tok, ADMIN, id.clone(), String::new(), String::new(), true)
             .unwrap_err();
         assert_eq!(err, BasePrecompileError::revert(IB20Asset::AnnouncementIdAlreadyUsed { id }));
-    }
-
-    #[test]
-    fn begin_announce_requires_operator_role() {
-        let mut tok = token();
-        let err = LOGIC
-            .begin_announce(&mut tok, ALICE, "id".to_string(), String::new(), String::new(), false)
-            .unwrap_err();
-        assert_eq!(
-            err,
-            BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
-                account: ALICE,
-                neededRole: AssetV2::OPERATOR_ROLE,
-            })
-        );
     }
 
     #[test]

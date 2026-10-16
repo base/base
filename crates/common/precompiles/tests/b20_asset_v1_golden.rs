@@ -480,23 +480,110 @@ fn golden_transfer_reverts_when_paused() {
     );
 }
 
-#[test]
-fn golden_transfer_with_memo_emits_transfer_then_memo() {
-    let mut s = fresh();
-    seed(&mut s, |t| fund(t, ALICE, u(100)));
-    let out = op_privileged(
-        &mut s,
+type MemoRun = fn(&mut HashMapStorageProvider) -> Result<Bytes, BasePrecompileError>;
+
+fn run_transfer_memo(s: &mut HashMapStorageProvider) -> Result<Bytes, BasePrecompileError> {
+    seed(s, |t| fund(t, ALICE, u(100)));
+    op_privileged(
+        s,
         ALICE,
         FakePolicyAccounting::new(),
         IB20::transferWithMemoCall { to: BOB, amount: u(30), memo: MEMO }.abi_encode(),
     )
-    .unwrap();
+}
 
-    assert_eq!(out, ok_true());
+fn run_transfer_from_memo(s: &mut HashMapStorageProvider) -> Result<Bytes, BasePrecompileError> {
+    seed(s, |t| {
+        fund(t, ALICE, u(100));
+        t.set_allowance(ALICE, BOB, u(40)).unwrap();
+    });
+    op_privileged(
+        s,
+        BOB,
+        FakePolicyAccounting::new(),
+        IB20::transferFromWithMemoCall { from: ALICE, to: CAROL, amount: u(30), memo: MEMO }
+            .abi_encode(),
+    )
+}
+
+fn run_mint_memo(s: &mut HashMapStorageProvider) -> Result<Bytes, BasePrecompileError> {
+    let mut policy = FakePolicyAccounting::new();
+    policy.allow(0, BOB);
+    op_privileged(
+        s,
+        ADMIN,
+        policy,
+        IB20::mintWithMemoCall { to: BOB, amount: u(40), memo: MEMO }.abi_encode(),
+    )
+}
+
+fn run_burn_memo(s: &mut HashMapStorageProvider) -> Result<Bytes, BasePrecompileError> {
+    seed(s, |t| {
+        fund(t, ALICE, u(100));
+        give_role(t, B20TokenRole::Burn.id(), ALICE);
+    });
+    op(
+        s,
+        ALICE,
+        FakePolicyAccounting::new(),
+        IB20::burnWithMemoCall { amount: u(40), memo: MEMO }.abi_encode(),
+    )
+}
+
+fn assert_memo_variant_emits_transfer_then_memo(
+    label: &str,
+    root: B256,
+    run: MemoRun,
+    expected: Bytes,
+) {
+    let mut s = fresh();
+    let out = run(&mut s).unwrap();
+
+    assert_eq!(out, expected);
     let events = s.get_events(TOKEN);
     assert_eq!(events[events.len() - 2].topics()[0], IB20::Transfer::SIGNATURE_HASH);
     assert_eq!(events[events.len() - 1].topics()[0], IB20::Memo::SIGNATURE_HASH);
-    assert_root("transfer_with_memo", s, ROOT_TRANSFER_WITH_MEMO);
+    assert_root(label, s, root);
+}
+
+#[test]
+fn golden_transfer_with_memo_emits_transfer_then_memo() {
+    assert_memo_variant_emits_transfer_then_memo(
+        "transfer_with_memo",
+        ROOT_TRANSFER_WITH_MEMO,
+        run_transfer_memo,
+        ok_true(),
+    );
+}
+
+#[test]
+fn golden_transfer_from_with_memo_emits_transfer_then_memo() {
+    assert_memo_variant_emits_transfer_then_memo(
+        "transfer_from_with_memo",
+        ROOT_TRANSFER_FROM_WITH_MEMO,
+        run_transfer_from_memo,
+        ok_true(),
+    );
+}
+
+#[test]
+fn golden_mint_with_memo_emits_transfer_then_memo() {
+    assert_memo_variant_emits_transfer_then_memo(
+        "mint_with_memo",
+        ROOT_MINT_WITH_MEMO,
+        run_mint_memo,
+        Bytes::new(),
+    );
+}
+
+#[test]
+fn golden_burn_with_memo_emits_transfer_then_memo() {
+    assert_memo_variant_emits_transfer_then_memo(
+        "burn_with_memo",
+        ROOT_BURN_WITH_MEMO,
+        run_burn_memo,
+        Bytes::new(),
+    );
 }
 
 // ============================================================================
@@ -595,29 +682,6 @@ fn golden_transfer_from_unprivileged_enforces_executor_policy() {
             policyId: POLICY_ID,
         })
     );
-}
-
-#[test]
-fn golden_transfer_from_with_memo() {
-    let mut s = fresh();
-    seed(&mut s, |t| {
-        fund(t, ALICE, u(100));
-        t.set_allowance(ALICE, BOB, u(40)).unwrap();
-    });
-    let out = op_privileged(
-        &mut s,
-        BOB,
-        FakePolicyAccounting::new(),
-        IB20::transferFromWithMemoCall { from: ALICE, to: CAROL, amount: u(30), memo: MEMO }
-            .abi_encode(),
-    )
-    .unwrap();
-
-    assert_eq!(out, ok_true());
-    let events = s.get_events(TOKEN);
-    assert_eq!(events[events.len() - 2].topics()[0], IB20::Transfer::SIGNATURE_HASH);
-    assert_eq!(events[events.len() - 1].topics()[0], IB20::Memo::SIGNATURE_HASH);
-    assert_root("transfer_from_with_memo", s, ROOT_TRANSFER_FROM_WITH_MEMO);
 }
 
 // ============================================================================
@@ -727,26 +791,6 @@ fn golden_mint_reverts_over_supply_cap() {
     );
 }
 
-#[test]
-fn golden_mint_with_memo() {
-    let mut s = fresh();
-    let mut policy = FakePolicyAccounting::new();
-    policy.allow(0, BOB);
-    let out = op_privileged(
-        &mut s,
-        ADMIN,
-        policy,
-        IB20::mintWithMemoCall { to: BOB, amount: u(40), memo: MEMO }.abi_encode(),
-    )
-    .unwrap();
-
-    assert!(out.is_empty());
-    let events = s.get_events(TOKEN);
-    assert_eq!(events[events.len() - 2].topics()[0], IB20::Transfer::SIGNATURE_HASH);
-    assert_eq!(events[events.len() - 1].topics()[0], IB20::Memo::SIGNATURE_HASH);
-    assert_root("mint_with_memo", s, ROOT_MINT_WITH_MEMO);
-}
-
 // ============================================================================
 // burn / burnBlocked
 // ============================================================================
@@ -787,28 +831,6 @@ fn golden_burn_requires_role_then_reduces_supply() {
     });
     assert_eq!(last_topic0(&s), IB20::Transfer::SIGNATURE_HASH);
     assert_root("burn", s, ROOT_BURN);
-}
-
-#[test]
-fn golden_burn_with_memo() {
-    let mut s = fresh();
-    seed(&mut s, |t| {
-        fund(t, ALICE, u(100));
-        give_role(t, B20TokenRole::Burn.id(), ALICE);
-    });
-    let out = op(
-        &mut s,
-        ALICE,
-        FakePolicyAccounting::new(),
-        IB20::burnWithMemoCall { amount: u(40), memo: MEMO }.abi_encode(),
-    )
-    .unwrap();
-
-    assert!(out.is_empty());
-    let events = s.get_events(TOKEN);
-    assert_eq!(events[events.len() - 2].topics()[0], IB20::Transfer::SIGNATURE_HASH);
-    assert_eq!(events[events.len() - 1].topics()[0], IB20::Memo::SIGNATURE_HASH);
-    assert_root("burn_with_memo", s, ROOT_BURN_WITH_MEMO);
 }
 
 #[test]
@@ -2827,7 +2849,11 @@ fn v1_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Asset::IB20AssetCall
             golden_approve_reverts_zero_approver,
         ]),
         C::transferWithMemo(_) => covered(&[golden_transfer_with_memo_emits_transfer_then_memo]),
-        C::transferFromWithMemo(_) => covered(&[golden_transfer_from_with_memo]),
+        C::transferFromWithMemo(_) => {
+            covered(&[golden_transfer_from_with_memo_emits_transfer_then_memo])
+        }
+        C::mintWithMemo(_) => covered(&[golden_mint_with_memo_emits_transfer_then_memo]),
+        C::burnWithMemo(_) => covered(&[golden_burn_with_memo_emits_transfer_then_memo]),
 
         // mint / burn
         C::mint(_) => covered(&[
@@ -2836,12 +2862,10 @@ fn v1_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Asset::IB20AssetCall
             golden_mint_reverts_over_supply_cap,
             golden_mint_reverts_zero_receiver,
         ]),
-        C::mintWithMemo(_) => covered(&[golden_mint_with_memo]),
         C::burn(_) => covered(&[
             golden_burn_requires_role_then_reduces_supply,
             golden_burn_reverts_insufficient_balance,
         ]),
-        C::burnWithMemo(_) => covered(&[golden_burn_with_memo]),
         C::burnBlocked(_) => covered(&[
             golden_burn_blocked_destroys_from_blocked_account,
             golden_burn_blocked_reverts_when_not_blocked,

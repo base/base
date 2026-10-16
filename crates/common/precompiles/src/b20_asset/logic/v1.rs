@@ -808,6 +808,7 @@ mod tests {
     use alloy_sol_types::SolEvent;
     use base_precompile_storage::{BasePrecompileError, Result};
     use k256::ecdsa::SigningKey;
+    use rstest::rstest;
 
     use crate::{
         Asset, AssetAccounting, AssetV1, B20_MAX_SUPPLY_CAP, B20AssetStorage, B20AssetToken,
@@ -1274,15 +1275,33 @@ mod tests {
         );
     }
 
-    #[test]
-    fn mint_unprivileged_requires_mint_role() {
+    /// Unprivileged callers are rejected by the access-control gate, which names the role the
+    /// operation requires.
+    #[rstest]
+    #[case::mint(B20TokenRole::Mint.id(), |tok: &mut Tok| LOGIC.mint(tok, ALICE, BOB, U256::from(1u64), false))]
+    #[case::update_multiplier(AssetV1::OPERATOR_ROLE, |tok: &mut Tok| {
+        LOGIC.update_multiplier(tok, ALICE, B20AssetStorage::WAD, false)
+    })]
+    #[case::batch_mint(B20TokenRole::Mint.id(), |tok: &mut Tok| {
+        LOGIC.batch_mint(tok, ALICE, vec![BOB], vec![U256::from(1u64)], false)
+    })]
+    #[case::update_extra_metadata(B20TokenRole::Metadata.id(), |tok: &mut Tok| {
+        LOGIC.update_extra_metadata(tok, ALICE, "k".to_string(), "v".to_string(), false)
+    })]
+    #[case::begin_announce(AssetV1::OPERATOR_ROLE, |tok: &mut Tok| {
+        LOGIC.begin_announce(tok, ALICE, "id".to_string(), String::new(), String::new(), false)
+    })]
+    fn unprivileged_operations_require_role(
+        #[case] needed_role: B256,
+        #[case] op: fn(&mut Tok) -> Result<()>,
+    ) {
         let mut tok = token();
-        let err = LOGIC.mint(&mut tok, ALICE, BOB, U256::from(1u64), false).unwrap_err();
+        let err = op(&mut tok).unwrap_err();
         assert_eq!(
             err,
             BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
                 account: ALICE,
-                neededRole: B20TokenRole::Mint.id(),
+                neededRole: needed_role,
             })
         );
     }
@@ -1461,20 +1480,6 @@ mod tests {
     }
 
     #[test]
-    fn update_multiplier_requires_operator_role() {
-        let mut tok = token();
-        let err =
-            LOGIC.update_multiplier(&mut tok, ALICE, B20AssetStorage::WAD, false).unwrap_err();
-        assert_eq!(
-            err,
-            BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
-                account: ALICE,
-                neededRole: AssetV1::OPERATOR_ROLE,
-            })
-        );
-    }
-
-    #[test]
     fn update_multiplier_rejects_zero() {
         let mut tok = token();
         let err = LOGIC.update_multiplier(&mut tok, ADMIN, U256::ZERO, true).unwrap_err();
@@ -1509,21 +1514,6 @@ mod tests {
         assert_eq!(tok.accounting().balance_of(ALICE).unwrap(), U256::from(100u64));
         assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(200u64));
         assert_eq!(tok.accounting().total_supply().unwrap(), U256::from(300u64));
-    }
-
-    #[test]
-    fn batch_mint_requires_mint_role() {
-        let mut tok = token();
-        let err = LOGIC
-            .batch_mint(&mut tok, ALICE, vec![BOB], vec![U256::from(1u64)], false)
-            .unwrap_err();
-        assert_eq!(
-            err,
-            BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
-                account: ALICE,
-                neededRole: B20TokenRole::Mint.id(),
-            })
-        );
     }
 
     #[test]
@@ -1599,21 +1589,6 @@ mod tests {
         assert_eq!(err, BasePrecompileError::revert(IB20Asset::InvalidMetadataKey {}));
     }
 
-    #[test]
-    fn update_extra_metadata_requires_metadata_role() {
-        let mut tok = token();
-        let err = LOGIC
-            .update_extra_metadata(&mut tok, ALICE, "k".to_string(), "v".to_string(), false)
-            .unwrap_err();
-        assert_eq!(
-            err,
-            BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
-                account: ALICE,
-                neededRole: B20TokenRole::Metadata.id(),
-            })
-        );
-    }
-
     // --- asset: announcements ---
 
     #[test]
@@ -1637,21 +1612,6 @@ mod tests {
             .begin_announce(&mut tok, ADMIN, id.clone(), String::new(), String::new(), true)
             .unwrap_err();
         assert_eq!(err, BasePrecompileError::revert(IB20Asset::AnnouncementIdAlreadyUsed { id }));
-    }
-
-    #[test]
-    fn begin_announce_requires_operator_role() {
-        let mut tok = token();
-        let err = LOGIC
-            .begin_announce(&mut tok, ALICE, "id".to_string(), String::new(), String::new(), false)
-            .unwrap_err();
-        assert_eq!(
-            err,
-            BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
-                account: ALICE,
-                neededRole: AssetV1::OPERATOR_ROLE,
-            })
-        );
     }
 
     #[test]
