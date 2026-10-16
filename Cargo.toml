@@ -418,17 +418,18 @@ reth-ethereum-forks = { git = "https://github.com/base/reth", tag = "base-v2.7.0
 reth-consensus-common = { git = "https://github.com/base/reth", tag = "base-v2.7.0.1", default-features = false }
 
 # tokio
-tokio = "1.52.3"
-tokio-util = "0.7.11"
-tokio-stream = "0.1.11"
+tokio = "1.53.1"
+tokio-util = "0.7.19"
+tokio-stream = "0.1.17"
+# Match Reth's websocket stack instead of resolving a second incompatible version.
 tokio-tungstenite = "0.29.0"
 
 # async
-futures = "0.3"
-reqwest = "0.13"
+futures = "0.3.31"
+reqwest = "0.13.1"
 async-stream = "0.3"
 async-channel = "2.5"
-async-trait = "0.1.68"
+async-trait = "0.1.83"
 
 # grpc
 tonic = "0.14"
@@ -439,17 +440,17 @@ jsonrpsee-core = "0.26.0"
 jsonrpsee-types = "0.26.0"
 
 # cli
-clap = "4"
-ratatui = "0.30"
+clap = "4.6.5"
 arboard = "3.6.1"
+ratatui = "0.30.0"
 indicatif = "0.18"
-crossterm = "0.29.0"
+crossterm = "0.29"
 tracing-indicatif = "0.3"
 
 # tracing
-tracing-appender = "0.2.5"
-tracing-subscriber = "0.3"
-tracing = { version = "0.1.0", default-features = false }
+tracing-appender = "0.2.4"
+tracing-subscriber = "0.3.22"
+tracing = { version = "0.1.43", default-features = false }
 
 # OpenTelemetry
 opentelemetry = "0.32"
@@ -459,10 +460,10 @@ opentelemetry-http = { version = "0.32", default-features = false }
 # metrics
 cadence = "1.5"
 ordered-float = "5"
-metrics = { version = "0.24.0", default-features = false }
-metrics-util = { version = "0.20.3", default-features = false }
-metrics-process = { version = "2.1.0", default-features = false }
-metrics-exporter-prometheus = { version = "0.18.3", default-features = false }
+metrics = { version = "0.24.3", default-features = false }
+metrics-util = { version = "0.20.1", default-features = false }
+metrics-process = { version = "2.4.3", default-features = false }
+metrics-exporter-prometheus = { version = "0.18.1", default-features = false }
 
 # aws
 aws-nitro-enclaves-nsm-api = "0.4"
@@ -499,13 +500,13 @@ coins-bip39 = { version = "0.12", default-features = false }
 ark-bls12-381 = { version = "0.6.0", default-features = false }
 
 # http
-url = "2.3"
-http = "1.0"
-hyper = "1.9"
+url = "2.5"
+http = "1.4"
+hyper = "1.8"
 tower = "0.5"
 http-body = "1.0"
-hyper-util = "0.1.5"
-http-body-util = "0.1.2"
+hyper-util = "0.1.11"
+http-body-util = "0.1.3"
 axum = { version = "0.8.9", default-features = false }
 tower-http = { version = "0.6", features = ["limit", "timeout"] }
 
@@ -521,29 +522,29 @@ unsigned-varint = { version = "0.8", default-features = false }
 rkyv = "0.8"
 bincode = "2"
 ciborium = "0.2"
-serde_with = "3"
 serde_repr = "0.1"
 serde_bytes = "0.11"
+serde_with = "3.8.1"
 serde_cbor = "0.11.2"
 serde_yaml = "0.9.34"
-ethereum_ssz = "0.10.4"
-ethereum_ssz_derive = "0.10.4"
+ethereum_ssz = "0.10"
+ethereum_ssz_derive = "0.10"
 toml = { version = "1.0", default-features = false }
-serde = { version = "1.0", default-features = false }
-serde_json = { version = "1.0", default-features = false }
+serde = { version = "1.0.228", default-features = false }
+serde_json = { version = "1.0.151", default-features = false }
 
 # testing
 arbtest = "0.3"
 mockall = "0.14"
-proptest = "1.7"
-tempfile = "3.20"
+tempfile = "3.27"
 rstest = "0.26.1"
 criterion = "0.8"
 serial_test = "3"
 httpmock = "0.8.2"
+proptest = "1.10.0"
+similar-asserts = "1"
 iai-callgrind = "0.16.1"
-similar-asserts = "1.5.0"
-arbitrary = { version = "1.3", default-features = false }
+arbitrary = { version = "1", default-features = false }
 testcontainers = { version = "0.25", default-features = false }
 testcontainers-modules = { version = "0.13", default-features = false }
 
@@ -551,11 +552,11 @@ testcontainers-modules = { version = "0.13", default-features = false }
 bollard = "0.19.4"
 
 # compression
+snap = "1"
 zstd = "0.13"
-snap = "1.1.1"
-tar = "0.4.46"
+tar = "0.4.44"
 miniz_oxide = "0.9.0"
-brotli = { version = "8", default-features = false }
+brotli = { version = "8.0.2", default-features = false }
 
 # database
 redb = "2"
@@ -566,17 +567,17 @@ rocksdb = { version = "0.24", default-features = false }
 eyre = "0.6"
 anyhow = "1.0"
 backtrace = "0.3"
-thiserror = { version = "2.0.0", default-features = false }
+thiserror = { version = "2.0", default-features = false }
 
 # collections and concurrency
-imbl = "7"
 lru = "0.16"
 moka = "0.12"
-rayon = "1.7"
-dashmap = "6.2"
+imbl = "7.0.0"
+rayon = "1.11"
+dashmap = "6.1"
 arc-swap = "1.7.1"
-parking_lot = "0.12"
-either = { version = "1.16.0", default-features = false }
+parking_lot = "0.12.3"
+either = { version = "1.15.0", default-features = false }
 
 # configuration
 dirs = "6.0.0"
@@ -587,7 +588,7 @@ figment = { version = "0.10.19", default-features = false }
 # encoding
 hex = "0.4"
 base64 = "0.22"
-bytes = "1.11.1"
+bytes = "1.12.1"
 
 # identifiers and randomness
 rand = "0.9"
@@ -595,24 +596,24 @@ uuid = "1.24"
 rand_08 = { package = "rand", version = "0.8" }
 
 # time
-chrono = "0.4.41"
-humantime = "2.1"
+chrono = "0.4.42"
+humantime = "2.3"
 
 # retry
-backon = "1.2"
+backon = "1.6"
 backoff = "0.4.0"
 
 # macros and code generation
 quote = "1"
 ctor = "0.6"
-auto_impl = "1"
 proc-macro2 = "1"
+auto_impl = "1.2.0"
 ambassador = "0.4.2"
 modular-bitfield = "0.13.1"
 static_assertions = { version = "1.1.0" }
 strum = { version = "0.27", default-features = false }
-derive_more = { version = "2", default-features = false }
 syn = { version = "2", features = ["full", "extra-traits"] }
+derive_more = { version = "2.1.0", default-features = false }
 
 # no_std
 spin = "0.10"
@@ -627,7 +628,7 @@ tokio-vsock = "0.7"
 tikv-jemallocator = "0.6"
 
 # tooling
-notify = "8.0.0"
+notify = "8.2"
 
 # rate limiting
 governor = "0.7"
