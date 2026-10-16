@@ -3,8 +3,8 @@ use alloy_eips::BlockNumberOrTag;
 use alloy_network::TxSigner;
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_provider::Provider;
-use alloy_rpc_types_eth::TransactionRequest;
-use alloy_sol_types::{Error as SolError, SolCall};
+use alloy_rpc_types_eth::{TransactionReceipt, TransactionRequest};
+use alloy_sol_types::{Error as SolError, SolCall, SolEvent};
 use alloy_transport::TransportError;
 use base_common_consensus::Predeploys;
 use base_proof_contracts::{GameStatus, IAnchorStateRegistry, IDisputeGameFactory};
@@ -76,6 +76,35 @@ pub enum WithdrawerError {
     /// The operation deadline elapsed.
     #[error("withdrawal operation timed out")]
     Timeout(#[source] tokio::time::error::Elapsed),
+    /// A broadcast transaction could not be confirmed; check its hash before retrying.
+    #[error("transaction {transaction_hash} was broadcast but could not be confirmed: {source}")]
+    Unconfirmed {
+        /// Hash of the broadcast L1 transaction.
+        transaction_hash: B256,
+        /// Failure after broadcast, with credential-bearing details removed.
+        #[source]
+        source: Box<Self>,
+    },
+    /// The portal consumed the withdrawal, but its target call failed; it cannot be retried.
+    #[error(
+        "withdrawal {withdrawal_hash} finalized in transaction {transaction_hash}, but its target call failed"
+    )]
+    TargetCallFailed {
+        /// Hash of the consumed withdrawal.
+        withdrawal_hash: B256,
+        /// Confirmed L1 finalization transaction.
+        transaction_hash: B256,
+    },
+    /// A successful receipt has no matching finalization event from the configured portal.
+    #[error(
+        "transaction {transaction_hash} has no portal finalization event for withdrawal {withdrawal_hash}"
+    )]
+    MissingFinalizationEvent {
+        /// Expected withdrawal commitment.
+        withdrawal_hash: B256,
+        /// Confirmed L1 transaction whose logs were checked.
+        transaction_hash: B256,
+    },
     /// The configured L2 transaction is not included or not found.
     #[error("L2 withdrawal receipt is unavailable")]
     MissingReceipt,
@@ -126,9 +155,6 @@ pub struct Withdrawer {
 }
 
 impl Withdrawer {
-    /// Maximum number of respected games returned by one factory search.
-    pub const GAME_SEARCH_PAGE_SIZE: u64 = 50;
-
     /// Constructs an operation without network or signer access.
     pub const fn new(config: WithdrawerConfig) -> Self {
         Self { config }
@@ -136,6 +162,7 @@ impl Withdrawer {
 
     /// Processes every withdrawal in receipt log order within one shared deadline.
     pub async fn run(&self) -> Result<Vec<WithdrawalOutcome>, WithdrawerError> {
+        let mut pending_transaction = None;
         tokio::time::timeout(self.config.timeout, async {
             let rpc = WithdrawalRpc::new(&self.config)?;
             let signer = WithdrawalSigner::new(&self.config.signer).await?;
@@ -147,6 +174,7 @@ impl Withdrawer {
             let withdrawals = Withdrawal::from_receipt(&receipt)?;
             let mut outcomes = Vec::with_capacity(withdrawals.len());
             for withdrawal in withdrawals {
+                pending_transaction = None;
                 let status = self.status(&rpc, &withdrawal, signer.address()).await?;
                 let hash = withdrawal.hash();
                 tracing::info!(withdrawal_hash = %hash, ?status, "withdrawal decision");
@@ -161,7 +189,14 @@ impl Withdrawer {
                             .abi_encode()
                             .into()
                         };
-                        self.submit(&rpc, &signer, calldata).await?
+                        self.submit(
+                            &rpc,
+                            &signer,
+                            calldata,
+                            (status == WithdrawalStatus::Finalize).then_some(hash),
+                            &mut pending_transaction,
+                        )
+                        .await?
                     }
                     WithdrawalStatus::Finalized | WithdrawalStatus::NotReady { .. } => None,
                 };
@@ -174,7 +209,13 @@ impl Withdrawer {
             Ok(outcomes)
         })
         .await
-        .map_err(WithdrawerError::Timeout)?
+        .map_err(|source| match pending_transaction {
+            Some(transaction_hash) => WithdrawerError::Unconfirmed {
+                transaction_hash,
+                source: Box::new(WithdrawerError::Timeout(source)),
+            },
+            None => WithdrawerError::Timeout(source),
+        })?
     }
 
     /// Reads the next action without preparing, signing, or submitting a transaction.
@@ -340,57 +381,41 @@ impl Withdrawer {
                     .header
                     .timestamp;
                 while count > U256::ZERO {
-                    let games = Self::read(
+                    count -= U256::from(1);
+                    let game = Self::read(
                         rpc,
                         dispute_game_factory,
-                        IDisputeGameFactory::findLatestGamesCall {
-                            gameType: game_type,
-                            start: count - U256::from(1),
-                            count: U256::from(Self::GAME_SEARCH_PAGE_SIZE),
-                        },
+                        IDisputeGameFactory::gameAtIndexCall { index: count },
                     )
                     .await?;
-                    if games.is_empty() {
+                    // A game created before the withdrawal cannot honestly cover it, nor can older games.
+                    if game.timestamp < withdrawal_timestamp {
                         break;
                     }
-                    for game in games {
-                        if game.index >= count {
-                            return Err(WithdrawerError::InvalidGame { index: game.index });
-                        }
-                        count = game.index;
-                        // A game created before the withdrawal cannot honestly cover it, nor can older games.
-                        if game.timestamp < withdrawal_timestamp {
-                            return Err(WithdrawerError::NoCoverage {
-                                block_number: withdrawal.block_number,
-                            });
-                        }
-                        let encoded_block = game
-                            .extraData
-                            .get(..32)
-                            .ok_or(WithdrawerError::InvalidGame { index: game.index })?;
-                        let game_block = U256::from_be_slice(encoded_block);
-                        if game_block < block {
-                            continue;
-                        }
-                        let entry = Self::read(
-                            rpc,
-                            dispute_game_factory,
-                            IDisputeGameFactory::gameAtIndexCall { index: game.index },
-                        )
-                        .await?;
-                        if entry.gameType != game_type
-                            || !Self::game_eligible(rpc, anchor_state_registry, entry.proxy).await?
-                        {
-                            continue;
-                        }
-                        return Ok(WithdrawalProvingOutput {
-                            block_number: game_block
-                                .try_into()
-                                .map_err(|_| WithdrawerError::ValueOverflow)?,
-                            index: game.index,
-                            root: game.rootClaim,
-                        });
+                    if game.gameType != game_type {
+                        continue;
                     }
+                    let extra_data =
+                        Self::read(rpc, game.proxy, WithdrawalDisputeGame::extraDataCall {})
+                            .await?;
+                    let encoded_block = extra_data
+                        .get(..32)
+                        .ok_or(WithdrawerError::InvalidGame { index: count })?;
+                    let game_block = U256::from_be_slice(encoded_block);
+                    if game_block < block
+                        || !Self::game_eligible(rpc, anchor_state_registry, game.proxy).await?
+                    {
+                        continue;
+                    }
+                    let root = Self::read(rpc, game.proxy, WithdrawalDisputeGame::rootClaimCall {})
+                        .await?;
+                    return Ok(WithdrawalProvingOutput {
+                        block_number: game_block
+                            .try_into()
+                            .map_err(|_| WithdrawerError::ValueOverflow)?,
+                        index: count,
+                        root,
+                    });
                 }
             }
             ProofSystem::OutputOracle { l2_output_oracle } => {
@@ -463,12 +488,17 @@ impl Withdrawer {
         .into())
     }
 
-    /// Prepares one transaction, optionally signs and broadcasts, then waits before returning.
+    /// Prepares and optionally broadcasts a transaction, recording its hash until receipt validation.
+    ///
+    /// Set `finalize_withdrawal` only for finalize calls. After broadcast, `pending_transaction`
+    /// stays set on receipt validation errors or cancellation so the caller can report the hash.
     pub async fn submit(
         &self,
         rpc: &WithdrawalRpc,
         signer: &WithdrawalSigner,
         calldata: Bytes,
+        finalize_withdrawal: Option<B256>,
+        pending_transaction: &mut Option<B256>,
     ) -> Result<Option<B256>, WithdrawerError> {
         let prepared = PreparedWithdrawalTransaction::prepare(
             &self.config,
@@ -494,9 +524,49 @@ impl Withdrawer {
         let hash = *signed.tx_hash();
         tracing::info!(transaction_hash = %hash, "submitting withdrawal transaction");
         rpc.broadcast(&signed).await?;
-        rpc.wait_for_receipt(hash).await?;
+        *pending_transaction = Some(hash);
+        let receipt = rpc.wait_for_receipt(hash).await.map_err(|source| {
+            WithdrawerError::Unconfirmed { transaction_hash: hash, source: Box::new(source.into()) }
+        })?;
+        if let Some(withdrawal_hash) = finalize_withdrawal {
+            self.check_finalization(&receipt, withdrawal_hash, hash)?;
+        }
+        *pending_transaction = None;
         tracing::info!(transaction_hash = %hash, "withdrawal transaction confirmed");
         Ok(Some(hash))
+    }
+
+    /// Checks the portal's finalization result, which can fail despite a successful L1 receipt.
+    pub fn check_finalization(
+        &self,
+        receipt: &TransactionReceipt,
+        withdrawal_hash: B256,
+        transaction_hash: B256,
+    ) -> Result<(), WithdrawerError> {
+        for log in receipt.inner.logs() {
+            if log.address() != self.config.network.portal
+                || log.topics().first()
+                    != Some(&WithdrawalPortal::WithdrawalFinalized::SIGNATURE_HASH)
+                || log.topics().get(1) != Some(&withdrawal_hash)
+            {
+                continue;
+            }
+            let event = WithdrawalPortal::WithdrawalFinalized::decode_log_validate(&log.inner)
+                .map_err(|error| WithdrawerError::Unconfirmed {
+                    transaction_hash,
+                    source: Box::new(WithdrawerError::decode_error(
+                        WithdrawalPortal::WithdrawalFinalized::SIGNATURE,
+                        error,
+                    )),
+                })?
+                .data;
+            return if event.success {
+                Ok(())
+            } else {
+                Err(WithdrawerError::TargetCallFailed { withdrawal_hash, transaction_hash })
+            };
+        }
+        Err(WithdrawerError::MissingFinalizationEvent { withdrawal_hash, transaction_hash })
     }
 
     /// Calls a contract using typed ABI encoding and redacted provider and decode errors.
@@ -508,25 +578,8 @@ impl Withdrawer {
         let request =
             TransactionRequest::default().to(target).input(Bytes::from(call.abi_encode()).into());
         let bytes = rpc.l1.call(request).await?;
-        C::abi_decode_returns_validate(&bytes).map_err(|error| {
-            let source = match error {
-                SolError::TypeCheckFail { .. } => SolError::custom("TypeCheckFail"),
-                SolError::InvalidEnumValue { .. } => SolError::custom("InvalidEnumValue"),
-                SolError::InvalidEventSignatureHash { .. } => {
-                    SolError::custom("InvalidEventSignatureHash")
-                }
-                SolError::InvalidLog { .. } => SolError::custom("InvalidLog"),
-                SolError::UnknownSelector { .. } => SolError::custom("UnknownSelector"),
-                SolError::FromHexError(_) => SolError::custom("FromHexError"),
-                SolError::Other(_) => SolError::custom("Other"),
-                error @ (SolError::Overrun
-                | SolError::Reserve(_)
-                | SolError::BufferNotEmpty
-                | SolError::ReserMismatch
-                | SolError::RecursionLimitExceeded(_)) => error,
-            };
-            WithdrawerError::Decode { call: C::SIGNATURE, source }
-        })
+        C::abi_decode_returns_validate(&bytes)
+            .map_err(|error| WithdrawerError::decode_error(C::SIGNATURE, error))
     }
 
     /// Computes the first allowed timestamp for the portal's strict elapsed-delay check.
@@ -540,6 +593,27 @@ impl Withdrawer {
 }
 
 impl WithdrawerError {
+    /// Removes response data from ABI diagnostics while retaining safe source errors.
+    pub fn decode_error(call: &'static str, error: SolError) -> Self {
+        let source = match error {
+            SolError::TypeCheckFail { .. } => SolError::custom("TypeCheckFail"),
+            SolError::InvalidEnumValue { .. } => SolError::custom("InvalidEnumValue"),
+            SolError::InvalidEventSignatureHash { .. } => {
+                SolError::custom("InvalidEventSignatureHash")
+            }
+            SolError::InvalidLog { .. } => SolError::custom("InvalidLog"),
+            SolError::UnknownSelector { .. } => SolError::custom("UnknownSelector"),
+            SolError::FromHexError(_) => SolError::custom("FromHexError"),
+            SolError::Other(_) => SolError::custom("Other"),
+            error @ (SolError::Overrun
+            | SolError::Reserve(_)
+            | SolError::BufferNotEmpty
+            | SolError::ReserMismatch
+            | SolError::RecursionLimitExceeded(_)) => error,
+        };
+        Self::Decode { call, source }
+    }
+
     /// Distinguishes execution reverts from transport failures and other server errors.
     pub fn is_execution_revert(&self) -> bool {
         matches!(self, Self::Request(error) if error.as_error_resp().is_some_and(|payload| {
@@ -611,11 +685,16 @@ mod tests {
         replaced: bool,
         output_error: Option<Value>,
         receipt_error: Option<Value>,
+        receipt_pending: bool,
+        receipt_reverted: bool,
+        finalization_success: Option<bool>,
+        finalization_emitter: Address,
         no_coverage: bool,
         skip_latest: bool,
         game_count: u64,
         old_games_before: u64,
         malformed_response: bool,
+        other_game_type: bool,
         wrong_root: bool,
         now: u64,
         dry: bool,
@@ -639,11 +718,16 @@ mod tests {
                 replaced: false,
                 output_error: None,
                 receipt_error: None,
+                receipt_pending: false,
+                receipt_reverted: false,
+                finalization_success: Some(true),
+                finalization_emitter: crate::NetworkPreset::BaseMainnet.resolve().portal,
                 no_coverage: false,
                 skip_latest: false,
                 game_count: 1,
                 old_games_before: 0,
                 malformed_response: false,
+                other_game_type: false,
                 wrong_root: false,
                 now: 1000,
                 dry: false,
@@ -814,9 +898,38 @@ mod tests {
                     if let Some(error) = &self.receipt_error {
                         return Err(error.clone());
                     }
+                    if self.receipt_pending {
+                        return Ok(Value::Null);
+                    }
                     let mut result = receipt.clone();
                     result["type"] = json!("0x0");
                     result["transactionHash"] = params[0].clone();
+                    if self.receipt_reverted {
+                        result["status"] = json!("0x0");
+                    }
+                    result["logs"] = json!([]);
+                    if let Some(success) = self.finalization_success {
+                        let tx = sent.lock().unwrap().last().unwrap().clone();
+                        if let Ok(call) =
+                            WithdrawalPortal::finalizeWithdrawalTransactionCall::abi_decode_validate(
+                                tx.input(),
+                            )
+                        {
+                            let withdrawal =
+                                Withdrawal { transaction: call.withdrawal, block_number: 0 };
+                            let event = WithdrawalPortal::WithdrawalFinalized {
+                                withdrawalHash: withdrawal.hash(),
+                                success,
+                            }
+                            .encode_log_data();
+                            let mut log = receipt["logs"][0].clone();
+                            log["address"] = json!(self.finalization_emitter);
+                            log["transactionHash"] = params[0].clone();
+                            log["topics"] = json!(event.topics());
+                            log["data"] = json!(event.data);
+                            result["logs"] = json!([log]);
+                        }
+                    }
                     result
                 }
                 "eth_getBlockByNumber" => {
@@ -912,17 +1025,10 @@ mod tests {
                         IDisputeGameFactory::gameCountCall,
                         U256::from(if self.skip_latest { 2 } else { self.game_count })
                     );
-                    reply!(
-                        IDisputeGameFactory::gameAtIndexCall,
-                        621u32,
-                        1u64,
-                        Address::repeat_byte(9)
-                    );
-                    if input[..4] == IDisputeGameFactory::findLatestGamesCall::SELECTOR {
+                    if input[..4] == IDisputeGameFactory::gameAtIndexCall::SELECTOR {
                         let call =
-                            IDisputeGameFactory::findLatestGamesCall::abi_decode(&input).unwrap();
-                        let start: u64 = call.start.try_into().unwrap();
-                        let count: u64 = call.count.try_into().unwrap();
+                            IDisputeGameFactory::gameAtIndexCall::abi_decode(&input).unwrap();
+                        let index: u64 = call.index.try_into().unwrap();
                         let timestamp = u64::from_str_radix(
                             fixture["header"]["timestamp"]
                                 .as_str()
@@ -931,31 +1037,29 @@ mod tests {
                             16,
                         )
                         .unwrap();
-                        let games = (0..count.min(start + 1))
-                            .map(|offset| {
-                                let index = start - offset;
-                                IDisputeGameFactory::GameSearchResult {
-                                    index: U256::from(index),
-                                    metadata: B256::ZERO,
-                                    timestamp: if index < self.old_games_before {
-                                        timestamp - 1
-                                    } else {
-                                        timestamp
-                                    },
-                                    rootClaim: claim,
-                                    extraData: Bytes::copy_from_slice(
-                                        &U256::from(if self.skip_latest && index == 1 {
-                                            1
-                                        } else {
-                                            block
-                                        })
-                                        .to_be_bytes::<32>(),
-                                    ),
-                                }
+                        reply!(
+                            IDisputeGameFactory::gameAtIndexCall,
+                            if self.other_game_type { 0u32 } else { 621u32 },
+                            if index < self.old_games_before { timestamp - 1 } else { timestamp },
+                            Address::repeat_byte(if self.skip_latest && index == 1 {
+                                10
+                            } else {
+                                9
                             })
-                            .collect::<Vec<_>>();
-                        reply!(IDisputeGameFactory::findLatestGamesCall, games);
+                        );
                     }
+                    reply!(
+                        WithdrawalDisputeGame::extraDataCall,
+                        Bytes::copy_from_slice(
+                            &U256::from(if params[0]["to"] == json!(Address::repeat_byte(10)) {
+                                1
+                            } else {
+                                block
+                            })
+                            .to_be_bytes::<32>()
+                        )
+                    );
+                    reply!(WithdrawalDisputeGame::rootClaimCall, claim);
                     reply!(WithdrawalOutputOracle::latestBlockNumberCall, U256::from(block));
                     reply!(WithdrawalOutputOracle::getL2OutputIndexAfterCall, U256::ZERO);
                     reply!(
@@ -1196,11 +1300,117 @@ mod tests {
         let subscriber =
             tracing_subscriber::fmt().with_ansi(false).with_writer(move || writer.clone()).finish();
         let result = server.run().with_subscriber(subscriber).await;
-        assert!(matches!(result, Err(WithdrawerError::Timeout(_))), "{result:?}");
+        let error = result.unwrap_err();
+        let WithdrawerError::Unconfirmed { transaction_hash, source } = &error else {
+            panic!("missing broadcast hash: {error:?}");
+        };
+        assert_eq!(*transaction_hash, *server.sent.lock().unwrap()[0].tx_hash());
+        assert!(matches!(**source, WithdrawerError::Timeout(_)), "{source:?}");
         let logs = String::from_utf8(capture.0.lock().unwrap().clone()).unwrap();
         assert!(logs.contains("receipt request failed transiently"), "{logs}");
         for secret in ["password", "host.invalid", "secret-value"] {
             assert!(!logs.contains(secret), "server-supplied secret leaked in warning: {logs}");
+        }
+    }
+
+    #[tokio::test]
+    async fn receipt_failure_retains_broadcast_hash_and_redacted_source() {
+        let server = Scenario {
+            receipt_error: Some(json!({
+                "code": -32602,
+                "message": "invalid at https://user:password@host.invalid/key",
+                "data": "secret-value"
+            })),
+            ..Default::default()
+        }
+        .start()
+        .await;
+        let error = server.run().await.unwrap_err();
+        let WithdrawerError::Unconfirmed { transaction_hash, source } = &error else {
+            panic!("missing broadcast hash: {error:?}");
+        };
+        assert_eq!(*transaction_hash, *server.sent.lock().unwrap()[0].tx_hash());
+        assert!(matches!(**source, WithdrawerError::Request(_)), "{source:?}");
+        assert!(std::error::Error::source(source.as_ref()).is_some());
+        for secret in ["password", "host.invalid", "secret-value"] {
+            assert!(!format!("{error} {error:?}").contains(secret));
+        }
+    }
+
+    #[tokio::test]
+    async fn shared_deadline_retains_hash_while_receipt_is_pending() {
+        let mut server = Scenario { receipt_pending: true, ..Default::default() }.start().await;
+        server.config.timeout = Duration::from_secs(1);
+        let error = server.run().await.unwrap_err();
+        let WithdrawerError::Unconfirmed { transaction_hash, source } = error else {
+            panic!("missing broadcast hash: {error:?}");
+        };
+        assert_eq!(transaction_hash, *server.sent.lock().unwrap()[0].tx_hash());
+        assert!(matches!(*source, WithdrawerError::Timeout(_)), "{source:?}");
+    }
+
+    #[tokio::test]
+    async fn reverted_receipt_retains_broadcast_hash() {
+        let server = Scenario { receipt_reverted: true, ..Default::default() }.start().await;
+        let error = server.run().await.unwrap_err();
+        let WithdrawerError::Unconfirmed { transaction_hash, source } = error else {
+            panic!("missing broadcast hash: {error:?}");
+        };
+        assert_eq!(transaction_hash, *server.sent.lock().unwrap()[0].tx_hash());
+        assert!(
+            matches!(*source, WithdrawerError::Rpc(WithdrawalRpcError::Reverted(hash)) if hash == transaction_hash)
+        );
+    }
+
+    #[tokio::test]
+    async fn finalization_reports_the_target_call_result() {
+        for fault in [false, true] {
+            for success in [false, true] {
+                let server = Scenario {
+                    fault,
+                    proven: 100,
+                    finalization_success: Some(success),
+                    ..Default::default()
+                }
+                .start()
+                .await;
+                let result = server.run().await;
+                let transaction_hash = *server.sent.lock().unwrap()[0].tx_hash();
+                if success {
+                    assert_eq!(result.unwrap()[0].transaction_hash, Some(transaction_hash));
+                } else {
+                    let WithdrawerError::TargetCallFailed {
+                        withdrawal_hash,
+                        transaction_hash: actual,
+                    } = result.unwrap_err()
+                    else {
+                        panic!("target failure was not reported");
+                    };
+                    assert_eq!(actual, transaction_hash);
+                    let receipt = serde_json::from_str(include_str!(
+                        "../fixtures/synthetic-deposit-withdrawal-receipt.json"
+                    ))
+                    .unwrap();
+                    assert_eq!(
+                        withdrawal_hash,
+                        Withdrawal::from_receipt(&receipt).unwrap()[0].hash()
+                    );
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn finalization_requires_an_event_from_the_configured_portal() {
+        for scenario in [
+            Scenario { finalization_success: None, ..Default::default() },
+            Scenario { finalization_emitter: Address::repeat_byte(0xff), ..Default::default() },
+        ] {
+            let server = Scenario { proven: 100, ..scenario }.start().await;
+            let error = server.run().await.unwrap_err();
+            assert!(
+                matches!(error, WithdrawerError::MissingFinalizationEvent { transaction_hash, .. } if transaction_hash == *server.sent.lock().unwrap()[0].tx_hash())
+            );
         }
     }
 
@@ -1272,31 +1482,38 @@ mod tests {
 
     #[tokio::test]
     async fn game_search_stops_at_games_older_than_the_withdrawal() {
-        let server = Scenario {
-            no_coverage: true,
-            game_count: 10_000,
-            old_games_before: 9_940,
-            ..Default::default()
+        for other_game_type in [false, true] {
+            let server = Scenario {
+                no_coverage: true,
+                game_count: 1_000,
+                old_games_before: 940,
+                other_game_type,
+                ..Default::default()
+            }
+            .start()
+            .await;
+            assert!(matches!(server.run().await, Err(WithdrawerError::NoCoverage { .. })));
+            let requests = server.requests.lock().unwrap();
+            let inspected: Vec<_> = requests
+                .iter()
+                .filter(|request| request["method"] == "eth_call")
+                .filter_map(|request| {
+                    let input: Bytes =
+                        serde_json::from_value(request["params"][0]["input"].clone()).unwrap();
+                    IDisputeGameFactory::gameAtIndexCall::abi_decode_validate(&input).ok()
+                })
+                .map(|call| call.index)
+                .collect();
+            assert_eq!(inspected, (939..1_000).rev().map(U256::from).collect::<Vec<_>>());
+            assert_eq!(
+                requests
+                    .iter()
+                    .filter(|request| request["method"] == "eth_getBlockByNumber")
+                    .count(),
+                1
+            );
+            assert!(server.sent.lock().unwrap().is_empty());
         }
-        .start()
-        .await;
-        assert!(matches!(server.run().await, Err(WithdrawerError::NoCoverage { .. })));
-        let requests = server.requests.lock().unwrap();
-        let searches = requests
-            .iter()
-            .filter(|request| request["method"] == "eth_call")
-            .filter(|request| {
-                let input: Bytes =
-                    serde_json::from_value(request["params"][0]["input"].clone()).unwrap();
-                input[..4] == IDisputeGameFactory::findLatestGamesCall::SELECTOR
-            })
-            .count();
-        assert!((1..=2).contains(&searches), "unbounded game search: {searches} requests");
-        assert_eq!(
-            requests.iter().filter(|request| request["method"] == "eth_getBlockByNumber").count(),
-            1
-        );
-        assert!(server.sent.lock().unwrap().is_empty());
     }
 
     #[tokio::test]

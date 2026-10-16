@@ -480,7 +480,7 @@ digest = "63043098db"
 
 ["crates/infra/withdrawer/README.md"]
 summary = "Configure and run receipt-wide withdrawal proving and finalization, including signer security, RPC retries, fee caps, proof verification, invalidation, and finality checks."
-digest = "cf6e9fe5e6"
+digest = "4e320e3094"
 
 ["crates/infra/zk-benchmarks/README.md"]
 summary = "One-line stub: ZK proof benchmarking utilities for Base load-test runs; no usage or detail beyond that."

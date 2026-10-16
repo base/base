@@ -42,5 +42,9 @@ sol! {
         function status() external view returns (uint8);
         /// L1 timestamp of resolution, or zero while in progress.
         function resolvedAt() external view returns (uint64);
+        /// Encoded game parameters beginning with the L2 block number.
+        function extraData() external view returns (bytes);
+        /// Output root committed to by the game.
+        function rootClaim() external view returns (bytes32);
     }
 }

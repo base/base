@@ -15,6 +15,8 @@ use thiserror::Error;
 sol! {
     /// Shared withdrawal portal calls using the authenticated proof types.
     interface WithdrawalPortal {
+        /// Portal consumption of a withdrawal and the target call's result.
+        event WithdrawalFinalized(bytes32 indexed withdrawalHash, bool success);
         /// Whether a withdrawal has completed.
         function finalizedWithdrawals(bytes32 withdrawalHash) external view returns (bool);
         /// Proves inclusion in a game or oracle output.
