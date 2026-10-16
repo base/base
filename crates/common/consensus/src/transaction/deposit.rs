@@ -492,7 +492,7 @@ mod tests {
 
     #[test]
     fn test_deposit_transaction_trait() {
-        let tx = TxDeposit { is_system_transaction: true, ..sample_deposit() };
+        let tx = sample_deposit();
 
         assert_eq!(tx.source_hash(), Some(B256::with_last_byte(2)));
         assert_eq!(tx.mint(), 1);

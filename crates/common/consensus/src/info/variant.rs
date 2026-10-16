@@ -910,15 +910,13 @@ mod tests {
     }
 
     #[rstest]
-    #[case::before_pectra_blob_schedule(
-        Some(1713121140),
-        // Pectra is scheduled but not active yet.
-        Header { requests_hash: Some(B256::ZERO), ..isthmus_l1_header() },
-    )]
-    #[case::no_pectra_blob_schedule(None, isthmus_l1_header())]
+    // Pectra is scheduled but not active yet, so the Cancun blob fee applies.
+    #[case::before_pectra_blob_schedule(Some(1713121140), 95_662_720_442)]
+    // No schedule, so the Prague blob fee applies immediately.
+    #[case::no_pectra_blob_schedule(None, 20_916_760)]
     fn test_try_new_isthmus(
         #[case] pectra_blob_schedule_time: Option<u64>,
-        #[case] l1_header: Header,
+        #[case] expected_blob_fee: u128,
     ) {
         let rollup_config = RollupConfig {
             upgrades: UpgradeConfig {
@@ -927,14 +925,18 @@ mod tests {
             },
             ..Default::default()
         };
+        // L1 has activated Prague, so the blob schedule decides which fee parameters apply.
+        let mut l1_config = Sepolia::l1_config();
+        l1_config.prague_time = Some(1713121139);
+        let l1_header = Header {
+            excess_blob_gas: Some(0x5080000),
+            blob_gas_used: Some(0x100000),
+            requests_hash: Some(B256::ZERO),
+            ..isthmus_l1_header()
+        };
 
-        let l1_info = try_new_info(
-            &rollup_config,
-            &Sepolia::l1_config(),
-            &isthmus_system_config(),
-            &l1_header,
-            0xFF,
-        );
+        let l1_info =
+            try_new_info(&rollup_config, &l1_config, &isthmus_system_config(), &l1_header, 0xFF);
 
         assert_eq!(
             l1_info,
@@ -945,7 +947,7 @@ mod tests {
                 l1_header.hash_slow(),
                 0,
                 address!("6887246668a3b87f54deb3b94ba47a6f63f32985"),
-                1,
+                expected_blob_fee,
                 0,
                 0,
                 0xabcd,

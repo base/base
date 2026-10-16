@@ -29,9 +29,10 @@ pub(crate) fn sample_deposit() -> TxDeposit {
         from: Address::repeat_byte(0x42),
         to: TxKind::Call(Address::repeat_byte(0x11)),
         mint: 1,
-        value: U256::from(1u64),
+        value: U256::from(2u64),
         gas_limit: 50_000,
-        ..Default::default()
+        is_system_transaction: true,
+        input: bytes!("05"),
     }
 }
 
