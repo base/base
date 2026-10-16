@@ -11,6 +11,7 @@
   - [Slot number (EIP-7843)](#slot-number-eip-7843)
   - [Calldata floor (EIP-7976)](#calldata-floor-eip-7976)
   - [Access-list pricing (EIP-7981)](#access-list-pricing-eip-7981)
+  - [Resource-based intrinsic gas (EIP-2780)](#resource-based-intrinsic-gas-eip-2780)
 - [Not included](#not-included)
 - [References](#references)
 
@@ -28,7 +29,7 @@
 | EIP | Summary | Change Summary |
 |---|---|---|
 | [7928](https://eips.ethereum.org/EIPS/eip-7928) · [Design](#block-level-access-lists-eip-7928) | **Block-Level Access Lists:** Records block state accesses and changes to support parallel execution and faster state processing. | Gossip BALs with Base blocks; omit them from L1 batches and regenerate them during CL sync. |
-| [2780](https://eips.ethereum.org/EIPS/eip-2780) | **Resource-based intrinsic transaction gas:** Replaces flat transaction overhead with charges for the resources actually consumed. | Extend the gas model to Base Transactions (EIP-8430), including batching, sponsorship, and nonce modes. |
+| [2780](https://eips.ethereum.org/EIPS/eip-2780) · [Design](#resource-based-intrinsic-gas-eip-2780) | **Resource-based intrinsic transaction gas:** Replaces flat transaction overhead with charges for the resources actually consumed. | Extend the gas model to Base Transactions (EIP-8430), including batching, sponsorship, and nonce modes. |
 | [7843](https://eips.ethereum.org/EIPS/eip-7843) · [Design](#slot-number-eip-7843) | **SLOTNUM opcode:** Exposes the current consensus slot through a new opcode and block-header field. | Use the L2 block number as the slot, rather than Ethereum's beacon slot. |
 | [7976](https://eips.ethereum.org/EIPS/eip-7976) · [Design](#calldata-floor-eip-7976) | **Increase Calldata Floor Cost:** Raises the transaction calldata floor to 64 gas per byte. | Recommend 128 gas/byte instead of L1's 64 to reduce block sizes and calldata growth. |
 | [8037](https://eips.ethereum.org/EIPS/eip-8037) | **State Creation Gas Cost Increase:** Reprices new state and meters state creation separately from execution. | Tune the state-byte price for Base; value TBD. |
@@ -198,6 +199,89 @@ Access-list data pricing must match the [EIP-7976 calldata floor](#calldata-floo
 | Address | 20 | 1,280 gas | 2,560 gas |
 | Storage key | 32 | 2,048 gas | 4,096 gas |
 
+### Resource-based intrinsic gas (EIP-2780)
+
+#### Motivation for Base
+
+Base's intrinsic base is a flat `21,000` for legacy and typed transactions, and a bespoke schedule for Base Transactions (EIP-8430). Both are fixed constants: a zero-value call and a value transfer that creates an account pay the same base, even though the second touches an extra account, writes an extra balance, emits a transfer log, and permanently grows the state.
+
+Denim's 200 ms blocks raise the transaction rate and lower the work per block, so the fixed per-transaction work — signature recovery, sender account access, and the sender's leaf write — becomes a larger share of block time. Pricing each of those primitives separately tracks real resource use better than one constant, and it lets the EIP-8037 and EIP-8038 repricings flow through the base instead of forcing Base to maintain a separate constant.
+
+#### What L1 EIP-2780 changes
+
+EIP-2780 splits the flat base into **intrinsic gas** (state-independent, the sole input to the validity check) and **runtime gas** (state-dependent, charged in a pre-execution phase). Running out of runtime gas does not invalidate the transaction: it is included, execution is skipped, and the pre-execution state changes are reverted.
+
+| Transaction shape | Intrinsic today | EIP-2780 intrinsic | EIP-2780 runtime |
+| :--- | :---: | :--- | :--- |
+| Self-transfer | `21,000` | `TX_BASE_COST` = 12,000 | — |
+| Zero-value call to an EOA | `21,000` | 12,000 + `COLD_ACCOUNT_ACCESS` = 15,000 | — |
+| Value transfer to an existing EOA | `21,000` | 12,000 + `COLD_ACCOUNT_ACCESS` + `TX_VALUE_COST` = 21,000 | — |
+| Value transfer creating an account | `21,000` | 21,000 | `STATE_BYTES_PER_NEW_ACCOUNT × CPSB` state gas |
+| Contract creation | `21,000` + 32,000 = 53,000 | `TX_BASE_COST` + `CREATE_ACCESS` = 24,000 | `STATE_BYTES_PER_NEW_ACCOUNT × CPSB` state gas if the target does not exist |
+| EIP-7702 transaction | 25,000 per authorization, 12,500 refunded for an existing authority | `EXECUTION_PER_AUTH_BASE_COST` = 7,816 per authorization | `ACCOUNT_WRITE`, plus new-account and delegation-bytes state gas |
+
+The calldata floor keeps its per-byte schedule; only the flat `21,000` term it sits on is replaced by the transaction's decomposed base, so the floor never undercuts the transaction's own intrinsic base.
+
+#### Base differences
+
+**Base Transactions (EIP-8430).** A Base Transaction (transaction type `0x79`) already has a decomposed intrinsic schedule: it batches calls, sponsors gas through a payer, and supports the account nonce, 2D nonce keys, and nonce-free mode. EIP-2780 extends to it by mapping its primitives onto that schedule, not by replacing it. The implementing code keeps the `eip8130` name.
+
+| EIP-2780 primitive | Base Transaction equivalent | Change |
+| :--- | :--- | :--- |
+| `TX_BASE_COST` — recovery, sender access, sender write, inclusion | `AA_BASE_COST` = 15,000 — decoding, sender resolution, nonce-mode dispatch, payer settlement, receipt assembly | **Keep 15,000.** The AA transport does more fixed work per transaction than a typed transaction; reducing it to 12,000 would underprice decoding, nonce dispatch, and payer settlement. |
+| `COLD_ACCOUNT_ACCESS` for `tx.to` | No intrinsic charge; each call is a real EVM frame metered warm/cold under EIP-8038 | **None.** EIP-2780 charges the single top-level recipient intrinsically because there is exactly one; an AA transaction has one recipient per call, each charged when it executes. |
+| `TX_VALUE_COST` for `tx.value` | `value_transfer_cost`, charged per call with `value > 0` and `to != sender` | **Keep 6,000 per value-bearing call.** Batching means N value-bearing calls pay N × 6,000, not one. |
+| New-account state gas | Account-creation charge applied before the callee runs | Charge `STATE_BYTES_PER_NEW_ACCOUNT × CPSB` state gas per call that creates an account, at runtime. |
+| Delegation-indicator state gas | `DELEGATION_DEPOSIT_COST` = 200 × 23 = 4,600 regular gas for a delegation entry or sender auto-delegation | Move the 23-byte indicator to `STATE_BYTES_PER_AUTH_BASE × CPSB` state gas. |
+| EIP-7702 authorization decomposition | No `authorization_list`; the delegation entry is authorized by `sender_auth` | No `EXECUTION_PER_AUTH_BASE_COST`; only the indicator state gas applies. |
+
+**Sponsorship and the payer.** `payer_auth_cost` is metered on top of `gas_limit` so a sponsored payer cannot starve `calls`, and already covers the payer's recovery and one cold account-state read. EIP-2780's sender base covers the sender's leaf write; a sponsored transaction writes a second account leaf, the payer's fee debit. **Proposal:** charge `ACCOUNT_WRITE` in execution gas once for the payer's first write when `payer != sender`, and nothing when the payer is the sender, whose write is already inside `AA_BASE_COST`.
+
+**Nonce modes.** `nonce_key_cost` is unchanged. It prices the nonce-manager replay state — 0 for the account nonce, 13,000 for nonce-free ring-buffer state, 22,100 for the first use of a sequenced key, and 5,000 for an existing one — which EIP-2780 has no primitive for. Nonce-free mode keeps its fixed composite.
+
+**Deposits and system transactions.** Exempt. Deposit transactions (type `0x7E`) carry no signature, fee, or sender-chosen recipient, and the L1-attributes deposit is protocol-injected; neither goes through the decomposition.
+
+**Calldata floor.** EIP-2780 replaces the flat `21,000` term in the EIP-7623 floor with the decomposed base, excluding per-authorization and initcode-word charges. Base raises the floor to 128 gas/byte (see [Calldata floor](#calldata-floor-eip-7976)) and prices access-list data at the same rate (see [Access-list pricing](#access-list-pricing-eip-7981)); EIP-2780 moves only the base term, so those rates are unchanged. Base Transactions keep their own floor over the serialized transaction and the payer blob, with the same decomposed sender base.
+
+**200 ms blocks.** Validity drops to `TX_BASE_COST + COLD_ACCOUNT_ACCESS` (15,000) for a zero-value call, so more transactions pass the validity check. The per-block transaction count stays bounded by the gas limit and by the fixed per-transaction work that intrinsic gas prices. A transaction that passes the intrinsic check but cannot afford a runtime charge is included, halted, and reverted, so builders must reserve the runtime state gas when selecting transactions and must not treat a reverted transaction's execution gas as free under [EIP-7778](https://eips.ethereum.org/EIPS/eip-7778) block accounting.
+
+**State creation and access pricing.** EIP-2780's runtime charges are EIP-8037 state gas (`STATE_BYTES_PER_NEW_ACCOUNT × CPSB` per new account, `STATE_BYTES_PER_AUTH_BASE × CPSB` per net-new delegation indicator), and its intrinsic and runtime access charges come from EIP-8038 (`COLD_ACCOUNT_ACCESS`, `WARM_ACCESS`, `ACCOUNT_WRITE`, `CREATE_ACCESS`). This design does not fix `CPSB` or the EIP-8038 prices for Base; those are chosen in the EIP-8037 and EIP-8038 specs. The table below carries the L1 values as placeholders.
+
+**EIP-7702.** The flat 25,000-per-authorization intrinsic charge and its refund are replaced by `EXECUTION_PER_AUTH_BASE_COST` = 7,816 (calldata, recovery, cold authority access, and warm writes) at the intrinsic phase, plus runtime charges per authority: `STATE_BYTES_PER_NEW_ACCOUNT × CPSB` state gas when the authority does not exist, `ACCOUNT_WRITE` execution gas for its first write (skipped when the sender base, the value cost, or a preceding authorization already paid it), and `STATE_BYTES_PER_AUTH_BASE × CPSB` state gas for net-new delegation bytes. Resolving a delegation stays a runtime `COLD_ACCOUNT_ACCESS` or `WARM_ACCESS` charge. Base activates EIP-7702 at Isthmus, so this applies to existing delegated accounts.
+
+#### Parameters
+
+L1 values are the EIP-2780 defaults. Base adopts them unless noted; `CPSB` and the EIP-8038 prices are decided in the EIP-8037 and EIP-8038 specs.
+
+| Name | Source | Base value |
+| :--- | :--- | :--- |
+| `TX_BASE_COST` | EIP-2780 | 12,000 for typed transactions; Base Transactions keep `AA_BASE_COST` = 15,000 |
+| `TX_VALUE_COST` | EIP-2780 | 6,000, per value-bearing call for Base Transactions |
+| `COLD_ACCOUNT_ACCESS` | EIP-8038 | 3,000 (TBD in the EIP-8038 PR) |
+| `WARM_ACCESS` | EIP-8038 | 100 (TBD in the EIP-8038 PR) |
+| `ACCOUNT_WRITE` | EIP-8038 | 9,000 (TBD in the EIP-8038 PR) |
+| `CREATE_ACCESS` | EIP-8038 | 12,000 (TBD in the EIP-8038 PR) |
+| `EXECUTION_PER_AUTH_BASE_COST` | EIP-8037 | 7,816 |
+| `STATE_BYTES_PER_NEW_ACCOUNT × CPSB` | EIP-8037 | TBD (decided in the EIP-8037 PR) |
+| `STATE_BYTES_PER_AUTH_BASE × CPSB` | EIP-8037 | TBD (decided in the EIP-8037 PR) |
+
+#### Touch points
+
+- **Consensus.** Intrinsic gas and the runtime pre-execution phase are consensus-critical for every transaction type, including the Base Transaction executor's enshrined schedule. All nodes must agree on the decomposition before activation.
+- **Block building.** Block gas accounting counts runtime charges under [EIP-7778](https://eips.ethereum.org/EIPS/eip-7778) pre-refund accounting. The builder already reserves a Base Transaction payer's authentication gas on top of `gas_limit`; that reservation must extend to the runtime charges it can predict from the transaction body.
+- **Txpool.** Validity stays intrinsic-only, but admission should reject a transaction whose `gas_limit` cannot cover a runtime charge it is certain to incur against current state — a value transfer to a non-existent recipient, a transfer to a delegated account, or a delegation from a new authority — so blocks are not filled with transactions guaranteed to halt.
+- **RPC estimation.** `eth_estimateGas` must return a limit covering the intrinsic base, the runtime charges (new-account state gas and delegation-target access), and execution gas. The Base Transaction estimator prices intrinsic and authentication once from the request and binary-searches the call pool, so it needs the same runtime terms added.
+- **Receipts.** `gasUsed` includes the runtime charges, as on L1.
+
+#### Open questions
+
+1. **Sender base for Base Transactions.** Keep `AA_BASE_COST` = 15,000, or reduce it to `TX_BASE_COST` = 12,000 and price the AA-specific work (decoding, nonce-mode dispatch, payer settlement) as its own primitives?
+2. **Payer write.** Charge `ACCOUNT_WRITE` once for a sponsored payer's first write, or fold it into `payer_auth_cost`? Charging it matches EIP-2780's one-write-per-leaf rule; folding it keeps the payer cost a single number.
+3. **Per-call access.** Should a Base Transaction charge a fixed per-call `COLD_ACCOUNT_ACCESS` intrinsically, as EIP-2780 does for its single top-level recipient, or rely on per-call EVM warm/cold metering? Metering is the closer analogue of an internal `CALL` and keeps intrinsic gas a function of the transaction body alone.
+4. **Base Transaction calldata floor.** Adopt Base's 128 gas/byte rate for the AA payload, keep EIP-8430's 10-gas-per-token floor, or set a separate rate?
+5. **Throughput anchor.** L1 selected its costs against a 75 Mgas/s target. Should Base re-derive `TX_BASE_COST` and `TX_VALUE_COST` against Denim's throughput target, or adopt L1's values and tune only `CPSB` and the EIP-8038 prices?
+6. **Guaranteed-revert admission.** Should the txpool reject transactions that cannot afford a runtime charge they are certain to incur, or accept them because they are valid and pay for the gas they consume?
+
 ## Not included
 
 | EIP | Summary | Relevant |
@@ -216,7 +300,10 @@ Access-list data pricing must match the [EIP-7976 calldata floor](#calldata-floo
 
 - [Glamsterdam meta-EIP (EIP-7773)](https://eips.ethereum.org/EIPS/eip-7773)
 - [Resource-based transaction gas (EIP-2780)](https://eips.ethereum.org/EIPS/eip-2780)
+- [EIP-2780 gas-cost report](https://github.com/ethereum/EIPs/blob/master/assets/eip-2780/gas-cost-report.md)
+- [revm's EIP-2780 intrinsic-gas decomposition](https://docs.rs/revm-primitives/43.0.0/src/revm_primitives/eip2780.rs.html)
 - [Calldata floor specification (EIP-7976)](https://eips.ethereum.org/EIPS/eip-7976)
+- [Calldata floor (EIP-7623)](https://eips.ethereum.org/EIPS/eip-7623)
 - [Access-list data pricing (EIP-7981)](https://eips.ethereum.org/EIPS/eip-7981)
 - [Base gas limits, block time, and fee parameters](https://docs.base.org/specifications/transactions/throughput-and-limits)
 - [Base Transactions (EIP-8430)](https://github.com/chunter-cb/EIPs/blob/aa-transaction-type/EIPS/eip-8430.md)
