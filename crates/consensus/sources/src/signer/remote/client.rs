@@ -116,6 +116,6 @@ impl RemoteSigner {
         // Set headers
         client_builder = client_builder.default_headers(self.headers.clone());
 
-        client_builder.build().map_err(RemoteSignerStartError::HTTPClientBuild)
+        Ok(client_builder.build()?)
     }
 }

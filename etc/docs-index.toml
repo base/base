@@ -300,7 +300,7 @@ digest = "f89e210ad5"
 
 ["crates/consensus/rpc/README.md"]
 summary = "jsonrpsee trait definitions for the rollup node RPC, chiefly optimism_syncStatus, with a security note that the endpoint is internal-only. Use when implementing or calling consensus RPC."
-digest = "969c4d6125"
+digest = "d382650c29"
 
 ["crates/consensus/safedb/README.md"]
 summary = "redb-backed persistent safe head tracking (SafeDB, SafeHeadListener, SafeDBReader) serving optimism_safeHeadAtL1; not multi-process safe. Use when working on safe head history."
@@ -400,7 +400,7 @@ digest = "5c43615d49"
 
 ["crates/execution/trie/README.md"]
 summary = "base-execution-trie: BaseProofsStore traits and backends (e.g. RocksdbProofsStorage) holding per-block trie diffs for fault-proof generation, with cursors, pruner and startup init job."
-digest = "b641655b32"
+digest = "e842faecd7"
 
 ["crates/execution/trie/src/db/schema.md"]
 summary = "MDBX proof-history DB schema: versioned DupSort tables, tombstones, BlockChangeSet reverse index, proof window keys, cursor reads, append-only writes, block 0 backfill. For eth_getProof storage."
