@@ -276,7 +276,7 @@ digest = "f74ad9f822"
 
 ["crates/consensus/disc/README.md"]
 summary = "Discv5-based peer discovery for Base (Discv5Builder, Discv5Driver, ENR management, persistent bootstore). Use when working on node discovery, bootnodes, or ENR behavior."
-digest = "f51be6f7e0"
+digest = "4e1797cb01"
 
 ["crates/consensus/engine/README.md"]
 summary = "Task-queue Engine API client for the rollup node (Engine, EngineClient, Insert/Consolidate/Finalize/Synchronize tasks, version selection). Use when changing engine state or forkchoice handling."
