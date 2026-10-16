@@ -22,10 +22,20 @@ base-consensus-providers = { workspace = true }
 ```
 
 ```rust,ignore
+use std::sync::Arc;
+
+use alloy_provider::RootProvider;
+use base_common_genesis::RollupConfig;
+use base_common_network::Base;
 use base_consensus_providers::{AlloyChainProvider, AlloyL2ChainProvider};
 
-let l1_provider = AlloyChainProvider::new(l1_rpc_url);
-let l2_provider = AlloyL2ChainProvider::new(l2_rpc_url, rollup_config);
+let cache_size = 1024;
+let l1_rpc = RootProvider::new_http(l1_rpc_url);
+let l2_rpc = RootProvider::<Base>::new_http(l2_rpc_url);
+let rollup_config: Arc<RollupConfig> = Arc::new(rollup_config);
+
+let l1_provider = AlloyChainProvider::new(l1_rpc, cache_size);
+let l2_provider = AlloyL2ChainProvider::new(l2_rpc, rollup_config, cache_size);
 ```
 
 ## License
