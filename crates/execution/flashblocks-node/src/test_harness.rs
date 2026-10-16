@@ -4,7 +4,6 @@
 //! - [`FlashblocksHarness`] - High-level test harness wrapping [`TestHarness`]
 //! - [`FlashblocksParts`] - Components for interacting with flashblocks worker tasks
 //! - [`FlashblocksTestExtension`] - Node extension for wiring up flashblocks in tests
-//! - [`FlashblocksLocalNode`] - Local node wrapper with flashblocks helpers
 //! - [`FlashblockBuilder`] - Test helper for building flashblocks
 //! - [`FlashblocksBuilderTestHarness`] - Test harness builder for building flashblocks
 
@@ -216,61 +215,6 @@ impl BaseNodeExtension for FlashblocksTestExtension {
     }
 }
 
-/// Local node wrapper that exposes helpers specific to Flashblocks tests.
-pub struct FlashblocksLocalNode {
-    node: LocalNode,
-    parts: FlashblocksParts,
-}
-
-impl fmt::Debug for FlashblocksLocalNode {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("FlashblocksLocalNode")
-            .field("node", &self.node)
-            .field("parts", &self.parts)
-            .finish()
-    }
-}
-
-impl FlashblocksLocalNode {
-    /// Launch a flashblocks-enabled node using the default configuration.
-    pub async fn new() -> Result<Self> {
-        Self::with_options(true).await
-    }
-
-    /// Builds a flashblocks-enabled node with canonical block streaming disabled so tests can call
-    /// `FlashblocksState::on_canonical_block_received` at precise points.
-    pub async fn manual_canonical() -> Result<Self> {
-        Self::with_options(false).await
-    }
-
-    async fn with_options(process_canonical: bool) -> Result<Self> {
-        // Build default chain spec programmatically
-        let genesis = build_test_genesis_azul();
-        let chain_spec = Arc::new(BaseChainSpec::from_genesis(genesis));
-
-        let extension = FlashblocksTestExtension::new(process_canonical);
-        let parts_source = extension.clone();
-        let node = LocalNode::new(vec![Box::new(extension)], chain_spec).await?;
-        let parts = parts_source.parts()?;
-        Ok(Self { node, parts })
-    }
-
-    /// Access the shared Flashblocks state for assertions or manual driving.
-    pub fn flashblocks_state(&self) -> Arc<FlashblocksState> {
-        self.parts.state()
-    }
-
-    /// Send a flashblock through the background processor and await completion.
-    pub async fn send_flashblock(&self, flashblock: Flashblock) -> Result<()> {
-        self.parts.send(flashblock).await
-    }
-
-    /// Split the wrapper into the underlying node plus flashblocks parts.
-    pub fn into_parts(self) -> (LocalNode, FlashblocksParts) {
-        (self.node, self.parts)
-    }
-}
-
 /// Helper that exposes [`TestHarness`] conveniences plus Flashblocks helpers.
 #[derive(Debug, Deref)]
 pub struct FlashblocksHarness {
@@ -288,11 +232,6 @@ impl FlashblocksHarness {
     /// Launch the harness configured for manual canonical progression.
     pub async fn manual_canonical() -> Result<Self> {
         Self::with_options(false).await
-    }
-
-    /// Get a reference to the inner [`TestHarness`]
-    pub const fn inner(&self) -> &TestHarness {
-        &self.inner
     }
 
     /// Get a handle to the in-memory Flashblocks state backing the harness.
@@ -363,11 +302,6 @@ impl FlashblocksBuilderTestHarness {
         flashblocks.on_canonical_block_received(genesis_block);
 
         Self { node, provider, flashblocks }
-    }
-
-    /// Get a reference to the inner [`FlashblocksHarness`]
-    pub const fn inner(&self) -> &FlashblocksHarness {
-        &self.node
     }
 
     /// Decode a private key from an account.
