@@ -53,9 +53,7 @@ pub struct ConductorState {
     rx: Option<mpsc::Receiver<ConductorPollUpdate>>,
     /// Sender half of the flashblocks URL watch channel.  When set, `poll`
     /// derives the current leader's flashblocks endpoint from the polled
-    /// status and pushes a new value whenever the leader changes.  This
-    /// removes the need for a separate `run_conductor_leader_url_tracker`
-    /// task that would duplicate the `conductor_leader` RPC calls.
+    /// status and pushes a new value whenever the leader changes.
     fb_url_tx: Option<watch::Sender<String>>,
     /// Most recent raft cluster membership snapshot. Shared by `Arc` with the
     /// poller so a membership change is a single allocation, not a deep copy.
@@ -94,7 +92,7 @@ impl ConductorState {
     /// Registers the node configs and URL sender used to track leader URL changes.
     ///
     /// After this is called, every `poll` will push the leader's `flashblocks_ws`
-    /// URL into `tx` whenever it changes — replacing the separate polling task.
+    /// URL into `tx` whenever it changes.
     pub fn set_url_sender(
         &mut self,
         nodes_config: Vec<ConductorNodeConfig>,
@@ -607,11 +605,10 @@ impl FlashState {
 
     /// Sets the watch receiver used to detect flashblocks endpoint changes.
     ///
-    /// When the watched URL changes (i.e. a new Raft leader is elected and
-    /// `run_conductor_leader_url_tracker` pushes its endpoint), `poll` resets
-    /// `last_flashblock` so the first flashblock from the new leader is not
-    /// compared against the previous leader's index, preventing spurious
-    /// missed-flashblock counts.
+    /// When the watched URL changes because `ConductorState::poll` pushes the
+    /// new Raft leader's endpoint, `FlashState::poll` resets `last_flashblock`
+    /// so the first flashblock from the new leader is not compared against the
+    /// previous leader's index, preventing spurious missed-flashblock counts.
     pub fn set_url_rx(&mut self, rx: watch::Receiver<String>) {
         self.url_rx = Some(rx);
     }
