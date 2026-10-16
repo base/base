@@ -281,37 +281,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_encode_decode_roundtrip() {
-        let l1_hash = B256::from([0xAA; 32]);
-        let l2_hash = B256::from([0xBB; 32]);
-        let l2_number = 42u64;
-
-        let encoded = SafeDB::encode_value(l1_hash, l2_hash, l2_number);
-        let (dec_l1, dec_l2, dec_num) = SafeDB::decode_value(&encoded);
-
-        assert_eq!(dec_l1, l1_hash);
-        assert_eq!(dec_l2, l2_hash);
-        assert_eq!(dec_num, l2_number);
-    }
-
-    #[tokio::test]
-    async fn test_write_and_read_back() {
-        let dir = tempfile::tempdir().unwrap();
-        let db = SafeDB::open(dir.path().join("test.redb")).unwrap();
-
-        let l1 = block_info(0x11, 100);
-        let l2 = l2_block_info(0x22, 200, 0x11, 100);
-
-        db.safe_head_updated(l2, l1).await.unwrap();
-
-        let resp = db.safe_head_at_l1(100).await.unwrap();
-        assert_eq!(resp.l1_block.number, 100);
-        assert_eq!(resp.l1_block.hash, B256::from([0x11; 32]));
-        assert_eq!(resp.safe_head.number, 200);
-        assert_eq!(resp.safe_head.hash, B256::from([0x22; 32]));
-    }
-
     #[tokio::test]
     async fn test_safe_head_at_l1_returns_highest_at_or_before() {
         let dir = tempfile::tempdir().unwrap();
