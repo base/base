@@ -17,8 +17,8 @@ workspace = true
 # Alloy
 alloy-rlp.workspace = true
 alloy-eips.workspace = true
-alloy-consensus.workspace = true
 alloy-genesis.workspace = true
+alloy-consensus.workspace = true
 alloy-sol-types.workspace = true
 alloy-primitives = { workspace = true, features = ["rlp"] }
 
@@ -94,6 +94,8 @@ arbitrary = [
 	"alloy-primitives/rand",
 	"alloy-rpc-types-eth?/arbitrary",
 	"alloy-serde?/arbitrary",
+	"alloy-sol-types/arbitrary",
+	"base-common-genesis/arbitrary",
 	"dep:arbitrary",
 	"reth-codecs?/arbitrary",
 	"reth-db-api?/arbitrary",
@@ -106,6 +108,7 @@ serde = [
 	"alloy-eips/serde",
 	"alloy-primitives/serde",
 	"alloy-rpc-types-eth?/serde",
+	"base-common-genesis/serde",
 	"bytes?/serde",
 	"dep:alloy-serde",
 	"dep:serde",

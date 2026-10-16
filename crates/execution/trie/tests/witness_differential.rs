@@ -58,7 +58,10 @@ impl Keyspace {
             }
             let account = (!rng.gen_bool(0.15)).then(|| random_account(rng));
             state.accounts.insert(*address, account);
-            let mut storage = HashedStorage::new(rng.gen_bool(0.05));
+            let mut storage = HashedStorage::default();
+            if rng.gen_bool(0.05) {
+                storage.storage.extend(slots.iter().map(|slot| (*slot, U256::ZERO)));
+            }
             for slot in slots.iter().chain([&random_hash(rng)]) {
                 if rng.gen_bool(0.6) {
                     let value = if rng.gen_bool(0.3) {
