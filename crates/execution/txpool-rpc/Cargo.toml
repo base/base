@@ -20,8 +20,10 @@ base-execution-txpool.workspace = true
 base-common-consensus.workspace = true
 base-execution-rpc.workspace = true
 base-observability-events.workspace = true
+base-execution-validity-metadata.workspace = true
 
 # reth
+reth-tasks.workspace = true
 reth-chainspec.workspace = true
 reth-storage-api.workspace = true
 reth-rpc-eth-types.workspace = true
@@ -29,6 +31,7 @@ reth-rpc-server-types.workspace = true
 reth-transaction-pool.workspace = true
 
 # alloy
+alloy-serde.workspace = true
 alloy-consensus.workspace = true
 alloy-primitives.workspace = true
 
@@ -51,10 +54,14 @@ eyre.workspace = true
 rstest.workspace = true
 metrics.workspace = true
 httpmock.workspace = true
+tempfile.workspace = true
 alloy-eips.workspace = true
 serde_json.workspace = true
+reth-chain-state.workspace = true
 alloy-signer.workspace = true
 alloy-signer-local.workspace = true
+reth-primitives-traits.workspace = true
+reth-ethereum-primitives.workspace = true
 metrics-util = { workspace = true, features = ["debugging"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
 reth-transaction-pool = { workspace = true, features = ["test-utils"] }

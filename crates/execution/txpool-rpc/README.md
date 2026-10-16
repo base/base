@@ -31,6 +31,30 @@ the complete sidecar and upstream error response instead of admitting it locally
 See the [wallet signing contract](../txpool/README.md#signed-validity-predicates) for
 EIP-712 types, signature encoding, rollout requirements, and security limitations.
 
+## Validity transaction status
+
+`ValidityTransactionStatusExtension` registers the read-only, builder-local
+`base_getValidityTransactionStatus(txHash)` method backed by a
+[`base-execution-validity-metadata`](../validity-metadata/README.md) store. It does not change any
+`eth_*` method. The lookup resolves the hash through the node's canonical chain provider and
+re-checks that the containing block hash is canonical at its height before reading the record for
+that exact block hash, so pending, private, orphaned and unknown transactions return `null`.
+
+| Outcome | Response |
+| --- | --- |
+| Not canonically included | `null` |
+| Included, block recorded | `{transactionHash, blockHash, blockNumber, transactionIndex, isValidityTransaction}` with hex quantities |
+| Included, no record or metadata disabled | error `-32050`, message `validity metadata unavailable`, data `not_recorded` |
+| Corrupt, conflicting or inconsistent record, or storage failure | error `-32603` `Internal error` without diagnostics |
+
+`isValidityTransaction` is `true` only for committed pool transactions that carried nonempty
+validity predicates. It is a builder-reported classification at lookup time, not a finality
+guarantee or cryptographic proof. A `not_recorded` error may clear once a pending write commits,
+but dropped or lost records never recover. Provider and store reads run on the blocking task pool,
+at most `MAX_CONCURRENT_VALIDITY_STATUS_LOOKUPS` at a time. Lookups need the node's transaction
+hash index. Public deployments should route only this method to the block producer that owns the
+store rather than exposing the producer's other RPC methods.
+
 ## Usage
 
 Add the dependency to your `Cargo.toml`:
@@ -43,13 +67,16 @@ base-txpool-rpc = { workspace = true }
 ```rust,ignore
 use base_txpool_rpc::{
     SendRawTransactionValidityConfig, SendRawTransactionValidityExtension, TxPoolRpcConfig,
-    TxPoolRpcExtension,
+    TxPoolRpcExtension, ValidityTransactionStatusConfig, ValidityTransactionStatusExtension,
 };
 
 runner.install_ext::<TxPoolRpcExtension>(TxPoolRpcConfig::default());
 runner.install_ext::<SendRawTransactionValidityExtension>(
     SendRawTransactionValidityConfig::default(),
 );
+runner.install_ext::<ValidityTransactionStatusExtension>(ValidityTransactionStatusConfig {
+    store: Some(store.clone()),
+});
 ```
 
 ## License

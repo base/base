@@ -4806,6 +4806,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-execution-validity-metadata"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "base-metrics",
+ "metrics",
+ "metrics-util",
+ "redb",
+ "tempfile",
+ "thiserror 2.0.19",
+ "tracing",
+]
+
+[[package]]
 name = "base-fee-jobs"
 version = "0.0.0"
 dependencies = [
@@ -6643,6 +6657,7 @@ dependencies = [
  "alloy-consensus 2.4.1",
  "alloy-eips 2.4.1",
  "alloy-primitives",
+ "alloy-serde 2.4.1",
  "alloy-signer 2.4.1",
  "alloy-signer-local 2.4.1",
  "base-common-chains",
@@ -6651,6 +6666,7 @@ dependencies = [
  "base-execution-chainspec",
  "base-execution-rpc",
  "base-execution-txpool",
+ "base-execution-validity-metadata",
  "base-node-runner",
  "base-observability-events",
  "base-test-utils",
@@ -6659,15 +6675,20 @@ dependencies = [
  "jsonrpsee",
  "metrics",
  "metrics-util",
+ "reth-chain-state",
  "reth-chainspec",
+ "reth-ethereum-primitives",
+ "reth-primitives-traits",
  "reth-provider",
  "reth-rpc-eth-types",
  "reth-rpc-server-types",
  "reth-storage-api",
+ "reth-tasks",
  "reth-transaction-pool",
  "rstest",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "tracing",
 ]

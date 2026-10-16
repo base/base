@@ -19,5 +19,14 @@ mod extension;
 pub use extension::{
     DEFAULT_MAX_VALIDITY_EXPIRY_SECS, DEFAULT_MAX_VALIDITY_PREDICATES,
     SendRawTransactionValidityConfig, SendRawTransactionValidityExtension, TxPoolRpcConfig,
-    TxPoolRpcExtension, ValiditySignatureMode,
+    TxPoolRpcExtension, ValiditySignatureMode, ValidityTransactionStatusConfig,
+    ValidityTransactionStatusExtension,
+};
+
+mod validity_metadata;
+pub use validity_metadata::{
+    MAX_CONCURRENT_VALIDITY_STATUS_LOOKUPS, VALIDITY_METADATA_NOT_RECORDED,
+    VALIDITY_METADATA_UNAVAILABLE_CODE, VALIDITY_METADATA_UNAVAILABLE_MESSAGE,
+    ValidityTransactionStatus, ValidityTransactionStatusApiImpl,
+    ValidityTransactionStatusApiServer,
 };

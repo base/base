@@ -4,12 +4,14 @@ use base_execution_rpc::SequencerClient;
 pub use base_execution_txpool::{
     DEFAULT_MAX_VALIDITY_EXPIRY_SECS, DEFAULT_MAX_VALIDITY_PREDICATES, ValiditySignatureMode,
 };
+use base_execution_validity_metadata::ValidityMetadataStore;
 use base_node_runner::{BaseNodeExtension, BaseRpcContext, FromExtensionConfig, NodeHooks};
 use reth_rpc_server_types::RethRpcModule;
 
 use crate::{
     AdminTxPoolApiImpl, AdminTxPoolApiServer, SendRawTransactionValidityApiImpl,
     SendRawTransactionValidityApiServer, TransactionStatusApiImpl, TransactionStatusApiServer,
+    ValidityTransactionStatusApiImpl, ValidityTransactionStatusApiServer,
 };
 
 /// Configuration for the `TxPool` RPC extension.
@@ -113,6 +115,47 @@ impl FromExtensionConfig for SendRawTransactionValidityExtension {
 
 impl FromExtensionConfig for TxPoolRpcExtension {
     type Config = TxPoolRpcConfig;
+
+    fn from_config(config: Self::Config) -> Self {
+        Self { config }
+    }
+}
+
+/// Configuration for the builder-local validity transaction status RPC.
+#[derive(Debug, Clone, Default)]
+pub struct ValidityTransactionStatusConfig {
+    /// Store shared with the builder's metadata recorder; `None` when recording is disabled,
+    /// in which case canonical transactions are reported as not recorded.
+    pub store: Option<ValidityMetadataStore>,
+}
+
+/// Extension registering the read-only `base_getValidityTransactionStatus` method.
+///
+/// Install only on the block producer that records the metadata. The method is merged into the
+/// node's configured RPC transports; public exposure should route only this method to the
+/// producer rather than exposing the producer's other RPC methods.
+#[derive(Debug, Default)]
+pub struct ValidityTransactionStatusExtension {
+    config: ValidityTransactionStatusConfig,
+}
+
+impl BaseNodeExtension for ValidityTransactionStatusExtension {
+    fn apply(self: Box<Self>, builder: NodeHooks) -> NodeHooks {
+        let store = self.config.store;
+        builder.add_rpc_module(move |ctx: &mut BaseRpcContext<'_>| {
+            let api = ValidityTransactionStatusApiImpl::new(
+                ctx.provider().clone(),
+                store,
+                ctx.node().task_executor.clone(),
+            );
+            ctx.modules.merge_configured(api.into_rpc())?;
+            Ok(())
+        })
+    }
+}
+
+impl FromExtensionConfig for ValidityTransactionStatusExtension {
+    type Config = ValidityTransactionStatusConfig;
 
     fn from_config(config: Self::Config) -> Self {
         Self { config }
