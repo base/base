@@ -297,68 +297,46 @@ where
 
 #[cfg(test)]
 mod tests {
-    use alloy_eips::eip2718::Encodable2718;
-    use alloy_primitives::{Address, Bytes, U256};
-    use alloy_signer::SignerSync;
+    use alloy_consensus::TxEip1559;
+    use alloy_primitives::{Address, Bytes, TxKind, U256};
     use alloy_signer_local::PrivateKeySigner;
-    use base_common_chains::ChainConfig;
-    use base_common_consensus::{
-        BasePooledTransaction as ConsensusPooledTransaction, BaseTransactionSigned, Call,
-        Eip8130Signed, Predeploys, TxEip8130,
-    };
+    use base_common_consensus::{Call, Predeploys, TxEip8130};
     use base_test_utils::Account;
-    use reth_primitives_traits::Recovered;
-    use reth_transaction_pool::{
-        CoinbaseTipOrdering, PoolTransaction, TransactionOrdering, test_utils::TransactionBuilder,
-    };
+    use reth_transaction_pool::{CoinbaseTipOrdering, TransactionOrdering};
 
     use super::*;
-    use crate::{BasePooledTransaction, ValidityOperator, ValidityPredicate};
+    use crate::{
+        BasePooledTransaction, ValidityOperator, ValidityPredicate, test_utils::TxFixtures,
+    };
+
+    fn eip1559_from(
+        account: Account,
+        nonce: u64,
+        max_fee_per_gas: u128,
+        max_priority_fee_per_gas: u128,
+        gas_limit: u64,
+    ) -> BasePooledTransaction {
+        TxFixtures::sign_eip1559(
+            &account.signer(),
+            TxEip1559 {
+                chain_id: 1,
+                nonce,
+                gas_limit,
+                max_fee_per_gas,
+                max_priority_fee_per_gas,
+                to: TxKind::Call(Account::Bob.address()),
+                value: U256::from(1_000),
+                ..Default::default()
+            },
+        )
+    }
 
     fn create_test_tx(nonce: u64) -> BasePooledTransaction {
-        let alice = Account::Alice;
-        let bob = Account::Bob;
-
-        let signed_tx = TransactionBuilder::default()
-            .signer(alice.signer_b256())
-            .chain_id(1)
-            .nonce(nonce)
-            .to(bob.address())
-            .value(1_000)
-            .gas_limit(21_000)
-            .max_fee_per_gas(10)
-            .max_priority_fee_per_gas(1)
-            .into_eip1559();
-        let tx = BaseTransactionSigned::Eip1559(
-            signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
-        );
-
-        let recovered = Recovered::new_unchecked(tx, alice.address());
-        let len = recovered.encode_2718_len();
-        BasePooledTransaction::new(recovered, len)
+        eip1559_from(Account::Alice, nonce, 10, 1, 21_000)
     }
 
     fn create_test_tx_with_timestamp(nonce: u64, received_at: u128) -> BasePooledTransaction {
-        let alice = Account::Alice;
-        let bob = Account::Bob;
-
-        let signed_tx = TransactionBuilder::default()
-            .signer(alice.signer_b256())
-            .chain_id(1)
-            .nonce(nonce)
-            .to(bob.address())
-            .value(1_000)
-            .gas_limit(21_000)
-            .max_fee_per_gas(10)
-            .max_priority_fee_per_gas(1)
-            .into_eip1559();
-        let tx = BaseTransactionSigned::Eip1559(
-            signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
-        );
-
-        let recovered = Recovered::new_unchecked(tx, alice.address());
-        let len = recovered.encode_2718_len();
-        BasePooledTransaction::new_with_received_at(recovered, len, received_at)
+        TxFixtures::received_at(create_test_tx(nonce), received_at)
     }
 
     fn create_test_tx_from(
@@ -367,25 +345,10 @@ mod tests {
         received_at: u128,
         max_priority_fee_per_gas: u128,
     ) -> BasePooledTransaction {
-        let bob = Account::Bob;
-
-        let signed_tx = TransactionBuilder::default()
-            .signer(account.signer_b256())
-            .chain_id(1)
-            .nonce(nonce)
-            .to(bob.address())
-            .value(1_000)
-            .gas_limit(21_000)
-            .max_fee_per_gas(10)
-            .max_priority_fee_per_gas(max_priority_fee_per_gas)
-            .into_eip1559();
-        let tx = BaseTransactionSigned::Eip1559(
-            signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
-        );
-
-        let recovered = Recovered::new_unchecked(tx, account.address());
-        let len = recovered.encode_2718_len();
-        BasePooledTransaction::new_with_received_at(recovered, len, received_at)
+        TxFixtures::received_at(
+            eip1559_from(account, nonce, 10, max_priority_fee_per_gas, 21_000),
+            received_at,
+        )
     }
 
     fn eip1559_pooled(
@@ -394,24 +357,7 @@ mod tests {
         max_priority_fee_per_gas: u128,
         gas_limit: u64,
     ) -> BasePooledTransaction {
-        let alice = Account::Alice;
-        let bob = Account::Bob;
-        let signed_tx = TransactionBuilder::default()
-            .signer(alice.signer_b256())
-            .chain_id(1)
-            .nonce(nonce)
-            .to(bob.address())
-            .value(1_000)
-            .gas_limit(gas_limit)
-            .max_fee_per_gas(max_fee_per_gas)
-            .max_priority_fee_per_gas(max_priority_fee_per_gas)
-            .into_eip1559();
-        let tx = BaseTransactionSigned::Eip1559(
-            signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
-        );
-        let recovered = Recovered::new_unchecked(tx, alice.address());
-        let len = recovered.encode_2718_len();
-        BasePooledTransaction::new(recovered, len)
+        eip1559_from(Account::Alice, nonce, max_fee_per_gas, max_priority_fee_per_gas, gas_limit)
     }
 
     fn eip8130_pooled(
@@ -420,7 +366,6 @@ mod tests {
         gas_limit: u64,
         coinbase_tip: Option<U256>,
     ) -> BasePooledTransaction {
-        let signer = PrivateKeySigner::random();
         let calls = coinbase_tip.map_or_else(Vec::new, |amount| {
             vec![vec![Call {
                 to: Predeploys::SEQUENCER_FEE_VAULT,
@@ -428,26 +373,17 @@ mod tests {
                 data: Bytes::new(),
             }]]
         });
-        let tx = TxEip8130 {
-            chain_id: ChainConfig::mainnet().chain_id,
-            sender: None,
-            nonce_key: U256::ZERO,
-            nonce_sequence: 0,
-            valid_after: 0,
-            valid_before: 0,
-            max_priority_fee_per_gas,
-            max_fee_per_gas,
-            gas_limit,
-            account_changes: Vec::new(),
-            calls,
-            metadata: Bytes::new(),
-            payer: None,
-        };
-        let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
-        let signed =
-            Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
-        let pooled = ConsensusPooledTransaction::Eip8130(signed);
-        BasePooledTransaction::from_pooled(Recovered::new_unchecked(pooled, signer.address()))
+        TxFixtures::sign_eip8130(
+            &PrivateKeySigner::random(),
+            None,
+            TxEip8130 {
+                max_priority_fee_per_gas,
+                max_fee_per_gas,
+                gas_limit,
+                calls,
+                ..TxFixtures::eip8130_tx(U256::ZERO, 0)
+            },
+        )
     }
 
     fn block_number_predicate() -> ValidityPredicate {
@@ -491,27 +427,7 @@ mod tests {
         let ordering = BaseOrdering::<BasePooledTransaction>::coinbase_tip();
 
         let higher_tip = create_test_tx(1);
-        let lower_tip = {
-            let alice = Account::Alice;
-            let bob = Account::Bob;
-
-            let signed_tx = TransactionBuilder::default()
-                .signer(alice.signer_b256())
-                .chain_id(1)
-                .nonce(2)
-                .to(bob.address())
-                .value(1_000)
-                .gas_limit(21_000)
-                .max_fee_per_gas(10)
-                .max_priority_fee_per_gas(0)
-                .into_eip1559();
-            let tx = BaseTransactionSigned::Eip1559(
-                signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
-            );
-            let recovered = Recovered::new_unchecked(tx, alice.address());
-            let len = recovered.encode_2718_len();
-            BasePooledTransaction::new(recovered, len)
-        };
+        let lower_tip = eip1559_from(Account::Alice, 2, 10, 0, 21_000);
 
         let higher_priority = ordering.priority(&higher_tip, 0);
         let lower_priority = ordering.priority(&lower_tip, 0);

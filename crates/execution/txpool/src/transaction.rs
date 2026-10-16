@@ -721,17 +721,11 @@ where
 mod tests {
     use std::sync::Arc;
 
-    use alloy_consensus::{SignableTransaction, TxEip1559, transaction::Recovered};
-    use alloy_eips::eip2718::Encodable2718;
+    use alloy_consensus::TxEip1559;
     use alloy_primitives::{Address, Bytes, TxKind, U256};
-    use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
     use base_bundles::{MeterBundleResponse, OpcodeGas, TransactionResult};
-    use base_common_chains::ChainConfig;
-    use base_common_consensus::{
-        BasePooledTransaction as ConsensusPooledTransaction, BasePrimitives, BaseTransactionSigned,
-        Eip8130Constants, Eip8130Signed, TxDeposit, TxEip8130,
-    };
+    use base_common_consensus::{BasePrimitives, Eip8130Constants, TxEip8130};
     use base_execution_chainspec::BaseChainSpec;
     use base_execution_evm::BaseEvmConfig;
     use reth_primitives_traits::InMemorySize;
@@ -743,7 +737,7 @@ mod tests {
 
     use crate::{
         BasePooledTransaction, BasePooledTx, BaseTransactionValidator, ConfigSlot, InvalidationKey,
-        ValidityOperator, ValidityPredicate, WatchManifest, WatchSet,
+        ValidityOperator, ValidityPredicate, WatchManifest, WatchSet, test_utils::TxFixtures,
     };
 
     fn meter_response(results: usize) -> MeterBundleResponse {
@@ -776,18 +770,17 @@ mod tests {
         max_priority_fee_per_gas: u128,
         max_fee_per_gas: u128,
     ) -> BasePooledTransaction {
-        let signer = signer();
-        let tx = TxEip1559 {
-            chain_id: ChainConfig::mainnet().chain_id,
-            max_priority_fee_per_gas,
-            max_fee_per_gas,
-            gas_limit: 21_000,
-            to: TxKind::Call(Address::ZERO),
-            ..Default::default()
-        };
-        let signature = signer.sign_hash_sync(&tx.signature_hash()).unwrap();
-        let pooled = ConsensusPooledTransaction::Eip1559(tx.into_signed(signature));
-        BasePooledTransaction::from_pooled(Recovered::new_unchecked(pooled, signer.address()))
+        TxFixtures::sign_eip1559(
+            &signer(),
+            TxEip1559 {
+                chain_id: TxFixtures::chain_id(),
+                max_priority_fee_per_gas,
+                max_fee_per_gas,
+                gas_limit: 21_000,
+                to: TxKind::Call(Address::ZERO),
+                ..Default::default()
+            },
+        )
     }
 
     fn eip8130_pooled(nonce_key: U256) -> BasePooledTransaction {
@@ -800,29 +793,15 @@ mod tests {
         max_fee_per_gas: u128,
     ) -> BasePooledTransaction {
         sign_eip8130(TxEip8130 {
-            chain_id: ChainConfig::mainnet().chain_id,
-            sender: None,
-            nonce_key,
-            nonce_sequence: 0,
-            valid_after: 0,
             valid_before: if nonce_key == Eip8130Constants::NONCE_KEY_MAX { 5 } else { 0 },
             max_priority_fee_per_gas,
             max_fee_per_gas,
-            gas_limit: 50_000,
-            account_changes: Vec::new(),
-            calls: Vec::new(),
-            metadata: Bytes::new(),
-            payer: None,
+            ..TxFixtures::eip8130_tx(nonce_key, 0)
         })
     }
 
     fn sign_eip8130(tx: TxEip8130) -> BasePooledTransaction {
-        let signer = signer();
-        let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
-        let signed =
-            Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
-        let pooled = ConsensusPooledTransaction::Eip8130(signed);
-        BasePooledTransaction::from_pooled(Recovered::new_unchecked(pooled, signer.address()))
+        TxFixtures::sign_eip8130(&signer(), None, tx)
     }
 
     #[tokio::test]
@@ -839,21 +818,7 @@ mod tests {
         let validator = BaseTransactionValidator::new(validator);
 
         let origin = TransactionOrigin::External;
-        let signer = Default::default();
-        let deposit_tx = TxDeposit {
-            source_hash: Default::default(),
-            from: signer,
-            to: TxKind::Create,
-            mint: 0,
-            value: U256::ZERO,
-            gas_limit: 0,
-            is_system_transaction: false,
-            input: Default::default(),
-        };
-        let signed_tx: BaseTransactionSigned = deposit_tx.into();
-        let signed_recovered = Recovered::new_unchecked(signed_tx, signer);
-        let len = signed_recovered.encode_2718_len();
-        let pooled_tx: BasePooledTransaction = BasePooledTransaction::new(signed_recovered, len);
+        let pooled_tx = TxFixtures::deposit();
         let outcome = validator.validate_one(origin, pooled_tx).await;
 
         let err = match outcome {
