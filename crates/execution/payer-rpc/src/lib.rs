@@ -8,7 +8,7 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 mod cache;
-pub use cache::{MAX_GET_TERMS_CACHE_SECS, TermsCache};
+pub use cache::{GET_TERMS_FRESH_FOR, MAX_GET_TERMS_CACHE_SECS, TermsCache};
 
 mod extension;
 pub use extension::{PayerRpcConfig, PayerRpcExtension};
