@@ -56,7 +56,7 @@ base-common-rpc-types-engine = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
 
 # rpc
-jsonrpsee = { workspace = true, optional = true }
+jsonrpsee.workspace = true
 
 # misc
 eyre.workspace = true
@@ -94,7 +94,6 @@ test-utils = [
 	"dep:base-common-rpc-types-engine",
 	"dep:base-test-utils",
 	"dep:chrono",
-	"dep:jsonrpsee",
 	"dep:reth-ipc",
 	"dep:reth-node-core",
 	"dep:reth-primitives-traits",

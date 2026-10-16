@@ -41,8 +41,8 @@ these shared or `BASE_BATCHER_*` names.
 ## `base rpc`
 
 `base rpc` starts a validator-oriented node by launching an embedded execution node and an embedded
-consensus node in the same process. The execution node exposes the Engine API over auth IPC, and the
-consensus node connects to that IPC endpoint internally.
+consensus node in the same process. The consensus node calls the execution node's Engine API
+handlers in memory, with no socket, IPC, or JWT in between.
 
 The execution CLI surface is shared with the standalone execution binaries through
 `base-execution-cli`. `base rpc` intentionally filters out flags for roles it does not run, including
@@ -73,8 +73,8 @@ simulation nodes.
 ## `base sequencer`
 
 `base sequencer` starts a sequencing node by launching an embedded execution node, embedded
-Flashblocks builder, and embedded consensus node in the same process. The execution node exposes the
-Engine API over auth IPC, and the consensus node connects to that IPC endpoint internally.
+Flashblocks builder, and embedded consensus node in the same process. The consensus node calls the
+execution node's Engine API handlers in memory, with no socket, IPC, or JWT in between.
 
 The command accepts the shared execution flags, builder flags, and sequencer consensus flags. It
 requires L1 execution and beacon RPC endpoints, and sequencer mode requires a signing key provided
@@ -118,7 +118,7 @@ and minted balances permanently diverge from mainnet. To return to mainnet, rest
 deleting `base-dev.json` does not undo execution. Only one process may open the database for writing.
 
 `base dev` continues an existing snapshot datadir as a local chain: an embedded execution node and
-an L1-free standalone sequencer in one process, connected over Engine IPC. It never creates,
+an L1-free standalone sequencer in one process, connected in memory. It never creates,
 downloads, or reinitializes data. Discovery and peers are disabled, and HTTP and WS RPC listen on
 loopback. A pre-Denim head gets Denim at its next block; the schedule and snapshot head are saved to
 `base-dev.json` in the datadir before the first block and restored on restart. Block timestamps

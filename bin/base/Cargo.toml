@@ -31,6 +31,7 @@ base-execution-evm.workspace = true
 base-consensus-node.workspace = true
 base-upgrade-signal.workspace = true
 base-builder-metering.workspace = true
+base-consensus-engine.workspace = true
 base-builder-multiplex.workspace = true
 base-execution-chainspec.workspace = true
 base-execution-consensus.workspace = true

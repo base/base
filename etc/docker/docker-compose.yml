@@ -291,7 +291,6 @@ services:
       - --authrpc.port=${L2_BUILDER_AUTH_PORT}
       - --authrpc.addr=0.0.0.0
       - --authrpc.jwtsecret=/genesis/jwt.hex
-      - --auth-ipc.path=/tmp/base-builder-engine.ipc
       - --port=${L2_BUILDER_P2P_PORT}
       - --discovery.port=${L2_BUILDER_P2P_PORT}
       - --nat=extip:${L2_BUILDER_ADVERTISE_IP}
@@ -497,7 +496,6 @@ services:
       - --authrpc.port=${L2_CLIENT_AUTH_PORT}
       - --authrpc.addr=0.0.0.0
       - --authrpc.jwtsecret=/genesis/jwt.hex
-      - --auth-ipc.path=/tmp/base-client-engine.ipc
       - --port=${L2_CLIENT_P2P_PORT}
       - --discovery.port=${L2_CLIENT_P2P_PORT}
       - --nat=extip:${L2_CLIENT_ADVERTISE_IP}
@@ -612,7 +610,6 @@ services:
       - --authrpc.port=${L2_BASE_RPC_AUTH_PORT}
       - --authrpc.addr=0.0.0.0
       - --authrpc.jwtsecret=/genesis/jwt.hex
-      - --auth-ipc.path=/tmp/base-engine.ipc
       - --port=${L2_BASE_RPC_P2P_PORT}
       - --discovery.port=${L2_BASE_RPC_P2P_PORT}
       - --nat=extip:${L2_BASE_RPC_ADVERTISE_IP}
@@ -715,7 +712,6 @@ services:
       - --authrpc.port=${L2_SHADOW_AUTH_PORT}
       - --authrpc.addr=0.0.0.0
       - --authrpc.jwtsecret=/genesis/jwt.hex
-      - --auth-ipc.path=/tmp/base-shadow-validator-engine.ipc
       - --port=${L2_SHADOW_P2P_PORT}
       - --discovery.port=${L2_SHADOW_P2P_PORT}
       - --nat=extip:${L2_SHADOW_ADVERTISE_IP}
