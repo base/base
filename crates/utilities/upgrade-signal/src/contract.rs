@@ -334,8 +334,8 @@ impl AlloyUpgradeSignalReader {
     /// Reads the schedule, retrying transient provider failures with bounded exponential jitter
     /// before giving up.
     ///
-    /// Used on the startup path, where a single transient L1 error should not abort node launch
-    /// outright; after `max_attempts` failures the last error is returned (fail-fast). This future
+    /// This bounded read is used by startup, which repeats it, and manual refresh. After
+    /// `max_attempts` provider failures, the last error is returned. This future
     /// is cancellation-safe: dropping it during shutdown cancels an in-flight HTTP request or
     /// retry sleep.
     ///

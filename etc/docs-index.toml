@@ -656,7 +656,7 @@ digest = "ffbb152cb0"
 
 ["crates/utilities/upgrade-signal/README.md"]
 summary = "Reads upgrade activation timestamps and minimum protocol version from the L1 ProtocolVersions contract; covers modes (metrics-only, startup-apply, runtime-admin), CLI flags, defaults, metrics."
-digest = "fd4c93a6fc"
+digest = "8d398b2575"
 
 ["docs/guides/BLOCK_PRODUCTION_REVIEW.md"]
 summary = "Review guide for block-production-sensitive PRs: mandatory payload size-limit gate across I/O boundaries, taxonomy of halt/stall scenarios (precompiles, builder, flashblocks), and a checklist."
