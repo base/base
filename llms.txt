@@ -105,7 +105,7 @@
 - [crates/consensus/service/README.md](crates/consensus/service/README.md): Consensus node composition layer: actor model, RollupNode vs FollowNode, startup sequence, and each actor (engine, derivation, sequencer, network, L1 watcher, RPC). Read to understand node wiring.
 - [crates/consensus/service/src/actors/network/README.md](crates/consensus/service/src/actors/network/README.md): Overview and example of the network actor, which owns libp2p gossip and discv5 discovery, built via NetworkBuilder or with_transport for tests. Use when wiring or testing the P2P actor.
 - [crates/consensus/sources/README.md](crates/consensus/sources/README.md): Block signing interfaces for the consensus node: local BlockSigner, RemoteSigner with mTLS client certs. Use when configuring or changing how blocks are signed.
-- [crates/consensus/upgrades/README.md](crates/consensus/upgrades/README.md): Consensus-layer upgrade types for Base: Upgrade trait and Upgrades registry (Ecotone to Jovian) with activation-block upgrade transactions. Use when wiring or checking fork activation; from op-alloy.
+- [crates/consensus/upgrades/README.md](crates/consensus/upgrades/README.md): Upgrade trait and Upgrades registry for Ecotone, Fjord, Isthmus, and Jovian network transactions. Use when collecting transactions for upgrade activation blocks.
 
 ## Crates: execution
 
