@@ -1003,7 +1003,7 @@ fn destroyed_storage_materializes_parent_slots<
             vec![(untouched_slot, U256::from(11)), (overwritten_slot, U256::from(22))],
         )
         .unwrap();
-    let storage = BaseProofsStorage::from(Arc::new(storage));
+    let storage: BaseProofsStorage<Arc<S>> = BaseProofsStorage::from(Arc::new(storage));
     let provider = BaseProofsStateProviderRef::new(Box::<NoopProvider>::default(), &storage, 0);
     let mut bundle = BundleState::default();
     let account = BundleAccount::new(
