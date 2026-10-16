@@ -841,7 +841,6 @@ name = "base-proof-driver"
 version = "0.0.0"
 dependencies = [
  "alloy-consensus",
- "alloy-evm",
  "alloy-primitives",
  "alloy-rlp",
  "async-trait",
