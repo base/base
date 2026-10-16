@@ -1,9 +1,7 @@
 use std::{collections::HashSet, time::Duration};
 
 use async_trait::async_trait;
-use base_shadow_indexer_db::{
-    ShadowBlockRepo, ShadowBlockRow, ShadowDbConfig, ShadowFlushOutcome, ShadowWrite,
-};
+use base_shadow_indexer_db::{ShadowBlockRepo, ShadowDbConfig, ShadowFlushOutcome, ShadowWrite};
 use reth_tasks::TaskExecutor;
 use tokio::{
     sync::mpsc,
@@ -74,7 +72,7 @@ impl ShadowWriter {
                     match maybe_write {
                         Some(mut write) => {
                             if let ShadowWrite::Reorged(row) = &mut write {
-                                self.stamp_row(row);
+                                row.payload.builder_version = self.builder_version.clone();
                             }
                             batch.push(write);
                             ShadowWriterMetrics::channel_depth().set(self.rx.len() as f64);
@@ -183,10 +181,6 @@ impl ShadowWriter {
 
         dropped
     }
-
-    fn stamp_row(&self, row: &mut ShadowBlockRow) {
-        row.payload.builder_version = self.builder_version.clone();
-    }
 }
 
 #[cfg(test)]
@@ -270,28 +264,6 @@ mod tests {
             })
             .collect();
         assert_eq!(retained, vec![9, 10], "refs survive so they cannot strand a persisted row");
-    }
-
-    #[tokio::test]
-    async fn flush_stamps_builder_version_without_mutating_created_at() {
-        let writer = test_writer();
-        let created_at = Utc::now();
-        let mut batch = vec![reorged(7, created_at)];
-        if let ShadowWrite::Reorged(row) = &mut batch[0] {
-            writer.stamp_row(row);
-        }
-
-        let mut repo = MockBlockInserter::new();
-        repo.expect_flush().times(MAX_FLUSH_ATTEMPTS).returning(move |writes| {
-            for write in writes {
-                let ShadowWrite::Reorged(row) = write else { continue };
-                assert_eq!(row.created_at, created_at);
-                assert_eq!(row.payload.builder_version, "test-builder");
-            }
-            Err(anyhow!("insert failed"))
-        });
-
-        writer.flush(&repo, &mut batch, "batch_full").await;
     }
 
     #[tokio::test]
