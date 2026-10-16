@@ -245,8 +245,7 @@ impl MultiplexRouter {
         async move {
             let selected_response = async move {
                 let selected_result = selected_rx.await.unwrap_or_else(|_| {
-                    selected_health.mark_unavailable();
-                    Self::set_service_health_metric(selected_builder, false);
+                    Self::mark_builder_unavailable(&selected_health, selected_builder);
                     Err(Self::unavailable_error(selected_builder))
                 });
                 info!(
@@ -260,8 +259,7 @@ impl MultiplexRouter {
             };
             let shadow_response = async move {
                 let shadow_result = shadow_rx.await.unwrap_or_else(|_| {
-                    shadow_health.mark_unavailable();
-                    Self::set_service_health_metric(shadow_builder, false);
+                    Self::mark_builder_unavailable(&shadow_health, shadow_builder);
                     Err(Self::unavailable_error(shadow_builder))
                 });
                 Self::inc_shadow_metric(shadow_builder, shadow_result.is_ok());
@@ -367,31 +365,16 @@ impl MultiplexRouter {
         let basic_health = self.basic_health.clone();
         let chain_spec = Arc::clone(&self.chain_spec);
         async move {
-            let mut flashblocks_events = match flashblocks_handle.subscribe().await {
-                Ok(events) => events.receiver,
-                Err(error) => {
-                    flashblocks_health.mark_unavailable();
-                    Self::set_service_health_metric(FLASHBLOCKS_BUILDER, false);
-                    error!(
-                        builder = FLASHBLOCKS_BUILDER,
-                        error = %error,
-                        "failed to subscribe to payload builder events"
-                    );
-                    return;
-                }
+            let Some(mut flashblocks_events) =
+                Self::subscribe_events(&flashblocks_handle, &flashblocks_health, FLASHBLOCKS_BUILDER)
+                    .await
+            else {
+                return;
             };
-            let mut basic_events = match basic_handle.subscribe().await {
-                Ok(events) => events.receiver,
-                Err(error) => {
-                    basic_health.mark_unavailable();
-                    Self::set_service_health_metric(BASIC_BUILDER, false);
-                    error!(
-                        builder = BASIC_BUILDER,
-                        error = %error,
-                        "failed to subscribe to payload builder events"
-                    );
-                    return;
-                }
+            let Some(mut basic_events) =
+                Self::subscribe_events(&basic_handle, &basic_health, BASIC_BUILDER).await
+            else {
+                return;
             };
             let (events_tx, events_rx) = broadcast::channel(64);
             if tx.send(events_rx).is_err() {
@@ -411,20 +394,10 @@ impl MultiplexRouter {
                         }
                         Err(broadcast::error::RecvError::Closed) => {
                             flashblocks_closed = true;
-                            flashblocks_health.mark_unavailable();
-                            Self::set_service_health_metric(FLASHBLOCKS_BUILDER, false);
+                            Self::mark_builder_unavailable(&flashblocks_health, FLASHBLOCKS_BUILDER);
                         }
                         Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                            metrics::counter!(
-                                "mux_subscription_lagged_events_total",
-                                "builder" => FLASHBLOCKS_BUILDER
-                            )
-                            .increment(skipped);
-                            warn!(
-                                builder = FLASHBLOCKS_BUILDER,
-                                skipped,
-                                "payload builder event forwarding lagged"
-                            );
+                            Self::record_lagged_events(FLASHBLOCKS_BUILDER, skipped);
                         }
                     },
                     result = basic_events.recv(), if !basic_closed => match result {
@@ -435,26 +408,45 @@ impl MultiplexRouter {
                         }
                         Err(broadcast::error::RecvError::Closed) => {
                             basic_closed = true;
-                            basic_health.mark_unavailable();
-                            Self::set_service_health_metric(BASIC_BUILDER, false);
+                            Self::mark_builder_unavailable(&basic_health, BASIC_BUILDER);
                         }
                         Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                            metrics::counter!(
-                                "mux_subscription_lagged_events_total",
-                                "builder" => BASIC_BUILDER
-                            )
-                            .increment(skipped);
-                            warn!(
-                                builder = BASIC_BUILDER,
-                                skipped,
-                                "payload builder event forwarding lagged"
-                            );
+                            Self::record_lagged_events(BASIC_BUILDER, skipped);
                         }
                     },
                 }
             }
         }
         .boxed()
+    }
+
+    /// Subscribes to one builder's events or marks it unavailable.
+    async fn subscribe_events(
+        handle: &PayloadBuilderHandle<BaseEngineTypes>,
+        health: &HealthState,
+        builder: &'static str,
+    ) -> Option<broadcast::Receiver<Events<BaseEngineTypes>>> {
+        match handle.subscribe().await {
+            Ok(events) => Some(events.receiver),
+            Err(error) => {
+                Self::mark_builder_unavailable(health, builder);
+                error!(builder, error = %error, "failed to subscribe to payload builder events");
+                None
+            }
+        }
+    }
+
+    /// Marks a builder unavailable and updates its health gauge.
+    fn mark_builder_unavailable(health: &HealthState, builder: &'static str) {
+        health.mark_unavailable();
+        Self::set_service_health_metric(builder, false);
+    }
+
+    /// Records skipped subscription events.
+    fn record_lagged_events(builder: &'static str, skipped: u64) {
+        metrics::counter!("mux_subscription_lagged_events_total", "builder" => builder)
+            .increment(skipped);
+        warn!(builder, skipped, "payload builder event forwarding lagged");
     }
 
     /// Maps selected-builder read results with unavailable conversion.
@@ -465,8 +457,7 @@ impl MultiplexRouter {
     ) -> Option<Result<T, PayloadBuilderError>> {
         match result {
             Some(Err(PayloadBuilderError::ChannelClosed)) => {
-                health.mark_unavailable();
-                Self::set_service_health_metric(builder, false);
+                Self::mark_builder_unavailable(health, builder);
                 Some(Err(Self::unavailable_error(builder)))
             }
             None if !health.is_healthy() => Some(Err(Self::unavailable_error(builder))),
