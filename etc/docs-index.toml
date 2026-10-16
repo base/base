@@ -668,7 +668,7 @@ digest = "0951b41580"
 
 ["docs/guides/P2P.md"]
 summary = "Explains the Base P2P stack for newcomers: consensus-layer discv5 and libp2p gossipsub versus execution-layer reth networking, how they interact via Engine API, key files, flags, and glossary."
-digest = "2407f38ac8"
+digest = "619d6e31e3"
 
 ["docs/guides/RELEASE.md"]
 summary = "Release process: Start Release creates releases/vX.Y.Z, version sync PR, automatic RC tags and builds per commit, then Publish Release for the final tag, Docker images and binaries."

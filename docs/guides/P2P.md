@@ -258,9 +258,10 @@ persists the current set of known ENRs to the boot store every 60 seconds.
 
 The driver communicates with the rest of the system through a
 [`Discv5Handler`](../../crates/consensus/disc/src/handler.rs),
-which is just a thin wrapper around an `mpsc::Sender`. Other parts of the system can request
-metrics, peer lists, the local ENR, or ask the discovery service to ban specific addresses. This
-channel-based design avoids the need for shared mutable state across async boundaries.
+which is just a thin wrapper around an `mpsc::Sender`. Other parts of the system can request the
+peer count, peer lists, routing table information, and the local ENR. They can also ask the discovery
+service to ban specific addresses. This channel-based design avoids the need for shared mutable
+state across async boundaries.
 
 
 ### Gossip: broadcasting blocks with libp2p and gossipsub

@@ -39,11 +39,8 @@ fn try_forward_enr(enr_sender: &Sender<Enr>, enr: Enr) -> bool {
 /// Channels are used to communicate between the [`Discv5Handler`]
 /// and the spawned task containing the [`Discv5`] service.
 ///
-/// Since some requested operations are asynchronous, this pattern of message
-/// passing is used as opposed to wrapping the [`Discv5`] in an `Arc<Mutex<>>`.
-/// If an `Arc<Mutex<>>` were used, a lock held across the operation's future
-/// would be needed since some asynchronous operations require a mutable
-/// reference to the [`Discv5`] service.
+/// Message passing gives the driver exclusive access to the discovery service
+/// while allowing other tasks to inspect the routing table and ban addresses.
 #[derive(Debug)]
 pub struct Discv5Driver {
     /// The [`Discv5`] discovery service.
@@ -228,12 +225,6 @@ impl Discv5Driver {
                     msg = req_recv.recv() => {
                         match msg {
                             Some(msg) => match msg {
-                                HandlerRequest::Metrics(tx) => {
-                                    let metrics = self.disc.metrics();
-                                    if let Err(e) = tx.send(metrics) {
-                                        warn!(target: "discovery", error = ?e, "Failed to send metrics");
-                                    }
-                                }
                                 HandlerRequest::PeerCount(tx) => {
                                     let peers = self.disc.connected_peers();
                                     if let Err(e) = tx.send(peers) {
@@ -244,15 +235,6 @@ impl Discv5Driver {
                                     let enr = self.disc.local_enr().clone();
                                     if let Err(e) = tx.send(enr.clone()) {
                                         warn!(target: "discovery", error = ?e, "Failed to send local enr");
-                                    }
-                                }
-                                HandlerRequest::AddEnr(enr) => {
-                                    let _ = self.disc.add_enr(enr);
-                                }
-                                HandlerRequest::RequestEnr{out, addr} => {
-                                    let enr = self.disc.request_enr(addr).await;
-                                    if let Err(e) = out.send(enr) {
-                                        warn!(target: "discovery", error = ?e, "Failed to send request enr");
                                     }
                                 }
                                 HandlerRequest::TableEnrs(tx) => {
