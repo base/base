@@ -6,8 +6,6 @@ sol! {
         /// Proof registered by the given submitter.
         function provenWithdrawals(bytes32 withdrawalHash, address submitter)
             external view returns (address disputeGameProxy, uint64 timestamp);
-        /// Current game type accepted for proving.
-        function respectedGameType() external view returns (uint32);
         /// Required proof age in seconds.
         function proofMaturityDelaySeconds() external view returns (uint256);
         /// Reverts unless the withdrawal can be finalized.

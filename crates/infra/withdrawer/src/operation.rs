@@ -12,9 +12,10 @@ use thiserror::Error;
 
 use crate::{
     FaultProofPortal, LegacyWithdrawalPortal, PreparedWithdrawalTransaction, ProofSystem,
-    Withdrawal, WithdrawalDisputeGame, WithdrawalError, WithdrawalOutputOracle, WithdrawalPortal,
-    WithdrawalRpc, WithdrawalRpcError, WithdrawalRpcTransport, WithdrawalSigner,
-    WithdrawalSignerError, WithdrawalTransactionError, WithdrawerConfig,
+    VerifiedWithdrawalProof, Withdrawal, WithdrawalDisputeGame, WithdrawalError,
+    WithdrawalOutputOracle, WithdrawalPortal, WithdrawalRpc, WithdrawalRpcError,
+    WithdrawalRpcTransport, WithdrawalSigner, WithdrawalSignerError, WithdrawalTransactionError,
+    WithdrawerConfig,
 };
 
 /// Next step determined from the portal and proof contracts.
@@ -357,12 +358,12 @@ impl Withdrawer {
         Ok(status == GameStatus::InProgress as u8 || status == GameStatus::DefenderWins as u8)
     }
 
-    /// Finds the latest eligible covering game, or the first covering legacy output.
+    /// Authenticates the latest usable covering game, or the first covering legacy output.
     pub async fn proving_output(
         &self,
         rpc: &WithdrawalRpc,
         withdrawal: &Withdrawal,
-    ) -> Result<WithdrawalProvingOutput, WithdrawerError> {
+    ) -> Result<(WithdrawalProvingOutput, VerifiedWithdrawalProof), WithdrawerError> {
         let block = U256::from(withdrawal.block_number);
         match self.config.network.proofs {
             ProofSystem::FaultProofs { dispute_game_factory, anchor_state_registry } => {
@@ -391,24 +392,45 @@ impl Withdrawer {
                     let extra_data =
                         Self::read(rpc, game.proxy, WithdrawalDisputeGame::extraDataCall {})
                             .await?;
-                    let encoded_block = extra_data
-                        .get(..32)
-                        .ok_or(WithdrawerError::InvalidGame { index: count })?;
+                    let Some(encoded_block) = extra_data.get(..32) else {
+                        let error = WithdrawerError::InvalidGame { index: count };
+                        tracing::warn!(
+                            game_index = %count, proxy = %game.proxy, reason = %error,
+                            "skipping unusable dispute game"
+                        );
+                        continue;
+                    };
                     let game_block = U256::from_be_slice(encoded_block);
-                    if game_block < block
-                        || !Self::game_eligible(rpc, anchor_state_registry, game.proxy).await?
-                    {
+                    if game_block < block {
+                        continue;
+                    }
+                    let Ok(block_number) = u64::try_from(game_block) else {
+                        tracing::warn!(
+                            game_index = %count, proxy = %game.proxy,
+                            reason = %WithdrawerError::ValueOverflow,
+                            "skipping unusable dispute game"
+                        );
+                        continue;
+                    };
+                    if !Self::game_eligible(rpc, anchor_state_registry, game.proxy).await? {
                         continue;
                     }
                     let root = Self::read(rpc, game.proxy, WithdrawalDisputeGame::rootClaimCall {})
                         .await?;
-                    return Ok(WithdrawalProvingOutput {
-                        block_number: game_block
-                            .try_into()
-                            .map_err(|_| WithdrawerError::ValueOverflow)?,
-                        index: count,
-                        root,
-                    });
+                    let output = WithdrawalProvingOutput { block_number, index: count, root };
+                    match Self::verify_output(rpc, withdrawal, output).await {
+                        Ok(proof) => return Ok((output, proof)),
+                        Err(
+                            error
+                            @ (WithdrawerError::MissingBlock | WithdrawerError::Withdrawal(_)),
+                        ) => {
+                            tracing::warn!(
+                                game_index = %count, proxy = %game.proxy, reason = %error,
+                                "skipping unusable dispute game"
+                            );
+                        }
+                        Err(error) => return Err(error),
+                    }
                 }
             }
             ProofSystem::OutputOracle { l2_output_oracle } => {
@@ -432,14 +454,16 @@ impl Withdrawer {
                     )
                     .await?;
                     if U256::from(output.l2BlockNumber) >= block {
-                        return Ok(WithdrawalProvingOutput {
+                        let output = WithdrawalProvingOutput {
                             block_number: output
                                 .l2BlockNumber
                                 .try_into()
                                 .map_err(|_| WithdrawerError::ValueOverflow)?,
                             index,
                             root: output.outputRoot,
-                        });
+                        };
+                        let proof = Self::verify_output(rpc, withdrawal, output).await?;
+                        return Ok((output, proof));
                     }
                 }
             }
@@ -447,13 +471,12 @@ impl Withdrawer {
         Err(WithdrawerError::NoCoverage { block_number: withdrawal.block_number })
     }
 
-    /// Fetches and authenticates a covering commitment before encoding the portal proof call.
-    pub async fn prove_calldata(
-        &self,
+    /// Fetches and authenticates an output's header and message passer proof.
+    pub async fn verify_output(
         rpc: &WithdrawalRpc,
         withdrawal: &Withdrawal,
-    ) -> Result<Bytes, WithdrawerError> {
-        let output = self.proving_output(rpc, withdrawal).await?;
+        output: WithdrawalProvingOutput,
+    ) -> Result<VerifiedWithdrawalProof, WithdrawerError> {
         let block = rpc
             .l2
             .get_block_by_number(output.block_number.into())
@@ -470,7 +493,16 @@ impl Withdrawer {
             .get_proof(Predeploys::L2_TO_L1_MESSAGE_PASSER, vec![withdrawal.slot()])
             .block_id(output.block_number.into())
             .await?;
-        let verified = withdrawal.verify_proof(&block.header, &proof, output.root)?;
+        Ok(withdrawal.verify_proof(&block.header, &proof, output.root)?)
+    }
+
+    /// Fetches and authenticates a covering commitment before encoding the portal proof call.
+    pub async fn prove_calldata(
+        &self,
+        rpc: &WithdrawalRpc,
+        withdrawal: &Withdrawal,
+    ) -> Result<Bytes, WithdrawerError> {
+        let (output, verified) = self.proving_output(rpc, withdrawal).await?;
         Ok(WithdrawalPortal::proveWithdrawalTransactionCall {
             withdrawal: withdrawal.transaction.clone(),
             outputIndex: output.index,
@@ -694,6 +726,9 @@ mod tests {
         malformed_response: bool,
         other_game_type: bool,
         wrong_root: bool,
+        latest_wrong_root: bool,
+        latest_extra_data: Option<Bytes>,
+        proof_error: Option<Value>,
         now: u64,
         dry: bool,
         hang: bool,
@@ -729,6 +764,9 @@ mod tests {
                 malformed_response: false,
                 other_game_type: false,
                 wrong_root: false,
+                latest_wrong_root: false,
+                latest_extra_data: None,
+                proof_error: None,
                 now: 1000,
                 dry: false,
                 hang: false,
@@ -939,6 +977,9 @@ mod tests {
                     result
                 }
                 "eth_getBlockByNumber" => {
+                    if l2 && params[0] == "0xffffffffffffffff" {
+                        return Ok(Value::Null);
+                    }
                     let mut block = fixture["header"].clone();
                     if !l2 {
                         block["timestamp"] = json!(format!("0x{:x}", self.now));
@@ -946,7 +987,12 @@ mod tests {
                     block["transactions"] = json!([]);
                     block
                 }
-                "eth_getProof" => fixture["proof"].clone(),
+                "eth_getProof" => {
+                    if let Some(error) = &self.proof_error {
+                        return Err(error.clone());
+                    }
+                    fixture["proof"].clone()
+                }
                 "eth_sendRawTransaction" => {
                     let raw: Bytes = serde_json::from_value(params[0].clone()).unwrap();
                     let tx = TxEnvelope::decode_2718(&mut raw.as_ref()).unwrap();
@@ -1029,7 +1075,6 @@ mod tests {
                         if self.game_status == 0 { 0u64 } else { 700u64 }
                     );
                     reply!(FaultProofPortal::proofMaturityDelaySecondsCall, U256::from(100));
-                    reply!(FaultProofPortal::respectedGameTypeCall, 621u32);
                     reply!(
                         IDisputeGameFactory::gameCountCall,
                         U256::from(if self.skip_latest { 2 } else { self.game_count })
@@ -1054,25 +1099,24 @@ mod tests {
                                 621u32
                             },
                             if index < self.old_games_before { timestamp - 1 } else { timestamp },
-                            Address::repeat_byte(if self.skip_latest && index == 1 {
-                                10
-                            } else {
-                                9
-                            })
+                            Address::repeat_byte(if index == 1 { 10 } else { 9 })
                         );
+                    }
+                    let latest = params[0]["to"] == json!(Address::repeat_byte(10));
+                    if latest && let Some(extra_data) = &self.latest_extra_data {
+                        reply!(WithdrawalDisputeGame::extraDataCall, extra_data.clone());
                     }
                     reply!(
                         WithdrawalDisputeGame::extraDataCall,
                         Bytes::copy_from_slice(
-                            &U256::from(if params[0]["to"] == json!(Address::repeat_byte(10)) {
-                                1
-                            } else {
-                                block
-                            })
-                            .to_be_bytes::<32>()
+                            &U256::from(if latest && self.skip_latest { 1 } else { block })
+                                .to_be_bytes::<32>()
                         )
                     );
-                    reply!(WithdrawalDisputeGame::rootClaimCall, claim);
+                    reply!(
+                        WithdrawalDisputeGame::rootClaimCall,
+                        if latest && self.latest_wrong_root { B256::ZERO } else { claim }
+                    );
                     reply!(WithdrawalOutputOracle::latestBlockNumberCall, U256::from(block));
                     reply!(WithdrawalOutputOracle::getL2OutputIndexAfterCall, U256::ZERO);
                     reply!(
@@ -1513,15 +1557,76 @@ mod tests {
 
     #[tokio::test]
     async fn proof_must_authenticate_the_published_claim() {
-        for fault in [false, true] {
-            let server = Scenario { fault, wrong_root: true, ..Default::default() }.start().await;
-            assert!(matches!(
-                server.run().await,
-                Err(WithdrawerError::Withdrawal(WithdrawalError::OutputRootMismatch { .. }))
-            ));
-            assert_eq!(*server.estimates.lock().unwrap(), 0);
-            assert!(server.sent.lock().unwrap().is_empty());
+        let server =
+            Scenario { fault: false, wrong_root: true, ..Default::default() }.start().await;
+        assert!(matches!(
+            server.run().await,
+            Err(WithdrawerError::Withdrawal(WithdrawalError::OutputRootMismatch { .. }))
+        ));
+        assert_eq!(*server.estimates.lock().unwrap(), 0);
+        assert!(server.sent.lock().unwrap().is_empty());
+
+        for valid_older_game in [true, false] {
+            let server = Scenario {
+                game_count: 2,
+                latest_wrong_root: true,
+                wrong_root: !valid_older_game,
+                ..Default::default()
+            }
+            .start()
+            .await;
+            let result = server.run().await;
+            if valid_older_game {
+                assert_eq!(result.unwrap()[0].status, WithdrawalStatus::Prove);
+                server.assert_sent(WithdrawalPortal::proveWithdrawalTransactionCall::SELECTOR, 1);
+            } else {
+                assert!(matches!(result, Err(WithdrawerError::NoCoverage { .. })));
+                assert_eq!(*server.estimates.lock().unwrap(), 0);
+                assert!(server.sent.lock().unwrap().is_empty());
+            }
         }
+    }
+
+    #[tokio::test]
+    async fn game_search_skips_unusable_claimed_blocks() {
+        for extra_data in [
+            Bytes::from(vec![0; 31]),
+            Bytes::copy_from_slice(&U256::MAX.to_be_bytes::<32>()),
+            Bytes::copy_from_slice(&U256::from(u64::MAX).to_be_bytes::<32>()),
+        ] {
+            let server = Scenario {
+                game_count: 2,
+                latest_extra_data: Some(extra_data),
+                ..Default::default()
+            }
+            .start()
+            .await;
+            assert_eq!(server.run().await.unwrap()[0].status, WithdrawalStatus::Prove);
+            server.assert_sent(WithdrawalPortal::proveWithdrawalTransactionCall::SELECTOR, 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn game_search_does_not_skip_proof_rpc_failures() {
+        let server = Scenario {
+            game_count: 2,
+            proof_error: Some(json!({
+                "code": -32602,
+                "message": "invalid at https://user:password@host.invalid/key",
+                "data": "secret-value"
+            })),
+            ..Default::default()
+        }
+        .start()
+        .await;
+        let error = server.run().await.unwrap_err();
+        assert!(matches!(error, WithdrawerError::Request(_)));
+        assert!(std::error::Error::source(&error).is_some());
+        for secret in ["password", "host.invalid", "secret-value"] {
+            assert!(!format!("{error} {error:?}").contains(secret));
+        }
+        assert_eq!(*server.estimates.lock().unwrap(), 0);
+        assert!(server.sent.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
