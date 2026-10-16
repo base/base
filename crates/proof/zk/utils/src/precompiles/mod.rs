@@ -132,11 +132,6 @@ impl BaseZkvmPrecompiles {
         Self::new_with_spec_and_activation_admin_address(self.spec, activation_admin_address)
     }
 
-    /// Returns the activation registry admin address.
-    pub const fn activation_admin_address(&self) -> Option<Address> {
-        self.activation_admin_address
-    }
-
     fn installed_precompiles(
         spec: BaseSpecId,
         activation_admin_address: Option<Address>,
