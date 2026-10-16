@@ -23,7 +23,10 @@ use reth_transaction_pool::{
     ValidPoolTransaction,
     pool::{AddedTransactionState, QueuedReason, TransactionEvent},
 };
-use tokio::{spawn, sync::mpsc};
+use tokio::{
+    spawn,
+    sync::mpsc::{self, error::TrySendError},
+};
 use tracing::debug;
 
 use crate::{
@@ -1839,6 +1842,10 @@ where
 }
 
 #[derive(Debug)]
+/// Event listeners for transactions in the 2D nonce sidecar.
+///
+/// Bounded listeners follow reth's listener semantics: a listener whose channel is full misses
+/// that event but stays subscribed, and is removed only once its receiver is dropped.
 struct SidecarListeners<T: BasePooledTx> {
     by_hash: HashMap<TxHash, Vec<mpsc::UnboundedSender<TransactionEvent>>>,
     all_events: Vec<mpsc::Sender<FullTransactionEvent<T>>>,
@@ -1990,7 +1997,7 @@ impl<T: BasePooledTx> SidecarListeners<T> {
     }
 
     fn broadcast_all(&mut self, event: FullTransactionEvent<T>) {
-        self.all_events.retain(|listener| listener.try_send(event.clone()).is_ok());
+        Self::send_to_open(&mut self.all_events, &event);
     }
 
     fn broadcast_pending_transaction(&mut self, transaction: &Arc<ValidPoolTransaction<T>>) {
@@ -2002,18 +2009,30 @@ impl<T: BasePooledTx> SidecarListeners<T> {
     }
 
     fn broadcast_pending(&mut self, transaction: &Arc<ValidPoolTransaction<T>>) {
-        self.pending_all.retain(|listener| listener.try_send(*transaction.hash()).is_ok());
+        let hash = *transaction.hash();
+        Self::send_to_open(&mut self.pending_all, &hash);
         if transaction.propagate {
-            self.pending_propagate
-                .retain(|listener| listener.try_send(*transaction.hash()).is_ok());
+            Self::send_to_open(&mut self.pending_propagate, &hash);
         }
     }
 
     fn broadcast_new(&mut self, event: NewTransactionEvent<T>) {
-        self.new_all.retain(|listener| listener.try_send(event.clone()).is_ok());
+        Self::send_to_open(&mut self.new_all, &event);
         if event.transaction.propagate {
-            self.new_propagate.retain(|listener| listener.try_send(event.clone()).is_ok());
+            Self::send_to_open(&mut self.new_propagate, &event);
         }
+    }
+
+    /// Sends `item` to every listener without waiting, dropping only listeners whose receiver is
+    /// gone.
+    ///
+    /// A full channel drops the item but keeps the listener: a consumer that falls behind for a
+    /// while must not lose its subscription for good, since a merged listener stays open on the
+    /// protocol side and the consumer would never learn that sidecar events stopped.
+    fn send_to_open<I: Clone>(listeners: &mut Vec<mpsc::Sender<I>>, item: &I) {
+        listeners.retain(|listener| {
+            !matches!(listener.try_send(item.clone()), Err(TrySendError::Closed(_)))
+        });
     }
 }
 
@@ -4143,5 +4162,84 @@ mod tests {
             assert_eq!(pool.get(&hash).is_some(), remains_live);
             assert_eq!(pool.guard.read().contains(&hash), remains_live);
         }
+    }
+
+    fn sidecar_channel_tx(channel: u64) -> Arc<ValidPoolTransaction<BasePooledTransaction>> {
+        Arc::new(valid_pool_transaction(signed_channel_tx(
+            &signer(),
+            U256::from(channel),
+            0,
+            1_000,
+        )))
+    }
+
+    /// A consumer of the merged pending listener that stops draining for longer than the channels
+    /// can buffer must still be woken by sidecar transactions once it catches up. The merged
+    /// receiver stays open on the protocol side, so a dropped sidecar listener would go unnoticed.
+    #[tokio::test]
+    async fn merged_pending_listener_keeps_sidecar_wakeups_after_consumer_stalls() {
+        let mut listeners = SidecarListeners::<BasePooledTransaction>::default();
+        let (_protocol_tx, protocol_rx) = mpsc::channel::<TxHash>(16);
+        let sidecar_rx = listeners.subscribe_pending(TransactionListenerKind::All);
+        let mut merged = merge_receivers(protocol_rx, sidecar_rx);
+
+        // The forwarder fills the merged channel, blocks on it, and then the sidecar channel fills.
+        let stalled = sidecar_channel_tx(1);
+        for _ in 0..3 * SIDE_CAR_EVENT_CHANNEL_SIZE {
+            listeners.broadcast_pending(&stalled);
+            tokio::task::yield_now().await;
+        }
+        while let Ok(Some(_)) = tokio::time::timeout(Duration::from_millis(20), merged.recv()).await
+        {
+        }
+
+        let next = sidecar_channel_tx(2);
+        listeners.broadcast_pending(&next);
+        let woken = tokio::time::timeout(Duration::from_secs(1), merged.recv()).await;
+        assert_eq!(woken.ok().flatten(), Some(*next.hash()));
+    }
+
+    #[tokio::test]
+    async fn new_and_all_event_listeners_survive_full_channels() {
+        let mut listeners = SidecarListeners::<BasePooledTransaction>::default();
+        let mut new_events = listeners.subscribe_new_transactions(TransactionListenerKind::All);
+        let mut all_events = listeners.subscribe_all();
+
+        let stalled = sidecar_channel_tx(1);
+        for _ in 0..=SIDE_CAR_EVENT_CHANNEL_SIZE {
+            listeners.broadcast_pending_transaction(&stalled);
+        }
+        for _ in 0..SIDE_CAR_EVENT_CHANNEL_SIZE {
+            new_events.recv().await.unwrap();
+            all_events.next().await.unwrap();
+        }
+
+        let next = sidecar_channel_tx(2);
+        listeners.broadcast_pending_transaction(&next);
+        assert_eq!(
+            new_events.recv().await.map(|event| *event.transaction.hash()),
+            Some(*next.hash())
+        );
+        assert!(
+            matches!(all_events.next().await, Some(FullTransactionEvent::Pending(hash)) if hash == *next.hash())
+        );
+    }
+
+    #[tokio::test]
+    async fn listeners_with_dropped_receivers_are_removed() {
+        let mut listeners = SidecarListeners::<BasePooledTransaction>::default();
+        drop(listeners.subscribe_pending(TransactionListenerKind::All));
+        drop(listeners.subscribe_pending(TransactionListenerKind::PropagateOnly));
+        drop(listeners.subscribe_new_transactions(TransactionListenerKind::All));
+        drop(listeners.subscribe_new_transactions(TransactionListenerKind::PropagateOnly));
+        drop(listeners.subscribe_all());
+
+        listeners.broadcast_pending_transaction(&sidecar_channel_tx(1));
+
+        assert!(listeners.pending_all.is_empty());
+        assert!(listeners.pending_propagate.is_empty());
+        assert!(listeners.new_all.is_empty());
+        assert!(listeners.new_propagate.is_empty());
+        assert!(listeners.all_events.is_empty());
     }
 }
