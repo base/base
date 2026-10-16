@@ -219,8 +219,8 @@ summary = "Scaffold for Base's EVM2 integration (BaseEvmTypes, currently mirrori
 digest = "e8fa087a1d"
 
 ["crates/common/flashblocks/README.md"]
-summary = "Wire-format types for flashblocks pre-confirmations: FlashblocksPayloadV1, FlashblocksDiff, and FlashblocksMetadata. Use when parsing or producing flashblock messages."
-digest = "dbfd8f54d4"
+summary = "Types for parsing flashblock messages: FlashblocksPayloadV1, ExecutionPayloadFlashblockDeltaV1, and the typed Metadata used by Flashblock."
+digest = "47ff1d0dd5"
 
 ["crates/common/flz/README.md"]
 summary = "FastLZ compressed-length estimation and Fjord L1 data gas calculation (data_gas_fjord, tx_estimated_size_fjord). Use when computing L1 data fees or transaction size estimates."
