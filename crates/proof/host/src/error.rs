@@ -34,9 +34,6 @@ pub enum HostError {
     /// Output root mismatch.
     #[error("Output root does not match L2 head")]
     OutputRootMismatch,
-    /// Agreed pre-state hash mismatch.
-    #[error("Agreed pre-state hash does not match")]
-    AgreedPreStateHashMismatch,
     /// Expected blob count mismatch.
     #[error("Expected {expected} blob(s), got {actual}")]
     BlobCountMismatch {
@@ -45,17 +42,6 @@ pub enum HostError {
         /// Actual blob count.
         actual: usize,
     },
-    /// Expected sidecar count mismatch.
-    #[error("Expected {expected} sidecar(s), got {actual}")]
-    SidecarCountMismatch {
-        /// Expected sidecar count.
-        expected: usize,
-        /// Actual sidecar count.
-        actual: usize,
-    },
-    /// No artifacts found for safe head.
-    #[error("No artifacts found for the safe head")]
-    NoArtifactsForSafeHead,
     /// Failed to fetch blob sidecars.
     #[error("Failed to fetch blob sidecars: {0}")]
     BlobSidecarFetchFailed(String),
@@ -65,9 +51,6 @@ pub enum HostError {
     /// Failed to convert slice to B256.
     #[error("Failed to convert slice to B256: {0}")]
     B256ConversionFailed(String),
-    /// Failed to fetch header RLP.
-    #[error("Failed to fetch header RLP: {0}")]
-    HeaderRlpFetchFailed(String),
     /// Error fetching code hash preimage.
     #[error("Error fetching code hash preimage: {0}")]
     CodeHashPreimageFetchFailed(String),
@@ -108,15 +91,6 @@ pub enum HostError {
     /// Serde JSON error.
     #[error("Serde JSON error: {0}")]
     SerdeJson(#[from] serde_json::Error),
-    /// Preimage oracle error.
-    #[error("Preimage oracle error: {0}")]
-    PreimageOracle(PreimageOracleError),
-    /// Base derive error.
-    #[error("Base derive error: {0}")]
-    BaseDerive(String),
-    /// Base executor error.
-    #[error("Base executor error: {0}")]
-    BaseExecutor(String),
     /// Proof program error.
     #[error(transparent)]
     ProofProgram(Box<FaultProofProgramError>),
