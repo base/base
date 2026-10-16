@@ -311,25 +311,18 @@ impl ActorAuthorizer {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{U256, address, keccak256};
-    use base_precompile_storage::{Handler, HashMapStorageProvider, StorageCtx};
+    use base_precompile_storage::Handler;
     use k256::ecdsa::SigningKey as K256SigningKey;
     use p256::ecdsa::{
         Signature as P256Sig, SigningKey as P256SigningKey, signature::hazmat::PrehashSigner,
     };
 
     use super::*;
+    use crate::test_utils::{actor_id, addr, key, pack, sig, with_storage};
 
     const HASH: B256 = B256::repeat_byte(0x42);
     const NOW: u64 = 1_000;
     const ACCOUNT: Address = address!("0x00000000000000000000000000000000000000a1");
-
-    /// Canonical Solidity packing of `ActorConfig` (each field at its bit offset:
-    /// authenticator 0..160, expiry 160..208, scope 208..224).
-    fn pack(authenticator: Address, scope: u16, expiry: u64) -> U256 {
-        U256::from_be_slice(authenticator.as_slice())
-            | (U256::from(expiry) << 160)
-            | (U256::from(scope) << 208)
-    }
 
     /// Packs an `AccountState` word carrying the inline secp256k1 self config
     /// (each field at its bit offset: defaultEOAExpiry 184..232, defaultEOAScope
@@ -337,28 +330,6 @@ mod tests {
     fn pack_self(scope: u16, expiry: u64, revoked: bool) -> U256 {
         let flags = if revoked { Eip8130Constants::DEFAULT_EOA_REVOKED } else { 0 };
         (U256::from(flags) << 128) | (U256::from(expiry) << 184) | (U256::from(scope) << 232)
-    }
-
-    fn actor_id(address: Address) -> B256 {
-        AccountConfigurationStorage::self_actor_id(address)
-    }
-
-    fn k1_key(byte: u8) -> K256SigningKey {
-        K256SigningKey::from_slice(&[byte; 32]).unwrap()
-    }
-
-    fn k1_address(key: &K256SigningKey) -> Address {
-        let point = key.verifying_key().to_encoded_point(false);
-        Address::from_slice(&keccak256(&point.as_bytes()[1..])[12..])
-    }
-
-    /// 65-byte `r || s || v` signature over `hash`, `v` in `{27, 28}`.
-    fn k1_sig(key: &K256SigningKey, hash: B256) -> [u8; 65] {
-        let (sig, recid) = key.sign_prehash_recoverable(hash.as_slice()).unwrap();
-        let mut out = [0u8; 65];
-        out[..64].copy_from_slice(&sig.to_bytes());
-        out[64] = recid.to_byte() + 27;
-        out
     }
 
     fn p256_key(byte: u8) -> P256SigningKey {
@@ -389,19 +360,13 @@ mod tests {
         out
     }
 
-    /// Runs `body` with a fresh in-memory `AccountConfigurationStorage`.
-    fn with_storage<R>(body: impl FnOnce(&mut AccountConfigurationStorage<'_>) -> R) -> R {
-        let mut storage = HashMapStorageProvider::new(1);
-        StorageCtx::enter(&mut storage, |ctx| body(&mut AccountConfigurationStorage::new(ctx)))
-    }
-
     #[test]
     fn implicit_eoa_authorizes_unrestricted_owner() {
-        let key = k1_key(0x11);
-        let account = k1_address(&key);
+        let key = key(0x11);
+        let account = addr(&key);
         // The k1 blob whose signer recovers to the account: a live default EOA
         // (flag unset, no explicit self entry) resolves to the unrestricted owner.
-        let auth = blob(Eip8130Constants::K1_AUTHENTICATOR, &k1_sig(&key, HASH));
+        let auth = blob(Eip8130Constants::K1_AUTHENTICATOR, &sig(&key, HASH));
         with_storage(|acc| {
             let resolved = ActorAuthorizer::authenticate_actor(acc, account, HASH, &auth, NOW);
             assert_eq!(resolved.unwrap(), ResolvedActor::unrestricted(actor_id(account)));
@@ -410,9 +375,9 @@ mod tests {
 
     #[test]
     fn default_eoa_revoked_self_is_rejected() {
-        let key = k1_key(0x11);
-        let account = k1_address(&key);
-        let auth = blob(Eip8130Constants::K1_AUTHENTICATOR, &k1_sig(&key, HASH));
+        let key = key(0x11);
+        let account = addr(&key);
+        let auth = blob(Eip8130Constants::K1_AUTHENTICATOR, &sig(&key, HASH));
         with_storage(|acc| {
             // DEFAULT_EOA_REVOKED set: the inline k1 self is disabled (revoked, or a
             // non-k1 self is the live self authenticator), so a k1 signature
@@ -427,10 +392,10 @@ mod tests {
 
     #[test]
     fn scoped_self_resolves_inline_config() {
-        let key = k1_key(0x11);
-        let account = k1_address(&key);
+        let key = key(0x11);
+        let account = addr(&key);
         let self_id = actor_id(account);
-        let auth = blob(Eip8130Constants::K1_AUTHENTICATOR, &k1_sig(&key, HASH));
+        let auth = blob(Eip8130Constants::K1_AUTHENTICATOR, &sig(&key, HASH));
         with_storage(|acc| {
             // Flag unset with an inline scope: the self key is live but scoped, and
             // resolves from the account-state slot alone (no `actor_config` read).
@@ -448,9 +413,9 @@ mod tests {
 
     #[test]
     fn expired_self_is_rejected() {
-        let key = k1_key(0x11);
-        let account = k1_address(&key);
-        let auth = blob(Eip8130Constants::K1_AUTHENTICATOR, &k1_sig(&key, HASH));
+        let key = key(0x11);
+        let account = addr(&key);
+        let auth = blob(Eip8130Constants::K1_AUTHENTICATOR, &sig(&key, HASH));
         with_storage(|acc| {
             // Inline expiry in the past: the self key is no longer valid.
             acc.account_state.at_mut(&account).write(pack_self(0, NOW - 1, false)).unwrap();
@@ -463,11 +428,11 @@ mod tests {
 
     #[test]
     fn gated_self_resolves_inline_policy_manager() {
-        let key = k1_key(0x11);
-        let account = k1_address(&key);
+        let key = key(0x11);
+        let account = addr(&key);
         let self_id = actor_id(account);
         let manager = address!("0x00000000000000000000000000000000000000d4");
-        let auth = blob(Eip8130Constants::K1_AUTHENTICATOR, &k1_sig(&key, HASH));
+        let auth = blob(Eip8130Constants::K1_AUTHENTICATOR, &sig(&key, HASH));
         with_storage(|acc| {
             // Inline SCOPE_POLICY set: the self key is gated and resolves its policy
             // target from `policy_manager[self][account]`.
@@ -486,10 +451,10 @@ mod tests {
 
     #[test]
     fn k1_signer_without_actor_entry_is_rejected() {
-        let key = k1_key(0x11);
+        let key = key(0x11);
         // Signer recovers to a non-account address with no registered actor entry.
-        let id = actor_id(k1_address(&key));
-        let auth = blob(Eip8130Constants::K1_AUTHENTICATOR, &k1_sig(&key, HASH));
+        let id = actor_id(addr(&key));
+        let auth = blob(Eip8130Constants::K1_AUTHENTICATOR, &sig(&key, HASH));
         with_storage(|acc| {
             assert_eq!(
                 ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW),
@@ -503,9 +468,9 @@ mod tests {
 
     #[test]
     fn explicit_k1_resolves_bound_actor_surface() {
-        let key = k1_key(0x22);
-        let id = actor_id(k1_address(&key));
-        let auth = blob(Eip8130Constants::K1_AUTHENTICATOR, &k1_sig(&key, HASH));
+        let key = key(0x22);
+        let id = actor_id(addr(&key));
+        let auth = blob(Eip8130Constants::K1_AUTHENTICATOR, &sig(&key, HASH));
         with_storage(|acc| {
             acc.actors
                 .at_mut(&id)
@@ -528,9 +493,9 @@ mod tests {
 
     #[test]
     fn ecrecover_unbound_actor_is_rejected() {
-        let key = k1_key(0x22);
-        let id = actor_id(k1_address(&key));
-        let auth = blob(Eip8130Constants::K1_AUTHENTICATOR, &k1_sig(&key, HASH));
+        let key = key(0x22);
+        let id = actor_id(addr(&key));
+        let auth = blob(Eip8130Constants::K1_AUTHENTICATOR, &sig(&key, HASH));
         with_storage(|acc| {
             assert_eq!(
                 ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW),
@@ -544,9 +509,9 @@ mod tests {
 
     #[test]
     fn expiry_is_enforced_against_now() {
-        let key = k1_key(0x22);
-        let id = actor_id(k1_address(&key));
-        let auth = blob(Eip8130Constants::K1_AUTHENTICATOR, &k1_sig(&key, HASH));
+        let key = key(0x22);
+        let id = actor_id(addr(&key));
+        let auth = blob(Eip8130Constants::K1_AUTHENTICATOR, &sig(&key, HASH));
         with_storage(|acc| {
             acc.actors
                 .at_mut(&id)
@@ -565,10 +530,10 @@ mod tests {
 
     #[test]
     fn gated_actor_resolves_policy_manager_target() {
-        let key = k1_key(0x22);
-        let id = actor_id(k1_address(&key));
+        let key = key(0x22);
+        let id = actor_id(addr(&key));
         let manager = address!("0x00000000000000000000000000000000000000d4");
-        let auth = blob(Eip8130Constants::K1_AUTHENTICATOR, &k1_sig(&key, HASH));
+        let auth = blob(Eip8130Constants::K1_AUTHENTICATOR, &sig(&key, HASH));
         with_storage(|acc| {
             acc.actors
                 .at_mut(&id)
@@ -613,15 +578,15 @@ mod tests {
         let mut data = Vec::new();
         data.extend_from_slice(delegate_account.as_slice());
         data.extend_from_slice(Eip8130Constants::K1_AUTHENTICATOR.as_slice());
-        data.extend_from_slice(&k1_sig(nested_key, HASH));
+        data.extend_from_slice(&sig(nested_key, HASH));
         blob(Eip8130Contracts::DELEGATE_AUTHENTICATOR, &data)
     }
 
     #[test]
     fn delegate_authorizes_nested_then_outer_surface() {
         let delegate_account = address!("0x00000000000000000000000000000000000000bb");
-        let nested_key = k1_key(0x44);
-        let nested_id = actor_id(k1_address(&nested_key));
+        let nested_key = key(0x44);
+        let nested_id = actor_id(addr(&nested_key));
         let outer_id = actor_id(delegate_account);
         let auth = delegate_auth(delegate_account, &nested_key);
         with_storage(|acc| {
@@ -654,8 +619,8 @@ mod tests {
     #[test]
     fn delegate_rejects_nested_actor_without_signature_scope() {
         let delegate_account = address!("0x00000000000000000000000000000000000000bb");
-        let nested_key = k1_key(0x44);
-        let nested_id = actor_id(k1_address(&nested_key));
+        let nested_key = key(0x44);
+        let nested_id = actor_id(addr(&nested_key));
         let outer_id = actor_id(delegate_account);
         let auth = delegate_auth(delegate_account, &nested_key);
         with_storage(|acc| {
@@ -690,8 +655,8 @@ mod tests {
     #[test]
     fn delegate_accepts_nested_actor_with_signature_scope() {
         let delegate_account = address!("0x00000000000000000000000000000000000000bb");
-        let nested_key = k1_key(0x44);
-        let nested_id = actor_id(k1_address(&nested_key));
+        let nested_key = key(0x44);
+        let nested_id = actor_id(addr(&nested_key));
         let outer_id = actor_id(delegate_account);
         let auth = delegate_auth(delegate_account, &nested_key);
         with_storage(|acc| {
@@ -721,8 +686,8 @@ mod tests {
     #[test]
     fn delegate_rejects_unbound_nested_actor() {
         let delegate_account = address!("0x00000000000000000000000000000000000000bb");
-        let nested_key = k1_key(0x44);
-        let nested_id = actor_id(k1_address(&nested_key));
+        let nested_key = key(0x44);
+        let nested_id = actor_id(addr(&nested_key));
         let outer_id = actor_id(delegate_account);
         let auth = delegate_auth(delegate_account, &nested_key);
         with_storage(|acc| {
@@ -770,8 +735,8 @@ mod tests {
         // with no `actor_config` entry — only the live inline default EOA.
         // `DelegateAuthenticator` → `authenticateActor` must honor that path;
         // bare `resolve_bound` would incorrectly return AuthenticatorMismatch.
-        let nested_key = k1_key(0x55);
-        let delegate_account = k1_address(&nested_key);
+        let nested_key = key(0x55);
+        let delegate_account = addr(&nested_key);
         let outer_id = actor_id(delegate_account);
         let auth = delegate_auth(delegate_account, &nested_key);
         with_storage(|acc| {
@@ -796,8 +761,8 @@ mod tests {
 
     #[test]
     fn delegate_rejects_nested_default_eoa_when_revoked() {
-        let nested_key = k1_key(0x56);
-        let delegate_account = k1_address(&nested_key);
+        let nested_key = key(0x56);
+        let delegate_account = addr(&nested_key);
         let outer_id = actor_id(delegate_account);
         let auth = delegate_auth(delegate_account, &nested_key);
         with_storage(|acc| {
@@ -818,8 +783,8 @@ mod tests {
     fn delegate_rejects_nested_scoped_default_eoa() {
         // Live but scoped (non-admin) default EOA may sign for its own account,
         // yet must not vouch as a delegate.
-        let nested_key = k1_key(0x57);
-        let delegate_account = k1_address(&nested_key);
+        let nested_key = key(0x57);
+        let delegate_account = addr(&nested_key);
         let nested_id = actor_id(delegate_account);
         let outer_id = actor_id(delegate_account);
         let auth = delegate_auth(delegate_account, &nested_key);
@@ -843,8 +808,8 @@ mod tests {
     #[test]
     fn delegate_rejects_unbound_outer_actor() {
         let delegate_account = address!("0x00000000000000000000000000000000000000bb");
-        let nested_key = k1_key(0x44);
-        let nested_id = actor_id(k1_address(&nested_key));
+        let nested_key = key(0x44);
+        let nested_id = actor_id(addr(&nested_key));
         let outer_id = actor_id(delegate_account);
         let auth = delegate_auth(delegate_account, &nested_key);
         with_storage(|acc| {
@@ -867,8 +832,8 @@ mod tests {
     #[test]
     fn delegate_to_zero_address_is_rejected_as_authentication_failed() {
         // A delegate to address(0) yields an outer actor id of bytes32(0).
-        let nested_key = k1_key(0x44);
-        let nested_id = actor_id(k1_address(&nested_key));
+        let nested_key = key(0x44);
+        let nested_id = actor_id(addr(&nested_key));
         let auth = delegate_auth(Address::ZERO, &nested_key);
         with_storage(|acc| {
             // Bind the nested actor on address(0) so the nested discharge passes
