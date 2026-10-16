@@ -13,7 +13,6 @@ workspace = true
 
 [dependencies]
 # ethereum
-alloy-eips.workspace = true
 alloy-primitives.workspace = true
 
 # reth
@@ -40,10 +39,13 @@ jsonrpsee = { workspace = true, features = ["http-client"] }
 
 [dev-dependencies]
 # ethereum
+alloy-eips.workspace = true
 alloy-signer.workspace = true
+alloy-genesis.workspace = true
 alloy-network.workspace = true
 alloy-provider.workspace = true
 alloy-consensus.workspace = true
+alloy-signer-local.workspace = true
 
 # workspace
 base-test-utils.workspace = true
@@ -58,6 +60,7 @@ base-observability-events = { workspace = true, features = ["test-utils"] }
 # misc
 eyre.workspace = true
 rstest.workspace = true
+mockall.workspace = true
 serde = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 jsonrpsee = { workspace = true, features = ["server"] }
