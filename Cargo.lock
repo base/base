@@ -4967,7 +4967,6 @@ dependencies = [
  "http-body 1.1.0",
  "jsonrpsee",
  "reqwest 0.13.4",
- "rstest",
  "serde",
  "tokio",
  "tokio-util",
