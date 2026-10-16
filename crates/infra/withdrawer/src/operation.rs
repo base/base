@@ -76,12 +76,14 @@ pub enum WithdrawerError {
     /// The operation deadline elapsed.
     #[error("withdrawal operation timed out")]
     Timeout(#[source] tokio::time::error::Elapsed),
-    /// A broadcast transaction could not be confirmed; check its hash before retrying.
-    #[error("transaction {transaction_hash} was broadcast but could not be confirmed: {source}")]
+    /// A signed transaction may have been broadcast but could not be confirmed; check its hash before retrying.
+    #[error(
+        "transaction {transaction_hash} may have been broadcast but could not be confirmed: {source}"
+    )]
     Unconfirmed {
-        /// Hash of the broadcast L1 transaction.
+        /// Hash of the signed L1 transaction.
         transaction_hash: B256,
-        /// Failure after broadcast, with credential-bearing details removed.
+        /// Broadcast or confirmation failure, with credential-bearing details removed.
         #[source]
         source: Box<Self>,
     },
@@ -364,12 +366,6 @@ impl Withdrawer {
         let block = U256::from(withdrawal.block_number);
         match self.config.network.proofs {
             ProofSystem::FaultProofs { dispute_game_factory, anchor_state_registry } => {
-                let game_type = Self::read(
-                    rpc,
-                    self.config.network.portal,
-                    FaultProofPortal::respectedGameTypeCall {},
-                )
-                .await?;
                 let mut count =
                     Self::read(rpc, dispute_game_factory, IDisputeGameFactory::gameCountCall {})
                         .await?;
@@ -391,9 +387,6 @@ impl Withdrawer {
                     // A game created before the withdrawal cannot honestly cover it, nor can older games.
                     if game.timestamp < withdrawal_timestamp {
                         break;
-                    }
-                    if game.gameType != game_type {
-                        continue;
                     }
                     let extra_data =
                         Self::read(rpc, game.proxy, WithdrawalDisputeGame::extraDataCall {})
@@ -490,8 +483,8 @@ impl Withdrawer {
 
     /// Prepares and optionally broadcasts a transaction, recording its hash until receipt validation.
     ///
-    /// Set `finalize_withdrawal` only for finalize calls. After broadcast, `pending_transaction`
-    /// stays set on receipt validation errors or cancellation so the caller can report the hash.
+    /// Set `finalize_withdrawal` only for finalize calls. After signing, `pending_transaction`
+    /// stays set on broadcast or receipt validation errors or cancellation to report the hash.
     pub async fn submit(
         &self,
         rpc: &WithdrawalRpc,
@@ -522,9 +515,12 @@ impl Withdrawer {
         }
         let signed = prepared.sign(signer).await?;
         let hash = *signed.tx_hash();
-        tracing::info!(transaction_hash = %hash, "submitting withdrawal transaction");
-        rpc.broadcast(&signed).await?;
         *pending_transaction = Some(hash);
+        tracing::info!(transaction_hash = %hash, "submitting withdrawal transaction");
+        rpc.broadcast(&signed).await.map_err(|source| WithdrawerError::Unconfirmed {
+            transaction_hash: hash,
+            source: Box::new(source.into()),
+        })?;
         let receipt = rpc.wait_for_receipt(hash).await.map_err(|source| {
             WithdrawerError::Unconfirmed { transaction_hash: hash, source: Box::new(source.into()) }
         })?;
@@ -684,6 +680,8 @@ mod tests {
         game_finalized: bool,
         replaced: bool,
         output_error: Option<Value>,
+        broadcast_error: Option<Value>,
+        broadcast_hang: bool,
         receipt_error: Option<Value>,
         receipt_pending: bool,
         receipt_reverted: bool,
@@ -717,6 +715,8 @@ mod tests {
                 game_finalized: true,
                 replaced: false,
                 output_error: None,
+                broadcast_error: None,
+                broadcast_hang: false,
                 receipt_error: None,
                 receipt_pending: false,
                 receipt_reverted: false,
@@ -828,6 +828,11 @@ mod tests {
                             }
                             let result = scenario
                                 .respond(&request, l2, &fixture, &receipt, &sent, &estimates);
+                            if scenario.broadcast_hang
+                                && request["method"] == "eth_sendRawTransaction"
+                            {
+                                std::future::pending::<()>().await;
+                            }
                             Json(match result {
                                 Ok(result) => {
                                     json!({"jsonrpc":"2.0", "id":request["id"], "result":result})
@@ -893,6 +898,7 @@ mod tests {
                     *estimates.lock().unwrap() += 1;
                     json!("0x10000")
                 }
+                "eth_getTransactionByHash" => Value::Null,
                 "eth_getTransactionReceipt" if l2 => receipt.clone(),
                 "eth_getTransactionReceipt" => {
                     if let Some(error) = &self.receipt_error {
@@ -946,6 +952,9 @@ mod tests {
                     let tx = TxEnvelope::decode_2718(&mut raw.as_ref()).unwrap();
                     let hash = *tx.tx_hash();
                     sent.lock().unwrap().push(tx);
+                    if let Some(error) = &self.broadcast_error {
+                        return Err(error.clone());
+                    }
                     json!(hash)
                 }
                 "eth_call" => {
@@ -1039,7 +1048,11 @@ mod tests {
                         .unwrap();
                         reply!(
                             IDisputeGameFactory::gameAtIndexCall,
-                            if self.other_game_type { 0u32 } else { 621u32 },
+                            if self.other_game_type && !(self.skip_latest && index == 1) {
+                                0u32
+                            } else {
+                                621u32
+                            },
                             if index < self.old_games_before { timestamp - 1 } else { timestamp },
                             Address::repeat_byte(if self.skip_latest && index == 1 {
                                 10
@@ -1314,6 +1327,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn broadcast_failure_retains_signed_hash_and_redacted_source() {
+        let server = Scenario {
+            broadcast_error: Some(json!({
+                "code": -32602,
+                "message": "invalid at https://user:password@host.invalid/key",
+                "data": "secret-value"
+            })),
+            ..Default::default()
+        }
+        .start()
+        .await;
+        let error = server.run().await.unwrap_err();
+        let WithdrawerError::Unconfirmed { transaction_hash, source } = &error else {
+            panic!("missing signed hash: {error:?}");
+        };
+        assert_eq!(*transaction_hash, *server.sent.lock().unwrap()[0].tx_hash());
+        assert!(matches!(**source, WithdrawerError::Request(_)), "{source:?}");
+        assert!(std::error::Error::source(source.as_ref()).is_some());
+        for secret in ["password", "host.invalid", "secret-value"] {
+            assert!(!format!("{error} {error:?}").contains(secret));
+        }
+    }
+
+    #[tokio::test]
+    async fn shared_deadline_retains_hash_during_broadcast() {
+        let mut server = Scenario { broadcast_hang: true, ..Default::default() }.start().await;
+        server.config.timeout = Duration::from_secs(1);
+        server.config.max_retries = 2;
+        server.config.retry_delay = Duration::from_millis(1);
+        let error = server.run().await.unwrap_err();
+        let WithdrawerError::Unconfirmed { transaction_hash, source } = error else {
+            panic!("missing signed hash: {error:?}");
+        };
+        assert_eq!(transaction_hash, *server.sent.lock().unwrap()[0].tx_hash());
+        assert!(matches!(*source, WithdrawerError::Timeout(_)), "{source:?}");
+    }
+
+    #[tokio::test]
     async fn receipt_failure_retains_broadcast_hash_and_redacted_source() {
         let server = Scenario {
             receipt_error: Some(json!({
@@ -1476,6 +1527,15 @@ mod tests {
     #[tokio::test]
     async fn game_search_skips_a_newer_noncovering_game() {
         let server = Scenario { skip_latest: true, ..Default::default() }.start().await;
+        assert_eq!(server.run().await.unwrap()[0].status, WithdrawalStatus::Prove);
+        server.assert_sent(WithdrawalPortal::proveWithdrawalTransactionCall::SELECTOR, 1);
+    }
+
+    #[tokio::test]
+    async fn game_search_uses_a_still_respected_earlier_game_type() {
+        let server = Scenario { other_game_type: true, skip_latest: true, ..Default::default() }
+            .start()
+            .await;
         assert_eq!(server.run().await.unwrap()[0].status, WithdrawalStatus::Prove);
         server.assert_sent(WithdrawalPortal::proveWithdrawalTransactionCall::SELECTOR, 1);
     }
