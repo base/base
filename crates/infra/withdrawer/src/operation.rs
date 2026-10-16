@@ -4,7 +4,7 @@ use alloy_network::TxSigner;
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types_eth::TransactionRequest;
-use alloy_sol_types::SolCall;
+use alloy_sol_types::{Error as SolError, SolCall};
 use alloy_transport::TransportError;
 use base_common_consensus::Predeploys;
 use base_proof_contracts::{GameStatus, IAnchorStateRegistry, IDisputeGameFactory};
@@ -56,8 +56,14 @@ pub enum WithdrawerError {
     #[error("withdrawal RPC request failed: {0}")]
     Request(#[source] TransportError),
     /// A contract returned malformed ABI data.
-    #[error("withdrawal contract response decoding failed: {0}")]
-    Decode(#[source] alloy_sol_types::Error),
+    #[error("withdrawal contract response decoding failed for {call}: {source}")]
+    Decode {
+        /// ABI signature of the call whose response could not be decoded.
+        call: &'static str,
+        /// ABI error with response data removed.
+        #[source]
+        source: SolError,
+    },
     /// Withdrawal extraction or local proof authentication failed.
     #[error(transparent)]
     Withdrawal(#[from] WithdrawalError),
@@ -120,6 +126,9 @@ pub struct Withdrawer {
 }
 
 impl Withdrawer {
+    /// Maximum number of respected games returned by one factory search.
+    pub const GAME_SEARCH_PAGE_SIZE: u64 = 50;
+
     /// Constructs an operation without network or signer access.
     pub const fn new(config: WithdrawerConfig) -> Self {
         Self { config }
@@ -323,6 +332,13 @@ impl Withdrawer {
                 let mut count =
                     Self::read(rpc, dispute_game_factory, IDisputeGameFactory::gameCountCall {})
                         .await?;
+                let withdrawal_timestamp = rpc
+                    .l2
+                    .get_block_by_number(withdrawal.block_number.into())
+                    .await?
+                    .ok_or(WithdrawerError::MissingBlock)?
+                    .header
+                    .timestamp;
                 while count > U256::ZERO {
                     let games = Self::read(
                         rpc,
@@ -330,41 +346,51 @@ impl Withdrawer {
                         IDisputeGameFactory::findLatestGamesCall {
                             gameType: game_type,
                             start: count - U256::from(1),
-                            count: U256::from(1),
+                            count: U256::from(Self::GAME_SEARCH_PAGE_SIZE),
                         },
                     )
                     .await?;
-                    let Some(game) = games.first() else { break };
-                    if game.index >= count {
-                        return Err(WithdrawerError::InvalidGame { index: game.index });
+                    if games.is_empty() {
+                        break;
                     }
-                    count = game.index;
-                    let encoded_block = game
-                        .extraData
-                        .get(..32)
-                        .ok_or(WithdrawerError::InvalidGame { index: game.index })?;
-                    let game_block = U256::from_be_slice(encoded_block);
-                    if game_block < block {
-                        continue;
+                    for game in games {
+                        if game.index >= count {
+                            return Err(WithdrawerError::InvalidGame { index: game.index });
+                        }
+                        count = game.index;
+                        // A game created before the withdrawal cannot honestly cover it, nor can older games.
+                        if game.timestamp < withdrawal_timestamp {
+                            return Err(WithdrawerError::NoCoverage {
+                                block_number: withdrawal.block_number,
+                            });
+                        }
+                        let encoded_block = game
+                            .extraData
+                            .get(..32)
+                            .ok_or(WithdrawerError::InvalidGame { index: game.index })?;
+                        let game_block = U256::from_be_slice(encoded_block);
+                        if game_block < block {
+                            continue;
+                        }
+                        let entry = Self::read(
+                            rpc,
+                            dispute_game_factory,
+                            IDisputeGameFactory::gameAtIndexCall { index: game.index },
+                        )
+                        .await?;
+                        if entry.gameType != game_type
+                            || !Self::game_eligible(rpc, anchor_state_registry, entry.proxy).await?
+                        {
+                            continue;
+                        }
+                        return Ok(WithdrawalProvingOutput {
+                            block_number: game_block
+                                .try_into()
+                                .map_err(|_| WithdrawerError::ValueOverflow)?,
+                            index: game.index,
+                            root: game.rootClaim,
+                        });
                     }
-                    let entry = Self::read(
-                        rpc,
-                        dispute_game_factory,
-                        IDisputeGameFactory::gameAtIndexCall { index: game.index },
-                    )
-                    .await?;
-                    if entry.gameType != game_type
-                        || !Self::game_eligible(rpc, anchor_state_registry, entry.proxy).await?
-                    {
-                        continue;
-                    }
-                    return Ok(WithdrawalProvingOutput {
-                        block_number: game_block
-                            .try_into()
-                            .map_err(|_| WithdrawerError::ValueOverflow)?,
-                        index: game.index,
-                        root: game.rootClaim,
-                    });
                 }
             }
             ProofSystem::OutputOracle { l2_output_oracle } => {
@@ -473,7 +499,7 @@ impl Withdrawer {
         Ok(Some(hash))
     }
 
-    /// Calls a contract using typed ABI encoding and redacted provider errors.
+    /// Calls a contract using typed ABI encoding and redacted provider and decode errors.
     pub async fn read<C: SolCall>(
         rpc: &WithdrawalRpc,
         target: Address,
@@ -482,7 +508,25 @@ impl Withdrawer {
         let request =
             TransactionRequest::default().to(target).input(Bytes::from(call.abi_encode()).into());
         let bytes = rpc.l1.call(request).await?;
-        C::abi_decode_returns_validate(&bytes).map_err(WithdrawerError::Decode)
+        C::abi_decode_returns_validate(&bytes).map_err(|error| {
+            let source = match error {
+                SolError::TypeCheckFail { .. } => SolError::custom("TypeCheckFail"),
+                SolError::InvalidEnumValue { .. } => SolError::custom("InvalidEnumValue"),
+                SolError::InvalidEventSignatureHash { .. } => {
+                    SolError::custom("InvalidEventSignatureHash")
+                }
+                SolError::InvalidLog { .. } => SolError::custom("InvalidLog"),
+                SolError::UnknownSelector { .. } => SolError::custom("UnknownSelector"),
+                SolError::FromHexError(_) => SolError::custom("FromHexError"),
+                SolError::Other(_) => SolError::custom("Other"),
+                error @ (SolError::Overrun
+                | SolError::Reserve(_)
+                | SolError::BufferNotEmpty
+                | SolError::ReserMismatch
+                | SolError::RecursionLimitExceeded(_)) => error,
+            };
+            WithdrawerError::Decode { call: C::SIGNATURE, source }
+        })
     }
 
     /// Computes the first allowed timestamp for the portal's strict elapsed-delay check.
@@ -569,6 +613,9 @@ mod tests {
         receipt_error: Option<Value>,
         no_coverage: bool,
         skip_latest: bool,
+        game_count: u64,
+        old_games_before: u64,
+        malformed_response: bool,
         wrong_root: bool,
         now: u64,
         dry: bool,
@@ -594,6 +641,9 @@ mod tests {
                 receipt_error: None,
                 no_coverage: false,
                 skip_latest: false,
+                game_count: 1,
+                old_games_before: 0,
+                malformed_response: false,
                 wrong_root: false,
                 now: 1000,
                 dry: false,
@@ -609,6 +659,7 @@ mod tests {
         config: WithdrawerConfig,
         sent: Arc<Mutex<Vec<TxEnvelope>>>,
         estimates: Arc<Mutex<usize>>,
+        requests: Arc<Mutex<Vec<Value>>>,
         tasks: Vec<JoinHandle<()>>,
     }
 
@@ -638,6 +689,7 @@ mod tests {
         async fn start(self) -> Harness {
             let sent = Arc::new(Mutex::new(Vec::<TxEnvelope>::new()));
             let estimates = Arc::new(Mutex::new(0));
+            let requests = Arc::new(Mutex::new(Vec::new()));
             let fixture: Value = serde_json::from_str(include_str!(
                 "../fixtures/base-sepolia-withdrawal-proof.json"
             ))
@@ -674,6 +726,7 @@ mod tests {
                 let scenario = Arc::clone(&scenario);
                 let sent = Arc::clone(&sent);
                 let estimates = Arc::clone(&estimates);
+                let requests = Arc::clone(&requests);
                 let fixture = fixture.clone();
                 let receipt = receipt.clone();
                 let app = Router::new().route(
@@ -682,6 +735,7 @@ mod tests {
                         let scenario = Arc::clone(&scenario);
                         let sent = Arc::clone(&sent);
                         let estimates = Arc::clone(&estimates);
+                        requests.lock().unwrap().push(request.clone());
                         let fixture = fixture.clone();
                         let receipt = receipt.clone();
                         async move {
@@ -735,7 +789,7 @@ mod tests {
             config.dry_run = scenario.dry;
             config.max_retries = 0;
             config.timeout = Duration::from_secs(5);
-            Harness { config, sent, estimates, tasks }
+            Harness { config, sent, estimates, requests, tasks }
         }
 
         fn respond(
@@ -782,6 +836,9 @@ mod tests {
                     json!(hash)
                 }
                 "eth_call" => {
+                    if self.malformed_response {
+                        return Ok(json!(B256::repeat_byte(0x61)));
+                    }
                     let input: Bytes = serde_json::from_value(params[0]["input"].clone()).unwrap();
                     macro_rules! reply {
                         ($call:ty, $($value:expr),* $(,)?) => {
@@ -853,33 +910,52 @@ mod tests {
                     reply!(FaultProofPortal::respectedGameTypeCall, 621u32);
                     reply!(
                         IDisputeGameFactory::gameCountCall,
-                        U256::from(if self.skip_latest { 2 } else { 1 })
+                        U256::from(if self.skip_latest { 2 } else { self.game_count })
                     );
-                    let index = if input[..4] == IDisputeGameFactory::findLatestGamesCall::SELECTOR
-                    {
-                        IDisputeGameFactory::findLatestGamesCall::abi_decode(&input).unwrap().start
-                    } else {
-                        U256::ZERO
-                    };
                     reply!(
                         IDisputeGameFactory::gameAtIndexCall,
                         621u32,
                         1u64,
                         Address::repeat_byte(9)
                     );
-                    reply!(
-                        IDisputeGameFactory::findLatestGamesCall,
-                        vec![IDisputeGameFactory::GameSearchResult {
-                            index,
-                            metadata: B256::ZERO,
-                            timestamp: 1,
-                            rootClaim: claim,
-                            extraData: Bytes::copy_from_slice(
-                                &U256::from(if index == U256::from(1) { 1 } else { block })
-                                    .to_be_bytes::<32>()
-                            ),
-                        }]
-                    );
+                    if input[..4] == IDisputeGameFactory::findLatestGamesCall::SELECTOR {
+                        let call =
+                            IDisputeGameFactory::findLatestGamesCall::abi_decode(&input).unwrap();
+                        let start: u64 = call.start.try_into().unwrap();
+                        let count: u64 = call.count.try_into().unwrap();
+                        let timestamp = u64::from_str_radix(
+                            fixture["header"]["timestamp"]
+                                .as_str()
+                                .unwrap()
+                                .trim_start_matches("0x"),
+                            16,
+                        )
+                        .unwrap();
+                        let games = (0..count.min(start + 1))
+                            .map(|offset| {
+                                let index = start - offset;
+                                IDisputeGameFactory::GameSearchResult {
+                                    index: U256::from(index),
+                                    metadata: B256::ZERO,
+                                    timestamp: if index < self.old_games_before {
+                                        timestamp - 1
+                                    } else {
+                                        timestamp
+                                    },
+                                    rootClaim: claim,
+                                    extraData: Bytes::copy_from_slice(
+                                        &U256::from(if self.skip_latest && index == 1 {
+                                            1
+                                        } else {
+                                            block
+                                        })
+                                        .to_be_bytes::<32>(),
+                                    ),
+                                }
+                            })
+                            .collect::<Vec<_>>();
+                        reply!(IDisputeGameFactory::findLatestGamesCall, games);
+                    }
                     reply!(WithdrawalOutputOracle::latestBlockNumberCall, U256::from(block));
                     reply!(WithdrawalOutputOracle::getL2OutputIndexAfterCall, U256::ZERO);
                     reply!(
@@ -1192,6 +1268,46 @@ mod tests {
         let server = Scenario { skip_latest: true, ..Default::default() }.start().await;
         assert_eq!(server.run().await.unwrap()[0].status, WithdrawalStatus::Prove);
         server.assert_sent(WithdrawalPortal::proveWithdrawalTransactionCall::SELECTOR, 1);
+    }
+
+    #[tokio::test]
+    async fn game_search_stops_at_games_older_than_the_withdrawal() {
+        let server = Scenario {
+            no_coverage: true,
+            game_count: 10_000,
+            old_games_before: 9_940,
+            ..Default::default()
+        }
+        .start()
+        .await;
+        assert!(matches!(server.run().await, Err(WithdrawerError::NoCoverage { .. })));
+        let requests = server.requests.lock().unwrap();
+        let searches = requests
+            .iter()
+            .filter(|request| request["method"] == "eth_call")
+            .filter(|request| {
+                let input: Bytes =
+                    serde_json::from_value(request["params"][0]["input"].clone()).unwrap();
+                input[..4] == IDisputeGameFactory::findLatestGamesCall::SELECTOR
+            })
+            .count();
+        assert!((1..=2).contains(&searches), "unbounded game search: {searches} requests");
+        assert_eq!(
+            requests.iter().filter(|request| request["method"] == "eth_getBlockByNumber").count(),
+            1
+        );
+        assert!(server.sent.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn contract_decode_errors_withhold_response_bytes() {
+        let server = Scenario { malformed_response: true, ..Default::default() }.start().await;
+        let error = server.run().await.unwrap_err();
+        assert!(matches!(error, WithdrawerError::Decode { .. }));
+        let diagnostic = format!("{error} {error:?}");
+        assert!(diagnostic.contains(WithdrawalPortal::finalizedWithdrawalsCall::SIGNATURE));
+        assert!(diagnostic.contains("TypeCheckFail"));
+        assert!(!diagnostic.contains("61616161"), "response bytes leaked: {diagnostic}");
     }
 
     #[tokio::test]
