@@ -48,6 +48,7 @@
 - [bin/snapshotter/README.md](bin/snapshotter/README.md): Stub README for the sidecar that periodically creates Reth snapshots and uploads them to S3-compatible storage, delegating to base-snapshotter.
 - [bin/snark-e2e/README.md](bin/snark-e2e/README.md): Stub README for the SNARK PLONK end-to-end verification binary: submits a one-block prove request, polls, and verifies the receipt; meant for K8s CronJobs.
 - [bin/websocket-proxy/README.md](bin/websocket-proxy/README.md): Stub README for websocket-proxy, a fan-out proxy that relays upstream WebSocket messages to downstream clients with optional auth, rate limiting, and brotli compression.
+- [bin/withdrawer/README.md](bin/withdrawer/README.md): Run the withdrawer CLI to prove or finalize all withdrawals in a receipt, with dry runs, stderr logging, and optional Ledger signing.
 - [bin/zk-benchmarks/README.md](bin/zk-benchmarks/README.md): Stub README for the ZK proof benchmarking binary for load-test runs, delegating to the base-zk-benchmarks library.
 - [bin/zk-fork-dispute/README.md](bin/zk-fork-dispute/README.md): ZK fork dispute binary for Base Anvil workflows: parses CLI arguments, builds a validated config, and delegates to base_zk_fork_dispute::ZkForkDispute::run(). Very short README.
 
