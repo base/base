@@ -66,8 +66,8 @@ mod tests {
         assert_eq!(ChainConfig::mainnet().bootnodes.consensus.len(), 5);
         assert_eq!(ChainConfig::sepolia().bootnodes.execution.len(), 4);
         assert_eq!(ChainConfig::sepolia().bootnodes.consensus.len(), 2);
-        assert_eq!(ChainConfig::zeronet().bootnodes.execution.len(), 4);
-        assert_eq!(ChainConfig::zeronet().bootnodes.consensus.len(), 2);
+        assert_eq!(ChainConfig::zeronet().bootnodes.execution.len(), 2);
+        assert_eq!(ChainConfig::zeronet().bootnodes.consensus.len(), 1);
     }
 
     #[test]
@@ -89,7 +89,7 @@ mod tests {
         assert_eq!(testnet.len(), 2);
 
         let zeronet = BootNodes::from_chain_id(ChainConfig::zeronet().chain_id);
-        assert_eq!(zeronet.len(), 2);
+        assert_eq!(zeronet.len(), 1);
 
         let unknown = BootNodes::from_chain_id(0);
         assert!(unknown.is_empty());
