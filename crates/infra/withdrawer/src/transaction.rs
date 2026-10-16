@@ -30,6 +30,14 @@ pub enum WithdrawalTransactionError {
     /// The latest block is unavailable for automatic fee selection.
     #[error("latest L1 block is unavailable")]
     MissingLatestBlock,
+    /// The L1 RPC serves a different chain than the selected network's contracts.
+    #[error("L1 RPC reports chain ID {actual}, but the network expects {expected}")]
+    L1ChainMismatch {
+        /// Chain ID the network's contracts live on.
+        expected: u64,
+        /// Chain ID reported by the L1 RPC.
+        actual: u64,
+    },
     /// A directly constructed configuration has an invalid multiplier.
     #[error("gas multiplier must be finite and at least 1.0")]
     InvalidGasMultiplier,
@@ -88,6 +96,14 @@ impl PreparedWithdrawalTransaction {
     ) -> Result<Self, WithdrawalTransactionError> {
         tokio::time::timeout(rpc.timeout, async {
             let chain_id = rpc.l1.get_chain_id().await?;
+            if let Some(expected) = config.network.l1_chain_id
+                && expected != chain_id
+            {
+                return Err(WithdrawalTransactionError::L1ChainMismatch {
+                    expected,
+                    actual: chain_id,
+                });
+            }
             let nonce = rpc.l1.get_transaction_count(sender).pending().await?;
             let fees = match config.fees {
                 Fees::Automatic => {
@@ -222,7 +238,7 @@ mod tests {
     use url::Url;
 
     use crate::{
-        Fees, PreparedWithdrawalTransaction, WithdrawalRpc, WithdrawalSigner,
+        Fees, NetworkPreset, PreparedWithdrawalTransaction, WithdrawalRpc, WithdrawalSigner,
         WithdrawalTransactionError, WithdrawerArgs, WithdrawerConfig,
     };
 
@@ -355,6 +371,44 @@ mod tests {
             );
             assert_eq!(server.count("eth_estimateGas"), 0);
         }
+    }
+
+    #[tokio::test]
+    async fn l1_chain_must_match_the_network() {
+        let server = Server::new(Some(100), 21_001).await;
+        let mut config = server.config();
+        config.network.l1_chain_id = Some(NetworkPreset::SEPOLIA_CHAIN_ID);
+        let rpc = WithdrawalRpc::new(&config).unwrap();
+        let result = PreparedWithdrawalTransaction::prepare(
+            &config,
+            &rpc,
+            Address::ZERO,
+            Address::repeat_byte(2),
+            Bytes::new(),
+        )
+        .await;
+        assert!(
+            matches!(
+                result,
+                Err(WithdrawalTransactionError::L1ChainMismatch {
+                    expected: NetworkPreset::SEPOLIA_CHAIN_ID,
+                    actual: 1,
+                })
+            ),
+            "{result:?}"
+        );
+        assert_eq!(server.count("eth_getTransactionCount"), 0);
+
+        config.network.l1_chain_id = None;
+        PreparedWithdrawalTransaction::prepare(
+            &config,
+            &rpc,
+            Address::ZERO,
+            Address::repeat_byte(2),
+            Bytes::new(),
+        )
+        .await
+        .unwrap();
     }
 
     #[tokio::test]

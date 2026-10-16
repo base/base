@@ -164,11 +164,13 @@ impl WithdrawerArgs {
                     dispute_game_factory: factory,
                     anchor_state_registry: registry,
                 },
+                l1_chain_id: None,
             }),
             (None, Some(url), Some(portal), None, None, Some(oracle)) => Ok(Network {
                 l2_rpc_url: url.clone(),
                 portal,
                 proofs: ProofSystem::OutputOracle { l2_output_oracle: oracle },
+                l1_chain_id: None,
             }),
             _ => Err(ConfigError::Network),
         }
