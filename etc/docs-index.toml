@@ -315,8 +315,8 @@ summary = "Overview and example of the network actor, which owns libp2p gossip a
 digest = "2587954b50"
 
 ["crates/consensus/sources/README.md"]
-summary = "Block signing interfaces for the consensus node: local BlockSigner, RemoteSigner with mTLS client certs. Use when configuring or changing how blocks are signed."
-digest = "15ec2f09b7"
+summary = "Block signing interfaces for the consensus node: BlockSigner for local or remote signing, RemoteSigner with mTLS client certs. Use when configuring or changing how blocks are signed."
+digest = "3b2f4cf0a4"
 
 ["crates/consensus/upgrades/README.md"]
 summary = "Upgrade trait and Upgrades registry for Ecotone, Fjord, Isthmus, and Jovian network transactions. Use when collecting transactions for upgrade activation blocks."
