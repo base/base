@@ -6,6 +6,7 @@ use alloy_primitives::{B256, Bytes};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_eth::TransactionReceipt;
 use alloy_transport::TransportError;
+use base_common_network::Base;
 use serde::{Deserialize, de::IgnoredAny};
 use thiserror::Error;
 use tracing::warn;
@@ -31,8 +32,8 @@ pub enum WithdrawalRpcError {
 pub struct WithdrawalRpc {
     /// L1 state reads and signed transaction submission.
     pub l1: RootProvider,
-    /// L2 state reads, including storage proofs.
-    pub l2: RootProvider,
+    /// Base L2 state reads, including deposit receipts and storage proofs.
+    pub l2: RootProvider<Base>,
     /// Deadline for broadcast and receipt waiting.
     pub timeout: Duration,
 }
@@ -753,6 +754,19 @@ mod tests {
             Err(WithdrawalRpcError::Request(_))
         ));
         assert_eq!(server.count(), 1);
+    }
+
+    #[tokio::test]
+    async fn l2_provider_deserializes_deposit_receipts() {
+        let receipt: Value = serde_json::from_str(include_str!(
+            "../fixtures/synthetic-deposit-withdrawal-receipt.json"
+        ))
+        .unwrap();
+        let server =
+            Server::new(vec![(StatusCode::OK, json!({"jsonrpc":"2.0", "result":receipt}))]).await;
+        let rpc = WithdrawalRpc::new(&server.config()).unwrap();
+        let receipt = rpc.l2.get_transaction_receipt(B256::ZERO).await.unwrap().unwrap();
+        assert_eq!(crate::Withdrawal::from_receipt(&receipt).unwrap().len(), 1);
     }
 
     #[tokio::test]
