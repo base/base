@@ -8,7 +8,7 @@ use alloy_primitives::{Address, B256};
 use clap::{
     Arg, ArgGroup, ArgMatches, Args, Command, CommandFactory, FromArgMatches, Parser,
     builder::TypedValueParser,
-    error::{ContextKind, ErrorKind},
+    error::{ContextKind, ContextValue, ErrorKind},
 };
 use coins_bip32::path::DerivationPath;
 use coins_bip39::{English, Mnemonic};
@@ -156,6 +156,14 @@ impl WithdrawerArgs {
         T: Into<OsString> + Clone,
     {
         command.try_get_matches_from(itr).map_err(|error| {
+            if error.kind() == ErrorKind::InvalidValue
+                && matches!(
+                    error.get(ContextKind::InvalidValue),
+                    Some(ContextValue::String(value)) if value.is_empty()
+                )
+            {
+                return error;
+            }
             // For these errors, InvalidArg is the declared argument, not the rejected value.
             if matches!(error.kind(), ErrorKind::InvalidValue | ErrorKind::ValueValidation)
                 && let Some(arg) = error.get(ContextKind::InvalidArg)
@@ -669,6 +677,19 @@ mod tests {
                 assert!(diagnostic.contains(reason), "missing reason: {diagnostic}");
             }
         }
+
+        let error = WithdrawerArgs::try_parse_from([
+            "withdrawer",
+            "--withdrawal",
+            HASH,
+            "--private-key",
+            KEY,
+            "--l1-rpc-url",
+        ])
+        .unwrap_err();
+        let diagnostic = error.to_string();
+        assert!(diagnostic.contains("a value is required for '--l1-rpc-url <L1_RPC_URL>'"));
+        assert!(!diagnostic.contains("redacted"));
     }
 
     #[test]
