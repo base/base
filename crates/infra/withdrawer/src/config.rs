@@ -179,11 +179,11 @@ impl WithdrawerArgs {
 
 impl CommandFactory for WithdrawerArgs {
     fn command() -> Command {
-        Self::augment_args(Command::new("withdrawer"))
+        Self::augment_args(Command::new("withdrawer").version(env!("CARGO_PKG_VERSION")))
     }
 
     fn command_for_update() -> Command {
-        Self::augment_args_for_update(Command::new("withdrawer"))
+        Self::augment_args_for_update(Command::new("withdrawer").version(env!("CARGO_PKG_VERSION")))
     }
 }
 

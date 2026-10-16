@@ -13,6 +13,21 @@ use base_protocol::OutputRoot;
 use thiserror::Error;
 
 sol! {
+    /// Shared withdrawal portal calls using the authenticated proof types.
+    interface WithdrawalPortal {
+        /// Whether a withdrawal has completed.
+        function finalizedWithdrawals(bytes32 withdrawalHash) external view returns (bool);
+        /// Proves inclusion in a game or oracle output.
+        function proveWithdrawalTransaction(
+            WithdrawalTransaction withdrawal,
+            uint256 outputIndex,
+            OutputRootProof outputRootProof,
+            bytes[] withdrawalProof
+        ) external;
+        /// Executes a proven withdrawal.
+        function finalizeWithdrawalTransaction(WithdrawalTransaction withdrawal) external;
+    }
+
     /// Withdrawal arguments accepted by the portal.
     #[derive(Debug, PartialEq, Eq)]
     struct WithdrawalTransaction {

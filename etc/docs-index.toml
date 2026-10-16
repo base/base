@@ -134,6 +134,10 @@ digest = "8c4856e58a"
 summary = "Stub README for websocket-proxy, a fan-out proxy that relays upstream WebSocket messages to downstream clients with optional auth, rate limiting, and brotli compression."
 digest = "f4bc5bde6b"
 
+["bin/withdrawer/README.md"]
+summary = "Run the withdrawer CLI to prove or finalize all withdrawals in a receipt, with dry runs, stderr logging, and optional Ledger signing."
+digest = "f133e3160f"
+
 ["bin/zk-benchmarks/README.md"]
 summary = "Stub README for the ZK proof benchmarking binary for load-test runs, delegating to the base-zk-benchmarks library."
 digest = "c2205559f3"
@@ -475,8 +479,8 @@ summary = "Alpha WebSocket proxy fanning out Flashblocks from rollup-boost to do
 digest = "63043098db"
 
 ["crates/infra/withdrawer/README.md"]
-summary = "Withdrawer configuration, signers, retrying RPC clients, capped L1 transaction preparation and signing, withdrawal extraction, and inclusion proof verification against onchain output claims."
-digest = "40cc2a03ee"
+summary = "Configure and run receipt-wide withdrawal proving and finalization, including signer security, RPC retries, fee caps, proof verification, invalidation, and finality checks."
+digest = "7749ee732c"
 
 ["crates/infra/zk-benchmarks/README.md"]
 summary = "One-line stub: ZK proof benchmarking utilities for Base load-test runs; no usage or detail beyond that."
@@ -665,6 +669,7 @@ digest = "393c4961d6"
 ["docs/guides/DEVNET.md"]
 summary = "Chooser for local environments: Docker and HA devnets, Anvil + local Nitro proving, snapshot devnet (base dev), snapshot benchmark harness, with quickstarts, data-reset behavior, and owning docs."
 digest = "0951b41580"
+
 ["docs/guides/GLAMSTERDAM.md"]
 summary = "Scopes Base's Glamsterdam EIPs with BAL and SLOTNUM designs, plus calldata and access-list pricing proposals for transaction costs, P2P block sizes, and storage growth."
 digest = "5934f501aa"

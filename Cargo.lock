@@ -6761,6 +6761,7 @@ dependencies = [
  "base-common-consensus",
  "base-common-network",
  "base-common-rpc-types",
+ "base-proof-contracts",
  "base-protocol",
  "clap",
  "coins-bip32",
@@ -6775,6 +6776,17 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
+]
+
+[[package]]
+name = "base-withdrawer-bin"
+version = "0.0.0"
+dependencies = [
+ "base-withdrawer",
+ "clap",
+ "eyre",
+ "tokio",
+ "tracing-subscriber",
 ]
 
 [[package]]

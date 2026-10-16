@@ -13,6 +13,20 @@ sol! {
     /// `DisputeGameFactory` contract interface.
     #[sol(rpc)]
     interface IDisputeGameFactory {
+        /// A game returned by a reverse chronological search.
+        #[derive(Debug)]
+        struct GameSearchResult {
+            uint256 index;
+            bytes32 metadata;
+            uint64 timestamp;
+            bytes32 rootClaim;
+            bytes extraData;
+        }
+
+        /// Searches backwards for games of the requested type.
+        function findLatestGames(uint32 gameType, uint256 start, uint256 count)
+            external view returns (GameSearchResult[] games);
+
         /// Error returned when a game with the same UUID already exists.
         error GameAlreadyExists(bytes32 uuid);
 
