@@ -9,7 +9,7 @@ use super::{UpgradeSignalBlockTag, UpgradeSignalConfig, UpgradeSignalDefaults, U
 pub struct UpgradeSignalArgs {
     /// L1 upgrade signal contract or proxy address.
     /// Defaults to the network's contract for Base mainnet, Sepolia, and zeronet on
-    /// base-consensus and unified base nodes.
+    /// unified base nodes.
     #[arg(long = "upgrade-signal.contract", env = "BASE_NODE_UPGRADE_SIGNAL_CONTRACT")]
     pub contract_address: Option<Address>,
 

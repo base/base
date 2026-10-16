@@ -82,7 +82,7 @@ const REVERT_CODE: [u8; 5] = [0x60, 0x00, 0x60, 0x00, 0xfd];
 enum Profile {
     /// Default-off observability, matching the other builder benches.
     Default,
-    /// Observability enabled as in production `bin/builder` deployments.
+    /// Observability enabled as in production `base sequencer` deployments.
     Production,
 }
 

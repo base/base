@@ -5,7 +5,7 @@ set -e
 # Downloads release binaries from GitHub releases and installs them locally.
 
 # NOTE: If you change this script, increment the version below.
-BASEUP_INSTALLER_VERSION="0.1.9"
+BASEUP_INSTALLER_VERSION="0.1.10"
 
 BASEUP_REPO="${BASEUP_REPO:-base/base}"
 BASEUP_REPO_REF="${BASEUP_REPO_REF:-main}"
@@ -19,7 +19,9 @@ BASEUP_RELEASE_GPG_PUBLIC_KEY="${BASEUP_RELEASE_GPG_PUBLIC_KEY:-}"
 BASEUP_RELEASE_GPG_KEY_URL="${BASEUP_RELEASE_GPG_KEY_URL:-}"
 BASEUP_GPG_HOME=""
 
-DEFAULT_BINS=("base" "base-reth-node" "base-consensus" "basectl")
+DEFAULT_BINS=("base" "basectl")
+# Still installable from historical release tags; newer releases do not publish them.
+DISCONTINUED_BINS=("base-reth-node" "base-consensus")
 SUPPORTED_TARGETS=("x86_64-unknown-linux-gnu" "aarch64-unknown-linux-gnu" "aarch64-apple-darwin")
 SELECTED_BINS=()
 SELECTED_TARGETS=()
@@ -589,7 +591,11 @@ normalize_bin_name() {
 
 add_selected_bin() {
     local normalized
-    normalized="$(normalize_bin_name "$1")" || error "Unknown binary '$1'. Valid values: base, base-reth-node, base-consensus, basectl, all."
+    normalized="$(normalize_bin_name "$1")" || error "Unknown binary '$1'. Valid values: base, basectl, all (discontinued: base-reth-node, base-consensus)."
+
+    if array_contains "$normalized" "${DISCONTINUED_BINS[@]}"; then
+        warn "$normalized is discontinued and only published in older releases; use 'base execution' or 'base consensus' instead."
+    fi
 
     if [[ "$normalized" == "all" ]]; then
         local item
@@ -940,7 +946,7 @@ Usage:
 Options:
   -v, --version         Print the baseup installer version
   -i, --install <VER>   Install a specific release tag (for example: v0.6.0)
-  -b, --bin <NAME>      Install only one binary (base, base-reth-node, base-consensus, basectl, all)
+  -b, --bin <NAME>      Install only one binary (base, basectl, all; discontinued: base-reth-node, base-consensus)
   -t, --target <TRIPLE> Verify a release target triple (verify-release only; repeatable; default: all published targets)
   -U, --update          Update baseup itself
   -f, --force           Reinstall even if the target version is already installed
@@ -952,7 +958,6 @@ Examples:
   baseup
   baseup -i v0.6.0
   baseup --bin base
-  baseup --bin base-reth-node
   baseup --bin basectl
   baseup verify-release
   baseup verify-release -i v1.0.0 --target x86_64-unknown-linux-gnu

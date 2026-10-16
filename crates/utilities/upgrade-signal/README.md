@@ -23,7 +23,7 @@ The shared CLI flags are:
 | `--upgrade-signal.mode <metrics-only\|startup-apply\|runtime-admin>` | `BASE_NODE_UPGRADE_SIGNAL_MODE` | `metrics-only` | Selects whether reads are observation-only, startup-applied, or runtime-applied. |
 | `--upgrade-signal.l1-block-tag <finalized\|safe\|latest>` | `BASE_NODE_UPGRADE_SIGNAL_L1_BLOCK_TAG` | `finalized` | Selects the L1 block tag used for contract calls. Also selects the interval between live contract reads: `finalized` 15m, `safe` 6m24s, `latest` 12s. |
 
-`base-consensus`, `base rpc`, and `base sequencer` use the following network defaults:
+`base consensus`, `base rpc`, and `base sequencer` use the following network defaults:
 
 | Network | L2 chain ID | Contract address |
 | ------- | ----------- | ---------------- |
