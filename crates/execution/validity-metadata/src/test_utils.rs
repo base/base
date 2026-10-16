@@ -1,18 +1,20 @@
-//! Test utilities for exercising validity metadata storage failures.
+//! Test utilities for exercising validity metadata storage failures and log volume.
 //!
 //! [`FailingBackend`] is hand-rolled rather than mocked because it implements redb's foreign
 //! `StorageBackend` trait and must delegate to a working in-memory backend until a failure is
-//! injected.
+//! injected. [`WarnCounter`] implements tracing-subscriber's foreign `Layer` trait.
 
 use std::{
     io,
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
 };
 
 use redb::{Database, StorageBackend, backends::InMemoryBackend};
+use tracing::{Event, Level, Subscriber};
+use tracing_subscriber::{Layer, layer::Context};
 
 use crate::ValidityMetadataStore;
 
@@ -63,5 +65,24 @@ impl StorageBackend for FailingBackend {
     fn write(&self, offset: u64, data: &[u8]) -> io::Result<()> {
         self.check()?;
         self.inner.write(offset, data)
+    }
+}
+
+/// Tracing layer counting `WARN` and `ERROR` events.
+#[derive(Debug, Clone, Default)]
+pub struct WarnCounter(pub Arc<AtomicUsize>);
+
+impl WarnCounter {
+    /// Returns the number of `WARN` and `ERROR` events seen so far.
+    pub fn count(&self) -> usize {
+        self.0.load(Ordering::SeqCst)
+    }
+}
+
+impl<S: Subscriber> Layer<S> for WarnCounter {
+    fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
+        if *event.metadata().level() <= Level::WARN {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
     }
 }

@@ -43,6 +43,17 @@ pub enum ValidityRecordStatus {
     Closed,
 }
 
+/// Running totals kept by the writer thread for sampling its logs.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ValidityWriterStats {
+    /// Batches whose durable write failed.
+    pub failed_batches: u64,
+    /// Records dropped because they failed validation.
+    pub invalid_records: u64,
+    /// Records whose block hash has conflicting classifications.
+    pub conflicting_records: u64,
+}
+
 /// Cloneable producer handle for validity block records.
 ///
 /// The default recorder is disabled and discards every record without side effects. The writer
@@ -99,8 +110,9 @@ impl ValidityMetadataRecorder {
     /// Counts a dropped record and logs on the first drop and every power-of-two drop after it.
     fn note_dropped(&self, reason: &'static str, record: &ValidityBlockRecord) {
         ValidityMetadataMetrics::records_dropped(reason).increment(1);
-        let dropped_total = self.dropped.fetch_add(1, Ordering::Relaxed).saturating_add(1);
-        if dropped_total.is_power_of_two() {
+        let previous = self.dropped.fetch_add(1, Ordering::Relaxed);
+        let dropped_total = previous.saturating_add(1);
+        if ValidityMetadataMetrics::is_log_sampled(previous, dropped_total) {
             warn!(
                 reason,
                 block = %record.block_hash,
@@ -114,23 +126,26 @@ impl ValidityMetadataRecorder {
     /// Drains the queue into batched writes until every sender is dropped.
     fn run_writer(store: &ValidityMetadataStore, receiver: &Receiver<ValidityBlockRecord>) {
         let mut batch = Vec::with_capacity(MAX_VALIDITY_METADATA_WRITE_BATCH);
-        let mut failed_batches = 0u64;
+        let mut stats = ValidityWriterStats::default();
         while let Ok(record) = receiver.recv() {
             batch.push(record);
             while batch.len() < MAX_VALIDITY_METADATA_WRITE_BATCH {
                 let Ok(record) = receiver.try_recv() else { break };
                 batch.push(record);
             }
-            Self::write_batch(store, &mut batch, &mut failed_batches);
+            Self::write_batch(store, &mut batch, &mut stats);
         }
         debug!("validity metadata writer stopped");
     }
 
     /// Normalizes, validates and commits `batch` once, leaving it empty.
+    ///
+    /// Every lost or conflicting record is counted in metrics; logs are sampled through
+    /// [`ValidityMetadataMetrics::is_log_sampled`] on the writer's running totals in `stats`.
     fn write_batch(
         store: &ValidityMetadataStore,
         batch: &mut Vec<ValidityBlockRecord>,
-        failed_batches: &mut u64,
+        stats: &mut ValidityWriterStats,
     ) {
         let mut valid = Vec::with_capacity(batch.len());
         for record in batch.drain(..) {
@@ -144,12 +159,17 @@ impl ValidityMetadataRecorder {
                 Ok(()) => valid.push(record),
                 Err(error) => {
                     ValidityMetadataMetrics::records_dropped("invalid").increment(1);
-                    warn!(
-                        block = %record.block_hash,
-                        block_number = record.block_number,
-                        error = %error,
-                        "dropped invalid validity metadata record"
-                    );
+                    let previous = stats.invalid_records;
+                    stats.invalid_records = previous.saturating_add(1);
+                    if ValidityMetadataMetrics::is_log_sampled(previous, stats.invalid_records) {
+                        warn!(
+                            block = %record.block_hash,
+                            block_number = record.block_number,
+                            error = %error,
+                            invalid_records = stats.invalid_records,
+                            "dropped invalid validity metadata record"
+                        );
+                    }
                 }
             }
         }
@@ -165,21 +185,28 @@ impl ValidityMetadataRecorder {
                 if outcome.conflicting > 0 {
                     ValidityMetadataMetrics::records_conflicting()
                         .increment(outcome.conflicting as u64);
-                    warn!(
-                        conflicting = outcome.conflicting,
-                        "validity metadata records conflict with stored classifications"
-                    );
+                    let previous = stats.conflicting_records;
+                    stats.conflicting_records = previous.saturating_add(outcome.conflicting as u64);
+                    if ValidityMetadataMetrics::is_log_sampled(previous, stats.conflicting_records)
+                    {
+                        warn!(
+                            conflicting = outcome.conflicting,
+                            conflicting_records = stats.conflicting_records,
+                            "validity metadata records conflict with stored classifications"
+                        );
+                    }
                 }
             }
             Err(err) => {
                 ValidityMetadataMetrics::records_dropped("write_failed")
                     .increment(valid.len() as u64);
-                *failed_batches = failed_batches.saturating_add(1);
-                if failed_batches.is_power_of_two() {
+                let previous = stats.failed_batches;
+                stats.failed_batches = previous.saturating_add(1);
+                if ValidityMetadataMetrics::is_log_sampled(previous, stats.failed_batches) {
                     error!(
                         error = %err,
                         records = valid.len(),
-                        failed_batches = *failed_batches,
+                        failed_batches = stats.failed_batches,
                         "failed to write validity metadata batch"
                     );
                 }
@@ -198,10 +225,12 @@ mod tests {
         CompositeKey, MetricKind,
         debugging::{DebugValue, DebuggingRecorder},
     };
+    use tracing_subscriber::layer::SubscriberExt;
 
     use super::*;
     use crate::{
-        MAX_VALIDITY_TRANSACTIONS_PER_RECORD, ValidityMetadataError, test_utils::FailingBackend,
+        MAX_VALIDITY_TRANSACTIONS_PER_RECORD, ValidityMetadataError,
+        test_utils::{FailingBackend, WarnCounter},
     };
 
     const TX_A: B256 = b256!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
@@ -222,7 +251,15 @@ mod tests {
 
     type Snapshot = Vec<(CompositeKey, Option<Unit>, Option<SharedString>, DebugValue)>;
 
-    /// Reads one counter from a snapshot; taking a snapshot drains counter values.
+    /// Asserts one counter in a snapshot (taking a snapshot drains counter values). Metrics are
+    /// no-ops without the `metrics` feature, so the assertion only applies with it enabled.
+    fn assert_counter(snapshot: &Snapshot, name: &str, label: Option<(&str, &str)>, expected: u64) {
+        if cfg!(feature = "metrics") {
+            assert_eq!(counter(snapshot, name, label), expected, "{name} {label:?}");
+        }
+    }
+
+    /// Reads one counter from a snapshot.
     fn counter(snapshot: &Snapshot, name: &str, label: Option<(&str, &str)>) -> u64 {
         snapshot
             .iter()
@@ -268,10 +305,10 @@ mod tests {
         assert_eq!(recorder.dropped.load(Ordering::Relaxed), 3);
 
         let snapshot = snapshotter.snapshot().into_vec();
-        assert_eq!(counter(&snapshot, "builder.validity_metadata.records_queued", None), 1);
+        assert_counter(&snapshot, "builder.validity_metadata.records_queued", None, 1);
         let dropped = "builder.validity_metadata.records_dropped";
-        assert_eq!(counter(&snapshot, dropped, Some(("reason", "queue_full"))), 2);
-        assert_eq!(counter(&snapshot, dropped, Some(("reason", "closed"))), 1);
+        assert_counter(&snapshot, dropped, Some(("reason", "queue_full")), 2);
+        assert_counter(&snapshot, dropped, Some(("reason", "closed")), 1);
     }
 
     #[test]
@@ -319,16 +356,20 @@ mod tests {
 
         let (store, _fail) = FailingBackend::store();
         let mut batch = vec![at_limit, over_limit];
-        ValidityMetadataRecorder::write_batch(&store, &mut batch, &mut 0);
+        ValidityMetadataRecorder::write_batch(
+            &store,
+            &mut batch,
+            &mut ValidityWriterStats::default(),
+        );
 
         let stored = store.get(block(1)).unwrap().unwrap();
         assert_eq!(stored.validity_transactions.len(), MAX_VALIDITY_TRANSACTIONS_PER_RECORD);
         assert!(store.get(block(2)).unwrap().is_none());
         let snapshot = snapshotter.snapshot().into_vec();
         let dropped = "builder.validity_metadata.records_dropped";
-        assert_eq!(counter(&snapshot, dropped, Some(("reason", "invalid"))), 1);
+        assert_counter(&snapshot, dropped, Some(("reason", "invalid")), 1);
         let written = "builder.validity_metadata.records_written";
-        assert_eq!(counter(&snapshot, written, Some(("outcome", "inserted"))), 1);
+        assert_counter(&snapshot, written, Some(("outcome", "inserted")), 1);
     }
 
     #[test]
@@ -352,21 +393,53 @@ mod tests {
         let (store, fail) = FailingBackend::store();
         fail.store(true, Ordering::SeqCst);
         let mut batch = vec![record(1, vec![TX_A]), record(2, vec![])];
-        let mut failed_batches = 0;
-        ValidityMetadataRecorder::write_batch(&store, &mut batch, &mut failed_batches);
+        let mut stats = ValidityWriterStats::default();
+        ValidityMetadataRecorder::write_batch(&store, &mut batch, &mut stats);
 
         assert!(batch.is_empty());
-        assert_eq!(failed_batches, 1);
-        assert_eq!(
-            counter(
-                &snapshotter.snapshot().into_vec(),
-                "builder.validity_metadata.records_dropped",
-                Some(("reason", "write_failed"))
-            ),
-            2
+        assert_eq!(stats.failed_batches, 1);
+        assert_counter(
+            &snapshotter.snapshot().into_vec(),
+            "builder.validity_metadata.records_dropped",
+            Some(("reason", "write_failed")),
+            2,
         );
         fail.store(false, Ordering::SeqCst);
         assert!(!matches!(store.get(block(1)), Ok(Some(_))));
+    }
+
+    #[test]
+    fn invalid_and_conflicting_record_logs_are_sampled() {
+        let warnings = WarnCounter::default();
+        let _guard =
+            tracing::subscriber::set_default(tracing_subscriber::registry().with(warnings.clone()));
+        let (store, _fail) = FailingBackend::store();
+        let mut stats = ValidityWriterStats::default();
+
+        for n in 0..20 {
+            let mut invalid = record(n, vec![TX_A, TX_B]);
+            invalid.transaction_count = 1;
+            ValidityMetadataRecorder::write_batch(&store, &mut vec![invalid], &mut stats);
+        }
+        assert_eq!(stats.invalid_records, 20);
+        // Occurrences 1, 2, 4, 8 and 16 are logged.
+        assert_eq!(warnings.count(), 5);
+
+        ValidityMetadataRecorder::write_batch(
+            &store,
+            &mut vec![record(50, vec![TX_A])],
+            &mut stats,
+        );
+        for _ in 0..20 {
+            ValidityMetadataRecorder::write_batch(
+                &store,
+                &mut vec![record(50, vec![])],
+                &mut stats,
+            );
+        }
+        assert_eq!(stats.conflicting_records, 20);
+        assert_eq!(warnings.count(), 10);
+        assert!(matches!(store.get(block(50)), Err(ValidityMetadataError::Conflict { .. })));
     }
 
     #[test]

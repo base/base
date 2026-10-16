@@ -35,7 +35,10 @@ classification.
 
 Each `put_batch` is one atomic write transaction committed with immediate durability. An
 identical retry is a no-op. A different record for an already stored block hash never overwrites
-it: the hash is durably marked conflicting and `get` returns `Conflict` for it permanently.
+it: the hash is durably marked conflicting and `get` returns `Conflict` for it permanently. This is
+an intentional fail-safe; there is no repair tooling, and deleting the database is not a routine
+repair because it discards every other record. Only pool-built blocks may be recorded: payload
+re-execution (`no_tx_pool`), witness generation and follower nodes must never record.
 
 ## Delivery and availability
 
@@ -44,8 +47,9 @@ The queue holds at most the capacity passed to `spawn`
 most `MAX_VALIDITY_METADATA_WRITE_BATCH` records per transaction. Records dropped on a full or
 closed queue, records in a failed write and records still queued at crash or shutdown are lost and
 not retried; lookups for those blocks report metadata as unavailable, never `false`. Drops, writes
-and conflicts are counted in the `builder.validity_metadata.*` metrics, and drop or failure logs
-are emitted only on power-of-two occurrence counts. The writer thread exits after every recorder
+and conflicts are counted in the `builder.validity_metadata.*` metrics. Drop, invalid-record,
+conflict and write-failure logs are emitted only on the first and every power-of-two occurrence
+(`ValidityMetadataMetrics::is_log_sampled`). The writer thread exits after every recorder
 clone is dropped and the queue is drained.
 
 Records are never pruned: disk usage grows with the number of recorded blocks, and capacity and

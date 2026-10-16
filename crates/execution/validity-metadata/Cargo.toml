@@ -20,8 +20,10 @@ thiserror = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
-tempfile.workspace = true
 metrics.workspace = true
+tempfile.workspace = true
+tracing-subscriber.workspace = true
+tracing = { workspace = true, features = ["std"] }
 metrics-util = { workspace = true, features = ["debugging"] }
 
 [features]

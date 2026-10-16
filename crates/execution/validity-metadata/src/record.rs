@@ -152,16 +152,32 @@ impl ValidityBlockRecord {
 
     /// Decodes and validates a record encoded by [`Self::encode`].
     pub fn decode(bytes: &[u8]) -> Result<Self, ValidityRecordError> {
+        let truncated = ValidityRecordError::Truncated { len: bytes.len() };
         if bytes.len() < VALIDITY_RECORD_HEADER_LEN {
-            return Err(ValidityRecordError::Truncated { len: bytes.len() });
+            return Err(truncated);
         }
-        if bytes[0] != VALIDITY_RECORD_VERSION {
-            return Err(ValidityRecordError::UnsupportedVersion { version: bytes[0] });
+        let Some((&[version], rest)) = bytes.split_first_chunk::<1>() else {
+            return Err(truncated);
+        };
+        if version != VALIDITY_RECORD_VERSION {
+            return Err(ValidityRecordError::UnsupportedVersion { version });
         }
-        let block_hash = B256::from_slice(&bytes[1..33]);
-        let block_number = u64::from_be_bytes(read_array(&bytes[33..41]));
-        let transaction_count = u32::from_be_bytes(read_array(&bytes[41..45]));
-        let count = u32::from_be_bytes(read_array(&bytes[45..49])) as usize;
+        let Some((block_hash, rest)) = rest.split_first_chunk::<32>() else {
+            return Err(truncated);
+        };
+        let Some((block_number, rest)) = rest.split_first_chunk::<8>() else {
+            return Err(truncated);
+        };
+        let Some((transaction_count, rest)) = rest.split_first_chunk::<4>() else {
+            return Err(truncated);
+        };
+        let Some((count, hashes)) = rest.split_first_chunk::<4>() else {
+            return Err(truncated);
+        };
+        let block_hash = B256::from(*block_hash);
+        let block_number = u64::from_be_bytes(*block_number);
+        let transaction_count = u32::from_be_bytes(*transaction_count);
+        let count = u32::from_be_bytes(*count) as usize;
         if count > MAX_VALIDITY_TRANSACTIONS_PER_RECORD {
             return Err(ValidityRecordError::TooManyValidityTransactions {
                 count,
@@ -172,19 +188,11 @@ impl ValidityBlockRecord {
         if bytes.len() != expected {
             return Err(ValidityRecordError::LengthMismatch { expected, actual: bytes.len() });
         }
-        let validity_transactions =
-            bytes[VALIDITY_RECORD_HEADER_LEN..].chunks_exact(32).map(TxHash::from_slice).collect();
+        let validity_transactions = hashes.chunks_exact(32).map(TxHash::from_slice).collect();
         let record = Self { block_hash, block_number, transaction_count, validity_transactions };
         record.validate()?;
         Ok(record)
     }
-}
-
-/// Copies a slice whose length the caller has already checked into a fixed-size array.
-fn read_array<const N: usize>(bytes: &[u8]) -> [u8; N] {
-    let mut out = [0u8; N];
-    out.copy_from_slice(bytes);
-    out
 }
 
 #[cfg(test)]

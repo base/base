@@ -23,6 +23,7 @@ mod recorder;
 pub use recorder::{
     DEFAULT_VALIDITY_METADATA_QUEUE_CAPACITY, MAX_VALIDITY_METADATA_WRITE_BATCH,
     VALIDITY_METADATA_WRITER_THREAD, ValidityMetadataRecorder, ValidityRecordStatus,
+    ValidityWriterStats,
 };
 
 #[cfg(test)]

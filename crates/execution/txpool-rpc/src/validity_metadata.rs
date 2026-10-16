@@ -5,12 +5,19 @@
 //! the metadata record for that exact block hash. Orphaned, pending or unknown transactions
 //! therefore return `null` even when metadata for their block exists. Results are a snapshot at
 //! lookup time, not a finality guarantee.
+//!
+//! Each provider read observes its own canonical snapshot. A reorg between the reads can make a
+//! lookup fail closed with an internal error (or `null`) instead of a classification; clients may
+//! retry such errors once the chain settles.
 
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
 
 use alloy_consensus::transaction::TxHashRef;
 use alloy_primitives::{B256, TxHash};
-use base_execution_validity_metadata::ValidityMetadataStore;
+use base_execution_validity_metadata::{ValidityMetadataMetrics, ValidityMetadataStore};
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
@@ -71,13 +78,16 @@ pub trait ValidityTransactionStatusApi {
 /// Implementation of [`ValidityTransactionStatusApiServer`].
 ///
 /// Provider and store reads run on the blocking task pool, bounded by
-/// [`MAX_CONCURRENT_VALIDITY_STATUS_LOOKUPS`].
+/// [`MAX_CONCURRENT_VALIDITY_STATUS_LOOKUPS`]. Internal failures are counted in
+/// `builder.validity_metadata.status_lookup_failures` and logged only on the first and every
+/// power-of-two failure, so callers cannot amplify logs by repeating failing requests.
 #[derive(Debug, Clone)]
 pub struct ValidityTransactionStatusApiImpl<Provider> {
     provider: Provider,
     store: Option<ValidityMetadataStore>,
     task_spawner: Runtime,
     lookups: Arc<Semaphore>,
+    internal_failures: Arc<AtomicU64>,
 }
 
 impl<Provider> ValidityTransactionStatusApiImpl<Provider>
@@ -95,61 +105,51 @@ where
             store,
             task_spawner,
             lookups: Arc::new(Semaphore::new(MAX_CONCURRENT_VALIDITY_STATUS_LOOKUPS)),
+            internal_failures: Arc::default(),
         }
     }
 
     /// Performs the blocking canonical lookup and metadata read for `tx_hash`.
-    pub fn lookup(
-        provider: &Provider,
-        store: Option<&ValidityMetadataStore>,
-        tx_hash: TxHash,
-    ) -> RpcResult<Option<ValidityTransactionStatus>> {
+    pub fn lookup(&self, tx_hash: TxHash) -> RpcResult<Option<ValidityTransactionStatus>> {
+        let provider = &self.provider;
         let Some((transaction, meta)) = provider
             .transaction_by_hash_with_meta(tx_hash)
-            .map_err(|error| Self::internal(tx_hash, "transaction lookup failed", &error))?
+            .map_err(|error| self.internal(tx_hash, "provider", &error))?
         else {
             return Ok(None);
         };
         if *transaction.tx_hash() != tx_hash {
-            return Err(Self::internal(
-                tx_hash,
-                "transaction index mismatch",
-                transaction.tx_hash(),
-            ));
+            return Err(self.internal(tx_hash, "transaction_mismatch", transaction.tx_hash()));
         }
         let body_indices = provider
             .block_body_indices(meta.block_number)
-            .map_err(|error| Self::internal(tx_hash, "block body lookup failed", &error))?;
+            .map_err(|error| self.internal(tx_hash, "provider", &error))?;
         // Check canonicality after reading the body so a reorg between the reads cannot pair the
         // count of one block with the hash of another without failing the consistency check.
         let canonical_hash = provider
             .block_hash(meta.block_number)
-            .map_err(|error| Self::internal(tx_hash, "canonical hash lookup failed", &error))?;
+            .map_err(|error| self.internal(tx_hash, "provider", &error))?;
         if canonical_hash != Some(meta.block_hash) {
             return Ok(None);
         }
 
-        let Some(store) = store else {
+        let Some(store) = &self.store else {
             return Err(Self::not_recorded());
         };
         let Some(record) = store
             .get(meta.block_hash)
-            .map_err(|error| Self::internal(tx_hash, "validity metadata read failed", &error))?
+            .map_err(|error| self.internal(tx_hash, "storage", &error))?
         else {
             return Err(Self::not_recorded());
         };
         let Some(body_indices) = body_indices else {
-            return Err(Self::internal(tx_hash, "missing block body", &meta.block_number));
+            return Err(self.internal(tx_hash, "missing_body", &meta.block_number));
         };
         if record.block_number != meta.block_number
             || u64::from(record.transaction_count) != body_indices.tx_count
             || meta.index >= body_indices.tx_count
         {
-            return Err(Self::internal(
-                tx_hash,
-                "validity metadata inconsistent with canonical block",
-                &meta.block_hash,
-            ));
+            return Err(self.internal(tx_hash, "inconsistent", &meta.block_hash));
         }
 
         Ok(Some(ValidityTransactionStatus {
@@ -170,13 +170,28 @@ where
         )
     }
 
-    /// Logs `detail` locally and returns a generic internal error without diagnostics.
+    /// Counts an internal failure, logs a sample of failures locally, and returns a generic
+    /// internal error carrying no diagnostics.
+    ///
+    /// `reason` must be one of the `status_lookup_failures` metric labels.
     fn internal(
+        &self,
         tx_hash: TxHash,
         reason: &'static str,
         detail: &dyn std::fmt::Display,
     ) -> ErrorObjectOwned {
-        warn!(tx_hash = %tx_hash, reason, detail = %detail, "validity status lookup failed");
+        ValidityMetadataMetrics::status_lookup_failures(reason).increment(1);
+        let previous = self.internal_failures.fetch_add(1, Ordering::Relaxed);
+        let failures = previous.saturating_add(1);
+        if ValidityMetadataMetrics::is_log_sampled(previous, failures) {
+            warn!(
+                tx_hash = %tx_hash,
+                reason,
+                detail = %detail,
+                failures,
+                "validity status lookup failed"
+            );
+        }
         ErrorObjectOwned::from(ErrorCode::InternalError)
     }
 }
@@ -195,23 +210,25 @@ where
         let permit = Arc::clone(&self.lookups)
             .acquire_owned()
             .await
-            .map_err(|_| ErrorObjectOwned::from(ErrorCode::InternalError))?;
-        let provider = self.provider.clone();
-        let store = self.store.clone();
+            .map_err(|error| self.internal(tx_hash, "task", &error))?;
+        let this = self.clone();
         let (tx, rx) = oneshot::channel();
         self.task_spawner.spawn_blocking_task(async move {
             let _permit = permit;
-            let _ = tx.send(Self::lookup(&provider, store.as_ref(), tx_hash));
+            let _ = tx.send(this.lookup(tx_hash));
         });
-        rx.await.map_err(|_| ErrorObjectOwned::from(ErrorCode::InternalError))?
+        rx.await.map_err(|error| self.internal(tx_hash, "task", &error))?
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use alloy_consensus::{BlockBody, Header, TxEip1559};
     use alloy_primitives::{Address, Bytes, Signature, TxKind, U256};
     use base_execution_validity_metadata::ValidityBlockRecord;
+    use metrics_util::debugging::{DebugValue, DebuggingRecorder};
     use reth_chain_state::{ExecutedBlock, NewCanonicalChain};
     use reth_ethereum_primitives::{Block, Transaction, TransactionSigned};
     use reth_primitives_traits::RecoveredBlock;
@@ -222,6 +239,10 @@ mod tests {
     };
     use reth_storage_api::DBProvider;
     use serde_json::{Value, json};
+    use tracing_subscriber::{
+        Layer,
+        layer::{Context, SubscriberExt},
+    };
 
     use super::*;
 
@@ -495,6 +516,10 @@ mod tests {
 
     type MockApi = ValidityTransactionStatusApiImpl<MockEthProvider>;
 
+    fn mock_api(provider: &MockEthProvider, store: Option<ValidityMetadataStore>) -> MockApi {
+        ValidityTransactionStatusApiImpl::new(provider.clone(), store, Runtime::test())
+    }
+
     /// A provider whose transaction index still returns a stale block replaced at its height.
     fn mock_with_stale_index(
         stale: &RecoveredBlock<Block>,
@@ -510,20 +535,43 @@ mod tests {
         provider
     }
 
-    #[test]
-    fn explicit_canonical_hash_check_hides_stale_index_entries() {
+    /// Tracing layer counting `WARN` and `ERROR` events emitted on the current thread.
+    #[derive(Clone, Default)]
+    struct WarnCounter(Arc<AtomicU64>);
+
+    impl<S: tracing::Subscriber> Layer<S> for WarnCounter {
+        fn on_event(&self, event: &tracing::Event<'_>, _ctx: Context<'_, S>) {
+            if *event.metadata().level() <= tracing::Level::WARN {
+                self.0.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+    }
+
+    /// Yields until `condition` holds; the timeout only guards against a hung test.
+    async fn wait_until(mut condition: impl FnMut() -> bool) {
+        tokio::time::timeout(Duration::from_secs(30), async {
+            while !condition() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("condition not reached");
+    }
+
+    #[tokio::test]
+    async fn explicit_canonical_hash_check_hides_stale_index_entries() {
         let stale = block(5, B256::ZERO, 0, vec![transaction(0)]);
         let canonical = block(5, B256::ZERO, 1, vec![transaction(1)]);
         let provider = mock_with_stale_index(&stale, &canonical, 1);
         let (_dir, store) = open_store();
         store.put_batch(&[record(&stale, &[0])]).unwrap();
 
-        let result = MockApi::lookup(&provider, Some(&store), tx_hash(&stale, 0)).unwrap();
+        let result = mock_api(&provider, Some(store)).lookup(tx_hash(&stale, 0)).unwrap();
         assert_eq!(result, None);
     }
 
-    #[test]
-    fn index_outside_canonical_count_or_missing_body_is_internal_error() {
+    #[tokio::test]
+    async fn index_outside_canonical_count_or_missing_body_is_internal_error() {
         let block = block(5, B256::ZERO, 0, vec![transaction(0), transaction(1)]);
         let (_dir, store) = open_store();
         let mut truncated = record(&block, &[]);
@@ -531,12 +579,125 @@ mod tests {
         store.put_batch(&[truncated]).unwrap();
 
         let provider = mock_with_stale_index(&block, &block, 1);
-        let error = MockApi::lookup(&provider, Some(&store), tx_hash(&block, 1)).unwrap_err();
+        let api = mock_api(&provider, Some(store));
+        let error = api.lookup(tx_hash(&block, 1)).unwrap_err();
         assert_eq!(error.code(), ErrorCode::InternalError.code());
         assert!(error.data().is_none());
 
         provider.block_body_indices.lock().clear();
-        let error = MockApi::lookup(&provider, Some(&store), tx_hash(&block, 0)).unwrap_err();
+        let error = api.lookup(tx_hash(&block, 0)).unwrap_err();
         assert_eq!(error.code(), ErrorCode::InternalError.code());
+    }
+
+    #[tokio::test]
+    async fn reorg_between_provider_reads_fails_closed_instead_of_classifying() {
+        // The transaction lookup saw block A (2 transactions, recorded with the transaction as a
+        // validity transaction), but the body read observed a replacing block with 3
+        // transactions before the chain returned to A. The lookup must not classify.
+        let block = block(5, B256::ZERO, 0, vec![transaction(0), transaction(1)]);
+        let (_dir, store) = open_store();
+        store.put_batch(&[record(&block, &[0])]).unwrap();
+        let provider = mock_with_stale_index(&block, &block, 3);
+
+        let error = mock_api(&provider, Some(store)).lookup(tx_hash(&block, 0)).unwrap_err();
+        assert_eq!(error.code(), ErrorCode::InternalError.code());
+        assert!(error.data().is_none());
+    }
+
+    #[tokio::test]
+    async fn repeated_internal_failures_are_counted_but_sampled_in_logs() {
+        let metrics = DebuggingRecorder::new();
+        let snapshotter = metrics.snapshotter();
+        let _metrics_guard = metrics::set_default_local_recorder(&metrics);
+        let warnings = WarnCounter::default();
+        let _log_guard =
+            tracing::subscriber::set_default(tracing_subscriber::registry().with(warnings.clone()));
+
+        // A recorded canonical block whose body indices are missing fails as `missing_body`.
+        let block = block(5, B256::ZERO, 0, vec![transaction(0)]);
+        let provider = mock_with_stale_index(&block, &block, 1);
+        provider.block_body_indices.lock().clear();
+        let (_dir, store) = open_store();
+        store.put_batch(&[record(&block, &[0])]).unwrap();
+        let api = mock_api(&provider, Some(store));
+
+        for _ in 0..100 {
+            let error = api.lookup(tx_hash(&block, 0)).unwrap_err();
+            assert_eq!(error, ErrorObjectOwned::from(ErrorCode::InternalError));
+        }
+
+        // Failures 1, 2, 4, 8, 16, 32 and 64 are logged; every failure is counted.
+        assert_eq!(warnings.0.load(Ordering::SeqCst), 7);
+        let failures =
+            snapshotter.snapshot().into_vec().into_iter().find_map(|(key, _, _, value)| {
+                let matches = key.key().name()
+                    == "builder.validity_metadata.status_lookup_failures"
+                    && key
+                        .key()
+                        .labels()
+                        .any(|l| l.key() == "reason" && l.value() == "missing_body");
+                match value {
+                    DebugValue::Counter(count) if matches => Some(count),
+                    _ => None,
+                }
+            });
+        assert_eq!(failures, Some(100));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn concurrent_lookups_are_bounded_and_abandoned_callers_keep_permits() {
+        let provider = MockEthProvider::default();
+        let api = mock_api(&provider, None);
+        let call = |byte: u8| {
+            let api = api.clone();
+            tokio::spawn(async move {
+                api.get_validity_transaction_status(B256::repeat_byte(byte)).await
+            })
+        };
+
+        // Every lookup that reaches the provider blocks on its block-map lock, held by a separate
+        // thread until released.
+        let (release, released) = std::sync::mpsc::channel::<()>();
+        let (locked, is_locked) = std::sync::mpsc::channel::<()>();
+        let blocks = Arc::clone(&provider.blocks);
+        let holder = std::thread::spawn(move || {
+            let _held = blocks.lock();
+            locked.send(()).unwrap();
+            let _ = released.recv();
+        });
+        is_locked.recv().unwrap();
+        let entered: Vec<_> = (0..MAX_CONCURRENT_VALIDITY_STATUS_LOOKUPS as u8).map(call).collect();
+        wait_until(|| api.lookups.available_permits() == 0).await;
+
+        // At the limit, an additional call cannot start a blocking lookup.
+        let over_limit = call(0xff);
+        for _ in 0..100 {
+            tokio::task::yield_now().await;
+        }
+        assert!(!over_limit.is_finished());
+        assert_eq!(api.lookups.available_permits(), 0);
+
+        // Abandoning the in-flight callers does not free permits while their reads are blocked.
+        for caller in &entered {
+            caller.abort();
+        }
+        for caller in entered {
+            assert!(caller.await.unwrap_err().is_cancelled());
+        }
+        assert_eq!(api.lookups.available_permits(), 0);
+        assert!(!over_limit.is_finished());
+
+        // Releasing the provider lets the abandoned reads finish and the waiting call proceed.
+        release.send(()).unwrap();
+        holder.join().unwrap();
+        assert_eq!(over_limit.await.unwrap().unwrap(), None);
+        let all = tokio::time::timeout(
+            Duration::from_secs(30),
+            api.lookups.acquire_many(MAX_CONCURRENT_VALIDITY_STATUS_LOOKUPS as u32),
+        )
+        .await
+        .expect("permits returned")
+        .unwrap();
+        drop(all);
     }
 }

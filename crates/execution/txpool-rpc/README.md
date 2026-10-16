@@ -50,10 +50,24 @@ that exact block hash, so pending, private, orphaned and unknown transactions re
 `isValidityTransaction` is `true` only for committed pool transactions that carried nonempty
 validity predicates. It is a builder-reported classification at lookup time, not a finality
 guarantee or cryptographic proof. A `not_recorded` error may clear once a pending write commits,
-but dropped or lost records never recover. Provider and store reads run on the blocking task pool,
-at most `MAX_CONCURRENT_VALIDITY_STATUS_LOOKUPS` at a time. Lookups need the node's transaction
-hash index. Public deployments should route only this method to the block producer that owns the
-store rather than exposing the producer's other RPC methods.
+but dropped or lost records never recover. Each provider read observes its own canonical
+snapshot, so a reorg during a lookup can produce a transient `-32603` (or `null`) instead of a
+classification; retry after the chain settles. A conflicting record yields `-32603` permanently by
+design; deleting the database is not a routine repair because it discards every other record.
+
+Provider and store reads run on the blocking task pool, at most
+`MAX_CONCURRENT_VALIDITY_STATUS_LOOKUPS` (16) at a time; further requests wait for a permit, and a
+caller that disconnects keeps its permit until its read finishes. Internal failures are counted
+in `builder.validity_metadata.status_lookup_failures` and logged only on the first and every
+power-of-two failure, so repeated failing requests cannot flood the logs.
+
+Operator prerequisites: lookups resolve hashes through the node's transaction-hash index and
+check the canonical block's body indices. If transaction lookup or bodies are pruned, affected
+transactions return `null` even when metadata was recorded, so keep both for the history you
+intend to serve; the method is not a generic archival service. Only the block producer that
+records the metadata can answer, and only for blocks it built while recording was enabled.
+Public deployments should route only this method to that producer rather than exposing the
+producer's other RPC methods.
 
 ## Usage
 
