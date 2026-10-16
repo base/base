@@ -11,7 +11,7 @@ mod sync_target;
 use std::{sync::Arc, time::Duration};
 
 use alloy_consensus::BlockHeader;
-use alloy_eips::eip1898::BlockWithParent;
+use alloy_eips::{BlockNumHash, eip1898::BlockWithParent};
 #[cfg(feature = "metrics")]
 use base_execution_trie::BaseProofsStore;
 use base_execution_trie::{
@@ -25,7 +25,7 @@ use reth_exex::{ExExContext, ExExEvent, ExExNotification, ExExNotificationsStrea
 use reth_node_api::{FullNodeComponents, NodePrimitives, NodeTypes};
 use reth_provider::{BlockNumReader, BlockReader, TransactionVariant};
 pub use sync_target::{CachedBlockTrieData, SyncTarget, SyncTargetState};
-use tokio::task;
+use tokio::{sync::mpsc::UnboundedSender, task};
 use tracing::{debug, error, info};
 
 /// Default safety threshold for the gap between stored earliest block and the configured
@@ -44,6 +44,9 @@ const DEFAULT_PROOFS_HISTORY_WINDOW: u64 = 6_480_000;
 
 /// Default interval between proof-storage prune runs. Default is 15 seconds.
 const DEFAULT_PRUNE_INTERVAL: Duration = Duration::from_secs(15);
+
+/// Delay before retrying a proofs storage revert that failed.
+const REVERT_RETRY_DELAY: Duration = Duration::from_secs(1);
 
 /// Default verification interval: disabled
 const DEFAULT_VERIFICATION_INTERVAL: u64 = 0; // disabled
@@ -323,6 +326,7 @@ where
         let task_sync_target = Arc::clone(&sync_target);
 
         let task_storage = self.storage.clone();
+        let task_events = self.ctx.events.clone();
         let task_provider = self.ctx.provider().clone();
         let task_evm_config = self.ctx.evm_config().clone();
         let verification_interval = self.verification_interval;
@@ -338,6 +342,7 @@ where
                     task_storage,
                     task_provider,
                     &task_collector,
+                    task_events,
                     verification_interval,
                 )
                 .await;
@@ -352,6 +357,7 @@ where
         storage: BaseProofsStorage<Storage>,
         provider: Node::Provider,
         collector: &LiveTrieCollector<'_, Node::Evm, Node::Provider, Storage>,
+        events: UnboundedSender<ExExEvent>,
         verification_interval: u64,
     ) {
         info!(target: "base::exex", "Starting proofs storage sync loop");
@@ -362,51 +368,74 @@ where
                 continue;
             };
 
-            match state {
-                SyncTargetState::Revert { revert_to } => {
-                    Self::handle_revert(&storage, collector, revert_to);
-                    sync_target.mark_revert_complete(&revert_to);
-                }
-                SyncTargetState::RevertThenSync { revert_to, sync_to } => {
-                    Self::handle_revert(&storage, collector, revert_to);
-                    sync_target.mark_revert_complete(&revert_to);
-                    Self::sync_forward(
-                        &sync_target,
-                        &storage,
-                        &provider,
-                        collector,
-                        verification_interval,
-                        sync_to,
-                    )
-                    .await;
-                }
-                SyncTargetState::SyncUpTo { to } => {
-                    Self::sync_forward(
-                        &sync_target,
-                        &storage,
-                        &provider,
-                        collector,
-                        verification_interval,
-                        to,
-                    )
-                    .await;
-                }
+            if let Err(e) = Self::process_state(
+                &sync_target,
+                &storage,
+                &provider,
+                collector,
+                &events,
+                verification_interval,
+                state,
+            )
+            .await
+            {
+                error!(
+                    target: "base::exex",
+                    error = ?e,
+                    retry_in = ?REVERT_RETRY_DELAY,
+                    "Failed to revert proofs storage, retrying"
+                );
+                tokio::time::sleep(REVERT_RETRY_DELAY).await;
             }
         }
+    }
+
+    /// Apply one sync target state.
+    ///
+    /// A revert must succeed before anything is synced on top of it. If it fails, the state is
+    /// put back on the sync target for a retry and the error is returned.
+    async fn process_state(
+        sync_target: &SyncTarget,
+        storage: &BaseProofsStorage<Storage>,
+        provider: &Node::Provider,
+        collector: &LiveTrieCollector<'_, Node::Evm, Node::Provider, Storage>,
+        events: &UnboundedSender<ExExEvent>,
+        verification_interval: u64,
+        state: SyncTargetState,
+    ) -> eyre::Result<()> {
+        if let Some(revert_to) = state.revert_to() {
+            if let Err(e) = Self::handle_revert(storage, collector, revert_to) {
+                sync_target.requeue(state);
+                return Err(e);
+            }
+            sync_target.mark_revert_complete(&revert_to);
+        }
+
+        let to = match state {
+            SyncTargetState::SyncUpTo { to }
+            | SyncTargetState::RevertThenSync { sync_to: to, .. } => to,
+            SyncTargetState::Revert { .. } => return Ok(()),
+        };
+        Self::sync_forward(
+            sync_target,
+            storage,
+            provider,
+            collector,
+            events,
+            verification_interval,
+            to,
+        )
+        .await;
+        Ok(())
     }
 
     fn handle_revert(
         storage: &BaseProofsStorage<Storage>,
         collector: &LiveTrieCollector<'_, Node::Evm, Node::Provider, Storage>,
         revert_to: BlockWithParent,
-    ) {
-        let latest = match storage.get_latest_block_number() {
-            Ok(Some((n, _))) => n,
-            Ok(None) => return,
-            Err(e) => {
-                error!(target: "base::exex", error = ?e, "Failed to get latest block during revert");
-                return;
-            }
+    ) -> eyre::Result<()> {
+        let Some((latest, _)) = storage.get_latest_block_number()? else {
+            return Ok(());
         };
 
         if latest >= revert_to.block.number {
@@ -416,9 +445,7 @@ where
                 latest,
                 "Reverting proofs storage"
             );
-            if let Err(e) = collector.unwind_history(revert_to) {
-                error!(target: "base::exex", error = ?e, "Failed to revert proofs storage");
-            }
+            collector.unwind_history(revert_to)?;
         } else {
             debug!(
                 target: "base::exex",
@@ -427,13 +454,20 @@ where
                 "Revert target beyond stored blocks, skipping"
             );
         }
+        Ok(())
     }
 
+    /// Syncs proofs storage forward to `target` in batches.
+    ///
+    /// Each iteration reports the latest stored block via `FinishedHeight` (only while it is at or
+    /// below `target`), so the same height may be reported more than once across calls. The `ExEx`
+    /// manager treats `FinishedHeight` as idempotent, so repeats are harmless.
     async fn sync_forward(
         sync_target: &SyncTarget,
         storage: &BaseProofsStorage<Storage>,
         provider: &Node::Provider,
         collector: &LiveTrieCollector<'_, Node::Evm, Node::Provider, Storage>,
+        events: &UnboundedSender<ExExEvent>,
         verification_interval: u64,
         target: u64,
     ) {
@@ -443,8 +477,8 @@ where
                 return;
             }
 
-            let latest = match storage.get_latest_block_number() {
-                Ok(Some((n, _))) => n,
+            let (latest, latest_hash) = match storage.get_latest_block_number() {
+                Ok(Some(latest)) => latest,
                 Ok(None) => {
                     error!(target: "base::exex", "No blocks stored in proofs storage during sync");
                     return;
@@ -454,6 +488,18 @@ where
                     return;
                 }
             };
+
+            // Only blocks that are stored are reported as finished, so the node keeps any data
+            // the sync loop still needs. Stored blocks above the target are not reported.
+            if latest <= target {
+                debug!(target: "base::exex", block_number = latest, "Sending FinishedHeight event");
+                if events
+                    .send(ExExEvent::FinishedHeight(BlockNumHash::new(latest, latest_hash)))
+                    .is_err()
+                {
+                    debug!(target: "base::exex", "ExEx event receiver dropped");
+                }
+            }
 
             if latest >= target {
                 return;
@@ -561,17 +607,6 @@ where
             ExExNotification::ChainReverted { old } => {
                 self.handle_chain_reverted(Arc::clone(old), sync_target)?
             }
-        }
-
-        if let Some(committed_chain) = notification.committed_chain() {
-            let tip = committed_chain.tip().num_hash();
-            debug!(
-                target: "base::exex",
-                block_number = tip.number,
-                block_hash = ?tip.hash,
-                "Sending FinishedHeight event"
-            );
-            self.ctx.events.send(ExExEvent::FinishedHeight(tip))?;
         }
 
         Ok(())
@@ -1136,5 +1171,89 @@ mod tests {
         // heavy lifting.
         let latest = proofs.get_latest_block_number().expect("get").expect("ok").0;
         assert_eq!(latest, 0, "Main thread should not have processed the blocks synchronously");
+    }
+
+    /// Run [`BaseProofsExEx::process_state`] against the exex's own provider and storage.
+    async fn process_state_with<NodeT, Store, P>(
+        exex: &BaseProofsExEx<NodeT, Store>,
+        sync_target: &SyncTarget,
+        state: SyncTargetState,
+    ) -> eyre::Result<()>
+    where
+        NodeT: FullNodeComponents<Types: NodeTypes<Primitives = P>>,
+        P: NodePrimitives,
+        Store: BaseProofsBatchStore + Clone + 'static,
+    {
+        let collector = LiveTrieCollector::new(
+            exex.ctx.evm_config().clone(),
+            exex.ctx.provider().clone(),
+            &exex.storage,
+        );
+        BaseProofsExEx::<NodeT, Store>::process_state(
+            sync_target,
+            &exex.storage,
+            exex.ctx.provider(),
+            &collector,
+            &exex.ctx.events,
+            0,
+            state,
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn failed_revert_is_retried_and_blocks_sync() {
+        let dir = tempdir_path();
+        let store = Arc::new(RocksdbProofsStorage::new(dir.as_path()).expect("env"));
+        let proofs: BaseProofsStorage<Arc<RocksdbProofsStorage>> = Arc::clone(&store).into();
+
+        init_storage(proofs.clone());
+        store_blocks(1, 10, &proofs);
+
+        let (ctx, mut handle) =
+            reth_exex_test_utils::test_exex_context().await.expect("exex test context");
+        let exex = build_test_exex(ctx, proofs.clone());
+        let sync_target = SyncTarget::new();
+
+        // Reverting to the earliest stored block is rejected by storage.
+        let revert_to =
+            BlockWithParent::new(hash_for_num(0), BlockNumHash::new(0, hash_for_num(0)));
+        let state = SyncTargetState::RevertThenSync { revert_to, sync_to: 12 };
+        let _ =
+            process_state_with(&exex, &sync_target, state).await.expect_err("revert should fail");
+
+        // The revert stays pending so it is retried, and nothing was synced or reported.
+        let pending = sync_target.take_state().expect("revert should be requeued");
+        assert!(matches!(
+            pending,
+            SyncTargetState::RevertThenSync { revert_to, sync_to: 12 } if revert_to.block.number == 0
+        ));
+        assert_eq!(proofs.get_latest_block_number().expect("get").expect("ok").0, 10);
+        assert!(handle.events_rx.try_recv().is_err(), "no FinishedHeight after a failed revert");
+    }
+
+    #[tokio::test]
+    async fn successful_revert_reports_only_stored_blocks() {
+        let dir = tempdir_path();
+        let store = Arc::new(RocksdbProofsStorage::new(dir.as_path()).expect("env"));
+        let proofs: BaseProofsStorage<Arc<RocksdbProofsStorage>> = Arc::clone(&store).into();
+
+        init_storage(proofs.clone());
+        store_blocks(1, 10, &proofs);
+
+        let (ctx, mut handle) =
+            reth_exex_test_utils::test_exex_context().await.expect("exex test context");
+        let exex = build_test_exex(ctx, proofs.clone());
+        let sync_target = SyncTarget::new();
+
+        let revert_to = mk_block(6).block_with_parent();
+        let state = SyncTargetState::RevertThenSync { revert_to, sync_to: 5 };
+        process_state_with(&exex, &sync_target, state).await.expect("revert should succeed");
+
+        assert!(sync_target.take_state().is_none());
+        assert_eq!(proofs.get_latest_block_number().expect("get").expect("ok").0, 5);
+        let ExExEvent::FinishedHeight(height) =
+            handle.events_rx.try_recv().expect("FinishedHeight event");
+        assert_eq!(height, BlockNumHash::new(5, hash_for_num(5)));
     }
 }
