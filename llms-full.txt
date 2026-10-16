@@ -72,7 +72,7 @@ Find a doc through the index below instead of grepping the tree. After adding, m
 - [bin/basectl/README.md](bin/basectl/README.md): basectl operator console reference: global options, TUI and scriptable commands (block, sync-status, p2p, txpool, conductor, sequencer, batcher, doctor, proofs), JSON output and examples.
 - [bin/builder/README.md](bin/builder/README.md): Stub README for the base-builder block builder binary, which runs base-builder-core. Minimal, no usage details.
 - [bin/challenger-e2e/README.md](bin/challenger-e2e/README.md): Challenger end-to-end test binary: forks L1 into a pod-local Anvil and checks the challenger scans valid games without disputing; intended as a K8s Job.
-- [bin/challenger/README.md](bin/challenger/README.md): ZK-proof dispute game challenger binary: parses CLI arguments, builds a validated config, and delegates to base_challenger::run(). Very short README.
+- [bin/challenger/README.md](bin/challenger/README.md): ZK-proof dispute game challenger binary that parses CLI arguments, builds a validated config, and delegates to base_challenger::ChallengerService::run().
 - [bin/consensus/README.md](bin/consensus/README.md): Stub README for base-consensus, the canonical consensus node entrypoint for the Base Stack. Minimal, no usage details.
 - [bin/load-tester/README.md](bin/load-tester/README.md): Stub README for the load-testing and benchmarking binary, which delegates to the base-load-tests library.
 - [bin/node/README.md](bin/node/README.md): Stub README for the Base Reth node binary, the entry point for running a node with flashblocks, transaction tracing, and metering.
@@ -227,7 +227,7 @@ Find a doc through the index below instead of grepping the tree. After adding, m
 
 ## Crates: utilities
 
-- [crates/utilities/balance-monitor/README.md](crates/utilities/balance-monitor/README.md): Describes BalanceMonitorLayer, an alloy ProviderLayer that polls an account balance on each new block and publishes it through a tokio watch channel. Use for onchain balance monitoring in services.
+- [crates/utilities/balance-monitor/README.md](crates/utilities/balance-monitor/README.md): Describes BalanceMonitorLayer, an alloy ProviderLayer that polls an account balance at a fixed interval and publishes it through a tokio watch channel for onchain balance monitoring in services.
 - [crates/utilities/cli/README.md](crates/utilities/cli/README.md): Overview of base-cli-utils: parse_cli!, register_version_metrics!, define_log_args!, define_metrics_args! macros and RuntimeManager (tokio runtime, signal shutdown). Use when building Base binaries.
 - [crates/utilities/health/README.md](crates/utilities/health/README.md): Health utilities: a healthz JSON-RPC method (HealthzRpc) for jsonrpsee, plus an axum-server feature serving Kubernetes-style /healthz and /readyz probes via HealthServer. Use to add health endpoints.
 - [crates/utilities/jwt/README.md](crates/utilities/jwt/README.md): JwtSecretReader reads, writes, generates and resolves JWT secrets for Base nodes. JwtValidator optionally validates secrets against an Engine API with the engine-validation feature.
