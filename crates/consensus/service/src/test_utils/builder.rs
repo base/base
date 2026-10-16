@@ -52,17 +52,17 @@ impl Drop for Harness {
 
 impl Harness {
     /// Returns the fake engine handle for call assertions.
-    pub fn fake_engine_handle(&self) -> &FakeEngineClientHandle {
+    pub const fn fake_engine_handle(&self) -> &FakeEngineClientHandle {
         &self.fake_engine_handle
     }
 
     /// Returns the fake L1 simulator.
-    pub fn fake_l1(&self) -> &FakeL1 {
+    pub const fn fake_l1(&self) -> &FakeL1 {
         &self.fake_l1
     }
 
     /// Returns the fake safedb handle.
-    pub fn fake_safedb_handle(&self) -> &FakeSafeDBHandle {
+    pub const fn fake_safedb_handle(&self) -> &FakeSafeDBHandle {
         &self.fake_safedb_handle
     }
 
@@ -140,7 +140,7 @@ impl HarnessBuilder {
     }
 
     /// Sets the node role.
-    pub fn with_role(mut self, role: NodeMode) -> Self {
+    pub const fn with_role(mut self, role: NodeMode) -> Self {
         self.role = role;
         self
     }
@@ -182,7 +182,7 @@ impl HarnessBuilder {
     /// succeed with the in-memory fakes, this seeds a default `Latest` L2 block and pins
     /// `genesis.l2.hash` to the hash of a default consensus header (the hash the default L2
     /// block resolves to). Off by default so unrelated tests keep the zero-hash genesis.
-    pub fn with_reset_recovery_support(mut self) -> Self {
+    pub const fn with_reset_recovery_support(mut self) -> Self {
         self.reset_recovery_support = true;
         self
     }

@@ -66,7 +66,7 @@ pub use actors::{
 };
 
 mod metrics;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
 #[cfg(test)]
 pub use actors::{
