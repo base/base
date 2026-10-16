@@ -168,7 +168,7 @@ pub struct ReceiptFieldsBuilder {
     /* ---------------------------------------- Isthmus ---------------------------------------- */
     /// The current operator fee scalar.
     pub operator_fee_scalar: Option<u128>,
-    /// The current L1 blob base fee scalar.
+    /// The current operator fee constant.
     pub operator_fee_constant: Option<u128>,
     /* ---------------------------------------- Jovian ----------------------------------------- */
     /// The current DA footprint gas scalar.
@@ -425,6 +425,8 @@ mod tests {
 
     use super::*;
 
+    const DA_FOOTPRINT_GAS_SCALAR: u16 = 100;
+
     /// Legacy compatibility fixture transaction at index 0 in block 124665056.
     ///
     /// <https://optimistic.etherscan.io/tx/0x312e290cf36df704a2217b015d6455396830b0ce678b860ebfcc30f41403d7b1>
@@ -494,64 +496,9 @@ mod tests {
             .expect("should parse revm l1 info")
             .build();
 
-        let L1BlockInfo {
-            l1_gas_price,
-            l1_gas_used,
-            l1_fee,
-            l1_fee_scalar,
-            l1_base_fee_scalar,
-            l1_blob_base_fee,
-            l1_blob_base_fee_scalar,
-            operator_fee_scalar,
-            operator_fee_constant,
-            da_footprint_gas_scalar,
-        } = receipt_meta.l1_block_info;
-
         assert_eq!(
-            l1_gas_price, TX_META_TX_1_OP_MAINNET_BLOCK_124665056.l1_block_info.l1_gas_price,
-            "incorrect l1 base fee (former gas price)"
-        );
-        assert_eq!(
-            l1_gas_used, TX_META_TX_1_OP_MAINNET_BLOCK_124665056.l1_block_info.l1_gas_used,
-            "incorrect l1 gas used"
-        );
-        assert_eq!(
-            l1_fee, TX_META_TX_1_OP_MAINNET_BLOCK_124665056.l1_block_info.l1_fee,
-            "incorrect l1 fee"
-        );
-        assert_eq!(
-            l1_fee_scalar, TX_META_TX_1_OP_MAINNET_BLOCK_124665056.l1_block_info.l1_fee_scalar,
-            "incorrect l1 fee scalar"
-        );
-        assert_eq!(
-            l1_base_fee_scalar,
-            TX_META_TX_1_OP_MAINNET_BLOCK_124665056.l1_block_info.l1_base_fee_scalar,
-            "incorrect l1 base fee scalar"
-        );
-        assert_eq!(
-            l1_blob_base_fee,
-            TX_META_TX_1_OP_MAINNET_BLOCK_124665056.l1_block_info.l1_blob_base_fee,
-            "incorrect l1 blob base fee"
-        );
-        assert_eq!(
-            l1_blob_base_fee_scalar,
-            TX_META_TX_1_OP_MAINNET_BLOCK_124665056.l1_block_info.l1_blob_base_fee_scalar,
-            "incorrect l1 blob base fee scalar"
-        );
-        assert_eq!(
-            operator_fee_scalar,
-            TX_META_TX_1_OP_MAINNET_BLOCK_124665056.l1_block_info.operator_fee_scalar,
-            "incorrect operator fee scalar"
-        );
-        assert_eq!(
-            operator_fee_constant,
-            TX_META_TX_1_OP_MAINNET_BLOCK_124665056.l1_block_info.operator_fee_constant,
-            "incorrect operator fee constant"
-        );
-        assert_eq!(
-            da_footprint_gas_scalar,
-            TX_META_TX_1_OP_MAINNET_BLOCK_124665056.l1_block_info.da_footprint_gas_scalar,
-            "incorrect da footprint gas scalar"
+            receipt_meta.l1_block_info,
+            TX_META_TX_1_OP_MAINNET_BLOCK_124665056.l1_block_info
         );
     }
 
@@ -630,29 +577,18 @@ mod tests {
             .expect("should parse revm l1 info")
             .build();
 
-        let L1BlockInfo {
-            l1_gas_price,
-            l1_gas_used,
-            l1_fee,
-            l1_fee_scalar,
-            l1_base_fee_scalar,
-            l1_blob_base_fee,
-            l1_blob_base_fee_scalar,
-            operator_fee_scalar,
-            operator_fee_constant,
-            da_footprint_gas_scalar,
-        } = receipt_meta.l1_block_info;
-
-        assert_eq!(l1_gas_price, Some(14121491676), "incorrect l1 base fee (former gas price)");
-        assert_eq!(l1_gas_used, Some(1600), "incorrect l1 gas used");
-        assert_eq!(l1_fee, Some(191150293412), "incorrect l1 fee");
-        assert!(l1_fee_scalar.is_none(), "incorrect l1 fee scalar");
-        assert_eq!(l1_base_fee_scalar, Some(2269), "incorrect l1 base fee scalar");
-        assert_eq!(l1_blob_base_fee, Some(1324954204), "incorrect l1 blob base fee");
-        assert_eq!(l1_blob_base_fee_scalar, Some(1055762), "incorrect l1 blob base fee scalar");
-        assert_eq!(operator_fee_scalar, None, "incorrect operator fee scalar");
-        assert_eq!(operator_fee_constant, None, "incorrect operator fee constant");
-        assert_eq!(da_footprint_gas_scalar, None, "incorrect da footprint gas scalar");
+        assert_eq!(
+            receipt_meta.l1_block_info,
+            L1BlockInfo {
+                l1_gas_price: Some(14121491676),
+                l1_gas_used: Some(1600),
+                l1_fee: Some(191150293412),
+                l1_base_fee_scalar: Some(2269),
+                l1_blob_base_fee: Some(1324954204),
+                l1_blob_base_fee_scalar: Some(1055762),
+                ..Default::default()
+            }
+        );
     }
 
     #[test]
@@ -693,50 +629,7 @@ mod tests {
 
     #[test]
     fn blob_gas_used_included_in_receipt_post_jovian() {
-        const DA_FOOTPRINT_GAS_SCALAR: u16 = 100;
-        let tx = TxEip7702 {
-            chain_id: 1u64,
-            nonce: 0,
-            max_fee_per_gas: 0x28f000fff,
-            max_priority_fee_per_gas: 0x28f000fff,
-            gas_limit: 10,
-            to: Address::default(),
-            value: U256::from(3_u64),
-            access_list: Default::default(),
-            authorization_list: Default::default(),
-            input: Bytes::from(vec![0; 1_000_000]),
-        };
-
-        let signature = Signature::new(U256::default(), U256::default(), true);
-
-        let tx = BaseTransactionSigned::new_unhashed(BaseTypedTransaction::Eip7702(tx), signature);
-
-        let mut l1_block_info = base_common_evm::L1BlockInfo {
-            da_footprint_gas_scalar: Some(DA_FOOTPRINT_GAS_SCALAR),
-            ..Default::default()
-        };
-
-        let upgrades = BaseChainSpec::mainnet();
-
-        let receipt = BaseReceiptBuilder::new(
-            &upgrades,
-            ConvertReceiptInput::<BasePrimitives> {
-                tx: Recovered::new_unchecked(&tx, Address::default()),
-                receipt: BaseReceipt::Eip7702(Receipt {
-                    status: Eip658Value::Eip658(true),
-                    cumulative_gas_used: 100,
-                    logs: vec![],
-                }),
-                gas_used: 100,
-                next_log_index: 0,
-                meta: TransactionMeta {
-                    timestamp: ChainConfig::mainnet().jovian_timestamp,
-                    ..Default::default()
-                },
-            },
-            &mut l1_block_info,
-        )
-        .unwrap();
+        let (receipt, tx) = blob_gas_receipt(ChainConfig::mainnet().jovian_timestamp);
 
         let expected_blob_gas_used = estimate_tx_compressed_size(tx.encoded_2718().as_slice())
             .saturating_div(1_000_000)
@@ -747,7 +640,12 @@ mod tests {
 
     #[test]
     fn blob_gas_used_not_included_in_receipt_post_isthmus() {
-        const DA_FOOTPRINT_GAS_SCALAR: u16 = 100;
+        let (receipt, _) = blob_gas_receipt(ChainConfig::mainnet().isthmus_timestamp);
+        assert_eq!(receipt.core_receipt.blob_gas_used, None);
+    }
+
+    /// Builds a receipt and its transaction for fork-dependent blob gas checks.
+    fn blob_gas_receipt(timestamp: u64) -> (BaseReceiptBuilder, BaseTransactionSigned) {
         let tx = TxEip7702 {
             chain_id: 1u64,
             nonce: 0,
@@ -783,16 +681,13 @@ mod tests {
                 }),
                 gas_used: 100,
                 next_log_index: 0,
-                meta: TransactionMeta {
-                    timestamp: ChainConfig::mainnet().isthmus_timestamp,
-                    ..Default::default()
-                },
+                meta: TransactionMeta { timestamp, ..Default::default() },
             },
             &mut l1_block_info,
         )
         .unwrap();
 
-        assert_eq!(receipt.core_receipt.blob_gas_used, None);
+        (receipt, tx)
     }
 
     /// Builds the RPC receipt for a two-phase EIP-8130 transaction whose stored
