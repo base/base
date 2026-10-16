@@ -81,11 +81,6 @@ impl<T> DepositReceipt<T> {
         }
     }
 
-    /// Attaches the given bloom to the receipt returning [`ReceiptWithBloom`].
-    pub const fn with_bloom_unchecked(self, bloom: Bloom) -> ReceiptWithBloom<Self> {
-        ReceiptWithBloom::new(self, bloom)
-    }
-
     /// Consumes the type and returns the inner [`Receipt`].
     pub fn into_inner(self) -> Receipt<T> {
         self.inner
