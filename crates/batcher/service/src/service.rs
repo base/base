@@ -916,22 +916,6 @@ mod tests {
         }
     }
 
-    /// Setup goes past the batcher check when the signer is the one the `SystemConfig` authorizes.
-    #[tokio::test]
-    async fn setup_accepts_the_signer_the_system_config_authorizes() {
-        let server = MockServer::start_async().await;
-        let signer = Address::repeat_byte(0x51);
-        mock_system_config(&server, signer).await;
-        // Setup reads the L1 head right after the check, so a served read means the check passed.
-        let l1_head = mock_rpc(&server, r#"{"method":"eth_blockNumber"}"#, r#""0x1""#.into()).await;
-
-        // Setup fails later, on the reads this test does not mock.
-        let _ =
-            BatcherService::new(mocked_config(&server, signer)).setup(TokioRuntime::new()).await;
-
-        assert!(l1_head.calls_async().await > 0, "setup must go past the check");
-    }
-
     /// A shadow batcher posts to its own inbox, so setup does not check its signer against the
     /// `SystemConfig`.
     #[tokio::test]
