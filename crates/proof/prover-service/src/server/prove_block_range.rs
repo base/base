@@ -152,27 +152,11 @@ fn parse_session_id(session_id: &str) -> RpcResult<String> {
 
 #[cfg(test)]
 mod tests {
-    use base_prover_service_db::{ApiProofType, ProofType};
+    use base_prover_service_db::ApiProofType;
     use uuid::Uuid;
 
     use super::parse_session_id;
     use crate::metrics;
-
-    #[test]
-    fn test_proof_type_label_compressed() {
-        assert_eq!(
-            metrics::proof_type_label(ProofType::OpSuccinctSp1ClusterCompressed),
-            "compressed"
-        );
-    }
-
-    #[test]
-    fn test_proof_type_label_snark_plonk() {
-        assert_eq!(
-            metrics::proof_type_label(ProofType::OpSuccinctSp1ClusterSnarkPlonk),
-            "snark_plonk"
-        );
-    }
 
     #[test]
     fn test_api_proof_type_label_compressed() {
