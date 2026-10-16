@@ -6,19 +6,6 @@ use alloy_genesis::GenesisAccount;
 use alloy_primitives::{U256, utils::Unit};
 use base_execution_chainspec::BaseChainSpec;
 use base_test_utils::{Account, GENESIS_GAS_LIMIT, build_test_genesis};
-use reth_db::{
-    ClientVersion, DatabaseEnv, init_db,
-    mdbx::{DatabaseArguments, KILOBYTE, MEGABYTE, MaxReadTransactionDuration},
-    test_utils::{
-        ERROR_DB_CREATION, TempDatabase, create_test_rocksdb_dir, create_test_static_files_dir,
-        tempdir_path,
-    },
-};
-use reth_node_builder::NodeTypesWithDBAdapter;
-use reth_provider::{
-    ProviderFactory,
-    providers::{NodeTypesForProvider, RocksDBBuilder, StaticFileProvider},
-};
 
 use crate::test_utils::TEST_ACCOUNT_BALANCE_ETH;
 
@@ -39,39 +26,4 @@ pub fn load_chain_spec() -> Arc<BaseChainSpec> {
         .with_gas_limit(GENESIS_GAS_LIMIT);
 
     Arc::new(BaseChainSpec::from_genesis(genesis))
-}
-
-/// Creates a provider factory for tests with the given chain spec.
-pub fn create_provider_factory<N: NodeTypesForProvider>(
-    chain_spec: Arc<N::ChainSpec>,
-    runtime: reth_tasks::Runtime,
-) -> ProviderFactory<NodeTypesWithDBAdapter<N, Arc<TempDatabase<DatabaseEnv>>>> {
-    let (static_dir, _) = create_test_static_files_dir();
-    let (rocksdb_dir, _) = create_test_rocksdb_dir();
-    let db = create_test_db();
-    ProviderFactory::new(
-        db,
-        chain_spec,
-        StaticFileProvider::read_write(static_dir.keep()).expect("static file provider"),
-        RocksDBBuilder::new(&rocksdb_dir).with_default_tables().build().expect("rocks db provider"),
-        runtime,
-    )
-    .expect("create provider factory")
-}
-
-/// Creates a temporary test database.
-fn create_test_db() -> Arc<TempDatabase<DatabaseEnv>> {
-    let path = tempdir_path();
-    let emsg = format!("{ERROR_DB_CREATION}: {path:?}");
-
-    let db = init_db(
-        &path,
-        DatabaseArguments::new(ClientVersion::default())
-            .with_max_read_transaction_duration(Some(MaxReadTransactionDuration::Unbounded))
-            .with_geometry_max_size(Some(4 * MEGABYTE))
-            .with_growth_step(Some(4 * KILOBYTE)),
-    )
-    .expect(&emsg);
-
-    Arc::new(TempDatabase::new(db, path))
 }
