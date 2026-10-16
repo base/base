@@ -400,7 +400,7 @@ digest = "5c43615d49"
 
 ["crates/execution/trie/README.md"]
 summary = "base-execution-trie: BaseProofsStore traits and backends (e.g. RocksdbProofsStorage) holding per-block trie diffs for fault-proof generation, with cursors, pruner and startup init job."
-digest = "b641655b32"
+digest = "e842faecd7"
 
 ["crates/execution/trie/src/db/schema.md"]
 summary = "MDBX proof-history DB schema: versioned DupSort tables, tombstones, BlockChangeSet reverse index, proof window keys, cursor reads, append-only writes, block 0 backfill. For eth_getProof storage."
