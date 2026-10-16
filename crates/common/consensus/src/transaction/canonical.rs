@@ -25,10 +25,13 @@ pub fn decode_2718_canonical<T: Decodable2718 + Encodable2718>(bytes: &[u8]) -> 
 #[cfg(test)]
 mod tests {
     use alloy_consensus::{SignableTransaction, TxEip1559, TxEip2930, TxEip7702, TxLegacy};
-    use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256};
+    use alloy_primitives::{Address, Bytes, Signature, U256};
 
     use super::*;
-    use crate::{BaseTxEnvelope, Eip8130Signed, TxDeposit, TxEip8130};
+    use crate::{
+        BaseTxEnvelope,
+        test_utils::{sample_deposit, sample_signed_8130},
+    };
 
     fn canonical_transactions() -> Vec<BaseTxEnvelope> {
         let signature = Signature::test_signature();
@@ -85,36 +88,8 @@ mod tests {
             }
             .into_signed(signature)
             .into(),
-            TxDeposit {
-                source_hash: B256::with_last_byte(2),
-                from: Address::repeat_byte(0x42),
-                to: TxKind::Call(to),
-                mint: 1,
-                value: U256::from(1u64),
-                gas_limit: 50_000,
-                is_system_transaction: false,
-                input: Bytes::new(),
-            }
-            .into(),
-            BaseTxEnvelope::Eip8130(Eip8130Signed::new(
-                TxEip8130 {
-                    chain_id: 8453,
-                    sender: Some(Address::repeat_byte(0x42)),
-                    nonce_key: U256::from(1u64),
-                    nonce_sequence: 1,
-                    valid_after: 0,
-                    valid_before: 1,
-                    max_priority_fee_per_gas: 1,
-                    max_fee_per_gas: 2,
-                    gas_limit: 50_000,
-                    account_changes: vec![],
-                    calls: vec![],
-                    metadata: Bytes::new(),
-                    payer: None,
-                },
-                Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef]),
-                Bytes::new(),
-            )),
+            sample_deposit().into(),
+            BaseTxEnvelope::Eip8130(sample_signed_8130(false)),
         ]
     }
 
