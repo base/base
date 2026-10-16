@@ -7,6 +7,7 @@ use alloy_rpc_types_engine::JwtSecret;
 use base_cli_utils::{LogConfig, RuntimeManager};
 use base_common_chains::ChainConfig;
 use base_common_genesis::RollupConfig;
+use base_consensus_engine::EngineEndpoint;
 use base_consensus_node::{
     EngineConfig, L1ConfigBuilder, NodeMode, NodeOperatingMode, RollupNode, RollupNodeBuilder,
     UpgradeSignalBuilderConfig,
@@ -33,7 +34,7 @@ use crate::{
 #[derive(Clone, Debug, Default)]
 pub struct ConsensusNodeOverrides {
     /// Override for the L2 Engine API endpoint.
-    pub l2_engine_rpc: Option<Url>,
+    pub l2_engine: Option<EngineEndpoint>,
     /// Override for the L2 Engine API JWT secret.
     pub l2_engine_jwt_secret: Option<JwtSecret>,
     /// Override for the L1 RPC endpoint used by consensus upgrade-signal reads.
@@ -45,14 +46,10 @@ impl ConsensusNodeOverrides {
     ///
     /// Consensus uses the same upgrade-signal L1 RPC as execution when one is configured.
     pub const fn embedded_execution(
-        l2_engine_rpc: Url,
+        l2_engine: EngineEndpoint,
         upgrade_signal_l1_rpc: Option<Url>,
     ) -> Self {
-        Self {
-            l2_engine_rpc: Some(l2_engine_rpc),
-            l2_engine_jwt_secret: None,
-            upgrade_signal_l1_rpc,
-        }
+        Self { l2_engine: Some(l2_engine), l2_engine_jwt_secret: None, upgrade_signal_l1_rpc }
     }
 }
 
@@ -511,14 +508,16 @@ impl ConsensusNodeArgs {
             da_batcher_sender_override: self.config.l1_rpc_args.l1_da_batcher_sender_override,
         };
 
-        let l2_engine_rpc = overrides
-            .l2_engine_rpc
-            .unwrap_or_else(|| self.config.l2_client_args.l2_engine_rpc.clone());
-        let jwt_secret = match overrides.l2_engine_jwt_secret {
-            Some(secret) => secret,
-            None => {
-                self.config.l2_client_args.resolve_jwt_secret_for_endpoint(&l2_engine_rpc).await?
+        let l2_endpoint = overrides.l2_engine.unwrap_or_else(|| {
+            EngineEndpoint::Url(self.config.l2_client_args.l2_engine_rpc.clone())
+        });
+        let jwt_secret = match (overrides.l2_engine_jwt_secret, &l2_endpoint) {
+            (Some(secret), _) => secret,
+            (None, EngineEndpoint::Url(url)) => {
+                self.config.l2_client_args.resolve_jwt_secret_for_endpoint(url).await?
             }
+            // The in-memory transport never sends the secret.
+            (None, EngineEndpoint::InMemory(_)) => JwtSecret::random(),
         };
 
         self.config.p2p_flags.check_ports()?;
@@ -539,7 +538,7 @@ impl ConsensusNodeArgs {
 
         let engine_config = EngineConfig {
             config: Arc::new(cfg.clone()),
-            l2_url: l2_engine_rpc,
+            l2_endpoint,
             l2_jwt_secret: jwt_secret,
             l1_url: self.config.l1_rpc_args.l1_eth_rpc.clone(),
             l1_rpc_timeout: self.config.l1_rpc_args.l1_rpc_timeout,
@@ -869,7 +868,7 @@ mod tests {
     #[test]
     fn embedded_execution_overrides_preserve_upgrade_signal_context() {
         let overrides = ConsensusNodeOverrides::embedded_execution(
-            Url::parse("http://localhost:8551").unwrap(),
+            EngineEndpoint::Url(Url::parse("http://localhost:8551").unwrap()),
             Some(Url::parse("http://localhost:8545").unwrap()),
         );
 
