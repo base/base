@@ -30,11 +30,6 @@ impl<B: ProverBackend> ProverService<B> {
         Self { config, backend, l1_header_cache: OnceLock::new() }
     }
 
-    /// Returns a reference to the prover configuration.
-    pub const fn config(&self) -> &ProverConfig {
-        &self.config
-    }
-
     /// Prove a single block.
     ///
     /// 1. Assembles [`HostConfig`] from static config + per-proof request
