@@ -27,6 +27,10 @@ pub enum EngineBuildError {
     /// The forkchoice update call to the engine api failed.
     #[error("Failed to build payload attributes in the engine. Forkchoice RPC error: {0}")]
     AttributesInsertionFailed(#[from] RpcError<TransportErrorKind>),
+    /// The engine rejected the payload attributes with the Engine API
+    /// `INVALID_PAYLOAD_ATTRIBUTES_ERROR` code.
+    #[error("Invalid payload attributes: {0}")]
+    InvalidPayloadAttributes(RpcError<TransportErrorKind>),
     /// The engine returned an invalid forkchoice state error.
     #[error("Invalid forkchoice state")]
     ForkchoiceStateInvalid,
@@ -71,6 +75,10 @@ impl EngineTaskError for BuildTaskError {
                 EngineTaskErrorSeverity::Flush
             }
             Self::EngineBuildError(EngineBuildError::AttributesInsertionFailed(_))
+            // Retried in place: the attributes may be locally built by the sequencer, and the EL
+            // also reports node-local payload job start failures with this code. Derived
+            // attributes get the Holocene deposits-only fallback in `ConsolidateTask` instead.
+            | Self::EngineBuildError(EngineBuildError::InvalidPayloadAttributes(_))
             | Self::EngineBuildError(EngineBuildError::UnexpectedPayloadStatus(_))
             | Self::EngineBuildError(EngineBuildError::MissingPayloadId)
             | Self::EngineBuildError(EngineBuildError::EngineSyncing) => {

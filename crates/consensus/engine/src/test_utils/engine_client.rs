@@ -14,6 +14,7 @@ use alloy_rpc_types_engine::{
 use alloy_rpc_types_eth::{Block, EIP1186AccountProofResponse, Transaction as EthTransaction};
 use alloy_transport::{TransportError, TransportErrorKind, TransportResult};
 use async_trait::async_trait;
+use base_common_consensus::DEPOSIT_TX_TYPE_ID;
 use base_common_genesis::RollupConfig;
 use base_common_network::{Base, BaseEngineApi};
 use base_common_rpc_types::Transaction as BaseTransaction;
@@ -84,6 +85,9 @@ pub struct MockEngineStorage {
     pub fork_choice_updated_v2_error: Option<ErrorPayload>,
     /// Error to return for `fork_choice_updated_v3` instead of a response.
     pub fork_choice_updated_v3_error: Option<ErrorPayload>,
+    /// Error to return for `fork_choice_updated_v3` only when the payload attributes carry a
+    /// non-deposit transaction, so their deposits-only form is still accepted.
+    pub fork_choice_updated_v3_non_deposit_attributes_error: Option<ErrorPayload>,
 
     // Version-specific get_payload responses
     /// Storage for execution payload envelope v2 responses.
@@ -223,6 +227,16 @@ impl MockEngineClientBuilder {
     /// Sets an error to return for `fork_choice_updated_v3`.
     pub fn with_fork_choice_updated_v3_error(mut self, error: ErrorPayload) -> Self {
         self.storage.fork_choice_updated_v3_error = Some(error);
+        self
+    }
+
+    /// Sets an error to return for `fork_choice_updated_v3` calls whose payload attributes carry a
+    /// non-deposit transaction.
+    pub fn with_fork_choice_updated_v3_non_deposit_attributes_error(
+        mut self,
+        error: ErrorPayload,
+    ) -> Self {
+        self.storage.fork_choice_updated_v3_non_deposit_attributes_error = Some(error);
         self
     }
 
@@ -649,6 +663,15 @@ impl BaseEngineApi for MockEngineClient {
             .fork_choice_updated_v3_requests
             .push((fork_choice_state, payload_attributes.is_some()));
         if let Some(error) = storage.fork_choice_updated_v3_error.clone() {
+            return Err(TransportError::ErrorResp(error));
+        }
+        let has_non_deposit_tx = payload_attributes
+            .as_ref()
+            .and_then(|attrs| attrs.transactions.as_ref())
+            .is_some_and(|txs| txs.iter().any(|tx| tx.first() != Some(&DEPOSIT_TX_TYPE_ID)));
+        if has_non_deposit_tx
+            && let Some(error) = storage.fork_choice_updated_v3_non_deposit_attributes_error.clone()
+        {
             return Err(TransportError::ErrorResp(error));
         }
         storage.fork_choice_updated_v3_response.clone().ok_or_else(|| {

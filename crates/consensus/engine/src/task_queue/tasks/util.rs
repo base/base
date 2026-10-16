@@ -55,3 +55,25 @@ pub(in crate::task_queue) async fn build_and_seal<EngineClient_: EngineClient>(
 
     Ok(())
 }
+
+/// Applies the Holocene fallback for derived attributes the execution layer rejected.
+///
+/// Builds and seals the deposits-only form of `attributes`. The returned error is always
+/// surfaced: [`SealTaskError::HoloceneInvalidFlush`] once the deposits-only block is imported,
+/// so the derivation pipeline flushes the rejected batch, or
+/// [`SealTaskError::DepositOnlyPayloadReattemptFailed`] if the deposits-only block also fails.
+pub(in crate::task_queue) async fn build_and_seal_deposits_only<EngineClient_: EngineClient>(
+    state: &mut EngineState,
+    engine: Arc<EngineClient_>,
+    cfg: Arc<RollupConfig>,
+    attributes: &AttributesWithParent,
+    payload_safety: InsertPayloadSafety,
+) -> SealTaskError {
+    match build_and_seal(state, engine, cfg, attributes.as_deposits_only(), payload_safety).await {
+        Ok(()) => {
+            info!(target: "engine", "Successfully imported deposits-only payload");
+            SealTaskError::HoloceneInvalidFlush
+        }
+        Err(_) => SealTaskError::DepositOnlyPayloadReattemptFailed,
+    }
+}

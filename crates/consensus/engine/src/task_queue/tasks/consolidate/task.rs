@@ -7,8 +7,10 @@ use base_common_genesis::RollupConfig;
 use base_protocol::{AttributesWithParent, L2BlockInfo};
 
 use crate::{
-    AttributesMatch, ConsolidateTaskError, EngineClient, EngineState, EngineTaskExt,
-    InsertPayloadSafety, SynchronizeTask, state::EngineSyncStateUpdate, task_queue::build_and_seal,
+    AttributesMatch, BuildTaskError, ConsolidateTaskError, EngineBuildError, EngineClient,
+    EngineState, EngineTaskExt, InsertPayloadSafety, SealTaskError, SynchronizeTask,
+    state::EngineSyncStateUpdate,
+    task_queue::{BuildAndSealError, build_and_seal, build_and_seal_deposits_only},
 };
 
 /// The [`ConsolidateTask`] attempts to consolidate the engine state using derived payload
@@ -34,20 +36,48 @@ impl<EngineClient_: EngineClient> ConsolidateTask<EngineClient_> {
     }
 
     /// Builds and seals the block of the derived attributes as safe.
+    ///
+    /// If the execution layer rejects the derived attributes as invalid, this applies the same
+    /// handling as an invalid built payload in [`crate::SealTask`]: deposits-only attributes are
+    /// a critical failure, and post-Holocene attributes are replaced by their deposits-only form.
     async fn build_and_seal_safe(
         &self,
         state: &mut EngineState,
     ) -> Result<(), ConsolidateTaskError> {
-        build_and_seal(
+        match build_and_seal(
             state,
             Arc::clone(&self.client),
             Arc::clone(&self.cfg),
             self.attributes.clone(),
             InsertPayloadSafety::Safe,
         )
-        .await?;
-
-        Ok(())
+        .await
+        {
+            Err(BuildAndSealError::Build(BuildTaskError::EngineBuildError(
+                EngineBuildError::InvalidPayloadAttributes(e),
+            ))) if self.attributes.is_deposits_only() => {
+                error!(target: "engine", error = %e, "Critical: Deposit-only payload attributes rejected");
+                Err(SealTaskError::DepositOnlyPayloadFailed.into())
+            }
+            Err(BuildAndSealError::Build(BuildTaskError::EngineBuildError(
+                EngineBuildError::InvalidPayloadAttributes(e),
+            ))) if self
+                .cfg
+                .is_holocene_active(self.attributes.attributes().payload_attributes.timestamp) =>
+            {
+                warn!(target: "engine", error = %e, "Re-attempting derived payload with deposits only");
+                Err(build_and_seal_deposits_only(
+                    state,
+                    Arc::clone(&self.client),
+                    Arc::clone(&self.cfg),
+                    &self.attributes,
+                    InsertPayloadSafety::Safe,
+                )
+                .await
+                .into())
+            }
+            res => Ok(res?),
+        }
     }
 
     /// If safe derivation is about to build on the current safe head, first check whether the EL

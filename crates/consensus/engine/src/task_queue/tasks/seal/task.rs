@@ -13,7 +13,7 @@ use super::SealTaskError;
 use crate::{
     Engine, EngineClient, EngineState, EngineTaskExt, InsertPayloadSafety, InsertTask,
     InsertTaskError::{self},
-    task_queue::build_and_seal,
+    task_queue::build_and_seal_deposits_only,
 };
 
 /// Task for block sealing and canonicalization.
@@ -84,25 +84,14 @@ impl<EngineClient_: EngineClient> SealTask<EngineClient_> {
             {
                 warn!(target: "engine", error = ?e, "Re-attempting payload import with deposits only.");
 
-                // HOLOCENE: Re-attempt payload import with deposits only
-                // First build the deposits-only payload, then seal it
-                let deposits_only_attrs = self.attributes.as_deposits_only();
-
-                return match build_and_seal(
+                return Err(build_and_seal_deposits_only(
                     state,
                     Arc::clone(&self.engine),
                     Arc::clone(&self.cfg),
-                    deposits_only_attrs.clone(),
+                    &self.attributes,
                     self.payload_safety,
                 )
-                .await
-                {
-                    Ok(_) => {
-                        info!(target: "engine", "Successfully imported deposits-only payload");
-                        Err(SealTaskError::HoloceneInvalidFlush)
-                    }
-                    Err(_) => Err(SealTaskError::DepositOnlyPayloadReattemptFailed),
-                };
+                .await);
             }
             Err(e) => {
                 error!(

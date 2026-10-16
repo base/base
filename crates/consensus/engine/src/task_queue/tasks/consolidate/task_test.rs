@@ -3,12 +3,18 @@
 use std::{sync::Arc, time::Duration};
 
 use alloy_eips::{BlockNumberOrTag, Encodable2718};
-use alloy_primitives::{B256, FixedBytes, b256};
-use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadId, PayloadStatus, PayloadStatusEnum};
+use alloy_json_rpc::ErrorPayload;
+use alloy_primitives::{Address, B256, Bloom, Bytes, FixedBytes, U256, b256};
+use alloy_rpc_types_engine::{
+    ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3, ForkchoiceUpdated,
+    INVALID_PAYLOAD_ATTRIBUTES_ERROR, PayloadId, PayloadStatus, PayloadStatusEnum,
+};
 use alloy_rpc_types_eth::{Block as RpcBlock, BlockTransactions};
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types::Transaction as BaseTransaction;
-use base_protocol::{BlockInfo, L1BlockInfoBedrock, L2BlockInfo};
+use base_common_rpc_types_engine::BaseExecutionPayloadEnvelopeV3;
+use base_protocol::{AttributesWithParent, BlockInfo, L1BlockInfoBedrock, L2BlockInfo};
+use rstest::rstest;
 use tokio::{sync::watch, time::timeout};
 
 use crate::{
@@ -16,8 +22,9 @@ use crate::{
     EngineTaskErrorSeverity, EngineTaskExt, SynchronizeTask,
     state::EngineSyncStateUpdate,
     test_utils::{
-        TestAttributesBuilder, TestEngineStateBuilder, encoded_l1_info_deposit_tx,
-        l1_info_deposit_tx, matching_rpc_block, rpc_transaction, test_engine_client_builder,
+        MockEngineStorage, TestAttributesBuilder, TestEngineStateBuilder,
+        encoded_l1_info_deposit_tx, l1_info_deposit_tx, matching_rpc_block, rpc_transaction,
+        test_engine_client_builder,
     },
 };
 
@@ -373,6 +380,174 @@ async fn consolidate_reconciles_unadvanced_unsafe_before_last_span_safe_attribut
             .all(|(_, has_attrs)| !has_attrs),
         "span-ending safe reconciliation must not start a stale FCU-with-attributes build"
     );
+}
+
+fn rpc_error(code: i32) -> ErrorPayload {
+    ErrorPayload { code: code.into(), message: "rejected".into(), data: None }
+}
+
+fn holocene_config() -> RollupConfig {
+    let mut cfg = RollupConfig::default();
+    cfg.upgrades.holocene_time = Some(0);
+    cfg
+}
+
+/// Derived attributes carrying the L1 info deposit followed by a user transaction.
+fn derived_attributes_with_user_tx(parent: L2BlockInfo) -> AttributesWithParent {
+    TestAttributesBuilder::new()
+        .with_parent(parent)
+        .with_transactions(vec![
+            encoded_l1_info_deposit_tx(L1BlockInfoBedrock::default()),
+            Bytes::from_static(&[0x02, 0xc0]),
+        ])
+        .build()
+}
+
+/// The payload the EL builds from the deposits-only form of `attributes`.
+fn deposits_only_payload(attributes: &AttributesWithParent) -> BaseExecutionPayloadEnvelopeV3 {
+    BaseExecutionPayloadEnvelopeV3 {
+        execution_payload: ExecutionPayloadV3 {
+            payload_inner: ExecutionPayloadV2 {
+                payload_inner: ExecutionPayloadV1 {
+                    parent_hash: attributes.parent.block_info.hash,
+                    fee_recipient: Address::ZERO,
+                    state_root: B256::ZERO,
+                    receipts_root: B256::ZERO,
+                    logs_bloom: Bloom::ZERO,
+                    prev_randao: attributes.attributes().payload_attributes.prev_randao,
+                    block_number: attributes.block_number(),
+                    gas_limit: 30_000_000,
+                    gas_used: 0,
+                    timestamp: attributes.attributes().payload_attributes.timestamp,
+                    extra_data: Default::default(),
+                    base_fee_per_gas: U256::ZERO,
+                    block_hash: B256::ZERO,
+                    transactions: vec![encoded_l1_info_deposit_tx(L1BlockInfoBedrock::default())],
+                },
+                withdrawals: vec![],
+            },
+            blob_gas_used: 0,
+            excess_blob_gas: 0,
+        },
+        block_value: U256::ZERO,
+        blobs_bundle: Default::default(),
+        should_override_builder: false,
+        parent_beacon_block_root: B256::ZERO,
+    }
+}
+
+fn attribute_fcu_count(requests: &MockEngineStorage) -> usize {
+    requests.fork_choice_updated_v3_requests.iter().filter(|(_, has_attrs)| *has_attrs).count()
+}
+
+/// Post-Holocene, derived attributes the EL rejects as invalid are replaced by their
+/// deposits-only form, which is sealed as the safe block before derivation is flushed.
+#[tokio::test]
+async fn invalid_derived_attributes_post_holocene_seal_deposits_only_block_and_flush() {
+    let parent = crate::test_utils::test_block_info(0);
+    let attributes = derived_attributes_with_user_tx(parent);
+    let client = Arc::new(
+        test_engine_client_builder()
+            .with_fork_choice_updated_v3_non_deposit_attributes_error(rpc_error(
+                INVALID_PAYLOAD_ATTRIBUTES_ERROR,
+            ))
+            .with_fork_choice_updated_v3_response(valid_build_fcu())
+            .with_execution_payload_v3(deposits_only_payload(&attributes))
+            .with_new_payload_v3_response(PayloadStatus {
+                status: PayloadStatusEnum::Valid,
+                latest_valid_hash: None,
+            })
+            .build(),
+    );
+    let mut state = TestEngineStateBuilder::new()
+        .with_unsafe_head(parent)
+        .with_safe_head(parent)
+        .with_finalized_head(parent)
+        .build();
+
+    let err = ConsolidateTask::new(Arc::clone(&client), Arc::new(holocene_config()), attributes)
+        .execute(&mut state)
+        .await
+        .expect_err("rejected derived attributes must flush derivation");
+
+    assert_eq!(err.severity(), EngineTaskErrorSeverity::Flush);
+    assert_eq!(state.sync_state.safe_head().block_info.number, 1);
+    assert_eq!(state.sync_state.safe_head().block_info.parent_hash, parent.block_info.hash);
+    assert_eq!(attribute_fcu_count(&*client.storage().read().await), 2);
+}
+
+/// Deposits-only derived attributes have no further fallback, so their rejection is fatal.
+#[tokio::test]
+async fn invalid_deposits_only_derived_attributes_are_critical() {
+    let parent = crate::test_utils::test_block_info(0);
+    let attributes = TestAttributesBuilder::new()
+        .with_parent(parent)
+        .with_transactions(vec![encoded_l1_info_deposit_tx(L1BlockInfoBedrock::default())])
+        .build();
+    let client = Arc::new(
+        test_engine_client_builder()
+            .with_fork_choice_updated_v3_error(rpc_error(INVALID_PAYLOAD_ATTRIBUTES_ERROR))
+            .build(),
+    );
+    let mut state = TestEngineStateBuilder::new()
+        .with_unsafe_head(parent)
+        .with_safe_head(parent)
+        .with_finalized_head(parent)
+        .build();
+
+    let err = ConsolidateTask::new(Arc::clone(&client), Arc::new(holocene_config()), attributes)
+        .execute(&mut state)
+        .await
+        .expect_err("rejected deposits-only attributes must fail");
+
+    assert_eq!(err.severity(), EngineTaskErrorSeverity::Critical);
+    assert_eq!(attribute_fcu_count(&*client.storage().read().await), 1);
+}
+
+/// Other build RPC failures, and invalid attributes before Holocene, are retried in place
+/// without a deposits-only rebuild.
+#[rstest]
+#[case::unknown_payload(-38001, holocene_config())]
+#[case::internal_error(-32603, holocene_config())]
+#[case::invalid_attributes_pre_holocene(INVALID_PAYLOAD_ATTRIBUTES_ERROR, RollupConfig::default())]
+#[tokio::test]
+async fn other_derived_build_rpc_errors_stay_temporary(
+    #[case] code: i32,
+    #[case] cfg: RollupConfig,
+) {
+    let parent = crate::test_utils::test_block_info(0);
+    let client = Arc::new(
+        test_engine_client_builder()
+            .with_fork_choice_updated_v2_error(rpc_error(code))
+            .with_fork_choice_updated_v3_error(rpc_error(code))
+            .build(),
+    );
+    let mut state = TestEngineStateBuilder::new()
+        .with_unsafe_head(parent)
+        .with_safe_head(parent)
+        .with_finalized_head(parent)
+        .build();
+
+    let err = ConsolidateTask::new(
+        Arc::clone(&client),
+        Arc::new(cfg),
+        derived_attributes_with_user_tx(parent),
+    )
+    .execute(&mut state)
+    .await
+    .expect_err("build must fail");
+
+    assert_eq!(err.severity(), EngineTaskErrorSeverity::Temporary);
+    let storage = client.storage();
+    let requests = storage.read().await;
+    let attribute_fcus = attribute_fcu_count(&requests)
+        + requests
+            .fork_choice_updated_v2_requests
+            .iter()
+            .filter(|(_, has_attrs)| *has_attrs)
+            .count();
+    assert_eq!(attribute_fcus, 1, "no deposits-only rebuild may be attempted");
+    assert_eq!(state.sync_state.safe_head(), parent);
 }
 
 #[tokio::test]
