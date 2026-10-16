@@ -607,8 +607,8 @@ summary = "Health utilities: a healthz JSON-RPC method (HealthzRpc) for jsonrpse
 digest = "b842a480e4"
 
 ["crates/utilities/jwt/README.md"]
-summary = "JWT secret handling for Base nodes: loading, generating and resolving secrets (file, encoded, default) and optionally validating them against an Engine API via the engine-validation feature."
-digest = "826664fe2d"
+summary = "JwtSecretReader reads, writes, generates and resolves JWT secrets for Base nodes. JwtValidator optionally validates secrets against an Engine API with the engine-validation feature."
+digest = "8054bcba99"
 
 ["crates/utilities/l1-head/README.md"]
 summary = "One-line crate description: shared L1 head calculation helpers for proof services. No usage details in the README."
