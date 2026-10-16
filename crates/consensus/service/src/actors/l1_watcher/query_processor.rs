@@ -32,19 +32,6 @@ where
     derivation_origin: watch::Receiver<Option<BlockInfo>>,
 }
 
-impl<L1Provider> Clone for L1WatcherQueryExecutor<L1Provider>
-where
-    L1Provider: L1BlockFetcher,
-{
-    fn clone(&self) -> Self {
-        Self {
-            rollup_config: Arc::clone(&self.rollup_config),
-            l1_provider: Arc::clone(&self.l1_provider),
-            derivation_origin: self.derivation_origin.clone(),
-        }
-    }
-}
-
 impl<L1Provider> L1WatcherQueryExecutor<L1Provider>
 where
     L1Provider: L1BlockFetcher,
