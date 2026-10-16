@@ -40,36 +40,6 @@ impl ZkHostConfig {
         Self::new(worker_id, vec![ZkVm::Sp1])
     }
 
-    /// Returns the worker identifier used for prover-service claims.
-    pub fn worker_id(&self) -> &str {
-        &self.worker_id
-    }
-
-    /// Returns the ZK VMs claimed by the worker.
-    pub fn zk_vms(&self) -> &[ZkVm] {
-        &self.zk_vms
-    }
-
-    /// Returns the heartbeat settings used while proofs are generated.
-    pub const fn proof_generator_heartbeat(&self) -> ProofGeneratorHeartbeatConfig {
-        self.proof_generator_heartbeat
-    }
-
-    /// Returns the configured delay after empty or failed discovery attempts.
-    pub const fn job_discovery_poll_interval(&self) -> Duration {
-        self.job_discovery_poll_interval
-    }
-
-    /// Returns the requested claim lock duration in seconds.
-    pub const fn job_discovery_lock_duration_seconds(&self) -> u32 {
-        self.job_discovery_lock_duration_seconds
-    }
-
-    /// Returns the maximum number of claimed proof jobs generated concurrently.
-    pub const fn job_discovery_max_concurrent_jobs(&self) -> usize {
-        self.job_discovery_max_concurrent_jobs
-    }
-
     /// Sets the delay after empty or failed discovery attempts.
     #[must_use]
     pub const fn with_job_discovery_poll_interval(
@@ -128,11 +98,6 @@ impl<Client> ZkHost<Client> {
     ) -> Self {
         assert!(!provers.is_empty(), "ZK host requires at least one prover backend");
         Self { client, provers, config }
-    }
-
-    /// Returns the host config.
-    pub const fn config(&self) -> &ZkHostConfig {
-        &self.config
     }
 }
 
