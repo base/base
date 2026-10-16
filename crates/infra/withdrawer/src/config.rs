@@ -7,7 +7,8 @@ use std::{
 use alloy_primitives::{Address, B256};
 use clap::{
     Arg, ArgGroup, ArgMatches, Args, Command, CommandFactory, FromArgMatches, Parser,
-    builder::TypedValueParser, error::ErrorKind,
+    builder::TypedValueParser,
+    error::{ContextKind, ErrorKind},
 };
 use coins_bip32::path::DerivationPath;
 use coins_bip39::{English, Mnemonic};
@@ -26,11 +27,15 @@ impl TypedValueParser for RpcUrlValueParser {
     fn parse_ref(
         &self,
         _cmd: &Command,
-        _arg: Option<&Arg>,
+        arg: Option<&Arg>,
         value: &OsStr,
     ) -> Result<Self::Value, clap::Error> {
         value.to_str().and_then(|value| Url::parse(value).ok()).ok_or_else(|| {
-            clap::Error::raw(ErrorKind::ValueValidation, "invalid RPC URL; check its format")
+            let message = arg.and_then(Arg::get_long).map_or_else(
+                || "invalid RPC URL; check its format".to_owned(),
+                |flag| format!("invalid RPC URL for --{flag}; check its format"),
+            );
+            clap::Error::raw(ErrorKind::ValueValidation, message)
         })
     }
 }
@@ -111,32 +116,28 @@ pub struct WithdrawerArgs {
 }
 
 impl WithdrawerArgs {
-    /// Parses arguments without echoing tokens when signing secrets are present.
+    /// Parses arguments without echoing values that may contain secrets or RPC credentials.
     pub fn parse_matches<I, T>(command: Command, itr: I) -> Result<ArgMatches, clap::Error>
     where
         I: IntoIterator<Item = T>,
         T: Into<OsString> + Clone,
     {
-        let args = itr.into_iter().map(Into::into).collect::<Vec<OsString>>();
-        let has_secret = args.iter().any(|arg| {
-            arg == "--mnemonic"
-                || arg == "--private-key"
-                || arg.as_encoded_bytes().starts_with(b"--mnemonic=")
-                || arg.as_encoded_bytes().starts_with(b"--private-key=")
-        });
-        command.try_get_matches_from(args).map_err(|error| {
-            if has_secret
-                && matches!(
-                    error.kind(),
-                    ErrorKind::UnknownArgument
-                        | ErrorKind::InvalidSubcommand
-                        | ErrorKind::InvalidValue
-                        | ErrorKind::ValueValidation
-                        | ErrorKind::TooManyValues
-                        | ErrorKind::InvalidUtf8
-                )
+        command.try_get_matches_from(itr).map_err(|error| {
+            // Redacting value parsers return raw errors without rejected-value context.
+            if matches!(
+                error.kind(),
+                ErrorKind::UnknownArgument
+                    | ErrorKind::InvalidSubcommand
+                    | ErrorKind::InvalidValue
+                    | ErrorKind::TooManyValues
+                    | ErrorKind::InvalidUtf8
+            ) || (error.kind() == ErrorKind::ValueValidation
+                && error.get(ContextKind::InvalidValue).is_some())
             {
-                clap::Error::raw(error.kind(), "invalid arguments; signing secrets are redacted")
+                clap::Error::raw(
+                    error.kind(),
+                    "invalid arguments; potentially sensitive values are redacted",
+                )
             } else {
                 error
             }
@@ -211,7 +212,7 @@ impl CommandFactory for WithdrawerArgs {
     }
 }
 
-// clap can echo stray secret words before any value parser gets to redact them.
+// clap can echo stray secrets and RPC URLs before any value parser can redact them.
 impl Parser for WithdrawerArgs {
     fn parse() -> Self {
         Self::parse_from(env::args_os())
@@ -591,12 +592,26 @@ mod tests {
             if flag == "--l1-rpc-url" {
                 argv.remove(1);
             }
-            argv.extend([flag.into(), "https://user:example-password@".into()]);
+            let value = "https://user:example-password@";
+            argv.extend([flag.into(), value.into()]);
             let error = WithdrawerArgs::try_parse_from(argv).unwrap_err();
             assert_eq!(error.kind(), ErrorKind::ValueValidation);
             let diagnostic = format!("{error} {error:?}");
             assert!(diagnostic.contains("invalid RPC URL"));
+            assert!(diagnostic.contains(flag));
+            assert!(!diagnostic.contains(value));
             assert!(!diagnostic.contains("example-password"), "credentials leaked: {diagnostic}");
+        }
+    }
+
+    #[test]
+    fn stray_rpc_urls_do_not_echo_credentials_without_signing_flags() {
+        let error = args(&["https://user:example-password@l2.example"]).unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::UnknownArgument);
+        let diagnostic = format!("{error} {error:?}");
+        assert!(diagnostic.contains("potentially sensitive values are redacted"));
+        for credential in ["user", "example-password"] {
+            assert!(!diagnostic.contains(credential), "credentials leaked: {diagnostic}");
         }
     }
 
@@ -838,7 +853,7 @@ mod tests {
         };
         assert_eq!(path.derivation_string(), "m/1");
         let unknown = args(&["--unknown-without-secret"]).unwrap_err().to_string();
-        assert!(unknown.contains("--unknown-without-secret"));
+        assert!(unknown.contains("potentially sensitive values are redacted"));
         let conflict = args(&[&format!("--private-key={KEY}"), &format!("--mnemonic={PHRASE}")])
             .unwrap_err()
             .to_string();
