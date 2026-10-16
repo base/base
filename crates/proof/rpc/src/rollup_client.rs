@@ -118,11 +118,6 @@ impl RollupClient {
         Ok(Self { provider, output_cache, retry_config: config.retry_config })
     }
 
-    /// Returns the output-at-block cache.
-    pub const fn output_cache(&self) -> &MeteredCache<u64, OutputAtBlock> {
-        &self.output_cache
-    }
-
     async fn request_output_at_block(&self, block_number: u64) -> RpcResult<OutputAtBlock> {
         let backoff = self.retry_config.to_backoff_builder();
 

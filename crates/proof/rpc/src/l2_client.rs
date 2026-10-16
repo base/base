@@ -163,31 +163,6 @@ impl L2Client {
             retry_config: config.retry_config,
         })
     }
-
-    /// Returns the blocks cache.
-    pub const fn blocks_cache(&self) -> &MeteredCache<B256, BaseBlock> {
-        &self.blocks_cache
-    }
-
-    /// Returns the headers cache.
-    pub const fn headers_cache(&self) -> &MeteredCache<B256, BaseHeader> {
-        &self.headers_cache
-    }
-
-    /// Returns the proofs cache.
-    pub const fn proofs_cache(&self) -> &MeteredCache<ProofCacheKey, EIP1186AccountProofResponse> {
-        &self.proofs_cache
-    }
-
-    /// Returns a reference to the underlying provider.
-    pub const fn provider(&self) -> &L2HttpProvider {
-        &self.provider
-    }
-
-    /// Returns a reference to the retry configuration.
-    pub const fn retry_config(&self) -> &RetryConfig {
-        &self.retry_config
-    }
 }
 
 #[async_trait]
