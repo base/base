@@ -83,7 +83,7 @@ jobs:
           - fork: Denim
             key: denim
             upgrade: denim
-            base_std_ref: 7321d891c9039040b5dad7248618de6fe5973661
+            base_std_ref: 3820cf0d260a2d7b0fdd8f580ab4942fc7856fbb
     env:
       FORK_NAME: ${{ matrix.fork }}
       FORK_KEY: ${{ matrix.key }}
