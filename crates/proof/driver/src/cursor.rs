@@ -1,7 +1,7 @@
 //! Contains the cursor for the derivation pipeline.
 //!
 //! This module provides the [`PipelineCursor`] which tracks the state of the derivation
-//! pipeline including L1 origins, L2 safe heads, and caching for efficient reorg handling.
+//! pipeline, including its current L1 origin and L2 safe head.
 
 use alloc::collections::{btree_map::BTreeMap, vec_deque::VecDeque};
 
@@ -12,14 +12,13 @@ use crate::TipCursor;
 
 /// A cursor that tracks the derivation pipeline state and progress.
 ///
-/// The [`PipelineCursor`] maintains a cache of recent L1 origins and their corresponding
-/// L2 tips to efficiently handle reorgs and provide quick access to recent derivation
-/// state. It implements a capacity-bounded LRU cache to prevent unbounded memory growth.
+/// The [`PipelineCursor`] maintains a capacity-bounded map of recent L1 origins to
+/// their corresponding L2 tips.
 #[derive(Debug, Clone)]
 pub struct PipelineCursor {
     /// The maximum number of cached L1/L2 mappings before evicting old entries.
     pub capacity: usize,
-    /// The channel timeout in blocks used for reorg recovery calculations.
+    /// The channel timeout in blocks used to size the initial cache capacity.
     pub channel_timeout: u64,
     /// The current L1 origin block that the pipeline is processing.
     pub origin: BlockInfo,
@@ -34,9 +33,6 @@ pub struct PipelineCursor {
 impl PipelineCursor {
     /// Creates a new pipeline cursor with the specified channel timeout and initial origin.
     pub fn new(channel_timeout: u64, origin: BlockInfo) -> Self {
-        // NOTE: capacity must be greater than the `channel_timeout` to allow
-        // for derivation to proceed through a deep reorg.
-        // Ref: <https://specs.base.org/protocol/consensus/derivation#timeouts>
         let capacity = channel_timeout as usize + 5;
 
         let mut origins = VecDeque::with_capacity(capacity);
