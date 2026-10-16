@@ -107,6 +107,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn accessors_return_constructor_arguments() {
+        let attributes =
+            BasePayloadAttributes { gas_limit: Some(30_000_000), ..Default::default() };
+        let parent = L2BlockInfo {
+            block_info: BlockInfo { number: 7, ..Default::default() },
+            ..Default::default()
+        };
+        let origin = BlockInfo { number: 42, timestamp: 1_000, ..Default::default() };
+        let awp = AttributesWithParent::new(attributes.clone(), parent, Some(origin), true);
+
+        assert_eq!(awp.attributes(), &attributes);
+        assert_eq!(awp.parent(), &parent);
+        assert_eq!(awp.derived_from(), Some(&origin));
+        assert!(awp.is_last_in_span());
+    }
+
+    #[test]
     fn count_transactions_counts_undecodable_entries() {
         let attributes = BasePayloadAttributes {
             transactions: Some(vec![vec![OpTxType::Deposit as u8, 0xaa].into(), vec![0xff].into()]),
