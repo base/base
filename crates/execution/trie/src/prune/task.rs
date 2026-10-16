@@ -10,11 +10,10 @@ use tracing::{info, warn};
 
 use crate::{BaseProofsStorage, BaseProofsStore, prune::BaseProofStoragePruner};
 
-/// Number of blocks pruned per MDBX write transaction.
-///
-/// Each batch uses its own write transaction. Batching amortizes page allocation,
-/// freelist management, and commit fsync costs while keeping per-transaction dirty-page
-/// sets and free-page reclamation lag bounded.
+/// Maximum number of blocks pruned per storage commit.
+/// Each batch commits separately, as one MDBX write transaction or one RocksDB write batch.
+/// Batching amortizes per-commit overhead, including synced writes, while bounding
+/// the number of blocks in each commit's write set.
 const PRUNE_BATCH_SIZE: u64 = 2000;
 
 /// Periodic pruner task: constructs the pruner and runs it every interval.
