@@ -7,7 +7,8 @@ pub use contracts::{
 
 mod config;
 pub use config::{
-    ConfigError, Fees, RpcUrlValueParser, SignerSource, WithdrawerArgs, WithdrawerConfig,
+    ConfigError, Fees, HdPathValueParser, RpcUrlValueParser, SignerSource, WithdrawerArgs,
+    WithdrawerConfig,
 };
 
 mod network;

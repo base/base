@@ -46,6 +46,33 @@ impl TypedValueParser for RpcUrlValueParser {
     }
 }
 
+/// Parses derivation paths with fixed error reasons and no rejected values in clap errors.
+#[derive(Debug, Clone)]
+pub struct HdPathValueParser;
+
+impl TypedValueParser for HdPathValueParser {
+    type Value = DerivationPath;
+
+    fn parse_ref(
+        &self,
+        _cmd: &Command,
+        arg: Option<&Arg>,
+        value: &OsStr,
+    ) -> Result<Self::Value, clap::Error> {
+        value
+            .to_str()
+            .ok_or("invalid derivation path")
+            .and_then(WithdrawerArgs::parse_hd_path)
+            .map_err(|reason| {
+                let message = arg.and_then(Arg::get_long).map_or_else(
+                    || format!("invalid derivation path: {reason}"),
+                    |flag| format!("invalid derivation path for --{flag}: {reason}"),
+                );
+                clap::Error::raw(ErrorKind::ValueValidation, message)
+            })
+    }
+}
+
 /// Command-line withdrawal settings before cross-field validation.
 #[derive(Debug, Clone, Args)]
 #[command(name = "withdrawer")]
@@ -87,7 +114,7 @@ pub struct WithdrawerArgs {
     #[arg(long, group = "signer")]
     pub ledger: bool,
     /// Mnemonic or Ledger derivation path.
-    #[arg(long, default_value = "m/44'/60'/0'/0/0", conflicts_with = "private_key", value_parser = Self::parse_hd_path)]
+    #[arg(long, default_value = "m/44'/60'/0'/0/0", conflicts_with = "private_key", value_parser = HdPathValueParser)]
     pub hd_path: DerivationPath,
     /// Explicit gas limit, bypassing estimation.
     #[arg(long, conflicts_with = "gas_multiplier", value_parser = clap::value_parser!(u64).range(1..))]
@@ -122,7 +149,7 @@ pub struct WithdrawerArgs {
 }
 
 impl WithdrawerArgs {
-    /// Parses arguments with safe flag names and RPC URL reasons, without echoing rejected values.
+    /// Parses arguments with safe flag names and reasons, without echoing rejected values.
     pub fn parse_matches<I, T>(command: Command, itr: I) -> Result<ArgMatches, clap::Error>
     where
         I: IntoIterator<Item = T>,
@@ -622,16 +649,25 @@ mod tests {
 
     #[test]
     fn invalid_values_name_flags_without_echoing_values() {
-        for (flag, value, kind) in [
-            ("--network", "base-mainet", ErrorKind::InvalidValue),
-            ("--timeout", "bogus", ErrorKind::ValueValidation),
-            ("--private-key", "private-secret-not-hex", ErrorKind::ValueValidation),
+        for (flag, value, kind, reason) in [
+            ("--network", "base-mainet", ErrorKind::InvalidValue, None),
+            ("--timeout", "bogus", ErrorKind::ValueValidation, None),
+            ("--private-key", "private-secret-not-hex", ErrorKind::ValueValidation, None),
+            (
+                "--hd-path",
+                "m/2147483648",
+                ErrorKind::ValueValidation,
+                Some("derivation path indices must be between 0 and 2147483647"),
+            ),
         ] {
             let error = args(&[flag, value]).unwrap_err();
             assert_eq!(error.kind(), kind);
             let diagnostic = format!("{error} {error:?}");
             assert!(diagnostic.contains(flag), "missing flag: {diagnostic}");
             assert!(!diagnostic.contains(value), "rejected value leaked: {diagnostic}");
+            if let Some(reason) = reason {
+                assert!(diagnostic.contains(reason), "missing reason: {diagnostic}");
+            }
         }
     }
 
