@@ -260,6 +260,9 @@ fn test_unwind_history_comprehensive<S: BaseProofsStore + BaseProofsInitialState
 
     let mut post_state_3 = HashedPostState::default();
     post_state_3.accounts.insert(account_1, Some(Account { nonce: 9, ..Default::default() }));
+    let mut storage_3 = HashedStorage::default();
+    storage_3.storage.insert(slot_2, U256::from(3333));
+    post_state_3.storages.insert(account_2, storage_3);
 
     storage.store_trie_updates(
         block_1,
