@@ -7,8 +7,8 @@ EVM configuration and execution for Base.
 Orchestrates EVM block execution for Base chains. The `BaseEvmConfig` type implements Reth's
 `ConfigureEvm` and `ConfigureEngineEvm` traits, constructing upgrade-aware execution environments
 by mapping timestamps to `SpecId` values and building the correct EVM context for each block.
-Also provides `BaseEvmEnvBuilder`, `BaseBlockAssembler`, L1 block info parsing via
-`extract_l1_info` and `RethL1BlockInfo`, `BaseRethReceiptBuilder`, and crate-specific error types.
+Also provides `BaseEvmEnvBuilder`, `BaseBlockAssembler`, L1 block info parsing via `extract_l1_info`,
+L1 data-fee calculation via `RethL1BlockInfo`, `BaseRethReceiptBuilder`, and crate-specific error types.
 
 ## Usage
 

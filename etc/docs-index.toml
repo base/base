@@ -347,8 +347,8 @@ summary = "Native EIP-8130 account abstraction validation: enshrined authenticat
 digest = "314b8c4376"
 
 ["crates/execution/evm/README.md"]
-summary = "Covers BaseEvmConfig setup for upgrade-aware EVM execution, plus block assembly, L1 block info parsing, receipt building, and crate error types."
-digest = "a3a0d7dbf0"
+summary = "BaseEvmConfig setup, block assembly, L1 info parsing and data-fee calculation, receipt building, and error types. Use when changing Base EVM setup or fork specs."
+digest = "8f433c0ac9"
 
 ["crates/execution/exex/README.md"]
 summary = "Proofs-history ExEx: versioned MDBX trie store serving historical eth_getProof without OOM, with pruner, debug_proofsSyncStatus, prune/unwind commands, metrics. Use to operate or debug proofs history."
