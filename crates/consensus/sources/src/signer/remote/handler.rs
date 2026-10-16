@@ -92,14 +92,8 @@ impl RemoteSignerHandler {
         };
 
         // Make JSON-RPC call to the custom method
-        let response: SignResponse = {
-            self.client
-                .read()
-                .await
-                .request("opsigner_signBlockPayload", &params)
-                .await
-                .map_err(RemoteSignerError::SigningRPCError)?
-        };
+        let response: SignResponse =
+            self.client.read().await.request("opsigner_signBlockPayload", &params).await?;
 
         // Parse the hex signature
         let signature_bytes =
@@ -110,9 +104,6 @@ impl RemoteSignerHandler {
             return Err(RemoteSignerError::InvalidSignatureLength(signature_bytes.len()));
         }
 
-        let signature = Signature::from_raw(signature_bytes.as_slice())
-            .map_err(RemoteSignerError::SignatureError)?;
-
-        Ok(signature)
+        Ok(Signature::from_raw(signature_bytes.as_slice())?)
     }
 }
