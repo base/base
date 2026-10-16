@@ -374,6 +374,10 @@ digest = "ff413936ff"
 summary = "base-node-core: core Base execution node types and builders (BaseEngineTypes, BaseEngineApiBuilder) wiring engine, RPC and payload subsystems. Use when assembling or modifying the node."
 digest = "7df2c6bbab"
 
+["crates/execution/payer-rpc/README.md"]
+summary = "Proxies ERC-8168 payer_getTerms and payer_sendTransaction to the sequencer or --rollup.payer. Rejects pre-Everest requests. --rollup.payer-cache stores one shared getTerms catalog."
+digest = "6c3e55d17c"
+
 ["crates/execution/payload/README.md"]
 summary = "Payload builder crate: BasePayloadBuilder assembles payloads from pool and CL attributes, BaseExecutionPayloadValidator checks them, BaseDAConfig provides DA config for fee calculation."
 digest = "61927fc218"
