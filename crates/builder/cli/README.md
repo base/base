@@ -33,11 +33,11 @@ error `-32050` (`not_recorded`) instead of a classification.
 - **Memory:** the in-process queue holds at most `DEFAULT_VALIDITY_METADATA_QUEUE_CAPACITY`
   (1,024) records, a count limit rather than a byte limit. Each record holds one 32-byte hash per
   committed validity transaction, so its size is bounded by the block's transaction count; for
-  example, a 30M-gas block holds at most about 1,430 transactions (about 45 KiB of hashes). The
-  65,536-hash (about 2 MiB) per-record limit is checked only by the writer, which drops larger
-  records as invalid; it does not cap memory before enqueue. A full queue of maximum-size records
-  would therefore occupy about 2 GiB plus allocation overhead, and the writer holds up to 64
-  dequeued records per batch on top of that.
+  example, a 30M-gas block holds at most about 1,430 transactions (about 45 kibibytes of hashes).
+  The 65,536-hash (about 2 mebibytes) per-record limit is checked only by the writer, which drops
+  larger records as invalid; it does not cap memory before enqueue. A full queue of maximum-size
+  records would therefore occupy about 2 gibibytes plus allocation overhead, and the writer holds
+  up to 64 dequeued records per batch on top of that.
 - **History prerequisites:** lookups use the transaction-hash index and block body indices;
   transactions whose lookup entry or body was pruned return `null` even when metadata was recorded.
   The startup warning checks only the prune settings from command-line flags (for example
@@ -67,4 +67,3 @@ transactions, receipts or block data.
 - **Trust:** both report the producer's classification. Neither proves that a transaction's
   private predicates held; the RPC adds trust in the producer's local storage, while a marker would
   at least be committed to consensus data that every node agrees on.
-

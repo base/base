@@ -176,7 +176,7 @@ digest = "04c3f5864b"
 
 ["crates/builder/cli/README.md"]
 summary = "base-builder-cli args plus --builder.validity-metadata.path: coverage, failures, lifecycle, retention, queue memory, CLI-only prune warning, routing, and RPC vs protocol-marker design."
-digest = "077778a4c5"
+digest = "b8a542b754"
 
 ["crates/builder/core/README.md"]
 summary = "base-builder-core: flashblocks payload builder library producing sub-second block chunks, with launcher and metering trait modules, cargo features, and usage."
