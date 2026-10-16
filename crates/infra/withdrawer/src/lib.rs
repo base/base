@@ -15,6 +15,9 @@ pub use transport::WithdrawalRpcTransport;
 mod signer;
 pub use signer::{WithdrawalSigner, WithdrawalSignerError};
 
+mod transaction;
+pub use transaction::{PreparedWithdrawalTransaction, WithdrawalTransactionError};
+
 mod secret;
 pub use secret::{Secret, SecretValueParser};
 
