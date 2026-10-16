@@ -429,6 +429,7 @@ mod tests {
     use alloy_primitives::{Address, LogData, U256, address};
     use alloy_sol_types::SolEvent;
     use base_precompile_storage::{BasePrecompileError, Result};
+    use rstest::rstest;
 
     use crate::{
         IPolicyRegistry, IPolicyRegistry::PolicyType, PolicyAccounting, PolicyRegistryLogic,
@@ -765,14 +766,6 @@ mod tests {
         assert!(!is_authorized(&rt, id, ALICE));
     }
 
-    #[test]
-    fn update_allowlist_on_blocklist_policy_reverts() {
-        let mut rt = initialized();
-        let id = create_blocklist(&mut rt);
-        let err = LOGIC.update_allowlist(&mut rt, id, true, vec![ALICE]).unwrap_err();
-        assert!(matches!(err, BasePrecompileError::Revert(_)));
-    }
-
     // --- BLOCKLIST membership ---
 
     #[test]
@@ -793,14 +786,6 @@ mod tests {
     }
 
     #[test]
-    fn update_blocklist_on_allowlist_policy_reverts() {
-        let mut rt = initialized();
-        let id = create_allowlist(&mut rt);
-        let err = LOGIC.update_blocklist(&mut rt, id, true, vec![ALICE]).unwrap_err();
-        assert!(matches!(err, BasePrecompileError::Revert(_)));
-    }
-
-    #[test]
     fn update_blocklist_too_many_accounts_reverts() {
         let mut rt = initialized();
         let id = create_blocklist(&mut rt);
@@ -812,15 +797,6 @@ mod tests {
                 maxBatchSize: U256::from(PolicyRegistryV1::MAX_ACCOUNTS_PER_BATCH),
             })
         );
-    }
-
-    #[test]
-    fn update_allowlist_on_blocklist_policy_by_non_admin_reverts_with_incompatible_type() {
-        let mut rt = initialized();
-        let id = create_blocklist(&mut rt);
-        set_caller(&mut rt, ALICE);
-        let err = LOGIC.update_allowlist(&mut rt, id, true, vec![BOB]).unwrap_err();
-        assert_eq!(err, BasePrecompileError::revert(IPolicyRegistry::IncompatiblePolicyType {}));
     }
 
     #[test]
@@ -947,49 +923,12 @@ mod tests {
     }
 
     #[test]
-    fn finalize_update_admin_without_pending_reverts() {
-        let mut rt = initialized();
-        let id = create_allowlist(&mut rt);
-        let err = LOGIC.finalize_update_admin(&mut rt, id).unwrap_err();
-        assert!(matches!(err, BasePrecompileError::Revert(_)));
-    }
-
-    #[test]
-    fn stage_update_admin_unauthorized_reverts() {
-        let mut rt = initialized();
-        let id = create_allowlist(&mut rt);
-        set_caller(&mut rt, ALICE);
-        let err = LOGIC.stage_update_admin(&mut rt, id, NEW_ADMIN).unwrap_err();
-        assert!(matches!(err, BasePrecompileError::Revert(_)));
-    }
-
-    #[test]
     fn finalize_update_admin_unauthorized_reverts() {
         let mut rt = initialized();
         let id = create_allowlist(&mut rt);
         LOGIC.stage_update_admin(&mut rt, id, NEW_ADMIN).unwrap();
         set_caller(&mut rt, ALICE);
         let err = LOGIC.finalize_update_admin(&mut rt, id).unwrap_err();
-        assert!(matches!(err, BasePrecompileError::Revert(_)));
-    }
-
-    // --- renounceAdmin ---
-
-    #[test]
-    fn renounce_admin_freezes_policy() {
-        let mut rt = initialized();
-        let id = create_allowlist(&mut rt);
-        LOGIC.renounce_admin(&mut rt, id).unwrap();
-        let err = LOGIC.update_allowlist(&mut rt, id, true, vec![ALICE]).unwrap_err();
-        assert!(matches!(err, BasePrecompileError::Revert(_)));
-    }
-
-    #[test]
-    fn renounce_admin_unauthorized_reverts() {
-        let mut rt = initialized();
-        let id = create_allowlist(&mut rt);
-        set_caller(&mut rt, ALICE);
-        let err = LOGIC.renounce_admin(&mut rt, id).unwrap_err();
         assert!(matches!(err, BasePrecompileError::Revert(_)));
     }
 
@@ -1091,5 +1030,63 @@ mod tests {
         let rt = initialized();
         let nonexistent = PolicyRegistryV1::make_id(0, 999);
         assert_eq!(LOGIC.pending_policy_admin(&rt, nonexistent).unwrap(), Address::ZERO);
+    }
+
+    #[rstest]
+    #[case::update_allowlist_on_blocklist(
+        create_blocklist,
+        ADMIN,
+        |mut rt: Storage, id: u64| LOGIC.update_allowlist(&mut rt, id, true, vec![ALICE]),
+        BasePrecompileError::revert(IPolicyRegistry::IncompatiblePolicyType {})
+    )]
+    #[case::update_blocklist_on_allowlist(
+        create_allowlist,
+        ADMIN,
+        |mut rt: Storage, id: u64| LOGIC.update_blocklist(&mut rt, id, true, vec![ALICE]),
+        BasePrecompileError::revert(IPolicyRegistry::IncompatiblePolicyType {})
+    )]
+    #[case::update_allowlist_on_blocklist_as_non_admin(
+        create_blocklist,
+        ALICE,
+        |mut rt: Storage, id: u64| LOGIC.update_allowlist(&mut rt, id, true, vec![ALICE]),
+        BasePrecompileError::revert(IPolicyRegistry::IncompatiblePolicyType {})
+    )]
+    #[case::finalize_admin_without_pending(
+        create_allowlist,
+        ADMIN,
+        |mut rt: Storage, id: u64| LOGIC.finalize_update_admin(&mut rt, id),
+        BasePrecompileError::revert(IPolicyRegistry::NoPendingAdmin {})
+    )]
+    #[case::stage_admin_as_non_admin(
+        create_allowlist,
+        ALICE,
+        |mut rt: Storage, id: u64| LOGIC.stage_update_admin(&mut rt, id, NEW_ADMIN),
+        BasePrecompileError::revert(IPolicyRegistry::Unauthorized {})
+    )]
+    #[case::update_allowlist_after_renounce(
+        create_allowlist,
+        ADMIN,
+        |mut rt: Storage, id: u64| {
+            LOGIC.renounce_admin(&mut rt, id).unwrap();
+            LOGIC.update_allowlist(&mut rt, id, true, vec![ALICE])
+        },
+        BasePrecompileError::revert(IPolicyRegistry::Unauthorized {})
+    )]
+    #[case::renounce_admin_as_non_admin(
+        create_allowlist,
+        ALICE,
+        |mut rt: Storage, id: u64| LOGIC.renounce_admin(&mut rt, id),
+        BasePrecompileError::revert(IPolicyRegistry::Unauthorized {})
+    )]
+    fn rejected_operation_reverts(
+        #[case] create: fn(&mut Storage) -> u64,
+        #[case] caller: Address,
+        #[case] operation: fn(Storage, u64) -> Result<()>,
+        #[case] expected: BasePrecompileError,
+    ) {
+        let mut rt = initialized();
+        let id = create(&mut rt);
+        set_caller(&mut rt, caller);
+        assert_eq!(operation(rt, id).unwrap_err(), expected);
     }
 }
