@@ -31,7 +31,7 @@ const RPC_CONTAINER_IPC_PATH: &str = "/home/op-reth-shared/rpc.ipc";
 
 /// This type represents a Base execution client node that is running inside a
 /// docker container. This node is used to validate the correctness of the blocks built
-/// by base-builder.
+/// by the Base builder.
 ///
 /// When this node is attached to a `ChainDriver`, it will automatically catch up with the
 /// provided chain and will transparently ingest all newly built blocks by the driver.

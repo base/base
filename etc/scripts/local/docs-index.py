@@ -520,7 +520,7 @@ class DocsIndexTests(unittest.TestCase):
     def test_sections_group_and_order_docs(self) -> None:
         self.assertEqual(section_of("README.md"), SECTION_REPO)
         self.assertEqual(section_of("docs/guides/P2P.md"), SECTION_GUIDES)
-        self.assertEqual(section_of("bin/node/README.md"), SECTION_BINARIES)
+        self.assertEqual(section_of("bin/base/README.md"), SECTION_BINARIES)
         self.assertEqual(section_of("crates/proof/mpt/README.md"), f"{SECTION_CRATES}proof")
         self.assertEqual(section_of("etc/docker/README.md"), SECTION_TOOLING)
         self.assertEqual(section_of("acceptance/README.md"), SECTION_TOOLING)
