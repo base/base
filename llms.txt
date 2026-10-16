@@ -65,7 +65,7 @@
 
 - [crates/builder/cli/README.md](crates/builder/cli/README.md): One-line README for base-builder-cli: reusable CLI arguments and config conversion helpers for Base builder nodes.
 - [crates/builder/core/README.md](crates/builder/core/README.md): base-builder-core: flashblocks payload builder library producing sub-second block chunks, with launcher and metering trait modules, cargo features, and usage.
-- [crates/builder/metering/README.md](crates/builder/metering/README.md): base-builder-metering: MeteringStore (DashMap with LRU eviction) implementing MeteringProvider, plus base_setMeteringInformation style JSON-RPC extensions, with wiring example.
+- [crates/builder/metering/README.md](crates/builder/metering/README.md): base-builder-metering covers MeteringStore backed by a moka cache with bounded LRU eviction and TTL, its MeteringProvider implementation, JSON-RPC extensions, and a wiring example.
 - [crates/builder/multiplex/README.md](crates/builder/multiplex/README.md): Runs flashblocks and basic payload builders in parallel behind one handle, selecting basic at Denim; cutover mode is off by default and a separate basic-only mode runs just the basic builder.
 - [crates/builder/publish/README.md](crates/builder/publish/README.md): WebSocket broadcast publisher for the block builder (WebSocketPublisher, Listener, BroadcastLoop, metrics traits). Use when changing how serialized payloads are pushed to connected subscribers.
 
