@@ -70,3 +70,24 @@ pub enum PrunerError {
     /// The pruner timed out before finishing the prune
     TimedOut(Duration),
 }
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::PrunerOutput;
+    use crate::api::WriteCounts;
+
+    #[test]
+    fn test_pruner_output_display() {
+        let pruner_output = PrunerOutput {
+            duration: Duration::from_secs(10),
+            start_block: 1,
+            end_block: 2,
+            write_counts: WriteCounts::new(1, 2, 3, 4),
+        };
+        let formatted_pruner_output = format!("{pruner_output}");
+
+        assert_eq!(formatted_pruner_output, "Pruned 1→2 (1 blocks), entries=10, elapsed=10.000s");
+    }
+}
