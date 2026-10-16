@@ -68,7 +68,7 @@ declaring more than 256 entries before allocating the decoded vector. Each bound
 makes up to three attempts on provider failures with capped, jittered exponential backoff. Empty
 schedules and decode errors return immediately from that read. Startup retries empty schedules and
 provider failures indefinitely at a fixed interval, failing closed, but aborts on decode errors.
-Manual refresh returns the error after the bounded read, while live reads are
+Manual refresh returns the error after the bounded read. Live polls make a single attempt and are
 dropped immediately when the node's shutdown signal wins its cancellation selection.
 
 `startup-apply` reads and validates the L1 schedule before the node starts serving.
