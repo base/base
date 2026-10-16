@@ -30,13 +30,19 @@ impl TypedValueParser for RpcUrlValueParser {
         arg: Option<&Arg>,
         value: &OsStr,
     ) -> Result<Self::Value, clap::Error> {
-        value.to_str().and_then(|value| Url::parse(value).ok()).ok_or_else(|| {
-            let message = arg.and_then(Arg::get_long).map_or_else(
-                || "invalid RPC URL; check its format".to_owned(),
-                |flag| format!("invalid RPC URL for --{flag}; check its format"),
-            );
-            clap::Error::raw(ErrorKind::ValueValidation, message)
-        })
+        value
+            .to_str()
+            .map_or_else(
+                || Err("check its format".to_owned()),
+                |value| Url::parse(value).map_err(|error| error.to_string()),
+            )
+            .map_err(|reason| {
+                let message = arg.and_then(Arg::get_long).map_or_else(
+                    || format!("invalid RPC URL: {reason}"),
+                    |flag| format!("invalid RPC URL for --{flag}: {reason}"),
+                );
+                clap::Error::raw(ErrorKind::ValueValidation, message)
+            })
     }
 }
 
@@ -116,13 +122,22 @@ pub struct WithdrawerArgs {
 }
 
 impl WithdrawerArgs {
-    /// Parses arguments without echoing values that may contain secrets or RPC credentials.
+    /// Parses arguments with safe flag names and RPC URL reasons, without echoing rejected values.
     pub fn parse_matches<I, T>(command: Command, itr: I) -> Result<ArgMatches, clap::Error>
     where
         I: IntoIterator<Item = T>,
         T: Into<OsString> + Clone,
     {
         command.try_get_matches_from(itr).map_err(|error| {
+            // For these errors, InvalidArg is the declared argument, not the rejected value.
+            if matches!(error.kind(), ErrorKind::InvalidValue | ErrorKind::ValueValidation)
+                && let Some(arg) = error.get(ContextKind::InvalidArg)
+            {
+                return clap::Error::raw(
+                    error.kind(),
+                    format!("invalid value for '{arg}'; the value is redacted"),
+                );
+            }
             // Redacting value parsers return raw errors without rejected-value context.
             if matches!(
                 error.kind(),
@@ -599,8 +614,24 @@ mod tests {
             let diagnostic = format!("{error} {error:?}");
             assert!(diagnostic.contains("invalid RPC URL"));
             assert!(diagnostic.contains(flag));
+            assert!(diagnostic.contains("empty host"));
             assert!(!diagnostic.contains(value));
             assert!(!diagnostic.contains("example-password"), "credentials leaked: {diagnostic}");
+        }
+    }
+
+    #[test]
+    fn invalid_values_name_flags_without_echoing_values() {
+        for (flag, value, kind) in [
+            ("--network", "base-mainet", ErrorKind::InvalidValue),
+            ("--timeout", "bogus", ErrorKind::ValueValidation),
+            ("--private-key", "private-secret-not-hex", ErrorKind::ValueValidation),
+        ] {
+            let error = args(&[flag, value]).unwrap_err();
+            assert_eq!(error.kind(), kind);
+            let diagnostic = format!("{error} {error:?}");
+            assert!(diagnostic.contains(flag), "missing flag: {diagnostic}");
+            assert!(!diagnostic.contains(value), "rejected value leaked: {diagnostic}");
         }
     }
 
