@@ -17,3 +17,9 @@ pub use signer::{WithdrawalSigner, WithdrawalSignerError};
 
 mod secret;
 pub use secret::{Secret, SecretValueParser};
+
+mod withdrawal;
+pub use withdrawal::{
+    MessagePassed, OutputRootProof, VerifiedWithdrawalProof, Withdrawal, WithdrawalError,
+    WithdrawalTransaction,
+};

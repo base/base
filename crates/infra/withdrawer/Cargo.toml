@@ -16,17 +16,24 @@ url.workspace = true
 tower.workspace = true
 humantime.workspace = true
 thiserror.workspace = true
+alloy-rlp.workspace = true
 alloy-eips.workspace = true
 serde_json.workspace = true
+alloy-trie.workspace = true
 coins-bip32.workspace = true
 async-trait.workspace = true
 alloy-signer.workspace = true
 alloy-network.workspace = true
+base-protocol.workspace = true
 alloy-provider.workspace = true
 alloy-json-rpc.workspace = true
 alloy-transport.workspace = true
+alloy-sol-types.workspace = true
 alloy-rpc-client.workspace = true
 alloy-signer-local.workspace = true
+base-common-network.workspace = true
+base-common-rpc-types.workspace = true
+base-common-consensus.workspace = true
 tokio = { workspace = true, features = ["time"] }
 tracing = { workspace = true, features = ["std"] }
 serde = { workspace = true, features = ["derive"] }

@@ -5,6 +5,7 @@ use std::{
 };
 
 use alloy_json_rpc::{RequestPacket, ResponsePacket};
+use alloy_network::Network;
 use alloy_provider::RootProvider;
 use alloy_rpc_client::ClientBuilder;
 use alloy_transport::{TransportError, TransportErrorKind, TransportFut, utils::guess_local_url};
@@ -38,7 +39,10 @@ impl WithdrawalRpcTransport {
     pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
     /// Builds a typed HTTP provider with bounded requests and retries, without network I/O.
-    pub fn connect(url: &Url, config: &WithdrawerConfig) -> Result<RootProvider, TransportError> {
+    pub fn connect<N: Network>(
+        url: &Url,
+        config: &WithdrawerConfig,
+    ) -> Result<RootProvider<N>, TransportError> {
         if !matches!(url.scheme(), "http" | "https") {
             return Err(TransportErrorKind::non_retryable_str("RPC URL must use HTTP(S)"));
         }
