@@ -90,6 +90,9 @@ mod two_d_nonce_pool;
 pub use two_d_nonce_pool::SidecarSenderIds;
 
 mod metrics;
-pub use metrics::{GuardMetrics, ValidatorMetrics, ValidityPoolMetrics, ValiditySignatureMetrics};
+pub use metrics::{
+    GuardMetrics, HistogramHandle, InsertHistograms, InsertMetrics, ValidatorMetrics,
+    ValidityPoolMetrics, ValiditySignatureMetrics,
+};
 
 pub mod estimated_da_size;
