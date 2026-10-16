@@ -81,11 +81,6 @@ impl<DB: RevmDatabase, I, P> BaseEvm<DB, I, P> {
         self.inner.ctx
     }
 
-    /// Consumes `self` and returns the inspector.
-    pub fn into_inspector(self) -> I {
-        self.inner.inspector
-    }
-
     /// Consumes `self` and returns a new [`BaseEvm`] with the given inspector, preserving
     /// the inspect flag. Used to swap inspectors without rebuilding from context.
     pub fn with_inspector<J>(self, inspector: J) -> BaseEvm<DB, J, P> {
