@@ -1,6 +1,6 @@
 //! Flashblocks adapters for parkable best-transaction iterators.
 
-use std::{collections::HashSet, marker::PhantomData, time::Instant};
+use std::{marker::PhantomData, time::Instant};
 
 use alloy_primitives::{Address, TxHash, map::B256Set};
 use base_execution_payload_builder::{ParkablePayloadTransactions, ParkedPredicateIndex};
@@ -26,7 +26,7 @@ where
     inner: I,
     // Transactions that were already committed to the state. Using them again would cause NonceTooLow
     // so we skip them
-    committed_transactions: HashSet<TxHash>,
+    committed_transactions: B256Set,
     // Shared cross-block rejection cache (survives across blocks, TTL-bounded)
     rejection_cache: RejectionCache,
     // Identity of the transaction most recently returned to the build loop.
@@ -113,9 +113,12 @@ where
 {
     type Transaction = T;
 
+    /// Resting time is measured once per call, from the first resting check to the return, so it
+    /// also covers advancing the inner iterator between resting transactions.
     fn next(&mut self, ctx: ()) -> Option<Self::Transaction> {
-        loop {
-            let tx = self.inner.next(ctx)?;
+        let mut resting_filter_start = None;
+        let next = loop {
+            let Some(tx) = self.inner.next(ctx) else { break None };
             let hash = *tx.hash();
             self.current_transaction = Some((hash, tx.sender(), tx.nonce()));
 
@@ -139,22 +142,22 @@ where
                 && !self.resting.is_empty()
                 && !tx.validity_predicates().is_empty()
             {
-                let started = Instant::now();
-                let resting = self.is_resting(hash, tx.validity_predicates());
-                if resting {
+                resting_filter_start.get_or_insert_with(Instant::now);
+                if self.is_resting(hash, tx.validity_predicates()) {
                     self.inner.park_current();
                     self.parked_resting.insert(hash);
                     self.current_transaction = None;
                     self.resting_stats.parked += 1;
-                }
-                self.resting_stats.duration += started.elapsed();
-                if resting {
                     continue;
                 }
             }
 
-            return Some(tx);
+            break Some(tx);
+        };
+        if let Some(start) = resting_filter_start {
+            self.resting_stats.duration += start.elapsed();
         }
+        next
     }
 
     /// Proxy to inner iterator
@@ -259,7 +262,7 @@ mod tests {
 
     use crate::{
         BestFlashblocksTxs, ParkableBestPayloadTransactions, ParkablePayloadTransactions,
-        RejectionCache, RestingPayloadTransactions, RestingPredicateMode,
+        RejectionCache, RestingPayloadTransactions, RestingPredicateMode, RestingStats,
     };
 
     type Ordering = BaseOrdering<BasePooledTransaction>;
@@ -734,6 +737,23 @@ mod tests {
 
         iterator.refresh_iterator(parkable(&pool));
         assert_eq!(*iterator.next(()).unwrap().hash(), *resting.hash());
+    }
+
+    #[test]
+    fn resting_work_is_reported_when_the_iterator_is_exhausted() {
+        let resting = validity_transaction(0, 0, 10, vec![balance_at_least(WATCHED, 1)]);
+        let pool = pending_pool(&[Arc::clone(&resting)]);
+        let mut iterator = resting_iterator(&pool);
+
+        let first = iterator.next(()).unwrap();
+        park_unsatisfied(&mut iterator, &first);
+        assert_eq!(iterator.take_resting_stats(), RestingStats::default());
+
+        iterator.refresh_iterator(parkable(&pool));
+        assert!(iterator.next(()).is_none());
+        let stats = iterator.take_resting_stats();
+        assert_eq!(stats.parked, 1);
+        assert!(!stats.duration.is_zero());
     }
 
     #[test]
