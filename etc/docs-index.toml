@@ -488,7 +488,7 @@ digest = "0208dada05"
 
 ["crates/proof/challenge/README.md"]
 summary = "base-challenger: ZK-proof dispute game challenger; module tour covering scanner, validator, pending proof phases, submitter, bond lifecycle, and config. Use to find where challenger logic lives."
-digest = "5e8a931c81"
+digest = "7dbd673958"
 
 ["crates/proof/client/README.md"]
 summary = "base-proof-client: runtime-agnostic prologue/driver/epilogue orchestration of a fault or ZK proof run with injected oracle, hint writer and EVM factory; InvalidClaim on root mismatch."
