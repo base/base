@@ -54,12 +54,12 @@ use revm::context::{Block, BlockEnv};
 use tracing::{debug, debug_span, info, instrument, trace, warn};
 
 use crate::{
-    Attributes, BasePayloadBuilderAttributes, BlockDeferrals, BuilderMetrics,
-    CoinbaseTipAffordability, InclusionTracker, MeteringProvider, ParkableBestPayloadTransactions,
-    ParkablePayloadTransactions, ParkedPredicateIndex, PayloadPrimitives, PredicateLoadTracker,
-    PredicateReadRecorder, RejectionCacheMetrics, StateChangeEffects, ValidityMetrics,
-    ValidityPredicateEvaluation, config::BaseBuilderConfig, error::BasePayloadBuilderError,
-    payload::BaseBuiltPayload,
+    Attributes, BasePayloadBuilderAttributes, BlockDeferrals, BuilderMetrics, CandidateBlockLimits,
+    CandidateScan, CoinbaseTipAffordability, InclusionTracker, MeteringProvider,
+    ParkableBestPayloadTransactions, ParkablePayloadTransactions, ParkedPredicateIndex,
+    PayloadPrimitives, PredicateLoadTracker, PredicateReadRecorder, RejectionCacheMetrics,
+    StateChangeEffects, ValidityMetrics, ValidityPredicateEvaluation, config::BaseBuilderConfig,
+    error::BasePayloadBuilderError, payload::BaseBuiltPayload,
 };
 
 macro_rules! emit_native_validity_event {
@@ -933,6 +933,8 @@ where
         let can_finalize_early = self.is_denim_active();
         let resource_metering = &self.builder_config.resource_metering;
         let mut resource_throttled = 0u64;
+        let mut candidate_limits = None;
+        let mut candidate_scan = CandidateScan::default();
         while let Some(tx) = best_txs.next(()) {
             if self.cancel.is_cancelled() {
                 return Ok(Some(()));
@@ -953,6 +955,37 @@ where
                     "skipping previously rejected transaction"
                 );
                 Self::skip_current(&mut best_txs, tx.sender(), tx.nonce(), replay_independent);
+                continue;
+            }
+
+            // A candidate group branches before any representative-specific check: the
+            // representative is only the iterator identity and is never executed as plain.
+            if let Some(group) = tx.candidate_group().cloned() {
+                let limits = *candidate_limits.get_or_insert_with(|| CandidateBlockLimits {
+                    block_number,
+                    block_gas_limit,
+                    tx_da_limit,
+                    block_da_limit,
+                    da_footprint_gas_scalar: self
+                        .chain_spec
+                        .is_jovian_active_at_timestamp(block_timestamp)
+                        .then(|| {
+                            L1BlockInfo::fetch_da_footprint_gas_scalar(builder.evm_mut().db_mut())
+                                .expect("DA footprint should always be available post jovian")
+                        }),
+                    base_fee,
+                });
+                let cancelled = self.execute_candidate_group(
+                    info,
+                    builder,
+                    &mut best_txs,
+                    &group,
+                    &limits,
+                    &mut candidate_scan,
+                )?;
+                if cancelled.is_some() {
+                    return Ok(Some(()));
+                }
                 continue;
             }
 
@@ -1554,11 +1587,16 @@ mod tests {
     use alloy_consensus::{Header, SignableTransaction, TxEip1559};
     use alloy_eips::eip2718::Encodable2718;
     use alloy_evm::Evm;
-    use alloy_primitives::{Address, B256, Signature, StorageKey, TxHash, TxKind, U256};
+    use alloy_primitives::{Address, B256, Bytes, Signature, StorageKey, TxHash, TxKind, U256};
     use base_bundles::{MeterBundleResponse, OpcodeGas, TransactionResult};
     use base_common_chains::BaseUpgrade;
     use base_common_consensus::{BasePrimitives, BaseTxEnvelope, Predeploys};
     use base_common_evm::BaseTime;
+    use base_execution_candidates::{
+        CandidateEnvelope, CandidateGroup, CandidateLimits, CandidateRuntime, CandidateSwitch,
+        GroupLedger, PrincipalEntry, PrincipalId, PrincipalsFile, StaticAccessPolicy,
+        test_utils::CandidateFixture,
+    };
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_execution_evm::BaseEvmConfig;
     use base_execution_txpool::{BasePooledTransaction, ValidityOperator, ValidityPredicate};
@@ -1583,14 +1621,19 @@ mod tests {
             PayloadStateRootHandle, StateRootComputeOutcome, StateRootSink, StateRootUpdateStream,
         },
     };
-    use revm::{Database, state::EvmState};
+    use revm::{
+        Database,
+        database::{CacheDB, EmptyDB},
+        state::{AccountInfo, EvmState, EvmStorageSlot},
+    };
 
     use super::{BasePayloadBuilderCtx, Builder, ExecutionInfo};
     use crate::{
-        BasePayloadBuilderAttributes, MeteringProvider, NoopMeteringProvider,
-        ParkablePayloadTransactions, ResourceMeteringConfig, ResourceMeteringDimension,
-        ResourceMeteringOperation, ResourceMeteringSchedule, SharedMeteringProvider,
-        config::BaseBuilderConfig, payload::EthPayloadBuilderAttributes,
+        BasePayloadBuilderAttributes, CandidateBuilderConfig, MeteringProvider,
+        NoopMeteringProvider, ParkablePayloadTransactions, ResourceMeteringConfig,
+        ResourceMeteringDimension, ResourceMeteringOperation, ResourceMeteringSchedule,
+        ScoreOverlay, SharedMeteringProvider, config::BaseBuilderConfig,
+        payload::EthPayloadBuilderAttributes,
     };
 
     #[derive(Debug)]
@@ -1990,8 +2033,10 @@ mod tests {
     #[test]
     fn native_builder_includes_transaction_with_matching_block_predicate() {
         let event_capture = TransactionEventCapture::install();
-        let transaction =
-            pool_transaction(0).with_validity_predicates(vec![ValidityPredicate::BlockNumber {
+        // Event capture is process-global, so this transaction must not share a hash with other
+        // tests.
+        let transaction = pool_transaction_to(0, Address::repeat_byte(0x58), U256::ZERO)
+            .with_validity_predicates(vec![ValidityPredicate::BlockNumber {
                 op: ValidityOperator::Equal,
                 value: U256::ONE,
             }]);
@@ -2024,9 +2069,9 @@ mod tests {
     fn native_builder_rejects_validity_candidate_that_fails_after_its_predicates_match() {
         let event_capture = TransactionEventCapture::install();
         // The funded sender is at nonce 0, so nonce 5 fails EVM validation after the predicate
-        // has matched.
-        let transaction =
-            pool_transaction(5).with_validity_predicates(vec![ValidityPredicate::BlockNumber {
+        // has matched. Event capture is process-global, so the hash must be unique to this test.
+        let transaction = pool_transaction_to(5, Address::repeat_byte(0x59), U256::ZERO)
+            .with_validity_predicates(vec![ValidityPredicate::BlockNumber {
                 op: ValidityOperator::Equal,
                 value: U256::ONE,
             }]);
@@ -2744,8 +2789,13 @@ mod tests {
             BuildOutcomeKind::Better { payload } | BuildOutcomeKind::Freeze(payload) => payload,
             other => panic!("expected a built payload, got {other:?}"),
         };
-        let hashes: Vec<_> =
-            payload.block().body().transactions.iter().map(|tx| *tx.tx_hash()).collect();
+        let hashes: Vec<_> = payload
+            .block()
+            .body()
+            .transactions
+            .iter()
+            .map(|tx| TxHash::from(*tx.tx_hash()))
+            .collect();
         assert_eq!(hashes, vec![sequencer_hash]);
         assert!(evicted.lock().unwrap().is_empty());
         assert_eq!(invalid.lock().unwrap().len(), 1);
@@ -2890,5 +2940,299 @@ mod tests {
             "the cache hit must be timed as well as the read-through; recording only the \
              read-through would hide the benefit of a warm cache"
         );
+    }
+
+    /// Token stub: a 36-byte call is `balanceOf` and returns slot 0; any other call adds
+    /// `msg.value` to slot 0.
+    const TOKEN_STUB: [u8; 28] =
+        alloy_primitives::hex!("366024146010573460005401600055005b60005460005260206000f3");
+
+    const CANDIDATE_RECIPIENT: Address = Address::repeat_byte(0xee);
+
+    fn candidate_runtime(fixture: &CandidateFixture, enabled: bool) -> Arc<CandidateRuntime> {
+        Arc::new(CandidateRuntime {
+            ledger: GroupLedger::default(),
+            policy: Arc::new(StaticAccessPolicy::new(PrincipalsFile {
+                policy_version: 0,
+                work_gas_quota: None,
+                principals: vec![PrincipalEntry {
+                    id: PrincipalId(1),
+                    senders: vec![fixture.address()],
+                }],
+            })),
+            switch: CandidateSwitch::new(enabled),
+            limits: CandidateLimits::default(),
+        })
+    }
+
+    /// A group whose siblings send `values` to `to`, recorded in `runtime`'s ledger.
+    fn candidate_group(
+        fixture: &CandidateFixture,
+        runtime: &CandidateRuntime,
+        to: Address,
+        values: &[u64],
+        configure: impl FnOnce(&mut CandidateEnvelope),
+    ) -> Arc<CandidateGroup> {
+        let raw: Vec<_> = values
+            .iter()
+            .map(|value| fixture.encode(fixture.sibling_tx(0, to, U256::from(*value))))
+            .collect();
+        let mut envelope = fixture.envelope_for(&raw, 0);
+        envelope.rule.recipient = CANDIDATE_RECIPIENT;
+        configure(&mut envelope);
+        let group = Arc::new(fixture.group(&raw, envelope));
+        runtime
+            .ledger
+            .create(Arc::clone(&group), PrincipalId(1), 0, |_| true)
+            .expect("group is admitted");
+        runtime.ledger.confirm_pooled(group.group_hash());
+        group
+    }
+
+    fn representative(group: &Arc<CandidateGroup>) -> BasePooledTransaction {
+        BasePooledTransaction::new(
+            group.representative().transaction.clone(),
+            group.representative().encoded.len(),
+        )
+        .with_candidate_group(Arc::clone(group))
+    }
+
+    fn build_candidate_payload(
+        runtime: Option<Arc<CandidateRuntime>>,
+        transactions: TestParkableTransactions,
+        sender: Address,
+    ) -> BuildOutcomeKind<crate::BaseBuiltPayload<BasePrimitives>> {
+        let mut ctx = pool_payload_context(DENIM_TIMESTAMP - 1);
+        ctx.builder_config.candidates = runtime.map(CandidateBuilderConfig::new);
+        let mut provider = StateProviderTest::default();
+        let mut storage = HashMap::default();
+        storage.insert(
+            StorageKey::from(BaseTime::ADMIN_SLOT.to_be_bytes::<32>()),
+            U256::from_be_slice(Predeploys::PROXY_ADMIN.as_slice()),
+        );
+        provider.insert_account(
+            Predeploys::BASE_TIME,
+            Account::default(),
+            Some(BaseTime::proxy_bytecode()),
+            storage,
+        );
+        provider.insert_account(
+            sender,
+            Account { balance: U256::MAX, ..Default::default() },
+            None,
+            HashMap::default(),
+        );
+        provider.insert_account(
+            CANDIDATE_TOKEN,
+            Account::default(),
+            Some(Bytes::from_static(&TOKEN_STUB)),
+            HashMap::default(),
+        );
+        Builder::new(|_| transactions)
+            .build(StateProviderDatabase::new(&provider), &provider, Some(state_root_handle()), ctx)
+            .expect("payload must build")
+    }
+
+    const CANDIDATE_TOKEN: Address = Address::repeat_byte(0x70);
+
+    fn included_hashes(
+        outcome: BuildOutcomeKind<crate::BaseBuiltPayload<BasePrimitives>>,
+    ) -> Vec<TxHash> {
+        match outcome {
+            BuildOutcomeKind::Better { payload } | BuildOutcomeKind::Freeze(payload) => payload
+                .block()
+                .body()
+                .transactions
+                .iter()
+                .map(|tx| TxHash::from(*tx.tx_hash()))
+                .collect(),
+            other => panic!("expected a built payload, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn candidate_group_commits_the_sibling_with_the_largest_native_delta() {
+        let fixture = CandidateFixture::new(8_453);
+        let runtime = candidate_runtime(&fixture, true);
+        let group = candidate_group(&fixture, &runtime, CANDIDATE_RECIPIENT, &[1, 3, 2], |_| {});
+
+        let included = included_hashes(build_candidate_payload(
+            Some(Arc::clone(&runtime)),
+            TestParkableTransactions::new(vec![representative(&group)]),
+            fixture.address(),
+        ));
+
+        assert_eq!(included, [group.siblings()[1].hash()]);
+        let entry = runtime.ledger.lookup(&group.group_hash()).expect("group is tracked");
+        assert_eq!(entry.attempts, 1);
+        assert_eq!(entry.last_commit, Some((group.siblings()[1].hash(), 1)));
+    }
+
+    #[test]
+    fn candidate_group_scores_token_balance_reads_on_each_trial_state() {
+        let fixture = CandidateFixture::new(8_453);
+        let runtime = candidate_runtime(&fixture, true);
+        let group = candidate_group(&fixture, &runtime, CANDIDATE_TOKEN, &[2, 5, 4], |envelope| {
+            envelope.rule.token = CANDIDATE_TOKEN;
+        });
+
+        let included = included_hashes(build_candidate_payload(
+            Some(Arc::clone(&runtime)),
+            TestParkableTransactions::new(vec![representative(&group)]),
+            fixture.address(),
+        ));
+
+        assert_eq!(included, [group.siblings()[1].hash()]);
+    }
+
+    #[test]
+    fn candidate_group_is_parked_when_candidate_selection_is_not_configured() {
+        let fixture = CandidateFixture::new(8_453);
+        let runtime = candidate_runtime(&fixture, true);
+        let group = candidate_group(&fixture, &runtime, CANDIDATE_RECIPIENT, &[1, 3], |_| {});
+        let invalid = Arc::new(Mutex::new(Vec::new()));
+
+        let included = included_hashes(build_candidate_payload(
+            None,
+            TestParkableTransactions::recording(vec![representative(&group)], Arc::clone(&invalid)),
+            fixture.address(),
+        ));
+
+        assert!(included.is_empty());
+        assert!(invalid.lock().unwrap().is_empty(), "parking never invalidates the lane");
+    }
+
+    #[test]
+    fn disabled_candidate_selection_commits_the_default_sibling_without_trials() {
+        let fixture = CandidateFixture::new(8_453);
+        let runtime = candidate_runtime(&fixture, false);
+        let group =
+            candidate_group(&fixture, &runtime, CANDIDATE_RECIPIENT, &[1, 3, 2], |envelope| {
+                envelope.default_index = 2;
+            });
+
+        let included = included_hashes(build_candidate_payload(
+            Some(Arc::clone(&runtime)),
+            TestParkableTransactions::new(vec![representative(&group)]),
+            fixture.address(),
+        ));
+
+        assert_eq!(included, [group.siblings()[2].hash()]);
+        let entry = runtime.ledger.lookup(&group.group_hash()).expect("group is tracked");
+        assert_eq!(entry.attempts, 0, "the kill switch never evaluates");
+    }
+
+    #[test]
+    fn no_eligible_sibling_falls_back_to_the_default_sibling() {
+        let fixture = CandidateFixture::new(8_453);
+        let runtime = candidate_runtime(&fixture, true);
+        let group = candidate_group(&fixture, &runtime, CANDIDATE_RECIPIENT, &[1, 3], |envelope| {
+            envelope.rule.min_delta = U256::from(10);
+        });
+
+        let included = included_hashes(build_candidate_payload(
+            Some(Arc::clone(&runtime)),
+            TestParkableTransactions::new(vec![representative(&group)]),
+            fixture.address(),
+        ));
+
+        assert_eq!(included, [group.siblings()[0].hash()]);
+    }
+
+    #[test]
+    fn no_eligible_sibling_without_fallback_parks_while_budget_remains() {
+        let fixture = CandidateFixture::new(8_453);
+        let runtime = candidate_runtime(&fixture, true);
+        let group = candidate_group(&fixture, &runtime, CANDIDATE_RECIPIENT, &[1, 3], |envelope| {
+            envelope.rule.min_delta = U256::from(10);
+            envelope.fallback_mode = 0;
+        });
+        let invalid = Arc::new(Mutex::new(Vec::new()));
+
+        let included = included_hashes(build_candidate_payload(
+            Some(Arc::clone(&runtime)),
+            TestParkableTransactions::recording(vec![representative(&group)], Arc::clone(&invalid)),
+            fixture.address(),
+        ));
+
+        assert!(included.is_empty());
+        assert!(invalid.lock().unwrap().is_empty());
+        let entry = runtime.ledger.lookup(&group.group_hash()).expect("group is tracked");
+        assert!(!entry.state.is_terminal());
+        assert_eq!(entry.attempts, 1);
+    }
+
+    #[test]
+    fn exhausted_group_without_fallback_is_evicted() {
+        let fixture = CandidateFixture::new(8_453);
+        let runtime = candidate_runtime(&fixture, true);
+        let group = candidate_group(&fixture, &runtime, CANDIDATE_RECIPIENT, &[1, 3], |envelope| {
+            envelope.fallback_mode = 0;
+            envelope.max_work_gas = 1;
+        });
+        let invalid = Arc::new(Mutex::new(Vec::new()));
+
+        let included = included_hashes(build_candidate_payload(
+            Some(Arc::clone(&runtime)),
+            TestParkableTransactions::recording(vec![representative(&group)], Arc::clone(&invalid)),
+            fixture.address(),
+        ));
+
+        assert!(included.is_empty());
+        assert_eq!(*invalid.lock().unwrap(), [(fixture.address(), 0)]);
+        let entry = runtime.ledger.lookup(&group.group_hash()).expect("evicted entries are kept");
+        assert!(entry.state.is_terminal());
+    }
+
+    #[test]
+    fn revoked_principal_evicts_the_group_without_fallback() {
+        let fixture = CandidateFixture::new(8_453);
+        let runtime = Arc::new(CandidateRuntime {
+            policy: Arc::new(StaticAccessPolicy::default()),
+            ..Arc::into_inner(candidate_runtime(&fixture, true)).expect("sole owner")
+        });
+        let group = candidate_group(&fixture, &runtime, CANDIDATE_RECIPIENT, &[1, 3], |_| {});
+
+        let included = included_hashes(build_candidate_payload(
+            Some(Arc::clone(&runtime)),
+            TestParkableTransactions::new(vec![representative(&group)]),
+            fixture.address(),
+        ));
+
+        assert!(included.is_empty(), "a revoked principal never reaches the fallback");
+        let entry = runtime.ledger.lookup(&group.group_hash()).expect("evicted entries are kept");
+        assert!(entry.state.is_terminal());
+    }
+
+    #[test]
+    fn score_overlay_reads_the_trial_diff_over_the_prefix() {
+        let address = Address::repeat_byte(0x01);
+        let mut prefix = CacheDB::new(EmptyDB::default());
+        prefix.insert_account_info(
+            address,
+            AccountInfo { balance: U256::from(7), ..Default::default() },
+        );
+        prefix
+            .insert_account_storage(address, U256::from(1), U256::from(11))
+            .expect("storage inserts");
+
+        let mut account = revm::state::Account::from(AccountInfo {
+            balance: U256::from(9),
+            ..Default::default()
+        });
+        account.mark_touch();
+        account.storage.insert(
+            U256::from(2),
+            EvmStorageSlot::new_changed(U256::ZERO, U256::from(5), Default::default()),
+        );
+        let diff: EvmState = [(address, account)].into_iter().collect();
+
+        let mut overlay = ScoreOverlay::new(&mut prefix, Some(&diff));
+        assert_eq!(overlay.basic(address).unwrap().unwrap().balance, U256::from(9));
+        assert_eq!(overlay.storage(address, U256::from(2)).unwrap(), U256::from(5));
+        assert_eq!(overlay.storage(address, U256::from(1)).unwrap(), U256::from(11));
+
+        let mut prefix_only = ScoreOverlay::new(&mut prefix, None);
+        assert_eq!(prefix_only.basic(address).unwrap().unwrap().balance, U256::from(7));
     }
 }

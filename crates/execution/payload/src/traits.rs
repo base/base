@@ -1,7 +1,7 @@
 use alloy_consensus::BlockBody;
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::PayloadId;
-use base_common_consensus::{BaseTransaction, DepositReceiptExt};
+use base_common_consensus::{BaseTransaction, BaseTransactionSigned, DepositReceiptExt, TxDeposit};
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use reth_payload_primitives::PayloadAttributes;
 use reth_primitives_traits::{FullBlockHeader, NodePrimitives, SignedTransaction, WithEncoded};
@@ -18,14 +18,16 @@ pub trait PayloadPrimitives:
     >
 {
     /// Helper AT to bound [`NodePrimitives::Block`] type without causing bound cycle.
-    type _TX: SignedTransaction + BaseTransaction;
+    ///
+    /// Candidate selection converts validated siblings and score-read probes into this type.
+    type _TX: SignedTransaction + BaseTransaction + From<BaseTransactionSigned> + From<TxDeposit>;
     /// Helper AT to bound [`NodePrimitives::Block`] type without causing bound cycle.
     type _Header: FullBlockHeader;
 }
 
 impl<Tx, T, Header> PayloadPrimitives for T
 where
-    Tx: SignedTransaction + BaseTransaction,
+    Tx: SignedTransaction + BaseTransaction + From<BaseTransactionSigned> + From<TxDeposit>,
     T: NodePrimitives<
             SignedTx = Tx,
             Receipt: DepositReceiptExt,

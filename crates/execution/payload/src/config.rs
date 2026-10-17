@@ -53,6 +53,11 @@ pub struct BaseBuilderConfig {
     /// label. Adds overhead to every state read, so it follows reth's
     /// `--engine.state-provider-metrics` and stays off by default.
     pub state_provider_metrics: bool,
+    /// Candidate-group selection, when `base_sendRawTransactionCandidates` is enabled.
+    ///
+    /// `None` keeps every candidate group parked: the builder never executes a
+    /// representative as a plain transaction.
+    pub candidates: Option<crate::CandidateBuilderConfig>,
 }
 
 impl Default for BaseBuilderConfig {
@@ -66,6 +71,7 @@ impl Default for BaseBuilderConfig {
             resource_metering: ResourceMeteringConfig::default(),
             rejection_cache: RejectionCache::default(),
             state_provider_metrics: false,
+            candidates: None,
         }
     }
 }
@@ -86,6 +92,7 @@ impl BaseBuilderConfig {
             resource_metering: ResourceMeteringConfig::default(),
             rejection_cache: RejectionCache::default(),
             state_provider_metrics: false,
+            candidates: None,
         }
     }
 
@@ -93,6 +100,13 @@ impl BaseBuilderConfig {
     #[must_use]
     pub const fn with_state_provider_metrics(mut self, enabled: bool) -> Self {
         self.state_provider_metrics = enabled;
+        self
+    }
+
+    /// Enables candidate-group selection.
+    #[must_use]
+    pub fn with_candidates(mut self, candidates: Option<crate::CandidateBuilderConfig>) -> Self {
+        self.candidates = candidates;
         self
     }
 
