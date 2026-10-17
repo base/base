@@ -54,6 +54,13 @@ then execute the onchain task that switches the expected image hash. The pending
 hash flag can then be removed. A signer registered with any other image hash
 cannot make an unlatched health check succeed unless it is valid onchain.
 
+New-image provers pass `/healthz` but cannot prove until the onchain task
+executes, and old-image provers stop proving once it does. Run the new provers
+alongside the old ones, for example in a separate ASG or target group, and retire
+the old provers only after the task lands. A rolling instance refresh of the
+existing fleet would replace the old provers early and stop proving until the
+task executes.
+
 ## Security Model
 
 This unauthenticated RPC listener is an internal control-plane endpoint. Restrict
