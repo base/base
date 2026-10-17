@@ -551,8 +551,8 @@ summary = "base-proof-rpc: Alloy-backed L1Client, L2Client and RollupClient trai
 digest = "7bbd42adf6"
 
 ["crates/proof/submission/README.md"]
-summary = "base-proof-submission: shared helpers to submit verifyProposalProof, proof-bearing challenge() and nullify() txs and classify non-retryable reverts; leaves game-selection policy to callers."
-digest = "c0cd2b9ea2"
+summary = "base-proof-submission: shared helpers to submit verifyProposalProof and classify non-retryable reverts; leaves game-selection policy to callers."
+digest = "fc77fd57ea"
 
 ["crates/proof/tee/nitro-enclave/README.md"]
 summary = "base-proof-tee-nitro-enclave: code that runs inside the AWS Nitro Enclave (vsock listener, proof client pipeline, ECDSA signing, NSM access, attestation verification)."

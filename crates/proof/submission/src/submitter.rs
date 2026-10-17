@@ -4,7 +4,7 @@ use alloy_primitives::{Address, Bytes, U256};
 use alloy_rpc_types_eth::TransactionReceipt;
 use base_tx_manager::{TxCandidate, TxManager};
 
-use crate::{ChallengeProofSubmission, NullifyProofSubmission, ProofSubmissionError};
+use crate::ProofSubmissionError;
 
 /// Submits proof bytes to an existing aggregate verifier dispute game.
 #[derive(Debug)]
@@ -18,11 +18,6 @@ impl<'a, T: TxManager> AggregateProofSubmitter<'a, T> {
         Self { tx_manager }
     }
 
-    /// Returns the address that will submit transactions on-chain.
-    pub fn sender_address(&self) -> Address {
-        self.tx_manager.sender_address()
-    }
-
     /// Submits `AggregateVerifier.verifyProposalProof(bytes)` to an existing game.
     pub async fn verify_proposal_proof(
         &self,
@@ -34,22 +29,6 @@ impl<'a, T: TxManager> AggregateProofSubmitter<'a, T> {
             base_proof_contracts::encode_verify_proposal_proof_calldata(proof_bytes),
         )
         .await
-    }
-
-    /// Submits `AggregateVerifier.challenge(bytes,uint256,bytes32)` to an existing game.
-    pub async fn challenge(
-        &self,
-        submission: ChallengeProofSubmission,
-    ) -> Result<TransactionReceipt, ProofSubmissionError> {
-        self.submit_calldata(submission.game_address, submission.calldata()).await
-    }
-
-    /// Submits `AggregateVerifier.nullify(bytes,uint256,bytes32)` to an existing game.
-    pub async fn nullify(
-        &self,
-        submission: NullifyProofSubmission,
-    ) -> Result<TransactionReceipt, ProofSubmissionError> {
-        self.submit_calldata(submission.game_address, submission.calldata()).await
     }
 
     async fn submit_calldata(
@@ -85,7 +64,7 @@ mod tests {
     use base_tx_manager::{SendHandle, SendResponse, TxCandidate, TxManager, TxManagerError};
 
     use super::AggregateProofSubmitter;
-    use crate::{ChallengeProofSubmission, NullifyProofSubmission, ProofSubmissionError};
+    use crate::ProofSubmissionError;
 
     fn receipt_with_status(success: bool, tx_hash: B256) -> TransactionReceipt {
         let inner = ReceiptEnvelope::Legacy(ReceiptWithBloom {
@@ -165,48 +144,6 @@ mod tests {
             candidate.tx_data,
             base_proof_contracts::encode_verify_proposal_proof_calldata(proof_bytes)
         );
-    }
-
-    #[tokio::test]
-    async fn challenge_sends_encoded_calldata_to_game() {
-        let tx_hash = B256::repeat_byte(0xbb);
-        let tx_manager = MockTxManager::new(Ok(receipt_with_status(true, tx_hash)));
-        let submitter = AggregateProofSubmitter::new(&tx_manager);
-        let submission = ChallengeProofSubmission::new(
-            Address::repeat_byte(0x11),
-            proof_bytes(),
-            7,
-            B256::repeat_byte(0x22),
-        );
-
-        let receipt = submitter.challenge(submission.clone()).await;
-
-        assert_eq!(receipt.unwrap().transaction_hash, tx_hash);
-        let candidate = tx_manager.take_candidate().unwrap();
-        assert_eq!(candidate.to, Some(submission.game_address));
-        assert_eq!(candidate.value, U256::ZERO);
-        assert_eq!(candidate.tx_data, submission.calldata());
-    }
-
-    #[tokio::test]
-    async fn nullify_sends_encoded_calldata_to_game() {
-        let tx_hash = B256::repeat_byte(0xcc);
-        let tx_manager = MockTxManager::new(Ok(receipt_with_status(true, tx_hash)));
-        let submitter = AggregateProofSubmitter::new(&tx_manager);
-        let submission = NullifyProofSubmission::new(
-            Address::repeat_byte(0x11),
-            proof_bytes(),
-            7,
-            B256::repeat_byte(0x22),
-        );
-
-        let receipt = submitter.nullify(submission.clone()).await;
-
-        assert_eq!(receipt.unwrap().transaction_hash, tx_hash);
-        let candidate = tx_manager.take_candidate().unwrap();
-        assert_eq!(candidate.to, Some(submission.game_address));
-        assert_eq!(candidate.value, U256::ZERO);
-        assert_eq!(candidate.tx_data, submission.calldata());
     }
 
     #[tokio::test]

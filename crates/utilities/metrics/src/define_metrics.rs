@@ -115,7 +115,7 @@ macro_rules! __define_metrics_impl {
             #[cfg(feature = "metrics")]
             pub fn zero() {
                 $(
-                    $crate::__define_metric_zero!($field, $kind; $(#[$($attr)*])*);
+                    $crate::__metric_zero_defaults!(@collect ($field, $kind) [] $(#[$($attr)*])*);
                 )*
             }
 
@@ -345,15 +345,6 @@ macro_rules! __describe_metric_from_attrs {
     };
     ($scope:tt, $field:ident, $kind:ident; ) => {
         ::core::compile_error!("define_metrics! fields require a #[describe(\"...\")] attribute");
-    };
-}
-
-/// Internal — emits zeroing code for counters and gauges.
-#[doc(hidden)]
-#[macro_export]
-macro_rules! __define_metric_zero {
-    ($field:ident, $kind:ident; $($attrs:tt)*) => {
-        $crate::__metric_zero_defaults!(@collect ($field, $kind) [] $($attrs)*);
     };
 }
 
