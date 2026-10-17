@@ -144,13 +144,6 @@ pub struct ThrottleParams {
     pub max_tx_size: u64,
 }
 
-impl ThrottleParams {
-    /// Returns `true` if throttling is actively reducing DA limits.
-    pub fn is_throttling(&self) -> bool {
-        self.intensity > 0.0
-    }
-}
-
 /// Strategy for calculating throttle intensity from DA backlog.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
@@ -336,7 +329,7 @@ impl DaThrottle {
             );
         }
 
-        params.as_ref().is_some_and(ThrottleParams::is_throttling)
+        params.is_some()
     }
 
     /// Compute a point-in-time snapshot of the current throttle state.
