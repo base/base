@@ -462,7 +462,7 @@ mod tests {
         assert!(error.to_string().contains("mock image hash RPC failure"));
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn pending_health_image_rpc_timeout_is_an_error_before_latch() {
         let registry = MockRegistry::new(false);
         registry.image_hash_should_stall.store(true, Ordering::Relaxed);
