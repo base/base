@@ -476,7 +476,7 @@ digest = "63043098db"
 
 ["crates/infra/withdrawer/README.md"]
 summary = "Configure withdrawer signers, RPC clients, capped L1 transactions, and proof verification; decide withdrawal status from onchain invalidation and finality checks."
-digest = "f25ecece12"
+digest = "0cbfb8d6c4"
 
 ["crates/infra/zk-benchmarks/README.md"]
 summary = "One-line stub: ZK proof benchmarking utilities for Base load-test runs; no usage or detail beyond that."

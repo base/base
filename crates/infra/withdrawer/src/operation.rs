@@ -22,7 +22,7 @@ pub enum WithdrawalStatus {
     Prove,
     /// The withdrawal can be executed.
     Finalize,
-    /// The anchor state registry must be unpaused before proving or finalizing.
+    /// The anchor state registry or legacy portal must be unpaused before proving or finalizing.
     Paused,
     /// Earliest known L1 ready time; an unresolved game can delay it further.
     NotReady {
@@ -135,6 +135,9 @@ impl Withdrawer {
                 (ready_at, waiting, finalized)
             }
             ProofSystem::OutputOracle { l2_output_oracle } => {
+                if Self::read(rpc, portal, LegacyWithdrawalPortal::pausedCall {}).await? {
+                    return Ok(WithdrawalStatus::Paused);
+                }
                 let proof = Self::read(
                     rpc,
                     portal,
@@ -443,7 +446,11 @@ mod tests {
                         WithdrawalPortal::finalizedWithdrawalsCall,
                         self.finalized || (params[1] == "pending" && self.pending_finalized)
                     );
-                    reply!(IAnchorStateRegistry::pausedCall, self.paused);
+                    if self.fault {
+                        reply!(IAnchorStateRegistry::pausedCall, self.paused);
+                    } else {
+                        reply!(LegacyWithdrawalPortal::pausedCall, self.paused);
+                    }
                     if input[..4] == FaultProofPortal::provenWithdrawalsCall::SELECTOR {
                         let call =
                             FaultProofPortal::provenWithdrawalsCall::abi_decode(&input).unwrap();
@@ -564,10 +571,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn paused_registry_waits_without_replacing_proofs() {
-        for proven in [0, 100] {
-            let server = Scenario { paused: true, proven, ..Default::default() }.start().await;
-            assert_eq!(server.status().await.unwrap(), WithdrawalStatus::Paused);
+    async fn paused_contracts_wait_without_replacing_proofs() {
+        for fault in [false, true] {
+            for proven in [0, 100] {
+                let server =
+                    Scenario { fault, paused: true, proven, ..Default::default() }.start().await;
+                assert_eq!(server.status().await.unwrap(), WithdrawalStatus::Paused);
+            }
         }
     }
 
