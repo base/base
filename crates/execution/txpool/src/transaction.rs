@@ -132,8 +132,9 @@ pub struct BasePooledTransaction<
 /// ingress does not meter its representative.
 #[derive(Debug)]
 pub enum PoolTransactionExtension {
-    /// In-process `meter_bundle` result. The later consumer only forwards `Some`.
-    Metering(MeterBundleResponse),
+    /// In-process `meter_bundle` result. The later consumer only forwards `Some`. Boxed so
+    /// the extension stays pointer-sized for candidate representatives.
+    Metering(Box<MeterBundleResponse>),
     /// Candidate group carried by a representative submitted through
     /// `base_sendRawTransactionCandidates`. The representative is only the pool and iterator
     /// lifecycle identity; the builder selects and commits one sibling.
@@ -146,7 +147,9 @@ impl PoolTransactionExtension {
     pub fn allocation_size(&self) -> usize {
         core::mem::size_of::<Self>()
             + match self {
-                Self::Metering(metering) => metering.heap_size(),
+                Self::Metering(metering) => {
+                    core::mem::size_of::<MeterBundleResponse>() + metering.heap_size()
+                }
                 Self::Candidate(group) => {
                     core::mem::size_of::<CandidateGroup>() + group.heap_size()
                 }
@@ -200,14 +203,14 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
     /// Attaches an in-process `meter_bundle` result to this transaction.
     #[must_use]
     pub fn with_metering(mut self, metering: MeterBundleResponse) -> Self {
-        self.extension = Some(Arc::new(PoolTransactionExtension::Metering(metering)));
+        self.extension = Some(Arc::new(PoolTransactionExtension::Metering(Box::new(metering))));
         self
     }
 
     /// Returns the attached `meter_bundle` result, if any.
     pub fn metering(&self) -> Option<&MeterBundleResponse> {
         match self.extension.as_deref()? {
-            PoolTransactionExtension::Metering(metering) => Some(metering),
+            PoolTransactionExtension::Metering(metering) => Some(metering.as_ref()),
             PoolTransactionExtension::Candidate(_) => None,
         }
     }
@@ -1131,7 +1134,10 @@ mod tests {
 
         assert_eq!(
             transaction.size(),
-            size_without_metering + core::mem::size_of::<PoolTransactionExtension>() + results_size,
+            size_without_metering
+                + core::mem::size_of::<PoolTransactionExtension>()
+                + core::mem::size_of::<MeterBundleResponse>()
+                + results_size,
             "attaching metering should add the Arc-allocated extension plus the results slice"
         );
         assert!(transaction.metering().is_some(), "metering should stay attached");
@@ -1158,6 +1164,7 @@ mod tests {
         assert_eq!(
             transaction.size(),
             size_without_metering
+                + core::mem::size_of::<PoolTransactionExtension>()
                 + core::mem::size_of::<MeterBundleResponse>()
                 + results_size
                 + opcode_gas_size
