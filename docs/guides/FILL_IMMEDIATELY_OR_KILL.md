@@ -196,7 +196,15 @@ flag into `ValidityAuthorization`.
 - Position `0` is the state after the block's sequencer transactions; a deposit that moves a
   watched balance is not a write in the journal.
 - The native builder applies kills only from a payload it returns; a pre-Denim payload can still
-  be superseded after its kills applied.
+  be superseded after its kills applied. The flashblocks builder applies a block's kills whenever
+  it finalizes the block, including a block abandoned at its deadline or superseded by a new
+  forkchoice update, so a searcher can be killed on that builder by a competitor that never landed;
+  the pool-side rule on other nodes does not share that kill. Validity lifetimes bound the harm.
+- The pool records the admission head from the latest canonical block it has processed. A
+  transaction admitted in the instant between a block committing and the pool observing it is
+  recorded one block early and may be evaluated one block early.
+- A flagged transaction whose predicates held but which was then rejected during execution (for
+  example, by a resource limit) is reported both as rejected and, at block close, as unfilled.
 
 ## Open questions for searchers
 

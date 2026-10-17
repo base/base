@@ -1108,32 +1108,53 @@ where
         mined: &B256Set,
         state: &dyn StateProvider,
     ) -> usize {
-        if self.fill_or_kill.read().is_empty() {
+        // Whichever of the pool maintenance and this expiry sees the block first advances the
+        // admission head, so a transaction admitted in between is not evaluated a block early.
+        self.canonical_head.fetch_max(committed_block, Ordering::Relaxed);
+        let pending = self
+            .fill_or_kill
+            .read()
+            .hashes()
+            .filter(|hash| !mined.contains(*hash))
+            .map(|hash| (*hash, self.get(hash)))
+            .collect::<Vec<_>>();
+        if pending.is_empty() {
             return 0;
         }
-        let _admission_guard = self.protocol_admission_lock.lock();
+        // State reads happen outside every pool lock, so admissions are not stalled by them.
+        let unreadable = Satisfiability { at_block_end: false, at_next_block_start: false };
         let mut db = StateProviderPredicateDb::new(state);
-        let expired = self.fill_or_kill.write().apply_canonical_block(committed_block, |hash| {
-            // A transaction mined in this block landed; one the pool no longer holds is gone.
-            if mined.contains(hash) {
-                return None;
-            }
-            let transaction = self.get(hash)?;
-            match Satisfiability::evaluate(
-                transaction.transaction.validity_predicates(),
-                &mut db,
-                committed_block,
-            ) {
-                Ok(satisfiability) => Some(satisfiability),
-                Err(error) => {
+        let evaluated = pending
+            .into_iter()
+            .map(|(hash, transaction)| {
+                // A transaction the pool no longer holds is gone from the index.
+                let Some(transaction) = transaction else {
+                    return (hash, None);
+                };
+                let satisfiability = Satisfiability::evaluate(
+                    transaction.transaction.validity_predicates(),
+                    &mut db,
+                    committed_block,
+                )
+                .unwrap_or_else(|error| {
                     debug!(
                         tx_hash = %hash,
                         error = %error,
                         "fill-or-kill predicate state unreadable; keeping the transaction"
                     );
-                    Some(Satisfiability { at_block_end: false, at_next_block_start: false })
-                }
+                    unreadable
+                });
+                (hash, Some(satisfiability))
+            })
+            .collect::<HashMap<_, _>>();
+        let _admission_guard = self.protocol_admission_lock.lock();
+        let expired = self.fill_or_kill.write().apply_canonical_block(committed_block, |hash| {
+            // Mined transactions landed. Transactions admitted since the snapshot wait for the
+            // next block, as a recent admission is not eligible for eviction anyway.
+            if mined.contains(hash) {
+                return None;
             }
+            evaluated.get(hash).copied().unwrap_or(Some(unreadable))
         });
         let removed = self.remove_dropped_across_pools(expired);
         self.release_from_guard(&removed);
@@ -1831,6 +1852,7 @@ where
     type Block = <TransactionValidationTaskExecutor<BaseTransactionValidator<Client, T, Evm>> as TransactionValidator>::Block;
 
     fn set_block_info(&self, info: BlockInfo) {
+        self.canonical_head.fetch_max(info.last_seen_block_number, Ordering::Relaxed);
         self.protocol_pool.set_block_info(info)
     }
 
@@ -1863,7 +1885,7 @@ where
             for hash in &mined_transactions {
                 fill_or_kill.remove(hash);
             }
-            self.canonical_head.store(block_number, Ordering::Relaxed);
+            self.canonical_head.fetch_max(block_number, Ordering::Relaxed);
         }
         self.protocol_pool.on_canonical_state_change(update);
         {

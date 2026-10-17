@@ -340,7 +340,7 @@ pub struct Builder<'a, Txs> {
     best: Box<dyn FnOnce(BestTransactionsAttributes) -> Txs + 'a>,
     /// Permanently removes mempool transactions that exceeded a per-transaction resource limit.
     #[debug(skip)]
-    evict_permanently_rejected: Box<dyn FnOnce(Vec<TxHash>) + 'a>,
+    evict_permanently_rejected: Box<dyn Fn(Vec<TxHash>) + 'a>,
 }
 
 impl<'a, Txs> Builder<'a, Txs> {
@@ -351,7 +351,7 @@ impl<'a, Txs> Builder<'a, Txs> {
 
     /// Sets the callback used to permanently remove mempool transactions that exceeded a
     /// per-transaction resource limit.
-    pub fn with_permanent_eviction(mut self, evict: impl FnOnce(Vec<TxHash>) + 'a) -> Self {
+    pub fn with_permanent_eviction(mut self, evict: impl Fn(Vec<TxHash>) + 'a) -> Self {
         self.evict_permanently_rejected = Box::new(evict);
         self
     }
@@ -410,10 +410,6 @@ impl<Txs> Builder<'_, Txs> {
 
         // 2. execute sequencer transactions
         let mut info = ctx.execute_sequencer_transactions(&mut builder)?;
-        // Hashes to evict from the pool once this payload is returned for use. If sealing fails,
-        // they are dropped: permanent rejections are already cached, and kills must not apply to a
-        // payload that is never used.
-        let mut pending_eviction = Vec::new();
 
         // 3. if mem pool transactions are requested we execute them
         if !ctx.attributes().no_tx_pool() {
@@ -427,21 +423,19 @@ impl<Txs> Builder<'_, Txs> {
                 info!(
                     target: "payload_builder",
                     count = rejected.len(),
-                    "rejected transactions permanently",
+                    "evicted permanently rejected transactions from pool",
                 );
+                evict_permanently_rejected(rejected);
             }
             if cancelled.is_some() {
-                evict_permanently_rejected(rejected);
                 return Ok(BuildOutcomeKind::Cancelled);
             }
 
             // check if the new payload is even more valuable
             if !ctx.is_denim_active() && !ctx.is_better_payload(info.total_fees) {
-                evict_permanently_rejected(rejected);
                 // can skip building the block
                 return Ok(BuildOutcomeKind::Aborted { fees: info.total_fees });
             }
-            pending_eviction = rejected;
         }
 
         let block_num = ctx.parent().number().saturating_add(1);
@@ -526,10 +520,7 @@ impl<Txs> Builder<'_, Txs> {
                 count = killed.len(),
                 "evicted fill-immediately-or-kill transactions from pool",
             );
-            pending_eviction.extend(killed);
-        }
-        if !pending_eviction.is_empty() {
-            evict_permanently_rejected(pending_eviction);
+            evict_permanently_rejected(killed);
         }
 
         if no_tx_pool || ctx.is_denim_active() {
@@ -1859,7 +1850,7 @@ mod tests {
     fn build_pool_payload_with<Txs>(
         ctx: BasePayloadBuilderCtx<BaseEvmConfig, BaseChainSpec>,
         transactions: Txs,
-        evict: impl FnOnce(Vec<TxHash>),
+        evict: impl Fn(Vec<TxHash>),
     ) -> BuildOutcomeKind<crate::BaseBuiltPayload<BasePrimitives>>
     where
         Txs: ParkablePayloadTransactions<Transaction = BasePooledTransaction> + Send + Sync,
@@ -1872,7 +1863,7 @@ mod tests {
         ctx: BasePayloadBuilderCtx<BaseEvmConfig, BaseChainSpec>,
         transactions: Txs,
         funded_senders: &[Address],
-        evict: impl FnOnce(Vec<TxHash>),
+        evict: impl Fn(Vec<TxHash>),
     ) -> BuildOutcomeKind<crate::BaseBuiltPayload<BasePrimitives>>
     where
         Txs: ParkablePayloadTransactions<Transaction = BasePooledTransaction> + Send + Sync,

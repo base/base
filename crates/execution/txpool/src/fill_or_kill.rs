@@ -113,6 +113,11 @@ impl FillOrKillIndex {
         self.entries.contains_key(hash)
     }
 
+    /// Returns the tracked hashes.
+    pub fn hashes(&self) -> impl Iterator<Item = &TxHash> + '_ {
+        self.entries.keys()
+    }
+
     /// Returns the number of tracked transactions.
     pub fn len(&self) -> usize {
         self.entries.len()

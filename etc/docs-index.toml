@@ -668,7 +668,7 @@ digest = "0951b41580"
 
 ["docs/guides/FILL_IMMEDIATELY_OR_KILL.md"]
 summary = "Contract for the fill_immediately_or_kill validity flag: read-after-write kills from the builder's predicate write journal, pool-side canonical expiry, searcher scenarios, limits, and open questions."
-digest = "7dd85e975a"
+digest = "81daff6e5a"
 
 ["docs/guides/GLAMSTERDAM.md"]
 summary = "Scopes Base's Glamsterdam EIPs with BAL and SLOTNUM designs, plus calldata and access-list pricing proposals for transaction costs, P2P block sizes, and storage growth."
