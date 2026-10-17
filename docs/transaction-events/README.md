@@ -317,10 +317,13 @@ block's mined transactions, under the winner's `tx_hash` with `block_hash` and
 `block_number`. Otherwise `TXPOOL_CANDIDATE_EVICTED`, under the
 representative, has `data.terminal_reason`: `replaced` (a same-nonce group
 replaced it), `expired` (pool maintenance passed `expiryBlock`),
-`budget_exhausted`, `revoked`, `permanent_exclusion`, or `dropped`. A group
-that left the pool another way, such as admin removal, pool-full eviction, a
-plain same-nonce replacement, or a builder nonce check, is `dropped` only once
-the recovery window closes, because a canonical landing can still correct it.
+`budget_exhausted`, `revoked`, `permanent_exclusion`, `nonce_consumed`, or
+`dropped`. `nonce_consumed` is journaled when a canonical block advances the
+sender's nonce past the group's without a sibling landing, for example through
+a sponsor's EIP-7702 authorization or a plain same-nonce transaction. A group
+that left the pool another way, such as admin removal or pool-full eviction, is
+`dropped` only once the recovery window closes, because a canonical landing can
+still correct it.
 
 Canonicality caveat: builder events are local payload construction signals, not
 canonical-chain or consensus-finality observations. A builder event with
