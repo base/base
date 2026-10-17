@@ -1,0 +1,32 @@
+{
+  "created_utc": "2026-10-06T17:36:42.491653+00:00",
+  "purpose": "Remedy the second completion audit's verified boundary omission. Earlier scoped metrics/data/results remain unchanged and cannot certify the complete pipeline.",
+  "baseline_origin": "1836cd2f5e7a559567cfcabbcc5e69ffc3f44baa",
+  "candidate_origin": "f83ab1e9706a888d08cd70f1c3584a7b44ce2aa7",
+  "production_changes": "Identical measurement-only instrumentation on baseline and candidate; no further optimization, logger change, required behavior removal or work reduction before this campaign.",
+  "primary_metric": "Equal-weight mean base_builder_complete_block_build_active_duration in ms/canonical block across transfer/storage x legacy/Azul, each 25%.",
+  "boundary": "Async PayloadBuilder::try_build entry immediately before calling build_payload, through all build_payload state/provider/cache/iterator/context/future cleanup and the final watch::Sender::send_replace handoff, including disposal of the replaced payload. Stop immediately after that handoff/drop and before recording instrumentation or returning Ok. All context/provider setup, selection/metering, execution, roots/finalization, serialization and earlier websocket/payload-channel handoffs remain inside.",
+  "scheduled_waits": "Subtract only the same explicit tokio::select inter-flashblock waiting intervals measured inside build_payload. Propagate that Duration to try_build without additional allocation. No cleanup, handoff, locking, serialization, logging, execution or other wait is subtracted.",
+  "legacy_metrics": "Keep original active_block_build_duration and block_build_wall_duration unchanged for historical comparison and additional 5% guards. Add complete_block_build_active_duration and complete_block_build_wall_duration, requiring exactly one of each per measured successful canonical block. Require complete durations >= scoped durations and active <= wall.",
+  "workload_and_state": "Unchanged original reference and strengthened normal/stress definitions from block-building-contract.json and block-building-audit-contract.json: fresh persisted chain901 MDBX fixture per process, matching sparse64MiB limits; 2warmups/10measured; all declared work included; independent validator canonical parity; original logger and default features/allocator; release opt3/thinLTO/16CGU/unwind/debugnone/stripsymbols.",
+  "environment": "macOS26.7.1 build25G241, AppleM5Pro Mac17,8 arm64,18logicalCPUs,48GiB, Rust1.96.0; no cross-OS pooling; no builds/tests/profiling during sampling.",
+  "matrix": [
+    {
+      "load_class": "reference",
+      "pairs": 5
+    },
+    {
+      "load_class": "normal",
+      "pairs": 15
+    },
+    {
+      "load_class": "stress",
+      "pairs": 5
+    }
+  ],
+  "order": "Independent process per workload/version/pair; alternate baseline/candidate on odd/even pairs. Run all matrices; exclude no observations or completed runs. Any smoke/debug samples are separate and never accepted.",
+  "acceptance": "On the complete-call reference metric, O<=0.85B and paired two-sided95% Student-t lower bound>=15%. Normal/stress cannot substitute or reweight the primary suite.",
+  "safety": "Unchanged5% per-workload relative noise tolerance on complete active/wall p95, scoped active/wall p95, driver p95 and peakRSS; p95 remains mean of per-run nearest-rank maxima with10samples, never pooled. Full inclusion/equalgas/independentcanonicalparity/publicationcounts/persistence/critical-task/panic guards remain. Zero payload-job expirations/missing/reducedframes and complete-wall processing-budget breaches (1.5s reference/stress,2.5s normal); reject absent observations.",
+  "stopping": "Exactly fixed5/15/5 pairs for this campaign; retain failures without outcome-driven extension. If complete mean/lower-bound or a safety guard fails, goal remains incomplete and requires investigation plus any newly predeclared campaign before further optimization.",
+  "limitations": "Synthetic production-code-path/load-shape coverage; not mainnet state replay or production-host timing. Older scoped reports and oldOS failed normal cohorts remain retained scoped/failed evidence; no claim they were fixed. Goal complete only after a new independent completion audit approves."
+}

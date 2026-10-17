@@ -15,8 +15,8 @@ pub use metrics::BuilderMetrics;
 
 mod execution;
 pub use execution::{
-    ExecutionInfo, ExecutionMeteringLimitExceeded, FlashblocksExecutionInfo, ResourceLimits,
-    TxResources, TxnExecutionError, TxnOutcome,
+    BlockRoots, ExecutionInfo, ExecutionMeteringLimitExceeded, FlashblocksExecutionInfo,
+    ResourceLimits, TxResources, TxnExecutionError, TxnOutcome,
 };
 
 mod execution_metering_mode;

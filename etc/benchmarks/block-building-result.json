@@ -1,0 +1,411 @@
+{
+  "headline": {
+    "baseline_ms": 35.361679445,
+    "optimized_ms": 27.916943215000003,
+    "reduction_percent": 21.053118366674894,
+    "paired_reduction_mean_percent": 21.04595452221169,
+    "paired_95_percent_ci": [
+      19.614277921499404,
+      22.477631122923977
+    ],
+    "independent_pairs": 5,
+    "failures": [],
+    "passed": true
+  },
+  "workloads": {
+    "transfer-legacy": {
+      "baseline_ms": 37.90402944,
+      "optimized_ms": 30.949860880000003,
+      "reduction_percent": 18.34677912280558,
+      "guardrails": {
+        "p95_ms": {
+          "baseline": 42.513958800000005,
+          "candidate": 35.940284,
+          "change_percent": -15.46239161336348
+        },
+        "wall_p95_ms": {
+          "baseline": 1015.4327168,
+          "candidate": 1013.7541334000006,
+          "change_percent": -0.1653072007852252
+        },
+        "driver_p95_ms": {
+          "baseline": 1056.2953668,
+          "candidate": 1054.5311082,
+          "change_percent": -0.16702322621604537
+        },
+        "peak_rss_bytes": {
+          "baseline": 5096338227.2,
+          "candidate": 5097793126.4,
+          "change_percent": 0.028547932557443367
+        }
+      },
+      "stages": {
+        "base_builder_active_block_build_duration": {
+          "baseline_ms": 37.90402944,
+          "candidate_ms": 30.949860880000003
+        },
+        "base_builder_block_build_wall_duration": {
+          "baseline_ms": 1006.54182666,
+          "candidate_ms": 996.78973584
+        },
+        "base_builder_flashblock_build_duration": {
+          "baseline_ms": 26.14533166,
+          "candidate_ms": 20.37771406
+        },
+        "base_builder_payload_transaction_simulation_duration": {
+          "baseline_ms": 17.57754084,
+          "candidate_ms": 14.35856544
+        },
+        "base_builder_sequencer_tx_duration": {
+          "baseline_ms": 0.06544667999999962,
+          "candidate_ms": 0.06392341999999912
+        },
+        "base_builder_state_root_calculation_duration": {
+          "baseline_ms": 6.7958659599999995,
+          "candidate_ms": 7.50496672
+        },
+        "base_builder_state_transition_merge_duration": {
+          "baseline_ms": 2.19578998,
+          "candidate_ms": 2.10299828
+        },
+        "base_builder_total_block_built_duration": {
+          "baseline_ms": 15.82579324,
+          "candidate_ms": 11.581635019999998
+        },
+        "base_builder_transaction_pool_fetch_duration": {
+          "baseline_ms": 0.04976506000000001,
+          "candidate_ms": 0.04572084
+        },
+        "base_builder_tx_simulation_duration": {
+          "baseline_ms": 3.7147498000000168,
+          "candidate_ms": 3.506657779999996
+        }
+      }
+    },
+    "transfer-azul": {
+      "baseline_ms": 34.90699936,
+      "optimized_ms": 28.144987720000007,
+      "reduction_percent": 19.371506471417298,
+      "guardrails": {
+        "p95_ms": {
+          "baseline": 39.3903254,
+          "candidate": 31.539033400000005,
+          "change_percent": -19.93203133071858
+        },
+        "wall_p95_ms": {
+          "baseline": 1014.9384835999998,
+          "candidate": 1013.5449665999993,
+          "change_percent": -0.1373006366905849
+        },
+        "driver_p95_ms": {
+          "baseline": 1056.1215836000001,
+          "candidate": 1055.1817164,
+          "change_percent": -0.08899232953809566
+        },
+        "peak_rss_bytes": {
+          "baseline": 5072578150.4,
+          "candidate": 5070418739.2,
+          "change_percent": -0.04257028942628027
+        }
+      },
+      "stages": {
+        "base_builder_active_block_build_duration": {
+          "baseline_ms": 34.90699936,
+          "candidate_ms": 28.144987720000007
+        },
+        "base_builder_block_build_wall_duration": {
+          "baseline_ms": 1004.3064150399999,
+          "candidate_ms": 1002.7778658799999
+        },
+        "base_builder_flashblock_build_duration": {
+          "baseline_ms": 23.803556699999998,
+          "candidate_ms": 18.17057162
+        },
+        "base_builder_payload_transaction_simulation_duration": {
+          "baseline_ms": 16.88910754,
+          "candidate_ms": 14.689271560000002
+        },
+        "base_builder_sequencer_tx_duration": {
+          "baseline_ms": 0.06418741999999797,
+          "candidate_ms": 0.06411744000000039
+        },
+        "base_builder_state_root_calculation_duration": {
+          "baseline_ms": 6.8728659,
+          "candidate_ms": 7.763700859999999
+        },
+        "base_builder_state_transition_merge_duration": {
+          "baseline_ms": 2.1600541800000004,
+          "candidate_ms": 2.2134699
+        },
+        "base_builder_total_block_built_duration": {
+          "baseline_ms": 14.24288761999999,
+          "candidate_ms": 9.618675660000005
+        },
+        "base_builder_transaction_pool_fetch_duration": {
+          "baseline_ms": 0.04772834000000001,
+          "candidate_ms": 0.04663922000000001
+        },
+        "base_builder_tx_simulation_duration": {
+          "baseline_ms": 3.5918459800000155,
+          "candidate_ms": 3.5974979199999777
+        }
+      }
+    },
+    "storage-legacy": {
+      "baseline_ms": 35.02099816,
+      "optimized_ms": 26.91503342,
+      "reduction_percent": 23.14601286624207,
+      "guardrails": {
+        "p95_ms": {
+          "baseline": 39.17254160000003,
+          "candidate": 30.7472498,
+          "change_percent": -21.5081571321888
+        },
+        "wall_p95_ms": {
+          "baseline": 1013.53015,
+          "candidate": 1011.3247749999996,
+          "change_percent": -0.21759342827645245
+        },
+        "driver_p95_ms": {
+          "baseline": 1060.8032,
+          "candidate": 1058.8246836,
+          "change_percent": -0.18651116437053972
+        },
+        "peak_rss_bytes": {
+          "baseline": 5060250828.8,
+          "candidate": 5060339302.4,
+          "change_percent": 0.0017484034486203726
+        }
+      },
+      "stages": {
+        "base_builder_active_block_build_duration": {
+          "baseline_ms": 35.02099816,
+          "candidate_ms": 26.91503342
+        },
+        "base_builder_block_build_wall_duration": {
+          "baseline_ms": 1007.0463258399999,
+          "candidate_ms": 1003.93056082
+        },
+        "base_builder_flashblock_build_duration": {
+          "baseline_ms": 25.07340912,
+          "candidate_ms": 18.776352579999998
+        },
+        "base_builder_payload_transaction_simulation_duration": {
+          "baseline_ms": 20.443727540000005,
+          "candidate_ms": 17.87249412
+        },
+        "base_builder_sequencer_tx_duration": {
+          "baseline_ms": 0.06212086000000033,
+          "candidate_ms": 0.0626117200000012
+        },
+        "base_builder_state_root_calculation_duration": {
+          "baseline_ms": 5.54917412,
+          "candidate_ms": 6.09331758
+        },
+        "base_builder_state_transition_merge_duration": {
+          "baseline_ms": 1.0415056400000002,
+          "candidate_ms": 1.0538383799999997
+        },
+        "base_builder_total_block_built_duration": {
+          "baseline_ms": 13.465209099999994,
+          "candidate_ms": 8.388444180000004
+        },
+        "base_builder_transaction_pool_fetch_duration": {
+          "baseline_ms": 0.04518074000000001,
+          "candidate_ms": 0.047910839999999996
+        },
+        "base_builder_tx_simulation_duration": {
+          "baseline_ms": 4.594506419999925,
+          "candidate_ms": 4.510045539999957
+        }
+      }
+    },
+    "storage-azul": {
+      "baseline_ms": 33.61469082,
+      "optimized_ms": 25.657890840000004,
+      "reduction_percent": 23.67060289980676,
+      "guardrails": {
+        "p95_ms": {
+          "baseline": 37.89694999999998,
+          "candidate": 29.796099200000004,
+          "change_percent": -21.37599674907871
+        },
+        "wall_p95_ms": {
+          "baseline": 1013.4246168000001,
+          "candidate": 1011.7598829999998,
+          "change_percent": -0.1642681431261117
+        },
+        "driver_p95_ms": {
+          "baseline": 1060.0590582,
+          "candidate": 1060.1270164,
+          "change_percent": 0.006410793764199951
+        },
+        "peak_rss_bytes": {
+          "baseline": 5047458201.6,
+          "candidate": 5048408473.6,
+          "change_percent": 0.018826743323963058
+        }
+      },
+      "stages": {
+        "base_builder_active_block_build_duration": {
+          "baseline_ms": 33.61469082,
+          "candidate_ms": 25.657890840000004
+        },
+        "base_builder_block_build_wall_duration": {
+          "baseline_ms": 1006.0402200000001,
+          "candidate_ms": 1004.9833791
+        },
+        "base_builder_flashblock_build_duration": {
+          "baseline_ms": 24.063103520000002,
+          "candidate_ms": 17.70517582
+        },
+        "base_builder_payload_transaction_simulation_duration": {
+          "baseline_ms": 20.145179300000006,
+          "candidate_ms": 17.558880180000003
+        },
+        "base_builder_sequencer_tx_duration": {
+          "baseline_ms": 0.06252579999999897,
+          "candidate_ms": 0.06261341999999948
+        },
+        "base_builder_state_root_calculation_duration": {
+          "baseline_ms": 5.44673412,
+          "candidate_ms": 6.22025406
+        },
+        "base_builder_state_transition_merge_duration": {
+          "baseline_ms": 1.0093509999999999,
+          "candidate_ms": 1.0000857399999998
+        },
+        "base_builder_total_block_built_duration": {
+          "baseline_ms": 12.789268299999996,
+          "candidate_ms": 7.652240920000001
+        },
+        "base_builder_transaction_pool_fetch_duration": {
+          "baseline_ms": 0.04453834,
+          "candidate_ms": 0.04577144000000001
+        },
+        "base_builder_tx_simulation_duration": {
+          "baseline_ms": 4.551501139999916,
+          "candidate_ms": 4.482959979999941
+        }
+      }
+    }
+  },
+  "baseline_reference_ms": 33.59046185,
+  "reduction_from_original_baseline_percent": 16.890266827337452,
+  "raw_artifact_sha256": {
+    "paired/baseline/01-storage-azul.json": "a38e2a7b117858a659d32e115b1aff55beca32a959552cb2fe49279e6fe25088",
+    "paired/baseline/01-storage-azul.log": "9c3fefde4cdff5a9d26816bbe5ff1271b8df5233a0b7bc7bdfd2736a822ea91c",
+    "paired/baseline/01-storage-legacy.json": "8eb38f099155428fcc0c63412ed55cc96b93fffbdbee4efdc5f3756cce58237f",
+    "paired/baseline/01-storage-legacy.log": "92720b8ad61910dbaf887610f17fed4d3d22d850022637539412f58daa428772",
+    "paired/baseline/01-transfer-azul.json": "8864408f43a5f1eeac4e257c400293275e3f3e0ca885a2b8f67d709af0d72785",
+    "paired/baseline/01-transfer-azul.log": "0f3eb1e24eb31a3016bcd0f680dc4b4b9fd006001baef52ad6b3bc9a74ace19d",
+    "paired/baseline/01-transfer-legacy.json": "dbc95bb7f1769da4f6752145e283df8d5a3b5787427acd13882881f00b398c7d",
+    "paired/baseline/01-transfer-legacy.log": "e808543899cf18ed1ad30213785ea1b1f7c69c0b43e6d58d7a37c5f54430b6df",
+    "paired/baseline/02-storage-azul.json": "4f2f7a4610c044ccccff21a8ec1845905730853a939244158207607fef985894",
+    "paired/baseline/02-storage-azul.log": "e851bc5a4cf5f2869b209cc61a6375b651a323f918e85aa7413070c033c9de5a",
+    "paired/baseline/02-storage-legacy.json": "f97737db197ecdce9c1d8cbf4cebaafe90d1223881e012f9e4fee1c99739c690",
+    "paired/baseline/02-storage-legacy.log": "9cb6542f294302f95ad15c6c0368150f59d8ca924feb398578513eb52e46b5f5",
+    "paired/baseline/02-transfer-azul.json": "f7e4b3e87a1f0d9a466cc0adc046995e2bc3d4b3e5d61a5282155820698cead9",
+    "paired/baseline/02-transfer-azul.log": "30fadb92a1fe30fdc75442d17ffb15dd4c18f8103ee53e621fc963c5911f3a1b",
+    "paired/baseline/02-transfer-legacy.json": "0a253ad2a8ef287e3e239b8a63af37a5c92d44c785ff1c630aea04307da89287",
+    "paired/baseline/02-transfer-legacy.log": "0b1300061100f90bab8064519627f60b289469a1306d43f82abe025585cf03f4",
+    "paired/baseline/03-storage-azul.json": "10642940223daec10bf5e53753660a65ed4b7d212f28b6e283e7119a7c56bc5e",
+    "paired/baseline/03-storage-azul.log": "cd67ca4265be690886a993eabd3fb8bd3f9abc0d8808b65ecceb374c6aae4211",
+    "paired/baseline/03-storage-legacy.json": "feb00272942fce41198d5dd80ea61ef4e5796b869ba5e45d8d1f9cd3537f090b",
+    "paired/baseline/03-storage-legacy.log": "3087ca06e14adb8b95050c866bae7c63b758df67b82b32c16cf3fb1dad1fc8a1",
+    "paired/baseline/03-transfer-azul.json": "a0eef211ec96dc44922c9d89a8404bda468a06f3f74f59549cad49aa168b65b5",
+    "paired/baseline/03-transfer-azul.log": "3245943c56cf1f0fd3fd7a64e04f580275475a9a9d79c61215ee8f3c227d86d8",
+    "paired/baseline/03-transfer-legacy.json": "42157f85ec06c0ef140b22932cd25f5ad51d455471b3228e1c18ac0bf7656a4c",
+    "paired/baseline/03-transfer-legacy.log": "3685ace700e736f1a1baf6e7a481d6aa55dd4997fd56fe08022f3658bf66f1ac",
+    "paired/baseline/04-storage-azul.json": "ea332bd920d60d65029aa6b0c682e1312205efb3c108f4948955e21700b267b7",
+    "paired/baseline/04-storage-azul.log": "a7149d84d846d847bc51ca56aa85ad31b463ee0ae80e07d2ee0a3a26c808e4df",
+    "paired/baseline/04-storage-legacy.json": "924c70869ccbbc12479ff7dbeb5eef259219ba90511148017a5f3bc2146f6511",
+    "paired/baseline/04-storage-legacy.log": "8dc12006288cf06aa4ee6a3fffd049c539de7b155c1bb8a5e3325268f1e169e0",
+    "paired/baseline/04-transfer-azul.json": "a7ab90cfc28d80b8a15110ce53ca80a29adf5c2f95e498a0cedd4e053d4e3b4d",
+    "paired/baseline/04-transfer-azul.log": "d9d6a498bb281e058f12a762d46bfeb2a816e2394177827d75c28d31b745d2e2",
+    "paired/baseline/04-transfer-legacy.json": "fd41db0de2e6e9ee1742fa038d59be6146ea9b3bf9b2af63a2a210bc965fbce1",
+    "paired/baseline/04-transfer-legacy.log": "89670a62a7d573a9e31adcb0185f87573f83b20cd40fb3073456e67ce4c9b526",
+    "paired/baseline/05-storage-azul.json": "26853469c038e219824223b9b585de89019b6f36a49e5a9c6ebb423fc3d10bf7",
+    "paired/baseline/05-storage-azul.log": "09a6d5e9137b660fffa86ac032c9b06d2bfd8e8e2ffce22e1e143f1764d52bd5",
+    "paired/baseline/05-storage-legacy.json": "cf1f9356157ff1e66fd4791e76731f0f8dc15513f44c93d33857241dee775e7b",
+    "paired/baseline/05-storage-legacy.log": "83e6d943090d7812e79b61e9f614541cc027dc02c83944b4708e422e4655b5a2",
+    "paired/baseline/05-transfer-azul.json": "519104b3c735a59ce955d5381428843d9530e3068de5e1e735b7115f5da1af81",
+    "paired/baseline/05-transfer-azul.log": "803ead45503ad05ced75c71f84b88c471a6cc62167b14b15bf0e61bb0aa9a82c",
+    "paired/baseline/05-transfer-legacy.json": "c88f85c3d8793b4ea03f68c115be46d1ac8bb561e173289b24535382c19138fc",
+    "paired/baseline/05-transfer-legacy.log": "eadaaccd5273e961c0e8f1d8eabc07e1c192377747a1f20080235d2573dfbd2e",
+    "paired/baseline/manifest.json": "ca251e54db5ce61654ec9e3520003963fc299ff796bb870807297cecd9e2dfb7",
+    "paired/candidate/01-storage-azul.json": "08723c9ed35b68a88d61dd6d064a4ea2a52f19c440a122b5449d0fd8297dacf1",
+    "paired/candidate/01-storage-azul.log": "d058f9b4af3f59263b480ff79c31dac9eb6b0bd4707f8a1ee6efb4052c0b0ead",
+    "paired/candidate/01-storage-legacy.json": "d7a11894b9d02a2197d97c3f097f77a11756d701e4c0239144617eca952117b7",
+    "paired/candidate/01-storage-legacy.log": "4a30b472a08721f63e16ad2d6de362c233f0e75146354fcb4bb85cb3c08b6b72",
+    "paired/candidate/01-transfer-azul.json": "d62b0682fdf31febce5814d5b69f2f7f625809d7fc65ac0ad3c30249a0882599",
+    "paired/candidate/01-transfer-azul.log": "155e6dc214dbcbd30aa40a85e478fc52359f91f46037275fc4a7d22ebca1eb0d",
+    "paired/candidate/01-transfer-legacy.json": "b0b368033c2933ee2445bf252b1d09c38755d459dca5d2c578bc658a51075ef9",
+    "paired/candidate/01-transfer-legacy.log": "6680675900f3b70adaecd48e31c18dc8d16c7c9f66edd27d2a7615ce0e0b7cbb",
+    "paired/candidate/02-storage-azul.json": "2d1b947876e4630ca3c301020140f2d4f02af1139e395a9a8bfb4e9b5b7ab216",
+    "paired/candidate/02-storage-azul.log": "479500f37a3e48959d33cfae33f3a2925799a6cb0a7c5d4284570c2ce02af2ab",
+    "paired/candidate/02-storage-legacy.json": "03f66c07bf09a4ab2d3821ebe1ba04fce605a4f247fd77361a61816c7092c521",
+    "paired/candidate/02-storage-legacy.log": "88559f151679aa2d9403b9a6d7b9c9b8ea196b3a40123b11fc8e1fa0f66cad2e",
+    "paired/candidate/02-transfer-azul.json": "dba6bb9efdff5536f5a87f7a2e6d598836231ba58eb3d2b79c7dee519b167879",
+    "paired/candidate/02-transfer-azul.log": "39c38f3a8ecdd8273c47ae1f037573b16cabbf1c71fe5615584c2e51e5eb090b",
+    "paired/candidate/02-transfer-legacy.json": "5c71a7203366edd7070f929b8d2b6170ed46a691a1662bb6b731afee99a03a8f",
+    "paired/candidate/02-transfer-legacy.log": "8fa69fe313d4eb48bd093e0383d697b1c80516decd9d1fb028c7e1b7651518ec",
+    "paired/candidate/03-storage-azul.json": "d541cf4809ca184bdeeb4c13bec4453dd0823cce3213f3e535043baa26bd4dbe",
+    "paired/candidate/03-storage-azul.log": "79d7ae67f69ded957482ede8996fc392ea688f47bf6f2fe3e822fe2ba4ae2cdf",
+    "paired/candidate/03-storage-legacy.json": "d6a989d9de41de3eb0e52834e92790adf90c1b3866a36868a836530ecfc37ffd",
+    "paired/candidate/03-storage-legacy.log": "f0ea389239a97d074304121cc1c1f56ee0a9e8cba4fe549b6f12bcce73a050bb",
+    "paired/candidate/03-transfer-azul.json": "3687f24b5f7fea582f39d9e7ca89b993986b17ff81c9c3e03c21a1e1e35887ca",
+    "paired/candidate/03-transfer-azul.log": "e6bbdb8a41f97ceff09cc442f477d691e59c3c8a3a3f0dc6cf8eb87a0bed1964",
+    "paired/candidate/03-transfer-legacy.json": "9e9811f6a5035efd7cbac7e6b46cdfc30f0a5e7582e6c29ad18e3b576f676af1",
+    "paired/candidate/03-transfer-legacy.log": "9d8bedafe4372c8f47a760122ade588902ac6a181adffbf91554c03c3c8c4074",
+    "paired/candidate/04-storage-azul.json": "09d69f8b48aee399e8e096aab93d49a7ded3af4a608a0bd9ea0cdfa48f070438",
+    "paired/candidate/04-storage-azul.log": "493e3f5f35d83e60f0b29d364e33733d3511310e2c552d7e26b574e7d40ed048",
+    "paired/candidate/04-storage-legacy.json": "31b9029f5fccb0e3bbbfc444567ac06cbd0ddf30f2ea773f4710b2737966e777",
+    "paired/candidate/04-storage-legacy.log": "19d49ff1626490c2661cd52da765846a949e9e6a3bc802049dba8e458a846034",
+    "paired/candidate/04-transfer-azul.json": "1d93893f1ec409202e46044074cc699184e74e27178dcd30934ba3b0f17bdb1f",
+    "paired/candidate/04-transfer-azul.log": "e53e986061ba511d7ef0d77b2d7c1922d18add52b8652b9538ef56cfe315d652",
+    "paired/candidate/04-transfer-legacy.json": "e3996a67d82a2973ef0f43a7c63bf7d94f3efc76a1ae2f2fa12e66a3a7157e74",
+    "paired/candidate/04-transfer-legacy.log": "e57c43ac2e59c145331420da00125d9d3f5d95199039fd4295fe884d7980342b",
+    "paired/candidate/05-storage-azul.json": "7d5dd4f981b41a82c9c7221b3737543f1de3da9677e60a7e1c7558230d35ebfc",
+    "paired/candidate/05-storage-azul.log": "7e77559ba788054395835aa878a0ba2c1f7b1e36873d641c791767902c8c3885",
+    "paired/candidate/05-storage-legacy.json": "9f808e49d80ceccddd0f4814f8bc7f19b43a2ead8cd7d8bd8e98e370ee2c44e5",
+    "paired/candidate/05-storage-legacy.log": "b4db0abd4c8e11a9e69885817d3882583bcbf5fc5c54ef9615f4ae9c70c1b090",
+    "paired/candidate/05-transfer-azul.json": "a36463a2553d1953003dcce801e21944edccc5c6e48d50818a0aa0354a719ac9",
+    "paired/candidate/05-transfer-azul.log": "c72d02fd5271918d3b778d26446d3211954b3baf38f2df7a7c95fb655eb8eba0",
+    "paired/candidate/05-transfer-legacy.json": "36f41084cd7b5bddb0ac38d06e931bc7b8de636a057a7718cab0e88a1a8ab1bc",
+    "paired/candidate/05-transfer-legacy.log": "4413d7b40c5907091a7bb71d8295aa16ab2e1c624f13f0e7c7397c91d737cecd",
+    "paired/candidate/manifest.json": "0e1cda037a22a59164fe59a917485a446176877fc20d17b11ac95a228618e103",
+    "paired/comparison.json": "cf3afd1e86dfd280ffa7c2119f546048850143d91e4886be390d9f90cdc6a642"
+  },
+  "report_url": "https://bdocs.cbhq.net/d/base-block-building-profile-2026-10-06",
+  "repository": "base/base",
+  "branch": "fahim/block-building-performance",
+  "baseline_commit": "16186068bb254d3b0d393a29ba8e3217753f2a2e",
+  "optimized_commit": "6fab920f84a41ce770927df2745116309769020b",
+  "environment": {
+    "cpu": "Apple M5 Pro",
+    "logical_cpus": 18,
+    "memory_bytes": 51539607552,
+    "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+    "platform": "Darwin KX1GFP2HP3 25.6.0 Darwin Kernel Version 25.6.0: Tue Aug 18 17:51:47 PDT 2026; root:xnu-12377.161.15.700.19~2/RELEASE_ARM64_T6050 arm64",
+    "allocator": "system allocator in the in-process test executable"
+  },
+  "validation": {
+    "rust_tests_passed": 228,
+    "acceptance_gate_tests_passed": 7,
+    "clippy_warnings_as_errors": "passed",
+    "docs_index": "175 docs; passed",
+    "measured_blocks_per_version": 200,
+    "measured_block_transactions": 1025,
+    "required_publications_per_block": 6,
+    "validator": "independent strict-attributes re-execution; matching canonical block hashes"
+  },
+  "evidence_directory": "/Users/fahim.ahmed/.mux/worktrees/base/profile-block-building-3/target/pipeline-profile",
+  "limits": [
+    "Synthetic fixed-offered-work burst workloads; not a mainnet snapshot or production-host claim.",
+    "Primary metric excludes only scheduled inter-flashblock waits; full wall and driver latency are guardrails.",
+    "Basic/Denim route correctness-tested, without a performance claim.",
+    "Stage timings overlap; state-root stage measured 0.54-0.89 ms higher while overall active time decreased.",
+    "95% interval describes mean paired percentage reductions; suite point reduction is the ratio of overall means."
+  ]
+}

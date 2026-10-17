@@ -19,7 +19,7 @@ use tokio::{sync::watch, time::Sleep};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, trace, warn};
 
-use crate::{PayloadBuilder, PayloadJobDeadline};
+use crate::{BuilderMetrics, PayloadBuilder, PayloadJobDeadline};
 
 /// Creates payload jobs that build blocks from Engine API payload attributes.
 ///
@@ -334,6 +334,7 @@ where
 
         // Check if deadline is reached
         if this.deadline.as_mut().poll(cx).is_ready() {
+            BuilderMetrics::payload_job_deadline_misses().increment(1);
             this.cancel.cancel();
             debug!("Deadline reached");
             return Poll::Ready(Ok(()));

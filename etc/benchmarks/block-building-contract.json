@@ -1,0 +1,29 @@
+{
+  "baseline_parent_commit": "561efe92925fca70e9ed19da069b9f303d3e2cfa",
+  "pipeline": "Production flashblocks payload service through LocalInstance, with independent MDBX-backed validator re-execution",
+  "primary_metric": "Equal-weight mean active_block_build_duration in milliseconds per successful canonical block across the four workloads",
+  "boundaries": "BasePayloadBuilder::build_payload entry through synchronous finalization return, including provider/context setup, pre-execution, pool selection/metering, EVM execution, assembly, root calculation, JSON serialization and websocket/payload-channel handoff; subtract only time awaiting the explicit inter-flashblock scheduler select",
+  "guardrail_metrics": ["block_build_wall_duration", "driver_wall_seconds", "p95_active_block_build_duration", "p95_block_build_wall_duration", "transactions", "gas_used", "canonical_builder_validator_parity", "flashblock_count", "peak_rss"],
+  "workloads": [
+    {"name": "transfer-legacy", "weight": 0.25, "azul": false, "transactions_per_block": 1024, "payload": "ETH transfers of 1 wei to deterministic new recipients"},
+    {"name": "transfer-azul", "weight": 0.25, "azul": true, "transactions_per_block": 1024, "payload": "ETH transfers of 1 wei to deterministic new recipients"},
+    {"name": "storage-legacy", "weight": 0.25, "azul": false, "transactions_per_block": 1024, "payload": "one fresh storage slot written per transaction by fixed EVM bytecode"},
+    {"name": "storage-azul", "weight": 0.25, "azul": true, "transactions_per_block": 1024, "payload": "one fresh storage slot written per transaction by fixed EVM bytecode"}
+  ],
+  "state": "Fresh isolated MDBX datadirs from the existing embedded chain-901 genesis fixture for each workload/repetition; deterministic prefunded builder_signer; storage deployment bytecode fixed in harness; builder and validator share fork configuration and block timestamps",
+  "cache_policy": "Warm process/database cache after two fixed workload blocks; fresh datadirs per process",
+  "warmup_blocks": 2,
+  "measured_blocks": 10,
+  "block_time_ms": 1000,
+  "flashblock_interval_ms": 200,
+  "flashblocks_leeway_ms": 100,
+  "block_gas_limit": 100000000,
+  "txpool_account_slots": 2048,
+  "build": "cargo test --locked --release -p base-builder-core --test pipeline_profile --no-run; workspace release profile unchanged; same instrumentation and recorder for both versions",
+  "minimum_run_pairs": 5,
+  "comparison_order": "Alternate baseline/candidate order by pair after exploratory baseline collection; no builds or parallel benchmark runs during measurements",
+  "confidence_method": "Paired workload-weighted run means; two-sided 95% Student-t confidence interval on percentage reduction across independent run pairs; add repetitions until lower bound >=15%",
+  "guardrail_tolerance": "Relative 5% noise tolerance for p95 wall/active latency and peak RSS; zero tolerance for missing transactions, changed gas work, parity failures, or fewer expected flashblocks; full driver latency 5%",
+  "acceptance": "O <= 0.85 * B and lower 95% confidence bound >=15%; all guardrails and correctness checks pass",
+  "limitations": "Synthetic production-path workloads on Apple silicon, not a mainnet snapshot or a production-host claim; basic/Denim builders require correctness/control tests and are not silently mixed into this flashblocks baseline"
+}
