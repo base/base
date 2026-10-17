@@ -10,8 +10,9 @@
 mod candidates;
 pub use candidates::{
     AdminCandidateSelectionApiImpl, AdminCandidateSelectionApiServer, CandidateSiblings,
-    CandidateSubmissionResponse, InflightAdmissions, SendRawTransactionCandidatesApiImpl,
-    SendRawTransactionCandidatesApiServer, SendRawTransactionCandidatesOptions,
+    CandidateSubmissionResponse, DEFAULT_CANDIDATE_ADMISSION_TIMEOUT, InflightAdmissions,
+    PendingAdmission, SendRawTransactionCandidatesApiImpl, SendRawTransactionCandidatesApiServer,
+    SendRawTransactionCandidatesOptions,
 };
 
 mod rpc;

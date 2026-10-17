@@ -100,6 +100,9 @@ pub enum CandidateError {
     /// A concurrent submission of the same group failed to insert it into the pool.
     #[error("a concurrent submission of this candidate group failed")]
     ConcurrentSubmissionFailed,
+    /// The group's pool insertion did not finish within the admission timeout.
+    #[error("candidate group admission timed out")]
+    AdmissionTimedOut,
     /// The group ledger is unavailable; admission fails closed.
     #[error("candidate ledger unavailable")]
     LedgerUnavailable,
@@ -142,6 +145,7 @@ impl CandidateError {
             Self::SenderGroupLimit => "sender_group_limit",
             Self::PoolGroupLimit => "pool_group_limit",
             Self::ConcurrentSubmissionFailed => "concurrent_submission_failed",
+            Self::AdmissionTimedOut => "admission_timeout",
             Self::LedgerUnavailable => "ledger_unavailable",
             Self::CombinedWithValidity => "combined_with_validity",
             Self::SenderDelegated => "sender_delegated",

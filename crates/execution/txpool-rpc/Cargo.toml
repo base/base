@@ -38,8 +38,8 @@ jsonrpsee.workspace = true
 
 # misc
 serde.workspace = true
-tokio.workspace = true
 tracing.workspace = true
+tokio = { workspace = true, features = ["sync", "time"] }
 
 [dev-dependencies]
 # workspace

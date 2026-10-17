@@ -3,6 +3,7 @@
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex, MutexGuard, PoisonError},
+    time::Duration,
 };
 
 use alloy_consensus::BlockHeader;
@@ -98,6 +99,10 @@ pub trait AdminCandidateSelectionApi {
     async fn set_candidate_selection_enabled(&self, enabled: bool) -> RpcResult<bool>;
 }
 
+/// How long a group's first admission may spend in pool insertion, and how long an exact
+/// duplicate waits for it. Pool validation normally takes milliseconds.
+pub const DEFAULT_CANDIDATE_ADMISSION_TIMEOUT: Duration = Duration::from_secs(2);
+
 /// Pool insertions in flight, by `groupHash`. The value becomes `Some(inserted)` when the
 /// first request finishes; exact duplicates wait on it instead of reporting acceptance early.
 pub type InflightAdmissions = Arc<Mutex<HashMap<B256, watch::Receiver<Option<bool>>>>>;
@@ -112,6 +117,57 @@ pub struct SendRawTransactionCandidatesApiImpl<Provider, Pool> {
     max_expiry_secs: u64,
     sequencer_client: Option<SequencerClient>,
     inflight: InflightAdmissions,
+    admission_timeout: Duration,
+}
+
+/// Owns a first admission's `Pending` ledger entry and in-flight receiver until it settles.
+///
+/// Dropping it unsettled, because the request was cancelled, settles the admission from pool
+/// state: confirmed if the representative is pooled, aborted otherwise. Either way the
+/// in-flight entry is removed and waiting duplicates learn the outcome, so no `Pending` entry
+/// outlives its request.
+#[derive(Debug)]
+pub struct PendingAdmission<Pool: TransactionPool> {
+    /// The ingress in-flight map holding this admission's receiver.
+    pub inflight: InflightAdmissions,
+    /// The shared candidate runtime holding the `Pending` ledger entry.
+    pub runtime: Arc<CandidateRuntime>,
+    /// The pool the representative is inserted into.
+    pub pool: Pool,
+    /// The admitted group.
+    pub group_hash: B256,
+    /// The representative being inserted.
+    pub representative: TxHash,
+    /// Publishes the outcome to waiting duplicates; `None` once settled.
+    pub outcome: Option<watch::Sender<Option<bool>>>,
+}
+
+impl<Pool: TransactionPool> PendingAdmission<Pool> {
+    /// Confirms or aborts the ledger entry, removes the in-flight receiver and wakes waiting
+    /// duplicates. Later calls do nothing.
+    pub fn settle(&mut self, inserted: bool) {
+        let Some(outcome) = self.outcome.take() else { return };
+        {
+            let mut inflight = self.inflight.lock().unwrap_or_else(PoisonError::into_inner);
+            inflight.remove(&self.group_hash);
+            if inserted {
+                self.runtime.ledger.confirm_pooled(self.group_hash);
+            } else {
+                self.runtime.ledger.abort(self.group_hash);
+            }
+        }
+        outcome.send_replace(Some(inserted));
+    }
+}
+
+impl<Pool: TransactionPool> Drop for PendingAdmission<Pool> {
+    fn drop(&mut self) {
+        if self.outcome.is_some() {
+            debug!(group_hash = %self.group_hash, "settling abandoned candidate admission");
+            let inserted = self.pool.contains(&self.representative);
+            self.settle(inserted);
+        }
+    }
 }
 
 impl<Provider, Pool> SendRawTransactionCandidatesApiImpl<Provider, Pool> {
@@ -134,7 +190,14 @@ impl<Provider, Pool> SendRawTransactionCandidatesApiImpl<Provider, Pool> {
             max_expiry_secs,
             sequencer_client: None,
             inflight: InflightAdmissions::default(),
+            admission_timeout: DEFAULT_CANDIDATE_ADMISSION_TIMEOUT,
         }
+    }
+
+    /// Overrides [`DEFAULT_CANDIDATE_ADMISSION_TIMEOUT`].
+    pub const fn with_admission_timeout(mut self, timeout: Duration) -> Self {
+        self.admission_timeout = timeout;
+        self
     }
 
     /// Proxies submissions unchanged to the sequencer instead of the local pool.
@@ -163,21 +226,22 @@ impl<Provider, Pool> SendRawTransactionCandidatesApiImpl<Provider, Pool> {
         self.inflight.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Waits for another request's insertion of the same group and mirrors its outcome.
-    async fn await_inflight(
+    /// Waits, at most the admission timeout, for another request's insertion of the same group
+    /// and mirrors its outcome.
+    pub async fn await_inflight(
+        &self,
         receiver: Option<watch::Receiver<Option<bool>>>,
         response: CandidateSubmissionResponse,
     ) -> RpcResult<CandidateSubmissionResponse> {
-        let inserted = match receiver {
-            Some(mut receiver) => {
-                receiver.wait_for(Option::is_some).await.is_ok_and(|outcome| *outcome == Some(true))
-            }
-            None => false,
+        let Some(mut receiver) = receiver else {
+            return Err(Self::reject(&CandidateError::ConcurrentSubmissionFailed));
         };
-        if inserted {
-            Ok(response)
-        } else {
-            Err(Self::reject(&CandidateError::ConcurrentSubmissionFailed))
+        let waited =
+            tokio::time::timeout(self.admission_timeout, receiver.wait_for(Option::is_some)).await;
+        match waited {
+            Err(_) => Err(Self::reject(&CandidateError::AdmissionTimedOut)),
+            Ok(Ok(outcome)) if *outcome == Some(true) => Ok(response),
+            Ok(_) => Err(Self::reject(&CandidateError::ConcurrentSubmissionFailed)),
         }
     }
 }
@@ -279,7 +343,7 @@ where
             }
         };
         if let Some(receiver) = in_flight {
-            return Self::await_inflight(receiver, response).await;
+            return self.await_inflight(receiver, response).await;
         }
 
         // Step 7: access policy.
@@ -321,7 +385,16 @@ where
         };
         let outcome = match created {
             Ok(sender) => sender,
-            Err(receiver) => return Self::await_inflight(receiver, response).await,
+            Err(receiver) => return self.await_inflight(receiver, response).await,
+        };
+        // From here the guard owns the Pending entry: cancelling this request settles it.
+        let mut admission = PendingAdmission {
+            inflight: Arc::clone(&self.inflight),
+            runtime: Arc::clone(&self.runtime),
+            pool: self.pool.clone(),
+            group_hash: response.group_hash,
+            representative: response.representative_hash,
+            outcome: Some(outcome),
         };
         let representative = group.representative();
         let transaction = BasePooledTransaction::new(
@@ -329,19 +402,25 @@ where
             representative.encoded.len(),
         )
         .with_candidate_group(Arc::clone(&group));
-        let inserted = self.pool.add_transaction(TransactionOrigin::Private, transaction).await;
-        {
-            let mut inflight = self.lock_inflight();
-            inflight.remove(&response.group_hash);
-            if inserted.is_ok() {
-                self.runtime.ledger.confirm_pooled(response.group_hash);
-            } else {
-                self.runtime.ledger.abort(response.group_hash);
+        let inserted = tokio::time::timeout(
+            self.admission_timeout,
+            self.pool.add_transaction(TransactionOrigin::Private, transaction),
+        )
+        .await;
+        match inserted {
+            Ok(Ok(_)) => admission.settle(true),
+            Ok(Err(error)) => {
+                admission.settle(false);
+                return Err(ErrorObjectOwned::from(EthApiError::from(error)));
             }
-        }
-        outcome.send_replace(Some(inserted.is_ok()));
-        if let Err(error) = inserted {
-            return Err(ErrorObjectOwned::from(EthApiError::from(error)));
+            Err(_) => {
+                let pooled = self.pool.contains(&response.representative_hash);
+                admission.settle(pooled);
+                if !pooled {
+                    debug!(group_hash = %response.group_hash, "candidate admission timed out");
+                    return Err(Self::reject(&CandidateError::AdmissionTimedOut));
+                }
+            }
         }
         info!(
             group_hash = %response.group_hash,
@@ -391,8 +470,8 @@ mod tests {
     use httpmock::{Method::POST, MockServer};
     use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
     use reth_transaction_pool::{
-        CoinbaseTipOrdering, Pool, PoolConfig, blobstore::InMemoryBlobStore,
-        noop::NoopTransactionPool, test_utils::OkValidator,
+        CoinbaseTipOrdering, Pool, PoolConfig, PoolTransaction, TransactionValidationOutcome,
+        blobstore::InMemoryBlobStore, noop::NoopTransactionPool, test_utils::OkValidator,
     };
 
     use super::*;
@@ -517,6 +596,148 @@ mod tests {
         assert_eq!(first, second);
         assert_eq!(pool.pool_size().total, 1);
         assert_eq!(runtime.ledger.counts(), (1, 1));
+    }
+
+    /// Holds every validation until `gate` opens, then accepts or rejects it.
+    #[derive(Debug, Clone)]
+    struct GatedValidator {
+        gate: Arc<tokio::sync::Semaphore>,
+        accept: bool,
+    }
+
+    impl GatedValidator {
+        /// A validator that never finishes.
+        fn stalled() -> Self {
+            Self { gate: Arc::new(tokio::sync::Semaphore::new(0)), accept: true }
+        }
+    }
+
+    impl reth_transaction_pool::TransactionValidator for GatedValidator {
+        type Transaction = BasePooledTransaction;
+        type Block = <OkValidator<BasePooledTransaction> as reth_transaction_pool::TransactionValidator>::Block;
+
+        async fn validate_transaction(
+            &self,
+            origin: TransactionOrigin,
+            transaction: Self::Transaction,
+        ) -> TransactionValidationOutcome<Self::Transaction> {
+            let _permit = self.gate.acquire().await.expect("gate stays open");
+            if self.accept {
+                OkValidator::default().validate_transaction(origin, transaction).await
+            } else {
+                TransactionValidationOutcome::Error(
+                    *transaction.hash(),
+                    Box::new(std::io::Error::other("rejected by the test validator")),
+                )
+            }
+        }
+    }
+
+    fn gated_rpc(
+        validator: GatedValidator,
+        runtime: &Arc<CandidateRuntime>,
+    ) -> SendRawTransactionCandidatesApiImpl<
+        TestProvider,
+        Pool<GatedValidator, CoinbaseTipOrdering<BasePooledTransaction>, InMemoryBlobStore>,
+    > {
+        let pool = Pool::new(
+            validator,
+            CoinbaseTipOrdering::default(),
+            InMemoryBlobStore::default(),
+            PoolConfig::default(),
+        );
+        rpc(provider(), pool, runtime, MAX_EXPIRY_SECS)
+    }
+
+    /// Yields until the first admission has registered its `Pending` entry.
+    async fn until_pending(runtime: &CandidateRuntime) {
+        for _ in 0..100 {
+            if runtime.ledger.counts() == (1, 1) {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+        panic!("the first admission never reached pool insertion");
+    }
+
+    #[tokio::test]
+    async fn cancelled_first_admission_releases_inflight_and_pending() {
+        let fixture = fixture();
+        let runtime = runtime(&[fixture.address()]);
+        let api = gated_rpc(GatedValidator::stalled(), &runtime);
+        let (siblings, options) = request(&fixture);
+
+        let first = tokio::spawn({
+            let api = api.clone();
+            async move { api.send_raw_transaction_candidates(siblings, options).await }
+        });
+        until_pending(&runtime).await;
+        first.abort();
+        assert!(first.await.unwrap_err().is_cancelled());
+
+        assert!(api.lock_inflight().is_empty(), "no orphaned in-flight receiver");
+        assert_eq!(runtime.ledger.counts(), (0, 0), "no orphaned Pending entry");
+    }
+
+    #[tokio::test]
+    async fn stalled_admission_and_its_duplicates_time_out() {
+        let fixture = fixture();
+        let runtime = runtime(&[fixture.address()]);
+        let api = gated_rpc(GatedValidator::stalled(), &runtime)
+            .with_admission_timeout(Duration::from_millis(50));
+        let (siblings, options) = request(&fixture);
+
+        let first = tokio::spawn({
+            let api = api.clone();
+            let (siblings, options) = (siblings.clone(), options.clone());
+            async move { api.send_raw_transaction_candidates(siblings, options).await }
+        });
+        until_pending(&runtime).await;
+        let duplicate = tokio::time::timeout(
+            Duration::from_secs(5),
+            api.send_raw_transaction_candidates(siblings, options),
+        )
+        .await
+        .expect("the duplicate wait is bounded");
+
+        let first = first.await.unwrap().expect_err("a stalled insertion times out");
+        assert_eq!(first.data().map(|data| data.get()), Some("\"admission_timeout\""));
+        assert!(duplicate.is_err(), "a duplicate never reports acceptance of a stalled group");
+        assert!(api.lock_inflight().is_empty());
+        assert_eq!(runtime.ledger.counts(), (0, 0));
+    }
+
+    #[tokio::test]
+    async fn failed_first_admission_fails_its_waiting_duplicates() {
+        let fixture = fixture();
+        let runtime = runtime(&[fixture.address()]);
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        let api = gated_rpc(GatedValidator { gate: Arc::clone(&gate), accept: false }, &runtime);
+        let (siblings, options) = request(&fixture);
+
+        let first = tokio::spawn({
+            let api = api.clone();
+            let (siblings, options) = (siblings.clone(), options.clone());
+            async move { api.send_raw_transaction_candidates(siblings, options).await }
+        });
+        until_pending(&runtime).await;
+        let duplicate = tokio::spawn({
+            let api = api.clone();
+            async move { api.send_raw_transaction_candidates(siblings, options).await }
+        });
+        for _ in 0..10 {
+            tokio::task::yield_now().await;
+        }
+        gate.add_permits(1);
+
+        assert!(first.await.unwrap().is_err());
+        let duplicate = duplicate.await.unwrap().expect_err("the duplicate mirrors the failure");
+        assert_eq!(
+            duplicate.data().map(|data| data.get()),
+            Some("\"concurrent_submission_failed\"")
+        );
+        assert!(api.lock_inflight().is_empty());
+        assert_eq!(runtime.ledger.counts(), (0, 0));
     }
 
     #[tokio::test]
