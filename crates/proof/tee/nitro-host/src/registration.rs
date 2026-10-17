@@ -1,10 +1,9 @@
-//! Shared signer-validity checker backed by the on-chain `TEEProverRegistry`.
+//! Shared signer checker backed by the onchain `TEEProverRegistry`.
 //!
-//! Two consumers, two policies:
-//! - **Health endpoint** — latching: once valid, stays healthy forever (avoids
-//!   ASG replacement on transient L1 failures).
-//! - **Proving guard** — fail-closed: rejects proof requests when the signer
-//!   is invalid or L1 is unreachable.
+//! Health accepts a currently valid signer or a registered image hash matching
+//! the configured nonzero pending hash. Once healthy, it stays healthy forever
+//! to avoid ASG replacement on transient L1 failures. Proving and enclave routing
+//! still require current onchain validity and never accept the pending hash.
 //!
 //! # Trade-off: latching health after deregistration
 //!
@@ -18,7 +17,7 @@
 
 use std::{sync::Arc, time::Duration};
 
-use alloy_primitives::Address;
+use alloy_primitives::{Address, B256};
 use base_proof_contracts::{TEEProverRegistryClient, TEEProverRegistryContractClient};
 use thiserror::Error;
 use tokio::sync::OnceCell;
@@ -64,7 +63,7 @@ pub enum RegistrationError {
     },
 }
 
-/// A signer that has been confirmed valid on-chain via `TEEProverRegistry`.
+/// A signer that has been confirmed valid onchain via `TEEProverRegistry`.
 #[derive(Debug)]
 pub struct ValidSigner {
     /// Index of the enclave in the configured transport list.
@@ -73,17 +72,18 @@ pub struct ValidSigner {
     pub signer: Address,
 }
 
-/// Checks whether the enclave signer is a **valid** signer in the on-chain
-/// `TEEProverRegistry` (registered AND matching the current image hash).
+/// Checks enclave signers against the onchain `TEEProverRegistry`.
 ///
-/// Each call to [`require_valid_signer`](Self::require_valid_signer) performs a
-/// live L1 query — proof requests are infrequent enough that caching is
-/// unnecessary.  A separate latching flag tracks whether the signer has *ever*
-/// been valid — once set, [`check_health`](Self::check_health) always succeeds.
+/// Proving and routing perform live validity checks against the current image
+/// hash. Health also accepts a registered image matching an optional pending
+/// hash, so the next image can deploy before onchain activation. Once either
+/// health condition succeeds, [`check_health`](Self::check_health) stays healthy
+/// without further registry calls.
 pub struct RegistrationChecker {
     transports: Vec<Arc<NitroTransport>>,
     registry: Box<dyn TEEProverRegistryClient>,
     healthy: OnceCell<()>,
+    pending_image_hash: Option<B256>,
 }
 
 impl std::fmt::Debug for RegistrationChecker {
@@ -103,7 +103,26 @@ impl RegistrationChecker {
         if transports.is_empty() {
             return Err(RegistrationError::Setup("at least one transport is required".into()));
         }
-        Ok(Self { transports, registry: Box::new(registry), healthy: OnceCell::new() })
+        Ok(Self {
+            transports,
+            registry: Box::new(registry),
+            healthy: OnceCell::new(),
+            pending_image_hash: None,
+        })
+    }
+
+    /// Configures an optional image hash accepted by health checks, but not proving.
+    ///
+    /// Returns [`RegistrationError::Setup`] if the pending hash is zero.
+    pub fn with_pending_image_hash(
+        mut self,
+        pending_image_hash: Option<B256>,
+    ) -> Result<Self, RegistrationError> {
+        if pending_image_hash.is_some_and(|hash| hash.is_zero()) {
+            return Err(RegistrationError::Setup("pending TEE image hash must be nonzero".into()));
+        }
+        self.pending_image_hash = pending_image_hash;
+        Ok(self)
     }
 
     /// Creates a checker from a deployed `TEEProverRegistry` configuration.
@@ -119,7 +138,7 @@ impl RegistrationChecker {
         })?;
         let registry = TEEProverRegistryContractClient::new(config.registry_address, l1_url);
 
-        Self::new(transports, registry)
+        Self::new(transports, registry)?.with_pending_image_hash(config.pending_image_hash)
     }
 
     /// Returns the configured enclave transports in checker index order.
@@ -145,7 +164,7 @@ impl RegistrationChecker {
         }
     }
 
-    async fn fetch_validity(&self) -> Result<bool, RegistrationError> {
+    async fn fetch_health(&self) -> Result<bool, RegistrationError> {
         let mut first_rpc_error = None;
 
         for (index, transport) in self.transports.iter().enumerate() {
@@ -160,7 +179,30 @@ impl RegistrationChecker {
             match self.is_valid_signer(signer).await {
                 Ok(true) => return Ok(true),
                 Ok(false) => {
-                    warn!(signer = %signer, index, "signer not valid in TEEProverRegistry");
+                    if let Some(pending) = self.pending_image_hash {
+                        match tokio::time::timeout(
+                            CHECK_TIMEOUT,
+                            self.registry.signer_image_hash(signer),
+                        )
+                        .await
+                        {
+                            Ok(Ok(image_hash)) if image_hash == pending => return Ok(true),
+                            Ok(Ok(_)) => {}
+                            Ok(Err(e)) => {
+                                first_rpc_error.get_or_insert_with(|| RegistrationError::Rpc {
+                                    signer,
+                                    reason: e.to_string(),
+                                });
+                            }
+                            Err(_) => {
+                                first_rpc_error.get_or_insert_with(|| RegistrationError::Rpc {
+                                    signer,
+                                    reason: "request timed out".into(),
+                                });
+                            }
+                        }
+                    }
+                    warn!(signer = %signer, index, "signer does not satisfy TEE registry health policy");
                 }
                 Err(e) => {
                     first_rpc_error.get_or_insert(e);
@@ -171,15 +213,18 @@ impl RegistrationChecker {
         first_rpc_error.map_or(Ok(false), Err)
     }
 
-    /// Latching health check: returns `true` once the signer has ever been
-    /// confirmed valid, and stays `true` forever after — even if the signer
-    /// is later deregistered.  See the [module-level docs](self) for the
-    /// trade-off this implies.
+    /// Returns `true` once any signer is valid or has the configured pending image.
+    ///
+    /// Success latches forever, even after deregistration. Before the latch,
+    /// pending image reads run only for invalid signers, at most once per
+    /// transport per call, with the same timeout as validity reads. An RPC
+    /// failure returns an error if no other signer satisfies the health policy.
+    /// See the [module-level docs](self) for the latch trade-off.
     pub async fn check_health(&self) -> Result<bool, RegistrationError> {
         if self.healthy.get().is_some() {
             return Ok(true);
         }
-        let valid = self.fetch_validity().await?;
+        let valid = self.fetch_health().await?;
         if valid {
             let _ = self.healthy.set(());
         }
@@ -202,7 +247,7 @@ impl RegistrationChecker {
         }
     }
 
-    /// Returns every enclave whose signer is currently valid on-chain, in
+    /// Returns every enclave whose signer is currently valid onchain, in
     /// config order.
     ///
     /// Best-effort across enclaves: RPC errors for individual signers are
@@ -303,6 +348,156 @@ mod tests {
         let a = transport_signer_address(&checker.transports[0]).await;
         let b = transport_signer_address(&checker.transports[1]).await;
         (a, b)
+    }
+
+    #[tokio::test]
+    async fn pending_health_accepts_only_the_configured_image() {
+        let pending = B256::repeat_byte(1);
+        let registry = MockRegistry::new(false);
+        let checker = test_checker_with_mock(registry.clone())
+            .with_pending_image_hash(Some(pending))
+            .unwrap();
+
+        for image_hash in [B256::ZERO, B256::repeat_byte(2)] {
+            *registry.image_hash.lock().unwrap() = image_hash;
+            assert!(!checker.check_health().await.unwrap());
+        }
+
+        assert_eq!(registry.image_hash_call_count.load(Ordering::Relaxed), 2);
+        *registry.image_hash.lock().unwrap() = pending;
+        assert!(checker.check_health().await.unwrap());
+        assert!(checker.check_health().await.unwrap());
+        assert_eq!(registry.image_hash_call_count.load(Ordering::Relaxed), 3);
+        assert_eq!(registry.call_count.load(Ordering::Relaxed), 3);
+    }
+
+    #[tokio::test]
+    async fn no_pending_hash_keeps_invalid_signers_unhealthy_without_image_reads() {
+        let registry = MockRegistry::new(false);
+        *registry.image_hash.lock().unwrap() = B256::repeat_byte(1);
+        registry.image_hash_should_fail.store(true, Ordering::Relaxed);
+        let checker = test_checker_with_mock(registry.clone());
+
+        assert!(!checker.check_health().await.unwrap());
+        assert!(!checker.check_health().await.unwrap());
+        assert_eq!(registry.call_count.load(Ordering::Relaxed), 2);
+        assert_eq!(registry.image_hash_call_count.load(Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test]
+    async fn pending_health_latch_does_not_authorize_proving_or_routing() {
+        let pending = B256::repeat_byte(1);
+        let registry = AddressBasedMockRegistry::new(HashMap::new());
+        let checker =
+            two_transport_checker(registry.clone()).with_pending_image_hash(Some(pending)).unwrap();
+        let (pending_signer, current_signer) = two_transport_signers(&checker).await;
+        registry.image_hashes.lock().unwrap().insert(pending_signer, pending);
+
+        assert!(checker.check_health().await.unwrap());
+        assert!(matches!(checker.require_valid_signer().await,
+            Err(RegistrationError::NotValid { signer }) if signer == pending_signer));
+        assert!(matches!(
+            checker.select_all_valid_enclaves().await,
+            Err(RegistrationError::NoValidSigner { .. })
+        ));
+
+        registry.validity_map.lock().unwrap().insert(current_signer, true);
+        let selected = checker.select_all_valid_enclaves().await.unwrap();
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].signer, current_signer);
+        assert_eq!(selected[0].index, 1);
+        assert!(checker.check_health().await.unwrap());
+        assert_eq!(*registry.image_hash_calls.lock().unwrap(), vec![pending_signer]);
+    }
+
+    #[tokio::test]
+    async fn pending_health_reads_each_invalid_transport_once_per_poll_before_latch() {
+        let pending = B256::repeat_byte(1);
+        let registry = AddressBasedMockRegistry::new(HashMap::new());
+        let checker =
+            two_transport_checker(registry.clone()).with_pending_image_hash(Some(pending)).unwrap();
+        let (a, b) = two_transport_signers(&checker).await;
+
+        assert!(!checker.check_health().await.unwrap());
+        assert_eq!(*registry.image_hash_calls.lock().unwrap(), vec![a, b]);
+        assert!(!checker.check_health().await.unwrap());
+        assert_eq!(*registry.image_hash_calls.lock().unwrap(), vec![a, b, a, b]);
+        registry.image_hashes.lock().unwrap().insert(b, pending);
+        assert!(checker.check_health().await.unwrap());
+        assert_eq!(*registry.image_hash_calls.lock().unwrap(), vec![a, b, a, b, a, b]);
+        assert_eq!(registry.call_count.load(Ordering::Relaxed), 6);
+
+        registry.should_fail.store(true, Ordering::Relaxed);
+        registry.image_hash_fail_signers.lock().unwrap().extend([a, b]);
+        assert!(checker.check_health().await.unwrap());
+        assert_eq!(registry.call_count.load(Ordering::Relaxed), 6);
+        assert_eq!(registry.image_hash_calls.lock().unwrap().len(), 6);
+    }
+
+    #[tokio::test]
+    async fn pending_health_skips_image_reads_for_valid_signers_and_validity_errors() {
+        let registry = AddressBasedMockRegistry::new(HashMap::new());
+        let checker = two_transport_checker(registry.clone())
+            .with_pending_image_hash(Some(B256::repeat_byte(1)))
+            .unwrap();
+        let (a, b) = two_transport_signers(&checker).await;
+        registry.fail_signers.lock().unwrap().insert(a);
+        registry.validity_map.lock().unwrap().insert(b, true);
+
+        assert!(checker.check_health().await.unwrap());
+        assert_eq!(registry.call_count.load(Ordering::Relaxed), 2);
+        assert!(registry.image_hash_calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn pending_health_image_rpc_failure_is_an_error_before_latch() {
+        let registry = MockRegistry::new(false);
+        registry.image_hash_should_fail.store(true, Ordering::Relaxed);
+        let checker = test_checker_with_mock(registry)
+            .with_pending_image_hash(Some(B256::repeat_byte(1)))
+            .unwrap();
+
+        let error = checker.check_health().await.unwrap_err();
+        assert!(matches!(error, RegistrationError::Rpc { .. }));
+        assert!(error.to_string().contains("mock image hash RPC failure"));
+    }
+
+    #[tokio::test]
+    async fn pending_health_image_rpc_timeout_is_an_error_before_latch() {
+        let registry = MockRegistry::new(false);
+        registry.image_hash_should_stall.store(true, Ordering::Relaxed);
+        let checker = test_checker_with_mock(registry)
+            .with_pending_image_hash(Some(B256::repeat_byte(1)))
+            .unwrap();
+
+        let result =
+            tokio::time::timeout(CHECK_TIMEOUT + Duration::from_secs(1), checker.check_health())
+                .await
+                .expect("image hash read exceeded the registry check timeout");
+        assert!(matches!(result, Err(RegistrationError::Rpc { .. })));
+    }
+
+    #[tokio::test]
+    async fn pending_health_can_recover_from_one_image_rpc_failure() {
+        let pending = B256::repeat_byte(1);
+        let registry = AddressBasedMockRegistry::new(HashMap::new());
+        let checker =
+            two_transport_checker(registry.clone()).with_pending_image_hash(Some(pending)).unwrap();
+        let (a, b) = two_transport_signers(&checker).await;
+        registry.image_hash_fail_signers.lock().unwrap().insert(a);
+        registry.image_hashes.lock().unwrap().insert(b, pending);
+
+        assert!(checker.check_health().await.unwrap());
+        assert_eq!(*registry.image_hash_calls.lock().unwrap(), vec![a, b]);
+    }
+
+    #[test]
+    fn pending_health_rejects_zero_hash() {
+        assert!(
+            test_checker_with_mock(MockRegistry::new(false))
+                .with_pending_image_hash(Some(B256::ZERO))
+                .is_err()
+        );
     }
 
     #[tokio::test]

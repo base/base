@@ -99,8 +99,8 @@ summary = "Stub README for the TEE prover binary that runs inside an AWS Nitro E
 digest = "8cb5c613d8"
 
 ["bin/prover/nitro-host/README.md"]
-summary = "Nitro TEE prover host worker: server and local subcommands, worker mode, env setup, readyz and healthz health checks, and the internal-only RPC security model."
-digest = "bc56bbd532"
+summary = "Nitro TEE prover host worker: server and local subcommands, env setup, registration-gated health, pending image rollout, and the internal-only RPC security model."
+digest = "2912d13f06"
 
 ["bin/prover/service/README.md"]
 summary = "Prover service binary: Postgres-backed requester and worker JSON-RPC APIs that queue proofs and lease jobs to external workers; covers the security model for the unauthenticated APIs."
