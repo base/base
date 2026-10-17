@@ -6164,7 +6164,6 @@ dependencies = [
  "axum 0.8.9",
  "base-health",
  "clap",
- "reqwest 0.13.4",
  "tokio",
  "tokio-util",
  "tracing",
