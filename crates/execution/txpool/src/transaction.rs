@@ -22,6 +22,7 @@ use base_common_consensus::{
     BaseTransactionSigned, CoinbaseTip, EIP8130_TX_TYPE_ID, Eip8130Constants, Eip8130Signed,
     Predeploys,
 };
+use base_execution_candidates::CandidateGroup;
 use c_kzg::KzgSettings;
 use reth_primitives_traits::{InMemorySize, SignedTransaction};
 use reth_transaction_pool::{
@@ -125,6 +126,12 @@ pub struct BasePooledTransaction<
     /// sequencer/builder inserts and on mempool txs while inline simulation is
     /// off. The later consumer only forwards `Some`.
     metering: Option<Arc<MeterBundleResponse>>,
+    /// Candidate group carried by a representative submitted through
+    /// `base_sendRawTransactionCandidates`. The representative is only the pool and iterator
+    /// lifecycle identity; the builder selects and commits one sibling.
+    candidate_group: Option<Arc<CandidateGroup>>,
+    /// Maximum sibling obligation reported by `cost()` for a candidate representative.
+    candidate_cost: U256,
 }
 
 impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
@@ -167,6 +174,8 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
             coinbase_tip_backing: CoinbaseTipBacking::default(),
             watch_manifest: OnceLock::new(),
             metering: None,
+            candidate_group: None,
+            candidate_cost: U256::ZERO,
         }
     }
 
@@ -180,6 +189,17 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
     /// Returns the attached `meter_bundle` result, if any.
     pub fn metering(&self) -> Option<&MeterBundleResponse> {
         self.metering.as_deref()
+    }
+
+    /// Attaches a validated candidate group to its representative.
+    ///
+    /// Pool affordability uses the maximum sibling obligation, capped like any pool cost.
+    /// Raw ingress must validate the group first; this does not verify it.
+    #[must_use]
+    pub fn with_candidate_group(mut self, group: Arc<CandidateGroup>) -> Self {
+        self.candidate_cost = group.max_cost().min(Self::MAX_POOL_COST);
+        self.candidate_group = Some(group);
+        self
     }
 
     /// Sets the validity predicates required for this transaction's inclusion.
@@ -323,6 +343,9 @@ where
     /// which [`BasePooledTx::coinbase_tip`] reads, before the classification,
     /// so the value is fixed while the transaction is pooled.
     fn cost(&self) -> &U256 {
+        if self.candidate_group.is_some() {
+            return &self.candidate_cost;
+        }
         let Some(class) = self.limit_class.get() else {
             return &self.inner.cost;
         };
@@ -368,6 +391,11 @@ impl<Cons: InMemorySize, Pooled> InMemorySize for BasePooledTransaction<Cons, Po
         let metering_size = self.metering.as_ref().map_or(0, |metering| {
             core::mem::size_of::<MeterBundleResponse>() + metering.heap_size()
         });
+        // Fixed when the group is attached, so the reported size is stable while pooled.
+        let candidate_size = self
+            .candidate_group
+            .as_ref()
+            .map_or(0, |group| core::mem::size_of::<CandidateGroup>() + group.heap_size());
         self.inner.size()
             + core::mem::size_of::<u128>()
             + core::mem::size_of::<Vec<crate::ValidityPredicate>>()
@@ -381,6 +409,9 @@ impl<Cons: InMemorySize, Pooled> InMemorySize for BasePooledTransaction<Cons, Po
             + validity_predicates_size
             + core::mem::size_of::<Option<Arc<MeterBundleResponse>>>()
             + metering_size
+            + core::mem::size_of::<Option<Arc<CandidateGroup>>>()
+            + core::mem::size_of::<U256>()
+            + candidate_size
     }
 }
 
@@ -607,6 +638,13 @@ pub trait BasePooledTx: PoolTransaction + DataAvailabilitySized {
         None
     }
 
+    /// Returns the candidate group carried by this representative, if any.
+    ///
+    /// Defaults to `None` for implementers that never carry candidate groups.
+    fn candidate_group(&self) -> Option<&Arc<CandidateGroup>> {
+        None
+    }
+
     /// Returns whether this transaction belongs in the EIP-8130 sidecar.
     fn is_eip8130_sidecar_transaction(&self) -> bool {
         self.eip8130_nonce_channel_key().is_some() || self.is_eip8130_nonce_free()
@@ -625,6 +663,10 @@ where
 
     fn validity_predicates(&self) -> &[crate::ValidityPredicate] {
         &self.validity_predicates
+    }
+
+    fn candidate_group(&self) -> Option<&Arc<CandidateGroup>> {
+        self.candidate_group.as_ref()
     }
 
     fn as_eip8130(&self) -> Option<&Eip8130Signed> {
@@ -1114,5 +1156,44 @@ mod tests {
             BasePooledTx::validity_predicates(&transaction),
             core::slice::from_ref(&predicate)
         );
+    }
+
+    fn candidate_representative(
+        fixture: &base_execution_candidates::test_utils::CandidateFixture,
+    ) -> (BasePooledTransaction, Arc<base_execution_candidates::CandidateGroup>) {
+        let cheap = fixture.encode(fixture.sibling_tx(0, Address::repeat_byte(1), U256::ZERO));
+        let rich =
+            fixture.encode(fixture.sibling_tx(0, Address::repeat_byte(2), U256::from(1_000_000)));
+        let raw = vec![cheap, rich];
+        let group = Arc::new(fixture.group(&raw, fixture.envelope_for(&raw, 0)));
+        let representative =
+            BasePooledTransaction::recover_raw_transaction(&group.representative().encoded)
+                .expect("representative decodes");
+        (representative, group)
+    }
+
+    #[test]
+    fn candidate_representative_reports_the_maximum_sibling_obligation() {
+        let fixture = base_execution_candidates::test_utils::CandidateFixture::new(8453);
+        let (representative, group) = candidate_representative(&fixture);
+        let plain_cost = *representative.cost();
+        assert!(BasePooledTx::candidate_group(&representative).is_none());
+
+        let carrying = representative.with_candidate_group(Arc::clone(&group));
+        assert_eq!(*carrying.cost(), group.max_cost());
+        assert!(*carrying.cost() > plain_cost, "the value-carrying sibling sets the cost");
+        assert_eq!(
+            BasePooledTx::candidate_group(&carrying).map(|group| group.group_hash()),
+            Some(group.group_hash())
+        );
+    }
+
+    #[test]
+    fn candidate_sidecar_counts_toward_pool_size() {
+        let fixture = base_execution_candidates::test_utils::CandidateFixture::new(8453);
+        let (representative, group) = candidate_representative(&fixture);
+        let plain_size = representative.size();
+        let carrying = representative.with_candidate_group(Arc::clone(&group));
+        assert!(carrying.size() >= plain_size + group.heap_size());
     }
 }

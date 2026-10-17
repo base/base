@@ -8,6 +8,7 @@ use alloy_eips::{
 };
 use alloy_primitives::{Address, B128, B256, TxHash, U256, map::AddressSet};
 use base_common_precompiles::NonceManagerStorage;
+use base_execution_candidates::CandidateRuntime;
 use futures::StreamExt;
 use parking_lot::{Mutex, RwLock};
 use reth_eth_wire_types::HandleMempoolData;
@@ -122,6 +123,8 @@ pub struct BaseTransactionPool<
     /// deadline eviction, so a same-nonce submission cannot race the sweep.
     /// Validation itself remains outside this lock.
     protocol_admission_lock: Arc<Mutex<()>>,
+    /// Candidate-selection state, when `base_sendRawTransactionCandidates` is enabled.
+    candidates: Option<Arc<CandidateRuntime>>,
 }
 
 impl<Client, S, Evm, T, O> fmt::Debug for BaseTransactionPool<Client, S, Evm, T, O>
@@ -157,6 +160,7 @@ where
             block_expiry: Arc::clone(&self.block_expiry),
             published_flashblock: Arc::clone(&self.published_flashblock),
             protocol_admission_lock: Arc::clone(&self.protocol_admission_lock),
+            candidates: self.candidates.clone(),
         }
     }
 }
@@ -202,7 +206,16 @@ where
             block_expiry: Arc::new(RwLock::new(crate::BlockExpiryIndex::new())),
             published_flashblock: Arc::new(RwLock::new(None)),
             protocol_admission_lock: Arc::new(Mutex::new(())),
+            candidates: None,
         }
+    }
+
+    /// Enables candidate-group handling: expiry, ledger reconciliation and fail-closed
+    /// suppression of plain sibling reinsertion. Call before sharing the pool.
+    #[must_use]
+    pub fn with_candidate_runtime(mut self, runtime: Arc<CandidateRuntime>) -> Self {
+        self.candidates = Some(runtime);
+        self
     }
 
     /// Configures EIP-8130 admission limits. Call before sharing the pool.
@@ -444,13 +457,42 @@ where
         }
     }
 
-    /// Returns the block-expiry bound for a validated transaction's validity
-    /// predicates, or `None` when they impose no finite block bound.
+    /// Returns the block-expiry bound for a validated transaction: its validity predicates'
+    /// finite block bound, or a candidate group's inclusive `expiryBlock`.
     fn validity_block_expiry_bound(validated: &TransactionValidationOutcome<T>) -> Option<u64> {
-        let transaction = validated.as_valid_transaction()?;
-        crate::ValidityPredicate::block_expiry_bound(
-            transaction.transaction().validity_predicates(),
-        )
+        let transaction = validated.as_valid_transaction()?.transaction();
+        transaction.candidate_group().map(|group| group.envelope().expiry_block).or_else(|| {
+            crate::ValidityPredicate::block_expiry_bound(transaction.validity_predicates())
+        })
+    }
+
+    /// Rejects automatic plain insertion of a known candidate sibling (design §4.6).
+    ///
+    /// Reth reinjects reorged-out transactions and restores the pool backup without sidecars,
+    /// which would turn a candidate sibling into an ordinary transaction. While candidates are
+    /// enabled this suppresses (a) any sidecar-free transaction whose hash the ledger retains as
+    /// a sibling, and (b) every sidecar-free `Private`-origin transaction: Private ingress always
+    /// attaches a sidecar, so such an entry can only be a backup restore whose group metadata is
+    /// gone. The group must be resubmitted.
+    fn reject_plain_candidate_reinsertion(
+        &self,
+        origin: TransactionOrigin,
+        transaction: &T,
+    ) -> PoolResult<()> {
+        let Some(candidates) = &self.candidates else { return Ok(()) };
+        if transaction.candidate_group().is_some() || !transaction.validity_predicates().is_empty()
+        {
+            return Ok(());
+        }
+        let hash = *transaction.hash();
+        if origin.is_private() || candidates.ledger.suppresses_plain_reinsertion(&hash) {
+            debug!(tx_hash = %hash, origin = ?origin, "suppressed plain reinsertion of a candidate sibling");
+            return Err(reth_transaction_pool::error::PoolError::other(
+                hash,
+                "candidate siblings cannot be inserted as plain transactions",
+            ));
+        }
+        Ok(())
     }
 
     /// Optional flashblock upper bound, paired with the block bound for pool eviction.
@@ -525,6 +567,10 @@ where
         // validity predicates, so an evicted tx can also hold guard capacity.
         // `release` is a no-op for the common EIP-1559 case that is not tracked.
         self.release_from_guard(&removed);
+        if let Some(candidates) = &self.candidates {
+            candidates.ledger.reconcile(|hash| self.protocol_pool.contains(hash));
+            candidates.ledger.prune(committed_block);
+        }
         if !removed.is_empty() {
             GuardMetrics::record_block_expiry_invalidations(removed.len());
             debug!(
@@ -1103,6 +1149,7 @@ where
         origin: TransactionOrigin,
         transaction: Self::Transaction,
     ) -> PoolResult<TransactionEvents> {
+        self.reject_plain_candidate_reinsertion(origin, &transaction)?;
         if !self.is_sidecar_transaction(&transaction) {
             let hash = *transaction.hash();
             let sender = transaction.sender();
@@ -1150,6 +1197,7 @@ where
         origin: TransactionOrigin,
         transaction: Self::Transaction,
     ) -> PoolResult<AddedTransactionOutcome> {
+        self.reject_plain_candidate_reinsertion(origin, &transaction)?;
         if self.is_sidecar_transaction(&transaction) {
             self.add_sidecar_transaction(origin, transaction).await
         } else {
@@ -4143,5 +4191,127 @@ mod tests {
             assert_eq!(pool.get(&hash).is_some(), remains_live);
             assert_eq!(pool.guard.read().contains(&hash), remains_live);
         }
+    }
+
+    fn candidate_runtime() -> Arc<CandidateRuntime> {
+        Arc::new(CandidateRuntime {
+            ledger: base_execution_candidates::GroupLedger::default(),
+            policy: Arc::new(base_execution_candidates::StaticAccessPolicy::default()),
+            switch: base_execution_candidates::CandidateSwitch::default(),
+            limits: base_execution_candidates::CandidateLimits::default(),
+        })
+    }
+
+    /// A funded two-sibling group, recorded in `runtime`'s ledger, and its representative.
+    fn candidate_submission(
+        client: &MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>,
+        runtime: &CandidateRuntime,
+    ) -> (Arc<base_execution_candidates::CandidateGroup>, BasePooledTransaction) {
+        let fixture = base_execution_candidates::test_utils::CandidateFixture::with_key(
+            test_chain_id(),
+            0x51,
+        );
+        fund(client, fixture.address());
+        let (raw, envelope, _) = fixture.submission(2, 0);
+        let group = Arc::new(fixture.group(&raw, envelope));
+        runtime
+            .ledger
+            .create(Arc::clone(&group), base_execution_candidates::PrincipalId(1), 0, |_| true)
+            .expect("group is admitted");
+        let representative =
+            BasePooledTransaction::recover_raw_transaction(&group.representative().encoded)
+                .expect("representative decodes")
+                .with_candidate_group(Arc::clone(&group));
+        (group, representative)
+    }
+
+    fn plain_sibling(
+        group: &base_execution_candidates::CandidateGroup,
+        index: usize,
+    ) -> BasePooledTransaction {
+        BasePooledTransaction::recover_raw_transaction(&group.siblings()[index].encoded)
+            .expect("sibling decodes")
+    }
+
+    #[tokio::test]
+    async fn candidate_siblings_are_not_reinserted_as_plain_transactions() {
+        let (pool, client) = build_integration_pool();
+        let runtime = candidate_runtime();
+        let pool = pool.with_candidate_runtime(Arc::clone(&runtime));
+        let (group, representative) = candidate_submission(&client, &runtime);
+
+        for origin in [TransactionOrigin::External, TransactionOrigin::Local] {
+            for index in 0..group.siblings().len() {
+                let err = pool
+                    .add_transaction(origin, plain_sibling(&group, index))
+                    .await
+                    .expect_err("a known sibling is suppressed as a plain transaction");
+                assert!(matches!(err.kind, PoolErrorKind::Other(_)), "got {err:?}");
+            }
+        }
+
+        pool.add_transaction(TransactionOrigin::Private, representative)
+            .await
+            .expect("the representative carrying its group is admitted");
+        assert!(pool.get(&group.representative().hash()).is_some());
+    }
+
+    #[tokio::test]
+    async fn private_reinsertion_without_a_sidecar_fails_closed_while_candidates_are_enabled() {
+        let (pool, client) = build_integration_pool();
+        let pool = pool.with_candidate_runtime(candidate_runtime());
+        let signer = signer();
+        fund(&client, signer.address());
+
+        let err = pool
+            .add_transaction(TransactionOrigin::Private, signed_1559(&signer, 0))
+            .await
+            .expect_err("a sidecar-free Private entry can only be a restored backup");
+        assert!(matches!(err.kind, PoolErrorKind::Other(_)), "got {err:?}");
+
+        pool.add_transaction(TransactionOrigin::Local, signed_1559(&signer, 0))
+            .await
+            .expect("ordinary local submissions are unaffected");
+    }
+
+    #[tokio::test]
+    async fn plain_transactions_are_unaffected_without_a_candidate_runtime() {
+        let (pool, client) = build_integration_pool();
+        let runtime = candidate_runtime();
+        let (group, _) = candidate_submission(&client, &runtime);
+        let signer = signer();
+        fund(&client, signer.address());
+
+        pool.add_transaction(TransactionOrigin::External, plain_sibling(&group, 1))
+            .await
+            .expect("sibling bytes are an ordinary transaction when candidates are disabled");
+        pool.add_transaction(TransactionOrigin::Private, signed_1559(&signer, 0))
+            .await
+            .expect("Private origin is unaffected when candidates are disabled");
+    }
+
+    #[tokio::test]
+    async fn candidate_group_expires_after_its_inclusive_expiry_block() {
+        let (pool, client) = build_integration_pool();
+        let runtime = candidate_runtime();
+        let pool = pool.with_candidate_runtime(Arc::clone(&runtime));
+        let (group, representative) = candidate_submission(&client, &runtime);
+        let expiry = group.envelope().expiry_block;
+        let hash = group.representative().hash();
+        pool.add_transaction(TransactionOrigin::Private, representative).await.unwrap();
+        runtime.ledger.confirm_pooled(group.group_hash());
+
+        // Committing `expiry - 1` leaves `expiry` as the next block, which may still include it.
+        pool.expire_by_block(expiry - 1);
+        assert!(pool.get(&hash).is_some());
+
+        pool.expire_by_block(expiry);
+        assert!(pool.get(&hash).is_none());
+        let entry = runtime.ledger.lookup(&group.group_hash()).expect("ledger keeps the entry");
+        assert!(entry.state.is_terminal(), "the dropped group is reconciled: {:?}", entry.state);
+        assert!(
+            runtime.ledger.suppresses_plain_reinsertion(&hash),
+            "tombstones outlive pool removal"
+        );
     }
 }
