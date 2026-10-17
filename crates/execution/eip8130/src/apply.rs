@@ -1089,7 +1089,7 @@ mod tests {
     use revm::state::Bytecode;
 
     use super::*;
-    use crate::{AccountCreated, ActorAuthorized, ActorRevoked};
+    use crate::{AccountCreated, ActorAuthorized, ActorRevoked, test_utils::with_storage};
 
     const ACCOUNT: Address = address!("0x00000000000000000000000000000000000000a1");
     const K1: Address = Eip8130Constants::K1_AUTHENTICATOR;
@@ -1099,11 +1099,6 @@ mod tests {
         b256!("0x1111111111111111111111111111111111111111111111111111111111111111");
     const NON_SELF: B256 =
         b256!("0x00000000000000000000000000000000000000dd000000000000000000000000");
-
-    fn with_storage<R>(body: impl FnOnce(&mut AccountConfigurationStorage<'_>) -> R) -> R {
-        let mut storage = HashMapStorageProvider::new(1);
-        StorageCtx::enter(&mut storage, |ctx| body(&mut AccountConfigurationStorage::new(ctx)))
-    }
 
     /// Runs `body` against a fresh provider and returns the Account Configuration logs.
     fn with_storage_events(
@@ -2343,42 +2338,29 @@ mod tests {
     }
 
     #[test]
-    fn delegation_effect_install_accepts_empty_code() {
-        let target = Address::repeat_byte(0x33);
-        let mut storage = HashMapStorageProvider::new(1);
-
-        StorageCtx::enter(&mut storage, |sctx| {
-            DelegationEffect::new(ACCOUNT, target).install(sctx)
-        })
-        .unwrap();
-
-        assert_eq!(
-            storage
-                .get_account_info(ACCOUNT)
-                .and_then(|info| info.code.as_ref())
-                .and_then(Bytecode::eip7702_address),
-            Some(target)
-        );
-    }
-
-    #[test]
-    fn delegation_effect_install_updates_existing_delegation() {
+    fn delegation_effect_install_sets_indicator_on_replaceable_code() {
+        // Empty-code accounts and accounts already carrying a delegation may be
+        // (re-)delegated: the only code-shape guard rejects ordinary bytecode.
         let target = Address::repeat_byte(0x44);
-        let mut storage = HashMapStorageProvider::new(1);
-        storage.set_code(ACCOUNT, Bytecode::new_eip7702(Address::repeat_byte(0x11))).unwrap();
+        for existing in [None, Some(Bytecode::new_eip7702(Address::repeat_byte(0x11)))] {
+            let mut storage = HashMapStorageProvider::new(1);
+            if let Some(code) = existing {
+                storage.set_code(ACCOUNT, code).unwrap();
+            }
 
-        StorageCtx::enter(&mut storage, |sctx| {
-            DelegationEffect::new(ACCOUNT, target).install(sctx)
-        })
-        .unwrap();
+            StorageCtx::enter(&mut storage, |sctx| {
+                DelegationEffect::new(ACCOUNT, target).install(sctx)
+            })
+            .unwrap();
 
-        assert_eq!(
-            storage
-                .get_account_info(ACCOUNT)
-                .and_then(|info| info.code.as_ref())
-                .and_then(Bytecode::eip7702_address),
-            Some(target)
-        );
+            assert_eq!(
+                storage
+                    .get_account_info(ACCOUNT)
+                    .and_then(|info| info.code.as_ref())
+                    .and_then(Bytecode::eip7702_address),
+                Some(target)
+            );
+        }
     }
 
     #[test]
@@ -2415,49 +2397,6 @@ mod tests {
             let state = acc.get_account_state(created.address).unwrap();
             assert!(state.default_eoa_revoked(), "create must revoke the default EOA");
         });
-    }
-
-    #[test]
-    fn delegation_effect_install_allows_empty_code_account() {
-        // An empty-code account may be delegated: the only code-shape guard is
-        // that ordinary contract bytecode is rejected.
-        let target = Address::repeat_byte(0x56);
-        let mut storage = HashMapStorageProvider::new(1);
-
-        StorageCtx::enter(&mut storage, |sctx| {
-            DelegationEffect::new(ACCOUNT, target).install(sctx)
-        })
-        .unwrap();
-
-        assert_eq!(
-            storage
-                .get_account_info(ACCOUNT)
-                .and_then(|info| info.code.as_ref())
-                .and_then(Bytecode::eip7702_address),
-            Some(target)
-        );
-    }
-
-    #[test]
-    fn delegation_effect_install_allows_redelegation_of_existing_delegate() {
-        // An account that already carries a delegation indicator may be
-        // re-delegated: existing delegation code is replaceable.
-        let target = Address::repeat_byte(0x57);
-        let mut storage = HashMapStorageProvider::new(1);
-        storage.set_code(ACCOUNT, Bytecode::new_eip7702(Address::repeat_byte(0x11))).unwrap();
-
-        StorageCtx::enter(&mut storage, |sctx| {
-            DelegationEffect::new(ACCOUNT, target).install(sctx)
-        })
-        .unwrap();
-
-        assert_eq!(
-            storage
-                .get_account_info(ACCOUNT)
-                .and_then(|info| info.code.as_ref())
-                .and_then(Bytecode::eip7702_address),
-            Some(target)
-        );
     }
 
     #[test]
