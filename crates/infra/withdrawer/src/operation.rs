@@ -370,7 +370,10 @@ impl Withdrawer {
         Ok(status == GameStatus::InProgress as u8 || status == GameStatus::DefenderWins as u8)
     }
 
-    /// Authenticates the latest usable covering game, or the first covering legacy output.
+    /// Authenticates the newest finalized covering game, or the oldest eligible fallback game.
+    ///
+    /// Skips unavailable or invalid fault-proof candidates, retaining the last proof RPC failure
+    /// if none verifies. Legacy outputs use the first covering commitment and fail on proof errors.
     pub async fn proving_output(
         &self,
         rpc: &WithdrawalRpc,
@@ -389,6 +392,8 @@ impl Withdrawer {
                     .ok_or(WithdrawerError::MissingBlock)?
                     .header
                     .timestamp;
+                let mut candidates = Vec::new();
+                let mut last_rpc_error = None;
                 while count > U256::ZERO {
                     count -= U256::from(1);
                     let game = Self::read(
@@ -427,23 +432,62 @@ impl Withdrawer {
                     if !Self::game_eligible(rpc, anchor_state_registry, game.proxy).await? {
                         continue;
                     }
+                    let finalized = Self::read(
+                        rpc,
+                        anchor_state_registry,
+                        IAnchorStateRegistry::isGameFinalizedCall { game: game.proxy },
+                    )
+                    .await?;
                     let root = Self::read(rpc, game.proxy, WithdrawalDisputeGame::rootClaimCall {})
                         .await?;
                     let output = WithdrawalProvingOutput { block_number, index: count, root };
+                    // Finalized games need only proof maturity; prefer the newest one that verifies.
+                    if !finalized {
+                        candidates.push((output, game.proxy));
+                        continue;
+                    }
                     match Self::verify_output(rpc, withdrawal, output).await {
                         Ok(proof) => return Ok((output, proof)),
                         Err(
                             error @ (WithdrawerError::MissingBlock
                             | WithdrawerError::Withdrawal(_)
-                            | WithdrawerError::Proof { .. }),
+                            | WithdrawerError::Proof { .. }
+                            | WithdrawerError::Request(_)),
                         ) => {
                             tracing::warn!(
                                 game_index = %count, proxy = %game.proxy, reason = %error,
                                 "skipping unusable dispute game"
                             );
+                            if matches!(error, WithdrawerError::Request(_)) {
+                                last_rpc_error = Some(error);
+                            }
                         }
                         Err(error) => return Err(error),
                     }
+                }
+                // Without a usable finalized game, the oldest candidate should resolve first.
+                for (output, proxy) in candidates.into_iter().rev() {
+                    match Self::verify_output(rpc, withdrawal, output).await {
+                        Ok(proof) => return Ok((output, proof)),
+                        Err(
+                            error @ (WithdrawerError::MissingBlock
+                            | WithdrawerError::Withdrawal(_)
+                            | WithdrawerError::Proof { .. }
+                            | WithdrawerError::Request(_)),
+                        ) => {
+                            tracing::warn!(
+                                game_index = %output.index, proxy = %proxy, reason = %error,
+                                "skipping unusable dispute game"
+                            );
+                            if matches!(error, WithdrawerError::Request(_)) {
+                                last_rpc_error = Some(error);
+                            }
+                        }
+                        Err(error) => return Err(error),
+                    }
+                }
+                if let Some(error) = last_rpc_error {
+                    return Err(error);
                 }
             }
             ProofSystem::OutputOracle { l2_output_oracle } => {
@@ -745,6 +789,7 @@ mod tests {
         respected: bool,
         game_status: u8,
         game_finalized: bool,
+        finalized_games: Vec<bool>,
         replaced: bool,
         output_error: Option<Value>,
         broadcast_error: Option<Value>,
@@ -757,6 +802,7 @@ mod tests {
         no_coverage: bool,
         skip_latest: bool,
         game_count: u64,
+        game_blocks: Vec<u64>,
         old_games_before: u64,
         malformed_response: bool,
         other_game_type: bool,
@@ -764,6 +810,7 @@ mod tests {
         latest_wrong_root: bool,
         latest_extra_data: Option<Bytes>,
         proof_error: Option<Value>,
+        proof_error_block: Option<u64>,
         now: u64,
         dry: bool,
         hang: bool,
@@ -783,6 +830,7 @@ mod tests {
                 respected: true,
                 game_status: 2,
                 game_finalized: true,
+                finalized_games: Vec::new(),
                 replaced: false,
                 output_error: None,
                 broadcast_error: None,
@@ -795,6 +843,7 @@ mod tests {
                 no_coverage: false,
                 skip_latest: false,
                 game_count: 1,
+                game_blocks: Vec::new(),
                 old_games_before: 0,
                 malformed_response: false,
                 other_game_type: false,
@@ -802,6 +851,7 @@ mod tests {
                 latest_wrong_root: false,
                 latest_extra_data: None,
                 proof_error: None,
+                proof_error_block: None,
                 now: 1000,
                 dry: false,
                 hang: false,
@@ -843,6 +893,10 @@ mod tests {
     }
 
     impl Scenario {
+        fn game_proxy(index: u64) -> Address {
+            Address::from_word(B256::from(U256::from(index + 9).to_be_bytes::<32>()))
+        }
+
         async fn start(self) -> Harness {
             let sent = Arc::new(Mutex::new(Vec::<TxEnvelope>::new()));
             let estimates = Arc::new(Mutex::new(0));
@@ -1016,6 +1070,22 @@ mod tests {
                         return Ok(Value::Null);
                     }
                     let mut block = fixture["header"].clone();
+                    if l2
+                        && self
+                            .game_blocks
+                            .iter()
+                            .any(|number| params[0] == json!(format!("{number:#x}")))
+                    {
+                        let mut header: alloy_rpc_types_eth::Header =
+                            serde_json::from_value(block).unwrap();
+                        header.inner.number = u64::from_str_radix(
+                            params[0].as_str().unwrap().trim_start_matches("0x"),
+                            16,
+                        )
+                        .unwrap();
+                        header.hash = header.inner.hash_slow();
+                        block = serde_json::to_value(header).unwrap();
+                    }
                     if !l2 {
                         block["timestamp"] = json!(format!("0x{:x}", self.now));
                     }
@@ -1023,7 +1093,11 @@ mod tests {
                     block
                 }
                 "eth_getProof" => {
-                    if let Some(error) = &self.proof_error {
+                    if self
+                        .proof_error_block
+                        .is_none_or(|number| params[2] == json!(format!("{number:#x}")))
+                        && let Some(error) = &self.proof_error
+                    {
                         return Err(error.clone());
                     }
                     fixture["proof"].clone()
@@ -1092,7 +1166,17 @@ mod tests {
                     reply!(IAnchorStateRegistry::isGameRetiredCall, old_game && self.retired);
                     reply!(IAnchorStateRegistry::isGameProperCall, !old_game || self.proper);
                     reply!(IAnchorStateRegistry::isGameRespectedCall, !old_game || self.respected);
-                    reply!(IAnchorStateRegistry::isGameFinalizedCall, self.game_finalized);
+                    if input[..4] == IAnchorStateRegistry::isGameFinalizedCall::SELECTOR {
+                        let call =
+                            IAnchorStateRegistry::isGameFinalizedCall::abi_decode(&input).unwrap();
+                        let finalized = self
+                            .finalized_games
+                            .iter()
+                            .enumerate()
+                            .find(|(index, _)| call.game == Self::game_proxy(*index as u64))
+                            .map_or(self.game_finalized, |(_, finalized)| *finalized);
+                        reply!(IAnchorStateRegistry::isGameFinalizedCall, finalized);
+                    }
                     reply!(
                         IAnchorStateRegistry::disputeGameFinalityDelaySecondsCall,
                         U256::from(200)
@@ -1134,20 +1218,42 @@ mod tests {
                                 621u32
                             },
                             if index < self.old_games_before { timestamp - 1 } else { timestamp },
-                            Address::repeat_byte(if index == 1 { 10 } else { 9 })
+                            Self::game_proxy(index)
                         );
                     }
-                    let latest = params[0]["to"] == json!(Address::repeat_byte(10));
+                    let latest = params[0]["to"] == json!(Self::game_proxy(1));
+                    let game_block = self
+                        .game_blocks
+                        .iter()
+                        .enumerate()
+                        .find(|(index, _)| {
+                            params[0]["to"] == json!(Self::game_proxy(*index as u64))
+                        })
+                        .map_or(block, |(_, number)| *number);
                     if latest && let Some(extra_data) = &self.latest_extra_data {
                         reply!(WithdrawalDisputeGame::extraDataCall, extra_data.clone());
                     }
                     reply!(
                         WithdrawalDisputeGame::extraDataCall,
                         Bytes::copy_from_slice(
-                            &U256::from(if latest && self.skip_latest { 1 } else { block })
+                            &U256::from(if latest && self.skip_latest { 1 } else { game_block })
                                 .to_be_bytes::<32>()
                         )
                     );
+                    let claim = if !self.game_blocks.is_empty() && !self.wrong_root {
+                        let mut header: alloy_rpc_types_eth::Header =
+                            serde_json::from_value(fixture["header"].clone()).unwrap();
+                        header.inner.number = game_block;
+                        base_protocol::OutputRoot::from_parts(
+                            header.state_root,
+                            serde_json::from_value(fixture["proof"]["storageHash"].clone())
+                                .unwrap(),
+                            header.inner.hash_slow(),
+                        )
+                        .hash()
+                    } else {
+                        claim
+                    };
                     reply!(
                         WithdrawalDisputeGame::rootClaimCall,
                         if latest && self.latest_wrong_root { B256::ZERO } else { claim }
@@ -1188,6 +1294,16 @@ mod tests {
     }
 
     impl Harness {
+        fn assert_proven_game(&self, index: u64) {
+            let sent = self.sent.lock().unwrap();
+            assert_eq!(sent.len(), 1);
+            let call = WithdrawalPortal::proveWithdrawalTransactionCall::abi_decode_validate(
+                sent[0].input(),
+            )
+            .unwrap();
+            assert_eq!(call.outputIndex, U256::from(index));
+        }
+
         async fn run(&self) -> Result<Vec<WithdrawalOutcome>, WithdrawerError> {
             Withdrawer::new(self.config.clone()).run().await
         }
@@ -1642,9 +1758,61 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn game_search_does_not_skip_proof_rpc_failures() {
+    async fn game_search_prefers_an_already_finalized_covering_game() {
+        let server = Scenario {
+            game_count: 3,
+            finalized_games: vec![false, true, false],
+            ..Default::default()
+        }
+        .start()
+        .await;
+        server.run().await.unwrap();
+        server.assert_proven_game(1);
+    }
+
+    #[tokio::test]
+    async fn game_search_uses_the_oldest_pending_covering_game() {
+        let server =
+            Scenario { game_count: 3, game_finalized: false, ..Default::default() }.start().await;
+        server.run().await.unwrap();
+        server.assert_proven_game(0);
+    }
+
+    #[tokio::test]
+    async fn game_search_skips_pruned_proofs() {
+        let fixture: Value =
+            serde_json::from_str(include_str!("../fixtures/base-sepolia-withdrawal-proof.json"))
+                .unwrap();
+        let block = u64::from_str_radix(
+            fixture["header"]["number"].as_str().unwrap().trim_start_matches("0x"),
+            16,
+        )
+        .unwrap();
+        for (game_finalized, game_blocks, index) in
+            [(false, vec![block, block + 1], 1), (true, vec![block + 1, block], 0)]
+        {
+            let server = Scenario {
+                game_count: 2,
+                game_finalized,
+                game_blocks,
+                proof_error_block: Some(block),
+                proof_error: Some(
+                    json!({"code": -32000, "message": "historical state unavailable"}),
+                ),
+                ..Default::default()
+            }
+            .start()
+            .await;
+            server.run().await.unwrap();
+            server.assert_proven_game(index);
+        }
+    }
+
+    #[tokio::test]
+    async fn game_search_returns_rpc_failure_when_no_candidate_verifies() {
         let server = Scenario {
             game_count: 2,
+            game_finalized: false,
             proof_error: Some(json!({
                 "code": -32602,
                 "message": "invalid at https://user:password@host.invalid/key",
@@ -1654,12 +1822,30 @@ mod tests {
         }
         .start()
         .await;
-        let error = server.run().await.unwrap_err();
+        let capture = LogCapture(Arc::new(Mutex::new(Vec::new())));
+        let writer = capture.clone();
+        let subscriber =
+            tracing_subscriber::fmt().with_ansi(false).with_writer(move || writer.clone()).finish();
+        let error = server.run().with_subscriber(subscriber).await.unwrap_err();
+        let logs = String::from_utf8(capture.0.lock().unwrap().clone()).unwrap();
+        for field in ["game_index=0", "game_index=1", "proxy=", "reason="] {
+            assert!(logs.contains(field), "missing {field}: {logs}");
+        }
         assert!(matches!(error, WithdrawerError::Request(_)));
         assert!(std::error::Error::source(&error).is_some());
         for secret in ["password", "host.invalid", "secret-value"] {
-            assert!(!format!("{error} {error:?}").contains(secret));
+            assert!(!format!("{error} {error:?} {logs}").contains(secret));
         }
+        assert_eq!(
+            server
+                .requests
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|request| request["method"] == "eth_getProof")
+                .count(),
+            2,
+        );
         assert_eq!(*server.estimates.lock().unwrap(), 0);
         assert!(server.sent.lock().unwrap().is_empty());
     }
