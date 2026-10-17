@@ -18,7 +18,7 @@ use axum::{
     body::{Body, to_bytes},
     http::{Request, StatusCode},
 };
-use base_observability_events::TransactionEvent;
+use base_observability_events::{EventIdBuilder, TransactionEvent};
 use chrono::Utc;
 use serde_json::{Value, json};
 use sqlx::{Executor, PgPool, migrate::Migrator, postgres::PgPoolOptions};
@@ -712,6 +712,46 @@ async fn postgres_sink_dedupes_retried_events_and_routes_by_class() -> anyhow::R
             (format!("{event_prefix}-warm"), format!("transaction_events_v2_warm_{today}")),
         ]
     );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn postgres_sink_keeps_every_candidate_round_of_one_group_and_payload() -> anyhow::Result<()>
+{
+    let harness = PostgresHarness::new().await?;
+    PgTransactionEventSink::migrate(&harness.database_url).await?;
+    let sink = PgTransactionEventSink::connect(&harness.database_url, 1).await?;
+    let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
+    let instance = unique_event_id();
+    // Two rounds of one group under one payload id differ only in their turn, as the builder
+    // derives them.
+    let rounds: Vec<_> = [1_u64, 2]
+        .into_iter()
+        .map(|turn| {
+            let id = EventIdBuilder::new()
+                .part("event_type", "BUILDER_CANDIDATE_ROUND")
+                .part("payload_id", "payload-1")
+                .part("candidate_instance", &instance)
+                .part("candidate_turn", turn)
+                .part("group_hash", "0x22")
+                .finish();
+            event_with_type(&id, "BUILDER_CANDIDATE_ROUND")
+        })
+        .collect();
+
+    assert_ne!(rounds[0].event_id, rounds[1].event_id);
+    assert_eq!(sink.insert_events(&rounds).await?.inserted_event_ids.len(), 2);
+    assert!(
+        sink.insert_events(&rounds[1..]).await?.inserted_event_ids.is_empty(),
+        "a redelivered round deduplicates"
+    );
+    let stored: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM transaction_events_v2 WHERE event_id = ANY($1)")
+            .bind(rounds.iter().map(|round| round.event_id.clone()).collect::<Vec<_>>())
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(stored, 2);
 
     Ok(())
 }

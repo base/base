@@ -22,7 +22,8 @@ future. A retried `event_id` dedupes only within the same UTC hour of its
 `event_time`. `TXPOOL_SEND_RAW_TRANSACTION_VALIDITY` uses the same warm window as
 `TXPOOL_SEND_RAW_TRANSACTION`. `BUILDER_DEFERRED` and `BUILDER_EXPIRED` use the
 same hot window as the other per-attempt builder decisions. Candidate-group
-events follow the same split: `TXPOOL_SEND_RAW_TRANSACTION_CANDIDATES` is
+events follow the same split: `BUILDER_CANDIDATE_ROUND` and
+`BUILDER_CANDIDATE_TRIAL` are hot, `TXPOOL_SEND_RAW_TRANSACTION_CANDIDATES` is
 warm, and `TXPOOL_SEND_RAW_TRANSACTION_CANDIDATES_REJECTED`,
 `TXPOOL_CANDIDATE_LANDED`, and `TXPOOL_CANDIDATE_EVICTED` are cold.
 
@@ -259,6 +260,8 @@ Builder:
 - `BUILDER_FLASHBLOCK_STARTED`
 - `BUILDER_FLASHBLOCK_PUBLISHED`
 - `BUILDER_FLASHBLOCK_BUILD_STOPPED`
+- `BUILDER_CANDIDATE_ROUND`
+- `BUILDER_CANDIDATE_TRIAL`
 
 Builder caveat: `BUILDER_ACCEPTED`, `BUILDER_REJECTED`, `BUILDER_DEFERRED`,
 and `BUILDER_EXPIRED` are emitted per payload-building attempt and include
@@ -321,8 +324,40 @@ read. `tx_hash` and `data.group_hash` are present only once the group
 validated, and every rejection has its own `event_id`, so repeated rejections
 are all kept. Proxies forward without journaling.
 
+Builder turns. Each turn that considers a group gets a never-reused
+`data.turn`; builder candidate event IDs include the instance and turn, so two
+rounds of one group under one `payload_id` are both kept, while a redelivered
+event deduplicates. A round that reserved work emits one
+`BUILDER_CANDIDATE_ROUND` against the representative when it settles, also when
+it was cancelled, ran out of time, saw finalization, or failed, with
+`data.attempt`, `data.round_siblings`, `data.reserved_work_gas`,
+`data.settled_work_gas`, `data.round_end` (`completed`, `cancelled`,
+`out_of_time`, `finalized`, or `error`), `data.sibling_outcomes` (each
+sibling's outcome label in envelope order: `eligible`, an ineligible reason, or
+`not_run`), `data.outcomes` (the same labels counted), and `data.winner_index`
+for a completed round with a winner. Scores stay out of the round. Per-sibling `BUILDER_CANDIDATE_TRIAL` events
+are off by default; `--builder.candidates.trial-events` enables them. A trial
+event carries the sibling's `tx_hash`, `data.stage` (`precheck` for admission
+failures, journaled even when the round is then denied a reservation, or
+`trial`), `data.outcome`, and `data.delta` and `data.gas_used` or
+`data.ineligible_reason`; a sibling that executed but was not scored before the
+round stopped is `interrupted`. The turn ends in at most one decision:
+`BUILDER_ACCEPTED` for the committed sibling with `data.candidate_selection`
+(`winner`, or `fallback` with `data.fallback_reason`), or, against the
+representative, `BUILDER_DEFERRED` for park and defer, `BUILDER_REJECTED` for
+eviction, or `BUILDER_EXPIRED` past `expiryBlock`. The reason field holds the
+lifecycle label, such as `all_failed`, `ledger_unavailable`, `deferred_quota`,
+`deferred_build_budget`, `deferred_deadline`, `deferred_finalization`,
+`deferred_unmetered`, `deferred_block_limits`, `deferred_verify_mismatch`,
+`revoked`, `permanent_exclusion`, `dropped`, or `budget_exhausted`. A group is
+considered at most once per build, so decisions are not deduplicated. These
+are per-payload observations: `BUILDER_ACCEPTED` is provisional.
+
 Measured sizes for a two-sibling group, as serialized JSON: admission 822
-bytes, rejection 548 to 681, landed 712, evicted 652 to 661.
+bytes, rejection 548 to 681, round 976 to 987 (each further sibling adds its
+label, about 10 to 25 bytes), trial 869 to 878, accepted 848,
+deferred 804, rejected 831, landed 712, evicted 652 to 661. A turn emits one
+round and one decision, plus one trial per sibling when trial events are on.
 
 Terminal events. The node's candidate ledger emits exactly one terminal event
 per admitted group, keyed by the group alone so replays deduplicate.
@@ -338,8 +373,8 @@ the recovery window closes, because a canonical landing can still correct it.
 
 Disabled selection. A node started without candidates, or one whose selection
 is disabled at runtime with `admin_setCandidateSelectionEnabled`, emits no
-ingress candidate events; the ledger still journals terminal events for groups
-admitted earlier.
+ingress or builder candidate events; the ledger still journals terminal events
+for groups admitted earlier.
 
 Canonicality caveat: builder events are local payload construction signals, not
 canonical-chain or consensus-finality observations. A builder event with

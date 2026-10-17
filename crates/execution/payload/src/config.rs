@@ -53,6 +53,11 @@ pub struct BaseBuilderConfig {
     /// label. Adds overhead to every state read, so it follows reth's
     /// `--engine.state-provider-metrics` and stays off by default.
     pub state_provider_metrics: bool,
+    /// Candidate-group selection, when `base_sendRawTransactionCandidates` is enabled.
+    ///
+    /// `None` keeps every candidate group parked: the builder never executes a
+    /// representative as a plain transaction.
+    pub candidates: Option<crate::CandidateBuilderConfig>,
 }
 
 impl Default for BaseBuilderConfig {
@@ -66,6 +71,7 @@ impl Default for BaseBuilderConfig {
             resource_metering: ResourceMeteringConfig::default(),
             rejection_cache: RejectionCache::default(),
             state_provider_metrics: false,
+            candidates: None,
         }
     }
 }
@@ -86,6 +92,7 @@ impl BaseBuilderConfig {
             resource_metering: ResourceMeteringConfig::default(),
             rejection_cache: RejectionCache::default(),
             state_provider_metrics: false,
+            candidates: None,
         }
     }
 
@@ -93,6 +100,13 @@ impl BaseBuilderConfig {
     #[must_use]
     pub const fn with_state_provider_metrics(mut self, enabled: bool) -> Self {
         self.state_provider_metrics = enabled;
+        self
+    }
+
+    /// Enables candidate-group selection.
+    #[must_use]
+    pub fn with_candidates(mut self, candidates: Option<crate::CandidateBuilderConfig>) -> Self {
+        self.candidates = candidates;
         self
     }
 
@@ -184,6 +198,20 @@ impl ResourceMeteringConfig {
     /// Returns whether metering is enabled with a non-empty schedule.
     pub fn is_active(&self) -> bool {
         self.enabled && !self.schedule.is_empty()
+    }
+
+    /// Returns `true` when an enforced dimension prices an operation that only a simulated
+    /// `meterBundle` sample reports. Without that sample the dimension is not enforced for the
+    /// transaction.
+    pub fn requires_simulated_sample(&self) -> bool {
+        self.is_active()
+            && self.schedule.dimensions.iter().any(|dimension| {
+                !dimension.dry_run
+                    && dimension
+                        .operations
+                        .iter()
+                        .any(|operation| !ResourceSample::is_executed_operation(&operation.name))
+            })
     }
 
     /// Looks up the simulated sample for `tx_hash`, if the provider has a matching result.
