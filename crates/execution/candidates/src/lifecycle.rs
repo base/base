@@ -50,6 +50,8 @@ pub enum DeferReason {
     BlockLimits,
     /// The winner's commit execution did not match its trial.
     VerifyMismatch,
+    /// Siblings lack the resource-metering samples an enforced dimension needs.
+    Unmetered,
 }
 
 /// Why the default sibling runs through the ordinary path.
@@ -95,6 +97,7 @@ impl TurnDecision {
             Self::Defer(DeferReason::BuildBudget) => "deferred_build_budget",
             Self::Defer(DeferReason::PrincipalQuota) => "deferred_quota",
             Self::Defer(DeferReason::Deadline) => "deferred_deadline",
+            Self::Defer(DeferReason::Unmetered) => "deferred_unmetered",
             Self::Defer(DeferReason::BlockLimits) => "deferred_block_limits",
             Self::Defer(DeferReason::VerifyMismatch) => "deferred_verify_mismatch",
             Self::Fallback(_) => "fallback",

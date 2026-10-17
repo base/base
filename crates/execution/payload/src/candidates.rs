@@ -37,8 +37,9 @@ use reth_payload_primitives::BuildNextEnv;
 use reth_primitives_traits::{HeaderTy, Recovered, TxTy, WithEncoded};
 use reth_transaction_pool::PoolTransaction;
 use revm::{
-    Database as _,
+    Database as _, Inspector,
     context::result::{ExecutionResult, ResultAndState},
+    interpreter::{CallInputs, CallOutcome},
     state::{Account, AccountInfo, Bytecode, EvmState},
 };
 use tracing::{debug, trace};
@@ -51,6 +52,20 @@ use crate::{
 /// Default per-build wall-time budget for candidate handling.
 pub const DEFAULT_CANDIDATE_EVAL_WALL_CUTOFF: Duration = Duration::from_millis(10);
 
+/// Default time after a build starts its pool scan past which no candidate work starts.
+///
+/// Placeholder below the 200 ms native block cadence until Phase 0 measurements choose it
+/// (design Q5).
+pub const DEFAULT_CANDIDATE_BUILD_DEADLINE: Duration = Duration::from_millis(100);
+
+/// Default work gas all candidate rounds of one build may reserve: two 30M-gas blocks of
+/// trials. Placeholder until Phase 0 measurements choose it (design Q5).
+pub const DEFAULT_CANDIDATE_BUILD_WORK_GAS: u64 = 60_000_000;
+
+/// Default work charged for a sibling that fails pre-EVM validation (design §5.6.2
+/// `invalid_attempt_gas`): the intrinsic cost of the cheapest transaction.
+pub const DEFAULT_INVALID_ATTEMPT_GAS: u64 = 21_000;
+
 /// Candidate selection settings for the native builder.
 #[derive(Debug, Clone)]
 pub struct CandidateBuilderConfig {
@@ -60,6 +75,12 @@ pub struct CandidateBuilderConfig {
     pub probe_gas: u64,
     /// Wall time candidate handling may spend per payload build.
     pub eval_wall_cutoff: Duration,
+    /// Time after the pool scan starts past which no candidate trial, probe or commit starts.
+    pub build_deadline: Duration,
+    /// Work gas all candidate rounds of one build may reserve.
+    pub build_work_gas: u64,
+    /// Work charged for a sibling that fails pre-EVM validation.
+    pub invalid_attempt_gas: u64,
     /// Server cap on evaluations per group, applied below the signed `maxEvaluations`.
     pub server_max_evaluations: u16,
 }
@@ -71,6 +92,9 @@ impl CandidateBuilderConfig {
             runtime,
             probe_gas: DEFAULT_PROBE_GAS,
             eval_wall_cutoff: DEFAULT_CANDIDATE_EVAL_WALL_CUTOFF,
+            build_deadline: DEFAULT_CANDIDATE_BUILD_DEADLINE,
+            build_work_gas: DEFAULT_CANDIDATE_BUILD_WORK_GAS,
+            invalid_attempt_gas: DEFAULT_INVALID_ATTEMPT_GAS,
             server_max_evaluations: DEFAULT_MAX_EVALUATIONS,
         }
     }
@@ -98,6 +122,83 @@ pub struct CandidateBlockLimits {
 pub struct CandidateScan {
     /// Wall time spent handling groups in this build.
     pub eval_duration: Duration,
+    /// Absolute time past which no candidate trial, probe or commit starts.
+    pub deadline: Option<Instant>,
+    /// Work gas reserved or settled by candidate rounds in this build.
+    pub work_gas: u64,
+    /// When the running group turn started.
+    pub turn_started: Option<Instant>,
+    /// Whether the builder has parked validity predicates that a commit may wake.
+    pub track_committed_state: bool,
+    /// State committed by the latest candidate sibling, when tracked, for the builder's
+    /// predicate wakeups.
+    pub committed_state: Option<EvmState>,
+}
+
+impl CandidateScan {
+    /// Starts a scan at `started`, applying the configured build deadline.
+    pub fn new(config: Option<&CandidateBuilderConfig>, started: Instant) -> Self {
+        Self { deadline: config.map(|config| started + config.build_deadline), ..Self::default() }
+    }
+
+    /// Returns `true` while the build deadline and the per-build wall cutoff, including the
+    /// running turn, both leave time for more candidate work.
+    pub fn has_time(&self, config: &CandidateBuilderConfig) -> bool {
+        let turn = self.turn_started.map_or(Duration::ZERO, |started| started.elapsed());
+        self.eval_duration + turn < config.eval_wall_cutoff
+            && self.deadline.is_none_or(|deadline| Instant::now() < deadline)
+    }
+}
+
+/// How an evaluation round ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RoundEnd {
+    /// Every sibling in the round ran.
+    Completed,
+    /// The payload job was cancelled.
+    Cancelled,
+    /// The build deadline, wall cutoff or a finalization request stopped the round.
+    OutOfTime,
+}
+
+impl RoundEnd {
+    /// Returns a stable label for logs.
+    pub const fn as_label(self) -> &'static str {
+        match self {
+            Self::Completed => "completed",
+            Self::Cancelled => "cancelled",
+            Self::OutOfTime => "out_of_time",
+        }
+    }
+}
+
+/// One evaluation round's siblings, outcomes and settled work.
+#[derive(Debug)]
+pub struct CandidateRound {
+    /// Sibling indexes that passed admission and run in this round.
+    pub siblings: Vec<usize>,
+    /// Outcome per sibling, in envelope order.
+    pub outcomes: Vec<TrialOutcome>,
+    /// Work gas actually consumed so far.
+    pub work: u64,
+}
+
+/// Makes the probe's top-level frame a `STATICCALL` (score-read context v1, design §3.4): any
+/// state change in the token, or in contracts it calls, halts the probe.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct StaticTopLevelCall {
+    /// Whether the top-level frame has started.
+    pub started: bool,
+}
+
+impl<CTX> Inspector<CTX> for StaticTopLevelCall {
+    fn call(&mut self, _context: &mut CTX, inputs: &mut CallInputs) -> Option<CallOutcome> {
+        if !self.started {
+            self.started = true;
+            inputs.is_static = true;
+        }
+        None
+    }
 }
 
 /// Discarded overlay over the frozen prefix for score-read probes (score-read context v1).
@@ -117,7 +218,8 @@ impl<'a, DB> ScoreOverlay<'a, DB> {
         Self { inner, diff }
     }
 
-    fn touched(&self, address: &Address) -> Option<&'a Account> {
+    /// Returns the trial diff's entry for `address` when the trial touched it.
+    pub fn touched(&self, address: &Address) -> Option<&'a Account> {
         self.diff.and_then(|diff| diff.get(address)).filter(|account| account.is_touched())
     }
 }
@@ -197,6 +299,8 @@ pub enum SiblingCommit {
 pub struct SiblingTrial {
     /// Gas used, or why the trial is ineligible before scoring.
     pub outcome: Result<u64, Ineligibility>,
+    /// Gas the EVM consumed, including for reverted, halted and resource-excluded trials.
+    pub gas_used: u64,
     /// The trial's state diff, kept only when a token probe needs it.
     pub state: Option<EvmState>,
     /// The recipient's post-trial native balance, when the trial touched it.
@@ -204,8 +308,14 @@ pub struct SiblingTrial {
 }
 
 impl SiblingTrial {
-    const fn invalid() -> Self {
-        Self { outcome: Err(Ineligibility::Invalid), state: None, recipient_balance: None }
+    /// A trial that failed pre-EVM validation.
+    pub const fn invalid() -> Self {
+        Self {
+            outcome: Err(Ineligibility::Invalid),
+            gas_used: 0,
+            state: None,
+            recipient_balance: None,
+        }
     }
 }
 
@@ -246,19 +356,22 @@ where
             return Ok(None);
         };
         let started = Instant::now();
+        scan.turn_started = Some(started);
         let turn = CandidateTurn { group, limits, config };
         let result = self.candidate_turn(info, builder, best_txs, turn, scan);
+        scan.turn_started = None;
         scan.eval_duration += started.elapsed();
         result
     }
 
-    fn candidate_turn<Builder, B>(
+    /// Runs the lifecycle, admission, reservation, evaluation and commit of one group turn.
+    pub fn candidate_turn<Builder, B>(
         &self,
         info: &mut ExecutionInfo,
         builder: &mut Builder,
         best_txs: &mut B,
         turn: CandidateTurn<'_>,
-        scan: &CandidateScan,
+        scan: &mut CandidateScan,
     ) -> Result<Option<()>, PayloadBuilderError>
     where
         Builder: BlockBuilder<Primitives = Evm::Primitives>,
@@ -286,18 +399,21 @@ where
             group_budget_exhausted: entry.as_ref().is_some_and(|entry| {
                 entry.budget_exhausted(full_round_gas, config.server_max_evaluations)
             }),
-            build_budget_available: scan.eval_duration < config.eval_wall_cutoff,
+            build_budget_available: scan.has_time(config),
         });
         let Some(entry) = entry else {
             return Ok(self.apply_decision(info, best_txs, group, decision, config));
         };
         if decision != TurnDecision::Evaluate {
-            return self.decide(info, builder, best_txs, turn, decision);
+            return self.decide(info, builder, best_txs, turn, decision, scan);
         }
 
         // Per-sibling static and simulated admission at the unchanged prefix; nothing reserved.
-        let mut outcomes: Vec<TrialOutcome> = Vec::with_capacity(group.siblings().len());
-        let mut round = Vec::new();
+        let mut round = CandidateRound {
+            siblings: Vec::new(),
+            outcomes: Vec::with_capacity(group.siblings().len()),
+            work: 0,
+        };
         for (index, sibling) in group.siblings().iter().enumerate() {
             let check = if entry.permanently_ineligible.get(index).copied().unwrap_or(false) {
                 Err(Ineligibility::PermanentlyExcluded)
@@ -306,20 +422,24 @@ where
             };
             match check {
                 Ok(()) => {
-                    round.push(index);
-                    outcomes.push(TrialOutcome::Ineligible(Ineligibility::NotRun));
+                    round.siblings.push(index);
+                    round.outcomes.push(TrialOutcome::Ineligible(Ineligibility::NotRun));
                 }
-                Err(reason) => outcomes.push(TrialOutcome::Ineligible(reason)),
+                Err(reason) => round.outcomes.push(TrialOutcome::Ineligible(reason)),
             }
         }
-        self.record_permanent_exclusions(group, &outcomes, config);
-        if round.is_empty() {
-            let decision = Self::without_trials(&outcomes, group.fallback());
-            return self.decide(info, builder, best_txs, turn, decision);
+        Self::record_permanent_exclusions(group, &round.outcomes, config);
+        if round.siblings.is_empty() {
+            let decision = Self::without_trials(&round.outcomes, group.fallback());
+            return self.decide(info, builder, best_txs, turn, decision, scan);
         }
 
-        // Reserve principal work first so a quota failure consumes no attempt.
-        let round_gas = Self::round_gas(group, &round, config);
+        // Reserve build work, then principal work, so neither failure consumes an attempt.
+        let round_gas = Self::round_gas(group, &round.siblings, config);
+        if scan.work_gas.saturating_add(round_gas) > config.build_work_gas {
+            let decision = TurnDecision::Defer(DeferReason::BuildBudget);
+            return Ok(self.apply_decision(info, best_txs, group, decision, config));
+        }
         let attempt = AttemptId {
             group_hash,
             parent_hash: self.parent().hash(),
@@ -352,27 +472,36 @@ where
                             }
                         },
                     };
-                    return self.decide(info, builder, best_txs, turn, decision);
+                    return self.decide(info, builder, best_txs, turn, decision, scan);
                 }
             };
 
-        let evaluation = self.evaluate_round(
-            &info.resource_metering_usage,
-            builder,
-            group,
-            &round,
-            &mut outcomes,
-            config,
-        );
-        let work = match &evaluation {
-            Ok(Some(work)) => *work,
-            Ok(None) | Err(_) => reservation.gas,
-        };
+        // Every round settles at the work it actually consumed, whether it completed, ran out
+        // of time, was cancelled or failed (design §5.6.2).
+        let evaluation =
+            self.evaluate_round(&info.resource_metering_usage, builder, turn, &mut round, scan);
+        let work = round.work.min(round_gas);
         runtime.ledger.settle(reservation, work);
         runtime.policy.settle(ticket, work);
-        if evaluation?.is_none() {
-            return Ok(Some(()));
+        scan.work_gas = scan.work_gas.saturating_add(work);
+        debug!(
+            target: "payload_builder",
+            group_hash = %group_hash,
+            attempt = attempt.seq,
+            reserved_work_gas = round_gas,
+            settled_work_gas = work,
+            outcome = evaluation.as_ref().map_or("error", |end| end.as_label()),
+            "settled candidate round"
+        );
+        match evaluation? {
+            RoundEnd::Completed => {}
+            RoundEnd::Cancelled => return Ok(Some(())),
+            RoundEnd::OutOfTime => {
+                let decision = TurnDecision::Defer(DeferReason::Deadline);
+                return Ok(self.apply_decision(info, best_txs, group, decision, config));
+            }
         }
+        let outcomes = round.outcomes;
         if let Some(nonce_used) = outcomes
             .iter()
             .position(|outcome| matches!(outcome, TrialOutcome::Ineligible(Ineligibility::Invalid)))
@@ -388,7 +517,7 @@ where
             best_txs.mark_current_committed();
             return Ok(None);
         }
-        self.record_permanent_exclusions(group, &outcomes, config);
+        Self::record_permanent_exclusions(group, &outcomes, config);
 
         let winner = WinnerSelection::choose(&outcomes);
         let decision = match winner {
@@ -418,7 +547,14 @@ where
         );
         match (decision, winner) {
             (TurnDecision::CommitWinner, Some(index)) => {
-                match self.commit_sibling(info, builder, group, index, limits)? {
+                if self.cancel.is_cancelled() {
+                    return Ok(Some(()));
+                }
+                if !scan.has_time(config) {
+                    let decision = TurnDecision::Defer(DeferReason::Deadline);
+                    return Ok(self.apply_decision(info, best_txs, group, decision, config));
+                }
+                match self.commit_sibling(info, builder, turn, index, scan)? {
                     SiblingCommit::Committed => {
                         Self::landed(group, index, limits, config);
                         best_txs.mark_current_committed();
@@ -435,18 +571,19 @@ where
                 }
                 Ok(None)
             }
-            (decision, _) => self.decide(info, builder, best_txs, turn, decision),
+            (decision, _) => self.decide(info, builder, best_txs, turn, decision, scan),
         }
     }
 
     /// Applies a decision that may run the fallback sibling.
-    fn decide<Builder, B>(
+    pub fn decide<Builder, B>(
         &self,
         info: &mut ExecutionInfo,
         builder: &mut Builder,
         best_txs: &mut B,
         turn: CandidateTurn<'_>,
         decision: TurnDecision,
+        scan: &mut CandidateScan,
     ) -> Result<Option<()>, PayloadBuilderError>
     where
         Builder: BlockBuilder<Primitives = Evm::Primitives>,
@@ -463,41 +600,50 @@ where
             return Ok(Some(()));
         }
         let index = usize::from(group.envelope().default_index);
-        let decision = match self.sibling_precheck(info, &group.siblings()[index], limits) {
-            Err(reason) if reason.is_permanent() => {
-                TurnDecision::Evict(EvictionReason::PermanentExclusion)
-            }
-            Err(_) => TurnDecision::Defer(DeferReason::BlockLimits),
-            Ok(()) => match self.commit_sibling(info, builder, group, index, limits)? {
-                SiblingCommit::Committed => {
-                    debug!(
-                        target: "payload_builder",
-                        group_hash = %group.group_hash(),
-                        reason = ?reason,
-                        "committed candidate fallback sibling"
-                    );
-                    Self::landed(group, index, limits, config);
-                    best_txs.mark_current_committed();
-                    return Ok(None);
-                }
-                SiblingCommit::NonceTooLow => {
-                    config.runtime.ledger.evict(group.group_hash(), EvictionReason::Dropped);
-                    best_txs.mark_current_committed();
-                    return Ok(None);
-                }
-                SiblingCommit::Excluded { permanent: true } => {
+        let decision = if !scan.has_time(config) {
+            TurnDecision::Defer(DeferReason::Deadline)
+        } else {
+            match self.sibling_precheck(info, &group.siblings()[index], limits) {
+                Err(reason) if reason.is_permanent() => {
                     TurnDecision::Evict(EvictionReason::PermanentExclusion)
                 }
-                SiblingCommit::Excluded { permanent: false } | SiblingCommit::Invalid => {
-                    TurnDecision::Defer(DeferReason::BlockLimits)
-                }
-            },
+                Err(Ineligibility::Unmetered) => TurnDecision::Defer(DeferReason::Unmetered),
+                Err(_) => TurnDecision::Defer(DeferReason::BlockLimits),
+                Ok(()) => match self.commit_sibling(info, builder, turn, index, scan)? {
+                    SiblingCommit::Committed => {
+                        debug!(
+                            target: "payload_builder",
+                            group_hash = %group.group_hash(),
+                            reason = ?reason,
+                            "committed candidate fallback sibling"
+                        );
+                        Self::landed(group, index, limits, config);
+                        best_txs.mark_current_committed();
+                        return Ok(None);
+                    }
+                    SiblingCommit::NonceTooLow => {
+                        config.runtime.ledger.evict(group.group_hash(), EvictionReason::Dropped);
+                        best_txs.mark_current_committed();
+                        return Ok(None);
+                    }
+                    SiblingCommit::Excluded { permanent: true } => {
+                        TurnDecision::Evict(EvictionReason::PermanentExclusion)
+                    }
+                    SiblingCommit::Excluded { permanent: false } | SiblingCommit::Invalid => {
+                        TurnDecision::Defer(DeferReason::BlockLimits)
+                    }
+                },
+            }
         };
         Ok(self.apply_decision(info, best_txs, group, decision, config))
     }
 
     /// Applies a decision that executes nothing: park, defer or evict.
-    fn apply_decision<B>(
+    ///
+    /// Eviction removes the representative from the pool through
+    /// [`ExecutionInfo::candidate_evictions`]. It never enters the rejection cache: the
+    /// representative's raw hash is only the group's lifecycle identity.
+    pub fn apply_decision<B>(
         &self,
         info: &mut ExecutionInfo,
         best_txs: &mut B,
@@ -517,7 +663,7 @@ where
         match decision {
             TurnDecision::Evict(reason) => {
                 config.runtime.ledger.evict(group.group_hash(), reason);
-                info.permanently_rejected_txs.push(group.representative().hash());
+                info.candidate_evictions.push(group.representative().hash());
                 best_txs.mark_invalid(group.sender(), group.nonce());
             }
             // Park and defer hold the lane and never mark the nonce committed.
@@ -527,7 +673,7 @@ where
     }
 
     /// The decision when every sibling failed admission before any trial ran.
-    fn without_trials(outcomes: &[TrialOutcome], fallback: FallbackMode) -> TurnDecision {
+    pub fn without_trials(outcomes: &[TrialOutcome], fallback: FallbackMode) -> TurnDecision {
         let permanent = |outcome: &TrialOutcome| match outcome {
             TrialOutcome::Ineligible(reason) => reason.is_permanent(),
             TrialOutcome::Eligible { .. } => false,
@@ -539,11 +685,14 @@ where
             // Ordinary checks on the default sibling decide between commit, defer and evict.
             return TurnDecision::Fallback(FallbackReason::NoEligibleSibling);
         }
+        if outcomes.contains(&TrialOutcome::Ineligible(Ineligibility::Unmetered)) {
+            return TurnDecision::Defer(DeferReason::Unmetered);
+        }
         TurnDecision::Defer(DeferReason::BlockLimits)
     }
 
-    fn record_permanent_exclusions(
-        &self,
+    /// Records newly observed transaction-scope permanent exclusions in the ledger.
+    pub fn record_permanent_exclusions(
         group: &CandidateGroup,
         outcomes: &[TrialOutcome],
         config: &CandidateBuilderConfig,
@@ -558,7 +707,8 @@ where
         }
     }
 
-    fn landed(
+    /// Records the builder's provisional commit of sibling `index`.
+    pub fn landed(
         group: &CandidateGroup,
         index: usize,
         limits: &CandidateBlockLimits,
@@ -572,7 +722,11 @@ where
     }
 
     /// Conservative work reservation for a round over `round` siblings (design §5.6.1).
-    fn round_gas(group: &CandidateGroup, round: &[usize], config: &CandidateBuilderConfig) -> u64 {
+    pub fn round_gas(
+        group: &CandidateGroup,
+        round: &[usize],
+        config: &CandidateBuilderConfig,
+    ) -> u64 {
         let probes = if group.envelope().rule.token.is_zero() { 0 } else { round.len() + 1 };
         let trial_gas = round
             .iter()
@@ -581,13 +735,18 @@ where
         trial_gas.saturating_add(config.probe_gas.saturating_mul(probes as u64))
     }
 
-    /// Static DA/gas limits and simulated resource admission for one sibling.
-    fn sibling_precheck(
+    /// Rejection-cache, static DA/gas, missing-metering and simulated resource admission for
+    /// one sibling.
+    pub fn sibling_precheck(
         &self,
         info: &ExecutionInfo,
         sibling: &CandidateSibling,
         limits: &CandidateBlockLimits,
     ) -> Result<(), Ineligibility> {
+        let hash = sibling.hash();
+        if self.builder_config.rejection_cache.is_rejected(&hash) {
+            return Err(Ineligibility::PermanentlyExcluded);
+        }
         if info.is_tx_over_limits(
             Self::sibling_da_size(sibling),
             limits.block_gas_limit,
@@ -598,17 +757,20 @@ where
         ) {
             return Err(Ineligibility::BlockLimits);
         }
-        let (_, admission) = self
-            .builder_config
-            .resource_metering
-            .check_simulated_usage(&sibling.hash(), &info.resource_metering_usage);
+        let resource_metering = &self.builder_config.resource_metering;
+        let (simulated, admission) =
+            resource_metering.check_simulated_usage(&hash, &info.resource_metering_usage);
+        if simulated.is_none() && resource_metering.requires_simulated_sample() {
+            return Err(Ineligibility::Unmetered);
+        }
         if admission.should_exclude() {
             return Err(Ineligibility::SimulatedResource { permanent: admission.is_permanent() });
         }
         Ok(())
     }
 
-    fn sibling_da_size(sibling: &CandidateSibling) -> u64 {
+    /// Returns a sibling's estimated DA size, as the pool would report it.
+    pub fn sibling_da_size(sibling: &CandidateSibling) -> u64 {
         BasePooledTransaction::<BaseTransactionSigned>::new(
             sibling.transaction.clone(),
             sibling.encoded.len(),
@@ -616,7 +778,8 @@ where
         .estimated_da_size()
     }
 
-    fn consensus_sibling(
+    /// Converts a sibling into the builder's consensus transaction type.
+    pub fn consensus_sibling(
         sibling: &CandidateSibling,
     ) -> WithEncoded<Recovered<TxTy<Evm::Primitives>>> {
         let transaction = TxTy::<Evm::Primitives>::from(sibling.transaction.inner().clone());
@@ -626,25 +789,46 @@ where
         )
     }
 
-    /// Runs every sibling in `round` as an uncommitted trial and scores it.
+    /// Returns why the round must stop before starting more work, if it must.
+    pub fn round_stop(
+        &self,
+        scan: &CandidateScan,
+        config: &CandidateBuilderConfig,
+    ) -> Option<RoundEnd> {
+        if self.cancel.is_cancelled() {
+            return Some(RoundEnd::Cancelled);
+        }
+        if (self.is_denim_active() && self.cancel.is_finalization_requested())
+            || !scan.has_time(config)
+        {
+            return Some(RoundEnd::OutOfTime);
+        }
+        None
+    }
+
+    /// Runs every sibling in the round as an uncommitted trial and scores it.
     ///
-    /// Returns the work gas consumed, or `None` if the job was cancelled mid-round.
-    fn evaluate_round<Builder>(
+    /// Checks cancellation, finalization and the build deadline before every trial and probe.
+    /// `round.work` holds the work consumed, also when the round stops early or fails.
+    pub fn evaluate_round<Builder>(
         &self,
         cumulative: &[u128],
         builder: &mut Builder,
-        group: &CandidateGroup,
-        round: &[usize],
-        outcomes: &mut [TrialOutcome],
-        config: &CandidateBuilderConfig,
-    ) -> Result<Option<u64>, PayloadBuilderError>
+        turn: CandidateTurn<'_>,
+        round: &mut CandidateRound,
+        scan: &CandidateScan,
+    ) -> Result<RoundEnd, PayloadBuilderError>
     where
         Builder: BlockBuilder<Primitives = Evm::Primitives>,
         <<Builder::Executor as BlockExecutor>::Evm as AlloyEvm>::DB: Database,
     {
+        let group = turn.group;
+        let config = turn.config;
         let rule = &group.envelope().rule;
-        let mut work = 0_u64;
         let evm_env = if rule.token.is_zero() { None } else { Some(self.probe_env()?) };
+        if let Some(end) = self.round_stop(scan, config) {
+            return Ok(end);
+        }
         let before = match &evm_env {
             None => {
                 let db = builder.evm_mut().db_mut();
@@ -655,13 +839,14 @@ where
             }
             Some(env) => {
                 let (result, gas) = self.probe_balance(builder, env.clone(), None, config, rule)?;
-                work = work.saturating_add(gas);
+                round.work = round.work.saturating_add(gas);
                 result
             }
         };
-        for &index in round {
-            if self.cancel.is_cancelled() {
-                return Ok(None);
+        for position in 0..round.siblings.len() {
+            let index = round.siblings[position];
+            if let Some(end) = self.round_stop(scan, config) {
+                return Ok(end);
             }
             let sibling = &group.siblings()[index];
             let trial =
@@ -669,27 +854,30 @@ where
             let gas_used = match trial.outcome {
                 Ok(gas_used) => gas_used,
                 Err(reason) => {
-                    // Invalid siblings consume time without EVM gas; charge their declared gas.
-                    work = work.saturating_add(match reason {
-                        Ineligibility::Invalid => 0,
-                        _ => sibling.transaction.gas_limit(),
+                    // Invalid siblings consume validation time without EVM gas.
+                    round.work = round.work.saturating_add(match reason {
+                        Ineligibility::Invalid => config.invalid_attempt_gas,
+                        _ => trial.gas_used,
                     });
-                    outcomes[index] = TrialOutcome::Ineligible(reason);
+                    round.outcomes[index] = TrialOutcome::Ineligible(reason);
                     continue;
                 }
             };
-            work = work.saturating_add(gas_used);
+            round.work = round.work.saturating_add(gas_used);
             let before = match before {
                 Ok(before) => before,
                 Err(reason) => {
                     // A failed before-probe makes every trial in the round ineligible.
-                    outcomes[index] = TrialOutcome::Ineligible(reason);
+                    round.outcomes[index] = TrialOutcome::Ineligible(reason);
                     continue;
                 }
             };
             let after = match &evm_env {
                 None => Ok(trial.recipient_balance.unwrap_or(before)),
                 Some(env) => {
+                    if let Some(end) = self.round_stop(scan, config) {
+                        return Ok(end);
+                    }
                     let (result, gas) = self.probe_balance(
                         builder,
                         env.clone(),
@@ -697,21 +885,21 @@ where
                         config,
                         rule,
                     )?;
-                    work = work.saturating_add(gas);
+                    round.work = round.work.saturating_add(gas);
                     result
                 }
             };
-            outcomes[index] =
+            round.outcomes[index] =
                 match after.and_then(|after| ScoreRead::delta(before, after, rule.min_delta)) {
                     Ok(delta) => TrialOutcome::Eligible { delta, gas_used },
                     Err(reason) => TrialOutcome::Ineligible(reason),
                 };
         }
-        Ok(Some(work))
+        Ok(RoundEnd::Completed)
     }
 
     /// Executes one sibling without committing and applies executed resource admission.
-    fn trial<Builder>(
+    pub fn trial<Builder>(
         &self,
         builder: &mut Builder,
         sibling: &CandidateSibling,
@@ -756,6 +944,7 @@ where
                     });
                 captured = Some(SiblingTrial {
                     outcome,
+                    gas_used,
                     state: keep_state.then(|| result_and_state.state.clone()),
                     recipient_balance,
                 });
@@ -773,7 +962,7 @@ where
     }
 
     /// Returns the EVM environment of the block being built, for score probes.
-    fn probe_env(&self) -> Result<EvmEnvFor<Evm>, PayloadBuilderError> {
+    pub fn probe_env(&self) -> Result<EvmEnvFor<Evm>, PayloadBuilderError> {
         let next_env = Evm::NextBlockEnvCtx::build_next_env(
             self.attributes(),
             self.parent(),
@@ -785,9 +974,11 @@ where
 
     /// Reads `rule.recipient`'s token balance on a discarded overlay (score-read context v1).
     ///
-    /// The probe is a gas-capped, zero-value, fee-free call from `address(0)`. Returns the
-    /// decoded balance or the trial ineligibility, plus the probe gas used.
-    fn probe_balance<Builder>(
+    /// The probe is a gas-capped, zero-value, fee-free top-level `STATICCALL` from
+    /// `address(0)`: a deposit-shaped carrier (no fee, nonce or balance checks; standard
+    /// intrinsic gas and EIP-2929 warm set) whose top-level frame [`StaticTopLevelCall`] makes
+    /// static. Returns the decoded balance or the trial ineligibility, plus the probe gas used.
+    pub fn probe_balance<Builder>(
         &self,
         builder: &mut Builder,
         evm_env: EvmEnvFor<Evm>,
@@ -812,7 +1003,11 @@ where
         };
         let probe = Recovered::new_unchecked(TxTy::<Evm::Primitives>::from(probe), Address::ZERO);
         let overlay = ScoreOverlay::new(builder.evm_mut().db_mut(), diff);
-        let mut evm = self.evm_config.evm_with_env(overlay, evm_env);
+        let mut evm = self.evm_config.evm_with_env_and_inspector(
+            overlay,
+            evm_env,
+            StaticTopLevelCall::default(),
+        );
         let result = match evm.transact(&probe) {
             Ok(ResultAndState { result, .. }) => result,
             Err(error) if EvmError::is_invalid_tx_err(&error) => {
@@ -830,7 +1025,7 @@ where
     }
 
     /// Returns `true` when the group's shared nonce is below the sender's prefix nonce.
-    fn nonce_already_used<Builder>(&self, builder: &mut Builder, group: &CandidateGroup) -> bool
+    pub fn nonce_already_used<Builder>(&self, builder: &mut Builder, group: &CandidateGroup) -> bool
     where
         Builder: BlockBuilder<Primitives = Evm::Primitives>,
         <<Builder::Executor as BlockExecutor>::Evm as AlloyEvm>::DB: Database,
@@ -845,17 +1040,25 @@ where
     }
 
     /// Commits one sibling through the ordinary resource-checked path and accounts it.
-    fn commit_sibling<Builder>(
+    ///
+    /// A transaction-scope executed exclusion is recorded against this sibling in the ledger,
+    /// never in the rejection cache. When `scan` tracks committed state, the committed diff is
+    /// kept for the builder's predicate wakeups.
+    pub fn commit_sibling<Builder>(
         &self,
         info: &mut ExecutionInfo,
         builder: &mut Builder,
-        group: &CandidateGroup,
+        turn: CandidateTurn<'_>,
         index: usize,
-        limits: &CandidateBlockLimits,
+        scan: &mut CandidateScan,
     ) -> Result<SiblingCommit, PayloadBuilderError>
     where
         Builder: BlockBuilder<Primitives = Evm::Primitives>,
     {
+        let group = turn.group;
+        let limits = turn.limits;
+        let track_state = scan.track_committed_state;
+        let mut committed_state = None;
         let sibling = &group.siblings()[index];
         let hash = sibling.hash();
         let resource_metering = &self.builder_config.resource_metering;
@@ -883,6 +1086,9 @@ where
                     CommitChanges::No
                 } else {
                     pending_resource_usage = decision.committed_usage();
+                    if track_state {
+                        committed_state = Some(result_and_state.state.clone());
+                    }
                     CommitChanges::Yes
                 }
             }) {
@@ -891,7 +1097,10 @@ where
                     let permanent =
                         executed_decision.as_ref().is_some_and(|decision| decision.is_permanent());
                     if permanent {
-                        info.permanently_rejected_txs.push(hash);
+                        turn.config
+                            .runtime
+                            .ledger
+                            .mark_permanently_ineligible(group.group_hash(), index);
                     }
                     return Ok(SiblingCommit::Excluded { permanent });
                 }
@@ -908,6 +1117,7 @@ where
                 Err(error) => return Err(PayloadBuilderError::EvmExecutionError(Box::new(error))),
             };
 
+        scan.committed_state = committed_state;
         let gas_used = gas_output.tx_gas_used();
         info.cumulative_gas_used += gas_used;
         info.cumulative_da_bytes_used += Self::sibling_da_size(sibling);

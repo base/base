@@ -8,7 +8,10 @@ use base_execution_candidates::{
     DEFAULT_MAX_SIBLING_GAS, DEFAULT_MAX_SIBLINGS, DEFAULT_PROBE_GAS, GroupLedger, PrincipalsFile,
     StaticAccessPolicy,
 };
-use base_execution_payload_builder::{CandidateBuilderConfig, DEFAULT_CANDIDATE_EVAL_WALL_CUTOFF};
+use base_execution_payload_builder::{
+    CandidateBuilderConfig, DEFAULT_CANDIDATE_BUILD_DEADLINE, DEFAULT_CANDIDATE_BUILD_WORK_GAS,
+    DEFAULT_CANDIDATE_EVAL_WALL_CUTOFF, DEFAULT_INVALID_ATTEMPT_GAS,
+};
 use eyre::WrapErr;
 
 /// Provisional maximum group lifetime past the next block, in seconds.
@@ -57,6 +60,28 @@ pub struct CandidateArgs {
     )]
     pub eval_wall_cutoff_us: u64,
 
+    /// Time after a build's pool scan starts past which no candidate work starts, in
+    /// microseconds.
+    #[arg(
+        long = "builder.candidates.build-deadline-us",
+        default_value_t = DEFAULT_CANDIDATE_BUILD_DEADLINE.as_micros() as u64
+    )]
+    pub build_deadline_us: u64,
+
+    /// Work gas all candidate rounds of one build may reserve.
+    #[arg(
+        long = "builder.candidates.build-work-gas",
+        default_value_t = DEFAULT_CANDIDATE_BUILD_WORK_GAS
+    )]
+    pub build_work_gas: u64,
+
+    /// Work charged for a sibling that fails pre-EVM validation.
+    #[arg(
+        long = "builder.candidates.invalid-attempt-gas",
+        default_value_t = DEFAULT_INVALID_ATTEMPT_GAS
+    )]
+    pub invalid_attempt_gas: u64,
+
     /// Server cap on evaluations per group, applied below the signed `maxEvaluations`.
     #[arg(long = "txpool.candidates.max-evaluations", default_value_t = DEFAULT_MAX_EVALUATIONS)]
     pub max_evaluations: u16,
@@ -73,6 +98,9 @@ impl Default for CandidateArgs {
             builder_candidates_enabled: false,
             probe_gas: DEFAULT_PROBE_GAS,
             eval_wall_cutoff_us: DEFAULT_CANDIDATE_EVAL_WALL_CUTOFF.as_micros() as u64,
+            build_deadline_us: DEFAULT_CANDIDATE_BUILD_DEADLINE.as_micros() as u64,
+            build_work_gas: DEFAULT_CANDIDATE_BUILD_WORK_GAS,
+            invalid_attempt_gas: DEFAULT_INVALID_ATTEMPT_GAS,
             max_evaluations: DEFAULT_MAX_EVALUATIONS,
         }
     }
@@ -113,6 +141,9 @@ impl CandidateArgs {
             runtime: Arc::clone(runtime),
             probe_gas: self.probe_gas,
             eval_wall_cutoff: Duration::from_micros(self.eval_wall_cutoff_us),
+            build_deadline: Duration::from_micros(self.build_deadline_us),
+            build_work_gas: self.build_work_gas,
+            invalid_attempt_gas: self.invalid_attempt_gas,
             server_max_evaluations: self.max_evaluations,
         })
     }

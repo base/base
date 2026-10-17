@@ -46,6 +46,10 @@ pub enum Ineligibility {
     PermanentlyExcluded,
     /// The round stopped before this sibling ran (cancellation or deadline).
     NotRun,
+    /// An enforced resource-metering dimension prices operations only a `meterBundle` sample
+    /// reports, and the sibling has none (design §5.2 "Missing metering"). Clears when a sample
+    /// arrives.
+    Unmetered,
 }
 
 impl Ineligibility {
@@ -65,6 +69,7 @@ impl Ineligibility {
             Self::BelowMinDelta => "below_min_delta",
             Self::PermanentlyExcluded => "permanently_excluded",
             Self::NotRun => "not_run",
+            Self::Unmetered => "unmetered",
         }
     }
 

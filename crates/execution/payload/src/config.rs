@@ -200,6 +200,20 @@ impl ResourceMeteringConfig {
         self.enabled && !self.schedule.is_empty()
     }
 
+    /// Returns `true` when an enforced dimension prices an operation that only a simulated
+    /// `meterBundle` sample reports. Without that sample the dimension is not enforced for the
+    /// transaction.
+    pub fn requires_simulated_sample(&self) -> bool {
+        self.is_active()
+            && self.schedule.dimensions.iter().any(|dimension| {
+                !dimension.dry_run
+                    && dimension
+                        .operations
+                        .iter()
+                        .any(|operation| !ResourceSample::is_executed_operation(&operation.name))
+            })
+    }
+
     /// Looks up the simulated sample for `tx_hash`, if the provider has a matching result.
     pub fn simulated_sample(&self, tx_hash: &TxHash) -> Option<ResourceSample> {
         if !self.is_active() {

@@ -10,7 +10,7 @@
 mod candidates;
 pub use candidates::{
     AdminCandidateSelectionApiImpl, AdminCandidateSelectionApiServer, CandidateSiblings,
-    CandidateSubmissionResponse, SendRawTransactionCandidatesApiImpl,
+    CandidateSubmissionResponse, InflightAdmissions, SendRawTransactionCandidatesApiImpl,
     SendRawTransactionCandidatesApiServer, SendRawTransactionCandidatesOptions,
 };
 

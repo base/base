@@ -275,6 +275,13 @@ impl ResourceSample {
         Self { gas_used, operations }
     }
 
+    /// Returns `true` when builder execution measures `name` itself (`STATE_*` effects), so
+    /// pricing it needs no simulated sample.
+    pub fn is_executed_operation(name: &str) -> bool {
+        let name = ResourceMeteringSchedule::normalize_operation_name(name);
+        Self::EXECUTED_STATE_OPERATIONS.iter().any(|operation| name == *operation)
+    }
+
     fn push_count(operations: &mut Vec<OpcodeGas>, name: &'static str, count: u64) {
         if count == 0 {
             return;
