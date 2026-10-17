@@ -468,12 +468,12 @@ where
 
     /// Rejects automatic plain insertion of a known candidate sibling (design §4.6).
     ///
-    /// Reth reinjects reorged-out transactions and restores the pool backup without sidecars,
-    /// which would turn a candidate sibling into an ordinary transaction. While candidates are
-    /// enabled this suppresses (a) any sidecar-free transaction whose hash the ledger retains as
-    /// a sibling, and (b) every sidecar-free `Private`-origin transaction: Private ingress always
-    /// attaches a sidecar, so such an entry can only be a backup restore whose group metadata is
-    /// gone. The group must be resubmitted.
+    /// Reth reinjects reorged-out transactions without sidecars, which would turn a candidate
+    /// sibling into an ordinary transaction. While candidates are enabled this suppresses any
+    /// sidecar-free transaction whose hash the ledger retains as a sibling, whatever its origin;
+    /// the group must be resubmitted. The pool backup saves only `Local` transactions, so it
+    /// never carries Private candidate representatives. The ledger is not restart-durable, which
+    /// is why enabling candidates requires acknowledging an ephemeral ledger.
     fn reject_plain_candidate_reinsertion(
         &self,
         origin: TransactionOrigin,
@@ -485,7 +485,7 @@ where
             return Ok(());
         }
         let hash = *transaction.hash();
-        if origin.is_private() || candidates.ledger.suppresses_plain_reinsertion(&hash) {
+        if candidates.ledger.suppresses_plain_reinsertion(&hash) {
             debug!(tx_hash = %hash, origin = ?origin, "suppressed plain reinsertion of a candidate sibling");
             return Err(reth_transaction_pool::error::PoolError::other(
                 hash,
@@ -4260,21 +4260,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn private_reinsertion_without_a_sidecar_fails_closed_while_candidates_are_enabled() {
+    async fn private_plain_ingress_is_unaffected_while_candidates_are_enabled() {
         let (pool, client) = build_integration_pool();
-        let pool = pool.with_candidate_runtime(candidate_runtime());
+        let runtime = candidate_runtime();
+        let pool = pool.with_candidate_runtime(Arc::clone(&runtime));
+        let (group, _) = candidate_submission(&client, &runtime);
         let signer = signer();
         fund(&client, signer.address());
 
+        pool.add_transaction(TransactionOrigin::Private, signed_1559(&signer, 0))
+            .await
+            .expect("only known siblings are suppressed, not every sidecar-free Private entry");
         let err = pool
-            .add_transaction(TransactionOrigin::Private, signed_1559(&signer, 0))
+            .add_transaction(TransactionOrigin::Private, plain_sibling(&group, 1))
             .await
-            .expect_err("a sidecar-free Private entry can only be a restored backup");
+            .expect_err("a known sibling stays suppressed under Private origin");
         assert!(matches!(err.kind, PoolErrorKind::Other(_)), "got {err:?}");
-
-        pool.add_transaction(TransactionOrigin::Local, signed_1559(&signer, 0))
-            .await
-            .expect("ordinary local submissions are unaffected");
     }
 
     #[tokio::test]

@@ -25,6 +25,13 @@ pub struct CandidateArgs {
     #[arg(long = "txpool.candidates.enabled", default_value = "false")]
     pub candidates_enabled: bool,
 
+    /// Acknowledges that the group ledger, sibling tombstones and principal usage live only in
+    /// memory. After a restart, budgets reset and a reorg can restore a pre-restart winner as a
+    /// plain transaction (design §4.6, Q16). Required with `--txpool.candidates.enabled` until
+    /// the ledger is recoverable; use only on devnets and tests.
+    #[arg(long = "txpool.candidates.ephemeral-ledger", default_value = "false")]
+    pub ephemeral_ledger: bool,
+
     /// JSON principals file (`policyVersion`, optional `workGasQuota`, `principals`). Without
     /// one, ingress admits nobody.
     #[arg(long = "txpool.candidates.principals-file")]
@@ -91,6 +98,7 @@ impl Default for CandidateArgs {
     fn default() -> Self {
         Self {
             candidates_enabled: false,
+            ephemeral_ledger: false,
             principals_file: None,
             max_siblings: DEFAULT_MAX_SIBLINGS,
             max_sibling_gas: DEFAULT_MAX_SIBLING_GAS,
@@ -112,6 +120,12 @@ impl CandidateArgs {
         if !self.candidates_enabled {
             return Ok(None);
         }
+        // Fail closed: the ledger cannot be recovered after a restart (design §4.4, §4.6).
+        eyre::ensure!(
+            self.ephemeral_ledger,
+            "--txpool.candidates.enabled requires --txpool.candidates.ephemeral-ledger: the \
+             candidate ledger does not survive restarts"
+        );
         let principals = match &self.principals_file {
             Some(path) => serde_json::from_slice(
                 &std::fs::read(path).wrap_err_with(|| format!("reading {}", path.display()))?,
@@ -187,6 +201,7 @@ mod tests {
         let args = CommandParser::parse_from([
             "test",
             "--txpool.candidates.enabled",
+            "--txpool.candidates.ephemeral-ledger",
             "--txpool.candidates.principals-file",
             path.to_str().expect("utf-8 path"),
             "--builder.candidates.enabled",
@@ -205,9 +220,21 @@ mod tests {
 
     #[test]
     fn builder_selection_requires_its_own_flag() {
-        let args = CommandParser::parse_from(["test", "--txpool.candidates.enabled"]).args;
+        let args = CommandParser::parse_from([
+            "test",
+            "--txpool.candidates.enabled",
+            "--txpool.candidates.ephemeral-ledger",
+        ])
+        .args;
         let runtime = args.runtime().expect("runtime builds");
         assert!(runtime.is_some(), "an absent principals file admits nobody but still runs");
         assert!(args.builder_config(runtime.as_ref()).is_none());
+    }
+
+    #[test]
+    fn enabling_candidates_requires_acknowledging_the_ephemeral_ledger() {
+        let args = CommandParser::parse_from(["test", "--txpool.candidates.enabled"]).args;
+        let err = args.runtime().expect_err("an unrecoverable ledger fails closed");
+        assert!(err.to_string().contains("ephemeral-ledger"), "got {err}");
     }
 }
