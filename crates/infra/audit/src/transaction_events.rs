@@ -272,7 +272,9 @@ impl TransactionEventRetentionClass {
             | TransactionEventType::BuilderPayloadFinalized
             | TransactionEventType::BuilderFlashblockStarted
             | TransactionEventType::BuilderFlashblockPublished
-            | TransactionEventType::BuilderFlashblockBuildStopped => Self::Cold,
+            | TransactionEventType::BuilderFlashblockBuildStopped
+            | TransactionEventType::TxpoolCandidateLanded
+            | TransactionEventType::TxpoolCandidateEvicted => Self::Cold,
         }
     }
 
@@ -2124,6 +2126,18 @@ mod tests {
         );
         assert_eq!(
             TransactionEventRetentionClass::for_event_type(TransactionEventType::SimulationFailed),
+            TransactionEventRetentionClass::Cold
+        );
+        assert_eq!(
+            TransactionEventRetentionClass::for_event_type(
+                TransactionEventType::TxpoolCandidateLanded
+            ),
+            TransactionEventRetentionClass::Cold
+        );
+        assert_eq!(
+            TransactionEventRetentionClass::for_event_type(
+                TransactionEventType::TxpoolCandidateEvicted
+            ),
             TransactionEventRetentionClass::Cold
         );
         assert_eq!(

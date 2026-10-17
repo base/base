@@ -21,7 +21,9 @@ whose `event_time` is already outside its window or more than an hour in the
 future. A retried `event_id` dedupes only within the same UTC hour of its
 `event_time`. `TXPOOL_SEND_RAW_TRANSACTION_VALIDITY` uses the same warm window as
 `TXPOOL_SEND_RAW_TRANSACTION`. `BUILDER_DEFERRED` and `BUILDER_EXPIRED` use the
-same hot window as the other per-attempt builder decisions.
+same hot window as the other per-attempt builder decisions. The candidate-group
+terminal events `TXPOOL_CANDIDATE_LANDED` and `TXPOOL_CANDIDATE_EVICTED` are
+cold.
 
 ## Configuration Fields
 
@@ -195,6 +197,8 @@ Mempool/node:
 - `TXPOOL_TRACKING_OVERFLOWED`
 - `TXPOOL_SEND_RAW_TRANSACTION`
 - `TXPOOL_SEND_RAW_TRANSACTION_VALIDITY`
+- `TXPOOL_CANDIDATE_LANDED`
+- `TXPOOL_CANDIDATE_EVICTED`
 
 `TXPOOL_SEND_RAW_TRANSACTION` and `TXPOOL_SEND_RAW_TRANSACTION_VALIDITY` are
 one-time RPC-admission events, one per unique submit path. They fire after the
@@ -293,6 +297,30 @@ also include top-level `block_hash`, `data.transaction_count`, `data.byte_size`,
 and `data.build_duration_ms`. Build-stopped events use `data.reason` to
 distinguish control-flow stops such as payload resolution winning before
 publish.
+
+Candidate groups (`base_sendRawTransactionCandidates`): every candidate event
+carries `data.group_hash`, the group's join key, and no sibling bytes, plus
+`data.candidate_instance`, a random per-process identifier.
+
+Deploy order: ingest and read consumers (the audit archiver and anything that
+deserializes `event_type`) must run a release that knows the candidate kinds
+before any builder or node emits them. Older binaries reject unknown
+`event_type` values.
+
+Measured sizes for a two-sibling group, as serialized JSON: landed 712
+bytes, evicted 652 to 661.
+
+Terminal events. The node's candidate ledger emits exactly one terminal event
+per admitted group, keyed by the group alone so replays deduplicate.
+`TXPOOL_CANDIDATE_LANDED` is canonical: a sibling appeared in a canonical
+block's mined transactions, under the winner's `tx_hash` with `block_hash` and
+`block_number`. Otherwise `TXPOOL_CANDIDATE_EVICTED`, under the
+representative, has `data.terminal_reason`: `replaced` (a same-nonce group
+replaced it), `expired` (pool maintenance passed `expiryBlock`),
+`budget_exhausted`, `revoked`, `permanent_exclusion`, or `dropped`. A group
+that left the pool another way, such as admin removal, pool-full eviction, a
+plain same-nonce replacement, or a builder nonce check, is `dropped` only once
+the recovery window closes, because a canonical landing can still correct it.
 
 Canonicality caveat: builder events are local payload construction signals, not
 canonical-chain or consensus-finality observations. A builder event with

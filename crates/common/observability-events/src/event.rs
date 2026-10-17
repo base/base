@@ -167,6 +167,13 @@ pub enum TransactionEventType {
     /// `data.validity_predicates`.
     #[serde(rename = "TXPOOL_SEND_RAW_TRANSACTION_VALIDITY")]
     TxpoolSendRawTransactionValidity,
+    /// A candidate group's sibling was mined in a canonical block. Terminal: a group gets
+    /// exactly one of this or [`Self::TxpoolCandidateEvicted`].
+    #[serde(rename = "TXPOOL_CANDIDATE_LANDED")]
+    TxpoolCandidateLanded,
+    /// A candidate group ended without landing; `data.terminal_reason` says why. Terminal.
+    #[serde(rename = "TXPOOL_CANDIDATE_EVICTED")]
+    TxpoolCandidateEvicted,
     /// The builder considered a transaction for payload inclusion.
     #[serde(rename = "BUILDER_CONSIDERED")]
     BuilderConsidered,
@@ -243,6 +250,8 @@ impl fmt::Display for TransactionEventType {
             Self::TxpoolValidatedInsertRejected => "TXPOOL_VALIDATED_INSERT_REJECTED",
             Self::TxpoolSendRawTransaction => "TXPOOL_SEND_RAW_TRANSACTION",
             Self::TxpoolSendRawTransactionValidity => "TXPOOL_SEND_RAW_TRANSACTION_VALIDITY",
+            Self::TxpoolCandidateLanded => "TXPOOL_CANDIDATE_LANDED",
+            Self::TxpoolCandidateEvicted => "TXPOOL_CANDIDATE_EVICTED",
             Self::BuilderConsidered => "BUILDER_CONSIDERED",
             Self::BuilderAccepted => "BUILDER_ACCEPTED",
             Self::BuilderRejected => "BUILDER_REJECTED",

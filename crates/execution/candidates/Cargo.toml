@@ -1,0 +1,44 @@
+[package]
+name = "base-execution-candidates"
+description = "Builder-side candidate selection: envelopes, validation, group ledger and selection rules"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# alloy
+alloy-eips.workspace = true
+alloy-serde.workspace = true
+alloy-sol-types.workspace = true
+alloy-consensus.workspace = true
+alloy-primitives = { workspace = true, features = ["k256", "serde"] }
+
+# base
+base-observability-events.workspace = true
+base-common-consensus = { workspace = true, features = ["k256", "serde", "std"] }
+
+# misc
+thiserror.workspace = true
+parking_lot.workspace = true
+serde = { workspace = true, features = ["derive", "std"] }
+
+# test-utils
+alloy-signer = { workspace = true, optional = true }
+alloy-signer-local = { workspace = true, optional = true }
+
+[dev-dependencies]
+rstest.workspace = true
+alloy-signer.workspace = true
+alloy-signer-local.workspace = true
+serde_json = { workspace = true, features = ["std"] }
+base-observability-events = { workspace = true, features = ["test-utils"] }
+
+[features]
+test-utils = [ "dep:alloy-signer", "dep:alloy-signer-local" ]
