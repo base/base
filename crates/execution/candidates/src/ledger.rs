@@ -39,6 +39,9 @@ pub enum EvictionReason {
     PermanentExclusion,
     /// The representative left the pool by another path (replacement, admin drop, discard).
     Dropped,
+    /// The sender's canonical nonce passed the group's nonce without a sibling landing, as when
+    /// a sponsor's EIP-7702 authorization signed by the sender consumed it.
+    NonceConsumed,
 }
 
 impl EvictionReason {
@@ -50,6 +53,7 @@ impl EvictionReason {
             Self::Revoked => "revoked",
             Self::PermanentExclusion => "permanent_exclusion",
             Self::Dropped => "dropped",
+            Self::NonceConsumed => "nonce_consumed",
         }
     }
 }
@@ -563,6 +567,46 @@ impl GroupLedger {
         }
         self.journal(&terminals);
         landed
+    }
+
+    /// Ends groups whose sender's canonical account nonce in `accounts` passed the group's nonce.
+    ///
+    /// Run after [`Self::record_landed`] for the same block, so a group whose own sibling used
+    /// the nonce lands instead. Otherwise another transaction consumed it, such as a sponsor's
+    /// EIP-7702 authorization signed by the sender, and no sibling can execute: a pooled or
+    /// provisionally dropped group becomes a final `Evicted(NonceConsumed)`, journaled now. Its
+    /// sibling tombstones are released at once because no sibling can enter the pool again;
+    /// the entry stays until prune, so resubmission is still `group_terminal`. A `Pending`
+    /// admission is left to settle from its own insertion.
+    pub fn record_nonces(&self, accounts: impl IntoIterator<Item = (Address, u64)>) {
+        let nonces: HashMap<Address, u64> = accounts.into_iter().collect();
+        if nonces.is_empty() {
+            return;
+        }
+        let mut terminals = Vec::new();
+        {
+            let mut state = self.state.lock();
+            let mut consumed = Vec::new();
+            for entry in state.entries.values_mut() {
+                let open = entry.state == GroupState::Pooled
+                    || entry.state == GroupState::Evicted(EvictionReason::Dropped);
+                let passed = nonces
+                    .get(&entry.group.sender())
+                    .is_some_and(|nonce| *nonce > entry.group.nonce());
+                if open && passed {
+                    entry.state = GroupState::Evicted(EvictionReason::NonceConsumed);
+                    terminals
+                        .extend(entry.take_terminal(TerminalOutcome::Evicted(
+                            EvictionReason::NonceConsumed,
+                        )));
+                    consumed.push(Arc::clone(&entry.group));
+                }
+            }
+            for group in &consumed {
+                state.release_tombstones(group);
+            }
+        }
+        self.journal(&terminals);
     }
 
     /// Moves a live group to a terminal state. Every reason but `Dropped` is final and
@@ -1096,6 +1140,66 @@ mod tests {
             terminals(&capture, &ledger, &landed),
             [(TransactionEventType::TxpoolCandidateLanded, "\"landed\"".to_string())]
         );
+    }
+
+    #[test]
+    fn canonical_nonce_past_the_group_ends_it_as_nonce_consumed() {
+        let capture = TransactionEventCapture::install();
+        let ledger = GroupLedger::default();
+        let fixture = CandidateFixture::new(CHAIN_ID);
+        let consumed = group(&fixture, 0, 1, 0);
+        admit(&ledger, &consumed, &[]);
+        let sibling = consumed.siblings()[1].hash();
+
+        // Another account, or the sender's nonce not yet past the group, changes nothing.
+        ledger.record_nonces([(Address::repeat_byte(0x99), 5), (fixture.address(), 0)]);
+        assert_eq!(ledger.lookup(&consumed.group_hash()).unwrap().state, GroupState::Pooled);
+
+        ledger.record_nonces([(fixture.address(), 1)]);
+        assert_eq!(
+            ledger.lookup(&consumed.group_hash()).unwrap().state,
+            GroupState::Evicted(EvictionReason::NonceConsumed)
+        );
+        assert_eq!(terminals(&capture, &ledger, &consumed), [evicted("nonce_consumed")]);
+        assert!(!ledger.suppresses_plain_reinsertion(&sibling), "tombstones are released");
+        // The sender's only slot is free for its next nonce; the consumed group stays terminal.
+        admit(&ledger, &group(&fixture, 1, 3, 0), &[]);
+        assert_eq!(
+            ledger.create(Arc::clone(&consumed), PRINCIPAL, 1, empty_pool),
+            Err(CandidateError::GroupTerminal)
+        );
+
+        ledger.record_nonces([(fixture.address(), 1)]);
+        ledger.prune(1_000);
+        assert_eq!(terminals(&capture, &ledger, &consumed), [evicted("nonce_consumed")]);
+    }
+
+    #[test]
+    fn nonce_consumed_respects_landing_and_in_flight_admissions() {
+        let capture = TransactionEventCapture::install();
+        let ledger =
+            GroupLedger::new(LedgerLimits { max_groups_per_sender: 8, ..Default::default() });
+        let fixture = CandidateFixture::new(CHAIN_ID);
+
+        // A group whose own sibling landed used the nonce itself.
+        let landed = group(&fixture, 0, 1, 0);
+        admit(&ledger, &landed, &[]);
+        ledger.record_landed(&[landed.siblings()[0].hash()], 1, B256::repeat_byte(0xbb));
+        // A provisionally dropped group learns why its nonce is gone, without waiting for prune.
+        let dropped = group(&fixture, 1, 3, 0);
+        admit(&ledger, &dropped, &[]);
+        ledger.reconcile(pool_of(&[&landed]), 1);
+        // An in-flight admission settles from its own insertion.
+        let in_flight = group(&fixture, 2, 5, 0);
+        pending(&ledger, &in_flight);
+
+        ledger.record_nonces([(fixture.address(), 3)]);
+        assert_eq!(
+            terminals(&capture, &ledger, &landed),
+            [(TransactionEventType::TxpoolCandidateLanded, "\"landed\"".to_string())]
+        );
+        assert_eq!(terminals(&capture, &ledger, &dropped), [evicted("nonce_consumed")]);
+        assert_eq!(ledger.lookup(&in_flight.group_hash()).unwrap().state, GroupState::Pending);
     }
 
     /// Creates `group` as a `Pending` admission whose pool insertion is still in flight.
