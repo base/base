@@ -1,4 +1,4 @@
-use std::error::Error as StdError;
+use std::{collections::VecDeque, error::Error as StdError};
 
 use alloy_consensus::Transaction;
 use alloy_eips::BlockNumberOrTag;
@@ -370,10 +370,12 @@ impl Withdrawer {
         Ok(status == GameStatus::InProgress as u8 || status == GameStatus::DefenderWins as u8)
     }
 
-    /// Authenticates the newest finalized covering game, or the oldest eligible fallback game.
+    /// Authenticates the newest finalized covering game, or the oldest eligible pending game.
     ///
-    /// Skips unavailable or invalid fault-proof candidates, retaining the last proof RPC failure
-    /// if none verifies. Legacy outputs use the first covering commitment and fail on proof errors.
+    /// The first proof RPC failure stops the walk and switches untried saved candidates to newest
+    /// first, for RPCs that only serve recent state. A second RPC failure returns immediately;
+    /// exhausting the fallback returns the first RPC error. Unavailable blocks and invalid proofs
+    /// are skipped. Legacy outputs use the first covering commitment and fail on proof errors.
     pub async fn proving_output(
         &self,
         rpc: &WithdrawalRpc,
@@ -392,81 +394,74 @@ impl Withdrawer {
                     .ok_or(WithdrawerError::MissingBlock)?
                     .header
                     .timestamp;
-                let mut candidates = Vec::new();
-                let mut last_rpc_error = None;
-                while count > U256::ZERO {
-                    count -= U256::from(1);
-                    let game = Self::read(
-                        rpc,
-                        dispute_game_factory,
-                        IDisputeGameFactory::gameAtIndexCall { index: count },
-                    )
-                    .await?;
-                    // A game created before the withdrawal cannot honestly cover it, nor can older games.
-                    if game.timestamp < withdrawal_timestamp {
-                        break;
-                    }
-                    let extra_data =
-                        Self::read(rpc, game.proxy, WithdrawalDisputeGame::extraDataCall {})
-                            .await?;
-                    let Some(encoded_block) = extra_data.get(..32) else {
-                        let error = WithdrawerError::InvalidGame { index: count };
-                        tracing::warn!(
-                            game_index = %count, proxy = %game.proxy, reason = %error,
-                            "skipping unusable dispute game"
-                        );
-                        continue;
-                    };
-                    let game_block = U256::from_be_slice(encoded_block);
-                    if game_block < block {
-                        continue;
-                    }
-                    let Ok(block_number) = u64::try_from(game_block) else {
-                        tracing::warn!(
-                            game_index = %count, proxy = %game.proxy,
-                            reason = %WithdrawerError::ValueOverflow,
-                            "skipping unusable dispute game"
-                        );
-                        continue;
-                    };
-                    if !Self::game_eligible(rpc, anchor_state_registry, game.proxy).await? {
-                        continue;
-                    }
-                    let finalized = Self::read(
-                        rpc,
-                        anchor_state_registry,
-                        IAnchorStateRegistry::isGameFinalizedCall { game: game.proxy },
-                    )
-                    .await?;
-                    let root = Self::read(rpc, game.proxy, WithdrawalDisputeGame::rootClaimCall {})
+                let mut candidates = VecDeque::new();
+                let mut first_rpc_error = None;
+                loop {
+                    let mut finalized_candidate = None;
+                    while first_rpc_error.is_none() && count > U256::ZERO {
+                        count -= U256::from(1);
+                        let game = Self::read(
+                            rpc,
+                            dispute_game_factory,
+                            IDisputeGameFactory::gameAtIndexCall { index: count },
+                        )
                         .await?;
-                    let output = WithdrawalProvingOutput { block_number, index: count, root };
-                    // Finalized games need only proof maturity; prefer the newest one that verifies.
-                    if !finalized {
-                        candidates.push((output, game.proxy));
-                        continue;
-                    }
-                    match Self::verify_output(rpc, withdrawal, output).await {
-                        Ok(proof) => return Ok((output, proof)),
-                        Err(
-                            error @ (WithdrawerError::MissingBlock
-                            | WithdrawerError::Withdrawal(_)
-                            | WithdrawerError::Proof { .. }
-                            | WithdrawerError::Request(_)),
-                        ) => {
+                        // A game created before the withdrawal cannot honestly cover it, nor can older games.
+                        if game.timestamp < withdrawal_timestamp {
+                            count = U256::ZERO;
+                            break;
+                        }
+                        let extra_data =
+                            Self::read(rpc, game.proxy, WithdrawalDisputeGame::extraDataCall {})
+                                .await?;
+                        let Some(encoded_block) = extra_data.get(..32) else {
+                            let error = WithdrawerError::InvalidGame { index: count };
                             tracing::warn!(
                                 game_index = %count, proxy = %game.proxy, reason = %error,
                                 "skipping unusable dispute game"
                             );
-                            if matches!(error, WithdrawerError::Request(_)) {
-                                last_rpc_error = Some(error);
-                            }
+                            continue;
+                        };
+                        let game_block = U256::from_be_slice(encoded_block);
+                        if game_block < block {
+                            continue;
                         }
-                        Err(error) => return Err(error),
+                        let Ok(block_number) = u64::try_from(game_block) else {
+                            tracing::warn!(
+                                game_index = %count, proxy = %game.proxy,
+                                reason = %WithdrawerError::ValueOverflow,
+                                "skipping unusable dispute game"
+                            );
+                            continue;
+                        };
+                        if !Self::game_eligible(rpc, anchor_state_registry, game.proxy).await? {
+                            continue;
+                        }
+                        let finalized = Self::read(
+                            rpc,
+                            anchor_state_registry,
+                            IAnchorStateRegistry::isGameFinalizedCall { game: game.proxy },
+                        )
+                        .await?;
+                        let root =
+                            Self::read(rpc, game.proxy, WithdrawalDisputeGame::rootClaimCall {})
+                                .await?;
+                        let output = WithdrawalProvingOutput { block_number, index: count, root };
+                        // Finalized games need only proof maturity; prefer the newest one that verifies.
+                        if finalized {
+                            finalized_candidate = Some((output, game.proxy));
+                            break;
+                        }
+                        candidates.push_back((output, game.proxy));
                     }
-                }
-                // Without a usable finalized game, the oldest candidate should resolve first.
-                for (output, proxy) in candidates.into_iter().rev() {
+                    let candidate = match finalized_candidate {
+                        Some(candidate) => Some(candidate),
+                        // Some RPCs only serve recent state; stop searching older games after a failure.
+                        None if first_rpc_error.is_some() => candidates.pop_front(),
+                        // Without a usable finalized game, the oldest candidate should resolve first.
+                        None => candidates.pop_back(),
+                    };
+                    let Some((output, proxy)) = candidate else { break };
                     match Self::verify_output(rpc, withdrawal, output).await {
                         Ok(proof) => return Ok((output, proof)),
                         Err(
@@ -480,13 +475,16 @@ impl Withdrawer {
                                 "skipping unusable dispute game"
                             );
                             if matches!(error, WithdrawerError::Request(_)) {
-                                last_rpc_error = Some(error);
+                                if first_rpc_error.is_some() {
+                                    return Err(error);
+                                }
+                                first_rpc_error = Some(error);
                             }
                         }
                         Err(error) => return Err(error),
                     }
                 }
-                if let Some(error) = last_rpc_error {
+                if let Some(error) = first_rpc_error {
                     return Err(error);
                 }
             }
@@ -1788,14 +1786,14 @@ mod tests {
             16,
         )
         .unwrap();
-        for (game_finalized, game_blocks, index) in
-            [(false, vec![block, block + 1], 1), (true, vec![block + 1, block], 0)]
+        for (finalized_games, proof_error_block) in
+            [(vec![false, false, false], block), (vec![true, true, false], block + 1)]
         {
             let server = Scenario {
-                game_count: 2,
-                game_finalized,
-                game_blocks,
-                proof_error_block: Some(block),
+                game_count: 3,
+                finalized_games,
+                game_blocks: vec![block, block + 1, block + 2],
+                proof_error_block: Some(proof_error_block),
                 proof_error: Some(
                     json!({"code": -32000, "message": "historical state unavailable"}),
                 ),
@@ -1804,14 +1802,14 @@ mod tests {
             .start()
             .await;
             server.run().await.unwrap();
-            server.assert_proven_game(index);
+            server.assert_proven_game(2);
         }
     }
 
     #[tokio::test]
-    async fn game_search_returns_rpc_failure_when_no_candidate_verifies() {
+    async fn game_search_stops_after_two_proof_rpc_failures() {
         let server = Scenario {
-            game_count: 2,
+            game_count: 3,
             game_finalized: false,
             proof_error: Some(json!({
                 "code": -32602,
@@ -1828,7 +1826,7 @@ mod tests {
             tracing_subscriber::fmt().with_ansi(false).with_writer(move || writer.clone()).finish();
         let error = server.run().with_subscriber(subscriber).await.unwrap_err();
         let logs = String::from_utf8(capture.0.lock().unwrap().clone()).unwrap();
-        for field in ["game_index=0", "game_index=1", "proxy=", "reason="] {
+        for field in ["game_index=0", "game_index=2", "proxy=", "reason="] {
             assert!(logs.contains(field), "missing {field}: {logs}");
         }
         assert!(matches!(error, WithdrawerError::Request(_)));
