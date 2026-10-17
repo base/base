@@ -47,8 +47,25 @@ pub(crate) struct BaseCli {
 }
 
 impl BaseCli {
+    /// Rejects option combinations that cannot run in one process.
+    ///
+    /// The top-level `--metrics.enabled` installs a global Prometheus recorder, so it is rejected
+    /// for commands that install reth's recorder (see [`BaseCommand::installs_reth_recorder`]).
+    /// Those commands serve metrics on reth's `--metrics` endpoint instead.
+    pub(crate) fn validate(&self) -> eyre::Result<()> {
+        if self.metrics.enabled && self.command.installs_reth_recorder() {
+            eyre::bail!(
+                "the top-level `--metrics.enabled` cannot be combined with a command that installs \
+                 reth's Prometheus recorder; serve metrics with reth's `--metrics <ADDR:PORT>` instead"
+            );
+        }
+        Ok(())
+    }
+
     /// Runs the selected command with shared process initialization.
     pub(crate) fn run(self) -> eyre::Result<()> {
+        self.validate()?;
+
         // Tonic captures the runtime during OTLP initialization. Keep it alive while the
         // command runs, but leave its context before commands enter their own runtimes.
         let tracing_runtime = self
@@ -247,6 +264,93 @@ mod tests {
         assert!(payload.contains("included_span"), "missing enabled debug span: {payload}");
         assert!(payload.contains("unified-otlp-test"), "missing service name: {payload}");
         assert!(!payload.contains("excluded_span"), "OTLP filter was ignored: {payload}");
+    }
+
+    /// Upstream flags every integrated command requires; nothing is contacted before rejection.
+    const INTEGRATED_UPSTREAM_ARGS: [&str; 4] =
+        ["--l1-eth-rpc", "http://127.0.0.1:1", "--l1-beacon", "http://127.0.0.1:1"];
+
+    #[test]
+    fn rejects_top_level_metrics_when_reth_installs_its_recorder() {
+        let dir = tempfile::tempdir().unwrap();
+        let datadir = dir.path().to_str().unwrap();
+        let ipc = format!("{datadir}/rpc.ipc");
+        let integrated = |flavor: &'static str, extra: &[&'static str]| {
+            let mut args = vec![
+                "base",
+                "--chain",
+                "dev",
+                "--metrics.enabled",
+                "--metrics.port",
+                "0",
+                flavor,
+                "--datadir",
+                datadir,
+                "--ipcpath",
+                &ipc,
+                "--disable-discovery",
+                "--port",
+                "0",
+                "--authrpc.port",
+                "0",
+            ];
+            args.extend(INTEGRATED_UPSTREAM_ARGS);
+            args.extend(extra);
+            args
+        };
+        // `--chain` and `--datadir` belong to the command that opens the database, which may be
+        // the parent of the command that takes `--metrics`.
+        let reth = |database_command: &[&'static str], metrics_command: &[&'static str]| {
+            let mut args = vec!["base", "--metrics.enabled", "--metrics.port", "0", "reth"];
+            args.extend(database_command);
+            args.extend(["--chain", "dev", "--datadir", datadir]);
+            args.extend(metrics_command);
+            args.extend(["--metrics", "127.0.0.1:0"]);
+            args
+        };
+        for args in [
+            integrated("rpc", &[]),
+            integrated("follow", &["--source-l2-rpc", "http://127.0.0.1:1"]),
+            integrated("sequencer", &["--p2p.sequencer.key.path", "/nonexistent-sequencer-key"]),
+            reth(&["stage", "run", "headers", "--from", "0", "--to", "1"], &[]),
+            reth(&["prune"], &[]),
+            reth(&["db"], &["repair-trie"]),
+        ] {
+            let rendered = args.join(" ");
+            let cli = BaseCli::try_parse_from(args).unwrap();
+            // Without rejection the node launches, and its debug-build future outgrows the
+            // default test stack.
+            let result = std::thread::Builder::new()
+                .stack_size(32 * 1024 * 1024)
+                .spawn(move || cli.run())
+                .unwrap()
+                .join()
+                .unwrap_or_else(|_| panic!("`{rendered}` panicked instead of being rejected"));
+            let error = result.expect_err(&rendered).to_string();
+            assert!(error.contains("--metrics <ADDR:PORT>"), "`{rendered}`: {error}");
+        }
+    }
+
+    #[test]
+    fn allows_top_level_metrics_when_reth_does_not_install_its_recorder() {
+        let rpc_without_top_level_metrics =
+            ["base", "rpc"].into_iter().chain(INTEGRATED_UPSTREAM_ARGS).collect::<Vec<_>>();
+        let batcher =
+            ["base", "--metrics.enabled", "batcher", "--l1-rpc-url", "http://localhost:8545"]
+                .into_iter()
+                .chain(BATCHER_SEQUENCER_URLS)
+                .collect();
+        for args in [
+            rpc_without_top_level_metrics,
+            batcher,
+            vec!["base", "--metrics.enabled", "bootnode"],
+            vec!["base", "--metrics.enabled", "reth", "prune"],
+            vec!["base", "--metrics.enabled", "reth", "db", "stats"],
+        ] {
+            let rendered = args.join(" ");
+            let cli = BaseCli::try_parse_from(args).unwrap();
+            assert!(cli.validate().is_ok(), "`{rendered}` was rejected");
+        }
     }
 
     /// The sequencer URLs flag a batcher command requires.
