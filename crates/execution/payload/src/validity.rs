@@ -7,7 +7,9 @@ use alloy_primitives::{
     Address, TxHash, U256,
     map::{B256Map, B256Set, HashMap, U256Map},
 };
-use base_execution_txpool::{PredicateContext, ValidityOperator, ValidityPredicate};
+use base_execution_txpool::{
+    PredicateContext, ValidityConditions, ValidityOperator, ValidityPredicate,
+};
 use revm::{Database, state::EvmState};
 
 /// The number of parked predicates at which a flat bucket becomes ordered by default.
@@ -45,17 +47,30 @@ impl ValidityPredicateKey {
         }
     }
 
-    /// Returns the first predicate that does not hold against `db` and `context`, with its index.
+    /// Returns the first unsatisfied normalized predicate and its state or context key.
+    ///
+    /// State predicates are borrowed during evaluation and cloned only when unsatisfied.
     pub fn first_unsatisfied<DB: Database>(
-        predicates: &[ValidityPredicate],
+        predicates: &ValidityConditions,
         db: &mut DB,
         context: &PredicateContext,
-    ) -> Result<Option<(usize, Self)>, DB::Error> {
-        for (index, predicate) in predicates.iter().enumerate() {
-            match predicate.matches(db, context) {
-                Ok(true) => {}
-                Ok(false) => return Ok(Some((index, Self::for_predicate(predicate)))),
-                Err(error) => return Err(error),
+    ) -> Result<Option<(ValidityPredicate, Self)>, DB::Error> {
+        if let Some((op, value)) =
+            predicates.block().first_unsatisfied(U256::from(context.block_number))
+        {
+            return Ok(Some((ValidityPredicate::BlockNumber { op, value }, Self::BlockNumber)));
+        }
+        if let Some((op, value)) =
+            predicates.flashblock().first_unsatisfied(U256::from(context.flashblock_index))
+        {
+            return Ok(Some((
+                ValidityPredicate::FlashblockIndex { op, value },
+                Self::FlashblockIndex,
+            )));
+        }
+        for predicate in predicates.state_predicates() {
+            if !predicate.matches(db, context)? {
+                return Ok(Some((predicate.clone(), Self::for_predicate(predicate))));
             }
         }
         Ok(None)
@@ -63,7 +78,7 @@ impl ValidityPredicateKey {
 }
 
 /// Result of evaluating a transaction's validity predicates at one build position.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ValidityPredicateEvaluation {
     /// Every predicate is satisfied.
     Matched,
@@ -71,8 +86,8 @@ pub enum ValidityPredicateEvaluation {
     Unsatisfied {
         /// State or position key that currently blocks the transaction.
         blocker: ValidityPredicateKey,
-        /// Position of the failed predicate in the submitted batch.
-        blocker_index: usize,
+        /// Failed condition, returned directly so parking does not rescan the batch.
+        predicate: ValidityPredicate,
         /// Whether the predicate batch can never be satisfied at a later build position.
         expired: bool,
     },
@@ -81,20 +96,16 @@ pub enum ValidityPredicateEvaluation {
 impl ValidityPredicateEvaluation {
     /// Evaluates predicates against the current state and build position.
     pub fn evaluate<DB: Database>(
-        predicates: &[ValidityPredicate],
+        predicates: &ValidityConditions,
         db: &mut DB,
         context: &PredicateContext,
     ) -> Result<Self, DB::Error> {
-        let Some((blocker_index, blocker)) =
+        let Some((predicate, blocker)) =
             ValidityPredicateKey::first_unsatisfied(predicates, db, context)?
         else {
             return Ok(Self::Matched);
         };
-        Ok(Self::Unsatisfied {
-            blocker,
-            blocker_index,
-            expired: ValidityPredicate::is_batch_expired(predicates, context),
-        })
+        Ok(Self::Unsatisfied { blocker, predicate, expired: predicates.is_expired(context) })
     }
 }
 
@@ -521,16 +532,81 @@ pub struct StateChangeEffects {
 }
 
 #[cfg(test)]
+pub mod test_utils {
+    //! Hand-rolled evaluation database for a single ordered log spanning account and
+    //! storage reads, including reads that fail. Separate method mocks cannot express
+    //! this cross-method log.
+
+    use alloy_primitives::{Address, B256, U256};
+    use revm::{
+        Database,
+        database::InMemoryDB,
+        database_interface::DBErrorMarker,
+        state::{AccountInfo, Bytecode},
+    };
+
+    /// A scripted account or storage read failure.
+    #[derive(Debug, PartialEq, Eq, thiserror::Error)]
+    #[error("scripted state read failure")]
+    pub struct ReadError;
+
+    impl DBErrorMarker for ReadError {}
+
+    /// In-memory state with ordered account/slot reads and optional error injection.
+    #[derive(Debug, Default)]
+    pub struct RecordingDatabase {
+        /// State returned by successful reads.
+        pub inner: InMemoryDB,
+        /// Account reads have no slot; storage reads retain their slot.
+        pub reads: Vec<(Address, Option<U256>)>,
+        /// One-based read index at which to return an error.
+        pub fail_on: Option<usize>,
+    }
+
+    impl Database for RecordingDatabase {
+        type Error = ReadError;
+
+        fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+            self.reads.push((address, None));
+            if self.fail_on == Some(self.reads.len()) {
+                return Err(ReadError);
+            }
+            Ok(self.inner.basic(address).unwrap())
+        }
+
+        fn storage(&mut self, address: Address, slot: U256) -> Result<U256, Self::Error> {
+            self.reads.push((address, Some(slot)));
+            if self.fail_on == Some(self.reads.len()) {
+                return Err(ReadError);
+            }
+            Ok(self.inner.storage(address, slot).unwrap())
+        }
+
+        fn code_by_hash(&mut self, _: B256) -> Result<Bytecode, Self::Error> {
+            panic!("validity predicates must not load bytecode");
+        }
+
+        fn block_hash(&mut self, _: u64) -> Result<B256, Self::Error> {
+            panic!("validity predicates must not load block hashes");
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, U256, map::B256Set};
-    use base_execution_txpool::{PredicateContext, ValidityOperator, ValidityPredicate};
+    use base_execution_txpool::{
+        PredicateContext, ValidityConditions, ValidityOperator, ValidityPredicate,
+    };
     use revm::{
         database::InMemoryDB,
         state::{Account, AccountInfo, EvmState, EvmStorageSlot},
     };
 
     use super::{
-        ParkedPredicateIndex, StateChangeEffects, ValidityPredicateEvaluation, ValidityPredicateKey,
+        ParkedPredicateIndex, StateChangeEffects, ValidityPredicateEvaluation,
+        ValidityPredicateKey,
+        test_utils::{ReadError, RecordingDatabase},
     };
 
     fn balance(address: Address, op: ValidityOperator, value: u64) -> ValidityPredicate {
@@ -569,6 +645,228 @@ mod tests {
     }
 
     #[test]
+    fn state_partition_order_short_circuits_failures_and_propagates_errors() {
+        let first = Address::with_last_byte(1);
+        let second = Address::with_last_byte(2);
+        let nonce_address = Address::with_last_byte(3);
+        let storage_address = Address::with_last_byte(4);
+        let ordered = [
+            balance(first, ValidityOperator::Equal, 1),
+            balance(second, ValidityOperator::Equal, 2),
+            ValidityPredicate::Nonce {
+                address: nonce_address,
+                op: ValidityOperator::Equal,
+                value: U256::from(3),
+            },
+            storage(storage_address, U256::from(0xff), ValidityOperator::Equal, 4),
+        ];
+        let conditions = ValidityConditions::new(vec![
+            ordered[3].clone(),
+            ordered[2].clone(),
+            ordered[0].clone(),
+            ordered[1].clone(),
+        ]);
+        let context = PredicateContext { block_number: 100, flashblock_index: 2 };
+        let expected_reads = [
+            (first, None),
+            (second, None),
+            (nonce_address, None),
+            (storage_address, Some(U256::from(7))),
+        ];
+        let mut db = RecordingDatabase::default();
+        for (index, predicate) in ordered.iter().enumerate() {
+            db.reads.clear();
+            let blocker = match index {
+                0 => ValidityPredicateKey::Balance(first),
+                1 => ValidityPredicateKey::Balance(second),
+                2 => ValidityPredicateKey::Nonce(nonce_address),
+                _ => ValidityPredicateKey::Storage(storage_address, U256::from(7)),
+            };
+            assert_eq!(
+                ValidityPredicateEvaluation::evaluate(&conditions, &mut db, &context),
+                Ok(ValidityPredicateEvaluation::Unsatisfied {
+                    blocker,
+                    predicate: predicate.clone(),
+                    expired: false
+                })
+            );
+            assert!(conditions.contains(predicate));
+            assert_eq!(db.reads, expected_reads[..=index]);
+            match index {
+                0 => db.inner.insert_account_info(
+                    first,
+                    AccountInfo { balance: U256::ONE, ..Default::default() },
+                ),
+                1 => db.inner.insert_account_info(
+                    second,
+                    AccountInfo { balance: U256::from(2), ..Default::default() },
+                ),
+                2 => db.inner.insert_account_info(
+                    nonce_address,
+                    AccountInfo { nonce: 3, ..Default::default() },
+                ),
+                _ => db
+                    .inner
+                    .insert_account_storage(storage_address, U256::from(7), U256::from(0x104))
+                    .unwrap(),
+            }
+        }
+        db.reads.clear();
+        assert_eq!(
+            ValidityPredicateEvaluation::evaluate(&conditions, &mut db, &context),
+            Ok(ValidityPredicateEvaluation::Matched)
+        );
+        assert_eq!(db.reads, expected_reads);
+        for failing_read in 1..=4 {
+            db.reads.clear();
+            db.fail_on = Some(failing_read);
+            assert_eq!(
+                ValidityPredicateEvaluation::evaluate(&conditions, &mut db, &context),
+                Err(ReadError)
+            );
+            assert_eq!(db.reads, expected_reads[..failing_read]);
+        }
+    }
+
+    #[test]
+    fn timing_blockers_are_normalized_and_gate_even_failing_state_reads() {
+        let state = balance(Address::ZERO, ValidityOperator::Equal, 1);
+        let conditions = ValidityConditions::new(vec![
+            state,
+            ValidityPredicate::FlashblockIndex {
+                op: ValidityOperator::Equal,
+                value: U256::from(2),
+            },
+            ValidityPredicate::BlockNumber {
+                op: ValidityOperator::GreaterThan,
+                value: U256::from(9),
+            },
+            ValidityPredicate::BlockNumber {
+                op: ValidityOperator::LessThan,
+                value: U256::from(21),
+            },
+            ValidityPredicate::BlockNumber {
+                op: ValidityOperator::NotEqual,
+                value: U256::from(15),
+            },
+            ValidityPredicate::BlockNumber {
+                op: ValidityOperator::NotEqual,
+                value: U256::from(15),
+            },
+        ]);
+        for (block_number, flashblock_index, blocker, op, value, expired) in [
+            (
+                9,
+                1,
+                ValidityPredicateKey::BlockNumber,
+                ValidityOperator::GreaterThanOrEqual,
+                10,
+                false,
+            ),
+            (15, 1, ValidityPredicateKey::BlockNumber, ValidityOperator::NotEqual, 15, false),
+            (21, 1, ValidityPredicateKey::BlockNumber, ValidityOperator::LessThanOrEqual, 20, true),
+            (
+                10,
+                1,
+                ValidityPredicateKey::FlashblockIndex,
+                ValidityOperator::GreaterThanOrEqual,
+                2,
+                false,
+            ),
+            (
+                10,
+                3,
+                ValidityPredicateKey::FlashblockIndex,
+                ValidityOperator::LessThanOrEqual,
+                2,
+                false,
+            ),
+            (
+                20,
+                3,
+                ValidityPredicateKey::FlashblockIndex,
+                ValidityOperator::LessThanOrEqual,
+                2,
+                true,
+            ),
+            // A later block resets the flashblock index, so a missed flashblock is not terminal.
+            (
+                11,
+                1,
+                ValidityPredicateKey::FlashblockIndex,
+                ValidityOperator::GreaterThanOrEqual,
+                2,
+                false,
+            ),
+        ] {
+            let context = PredicateContext { block_number, flashblock_index };
+            let predicate = match blocker {
+                ValidityPredicateKey::BlockNumber => {
+                    ValidityPredicate::BlockNumber { op, value: U256::from(value) }
+                }
+                _ => ValidityPredicate::FlashblockIndex { op, value: U256::from(value) },
+            };
+            let mut db = RecordingDatabase { fail_on: Some(1), ..Default::default() };
+            assert_eq!(
+                ValidityPredicateEvaluation::evaluate(&conditions, &mut db, &context),
+                Ok(ValidityPredicateEvaluation::Unsatisfied {
+                    blocker,
+                    predicate: predicate.clone(),
+                    expired
+                })
+            );
+            assert!(conditions.contains(&predicate));
+            assert!(db.reads.is_empty());
+        }
+        let mut db = RecordingDatabase { fail_on: Some(1), ..Default::default() };
+        let context = PredicateContext { block_number: 11, flashblock_index: 2 };
+        assert_eq!(
+            ValidityPredicateEvaluation::evaluate(&conditions, &mut db, &context),
+            Err(ReadError)
+        );
+        assert_eq!(db.reads, [(Address::ZERO, None)]);
+        db.reads.clear();
+        assert_eq!(
+            ValidityPredicateEvaluation::evaluate(ValidityConditions::empty(), &mut db, &context),
+            Ok(ValidityPredicateEvaluation::Matched)
+        );
+        assert!(db.reads.is_empty());
+    }
+
+    #[test]
+    fn timing_mismatch_parks_without_reading_state() {
+        let address = Address::with_last_byte(1);
+        let conditions = ValidityConditions::new(vec![
+            balance(address, ValidityOperator::GreaterThan, 0),
+            ValidityPredicate::BlockNumber {
+                op: ValidityOperator::GreaterThanOrEqual,
+                value: U256::from(101),
+            },
+        ]);
+        let context = PredicateContext { block_number: 100, flashblock_index: 1 };
+        let mut db = InMemoryDB::default();
+        assert_eq!(
+            ValidityPredicateEvaluation::evaluate(&conditions, &mut db, &context).unwrap(),
+            ValidityPredicateEvaluation::Unsatisfied {
+                blocker: ValidityPredicateKey::BlockNumber,
+                predicate: ValidityPredicate::BlockNumber {
+                    op: ValidityOperator::GreaterThanOrEqual,
+                    value: U256::from(101)
+                },
+                expired: false,
+            },
+        );
+        assert!(db.cache.accounts.is_empty(), "timing gate must not load account state");
+        let next = PredicateContext { block_number: 101, ..context };
+        let evaluation =
+            ValidityPredicateEvaluation::evaluate(&conditions, &mut db, &next).unwrap();
+        assert!(
+            matches!(evaluation, ValidityPredicateEvaluation::Unsatisfied { blocker: ValidityPredicateKey::Balance(found), .. } if found == address)
+        );
+        assert!(db.cache.accounts.contains_key(&address));
+    }
+
+    #[test]
     fn passed_nonce_upper_bounds_remain_ineligible_until_block_expiry() {
         let address = Address::with_last_byte(1);
         let context = PredicateContext { block_number: 100, flashblock_index: 1 };
@@ -584,6 +882,7 @@ mod tests {
                     value: U256::from(102),
                 },
             ];
+            let predicates = ValidityConditions::new(predicates.to_vec());
             let mut db = InMemoryDB::default();
             db.insert_account_info(
                 address,
@@ -598,7 +897,7 @@ mod tests {
                 ValidityPredicateEvaluation::evaluate(&predicates, &mut db, &context).unwrap(),
                 ValidityPredicateEvaluation::Unsatisfied {
                     blocker: ValidityPredicateKey::Nonce(address),
-                    blocker_index: 0,
+                    predicate: ValidityPredicate::Nonce { address, op, value: U256::from(3) },
                     expired: false,
                 },
             );
@@ -607,8 +906,11 @@ mod tests {
                 ValidityPredicateEvaluation::evaluate(&predicates, &mut db, &expired_context)
                     .unwrap(),
                 ValidityPredicateEvaluation::Unsatisfied {
-                    blocker: ValidityPredicateKey::Nonce(address),
-                    blocker_index: 0,
+                    blocker: ValidityPredicateKey::BlockNumber,
+                    predicate: ValidityPredicate::BlockNumber {
+                        op: ValidityOperator::LessThanOrEqual,
+                        value: U256::from(102)
+                    },
                     expired: true,
                 },
             );

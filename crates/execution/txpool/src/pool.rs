@@ -30,7 +30,7 @@ use crate::{
     Admission, BasePooledTx, BaseTransactionValidator, FlashblockExpiry, GuardLimits, GuardMetrics,
     InvalidationCause, InvalidationKey, LimitRejection, MempoolGuard, ParkableBestTransactions,
     ParkableTransactionPool, ParkedBestTransactions, PredicateContext, StateDiffInvalidation,
-    ValidityPoolMetrics, ValidityPredicate,
+    ValidityPoolMetrics,
     best::MergeBestTransactions,
     two_d_nonce_pool::{InsertOutcome, LaneId, LaneUpdate, SidecarLimits, TwoDNoncePool},
 };
@@ -448,9 +448,7 @@ where
     /// predicates, or `None` when they impose no finite block bound.
     fn validity_block_expiry_bound(validated: &TransactionValidationOutcome<T>) -> Option<u64> {
         let transaction = validated.as_valid_transaction()?;
-        crate::ValidityPredicate::block_expiry_bound(
-            transaction.transaction().validity_predicates(),
-        )
+        transaction.transaction().validity_conditions().block().expiry_bound()
     }
 
     /// Optional flashblock upper bound, paired with the block bound for pool eviction.
@@ -458,7 +456,7 @@ where
         validated: &TransactionValidationOutcome<T>,
     ) -> Option<u64> {
         let transaction = validated.as_valid_transaction()?;
-        ValidityPredicate::flashblock_expiry_bound(transaction.transaction().validity_predicates())
+        transaction.transaction().validity_conditions().flashblock().expiry_bound()
     }
 
     /// Rejects a late arrival whose deadline is behind the published position.
@@ -474,10 +472,7 @@ where
                 block_number: position.block_number,
                 flashblock_index: position.flashblock_index.saturating_add(1),
             };
-            if ValidityPredicate::is_batch_expired(
-                transaction.transaction().validity_predicates(),
-                &next,
-            ) {
+            if transaction.transaction().validity_conditions().is_expired(&next) {
                 return Err(reth_transaction_pool::error::PoolError::other(
                     hash,
                     "validity deadline expired at published flashblock",
@@ -567,7 +562,7 @@ where
     fn has_validity_predicates(validated: &TransactionValidationOutcome<T>) -> bool {
         validated
             .as_valid_transaction()
-            .is_some_and(|transaction| !transaction.transaction().validity_predicates().is_empty())
+            .is_some_and(|transaction| !transaction.transaction().validity_conditions().is_empty())
     }
 
     fn reconcile_guard(&self) {
@@ -839,7 +834,7 @@ where
                     .limit_class()
                     .map(|class| class.classification_generation);
                 let admission = Self::admission_for(&validated.transaction);
-                let is_validity = !validated.transaction.validity_predicates().is_empty();
+                let is_validity = !validated.transaction.validity_conditions().is_empty();
                 let sender = validated.sender();
                 let mut outcome = nonce_pool.insert_validated(validated, state_nonce)?;
                 nonce_pool.record_validated_balance(sender, balance, balance_epoch);
