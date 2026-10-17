@@ -172,6 +172,7 @@ metrics-exporter-prometheus.workspace = true
 alloy-provider = { workspace = true, default-features = true, features = ["txpool-api"] }
 
 # bench
+iai-callgrind.workspace = true
 criterion = { workspace = true, features = ["html_reports"] }
 
 # misc
@@ -235,6 +236,14 @@ test-utils = [
 	"rlimit",
 	"testcontainers",
 ]
+
+[[bench]]
+name = "build_loop"
+harness = false
+
+[[bench]]
+name = "build_loop_iai"
+harness = false
 
 [[bench]]
 name = "state_root"
