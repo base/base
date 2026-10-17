@@ -136,7 +136,11 @@ pub(crate) struct Cli {
 
 impl Cli {
     pub(crate) fn config(self) -> Result<RegistrarConfig, Box<RegistrarError>> {
-        validate_health_port(self.health.port)?;
+        if self.health.port == 0 {
+            return Err(Box::new(RegistrarError::Config(
+                "health server port must be non-zero".into(),
+            )));
+        }
 
         Ok(RegistrarConfig {
             l1_rpc_url: self.l1_rpc_url,
@@ -161,14 +165,6 @@ impl Cli {
             metrics_config: self.metrics.into(),
         })
     }
-}
-
-fn validate_health_port(port: u16) -> Result<(), Box<RegistrarError>> {
-    if port == 0 {
-        return Err(Box::new(RegistrarError::Config("health server port must be non-zero".into())));
-    }
-
-    Ok(())
 }
 
 #[cfg(test)]
@@ -273,6 +269,9 @@ mod tests {
 
     #[test]
     fn health_port_zero_rejected() {
-        assert!(validate_health_port(0).is_err());
+        let mut args = required_args();
+        args.extend(["--health.port", "0"]);
+
+        assert!(Cli::parse_from(args).config().is_err());
     }
 }
