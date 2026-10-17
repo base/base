@@ -177,12 +177,6 @@ impl TxDeposit {
         Header { list: false, payload_length: self.eip2718_encoded_length() }
     }
 
-    /// Get the length of the transaction when network encoded. This is the
-    /// EIP-2718 encoded length with an outer RLP header.
-    pub fn network_encoded_length(&self) -> usize {
-        self.network_header().length_with_payload()
-    }
-
     /// Network encode the transaction with the given signature.
     pub fn network_encode(&self, out: &mut dyn BufMut) {
         self.network_header().encode(out);
@@ -538,7 +532,6 @@ mod tests {
         let mut buf = BytesMut::new();
         tx.network_encode(&mut buf);
 
-        assert_eq!(buf.len(), tx.network_encoded_length());
         assert_eq!(Bytes::decode(&mut &buf[..]).unwrap(), tx.encoded_2718());
     }
 
