@@ -49,6 +49,12 @@ pub use validity::{
 mod block_expiry;
 pub use block_expiry::{BlockExpiryIndex, ExpiryPosition, FlashblockExpiry};
 
+mod fill_or_kill;
+pub use fill_or_kill::{
+    FillOrKillExpiry, FillOrKillIndex, Satisfiability, StateProviderPredicateDb,
+    maintain_fill_or_kill_expiry,
+};
+
 mod transaction;
 pub use transaction::{
     BasePooledTransaction, BasePooledTx, CoinbaseTipBacking, TimestampedTransaction,

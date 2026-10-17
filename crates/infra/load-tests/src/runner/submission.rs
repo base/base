@@ -301,6 +301,7 @@ impl SignedTransaction {
                     chain_id,
                     self.tx_hash,
                     &self.validity,
+                    false,
                 ))
                 .map_err(|e| {
                     BaselineError::Transaction(format!("failed to sign validity sidecar: {e}"))
@@ -1767,12 +1768,17 @@ mod tests {
             .unwrap();
             let hash = tx.tx_hash;
             let signature = signer
-                .sign_hash_sync(&ValidityAuthorization::signing_hash(8453, hash, &tx.validity))
+                .sign_hash_sync(&ValidityAuthorization::signing_hash(
+                    8453,
+                    hash,
+                    &tx.validity,
+                    false,
+                ))
                 .unwrap();
             let unsigned = server.mock(|when, then| {
                 when.method(POST).json_body(serde_json::json!([{
                     "jsonrpc":"2.0","id":0,"method":"base_sendRawTransactionValidity",
-                    "params":[tx.raw, TransactionValidity { validity: tx.validity.clone(), validity_signature: None }],
+                    "params":[tx.raw, TransactionValidity { validity: tx.validity.clone(), validity_signature: None, fill_immediately_or_kill: false }],
                 }]));
                 then.status(200).json_body(serde_json::json!([{"jsonrpc":"2.0","id":0,"error":{
                     "code":-32602,"message":ValidityAuthorizationError::MissingSignature.to_string(),"data":"missing",
@@ -1781,7 +1787,7 @@ mod tests {
             let signed = server.mock(|when, then| {
                 when.method(POST).json_body(serde_json::json!([{
                     "jsonrpc":"2.0","id":0,"method":"base_sendRawTransactionValidity",
-                    "params":[tx.raw, TransactionValidity { validity: tx.validity.clone(), validity_signature: Some(signature) }],
+                    "params":[tx.raw, TransactionValidity { validity: tx.validity.clone(), validity_signature: Some(signature), fill_immediately_or_kill: false }],
                 }]));
                 then.status(200).json_body(serde_json::json!([{"jsonrpc":"2.0","id":0,"result":hash}]));
             });

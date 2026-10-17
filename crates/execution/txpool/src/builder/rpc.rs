@@ -303,13 +303,22 @@ mod tests {
             value: U256::from(31),
         }];
         let signature = signer
-            .sign_hash_sync(&ValidityAuthorization::signing_hash(8453, *signed.hash(), &validity))
+            .sign_hash_sync(&ValidityAuthorization::signing_hash(
+                8453,
+                *signed.hash(),
+                &validity,
+                false,
+            ))
             .unwrap();
         ValidatedTransaction {
             sender: signer.address(),
             raw: signed.encoded_2718().into(),
             metering: None,
-            extensions: TransactionValidity { validity, validity_signature: Some(signature) },
+            extensions: TransactionValidity {
+                validity,
+                validity_signature: Some(signature),
+                fill_immediately_or_kill: false,
+            },
         }
     }
 

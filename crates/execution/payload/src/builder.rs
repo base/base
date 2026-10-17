@@ -55,11 +55,11 @@ use tracing::{debug, debug_span, info, instrument, trace, warn};
 
 use crate::{
     Attributes, BasePayloadBuilderAttributes, BlockDeferrals, BuilderMetrics,
-    CoinbaseTipAffordability, InclusionTracker, MeteringProvider, ParkableBestPayloadTransactions,
-    ParkablePayloadTransactions, ParkedPredicateIndex, PayloadPrimitives, PredicateLoadTracker,
-    PredicateReadRecorder, RejectionCacheMetrics, StateChangeEffects, ValidityMetrics,
-    ValidityPredicateEvaluation, config::BaseBuilderConfig, error::BasePayloadBuilderError,
-    payload::BaseBuiltPayload,
+    CoinbaseTipAffordability, FillOrKillTracker, InclusionTracker, Kill, MeteringProvider,
+    ParkableBestPayloadTransactions, ParkablePayloadTransactions, ParkedPredicateIndex,
+    PayloadPrimitives, PredicateLoadTracker, PredicateReadRecorder, RejectionCacheMetrics,
+    StateChangeEffects, ValidityMetrics, ValidityPredicateEvaluation, config::BaseBuilderConfig,
+    error::BasePayloadBuilderError, payload::BaseBuiltPayload,
 };
 
 macro_rules! emit_native_validity_event {
@@ -340,7 +340,7 @@ pub struct Builder<'a, Txs> {
     best: Box<dyn FnOnce(BestTransactionsAttributes) -> Txs + 'a>,
     /// Permanently removes mempool transactions that exceeded a per-transaction resource limit.
     #[debug(skip)]
-    evict_permanently_rejected: Box<dyn FnOnce(Vec<TxHash>) + 'a>,
+    evict_permanently_rejected: Box<dyn Fn(Vec<TxHash>) + 'a>,
 }
 
 impl<'a, Txs> Builder<'a, Txs> {
@@ -351,13 +351,21 @@ impl<'a, Txs> Builder<'a, Txs> {
 
     /// Sets the callback used to permanently remove mempool transactions that exceeded a
     /// per-transaction resource limit.
-    pub fn with_permanent_eviction(mut self, evict: impl FnOnce(Vec<TxHash>) + 'a) -> Self {
+    pub fn with_permanent_eviction(mut self, evict: impl Fn(Vec<TxHash>) + 'a) -> Self {
         self.evict_permanently_rejected = Box::new(evict);
         self
     }
 }
 
 impl<Txs> Builder<'_, Txs> {
+    /// Records `hashes` in the shared rejection cache and drops their metering data.
+    fn reject_permanently(config: &BaseBuilderConfig, hashes: &[TxHash]) {
+        config.rejection_cache.mark_rejected(hashes);
+        RejectionCacheMetrics::insertions().increment(hashes.len() as u64);
+        RejectionCacheMetrics::size().set(config.rejection_cache.entry_count() as f64);
+        MeteringProvider::remove(config.resource_metering.provider.as_ref(), hashes);
+    }
+
     /// Builds the payload on top of the state.
     pub fn build<Evm, ChainSpec, N, Attrs>(
         self,
@@ -407,23 +415,17 @@ impl<Txs> Builder<'_, Txs> {
         if !ctx.attributes().no_tx_pool() {
             let best_txs = best(ctx.best_transaction_attributes(builder.evm_mut().block()));
             let cancelled = ctx.execute_best_transactions(&mut info, &mut builder, best_txs)?;
-            if !info.permanently_rejected_txs.is_empty() {
-                let rejected = std::mem::take(&mut info.permanently_rejected_txs);
-                let count = rejected.len();
-                ctx.builder_config.rejection_cache.mark_rejected(&rejected);
-                RejectionCacheMetrics::insertions().increment(count as u64);
-                RejectionCacheMetrics::size()
-                    .set(ctx.builder_config.rejection_cache.entry_count() as f64);
-                MeteringProvider::remove(
-                    ctx.builder_config.resource_metering.provider.as_ref(),
-                    &rejected,
-                );
-                evict_permanently_rejected(rejected);
+            // Permanent rejections do not depend on the built state, so they are applied even if
+            // this attempt is discarded. Kills do: they wait until the payload is returned below.
+            let rejected = std::mem::take(&mut info.permanently_rejected_txs);
+            if !rejected.is_empty() {
+                Self::reject_permanently(&ctx.builder_config, &rejected);
                 info!(
                     target: "payload_builder",
-                    count,
+                    count = rejected.len(),
                     "evicted permanently rejected transactions from pool",
                 );
+                evict_permanently_rejected(rejected);
             }
             if cancelled.is_some() {
                 return Ok(BuildOutcomeKind::Cancelled);
@@ -495,6 +497,31 @@ impl<Txs> Builder<'_, Txs> {
             block_access_list.map(|bal| alloy_rlp::encode(bal).into()),
         );
         BuilderMetrics::record_inclusion(&info.inclusion);
+
+        // This payload is returned for use, so kills decided against its committed state apply.
+        // They are cached as rejected so a mempool re-forward cannot bring one back.
+        if !info.killed_txs.is_empty() {
+            for kill in &info.killed_txs {
+                emit_native_validity_event!(
+                    ctx,
+                    TransactionEventType::BuilderExpired,
+                    kill.tx_hash,
+                    kill.ordering_position,
+                    {
+                        "expire_reason" => kill.reason.label(),
+                        "expire_detail" => kill.reason.detail(),
+                    }
+                );
+            }
+            let killed = info.killed_txs.drain(..).map(|kill| kill.tx_hash).collect::<Vec<_>>();
+            Self::reject_permanently(&ctx.builder_config, &killed);
+            info!(
+                target: "payload_builder",
+                count = killed.len(),
+                "evicted fill-immediately-or-kill transactions from pool",
+            );
+            evict_permanently_rejected(killed);
+        }
 
         if no_tx_pool || ctx.is_denim_active() {
             // if `no_tx_pool` is set only transactions from the payload attributes will be included
@@ -590,6 +617,10 @@ pub struct ExecutionInfo {
     /// Transaction hashes that exceeded a per-transaction resource limit and should be
     /// permanently removed from the pool and recorded in the shared rejection cache.
     pub permanently_rejected_txs: Vec<TxHash>,
+    /// Fill-immediately-or-kill transactions dropped by this scan, with the validity consideration
+    /// index as their ordering position. They are reported, evicted, and cached as rejected only
+    /// if this payload is returned for use.
+    pub killed_txs: Vec<Kill>,
 }
 
 impl ExecutionInfo {
@@ -602,6 +633,7 @@ impl ExecutionInfo {
             inclusion: InclusionTracker::default(),
             resource_metering_usage: Vec::new(),
             permanently_rejected_txs: Vec::new(),
+            killed_txs: Vec::new(),
         }
     }
 
@@ -919,6 +951,7 @@ where
         // the payload is built once, so this covers the whole block; pre-Denim rebuilds start a
         // fresh scan and report deferrals again.
         let mut deferrals = BlockDeferrals::default();
+        let mut fill_or_kill = FillOrKillTracker::default();
         let mut validity_candidates_evaluated = 0_u64;
         let mut validity_candidates_deferred = 0_u64;
         let mut predicate_eval_cutoff_hit = false;
@@ -1024,7 +1057,7 @@ where
             if has_validity_predicates {
                 validity_candidates_evaluated += 1;
                 let evaluation_start = Instant::now();
-                let evaluation = {
+                let mut evaluation = {
                     let mut recorder = PredicateReadRecorder::new(
                         builder.evm_mut().db_mut(),
                         &mut predicate_loads,
@@ -1035,9 +1068,55 @@ where
                         &predicate_context,
                     )
                 };
+                // A satisfied fill-immediately-or-kill candidate is also checked against the
+                // block's predicate write journal. A failed read there is handled like a failed
+                // predicate read.
+                let kill = match evaluation {
+                    Ok(ValidityPredicateEvaluation::Matched) if tx.fill_immediately_or_kill() => {
+                        match fill_or_kill.check_satisfied(
+                            tx_hash,
+                            validity_consideration_index,
+                            tx.validity_predicates(),
+                            builder.evm_mut().db_mut(),
+                            &predicate_context,
+                        ) {
+                            Ok(kill) => kill,
+                            Err(error) => {
+                                evaluation = Err(error);
+                                None
+                            }
+                        }
+                    }
+                    _ => None,
+                };
                 *predicate_eval_duration.get_or_insert(Duration::ZERO) +=
                     evaluation_start.elapsed();
                 match evaluation {
+                    Ok(ValidityPredicateEvaluation::Matched) if kill.is_some() => {
+                        let kill = kill.expect("checked above");
+                        // Counted as matched like any other evaluation, as in the flashblocks
+                        // builder, and separately as a kill.
+                        ValidityMetrics::validity_predicate_evaluations_total("matched")
+                            .increment(1);
+                        ValidityMetrics::validity_predicate_evaluations_total(kill.reason.label())
+                            .increment(1);
+                        trace!(
+                            target: "payload_builder",
+                            tx_hash = ?tx_hash,
+                            reason = kill.reason.label(),
+                            "dropping fill-immediately-or-kill transaction"
+                        );
+                        // The opportunity is gone. The kill is reported, evicted, and cached as
+                        // rejected with the scan's other kills once this payload is returned for
+                        // use.
+                        Self::skip_current(
+                            &mut best_txs,
+                            tx.sender(),
+                            tx.nonce(),
+                            replay_independent,
+                        );
+                        continue;
+                    }
                     Ok(ValidityPredicateEvaluation::Matched) => {
                         ValidityMetrics::validity_predicate_evaluations_total("matched")
                             .increment(1);
@@ -1242,6 +1321,8 @@ where
                 continue;
             }
 
+            // Read before the consensus conversion so the commit can be reported below.
+            let fill_or_kill_flagged = tx.fill_immediately_or_kill();
             let (tx_encoded, tx) = tx.into_consensus_with2718().split();
 
             let da_footprint_gas_scalar = self
@@ -1320,6 +1401,7 @@ where
                                 predicate_index.affected_by_state(&result_and_state.state);
                             predicate_bucket_wakeups += state_change_effects.woken_buckets as u64;
                         }
+                        fill_or_kill.record_committed_state(&result_and_state.state);
                         CommitChanges::Yes
                     }
                 },
@@ -1401,6 +1483,9 @@ where
             }
 
             best_txs.mark_current_committed();
+            if fill_or_kill_flagged {
+                fill_or_kill.record_included(&tx_hash);
+            }
             let predicates_need_rescan = !state_change_effects.affected_transactions.is_empty();
             let predicate_rescan_start = Instant::now();
             for (rescanned, parked_hash) in
@@ -1509,6 +1594,10 @@ where
             }
         }
 
+        // The scan is over: flagged transactions whose predicates held but which were not included
+        // are killed as well.
+        info.killed_txs.extend(fill_or_kill.finish());
+
         if let Some(predicate_eval_duration) = predicate_eval_duration {
             ValidityMetrics::record_predicate_eval_duration(predicate_eval_duration);
         }
@@ -1561,7 +1650,9 @@ mod tests {
     use base_common_evm::BaseTime;
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_execution_evm::BaseEvmConfig;
-    use base_execution_txpool::{BasePooledTransaction, ValidityOperator, ValidityPredicate};
+    use base_execution_txpool::{
+        BasePooledTransaction, TransactionValidity, ValidityOperator, ValidityPredicate,
+    };
     use base_observability_events::{TransactionEventCapture, TransactionEventType};
     use reth_basic_payload_builder::{BuildOutcomeKind, PayloadConfig};
     use reth_chainspec::ChainSpec;
@@ -1759,7 +1850,7 @@ mod tests {
     fn build_pool_payload_with<Txs>(
         ctx: BasePayloadBuilderCtx<BaseEvmConfig, BaseChainSpec>,
         transactions: Txs,
-        evict: impl FnOnce(Vec<TxHash>),
+        evict: impl Fn(Vec<TxHash>),
     ) -> BuildOutcomeKind<crate::BaseBuiltPayload<BasePrimitives>>
     where
         Txs: ParkablePayloadTransactions<Transaction = BasePooledTransaction> + Send + Sync,
@@ -1772,7 +1863,7 @@ mod tests {
         ctx: BasePayloadBuilderCtx<BaseEvmConfig, BaseChainSpec>,
         transactions: Txs,
         funded_senders: &[Address],
-        evict: impl FnOnce(Vec<TxHash>),
+        evict: impl Fn(Vec<TxHash>),
     ) -> BuildOutcomeKind<crate::BaseBuiltPayload<BasePrimitives>>
     where
         Txs: ParkablePayloadTransactions<Transaction = BasePooledTransaction> + Send + Sync,
@@ -1936,6 +2027,50 @@ mod tests {
     }
 
     impl ParkablePayloadTransactions for FinalizeAfterFirstTransaction {
+        fn park_current(&mut self) {
+            self.transactions.park_current();
+        }
+
+        fn mark_current_committed(&mut self) {
+            self.transactions.mark_current_committed();
+        }
+
+        fn promote(&mut self, transaction_hash: B256) -> bool {
+            self.transactions.promote(transaction_hash)
+        }
+
+        fn discard_parked(&mut self, transaction_hash: B256) -> bool {
+            self.transactions.discard_parked(transaction_hash)
+        }
+    }
+
+    /// Cancels the build once `cancel_after` transactions have been yielded, as when a new
+    /// forkchoice update supersedes the job mid-scan.
+    struct CancelAfter {
+        transactions: TestParkableTransactions,
+        cancel_after: usize,
+        calls: usize,
+        cancel: Option<CancelOnDrop>,
+    }
+
+    impl PayloadTransactions for CancelAfter {
+        type Transaction = BasePooledTransaction;
+
+        fn next(&mut self, _ctx: ()) -> Option<Self::Transaction> {
+            if self.calls == self.cancel_after {
+                // Dropping a clone of the job's cancel handle cancels the build.
+                self.cancel.take();
+            }
+            self.calls += 1;
+            self.transactions.next(())
+        }
+
+        fn mark_invalid(&mut self, sender: Address, nonce: u64) {
+            self.transactions.mark_invalid(sender, nonce);
+        }
+    }
+
+    impl ParkablePayloadTransactions for CancelAfter {
         fn park_current(&mut self) {
             self.transactions.park_current();
         }
@@ -2195,6 +2330,255 @@ mod tests {
             .map(|transaction| *transaction.tx_hash())
             .collect::<Vec<_>>();
         assert_eq!(included_hashes, vec![trigger_hash, gated_hash]);
+    }
+
+    /// Builds a trigger that pays one wei to `watched`, waking a parked backrunner whose predicate
+    /// requires that payment. Before the backrunner is re-yielded, a faster competitor pays
+    /// `watched` again. Returns the included hashes in order.
+    fn native_backrunner_after_trigger_and_competitor(
+        fill_immediately_or_kill: bool,
+    ) -> Vec<TxHash> {
+        let watched = Address::repeat_byte(0x45);
+        let backrunner = pool_transaction_to(0, Address::repeat_byte(0x56), U256::ZERO)
+            .with_validity(TransactionValidity {
+                validity: vec![ValidityPredicate::Balance {
+                    address: watched,
+                    op: ValidityOperator::GreaterThanOrEqual,
+                    value: U256::ONE,
+                }],
+                validity_signature: None,
+                fill_immediately_or_kill,
+            });
+        let trigger = pool_transaction_to(0, watched, U256::ONE);
+        // Pays a different amount than the trigger so the two test-signed transactions recover
+        // distinct senders.
+        let competitor = pool_transaction_to(0, watched, U256::from(2));
+        let funded_senders = [backrunner.sender(), trigger.sender(), competitor.sender()];
+
+        // Promoted transactions are re-yielded after the queued ones, so the competitor commits
+        // between the backrunner's wake and its re-yield.
+        let BuildOutcomeKind::Freeze(payload) = build_parkable_pool_payload(
+            pool_payload_context(DENIM_TIMESTAMP),
+            TestParkableTransactions::with_promoted_last(vec![backrunner, trigger, competitor]),
+            &funded_senders,
+        ) else {
+            panic!("Denim payload must freeze")
+        };
+        payload
+            .block()
+            .body()
+            .transactions
+            .iter()
+            .map(|transaction| B256::from(*transaction.tx_hash()))
+            .collect()
+    }
+
+    /// The write that satisfies a flagged backrunner's predicates is not a conflict, but a second
+    /// write before it executes is: the losing backrunner is dropped instead of paying gas.
+    #[test]
+    fn native_builder_kills_woken_fill_immediately_or_kill_after_a_faster_competitor_writes() {
+        assert_eq!(native_backrunner_after_trigger_and_competitor(false).len(), 3);
+        assert_eq!(native_backrunner_after_trigger_and_competitor(true).len(), 2);
+    }
+
+    /// Outcome of building a competitor and a lower-priority searcher on the same opportunity.
+    #[derive(Debug, PartialEq, Eq)]
+    struct SearcherOutcome {
+        included: bool,
+        evicted: bool,
+        cached: bool,
+        kill_events: usize,
+    }
+
+    /// How [`native_searcher_after_competitor`] builds its payload.
+    enum SearcherBuild {
+        /// A Denim build that is returned for use.
+        Returned,
+        /// A pre-Denim rebuild that fails to beat this payload and is discarded as `Aborted`.
+        OutbidBy(crate::BaseBuiltPayload<BasePrimitives>),
+        /// A build cancelled after both transactions were considered.
+        Cancelled,
+    }
+
+    /// What the lower-priority searcher's predicates read.
+    #[derive(Debug, Clone, Copy)]
+    enum SearcherWatches {
+        /// The balance the competitor pays into, written when the competitor commits.
+        CompetitorRecipient,
+        /// A balance nothing in the block writes.
+        Untouched,
+    }
+
+    /// Builds an ordinary competitor paying one wei to a recipient, then a lower-priority searcher
+    /// whose loose balance predicate holds before and after that payment, and reports what
+    /// happened to the searcher and how many kill events it produced.
+    fn native_searcher_after_competitor(
+        watches: SearcherWatches,
+        fill_immediately_or_kill: bool,
+        build: SearcherBuild,
+    ) -> (SearcherOutcome, BuildOutcomeKind<crate::BaseBuiltPayload<BasePrimitives>>) {
+        let recipient = Address::repeat_byte(0x71);
+        let watched = match watches {
+            SearcherWatches::CompetitorRecipient => recipient,
+            SearcherWatches::Untouched => Address::repeat_byte(0x44),
+        };
+        // Test-signed transactions recover a sender from their contents, so distinct recipients
+        // give distinct senders. Event capture is process-global, so these hashes must not be
+        // shared with other tests.
+        let competitor = pool_transaction_to(0, recipient, U256::ONE);
+        let searcher = pool_transaction_to(0, Address::repeat_byte(0x72), U256::ZERO)
+            .with_validity(TransactionValidity {
+                validity: vec![ValidityPredicate::Balance {
+                    address: watched,
+                    op: ValidityOperator::LessThan,
+                    value: U256::MAX,
+                }],
+                validity_signature: None,
+                fill_immediately_or_kill,
+            });
+        let funded_senders = [competitor.sender(), searcher.sender()];
+        let competitor_hash = *competitor.hash();
+        let searcher_hash = *searcher.hash();
+        let event_capture = TransactionEventCapture::install();
+        let transactions = TestParkableTransactions::new(vec![competitor, searcher]);
+        let evicted = Arc::new(Mutex::new(Vec::new()));
+        let evict = {
+            let evicted = Arc::clone(&evicted);
+            move |hashes| evicted.lock().unwrap().extend(hashes)
+        };
+        let (outcome, cache) = match build {
+            SearcherBuild::Returned => {
+                let ctx = pool_payload_context(DENIM_TIMESTAMP);
+                let cache = ctx.builder_config.rejection_cache.clone();
+                (build_parkable_pool_payload_with(ctx, transactions, &funded_senders, evict), cache)
+            }
+            SearcherBuild::OutbidBy(best) => {
+                let mut ctx = pool_payload_context(DENIM_TIMESTAMP - 1);
+                ctx.best_payload = Some(best);
+                let cache = ctx.builder_config.rejection_cache.clone();
+                (build_parkable_pool_payload_with(ctx, transactions, &funded_senders, evict), cache)
+            }
+            SearcherBuild::Cancelled => {
+                let ctx = pool_payload_context(DENIM_TIMESTAMP);
+                let cache = ctx.builder_config.rejection_cache.clone();
+                // The competitor commits and the searcher is killed before the third poll cancels.
+                let transactions = CancelAfter {
+                    transactions,
+                    cancel_after: 2,
+                    calls: 0,
+                    cancel: Some(ctx.cancel.clone()),
+                };
+                (build_parkable_pool_payload_with(ctx, transactions, &funded_senders, evict), cache)
+            }
+        };
+        let kill_events = event_capture
+            .events()
+            .into_iter()
+            .filter(|event| {
+                event.tx_hash == Some(searcher_hash)
+                    && event.event_type == TransactionEventType::BuilderExpired
+            })
+            .count();
+        drop(event_capture);
+        let included = match &outcome {
+            BuildOutcomeKind::Freeze(payload) | BuildOutcomeKind::Better { payload } => {
+                let hashes = payload
+                    .block()
+                    .body()
+                    .transactions
+                    .iter()
+                    .map(|transaction| *transaction.tx_hash())
+                    .collect::<Vec<_>>();
+                assert_eq!(hashes[0], competitor_hash, "the winning bid must land first");
+                hashes.contains(&searcher_hash)
+            }
+            _ => false,
+        };
+        let evicted = evicted.lock().unwrap().contains(&searcher_hash);
+        let outcome_summary = SearcherOutcome {
+            included,
+            evicted,
+            cached: cache.is_rejected(&searcher_hash),
+            kill_events,
+        };
+        (outcome_summary, outcome)
+    }
+
+    /// The searcher's fate when a build applies nothing for it.
+    const UNTOUCHED: SearcherOutcome =
+        SearcherOutcome { included: false, evicted: false, cached: false, kill_events: 0 };
+
+    #[test]
+    fn native_builder_kills_fill_immediately_or_kill_once_its_predicate_state_is_written() {
+        let unflagged = SearcherOutcome { included: true, ..UNTOUCHED };
+        let killed = SearcherOutcome { evicted: true, cached: true, kill_events: 1, ..UNTOUCHED };
+        assert_eq!(
+            native_searcher_after_competitor(
+                SearcherWatches::CompetitorRecipient,
+                false,
+                SearcherBuild::Returned
+            )
+            .0,
+            unflagged
+        );
+        assert_eq!(
+            native_searcher_after_competitor(
+                SearcherWatches::CompetitorRecipient,
+                true,
+                SearcherBuild::Returned
+            )
+            .0,
+            killed
+        );
+    }
+
+    #[test]
+    fn native_builder_keeps_fill_immediately_or_kill_whose_predicate_state_is_untouched() {
+        let included = SearcherOutcome { included: true, ..UNTOUCHED };
+        assert_eq!(
+            native_searcher_after_competitor(
+                SearcherWatches::Untouched,
+                true,
+                SearcherBuild::Returned
+            )
+            .0,
+            included
+        );
+    }
+
+    #[test]
+    fn native_builder_does_not_kill_from_an_outbid_payload() {
+        // A first build with the same transactions becomes the payload to beat.
+        let BuildOutcomeKind::Freeze(best) = native_searcher_after_competitor(
+            SearcherWatches::Untouched,
+            false,
+            SearcherBuild::Returned,
+        )
+        .1
+        else {
+            panic!("Denim payload must freeze")
+        };
+
+        let (searcher, outcome) = native_searcher_after_competitor(
+            SearcherWatches::CompetitorRecipient,
+            true,
+            SearcherBuild::OutbidBy(best),
+        );
+
+        assert!(matches!(outcome, BuildOutcomeKind::Aborted { .. }), "got {outcome:?}");
+        assert_eq!(searcher, UNTOUCHED);
+    }
+
+    #[test]
+    fn native_builder_does_not_kill_from_a_cancelled_payload() {
+        let (searcher, outcome) = native_searcher_after_competitor(
+            SearcherWatches::CompetitorRecipient,
+            true,
+            SearcherBuild::Cancelled,
+        );
+
+        assert!(matches!(outcome, BuildOutcomeKind::Cancelled), "got {outcome:?}");
+        assert_eq!(searcher, UNTOUCHED);
     }
 
     #[test]

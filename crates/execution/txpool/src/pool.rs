@@ -1,18 +1,29 @@
 //! Base transaction-pool wrapper that combines the protocol pool with a 2D nonce sidecar.
 
-use std::{collections::HashMap, fmt, sync::Arc};
+use std::{
+    collections::HashMap,
+    fmt,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+};
 
 use alloy_eips::{
     eip4844::{BlobAndProofV1, BlobAndProofV2, BlobCellsAndProofsV1},
     eip7594::BlobTransactionSidecarVariant,
 };
-use alloy_primitives::{Address, B128, B256, TxHash, U256, map::AddressSet};
+use alloy_primitives::{
+    Address, B128, B256, TxHash, U256,
+    map::{AddressSet, B256Set},
+};
 use base_common_precompiles::NonceManagerStorage;
 use futures::StreamExt;
 use parking_lot::{Mutex, RwLock};
 use reth_eth_wire_types::HandleMempoolData;
 use reth_execution_types::ChangedAccount;
 use reth_primitives_traits::Recovered;
+use reth_storage_api::StateProvider;
 use reth_transaction_pool::{
     AddedTransactionOutcome, AllPoolTransactions, AllTransactionsEvents, BestTransactions,
     BestTransactionsAttributes, BlobStore, BlobStoreError, BlockInfo, FullTransactionEvent,
@@ -27,10 +38,11 @@ use tokio::{spawn, sync::mpsc};
 use tracing::debug;
 
 use crate::{
-    Admission, BasePooledTx, BaseTransactionValidator, FlashblockExpiry, GuardLimits, GuardMetrics,
-    InvalidationCause, InvalidationKey, LimitRejection, MempoolGuard, ParkableBestTransactions,
-    ParkableTransactionPool, ParkedBestTransactions, PredicateContext, StateDiffInvalidation,
-    ValidityPoolMetrics, ValidityPredicate,
+    Admission, BasePooledTx, BaseTransactionValidator, FillOrKillExpiry, FillOrKillIndex,
+    FlashblockExpiry, GuardLimits, GuardMetrics, InvalidationCause, InvalidationKey,
+    LimitRejection, MempoolGuard, ParkableBestTransactions, ParkableTransactionPool,
+    ParkedBestTransactions, PredicateContext, Satisfiability, StateDiffInvalidation,
+    StateProviderPredicateDb, ValidityPoolMetrics, ValidityPredicate,
     best::MergeBestTransactions,
     two_d_nonce_pool::{InsertOutcome, LaneId, LaneUpdate, SidecarLimits, TwoDNoncePool},
 };
@@ -116,6 +128,12 @@ pub struct BaseTransactionPool<
     /// Block and flashblock deadline index for validity transactions, including
     /// EIP-1559 advanced submissions.
     block_expiry: Arc<RwLock<crate::BlockExpiryIndex>>,
+    /// Pending fill-immediately-or-kill transactions, evicted once a canonical block they were
+    /// pending for could have included them.
+    fill_or_kill: Arc<RwLock<FillOrKillIndex>>,
+    /// Number of the latest canonical block, recorded as the admission head of flagged
+    /// transactions.
+    canonical_head: Arc<AtomicU64>,
     /// Highest published position on the current branch; checked under `protocol_admission_lock`.
     published_flashblock: Arc<RwLock<Option<PredicateContext>>>,
     /// Serializes pool admission with successful flashblock publication and
@@ -155,6 +173,8 @@ where
             listeners: Arc::clone(&self.listeners),
             guard: Arc::clone(&self.guard),
             block_expiry: Arc::clone(&self.block_expiry),
+            fill_or_kill: Arc::clone(&self.fill_or_kill),
+            canonical_head: Arc::clone(&self.canonical_head),
             published_flashblock: Arc::clone(&self.published_flashblock),
             protocol_admission_lock: Arc::clone(&self.protocol_admission_lock),
         }
@@ -200,6 +220,8 @@ where
             listeners: Arc::new(RwLock::new(SidecarListeners::default())),
             guard: Arc::new(RwLock::new(MempoolGuard::unlimited())),
             block_expiry: Arc::new(RwLock::new(crate::BlockExpiryIndex::new())),
+            fill_or_kill: Arc::new(RwLock::new(FillOrKillIndex::default())),
+            canonical_head: Arc::new(AtomicU64::new(0)),
             published_flashblock: Arc::new(RwLock::new(None)),
             protocol_admission_lock: Arc::new(Mutex::new(())),
         }
@@ -570,6 +592,28 @@ where
             .is_some_and(|transaction| !transaction.transaction().validity_predicates().is_empty())
     }
 
+    /// Returns whether a validated transaction is flagged fill-immediately-or-kill.
+    fn is_fill_or_kill(validated: &TransactionValidationOutcome<T>) -> bool {
+        validated
+            .as_valid_transaction()
+            .is_some_and(|transaction| transaction.transaction().fill_immediately_or_kill())
+    }
+
+    /// Tracks an admitted flagged transaction from the current canonical head, dropping the
+    /// entry of the transaction it replaced.
+    fn register_fill_or_kill(&self, hash: TxHash, flagged: bool, replaced: Option<TxHash>) {
+        if !flagged && replaced.is_none() {
+            return;
+        }
+        let mut fill_or_kill = self.fill_or_kill.write();
+        if let Some(replaced) = replaced {
+            fill_or_kill.remove(&replaced);
+        }
+        if flagged {
+            fill_or_kill.insert(hash, self.canonical_head.load(Ordering::Relaxed));
+        }
+    }
+
     fn reconcile_guard(&self) {
         let tracked = self.guard.read().tracked_hashes();
         if tracked.is_empty() {
@@ -687,6 +731,7 @@ where
         let block_expiry_bound = Self::validity_block_expiry_bound(&validated);
         let flashblock_expiry_bound = Self::validity_flashblock_expiry_bound(&validated);
         let is_validity = Self::has_validity_predicates(&validated);
+        let is_fill_or_kill = Self::is_fill_or_kill(&validated);
         let mut outcomes =
             self.protocol_pool.inner().add_transactions(origin, std::iter::once(validated));
         let outcome = match outcomes.pop() {
@@ -709,6 +754,7 @@ where
         };
         self.gate_protocol_admission(hash, replaced, pre_admitted)?;
         self.register_block_expiry(hash, block_expiry_bound, flashblock_expiry_bound, replaced);
+        self.register_fill_or_kill(hash, is_fill_or_kill, replaced);
         if is_validity {
             ValidityPoolMetrics::record_admission(replaced.is_some());
         }
@@ -818,6 +864,7 @@ where
         // without this it would linger indefinitely.
         let block_expiry_bound = Self::validity_block_expiry_bound(&validated);
         let flashblock_expiry_bound = Self::validity_flashblock_expiry_bound(&validated);
+        let is_fill_or_kill = Self::is_fill_or_kill(&validated);
         let _admission_guard = self.protocol_admission_lock.lock();
         if let Some(transaction) = validated.as_valid_transaction() {
             self.ensure_not_published_expired(*transaction.transaction().hash(), &validated)?;
@@ -945,6 +992,7 @@ where
                     flashblock_expiry_bound,
                     replaced_hash,
                 );
+                self.register_fill_or_kill(inserted_hash, is_fill_or_kill, replaced_hash);
                 Ok(outcome.outcome)
             }
             TransactionValidationOutcome::Invalid(transaction, error) => {
@@ -1045,6 +1093,83 @@ where
     }
 }
 
+impl<Client, S, Evm, T, O> FillOrKillExpiry for BaseTransactionPool<Client, S, Evm, T, O>
+where
+    Client: 'static,
+    Evm: 'static,
+    BaseTransactionValidator<Client, T, Evm>: TransactionValidator<Transaction = T>,
+    T: BasePooledTx + reth_transaction_pool::EthPoolTransaction + 'static,
+    O: reth_transaction_pool::TransactionOrdering<Transaction = T> + Clone,
+    S: BlobStore + Clone,
+{
+    fn expire_fill_or_kill(
+        &self,
+        committed_block: u64,
+        mined: &B256Set,
+        state: &dyn StateProvider,
+    ) -> usize {
+        // Whichever of the pool maintenance and this expiry sees the block first advances the
+        // admission head, so a transaction admitted in between is not evaluated a block early.
+        self.canonical_head.fetch_max(committed_block, Ordering::Relaxed);
+        let pending = self
+            .fill_or_kill
+            .read()
+            .hashes()
+            .filter(|hash| !mined.contains(*hash))
+            .map(|hash| (*hash, self.get(hash)))
+            .collect::<Vec<_>>();
+        if pending.is_empty() {
+            return 0;
+        }
+        // State reads happen outside every pool lock, so admissions are not stalled by them.
+        let unreadable = Satisfiability { at_block_end: false, at_next_block_start: false };
+        let mut db = StateProviderPredicateDb::new(state);
+        let evaluated = pending
+            .into_iter()
+            .map(|(hash, transaction)| {
+                // A transaction the pool no longer holds is gone from the index.
+                let Some(transaction) = transaction else {
+                    return (hash, None);
+                };
+                let satisfiability = Satisfiability::evaluate(
+                    transaction.transaction.validity_predicates(),
+                    &mut db,
+                    committed_block,
+                )
+                .unwrap_or_else(|error| {
+                    debug!(
+                        tx_hash = %hash,
+                        error = %error,
+                        "fill-or-kill predicate state unreadable; keeping the transaction"
+                    );
+                    unreadable
+                });
+                (hash, Some(satisfiability))
+            })
+            .collect::<HashMap<_, _>>();
+        let _admission_guard = self.protocol_admission_lock.lock();
+        let expired = self.fill_or_kill.write().apply_canonical_block(committed_block, |hash| {
+            // Mined transactions landed. Transactions admitted since the snapshot wait for the
+            // next block, as a recent admission is not eligible for eviction anyway.
+            if mined.contains(hash) {
+                return None;
+            }
+            evaluated.get(hash).copied().unwrap_or(Some(unreadable))
+        });
+        let removed = self.remove_dropped_across_pools(expired);
+        self.release_from_guard(&removed);
+        if !removed.is_empty() {
+            ValidityPoolMetrics::record_fill_or_kill_expired(removed.len());
+            debug!(
+                count = removed.len(),
+                block = committed_block,
+                "fill-immediately-or-kill transactions expired at a block they were satisfiable in"
+            );
+        }
+        removed.len()
+    }
+}
+
 impl<Client, S, Evm, T, O> FlashblockExpiry for BaseTransactionPool<Client, S, Evm, T, O>
 where
     Client: 'static,
@@ -1118,6 +1243,7 @@ where
             let block_expiry_bound = Self::validity_block_expiry_bound(&validated);
             let flashblock_expiry_bound = Self::validity_flashblock_expiry_bound(&validated);
             let is_validity = Self::has_validity_predicates(&validated);
+            let is_fill_or_kill = Self::is_fill_or_kill(&validated);
             let events =
                 match self.protocol_pool.inner().add_transaction_and_subscribe(origin, validated) {
                     Ok(events) => events,
@@ -1130,6 +1256,7 @@ where
                 };
             self.gate_protocol_admission(hash, replaced, pre_admitted)?;
             self.register_block_expiry(hash, block_expiry_bound, flashblock_expiry_bound, replaced);
+            self.register_fill_or_kill(hash, is_fill_or_kill, replaced);
             if is_validity {
                 ValidityPoolMetrics::record_admission(replaced.is_some());
             }
@@ -1725,6 +1852,7 @@ where
     type Block = <TransactionValidationTaskExecutor<BaseTransactionValidator<Client, T, Evm>> as TransactionValidator>::Block;
 
     fn set_block_info(&self, info: BlockInfo) {
+        self.canonical_head.fetch_max(info.last_seen_block_number, Ordering::Relaxed);
         self.protocol_pool.set_block_info(info)
     }
 
@@ -1753,6 +1881,11 @@ where
             for hash in &mined_transactions {
                 block_expiry.remove(hash);
             }
+            let mut fill_or_kill = self.fill_or_kill.write();
+            for hash in &mined_transactions {
+                fill_or_kill.remove(hash);
+            }
+            self.canonical_head.fetch_max(block_number, Ordering::Relaxed);
         }
         self.protocol_pool.on_canonical_state_change(update);
         {
@@ -2085,7 +2218,10 @@ mod tests {
     use base_test_utils::build_test_genesis_everest;
     use futures::{FutureExt, StreamExt, future::join_all};
     use reth_primitives_traits::{InMemorySize, SealedBlock};
-    use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
+    use reth_provider::{
+        StateProviderFactory,
+        test_utils::{ExtendedAccount, MockEthProvider},
+    };
     use reth_tasks::Runtime;
     use reth_transaction_pool::{
         CanonicalStateUpdate, PoolConfig, PoolUpdateKind, PriceBumpConfig, SubPoolLimit,
@@ -2095,8 +2231,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        BaseL1BlockInfo, BaseOrdering, BasePooledTransaction, LimitClass, ValidityOperator,
-        ValidityPredicate, WatchSet,
+        BaseL1BlockInfo, BaseOrdering, BasePooledTransaction, LimitClass, TransactionValidity,
+        ValidityOperator, ValidityPredicate, WatchSet,
     };
 
     fn test_chain_id() -> u64 {
@@ -3913,6 +4049,125 @@ mod tests {
         assert!(pool.get(&replacement_hash).is_some());
         assert_eq!(publish(&pool, 100, 2), 0);
         assert!(pool.get(&replacement_hash).is_some());
+    }
+
+    /// Applies canonical block `block` to the pool's fill-or-kill expiry against the mock
+    /// provider's latest state and returns how many transactions were evicted.
+    fn expire_fill_or_kill_at(
+        pool: &IntegrationPool,
+        client: &MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>,
+        block: u64,
+    ) -> usize {
+        let state = client.latest().unwrap();
+        pool.expire_fill_or_kill(block, &B256Set::default(), &*state)
+    }
+
+    #[tokio::test]
+    async fn fill_or_kill_transaction_expires_at_a_satisfiable_block_it_was_pending_for() {
+        let (pool, client) = build_integration_pool();
+        let signer = signer();
+        fund(&client, signer.address());
+        // Holds against the funded balance from admission on.
+        let loose = ValidityPredicate::Balance {
+            address: signer.address(),
+            op: ValidityOperator::GreaterThan,
+            value: U256::ZERO,
+        };
+        let block_bound = ValidityPredicate::BlockNumber {
+            op: ValidityOperator::LessThan,
+            value: U256::from(100),
+        };
+        let flagged = signed_1559(&signer, 0).with_validity(TransactionValidity {
+            validity: vec![loose.clone(), block_bound.clone()],
+            validity_signature: None,
+            fill_immediately_or_kill: true,
+        });
+        let plain = signed_1559(&signer, 1).with_validity(TransactionValidity {
+            validity: vec![loose, block_bound],
+            validity_signature: None,
+            fill_immediately_or_kill: false,
+        });
+        let flagged_hash = *flagged.hash();
+        let plain_hash = *plain.hash();
+        pool.add_transaction(TransactionOrigin::Local, flagged).await.unwrap();
+        pool.add_transaction(TransactionOrigin::Local, plain).await.unwrap();
+        assert_eq!(pool.fill_or_kill.read().len(), 1);
+
+        // Admitted at head 0: block 1 was already building, so the transaction is given block 2.
+        assert_eq!(expire_fill_or_kill_at(&pool, &client, 1), 0);
+        assert!(pool.get(&flagged_hash).is_some());
+        assert_eq!(expire_fill_or_kill_at(&pool, &client, 2), 1);
+        assert!(pool.get(&flagged_hash).is_none(), "the flagged transaction must be evicted");
+        assert!(pool.get(&plain_hash).is_some(), "an unflagged validity transaction waits");
+        assert!(pool.fill_or_kill.read().is_empty());
+    }
+
+    #[tokio::test]
+    async fn fill_or_kill_transaction_waits_while_its_predicates_do_not_hold() {
+        let (pool, client) = build_integration_pool();
+        let signer = signer();
+        fund(&client, signer.address());
+        let flagged = signed_1559(&signer, 0).with_validity(TransactionValidity {
+            validity: vec![
+                ValidityPredicate::Balance {
+                    address: Address::repeat_byte(0x77),
+                    op: ValidityOperator::GreaterThan,
+                    value: U256::ZERO,
+                },
+                ValidityPredicate::BlockNumber {
+                    op: ValidityOperator::LessThan,
+                    value: U256::from(100),
+                },
+            ],
+            validity_signature: None,
+            fill_immediately_or_kill: true,
+        });
+        let hash = *flagged.hash();
+        pool.add_transaction(TransactionOrigin::Local, flagged).await.unwrap();
+
+        for block in 1..5 {
+            assert_eq!(expire_fill_or_kill_at(&pool, &client, block), 0);
+        }
+        assert!(pool.get(&hash).is_some());
+
+        // The watched account is funded: satisfiable at the end of block 5, so evicted there.
+        fund(&client, Address::repeat_byte(0x77));
+        assert_eq!(expire_fill_or_kill_at(&pool, &client, 5), 1);
+        assert!(pool.get(&hash).is_none());
+    }
+
+    #[tokio::test]
+    async fn mined_fill_or_kill_transaction_leaves_the_index() {
+        let (pool, client) = build_integration_pool();
+        let signer = signer();
+        fund(&client, signer.address());
+        let flagged = signed_1559(&signer, 0).with_validity(TransactionValidity {
+            validity: vec![ValidityPredicate::BlockNumber {
+                op: ValidityOperator::LessThan,
+                value: U256::from(100),
+            }],
+            validity_signature: None,
+            fill_immediately_or_kill: true,
+        });
+        let hash = *flagged.hash();
+        pool.add_transaction(TransactionOrigin::Local, flagged).await.unwrap();
+        assert!(pool.fill_or_kill.read().contains(&hash));
+
+        let block = SealedBlock::seal_slow(BaseBlock {
+            header: alloy_consensus::Header { number: 1, timestamp: 1, ..Default::default() },
+            body: Default::default(),
+        });
+        pool.on_canonical_state_change(CanonicalStateUpdate {
+            new_tip: &block,
+            pending_block_base_fee: 0,
+            pending_block_blob_fee: None,
+            changed_accounts: Vec::new(),
+            mined_transactions: vec![hash],
+            update_kind: PoolUpdateKind::Commit,
+        });
+
+        assert!(!pool.fill_or_kill.read().contains(&hash));
+        assert_eq!(pool.canonical_head.load(Ordering::Relaxed), 1);
     }
 
     #[tokio::test]

@@ -215,6 +215,7 @@ async fn forwards_validity_to_every_builder(
             DEVNET_CHAIN_ID,
             keccak256(&raw),
             &expected,
+            false,
         ))?)
     } else {
         None
@@ -228,6 +229,7 @@ async fn forwards_validity_to_every_builder(
                 SendRawTransactionValidityOptions {
                     validity: expected.clone(),
                     validity_signature,
+                    fill_immediately_or_kill: false,
                 },
             ),
         )

@@ -55,6 +55,7 @@ async fn recoverable_predicate_emits_builder_deferred() -> eyre::Result<()> {
                         value: U256::from_limbs([1, 0, 0, 0]),
                     }],
                     validity_signature: None,
+                    fill_immediately_or_kill: false,
                 },
             },),
         )
@@ -144,6 +145,7 @@ async fn blocked_transaction_emits_one_builder_deferred_per_block() -> eyre::Res
                         value: U256::from(1),
                     }],
                     validity_signature: None,
+                    fill_immediately_or_kill: false,
                 },
             },),
         )
@@ -170,6 +172,71 @@ async fn blocked_transaction_emits_one_builder_deferred_per_block() -> eyre::Res
         "the flashblocks builder must not emit BUILDER_CONSIDERED"
     );
 
+    Ok(())
+}
+
+/// A killed fill-immediately-or-kill transaction is re-yielded by every later flashblock of the
+/// block, but is reported with one `BUILDER_EXPIRED`.
+#[tokio::test]
+async fn killed_transaction_emits_one_builder_expired_per_block() -> eyre::Result<()> {
+    let capture = TransactionEventCapture::install();
+    let instance = validity_instance().build().await?;
+    let driver = instance.driver().await?;
+    let accounts = driver.fund_accounts(2, ONE_ETH).await?;
+    let pool = Address::random();
+    // Holds before and after the competitor pays into the pool.
+    let loose = ValidityPredicate::Balance {
+        address: pool,
+        op: ValidityOperator::LessThan,
+        value: U256::MAX,
+    };
+
+    let mut insert = Vec::new();
+    for (signer, to, priority_fee, fill_immediately_or_kill) in
+        [(&accounts[0], pool, 100, false), (&accounts[1], Address::random(), 50, true)]
+    {
+        let tx = driver
+            .create_transaction()
+            .with_signer(signer)
+            .with_nonce(0)
+            .with_to(to)
+            .with_value(1)
+            .with_max_priority_fee_per_gas(priority_fee)
+            .build()
+            .await;
+        insert.push(tx.tx_hash());
+        driver
+            .provider()
+            .raw_request::<_, ()>(
+                "base_insertValidatedTransaction".into(),
+                (ValidatedTransaction {
+                    sender: signer.address(),
+                    raw: tx.encoded_2718().into(),
+                    metering: None,
+                    extensions: TransactionValidity {
+                        validity: vec![loose.clone()],
+                        validity_signature: None,
+                        fill_immediately_or_kill,
+                    },
+                },),
+            )
+            .await?;
+    }
+    let searcher_hash = insert[1];
+
+    let block = driver.build_new_block().await?;
+    assert!(!block.transactions.into_transactions().any(|tx| tx.tx_hash() == searcher_hash));
+
+    let expired = capture
+        .events()
+        .into_iter()
+        .filter(|event| {
+            event.tx_hash == Some(searcher_hash)
+                && event.event_type == TransactionEventType::BuilderExpired
+        })
+        .map(|event| event.data["expire_reason"].clone())
+        .collect::<Vec<_>>();
+    assert_eq!(expired, [serde_json::json!("fill_immediately_or_kill_state_overwritten")]);
     Ok(())
 }
 
@@ -206,6 +273,7 @@ async fn expired_position_predicate_emits_builder_expired() -> eyre::Result<()> 
                         value: U256::from(latest.header.number),
                     }],
                     validity_signature: None,
+                    fill_immediately_or_kill: false,
                 },
             },),
         )
@@ -296,6 +364,7 @@ async fn expired_flashblock_predicate_releases_same_nonce_before_block_seals() -
                         },
                     ],
                     validity_signature: None,
+                    fill_immediately_or_kill: false,
                 },
             },),
         )

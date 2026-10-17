@@ -13,6 +13,7 @@
 
 - [docs/guides/BLOCK_PRODUCTION_REVIEW.md](docs/guides/BLOCK_PRODUCTION_REVIEW.md): Review guide for block-production-sensitive PRs: mandatory payload size-limit gate across I/O boundaries, taxonomy of halt/stall scenarios (precompiles, builder, flashblocks), and a checklist.
 - [docs/guides/DEVNET.md](docs/guides/DEVNET.md): Chooser for local environments: Docker and HA devnets, Anvil + local Nitro proving, snapshot devnet (base dev), snapshot benchmark harness, with quickstarts, data-reset behavior, and owning docs.
+- [docs/guides/FILL_IMMEDIATELY_OR_KILL.md](docs/guides/FILL_IMMEDIATELY_OR_KILL.md): Contract for the fill_immediately_or_kill validity flag: read-after-write kills from the builder's predicate write journal, pool-side canonical expiry, searcher scenarios, limits, and open questions.
 - [docs/guides/GLAMSTERDAM.md](docs/guides/GLAMSTERDAM.md): Scopes Base's Glamsterdam EIPs with BAL and SLOTNUM designs, plus calldata and access-list pricing proposals for transaction costs, P2P block sizes, and storage growth.
 - [docs/guides/P2P.md](docs/guides/P2P.md): Explains the Base P2P stack for newcomers: consensus-layer discv5 and libp2p gossipsub versus execution-layer reth networking, how they interact via Engine API, key files, flags, and glossary.
 - [docs/guides/RELEASE.md](docs/guides/RELEASE.md): Release process: Start Release creates releases/vX.Y.Z, version sync PR, automatic RC tags and builds per commit, then Publish Release for the final tag, Docker images and binaries.
@@ -132,10 +133,10 @@
 - [crates/execution/trie/README.md](crates/execution/trie/README.md): base-execution-trie: BaseProofsStore traits and backends (e.g. RocksdbProofsStorage) holding per-block trie diffs for fault-proof generation, with cursors, pruner and startup init job.
 - [crates/execution/trie/src/db/schema.md](crates/execution/trie/src/db/schema.md): MDBX proof-history DB schema: versioned DupSort tables, tombstones, BlockChangeSet reverse index, proof window keys, cursor reads, append-only writes, block 0 backfill. For eth_getProof storage.
 - [crates/execution/tx-forwarding/README.md](crates/execution/tx-forwarding/README.md): base-tx-forwarding: forwards mempool txs to builder RPCs via per-destination queues fed by FIFO and tip-priority lanes; dedup, batching, resend; spawn_requests for custom ForwardRequest; CLI flags.
-- [crates/execution/txpool-rpc/README.md](crates/execution/txpool-rpc/README.md): Txpool RPC admin/status APIs and validity submissions; shared staged signature modes, signature rejection metrics, predicate forwarding and sequencer proxy behavior.
+- [crates/execution/txpool-rpc/README.md](crates/execution/txpool-rpc/README.md): Txpool RPC admin/status APIs and validity submissions; staged signature modes, fill-immediately-or-kill flag, signature metrics, predicate forwarding and sequencer proxy.
 - [crates/execution/txpool-tracing/README.md](crates/execution/txpool-tracing/README.md): Txpool tracing extension: tracks mempool lifecycle events, txpool_transactionStatus RPC, enabling CLI flags, and reth_transaction_tracing_tx_event histogram. Use to debug tx latency or drops.
 - [crates/execution/txpool/PROPAGATION_PIPELINE.md](crates/execution/txpool/PROPAGATION_PIPELINE.md): Plan to forward mempool txs to builders via base_insertValidatedTransaction in 4 PRs (consumer, forwarder, builder endpoint, node integration). Only PR 1 is marked done. Names a crates/txpool/ path.
-- [crates/execution/txpool/README.md](crates/execution/txpool/README.md): Base txpool validation/ordering, builder wire extensions, staged EIP-712 predicate authorization, wallet signing contract, rejection metrics, and rollout/security limits.
+- [crates/execution/txpool/README.md](crates/execution/txpool/README.md): Base txpool validation/ordering, builder wire extensions, fill-immediately-or-kill eviction, staged EIP-712 predicate authorization, wallet signing contract, and rollout/security limits.
 
 ## Crates: infra
 

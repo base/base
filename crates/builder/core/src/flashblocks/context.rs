@@ -19,7 +19,7 @@ use base_execution_eip8130::IntrinsicGas;
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
 use base_execution_payload_builder::{
     BasePayloadBuilderAttributes, BuilderMetrics as SharedBuilderMetrics, CoinbaseTipAffordability,
-    ValidityMetrics, error::BasePayloadBuilderError,
+    KillReason, ValidityMetrics, error::BasePayloadBuilderError,
 };
 use base_execution_txpool::{
     BasePooledTx, GuardMetrics, PredicateContext, TimestampedTransaction,
@@ -730,6 +730,39 @@ impl BasePayloadBuilderCtx {
         diag.txs_deferred += 1;
     }
 
+    /// Closes the block's fill-immediately-or-kill bookkeeping.
+    ///
+    /// Flagged transactions whose predicates held in this block but which were never included are
+    /// killed now and reported; transactions killed during the block were reported when it
+    /// happened. Returns every hash killed in the block, for eviction.
+    pub(crate) fn finish_fill_or_kill(
+        &self,
+        info: &mut ExecutionInfo,
+        limits: &ResourceLimits,
+    ) -> Vec<TxHash> {
+        let kills = info.fill_or_kill.finish();
+        let payload_id = self.payload_id().to_string();
+        for kill in kills.iter().filter(|kill| kill.reason == KillReason::Unfilled) {
+            ValidityMetrics::validity_predicate_evaluations_total(kill.reason.label()).increment(1);
+            self.emit_builder_decision_event(
+                &payload_id,
+                TransactionEventType::BuilderExpired,
+                kill.tx_hash,
+                Some(kill.ordering_position),
+                || {
+                    BuilderExpiredEventData::new(
+                        kill.reason.label(),
+                        kill.reason.detail(),
+                        info,
+                        limits,
+                        None,
+                    )
+                },
+            );
+        }
+        kills.into_iter().map(|kill| kill.tx_hash).collect()
+    }
+
     /// Executes the given best transactions and updates the execution info.
     ///
     /// Returns diagnostics summarizing transaction selection for the flashblock. `deferrals`
@@ -780,6 +813,7 @@ impl BasePayloadBuilderCtx {
             ParkedPredicateIndex::new(self.builder_config.predicate_bucket_ordered_threshold);
         let predicate_context =
             PredicateContext { block_number, flashblock_index: self.flashblock_index() };
+        info.fill_or_kill.begin_flashblock(self.flashblock_index());
 
         // Total validity-predicate evaluation time (inclusive of the state loads each
         // evaluation performs) across this flashblock build. `None` until the first
@@ -809,6 +843,14 @@ impl BasePayloadBuilderCtx {
             let validity_handling_start = has_validity_predicates.then(Instant::now);
             let coinbase_tip = tx.coinbase_tip();
             let has_coinbase_tip = coinbase_tip.is_some();
+
+            // A killed fill-immediately-or-kill transaction stays in the pool until the block is
+            // finalized, so later flashblocks re-yield it; it was reported when it was killed.
+            if tx.fill_immediately_or_kill() && info.fill_or_kill.is_killed(&tx_hash) {
+                diag.txs_rejected_other += 1;
+                Self::skip_pooled_current(best_txs, &tx);
+                continue;
+            }
 
             // Defer without evaluating once this flashblock's predicate-eval time budget is
             // exhausted, rather than spending more IO on the naive per-transaction loop. The
@@ -953,6 +995,78 @@ impl BasePayloadBuilderCtx {
                     validity_handling_start.map_or_else(Duration::default, |start| start.elapsed());
                 continue;
             }
+            // The predicates hold. A fill-immediately-or-kill transaction may only execute against
+            // the predicate state it was first satisfied on in this block: if a location its
+            // predicates read was written since, it is killed. The kill is final; the transaction
+            // is evicted and cached as rejected when the block is finalized, so a mempool
+            // re-forward cannot bring it back.
+            if tx.fill_immediately_or_kill() {
+                let checked = Self::accumulate_elapsed(&mut predicate_eval_total, || {
+                    info.fill_or_kill.check_satisfied(
+                        tx_hash,
+                        ordering_position,
+                        tx.validity_predicates(),
+                        &mut **evm.db_mut(),
+                        &predicate_context,
+                    )
+                });
+                let kill = match checked {
+                    Ok(kill) => kill,
+                    Err(error) => {
+                        warn!(
+                            target: "payload_builder",
+                            tx_hash = ?tx_hash,
+                            error = ?error,
+                            "failed to read validity predicate state"
+                        );
+                        let cx = DecisionContext {
+                            payload_id: &payload_id,
+                            info,
+                            limits,
+                            reason: "validity_predicate_read_failed",
+                            detail: "failed to read state required by a validity predicate",
+                        };
+                        // A read failure is only terminal for this scan, so it is not cached.
+                        self.reject_current(best_txs, &mut diag, &cx, &tx, ordering_position);
+                        validity_handling += validity_handling_start
+                            .map_or_else(Duration::default, |start| start.elapsed());
+                        continue;
+                    }
+                };
+                if let Some(kill) = kill {
+                    let cx = DecisionContext {
+                        payload_id: &payload_id,
+                        info,
+                        limits,
+                        reason: kill.reason.label(),
+                        detail: kill.reason.detail(),
+                    };
+                    trace!(
+                        target: "payload_builder",
+                        tx_hash = ?tx_hash,
+                        reason = kill.reason.label(),
+                        "dropping fill-immediately-or-kill transaction"
+                    );
+                    ValidityMetrics::validity_predicate_evaluations_total(kill.reason.label())
+                        .increment(1);
+                    self.emit_builder_decision_event(
+                        cx.payload_id,
+                        TransactionEventType::BuilderExpired,
+                        tx_hash,
+                        Some(ordering_position),
+                        || {
+                            BuilderExpiredEventData::new(
+                                cx.reason, cx.detail, cx.info, cx.limits, None,
+                            )
+                        },
+                    );
+                    diag.txs_rejected_other += 1;
+                    Self::skip_pooled_current(best_txs, &tx);
+                    validity_handling += validity_handling_start
+                        .map_or_else(Duration::default, |start| start.elapsed());
+                    continue;
+                }
+            }
             validity_handling +=
                 validity_handling_start.map_or_else(Duration::default, |start| start.elapsed());
 
@@ -1042,6 +1156,8 @@ impl BasePayloadBuilderCtx {
                 continue;
             }
 
+            // Read before the consensus conversion so the commit can be reported below.
+            let fill_or_kill_flagged = tx.fill_immediately_or_kill();
             let (tx_encoded, tx) = tx.into_consensus_with2718().split();
             let tx_hash = tx.tx_hash();
             let tx_uncompressed_size = tx_encoded.len() as u64;
@@ -1421,6 +1537,10 @@ impl BasePayloadBuilderCtx {
             };
             predicate_bucket_wakeups += state_change_effects.woken_buckets as u64;
             best_txs.record_committed_state(&state);
+            info.fill_or_kill.record_committed_state(&state);
+            if fill_or_kill_flagged {
+                info.fill_or_kill.record_included(&tx_hash);
+            }
 
             // commit changes
             evm.db_mut().commit(state);

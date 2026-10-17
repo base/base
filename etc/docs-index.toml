@@ -411,8 +411,8 @@ summary = "base-tx-forwarding: forwards mempool txs to builder RPCs via per-dest
 digest = "b72a1536e1"
 
 ["crates/execution/txpool-rpc/README.md"]
-summary = "Txpool RPC admin/status APIs and validity submissions; shared staged signature modes, signature rejection metrics, predicate forwarding and sequencer proxy behavior."
-digest = "adef27d8c3"
+summary = "Txpool RPC admin/status APIs and validity submissions; staged signature modes, fill-immediately-or-kill flag, signature metrics, predicate forwarding and sequencer proxy."
+digest = "4d459139f6"
 
 ["crates/execution/txpool-tracing/README.md"]
 summary = "Txpool tracing extension: tracks mempool lifecycle events, txpool_transactionStatus RPC, enabling CLI flags, and reth_transaction_tracing_tx_event histogram. Use to debug tx latency or drops."
@@ -423,8 +423,8 @@ summary = "Plan to forward mempool txs to builders via base_insertValidatedTrans
 digest = "2e785bfe9d"
 
 ["crates/execution/txpool/README.md"]
-summary = "Base txpool validation/ordering, builder wire extensions, staged EIP-712 predicate authorization, wallet signing contract, rejection metrics, and rollout/security limits."
-digest = "f8413da3b9"
+summary = "Base txpool validation/ordering, builder wire extensions, fill-immediately-or-kill eviction, staged EIP-712 predicate authorization, wallet signing contract, and rollout/security limits."
+digest = "52e52c59be"
 
 ["crates/infra/audit/README.md"]
 summary = "audit-archiver-lib: ingests Vector transaction-event/v1 batches into Postgres idempotently and serves JSON-RPC queries; covers the migrations and schema snapshot regeneration."
@@ -666,6 +666,10 @@ digest = "393c4961d6"
 summary = "Chooser for local environments: Docker and HA devnets, Anvil + local Nitro proving, snapshot devnet (base dev), snapshot benchmark harness, with quickstarts, data-reset behavior, and owning docs."
 digest = "0951b41580"
 
+["docs/guides/FILL_IMMEDIATELY_OR_KILL.md"]
+summary = "Contract for the fill_immediately_or_kill validity flag: read-after-write kills from the builder's predicate write journal, pool-side canonical expiry, searcher scenarios, limits, and open questions."
+digest = "81daff6e5a"
+
 ["docs/guides/GLAMSTERDAM.md"]
 summary = "Scopes Base's Glamsterdam EIPs with BAL and SLOTNUM designs, plus calldata and access-list pricing proposals for transaction costs, P2P block sizes, and storage growth."
 digest = "5934f501aa"
@@ -696,7 +700,7 @@ digest = "8df3320197"
 
 ["docs/transaction-events/README.md"]
 summary = "Spec for transaction-event/v1, the JSONL business event journal for transaction observability: config fields, envelope, event vocabulary, Vector to audit-archiver ingest, Postgres retention, examples."
-digest = "24f8b4422b"
+digest = "903d0bc44a"
 
 ["docs/transaction-events/tips-parity-checklist.md"]
 summary = "Checklist for verifying TIPS UI audit-archiver/Postgres responses match the S3-backed routes (block, txn, bundle, rejected) before switching TIPS_UI_QUERY_BACKEND=audit."

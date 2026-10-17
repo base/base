@@ -80,6 +80,7 @@ fn validity() -> TransactionValidity {
             .expect("valid predicate"),
         ],
         validity_signature: None,
+        fill_immediately_or_kill: false,
     }
 }
 
