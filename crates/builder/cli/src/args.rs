@@ -17,6 +17,8 @@ use base_observability_events::{
 };
 use tracing::warn;
 
+use crate::CandidateArgs;
+
 /// Parameters for Flashblocks configuration.
 ///
 /// The names in the struct are prefixed with `flashblocks` to avoid conflicts
@@ -290,6 +292,10 @@ pub struct Args {
     /// Shadow indexer `ExEx` configuration
     #[command(flatten)]
     pub shadow_indexer: ShadowIndexerArgs,
+
+    /// Candidate-group ingress and selection configuration
+    #[command(flatten)]
+    pub candidates: CandidateArgs,
 }
 
 impl HasRollupArgs for Args {
@@ -341,6 +347,7 @@ impl Default for Args {
             basic_payload_builder: false,
             transaction_events: TransactionEventsArgs::default(),
             shadow_indexer: ShadowIndexerArgs::default(),
+            candidates: CandidateArgs::default(),
         }
     }
 }
@@ -398,6 +405,7 @@ impl Args {
                 Duration::from_secs(self.rejection_cache_ttl_secs),
             ),
             manifest_precheck_enabled: self.manifest_precheck_enabled,
+            candidates: None,
         })
     }
 }

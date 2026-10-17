@@ -11,8 +11,17 @@ extern crate alloc;
 
 mod affordability;
 pub use affordability::CoinbaseTipAffordability;
+
+mod candidates;
+pub use candidates::{
+    CandidateBlockLimits, CandidateBuilderConfig, CandidateRound, CandidateScan, CandidateTurn,
+    DEFAULT_CANDIDATE_BUILD_DEADLINE, DEFAULT_CANDIDATE_BUILD_WORK_GAS,
+    DEFAULT_CANDIDATE_EVAL_WALL_CUTOFF, DEFAULT_INVALID_ATTEMPT_GAS, RoundEnd, ScoreOverlay,
+    SiblingCommit, SiblingTrial, StaticTopLevelCall,
+};
+
 pub mod builder;
-pub use builder::BasePayloadBuilder;
+pub use builder::{BasePayloadBuilder, PredicateRescan};
 pub mod config;
 pub use config::{BuilderStateProvider, ResourceMeteringConfig};
 mod rejection_cache;

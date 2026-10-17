@@ -13,11 +13,12 @@ use alloy_rlp::encode;
 use base_common_chains::Upgrades;
 use base_common_consensus::{BasePrimitives, BaseTransaction, BaseTxEnvelope};
 use base_common_rpc_types_engine::{BasePayloadAttributes, ExecutionData};
+use base_execution_candidates::CandidateRuntime;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::{BaseEvmConfig, BaseRethReceiptBuilder};
 use base_execution_payload_builder::{
-    Attributes, BaseBuiltPayload, BasePayloadBuilderAttributes,
+    Attributes, BaseBuiltPayload, BasePayloadBuilderAttributes, CandidateBuilderConfig,
     DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, PayloadPrimitives, RejectionCache,
     config::{BaseBuilderConfig, BaseDAConfig, GasLimitConfig, ResourceMeteringConfig},
 };
@@ -812,6 +813,8 @@ pub struct BasePoolBuilder<T = BasePooledTransaction> {
     pub additional_trusted_delegation_targets: AddressSet,
     /// Operator-allowlisted EIP-8130 payers.
     pub allowlisted_payers: AddressSet,
+    /// Candidate runtime; `Some` enables the plain-sibling reinsertion guard and ledger pruning.
+    pub candidate_runtime: Option<Arc<CandidateRuntime>>,
     /// Marker for the pooled transaction type.
     _pd: core::marker::PhantomData<T>,
 }
@@ -824,6 +827,7 @@ impl<T> Default for BasePoolBuilder<T> {
             guard_limits: GuardLimits::default(),
             additional_trusted_delegation_targets: AddressSet::default(),
             allowlisted_payers: AddressSet::default(),
+            candidate_runtime: None,
             _pd: Default::default(),
         }
     }
@@ -839,6 +843,7 @@ impl<T> Clone for BasePoolBuilder<T> {
                 .additional_trusted_delegation_targets
                 .clone(),
             allowlisted_payers: self.allowlisted_payers.clone(),
+            candidate_runtime: self.candidate_runtime.clone(),
             _pd: core::marker::PhantomData,
         }
     }
@@ -879,6 +884,12 @@ impl<T> BasePoolBuilder<T> {
         self.allowlisted_payers = payers.into_iter().collect();
         self
     }
+
+    /// Shares the candidate runtime with the pool.
+    pub fn with_candidate_runtime(mut self, runtime: Option<Arc<CandidateRuntime>>) -> Self {
+        self.candidate_runtime = runtime;
+        self
+    }
 }
 
 impl<Node, T, Evm> PoolBuilder<Node, Evm> for BasePoolBuilder<T>
@@ -900,6 +911,7 @@ where
             guard_limits,
             additional_trusted_delegation_targets,
             allowlisted_payers,
+            candidate_runtime,
             ..
         } = self;
 
@@ -935,8 +947,11 @@ where
             final_pool_config.clone(),
         );
         let allowlisted_payer_count = allowlisted_payers.len();
-        let transaction_pool =
+        let mut transaction_pool =
             BaseTransactionPool::new(transaction_pool, ordering).with_guard_limits(guard_limits);
+        if let Some(runtime) = candidate_runtime {
+            transaction_pool = transaction_pool.with_candidate_runtime(runtime);
+        }
         spawn_maintenance_tasks(ctx, transaction_pool.clone(), &final_pool_config)?;
         let state_diff_events = BroadcastStream::new(ctx.provider().subscribe_to_canonical_state());
         ctx.task_executor().spawn_critical_task(
@@ -979,6 +994,8 @@ pub struct BasePayloadBuilder {
     pub resource_metering: ResourceMeteringConfig,
     /// Shared, cross-job cache of permanently rejected transaction hashes.
     pub rejection_cache: RejectionCache,
+    /// Candidate-group selection; `None` keeps candidate groups parked.
+    pub candidates: Option<CandidateBuilderConfig>,
 }
 
 impl Default for BasePayloadBuilder {
@@ -991,6 +1008,7 @@ impl Default for BasePayloadBuilder {
             predicate_bucket_ordered_threshold: DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD,
             resource_metering: ResourceMeteringConfig::default(),
             rejection_cache: RejectionCache::default(),
+            candidates: None,
         }
     }
 }
@@ -1040,6 +1058,12 @@ impl BasePayloadBuilder {
     /// Configure the shared rejection cache for permanently rejected transactions.
     pub fn with_rejection_cache(mut self, rejection_cache: RejectionCache) -> Self {
         self.rejection_cache = rejection_cache;
+        self
+    }
+
+    /// Enables candidate-group selection in the native payload builder.
+    pub fn with_candidates(mut self, candidates: Option<CandidateBuilderConfig>) -> Self {
+        self.candidates = candidates;
         self
     }
 }
@@ -1092,6 +1116,7 @@ where
                     resource_metering: self.resource_metering,
                     rejection_cache: self.rejection_cache,
                     state_provider_metrics: ctx.config().engine.state_provider_metrics,
+                    candidates: self.candidates,
                 },
             );
         Ok(payload_builder)

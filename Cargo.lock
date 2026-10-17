@@ -3241,12 +3241,15 @@ dependencies = [
  "base-builder-core",
  "base-builder-metering",
  "base-bundles",
+ "base-execution-candidates",
  "base-execution-cli",
+ "base-execution-payload-builder",
  "base-node-core",
  "base-observability-events",
  "clap",
  "eyre",
  "rstest",
+ "serde_json",
  "tracing",
 ]
 
@@ -3284,6 +3287,7 @@ dependencies = [
  "base-common-network",
  "base-common-rpc-types",
  "base-common-rpc-types-engine",
+ "base-execution-candidates",
  "base-execution-chainspec",
  "base-execution-consensus",
  "base-execution-eip8130",
@@ -4299,6 +4303,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-execution-candidates"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus 2.4.1",
+ "alloy-eips 2.4.1",
+ "alloy-primitives",
+ "alloy-serde 2.4.1",
+ "alloy-signer 2.4.1",
+ "alloy-signer-local 2.4.1",
+ "alloy-sol-types",
+ "base-common-consensus",
+ "parking_lot",
+ "rstest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+]
+
+[[package]]
 name = "base-execution-chainspec"
 version = "0.0.0"
 dependencies = [
@@ -4581,6 +4604,7 @@ dependencies = [
  "base-common-consensus",
  "base-common-evm",
  "base-common-rpc-types-engine",
+ "base-execution-candidates",
  "base-execution-chainspec",
  "base-execution-eip8130",
  "base-execution-evm",
@@ -4766,6 +4790,7 @@ dependencies = [
  "base-common-flz",
  "base-common-genesis",
  "base-common-precompiles",
+ "base-execution-candidates",
  "base-execution-chainspec",
  "base-execution-eip8130",
  "base-execution-evm",
@@ -5141,6 +5166,7 @@ dependencies = [
  "base-common-consensus",
  "base-common-evm",
  "base-common-rpc-types-engine",
+ "base-execution-candidates",
  "base-execution-chainspec",
  "base-execution-consensus",
  "base-execution-evm",
@@ -5218,6 +5244,7 @@ dependencies = [
  "base-common-network",
  "base-common-rpc-types",
  "base-common-rpc-types-engine",
+ "base-execution-candidates",
  "base-execution-chainspec",
  "base-execution-payload-builder",
  "base-execution-rpc",
@@ -6575,6 +6602,7 @@ dependencies = [
  "alloy-signer-local 2.4.1",
  "base-common-consensus",
  "base-common-rpc-types",
+ "base-execution-candidates",
  "base-execution-chainspec",
  "base-execution-txpool",
  "base-metrics",
@@ -6647,6 +6675,7 @@ dependencies = [
  "base-common-chains",
  "base-common-consensus",
  "base-common-genesis",
+ "base-execution-candidates",
  "base-execution-chainspec",
  "base-execution-rpc",
  "base-execution-txpool",

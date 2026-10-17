@@ -322,6 +322,10 @@ digest = "3b2f4cf0a4"
 summary = "Upgrade trait and Upgrades registry for Ecotone, Fjord, Isthmus, and Jovian network transactions. Use when collecting transactions for upgrade activation blocks."
 digest = "a7737b723a"
 
+["crates/execution/candidates/README.md"]
+summary = "base-execution-candidates: CandidateSet envelope and validation, GroupLedger, access policy, lifecycle precedence and winner scoring for base_sendRawTransactionCandidates; off by default."
+digest = "8861f7632a"
+
 ["crates/execution/chainspec/README.md"]
 summary = "BaseChainSpec and SUPPORTED_CHAINS CLI resolution, Holocene/Jovian base fee helpers, and Denim timestamp validation rules (custom genesis needs nonzero config.blockTime). Use for chain/fork config."
 digest = "c4d9ec281c"
