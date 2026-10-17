@@ -26,7 +26,7 @@ mod enr;
 pub use enr::{BaseEnr, BaseEnrError, EnrValidation};
 
 mod any;
-pub use any::{AnyNode, DialOptsError};
+pub use any::AnyNode;
 
 mod boot;
 pub use boot::{BootNode, BootNodeParseError};

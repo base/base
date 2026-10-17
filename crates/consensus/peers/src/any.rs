@@ -18,17 +18,6 @@ pub enum AnyNode {
     PeerId(PeerId),
 }
 
-/// An error that can occur when converting an [`AnyNode`] to [`DialOpts`].
-#[derive(Debug, thiserror::Error)]
-pub enum DialOptsError {
-    /// The peer id is not valid and cannot be converted to a secp256k1 public key.
-    #[error("Invalid peer id. Error: {0}")]
-    InvalidPeerId(secp256k1::Error),
-    /// The secp256k1 public key cannot be converted to a libp2p peer id.
-    #[error("Invalid public key. Error: {0}")]
-    InvalidPublicKey(#[from] discv5::libp2p_identity::DecodingError),
-}
-
 impl AnyNode {
     /// Returns the local peer id of the node.
     pub fn peer_id(&self) -> PeerId {
@@ -40,17 +29,13 @@ impl AnyNode {
     }
 
     /// Converts the [`AnyNode`] into [`DialOpts`].
-    pub fn as_dial_opts(&self) -> Result<DialOpts, DialOptsError> {
-        let peer_id = PeerUtils::local_id_to_p2p_id(self.peer_id()).map_err(|e| match e {
-            PeerIdConversionError::InvalidPeerId(e) => DialOptsError::InvalidPeerId(e),
-            PeerIdConversionError::InvalidPublicKey(e) => DialOptsError::InvalidPublicKey(e),
-        })?;
-        Ok(peer_id.into())
+    pub fn as_dial_opts(&self) -> Result<DialOpts, PeerIdConversionError> {
+        Ok(PeerUtils::local_id_to_p2p_id(self.peer_id())?.into())
     }
 }
 
 impl TryFrom<AnyNode> for DialOpts {
-    type Error = DialOptsError;
+    type Error = PeerIdConversionError;
 
     fn try_from(node: AnyNode) -> Result<Self, Self::Error> {
         node.as_dial_opts()
@@ -78,8 +63,8 @@ mod tests {
     fn test_into_dial_ops_error() {
         let peer_id: PeerId = PeerId::ZERO;
         let any_node = AnyNode::from(peer_id);
-        let res: DialOptsError = any_node.as_dial_opts().unwrap_err();
-        assert!(matches!(res, DialOptsError::InvalidPeerId(_)));
+        let res: PeerIdConversionError = any_node.as_dial_opts().unwrap_err();
+        assert!(matches!(res, PeerIdConversionError::InvalidPeerId(_)));
     }
 
     #[test]
