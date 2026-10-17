@@ -6,7 +6,9 @@ pub use contracts::{
 };
 
 mod operation;
-pub use operation::{WithdrawalProvingOutput, WithdrawalStatus, Withdrawer, WithdrawerError};
+pub use operation::{
+    WithdrawalOutcome, WithdrawalProvingOutput, WithdrawalStatus, Withdrawer, WithdrawerError,
+};
 
 mod config;
 pub use config::{
