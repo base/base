@@ -8,7 +8,6 @@ use alloy_primitives::{Bloom, Log};
 use alloy_rlp::{Buf, BufMut, Decodable, Encodable, Header};
 
 use super::BaseTxReceipt;
-use crate::transaction::DepositInfo;
 
 /// [`DepositReceipt`] with calculated bloom filter, modified for Base.
 ///
@@ -84,14 +83,6 @@ impl<T> DepositReceipt<T> {
     /// Consumes the type and returns the inner [`Receipt`].
     pub fn into_inner(self) -> Receipt<T> {
         self.inner
-    }
-
-    /// Returns the deposit info for this receipt.
-    pub const fn deposit_info(&self) -> DepositInfo {
-        DepositInfo {
-            deposit_nonce: self.deposit_nonce,
-            deposit_receipt_version: self.deposit_receipt_version,
-        }
     }
 
     /// Converts the receipt's log type by applying a function to each log.
