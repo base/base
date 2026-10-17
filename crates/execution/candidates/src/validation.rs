@@ -101,7 +101,8 @@ impl CandidateValidator {
         Ok(group)
     }
 
-    fn check_bounds(&self, raw_siblings: &[Bytes]) -> Result<(), CandidateError> {
+    /// Checks sibling count and request byte bounds before any decoding.
+    pub fn check_bounds(&self, raw_siblings: &[Bytes]) -> Result<(), CandidateError> {
         let max = self.limits.max_siblings.min(MAX_SIBLINGS_CEILING);
         if raw_siblings.len() < 2 {
             return Err(CandidateError::TooFewSiblings);
@@ -122,7 +123,8 @@ impl CandidateValidator {
         Ok(())
     }
 
-    fn decode(raw_siblings: &[Bytes]) -> Result<Vec<CandidateSibling>, CandidateError> {
+    /// Decodes and recovers each sibling, rejecting non-EIP-1559 encodings.
+    pub fn decode(raw_siblings: &[Bytes]) -> Result<Vec<CandidateSibling>, CandidateError> {
         raw_siblings
             .iter()
             .enumerate()
@@ -143,7 +145,9 @@ impl CandidateValidator {
             .collect()
     }
 
-    fn check_uniformity(&self, siblings: &[CandidateSibling]) -> Result<(), CandidateError> {
+    /// Checks that siblings share sender, nonce, fees and gas limit, are distinct, and stay
+    /// within the sibling gas cap (design §4.2).
+    pub fn check_uniformity(&self, siblings: &[CandidateSibling]) -> Result<(), CandidateError> {
         let first = &siblings[0];
         let first_tx = first.transaction.inner();
         for sibling in siblings {
@@ -180,7 +184,8 @@ impl CandidateValidator {
         Ok(())
     }
 
-    fn check_envelope(
+    /// Checks the envelope against the siblings and the configured limits.
+    pub fn check_envelope(
         envelope: &CandidateEnvelope,
         siblings: &[CandidateSibling],
     ) -> Result<(), CandidateError> {
@@ -221,7 +226,8 @@ impl CandidateValidator {
         Ok(())
     }
 
-    fn check_signature(group: &CandidateGroup) -> Result<(), CandidateError> {
+    /// Checks that the envelope signer is the siblings' sender.
+    pub fn check_signature(group: &CandidateGroup) -> Result<(), CandidateError> {
         let signature = group.signature();
         if signature.normalize_s().is_some() {
             return Err(CandidateError::EnvelopeSignatureInvalid);

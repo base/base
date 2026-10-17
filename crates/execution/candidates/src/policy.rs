@@ -181,7 +181,8 @@ impl StaticAccessPolicy {
         self.used.lock().get(&principal).copied().unwrap_or_default()
     }
 
-    fn authorized(&self, principal: PrincipalId) -> bool {
+    /// Returns whether `principal` is still listed in the principals file.
+    pub fn authorized(&self, principal: PrincipalId) -> bool {
         self.senders.values().any(|id| *id == principal)
     }
 }

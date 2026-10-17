@@ -67,6 +67,15 @@ impl CandidateGroup {
                     core::mem::size_of::<CandidateSibling>()
                         + sibling.encoded.len()
                         + sibling.transaction.inner().input().len()
+                        + sibling.transaction.inner().access_list().map_or(0, |list| {
+                            core::mem::size_of_val(list.0.as_slice())
+                                + list
+                                    .iter()
+                                    .map(|item| {
+                                        core::mem::size_of_val(item.storage_keys.as_slice())
+                                    })
+                                    .sum::<usize>()
+                        })
                 })
                 .sum::<usize>();
         Self { envelope, signature, group_hash, chain_id, siblings, heap_size }
@@ -135,5 +144,46 @@ impl CandidateGroup {
     /// Returns the heap memory held by the group, fixed at construction.
     pub const fn heap_size(&self) -> usize {
         self.heap_size
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_eips::eip2930::{AccessList, AccessListItem};
+
+    use super::*;
+    use crate::test_utils::CandidateFixture;
+
+    fn group_with_access_list(access_list: AccessList) -> CandidateGroup {
+        let fixture = CandidateFixture::new(8_453);
+        let raw: Vec<Bytes> = (1..=2_u64)
+            .map(|value| {
+                let mut tx = fixture.sibling_tx(0, Address::repeat_byte(0x77), U256::from(value));
+                tx.access_list = access_list.clone();
+                fixture.encode(tx)
+            })
+            .collect();
+        let envelope = fixture.envelope_for(&raw, 0);
+        fixture.group(&raw, envelope)
+    }
+
+    #[test]
+    fn access_lists_count_toward_the_sidecar_heap() {
+        let plain = group_with_access_list(AccessList::default());
+        let keys = vec![B256::ZERO; 4];
+        let listed = group_with_access_list(AccessList(vec![AccessListItem {
+            address: Address::repeat_byte(0x01),
+            storage_keys: keys.clone(),
+        }]));
+
+        let encoded_growth: usize = listed
+            .siblings()
+            .iter()
+            .zip(plain.siblings())
+            .map(|(listed, plain)| listed.encoded.len() - plain.encoded.len())
+            .sum();
+        let backing =
+            2 * (core::mem::size_of::<AccessListItem>() + core::mem::size_of_val(keys.as_slice()));
+        assert_eq!(listed.heap_size() - plain.heap_size(), encoded_growth + backing);
     }
 }

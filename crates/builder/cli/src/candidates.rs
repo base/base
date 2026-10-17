@@ -5,8 +5,8 @@ use std::{path::PathBuf, sync::Arc};
 
 use base_execution_candidates::{
     CandidateLimits, CandidateRuntime, CandidateSwitch, DEFAULT_MAX_EVALUATIONS,
-    DEFAULT_MAX_SIBLING_GAS, DEFAULT_MAX_SIBLINGS, DEFAULT_PROBE_GAS, GroupLedger, PrincipalsFile,
-    StaticAccessPolicy,
+    DEFAULT_MAX_SIBLING_GAS, DEFAULT_MAX_SIBLINGS, DEFAULT_PROBE_GAS, GroupLedger,
+    MAX_SIBLINGS_CEILING, PrincipalsFile, StaticAccessPolicy,
 };
 use base_execution_payload_builder::{
     CandidateBuilderConfig, DEFAULT_CANDIDATE_BUILD_DEADLINE, DEFAULT_CANDIDATE_BUILD_WORK_GAS,
@@ -120,6 +120,10 @@ impl CandidateArgs {
         if !self.candidates_enabled {
             return Ok(None);
         }
+        eyre::ensure!(
+            (2..=MAX_SIBLINGS_CEILING).contains(&self.max_siblings),
+            "--txpool.candidates.max-siblings must be between 2 and {MAX_SIBLINGS_CEILING}"
+        );
         // Fail closed: the ledger cannot be recovered after a restart (design §4.4, §4.6).
         eyre::ensure!(
             self.ephemeral_ledger,
@@ -236,5 +240,19 @@ mod tests {
         let args = CommandParser::parse_from(["test", "--txpool.candidates.enabled"]).args;
         let err = args.runtime().expect_err("an unrecoverable ledger fails closed");
         assert!(err.to_string().contains("ephemeral-ledger"), "got {err}");
+    }
+
+    #[test]
+    fn max_siblings_past_the_request_ceiling_is_rejected() {
+        let args = CommandParser::parse_from([
+            "test",
+            "--txpool.candidates.enabled",
+            "--txpool.candidates.ephemeral-ledger",
+            "--txpool.candidates.max-siblings",
+            "17",
+        ])
+        .args;
+        let err = args.runtime().expect_err("the request decoder stops at the ceiling");
+        assert!(err.to_string().contains("max-siblings"), "got {err}");
     }
 }

@@ -24,9 +24,9 @@ alloy-primitives = { workspace = true, features = ["k256", "serde"] }
 base-common-consensus = { workspace = true, features = ["k256", "serde", "std"] }
 
 # misc
-serde = { workspace = true, features = ["derive", "std"] }
 thiserror.workspace = true
 parking_lot.workspace = true
+serde = { workspace = true, features = ["derive", "std"] }
 
 # test-utils
 alloy-signer = { workspace = true, optional = true }

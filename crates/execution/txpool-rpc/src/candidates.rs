@@ -143,7 +143,8 @@ impl<Provider, Pool> SendRawTransactionCandidatesApiImpl<Provider, Pool> {
         self
     }
 
-    fn reject(error: &CandidateError) -> ErrorObjectOwned {
+    /// Maps a candidate rejection to its `-32602` error with the stable reason label.
+    pub fn reject(error: &CandidateError) -> ErrorObjectOwned {
         ErrorObjectOwned::owned(
             ErrorCode::InvalidParams.code(),
             error.to_string(),
@@ -151,13 +152,14 @@ impl<Provider, Pool> SendRawTransactionCandidatesApiImpl<Provider, Pool> {
         )
     }
 
-    fn internal(message: String) -> ErrorObjectOwned {
+    /// Returns a `-32603` internal error.
+    pub fn internal(message: String) -> ErrorObjectOwned {
         ErrorObjectOwned::owned(ErrorCode::InternalError.code(), message, None::<()>)
     }
 
     /// Locks the in-flight map. Ledger transitions between `Pending` and a settled state happen
     /// under this lock, so a `Pending` entry always has a registered receiver.
-    fn lock_inflight(&self) -> MutexGuard<'_, HashMap<B256, watch::Receiver<Option<bool>>>> {
+    pub fn lock_inflight(&self) -> MutexGuard<'_, HashMap<B256, watch::Receiver<Option<bool>>>> {
         self.inflight.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
@@ -185,7 +187,7 @@ where
     Provider: BlockReaderIdExt + ChainSpecProvider<ChainSpec: Upgrades> + StateProviderFactory,
 {
     /// Returns the inclusive window `expiryBlock` must fall in, or `None` before genesis.
-    fn expiry_window(&self) -> RpcResult<Option<ExpiryWindow>> {
+    pub fn expiry_window(&self) -> RpcResult<Option<ExpiryWindow>> {
         let header = self
             .provider
             .latest_header()
@@ -203,7 +205,7 @@ where
     }
 
     /// Rejects EIP-7702-delegated senders (design §4.2).
-    fn ensure_sender_not_delegated(&self, group: &CandidateGroup) -> RpcResult<()> {
+    pub fn ensure_sender_not_delegated(&self, group: &CandidateGroup) -> RpcResult<()> {
         let state = self
             .provider
             .latest()
