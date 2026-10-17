@@ -316,9 +316,6 @@ async fn run_worker(
     let registry_configured = registration_health.is_some();
     let config = runtime.prover_config()?;
 
-    if transports.is_empty() {
-        return Err(eyre!("at least one enclave transport is required"));
-    }
     let enclave_count = transports.len();
     if enclave_count > 1 && !registry_configured {
         match transport_mode {
