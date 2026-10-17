@@ -151,6 +151,7 @@ Find a doc through the index below instead of grepping the tree. After adding, m
 
 ## Crates: execution
 
+- [crates/execution/candidates/README.md](crates/execution/candidates/README.md): base-execution-candidates: CandidateSet envelope and validation, GroupLedger, access policy, lifecycle precedence and winner scoring for base_sendRawTransactionCandidates; off by default.
 - [crates/execution/chainspec/README.md](crates/execution/chainspec/README.md): BaseChainSpec and SUPPORTED_CHAINS CLI resolution, Holocene/Jovian base fee helpers, and Denim timestamp validation rules (custom genesis needs nonzero config.blockTime). Use for chain/fork config.
 - [crates/execution/cli/README.md](crates/execution/cli/README.md): base-execution-cli: Base execution node CLI wrapper with BaseChainSpecParser and a Cli type that drives node startup. Use when changing node argument parsing or chain selection.
 - [crates/execution/consensus/README.md](crates/execution/consensus/README.md): BaseBeaconConsensus for execution-layer block header/body validation (blob gas, deposits, Canyon EIP-1559, Isthmus) plus receipt root helpers. Use when touching block validation rules.

@@ -135,6 +135,14 @@ where
                 continue;
             }
 
+            // The flashblocks builder does not run candidate selection. Parking keeps the group's
+            // lane intact for a native build and never executes the representative as plain.
+            if tx.candidate_group().is_some() {
+                self.inner.park_current();
+                self.current_transaction = None;
+                continue;
+            }
+
             if self.resting_predicate_mode.is_enforced()
                 && !self.resting.is_empty()
                 && !tx.validity_predicates().is_empty()
@@ -245,6 +253,7 @@ mod tests {
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{Address, Signature, TxHash, TxKind, U256};
     use base_common_consensus::{BaseTransactionSigned, BaseTxEnvelope};
+    use base_execution_candidates::test_utils::CandidateFixture;
     use base_execution_txpool::{
         BaseOrdering, BasePooledTransaction, ParkedBestTransactions, ValidityOperator,
         ValidityPredicate,
@@ -352,6 +361,32 @@ mod tests {
             Some(*transaction.hash())
         })
         .collect()
+    }
+
+    #[test]
+    fn candidate_groups_are_parked_instead_of_executed() {
+        let fixture = CandidateFixture::new(1);
+        let (raw, envelope, _) = fixture.submission(2, 0);
+        let group = Arc::new(fixture.group(&raw, envelope));
+        let representative = Arc::new(ValidPoolTransaction {
+            transaction_id: TransactionId::new(9.into(), 0),
+            transaction: BasePooledTransaction::new(
+                group.representative().transaction.clone(),
+                group.representative().encoded.len(),
+            )
+            .with_candidate_group(Arc::clone(&group)),
+            propagate: false,
+            timestamp: std::time::Instant::now(),
+            origin: TransactionOrigin::Private,
+            authority_ids: None,
+        });
+        let plain = transaction(0, 0, 1);
+        let pool = pending_pool(&[representative, Arc::clone(&plain)]);
+
+        let mut iterator = BestFlashblocksTxs::new(parkable(&pool), test_rejection_cache());
+        iterator.refresh_iterator(parkable(&pool));
+
+        assert_eq!(drain_without_including(&mut iterator), [*plain.hash()]);
     }
 
     #[test]
