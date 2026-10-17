@@ -153,8 +153,9 @@ pub struct Config {
     pub dispute_timeout: Duration,
 
     /// How long the driver keeps retrying an L2 RPC read that fails the way an
-    /// unavailable node does (`no state found`, a refused connection, a 503),
-    /// before it gives up and fails the run as an infrastructure failure.
+    /// unavailable node does (`no state found`, a refused connection, an HTTP
+    /// 502/503/504/429 from a load balancer), before it gives up and fails the
+    /// run as an infrastructure failure.
     ///
     /// Covers a node restart. The challenger reads the same node, so while it
     /// is down no dispute can be expected of the challenger either.

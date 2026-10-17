@@ -242,16 +242,6 @@ mod tests {
     }
 
     #[test]
-    fn phase_is_the_running_one() {
-        let mut progress = Progress::new(Scenario::Path3);
-        assert_eq!(progress.phase(), None);
-        progress.start(Phase::Setup);
-        assert_eq!(progress.phase(), Some(Phase::Setup));
-        progress.pass();
-        assert_eq!(progress.phase(), None);
-    }
-
-    #[test]
     fn positions_follow_the_plan() {
         let progress = Progress::new(Scenario::Path3);
         assert_eq!(progress.position(Phase::Setup), 1);

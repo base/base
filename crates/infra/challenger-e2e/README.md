@@ -364,7 +364,8 @@ whoever triages it after the wrong component. The driver keeps the two apart:
   behind each selected game's final root — the read every path makes to compute
   the canonical root it corrupts — and so does every path, right before its
   patch. A read that fails the way an unavailable node does (`no state found`, a
-  missing block, a refused connection, a 502/503/504) is retried for
+  missing block, a refused connection, an HTTP 502/503/504/429 from a load
+  balancer, whatever its body says) is retried for
   `CHALLENGER_E2E_L2_RETRY_BUDGET`, which covers a node restart.
 - **It reads L2 state at every dispute timeout, and when a patch fails.** The
   challenger validates against the same node, so a timeout while that node

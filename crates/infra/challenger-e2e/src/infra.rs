@@ -49,7 +49,7 @@ const ATTEMPT_TIMEOUT: Duration = Duration::from_secs(30);
 /// Matched case-insensitively against the whole error chain. Kept narrow on
 /// purpose: an error that matches is retried and, if it persists, excused from
 /// counting against the challenger.
-const TRANSIENT_PATTERNS: [&str; 11] = [
+const TRANSIENT_PATTERNS: [&str; 12] = [
     // reth while a node restarts or before it has state for a block.
     "no state found",
     "header not found",
@@ -60,10 +60,14 @@ const TRANSIENT_PATTERNS: [&str; 11] = [
     "connection reset",
     // An attempt cut off by `ATTEMPT_TIMEOUT`.
     "did not answer within",
-    // A load balancer in front of the node.
-    "502 bad gateway",
-    "503 service unavailable",
-    "504 gateway timeout",
+    // A load balancer in front of the node. alloy renders a non-JSON-RPC
+    // response as `HTTP error {status} with empty body` or `... with body: ..`,
+    // so the status is matched, not whatever the body says.
+    "http error 502 ",
+    "http error 503 ",
+    "http error 504 ",
+    "http error 429 ",
+    // alloy's own wording for a rate limit it reports outside `HttpError`.
     "429 too many requests",
 ];
 
@@ -234,10 +238,21 @@ mod tests {
             "server returned an error response: error code -32603: no state found for block \
              number 4788534",
             "error sending request for url (https://l2.example/)",
-            "HTTP error 503 Service Unavailable",
+            // alloy's `HttpError` behind an empty body, nginx and Envoy.
+            "HTTP error 503 with empty body",
+            "HTTP error 504 with body: <html><center><h1>504 Gateway Time-out</h1></center></html>",
+            "HTTP error 502 with body: upstream connect error or disconnect/reset before headers",
+            "HTTP error 429 with empty body",
         ] {
             let error = eyre::eyre!("{message}").wrap_err("failed to fetch proof");
             assert!(Unavailable::looks_transient(&error), "{message}");
+        }
+    }
+
+    #[test]
+    fn other_http_statuses_are_not_transient() {
+        for message in ["HTTP error 500 with empty body", "HTTP error 5030 with empty body"] {
+            assert!(!Unavailable::looks_transient(&eyre::eyre!("{message}")), "{message}");
         }
     }
 
