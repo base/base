@@ -3571,7 +3571,6 @@ dependencies = [
  "backtrace",
  "base-metrics",
  "clap",
- "dirs-next",
  "eyre",
  "libc",
  "metrics",

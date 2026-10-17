@@ -580,7 +580,6 @@ either = { version = "1.15.0", default-features = false }
 
 # configuration
 dirs = "6.0.0"
-dirs-next = "2.0.0"
 dotenvy = { version = "0.15.7", default-features = false }
 figment = { version = "0.10.19", default-features = false }
 
