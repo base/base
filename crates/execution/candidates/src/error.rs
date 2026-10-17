@@ -78,8 +78,9 @@ pub enum CandidateError {
     /// The ledger records this group as landed, exhausted, replaced or revoked.
     #[error("candidate group is terminal")]
     GroupTerminal,
-    /// The representative hash is already pooled under a different envelope.
-    #[error("representative is already pooled under a different envelope")]
+    /// The representative hash is already pooled, as a plain transaction or under a different
+    /// envelope.
+    #[error("representative is already pooled")]
     RepresentativeConflict,
     /// The sender maps to no authorized principal.
     #[error("sender is not an authorized candidate principal")]
@@ -96,6 +97,9 @@ pub enum CandidateError {
     /// The pool already holds the maximum number of groups.
     #[error("pool candidate group limit reached")]
     PoolGroupLimit,
+    /// A concurrent submission of the same group failed to insert it into the pool.
+    #[error("a concurrent submission of this candidate group failed")]
+    ConcurrentSubmissionFailed,
     /// The group ledger is unavailable; admission fails closed.
     #[error("candidate ledger unavailable")]
     LedgerUnavailable,
@@ -137,6 +141,7 @@ impl CandidateError {
             Self::PrincipalQuotaExhausted => "principal_quota_exhausted",
             Self::SenderGroupLimit => "sender_group_limit",
             Self::PoolGroupLimit => "pool_group_limit",
+            Self::ConcurrentSubmissionFailed => "concurrent_submission_failed",
             Self::LedgerUnavailable => "ledger_unavailable",
             Self::CombinedWithValidity => "combined_with_validity",
             Self::SenderDelegated => "sender_delegated",

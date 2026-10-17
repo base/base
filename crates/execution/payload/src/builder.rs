@@ -2983,7 +2983,7 @@ mod tests {
         let group = Arc::new(fixture.group(&raw, envelope));
         runtime
             .ledger
-            .create(Arc::clone(&group), PrincipalId(1), 0, |_| true)
+            .create(Arc::clone(&group), PrincipalId(1), 0, |_| false)
             .expect("group is admitted");
         runtime.ledger.confirm_pooled(group.group_hash());
         group

@@ -1827,6 +1827,9 @@ where
                 guard.release(transaction.hash());
             }
         }
+        if let Some(candidates) = &self.candidates {
+            candidates.ledger.record_landed(&mined_transactions, block_number);
+        }
         self.expire_due_buckets(now);
         self.expire_by_block(block_number);
         self.reconcile_guard();
@@ -4216,7 +4219,7 @@ mod tests {
         let group = Arc::new(fixture.group(&raw, envelope));
         runtime
             .ledger
-            .create(Arc::clone(&group), base_execution_candidates::PrincipalId(1), 0, |_| true)
+            .create(Arc::clone(&group), base_execution_candidates::PrincipalId(1), 0, |_| false)
             .expect("group is admitted");
         let representative =
             BasePooledTransaction::recover_raw_transaction(&group.representative().encoded)

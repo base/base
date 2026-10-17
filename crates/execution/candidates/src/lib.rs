@@ -36,7 +36,7 @@ mod ledger;
 pub use ledger::{
     DEFAULT_MAX_EVALUATIONS, DEFAULT_MAX_GROUPS, DEFAULT_MAX_GROUPS_PER_SENDER,
     DEFAULT_RECOVERY_WINDOW_BLOCKS, EvictionReason, GroupLedger, GroupLedgerEntry,
-    GroupReservation, GroupState, LedgerAdmission, LedgerLimits, ReserveError,
+    GroupReservation, GroupState, LedgerAdmission, LedgerLimits, LedgerState, ReserveError,
 };
 
 mod lifecycle;

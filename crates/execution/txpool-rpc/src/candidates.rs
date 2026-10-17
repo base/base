@@ -1,13 +1,16 @@
 //! `base_sendRawTransactionCandidates` ingress and its runtime kill switch.
 
-use std::sync::Arc;
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex, MutexGuard, PoisonError},
+};
 
 use alloy_consensus::BlockHeader;
 use alloy_primitives::{B256, Bytes, Signature, TxHash};
 use base_common_chains::Upgrades;
 use base_execution_candidates::{
     CandidateEnvelope, CandidateError, CandidateGroup, CandidateRuntime, CandidateValidator,
-    ExpiryWindow, GroupSummary, LedgerAdmission,
+    ExpiryWindow, GroupState, GroupSummary, LedgerAdmission,
 };
 use base_execution_rpc::SequencerClient;
 use base_execution_txpool::BasePooledTransaction;
@@ -21,6 +24,7 @@ use reth_rpc_eth_types::EthApiError;
 use reth_storage_api::{BlockReaderIdExt, StateProviderFactory};
 use reth_transaction_pool::{TransactionOrigin, TransactionPool};
 use serde::{Deserialize, Deserializer, Serialize};
+use tokio::sync::watch;
 use tracing::{debug, info};
 
 use crate::BlockCadence;
@@ -94,6 +98,10 @@ pub trait AdminCandidateSelectionApi {
     async fn set_candidate_selection_enabled(&self, enabled: bool) -> RpcResult<bool>;
 }
 
+/// Pool insertions in flight, by `groupHash`. The value becomes `Some(inserted)` when the
+/// first request finishes; exact duplicates wait on it instead of reporting acceptance early.
+pub type InflightAdmissions = Arc<Mutex<HashMap<B256, watch::Receiver<Option<bool>>>>>;
+
 /// Local ingress for candidate groups.
 #[derive(Debug, Clone)]
 pub struct SendRawTransactionCandidatesApiImpl<Provider, Pool> {
@@ -103,6 +111,7 @@ pub struct SendRawTransactionCandidatesApiImpl<Provider, Pool> {
     chain_id: u64,
     max_expiry_secs: u64,
     sequencer_client: Option<SequencerClient>,
+    inflight: InflightAdmissions,
 }
 
 impl<Provider, Pool> SendRawTransactionCandidatesApiImpl<Provider, Pool> {
@@ -110,14 +119,22 @@ impl<Provider, Pool> SendRawTransactionCandidatesApiImpl<Provider, Pool> {
     ///
     /// `max_expiry_secs` bounds how far past the next block `expiryBlock` may be, converted to
     /// blocks at the active full-block cadence.
-    pub const fn new(
+    pub fn new(
         provider: Provider,
         pool: Pool,
         runtime: Arc<CandidateRuntime>,
         chain_id: u64,
         max_expiry_secs: u64,
     ) -> Self {
-        Self { provider, pool, runtime, chain_id, max_expiry_secs, sequencer_client: None }
+        Self {
+            provider,
+            pool,
+            runtime,
+            chain_id,
+            max_expiry_secs,
+            sequencer_client: None,
+            inflight: InflightAdmissions::default(),
+        }
     }
 
     /// Proxies submissions unchanged to the sequencer instead of the local pool.
@@ -136,6 +153,30 @@ impl<Provider, Pool> SendRawTransactionCandidatesApiImpl<Provider, Pool> {
 
     fn internal(message: String) -> ErrorObjectOwned {
         ErrorObjectOwned::owned(ErrorCode::InternalError.code(), message, None::<()>)
+    }
+
+    /// Locks the in-flight map. Ledger transitions between `Pending` and a settled state happen
+    /// under this lock, so a `Pending` entry always has a registered receiver.
+    fn lock_inflight(&self) -> MutexGuard<'_, HashMap<B256, watch::Receiver<Option<bool>>>> {
+        self.inflight.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Waits for another request's insertion of the same group and mirrors its outcome.
+    async fn await_inflight(
+        receiver: Option<watch::Receiver<Option<bool>>>,
+        response: CandidateSubmissionResponse,
+    ) -> RpcResult<CandidateSubmissionResponse> {
+        let inserted = match receiver {
+            Some(mut receiver) => {
+                receiver.wait_for(Option::is_some).await.is_ok_and(|outcome| *outcome == Some(true))
+            }
+            None => false,
+        };
+        if inserted {
+            Ok(response)
+        } else {
+            Err(Self::reject(&CandidateError::ConcurrentSubmissionFailed))
+        }
     }
 }
 
@@ -218,12 +259,25 @@ where
         let group = Arc::new(group);
         let response = CandidateSubmissionResponse::from(group.as_ref());
 
-        // Step 6: an exact duplicate returns the original response before any other check.
-        if let Some(entry) = self.runtime.ledger.lookup(&response.group_hash) {
-            if entry.state.is_terminal() {
-                return Err(Self::reject(&CandidateError::GroupTerminal));
+        // Step 6: an exact duplicate returns the original response before any other check,
+        // but only once the group is actually pooled.
+        let in_flight = {
+            let inflight = self.lock_inflight();
+            match self
+                .runtime
+                .ledger
+                .classify(&response.group_hash, |hash| self.pool.contains(hash))
+            {
+                None => None,
+                Some(state) if state.is_terminal() => {
+                    return Err(Self::reject(&CandidateError::GroupTerminal));
+                }
+                Some(GroupState::Pending) => Some(inflight.get(&response.group_hash).cloned()),
+                Some(_) => return Ok(response),
             }
-            return Ok(response);
+        };
+        if let Some(receiver) = in_flight {
+            return Self::await_inflight(receiver, response).await;
         }
 
         // Step 7: access policy.
@@ -244,28 +298,49 @@ where
             .map_err(|denied| Self::reject(&CandidateError::from(denied)))?;
 
         // Step 8: ledger entry, then pool insertion; confirm or abort atomically per group.
-        let admission = self
-            .runtime
-            .ledger
-            .create(Arc::clone(&group), principal, policy.policy_version(), |hash| {
-                self.pool.contains(hash)
-            })
-            .map_err(|error| Self::reject(&error))?;
-        if admission == LedgerAdmission::Duplicate {
-            return Ok(response);
-        }
+        let created = {
+            let mut inflight = self.lock_inflight();
+            let admission = self
+                .runtime
+                .ledger
+                .create(Arc::clone(&group), principal, policy.policy_version(), |hash| {
+                    self.pool.contains(hash)
+                })
+                .map_err(|error| Self::reject(&error))?;
+            match admission {
+                LedgerAdmission::Duplicate => return Ok(response),
+                LedgerAdmission::Pending => Err(inflight.get(&response.group_hash).cloned()),
+                LedgerAdmission::Created => {
+                    let (sender, receiver) = watch::channel(None);
+                    inflight.insert(response.group_hash, receiver);
+                    Ok(sender)
+                }
+            }
+        };
+        let outcome = match created {
+            Ok(sender) => sender,
+            Err(receiver) => return Self::await_inflight(receiver, response).await,
+        };
         let representative = group.representative();
         let transaction = BasePooledTransaction::new(
             representative.transaction.clone(),
             representative.encoded.len(),
         )
         .with_candidate_group(Arc::clone(&group));
-        if let Err(error) = self.pool.add_transaction(TransactionOrigin::Private, transaction).await
+        let inserted = self.pool.add_transaction(TransactionOrigin::Private, transaction).await;
         {
-            self.runtime.ledger.abort(response.group_hash);
+            let mut inflight = self.lock_inflight();
+            inflight.remove(&response.group_hash);
+            if inserted.is_ok() {
+                self.runtime.ledger.confirm_pooled(response.group_hash);
+            } else {
+                self.runtime.ledger.abort(response.group_hash);
+            }
+        }
+        outcome.send_replace(Some(inserted.is_ok()));
+        if let Err(error) = inserted {
             return Err(ErrorObjectOwned::from(EthApiError::from(error)));
         }
-        self.runtime.ledger.confirm_pooled(response.group_hash);
         info!(
             group_hash = %response.group_hash,
             representative = %response.representative_hash,
@@ -440,6 +515,70 @@ mod tests {
         assert_eq!(first, second);
         assert_eq!(pool.pool_size().total, 1);
         assert_eq!(runtime.ledger.counts(), (1, 1));
+    }
+
+    #[tokio::test]
+    async fn pending_duplicate_waits_instead_of_reporting_acceptance() {
+        let fixture = fixture();
+        let runtime = runtime(&[fixture.address()]);
+        let api = rpc(provider(), pool(), &runtime, MAX_EXPIRY_SECS);
+        let (siblings, options) = request(&fixture);
+        let (envelope, signature) = (options.envelope.clone(), options.envelope_signature);
+        let group = CandidateValidator { limits: runtime.limits, chain_id: chain_id() }
+            .validate(&siblings.0, envelope, signature, None)
+            .unwrap();
+        // A first request created the entry; its insertion has not settled.
+        let (sender, receiver) = watch::channel(None);
+        api.lock_inflight().insert(group.group_hash(), receiver);
+        runtime.ledger.create(Arc::new(group), PRINCIPAL, 1, |_| false).unwrap();
+
+        let duplicate = tokio::spawn({
+            let api = api.clone();
+            async move { api.send_raw_transaction_candidates(siblings, options).await }
+        });
+        tokio::task::yield_now().await;
+        assert!(!duplicate.is_finished(), "duplicate must wait for the first insertion");
+        sender.send_replace(Some(false));
+
+        let error = duplicate.await.unwrap().unwrap_err();
+        assert_eq!(label(&error), "concurrent_submission_failed");
+    }
+
+    #[tokio::test]
+    async fn duplicate_after_admin_removal_is_terminal() {
+        let fixture = fixture();
+        let runtime = runtime(&[fixture.address()]);
+        let pool = pool();
+        let api = rpc(provider(), pool.clone(), &runtime, MAX_EXPIRY_SECS);
+        let (siblings, options) = request(&fixture);
+        let response =
+            api.send_raw_transaction_candidates(siblings.clone(), options.clone()).await.unwrap();
+        pool.remove_transactions(vec![response.representative_hash]);
+
+        let error = api.send_raw_transaction_candidates(siblings, options).await.unwrap_err();
+        assert_eq!(label(&error), "group_terminal");
+    }
+
+    #[tokio::test]
+    async fn plain_pooled_representative_is_a_representative_conflict() {
+        let fixture = fixture();
+        let runtime = runtime(&[fixture.address()]);
+        let pool = pool();
+        let api = rpc(provider(), pool.clone(), &runtime, MAX_EXPIRY_SECS);
+        let (siblings, options) = request(&fixture);
+        let group = CandidateValidator { limits: runtime.limits, chain_id: chain_id() }
+            .validate(&siblings.0, options.envelope.clone(), options.envelope_signature, None)
+            .unwrap();
+        let representative = group.representative();
+        let plain = BasePooledTransaction::new(
+            representative.transaction.clone(),
+            representative.encoded.len(),
+        );
+        pool.add_transaction(TransactionOrigin::External, plain).await.unwrap();
+
+        let error = api.send_raw_transaction_candidates(siblings, options).await.unwrap_err();
+        assert_eq!(label(&error), "representative_conflict");
+        assert_eq!(runtime.ledger.counts(), (0, 0));
     }
 
     #[tokio::test]
