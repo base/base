@@ -1,0 +1,56 @@
+# Fails if a workflow change breaks the workflow security policy, e.g. adds a
+# pull_request_target trigger or uses the Amp bot key without the required
+# lockdown. See .github/scripts/check_workflow_policy.py for the rules.
+# Make this a required status check on main.
+#
+# The check script is loaded from the base commit, so a PR (including one Amp
+# pushed to) can't weaken the rules it is checked against. New rules apply to
+# the PRs after the one that adds them.
+
+name: Workflow Policy
+
+on:
+  pull_request:
+  merge_group:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check workflow security policy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Check out the policy script from the base commit
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          path: policy-base
+          sparse-checkout: .github/scripts
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install PyYAML
+        run: python3 -m pip install --user --quiet pyyaml==6.0.2
+
+      - name: Check workflows
+        shell: bash
+        run: |
+          set -euo pipefail
+          script=policy-base/.github/scripts/check_workflow_policy.py
+          if [[ ! -f "$script" ]]; then
+            # Only for the PR that first adds the policy check.
+            echo "::warning::No policy script on the base commit; using this PR's copy."
+            script=.github/scripts/check_workflow_policy.py
+          fi
+          python3 "$script" .github/workflows
