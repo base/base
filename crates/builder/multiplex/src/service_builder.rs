@@ -79,6 +79,7 @@ impl MultiplexingServiceBuilder {
             },
             rejection_cache: self.builder_config.rejection_cache.clone(),
             state_provider_metrics,
+            candidates: self.builder_config.candidates.clone(),
         }
     }
 }

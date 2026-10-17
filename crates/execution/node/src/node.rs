@@ -17,7 +17,7 @@ use base_execution_chainspec::BaseChainSpec;
 use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::{BaseEvmConfig, BaseRethReceiptBuilder};
 use base_execution_payload_builder::{
-    Attributes, BaseBuiltPayload, BasePayloadBuilderAttributes,
+    Attributes, BaseBuiltPayload, BasePayloadBuilderAttributes, CandidateBuilderConfig,
     DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, PayloadPrimitives, RejectionCache,
     config::{BaseBuilderConfig, BaseDAConfig, GasLimitConfig, ResourceMeteringConfig},
 };
@@ -979,6 +979,8 @@ pub struct BasePayloadBuilder {
     pub resource_metering: ResourceMeteringConfig,
     /// Shared, cross-job cache of permanently rejected transaction hashes.
     pub rejection_cache: RejectionCache,
+    /// Candidate-group selection; `None` keeps candidate groups parked.
+    pub candidates: Option<CandidateBuilderConfig>,
 }
 
 impl Default for BasePayloadBuilder {
@@ -991,6 +993,7 @@ impl Default for BasePayloadBuilder {
             predicate_bucket_ordered_threshold: DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD,
             resource_metering: ResourceMeteringConfig::default(),
             rejection_cache: RejectionCache::default(),
+            candidates: None,
         }
     }
 }
@@ -1040,6 +1043,12 @@ impl BasePayloadBuilder {
     /// Configure the shared rejection cache for permanently rejected transactions.
     pub fn with_rejection_cache(mut self, rejection_cache: RejectionCache) -> Self {
         self.rejection_cache = rejection_cache;
+        self
+    }
+
+    /// Enables candidate-group selection in the native payload builder.
+    pub fn with_candidates(mut self, candidates: Option<CandidateBuilderConfig>) -> Self {
+        self.candidates = candidates;
         self
     }
 }
@@ -1092,6 +1101,7 @@ where
                     resource_metering: self.resource_metering,
                     rejection_cache: self.rejection_cache,
                     state_provider_metrics: ctx.config().engine.state_provider_metrics,
+                    candidates: self.candidates,
                 },
             );
         Ok(payload_builder)
