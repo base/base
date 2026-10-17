@@ -67,11 +67,6 @@ impl BaseTxEnvelope {
         }
     }
 
-    /// Returns whether this envelope is an EIP-8130 transaction.
-    pub const fn is_eip8130(&self) -> bool {
-        matches!(self, Self::Eip8130(_))
-    }
-
     /// Returns the transaction's gas limit.
     pub fn gas_limit(&self) -> u64 {
         match self {
@@ -154,7 +149,6 @@ mod tests {
         );
         let envelope = BaseTxEnvelope::from(tx);
         assert_eq!(envelope.ty(), EIP8130_TX_TYPE_ID);
-        assert!(envelope.is_eip8130());
         assert!(envelope.as_eip8130().is_some());
         assert_eq!(envelope.gas_limit(), 250_000);
         // An EIP-8130 tx is neither a deposit nor a standard transaction.

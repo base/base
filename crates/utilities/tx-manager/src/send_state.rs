@@ -4,10 +4,7 @@
 //! loop. All mutable fields use a [`std::sync::Mutex`] since critical sections
 //! are CPU-bound with no `.await` points.
 
-use std::{
-    sync::Mutex,
-    time::{Duration, Instant},
-};
+use std::{sync::Mutex, time::Duration};
 
 use alloy_primitives::B256;
 
@@ -30,14 +27,8 @@ struct SendStateInner {
     has_published: bool,
     nonce_too_low_count: u64,
     bump_count: u64,
-    mempool_deadline: Option<MempoolDeadline>,
+    mempool_deadline: Option<Duration>,
     assigned_nonce: Option<u64>,
-}
-
-#[derive(Debug, Clone, Copy)]
-enum MempoolDeadline {
-    Runtime(Duration),
-    WallClock(Instant),
 }
 
 impl SendState {
@@ -103,7 +94,7 @@ impl SendState {
         }
     }
 
-    /// Returns the critical error that should cause the send loop to abort, or
+    /// Returns the critical error at the given runtime-relative timestamp, or
     /// `None` if sending should continue.
     ///
     /// Conditions are checked in priority order:
@@ -116,22 +107,12 @@ impl SendState {
     ///    successfully published, returns
     ///    [`TxManagerError::MempoolDeadlineExpired`]. Once a publish has
     ///    succeeded the tx is in the mempool and the deadline's purpose is
-    ///    served — further waiting is governed by `tx_send_timeout` and the
+    ///    served. Further waiting is governed by `tx_send_timeout` and the
     ///    bump cycle, not by aborting (which would leak a pre-reserved nonce
     ///    and stall publication on lower nonces still live on L1).
     /// 5. Otherwise, returns `None`.
     #[must_use]
-    pub fn critical_error(&self) -> Option<TxManagerError> {
-        self.critical_error_with(None)
-    }
-
-    /// Returns the critical error using a runtime-relative timestamp.
-    #[must_use]
     pub fn critical_error_at(&self, now: Duration) -> Option<TxManagerError> {
-        self.critical_error_with(Some(now))
-    }
-
-    fn critical_error_with(&self, runtime_now: Option<Duration>) -> Option<TxManagerError> {
         let inner = self.inner.lock().expect("SendState mutex poisoned");
 
         if !inner.mined_txs.is_empty() {
@@ -145,17 +126,9 @@ impl SendState {
         }
         if !inner.has_published
             && let Some(deadline) = inner.mempool_deadline
+            && now >= deadline
         {
-            let expired = match deadline {
-                MempoolDeadline::Runtime(deadline) => match runtime_now {
-                    Some(now) => now >= deadline,
-                    None => return Some(TxManagerError::RuntimeMempoolDeadlineMissingTimestamp),
-                },
-                MempoolDeadline::WallClock(deadline) => Instant::now() >= deadline,
-            };
-            if expired {
-                return Some(TxManagerError::MempoolDeadlineExpired);
-            }
+            return Some(TxManagerError::MempoolDeadlineExpired);
         }
 
         None
@@ -189,13 +162,7 @@ impl SendState {
     /// timeout`.
     pub fn set_runtime_mempool_deadline(&self, absolute_deadline: Duration) {
         let mut inner = self.inner.lock().expect("SendState mutex poisoned");
-        inner.mempool_deadline = Some(MempoolDeadline::Runtime(absolute_deadline));
-    }
-
-    /// Sets the mempool inclusion deadline from wall-clock time.
-    pub fn set_wall_clock_mempool_deadline(&self, deadline: Instant) {
-        let mut inner = self.inner.lock().expect("SendState mutex poisoned");
-        inner.mempool_deadline = Some(MempoolDeadline::WallClock(deadline));
+        inner.mempool_deadline = Some(absolute_deadline);
     }
 
     /// Returns `true` if at least one transaction was successfully published.
@@ -243,7 +210,7 @@ mod tests {
     #[case::max(u64::MAX)]
     fn constructor_accepts_positive_threshold(#[case] count: u64) {
         let state = SendState::new(count).unwrap();
-        assert!(state.critical_error().is_none());
+        assert!(state.critical_error_at(Duration::ZERO).is_none());
     }
 
     // ── Fresh state ─────────────────────────────────────────────────────
@@ -251,7 +218,7 @@ mod tests {
     #[test]
     fn fresh_state_has_no_critical_error() {
         let state = SendState::new(3).unwrap();
-        assert!(state.critical_error().is_none());
+        assert!(state.critical_error_at(Duration::ZERO).is_none());
     }
 
     #[test]
@@ -274,7 +241,7 @@ mod tests {
         state.record_successful_publish();
         state.process_send_error(&TxManagerError::NonceTooLow);
         state.process_send_error(&TxManagerError::NonceTooLow);
-        assert!(state.critical_error().is_none());
+        assert!(state.critical_error_at(Duration::ZERO).is_none());
     }
 
     #[test]
@@ -284,7 +251,7 @@ mod tests {
         for _ in 0..3 {
             state.process_send_error(&TxManagerError::NonceTooLow);
         }
-        assert_eq!(state.critical_error(), Some(TxManagerError::NonceTooLow));
+        assert_eq!(state.critical_error_at(Duration::ZERO), Some(TxManagerError::NonceTooLow));
     }
 
     #[test]
@@ -294,7 +261,7 @@ mod tests {
         for _ in 0..5 {
             state.process_send_error(&TxManagerError::NonceTooLow);
         }
-        assert_eq!(state.critical_error(), Some(TxManagerError::NonceTooLow));
+        assert_eq!(state.critical_error_at(Duration::ZERO), Some(TxManagerError::NonceTooLow));
     }
 
     // ── Mined tx suppression ────────────────────────────────────────────
@@ -307,21 +274,23 @@ mod tests {
         for _ in 0..5 {
             state.process_send_error(&TxManagerError::NonceTooLow);
         }
-        assert_eq!(state.critical_error(), Some(TxManagerError::NonceTooLow));
+        assert_eq!(state.critical_error_at(Duration::ZERO), Some(TxManagerError::NonceTooLow));
 
-        // Mine a tx — critical_error should now return None.
         state.tx_mined(B256::with_last_byte(1));
-        assert!(state.critical_error().is_none());
+        assert!(state.critical_error_at(Duration::ZERO).is_none());
     }
 
     #[test]
     fn mined_tx_suppresses_mempool_deadline_abort() {
         let state = SendState::new(3).unwrap();
-        state.set_wall_clock_mempool_deadline(Instant::now() - Duration::from_secs(1));
-        assert_eq!(state.critical_error(), Some(TxManagerError::MempoolDeadlineExpired));
+        state.set_runtime_mempool_deadline(Duration::ZERO);
+        assert_eq!(
+            state.critical_error_at(Duration::ZERO),
+            Some(TxManagerError::MempoolDeadlineExpired)
+        );
 
         state.tx_mined(B256::with_last_byte(1));
-        assert!(state.critical_error().is_none());
+        assert!(state.critical_error_at(Duration::ZERO).is_none());
     }
 
     // ── tx_not_mined reset ──────────────────────────────────────────────
@@ -339,17 +308,17 @@ mod tests {
             state.process_send_error(&TxManagerError::NonceTooLow);
         }
         // Still suppressed by mined tx.
-        assert!(state.critical_error().is_none());
+        assert!(state.critical_error_at(Duration::ZERO).is_none());
 
         // Un-mine: counter should reset.
         state.tx_not_mined(tx);
-        assert!(state.critical_error().is_none());
+        assert!(state.critical_error_at(Duration::ZERO).is_none());
 
         // Need fresh errors to re-trigger.
         for _ in 0..3 {
             state.process_send_error(&TxManagerError::NonceTooLow);
         }
-        assert_eq!(state.critical_error(), Some(TxManagerError::NonceTooLow));
+        assert_eq!(state.critical_error_at(Duration::ZERO), Some(TxManagerError::NonceTooLow));
     }
 
     // ── Multiple mined txs ──────────────────────────────────────────────
@@ -370,7 +339,7 @@ mod tests {
 
         // Remove one — still has another mined tx, no reset.
         state.tx_not_mined(tx1);
-        assert!(state.critical_error().is_none());
+        assert!(state.critical_error_at(Duration::ZERO).is_none());
         assert!(state.is_waiting_for_confirmation());
     }
 
@@ -382,12 +351,12 @@ mod tests {
         for _ in 0..5 {
             state.process_send_error(&TxManagerError::NonceTooLow);
         }
-        assert_eq!(state.critical_error(), Some(TxManagerError::NonceTooLow));
+        assert_eq!(state.critical_error_at(Duration::ZERO), Some(TxManagerError::NonceTooLow));
 
         // Removing a hash that was never mined is a no-op — the counter
         // is preserved and the abort remains valid.
         state.tx_not_mined(B256::with_last_byte(99));
-        assert_eq!(state.critical_error(), Some(TxManagerError::NonceTooLow));
+        assert_eq!(state.critical_error_at(Duration::ZERO), Some(TxManagerError::NonceTooLow));
     }
 
     #[test]
@@ -408,7 +377,7 @@ mod tests {
         state.tx_not_mined(tx2);
 
         // Counter was reset — no abort yet.
-        assert!(state.critical_error().is_none());
+        assert!(state.critical_error_at(Duration::ZERO).is_none());
     }
 
     // ── Mempool deadline ────────────────────────────────────────────────
@@ -416,21 +385,24 @@ mod tests {
     #[test]
     fn expired_mempool_deadline_triggers_abort() {
         let state = SendState::new(3).unwrap();
-        state.set_wall_clock_mempool_deadline(Instant::now() - Duration::from_secs(1));
-        assert_eq!(state.critical_error(), Some(TxManagerError::MempoolDeadlineExpired));
+        state.set_runtime_mempool_deadline(Duration::ZERO);
+        assert_eq!(
+            state.critical_error_at(Duration::ZERO),
+            Some(TxManagerError::MempoolDeadlineExpired)
+        );
     }
 
     #[test]
     fn future_mempool_deadline_does_not_abort() {
         let state = SendState::new(3).unwrap();
-        state.set_wall_clock_mempool_deadline(Instant::now() + Duration::from_secs(60));
-        assert!(state.critical_error().is_none());
+        state.set_runtime_mempool_deadline(Duration::from_secs(60));
+        assert!(state.critical_error_at(Duration::ZERO).is_none());
     }
 
     #[test]
     fn no_mempool_deadline_does_not_abort() {
         let state = SendState::new(3).unwrap();
-        assert!(state.critical_error().is_none());
+        assert!(state.critical_error_at(Duration::ZERO).is_none());
     }
 
     #[test]
@@ -440,29 +412,16 @@ mod tests {
         // must no longer fire. Otherwise the send loop aborts while the
         // pre-reserved nonce stays live on L1, stalling subsequent sends.
         let state = SendState::new(3).unwrap();
-        state.set_wall_clock_mempool_deadline(Instant::now() - Duration::from_secs(1));
+        state.set_runtime_mempool_deadline(Duration::ZERO);
         state.record_successful_publish();
-        assert!(state.critical_error().is_none());
+        assert!(state.critical_error_at(Duration::ZERO).is_none());
     }
 
     #[test]
-    fn expired_mempool_deadline_before_publish_still_aborts() {
-        // Negative case: with no successful publish, the expired deadline
-        // remains a terminal abort condition.
-        let state = SendState::new(3).unwrap();
-        state.set_wall_clock_mempool_deadline(Instant::now() - Duration::from_secs(1));
-        assert_eq!(state.critical_error(), Some(TxManagerError::MempoolDeadlineExpired));
-    }
-
-    #[test]
-    fn runtime_mempool_deadline_without_runtime_timestamp_returns_error() {
+    fn runtime_mempool_deadline_expires_at_exact_timestamp() {
         let state = SendState::new(3).unwrap();
         state.set_runtime_mempool_deadline(Duration::from_secs(1));
 
-        assert_eq!(
-            state.critical_error(),
-            Some(TxManagerError::RuntimeMempoolDeadlineMissingTimestamp),
-        );
         assert!(state.critical_error_at(Duration::ZERO).is_none());
         assert_eq!(
             state.critical_error_at(Duration::from_secs(1)),
@@ -477,7 +436,7 @@ mod tests {
         let state = SendState::new(3).unwrap();
         // No successful publish recorded.
         state.process_send_error(&TxManagerError::NonceTooLow);
-        assert_eq!(state.critical_error(), Some(TxManagerError::NonceTooLow));
+        assert_eq!(state.critical_error_at(Duration::ZERO), Some(TxManagerError::NonceTooLow));
     }
 
     // ── Post-publish gradual abort ──────────────────────────────────────
@@ -489,14 +448,14 @@ mod tests {
 
         // Single nonce-too-low should NOT abort after a successful publish.
         state.process_send_error(&TxManagerError::NonceTooLow);
-        assert!(state.critical_error().is_none());
+        assert!(state.critical_error_at(Duration::ZERO).is_none());
 
         // Need to reach the threshold.
         state.process_send_error(&TxManagerError::NonceTooLow);
-        assert!(state.critical_error().is_none());
+        assert!(state.critical_error_at(Duration::ZERO).is_none());
 
         state.process_send_error(&TxManagerError::NonceTooLow);
-        assert_eq!(state.critical_error(), Some(TxManagerError::NonceTooLow));
+        assert_eq!(state.critical_error_at(Duration::ZERO), Some(TxManagerError::NonceTooLow));
     }
 
     // ── NonceTooHigh ───────────────────────────────────────────────────
@@ -505,7 +464,7 @@ mod tests {
     fn nonce_too_high_is_transient() {
         let state = SendState::new(3).unwrap();
         state.process_send_error(&TxManagerError::NonceTooHigh);
-        assert!(state.critical_error().is_none());
+        assert!(state.critical_error_at(Duration::ZERO).is_none());
     }
 
     // ── Priority ordering ────────────────────────────────────────────────
@@ -515,11 +474,11 @@ mod tests {
         let state = SendState::new(3).unwrap();
         // No successful publish.
         state.process_send_error(&TxManagerError::NonceTooLow);
-        state.set_wall_clock_mempool_deadline(Instant::now() - Duration::from_secs(1));
+        state.set_runtime_mempool_deadline(Duration::ZERO);
 
         // Pre-publish NonceTooLow (priority 2) wins over
         // MempoolDeadlineExpired (priority 4).
-        assert_eq!(state.critical_error(), Some(TxManagerError::NonceTooLow));
+        assert_eq!(state.critical_error_at(Duration::ZERO), Some(TxManagerError::NonceTooLow));
     }
 
     // ── tx_mined idempotency ──────────────────────────────────────────────
