@@ -264,38 +264,7 @@ mod tests {
             }
         );
 
-        let chain_info = ChainInfo::try_from(&others).unwrap();
-
-        assert_eq!(
-            chain_info,
-            ChainInfo {
-                genesis_info: Some(GenesisInfo {
-                    bedrock_block: Some(10),
-                    regolith_time: Some(12),
-                    canyon_time: Some(0),
-                    ecotone_time: Some(0),
-                    fjord_time: None,
-                    granite_time: None,
-                    holocene_time: None,
-                    isthmus_time: None,
-                    jovian_time: None,
-                    base: UpgradeInfo {
-                        azul: Some(14),
-                        beryl: Some(16),
-                        cobalt: None,
-                        denim: None,
-                        everest: None,
-                        zenith: None,
-                    },
-                    activation_admin_address: None,
-                }),
-                base_fee_info: Some(FeeInfo {
-                    eip1559_elasticity: None,
-                    eip1559_denominator: Some(8),
-                    eip1559_denominator_canyon: Some(8),
-                }),
-            }
-        );
+        assert_eq!(ChainInfo::try_from(&others).unwrap(), chain_info);
     }
 
     #[test]
