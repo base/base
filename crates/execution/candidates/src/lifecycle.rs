@@ -93,6 +93,10 @@ pub enum TurnDecision {
     Evaluate,
     /// Commit the selected winner.
     CommitWinner,
+    /// The group's nonce is already used at this build's prefix, so no sibling can execute in
+    /// this payload: release the lane for this build only. The ledger is unchanged, because
+    /// the payload may not land; canonical state decides whether the nonce is consumed.
+    NonceUsed,
 }
 
 impl TurnDecision {
@@ -104,6 +108,7 @@ impl TurnDecision {
             Self::Evict(EvictionReason::BudgetExhausted) => "budget_exhausted",
             Self::Evict(EvictionReason::PermanentExclusion) => "permanent_exclusion",
             Self::Evict(EvictionReason::Dropped) => "dropped",
+            Self::Evict(EvictionReason::NonceConsumed) => "nonce_consumed",
             Self::Park(ParkReason::LedgerUnavailable) => "ledger_unavailable",
             Self::Park(ParkReason::SelectionDisabled) => "disabled_parked",
             Self::Park(ParkReason::NoEligibleSibling) => "all_failed",
@@ -117,6 +122,7 @@ impl TurnDecision {
             Self::Fallback(_) => "fallback",
             Self::Evaluate => "evaluate",
             Self::CommitWinner => "winner",
+            Self::NonceUsed => "nonce_used",
         }
     }
 }

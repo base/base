@@ -1784,6 +1784,9 @@ where
         let now = update.timestamp();
         let block_number = update.number();
         let mined_transactions = update.mined_transactions.clone();
+        let account_nonces: Vec<_> = self.candidates.as_ref().map_or_else(Vec::new, |_| {
+            update.changed_accounts.iter().map(|account| (account.address, account.nonce)).collect()
+        });
         // Free mined capacity atomically with admission before the heavier pool
         // maintenance. The transaction is already canonical, so it no longer
         // consumes an admission slot even until its pool entry is pruned below.
@@ -1828,8 +1831,10 @@ where
             }
         }
         if let Some(candidates) = &self.candidates {
-            // Before expiry maintenance, so a mined sibling lands instead of expiring.
+            // Before expiry maintenance, so a mined sibling lands instead of expiring, and
+            // before the nonce sweep, so it lands instead of reading as a consumed nonce.
             candidates.ledger.record_landed(&mined_transactions, block_number, block_hash);
+            candidates.ledger.record_nonces(account_nonces);
         }
         self.expire_due_buckets(now);
         self.expire_by_block(block_number);
@@ -4301,6 +4306,54 @@ mod tests {
         assert_eq!(landed[0].tx_hash, Some(winner));
         assert_eq!(landed[0].block_number, Some(1));
         assert_eq!(landed[0].block_hash, Some(block.hash()));
+    }
+
+    #[tokio::test]
+    async fn canonical_nonce_consumed_by_another_transaction_ends_the_group_at_once() {
+        let capture = base_observability_events::TransactionEventCapture::install();
+        let (pool, client) = build_integration_pool();
+        let runtime = candidate_runtime();
+        let pool = pool.with_candidate_runtime(Arc::clone(&runtime));
+        let (group, representative) = candidate_submission(&client, &runtime);
+        pool.add_transaction(TransactionOrigin::Private, representative)
+            .await
+            .expect("the representative carrying its group is admitted");
+        runtime.ledger.confirm_pooled(group.group_hash(), |hash| pool.get(hash).is_some());
+        let block = SealedBlock::seal_slow(BaseBlock {
+            header: alloy_consensus::Header {
+                number: 1,
+                gas_limit: pool.block_info().block_gas_limit,
+                timestamp: INTEGRATION_POOL_NOW_SECS,
+                ..Default::default()
+            },
+            body: Default::default(),
+        });
+
+        // A sponsor's EIP-7702 authorization advanced the sender's nonce; no sibling was mined.
+        pool.on_canonical_state_change(CanonicalStateUpdate {
+            new_tip: &block,
+            pending_block_base_fee: 0,
+            pending_block_blob_fee: None,
+            changed_accounts: vec![ChangedAccount {
+                address: group.sender(),
+                nonce: group.nonce() + 1,
+                balance: U256::MAX,
+            }],
+            mined_transactions: Vec::new(),
+            update_kind: PoolUpdateKind::Commit,
+        });
+
+        let entry = runtime.ledger.lookup(&group.group_hash()).expect("ledger keeps the entry");
+        assert_eq!(
+            entry.state,
+            base_execution_candidates::GroupState::Evicted(
+                base_execution_candidates::EvictionReason::NonceConsumed
+            )
+        );
+        assert!(!runtime.ledger.suppresses_plain_reinsertion(&group.siblings()[1].hash()));
+        let terminals = candidate_events(&capture, &runtime, &group);
+        assert_eq!(terminals.len(), 1, "journaled once, before the recovery window: {terminals:?}");
+        assert_eq!(terminals[0].data["terminal_reason"], "nonce_consumed");
     }
 
     #[tokio::test]
