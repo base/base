@@ -8,6 +8,9 @@ pub use mock_prover::{MockProofRequests, MockProver};
 
 mod mock_verifier;
 
+mod bonds;
+pub use bonds::BondStorage;
+
 mod progress;
 
 mod infra;
