@@ -217,6 +217,13 @@ where
             }
 
             txs_read += 1;
+            // Candidate groups are never forwarded: the destination cannot be assumed to
+            // understand the group, and forwarding the representative alone would publish a
+            // plain sibling (design §4.4, fail closed).
+            if tx.transaction.candidate_group().is_some() {
+                txs_ignored += 1;
+                continue;
+            }
             if self.recently_sent.was_recently_sent(tx.hash()) {
                 txs_ignored += 1;
                 continue;
@@ -374,6 +381,7 @@ mod tests {
     use alloy_consensus::transaction::Recovered;
     use alloy_primitives::{Address, B256, TxKind, U256};
     use base_common_consensus::{BaseTransactionSigned, TxDeposit};
+    use base_execution_candidates::test_utils::CandidateFixture;
     use base_execution_txpool::BasePooledTransaction;
     use reth_transaction_pool::{
         TransactionOrigin, identifier::TransactionId, noop::NoopTransactionPool,
@@ -477,6 +485,47 @@ mod tests {
             reader.try_enqueue(&transaction(1)),
             Err(mpsc::error::TrySendError::Closed(()))
         ));
+    }
+
+    fn candidate_transaction() -> Arc<ValidPoolTransaction<BasePooledTransaction>> {
+        let fixture = CandidateFixture::new(8453);
+        let (raw, envelope, _) = fixture.submission(2, 0);
+        let group = Arc::new(fixture.group(&raw, envelope));
+        let transaction =
+            BasePooledTransaction::recover_raw_transaction(&group.representative().encoded)
+                .expect("representative decodes")
+                .with_candidate_group(group);
+        Arc::new(ValidPoolTransaction {
+            transaction_id: TransactionId::new(0u64.into(), 0),
+            transaction,
+            propagate: false,
+            timestamp: Instant::now(),
+            origin: TransactionOrigin::Private,
+            authority_ids: None,
+        })
+    }
+
+    /// A candidate representative must never leave the node, even when the destination queue
+    /// has room: forwarding it would publish one sibling as a plain transaction.
+    #[test]
+    fn candidate_groups_are_never_forwarded() {
+        let candidate = candidate_transaction();
+        let plain = transaction(1);
+        let (_announce, announcements) = mpsc::channel(1);
+        let (snapshot_tx, _snapshots) = mpsc::unbounded_channel();
+        let pool = costly_pool(
+            Duration::ZERO,
+            vec![Arc::clone(&candidate), Arc::clone(&plain)],
+            announcements,
+            snapshot_tx,
+        );
+        let (sender, mut receiver) = mpsc::channel(8);
+        let mut reader = paced_reader(pool, sender, CancellationToken::new());
+
+        let mut lanes = reader.take_snapshot().expect("not cancelled");
+        assert_eq!(reader.fill_queue(&mut lanes), Some(1));
+        assert_eq!(receiver.try_recv().unwrap().tx_hash, *plain.hash());
+        assert!(receiver.try_recv().is_err());
     }
 
     /// A pool whose snapshots block for `cost` and yield `txs`, announcing whatever arrives on
