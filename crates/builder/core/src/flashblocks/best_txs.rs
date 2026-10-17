@@ -21,7 +21,7 @@ use crate::{
 pub struct BestFlashblocksTxs<T, I>
 where
     T: BasePooledTx,
-    I: ParkablePayloadTransactions<Transaction = T>,
+    I: ParkablePayloadTransactions<Pooled = T>,
 {
     inner: I,
     // Transactions that were already committed to the state. Using them again would cause NonceTooLow
@@ -44,7 +44,7 @@ where
 impl<T, I> std::fmt::Debug for BestFlashblocksTxs<T, I>
 where
     T: BasePooledTx,
-    I: ParkablePayloadTransactions<Transaction = T>,
+    I: ParkablePayloadTransactions<Pooled = T>,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BestFlashblocksTxs")
@@ -59,7 +59,7 @@ where
 impl<T, I> BestFlashblocksTxs<T, I>
 where
     T: BasePooledTx,
-    I: ParkablePayloadTransactions<Transaction = T>,
+    I: ParkablePayloadTransactions<Pooled = T>,
 {
     /// Creates a new [`BestFlashblocksTxs`] wrapping the given payload transaction iterator.
     pub fn new(inner: I, rejection_cache: RejectionCache) -> Self {
@@ -109,13 +109,14 @@ where
 impl<T, I> PayloadTransactions for BestFlashblocksTxs<T, I>
 where
     T: BasePooledTx,
-    I: ParkablePayloadTransactions<Transaction = T>,
+    I: ParkablePayloadTransactions<Pooled = T>,
 {
-    type Transaction = T;
+    type Transaction = I::Transaction;
 
     fn next(&mut self, ctx: ()) -> Option<Self::Transaction> {
         loop {
-            let tx = self.inner.next(ctx)?;
+            let pooled = self.inner.next(ctx)?;
+            let tx = &pooled.transaction;
             let hash = *tx.hash();
             self.current_transaction = Some((hash, tx.sender(), tx.nonce()));
 
@@ -153,7 +154,7 @@ where
                 }
             }
 
-            return Some(tx);
+            return Some(pooled);
         }
     }
 
@@ -175,8 +176,10 @@ where
 impl<T, I> ParkablePayloadTransactions for BestFlashblocksTxs<T, I>
 where
     T: BasePooledTx,
-    I: ParkablePayloadTransactions<Transaction = T>,
+    I: ParkablePayloadTransactions<Pooled = T>,
 {
+    type Pooled = T;
+
     fn park_current(&mut self) {
         self.inner.park_current();
         self.current_transaction = None;
@@ -201,7 +204,7 @@ where
 impl<T, I> RestingPayloadTransactions for BestFlashblocksTxs<T, I>
 where
     T: BasePooledTx,
-    I: ParkablePayloadTransactions<Transaction = T>,
+    I: ParkablePayloadTransactions<Pooled = T>,
 {
     /// Flashblock-index predicates are not recorded because the index changes between
     /// flashblocks without any commit.
@@ -241,7 +244,7 @@ where
 mod tests {
     use std::{sync::Arc, time::Duration};
 
-    use alloy_consensus::{SignableTransaction, Transaction, TxEip1559};
+    use alloy_consensus::{SignableTransaction, TxEip1559};
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{Address, Signature, TxHash, TxKind, U256};
     use base_common_consensus::{BaseTransactionSigned, BaseTxEnvelope};
@@ -252,8 +255,7 @@ mod tests {
     use reth_payload_util::PayloadTransactions;
     use reth_primitives_traits::Recovered;
     use reth_transaction_pool::{
-        PoolTransaction, TransactionOrigin, ValidPoolTransaction, identifier::TransactionId,
-        pool::PendingPool,
+        TransactionOrigin, ValidPoolTransaction, identifier::TransactionId, pool::PendingPool,
     };
     use revm::state::{Account, EvmState};
 
@@ -344,7 +346,7 @@ mod tests {
     /// returns the yielded hashes.
     fn drain_without_including<I>(iterator: &mut I) -> Vec<TxHash>
     where
-        I: PayloadTransactions<Transaction = BasePooledTransaction>,
+        I: PayloadTransactions<Transaction = Arc<ValidPoolTransaction<BasePooledTransaction>>>,
     {
         std::iter::from_fn(|| {
             let transaction = iterator.next(())?;
@@ -352,6 +354,17 @@ mod tests {
             Some(*transaction.hash())
         })
         .collect()
+    }
+
+    #[test]
+    fn yields_the_pool_transaction_handle() {
+        let pooled = transaction(0, 0, 1);
+        let pool = pending_pool(&[Arc::clone(&pooled)]);
+        let mut iterator = BestFlashblocksTxs::new(parkable(&pool), test_rejection_cache());
+
+        let yielded = iterator.next(()).unwrap();
+
+        assert!(Arc::ptr_eq(&yielded, &pooled));
     }
 
     #[test]
@@ -654,10 +667,10 @@ mod tests {
     /// Plays the build loop's part for a candidate whose predicate is unsatisfied.
     fn park_unsatisfied(
         iterator: &mut BestFlashblocksTxs<BasePooledTransaction, Parkable>,
-        transaction: &BasePooledTransaction,
+        transaction: &ValidPoolTransaction<BasePooledTransaction>,
     ) {
         iterator.park_current();
-        iterator.rest(*transaction.hash(), &transaction.validity_predicates()[0]);
+        iterator.rest(*transaction.hash(), &transaction.transaction.validity_predicates()[0]);
     }
 
     #[test]
@@ -749,7 +762,7 @@ mod tests {
 
         let first = iterator.next(()).unwrap();
         park_unsatisfied(&mut iterator, &first);
-        iterator.rest(*resting.hash(), &first.validity_predicates()[1]);
+        iterator.rest(*resting.hash(), &first.transaction.validity_predicates()[1]);
 
         iterator.refresh_iterator(parkable(&pool));
         assert!(iterator.next(()).is_none());
@@ -807,7 +820,7 @@ mod tests {
         iterator.refresh_iterator(parkable(&pool));
         let yielded = iterator.next(()).unwrap();
         assert_eq!(*yielded.hash(), *resting.hash());
-        assert!(iterator.is_resting(*resting.hash(), yielded.validity_predicates()));
+        assert!(iterator.is_resting(*resting.hash(), yielded.transaction.validity_predicates()));
     }
 
     #[test]
