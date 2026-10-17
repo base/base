@@ -1653,8 +1653,8 @@ mod tests {
     use base_common_evm::BaseTime;
     use base_execution_candidates::{
         CandidateEnvelope, CandidateGroup, CandidateLimits, CandidateRuntime, CandidateSwitch,
-        EvictionReason, GroupLedger, GroupState, PrincipalEntry, PrincipalId, PrincipalsFile,
-        StaticAccessPolicy, test_utils::CandidateFixture,
+        GroupLedger, GroupState, PrincipalEntry, PrincipalId, PrincipalsFile, StaticAccessPolicy,
+        test_utils::CandidateFixture,
     };
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_execution_evm::BaseEvmConfig;
@@ -4168,8 +4168,54 @@ mod tests {
         );
     }
 
+    /// A sponsor's EIP-7702 authorization signed by the candidate sender bumps the sender's nonce
+    /// when the sponsor executes earlier in the block. The builder sees only the prefix nonce, so
+    /// the first build starts the sender one nonce ahead; the harness cannot build an
+    /// Isthmus block, which needs a storage root the test state provider does not compute.
     #[test]
-    fn nonce_too_low_group_is_evicted_without_invalidating_the_lane() {
+    fn nonce_used_only_by_an_unlanded_build_prefix_keeps_the_group_live() {
+        let fixture = CandidateFixture::new(8_453);
+        let runtime = candidate_runtime(&fixture, true);
+        let group = candidate_group(&fixture, &runtime, CANDIDATE_RECIPIENT, &[1, 3], |_| {});
+        let invalid = Arc::new(Mutex::new(Vec::new()));
+
+        let included = included_hashes(
+            build_candidate_payload_with(
+                CandidateBuild {
+                    runtime: Some(Arc::clone(&runtime)),
+                    sender: fixture.address(),
+                    sender_account: Some(Account {
+                        nonce: 1,
+                        balance: U256::MAX,
+                        ..Default::default()
+                    }),
+                    ..CandidateBuild::default()
+                },
+                TestParkableTransactions::recording(
+                    vec![representative(&group)],
+                    Arc::clone(&invalid),
+                ),
+                |_| {},
+            )
+            .0,
+        );
+        assert!(included.is_empty());
+        assert!(invalid.lock().unwrap().is_empty(), "the sender's lane stays valid");
+        let entry = runtime.ledger.lookup(&group.group_hash()).expect("entry kept");
+        assert_eq!(entry.state, GroupState::Pooled, "one payload's prefix does not end the group");
+        assert_eq!(entry.attempts, 0, "a used nonce spends no evaluation");
+
+        // That payload did not land: the next build's state still has the nonce free.
+        let included = included_hashes(build_candidate_payload(
+            Some(Arc::clone(&runtime)),
+            TestParkableTransactions::new(vec![representative(&group)]),
+            fixture.address(),
+        ));
+        assert_eq!(included, [group.siblings()[1].hash()], "the group still lands");
+    }
+
+    #[test]
+    fn nonce_used_at_the_prefix_is_a_per_payload_rejection() {
         let capture = TransactionEventCapture::install();
         let fixture = CandidateFixture::new(8_453);
         let runtime = candidate_runtime(&fixture, true);
@@ -4193,14 +4239,12 @@ mod tests {
 
         assert!(included_hashes(outcome).is_empty());
         assert!(invalid.lock().unwrap().is_empty(), "a used nonce releases the lane");
-        let entry = runtime.ledger.lookup(&group.group_hash()).expect("evicted entries are kept");
-        assert_eq!(entry.state, GroupState::Evicted(EvictionReason::Dropped));
-        // A dropped group stays provisional until the recovery window closes.
-        assert_eq!(candidate_reasons(&capture, &runtime, &group), [rejected("dropped")]);
-        runtime.ledger.prune(1_000);
+        // The builder journals what it saw; only canonical maintenance ends the group.
+        assert_eq!(candidate_reasons(&capture, &runtime, &group), [rejected("nonce_used")]);
+        runtime.ledger.record_nonces([(fixture.address(), 1)]);
         assert_eq!(
             candidate_reasons(&capture, &runtime, &group),
-            [rejected("dropped"), evicted("dropped")]
+            [rejected("nonce_used"), evicted("nonce_consumed")]
         );
     }
 

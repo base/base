@@ -349,7 +349,11 @@ eviction, or `BUILDER_EXPIRED` past `expiryBlock`. The reason field holds the
 lifecycle label, such as `all_failed`, `ledger_unavailable`, `deferred_quota`,
 `deferred_build_budget`, `deferred_deadline`, `deferred_finalization`,
 `deferred_unmetered`, `deferred_block_limits`, `deferred_verify_mismatch`,
-`revoked`, `permanent_exclusion`, `dropped`, or `budget_exhausted`. A group is
+`revoked`, `permanent_exclusion`, or `budget_exhausted`. `BUILDER_REJECTED`
+with `nonce_used` and `permanent: false` means the group's nonce was already
+used at this payload's prefix, for example by a sponsor's EIP-7702
+authorization: the builder releases the sender's lane for this payload only and
+leaves the ledger unchanged, since the payload may not land. A group is
 considered at most once per build, so decisions are not deduplicated. These
 are per-payload observations: `BUILDER_ACCEPTED` is provisional.
 

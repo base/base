@@ -525,6 +525,14 @@ where
             }),
             build_budget_available: scan.has_time(config),
         });
+        // A nonce already used at this payload's prefix, as by a sponsor's EIP-7702
+        // authorization, holds for this payload only: release the lane without spending work or
+        // changing the ledger, which canonical maintenance settles. Hard expiry still decides.
+        if decision != TurnDecision::Evict(EvictionReason::Expired)
+            && self.nonce_already_used(builder, group)
+        {
+            return Ok(self.apply_decision(info, best_txs, turn, TurnDecision::NonceUsed));
+        }
         let Some(entry) = entry else {
             return Ok(self.apply_decision(info, best_txs, turn, decision));
         };
@@ -631,22 +639,6 @@ where
             return Ok(self.interrupt(info, best_txs, turn, end, attempt_seq));
         }
         let outcomes = round.outcomes;
-        if let Some(nonce_used) = outcomes
-            .iter()
-            .position(|outcome| matches!(outcome, TrialOutcome::Ineligible(Ineligibility::Invalid)))
-            && self.nonce_already_used(builder, group)
-        {
-            debug!(
-                target: "payload_builder",
-                group_hash = %group_hash,
-                sibling = nonce_used,
-                "candidate group nonce already used"
-            );
-            runtime.ledger.evict(group_hash, EvictionReason::Dropped);
-            self.journal_decision(turn, TurnDecision::Evict(EvictionReason::Dropped));
-            best_txs.mark_current_committed();
-            return Ok(None);
-        }
         Self::record_permanent_exclusions(group, &outcomes, config);
 
         let winner = WinnerSelection::choose(&outcomes);
@@ -694,9 +686,7 @@ where
                         best_txs.mark_current_committed();
                     }
                     SiblingCommit::NonceTooLow => {
-                        runtime.ledger.evict(group_hash, EvictionReason::Dropped);
-                        self.journal_decision(turn, TurnDecision::Evict(EvictionReason::Dropped));
-                        best_txs.mark_current_committed();
+                        self.apply_decision(info, best_txs, turn, TurnDecision::NonceUsed);
                     }
                     SiblingCommit::Unmetered => {
                         let decision = TurnDecision::Defer(DeferReason::Unmetered);
@@ -760,12 +750,7 @@ where
                         best_txs.mark_current_committed();
                         return Ok(None);
                     }
-                    SiblingCommit::NonceTooLow => {
-                        config.runtime.ledger.evict(group.group_hash(), EvictionReason::Dropped);
-                        self.journal_decision(turn, TurnDecision::Evict(EvictionReason::Dropped));
-                        best_txs.mark_current_committed();
-                        return Ok(None);
-                    }
+                    SiblingCommit::NonceTooLow => TurnDecision::NonceUsed,
                     SiblingCommit::Excluded { permanent: true } => {
                         TurnDecision::Evict(EvictionReason::PermanentExclusion)
                     }
@@ -830,6 +815,8 @@ where
                 info.candidate_evictions.push(group.representative().hash());
                 best_txs.mark_invalid(group.sender(), group.nonce());
             }
+            // The nonce is used at this prefix, so later nonces of the sender may follow.
+            TurnDecision::NonceUsed => best_txs.mark_current_committed(),
             // Park and defer hold the lane and never mark the nonce committed.
             _ => best_txs.park_current(),
         }
@@ -939,6 +926,18 @@ where
                     group,
                     [],
                     { "defer_reason" => label }
+                );
+            }
+            // A per-payload observation: the ledger entry is unchanged.
+            TurnDecision::NonceUsed => {
+                emit_candidate_event!(
+                    self,
+                    turn.journal,
+                    TransactionEventType::BuilderRejected,
+                    representative,
+                    group,
+                    [],
+                    { "rejection_reason" => label, "permanent" => false }
                 );
             }
             TurnDecision::Fallback(_) | TurnDecision::Evaluate | TurnDecision::CommitWinner => {}
