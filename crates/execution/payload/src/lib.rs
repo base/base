@@ -38,7 +38,9 @@ pub use parkable::{
 };
 
 mod metrics;
-pub use metrics::{BuilderMetrics, ValidityMetrics};
+pub use metrics::{
+    BuilderMetrics, ValidityEvaluationCounters, ValidityEvaluationOutcome, ValidityMetrics,
+};
 
 mod deferrals;
 pub use deferrals::BlockDeferrals;
