@@ -13,6 +13,14 @@
 //! [`crate::mock_verifier`] for the same run; against a real verifier every
 //! dispute built from it would revert `InvalidProof()`.
 //!
+//! With [`MockFault::FailFirst`], the first attempt of every SNARK session the
+//! fault target (the challenger) requests reports `Failed`. The real service
+//! keeps a failed session failed until the same session is re-sent with
+//! `retry_failed`, rejecting a resend without it, and so does this mock. A
+//! dispute therefore only lands if the
+//! challenger notices the failure and re-requests the proof. The driver's own
+//! staging requests carry a different prover address and are never failed.
+//!
 //! TEE requests are refused with a non-retryable error. The challenger treats
 //! that as "TEE unavailable" and falls back to ZK straight away, which is the
 //! branch every zeronet run takes today: the throwaway challenger key is not a
@@ -27,7 +35,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use alloy_primitives::{Bytes, hex};
+use alloy_primitives::{Address, Bytes, hex};
 use base_proof_submission::test_utils::SnarkReceiptFixture;
 use base_prover_service_protocol::{
     CancelProofRequest, DeleteProofRequest, DeleteProofsByTeeSignerRequest, GetProofRequest,
@@ -44,8 +52,13 @@ use jsonrpsee::{
 use tracing::info;
 use url::Url;
 
+use crate::config::MockFault;
+
 /// `NOT_FOUND`, as the real prover-service and its client use it.
 const ERROR_NOT_FOUND: i32 = -32004;
+
+/// `FAILED_PRECONDITION`, as the real prover-service and its client use it.
+const ERROR_FAILED_PRECONDITION: i32 = -32017;
 
 /// Leading four bytes of the mock receipt's PLONK verifying-key hash.
 ///
@@ -61,7 +74,35 @@ const MOCK_PROOF: &[u8] = b"challenger-e2e-mock-proof";
 #[derive(Debug, Clone)]
 struct Session {
     request: ProofRequestKind,
+    /// When the current attempt started: at submission, then at each requeue.
     submitted_at: Instant,
+    /// The current attempt has failed; only a resend with `retry_failed`
+    /// starts another.
+    failed: bool,
+    /// Attempts this mock failed on purpose.
+    injected_failures: u32,
+    /// Times the session was requeued after a failure.
+    requeues: u32,
+}
+
+impl Session {
+    fn new(request: ProofRequestKind) -> Self {
+        Self {
+            request,
+            submitted_at: Instant::now(),
+            failed: false,
+            injected_failures: 0,
+            requeues: 0,
+        }
+    }
+
+    /// Prover address of a SNARK request; `None` for every other kind.
+    const fn snark_prover(&self) -> Option<Address> {
+        match &self.request {
+            ProofRequestKind::SnarkPlonk(request) => Some(request.prover_address),
+            ProofRequestKind::Compressed(_) | ProofRequestKind::Tee(_) => None,
+        }
+    }
 }
 
 /// Shared state behind the RPC handlers.
@@ -69,11 +110,18 @@ struct Session {
 struct MockProverService {
     sessions: Mutex<HashMap<String, Session>>,
     proving_time: Duration,
+    fault: MockFault,
+    /// Only SNARK sessions requested for this prover address are faulted.
+    fault_target: Address,
 }
 
 impl MockProverService {
     fn invalid_params(message: impl Into<String>) -> ErrorObjectOwned {
         ErrorObjectOwned::owned(ErrorCode::InvalidParams.code(), message.into(), None::<()>)
+    }
+
+    fn failed_precondition(message: impl Into<String>) -> ErrorObjectOwned {
+        ErrorObjectOwned::owned(ERROR_FAILED_PRECONDITION, message.into(), None::<()>)
     }
 
     fn not_found(message: impl Into<String>) -> ErrorObjectOwned {
@@ -127,14 +175,32 @@ impl MockProverService {
         }
 
         let mut sessions = self.sessions.lock().expect("mock prover state poisoned");
-        if let Some(existing) = sessions.get(&session_id) {
-            // Idempotent on an identical request, as the real service is.
-            if existing.request == kind {
-                return Ok(ProveBlockRangeResponse { session_id });
+        if let Some(existing) = sessions.get_mut(&session_id) {
+            if existing.request != kind {
+                return Err(Self::invalid_params(format!(
+                    "session_id {session_id} is already bound to a different request"
+                )));
             }
-            return Err(Self::invalid_params(format!(
-                "session_id {session_id} is already bound to a different request"
-            )));
+            // Idempotent on an identical request, as the real service is: a
+            // failed session starts a new attempt only when the caller allows
+            // it, and a resend that does not is rejected, not ignored.
+            if existing.failed {
+                if !request.retry_failed {
+                    return Err(Self::failed_precondition(format!(
+                        "session_id {session_id} already failed; set retry_failed to true to \
+                         requeue it"
+                    )));
+                }
+                existing.failed = false;
+                existing.submitted_at = Instant::now();
+                existing.requeues += 1;
+                info!(
+                    session_id = %session_id,
+                    requeues = existing.requeues,
+                    "mock prover requeued a failed session"
+                );
+            }
+            return Ok(ProveBlockRangeResponse { session_id });
         }
 
         info!(
@@ -143,16 +209,19 @@ impl MockProverService {
             proving_time = ?self.proving_time,
             "mock prover accepted a proof request"
         );
-        sessions
-            .insert(session_id.clone(), Session { request: kind, submitted_at: Instant::now() });
+        sessions.insert(session_id.clone(), Session::new(kind));
         Ok(ProveBlockRangeResponse { session_id })
     }
 
     fn status(&self, session_id: &str) -> RpcResult<GetProofResponse> {
-        let sessions = self.sessions.lock().expect("mock prover state poisoned");
+        let mut sessions = self.sessions.lock().expect("mock prover state poisoned");
         let session = sessions
-            .get(session_id)
+            .get_mut(session_id)
             .ok_or_else(|| Self::not_found(format!("session_id {session_id} not found")))?;
+
+        if session.failed {
+            return Ok(Self::failed_response());
+        }
 
         // Reported as running for a while so the callers' polling loops are
         // exercised rather than satisfied on the first look.
@@ -163,11 +232,30 @@ impl MockProverService {
                 result: None,
             });
         }
+        // The first attempt is the one that fails, so a requeued session
+        // succeeds and the challenger's recovery is what lands the dispute.
+        if self.fault == MockFault::FailFirst
+            && session.injected_failures == 0
+            && session.snark_prover() == Some(self.fault_target)
+        {
+            session.failed = true;
+            session.injected_failures += 1;
+            info!(session_id = %session_id, "mock prover failed a session on purpose");
+            return Ok(Self::failed_response());
+        }
         Ok(GetProofResponse {
             status: ProofStatus::Succeeded,
             error_message: None,
             result: Some(Self::mock_snark_result()),
         })
+    }
+
+    fn failed_response() -> GetProofResponse {
+        GetProofResponse {
+            status: ProofStatus::Failed,
+            error_message: Some("injected by the challenger E2E mock prover".to_owned()),
+            result: None,
+        }
     }
 }
 
@@ -232,6 +320,18 @@ impl MockProofRequests {
             })
             .collect()
     }
+
+    /// How the session serving `request` was faulted and recovered, as
+    /// `(injected_failures, requeues)`; `None` if no session serves it.
+    pub fn faults_of(&self, request: &SnarkPlonkProofRequest) -> Option<(u32, u32)> {
+        let sessions = self.0.sessions.lock().expect("mock prover state poisoned");
+        sessions.values().find_map(|session| match &session.request {
+            ProofRequestKind::SnarkPlonk(served) if served == request => {
+                Some((session.injected_failures, session.requeues))
+            }
+            _ => None,
+        })
+    }
 }
 
 /// A running mock prover. Stops when dropped.
@@ -247,17 +347,32 @@ impl MockProver {
     ///
     /// Loopback is enough: the challenger runs as a sidecar in the same pod and
     /// so shares the network namespace.
-    pub async fn start(proving_time: Duration) -> Result<Self> {
+    /// `fault` applies only to SNARK sessions requested for `fault_target`.
+    pub async fn start(
+        proving_time: Duration,
+        fault: MockFault,
+        fault_target: Address,
+    ) -> Result<Self> {
         let server = Server::builder()
             .build(SocketAddr::from(([127, 0, 0, 1], 0)))
             .await
             .context("failed to bind the mock prover")?;
         let address = server.local_addr().context("mock prover has no local address")?;
-        let service =
-            Arc::new(MockProverService { sessions: Mutex::new(HashMap::new()), proving_time });
+        let service = Arc::new(MockProverService {
+            sessions: Mutex::new(HashMap::new()),
+            proving_time,
+            fault,
+            fault_target,
+        });
         let handle = server.start(MockProverRpc(Arc::clone(&service)).into_rpc());
         let url = Url::parse(&format!("http://{address}")).context("mock prover URL")?;
-        info!(url = %url, proving_time = ?proving_time, "started the mock prover");
+        info!(
+            url = %url,
+            proving_time = ?proving_time,
+            fault = ?fault,
+            fault_target = %fault_target,
+            "started the mock prover"
+        );
         Ok(Self { url, handle, service })
     }
 
@@ -292,8 +407,19 @@ mod tests {
 
     use super::*;
 
+    const CHALLENGER: Address = Address::repeat_byte(0x22);
+
     fn service(proving_time: Duration) -> MockProverService {
-        MockProverService { sessions: Mutex::new(HashMap::new()), proving_time }
+        faulty_service(proving_time, MockFault::None)
+    }
+
+    fn faulty_service(proving_time: Duration, fault: MockFault) -> MockProverService {
+        MockProverService {
+            sessions: Mutex::new(HashMap::new()),
+            proving_time,
+            fault,
+            fault_target: CHALLENGER,
+        }
     }
 
     fn snark(session_id: &str, start_block_number: u64) -> ProveBlockRangeRequest {
@@ -311,7 +437,7 @@ mod tests {
                         zk_vm: ZkVm::Sp1,
                         zk_backend: ZkBackend::Cluster,
                     },
-                    prover_address: Address::repeat_byte(0x22),
+                    prover_address: CHALLENGER,
                 }),
             },
             retry_failed: true,
@@ -346,6 +472,42 @@ mod tests {
         mock.prove(snark("s", 100)).expect("identical resend is idempotent");
         let conflict = mock.prove(snark("s", 101)).expect_err("different request must conflict");
         assert_eq!(conflict.code(), ErrorCode::InvalidParams.code());
+    }
+
+    #[test]
+    fn fail_first_fails_once_and_succeeds_after_a_retry() {
+        let mock = faulty_service(Duration::ZERO, MockFault::FailFirst);
+        mock.prove(snark("s", 100)).expect("accepted");
+        assert_eq!(mock.status("s").expect("known").status, ProofStatus::Failed);
+
+        // A resend without retry_failed is rejected and leaves the session
+        // failed, as the real service does.
+        let mut resend = snark("s", 100);
+        resend.retry_failed = false;
+        let error = mock.prove(resend).expect_err("retry not allowed");
+        assert_eq!(error.code(), ERROR_FAILED_PRECONDITION);
+        assert_eq!(mock.status("s").expect("known").status, ProofStatus::Failed);
+
+        mock.prove(snark("s", 100)).expect("requeued");
+        assert_eq!(mock.status("s").expect("known").status, ProofStatus::Succeeded);
+
+        let requests = MockProofRequests(Arc::new(mock));
+        let ProofRequestKind::SnarkPlonk(request) = snark("s", 100).proof.request else {
+            unreachable!("snark() builds a SNARK request");
+        };
+        assert_eq!(requests.faults_of(&request), Some((1, 1)));
+    }
+
+    #[test]
+    fn fail_first_spares_other_provers() {
+        let mock = faulty_service(Duration::ZERO, MockFault::FailFirst);
+        let mut staging = snark("driver", 100);
+        let ProofRequestKind::SnarkPlonk(request) = &mut staging.proof.request else {
+            unreachable!("snark() builds a SNARK request");
+        };
+        request.prover_address = Address::repeat_byte(0x33);
+        mock.prove(staging).expect("accepted");
+        assert_eq!(mock.status("driver").expect("known").status, ProofStatus::Succeeded);
     }
 
     #[test]
@@ -415,7 +577,8 @@ mod tests {
     async fn serves_the_real_client_over_loopback() {
         use base_prover_service_client::{ProofRequesterClient, ProverServiceClientConfig};
 
-        let mock = MockProver::start(Duration::ZERO).await.expect("start");
+        let mock =
+            MockProver::start(Duration::ZERO, MockFault::None, CHALLENGER).await.expect("start");
         let client =
             ProofRequesterClient::connect(&ProverServiceClientConfig::new(mock.url().as_str()))
                 .expect("client");

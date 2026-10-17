@@ -33,6 +33,17 @@ no real proof in it. TEE requests are refused with a non-retryable error, so
 the challenger falls back to ZK at once — the branch every zeronet run takes
 anyway, because the throwaway challenger key is not a registered TEE proposer.
 
+By default the mock also fails the first attempt of every proof session the
+challenger requests (`CHALLENGER_E2E_MOCK_FAULT=fail-first`). Like the real
+service, it keeps a failed session failed until the same session is re-sent
+with `retry_failed` (a resend without it is rejected with `FAILED_PRECONDITION`),
+and only then proves it. A dispute can therefore only land
+if the challenger noticed the failure and re-requested the proof, and each
+dispute assertion also checks the mock's record: the session behind the
+challenger's proof shows one injected failure and at least one requeue. The
+driver's own staging requests use a different prover address and are never
+failed. `none` turns the fault off.
+
 Those proofs only land because the fork's verifiers are replaced too. Both
 verifiers of each game under test get the runtime of
 `contracts/MockVerifier.sol` for the whole run (`src/mock_verifier.rs`). It
@@ -408,6 +419,7 @@ is pointed at and talks to the same prover-service.
 | `CHALLENGER_E2E_ANVIL_PORT` | No (default `18545`) | Fork port; not 8545, which the production challenger reserves for its signer sidecar |
 | `CHALLENGER_E2E_PROVER` | No (default `mock`) | `mock` for the in-pod prover and mock verifiers, `real` for the live prover-service |
 | `CHALLENGER_E2E_MOCK_PROVING_TIME` | No (default `5s`) | How long the mock reports each proof as running |
+| `CHALLENGER_E2E_MOCK_FAULT` | No (default `fail-first`) | `fail-first` fails the first attempt of each challenger proof session, so every dispute also tests the retry; `none` disables it |
 | `CHALLENGER_E2E_SCENARIO` | No (default `all`) | `all` for every path on one fork (three games), or the cheaper subsets `path1-path2` and `path3` for `real` prover runs |
 | `CHALLENGER_E2E_ENV_FILE` | No (default `/shared/challenger.env`) | Handshake file that releases the challenger; the chart's sidecar waits on the default. Override only to run the pair outside the pod |
 | `CHALLENGER_E2E_CHALLENGER_METRICS_URL` | No (default `http://127.0.0.1:7300/metrics`) | Prometheus endpoint of the challenger under test |
