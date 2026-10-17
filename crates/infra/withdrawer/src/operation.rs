@@ -256,7 +256,7 @@ impl WithdrawerError {
         Self::Decode { call, source }
     }
 
-    /// Distinguishes execution reverts from transport failures and other server errors.
+    /// Classifies execution reverts after redaction, which must preserve the code and "execution reverted" marker.
     pub fn is_execution_revert(&self) -> bool {
         matches!(self, Self::Request(error) if error.as_error_resp().is_some_and(|payload| {
             payload.code == 3 || payload.message.trim_start().to_ascii_lowercase().starts_with("execution reverted")

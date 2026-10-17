@@ -122,7 +122,7 @@ impl WithdrawalRpcTransport {
         }
     }
 
-    /// Redacts server messages and data for reporting after retry classification.
+    /// Redacts server messages and data after retry classification; must preserve the code and "execution reverted" marker for revert classification.
     pub fn redact_diagnostic(error: TransportError) -> TransportError {
         let mut error = Self::redact(error);
         if let TransportError::ErrorResp(payload) = &mut error {
