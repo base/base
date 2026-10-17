@@ -648,7 +648,7 @@ impl SnapshotUploader {
         match result {
             Ok(bytes_uploaded) => Ok(bytes_uploaded),
             Err(error) => {
-                self.abort_streaming_multipart_upload(&key, &upload_id).await;
+                self.abort_multipart_upload(&key, &upload_id).await;
                 Err(error)
             }
         }
@@ -764,7 +764,7 @@ impl SnapshotUploader {
         .await
     }
 
-    async fn abort_streaming_multipart_upload(&self, key: &str, upload_id: &str) {
+    async fn abort_multipart_upload(&self, key: &str, upload_id: &str) {
         match self
             .client
             .abort_multipart_upload()
@@ -775,22 +775,33 @@ impl SnapshotUploader {
             .await
         {
             Ok(_) => {
-                warn!(key = %key, upload_id, "aborted streaming multipart upload after failure")
+                warn!(key = %key, upload_id, "aborted multipart upload after failure")
             }
             Err(error) => error!(
                 key = %key,
                 upload_id,
                 error = %error,
                 error_debug = ?error,
-                "failed to abort streaming multipart upload after failure"
+                "failed to abort multipart upload after failure"
             ),
         }
     }
 
-    /// Lists remote static files with their sizes. Call once and pass the result
-    /// to `generate_manifest` for skip-range computation.
+    /// Lists remote static filenames and sizes for manifest skip-range computation.
     pub async fn list_remote_static_files(&self) -> Result<HashMap<String, u64>> {
-        self.list_remote_objects(&self.static_files_prefix()).await
+        let prefix = self.static_files_prefix();
+        let prefix_with_slash = format!("{prefix}/");
+        let remote: HashMap<String, u64> = self
+            .list_remote_objects(&prefix)
+            .await?
+            .into_iter()
+            .map(|(key, size)| {
+                (key.strip_prefix(&prefix_with_slash).unwrap_or(&key).to_string(), size)
+            })
+            .collect();
+
+        debug!(prefix = %prefix, count = remote.len(), "listed remote objects");
+        Ok(remote)
     }
 
     /// Fetches the most recent `manifest.json` from a prior run, if one exists.
@@ -1174,10 +1185,10 @@ impl SnapshotUploader {
         })
     }
 
-    /// Lists all objects under a prefix in the bucket, returning filename → size.
-    async fn list_remote_objects(&self, prefix: &str) -> Result<HashMap<String, u64>> {
+    /// Lists full object keys and sizes under a prefix in listing order, skipping objects without keys.
+    async fn list_remote_objects(&self, prefix: &str) -> Result<Vec<(String, u64)>> {
         let prefix_with_slash = format!("{prefix}/");
-        let mut remote = HashMap::new();
+        let mut remote = Vec::new();
         let mut continuation_token = None;
 
         loop {
@@ -1195,9 +1206,8 @@ impl SnapshotUploader {
 
             for obj in resp.contents() {
                 if let Some(key) = obj.key() {
-                    let filename = key.strip_prefix(&prefix_with_slash).unwrap_or(key).to_string();
                     let size: u64 = obj.size.unwrap_or(0).try_into().unwrap_or(0);
-                    remote.insert(filename, size);
+                    remote.push((key.to_string(), size));
                 }
             }
 
@@ -1208,43 +1218,7 @@ impl SnapshotUploader {
             }
         }
 
-        debug!(prefix = %prefix, count = remote.len(), "listed remote objects");
         Ok(remote)
-    }
-
-    /// Lists full object keys under a prefix.
-    async fn list_remote_keys(&self, prefix: &str) -> Result<Vec<String>> {
-        let prefix_with_slash = format!("{prefix}/");
-        let mut keys = Vec::new();
-        let mut continuation_token = None;
-
-        loop {
-            let mut req =
-                self.client.list_objects_v2().bucket(&self.bucket).prefix(&prefix_with_slash);
-
-            if let Some(token) = continuation_token.take() {
-                req = req.continuation_token(token);
-            }
-
-            let resp = req
-                .send()
-                .await
-                .with_context(|| format!("failed to list objects under {prefix_with_slash}"))?;
-
-            for obj in resp.contents() {
-                if let Some(key) = obj.key() {
-                    keys.push(key.to_string());
-                }
-            }
-
-            if resp.is_truncated() == Some(true) {
-                continuation_token = resp.next_continuation_token().map(String::from);
-            } else {
-                break;
-            }
-        }
-
-        Ok(keys)
     }
 
     /// Returns whether a full object key exists remotely.
@@ -1265,9 +1239,10 @@ impl SnapshotUploader {
         }
     }
 
-    /// Deletes all objects under a prefix and returns the number of deleted keys.
+    /// Deletes all listed objects under a prefix and returns the number of deleted keys.
     async fn delete_prefix(&self, prefix: &str) -> Result<usize> {
-        let keys = self.list_remote_keys(prefix).await?;
+        let keys: Vec<_> =
+            self.list_remote_objects(prefix).await?.into_iter().map(|(key, _)| key).collect();
         if keys.is_empty() {
             return Ok(0);
         }
@@ -1409,29 +1384,7 @@ impl SnapshotUploader {
                 .await
             }
             Err(e) => {
-                match self
-                    .client
-                    .abort_multipart_upload()
-                    .bucket(&self.bucket)
-                    .key(key)
-                    .upload_id(&upload_id)
-                    .send()
-                    .await
-                {
-                    Ok(_) => {
-                        warn!(key = %key, upload_id, "aborted multipart upload after failure")
-                    }
-                    Err(abort_error) => {
-                        error!(
-                            key = %key,
-                            upload_id,
-                            error = %abort_error,
-                            error_debug = ?abort_error,
-                            "failed to abort multipart upload after failure"
-                        );
-                    }
-                }
-
+                self.abort_multipart_upload(key, &upload_id).await;
                 Err(e)
             }
         }

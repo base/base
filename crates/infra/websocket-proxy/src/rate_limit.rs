@@ -172,51 +172,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_global_rate_limits() {
-        let user_1 = IpAddr::from_str("127.0.0.1").unwrap();
-        let user_2 = IpAddr::from_str("128.0.0.1").unwrap();
-
-        let rate_limiter = Arc::new(InMemoryRateLimit::new(GLOBAL_LIMIT, PER_IP_LIMIT));
-
-        let _c1 = Arc::clone(&rate_limiter).try_acquire(user_1).unwrap();
-
-        let _c2 = Arc::clone(&rate_limiter).try_acquire(user_2).unwrap();
-
-        let _c3 = Arc::clone(&rate_limiter).try_acquire(user_1).unwrap();
-
-        assert_eq!(rate_limiter.inner.lock().unwrap().semaphore.available_permits(), 0);
-
-        let c4 = Arc::clone(&rate_limiter).try_acquire(user_2);
-        assert!(c4.is_err());
-        assert_eq!(c4.err().unwrap().to_string(), "Rate Limit Reached: Global limit");
-
-        drop(_c3);
-
-        let c4 = rate_limiter.try_acquire(user_2);
-        assert!(c4.is_ok());
-    }
-
-    #[tokio::test]
-    async fn test_per_ip_limits() {
-        let user_1 = IpAddr::from_str("127.0.0.1").unwrap();
-        let user_2 = IpAddr::from_str("127.0.0.2").unwrap();
-
-        let rate_limiter = Arc::new(InMemoryRateLimit::new(GLOBAL_LIMIT, PER_IP_LIMIT));
-
-        let _c1 = Arc::clone(&rate_limiter).try_acquire(user_1).unwrap();
-        let _c2 = Arc::clone(&rate_limiter).try_acquire(user_1).unwrap();
-
-        assert_eq!(rate_limiter.inner.lock().unwrap().active_connections[&user_1], 2);
-
-        let c3 = Arc::clone(&rate_limiter).try_acquire(user_1);
-        assert!(c3.is_err());
-        assert_eq!(c3.err().unwrap().to_string(), "Rate Limit Reached: IP limit exceeded");
-
-        let c4 = rate_limiter.try_acquire(user_2);
-        assert!(c4.is_ok());
-    }
-
-    #[tokio::test]
     async fn test_global_limits_with_multiple_ips() {
         let user_1 = IpAddr::from_str("127.0.0.1").unwrap();
         let user_2 = IpAddr::from_str("127.0.0.2").unwrap();

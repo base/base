@@ -200,11 +200,9 @@ async fn run_load_test(args: LoadArgs) -> Result<()> {
         query_rpc,
         load_config.chain_id
     );
-    let duration_display = if args.continuous {
-        "continuous".to_string()
-    } else {
-        load_config.duration.map_or_else(|| "continuous".to_string(), |d| format!("{d:?}"))
-    };
+    let display_duration = if args.continuous { None } else { load_config.duration };
+    let duration_display =
+        display_duration.map_or_else(|| "continuous".to_string(), |d| format!("{d:?}"));
     let target_gps_display = load_config
         .target_gps
         .map_or_else(|| "unbounded".to_string(), |gps| format!("{gps} gas/s"));
@@ -214,7 +212,6 @@ async fn run_load_test(args: LoadArgs) -> Result<()> {
     );
     println!();
 
-    let display_duration = if args.continuous { None } else { load_config.duration };
     let output = base_load_tests::LoadTestExecutor::run_prepared(
         test_config,
         load_config,

@@ -5,10 +5,6 @@ use alloy_primitives::Address;
 /// Errors that can occur in baseline operations.
 #[derive(Debug, thiserror::Error)]
 pub enum BaselineError {
-    /// Network connection error.
-    #[error("network error: {0}")]
-    Network(String),
-
     /// RPC call error.
     #[error("rpc error: {0}")]
     Rpc(String),

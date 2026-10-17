@@ -50,7 +50,7 @@ use alloy_network::{
     Ethereum, EthereumWallet, Network, NetworkTransactionBuilder, NetworkWallet,
     TransactionBuilder, TransactionBuilderError,
 };
-use alloy_primitives::{Address, B256, Bytes};
+use alloy_primitives::{Address, B256, Bytes, keccak256};
 use alloy_provider::Provider;
 use alloy_rpc_types_eth::{TransactionReceipt, TransactionRequest};
 use alloy_transport::TransportError;
@@ -307,6 +307,12 @@ where
             closed: Arc::new(AtomicBool::new(false)),
             metrics,
         })
+    }
+
+    /// Uses the `pending` block tag for nonce initialization and after nonce resets.
+    pub fn with_pending_nonce(mut self) -> Self {
+        self.nonce_manager = self.nonce_manager.with_pending_tag();
+        self
     }
 
     /// Returns a reference to the RPC provider.
@@ -1135,42 +1141,32 @@ where
                 return Ok(receipt);
             }
 
-            // Skip the select to respond immediately to the bump-fees flag set by
-            // process_send_error on retryable errors, rather than waiting for the
-            // next timer tick. take_bump_fees clears the flag atomically so a
-            // failed bump does not re-trigger.
-            if !send_state.take_bump_fees() {
-                // Determine which event fired. handle_fee_bump (and
-                // transitively prepare()) is NOT cancellation-safe, so it
-                // must not run inside tokio::select!. The select block only
-                // captures which arm won; fee bump work runs to completion
-                // outside the select block.
-                tokio::select! {
-                    biased;
-                    result = receipt_rx.recv() => {
-                        match result {
-                            Some(receipt) => {
-                                info!(
-                                    tx_hash = %receipt.transaction_hash,
-                                    block = ?receipt.block_number,
-                                    status = %receipt.inner.status(),
-                                    "transaction receipt received",
-                                );
-                                return Ok(receipt);
-                            }
-                            None => {
-                                // All senders dropped — should not happen in normal flow.
-                                return Err(TxManagerError::ChannelClosed);
-                            }
+            // Preparation is not cancellation-safe, so fee bump work must run
+            // to completion outside the select block.
+            tokio::select! {
+                biased;
+                result = receipt_rx.recv() => {
+                    match result {
+                        Some(receipt) => {
+                            info!(
+                                tx_hash = %receipt.transaction_hash,
+                                block = ?receipt.block_number,
+                                status = %receipt.inner.status(),
+                                "transaction receipt received",
+                            );
+                            return Ok(receipt);
+                        }
+                        None => {
+                            // All senders dropped — should not happen in normal flow.
+                            return Err(TxManagerError::ChannelClosed);
                         }
                     }
-                    _ = bump_ticker.next() => {}
-                };
-            }
+                }
+                _ = bump_ticker.next() => {}
+            };
 
-            // Fee bump work stays outside the select because preparation is not cancellation-safe.
             self.try_fee_bump(candidate, send_state, &receipt_tx, &mut bump).await;
-            // Reset the bump ticker so we get a full interval before the next timer-driven bump.
+            // Even a failed publication must wait a full interval before another bump.
             bump_ticker = self.runtime.interval(self.config.resubmission_timeout);
             bump_ticker.next().await;
         }
@@ -1319,7 +1315,7 @@ where
     /// Broadcasts a raw transaction to the network.
     ///
     /// On success, records a successful publish on the [`SendState`] and
-    /// returns the transaction hash. On [`TxManagerError::AlreadyKnown`]
+    /// returns the locally computed transaction hash. On [`TxManagerError::AlreadyKnown`]
     /// after a prior successful publish, treats it as success — records
     /// another successful publish and returns `Ok(last_tx_hash)` so
     /// callers do not need to special-case this variant. All other errors
@@ -1328,6 +1324,15 @@ where
     /// The `last_tx_hash` parameter is the hash from the most recent
     /// successful publish. When the network returns `AlreadyKnown` on
     /// resubmission, this hash is returned as the successful result.
+    ///
+    /// The returned hash never comes from the RPC. It is the decoded envelope's
+    /// [`TxEnvelope::tx_hash`], which excludes any EIP-4844 blob sidecar. If `raw_tx`
+    /// does not decode as a known envelope, it falls back to `keccak256(raw_tx)`, the
+    /// EIP-2718 hash of any typed transaction whose network encoding equals its
+    /// consensus encoding; a well-formed RPC hash is not preferred, because the RPC
+    /// reply is advisory. A different or undecodable hash in a valid JSON-RPC success
+    /// response only logs a warning; only a transport failure, an invalid response
+    /// envelope, or a JSON-RPC error response is a publication error.
     ///
     /// # Errors
     ///
@@ -1338,23 +1343,48 @@ where
         raw_tx: &Bytes,
         last_tx_hash: Option<B256>,
     ) -> TxManagerResult<B256> {
+        let local_tx_hash = match TxEnvelope::decode_2718_exact(raw_tx) {
+            Ok(envelope) => *envelope.tx_hash(),
+            Err(error) => {
+                // Unknown transaction types must not turn a successful broadcast into an error.
+                warn!(%error, "could not decode transaction, hashing raw bytes as a fallback");
+                keccak256(raw_tx)
+            }
+        };
+        // Decode the result separately so invalid response envelopes remain publication errors.
         let result = RuntimeTimeout::run(
             &self.runtime,
             self.config.network_timeout,
-            self.provider.send_raw_transaction(raw_tx),
+            self.provider
+                .client()
+                .request::<_, serde_json::Value>("eth_sendRawTransaction", (raw_tx,)),
         )
         .await;
 
         match result {
-            Ok(Ok(pending)) => {
-                let tx_hash = *pending.tx_hash();
+            Ok(Ok(response)) => {
+                match serde_json::from_value::<B256>(response) {
+                    Ok(rpc_tx_hash) if rpc_tx_hash != local_tx_hash => {
+                        warn!(
+                            local_tx_hash = %local_tx_hash,
+                            rpc_tx_hash = %rpc_tx_hash,
+                            "RPC returned a different transaction hash, using locally computed hash"
+                        );
+                    }
+                    Err(_) => {
+                        warn!(
+                            local_tx_hash = %local_tx_hash,
+                            "RPC returned an undecodable transaction hash, treating publication as successful"
+                        );
+                    }
+                    Ok(_) => {}
+                }
                 send_state.record_successful_publish();
-                info!(tx_hash = %tx_hash, "transaction published");
-                Ok(tx_hash)
+                info!(tx_hash = %local_tx_hash, "transaction published");
+                Ok(local_tx_hash)
             }
             Ok(Err(e)) => {
                 let classified = self.classify_and_record_rpc(&e);
-
                 // AlreadyKnown on resubmission is a success — the tx is in
                 // the mempool from a prior publish. Return the previous hash.
                 if classified.is_already_known() && send_state.has_published() {
@@ -1735,17 +1765,25 @@ where
 
 #[cfg(test)]
 mod tests {
+    //! The receipt-checking provider wraps Alloy's concrete RPC builders, which automock
+    //! cannot construct, to reject confirmation under an RPC-supplied hash.
+
     use std::{
         sync::{Arc, atomic::AtomicBool},
         time::Duration,
     };
 
-    use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom, TxEip1559};
+    use alloy_consensus::{
+        Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom, SignableTransaction, TxEip1559,
+        TxEip4844, TxEip4844WithSidecar,
+    };
+    use alloy_eips::{Encodable2718, eip4844::Blob};
     use alloy_network::EthereumWallet;
     use alloy_node_bindings::Anvil;
-    use alloy_primitives::{Address, B256, Bloom, Bytes, TxKind, U256};
-    use alloy_provider::{ProviderBuilder, RootProvider};
-    use alloy_rpc_types_eth::{Block, TransactionReceipt};
+    use alloy_primitives::{Address, B256, Bloom, Bytes, TxKind, U256, keccak256};
+    use alloy_provider::{Provider, ProviderBuilder, ProviderCall, RootProvider};
+    use alloy_rpc_types_eth::{Block, TransactionReceipt, TransactionRequest};
+    use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
     use alloy_transport::mock::Asserter;
     use base_runtime::{
@@ -1753,12 +1791,16 @@ mod tests {
         deterministic::{Config, Runner},
     };
     use rstest::rstest;
-    use tokio::sync::mpsc;
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::TcpListener,
+        sync::mpsc,
+    };
 
     use super::{PreparedTx, SimpleTxManager, TxEnvelope};
     use crate::{
-        GasPriceCaps, NonceManager, NoopTxMetrics, SendState, TxCandidate, TxManagerConfig,
-        TxManagerError,
+        BlobTxBuilder, GasPriceCaps, NonceManager, NoopTxMetrics, SendState, TxCandidate,
+        TxManager, TxManagerConfig, TxManagerError,
     };
 
     async fn setup() -> (SimpleTxManager<RootProvider>, alloy_node_bindings::AnvilInstance) {
@@ -1780,10 +1822,280 @@ mod tests {
         (manager, anvil)
     }
 
+    #[rstest]
+    #[case::latest_by_default(false, 0)]
+    #[case::pending_opt_in(true, 1)]
+    #[tokio::test]
+    async fn nonce_initialization_block_tag(#[case] pending: bool, #[case] expected_nonce: u64) {
+        let anvil = Anvil::new().arg("--no-mining").spawn();
+        let provider = RootProvider::new_http(anvil.endpoint_url());
+        let signer: PrivateKeySigner = anvil.keys()[0].clone().into();
+        let _pending = provider
+            .send_transaction(
+                TransactionRequest::default()
+                    .from(signer.address())
+                    .to(Address::with_last_byte(0x42))
+                    .value(U256::from(1))
+                    .gas_limit(21_000),
+            )
+            .await
+            .expect("transaction should enter the mempool");
+        let manager = SimpleTxManager::from_wallet(
+            provider,
+            EthereumWallet::from(signer),
+            TxManagerConfig::default(),
+            anvil.chain_id(),
+            Arc::new(NoopTxMetrics),
+        )
+        .await
+        .unwrap();
+        let manager = if pending { manager.with_pending_nonce() } else { manager };
+
+        assert_eq!(manager.nonce_manager().next_nonce().await.unwrap().nonce(), expected_nonce);
+    }
+
+    #[derive(Debug, Clone)]
+    struct ReceiptHashProvider {
+        inner: RootProvider,
+        local_tx_hash: B256,
+    }
+
+    impl Provider for ReceiptHashProvider {
+        fn root(&self) -> &RootProvider {
+            &self.inner
+        }
+
+        fn get_transaction_receipt(
+            &self,
+            hash: B256,
+        ) -> ProviderCall<(B256,), Option<TransactionReceipt>> {
+            assert_eq!(hash, self.local_tx_hash, "receipt polling must use the local hash");
+            self.inner.get_transaction_receipt(hash)
+        }
+    }
+
+    fn signed_eip1559() -> TxEnvelope {
+        let tx = TxEip1559 {
+            chain_id: 1,
+            gas_limit: 21_000,
+            max_fee_per_gas: 2_000_000_000,
+            max_priority_fee_per_gas: 1_000_000_000,
+            to: TxKind::Call(Address::with_last_byte(0x42)),
+            ..Default::default()
+        };
+        let signature = PrivateKeySigner::random().sign_hash_sync(&tx.signature_hash()).unwrap();
+        tx.into_signed(signature).into()
+    }
+
+    #[tokio::test]
+    async fn publish_tx_confirms_local_hash_when_rpc_hash_differs() {
+        let envelope = signed_eip1559();
+        let raw_tx = envelope.encoded_2718().into();
+        let local_tx_hash = *envelope.tx_hash();
+        let rpc_tx_hash = B256::with_last_byte(0x42);
+        let (receipt, block) = mined_receipt(local_tx_hash, 10);
+        let asserter = Asserter::new();
+        asserter.push_success(&1u64);
+        asserter.push_success(&rpc_tx_hash);
+        asserter.push_success(&10u64);
+        asserter.push_success(&Some(&receipt));
+        asserter.push_success(&Some(&block));
+        let provider = ReceiptHashProvider {
+            inner: ProviderBuilder::default().connect_mocked_client(asserter),
+            local_tx_hash,
+        };
+        let manager = SimpleTxManager::from_wallet(
+            provider,
+            EthereumWallet::from(PrivateKeySigner::random()),
+            TxManagerConfig { num_confirmations: 1, ..TxManagerConfig::default() },
+            1,
+            Arc::new(NoopTxMetrics),
+        )
+        .await
+        .expect("should construct manager");
+        let send_state = SendState::new(3).expect("should construct send state");
+
+        let tx_hash = manager
+            .publish_tx(&send_state, &raw_tx, None)
+            .await
+            .expect("an unexpected RPC hash must not fail publication");
+        let confirmed = tokio::time::timeout(
+            Duration::from_secs(1),
+            SimpleTxManager::<ReceiptHashProvider>::wait_mined(
+                &send_state,
+                manager.provider(),
+                tx_hash,
+                manager.config(),
+                &AtomicBool::new(false),
+            ),
+        )
+        .await
+        .expect("local transaction should confirm")
+        .expect("should return a confirmed receipt");
+
+        assert_eq!(tx_hash, local_tx_hash);
+        assert_eq!(confirmed.transaction_hash, local_tx_hash);
+        assert_ne!(confirmed.transaction_hash, rpc_tx_hash);
+        assert!(send_state.has_published());
+    }
+
+    #[tokio::test]
+    async fn publish_tx_succeeds_when_rpc_hash_is_undecodable() {
+        let envelope = signed_eip1559();
+        let raw_tx = envelope.encoded_2718().into();
+        let asserter = Asserter::new();
+        asserter.push_success(&1u64);
+        asserter.push_success(&"0xnot-a-hash");
+        let provider = ProviderBuilder::new().connect_mocked_client(asserter);
+        let manager = SimpleTxManager::from_wallet(
+            provider,
+            EthereumWallet::from(PrivateKeySigner::random()),
+            TxManagerConfig::default(),
+            1,
+            Arc::new(NoopTxMetrics),
+        )
+        .await
+        .expect("should construct manager");
+        let send_state = SendState::new(3).expect("should construct send state");
+
+        let tx_hash = manager
+            .publish_tx(&send_state, &raw_tx, None)
+            .await
+            .expect("an undecodable RPC hash must not fail publication");
+
+        assert_eq!(tx_hash, *envelope.tx_hash());
+        assert!(send_state.has_published());
+    }
+
+    #[rstest]
+    #[case::canonical_rpc_hash(false)]
+    #[case::mismatched_rpc_hash(true)]
+    #[tokio::test]
+    async fn publish_tx_tracks_blob_hash_without_sidecar(#[case] mismatched_rpc_hash: bool) {
+        let sidecar = BlobTxBuilder::build_sidecar(&[Box::<Blob>::default()]).unwrap();
+        let tx = TxEip4844 {
+            chain_id: 1,
+            gas_limit: 21_000,
+            max_fee_per_gas: 2_000_000_000,
+            max_priority_fee_per_gas: 1_000_000_000,
+            max_fee_per_blob_gas: 1_000_000_000,
+            to: Address::with_last_byte(0x42),
+            blob_versioned_hashes: sidecar.versioned_hashes().collect(),
+            ..Default::default()
+        };
+        let signature = PrivateKeySigner::random().sign_hash_sync(&tx.signature_hash()).unwrap();
+        let tx: TxEip4844WithSidecar =
+            TxEip4844WithSidecar::from_tx_and_sidecar(tx, sidecar.into());
+        let envelope: TxEnvelope = tx.into_signed(signature).into();
+        let raw_tx = Bytes::from(envelope.encoded_2718());
+        let canonical_hash = *envelope.tx_hash();
+        assert_ne!(canonical_hash, keccak256(&raw_tx));
+        let rpc_hash =
+            if mismatched_rpc_hash { B256::with_last_byte(0x42) } else { canonical_hash };
+        let asserter = Asserter::new();
+        asserter.push_success(&1u64);
+        asserter.push_success(&rpc_hash);
+        let manager = SimpleTxManager::from_wallet(
+            ProviderBuilder::new().connect_mocked_client(asserter),
+            EthereumWallet::from(PrivateKeySigner::random()),
+            TxManagerConfig::default(),
+            1,
+            Arc::new(NoopTxMetrics),
+        )
+        .await
+        .unwrap();
+        let send_state = SendState::new(3).unwrap();
+
+        let tracked_hash = manager.publish_tx(&send_state, &raw_tx, None).await.unwrap();
+
+        assert_eq!(tracked_hash, canonical_hash);
+        assert!(send_state.has_published());
+    }
+
+    #[tokio::test]
+    async fn publish_tx_does_not_fail_for_an_unknown_transaction_type() {
+        let raw_tx = Bytes::from_static(&[0x7f]);
+        let expected_hash = keccak256(&raw_tx);
+        let asserter = Asserter::new();
+        asserter.push_success(&1u64);
+        asserter.push_success(&expected_hash);
+        let manager = SimpleTxManager::from_wallet(
+            ProviderBuilder::new().connect_mocked_client(asserter),
+            EthereumWallet::from(PrivateKeySigner::random()),
+            TxManagerConfig::default(),
+            1,
+            Arc::new(NoopTxMetrics),
+        )
+        .await
+        .unwrap();
+        let send_state = SendState::new(3).unwrap();
+
+        assert_eq!(manager.publish_tx(&send_state, &raw_tx, None).await.unwrap(), expected_hash);
+        assert!(send_state.has_published());
+    }
+
+    #[rstest]
+    #[case::html("<html>rate limited</html>")]
+    #[case::empty("")]
+    #[case::non_rpc_json(r#"{"message":"rate limited"}"#)]
+    #[tokio::test]
+    async fn publish_tx_rejects_invalid_response_envelopes(#[case] body: &'static str) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap()).parse().unwrap();
+        let server = tokio::spawn(async move {
+            tokio::time::timeout(Duration::from_secs(5), async move {
+                for body in [r#"{"jsonrpc":"2.0","id":0,"result":"0x1"}"#, body] {
+                    let (mut stream, _) = listener.accept().await.unwrap();
+                    let mut request = Vec::with_capacity(1024);
+                    loop {
+                        assert_ne!(stream.read_buf(&mut request).await.unwrap(), 0);
+                        if let Some(end) = request.windows(4).position(|w| w == b"\r\n\r\n")
+                            && serde_json::from_slice::<serde_json::Value>(&request[end + 4..])
+                                .is_ok()
+                        {
+                            break;
+                        }
+                    }
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    stream.write_all(response.as_bytes()).await.unwrap();
+                }
+            })
+            .await
+            .expect("HTTP server should finish");
+        });
+        let manager = SimpleTxManager::from_wallet(
+            RootProvider::new_http(url),
+            EthereumWallet::from(PrivateKeySigner::random()),
+            TxManagerConfig { network_timeout: Duration::from_secs(1), ..Default::default() },
+            1,
+            Arc::new(NoopTxMetrics),
+        )
+        .await
+        .unwrap();
+        let send_state = SendState::new(3).unwrap();
+        send_state.set_runtime_mempool_deadline(Duration::from_secs(1));
+
+        let result =
+            manager.publish_tx(&send_state, &signed_eip1559().encoded_2718().into(), None).await;
+
+        assert_eq!(result, Err(TxManagerError::Rpc("transport request failed".into())));
+        assert!(!send_state.has_published());
+        assert_eq!(
+            send_state.critical_error_at(Duration::from_secs(1)),
+            Some(TxManagerError::MempoolDeadlineExpired)
+        );
+        server.await.unwrap();
+    }
+
     #[tokio::test]
     async fn publish_tx_retries_nonce_too_high() {
         let asserter = Asserter::new();
-        let expected_hash = B256::with_last_byte(0x42);
+        let envelope = signed_eip1559();
+        let raw_tx = envelope.encoded_2718().into();
+        let expected_hash = *envelope.tx_hash();
         asserter.push_success(&1u64);
         asserter.push_failure_msg("nonce too high");
         asserter.push_success(&expected_hash);
@@ -1802,7 +2114,7 @@ mod tests {
         let send_state = SendState::new(3).expect("should construct send state");
 
         let hash = manager
-            .publish_tx_with_nonce_retry(&send_state, &Bytes::from_static(&[0x02]))
+            .publish_tx_with_nonce_retry(&send_state, &raw_tx)
             .await
             .expect("nonce-too-high publication should be retried");
 
@@ -1838,7 +2150,7 @@ mod tests {
         });
 
         let err = manager
-            .publish_tx_with_nonce_retry(&send_state, &Bytes::from_static(&[0x02]))
+            .publish_tx_with_nonce_retry(&send_state, &signed_eip1559().encoded_2718().into())
             .await
             .expect_err("closed manager must not retry publication");
         assert_eq!(err, TxManagerError::ChannelClosed);
@@ -1849,7 +2161,9 @@ mod tests {
     fn publish_retry_uses_injected_runtime_sleep() {
         Runner::start(Config::seeded(0), |ctx| async move {
             let asserter = Asserter::new();
-            let expected_hash = B256::with_last_byte(0x42);
+            let envelope = signed_eip1559();
+            let raw_tx = envelope.encoded_2718().into();
+            let expected_hash = *envelope.tx_hash();
             asserter.push_success(&1u64);
             asserter.push_failure_msg("nonce too high");
             asserter.push_success(&expected_hash);
@@ -1874,7 +2188,7 @@ mod tests {
             let send_state = SendState::new(3).expect("should construct send state");
 
             let hash = manager
-                .publish_tx_with_nonce_retry(&send_state, &Bytes::from_static(&[0x02]))
+                .publish_tx_with_nonce_retry(&send_state, &raw_tx)
                 .await
                 .expect("injected runtime should drive the nonce-too-high retry");
 
@@ -1913,7 +2227,7 @@ mod tests {
             send_state.set_runtime_mempool_deadline(ctx.now() + Duration::from_secs(1));
 
             let err = manager
-                .publish_tx_with_nonce_retry(&send_state, &Bytes::from_static(&[0x02]))
+                .publish_tx_with_nonce_retry(&send_state, &signed_eip1559().encoded_2718().into())
                 .await
                 .expect_err("retry must not publish after the mempool deadline");
 
@@ -2068,6 +2382,75 @@ mod tests {
 
             ctx.sleep(Duration::from_secs(10)).await;
             assert_eq!(asserter.read_q().len(), unused_responses);
+        });
+    }
+
+    #[rstest]
+    #[case::replacement_underpriced("replacement transaction underpriced")]
+    #[case::rpc("service unavailable")]
+    fn failed_fee_bumps_wait_for_resubmission_timeout(#[case] publish_error: &'static str) {
+        Runner::start(Config::seeded(0), move |ctx| async move {
+            let resubmission_timeout = Duration::from_secs(10);
+            let bump_intervals = 3;
+            let rpc_calls_per_bump = 4;
+            let asserter = Asserter::new();
+            let mut block: Block = Block::default();
+            block.header.base_fee_per_gas = Some(1_000_000_000);
+            asserter.push_success(&1u64);
+            asserter.push_success(&1_000_000_000u128);
+            asserter.push_success(&Some(&block));
+            asserter.push_success(&21_000u64);
+            asserter.push_success(&0u64);
+            asserter.push_success(&B256::with_last_byte(1));
+            asserter.push_success(&1u64);
+            asserter.push_success(&Option::<TransactionReceipt>::None);
+            for _ in 0..=bump_intervals {
+                asserter.push_success(&1_000_000_000u128);
+                asserter.push_success(&Some(&block));
+                asserter.push_success(&21_000u64);
+                asserter.push_failure_msg(publish_error);
+            }
+            let provider = ProviderBuilder::new().connect_mocked_client(asserter.clone());
+            let config = TxManagerConfig {
+                resubmission_timeout,
+                receipt_query_interval: Duration::from_secs(60),
+                safe_abort_nonce_too_low_count: 10,
+                ..TxManagerConfig::default()
+            };
+            let manager = SimpleTxManager::from_wallet_with_runtime(
+                ctx.clone(),
+                provider,
+                EthereumWallet::from(PrivateKeySigner::random()),
+                config,
+                1,
+                Arc::new(NoopTxMetrics),
+            )
+            .await
+            .expect("should construct manager");
+            let candidate =
+                TxCandidate { to: Some(Address::with_last_byte(0x42)), ..Default::default() };
+            let mut send = Box::pin(manager.send(candidate));
+            assert!(futures::poll!(&mut send).is_pending());
+            ctx.sleep(Duration::from_nanos(1)).await;
+            assert_eq!(asserter.read_q().len(), (bump_intervals + 1) * rpc_calls_per_bump);
+
+            for attempts in 1..=bump_intervals {
+                ctx.sleep(resubmission_timeout - Duration::from_nanos(2)).await;
+                assert!(futures::poll!(&mut send).is_pending());
+                assert_eq!(
+                    asserter.read_q().len(),
+                    (bump_intervals + 2 - attempts) * rpc_calls_per_bump,
+                    "fee-bump RPC calls must not run before a full resubmission timeout"
+                );
+                ctx.sleep(Duration::from_nanos(1)).await;
+                assert!(futures::poll!(&mut send).is_pending());
+                assert_eq!(
+                    asserter.read_q().len(),
+                    (bump_intervals + 1 - attempts) * rpc_calls_per_bump,
+                    "fee-bump RPC calls must run at most once per resubmission interval"
+                );
+                ctx.sleep(Duration::from_nanos(1)).await;
+            }
         });
     }
 

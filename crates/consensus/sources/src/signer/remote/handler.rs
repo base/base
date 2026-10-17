@@ -42,12 +42,6 @@ pub enum RemoteSignerError {
     /// JSON-RPC transport error
     #[error("JSON-RPC transport error: {0}")]
     SigningRPCError(#[from] alloy_transport::TransportError),
-    /// JSON serialization error
-    #[error("JSON serialization error: {0}")]
-    JsonError(#[from] serde_json::Error),
-    /// Failed to ping signer
-    #[error("Failed to ping signer: {0}")]
-    PingError(alloy_transport::TransportError),
     /// Invalid signature hex encoding
     #[error("Invalid signature hex encoding: {0}")]
     InvalidSignatureHex(alloy_primitives::hex::FromHexError),
@@ -98,14 +92,8 @@ impl RemoteSignerHandler {
         };
 
         // Make JSON-RPC call to the custom method
-        let response: SignResponse = {
-            self.client
-                .read()
-                .await
-                .request("opsigner_signBlockPayload", &params)
-                .await
-                .map_err(RemoteSignerError::SigningRPCError)?
-        };
+        let response: SignResponse =
+            self.client.read().await.request("opsigner_signBlockPayload", &params).await?;
 
         // Parse the hex signature
         let signature_bytes =
@@ -116,9 +104,6 @@ impl RemoteSignerHandler {
             return Err(RemoteSignerError::InvalidSignatureLength(signature_bytes.len()));
         }
 
-        let signature = Signature::from_raw(signature_bytes.as_slice())
-            .map_err(RemoteSignerError::SignatureError)?;
-
-        Ok(signature)
+        Ok(Signature::from_raw(signature_bytes.as_slice())?)
     }
 }

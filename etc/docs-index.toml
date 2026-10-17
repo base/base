@@ -55,8 +55,8 @@ summary = "base-telemetry backend: CLI and env config, per-IP rate limiting, and
 digest = "6d0de36199"
 
 ["bin/base/README.md"]
-summary = "Unified base commands, tracing and chain selection; native snapshot download/run, history retention, dev impersonation and signed RPC examples, restart and timing limits, and container usage."
-digest = "bcfe6bea9c"
+summary = "Unified base commands and chain selection; execution-only and consensus-only modes over Engine API; native snapshot dev mode, history retention, impersonation, timing limits, and container usage."
+digest = "e0fcc0f289"
 
 ["bin/basectl/README.md"]
 summary = "basectl operator console reference: global options, TUI and scriptable commands (block, sync-status, p2p, txpool, conductor, sequencer, batcher, doctor, proofs), JSON output and examples."
@@ -71,8 +71,8 @@ summary = "Challenger end-to-end test binary: forks L1 into a pod-local Anvil an
 digest = "9d88297895"
 
 ["bin/challenger/README.md"]
-summary = "ZK-proof dispute game challenger binary: parses CLI arguments, builds a validated config, and delegates to base_challenger::run(). Very short README."
-digest = "8dcfdcfb7b"
+summary = "ZK-proof dispute game challenger binary that parses CLI arguments, builds a validated config, and delegates to base_challenger::ChallengerService::run()."
+digest = "887edd2713"
 
 ["bin/consensus/README.md"]
 summary = "Stub README for base-consensus, the canonical consensus node entrypoint for the Base Stack. Minimal, no usage details."
@@ -183,8 +183,8 @@ summary = "base-builder-core: flashblocks payload builder library producing sub-
 digest = "21cbb6ed7f"
 
 ["crates/builder/metering/README.md"]
-summary = "base-builder-metering: MeteringStore (DashMap with LRU eviction) implementing MeteringProvider, plus base_setMeteringInformation style JSON-RPC extensions, with wiring example."
-digest = "89c5698c36"
+summary = "base-builder-metering covers MeteringStore's moka cache with a configured max capacity, LRU eviction policy, and TTL, its MeteringProvider implementation, JSON-RPC extensions, and a wiring example."
+digest = "fe08cca8b3"
 
 ["crates/builder/multiplex/README.md"]
 summary = "Runs flashblocks and basic payload builders in parallel behind one handle, selecting basic at Denim; cutover mode is off by default and a separate basic-only mode runs just the basic builder."
@@ -199,8 +199,8 @@ summary = "Types for transaction bundles used in resource metering (Bundle, Pars
 digest = "279c9afeab"
 
 ["crates/common/chains/README.md"]
-summary = "Single source of truth for Base chain config (BaseChainConfig consts: chain IDs, upgrade timestamps, genesis) and the BaseUpgrade enum/traits. Use when you need upgrade timestamps or chain params."
-digest = "5ffbd5d04c"
+summary = "Base chain parameters and upgrade timestamps via ChainConfig, upgrade schedules via ChainUpgrades and Upgrades, and the BaseUpgrade re-export with BaseUpgradeExt execution helpers."
+digest = "9ad08c2366"
 
 ["crates/common/consensus/README.md"]
 summary = "Base EL consensus types that differ from alloy-consensus, notably BaseTxEnvelope with deposit txs and receipts with deposit_nonce. Use when handling Base transactions and receipts."
@@ -219,8 +219,8 @@ summary = "Scaffold for Base's EVM2 integration (BaseEvmTypes, currently mirrori
 digest = "e8fa087a1d"
 
 ["crates/common/flashblocks/README.md"]
-summary = "Wire-format types for flashblocks pre-confirmations: FlashblocksPayloadV1, FlashblocksDiff, and FlashblocksMetadata. Use when parsing or producing flashblock messages."
-digest = "dbfd8f54d4"
+summary = "Types for parsing flashblock messages: FlashblocksPayloadV1, ExecutionPayloadFlashblockDeltaV1, and the typed Metadata used by Flashblock."
+digest = "47ff1d0dd5"
 
 ["crates/common/flz/README.md"]
 summary = "FastLZ compressed-length estimation and Fjord L1 data gas calculation (data_gas_fjord, tx_estimated_size_fjord). Use when computing L1 data fees or transaction size estimates."
@@ -276,7 +276,7 @@ digest = "f74ad9f822"
 
 ["crates/consensus/disc/README.md"]
 summary = "Discv5-based peer discovery for Base (Discv5Builder, Discv5Driver, ENR management, persistent bootstore). Use when working on node discovery, bootnodes, or ENR behavior."
-digest = "f51be6f7e0"
+digest = "4e1797cb01"
 
 ["crates/consensus/engine/README.md"]
 summary = "Task-queue Engine API client for the rollup node (Engine, EngineClient, Insert/Consolidate/Finalize/Synchronize tasks, version selection). Use when changing engine state or forkchoice handling."
@@ -296,11 +296,11 @@ digest = "b6430af020"
 
 ["crates/consensus/providers/README.md"]
 summary = "Alloy-backed data providers for derivation (AlloyChainProvider, AlloyL2ChainProvider, beacon client, blob provider) and OnlinePipeline. Use when wiring derivation to live L1/L2 nodes."
-digest = "de5aceb5e6"
+digest = "f89e210ad5"
 
 ["crates/consensus/rpc/README.md"]
 summary = "jsonrpsee trait definitions for the rollup node RPC, chiefly optimism_syncStatus, with a security note that the endpoint is internal-only. Use when implementing or calling consensus RPC."
-digest = "969c4d6125"
+digest = "d382650c29"
 
 ["crates/consensus/safedb/README.md"]
 summary = "redb-backed persistent safe head tracking (SafeDB, SafeHeadListener, SafeDBReader) serving optimism_safeHeadAtL1; not multi-process safe. Use when working on safe head history."
@@ -315,12 +315,12 @@ summary = "Overview and example of the network actor, which owns libp2p gossip a
 digest = "2587954b50"
 
 ["crates/consensus/sources/README.md"]
-summary = "Block signing interfaces for the consensus node: local BlockSigner, RemoteSigner with mTLS client certs. Use when configuring or changing how blocks are signed."
-digest = "15ec2f09b7"
+summary = "Block signing interfaces for the consensus node: BlockSigner for local or remote signing, RemoteSigner with mTLS client certs. Use when configuring or changing how blocks are signed."
+digest = "3b2f4cf0a4"
 
 ["crates/consensus/upgrades/README.md"]
-summary = "Consensus-layer upgrade types for Base: Upgrade trait and Upgrades registry (Ecotone to Jovian) with activation-block upgrade transactions. Use when wiring or checking fork activation; from op-alloy."
-digest = "c2967f4570"
+summary = "Upgrade trait and Upgrades registry for Ecotone, Fjord, Isthmus, and Jovian network transactions. Use when collecting transactions for upgrade activation blocks."
+digest = "a7737b723a"
 
 ["crates/execution/chainspec/README.md"]
 summary = "BaseChainSpec and SUPPORTED_CHAINS CLI resolution, Holocene/Jovian base fee helpers, and Denim timestamp validation rules (custom genesis needs nonzero config.blockTime). Use for chain/fork config."
@@ -344,11 +344,11 @@ digest = "9c987d9934"
 
 ["crates/execution/eip8130/README.md"]
 summary = "Native EIP-8130 account abstraction validation: enshrined authenticators (not precompiles) needing parity with contracts, validation layers, intrinsic gas formula, EIP-7623 floor, fee checks."
-digest = "96d10d28d3"
+digest = "314b8c4376"
 
 ["crates/execution/evm/README.md"]
-summary = "BaseEvmConfig implementing reth ConfigureEvm, mapping timestamps to SpecId for upgrade-aware EVM environments, and re-exporting executor types. Use when changing Base EVM setup or fork specs."
-digest = "7b39d77ff1"
+summary = "BaseEvmConfig setup, block assembly, L1 info parsing and data-fee calculation, receipt building, and error types. Use when changing Base EVM setup or fork specs."
+digest = "8f433c0ac9"
 
 ["crates/execution/exex/README.md"]
 summary = "Proofs-history ExEx: versioned MDBX trie store serving historical eth_getProof without OOM, with pruner, debug_proofsSyncStatus, prune/unwind commands, metrics. Use to operate or debug proofs history."
@@ -400,7 +400,7 @@ digest = "5c43615d49"
 
 ["crates/execution/trie/README.md"]
 summary = "base-execution-trie: BaseProofsStore traits and backends (e.g. RocksdbProofsStorage) holding per-block trie diffs for fault-proof generation, with cursors, pruner and startup init job."
-digest = "b641655b32"
+digest = "e842faecd7"
 
 ["crates/execution/trie/src/db/schema.md"]
 summary = "MDBX proof-history DB schema: versioned DupSort tables, tombstones, BlockChangeSet reverse index, proof window keys, cursor reads, append-only writes, block 0 backfill. For eth_getProof storage."
@@ -438,6 +438,10 @@ digest = "1e4810a82c"
 summary = "Behavioural e2e test of the challenger: forks L1 into Anvil, patches real games; the default `all` scenario covers Paths 1-4 on one fork by reviving nullified verifiers. Lists scenarios and env vars."
 digest = "a085a1e104"
 
+["crates/infra/fee-jobs/README.md"]
+summary = "Run disburse, process, and sweep fee jobs with per-command environment variables, preconditions, and transaction manager settings."
+digest = "63f18e304f"
+
 ["crates/infra/load-tests/README.md"]
 summary = "Load testing: devnet/sepolia profiles, YAML workloads, calibration, adaptive or proactive validity signing, resource pacing, benchmark/report tools, and rollout limitations."
 digest = "a5633d6f46"
@@ -470,6 +474,10 @@ digest = "333f88c3b6"
 summary = "Alpha WebSocket proxy fanning out Flashblocks from rollup-boost to downstream RPC nodes, with optional Brotli and trusted-proxy CIDR client IP handling. Use for its CLI flags and deployment."
 digest = "63043098db"
 
+["crates/infra/withdrawer/README.md"]
+summary = "Withdrawer configuration, signers, retrying RPC clients, capped L1 transaction preparation and signing, withdrawal extraction, and inclusion proof verification against onchain output claims."
+digest = "93f46fb900"
+
 ["crates/infra/zk-benchmarks/README.md"]
 summary = "One-line stub: ZK proof benchmarking utilities for Base load-test runs; no usage or detail beyond that."
 digest = "2f4f0dcd6f"
@@ -480,7 +488,7 @@ digest = "0208dada05"
 
 ["crates/proof/challenge/README.md"]
 summary = "base-challenger: ZK-proof dispute game challenger; module tour covering scanner, validator, pending proof phases, submitter, bond lifecycle, and config. Use to find where challenger logic lives."
-digest = "5e8a931c81"
+digest = "7dbd673958"
 
 ["crates/proof/client/README.md"]
 summary = "base-proof-client: runtime-agnostic prologue/driver/epilogue orchestration of a fault or ZK proof run with injected oracle, hint writer and EVM factory; InvalidClaim on root mismatch."
@@ -587,8 +595,8 @@ summary = "Host-side witness capture for ZK proving: fetches L1/L2 data over RPC
 digest = "c2ed1875a8"
 
 ["crates/utilities/balance-monitor/README.md"]
-summary = "Describes BalanceMonitorLayer, an alloy ProviderLayer that polls an account balance on each new block and publishes it through a tokio watch channel. Use for onchain balance monitoring in services."
-digest = "4db9619278"
+summary = "Describes BalanceMonitorLayer, an alloy ProviderLayer that polls an account balance at a fixed interval and publishes it through a tokio watch channel for onchain balance monitoring in services."
+digest = "cbf93709e9"
 
 ["crates/utilities/cli/README.md"]
 summary = "Overview of base-cli-utils: parse_cli!, register_version_metrics!, define_log_args!, define_metrics_args! macros and RuntimeManager (tokio runtime, signal shutdown). Use when building Base binaries."
@@ -599,8 +607,8 @@ summary = "Health utilities: a healthz JSON-RPC method (HealthzRpc) for jsonrpse
 digest = "b842a480e4"
 
 ["crates/utilities/jwt/README.md"]
-summary = "JWT secret handling for Base nodes: loading, generating and resolving secrets (file, encoded, default) and optionally validating them against an Engine API via the engine-validation feature."
-digest = "826664fe2d"
+summary = "JwtSecretReader reads, writes, generates and resolves JWT secrets for Base nodes. JwtValidator optionally validates secrets against an Engine API with the engine-validation feature."
+digest = "8054bcba99"
 
 ["crates/utilities/l1-head/README.md"]
 summary = "One-line crate description: shared L1 head calculation helpers for proof services. No usage details in the README."
@@ -632,7 +640,7 @@ digest = "9b7117ade3"
 
 ["crates/utilities/test-utils/README.md"]
 summary = "Shared integration-test utilities: build_test_genesis, pre-funded test Accounts, and Solidity contract bindings (MockERC20, proxies, etc.). Use as a dev-dependency in Base integration tests."
-digest = "200a2d2b84"
+digest = "60c6c414f2"
 
 ["crates/utilities/test-utils/contracts/README.md"]
 summary = "Upstream Foundry boilerplate README for the test contracts project, plus one Base-specific section on deploying the WETH/USDC real-token swap devnet harness used by the load-test Justfile."
@@ -648,7 +656,7 @@ digest = "ffbb152cb0"
 
 ["crates/utilities/upgrade-signal/README.md"]
 summary = "Reads upgrade activation timestamps and minimum protocol version from the L1 ProtocolVersions contract; covers modes (metrics-only, startup-apply, runtime-admin), CLI flags, defaults, metrics."
-digest = "fd4c93a6fc"
+digest = "e38e07a646"
 
 ["docs/guides/BLOCK_PRODUCTION_REVIEW.md"]
 summary = "Review guide for block-production-sensitive PRs: mandatory payload size-limit gate across I/O boundaries, taxonomy of halt/stall scenarios (precompiles, builder, flashblocks), and a checklist."
@@ -658,9 +666,13 @@ digest = "393c4961d6"
 summary = "Chooser for local environments: Docker and HA devnets, Anvil + local Nitro proving, snapshot devnet (base dev), snapshot benchmark harness, with quickstarts, data-reset behavior, and owning docs."
 digest = "0951b41580"
 
+["docs/guides/GLAMSTERDAM.md"]
+summary = "Scopes Base's Glamsterdam EIPs with BAL and SLOTNUM designs, plus calldata and access-list pricing proposals for transaction costs, P2P block sizes, and storage growth."
+digest = "5934f501aa"
+
 ["docs/guides/P2P.md"]
 summary = "Explains the Base P2P stack for newcomers: consensus-layer discv5 and libp2p gossipsub versus execution-layer reth networking, how they interact via Engine API, key files, flags, and glossary."
-digest = "2407f38ac8"
+digest = "619d6e31e3"
 
 ["docs/guides/RELEASE.md"]
 summary = "Release process: Start Release creates releases/vX.Y.Z, version sync PR, automatic RC tags and builds per commit, then Publish Release for the final tag, Docker images and binaries."
@@ -680,7 +692,7 @@ digest = "261c1fa398"
 
 ["docs/guides/UPGRADES.md"]
 summary = "Step-by-step guide to adding a network upgrade (Azul as example): BaseUpgrade enum, RollupConfig activation, timestamps, plus BaseSpecId and precompile routing if EVM rules change, and a checklist."
-digest = "e87f3373b8"
+digest = "8df3320197"
 
 ["docs/transaction-events/README.md"]
 summary = "Spec for transaction-event/v1, the JSONL business event journal for transaction observability: config fields, envelope, event vocabulary, Vector to audit-archiver ingest, Postgres retention, examples."

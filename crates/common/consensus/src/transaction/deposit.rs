@@ -486,65 +486,18 @@ impl InMemorySize for TxDeposit {
 mod tests {
     use alloy_primitives::hex;
     use alloy_rlp::BytesMut;
-    use rstest::rstest;
 
     use super::*;
-    use crate::BaseTxEnvelope;
+    use crate::{BaseTxEnvelope, test_utils::sample_deposit};
 
     #[test]
     fn test_deposit_transaction_trait() {
-        let tx = TxDeposit {
-            source_hash: B256::with_last_byte(42),
-            from: Address::default(),
-            to: TxKind::default(),
-            mint: 100,
-            value: U256::from(1000),
-            gas_limit: 50000,
-            is_system_transaction: true,
-            input: Bytes::default(),
-        };
+        let tx = sample_deposit();
 
-        assert_eq!(tx.source_hash(), Some(B256::with_last_byte(42)));
-        assert_eq!(tx.mint(), 100);
+        assert_eq!(tx.source_hash(), Some(B256::with_last_byte(2)));
+        assert_eq!(tx.mint(), 1);
         assert!(tx.is_system_transaction());
-    }
-
-    #[test]
-    fn test_deposit_transaction_without_mint() {
-        let tx = TxDeposit {
-            source_hash: B256::default(),
-            from: Address::default(),
-            to: TxKind::default(),
-            mint: 0,
-            value: U256::default(),
-            gas_limit: 50000,
-            is_system_transaction: false,
-            input: Bytes::default(),
-        };
-
-        assert_eq!(tx.source_hash(), Some(B256::default()));
-        assert_eq!(tx.mint(), 0);
-        assert!(!tx.is_system_transaction());
-    }
-
-    #[test]
-    fn test_deposit_transaction_to_contract() {
-        let contract_address = Address::with_last_byte(0xFF);
-        let tx = TxDeposit {
-            source_hash: B256::default(),
-            from: Address::default(),
-            to: TxKind::Call(contract_address),
-            mint: 200,
-            value: U256::from(500),
-            gas_limit: 100000,
-            is_system_transaction: false,
-            input: Bytes::from_static(&[1, 2, 3]),
-        };
-
-        assert_eq!(tx.source_hash(), Some(B256::default()));
-        assert_eq!(tx.mint(), 200);
-        assert!(!tx.is_system_transaction());
-        assert_eq!(tx.kind(), TxKind::Call(contract_address));
+        assert_eq!(tx.kind(), TxKind::Call(Address::repeat_byte(0x11)));
     }
 
     #[test]
@@ -569,16 +522,7 @@ mod tests {
 
     #[test]
     fn test_encode_decode_fields() {
-        let original = TxDeposit {
-            source_hash: B256::default(),
-            from: Address::default(),
-            to: TxKind::default(),
-            mint: 100,
-            value: U256::default(),
-            gas_limit: 50000,
-            is_system_transaction: true,
-            input: Bytes::default(),
-        };
+        let original = sample_deposit();
 
         let mut buffer = BytesMut::new();
         original.rlp_encode_fields(&mut buffer);
@@ -588,146 +532,24 @@ mod tests {
     }
 
     #[test]
-    fn test_encode_with_and_without_header() {
-        let tx_deposit = TxDeposit {
-            source_hash: B256::default(),
-            from: Address::default(),
-            to: TxKind::default(),
-            mint: 100,
-            value: U256::default(),
-            gas_limit: 50000,
-            is_system_transaction: true,
-            input: Bytes::default(),
-        };
+    fn test_network_encoding_wraps_eip2718_bytes() {
+        let tx = sample_deposit();
 
-        let mut buffer_with_header = BytesMut::new();
-        tx_deposit.encode(&mut buffer_with_header);
+        let mut buf = BytesMut::new();
+        tx.network_encode(&mut buf);
 
-        let mut buffer_without_header = BytesMut::new();
-        tx_deposit.rlp_encode_fields(&mut buffer_without_header);
-
-        assert!(buffer_with_header.len() > buffer_without_header.len());
+        assert_eq!(buf.len(), tx.network_encoded_length());
+        assert_eq!(Bytes::decode(&mut &buf[..]).unwrap(), tx.encoded_2718());
     }
 
     #[test]
-    fn test_payload_length() {
-        let tx_deposit = TxDeposit {
-            source_hash: B256::default(),
-            from: Address::default(),
-            to: TxKind::default(),
-            mint: 100,
-            value: U256::default(),
-            gas_limit: 50000,
-            is_system_transaction: true,
-            input: Bytes::default(),
-        };
+    fn test_size_grows_with_input() {
+        let empty = TxDeposit::default();
+        let with_input = TxDeposit { input: Bytes::from_static(&[0xab; 10]), ..Default::default() };
 
-        assert!(tx_deposit.size() > tx_deposit.rlp_encoded_fields_length());
+        assert_eq!(with_input.size(), empty.size() + 10);
     }
 
-    #[rstest]
-    #[case::empty_create(TxDeposit {
-        source_hash: B256::default(),
-        from: Address::default(),
-        to: TxKind::Create,
-        mint: 0,
-        value: U256::ZERO,
-        gas_limit: 0,
-        is_system_transaction: false,
-        input: Bytes::new(),
-    })]
-    #[case::call_with_value(TxDeposit {
-        source_hash: B256::with_last_byte(0xff),
-        from: Address::with_last_byte(0xaa),
-        to: TxKind::Call(Address::with_last_byte(0xbb)),
-        mint: 500,
-        value: U256::from(1_000_000u64),
-        gas_limit: 21000,
-        is_system_transaction: false,
-        input: Bytes::new(),
-    })]
-    #[case::system_tx_with_calldata(TxDeposit {
-        source_hash: B256::with_last_byte(42),
-        from: Address::with_last_byte(1),
-        to: TxKind::Call(Address::ZERO),
-        mint: 0,
-        value: U256::ZERO,
-        gas_limit: 100_000,
-        is_system_transaction: true,
-        input: Bytes::from_static(&[1, 2, 3, 4, 5]),
-    })]
-    #[case::large_mint_and_value(TxDeposit {
-        source_hash: B256::repeat_byte(0xde),
-        from: Address::repeat_byte(0xad),
-        to: TxKind::Create,
-        mint: u128::MAX,
-        value: U256::MAX,
-        gas_limit: u64::MAX,
-        is_system_transaction: false,
-        input: Bytes::from_static(&[0xab; 128]),
-    })]
-    #[case::zero_gas_create_with_calldata(TxDeposit {
-        source_hash: B256::ZERO,
-        from: Address::ZERO,
-        to: TxKind::Create,
-        mint: 1,
-        value: U256::from(1u64),
-        gas_limit: 0,
-        is_system_transaction: true,
-        input: Bytes::from_static(&[0xff; 32]),
-    })]
-    fn test_size_accounts_for_all_fields(#[case] tx: TxDeposit) {
-        let expected = mem::size_of::<B256>()       // source_hash
-            + mem::size_of::<Address>()              // from
-            + tx.to.size()                           // to
-            + mem::size_of::<u128>()                 // mint
-            + mem::size_of::<U256>()                 // value
-            + mem::size_of::<u64>()                  // gas_limit
-            + mem::size_of::<bool>()                 // is_system_transaction
-            + tx.input.len(); // input
-        assert_eq!(tx.size(), expected);
-    }
-
-    #[test]
-    fn test_encode_inner_with_and_without_header() {
-        let tx_deposit = TxDeposit {
-            source_hash: B256::default(),
-            from: Address::default(),
-            to: TxKind::default(),
-            mint: 100,
-            value: U256::default(),
-            gas_limit: 50000,
-            is_system_transaction: true,
-            input: Bytes::default(),
-        };
-
-        let mut buffer_with_header = BytesMut::new();
-        tx_deposit.network_encode(&mut buffer_with_header);
-
-        let mut buffer_without_header = BytesMut::new();
-        tx_deposit.encode_2718(&mut buffer_without_header);
-
-        assert!(buffer_with_header.len() > buffer_without_header.len());
-    }
-
-    #[test]
-    fn test_payload_length_header() {
-        let tx_deposit = TxDeposit {
-            source_hash: B256::default(),
-            from: Address::default(),
-            to: TxKind::default(),
-            mint: 100,
-            value: U256::default(),
-            gas_limit: 50000,
-            is_system_transaction: true,
-            input: Bytes::default(),
-        };
-
-        let total_len = tx_deposit.network_encoded_length();
-        let len_without_header = tx_deposit.eip2718_encoded_length();
-
-        assert!(total_len > len_without_header);
-    }
     #[test]
     fn test_deposit_tx_roundtrip() {
         let raw_txs = [

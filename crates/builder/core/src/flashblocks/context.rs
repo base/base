@@ -5,7 +5,7 @@ use std::{
 };
 
 use alloy_consensus::{Eip658Value, Transaction};
-use alloy_eips::{Encodable2718, Typed2718};
+use alloy_eips::{Encodable2718, Typed2718, eip2718::WithEncoded};
 use alloy_evm::Database;
 #[cfg(any(test, feature = "test-utils"))]
 use alloy_primitives::B256;
@@ -769,6 +769,12 @@ impl BasePayloadBuilderCtx {
 
         let block_number = as_u64_saturated!(self.evm_env.block_env.number);
         let block_timestamp = self.attributes().timestamp();
+        let mut coinbase_tip_affordability = CoinbaseTipAffordability::load(
+            evm.db_mut(),
+            block_number,
+            self.evm_env.cfg_env.spec,
+            u128::from(base_fee),
+        );
         let payload_id = self.payload_id().to_string();
         let mut predicate_index =
             ParkedPredicateIndex::new(self.builder_config.predicate_bucket_ordered_threshold);
@@ -1061,7 +1067,7 @@ impl BasePayloadBuilderCtx {
                 None => 0,
             };
 
-            if CoinbaseTipAffordability::unaffordable(&tx, tx_payer_auth, evm.db_mut()) {
+            if coinbase_tip_affordability.unaffordable(&tx, tx_payer_auth, evm.db_mut()) {
                 trace!(
                     target: "payload_builder",
                     tx_hash = ?tx_hash,
@@ -1085,9 +1091,9 @@ impl BasePayloadBuilderCtx {
 
             // Kept past consensus conversion so a commit can claim the state it conditioned on.
             let committed_predicates = tx.validity_predicates().to_vec();
-            let tx = tx.into_consensus();
+            let (tx_encoded, tx) = tx.into_consensus_with2718().split();
             let tx_hash = tx.tx_hash();
-            let tx_uncompressed_size = tx.encode_2718_len() as u64;
+            let tx_uncompressed_size = tx_encoded.len() as u64;
 
             let log_txn = |result: Result<TxnOutcome, TxnExecutionError>| {
                 let result_str = match &result {
@@ -1279,7 +1285,9 @@ impl BasePayloadBuilderCtx {
             let _tx_span_guard = tx_span.enter();
 
             let execution_start_time = Instant::now();
-            let ResultAndState { result, state } = match evm.transact(&tx) {
+            let ResultAndState { result, state } = match evm
+                .transact(WithEncoded::new(tx_encoded, &tx))
+            {
                 Ok(res) => res,
                 Err(err) => {
                     if let Some(err) = err.as_invalid_tx_err() {

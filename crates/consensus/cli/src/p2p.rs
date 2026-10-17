@@ -6,12 +6,10 @@ use std::{
     num::{NonZeroUsize, ParseIntError},
     ops::{Deref, DerefMut},
     path::PathBuf,
-    str::FromStr,
 };
 
 use alloy_primitives::{B256, b256};
 use alloy_provider::Provider;
-use alloy_signer_local::PrivateKeySigner;
 use backon::Retryable;
 use base_common_genesis::RollupConfig;
 use base_consensus_derive::ChainProvider;
@@ -404,35 +402,6 @@ impl P2PArgs {
         Ok(())
     }
 
-    /// Returns the private key as specified in the raw cli flag or via file path.
-    pub fn private_key(&self) -> Option<PrivateKeySigner> {
-        if let Some(key) = self.private_key {
-            match PrivateKeySigner::from_bytes(&key) {
-                Ok(signer) => return Some(signer),
-                Err(e) => {
-                    error!(target: "p2p::flags", error = %e, "Failed to parse private key");
-                    return None;
-                }
-            }
-        }
-
-        if let Some(path) = self.priv_path.as_ref()
-            && path.exists()
-        {
-            let contents = std::fs::read_to_string(path).ok()?;
-            let decoded = B256::from_str(&contents).ok()?;
-            match PrivateKeySigner::from_bytes(&decoded) {
-                Ok(signer) => return Some(signer),
-                Err(e) => {
-                    error!(target: "p2p::flags", error = %e, "Failed to parse private key from file");
-                    return None;
-                }
-            }
-        }
-
-        None
-    }
-
     /// Returns the unsafe block signer from the CLI arguments.
     ///
     /// This method fetches the unsafe block signer from L1 if an RPC URL is provided,
@@ -782,9 +751,12 @@ impl P2PArgs {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
+    use std::{
+        str::FromStr,
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
     };
 
     use alloy_primitives::{Address, b256};

@@ -293,20 +293,6 @@ impl DelegationEffect {
         sctx.set_code(self.account, code)?;
         Ok(())
     }
-
-    /// The delegation-indicator code to install
-    /// (`DELEGATION_INDICATOR_PREFIX || target`), or `None` to clear the
-    /// account's delegation (a zero target).
-    #[must_use]
-    pub fn indicator(&self) -> Option<Bytes> {
-        if self.target.is_zero() {
-            return None;
-        }
-        let mut code = Vec::with_capacity(Eip8130Constants::DELEGATION_INDICATOR_SIZE);
-        code.extend_from_slice(&Eip8130Constants::DELEGATION_INDICATOR_PREFIX);
-        code.extend_from_slice(self.target.as_slice());
-        Some(Bytes::from(code))
-    }
 }
 
 /// The deferred account-*code* effects produced by applying a transaction's
@@ -2325,19 +2311,6 @@ mod tests {
             };
             assert!(AccountChangeApplier::apply_create(acc, &entry).is_ok());
         });
-    }
-
-    #[test]
-    fn delegation_effect_indicator_set_and_clear() {
-        let target = address!("0x00000000000000000000000000000000000000ee");
-        let set = DelegationEffect::new(ACCOUNT, target);
-        let code = set.indicator().unwrap();
-        assert_eq!(code.len(), Eip8130Constants::DELEGATION_INDICATOR_SIZE);
-        assert_eq!(&code[..3], &Eip8130Constants::DELEGATION_INDICATOR_PREFIX);
-        assert_eq!(&code[3..], target.as_slice());
-
-        let clear = DelegationEffect::new(ACCOUNT, Address::ZERO);
-        assert!(clear.indicator().is_none());
     }
 
     #[test]

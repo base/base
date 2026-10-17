@@ -88,6 +88,8 @@ struct Eip8130ValidationState {
     /// and the guard's payer balance watch.
     sender_balance: U256,
     sender_nonce: u64,
+    /// The sender's code hash when the sender is EIP-7702 delegated, the only
+    /// sender code reth's delegation slot limit is meant for; `None` otherwise.
     sender_bytecode_hash: Option<B256>,
     watch_set: WatchSet,
     sender_locked: bool,
@@ -1023,7 +1025,10 @@ where
                 transaction: ValidTransaction::new(transaction, None),
                 propagate,
                 bytecode_hash: state.sender_bytecode_hash,
-                authorities: (state.payer != state.sender).then_some(vec![state.payer]),
+                // Reth reserves authorities under its EIP-7702 delegation slot
+                // limit. A payer installs no delegation; the payer-keyed guard
+                // bounds what it sponsors.
+                authorities: None,
             };
             return self.apply_base_checks(outcome, false);
         }
@@ -1380,7 +1385,7 @@ where
             payer_balance: payer_account.balance,
             sender_balance: sender_account.balance,
             sender_nonce,
-            sender_bytecode_hash: sender_account.bytecode_hash,
+            sender_bytecode_hash: Self::delegated_code_hash(&*state, &sender_account)?,
             watch_set,
             // Without the Keystore an account's only key is its own secp256k1
             // key, which can never change: its authorization is as stable as a
@@ -1602,6 +1607,23 @@ where
                 .map(|nonce| (nonce == 0, nonce))
                 .map_err(|error| Self::precompile_storage_error(error, "nonce manager read failed"))
         })
+    }
+
+    /// Returns `account`'s code hash when its code is an EIP-7702 delegation
+    /// indicator, matching the only sender code a standard transaction can
+    /// report to reth.
+    fn delegated_code_hash(
+        state: &dyn StateProvider,
+        account: &reth_primitives_traits::Account,
+    ) -> Result<Option<B256>, InvalidPoolTransactionError> {
+        let Some(code_hash) = account.bytecode_hash.filter(|hash| *hash != KECCAK_EMPTY) else {
+            return Ok(None);
+        };
+        let delegated = state
+            .bytecode_by_hash(&code_hash)
+            .map_err(|error| Self::state_read_error(error, "sender code read failed"))?
+            .is_some_and(|code| code.is_eip7702());
+        Ok(delegated.then_some(code_hash))
     }
 
     fn account_has_code(
@@ -3908,5 +3930,31 @@ mod tests {
         assert_eq!(state.payer, sender);
         assert_eq!(state.sender_bytecode_hash, Some(expected_hash));
         assert!(state.watch_set.iter().any(|key| *key == InvalidationKey::CodeHash(sender)));
+    }
+
+    /// Reth applies its EIP-7702 delegation slot limit to any sender reported
+    /// with code, so a sender whose code is not a delegation indicator must
+    /// report none, as a standard transaction's sender would.
+    #[test]
+    fn sender_with_non_delegation_code_reports_no_code_hash() {
+        let signer = PrivateKeySigner::random();
+        let sender = signer.address();
+        let tx = TxEip8130 {
+            chain_id: test_chain_id(),
+            nonce_key: U256::ZERO,
+            max_fee_per_gas: 100,
+            gas_limit: 1_000_000,
+            ..Default::default()
+        };
+        let sender_auth = k1_auth_blob(&signer, tx.sender_signature_hash()).slice(20..);
+        let signed = Eip8130Signed::new(tx, sender_auth, Bytes::new());
+        let account = ExtendedAccount::new(0, U256::from(1_000_000_000_000_000_000u64))
+            .with_bytecode(Bytes::from_static(&[0x60, 0x00]));
+        let validator = build_test_validator_with_account(sender, account);
+
+        let state = validator
+            .validate_eip8130_full(&signed)
+            .expect("a sender with code may send an EIP-8130 transaction");
+        assert_eq!(state.sender_bytecode_hash, None);
     }
 }

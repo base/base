@@ -30,8 +30,7 @@ pub struct SequencerConfig {
     /// commit latency for typical mainnet payloads, and a prerequisite for blocks
     /// larger than the conductor's 5 `MiB` JSON-RPC body limit.
     ///
-    /// Requires conductor with binary endpoint support
-    /// (<https://github.com/base/optimism/pull/36>).
+    /// Requires a conductor that exposes the binary commit endpoint.
     pub conductor_binary_commit: bool,
     /// Request timeout for conductor RPC calls (both JSON-RPC and binary commit).
     pub conductor_rpc_timeout: Duration,

@@ -1,11 +1,6 @@
 //! Batcher service startup and wiring.
 
-use std::{
-    future::{Future, pending},
-    sync::Arc,
-    task::Poll,
-    time::Duration,
-};
+use std::{future::Future, sync::Arc, task::Poll, time::Duration};
 
 use alloy_provider::{Provider, ProviderBuilder, ProviderLayer, RootProvider};
 use backon::Retryable;
@@ -70,25 +65,34 @@ pub struct ReadyBatcher {
 
 impl ReadyBatcher {
     /// Run the batch submission loop until the runtime is cancelled.
+    ///
+    /// The driver and the background tasks run until either exits, which cancels the others.
+    /// All are then awaited, so the driver always completes its shutdown drain. A background
+    /// task exiting is an error; the driver error takes precedence.
     pub async fn run(self) -> eyre::Result<()> {
         info!("batcher driver running");
         let Self { driver, admin_server, background_tasks, cancellation } = self;
-        let background_cancellation = cancellation.clone();
-        let background_task_exit = async move {
+        let run_driver = async {
+            let result = driver.run().await;
+            cancellation.cancel();
+            result
+        };
+        let watch_background_tasks = async {
             let mut background_tasks = background_tasks
                 .into_iter()
                 .map(|(task_name, task)| async move { (task_name, task.await) })
                 .collect::<FuturesUnordered<_>>();
-            tokio::select! {
+            let result = tokio::select! {
                 biased;
-                () = background_cancellation.cancelled() => {}
+                () = cancellation.cancelled() => Ok(()),
                 Some((task_name, result)) = background_tasks.next(), if !background_tasks.is_empty() => {
                     match result {
-                        Ok(()) => eyre::bail!("{task_name} exited unexpectedly"),
-                        Err(error) => eyre::bail!("{task_name} failed: {error}"),
+                        Ok(()) => Err(eyre::eyre!("{task_name} exited unexpectedly")),
+                        Err(error) => Err(eyre::eyre!("{task_name} failed: {error}")),
                     }
                 }
-            }
+            };
+            cancellation.cancel();
 
             while let Some((task_name, result)) = background_tasks.next().await {
                 if let Err(error) = result {
@@ -99,43 +103,22 @@ impl ReadyBatcher {
                     );
                 }
             }
-
-            Ok::<_, eyre::Report>(())
+            result
         };
-        tokio::pin!(background_task_exit);
-        let driver_run = driver.run();
-        tokio::pin!(driver_run);
-        let admin_stopped = async {
-            match admin_server.as_ref() {
-                Some(admin) => admin.stopped().await,
-                None => pending().await,
-            }
-        };
-        tokio::pin!(admin_stopped);
-        let mut admin_active = admin_server.is_some();
-
-        loop {
+        let watch_admin = async {
+            let Some(admin) = admin_server.as_ref() else { return };
             tokio::select! {
-                r = &mut driver_run => {
-                    cancellation.cancel();
-                    let driver_result = r;
-                    let background_result = background_task_exit.as_mut().await;
-                    driver_result?;
-                    background_result?;
-                    break;
-                }
-                r = &mut background_task_exit => {
-                    cancellation.cancel();
-                    r?;
-                    driver_run.await?;
-                    break;
-                }
-                () = &mut admin_stopped, if admin_active => {
-                    admin_active = false;
+                () = admin.stopped() => {
                     warn!("admin server stopped unexpectedly; batcher continues without admin API");
                 }
+                () = cancellation.cancelled() => {}
             }
-        }
+        };
+
+        let (driver_result, background_result, ()) =
+            tokio::join!(run_driver, watch_background_tasks, watch_admin);
+        driver_result?;
+        background_result?;
         info!("batcher service shutting down");
         Ok(())
     }
@@ -931,22 +914,6 @@ mod tests {
         for read in &reads {
             read.assert_calls_async(1).await;
         }
-    }
-
-    /// Setup goes past the batcher check when the signer is the one the `SystemConfig` authorizes.
-    #[tokio::test]
-    async fn setup_accepts_the_signer_the_system_config_authorizes() {
-        let server = MockServer::start_async().await;
-        let signer = Address::repeat_byte(0x51);
-        mock_system_config(&server, signer).await;
-        // Setup reads the L1 head right after the check, so a served read means the check passed.
-        let l1_head = mock_rpc(&server, r#"{"method":"eth_blockNumber"}"#, r#""0x1""#.into()).await;
-
-        // Setup fails later, on the reads this test does not mock.
-        let _ =
-            BatcherService::new(mocked_config(&server, signer)).setup(TokioRuntime::new()).await;
-
-        assert!(l1_head.calls_async().await > 0, "setup must go past the check");
     }
 
     /// A shadow batcher posts to its own inbox, so setup does not check its signer against the

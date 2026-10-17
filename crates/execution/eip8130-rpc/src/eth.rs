@@ -74,9 +74,10 @@ pub trait Eip8130EthApiOverride {
 
     /// Executes a call.
     ///
-    /// A request carrying EIP-8130 fields (or `type: 0x79`) runs the same
-    /// read-only EIP-8130 simulation as `eth_estimateGas` (gated on the Everest
-    /// fork) and returns the output of its final call. A plain request falls
+    /// A request carrying EIP-8130 fields (or `type: 0x79`) runs the read-only
+    /// EIP-8130 simulation once at the request's gas, without the
+    /// `eth_estimateGas` gas-limit search (gated on the Everest fork), and
+    /// returns the output of its final call. A plain request falls
     /// through to the standard reth `eth_call` unchanged.
     #[method(name = "call")]
     async fn call(

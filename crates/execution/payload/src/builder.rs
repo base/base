@@ -15,7 +15,7 @@ use alloy_rpc_types_debug::ExecutionWitness;
 use alloy_rpc_types_engine::PayloadId;
 use base_common_chains::Upgrades;
 use base_common_consensus::{BaseTransaction, DepositReceiptExt, Predeploys};
-use base_common_evm::L1BlockInfo;
+use base_common_evm::{BaseSpecId, L1BlockInfo};
 use base_execution_eip8130::IntrinsicGas;
 use base_execution_txpool::{
     BasePooledTx, GuardMetrics, ParkableTransactionPool, PredicateContext, ValidityPredicate,
@@ -40,7 +40,7 @@ use reth_payload_builder_primitives::PayloadBuilderError;
 use reth_payload_primitives::{BuildNextEnv, BuiltPayloadExecutedBlock};
 use reth_payload_util::{NoopPayloadTransactions, PayloadTransactions};
 use reth_primitives_traits::{
-    HeaderTy, NodePrimitives, SealedHeader, SealedHeaderFor, SignedTransaction, TxTy,
+    HeaderTy, NodePrimitives, SealedHeader, SealedHeaderFor, SignedTransaction, TxTy, WithEncoded,
 };
 use reth_revm::{
     cancelled::CancelOnDrop, database::StateProviderDatabase, db::State,
@@ -966,6 +966,12 @@ where
         let mut predicate_eval_cutoff_hit = false;
 
         let block_timestamp = self.attributes().timestamp();
+        let mut coinbase_tip_affordability = CoinbaseTipAffordability::load(
+            builder.evm_mut().db_mut(),
+            block_number,
+            BaseSpecId::from_timestamp(&*self.chain_spec, block_timestamp),
+            u128::from(base_fee),
+        );
         let can_finalize_early = self.is_denim_active();
         let resource_metering = &self.builder_config.resource_metering;
         let mut resource_throttled = 0u64;
@@ -1255,7 +1261,7 @@ where
                 None => 0,
             };
 
-            if CoinbaseTipAffordability::unaffordable(
+            if coinbase_tip_affordability.unaffordable(
                 &tx,
                 tx_payer_auth,
                 builder.evm_mut().db_mut(),
@@ -1308,7 +1314,7 @@ where
 
             // Kept past consensus conversion so a commit can claim the state it conditioned on.
             let committed_predicates = tx.validity_predicates().to_vec();
-            let tx = tx.into_consensus();
+            let (tx_encoded, tx) = tx.into_consensus_with2718().split();
 
             let da_footprint_gas_scalar = self
                 .chain_spec
@@ -1366,7 +1372,7 @@ where
             let mut pending_resource_usage = None;
             let mut executed_decision = None;
             let gas_output = match builder.execute_transaction_with_commit_condition(
-                tx.clone(),
+                WithEncoded::new(tx_encoded, tx.clone()),
                 |result| {
                     let result_and_state = result.result();
                     let decision = resource_metering.check_executed_usage(

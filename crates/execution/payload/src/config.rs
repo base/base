@@ -248,7 +248,7 @@ impl ResourceMeteringConfig {
         if !self.is_active() {
             return ResourceThrottlingDecision::Allow(ResourceMeteringUsage::zero(0));
         }
-        let sample = ResourceSample::from_execution(gas_used, state, simulated);
+        let sample = ResourceSample::from_execution(gas_used, state, simulated, &self.schedule);
         let decision = self.schedule.decide_sample(&sample, cumulative);
         self.record_decision(tx_hash, &decision);
         decision
@@ -268,7 +268,8 @@ impl ResourceMeteringConfig {
             return None;
         }
         let simulated = self.simulated_sample(tx_hash);
-        let sample = ResourceSample::from_execution(gas_used, state, simulated.as_ref());
+        let sample =
+            ResourceSample::from_execution(gas_used, state, simulated.as_ref(), &self.schedule);
         self.schedule.evaluate(sample.gas_used, &sample.operations).map_or_else(
             |_| {
                 self.record_decision(tx_hash, &ResourceThrottlingDecision::CalculationFailed);

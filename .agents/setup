@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Cache development prerequisites, not a workspace build or a running devnet.
+# Docker/SP1 proof builds and services with RPC credentials remain on-demand.
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root"
+started=$SECONDS
+step_started=$SECONDS
+step() {
+    printf '\n[setup +%ss] %s (previous step: %ss)\n' \
+        "$((SECONDS - started))" "$1" "$((SECONDS - step_started))"
+    step_started=$SECONDS
+}
+scratch="$(mktemp -d)"
+trap 'rm -rf "$scratch"' EXIT
+
+step 'Native build dependencies'
+packages=(
+    build-essential ca-certificates clang cmake curl git libclang-dev
+    libprotobuf-dev libsqlite3-dev libssl-dev lld llvm llvm-dev pkg-config
+    protobuf-compiler python3 unzip
+)
+missing=()
+for package in "${packages[@]}"; do
+    if [[ "$(dpkg-query -W -f='${Status}' "$package" 2>/dev/null || true)" != 'install ok installed' ]]; then
+        missing+=("$package")
+    fi
+done
+if ((${#missing[@]})); then
+    sudo apt-get update
+    sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${missing[@]}"
+fi
+
+step 'Checksum-pinned mise bootstrap'
+case "$(uname -m)" in
+    x86_64)
+        mise_arch=x64
+        mise_sha=77fbb428fff656ec0bbacb99d7ed5b038a0e09a9cc0168909fcf3da56b5d51e0
+        ;;
+    aarch64)
+        mise_arch=arm64
+        mise_sha=0c7f27abf12f80949837fe281137b6c68a8af47cd70068559516eb6160e1728d
+        ;;
+    *) echo 'Unsupported orb architecture' >&2; exit 1 ;;
+esac
+mise_bin="$HOME/.local/bin/mise"
+if [[ ! -x "$mise_bin" ]] || ! echo "$mise_sha  $mise_bin" | sha256sum --check --status 2>/dev/null; then
+    curl --fail --show-error --location --retry 3 --max-time 120 \
+        "https://github.com/jdx/mise/releases/download/v2026.10.9/mise-v2026.10.9-linux-${mise_arch}-musl" \
+        -o "$scratch/mise"
+    echo "$mise_sha  $scratch/mise" | sha256sum -c -
+    install -Dm755 "$scratch/mise" "$mise_bin"
+fi
+
+step 'Install locked development tools'
+"$mise_bin" trust "$repo_root/mise.toml"
+"$mise_bin" install --locked
+# Activate in this installer; later processes receive the same complete environment.
+mise_env="$("$mise_bin" env --shell bash)"
+eval "$mise_env"
+
+step 'Persist environment for non-interactive login shells'
+mkdir -p "$HOME/.config/base-orb"
+cat > "$HOME/.config/base-orb/env" <<EOF
+if [[ -z "\${BASE_ORB_MISE_ACTIVE:-}" ]]; then
+    export BASE_ORB_MISE_ACTIVE=1
+    export PATH="\$HOME/.local/bin:\$PATH"
+    eval "\$("\$HOME/.local/bin/mise" env --shell bash)"
+fi
+export LIBCLANG_PATH="\$(llvm-config --libdir)"
+EOF
+# Creating .bash_profile must preserve Bash's previous login-file precedence.
+if [[ ! -e "$HOME/.bash_profile" ]]; then
+    cat > "$HOME/.bash_profile" <<'EOF'
+if [[ -f "$HOME/.bash_login" ]]; then
+    . "$HOME/.bash_login"
+elif [[ -f "$HOME/.profile" ]]; then
+    . "$HOME/.profile"
+fi
+EOF
+fi
+marker='# Base orb development environment'
+if ! grep -Fqx "$marker" "$HOME/.bash_profile" 2>/dev/null; then
+    cat >> "$HOME/.bash_profile" <<EOF
+
+$marker
+case "\$PWD/" in
+    "$repo_root/"*) . "\$HOME/.config/base-orb/env" ;;
+esac
+EOF
+fi
+
+export LIBCLANG_PATH
+LIBCLANG_PATH="$(llvm-config --libdir)"
+step 'Fetch locked Cargo dependencies'
+cargo fetch --locked
+
+step 'Build Solidity test fixtures'
+just build contracts
+
+step 'Ready (Docker devnets and SP1 proof builds are on-demand)'

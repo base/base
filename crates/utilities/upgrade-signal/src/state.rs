@@ -98,40 +98,6 @@ impl UpgradeSignalStateUpdate {
     }
 }
 
-/// Live observer baseline for one contract-backed upgrade.
-///
-/// Tracks the last signal read from L1, which drives change detection and metrics. Whether a
-/// schedule still needs applying is decided against the runtime registry itself (see
-/// [`UpgradeSignalMonitor::schedule_needs_apply`]), not this observer baseline, so a failed apply
-/// cannot poison the decision: the schedule keeps being offered until the registry actually
-/// reflects it.
-#[derive(Debug, Clone, Default, Eq, PartialEq)]
-struct UpgradeSignalState {
-    /// Last signal read from L1 by the live observer.
-    observed: Option<UpgradeSignal>,
-}
-
-impl UpgradeSignalState {
-    /// Creates an empty upgrade signal state tracker.
-    const fn new() -> Self {
-        Self { observed: None }
-    }
-
-    /// Records a newly read live signal against the observed baseline.
-    fn update_signal(&mut self, signal: UpgradeSignal) -> UpgradeSignalStateUpdate {
-        let update = match self.observed.as_ref() {
-            Some(previous) if previous.has_same_contract_values(&signal) => {
-                UpgradeSignalStateUpdate::Unchanged
-            }
-            Some(_) => UpgradeSignalStateUpdate::Changed,
-            None => UpgradeSignalStateUpdate::Initialized,
-        };
-
-        self.observed = Some(signal);
-        update
-    }
-}
-
 /// Outcome of a single live poll, telling the caller whether the node must fail closed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[must_use = "a HaltNode outcome must fail the node closed to avoid forking off the network"]
@@ -161,8 +127,11 @@ pub enum UpgradeSignalPollOutcome {
 pub struct UpgradeSignalMonitor {
     /// Metric layer recorded by this monitor.
     pub metrics_layer: UpgradeSignalMetricLayer,
-    /// Live observer state by contract-backed upgrade.
-    states: BTreeMap<BaseUpgrade, UpgradeSignalState>,
+    /// Last signal read from L1 per upgrade, used for change detection and metrics.
+    ///
+    /// Whether a schedule still needs applying is decided against the runtime registry (see
+    /// [`Self::schedule_needs_apply`]), not this baseline, so a failed apply cannot poison the decision.
+    observed: BTreeMap<BaseUpgrade, UpgradeSignal>,
     /// Minimum protocol version of each active upgrade the last committed apply validated.
     ///
     /// The runtime registry stores only activation timestamps, not the minimum protocol version an
@@ -180,13 +149,9 @@ impl UpgradeSignalMonitor {
     /// Creates a monitor for all contract-backed upgrades.
     pub fn new(metrics_layer: UpgradeSignalMetricLayer) -> Self {
         UpgradeSignalMetrics::init();
-        let mut states = BTreeMap::new();
-        for upgrade_id in BaseUpgrade::CONTRACT_VARIANTS {
-            states.insert(upgrade_id, UpgradeSignalState::new());
-        }
         Self {
             metrics_layer,
-            states,
+            observed: BTreeMap::new(),
             validated_protocol_versions: BTreeMap::new(),
             last_apply_failure: None,
         }
@@ -444,7 +409,14 @@ impl UpgradeSignalMonitor {
         let upgrade_id = signal.upgrade_id;
         UpgradeSignalMetrics::record_signal(self.metrics_layer, l1_block_number, &signal);
 
-        let update = self.states.entry(upgrade_id).or_default().update_signal(signal);
+        let update = match self.observed.get(&upgrade_id) {
+            Some(previous) if previous.has_same_contract_values(&signal) => {
+                UpgradeSignalStateUpdate::Unchanged
+            }
+            Some(_) => UpgradeSignalStateUpdate::Changed,
+            None => UpgradeSignalStateUpdate::Initialized,
+        };
+        self.observed.insert(upgrade_id, signal);
         if matches!(update, UpgradeSignalStateUpdate::Changed) {
             UpgradeSignalMetrics::record_signal_update(self.metrics_layer, upgrade_id);
         }
@@ -477,23 +449,6 @@ mod tests {
     #[test]
     fn signal_ignores_zero_activation_timestamp() {
         assert_eq!(signal(0).positive_activation_timestamp(), None);
-    }
-
-    #[test]
-    fn state_initializes_then_tracks_unchanged_signal() {
-        let mut state = UpgradeSignalState::new();
-
-        assert_eq!(state.update_signal(signal(10)), UpgradeSignalStateUpdate::Initialized);
-        assert_eq!(state.update_signal(signal(10)), UpgradeSignalStateUpdate::Unchanged);
-    }
-
-    #[test]
-    fn state_detects_contract_value_changes() {
-        let mut state = UpgradeSignalState::new();
-
-        state.update_signal(signal(10));
-
-        assert_eq!(state.update_signal(signal(12)), UpgradeSignalStateUpdate::Changed);
     }
 
     fn monitor() -> UpgradeSignalMonitor {

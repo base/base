@@ -246,16 +246,6 @@ impl<T: CommsClient> TrieDBProvider for OracleL2ChainProvider<T> {
 impl<T: CommsClient> TrieHinter for OracleL2ChainProvider<T> {
     type Error = OracleProviderError;
 
-    fn hint_trie_node(&self, hash: B256) -> Result<(), Self::Error> {
-        crate::block_on(async move {
-            HintType::L2StateNode
-                .with_data(&[hash.as_slice()])
-                .with_data(self.chain_id.map_or_else(Vec::new, |id| id.to_be_bytes().to_vec()))
-                .send(self.oracle.as_ref())
-                .await
-        })
-    }
-
     fn hint_account_proof(&self, address: Address, block_number: u64) -> Result<(), Self::Error> {
         crate::block_on(async move {
             HintType::L2AccountProof
