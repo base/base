@@ -663,9 +663,11 @@ impl ResultsTrackerInner {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::address;
-
     use super::*;
+
+    fn addr() -> Address {
+        Address::with_last_byte(1)
+    }
 
     fn block_at(number: u64, observed_at: Instant) -> BlockObservation {
         BlockObservation { number, observed_at }
@@ -683,7 +685,7 @@ mod tests {
 
     #[test]
     fn discard_pending_transaction_releases_in_flight_once() {
-        let from = address!("0000000000000000000000000000000000000001");
+        let from = addr();
         let tx_hash = TxHash::repeat_byte(0xd0);
         let tracker = ResultsTracker::new(&[from]);
 
@@ -703,7 +705,7 @@ mod tests {
 
     #[test]
     fn discard_flashblock_released_transaction_does_not_double_decrement() {
-        let from = address!("0000000000000000000000000000000000000001");
+        let from = addr();
         let tx_hash = TxHash::repeat_byte(0xd1);
         let tracker = ResultsTracker::new(&[from]);
 
@@ -720,7 +722,7 @@ mod tests {
 
     #[test]
     fn confirms_pending_transaction_from_block_hashes() {
-        let from = address!("0000000000000000000000000000000000000001");
+        let from = addr();
         let tx_hash = TxHash::repeat_byte(1);
         let tracker = ResultsTracker::new(&[from]);
         tracker.begin_measurement(6, Some(1));
@@ -754,7 +756,7 @@ mod tests {
 
     #[test]
     fn second_block_with_same_hash_is_ignored() {
-        let from = address!("0000000000000000000000000000000000000001");
+        let from = addr();
         let tx_hash = TxHash::repeat_byte(7);
         let tracker = ResultsTracker::new(&[from]);
         tracker.begin_measurement(10, Some(2));
@@ -772,7 +774,7 @@ mod tests {
 
     #[test]
     fn flashblock_observation_feeds_rolling_and_joins_at_block_landing() {
-        let from = address!("0000000000000000000000000000000000000001");
+        let from = addr();
         let tx_hash = TxHash::repeat_byte(2);
         let tracker = ResultsTracker::new(&[from]);
         tracker.begin_measurement(7, Some(1));
@@ -802,7 +804,7 @@ mod tests {
 
     #[test]
     fn flashblock_releases_in_flight_before_block_landing() {
-        let from = address!("0000000000000000000000000000000000000001");
+        let from = addr();
         let tx_hash = TxHash::repeat_byte(4);
         let tracker = ResultsTracker::new(&[from]);
         tracker.begin_measurement(9, Some(1));
@@ -831,7 +833,7 @@ mod tests {
 
     #[test]
     fn duplicate_flashblock_does_not_double_release() {
-        let from = address!("0000000000000000000000000000000000000001");
+        let from = addr();
         let tx_hash = TxHash::repeat_byte(5);
         let tracker = ResultsTracker::new(&[from]);
 
@@ -856,7 +858,7 @@ mod tests {
 
     #[tokio::test]
     async fn flashblock_before_rpc_ack_releases_on_registration() {
-        let from = address!("0000000000000000000000000000000000000001");
+        let from = addr();
         let tx_hash = TxHash::repeat_byte(6);
         let (pulse_tx, mut pulse_rx) = mpsc::channel(1);
         let tracker = ResultsTracker::new_with_pulse_sender(&[from], pulse_tx);
@@ -876,7 +878,7 @@ mod tests {
 
     #[test]
     fn expire_pending_cleans_up_flashblock_released_entries() {
-        let from = address!("0000000000000000000000000000000000000001");
+        let from = addr();
         let tx_hash = TxHash::repeat_byte(0xe0);
         let tracker = ResultsTracker::new(&[from]);
 
@@ -897,7 +899,7 @@ mod tests {
 
     #[test]
     fn expired_setup_transaction_is_not_a_measured_failure() {
-        let from = address!("0000000000000000000000000000000000000001");
+        let from = addr();
         let tx_hash = TxHash::repeat_byte(0xe1);
         let tracker = ResultsTracker::new(&[from]);
 
@@ -911,7 +913,7 @@ mod tests {
 
     #[test]
     fn warmup_landing_emits_metrics_before_measurement() {
-        let from = address!("0000000000000000000000000000000000000001");
+        let from = addr();
         let tx_hash = TxHash::repeat_byte(0xe2);
         let tracker = ResultsTracker::new(&[from]);
 
@@ -927,7 +929,7 @@ mod tests {
 
     #[test]
     fn warmup_landing_after_measurement_does_not_pollute_metrics() {
-        let from = address!("0000000000000000000000000000000000000001");
+        let from = addr();
         let tx_hash = TxHash::repeat_byte(0xe3);
         let tracker = ResultsTracker::new(&[from]);
 
