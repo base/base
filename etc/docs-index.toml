@@ -40,7 +40,7 @@ digest = "470a0b3a14"
 
 ["baseup/README.md"]
 summary = "baseup installer for Base release binaries: install commands and flags, binaries installed, checksum, GPG and SLSA verification, verify-release, and supported targets."
-digest = "d13723c0b1"
+digest = "67e8534337"
 
 ["bin/acceptance/README.md"]
 summary = "base-acceptance CLI entry point for the acceptance system: lists subcommands (validate, plan, run, check, report, cleanup) and example cargo invocations, deferring to acceptance/README.md."
@@ -56,15 +56,11 @@ digest = "6d0de36199"
 
 ["bin/base/README.md"]
 summary = "Unified base commands and chain selection; execution-only and consensus-only modes over Engine API; native snapshot dev mode, history retention, impersonation, timing limits, and container usage."
-digest = "e0fcc0f289"
+digest = "4ef778eae0"
 
 ["bin/basectl/README.md"]
 summary = "basectl operator console reference: global options, TUI and scriptable commands (block, sync-status, p2p, txpool, conductor, sequencer, batcher, doctor, proofs), JSON output and examples."
 digest = "78a08a9f7a"
-
-["bin/builder/README.md"]
-summary = "Stub README for the base-builder block builder binary, which runs base-builder-core. Minimal, no usage details."
-digest = "4be70960df"
 
 ["bin/challenger-e2e/README.md"]
 summary = "Challenger end-to-end test binary: forks L1 into a pod-local Anvil and checks the challenger scans valid games without disputing; intended as a K8s Job."
@@ -74,17 +70,9 @@ digest = "9d88297895"
 summary = "ZK-proof dispute game challenger binary that parses CLI arguments, builds a validated config, and delegates to base_challenger::ChallengerService::run()."
 digest = "887edd2713"
 
-["bin/consensus/README.md"]
-summary = "Stub README for base-consensus, the canonical consensus node entrypoint for the Base Stack. Minimal, no usage details."
-digest = "093960423f"
-
 ["bin/load-tester/README.md"]
 summary = "Stub README for the load-testing and benchmarking binary, which delegates to the base-load-tests library."
 digest = "01b87e93e9"
-
-["bin/node/README.md"]
-summary = "Stub README for the Base Reth node binary, the entry point for running a node with flashblocks, transaction tracing, and metering."
-digest = "4f933a70af"
 
 ["bin/proposer/README.md"]
 summary = "Stub README for the TEE-based output proposer binary, which delegates to base_proposer::ProposerService::run()."
@@ -180,7 +168,7 @@ digest = "95723e8f5d"
 
 ["crates/builder/core/README.md"]
 summary = "base-builder-core: flashblocks payload builder library producing sub-second block chunks, with launcher and metering trait modules, cargo features, and usage."
-digest = "21cbb6ed7f"
+digest = "31b4f2abe5"
 
 ["crates/builder/metering/README.md"]
 summary = "base-builder-metering covers MeteringStore's moka cache with a configured max capacity, LRU eviction policy, and TTL, its MeteringProvider implementation, JSON-RPC extensions, and a wiring example."
@@ -352,7 +340,7 @@ digest = "8f433c0ac9"
 
 ["crates/execution/exex/README.md"]
 summary = "Proofs-history ExEx: versioned MDBX trie store serving historical eth_getProof without OOM, with pruner, debug_proofsSyncStatus, prune/unwind commands, metrics. Use to operate or debug proofs history."
-digest = "13927f28e4"
+digest = "00b11becfb"
 
 ["crates/execution/flashblocks-node/README.md"]
 summary = "FlashblocksExtension for the Base node: install_ext usage (install last), CLI flags (--flashblocks-url, --max-pending-blocks-depth, cached-execution), and the state, subscriber, RPC components."
@@ -408,7 +396,7 @@ digest = "559e8e9f95"
 
 ["crates/execution/tx-forwarding/README.md"]
 summary = "base-tx-forwarding: forwards mempool txs to builder RPCs via per-destination queues fed by FIFO and tip-priority lanes; dedup, batching, resend; spawn_requests for custom ForwardRequest; CLI flags."
-digest = "b72a1536e1"
+digest = "fc568c1b25"
 
 ["crates/execution/txpool-rpc/README.md"]
 summary = "Txpool RPC admin/status APIs and validity submissions; shared staged signature modes, signature rejection metrics, predicate forwarding and sequencer proxy behavior."
@@ -416,11 +404,11 @@ digest = "adef27d8c3"
 
 ["crates/execution/txpool-tracing/README.md"]
 summary = "Txpool tracing extension: tracks mempool lifecycle events, txpool_transactionStatus RPC, enabling CLI flags, and reth_transaction_tracing_tx_event histogram. Use to debug tx latency or drops."
-digest = "e58f6b44fb"
+digest = "e6a5afc2dc"
 
 ["crates/execution/txpool/PROPAGATION_PIPELINE.md"]
 summary = "Plan to forward mempool txs to builders via base_insertValidatedTransaction in 4 PRs (consumer, forwarder, builder endpoint, node integration). Only PR 1 is marked done. Names a crates/txpool/ path."
-digest = "2e785bfe9d"
+digest = "43eede6d4a"
 
 ["crates/execution/txpool/README.md"]
 summary = "Base txpool validation/ordering, builder wire extensions, staged EIP-712 predicate authorization, wallet signing contract, rejection metrics, and rollout/security limits."
@@ -656,7 +644,7 @@ digest = "ffbb152cb0"
 
 ["crates/utilities/upgrade-signal/README.md"]
 summary = "Reads upgrade activation timestamps and minimum protocol version from the L1 ProtocolVersions contract; covers modes (metrics-only, startup-apply, runtime-admin), CLI flags, defaults, metrics."
-digest = "e38e07a646"
+digest = "809b425724"
 
 ["docs/guides/BLOCK_PRODUCTION_REVIEW.md"]
 summary = "Review guide for block-production-sensitive PRs: mandatory payload size-limit gate across I/O boundaries, taxonomy of halt/stall scenarios (precompiles, builder, flashblocks), and a checklist."
@@ -676,7 +664,7 @@ digest = "619d6e31e3"
 
 ["docs/guides/RELEASE.md"]
 summary = "Release process: Start Release creates releases/vX.Y.Z, version sync PR, automatic RC tags and builds per commit, then Publish Release for the final tag, Docker images and binaries."
-digest = "dbf3e3e8de"
+digest = "c7785feb71"
 
 ["docs/guides/SNAPSHOT_BENCHMARKS.md"]
 summary = "How to run repeatable base-bench snapshot benchmarks on the snapshot benchmark harness, aggregate selected runs, and publish to base/benchmark. Use when measuring performance on restored datadirs."
@@ -704,7 +692,7 @@ digest = "49f6748dde"
 
 ["etc/docker/README.md"]
 summary = "Dockerfiles, Bake targets, published images (ghcr.io/base/node and single-binary images), and Compose setup for the local devnet and Rust services, including batcher topology and build profiles."
-digest = "1b26e226ad"
+digest = "e42e659bf2"
 
 ["etc/systems/README.md"]
 summary = "Docs for base-system-tests: running the snapshot benchmark harness (builder and follow client), snapshot and transfer benchmarks, workload suite, 2s vs 200ms comparison, cleanup."

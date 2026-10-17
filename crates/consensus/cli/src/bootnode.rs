@@ -7,8 +7,6 @@ use std::{
 };
 
 use alloy_primitives::B256;
-use base_cli_utils::{LogConfig, RuntimeManager};
-use base_common_genesis::RollupConfig;
 use base_consensus_disc::{Discv5Builder, LocalNode};
 use base_consensus_peers::{BootNode, BootNodes, BootStoreFile, SecretKeyLoader};
 use clap::Args;
@@ -16,105 +14,7 @@ use discv5::{Config, ConfigBuilder, Enr, enr::k256};
 use eyre::Context;
 use libp2p::identity::Keypair;
 use tokio::time::Duration;
-use tracing::{debug, info, warn};
-
-use crate::{ConsensusChainArgs, L2ConfigFile, LogArgs, MetricsArgs, metrics::CliMetrics};
-
-/// Base consensus bootnode arguments.
-#[derive(Args, Clone, Debug)]
-pub struct Bootnode {
-    /// Logging configuration.
-    #[command(flatten)]
-    pub logging: LogArgs,
-
-    /// Metrics configuration.
-    #[command(flatten)]
-    pub metrics: MetricsArgs,
-
-    /// L2 configuration file.
-    #[clap(flatten)]
-    pub l2_config: L2ConfigFile,
-
-    /// Bootnode P2P discovery arguments.
-    #[command(flatten)]
-    pub p2p: BootnodeP2PArgs,
-}
-
-/// Prints the deterministic ENR for a Base consensus bootnode.
-#[derive(Args, Clone, Debug)]
-pub struct BootnodeEnr {
-    /// L2 configuration file.
-    #[clap(flatten)]
-    pub l2_config: L2ConfigFile,
-
-    /// Bootnode P2P discovery arguments.
-    #[command(flatten)]
-    pub p2p: BootnodeP2PArgs,
-}
-
-impl Bootnode {
-    /// Runs the CLI.
-    pub fn run(self, chain: ConsensusChainArgs) -> eyre::Result<()> {
-        base_cli_utils::init_tracing!(
-            LogConfig::from(self.logging.clone()),
-            ["libp2p_gossipsub=error"]
-        )?;
-
-        let cfg = self.l2_config.load(&chain.l2_chain_id).map_err(|e| eyre::eyre!(e))?;
-
-        base_cli_utils::MetricsConfig::from(self.metrics.clone()).init_with(|| {
-            base_cli_utils::register_version_metrics!();
-            CliMetrics::init_rollup_config(&cfg);
-            CliMetrics::init_bootnode_p2p(&self.p2p);
-        })?;
-
-        RuntimeManager::new().run_until_ctrl_c(self.exec(cfg))
-    }
-
-    /// Runs the discovery-only bootnode.
-    pub async fn exec(self, cfg: RollupConfig) -> eyre::Result<()> {
-        let _upgrade_countdown_metrics =
-            self.metrics.enabled.then(|| CliMetrics::spawn_upgrade_countdown_recorder(cfg.clone()));
-        let chain_id = cfg.l2_chain_id.id();
-        self.p2p.check_ports()?;
-
-        let driver = self.p2p.discovery_driver(chain_id)?;
-        let (handler, mut discovered_enrs) = driver.start();
-        let local_enr = handler.local_enr().await.wrap_err("discovery service stopped")?;
-        self.p2p.write_enr_output(&local_enr)?;
-
-        info!(
-            target: "rollup_node::bootnode",
-            chain_id = chain_id,
-            enr = %local_enr,
-            "Consensus bootnode started"
-        );
-        CliMetrics::record_bootnode_up();
-
-        while let Some(enr) = discovered_enrs.recv().await {
-            debug!(
-                target: "rollup_node::bootnode",
-                peer_id = %enr.node_id(),
-                enr = %enr,
-                "Discovered consensus peer"
-            );
-        }
-
-        warn!(target: "rollup_node::bootnode", "Discovery ENR stream closed");
-        Ok(())
-    }
-}
-
-impl BootnodeEnr {
-    /// Runs the CLI.
-    pub fn run(self, chain: ConsensusChainArgs) -> eyre::Result<()> {
-        let cfg = self.l2_config.load(&chain.l2_chain_id).map_err(|e| eyre::eyre!(e))?;
-        let enr = self.p2p.local_enr(cfg.l2_chain_id.id())?;
-        self.p2p.write_enr_output(&enr)?;
-        println!("{enr}");
-        Ok(())
-    }
-}
+use tracing::info;
 
 /// P2P discovery arguments for the consensus bootnode.
 #[derive(Args, Clone, Debug, PartialEq, Eq)]
