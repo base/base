@@ -1,3 +1,5 @@
+use std::error::Error as StdError;
+
 use alloy_consensus::Transaction;
 use alloy_eips::BlockNumberOrTag;
 use alloy_network::TxSigner;
@@ -6,13 +8,14 @@ use alloy_provider::Provider;
 use alloy_rpc_types_eth::{TransactionReceipt, TransactionRequest};
 use alloy_sol_types::{Error as SolError, SolCall, SolEvent};
 use alloy_transport::TransportError;
+use alloy_trie::proof::ProofVerificationError;
 use base_common_consensus::Predeploys;
 use base_proof_contracts::{GameStatus, IAnchorStateRegistry, IDisputeGameFactory};
 use thiserror::Error;
 
 use crate::{
-    FaultProofPortal, LegacyWithdrawalPortal, PreparedWithdrawalTransaction, ProofSystem,
-    VerifiedWithdrawalProof, Withdrawal, WithdrawalDisputeGame, WithdrawalError,
+    FaultProofPortal, LegacyWithdrawalPortal, MessagePassed, PreparedWithdrawalTransaction,
+    ProofSystem, VerifiedWithdrawalProof, Withdrawal, WithdrawalDisputeGame, WithdrawalError,
     WithdrawalOutputOracle, WithdrawalPortal, WithdrawalRpc, WithdrawalRpcError,
     WithdrawalRpcTransport, WithdrawalSigner, WithdrawalSignerError, WithdrawalTransactionError,
     WithdrawerConfig,
@@ -67,7 +70,16 @@ pub enum WithdrawerError {
     },
     /// Withdrawal extraction or local proof authentication failed.
     #[error(transparent)]
-    Withdrawal(#[from] WithdrawalError),
+    Withdrawal(WithdrawalError),
+    /// Local proof authentication failed, with proof-supplied values removed.
+    #[error("{proof} proof verification failed: {source}")]
+    Proof {
+        /// Account or storage proof that failed verification.
+        proof: &'static str,
+        /// Proof error with data-bearing payloads replaced by their kind.
+        #[source]
+        source: Box<dyn StdError + Send + Sync>,
+    },
     /// Signer construction failed.
     #[error(transparent)]
     Signer(#[from] WithdrawalSignerError),
@@ -77,14 +89,14 @@ pub enum WithdrawerError {
     /// The operation deadline elapsed.
     #[error("withdrawal operation timed out")]
     Timeout(#[source] tokio::time::error::Elapsed),
-    /// A signed transaction may have been broadcast but could not be confirmed; check its hash before retrying.
+    /// A signed transaction may have been broadcast or included; check its hash before retrying.
     #[error(
-        "transaction {transaction_hash} may have been broadcast but could not be confirmed: {source}"
+        "transaction {transaction_hash} was signed and may have been broadcast or included; check it before retrying: {source}"
     )]
     Unconfirmed {
         /// Hash of the signed L1 transaction.
         transaction_hash: B256,
-        /// Broadcast or confirmation failure, with credential-bearing details removed.
+        /// Submission, receipt, or event validation failure, with credential-bearing details removed.
         #[source]
         source: Box<Self>,
     },
@@ -421,8 +433,9 @@ impl Withdrawer {
                     match Self::verify_output(rpc, withdrawal, output).await {
                         Ok(proof) => return Ok((output, proof)),
                         Err(
-                            error
-                            @ (WithdrawerError::MissingBlock | WithdrawerError::Withdrawal(_)),
+                            error @ (WithdrawerError::MissingBlock
+                            | WithdrawerError::Withdrawal(_)
+                            | WithdrawerError::Proof { .. }),
                         ) => {
                             tracing::warn!(
                                 game_index = %count, proxy = %game.proxy, reason = %error,
@@ -642,6 +655,15 @@ impl WithdrawerError {
         Self::Decode { call, source }
     }
 
+    /// Removes proof-supplied values while retaining safe proof source errors.
+    pub fn proof_error(proof: &'static str, error: ProofVerificationError) -> Self {
+        let source: Box<dyn StdError + Send + Sync> = match error {
+            ProofVerificationError::ValueMismatch { .. } => "ValueMismatch".into(),
+            error => Box::new(error),
+        };
+        Self::Proof { proof, source }
+    }
+
     /// Distinguishes execution reverts from transport failures and other server errors.
     pub fn is_execution_revert(&self) -> bool {
         matches!(self, Self::Request(error) if error.as_error_resp().is_some_and(|payload| {
@@ -661,6 +683,19 @@ impl From<WithdrawalRpcError> for WithdrawerError {
         match error {
             WithdrawalRpcError::Request(error) => error.into(),
             error => Self::Rpc(error),
+        }
+    }
+}
+
+impl From<WithdrawalError> for WithdrawerError {
+    fn from(error: WithdrawalError) -> Self {
+        match error {
+            WithdrawalError::DecodeEvent(error) => {
+                Self::decode_error(MessagePassed::SIGNATURE, error)
+            }
+            WithdrawalError::AccountProof(error) => Self::proof_error("account", error),
+            WithdrawalError::StorageProof(error) => Self::proof_error("storage", error),
+            error => Self::Withdrawal(error),
         }
     }
 }
@@ -1678,6 +1713,37 @@ mod tests {
                 1
             );
             assert!(server.sent.lock().unwrap().is_empty());
+        }
+    }
+
+    #[test]
+    fn withdrawal_errors_withhold_response_bytes_through_the_source_chain() {
+        let rejected = b"rejected-credential";
+        let proof_error = || ProofVerificationError::ValueMismatch {
+            path: alloy_trie::Nibbles::unpack(rejected),
+            got: Some(Bytes::copy_from_slice(rejected)),
+            expected: Some(Bytes::copy_from_slice(rejected)),
+        };
+        for (kind, error) in [
+            (
+                "TypeCheckFail",
+                WithdrawalError::DecodeEvent(SolError::type_check_fail(rejected, "uint256")),
+            ),
+            ("ValueMismatch", WithdrawalError::AccountProof(proof_error())),
+            ("ValueMismatch", WithdrawalError::StorageProof(proof_error())),
+        ] {
+            let error = WithdrawerError::from(error);
+            assert!(error.source().is_some());
+            let mut diagnostic = String::new();
+            let mut source = Some(&error as &dyn StdError);
+            while let Some(error) = source {
+                diagnostic.push_str(&format!("{error} {error:?} "));
+                source = error.source();
+            }
+            assert!(diagnostic.contains(kind));
+            for secret in ["rejected-credential", "72656a65637465642d63726564656e7469616c"] {
+                assert!(!diagnostic.contains(secret), "response bytes leaked: {diagnostic}");
+            }
         }
     }
 
