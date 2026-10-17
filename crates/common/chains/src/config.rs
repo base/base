@@ -103,6 +103,8 @@ pub struct ChainConfig {
     // Roles
     /// Unsafe block signer address.
     pub unsafe_block_signer: Option<Address>,
+
+    // Pruning
     /// Maximum number of entries deleted per execution-layer pruning batch.
     pub prune_delete_limit: usize,
 
