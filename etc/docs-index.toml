@@ -527,8 +527,8 @@ summary = "base-proof SDK: oracle-backed derivation and execution pieces (Oracle
 digest = "0cdfb06654"
 
 ["crates/proof/proposer/README.md"]
-summary = "base-proposer: TEE-based output proposer; requests a TEE-signed proposal, verifies locally, submits via DisputeGameFactory. Explains stateless on-chain parent game recovery each tick."
-digest = "4f414183f1"
+summary = "base-proposer: TEE-based output proposer with local output-root verification, DisputeGameFactory submission, and forward-walk parent game recovery from the anchor root with a cached tip."
+digest = "b843d99887"
 
 ["crates/proof/prover-service/README.md"]
 summary = "base-prover-service: JSON-RPC contract and service for proof requests, status polling and worker-claimed ZK/TEE jobs via the proof_requests queue; backends live in worker hosts."
