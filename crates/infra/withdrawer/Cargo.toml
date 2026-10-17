@@ -32,6 +32,7 @@ alloy-sol-types.workspace = true
 alloy-rpc-client.workspace = true
 alloy-signer-local.workspace = true
 base-common-network.workspace = true
+base-proof-contracts.workspace = true
 base-common-rpc-types.workspace = true
 base-common-consensus.workspace = true
 tokio = { workspace = true, features = ["time"] }

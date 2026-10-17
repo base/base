@@ -14,6 +14,8 @@ sol! {
 
     /// Legacy portal reads.
     interface LegacyWithdrawalPortal {
+        /// Whether proving and finalizing are paused.
+        function paused() external view returns (bool);
         /// Stored proof and its oracle index.
         function provenWithdrawals(bytes32 withdrawalHash) external view returns (
             bytes32 outputRoot, uint128 timestamp, uint128 l2OutputIndex
