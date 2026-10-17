@@ -102,6 +102,10 @@ pub enum CandidateError {
     /// v0 rejects groups combined with validity predicates.
     #[error("candidate groups cannot carry validity predicates")]
     CombinedWithValidity,
+    /// v0 rejects EIP-7702-delegated senders (design §4.2): delegated code can move the sender's
+    /// balance or nonce independently of the siblings.
+    #[error("EIP-7702-delegated senders cannot submit candidate groups")]
+    SenderDelegated,
 }
 
 impl CandidateError {
@@ -135,6 +139,7 @@ impl CandidateError {
             Self::PoolGroupLimit => "pool_group_limit",
             Self::LedgerUnavailable => "ledger_unavailable",
             Self::CombinedWithValidity => "combined_with_validity",
+            Self::SenderDelegated => "sender_delegated",
         }
     }
 }

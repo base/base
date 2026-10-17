@@ -6668,6 +6668,7 @@ dependencies = [
  "base-common-chains",
  "base-common-consensus",
  "base-common-genesis",
+ "base-execution-candidates",
  "base-execution-chainspec",
  "base-execution-rpc",
  "base-execution-txpool",

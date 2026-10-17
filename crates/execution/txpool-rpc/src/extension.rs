@@ -1,14 +1,20 @@
 //! `TxPool` RPC extension for registering transaction pool management APIs.
 
+use std::sync::Arc;
+
+use base_execution_candidates::CandidateRuntime;
 use base_execution_rpc::SequencerClient;
 pub use base_execution_txpool::{
     DEFAULT_MAX_VALIDITY_EXPIRY_SECS, DEFAULT_MAX_VALIDITY_PREDICATES, ValiditySignatureMode,
 };
 use base_node_runner::{BaseNodeExtension, BaseRpcContext, FromExtensionConfig, NodeHooks};
+use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_rpc_server_types::RethRpcModule;
 
 use crate::{
-    AdminTxPoolApiImpl, AdminTxPoolApiServer, SendRawTransactionValidityApiImpl,
+    AdminCandidateSelectionApiImpl, AdminCandidateSelectionApiServer, AdminTxPoolApiImpl,
+    AdminTxPoolApiServer, SendRawTransactionCandidatesApiImpl,
+    SendRawTransactionCandidatesApiServer, SendRawTransactionValidityApiImpl,
     SendRawTransactionValidityApiServer, TransactionStatusApiImpl, TransactionStatusApiServer,
 };
 
@@ -105,6 +111,62 @@ impl BaseNodeExtension for SendRawTransactionValidityExtension {
 
 impl FromExtensionConfig for SendRawTransactionValidityExtension {
     type Config = SendRawTransactionValidityConfig;
+
+    fn from_config(config: Self::Config) -> Self {
+        Self { config }
+    }
+}
+
+/// Configuration for `base_sendRawTransactionCandidates` ingress.
+///
+/// Install the extension only when `--txpool.candidates.enabled` is set: an unregistered method
+/// returns `-32601`, while a registered but runtime-disabled one returns `candidates_disabled`.
+#[derive(Debug, Clone)]
+pub struct SendRawTransactionCandidatesConfig {
+    /// Candidate runtime shared with the pool and the payload builder.
+    pub runtime: Arc<CandidateRuntime>,
+    /// Maximum group lifetime past the next block, in seconds.
+    pub max_expiry_secs: u64,
+    /// Upstream sequencer RPC for proxy nodes.
+    pub sequencer_url: Option<String>,
+    /// HTTP headers sent to the upstream sequencer, in `name=value` form.
+    pub sequencer_headers: Vec<String>,
+}
+
+/// Extension registering candidate-group ingress and its admin toggle.
+#[derive(Debug)]
+pub struct SendRawTransactionCandidatesExtension {
+    config: SendRawTransactionCandidatesConfig,
+}
+
+impl BaseNodeExtension for SendRawTransactionCandidatesExtension {
+    fn apply(self: Box<Self>, builder: NodeHooks) -> NodeHooks {
+        let config = self.config;
+        builder.add_rpc_module(move |ctx: &mut BaseRpcContext<'_>| {
+            let chain_id = ctx.provider().chain_spec().chain_id();
+            let mut api = SendRawTransactionCandidatesApiImpl::new(
+                ctx.provider().clone(),
+                ctx.pool().clone(),
+                Arc::clone(&config.runtime),
+                chain_id,
+                config.max_expiry_secs,
+            );
+            if let Some(url) = &config.sequencer_url {
+                api = api.with_sequencer_client(SequencerClient::new_http_with_headers(
+                    url,
+                    config.sequencer_headers.clone(),
+                )?);
+            }
+            ctx.modules.merge_configured(api.into_rpc())?;
+            let admin = AdminCandidateSelectionApiImpl::new(Arc::clone(&config.runtime));
+            ctx.modules.merge_if_module_configured(RethRpcModule::Admin, admin.into_rpc())?;
+            Ok(())
+        })
+    }
+}
+
+impl FromExtensionConfig for SendRawTransactionCandidatesExtension {
+    type Config = SendRawTransactionCandidatesConfig;
 
     fn from_config(config: Self::Config) -> Self {
         Self { config }
