@@ -475,8 +475,8 @@ summary = "Alpha WebSocket proxy fanning out Flashblocks from rollup-boost to do
 digest = "63043098db"
 
 ["crates/infra/withdrawer/README.md"]
-summary = "Withdrawer configuration, signers, retrying RPC clients, capped L1 transaction preparation and signing, withdrawal extraction, and inclusion proof verification against onchain output claims."
-digest = "93f46fb900"
+summary = "Configure withdrawer signers, RPC clients, capped L1 transactions, and proof verification; decide withdrawal status from onchain invalidation and finality checks."
+digest = "026fb8566b"
 
 ["crates/infra/zk-benchmarks/README.md"]
 summary = "One-line stub: ZK proof benchmarking utilities for Base load-test runs; no usage or detail beyond that."
