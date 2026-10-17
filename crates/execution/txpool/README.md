@@ -48,38 +48,29 @@ Extension payloads must serialize as a JSON map (a braced struct, not a unit str
 
 ### Fill-immediately-or-kill
 
-Set `fill_immediately_or_kill: true` alongside `validity` to drop a transaction once its
-opportunity has been captured, instead of including it and paying gas. It requires non-empty
-predicates and defaults to `false`.
+Set `fill_immediately_or_kill: true` alongside `validity` to have the transaction land in the
+first block in which its predicates hold, against the state they first held on, or be dropped
+without paying gas. It requires non-empty predicates and defaults to `false`. The full contract,
+scenarios, and limits are in [`docs/guides/FILL_IMMEDIATELY_OR_KILL.md`](../../../docs/guides/FILL_IMMEDIATELY_OR_KILL.md).
 
-Builders track the balance, nonce, and storage locations read by the predicates of every
-validity transaction committed in the block being built. When a flagged transaction's
-predicates hold but any of those locations was already claimed by an earlier validity
-transaction in the same block, the builder drops it rather than including it. The kill is final
-because the predicates would otherwise keep holding in later blocks after the opportunity is
-gone: once the block is finalized, the builder evicts the transaction and records it in its
-rejection cache, so mempool nodes re-forwarding the same transaction cannot re-admit it. Submit
-a new, separately signed transaction to bid again.
+In the block being built, the builder keeps a journal of every write to a balance, nonce, or
+storage slot. When a flagged transaction's predicates hold, it replays that journal to find the
+earliest position in the block at which they held. If any location the predicates read was written
+after that position, the transaction is killed; otherwise it executes as usual. The write that
+makes the predicates true is not a conflict, so a backrun still fills behind its trigger. A flagged
+transaction whose predicates held during the block but which the block closed without is killed
+too. Conflicts are read-after-write only: another transaction that merely reads the same state
+never kills, and any transaction that writes it does, whether or not it carries predicates.
 
-Known limitations:
+A kill is final: the builder evicts the transaction and records it in its rejection cache, and
+every pool independently evicts a flagged transaction once a canonical block it was pending for
+could have included it. Submit a new, separately signed transaction to bid again.
 
-- The native builder applies kills only from a payload it returns (not a cancelled or out-bid
-  attempt), but a pre-Denim payload can still be superseded by a later one without the
-  competitor. The flashblocks builder applies a block's kills whenever it finalizes the block,
-  including a block abandoned at its deadline or by a new forkchoice update, so a searcher can
-  be killed by a competitor that never landed. Validity lifetimes are bounded (60 seconds by
-  default), which bounds the harm.
-- The rejection cache is local to each builder, so a re-forward to another builder (failover or
-  multiple forwarding targets) can still land a killed transaction.
-- The cache is keyed by transaction hash. While validity signatures are not required, anyone
-  holding the raw transaction can resubmit it with the flag and a contended predicate to have it
-  killed and blocked for the cache lifetime.
-
-Block-number and flashblock-index predicates never claim a location. Matching is by location
-only, so two searchers conditioning on the same slot exclude each other whatever values
-they compare. Every committed validity transaction claims, including one that reverted and the
-sender's own earlier transaction, so a flagged follow-up on the same state is killed too. The check needs no execution or rollback; it is not revert protection, and it
-does not react to ordinary transactions that change the same state.
+Limits: a flagged transaction admitted after the block containing the competitor is a fresh bid,
+so bound `block_number` to the block the bid was computed against; a transaction forwarded to a
+new sequencer leader during the block in which it was killed may fill once there; writes to a
+watched location by unrelated transactions (such as the sender's own earlier transaction) kill as
+well.
 
 ### Signed validity predicates
 

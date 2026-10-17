@@ -183,23 +183,24 @@ async fn killed_transaction_emits_one_builder_expired_per_block() -> eyre::Resul
     let instance = validity_instance().build().await?;
     let driver = instance.driver().await?;
     let accounts = driver.fund_accounts(2, ONE_ETH).await?;
-    let slot = ValidityPredicate::Storage {
-        address: Address::random(),
-        slot: U256::from(1),
-        mask: U256::MAX,
-        op: ValidityOperator::Equal,
-        value: U256::ZERO,
+    let pool = Address::random();
+    // Holds before and after the competitor pays into the pool.
+    let loose = ValidityPredicate::Balance {
+        address: pool,
+        op: ValidityOperator::LessThan,
+        value: U256::MAX,
     };
 
     let mut insert = Vec::new();
-    for (signer, priority_fee, fill_immediately_or_kill) in
-        [(&accounts[0], 100, false), (&accounts[1], 50, true)]
+    for (signer, to, priority_fee, fill_immediately_or_kill) in
+        [(&accounts[0], pool, 100, false), (&accounts[1], Address::random(), 50, true)]
     {
         let tx = driver
             .create_transaction()
             .with_signer(signer)
             .with_nonce(0)
-            .with_to(Address::random())
+            .with_to(to)
+            .with_value(1)
             .with_max_priority_fee_per_gas(priority_fee)
             .build()
             .await;
@@ -213,7 +214,7 @@ async fn killed_transaction_emits_one_builder_expired_per_block() -> eyre::Resul
                     raw: tx.encoded_2718().into(),
                     metering: None,
                     extensions: TransactionValidity {
-                        validity: vec![slot.clone()],
+                        validity: vec![loose.clone()],
                         validity_signature: None,
                         fill_immediately_or_kill,
                     },
@@ -235,7 +236,7 @@ async fn killed_transaction_emits_one_builder_expired_per_block() -> eyre::Resul
         })
         .map(|event| event.data["expire_reason"].clone())
         .collect::<Vec<_>>();
-    assert_eq!(expired, [serde_json::json!("fill_immediately_or_kill_contended")]);
+    assert_eq!(expired, [serde_json::json!("fill_immediately_or_kill_state_overwritten")]);
     Ok(())
 }
 

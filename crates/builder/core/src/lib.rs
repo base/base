@@ -40,7 +40,7 @@ mod transaction_events;
 mod flashblocks;
 pub use flashblocks::{
     BasePayloadBuilderCtx, BestFlashblocksTxs, BlockDeferrals, BlockPayloadJob,
-    BlockPayloadJobGenerator, BuildArguments, ClaimedPredicateKeys, FLOW_STANDARD, FLOW_VALIDITY,
+    BlockPayloadJobGenerator, BuildArguments, FLOW_STANDARD, FLOW_VALIDITY, FillOrKillTracker,
     FlashblockDiagnostics, FlashblockSelectionOutcome, FlashblocksExtraCtx,
     FlashblocksServiceBuilder, InclusionFlow, InclusionTracker, ParkableBestPayloadTransactions,
     ParkablePayloadTransactions, ParkedPredicateIndex, PayloadBuilder, PayloadHandler,

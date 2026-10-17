@@ -27,7 +27,7 @@ sol! {
         bytes32 transactionHash;
         /// Predicates sorted by their EIP-712 struct hashes, retaining duplicates.
         ValidityPredicate[] validity;
-        /// Whether builders drop the transaction once its predicate state has been claimed.
+        /// Whether the transaction is dropped once the state its predicates read moves.
         bool fillImmediatelyOrKill;
     }
 }

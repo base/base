@@ -27,7 +27,7 @@ insert, and the insert endpoint to be restricted to trusted forwarders. A `requi
 builder receiving from an `off` forwarder still accepts invalid supplied signatures.
 Predicates are enforced during block construction; an unsatisfied transaction is deferred
 and an expired one is evicted. The optional `fill_immediately_or_kill` flag also evicts a
-transaction once its predicate state was claimed earlier in the block; see
+transaction once the state its predicates read was written before it could land; see
 [fill-immediately-or-kill](../txpool/README.md#fill-immediately-or-kill). Regular RPC nodes with a configured sequencer URL proxy
 the complete sidecar and upstream error response instead of admitting it locally.
 See the [wallet signing contract](../txpool/README.md#signed-validity-predicates) for

@@ -99,8 +99,8 @@ pub struct BasePooledTransaction<
     validity_predicates: Vec<crate::ValidityPredicate>,
     /// Sender authorization retained for builder forwarding.
     validity_signature: Option<Signature>,
-    /// Whether a builder evicts and rejects this transaction once a committed validity
-    /// transaction claimed state its predicates read.
+    /// Whether this transaction must land in the first block its predicates hold in, against the
+    /// state they first held on, or be dropped.
     fill_immediately_or_kill: bool,
     /// The set of on-chain state surfaces whose change invalidates this
     /// transaction, computed once during validation and consumed by the pool's
@@ -224,7 +224,7 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
         self.validity_signature
     }
 
-    /// Returns whether a builder drops this transaction once its predicate state has been claimed.
+    /// Returns whether this transaction is dropped once the state its predicates read moves.
     pub const fn fill_immediately_or_kill(&self) -> bool {
         self.fill_immediately_or_kill
     }
@@ -516,7 +516,7 @@ pub trait BasePooledTx: PoolTransaction + DataAvailabilitySized {
         &[]
     }
 
-    /// Returns whether a builder drops this transaction once its predicate state has been claimed.
+    /// Returns whether this transaction is dropped once the state its predicates read moves.
     ///
     /// See [`crate::TransactionValidity::fill_immediately_or_kill`].
     fn fill_immediately_or_kill(&self) -> bool {

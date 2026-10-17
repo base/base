@@ -415,18 +415,21 @@ async fn resting_transaction_is_included_once_its_blocking_state_changes() -> ey
     Ok(())
 }
 
-/// Inserts a transaction from `signer` conditioned on `validity` through the builder API.
+/// Inserts a transaction from `signer` paying one wei to `to`, conditioned on `validity`, through
+/// the builder API.
 async fn insert_validity_transaction(
     driver: &ChainDriver,
     signer: &PrivateKeySigner,
     priority_fee: u128,
+    to: Address,
     validity: Vec<ValidityPredicate>,
     fill_immediately_or_kill: bool,
 ) -> eyre::Result<TxHash> {
     let tx = driver
         .create_transaction()
         .with_signer(signer)
-        .with_to(Address::random())
+        .with_to(to)
+        .with_value(1)
         .with_max_priority_fee_per_gas(priority_fee)
         .build()
         .await;
@@ -450,21 +453,16 @@ async fn insert_validity_transaction(
     Ok(hash)
 }
 
-/// A storage predicate that holds for any unwritten slot, standing in for a shared opportunity.
-fn untouched_slot(address: Address, slot: u64) -> ValidityPredicate {
-    ValidityPredicate::Storage {
-        address,
-        slot: U256::from(slot),
-        mask: U256::MAX,
-        op: ValidityOperator::Equal,
-        value: U256::ZERO,
-    }
+/// A loose balance predicate that holds whatever is paid into `address`, standing in for a
+/// searcher whose bounds do not capture the opportunity it is really after.
+const fn loose_balance(address: Address) -> ValidityPredicate {
+    ValidityPredicate::Balance { address, op: ValidityOperator::LessThan, value: U256::MAX }
 }
 
-/// Builds one block containing a higher-priority validity transaction and a lower-priority one
-/// whose predicates read `searcher_slot`, and returns whether the lower-priority one landed.
+/// Builds one block with a higher-priority competitor paying into `pool` and a lower-priority
+/// searcher whose loose predicate reads `watched`, and returns whether the searcher landed.
 async fn searcher_included_after_competitor(
-    searcher_slot: u64,
+    watches_pool: bool,
     fill_immediately_or_kill: bool,
 ) -> eyre::Result<bool> {
     let instance = LocalInstanceBuilder::new(BuilderConfig::for_tests())
@@ -476,20 +474,16 @@ async fn searcher_included_after_competitor(
     let driver = instance.driver().await?;
     let accounts = driver.fund_accounts(2, ONE_ETH).await?;
     let pool = Address::random();
+    let watched = if watches_pool { pool } else { Address::random() };
 
-    let competitor = insert_validity_transaction(
-        &driver,
-        &accounts[0],
-        100,
-        vec![untouched_slot(pool, 1)],
-        false,
-    )
-    .await?;
+    let competitor =
+        insert_validity_transaction(&driver, &accounts[0], 100, pool, Vec::new(), false).await?;
     let searcher = insert_validity_transaction(
         &driver,
         &accounts[1],
         50,
-        vec![untouched_slot(pool, searcher_slot)],
+        Address::random(),
+        vec![loose_balance(watched)],
         fill_immediately_or_kill,
     )
     .await?;
@@ -500,27 +494,67 @@ async fn searcher_included_after_competitor(
     Ok(included.contains(&searcher))
 }
 
-/// A fill-immediately-or-kill transaction is dropped once a validity transaction conditioned on
-/// the same state commits ahead of it, even though its own predicates still hold. Without the
-/// flag the same transaction lands and pays gas for an opportunity that was already taken.
+/// A fill-immediately-or-kill transaction whose predicates held at the start of the block is
+/// dropped once an earlier transaction writes the state those predicates read, even though they
+/// still hold. Without the flag the same transaction lands and pays gas for an opportunity that
+/// was already taken.
 #[tokio::test]
-async fn fill_immediately_or_kill_is_dropped_after_competitor_claims_its_state() -> eyre::Result<()>
-{
-    assert!(searcher_included_after_competitor(1, false).await?);
-    assert!(!searcher_included_after_competitor(1, true).await?);
+async fn fill_immediately_or_kill_is_dropped_once_its_predicate_state_is_written()
+-> eyre::Result<()> {
+    assert!(searcher_included_after_competitor(true, false).await?);
+    assert!(!searcher_included_after_competitor(true, true).await?);
     Ok(())
 }
 
-/// Another validity transaction only kills a fill-immediately-or-kill transaction when their
-/// predicates read the same state.
+/// Writes to state the predicates do not read never kill.
 #[tokio::test]
-async fn fill_immediately_or_kill_survives_unrelated_validity_commit() -> eyre::Result<()> {
-    assert!(searcher_included_after_competitor(2, true).await?);
+async fn fill_immediately_or_kill_survives_unrelated_writes() -> eyre::Result<()> {
+    assert!(searcher_included_after_competitor(false, true).await?);
     Ok(())
 }
 
-/// With no competing claim, a fill-immediately-or-kill transaction parked on unmet state is still
-/// included once a commit satisfies it.
+/// A transaction that reads the same state as a flagged transaction, but does not write it, is not
+/// a conflict: kills are read-after-write only.
+#[tokio::test]
+async fn fill_immediately_or_kill_survives_a_competitor_that_only_reads_its_state()
+-> eyre::Result<()> {
+    let instance = LocalInstanceBuilder::new(BuilderConfig::for_tests())
+        .install_ext::<BuilderApiExtension>(
+            BuilderApiExtensionConfig::new(DEFAULT_MAX_VALIDITY_PREDICATES).with_noop_metering(),
+        )
+        .build()
+        .await?;
+    let driver = instance.driver().await?;
+    let accounts = driver.fund_accounts(2, ONE_ETH).await?;
+    let pool = Address::random();
+
+    let reader = insert_validity_transaction(
+        &driver,
+        &accounts[0],
+        100,
+        Address::random(),
+        vec![loose_balance(pool)],
+        false,
+    )
+    .await?;
+    let searcher = insert_validity_transaction(
+        &driver,
+        &accounts[1],
+        50,
+        Address::random(),
+        vec![loose_balance(pool)],
+        true,
+    )
+    .await?;
+
+    let block = driver.build_new_block().await?;
+    let included = block.transactions.hashes().collect::<Vec<_>>();
+    assert_eq!(included[included.len() - 2..], [reader, searcher]);
+    Ok(())
+}
+
+/// With no competing write, a fill-immediately-or-kill transaction parked on unmet state is still
+/// included once a commit satisfies it: the satisfying write is not a conflict.
 #[tokio::test]
 async fn fill_immediately_or_kill_fills_when_woken_without_competition() -> eyre::Result<()> {
     let instance = LocalInstanceBuilder::new(BuilderConfig::for_tests())
@@ -537,6 +571,7 @@ async fn fill_immediately_or_kill_fills_when_woken_without_competition() -> eyre
         &driver,
         &accounts[0],
         100,
+        Address::random(),
         vec![ValidityPredicate::Balance {
             address: watched,
             op: ValidityOperator::Equal,
@@ -566,11 +601,56 @@ async fn fill_immediately_or_kill_fills_when_woken_without_competition() -> eyre
     Ok(())
 }
 
-/// A competitor committed in an earlier flashblock of the block still claims its state. The killed
-/// transaction is evicted and cached as rejected, so neither the next block nor a mempool re-forward
-/// of the same transaction lands it, even though its predicates still hold.
+/// Two backrunners wake on the same trigger. The faster one pays into the watched balance again
+/// before the flagged one executes, so the flagged one is dropped instead of landing late.
 #[tokio::test]
-async fn fill_immediately_or_kill_evicts_after_competitor_in_earlier_flashblock() -> eyre::Result<()>
+async fn fill_immediately_or_kill_loses_a_backrun_race_without_paying() -> eyre::Result<()> {
+    let instance = LocalInstanceBuilder::new(BuilderConfig::for_tests())
+        .install_ext::<BuilderApiExtension>(
+            BuilderApiExtensionConfig::new(DEFAULT_MAX_VALIDITY_PREDICATES).with_noop_metering(),
+        )
+        .build()
+        .await?;
+    let driver = instance.driver().await?;
+    let accounts = driver.fund_accounts(3, ONE_ETH).await?;
+    let victim = Address::random();
+    let paid = ValidityPredicate::Balance {
+        address: victim,
+        op: ValidityOperator::GreaterThanOrEqual,
+        value: U256::from(1),
+    };
+
+    let fast =
+        insert_validity_transaction(&driver, &accounts[0], 100, victim, vec![paid.clone()], false)
+            .await?;
+    let slow =
+        insert_validity_transaction(&driver, &accounts[1], 50, Address::random(), vec![paid], true)
+            .await?;
+    let trigger = *driver
+        .create_transaction()
+        .with_signer(&accounts[2])
+        .with_to(victim)
+        .with_value(1)
+        .with_max_priority_fee_per_gas(200)
+        .send()
+        .await?
+        .tx_hash();
+
+    let block = driver.build_new_block().await?;
+    let tracked = [trigger, fast, slow];
+    let actual = block
+        .transactions
+        .into_transactions()
+        .filter_map(|tx| tracked.contains(&tx.tx_hash()).then(|| tx.tx_hash()))
+        .collect::<Vec<_>>();
+    assert_eq!(actual, [trigger, fast]);
+    Ok(())
+}
+
+/// A flashblock bound delays when the predicates count as satisfied: a write before the bound is
+/// not a conflict, so the transaction fills once the bound is reached.
+#[tokio::test]
+async fn fill_immediately_or_kill_counts_satisfaction_from_its_flashblock_bound() -> eyre::Result<()>
 {
     let instance = LocalInstanceBuilder::new(BuilderConfig::for_tests())
         .install_ext::<BuilderApiExtension>(
@@ -581,66 +661,38 @@ async fn fill_immediately_or_kill_evicts_after_competitor_in_earlier_flashblock(
     let driver = instance.driver().await?;
     let accounts = driver.fund_accounts(2, ONE_ETH).await?;
     let pool = Address::random();
-
-    insert_validity_transaction(&driver, &accounts[0], 100, vec![untouched_slot(pool, 1)], false)
-        .await?;
     let config = instance.builder_config();
-    let block_number = driver.latest().await?.header.number + 1;
-    let block_bound = ValidityPredicate::BlockNumber {
-        op: ValidityOperator::LessThanOrEqual,
-        value: U256::from(block_number + 2),
-    };
-    let searcher_tx = driver
-        .create_transaction()
-        .with_signer(&accounts[1])
-        .with_to(Address::random())
-        .with_max_priority_fee_per_gas(200)
-        .build()
-        .await;
-    let searcher = searcher_tx.tx_hash();
-    let insert = |validity: Vec<ValidityPredicate>| {
-        driver.provider().raw_request::<_, ()>(
-            "base_insertValidatedTransaction".into(),
-            (ValidatedTransaction {
-                sender: accounts[1].address(),
-                raw: searcher_tx.encoded_2718().into(),
-                metering: None,
-                extensions: TransactionValidity {
-                    validity,
-                    validity_signature: None,
-                    fill_immediately_or_kill: true,
-                },
-            },),
-        )
-    };
-    // The flashblock bound delays the searcher until after the competitor's flashblock.
-    insert(vec![
-        ValidityPredicate::FlashblockIndex {
-            op: ValidityOperator::GreaterThanOrEqual,
-            value: U256::from(config.flashblocks_per_block() - 1),
-        },
-        block_bound.clone(),
-        untouched_slot(pool, 1),
-    ])
+
+    let competitor =
+        insert_validity_transaction(&driver, &accounts[0], 100, pool, Vec::new(), false).await?;
+    let searcher = insert_validity_transaction(
+        &driver,
+        &accounts[1],
+        200,
+        Address::random(),
+        vec![
+            ValidityPredicate::FlashblockIndex {
+                op: ValidityOperator::GreaterThanOrEqual,
+                value: U256::from(config.flashblocks_per_block() - 1),
+            },
+            loose_balance(pool),
+        ],
+        true,
+    )
     .await?;
 
-    let contended = driver.build_new_block().await?;
-    assert!(!contended.transactions.hashes().any(|hash| hash == searcher));
-    assert!(instance.pool().is_dropped(searcher), "a killed bid must be evicted");
-
-    let next = driver.build_new_block().await?;
-    assert!(!next.transactions.hashes().any(|hash| hash == searcher));
-
-    // A mempool node re-forwards transactions it still holds.
-    insert(vec![block_bound, untouched_slot(pool, 1)]).await?;
-    let reforwarded = driver.build_new_block().await?;
-    assert!(!reforwarded.transactions.hashes().any(|hash| hash == searcher));
+    let block = driver.build_new_block().await?;
+    let included = block.transactions.hashes().collect::<Vec<_>>();
+    assert!(included.contains(&competitor));
+    assert!(included.contains(&searcher));
     Ok(())
 }
 
-/// A validity transaction that is parked rather than committed claims nothing.
+/// A killed transaction is evicted and cached as rejected, so neither the next block nor a mempool
+/// re-forward of the same transaction lands it, even though its predicates still hold.
 #[tokio::test]
-async fn parked_validity_transaction_does_not_claim_state() -> eyre::Result<()> {
+async fn fill_immediately_or_kill_evicts_and_rejects_reforwards_of_a_killed_transaction()
+-> eyre::Result<()> {
     let instance = LocalInstanceBuilder::new(BuilderConfig::for_tests())
         .install_ext::<BuilderApiExtension>(
             BuilderApiExtensionConfig::new(DEFAULT_MAX_VALIDITY_PREDICATES).with_noop_metering(),
@@ -650,27 +702,48 @@ async fn parked_validity_transaction_does_not_claim_state() -> eyre::Result<()> 
     let driver = instance.driver().await?;
     let accounts = driver.fund_accounts(2, ONE_ETH).await?;
     let pool = Address::random();
-    let never_funded = ValidityPredicate::Balance {
-        address: Address::random(),
-        op: ValidityOperator::GreaterThan,
-        value: U256::ZERO,
+
+    insert_validity_transaction(&driver, &accounts[0], 100, pool, Vec::new(), false).await?;
+    let block_number = driver.latest().await?.header.number + 1;
+    let block_bound = ValidityPredicate::BlockNumber {
+        op: ValidityOperator::LessThanOrEqual,
+        value: U256::from(block_number + 2),
     };
+    let searcher_tx = driver
+        .create_transaction()
+        .with_signer(&accounts[1])
+        .with_to(Address::random())
+        .with_max_priority_fee_per_gas(50)
+        .build()
+        .await;
+    let searcher = searcher_tx.tx_hash();
+    let insert = || {
+        driver.provider().raw_request::<_, ()>(
+            "base_insertValidatedTransaction".into(),
+            (ValidatedTransaction {
+                sender: accounts[1].address(),
+                raw: searcher_tx.encoded_2718().into(),
+                metering: None,
+                extensions: TransactionValidity {
+                    validity: vec![block_bound.clone(), loose_balance(pool)],
+                    validity_signature: None,
+                    fill_immediately_or_kill: true,
+                },
+            },),
+        )
+    };
+    insert().await?;
 
-    let parked = insert_validity_transaction(
-        &driver,
-        &accounts[0],
-        100,
-        vec![untouched_slot(pool, 1), never_funded],
-        false,
-    )
-    .await?;
-    let searcher =
-        insert_validity_transaction(&driver, &accounts[1], 50, vec![untouched_slot(pool, 1)], true)
-            .await?;
+    let contended = driver.build_new_block().await?;
+    assert!(!contended.transactions.hashes().any(|hash| hash == searcher));
+    assert!(instance.pool().is_dropped(searcher), "a killed bid must be evicted");
 
-    let block = driver.build_new_block().await?;
-    let included = block.transactions.hashes().collect::<Vec<_>>();
-    assert!(!included.contains(&parked));
-    assert!(included.contains(&searcher));
+    let next = driver.build_new_block().await?;
+    assert!(!next.transactions.hashes().any(|hash| hash == searcher));
+
+    // A mempool node re-forwards transactions it still holds.
+    insert().await?;
+    let reforwarded = driver.build_new_block().await?;
+    assert!(!reforwarded.transactions.hashes().any(|hash| hash == searcher));
     Ok(())
 }

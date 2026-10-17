@@ -5,13 +5,13 @@
 use core::fmt::Debug;
 
 use ExecutionMeteringLimitExceeded::TransactionExecutionTime;
-use alloy_primitives::{Address, TxHash, U256};
+use alloy_primitives::{Address, U256};
 use base_common_consensus::{BaseReceipt, BaseTransactionSigned};
 use base_common_evm::BaseTransactionError;
 use derive_more::Display;
 use thiserror::Error;
 
-use crate::{ClaimedPredicateKeys, InclusionTracker, PredicateLoadTracker};
+use crate::{FillOrKillTracker, InclusionTracker, PredicateLoadTracker};
 
 /// Resource limits configuration for transaction and block constraints.
 ///
@@ -226,11 +226,10 @@ pub struct ExecutionInfo {
     pub da_footprint_scalar: Option<u16>,
     /// Validity-predicate state loads accumulated across the block's flashblock builds.
     pub predicate_loads: PredicateLoadTracker,
-    /// State locations claimed by validity transactions committed across the block's flashblocks.
-    pub claimed_predicate_keys: ClaimedPredicateKeys,
-    /// Fill-immediately-or-kill transactions killed in this block, evicted when it is finalized.
-    /// Kept on the block so a kill in a flashblock cancelled before publication still applies.
-    pub killed_txs: Vec<TxHash>,
+    /// Fill-immediately-or-kill decisions across the block's flashblocks: the in-block predicate
+    /// write journal and the flagged transactions satisfied or killed so far. Kept on the block so
+    /// a kill in a flashblock cancelled before publication still applies.
+    pub fill_or_kill: FillOrKillTracker,
     /// Validity inclusion and EIP-1559 fee revenue accumulated across the block.
     pub inclusion: InclusionTracker,
 }
@@ -249,8 +248,7 @@ impl ExecutionInfo {
             extra: Default::default(),
             da_footprint_scalar: None,
             predicate_loads: PredicateLoadTracker::default(),
-            claimed_predicate_keys: ClaimedPredicateKeys::default(),
-            killed_txs: Vec::new(),
+            fill_or_kill: FillOrKillTracker::default(),
             inclusion: InclusionTracker::default(),
         }
     }
