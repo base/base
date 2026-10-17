@@ -292,6 +292,8 @@ pub enum SiblingCommit {
     NonceTooLow,
     /// The sibling failed EVM validation at this prefix.
     Invalid,
+    /// The simulated sample the schedule requires is no longer available.
+    Unmetered,
 }
 
 /// A sibling's uncommitted trial.
@@ -481,6 +483,7 @@ where
         let evaluation =
             self.evaluate_round(&info.resource_metering_usage, builder, turn, &mut round, scan);
         let work = round.work.min(round_gas);
+        let attempt_seq = reservation.attempt;
         runtime.ledger.settle(reservation, work);
         runtime.policy.settle(ticket, work);
         scan.work_gas = scan.work_gas.saturating_add(work);
@@ -493,13 +496,9 @@ where
             outcome = evaluation.as_ref().map_or("error", |end| end.as_label()),
             "settled candidate round"
         );
-        match evaluation? {
-            RoundEnd::Completed => {}
-            RoundEnd::Cancelled => return Ok(Some(())),
-            RoundEnd::OutOfTime => {
-                let decision = TurnDecision::Defer(DeferReason::Deadline);
-                return Ok(self.apply_decision(info, best_txs, group, decision, config));
-            }
+        let end = evaluation?;
+        if end != RoundEnd::Completed {
+            return Ok(self.interrupt(info, best_txs, turn, end, attempt_seq));
         }
         let outcomes = round.outcomes;
         if let Some(nonce_used) = outcomes
@@ -522,6 +521,10 @@ where
         let winner = WinnerSelection::choose(&outcomes);
         let decision = match winner {
             Some(_) => TurnDecision::CommitWinner,
+            // A sample that disappeared since precheck fails closed (design §5.2).
+            None if outcomes.contains(&TrialOutcome::Ineligible(Ineligibility::Unmetered)) => {
+                TurnDecision::Defer(DeferReason::Unmetered)
+            }
             None if outcomes.iter().all(|outcome| match outcome {
                 TrialOutcome::Ineligible(reason) => reason.is_block_scope(),
                 TrialOutcome::Eligible { .. } => false,
@@ -545,15 +548,15 @@ where
             decision = decision.as_label(),
             "evaluated candidate group"
         );
+        // A stop that arrived during the last trial still prevents the winner or fallback from
+        // executing; the round defers without consuming its attempt.
+        if matches!(decision, TurnDecision::CommitWinner | TurnDecision::Fallback(_))
+            && let Some(end) = self.round_stop(scan, config)
+        {
+            return Ok(self.interrupt(info, best_txs, turn, end, attempt_seq));
+        }
         match (decision, winner) {
             (TurnDecision::CommitWinner, Some(index)) => {
-                if self.cancel.is_cancelled() {
-                    return Ok(Some(()));
-                }
-                if !scan.has_time(config) {
-                    let decision = TurnDecision::Defer(DeferReason::Deadline);
-                    return Ok(self.apply_decision(info, best_txs, group, decision, config));
-                }
                 match self.commit_sibling(info, builder, turn, index, scan)? {
                     SiblingCommit::Committed => {
                         Self::landed(group, index, limits, config);
@@ -562,6 +565,10 @@ where
                     SiblingCommit::NonceTooLow => {
                         runtime.ledger.evict(group_hash, EvictionReason::Dropped);
                         best_txs.mark_current_committed();
+                    }
+                    SiblingCommit::Unmetered => {
+                        let decision = TurnDecision::Defer(DeferReason::Unmetered);
+                        self.apply_decision(info, best_txs, group, decision, config);
                     }
                     // The live re-execution disagreed with the trial at the same prefix.
                     SiblingCommit::Excluded { .. } | SiblingCommit::Invalid => {
@@ -596,12 +603,12 @@ where
         let TurnDecision::Fallback(reason) = decision else {
             return Ok(self.apply_decision(info, best_txs, group, decision, config));
         };
-        if self.cancel.is_cancelled() {
-            return Ok(Some(()));
-        }
         let index = usize::from(group.envelope().default_index);
-        let decision = if !scan.has_time(config) {
-            TurnDecision::Defer(DeferReason::Deadline)
+        let decision = if let Some(end) = self.round_stop(scan, config) {
+            match end {
+                RoundEnd::Cancelled => return Ok(Some(())),
+                _ => TurnDecision::Defer(DeferReason::Deadline),
+            }
         } else {
             match self.sibling_precheck(info, &group.siblings()[index], limits) {
                 Err(reason) if reason.is_permanent() => {
@@ -629,6 +636,7 @@ where
                     SiblingCommit::Excluded { permanent: true } => {
                         TurnDecision::Evict(EvictionReason::PermanentExclusion)
                     }
+                    SiblingCommit::Unmetered => TurnDecision::Defer(DeferReason::Unmetered),
                     SiblingCommit::Excluded { permanent: false } | SiblingCommit::Invalid => {
                         TurnDecision::Defer(DeferReason::BlockLimits)
                     }
@@ -636,6 +644,31 @@ where
             }
         };
         Ok(self.apply_decision(info, best_txs, group, decision, config))
+    }
+
+    /// Ends a turn whose round was interrupted by cancellation, finalization or the deadline.
+    ///
+    /// The round's settled work stays charged but its attempt is returned (design §5.7 step 7).
+    /// Cancellation stops the build; the other stops defer the group.
+    pub fn interrupt<B>(
+        &self,
+        info: &mut ExecutionInfo,
+        best_txs: &mut B,
+        turn: CandidateTurn<'_>,
+        end: RoundEnd,
+        attempt: u16,
+    ) -> Option<()>
+    where
+        B: ParkablePayloadTransactions<Transaction: PoolTransaction>,
+    {
+        turn.config.runtime.ledger.release_attempt(turn.group.group_hash(), attempt);
+        match end {
+            RoundEnd::Cancelled => Some(()),
+            _ => {
+                let decision = TurnDecision::Defer(DeferReason::Deadline);
+                self.apply_decision(info, best_txs, turn.group, decision, turn.config)
+            }
+        }
     }
 
     /// Applies a decision that executes nothing: park, defer or evict.
@@ -913,6 +946,12 @@ where
         let resource_metering = &self.builder_config.resource_metering;
         let hash = sibling.hash();
         let (simulated, _) = resource_metering.check_simulated_usage(&hash, cumulative);
+        if simulated.is_none() && resource_metering.requires_simulated_sample() {
+            return Ok(SiblingTrial {
+                outcome: Err(Ineligibility::Unmetered),
+                ..SiblingTrial::invalid()
+            });
+        }
         let mut captured = None;
         let executed = builder.execute_transaction_with_commit_condition(
             Self::consensus_sibling(sibling),
@@ -1064,6 +1103,10 @@ where
         let resource_metering = &self.builder_config.resource_metering;
         let (simulated, _) =
             resource_metering.check_simulated_usage(&hash, &info.resource_metering_usage);
+        // Each lookup is fresh: a sample evicted since the trial must not commit unmetered.
+        if simulated.is_none() && resource_metering.requires_simulated_sample() {
+            return Ok(SiblingCommit::Unmetered);
+        }
         let mut pending_resource_usage = None;
         let mut executed_decision = None;
         let tx = TxTy::<Evm::Primitives>::from(sibling.transaction.inner().clone());

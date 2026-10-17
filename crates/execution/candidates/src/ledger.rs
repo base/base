@@ -388,6 +388,18 @@ impl GroupLedger {
         Ok(GroupReservation { group_hash, attempt: entry.attempts, gas })
     }
 
+    /// Returns the attempt of an interrupted round (design §5.7 step 7: a cancellation or
+    /// deadline stop defers without consuming an attempt). Work already settled stays charged.
+    /// Only the latest attempt can be returned.
+    pub fn release_attempt(&self, group_hash: B256, attempt: u16) {
+        let mut state = self.state.lock();
+        if let Some(entry) = state.entries.get_mut(&group_hash)
+            && entry.attempts == attempt
+        {
+            entry.attempts -= 1;
+        }
+    }
+
     /// Settles a reservation at actual work and releases the unused part.
     pub fn settle(&self, reservation: GroupReservation, gas_used: u64) {
         let mut state = self.state.lock();
@@ -768,6 +780,23 @@ mod tests {
         assert_eq!(ledger.group_of_sibling(&sibling), Some(c.group_hash()));
         ledger.prune(211);
         assert!(!ledger.suppresses_plain_reinsertion(&sibling));
+    }
+
+    #[test]
+    fn interrupted_round_returns_its_attempt_but_keeps_its_work() {
+        let ledger = GroupLedger::default();
+        let fixture = CandidateFixture::new(CHAIN_ID);
+        let group = group(&fixture, 0, 1, 0);
+        let hash = group.group_hash();
+        admit(&ledger, &group, &[]);
+
+        let reservation = ledger.reserve(hash, 100, 8).unwrap();
+        let attempt = reservation.attempt;
+        ledger.settle(reservation, 40);
+        ledger.release_attempt(hash, attempt);
+
+        let entry = ledger.lookup(&hash).unwrap();
+        assert_eq!((entry.attempts, entry.work_gas_settled, entry.work_gas_reserved), (0, 40, 0));
     }
 
     #[test]

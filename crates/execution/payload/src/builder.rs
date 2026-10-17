@@ -3582,6 +3582,132 @@ mod tests {
         assert_eq!(entry.permanently_ineligible, [false, true]);
     }
 
+    /// What [`ScriptedMeterProvider`] does once its target has been looked up enough times.
+    #[derive(Debug)]
+    enum MeterScript {
+        /// Requests payload finalization, as a late `getPayload` would. Held in `ManuallyDrop`
+        /// because dropping a `CancelOnDrop` clone cancels the job.
+        Finalize(ManuallyDrop<CancelOnDrop>),
+        /// Stops returning the sample, as a TTL/LRU eviction or a clear would.
+        Disappear,
+    }
+
+    /// Returns a light sample for every hash; from `target`'s `from_lookup`-th lookup on it
+    /// runs `script`. Lookups happen at precheck (1), trial (2) and commit (3).
+    #[derive(Debug)]
+    struct ScriptedMeterProvider {
+        target: TxHash,
+        from_lookup: usize,
+        script: MeterScript,
+        lookups: Mutex<HashMap<TxHash, usize>>,
+    }
+
+    impl MeteringProvider for ScriptedMeterProvider {
+        fn get(&self, tx_hash: &TxHash) -> Option<Arc<MeterBundleResponse>> {
+            let mut lookups = self.lookups.lock().unwrap();
+            let seen = lookups.entry(*tx_hash).or_default();
+            *seen += 1;
+            if *tx_hash == self.target && *seen >= self.from_lookup {
+                match &self.script {
+                    MeterScript::Finalize(cancel) => cancel.request_finalization(),
+                    MeterScript::Disappear => return None,
+                }
+            }
+            Some(Arc::new(meter_for(*tx_hash, 21_000)))
+        }
+    }
+
+    /// Builds `group` under enforced `SSTORE` pricing with a scripted metering provider.
+    fn build_with_meter_script(
+        fixture: &CandidateFixture,
+        runtime: &Arc<CandidateRuntime>,
+        group: &Arc<CandidateGroup>,
+        target: usize,
+        from_lookup: usize,
+        finalize: bool,
+    ) -> Vec<TxHash> {
+        let (outcome, _) = build_candidate_payload_with(
+            CandidateBuild {
+                runtime: Some(Arc::clone(runtime)),
+                sender: fixture.address(),
+                timestamp: Some(DENIM_TIMESTAMP),
+                ..CandidateBuild::default()
+            },
+            TestParkableTransactions::new(vec![representative(group)]),
+            |ctx| {
+                let script = if finalize {
+                    MeterScript::Finalize(ManuallyDrop::new(ctx.cancel.clone()))
+                } else {
+                    MeterScript::Disappear
+                };
+                ctx.builder_config.resource_metering = metering_config(
+                    cpu_schedule_with_sstore(1_000_000_000, None, 1),
+                    Arc::new(ScriptedMeterProvider {
+                        target: group.siblings()[target].hash(),
+                        from_lookup,
+                        script,
+                        lookups: Mutex::default(),
+                    }),
+                );
+            },
+        );
+        included_hashes(outcome)
+    }
+
+    #[test]
+    fn finalization_during_the_last_trial_defers_the_winner() {
+        let fixture = CandidateFixture::new(8_453);
+        let runtime = candidate_runtime(&fixture, true);
+        let group = candidate_group(&fixture, &runtime, CANDIDATE_RECIPIENT, &[1, 3], |_| {});
+
+        let included = build_with_meter_script(&fixture, &runtime, &group, 1, 2, true);
+
+        assert!(included.is_empty(), "the winner must not execute after finalization");
+        let entry = runtime.ledger.lookup(&group.group_hash()).expect("group is tracked");
+        assert!(!entry.state.is_terminal());
+        assert_eq!(entry.attempts, 0, "an interrupted round consumes no attempt");
+        assert_eq!(entry.work_gas_settled, 42_000, "the trials' work stays charged");
+    }
+
+    #[test]
+    fn finalization_during_the_last_trial_defers_the_fallback() {
+        let fixture = CandidateFixture::new(8_453);
+        let runtime = candidate_runtime(&fixture, true);
+        let group = candidate_group(&fixture, &runtime, CANDIDATE_RECIPIENT, &[1, 3], |envelope| {
+            envelope.rule.min_delta = U256::from(10);
+        });
+
+        let included = build_with_meter_script(&fixture, &runtime, &group, 1, 2, true);
+
+        assert!(included.is_empty(), "the fallback must not execute after finalization");
+        let entry = runtime.ledger.lookup(&group.group_hash()).expect("group is tracked");
+        assert_eq!(entry.attempts, 0);
+    }
+
+    #[test]
+    fn metering_sample_disappearing_before_commit_defers_the_winner() {
+        let fixture = CandidateFixture::new(8_453);
+        let runtime = candidate_runtime(&fixture, true);
+        let group = candidate_group(&fixture, &runtime, CANDIDATE_RECIPIENT, &[1, 3], |_| {});
+
+        let included = build_with_meter_script(&fixture, &runtime, &group, 1, 3, false);
+
+        assert!(included.is_empty(), "a winner whose sample disappeared must not commit");
+        let entry = runtime.ledger.lookup(&group.group_hash()).expect("group is tracked");
+        assert!(!entry.state.is_terminal());
+    }
+
+    #[test]
+    fn metering_sample_disappearing_before_trial_makes_the_sibling_ineligible() {
+        let fixture = CandidateFixture::new(8_453);
+        let runtime = candidate_runtime(&fixture, true);
+        let group = candidate_group(&fixture, &runtime, CANDIDATE_RECIPIENT, &[1, 3], |_| {});
+
+        let included = build_with_meter_script(&fixture, &runtime, &group, 1, 2, false);
+
+        assert_eq!(included, [group.siblings()[0].hash()], "only the still-metered sibling runs");
+    }
+
     #[test]
     fn nonce_too_low_group_is_evicted_without_invalidating_the_lane() {
         let fixture = CandidateFixture::new(8_453);
