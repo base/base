@@ -9,7 +9,8 @@ use reth_payload_util::PayloadTransactions;
 use revm::state::EvmState;
 
 use crate::{
-    BuilderMetrics, RejectionCache, RestingPayloadTransactions, RestingPredicateMode, RestingStats,
+    BuilderMetrics, CounterHandle, RejectionCache, RestingPayloadTransactions,
+    RestingPredicateMode, RestingStats,
 };
 
 /// An adapter that skips transactions already committed or permanently rejected by flashblocks.
@@ -38,6 +39,8 @@ where
     // loop parked are woken by its own predicate index instead.
     parked_resting: B256Set,
     resting_stats: RestingStats,
+    // Resolved on the first hit so later hits on the candidate path skip the registry lookup.
+    rejection_cache_hits: Option<CounterHandle>,
     transaction: PhantomData<T>,
 }
 
@@ -72,6 +75,7 @@ where
             resting: ParkedPredicateIndex::default(),
             parked_resting: B256Set::default(),
             resting_stats: RestingStats::default(),
+            rejection_cache_hits: None,
             transaction: PhantomData,
         }
     }
@@ -126,7 +130,9 @@ where
             }
 
             if self.rejection_cache.is_rejected(&hash) {
-                BuilderMetrics::rejection_cache_hits().increment(1);
+                self.rejection_cache_hits
+                    .get_or_insert_with(BuilderMetrics::rejection_cache_hits)
+                    .increment(1);
                 // Only intrinsically invalid transactions enter this cache. Their nonce-lane
                 // descendants cannot execute across the resulting gap, so exclude the lane for
                 // this iterator rather than treating the rejected head as committed.
