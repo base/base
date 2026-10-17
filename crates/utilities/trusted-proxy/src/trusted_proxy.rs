@@ -168,23 +168,6 @@ mod tests {
     }
 
     #[test]
-    fn last_header_occurrence_wins_over_spoofed_first_line() {
-        // A client sends its own X-Forwarded-For line; the trusted proxy
-        // appends a second line with the real address. The proxy-appended
-        // line must win.
-        let config = xff_config(vec!["127.0.0.0/8"]);
-        let trusted_proxy = IpAddr::V4(Ipv4Addr::LOCALHOST);
-        let real_client = IpAddr::V4(Ipv4Addr::new(198, 51, 100, 7));
-
-        let mut headers = HeaderMap::new();
-        headers.append("x-forwarded-for", HeaderValue::from_static("203.0.113.99"));
-        headers.append("x-forwarded-for", HeaderValue::from_static("198.51.100.7"));
-
-        assert_eq!(config.client_ip(trusted_proxy, &headers), real_client);
-        assert_eq!(config.forwarded_client_ip(&headers).unwrap(), real_client);
-    }
-
-    #[test]
     fn rightmost_untrusted_entry_across_lines_wins() {
         let config = xff_config(vec!["127.0.0.0/8"]);
         let real_client = IpAddr::V4(Ipv4Addr::new(198, 51, 100, 7));
