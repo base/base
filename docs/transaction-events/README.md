@@ -21,9 +21,10 @@ whose `event_time` is already outside its window or more than an hour in the
 future. A retried `event_id` dedupes only within the same UTC hour of its
 `event_time`. `TXPOOL_SEND_RAW_TRANSACTION_VALIDITY` uses the same warm window as
 `TXPOOL_SEND_RAW_TRANSACTION`. `BUILDER_DEFERRED` and `BUILDER_EXPIRED` use the
-same hot window as the other per-attempt builder decisions. The candidate-group
-terminal events `TXPOOL_CANDIDATE_LANDED` and `TXPOOL_CANDIDATE_EVICTED` are
-cold.
+same hot window as the other per-attempt builder decisions. Candidate-group
+events follow the same split: `TXPOOL_SEND_RAW_TRANSACTION_CANDIDATES` is
+warm, and `TXPOOL_SEND_RAW_TRANSACTION_CANDIDATES_REJECTED`,
+`TXPOOL_CANDIDATE_LANDED`, and `TXPOOL_CANDIDATE_EVICTED` are cold.
 
 ## Configuration Fields
 
@@ -197,6 +198,8 @@ Mempool/node:
 - `TXPOOL_TRACKING_OVERFLOWED`
 - `TXPOOL_SEND_RAW_TRANSACTION`
 - `TXPOOL_SEND_RAW_TRANSACTION_VALIDITY`
+- `TXPOOL_SEND_RAW_TRANSACTION_CANDIDATES`
+- `TXPOOL_SEND_RAW_TRANSACTION_CANDIDATES_REJECTED`
 - `TXPOOL_CANDIDATE_LANDED`
 - `TXPOOL_CANDIDATE_EVICTED`
 
@@ -307,8 +310,19 @@ deserializes `event_type`) must run a release that knows the candidate kinds
 before any builder or node emits them. Older binaries reject unknown
 `event_type` values.
 
-Measured sizes for a two-sibling group, as serialized JSON: landed 712
-bytes, evicted 652 to 661.
+Ingress. `TXPOOL_SEND_RAW_TRANSACTION_CANDIDATES` fires once per admitted group,
+when the representative is pooled, keyed by the representative's `tx_hash`, with
+`data.sibling_hashes`. Its `event_id` depends only on the group, and duplicate
+submissions emit nothing. A refused request gets
+`TXPOOL_SEND_RAW_TRANSACTION_CANDIDATES_REJECTED` with the RPC error label in
+`data.rejection_reason`: `pool_rejected` when the pool refused the
+representative and `internal_error` for an unlabeled failure such as a state
+read. `tx_hash` and `data.group_hash` are present only once the group
+validated, and every rejection has its own `event_id`, so repeated rejections
+are all kept. Proxies forward without journaling.
+
+Measured sizes for a two-sibling group, as serialized JSON: admission 822
+bytes, rejection 548 to 681, landed 712, evicted 652 to 661.
 
 Terminal events. The node's candidate ledger emits exactly one terminal event
 per admitted group, keyed by the group alone so replays deduplicate.
@@ -321,6 +335,11 @@ replaced it), `expired` (pool maintenance passed `expiryBlock`),
 that left the pool another way, such as admin removal, pool-full eviction, a
 plain same-nonce replacement, or a builder nonce check, is `dropped` only once
 the recovery window closes, because a canonical landing can still correct it.
+
+Disabled selection. A node started without candidates, or one whose selection
+is disabled at runtime with `admin_setCandidateSelectionEnabled`, emits no
+ingress candidate events; the ledger still journals terminal events for groups
+admitted earlier.
 
 Canonicality caveat: builder events are local payload construction signals, not
 canonical-chain or consensus-finality observations. A builder event with

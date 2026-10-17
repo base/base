@@ -254,7 +254,8 @@ impl TransactionEventRetentionClass {
             | TransactionEventType::TxpoolBuilderConsumed
             | TransactionEventType::TxpoolValidatedInsertAccepted
             | TransactionEventType::TxpoolSendRawTransaction
-            | TransactionEventType::TxpoolSendRawTransactionValidity => Self::Warm,
+            | TransactionEventType::TxpoolSendRawTransactionValidity
+            | TransactionEventType::TxpoolSendRawTransactionCandidates => Self::Warm,
             TransactionEventType::ProxyRejected
             | TransactionEventType::ProxyValidationRejected
             | TransactionEventType::ProxyBackendFailure
@@ -273,6 +274,7 @@ impl TransactionEventRetentionClass {
             | TransactionEventType::BuilderFlashblockStarted
             | TransactionEventType::BuilderFlashblockPublished
             | TransactionEventType::BuilderFlashblockBuildStopped
+            | TransactionEventType::TxpoolSendRawTransactionCandidatesRejected
             | TransactionEventType::TxpoolCandidateLanded
             | TransactionEventType::TxpoolCandidateEvicted => Self::Cold,
         }
@@ -2121,6 +2123,12 @@ mod tests {
         assert_eq!(
             TransactionEventRetentionClass::for_event_type(
                 TransactionEventType::TxpoolSendRawTransactionValidity
+            ),
+            TransactionEventRetentionClass::Warm
+        );
+        assert_eq!(
+            TransactionEventRetentionClass::for_event_type(
+                TransactionEventType::TxpoolSendRawTransactionCandidates
             ),
             TransactionEventRetentionClass::Warm
         );
