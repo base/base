@@ -337,12 +337,9 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        pin::Pin,
-        sync::{
-            Arc, Mutex,
-            atomic::{AtomicU32, Ordering},
-        },
+    use std::sync::{
+        Arc, Mutex,
+        atomic::{AtomicU32, Ordering},
     };
 
     use alloy_eips::BlockId;
@@ -353,9 +350,7 @@ mod tests {
     use tokio_util::sync::CancellationToken;
 
     use super::*;
-    use crate::DerivationClientResult;
-
-    type BoxedBlockStream = Pin<Box<dyn Stream<Item = BlockInfo> + Unpin + Send>>;
+    use crate::test_utils::{BoxedBlockStream, RecordingDerivationClient, block_at};
 
     // ---------------------------------------------------------------------------
     // Mock L1BlockFetcher used by LogRetrier tests.
@@ -479,46 +474,8 @@ mod tests {
     }
 
     // ---------------------------------------------------------------------------
-    // Mock derivation client that captures sent blocks
-    // ---------------------------------------------------------------------------
-
-    #[derive(Debug, Clone, Default)]
-    struct RecordingDerivationClient {
-        heads: Arc<Mutex<Vec<BlockInfo>>>,
-        finalized: Arc<Mutex<Vec<BlockInfo>>>,
-    }
-
-    #[async_trait]
-    impl L1WatcherDerivationClient for RecordingDerivationClient {
-        async fn send_finalized_l1_block(&self, block: BlockInfo) -> DerivationClientResult<()> {
-            self.finalized.lock().unwrap().push(block);
-            Ok(())
-        }
-
-        async fn send_new_l1_head(&self, block: BlockInfo) -> DerivationClientResult<()> {
-            self.heads.lock().unwrap().push(block);
-            Ok(())
-        }
-    }
-
-    impl RecordingDerivationClient {
-        fn sent_heads(&self) -> Vec<BlockInfo> {
-            self.heads.lock().unwrap().clone()
-        }
-    }
-
-    // ---------------------------------------------------------------------------
     // Actor test helpers
     // ---------------------------------------------------------------------------
-
-    fn block_at(number: u64) -> BlockInfo {
-        BlockInfo {
-            hash: B256::from([number as u8; 32]),
-            number,
-            parent_hash: B256::ZERO,
-            timestamp: number * 12,
-        }
-    }
 
     /// Build and run an [`L1WatcherActor`] to completion (stream ends → `StreamEnded`).
     ///

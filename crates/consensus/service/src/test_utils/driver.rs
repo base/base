@@ -47,7 +47,7 @@ pub struct Driver {
 
 impl Driver {
     /// Creates a new driver with no harnesses.
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self { harnesses: Vec::new() }
     }
 

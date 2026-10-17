@@ -7,37 +7,31 @@
 //! provider was not constrained by the L1 head signal, so `verifier_l1_confs` had no effect
 //! on the safe head.
 
-use std::{
-    pin::Pin,
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicU64, Ordering},
-    },
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
 };
 
 use alloy_consensus::Header;
 use alloy_eips::{BlockId, BlockNumberOrTag};
-use alloy_primitives::{B256, Bloom, U256};
+use alloy_primitives::{Bloom, U256};
 use alloy_rpc_types_eth::{Block, Filter, Header as RpcHeader, Log};
 use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
 use base_consensus_derive::{ChainProvider, PipelineErrorKind};
 use base_consensus_node::{
-    DerivationClientResult, L1BlockFetcher, L1WatcherActor, L1WatcherDerivationClient,
-    L1WatcherQueryExecutor, NodeActor,
+    L1BlockFetcher, L1WatcherActor, L1WatcherQueryExecutor, NodeActor,
+    test_utils::{BoxedBlockStream, RecordingDerivationClient, block_at},
 };
 use base_consensus_providers::{AlloyChainProviderError, ConfDepthProvider, L1HeadNumber};
 use base_consensus_rpc::L1WatcherQueries;
 use base_protocol::BlockInfo;
-use futures::Stream;
 use tokio::sync::{oneshot, watch};
 use tokio_util::sync::CancellationToken;
 
 // ---------------------------------------------------------------------------
 // Mock types
 // ---------------------------------------------------------------------------
-
-type BoxedBlockStream = Pin<Box<dyn Stream<Item = BlockInfo> + Unpin + Send>>;
 
 /// A minimal [`L1BlockFetcher`] that returns configurable blocks.
 struct MockL1Fetcher {
@@ -81,35 +75,6 @@ impl L1BlockFetcher for MockL1Fetcher {
 
     async fn get_block(&self, id: BlockId) -> Result<Option<Block>, Self::Error> {
         Ok(self.block_info_for_id(id).map(Self::block))
-    }
-}
-
-/// Records derivation messages sent by the L1 watcher.
-#[derive(Debug, Clone, Default)]
-struct RecordingDerivationClient {
-    heads: Arc<Mutex<Vec<BlockInfo>>>,
-    finalized: Arc<Mutex<Vec<BlockInfo>>>,
-}
-
-#[async_trait]
-impl L1WatcherDerivationClient for RecordingDerivationClient {
-    async fn send_finalized_l1_block(&self, block: BlockInfo) -> DerivationClientResult<()> {
-        self.finalized.lock().unwrap().push(block);
-        Ok(())
-    }
-
-    async fn send_new_l1_head(&self, block: BlockInfo) -> DerivationClientResult<()> {
-        self.heads.lock().unwrap().push(block);
-        Ok(())
-    }
-}
-
-fn block_at(number: u64) -> BlockInfo {
-    BlockInfo {
-        hash: B256::from([number as u8; 32]),
-        number,
-        parent_hash: B256::ZERO,
-        timestamp: number * 12,
     }
 }
 
@@ -253,7 +218,7 @@ async fn l1_head_atomic_holds_real_head_not_delayed() {
     assert_eq!(l1_head_number.load(Ordering::Relaxed), 50);
 
     // Meanwhile, derivation should have received delayed heads.
-    let heads = derivation_client.heads.lock().unwrap().clone();
+    let heads = derivation_client.sent_heads();
     assert_eq!(heads.len(), 3, "all three heads should have been forwarded to derivation");
     assert_eq!(
         heads.iter().map(|head| head.number).collect::<Vec<_>>(),
@@ -290,7 +255,7 @@ async fn sync_status_reports_derivation_origin_separately_from_live_head_with_ve
     let _ = actor.start(()).await;
 
     assert_eq!(l1_head_number.load(Ordering::Relaxed), 100);
-    let heads = derivation_client.heads.lock().unwrap().clone();
+    let heads = derivation_client.sent_heads();
     let derivation_origin = heads.last().copied().expect("derivation should receive a head");
     assert_eq!(derivation_origin.number, 96);
 
