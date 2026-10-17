@@ -14,9 +14,9 @@ use base_common_consensus::{Eip8130Constants, Eip8130Contracts};
 /// are EIP-2028; together they reproduce the EIP-8130 `nonce_key_cost` table
 /// (cold SLOAD + SSTORE set = 22,100; cold SLOAD + warm SSTORE reset = 5,000).
 /// The authenticator execution costs are the chain-policy values for the
-/// enshrined canonical authenticators, set to the EVM precompile costs Base uses
-/// (see the crate docs). The revm-backed `gas_primitives_match_evm_reference`
-/// test in `base-execution-eip8130` is a drift tripwire that pins the EVM
+/// enshrined canonical authenticators, set to the EVM precompile costs Base uses.
+/// The revm-backed `gas_primitives_match_evm_reference` test in
+/// `base-execution-eip8130` is a drift tripwire that pins the EVM
 /// primitives to revm's canonical constants, so an upstream repricing is
 /// surfaced and re-decided deliberately rather than tracked silently.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

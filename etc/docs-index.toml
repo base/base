@@ -208,7 +208,7 @@ digest = "766777915d"
 
 ["crates/common/eip8130/README.md"]
 summary = "Engine-neutral no_std EIP-8130 primitives (intrinsic gas schedule, nonce manager slot derivation) shared by revm and EVM2 paths. Use when changing EIP-8130 gas pricing or nonce slots."
-digest = "e0d063f6c5"
+digest = "43da7b1398"
 
 ["crates/common/evm/README.md"]
 summary = "Base revm-based EVM support: upgrade-to-SpecId mapping, BaseEvmFactory, block executors, receipt builders, and create2 deployer handling. Use when changing per-upgrade execution rules."
