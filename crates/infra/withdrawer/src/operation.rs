@@ -370,7 +370,24 @@ impl Withdrawer {
         Ok(status == GameStatus::InProgress as u8 || status == GameStatus::DefenderWins as u8)
     }
 
+    /// Checks eligibility and reads the root for a factory index, proxy, and claimed L2 block.
+    pub async fn game_proving_output(
+        rpc: &WithdrawalRpc,
+        registry: Address,
+        candidate: (U256, Address, u64),
+    ) -> Result<Option<WithdrawalProvingOutput>, WithdrawerError> {
+        if !Self::game_eligible(rpc, registry, candidate.1).await? {
+            return Ok(None);
+        }
+        let root = Self::read(rpc, candidate.1, WithdrawalDisputeGame::rootClaimCall {}).await?;
+        Ok(Some(WithdrawalProvingOutput { block_number: candidate.2, index: candidate.0, root }))
+    }
+
     /// Authenticates the newest finalized covering game, or the oldest eligible pending game.
+    ///
+    /// The backward walk uses three contract reads per covering game: `gameAtIndex`, `extraData`,
+    /// and `isGameFinalized`. Eligibility and `rootClaim` reads wait until verification is about to run,
+    /// including finalized games. Ineligible games are skipped without a warning.
     ///
     /// The first proof RPC failure stops the walk and switches untried saved candidates to newest
     /// first, for RPCs that only serve recent state. A second RPC failure returns immediately;
@@ -434,25 +451,19 @@ impl Withdrawer {
                             );
                             continue;
                         };
-                        if !Self::game_eligible(rpc, anchor_state_registry, game.proxy).await? {
-                            continue;
-                        }
                         let finalized = Self::read(
                             rpc,
                             anchor_state_registry,
                             IAnchorStateRegistry::isGameFinalizedCall { game: game.proxy },
                         )
                         .await?;
-                        let root =
-                            Self::read(rpc, game.proxy, WithdrawalDisputeGame::rootClaimCall {})
-                                .await?;
-                        let output = WithdrawalProvingOutput { block_number, index: count, root };
-                        // Finalized games need only proof maturity; prefer the newest one that verifies.
+                        let candidate = (count, game.proxy, block_number);
+                        // Finalized games need only proof maturity if eligible; prefer the newest that verifies.
                         if finalized {
-                            finalized_candidate = Some((output, game.proxy));
+                            finalized_candidate = Some(candidate);
                             break;
                         }
-                        candidates.push_back((output, game.proxy));
+                        candidates.push_back(candidate);
                     }
                     let candidate = match finalized_candidate {
                         Some(candidate) => Some(candidate),
@@ -461,7 +472,12 @@ impl Withdrawer {
                         // Without a usable finalized game, the oldest candidate should resolve first.
                         None => candidates.pop_back(),
                     };
-                    let Some((output, proxy)) = candidate else { break };
+                    let Some(candidate) = candidate else { break };
+                    let Some(output) =
+                        Self::game_proving_output(rpc, anchor_state_registry, candidate).await?
+                    else {
+                        continue;
+                    };
                     match Self::verify_output(rpc, withdrawal, output).await {
                         Ok(proof) => return Ok((output, proof)),
                         Err(
@@ -471,7 +487,7 @@ impl Withdrawer {
                             | WithdrawerError::Request(_)),
                         ) => {
                             tracing::warn!(
-                                game_index = %output.index, proxy = %proxy, reason = %error,
+                                game_index = %output.index, proxy = %candidate.1, reason = %error,
                                 "skipping unusable dispute game"
                             );
                             if matches!(error, WithdrawerError::Request(_)) {
@@ -782,6 +798,7 @@ mod tests {
         proven: u64,
         finalized: bool,
         blacklisted: bool,
+        blacklisted_game: Option<u64>,
         retired: bool,
         proper: bool,
         respected: bool,
@@ -823,6 +840,7 @@ mod tests {
                 proven: 0,
                 finalized: false,
                 blacklisted: false,
+                blacklisted_game: None,
                 retired: false,
                 proper: true,
                 respected: true,
@@ -1157,10 +1175,17 @@ mod tests {
                         1u128
                     );
                     let old_game = input.get(16..36) == Some(Address::repeat_byte(8).as_slice());
-                    reply!(
-                        IAnchorStateRegistry::isGameBlacklistedCall,
-                        old_game && self.blacklisted
-                    );
+                    if input[..4] == IAnchorStateRegistry::isGameBlacklistedCall::SELECTOR {
+                        let call = IAnchorStateRegistry::isGameBlacklistedCall::abi_decode(&input)
+                            .unwrap();
+                        reply!(
+                            IAnchorStateRegistry::isGameBlacklistedCall,
+                            (old_game && self.blacklisted)
+                                || self
+                                    .blacklisted_game
+                                    .is_some_and(|index| { call.game == Self::game_proxy(index) })
+                        );
+                    }
                     reply!(IAnchorStateRegistry::isGameRetiredCall, old_game && self.retired);
                     reply!(IAnchorStateRegistry::isGameProperCall, !old_game || self.proper);
                     reply!(IAnchorStateRegistry::isGameRespectedCall, !old_game || self.respected);
@@ -1772,6 +1797,38 @@ mod tests {
     async fn game_search_uses_the_oldest_pending_covering_game() {
         let server =
             Scenario { game_count: 3, game_finalized: false, ..Default::default() }.start().await;
+        server.run().await.unwrap();
+        server.assert_proven_game(0);
+    }
+
+    #[tokio::test]
+    async fn game_search_reads_pending_eligibility_and_roots_only_when_verifying() {
+        let server =
+            Scenario { game_count: 4, game_finalized: false, ..Default::default() }.start().await;
+        server.run().await.unwrap();
+        server.assert_proven_game(0);
+        let requests = server.requests.lock().unwrap();
+        let calls: Vec<Bytes> = requests
+            .iter()
+            .filter(|request| request["method"] == "eth_call")
+            .map(|request| serde_json::from_value(request["params"][0]["input"].clone()).unwrap())
+            .collect();
+        for (selector, expected) in [
+            (IDisputeGameFactory::gameAtIndexCall::SELECTOR, 4),
+            (WithdrawalDisputeGame::extraDataCall::SELECTOR, 4),
+            (IAnchorStateRegistry::isGameFinalizedCall::SELECTOR, 4),
+            (IAnchorStateRegistry::isGameProperCall::SELECTOR, 1),
+            (WithdrawalDisputeGame::rootClaimCall::SELECTOR, 1),
+        ] {
+            assert_eq!(calls.iter().filter(|input| input[..4] == selector).count(), expected);
+        }
+    }
+
+    #[tokio::test]
+    async fn game_search_skips_a_finalized_but_blacklisted_game() {
+        let server = Scenario { game_count: 2, blacklisted_game: Some(1), ..Default::default() }
+            .start()
+            .await;
         server.run().await.unwrap();
         server.assert_proven_game(0);
     }
