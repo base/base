@@ -10,7 +10,6 @@ mod packing;
 mod storable;
 mod storable_primitives;
 mod storable_tests;
-mod test_fields;
 mod utils;
 
 use proc_macro::TokenStream;
@@ -96,16 +95,4 @@ pub fn storable_arrays(_input: TokenStream) -> TokenStream {
 #[proc_macro]
 pub fn storable_nested_arrays(_input: TokenStream) -> TokenStream {
     storable_primitives::gen_nested_arrays().into()
-}
-
-/// Test helper macro for validating slots.
-#[proc_macro]
-pub fn gen_test_fields_layout(input: TokenStream) -> TokenStream {
-    test_fields::gen_layout(proc_macro2::TokenStream::from(input))
-}
-
-/// Test helper macro for validating struct field slots.
-#[proc_macro]
-pub fn gen_test_fields_struct(input: TokenStream) -> TokenStream {
-    test_fields::gen_struct_fields(proc_macro2::TokenStream::from(input))
 }
