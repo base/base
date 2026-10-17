@@ -23,5 +23,7 @@ This crate holds the builder-independent parts:
 - `CandidateRuntime`: the ledger, policy, kill switch and limits shared by ingress, the pool
   and the builder.
 
-Everything is off by default. Enabling candidate ingress in production also requires the
-deferred forwarding, privacy and recovery work described in the design.
+Everything is off by default. The ledger, tombstones and principal usage live only in memory,
+so enabling ingress requires `--txpool.candidates.ephemeral-ledger` and is limited to devnets
+and tests. Production use also requires the deferred forwarding, privacy and recovery work
+described in the design.
