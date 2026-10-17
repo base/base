@@ -227,6 +227,7 @@ pub const fn calc_packed_slot_count(n: usize, elem_bytes: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::Address;
+    use rstest::rstest;
 
     use super::*;
     use crate::{
@@ -237,74 +238,48 @@ mod tests {
 
     // -- HELPER FUNCTION TESTS ----------------------------------------------------
 
-    #[test]
-    fn test_calc_element_slot() {
-        assert_eq!(calc_element_slot(0, 1), 0);
-        assert_eq!(calc_element_slot(31, 1), 0);
-        assert_eq!(calc_element_slot(32, 1), 1);
-        assert_eq!(calc_element_slot(63, 1), 1);
-        assert_eq!(calc_element_slot(64, 1), 2);
+    /// `(idx, elem_bytes, expected_slot, expected_offset, expected_slot_count)`, where
+    /// `expected_slot_count` is the number of slots needed to hold `idx + 1` elements.
+    #[rstest]
+    // 1-byte elements: 32 per slot.
+    #[case(0, 1, 0, 0, 1)]
+    #[case(9, 1, 0, 9, 1)]
+    #[case(31, 1, 0, 31, 1)]
+    #[case(32, 1, 1, 0, 2)]
+    #[case(63, 1, 1, 31, 2)]
+    #[case(64, 1, 2, 0, 3)]
+    #[case(99, 1, 3, 3, 4)]
+    // 2-byte elements: 16 per slot.
+    #[case(0, 2, 0, 0, 1)]
+    #[case(1, 2, 0, 2, 1)]
+    #[case(15, 2, 0, 30, 1)]
+    #[case(16, 2, 1, 0, 2)]
+    // 20-byte elements: 1 per slot.
+    #[case(0, 20, 0, 0, 1)]
+    #[case(1, 20, 1, 0, 2)]
+    #[case(2, 20, 2, 0, 3)]
+    // 11-byte elements do not divide 32: 2 per slot.
+    #[case(0, 11, 0, 0, 1)]
+    #[case(1, 11, 0, 11, 1)]
+    #[case(2, 11, 1, 0, 2)]
+    #[case(3, 11, 1, 11, 2)]
+    #[case(4, 11, 2, 0, 3)]
+    fn test_element_packing_helpers(
+        #[case] idx: usize,
+        #[case] elem_bytes: usize,
+        #[case] expected_slot: usize,
+        #[case] expected_offset: usize,
+        #[case] expected_slot_count: usize,
+    ) {
+        assert_eq!(calc_element_slot(idx, elem_bytes), expected_slot);
+        assert_eq!(calc_element_offset(idx, elem_bytes), expected_offset);
 
-        assert_eq!(calc_element_slot(0, 2), 0);
-        assert_eq!(calc_element_slot(15, 2), 0);
-        assert_eq!(calc_element_slot(16, 2), 1);
+        let loc = calc_element_loc(idx, elem_bytes);
+        assert_eq!(loc.offset_slots, expected_slot);
+        assert_eq!(loc.offset_bytes, expected_offset);
+        assert_eq!(loc.size, elem_bytes);
 
-        assert_eq!(calc_element_slot(0, 20), 0);
-        assert_eq!(calc_element_slot(1, 20), 1);
-        assert_eq!(calc_element_slot(2, 20), 2);
-    }
-
-    #[test]
-    fn test_calc_element_offset() {
-        assert_eq!(calc_element_offset(0, 1), 0);
-        assert_eq!(calc_element_offset(1, 1), 1);
-        assert_eq!(calc_element_offset(31, 1), 31);
-        assert_eq!(calc_element_offset(32, 1), 0);
-
-        assert_eq!(calc_element_offset(0, 2), 0);
-        assert_eq!(calc_element_offset(1, 2), 2);
-        assert_eq!(calc_element_offset(15, 2), 30);
-        assert_eq!(calc_element_offset(16, 2), 0);
-
-        assert_eq!(calc_element_offset(0, 20), 0);
-        assert_eq!(calc_element_offset(1, 20), 0);
-        assert_eq!(calc_element_offset(2, 20), 0);
-    }
-
-    #[test]
-    fn test_calc_packed_slot_count() {
-        assert_eq!(calc_packed_slot_count(10, 1), 1);
-        assert_eq!(calc_packed_slot_count(32, 1), 1);
-        assert_eq!(calc_packed_slot_count(33, 1), 2);
-        assert_eq!(calc_packed_slot_count(100, 1), 4);
-
-        assert_eq!(calc_packed_slot_count(16, 2), 1);
-        assert_eq!(calc_packed_slot_count(17, 2), 2);
-
-        assert_eq!(calc_packed_slot_count(1, 20), 1);
-        assert_eq!(calc_packed_slot_count(2, 20), 2);
-        assert_eq!(calc_packed_slot_count(3, 20), 3);
-    }
-
-    #[test]
-    fn test_calc_element_loc_non_divisor_sizes() {
-        assert_eq!(calc_element_slot(0, 11), 0);
-        assert_eq!(calc_element_slot(1, 11), 0);
-        assert_eq!(calc_element_slot(2, 11), 1);
-        assert_eq!(calc_element_slot(3, 11), 1);
-        assert_eq!(calc_element_slot(4, 11), 2);
-
-        assert_eq!(calc_element_offset(0, 11), 0);
-        assert_eq!(calc_element_offset(1, 11), 11);
-        assert_eq!(calc_element_offset(2, 11), 0);
-        assert_eq!(calc_element_offset(3, 11), 11);
-        assert_eq!(calc_element_offset(4, 11), 0);
-
-        assert_eq!(calc_packed_slot_count(1, 11), 1);
-        assert_eq!(calc_packed_slot_count(2, 11), 1);
-        assert_eq!(calc_packed_slot_count(3, 11), 2);
-        assert_eq!(calc_packed_slot_count(4, 11), 2);
-        assert_eq!(calc_packed_slot_count(5, 11), 3);
+        assert_eq!(calc_packed_slot_count(idx + 1, elem_bytes), expected_slot_count);
     }
 
     #[test]
@@ -556,99 +531,84 @@ mod tests {
         0..=(32 - bytes)
     }
 
+    fn roundtrip<T>(strategy: impl Strategy<Value = T>, bytes: usize)
+    where
+        T: FromWord + StorableType + PartialEq + core::fmt::Debug,
+    {
+        proptest!(ProptestConfig::with_cases(500), |(value in strategy, offset in arb_offset(bytes))| {
+            let slot = Word::insert_into_word(U256::ZERO, &value, offset, bytes)?;
+            let extracted = Word::extract_from_word::<T>(slot, offset, bytes)?;
+            prop_assert_eq!(extracted, value);
+        });
+    }
+
+    #[test]
+    fn proptest_roundtrip_u8() {
+        roundtrip(any::<u8>(), 1);
+    }
+
+    #[test]
+    fn proptest_roundtrip_u16() {
+        roundtrip(any::<u16>(), 2);
+    }
+
+    #[test]
+    fn proptest_roundtrip_u32() {
+        roundtrip(any::<u32>(), 4);
+    }
+
+    #[test]
+    fn proptest_roundtrip_u64() {
+        roundtrip(any::<u64>(), 8);
+    }
+
+    #[test]
+    fn proptest_roundtrip_u128() {
+        roundtrip(any::<u128>(), 16);
+    }
+
+    #[test]
+    fn proptest_roundtrip_address() {
+        roundtrip(arb_address(), 20);
+    }
+
+    #[test]
+    fn proptest_roundtrip_u256() {
+        roundtrip(arb_u256(), 32);
+    }
+
+    #[test]
+    fn proptest_roundtrip_bool() {
+        roundtrip(any::<bool>(), 1);
+    }
+
+    #[test]
+    fn proptest_roundtrip_i8() {
+        roundtrip(any::<i8>(), 1);
+    }
+
+    #[test]
+    fn proptest_roundtrip_i16() {
+        roundtrip(any::<i16>(), 2);
+    }
+
+    #[test]
+    fn proptest_roundtrip_i32() {
+        roundtrip(any::<i32>(), 4);
+    }
+
+    #[test]
+    fn proptest_roundtrip_i64() {
+        roundtrip(any::<i64>(), 8);
+    }
+
+    #[test]
+    fn proptest_roundtrip_i128() {
+        roundtrip(any::<i128>(), 16);
+    }
+
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(500))]
-
-        #[test]
-        fn proptest_roundtrip_u8(value: u8, offset in arb_offset(1)) {
-            let slot = Word::insert_into_word(U256::ZERO, &value, offset, 1)?;
-            let extracted: u8 = Word::extract_from_word(slot, offset, 1)?;
-            prop_assert_eq!(extracted, value);
-        }
-
-        #[test]
-        fn proptest_roundtrip_u16(value: u16, offset in arb_offset(2)) {
-            let slot = Word::insert_into_word(U256::ZERO, &value, offset, 2)?;
-            let extracted: u16 = Word::extract_from_word(slot, offset, 2)?;
-            prop_assert_eq!(extracted, value);
-        }
-
-        #[test]
-        fn proptest_roundtrip_u32(value: u32, offset in arb_offset(4)) {
-            let slot = Word::insert_into_word(U256::ZERO, &value, offset, 4)?;
-            let extracted: u32 = Word::extract_from_word(slot, offset, 4)?;
-            prop_assert_eq!(extracted, value);
-        }
-
-        #[test]
-        fn proptest_roundtrip_u64(value: u64, offset in arb_offset(8)) {
-            let slot = Word::insert_into_word(U256::ZERO, &value, offset, 8)?;
-            let extracted: u64 = Word::extract_from_word(slot, offset, 8)?;
-            prop_assert_eq!(extracted, value);
-        }
-
-        #[test]
-        fn proptest_roundtrip_u128(value: u128, offset in arb_offset(16)) {
-            let slot = Word::insert_into_word(U256::ZERO, &value, offset, 16)?;
-            let extracted: u128 = Word::extract_from_word(slot, offset, 16)?;
-            prop_assert_eq!(extracted, value);
-        }
-
-        #[test]
-        fn proptest_roundtrip_address(addr in arb_address(), offset in arb_offset(20)) {
-            let slot = Word::insert_into_word(U256::ZERO, &addr, offset, 20)?;
-            let extracted: Address = Word::extract_from_word(slot, offset, 20)?;
-            prop_assert_eq!(extracted, addr);
-        }
-
-        #[test]
-        fn proptest_roundtrip_u256(value in arb_u256()) {
-            let slot = Word::insert_into_word(U256::ZERO, &value, 0, 32)?;
-            let extracted: U256 = Word::extract_from_word(slot, 0, 32)?;
-            prop_assert_eq!(extracted, value);
-        }
-
-        #[test]
-        fn proptest_roundtrip_bool(value: bool, offset in arb_offset(1)) {
-            let slot = Word::insert_into_word(U256::ZERO, &value, offset, 1)?;
-            let extracted: bool = Word::extract_from_word(slot, offset, 1)?;
-            prop_assert_eq!(extracted, value);
-        }
-
-        #[test]
-        fn proptest_roundtrip_i8(value: i8, offset in arb_offset(1)) {
-            let slot = Word::insert_into_word(U256::ZERO, &value, offset, 1)?;
-            let extracted: i8 = Word::extract_from_word(slot, offset, 1)?;
-            prop_assert_eq!(extracted, value);
-        }
-
-        #[test]
-        fn proptest_roundtrip_i16(value: i16, offset in arb_offset(2)) {
-            let slot = Word::insert_into_word(U256::ZERO, &value, offset, 2)?;
-            let extracted: i16 = Word::extract_from_word(slot, offset, 2)?;
-            prop_assert_eq!(extracted, value);
-        }
-
-        #[test]
-        fn proptest_roundtrip_i32(value: i32, offset in arb_offset(4)) {
-            let slot = Word::insert_into_word(U256::ZERO, &value, offset, 4)?;
-            let extracted: i32 = Word::extract_from_word(slot, offset, 4)?;
-            prop_assert_eq!(extracted, value);
-        }
-
-        #[test]
-        fn proptest_roundtrip_i64(value: i64, offset in arb_offset(8)) {
-            let slot = Word::insert_into_word(U256::ZERO, &value, offset, 8)?;
-            let extracted: i64 = Word::extract_from_word(slot, offset, 8)?;
-            prop_assert_eq!(extracted, value);
-        }
-
-        #[test]
-        fn proptest_roundtrip_i128(value: i128, offset in arb_offset(16)) {
-            let slot = Word::insert_into_word(U256::ZERO, &value, offset, 16)?;
-            let extracted: i128 = Word::extract_from_word(slot, offset, 16)?;
-            prop_assert_eq!(extracted, value);
-        }
 
         #[test]
         fn proptest_multiple_values_no_interference(v1: u8, v2: u16, v3: u32) {
