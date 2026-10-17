@@ -596,7 +596,7 @@ digest = "c2ed1875a8"
 
 ["crates/utilities/balance-monitor/README.md"]
 summary = "Describes BalanceMonitorLayer, an alloy ProviderLayer that polls an account balance at a fixed interval and publishes it through a tokio watch channel for onchain balance monitoring in services."
-digest = "cbf93709e9"
+digest = "cbb0b58371"
 
 ["crates/utilities/cli/README.md"]
 summary = "Overview of base-cli-utils: parse_cli!, register_version_metrics!, define_log_args!, define_metrics_args! macros and RuntimeManager (tokio runtime, signal shutdown). Use when building Base binaries."
