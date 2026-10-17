@@ -15,14 +15,9 @@ pub struct WorkerQueueConfig {
     pub reaper_batch_size: u32,
 }
 
-impl WorkerQueueConfig {
-    /// Default worker queue tuning.
-    pub const DEFAULT: Self = Self { reclaim_attempts: 5, reaper_batch_size: 100 };
-}
-
 impl Default for WorkerQueueConfig {
     fn default() -> Self {
-        Self::DEFAULT
+        Self { reclaim_attempts: 5, reaper_batch_size: 100 }
     }
 }
 
