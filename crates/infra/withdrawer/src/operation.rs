@@ -1,9 +1,11 @@
 use std::{collections::VecDeque, error::Error as StdError};
 
+use alloy_consensus::Transaction;
 use alloy_eips::BlockNumberOrTag;
+use alloy_network::TxSigner;
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_provider::Provider;
-use alloy_rpc_types_eth::TransactionRequest;
+use alloy_rpc_types_eth::{TransactionReceipt, TransactionRequest};
 use alloy_sol_types::{Error as SolError, SolCall, SolEvent};
 use alloy_transport::TransportError;
 use alloy_trie::proof::ProofVerificationError;
@@ -12,9 +14,11 @@ use base_proof_contracts::{GameStatus, IAnchorStateRegistry, IDisputeGameFactory
 use thiserror::Error;
 
 use crate::{
-    FaultProofPortal, LegacyWithdrawalPortal, MessagePassed, ProofSystem, VerifiedWithdrawalProof,
-    Withdrawal, WithdrawalDisputeGame, WithdrawalError, WithdrawalOutputOracle, WithdrawalPortal,
-    WithdrawalRpc, WithdrawalRpcTransport, WithdrawerConfig,
+    FaultProofPortal, LegacyWithdrawalPortal, MessagePassed, PreparedWithdrawalTransaction,
+    ProofSystem, VerifiedWithdrawalProof, Withdrawal, WithdrawalDisputeGame, WithdrawalError,
+    WithdrawalOutputOracle, WithdrawalPortal, WithdrawalRpc, WithdrawalRpcError,
+    WithdrawalRpcTransport, WithdrawalSigner, WithdrawalSignerError, WithdrawalTransactionError,
+    WithdrawerConfig,
 };
 
 /// Next step determined from the portal and proof contracts.
@@ -35,9 +39,23 @@ pub enum WithdrawalStatus {
     },
 }
 
+/// Result for one withdrawal in the L2 receipt.
+#[derive(Debug)]
+pub struct WithdrawalOutcome {
+    /// Hash of the withdrawal fields.
+    pub withdrawal_hash: B256,
+    /// Decision before any submission.
+    pub status: WithdrawalStatus,
+    /// Confirmed L1 transaction, absent for dry runs and no-op decisions.
+    pub transaction_hash: Option<B256>,
+}
+
 /// Failure of a complete withdrawal operation.
 #[derive(Debug, Error)]
 pub enum WithdrawerError {
+    /// A lower-level RPC operation failed.
+    #[error(transparent)]
+    Rpc(WithdrawalRpcError),
     /// A provider request failed after removal of credential-bearing details.
     #[error("withdrawal RPC request failed: {0}")]
     Request(#[source] TransportError),
@@ -62,6 +80,49 @@ pub enum WithdrawerError {
         #[source]
         source: Box<dyn StdError + Send + Sync>,
     },
+    /// Signer construction failed.
+    #[error(transparent)]
+    Signer(#[from] WithdrawalSignerError),
+    /// Transaction preparation or signing failed.
+    #[error(transparent)]
+    Transaction(WithdrawalTransactionError),
+    /// The operation deadline elapsed.
+    #[error("withdrawal operation timed out")]
+    Timeout(#[source] tokio::time::error::Elapsed),
+    /// A signed transaction may have been broadcast or included; check its hash before retrying.
+    #[error(
+        "transaction {transaction_hash} was signed and may have been broadcast or included; check it before retrying: {source}"
+    )]
+    Unconfirmed {
+        /// Hash of the signed L1 transaction.
+        transaction_hash: B256,
+        /// Submission, receipt, or event validation failure, with credential-bearing details removed.
+        #[source]
+        source: Box<Self>,
+    },
+    /// The portal consumed the withdrawal, but its target call failed; it cannot be retried.
+    #[error(
+        "withdrawal {withdrawal_hash} finalized in transaction {transaction_hash}, but its target call failed"
+    )]
+    TargetCallFailed {
+        /// Hash of the consumed withdrawal.
+        withdrawal_hash: B256,
+        /// Confirmed L1 finalization transaction.
+        transaction_hash: B256,
+    },
+    /// A successful receipt has no matching finalization event from the configured portal.
+    #[error(
+        "transaction {transaction_hash} has no portal finalization event for withdrawal {withdrawal_hash}"
+    )]
+    MissingFinalizationEvent {
+        /// Expected withdrawal commitment.
+        withdrawal_hash: B256,
+        /// Confirmed L1 transaction whose logs were checked.
+        transaction_hash: B256,
+    },
+    /// The configured L2 transaction is not included or not found.
+    #[error("L2 withdrawal receipt is unavailable")]
+    MissingReceipt,
     /// A header required for proof verification or finality is missing.
     #[error("required block header is unavailable")]
     MissingBlock,
@@ -101,7 +162,7 @@ pub struct WithdrawalProvingOutput {
     pub root: B256,
 }
 
-/// Read-only withdrawal decisions from onchain state.
+/// One receipt's sequential, deadline-bounded prove/finalize operation.
 #[derive(Debug)]
 pub struct Withdrawer {
     /// Validated operation settings.
@@ -112,6 +173,64 @@ impl Withdrawer {
     /// Constructs an operation without network or signer access.
     pub const fn new(config: WithdrawerConfig) -> Self {
         Self { config }
+    }
+
+    /// Processes every withdrawal in receipt log order within one shared deadline.
+    pub async fn run(&self) -> Result<Vec<WithdrawalOutcome>, WithdrawerError> {
+        let mut pending_transaction = None;
+        tokio::time::timeout(self.config.timeout, async {
+            let rpc = WithdrawalRpc::new(&self.config)?;
+            let signer = WithdrawalSigner::new(&self.config.signer).await?;
+            let receipt = rpc
+                .l2
+                .get_transaction_receipt(self.config.withdrawal)
+                .await?
+                .ok_or(WithdrawerError::MissingReceipt)?;
+            let withdrawals = Withdrawal::from_receipt(&receipt)?;
+            let mut outcomes = Vec::with_capacity(withdrawals.len());
+            for withdrawal in withdrawals {
+                pending_transaction = None;
+                let status = self.status(&rpc, &withdrawal, signer.address()).await?;
+                let hash = withdrawal.hash();
+                tracing::info!(withdrawal_hash = %hash, ?status, "withdrawal decision");
+                let transaction_hash = match status {
+                    WithdrawalStatus::Prove | WithdrawalStatus::Finalize => {
+                        let calldata = if status == WithdrawalStatus::Prove {
+                            self.prove_calldata(&rpc, &withdrawal).await?
+                        } else {
+                            WithdrawalPortal::finalizeWithdrawalTransactionCall {
+                                withdrawal: withdrawal.transaction.clone(),
+                            }
+                            .abi_encode()
+                            .into()
+                        };
+                        self.submit(
+                            &rpc,
+                            &signer,
+                            calldata,
+                            (status == WithdrawalStatus::Finalize).then_some(hash),
+                            &mut pending_transaction,
+                        )
+                        .await?
+                    }
+                    WithdrawalStatus::Finalized | WithdrawalStatus::NotReady { .. } => None,
+                };
+                outcomes.push(WithdrawalOutcome {
+                    withdrawal_hash: hash,
+                    status,
+                    transaction_hash,
+                });
+            }
+            Ok(outcomes)
+        })
+        .await
+        .map_err(|source| match pending_transaction {
+            Some(transaction_hash) => WithdrawerError::Unconfirmed {
+                transaction_hash,
+                source: Box::new(WithdrawerError::Timeout(source)),
+            },
+            None => WithdrawerError::Timeout(source),
+        })?
     }
 
     /// Reads the next action without preparing, signing, or submitting a transaction.
@@ -448,6 +567,107 @@ impl Withdrawer {
         Ok(withdrawal.verify_proof(&block.header, &proof, output.root)?)
     }
 
+    /// Fetches and authenticates a covering commitment before encoding the portal proof call.
+    pub async fn prove_calldata(
+        &self,
+        rpc: &WithdrawalRpc,
+        withdrawal: &Withdrawal,
+    ) -> Result<Bytes, WithdrawerError> {
+        let (output, verified) = self.proving_output(rpc, withdrawal).await?;
+        Ok(WithdrawalPortal::proveWithdrawalTransactionCall {
+            withdrawal: withdrawal.transaction.clone(),
+            outputIndex: output.index,
+            outputRootProof: verified.output_root_proof,
+            withdrawalProof: verified.storage_proof,
+        }
+        .abi_encode()
+        .into())
+    }
+
+    /// Prepares and optionally broadcasts a transaction, recording its hash until receipt validation.
+    ///
+    /// Set `finalize_withdrawal` only for finalize calls. After signing, `pending_transaction`
+    /// stays set on broadcast or receipt validation errors or cancellation to report the hash.
+    pub async fn submit(
+        &self,
+        rpc: &WithdrawalRpc,
+        signer: &WithdrawalSigner,
+        calldata: Bytes,
+        finalize_withdrawal: Option<B256>,
+        pending_transaction: &mut Option<B256>,
+    ) -> Result<Option<B256>, WithdrawerError> {
+        let prepared = PreparedWithdrawalTransaction::prepare(
+            &self.config,
+            rpc,
+            signer.address(),
+            self.config.network.portal,
+            calldata,
+        )
+        .await?;
+        if self.config.dry_run {
+            let transaction = prepared.transaction();
+            tracing::info!(
+                target = %self.config.network.portal,
+                calldata_length = transaction.input().len(),
+                selector = %Bytes::copy_from_slice(&transaction.input()[..transaction.input().len().min(4)]),
+                gas_limit = transaction.gas_limit(),
+                maximum_gas_cost = %prepared.maximum_gas_cost(),
+                "dry run prepared withdrawal transaction"
+            );
+            return Ok(None);
+        }
+        let signed = prepared.sign(signer).await?;
+        let hash = *signed.tx_hash();
+        *pending_transaction = Some(hash);
+        tracing::info!(transaction_hash = %hash, "submitting withdrawal transaction");
+        rpc.broadcast(&signed).await.map_err(|source| WithdrawerError::Unconfirmed {
+            transaction_hash: hash,
+            source: Box::new(source.into()),
+        })?;
+        let receipt = rpc.wait_for_receipt(hash).await.map_err(|source| {
+            WithdrawerError::Unconfirmed { transaction_hash: hash, source: Box::new(source.into()) }
+        })?;
+        if let Some(withdrawal_hash) = finalize_withdrawal {
+            self.check_finalization(&receipt, withdrawal_hash, hash)?;
+        }
+        *pending_transaction = None;
+        tracing::info!(transaction_hash = %hash, "withdrawal transaction confirmed");
+        Ok(Some(hash))
+    }
+
+    /// Checks the portal's finalization result, which can fail despite a successful L1 receipt.
+    pub fn check_finalization(
+        &self,
+        receipt: &TransactionReceipt,
+        withdrawal_hash: B256,
+        transaction_hash: B256,
+    ) -> Result<(), WithdrawerError> {
+        for log in receipt.inner.logs() {
+            if log.address() != self.config.network.portal
+                || log.topics().first()
+                    != Some(&WithdrawalPortal::WithdrawalFinalized::SIGNATURE_HASH)
+                || log.topics().get(1) != Some(&withdrawal_hash)
+            {
+                continue;
+            }
+            let event = WithdrawalPortal::WithdrawalFinalized::decode_log_validate(&log.inner)
+                .map_err(|error| WithdrawerError::Unconfirmed {
+                    transaction_hash,
+                    source: Box::new(WithdrawerError::decode_error(
+                        WithdrawalPortal::WithdrawalFinalized::SIGNATURE,
+                        error,
+                    )),
+                })?
+                .data;
+            return if event.success {
+                Ok(())
+            } else {
+                Err(WithdrawerError::TargetCallFailed { withdrawal_hash, transaction_hash })
+            };
+        }
+        Err(WithdrawerError::MissingFinalizationEvent { withdrawal_hash, transaction_hash })
+    }
+
     /// Calls a contract using typed ABI encoding and redacted provider and decode errors.
     pub async fn read<C: SolCall>(
         rpc: &WithdrawalRpc,
@@ -516,6 +736,15 @@ impl From<TransportError> for WithdrawerError {
     }
 }
 
+impl From<WithdrawalRpcError> for WithdrawerError {
+    fn from(error: WithdrawalRpcError) -> Self {
+        match error {
+            WithdrawalRpcError::Request(error) => error.into(),
+            error => Self::Rpc(error),
+        }
+    }
+}
+
 impl From<WithdrawalError> for WithdrawerError {
     fn from(error: WithdrawalError) -> Self {
         match error {
@@ -529,6 +758,15 @@ impl From<WithdrawalError> for WithdrawerError {
     }
 }
 
+impl From<WithdrawalTransactionError> for WithdrawerError {
+    fn from(error: WithdrawalTransactionError) -> Self {
+        match error {
+            WithdrawalTransactionError::Request(error) => error.into(),
+            error => Self::Transaction(error),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -537,6 +775,8 @@ mod tests {
         time::Duration,
     };
 
+    use alloy_consensus::{Transaction, TxEnvelope};
+    use alloy_eips::Decodable2718;
     use alloy_primitives::{Address, Bytes, U256};
     use alloy_sol_types::SolCall;
     use axum::{Json, Router, routing::post};
@@ -567,6 +807,13 @@ mod tests {
         finalized_games: Vec<bool>,
         replaced: bool,
         output_error: Option<Value>,
+        broadcast_error: Option<Value>,
+        broadcast_hang: bool,
+        receipt_error: Option<Value>,
+        receipt_pending: bool,
+        receipt_reverted: bool,
+        finalization_success: Option<bool>,
+        finalization_emitter: Address,
         no_coverage: bool,
         skip_latest: bool,
         game_count: u64,
@@ -580,6 +827,9 @@ mod tests {
         proof_error: Option<Value>,
         proof_error_block: Option<u64>,
         now: u64,
+        dry: bool,
+        hang: bool,
+        second_withdrawal: bool,
         reject_check: bool,
     }
 
@@ -599,6 +849,13 @@ mod tests {
                 finalized_games: Vec::new(),
                 replaced: false,
                 output_error: None,
+                broadcast_error: None,
+                broadcast_hang: false,
+                receipt_error: None,
+                receipt_pending: false,
+                receipt_reverted: false,
+                finalization_success: Some(true),
+                finalization_emitter: crate::NetworkPreset::BaseMainnet.resolve().portal,
                 no_coverage: false,
                 skip_latest: false,
                 game_count: 1,
@@ -612,6 +869,9 @@ mod tests {
                 proof_error: None,
                 proof_error_block: None,
                 now: 1000,
+                dry: false,
+                hang: false,
+                second_withdrawal: false,
                 reject_check: false,
             }
         }
@@ -620,6 +880,8 @@ mod tests {
     #[derive(Debug)]
     struct Harness {
         config: WithdrawerConfig,
+        sent: Arc<Mutex<Vec<TxEnvelope>>>,
+        estimates: Arc<Mutex<usize>>,
         requests: Arc<Mutex<Vec<Value>>>,
         tasks: Vec<JoinHandle<()>>,
     }
@@ -652,26 +914,68 @@ mod tests {
         }
 
         async fn start(self) -> Harness {
+            let sent = Arc::new(Mutex::new(Vec::<TxEnvelope>::new()));
+            let estimates = Arc::new(Mutex::new(0));
             let requests = Arc::new(Mutex::new(Vec::new()));
             let fixture: Value = serde_json::from_str(include_str!(
                 "../fixtures/base-sepolia-withdrawal-proof.json"
             ))
             .unwrap();
+            let mut receipt: Value = serde_json::from_str(include_str!(
+                "../fixtures/synthetic-deposit-withdrawal-receipt.json"
+            ))
+            .unwrap();
+            if self.second_withdrawal {
+                let mut second = receipt["logs"][0].clone();
+                let mut event =
+                    Withdrawal::from_receipt(&serde_json::from_value(receipt.clone()).unwrap())
+                        .unwrap()
+                        .remove(0);
+                event.transaction.nonce += U256::from(1);
+                let message = crate::MessagePassed {
+                    nonce: event.transaction.nonce,
+                    sender: event.transaction.sender,
+                    target: event.transaction.target,
+                    value: event.transaction.value,
+                    gasLimit: event.transaction.gasLimit,
+                    data: event.transaction.data.clone(),
+                    withdrawalHash: event.hash(),
+                };
+                let log = alloy_sol_types::SolEvent::encode_log_data(&message);
+                second["topics"] = json!(log.topics());
+                second["data"] = json!(log.data);
+                receipt["logs"].as_array_mut().unwrap().push(second);
+            }
             let scenario = Arc::new(self);
             let mut urls = Vec::new();
             let mut tasks = Vec::new();
             for l2 in [false, true] {
                 let scenario = Arc::clone(&scenario);
+                let sent = Arc::clone(&sent);
+                let estimates = Arc::clone(&estimates);
                 let requests = Arc::clone(&requests);
                 let fixture = fixture.clone();
+                let receipt = receipt.clone();
                 let app = Router::new().route(
                     "/",
                     post(move |Json(request): Json<Value>| {
                         let scenario = Arc::clone(&scenario);
+                        let sent = Arc::clone(&sent);
+                        let estimates = Arc::clone(&estimates);
                         requests.lock().unwrap().push(request.clone());
                         let fixture = fixture.clone();
+                        let receipt = receipt.clone();
                         async move {
-                            let result = scenario.respond(&request, l2, &fixture);
+                            if scenario.hang {
+                                std::future::pending::<()>().await;
+                            }
+                            let result = scenario
+                                .respond(&request, l2, &fixture, &receipt, &sent, &estimates);
+                            if scenario.broadcast_hang
+                                && request["method"] == "eth_sendRawTransaction"
+                            {
+                                std::future::pending::<()>().await;
+                            }
                             Json(match result {
                                 Ok(result) => {
                                     json!({"jsonrpc":"2.0", "id":request["id"], "result":result})
@@ -714,14 +1018,69 @@ mod tests {
             } else {
                 ProofSystem::OutputOracle { l2_output_oracle: Address::repeat_byte(2) }
             };
+            config.dry_run = scenario.dry;
             config.max_retries = 0;
             config.timeout = Duration::from_secs(5);
-            Harness { config, requests, tasks }
+            Harness { config, sent, estimates, requests, tasks }
         }
 
-        fn respond(&self, request: &Value, l2: bool, fixture: &Value) -> Result<Value, Value> {
+        fn respond(
+            &self,
+            request: &Value,
+            l2: bool,
+            fixture: &Value,
+            receipt: &Value,
+            sent: &Mutex<Vec<TxEnvelope>>,
+            estimates: &Mutex<usize>,
+        ) -> Result<Value, Value> {
             let params = &request["params"];
             Ok(match request["method"].as_str().unwrap() {
+                "eth_chainId" => json!("0x1"),
+                "eth_getTransactionCount" => json!(format!("0x{:x}", sent.lock().unwrap().len())),
+                "eth_estimateGas" => {
+                    *estimates.lock().unwrap() += 1;
+                    json!("0x10000")
+                }
+                "eth_getTransactionByHash" => Value::Null,
+                "eth_getTransactionReceipt" if l2 => receipt.clone(),
+                "eth_getTransactionReceipt" => {
+                    if let Some(error) = &self.receipt_error {
+                        return Err(error.clone());
+                    }
+                    if self.receipt_pending {
+                        return Ok(Value::Null);
+                    }
+                    let mut result = receipt.clone();
+                    result["type"] = json!("0x0");
+                    result["transactionHash"] = params[0].clone();
+                    if self.receipt_reverted {
+                        result["status"] = json!("0x0");
+                    }
+                    result["logs"] = json!([]);
+                    if let Some(success) = self.finalization_success {
+                        let tx = sent.lock().unwrap().last().unwrap().clone();
+                        if let Ok(call) =
+                            WithdrawalPortal::finalizeWithdrawalTransactionCall::abi_decode_validate(
+                                tx.input(),
+                            )
+                        {
+                            let withdrawal =
+                                Withdrawal { transaction: call.withdrawal, block_number: 0 };
+                            let event = WithdrawalPortal::WithdrawalFinalized {
+                                withdrawalHash: withdrawal.hash(),
+                                success,
+                            }
+                            .encode_log_data();
+                            let mut log = receipt["logs"][0].clone();
+                            log["address"] = json!(self.finalization_emitter);
+                            log["transactionHash"] = params[0].clone();
+                            log["topics"] = json!(event.topics());
+                            log["data"] = json!(event.data);
+                            result["logs"] = json!([log]);
+                        }
+                    }
+                    result
+                }
                 "eth_getBlockByNumber" => {
                     if l2 && params[0] == "0xffffffffffffffff" {
                         return Ok(Value::Null);
@@ -758,6 +1117,16 @@ mod tests {
                         return Err(error.clone());
                     }
                     fixture["proof"].clone()
+                }
+                "eth_sendRawTransaction" => {
+                    let raw: Bytes = serde_json::from_value(params[0].clone()).unwrap();
+                    let tx = TxEnvelope::decode_2718(&mut raw.as_ref()).unwrap();
+                    let hash = *tx.tx_hash();
+                    sent.lock().unwrap().push(tx);
+                    if let Some(error) = &self.broadcast_error {
+                        return Err(error.clone());
+                    }
+                    json!(hash)
                 }
                 "eth_call" => {
                     if self.malformed_response {
@@ -948,42 +1317,75 @@ mod tests {
     }
 
     impl Harness {
-        async fn status(&self) -> Result<WithdrawalStatus, WithdrawerError> {
-            let rpc = WithdrawalRpc::new(&self.config).unwrap();
-            let receipt = serde_json::from_str(include_str!(
-                "../fixtures/synthetic-deposit-withdrawal-receipt.json"
-            ))
+        fn assert_proven_game(&self, index: u64) {
+            let sent = self.sent.lock().unwrap();
+            assert_eq!(sent.len(), 1);
+            let call = WithdrawalPortal::proveWithdrawalTransactionCall::abi_decode_validate(
+                sent[0].input(),
+            )
             .unwrap();
-            let withdrawal = Withdrawal::from_receipt(&receipt).unwrap().remove(0);
-            let submitter = alloy_signer_local::PrivateKeySigner::from_bytes(&B256::repeat_byte(1))
-                .unwrap()
-                .address();
-            Withdrawer::new(self.config.clone()).status(&rpc, &withdrawal, submitter).await
+            assert_eq!(call.outputIndex, U256::from(index));
         }
 
-        async fn proving_output(&self) -> Result<WithdrawalProvingOutput, WithdrawerError> {
-            let rpc = WithdrawalRpc::new(&self.config).unwrap();
-            let receipt = serde_json::from_str(include_str!(
-                "../fixtures/synthetic-deposit-withdrawal-receipt.json"
-            ))
-            .unwrap();
-            let withdrawal = Withdrawal::from_receipt(&receipt).unwrap().remove(0);
-            Withdrawer::new(self.config.clone())
-                .proving_output(&rpc, &withdrawal)
-                .await
-                .map(|(output, _)| output)
+        async fn run(&self) -> Result<Vec<WithdrawalOutcome>, WithdrawerError> {
+            Withdrawer::new(self.config.clone()).run().await
+        }
+
+        fn assert_sent(&self, selector: [u8; 4], count: usize) {
+            let sent = self.sent.lock().unwrap();
+            assert_eq!(sent.len(), count, "unexpected number of signed submissions");
+            for (nonce, tx) in sent.iter().enumerate() {
+                assert_eq!(&tx.input()[..4], &selector);
+                assert_eq!(tx.nonce(), nonce as u64);
+                assert_eq!(tx.gas_limit(), 65536);
+                assert_eq!(tx.to(), Some(self.config.network.portal));
+                if selector == WithdrawalPortal::proveWithdrawalTransactionCall::SELECTOR {
+                    let call =
+                        WithdrawalPortal::proveWithdrawalTransactionCall::abi_decode_validate(
+                            tx.input(),
+                        )
+                        .unwrap();
+                    let fixture: Value = serde_json::from_str(include_str!(
+                        "../fixtures/base-sepolia-withdrawal-proof.json"
+                    ))
+                    .unwrap();
+                    assert_eq!(
+                        call.outputRootProof.latestBlockhash,
+                        serde_json::from_value::<B256>(fixture["header"]["hash"].clone()).unwrap()
+                    );
+                    assert!(!call.withdrawalProof.is_empty());
+                    assert_eq!(call.outputIndex, U256::ZERO);
+                }
+                assert_eq!(
+                    tx.signature().recover_address_from_prehash(&tx.signature_hash()).unwrap(),
+                    alloy_signer_local::PrivateKeySigner::from_bytes(&B256::repeat_byte(1))
+                        .unwrap()
+                        .address()
+                );
+            }
         }
     }
 
     #[tokio::test]
     async fn proves_then_finalizes_both_proof_systems() {
         for fault in [false, true] {
-            for (proven, status) in
-                [(0, WithdrawalStatus::Prove), (100, WithdrawalStatus::Finalize)]
-            {
+            for (proven, status, selector) in [
+                (
+                    0,
+                    WithdrawalStatus::Prove,
+                    WithdrawalPortal::proveWithdrawalTransactionCall::SELECTOR,
+                ),
+                (
+                    100,
+                    WithdrawalStatus::Finalize,
+                    WithdrawalPortal::finalizeWithdrawalTransactionCall::SELECTOR,
+                ),
+            ] {
                 let server = Scenario { fault, proven, ..Default::default() }.start().await;
-                let outcomes = server.status().await.unwrap();
-                assert_eq!(outcomes, status);
+                let outcomes = server.run().await.unwrap();
+                assert_eq!(outcomes[0].status, status);
+                assert!(outcomes[0].transaction_hash.is_some());
+                server.assert_sent(selector, 1);
             }
         }
     }
@@ -998,8 +1400,13 @@ mod tests {
             Scenario { game_status: 1, ..Default::default() },
         ] {
             let server = Scenario { proven: 100, ..scenario }.start().await;
-            let outcomes = server.status().await.unwrap();
-            assert_eq!(outcomes, WithdrawalStatus::Prove, "invalidated proof was retained");
+            let outcomes = server.run().await.unwrap();
+            assert_eq!(
+                outcomes[0].status,
+                WithdrawalStatus::Prove,
+                "invalidated proof was retained"
+            );
+            server.assert_sent(WithdrawalPortal::proveWithdrawalTransactionCall::SELECTOR, 1);
         }
     }
 
@@ -1019,18 +1426,20 @@ mod tests {
             }
             .start()
             .await;
-            let outcomes = server.status().await.unwrap();
-            assert_eq!(outcomes, WithdrawalStatus::Prove);
+            let outcomes = server.run().await.unwrap();
+            assert_eq!(outcomes[0].status, WithdrawalStatus::Prove);
+            server.assert_sent(WithdrawalPortal::proveWithdrawalTransactionCall::SELECTOR, 1);
         }
     }
 
     #[tokio::test]
     async fn legacy_rpc_failure_is_not_a_deleted_output() {
         let server = Scenario { fault: false, proven: 100, output_error: Some(json!({"code":-32000,"message":"upstream unavailable at https://user:password@host.invalid/key"})), ..Default::default() }.start().await;
-        let error = server.status().await.expect_err("non-revert RPC error was ignored");
+        let error = server.run().await.expect_err("non-revert RPC error was ignored");
         assert!(!format!("{error:?}").contains("password"));
         let source = std::error::Error::source(&error).expect("RPC error must retain its source");
         assert!(!format!("{source:?}").contains("password"));
+        assert!(server.sent.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -1043,8 +1452,13 @@ mod tests {
         ] {
             let proven = if scenario.proven == 0 { 100 } else { scenario.proven };
             let server = Scenario { proven, ..scenario }.start().await;
-            let outcomes = server.status().await.unwrap();
-            assert_eq!(outcomes, WithdrawalStatus::NotReady { ready_at, waiting_for_game });
+            let outcomes = server.run().await.unwrap();
+            assert_eq!(
+                outcomes[0].status,
+                WithdrawalStatus::NotReady { ready_at, waiting_for_game }
+            );
+            assert!(server.sent.lock().unwrap().is_empty());
+            assert_eq!(*server.estimates.lock().unwrap(), 0);
         }
     }
 
@@ -1052,14 +1466,247 @@ mod tests {
     async fn portal_check_remains_authoritative() {
         let server =
             Scenario { proven: 100, reject_check: true, ..Default::default() }.start().await;
-        assert!(server.status().await.is_err(), "portal refusal was ignored");
+        assert!(server.run().await.is_err(), "portal refusal was ignored");
+        assert!(server.sent.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
-    async fn finalized_withdrawal_needs_no_action() {
+    async fn finalized_withdrawal_never_prepares_a_transaction() {
         let server = Scenario { finalized: true, ..Default::default() }.start().await;
-        let outcomes = server.status().await.unwrap();
-        assert_eq!(outcomes, WithdrawalStatus::Finalized);
+        let outcomes = server.run().await.unwrap();
+        assert_eq!(outcomes[0].status, WithdrawalStatus::Finalized);
+        assert!(outcomes[0].transaction_hash.is_none());
+        assert_eq!(*server.estimates.lock().unwrap(), 0);
+        assert!(server.sent.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn dry_run_estimates_and_enforces_fee_cap_without_submission() {
+        for fault in [false, true] {
+            for proven in [0, 100] {
+                let mut server =
+                    Scenario { fault, proven, dry: true, ..Default::default() }.start().await;
+                let capture = LogCapture(Arc::new(Mutex::new(Vec::new())));
+                let writer = capture.clone();
+                let subscriber = tracing_subscriber::fmt()
+                    .with_ansi(false)
+                    .with_writer(move || writer.clone())
+                    .finish();
+                let outcomes = server.run().with_subscriber(subscriber).await.unwrap();
+                let logs = String::from_utf8(capture.0.lock().unwrap().clone()).unwrap();
+                for field in [
+                    "target=",
+                    "calldata_length=",
+                    "selector=",
+                    "gas_limit=65536",
+                    "maximum_gas_cost=131072",
+                ] {
+                    assert!(logs.contains(field), "missing dry-run field {field}: {logs}");
+                }
+                assert_eq!(outcomes.len(), 1);
+                assert!(outcomes[0].transaction_hash.is_none());
+                assert_eq!(*server.estimates.lock().unwrap(), 1);
+                assert!(server.sent.lock().unwrap().is_empty());
+                server.config.max_gas_price = Some(1);
+                assert!(server.run().await.is_err(), "dry run bypassed fee cap");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn receipt_warnings_do_not_expose_server_supplied_secrets() {
+        let mut server = Scenario {
+            proven: 100,
+            receipt_error: Some(json!({
+                "code": -32005, "message": "rate limit at https://user:password@host.invalid/key",
+                "data": "request token secret-value"
+            })),
+            ..Default::default()
+        }
+        .start()
+        .await;
+        server.config.timeout = Duration::from_secs(1);
+        let capture = LogCapture(Arc::new(Mutex::new(Vec::new())));
+        let writer = capture.clone();
+        let subscriber =
+            tracing_subscriber::fmt().with_ansi(false).with_writer(move || writer.clone()).finish();
+        let result = server.run().with_subscriber(subscriber).await;
+        let error = result.unwrap_err();
+        let WithdrawerError::Unconfirmed { transaction_hash, source } = &error else {
+            panic!("missing broadcast hash: {error:?}");
+        };
+        assert_eq!(*transaction_hash, *server.sent.lock().unwrap()[0].tx_hash());
+        assert!(matches!(**source, WithdrawerError::Timeout(_)), "{source:?}");
+        let logs = String::from_utf8(capture.0.lock().unwrap().clone()).unwrap();
+        assert!(logs.contains("receipt request failed transiently"), "{logs}");
+        for secret in ["password", "host.invalid", "secret-value"] {
+            assert!(!logs.contains(secret), "server-supplied secret leaked in warning: {logs}");
+        }
+    }
+
+    #[tokio::test]
+    async fn broadcast_failure_retains_signed_hash_and_redacted_source() {
+        let server = Scenario {
+            broadcast_error: Some(json!({
+                "code": -32602,
+                "message": "invalid at https://user:password@host.invalid/key",
+                "data": "secret-value"
+            })),
+            ..Default::default()
+        }
+        .start()
+        .await;
+        let error = server.run().await.unwrap_err();
+        let WithdrawerError::Unconfirmed { transaction_hash, source } = &error else {
+            panic!("missing signed hash: {error:?}");
+        };
+        assert_eq!(*transaction_hash, *server.sent.lock().unwrap()[0].tx_hash());
+        assert!(matches!(**source, WithdrawerError::Request(_)), "{source:?}");
+        assert!(std::error::Error::source(source.as_ref()).is_some());
+        for secret in ["password", "host.invalid", "secret-value"] {
+            assert!(!format!("{error} {error:?}").contains(secret));
+        }
+    }
+
+    #[tokio::test]
+    async fn shared_deadline_retains_hash_during_broadcast() {
+        let mut server = Scenario { broadcast_hang: true, ..Default::default() }.start().await;
+        server.config.timeout = Duration::from_secs(1);
+        server.config.max_retries = 2;
+        server.config.retry_delay = Duration::from_millis(1);
+        let error = server.run().await.unwrap_err();
+        let WithdrawerError::Unconfirmed { transaction_hash, source } = error else {
+            panic!("missing signed hash: {error:?}");
+        };
+        assert_eq!(transaction_hash, *server.sent.lock().unwrap()[0].tx_hash());
+        assert!(matches!(*source, WithdrawerError::Timeout(_)), "{source:?}");
+    }
+
+    #[tokio::test]
+    async fn receipt_failure_retains_broadcast_hash_and_redacted_source() {
+        let server = Scenario {
+            receipt_error: Some(json!({
+                "code": -32602,
+                "message": "invalid at https://user:password@host.invalid/key",
+                "data": "secret-value"
+            })),
+            ..Default::default()
+        }
+        .start()
+        .await;
+        let error = server.run().await.unwrap_err();
+        let WithdrawerError::Unconfirmed { transaction_hash, source } = &error else {
+            panic!("missing broadcast hash: {error:?}");
+        };
+        assert_eq!(*transaction_hash, *server.sent.lock().unwrap()[0].tx_hash());
+        assert!(matches!(**source, WithdrawerError::Request(_)), "{source:?}");
+        assert!(std::error::Error::source(source.as_ref()).is_some());
+        for secret in ["password", "host.invalid", "secret-value"] {
+            assert!(!format!("{error} {error:?}").contains(secret));
+        }
+    }
+
+    #[tokio::test]
+    async fn shared_deadline_retains_hash_while_receipt_is_pending() {
+        let mut server = Scenario { receipt_pending: true, ..Default::default() }.start().await;
+        server.config.timeout = Duration::from_secs(1);
+        let error = server.run().await.unwrap_err();
+        let WithdrawerError::Unconfirmed { transaction_hash, source } = error else {
+            panic!("missing broadcast hash: {error:?}");
+        };
+        assert_eq!(transaction_hash, *server.sent.lock().unwrap()[0].tx_hash());
+        assert!(matches!(*source, WithdrawerError::Timeout(_)), "{source:?}");
+    }
+
+    #[tokio::test]
+    async fn reverted_receipt_retains_broadcast_hash() {
+        let server = Scenario { receipt_reverted: true, ..Default::default() }.start().await;
+        let error = server.run().await.unwrap_err();
+        let WithdrawerError::Unconfirmed { transaction_hash, source } = error else {
+            panic!("missing broadcast hash: {error:?}");
+        };
+        assert_eq!(transaction_hash, *server.sent.lock().unwrap()[0].tx_hash());
+        assert!(
+            matches!(*source, WithdrawerError::Rpc(WithdrawalRpcError::Reverted(hash)) if hash == transaction_hash)
+        );
+    }
+
+    #[tokio::test]
+    async fn finalization_reports_the_target_call_result() {
+        for fault in [false, true] {
+            for success in [false, true] {
+                let server = Scenario {
+                    fault,
+                    proven: 100,
+                    finalization_success: Some(success),
+                    ..Default::default()
+                }
+                .start()
+                .await;
+                let result = server.run().await;
+                let transaction_hash = *server.sent.lock().unwrap()[0].tx_hash();
+                if success {
+                    assert_eq!(result.unwrap()[0].transaction_hash, Some(transaction_hash));
+                } else {
+                    let WithdrawerError::TargetCallFailed {
+                        withdrawal_hash,
+                        transaction_hash: actual,
+                    } = result.unwrap_err()
+                    else {
+                        panic!("target failure was not reported");
+                    };
+                    assert_eq!(actual, transaction_hash);
+                    let receipt = serde_json::from_str(include_str!(
+                        "../fixtures/synthetic-deposit-withdrawal-receipt.json"
+                    ))
+                    .unwrap();
+                    assert_eq!(
+                        withdrawal_hash,
+                        Withdrawal::from_receipt(&receipt).unwrap()[0].hash()
+                    );
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn finalization_requires_an_event_from_the_configured_portal() {
+        for scenario in [
+            Scenario { finalization_success: None, ..Default::default() },
+            Scenario { finalization_emitter: Address::repeat_byte(0xff), ..Default::default() },
+        ] {
+            let server = Scenario { proven: 100, ..scenario }.start().await;
+            let error = server.run().await.unwrap_err();
+            assert!(
+                matches!(error, WithdrawerError::MissingFinalizationEvent { transaction_hash, .. } if transaction_hash == *server.sent.lock().unwrap()[0].tx_hash())
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn operation_timeout_is_typed_and_bounded() {
+        let mut server = Scenario { hang: true, ..Default::default() }.start().await;
+        server.config.timeout = Duration::from_millis(50);
+        server.config.max_retries = 1;
+        let result = server.run().await;
+        assert!(
+            matches!(result, Err(WithdrawerError::Timeout(_))),
+            "missing shared operation deadline: {result:?}"
+        );
+        assert!(server.sent.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn missing_covering_output_never_submits() {
+        for fault in [false, true] {
+            let server = Scenario { fault, no_coverage: true, ..Default::default() }.start().await;
+            let result = server.run().await;
+            assert!(
+                matches!(result, Err(WithdrawerError::NoCoverage { .. })),
+                "missing no-coverage error: {result:?}"
+            );
+            assert!(server.sent.lock().unwrap().is_empty());
+        }
     }
 
     #[tokio::test]
@@ -1078,29 +1725,7 @@ mod tests {
             let withdrawal = Withdrawal::from_receipt(&receipt).unwrap().remove(0);
             let flow = Withdrawer::new(server.config.clone());
             assert_eq!(flow.status(&rpc, &withdrawal, Address::ZERO).await.unwrap(), expected);
-        }
-    }
-
-    #[tokio::test]
-    async fn contract_decode_errors_withhold_response_bytes() {
-        let server = Scenario { malformed_response: true, ..Default::default() }.start().await;
-        let error = server.status().await.unwrap_err();
-        assert!(matches!(error, WithdrawerError::Decode { .. }));
-        let diagnostic = format!("{error} {error:?}");
-        assert!(diagnostic.contains(WithdrawalPortal::finalizedWithdrawalsCall::SIGNATURE));
-        assert!(diagnostic.contains("TypeCheckFail"));
-        assert!(!diagnostic.contains("61616161"), "response bytes leaked: {diagnostic}");
-    }
-
-    #[tokio::test]
-    async fn missing_covering_output_returns_no_coverage() {
-        for fault in [false, true] {
-            let server = Scenario { fault, no_coverage: true, ..Default::default() }.start().await;
-            let result = server.proving_output().await;
-            assert!(
-                matches!(result, Err(WithdrawerError::NoCoverage { .. })),
-                "missing no-coverage error: {result:?}"
-            );
+            assert!(server.sent.lock().unwrap().is_empty());
         }
     }
 
@@ -1109,9 +1734,11 @@ mod tests {
         let server =
             Scenario { fault: false, wrong_root: true, ..Default::default() }.start().await;
         assert!(matches!(
-            server.proving_output().await,
+            server.run().await,
             Err(WithdrawerError::Withdrawal(WithdrawalError::OutputRootMismatch { .. }))
         ));
+        assert_eq!(*server.estimates.lock().unwrap(), 0);
+        assert!(server.sent.lock().unwrap().is_empty());
 
         for valid_older_game in [true, false] {
             let server = Scenario {
@@ -1122,11 +1749,14 @@ mod tests {
             }
             .start()
             .await;
-            let result = server.proving_output().await;
+            let result = server.run().await;
             if valid_older_game {
-                assert_eq!(result.unwrap().index, U256::ZERO);
+                assert_eq!(result.unwrap()[0].status, WithdrawalStatus::Prove);
+                server.assert_sent(WithdrawalPortal::proveWithdrawalTransactionCall::SELECTOR, 1);
             } else {
                 assert!(matches!(result, Err(WithdrawerError::NoCoverage { .. })));
+                assert_eq!(*server.estimates.lock().unwrap(), 0);
+                assert!(server.sent.lock().unwrap().is_empty());
             }
         }
     }
@@ -1145,7 +1775,8 @@ mod tests {
             }
             .start()
             .await;
-            assert_eq!(server.proving_output().await.unwrap().index, U256::ZERO);
+            assert_eq!(server.run().await.unwrap()[0].status, WithdrawalStatus::Prove);
+            server.assert_sent(WithdrawalPortal::proveWithdrawalTransactionCall::SELECTOR, 1);
         }
     }
 
@@ -1158,21 +1789,24 @@ mod tests {
         }
         .start()
         .await;
-        assert_eq!(server.proving_output().await.unwrap().index, U256::from(1));
+        server.run().await.unwrap();
+        server.assert_proven_game(1);
     }
 
     #[tokio::test]
     async fn game_search_uses_the_oldest_pending_covering_game() {
         let server =
             Scenario { game_count: 3, game_finalized: false, ..Default::default() }.start().await;
-        assert_eq!(server.proving_output().await.unwrap().index, U256::from(0));
+        server.run().await.unwrap();
+        server.assert_proven_game(0);
     }
 
     #[tokio::test]
     async fn game_search_reads_pending_eligibility_and_roots_only_when_verifying() {
         let server =
             Scenario { game_count: 4, game_finalized: false, ..Default::default() }.start().await;
-        assert_eq!(server.proving_output().await.unwrap().index, U256::from(0));
+        server.run().await.unwrap();
+        server.assert_proven_game(0);
         let requests = server.requests.lock().unwrap();
         let calls: Vec<Bytes> = requests
             .iter()
@@ -1195,7 +1829,8 @@ mod tests {
         let server = Scenario { game_count: 2, blacklisted_game: Some(1), ..Default::default() }
             .start()
             .await;
-        assert_eq!(server.proving_output().await.unwrap().index, U256::from(0));
+        server.run().await.unwrap();
+        server.assert_proven_game(0);
     }
 
     #[tokio::test]
@@ -1223,7 +1858,8 @@ mod tests {
             }
             .start()
             .await;
-            assert_eq!(server.proving_output().await.unwrap().index, U256::from(2));
+            server.run().await.unwrap();
+            server.assert_proven_game(2);
         }
     }
 
@@ -1245,7 +1881,7 @@ mod tests {
         let writer = capture.clone();
         let subscriber =
             tracing_subscriber::fmt().with_ansi(false).with_writer(move || writer.clone()).finish();
-        let error = server.proving_output().with_subscriber(subscriber).await.unwrap_err();
+        let error = server.run().with_subscriber(subscriber).await.unwrap_err();
         let logs = String::from_utf8(capture.0.lock().unwrap().clone()).unwrap();
         for field in ["game_index=0", "game_index=2", "proxy=", "reason="] {
             assert!(logs.contains(field), "missing {field}: {logs}");
@@ -1265,12 +1901,15 @@ mod tests {
                 .count(),
             2,
         );
+        assert_eq!(*server.estimates.lock().unwrap(), 0);
+        assert!(server.sent.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
     async fn game_search_skips_a_newer_noncovering_game() {
         let server = Scenario { skip_latest: true, ..Default::default() }.start().await;
-        assert_eq!(server.proving_output().await.unwrap().index, U256::ZERO);
+        assert_eq!(server.run().await.unwrap()[0].status, WithdrawalStatus::Prove);
+        server.assert_sent(WithdrawalPortal::proveWithdrawalTransactionCall::SELECTOR, 1);
     }
 
     #[tokio::test]
@@ -1278,7 +1917,8 @@ mod tests {
         let server = Scenario { other_game_type: true, skip_latest: true, ..Default::default() }
             .start()
             .await;
-        assert_eq!(server.proving_output().await.unwrap().index, U256::ZERO);
+        assert_eq!(server.run().await.unwrap()[0].status, WithdrawalStatus::Prove);
+        server.assert_sent(WithdrawalPortal::proveWithdrawalTransactionCall::SELECTOR, 1);
     }
 
     #[tokio::test]
@@ -1293,10 +1933,7 @@ mod tests {
             }
             .start()
             .await;
-            assert!(matches!(
-                server.proving_output().await,
-                Err(WithdrawerError::NoCoverage { .. })
-            ));
+            assert!(matches!(server.run().await, Err(WithdrawerError::NoCoverage { .. })));
             let requests = server.requests.lock().unwrap();
             let inspected: Vec<_> = requests
                 .iter()
@@ -1316,6 +1953,7 @@ mod tests {
                     .count(),
                 1
             );
+            assert!(server.sent.lock().unwrap().is_empty());
         }
     }
 
@@ -1348,5 +1986,26 @@ mod tests {
                 assert!(!diagnostic.contains(secret), "response bytes leaked: {diagnostic}");
             }
         }
+    }
+
+    #[tokio::test]
+    async fn contract_decode_errors_withhold_response_bytes() {
+        let server = Scenario { malformed_response: true, ..Default::default() }.start().await;
+        let error = server.run().await.unwrap_err();
+        assert!(matches!(error, WithdrawerError::Decode { .. }));
+        let diagnostic = format!("{error} {error:?}");
+        assert!(diagnostic.contains(WithdrawalPortal::finalizedWithdrawalsCall::SIGNATURE));
+        assert!(diagnostic.contains("TypeCheckFail"));
+        assert!(!diagnostic.contains("61616161"), "response bytes leaked: {diagnostic}");
+    }
+
+    #[tokio::test]
+    async fn receipt_withdrawals_are_sequential_and_independent() {
+        let server =
+            Scenario { proven: 100, second_withdrawal: true, ..Default::default() }.start().await;
+        let outcomes = server.run().await.unwrap();
+        assert_eq!(outcomes.len(), 2);
+        assert_ne!(outcomes[0].withdrawal_hash, outcomes[1].withdrawal_hash);
+        server.assert_sent(WithdrawalPortal::finalizeWithdrawalTransactionCall::SELECTOR, 2);
     }
 }
