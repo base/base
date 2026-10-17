@@ -2047,7 +2047,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::BasePooledTransaction;
+    use crate::{BasePooledTransaction, test_utils::TxFixtures};
 
     type TestValidator = BaseTransactionValidator<
         MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>,
@@ -2057,7 +2057,7 @@ mod tests {
 
     fn everest_chain_spec() -> Arc<BaseChainSpec> {
         let mut genesis = build_test_genesis_everest();
-        genesis.config.chain_id = test_chain_id();
+        genesis.config.chain_id = TxFixtures::chain_id();
         Arc::new(BaseChainSpec::from_genesis(genesis))
     }
 
@@ -2065,7 +2065,7 @@ mod tests {
     /// genesis.
     fn zenith_chain_spec() -> Arc<BaseChainSpec> {
         let mut genesis = build_test_genesis_everest();
-        genesis.config.chain_id = test_chain_id();
+        genesis.config.chain_id = TxFixtures::chain_id();
         genesis.config.extra_fields.insert(
             "base".to_string(),
             serde_json::json!({
@@ -2176,11 +2176,6 @@ mod tests {
     #[test]
     fn sender_sig_type_identifies_eoa_path_as_k1() {
         assert_eq!(TestValidator::sender_sig_type(&sign_eoa_eip8130(minimal_valid_eoa_tx())), "k1");
-    }
-
-    /// Returns the chain id the [`build_test_validator`] is configured against.
-    fn test_chain_id() -> u64 {
-        ChainConfig::mainnet().chain_id
     }
 
     fn balance_diff(address: Address, balance: u64) -> crate::AccountStateDiff {
@@ -2397,21 +2392,7 @@ mod tests {
     /// Returns a minimal, structurally valid EOA-path [`TxEip8130`] bound to the
     /// test chain. `sender` is left as `None` so the EOA recovery path is exercised.
     fn minimal_valid_eoa_tx() -> TxEip8130 {
-        TxEip8130 {
-            chain_id: test_chain_id(),
-            sender: None,
-            nonce_key: U256::ZERO,
-            nonce_sequence: 1,
-            valid_after: 0,
-            valid_before: 0,
-            max_priority_fee_per_gas: 0,
-            max_fee_per_gas: 1_000,
-            gas_limit: 50_000,
-            account_changes: Vec::new(),
-            calls: Vec::new(),
-            metadata: Bytes::new(),
-            payer: None,
-        }
+        TxEip8130 { max_fee_per_gas: 1_000, ..TxFixtures::eip8130_tx(U256::ZERO, 1) }
     }
 
     /// Maps a shared structural check to the pool's rejection, as admission does.
@@ -2578,7 +2559,7 @@ mod tests {
     #[test]
     fn rejects_eip8130_with_wrong_chain_id() {
         let validator = build_test_validator();
-        let tx = TxEip8130 { chain_id: test_chain_id() + 1, ..minimal_valid_eoa_tx() };
+        let tx = TxEip8130 { chain_id: TxFixtures::chain_id() + 1, ..minimal_valid_eoa_tx() };
         let signed = sign_eoa_eip8130(tx);
         assert_chain_id_mismatch(validator.validate_eip8130_structural(&signed));
     }
@@ -3496,17 +3477,7 @@ mod tests {
             timestamp: chain_config.isthmus_timestamp,
             ..Default::default()
         };
-        let l1_info_tx: BaseTransactionSigned = TxDeposit {
-            source_hash: Default::default(),
-            from: Address::ZERO,
-            to: TxKind::Create,
-            mint: 0,
-            value: U256::ZERO,
-            gas_limit: 0,
-            is_system_transaction: false,
-            input: isthmus_data.into(),
-        }
-        .into();
+        let l1_info_tx: BaseTransactionSigned = TxFixtures::l1_info_deposit(isthmus_data);
         validator.update_l1_block_info(&header, &[l1_info_tx]);
 
         let pooled_tx: BasePooledTransaction =
@@ -3547,8 +3518,7 @@ mod tests {
         let client = MockEthProvider::<BasePrimitives>::new()
             .with_chain_spec(Arc::clone(&chain_spec))
             .with_genesis_block();
-        client
-            .add_account(sender, ExtendedAccount::new(0, U256::from(1_000_000_000_000_000_000u64)));
+        client.add_account(sender, TxFixtures::funded_account());
         let evm_config = BaseEvmConfig::base(Arc::clone(&chain_spec));
         let inner = EthTransactionValidatorBuilder::new(client, evm_config)
             .no_shanghai()
@@ -3562,17 +3532,7 @@ mod tests {
             timestamp: chain_config.isthmus_timestamp,
             ..Default::default()
         };
-        let l1_info_tx: BaseTransactionSigned = TxDeposit {
-            source_hash: Default::default(),
-            from: Address::ZERO,
-            to: TxKind::Create,
-            mint: 0,
-            value: U256::ZERO,
-            gas_limit: 0,
-            is_system_transaction: false,
-            input: isthmus_data.clone().into(),
-        }
-        .into();
+        let l1_info_tx: BaseTransactionSigned = TxFixtures::l1_info_deposit(isthmus_data.clone());
         validator.update_l1_block_info(&header, &[l1_info_tx]);
 
         let state = validator.validate_eip8130_full(&signed).expect("valid funded EIP-8130 tx");
@@ -3716,10 +3676,7 @@ mod tests {
         let client = MockEthProvider::<BasePrimitives>::new()
             .with_chain_spec(Arc::clone(&chain_spec))
             .with_genesis_block();
-        client.add_account(
-            signer.address(),
-            ExtendedAccount::new(0, U256::from(1_000_000_000_000_000_000u64)),
-        );
+        client.add_account(signer.address(), TxFixtures::funded_account());
         let evm_config = BaseEvmConfig::base(Arc::clone(&chain_spec));
         let inner = EthTransactionValidatorBuilder::new(client, evm_config)
             .no_shanghai()
@@ -3759,7 +3716,7 @@ mod tests {
     ) -> (TestValidator, Eip8130Signed, Address) {
         let sender = signer.address();
         let tx = TxEip8130 {
-            chain_id: test_chain_id(),
+            chain_id: TxFixtures::chain_id(),
             sender: None,
             nonce_key: U256::ZERO,
             nonce_sequence: 0,
@@ -3778,7 +3735,7 @@ mod tests {
         let sender_auth = k1_auth_blob(signer, tx.sender_signature_hash()).slice(20..);
         let signed = Eip8130Signed::new(tx, sender_auth, Bytes::new());
 
-        let mut account = ExtendedAccount::new(0, U256::from(1_000_000_000_000_000_000u64));
+        let mut account = TxFixtures::funded_account();
         if let Some(code) = existing_code {
             account = account.with_bytecode(code);
         }
@@ -3831,11 +3788,11 @@ mod tests {
             signature: Bytes::new(),
         };
         let config_digest =
-            ConfigChangeAuthorizer::changes_digest(derived, test_chain_id(), &config);
+            ConfigChangeAuthorizer::changes_digest(derived, TxFixtures::chain_id(), &config);
         config.signature = k1_auth_blob(&signer, config_digest);
 
         let tx = TxEip8130 {
-            chain_id: test_chain_id(),
+            chain_id: TxFixtures::chain_id(),
             sender: Some(derived),
             nonce_key: U256::ZERO,
             nonce_sequence: 0,
@@ -3859,7 +3816,7 @@ mod tests {
         // is still "fresh" (nonce 0, no code) for the create freshness gate.
         let validator = build_test_validator_with_account_and_spec(
             derived,
-            ExtendedAccount::new(0, U256::from(1_000_000_000_000_000_000u64)),
+            TxFixtures::funded_account(),
             zenith_chain_spec(),
         );
 
@@ -3940,7 +3897,7 @@ mod tests {
         let signer = PrivateKeySigner::random();
         let sender = signer.address();
         let tx = TxEip8130 {
-            chain_id: test_chain_id(),
+            chain_id: TxFixtures::chain_id(),
             nonce_key: U256::ZERO,
             max_fee_per_gas: 100,
             gas_limit: 1_000_000,
@@ -3948,8 +3905,7 @@ mod tests {
         };
         let sender_auth = k1_auth_blob(&signer, tx.sender_signature_hash()).slice(20..);
         let signed = Eip8130Signed::new(tx, sender_auth, Bytes::new());
-        let account = ExtendedAccount::new(0, U256::from(1_000_000_000_000_000_000u64))
-            .with_bytecode(Bytes::from_static(&[0x60, 0x00]));
+        let account = TxFixtures::funded_account().with_bytecode(Bytes::from_static(&[0x60, 0x00]));
         let validator = build_test_validator_with_account(sender, account);
 
         let state = validator

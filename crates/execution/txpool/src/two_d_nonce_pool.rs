@@ -1132,19 +1132,15 @@ mod tests {
         time::Instant,
     };
 
-    use alloy_consensus::{Transaction, transaction::Recovered};
-    use alloy_primitives::Bytes;
-    use alloy_signer::SignerSync;
+    use alloy_consensus::Transaction;
     use alloy_signer_local::PrivateKeySigner;
-    use base_common_chains::ChainConfig;
-    use base_common_consensus::{
-        BasePooledTransaction as ConsensusPooledTransaction, Eip8130Signed, TxEip8130,
-    };
+    use base_common_consensus::TxEip8130;
     use reth_transaction_pool::{PoolTransaction, PriceBumpConfig, Priority, TransactionOrigin};
 
     use super::*;
     use crate::{
         BaseOrdering, BasePooledTransaction, LimitClass, ValidityOperator, ValidityPredicate,
+        test_utils::TxFixtures,
     };
 
     #[derive(Clone, Debug, Default)]
@@ -1164,10 +1160,6 @@ mod tests {
             self.priority_evaluations.fetch_add(1, Ordering::Relaxed);
             transaction.effective_tip_per_gas(base_fee).into()
         }
-    }
-
-    fn test_chain_id() -> u64 {
-        ChainConfig::mainnet().chain_id
     }
 
     fn signer() -> PrivateKeySigner {
@@ -1201,26 +1193,16 @@ mod tests {
         max_priority_fee_per_gas: u128,
         max_fee_per_gas: u128,
     ) -> BasePooledTransaction {
-        let tx = TxEip8130 {
-            chain_id: test_chain_id(),
-            sender: None,
-            nonce_key,
-            nonce_sequence,
-            valid_after: 0,
-            valid_before,
-            max_priority_fee_per_gas,
-            max_fee_per_gas,
-            gas_limit: 50_000,
-            account_changes: Vec::new(),
-            calls: Vec::new(),
-            metadata: Bytes::new(),
-            payer: None,
-        };
-        let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
-        let signed =
-            Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
-        let pooled = ConsensusPooledTransaction::Eip8130(signed);
-        BasePooledTransaction::from_pooled(Recovered::new_unchecked(pooled, signer.address()))
+        TxFixtures::sign_eip8130(
+            signer,
+            None,
+            TxEip8130 {
+                valid_before,
+                max_priority_fee_per_gas,
+                max_fee_per_gas,
+                ..TxFixtures::eip8130_tx(nonce_key, nonce_sequence)
+            },
+        )
     }
 
     fn signed_nonce_free_tx(
@@ -1280,40 +1262,6 @@ mod tests {
         priority_evaluations.load(Ordering::Relaxed)
     }
 
-    fn run_best_transactions_wall_clock(lane_count: usize) {
-        let signer = signer();
-        let transaction =
-            Arc::new(valid_pool_transaction(signed_channel_tx(&signer, U256::from(1), 0, 1_000)));
-
-        let setup_started = Instant::now();
-        let lanes = (1..=lane_count)
-            .map(|nonce_key| {
-                (
-                    (signer.address(), U256::from(nonce_key)),
-                    NonceLane {
-                        next_nonce: 0,
-                        transactions: BTreeMap::from([(0, Arc::clone(&transaction))]),
-                    },
-                )
-            })
-            .collect();
-        let setup_elapsed = setup_started.elapsed();
-
-        let snapshot_started = Instant::now();
-        let best =
-            BestTwoDTransactions::new(&lanes, &B256Map::default(), BaseOrdering::coinbase_tip(), 0);
-        let snapshot_elapsed = snapshot_started.elapsed();
-
-        let drain_started = Instant::now();
-        let yielded = best.count();
-        let drain_elapsed = drain_started.elapsed();
-
-        eprintln!(
-            "{lane_count:>6} lanes: setup={setup_elapsed:?}, snapshot={snapshot_elapsed:?}, drain={drain_elapsed:?}"
-        );
-        assert_eq!(yielded, lane_count);
-    }
-
     #[test]
     fn channelized_transactions_with_same_sequence_can_coexist() {
         let mut pool = TwoDNoncePool::new(PriceBumpConfig::default());
@@ -1341,24 +1289,6 @@ mod tests {
 
         assert_eq!(small_evaluations, SMALL_LANE_COUNT);
         assert_eq!(large_evaluations, LARGE_LANE_COUNT);
-    }
-
-    #[test]
-    #[ignore = "wall-clock diagnostic; run explicitly in release mode with --ignored --nocapture"]
-    fn best_transactions_wall_clock_1k_lanes() {
-        run_best_transactions_wall_clock(1_000);
-    }
-
-    #[test]
-    #[ignore = "wall-clock diagnostic; run explicitly in release mode with --ignored --nocapture"]
-    fn best_transactions_wall_clock_10k_lanes() {
-        run_best_transactions_wall_clock(10_000);
-    }
-
-    #[test]
-    #[ignore = "wall-clock diagnostic; run explicitly in release mode with --ignored --nocapture"]
-    fn best_transactions_wall_clock_100k_lanes() {
-        run_best_transactions_wall_clock(100_000);
     }
 
     #[test]
