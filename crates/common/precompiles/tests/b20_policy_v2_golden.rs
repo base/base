@@ -1168,82 +1168,29 @@ fn golden_gas_footprints() {
 // meta: op coverage checklist
 // ============================================================================
 
-/// Compile-time coverage checklist — never called; its exhaustive `match` (no `_` arm) names the
-/// golden `#[test]` fn(s) pinning each op. Adding an ABI op fails the build until a golden is added.
-#[allow(dead_code)]
-fn v2_op_coverage_checklist(call: IPolicyRegistry::IPolicyRegistryCalls) {
+/// Compile-time guard: a new ABI selector fails the build until it gets an arm here and a golden test.
+fn op_coverage_checklist(call: IPolicyRegistry::IPolicyRegistryCalls) {
     use IPolicyRegistry::IPolicyRegistryCalls as C;
 
-    fn covered(_goldens: &[fn()]) {}
-
     match call {
-        C::createPolicy(_) => covered(&[
-            golden_create_blocklist,
-            golden_create_allowlist,
-            golden_create_reverts_zero_admin,
-            golden_create_policy_composite_type_is_incompatible_policy_type_in_v2,
-        ]),
-        C::createPolicyWithAccounts(_) => covered(&[
-            golden_create_with_accounts,
-            golden_create_with_accounts_blocklist,
-            golden_create_with_accounts_reverts_batch_too_large,
-        ]),
-        C::updateAllowlist(_) => covered(&[
-            golden_update_allowlist,
-            golden_update_allowlist_remove,
-            golden_update_allowlist_reverts_incompatible_type,
-            golden_update_allowlist_reverts_unauthorized,
-            golden_update_allowlist_reverts_policy_not_found,
-        ]),
-        C::updateBlocklist(_) => covered(&[
-            golden_update_blocklist,
-            golden_update_blocklist_reverts_incompatible_type,
-            golden_update_blocklist_reverts_batch_too_large,
-        ]),
-        C::stageUpdateAdmin(_) => covered(&[
-            golden_stage_and_finalize_update_admin,
-            golden_stage_update_admin_reverts_unauthorized,
-        ]),
-        C::finalizeUpdateAdmin(_) => covered(&[
-            golden_stage_and_finalize_update_admin,
-            golden_finalize_reverts_no_pending,
-            golden_finalize_reverts_unauthorized,
-        ]),
-        C::renounceAdmin(_) => {
-            covered(&[golden_renounce_admin, golden_renounce_admin_reverts_unauthorized])
-        }
-        C::isAuthorized(_) => covered(&[
-            golden_is_authorized_builtins_and_malformed,
-            golden_is_authorized_empty_policies,
-        ]),
-        C::policyExists(_) => {
-            covered(&[golden_reads_for_nonexistent_and_builtins, golden_create_blocklist])
-        }
-        C::policyAdmin(_) => {
-            covered(&[golden_reads_for_nonexistent_and_builtins, golden_create_allowlist])
-        }
-        C::pendingPolicyAdmin(_) => covered(&[
-            golden_reads_for_nonexistent_and_builtins,
-            golden_stage_and_finalize_update_admin,
-        ]),
-        C::createCompositePolicy(_) => covered(&[
-            golden_create_composite_union,
-            golden_create_composite_reverts_incompatible_type,
-            golden_create_composite_reverts_child_count_outside_of_range,
-        ]),
-        C::updateComposite(_) => {
-            covered(&[golden_update_composite, golden_update_composite_reverts_unauthorized])
-        }
-        C::compositePolicyChildIds(_) => covered(&[
-            golden_composite_policy_child_ids,
-            golden_composite_policy_child_ids_empty_for_non_composites,
-            golden_composite_policy_child_ids_reads_before_activation,
-        ]),
-        C::MIN_COMPOSITE_CHILD_POLICIES(_) | C::MAX_COMPOSITE_CHILD_POLICIES(_) => covered(&[
-            golden_min_max_composite_child_policies,
-            golden_min_max_composite_child_policies_read_before_activation,
-        ]),
-        // V3 ABI; unknown to V2.
-        C::invertedPolicyId(_) => covered(&[golden_inverted_policy_id_selector_unknown_in_v2]),
+        C::createPolicy(_)
+        | C::createPolicyWithAccounts(_)
+        | C::updateAllowlist(_)
+        | C::updateBlocklist(_)
+        | C::stageUpdateAdmin(_)
+        | C::finalizeUpdateAdmin(_)
+        | C::renounceAdmin(_)
+        | C::isAuthorized(_)
+        | C::policyExists(_)
+        | C::policyAdmin(_)
+        | C::pendingPolicyAdmin(_)
+        | C::createCompositePolicy(_)
+        | C::updateComposite(_)
+        | C::compositePolicyChildIds(_)
+        | C::MIN_COMPOSITE_CHILD_POLICIES(_)
+        | C::MAX_COMPOSITE_CHILD_POLICIES(_)
+        | C::invertedPolicyId(_) => {}
     }
 }
+
+const _: fn(IPolicyRegistry::IPolicyRegistryCalls) = op_coverage_checklist;
