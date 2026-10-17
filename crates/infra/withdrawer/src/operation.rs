@@ -22,6 +22,8 @@ pub enum WithdrawalStatus {
     Prove,
     /// The withdrawal can be executed.
     Finalize,
+    /// The anchor state registry must be unpaused before proving or finalizing.
+    Paused,
     /// Earliest known L1 ready time; an unresolved game can delay it further.
     NotReady {
         /// Earliest L1 timestamp allowed by the known delays.
@@ -87,6 +89,11 @@ impl Withdrawer {
         }
         let (ready_at, waiting_for_game, game_finalized) = match self.config.network.proofs {
             ProofSystem::FaultProofs { anchor_state_registry, .. } => {
+                if Self::read(rpc, anchor_state_registry, IAnchorStateRegistry::pausedCall {})
+                    .await?
+                {
+                    return Ok(WithdrawalStatus::Paused);
+                }
                 let proof = Self::read(
                     rpc,
                     portal,
@@ -204,7 +211,7 @@ impl Withdrawer {
         Ok(status == GameStatus::InProgress as u8 || status == GameStatus::DefenderWins as u8)
     }
 
-    /// Calls a contract using typed ABI encoding and redacted provider and decode errors.
+    /// Calls a contract at the latest mined block with redacted provider and decode errors.
     pub async fn read<C: SolCall>(
         rpc: &WithdrawalRpc,
         target: Address,
@@ -212,7 +219,7 @@ impl Withdrawer {
     ) -> Result<C::Return, WithdrawerError> {
         let request =
             TransactionRequest::default().to(target).input(Bytes::from(call.abi_encode()).into());
-        let bytes = rpc.l1.call(request).await?;
+        let bytes = rpc.l1.call(request).latest().await?;
         C::abi_decode_returns_validate(&bytes)
             .map_err(|error| WithdrawerError::decode_error(C::SIGNATURE, error))
     }
@@ -286,6 +293,8 @@ mod tests {
         fault: bool,
         proven: u64,
         finalized: bool,
+        pending_finalized: bool,
+        paused: bool,
         blacklisted: bool,
         retired: bool,
         proper: bool,
@@ -305,6 +314,8 @@ mod tests {
                 fault: true,
                 proven: 0,
                 finalized: false,
+                pending_finalized: false,
+                paused: false,
                 blacklisted: false,
                 retired: false,
                 proper: true,
@@ -428,7 +439,11 @@ mod tests {
                         16,
                     )
                     .unwrap();
-                    reply!(WithdrawalPortal::finalizedWithdrawalsCall, self.finalized);
+                    reply!(
+                        WithdrawalPortal::finalizedWithdrawalsCall,
+                        self.finalized || (params[1] == "pending" && self.pending_finalized)
+                    );
+                    reply!(IAnchorStateRegistry::pausedCall, self.paused);
                     if input[..4] == FaultProofPortal::provenWithdrawalsCall::SELECTOR {
                         let call =
                             FaultProofPortal::provenWithdrawalsCall::abi_decode(&input).unwrap();
@@ -456,7 +471,10 @@ mod tests {
                         old_game && self.blacklisted
                     );
                     reply!(IAnchorStateRegistry::isGameRetiredCall, old_game && self.retired);
-                    reply!(IAnchorStateRegistry::isGameProperCall, !old_game || self.proper);
+                    reply!(
+                        IAnchorStateRegistry::isGameProperCall,
+                        !self.paused && (!old_game || self.proper)
+                    );
                     reply!(IAnchorStateRegistry::isGameRespectedCall, !old_game || self.respected);
                     reply!(IAnchorStateRegistry::isGameFinalizedCall, self.game_finalized);
                     reply!(
@@ -546,6 +564,14 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn paused_registry_waits_without_replacing_proofs() {
+        for proven in [0, 100] {
+            let server = Scenario { paused: true, proven, ..Default::default() }.start().await;
+            assert_eq!(server.status().await.unwrap(), WithdrawalStatus::Paused);
+        }
+    }
+
+    #[tokio::test]
     async fn replaced_and_deleted_legacy_proofs_are_proven_again() {
         for (replaced, output_error) in [
             (true, None),
@@ -602,6 +628,17 @@ mod tests {
         let server = Scenario { finalized: true, ..Default::default() }.start().await;
         let outcomes = server.status().await.unwrap();
         assert_eq!(outcomes, WithdrawalStatus::Finalized);
+    }
+
+    #[tokio::test]
+    async fn pending_finalization_does_not_complete_a_withdrawal() {
+        for fault in [false, true] {
+            let server =
+                Scenario { fault, proven: 100, pending_finalized: true, ..Default::default() }
+                    .start()
+                    .await;
+            assert_eq!(server.status().await.unwrap(), WithdrawalStatus::Finalize);
+        }
     }
 
     #[tokio::test]

@@ -32,11 +32,11 @@ Without `gas_limit`, estimation uses the same sender, target, calldata, chain ID
 
 ## Prove/finalize flow
 
-`Withdrawer::status` performs only reads.
+`Withdrawer::status` performs only reads against the latest mined L1 state.
 
-`WithdrawalStatus` separates onchain decisions from transaction submission. `Finalized` does nothing, `Prove` requires a new proof, `Finalize` permits execution, and `NotReady` reports an earliest known L1 timestamp with a flag for an unresolved game. The game must resolve before its finality delay can start, so that timestamp is not a promise of readiness.
+`WithdrawalStatus` separates onchain decisions from transaction submission. `Finalized` does nothing, `Prove` requires a new proof, `Finalize` permits execution, and `Paused` waits for the anchor state registry to be unpaused before proving or finalizing. `NotReady` reports an earliest known L1 timestamp with a flag for an unresolved game. The game must resolve before its finality delay can start, so that timestamp is not a promise of readiness.
 
-Fault-proof state uses `provenWithdrawals(hash, signer_address)`. Blacklisted, retired, improper, unrespected, and challenger-winning games invalidate a proof. In-progress games retain their proofs but cannot finalize. Legacy proofs are invalidated when their stored output root differs from the oracle, or when the stored output's lookup reverts. Other legacy RPC errors fail without submitting.
+Fault-proof state uses `provenWithdrawals(hash, signer_address)`. While the anchor state registry is paused, withdrawals wait without replacing proofs. When unpaused, blacklisted, retired, improper, unrespected, and challenger-winning games invalidate a proof. In-progress games retain their proofs but cannot finalize. Legacy proofs are invalidated when their stored output root differs from the oracle, or when the stored output's lookup reverts. Other legacy RPC errors fail without submitting.
 
 Fault-proof finalization requires proof maturity and ASR game finality, followed by the portal's authoritative `checkWithdrawal` call. Legacy finalization checks the proof and output ages against the latest L1 timestamp, not the local clock or L2 time. Both apply the portal's strict timestamp boundary.
 
