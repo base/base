@@ -128,7 +128,7 @@ digest = "3734daa645"
 
 ["bin/snark-e2e/README.md"]
 summary = "Stub README for the SNARK PLONK end-to-end verification binary: submits a one-block prove request, polls, and verifies the receipt; meant for K8s CronJobs."
-digest = "8c4856e58a"
+digest = "78830928d8"
 
 ["bin/websocket-proxy/README.md"]
 summary = "Stub README for websocket-proxy, a fan-out proxy that relays upstream WebSocket messages to downstream clients with optional auth, rate limiting, and brotli compression."
