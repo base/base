@@ -135,6 +135,7 @@ impl WithdrawalRpc {
                                     .contains(Self::TX_INDEXING_IN_PROGRESS)
                             }) =>
                     {
+                        let error = WithdrawalRpcTransport::redact_diagnostic(error);
                         warn!(transaction_hash = %hash, error = %error, "receipt request failed transiently");
                     }
                     Err(error) => {
