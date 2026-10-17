@@ -129,6 +129,7 @@ struct OrderedPredicateBucket {
     equal: U256Map<U256Map<B256Set>>,
     not_equal: U256Map<B256Set>,
     never: B256Set,
+    len: usize,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -264,7 +265,7 @@ impl<T> ParkedPredicateIndex<T> {
             .entry(blocker)
             .or_insert_with(|| PredicateBucket::Flat(B256Set::default()));
         bucket.insert(hash, predicate);
-        if bucket.len() >= self.ordered_threshold && bucket.is_flat() && blocker.is_state() {
+        if bucket.is_flat() && blocker.is_state() && bucket.len() >= self.ordered_threshold {
             let hashes = bucket.take_flat().expect("bucket was checked as flat");
             let mut ordered = OrderedPredicateBucket::default();
             for hash in hashes {
@@ -330,13 +331,14 @@ impl PredicateBucket {
     fn len(&self) -> usize {
         match self {
             Self::Flat(hashes) => hashes.len(),
-            Self::Ordered(bucket) => bucket.len(),
+            Self::Ordered(bucket) => bucket.len,
         }
     }
 
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
+
     const fn is_flat(&self) -> bool {
         matches!(self, Self::Flat(_))
     }
@@ -365,25 +367,22 @@ impl PredicateBucket {
 impl OrderedPredicateBucket {
     fn insert(&mut self, hash: TxHash, predicate: &ValidityPredicate) {
         let Some((mask, kind)) = ordered_predicate(predicate) else { return };
-        match kind {
+        let hashes = match kind {
             OrderedPredicateKind::Threshold(value) => {
-                self.thresholds.entry(mask).or_default().entry(value).or_default().insert(hash);
+                self.thresholds.entry(mask).or_default().entry(value).or_default()
             }
             OrderedPredicateKind::Equal(value) => {
-                self.equal.entry(mask).or_default().entry(value).or_default().insert(hash);
+                self.equal.entry(mask).or_default().entry(value).or_default()
             }
-            OrderedPredicateKind::NotEqual => {
-                self.not_equal.entry(mask).or_default().insert(hash);
-            }
-            OrderedPredicateKind::Never => {
-                self.never.insert(hash);
-            }
-        }
+            OrderedPredicateKind::NotEqual => self.not_equal.entry(mask).or_default(),
+            OrderedPredicateKind::Never => &mut self.never,
+        };
+        self.len += usize::from(hashes.insert(hash));
     }
 
     fn remove(&mut self, hash: TxHash, predicate: &ValidityPredicate) {
         let Some((mask, kind)) = ordered_predicate(predicate) else { return };
-        match kind {
+        let removed = match kind {
             OrderedPredicateKind::Threshold(value) => {
                 remove_hash(&mut self.thresholds, mask, Some(value), hash)
             }
@@ -391,17 +390,9 @@ impl OrderedPredicateBucket {
                 remove_hash(&mut self.equal, mask, Some(value), hash)
             }
             OrderedPredicateKind::NotEqual => remove_hash(&mut self.not_equal, mask, None, hash),
-            OrderedPredicateKind::Never => {
-                self.never.remove(&hash);
-            }
-        }
-    }
-
-    fn len(&self) -> usize {
-        self.thresholds.values().flat_map(BTreeMap::values).map(B256Set::len).sum::<usize>()
-            + self.equal.values().flat_map(U256Map::values).map(B256Set::len).sum::<usize>()
-            + self.not_equal.values().map(B256Set::len).sum::<usize>()
-            + self.never.len()
+            OrderedPredicateKind::Never => self.never.remove(&hash),
+        };
+        self.len -= usize::from(removed);
     }
 
     fn extend_all(&self, target: &mut Vec<TxHash>) {
@@ -464,50 +455,66 @@ fn ordered_predicate(predicate: &ValidityPredicate) -> Option<(U256, OrderedPred
     Some((mask, kind))
 }
 
-fn remove_hash<M>(map: &mut U256Map<M>, mask: U256, value: Option<U256>, hash: TxHash)
+/// Removes `hash` from the `mask` group, pruning the group once it is empty, and returns whether
+/// `hash` was present.
+fn remove_hash<M>(map: &mut U256Map<M>, mask: U256, value: Option<U256>, hash: TxHash) -> bool
 where
     M: BucketMap,
 {
-    let remove_mask = map.get_mut(&mask).is_some_and(|bucket| bucket.remove_hash(value, hash));
-    if remove_mask {
+    let Some(bucket) = map.get_mut(&mask) else { return false };
+    let removed = bucket.remove_hash(value, hash);
+    if bucket.is_empty() {
         map.remove(&mask);
     }
+    removed
 }
 
 trait BucketMap {
+    /// Removes `hash` and returns whether it was present.
     fn remove_hash(&mut self, value: Option<U256>, hash: TxHash) -> bool;
+
+    fn is_empty(&self) -> bool;
 }
 
 impl BucketMap for BTreeMap<U256, B256Set> {
     fn remove_hash(&mut self, value: Option<U256>, hash: TxHash) -> bool {
         let value = value.expect("threshold index has a value");
-        if let Some(hashes) = self.get_mut(&value) {
-            hashes.remove(&hash);
-            if hashes.is_empty() {
-                self.remove(&value);
-            }
+        let Some(hashes) = self.get_mut(&value) else { return false };
+        let removed = hashes.remove(&hash);
+        if hashes.is_empty() {
+            self.remove(&value);
         }
-        self.is_empty()
+        removed
+    }
+
+    fn is_empty(&self) -> bool {
+        Self::is_empty(self)
     }
 }
 
 impl BucketMap for U256Map<B256Set> {
     fn remove_hash(&mut self, value: Option<U256>, hash: TxHash) -> bool {
         let value = value.expect("point index has a value");
-        if let Some(hashes) = self.get_mut(&value) {
-            hashes.remove(&hash);
-            if hashes.is_empty() {
-                self.remove(&value);
-            }
+        let Some(hashes) = self.get_mut(&value) else { return false };
+        let removed = hashes.remove(&hash);
+        if hashes.is_empty() {
+            self.remove(&value);
         }
-        self.is_empty()
+        removed
+    }
+
+    fn is_empty(&self) -> bool {
+        Self::is_empty(self)
     }
 }
 
 impl BucketMap for B256Set {
     fn remove_hash(&mut self, _: Option<U256>, hash: TxHash) -> bool {
-        self.remove(&hash);
-        self.is_empty()
+        self.remove(&hash)
+    }
+
+    fn is_empty(&self) -> bool {
+        Self::is_empty(self)
     }
 }
 
@@ -852,6 +859,58 @@ mod tests {
         );
         assert_eq!(index.remove(hash), Some(7));
         assert!(index.is_empty());
+    }
+
+    #[test]
+    fn ordered_bucket_depth_tracks_park_reindex_and_remove() {
+        let address = Address::with_last_byte(1);
+        let other_address = Address::with_last_byte(2);
+        let hashes: Vec<B256> = (1..=6).map(B256::with_last_byte).collect();
+        let mut index = ParkedPredicateIndex::new(1);
+        let depths = |index: &ParkedPredicateIndex<()>| {
+            let mut depths = index.bucket_depths().collect::<Vec<_>>();
+            depths.sort_unstable();
+            depths
+        };
+
+        for (hash, op, value) in [
+            (hashes[0], ValidityOperator::GreaterThanOrEqual, 10),
+            (hashes[1], ValidityOperator::GreaterThanOrEqual, 10),
+            (hashes[2], ValidityOperator::LessThan, 20),
+            (hashes[3], ValidityOperator::Equal, 30),
+            (hashes[4], ValidityOperator::NotEqual, 40),
+            (hashes[5], ValidityOperator::GreaterThan, u64::MAX),
+        ] {
+            index.park(hash, (), balance(address, op, value));
+        }
+        index.park(
+            hashes[5],
+            (),
+            ValidityPredicate::Balance {
+                address,
+                op: ValidityOperator::GreaterThan,
+                value: U256::MAX,
+            },
+        );
+        assert_eq!(depths(&index), vec![6]);
+
+        assert!(index.reindex(hashes[0], balance(address, ValidityOperator::Equal, 50)));
+        assert!(index.reindex(hashes[3], balance(address, ValidityOperator::Equal, 30)));
+        assert_eq!(depths(&index), vec![6]);
+
+        assert!(index.reindex(hashes[1], balance(other_address, ValidityOperator::Equal, 1)));
+        assert_eq!(depths(&index), vec![1, 5]);
+
+        for hash in &hashes[2..] {
+            assert_eq!(index.remove(*hash), Some(()));
+        }
+        assert_eq!(index.remove(hashes[2]), None);
+        assert_eq!(depths(&index), vec![1, 1]);
+
+        assert_eq!(index.remove(hashes[0]), Some(()));
+        assert_eq!(index.remove(hashes[1]), Some(()));
+        assert!(index.is_empty());
+        assert_eq!(depths(&index), Vec::<usize>::new());
     }
 
     #[test]
