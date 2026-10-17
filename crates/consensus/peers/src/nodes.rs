@@ -42,16 +42,6 @@ impl BootNodes {
     pub fn testnet() -> Self {
         Self::try_from(ChainConfig::sepolia()).expect("hardcoded bootnode should parse")
     }
-
-    /// Returns the length of the bootnodes.
-    pub const fn len(&self) -> usize {
-        self.0.len()
-    }
-
-    /// Returns if the bootnodes are empty.
-    pub const fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
 }
 
 #[cfg(test)]
