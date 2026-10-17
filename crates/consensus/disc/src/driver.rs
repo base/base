@@ -1,6 +1,6 @@
 //! Discovery Module.
 
-use std::{collections::HashMap, net::IpAddr, time::Instant};
+use std::net::SocketAddr;
 
 use backon::{ExponentialBuilder, RetryableWithContext};
 use base_consensus_peers::{
@@ -32,42 +32,17 @@ fn try_forward_enr(enr_sender: &Sender<Enr>, enr: Enr) -> bool {
     }
 }
 
-/// Minimum delay between pings sent to verify unverifiable ENRs advertising the same IP.
-const VERIFY_PING_COOLDOWN: Duration = Duration::from_secs(60);
-
-/// Maximum number of advertised IPs tracked by [`VerifyPingLimiter`].
-const VERIFY_PING_MAX_TRACKED_IPS: usize = 1024;
-
-/// Rate-limits pings sent to the socket advertised in an unverifiable ENR.
+/// Returns true if an unverifiable ENR should be verified by pinging the socket it advertises.
 ///
-/// The ENR is unverified, so a peer may advertise someone else's address. Keying the
-/// cooldown on the advertised IP bounds the traffic such a peer can direct at that address.
-#[derive(Debug, Default)]
-struct VerifyPingLimiter(HashMap<IpAddr, Instant>);
-
-impl VerifyPingLimiter {
-    /// Returns true if a verification ping to `ip` may be sent now, and records it.
-    fn allow(&mut self, ip: IpAddr, now: Instant) -> bool {
-        let fresh = |last: &Instant| now.duration_since(*last) < VERIFY_PING_COOLDOWN;
-        if self.0.get(&ip).is_some_and(fresh) {
-            return false;
-        }
-        if self.0.len() >= VERIFY_PING_MAX_TRACKED_IPS {
-            self.0.retain(|_, last| fresh(last));
-            if self.0.len() >= VERIFY_PING_MAX_TRACKED_IPS {
-                return false;
-            }
-        }
-        self.0.insert(ip, now);
-        true
-    }
-}
-
-/// Returns the IP of the UDP socket advertised in the ENR, if any.
-fn advertised_udp_ip(enr: &Enr) -> Option<IpAddr> {
-    enr.udp4_socket()
-        .map(|socket| IpAddr::V4(*socket.ip()))
-        .or_else(|| enr.udp6_socket().map(|socket| IpAddr::V6(*socket.ip())))
+/// Only ENRs whose packets arrive from the advertised IP on a different port qualify: the
+/// signature of port-translating NAT, such as a K8s hostPort. The ping can then only reach the
+/// sender's own IP, so a peer cannot use its ENR to aim traffic at a third party, and records
+/// advertising an address the peer does not send from (e.g. a private IP) are skipped.
+fn should_verify_advertised_socket(enr: &Enr, observed: SocketAddr) -> bool {
+    let advertised =
+        enr.udp4_socket().map(SocketAddr::V4).or_else(|| enr.udp6_socket().map(SocketAddr::V6));
+    advertised
+        .is_some_and(|advertised| advertised.ip().to_canonical() == observed.ip().to_canonical())
 }
 
 /// The [`Discv5Driver`] drives the discovery service.
@@ -214,7 +189,6 @@ impl Discv5Driver {
             let mut removal_interval = tokio::time::interval(remove_dur);
             let mut interval = tokio::time::interval(self.interval);
             let mut store_interval = tokio::time::interval(self.store_interval);
-            let mut verify_ping_limiter = VerifyPingLimiter::default();
 
             // Step 1: Start the discovery service.
             let Ok(s) = self.init().await else {
@@ -333,7 +307,7 @@ impl Discv5Driver {
                                     store.add_enr(enr);
                                 }
                             }
-                            discv5::Event::UnverifiableEnr { enr, .. }
+                            discv5::Event::UnverifiableEnr { enr, socket, .. }
                                 if EnrValidation::validate(&enr, chain_id).is_valid() =>
                             {
                                 debug!(target: "discovery", enr = ?enr, "Valid ENR discovered, forwarding to swarm");
@@ -345,18 +319,16 @@ impl Discv5Driver {
                                 // sessions they start, so they are never handed out to other peers.
                                 // Ping the advertised socket instead: if it answers, discv5 sets up a
                                 // verified session and adds the node to the table.
-                                if let Some(ip) = advertised_udp_ip(&enr)
-                                    && verify_ping_limiter.allow(ip, Instant::now())
-                                {
+                                if should_verify_advertised_socket(&enr, socket) {
                                     let ping = self.disc.send_ping(enr.clone());
                                     tokio::spawn(async move {
                                         match ping.await {
                                             Ok(_) => {
-                                                debug!(target: "discovery", %ip, "Unverifiable ENR answered ping at its advertised socket");
+                                                debug!(target: "discovery", observed = %socket, "Unverifiable ENR answered ping at its advertised socket");
                                                 Metrics::discovery_event("unverifiable_enr_verified").increment(1.0);
                                             }
                                             Err(err) => {
-                                                debug!(target: "discovery", %ip, error = ?err, "Unverifiable ENR did not answer ping at its advertised socket");
+                                                debug!(target: "discovery", observed = %socket, error = ?err, "Unverifiable ENR did not answer ping at its advertised socket");
                                             }
                                         }
                                     });
@@ -425,7 +397,10 @@ impl Discv5Driver {
 
 #[cfg(test)]
 mod tests {
-    use std::net::{Ipv4Addr, SocketAddr};
+    use std::{
+        net::{IpAddr, Ipv4Addr, SocketAddr},
+        time::Instant,
+    };
 
     use base_common_chains::ChainConfig;
     use discv5::{
@@ -629,15 +604,24 @@ mod tests {
     }
 
     #[test]
-    fn verify_ping_limiter_enforces_cooldown_per_ip() {
-        let mut limiter = VerifyPingLimiter::default();
-        let now = Instant::now();
-        let ip = IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1));
+    fn verifies_only_unverifiable_enrs_sent_from_their_advertised_ip() {
+        let advertised_ip = Ipv4Addr::new(192, 0, 2, 1);
+        let key = CombinedKey::generate_secp256k1();
+        let enr = Enr::builder().ip4(advertised_ip).udp4(30222).build(&key).unwrap();
 
-        assert!(limiter.allow(ip, now));
-        assert!(!limiter.allow(ip, now + VERIFY_PING_COOLDOWN / 2));
-        assert!(limiter.allow(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 2)), now));
-        assert!(limiter.allow(ip, now + VERIFY_PING_COOLDOWN));
+        // Same IP, translated port: port-translating NAT.
+        assert!(should_verify_advertised_socket(&enr, SocketAddr::from((advertised_ip, 51873))));
+        // Same IP, seen as an IPv4-mapped IPv6 source on a dual-stack socket.
+        let mapped = IpAddr::V6(advertised_ip.to_ipv6_mapped());
+        assert!(should_verify_advertised_socket(&enr, SocketAddr::new(mapped, 51873)));
+        // Different IP: e.g. a private advertised address, or someone else's.
+        let other = SocketAddr::from((Ipv4Addr::new(198, 51, 100, 7), 30222));
+        assert!(!should_verify_advertised_socket(&enr, other));
+        // No UDP socket advertised.
+        assert!(!should_verify_advertised_socket(
+            &test_enr(),
+            SocketAddr::from((advertised_ip, 51873))
+        ));
     }
 
     /// Reserves a free localhost UDP port.
