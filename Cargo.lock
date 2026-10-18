@@ -5304,7 +5304,6 @@ dependencies = [
  "derive_more 2.1.1",
  "proptest",
  "revm",
- "rstest",
  "thiserror 2.0.19",
  "tracing",
 ]
@@ -5381,7 +5380,6 @@ dependencies = [
  "alloy-transport",
  "async-trait",
  "futures",
- "rstest",
  "serde_json",
  "thiserror 2.0.19",
  "tracing",
