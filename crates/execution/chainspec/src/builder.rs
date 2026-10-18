@@ -4,7 +4,7 @@ use alloy_hardforks::Hardfork;
 use alloy_primitives::Address;
 use base_common_genesis::BaseUpgrade;
 use reth_chainspec::ChainSpecBuilder;
-use reth_ethereum_forks::{ChainHardforks, EthereumHardfork, ForkCondition};
+use reth_ethereum_forks::{EthereumHardfork, ForkCondition};
 use reth_primitives_traits::SealedHeader;
 
 use crate::{BaseChainSpec, BaseChainSpecError};
@@ -61,12 +61,6 @@ impl BaseChainSpecBuilder {
         self
     }
 
-    /// Add the given forks with the given activation condition to the spec.
-    pub fn with_forks(mut self, forks: ChainHardforks) -> Self {
-        self.inner = self.inner.with_forks(forks);
-        self
-    }
-
     /// Set the activation registry admin address.
     pub const fn activation_admin_address(mut self, address: Address) -> Self {
         self.activation_admin_address = Some(address);
@@ -82,12 +76,6 @@ impl BaseChainSpecBuilder {
     /// Set the legacy L2 block interval in seconds.
     pub const fn block_time(mut self, block_time: u64) -> Self {
         self.block_time = Some(block_time);
-        self
-    }
-
-    /// Remove the given fork from the spec.
-    pub fn without_fork(mut self, fork: BaseUpgrade) -> Self {
-        self.inner = self.inner.without_fork(fork);
         self
     }
 
