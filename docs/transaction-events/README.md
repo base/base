@@ -334,7 +334,10 @@ replaced it), `expired` (pool maintenance passed `expiryBlock`),
 `budget_exhausted`, `revoked`, `permanent_exclusion`, `nonce_consumed`, or
 `dropped`. `nonce_consumed` is journaled when a canonical block advances the
 sender's nonce past the group's without a sibling landing, for example through
-a sponsor's EIP-7702 authorization or a plain same-nonce transaction. A group
+a sponsor's EIP-7702 authorization or a plain same-nonce transaction, or when
+an admission that was still settling at that block settles. The group's sibling
+hashes stay suppressed until the recovery window closes, so a reorg cannot
+reinsert a sibling without its group. A group
 that left the pool another way, such as admin removal or pool-full eviction, is
 `dropped` only once the recovery window closes, because a canonical landing can
 still correct it.
