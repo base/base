@@ -2,7 +2,6 @@
 //!
 //! Provides test utilities for flashblocks including:
 //! - [`FlashblocksHarness`] - High-level test harness wrapping [`TestHarness`]
-//! - [`FlashblocksParts`] - Components for interacting with flashblocks worker tasks
 //! - [`FlashblocksTestExtension`] - Node extension for wiring up flashblocks in tests
 //! - [`FlashblockBuilder`] - Test helper for building flashblocks
 //! - [`FlashblocksBuilderTestHarness`] - Test harness builder for building flashblocks
@@ -53,34 +52,6 @@ use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 // so it can be processed by the state processor
 const SLEEP_TIME: u64 = 10;
 
-/// Components that allow tests to interact with the Flashblocks worker tasks.
-#[derive(Clone)]
-pub struct FlashblocksParts {
-    sender: mpsc::Sender<(Flashblock, oneshot::Sender<()>)>,
-    state: Arc<FlashblocksState>,
-}
-
-impl fmt::Debug for FlashblocksParts {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("FlashblocksParts").finish_non_exhaustive()
-    }
-}
-
-impl FlashblocksParts {
-    /// Clone the shared [`FlashblocksState`] handle.
-    pub fn state(&self) -> Arc<FlashblocksState> {
-        Arc::clone(&self.state)
-    }
-
-    /// Send a flashblock to the background processor and wait until it is handled.
-    pub async fn send(&self, flashblock: Flashblock) -> Result<()> {
-        let (tx, rx) = oneshot::channel();
-        self.sender.send((flashblock, tx)).await.map_err(|err| eyre::eyre!(err))?;
-        rx.await.map_err(|err| eyre::eyre!(err))?;
-        Ok(())
-    }
-}
-
 /// Test extension for flashblocks functionality.
 ///
 /// This extension wires up the flashblocks canonical subscription and RPC modules for testing,
@@ -122,12 +93,12 @@ impl FlashblocksTestExtension {
         Self { inner: Arc::new(inner) }
     }
 
-    /// Get the flashblocks parts after the node has been launched.
-    pub fn parts(&self) -> Result<FlashblocksParts> {
-        Ok(FlashblocksParts {
-            sender: self.inner.sender.clone(),
-            state: Arc::clone(&self.inner.state),
-        })
+    /// Send a flashblock to the background processor and wait until it is handled.
+    pub async fn send(&self, flashblock: Flashblock) -> Result<()> {
+        let (tx, rx) = oneshot::channel();
+        self.inner.sender.send((flashblock, tx)).await.map_err(|err| eyre::eyre!(err))?;
+        rx.await.map_err(|err| eyre::eyre!(err))?;
+        Ok(())
     }
 }
 
@@ -140,14 +111,11 @@ impl BaseNodeExtension for FlashblocksTestExtension {
         let state_for_start = Arc::clone(&state);
         let state_for_rpc = state;
 
-        // Start state processor and subscriptions after node is started
         let hooks = hooks.add_node_started_hook(move |ctx| {
             let provider = ctx.provider().clone();
 
-            // Start the state processor with the provider
             state_for_start.start(provider.clone());
 
-            // Spawn a task to forward canonical state notifications to the in-memory state
             let provider_for_notify = provider;
             let mut canon_notify_stream =
                 BroadcastStream::new(ctx.provider().subscribe_to_canonical_state());
@@ -159,7 +127,6 @@ impl BaseNodeExtension for FlashblocksTestExtension {
                 }
             });
 
-            // If process_canonical is enabled, spawn a task to process canonical blocks
             if process_canonical {
                 let state_for_canonical = state_for_start;
                 let mut canonical_stream =
@@ -187,7 +154,6 @@ impl BaseNodeExtension for FlashblocksTestExtension {
             );
             ctx.modules.replace_configured(api_ext.into_rpc())?;
 
-            // Register eth_subscribe subscription endpoint for flashblocks
             // Uses replace_configured since eth_subscribe already exists from reth's standard module
             // Pass eth_api to enable proxying standard subscription types to reth's implementation
             let eth_pubsub = EthPubSub::new(
@@ -220,7 +186,7 @@ impl BaseNodeExtension for FlashblocksTestExtension {
 pub struct FlashblocksHarness {
     #[deref]
     inner: TestHarness,
-    parts: FlashblocksParts,
+    extension: FlashblocksTestExtension,
 }
 
 impl FlashblocksHarness {
@@ -236,38 +202,31 @@ impl FlashblocksHarness {
 
     /// Get a handle to the in-memory Flashblocks state backing the harness.
     pub fn flashblocks_state(&self) -> Arc<FlashblocksState> {
-        self.parts.state()
+        Arc::clone(&self.extension.inner.state)
     }
 
     /// Send a single flashblock through the harness.
     pub async fn send_flashblock(&self, flashblock: Flashblock) -> Result<()> {
-        self.parts.send(flashblock).await
+        self.extension.send(flashblock).await
     }
 
     async fn with_options(process_canonical: bool) -> Result<Self> {
         init_silenced_tracing();
 
-        // Build default chain spec programmatically
         let genesis = build_test_genesis_azul();
         let chain_spec = Arc::new(BaseChainSpec::from_genesis(genesis));
 
-        // Create the extension and keep a reference to get parts after launch
         let extension = FlashblocksTestExtension::new(process_canonical);
-        let parts_source = extension.clone();
 
-        // Launch the node with the flashblocks extension
-        let node = LocalNode::new(vec![Box::new(extension)], chain_spec).await?;
+        let node = LocalNode::new(vec![Box::new(extension.clone())], chain_spec).await?;
         let engine = node.engine_api()?;
 
         tokio::time::sleep(Duration::from_millis(NODE_STARTUP_DELAY_MS)).await;
 
-        // Get the parts from the extension after node launch
-        let parts = parts_source.parts()?;
-
-        // Create harness by building it directly (avoiding TestHarnessBuilder since we already have node)
+        // Avoid TestHarnessBuilder because the node already exists.
         let inner = TestHarness::from_parts(node, engine);
 
-        Ok(Self { inner, parts })
+        Ok(Self { inner, extension })
     }
 }
 
@@ -358,21 +317,12 @@ impl FlashblocksBuilderTestHarness {
         to: Account,
         amount: u128,
     ) -> BaseTransactionSigned {
-        let txn = TransactionBuilder::default()
-            .signer(Self::decode_private_key(from))
-            .chain_id(self.provider.chain_spec().chain_id())
-            .to(to.address())
-            .nonce(self.account_state(from).nonce)
-            .value(amount)
-            .gas_limit(21_000)
-            .max_fee_per_gas(1_000_000_000)
-            .max_priority_fee_per_gas(1_000_000_000)
-            .into_eip1559()
-            .as_eip1559()
-            .unwrap()
-            .clone();
-
-        BaseTransactionSigned::Eip1559(txn)
+        self.build_transaction_to_send_eth_with_nonce(
+            from,
+            to,
+            amount,
+            self.account_state(from).nonce,
+        )
     }
 
     /// Build a transaction to send ETH from one account to another with a specific nonce.
