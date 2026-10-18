@@ -56,10 +56,12 @@ cannot make an unlatched health check succeed unless it is valid onchain.
 
 New-image provers pass `/healthz` but cannot prove until the onchain task
 executes, and old-image provers stop proving once it does. Run the new provers
-alongside the old ones, for example in a separate ASG or target group, and retire
-the old provers only after the task lands. A rolling instance refresh of the
-existing fleet would replace the old provers early and stop proving until the
-task executes.
+alongside the old ones in a separate ASG attached to the target group the
+registrar watches, and retire the old provers only after the task lands. Do not
+use a separate target group: the registrar only registers instances in its
+configured target group and deregisters every other onchain signer as an orphan.
+A rolling instance refresh of the existing fleet would replace the old provers
+early and stop proving until the task executes.
 
 ## Security Model
 

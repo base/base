@@ -100,7 +100,7 @@ digest = "8cb5c613d8"
 
 ["bin/prover/nitro-host/README.md"]
 summary = "Nitro TEE prover host worker: server and local subcommands, env setup, registration-gated health, pending image rollout, and the internal-only RPC security model."
-digest = "df291c806c"
+digest = "8295c3cb02"
 
 ["bin/prover/service/README.md"]
 summary = "Prover service binary: Postgres-backed requester and worker JSON-RPC APIs that queue proofs and lease jobs to external workers; covers the security model for the unauthenticated APIs."
