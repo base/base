@@ -309,7 +309,8 @@ impl DaTracker {
         self.last_attributed_safe_l2 = safe_block;
     }
 
-    /// Adds a block from the initial backlog fetch.
+    /// Prepends a block contribution, evicting the oldest past `MAX_HISTORY`.
+    /// Does not update backlog totals or growth samples.
     pub fn add_backlog_block(&mut self, block_number: u64, da_bytes: u64, timestamp: u64) {
         let contribution = BlockContribution { block_number, da_bytes, timestamp, tx_count: 0 };
         self.block_contributions.push_front(contribution);
@@ -327,11 +328,7 @@ impl DaTracker {
         self.da_backlog_bytes = self.da_backlog_bytes.saturating_add(da_bytes);
         self.growth_tracker.add_sample(da_bytes);
 
-        let contribution = BlockContribution { block_number, da_bytes, timestamp, tx_count: 0 };
-        self.block_contributions.push_front(contribution);
-        if self.block_contributions.len() > MAX_HISTORY {
-            self.block_contributions.pop_back();
-        }
+        self.add_backlog_block(block_number, da_bytes, timestamp);
     }
 
     /// Updates an existing block's DA bytes with accurate data from a full fetch.
