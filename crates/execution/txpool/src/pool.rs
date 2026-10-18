@@ -4350,10 +4350,105 @@ mod tests {
                 base_execution_candidates::EvictionReason::NonceConsumed
             )
         );
-        assert!(!runtime.ledger.suppresses_plain_reinsertion(&group.siblings()[1].hash()));
+        assert!(
+            runtime.ledger.suppresses_plain_reinsertion(&group.siblings()[1].hash()),
+            "reinjection tombstones outlive the terminal until prune"
+        );
         let terminals = candidate_events(&capture, &runtime, &group);
         assert_eq!(terminals.len(), 1, "journaled once, before the recovery window: {terminals:?}");
         assert_eq!(terminals[0].data["terminal_reason"], "nonce_consumed");
+    }
+
+    /// Applies a canonical update at `number` that sets `sender`'s nonce and mines `mined`.
+    fn canonical_nonce_update(
+        pool: &IntegrationPool,
+        number: u64,
+        sender: Address,
+        nonce: u64,
+        mined: Vec<TxHash>,
+        update_kind: PoolUpdateKind,
+    ) {
+        let block = SealedBlock::seal_slow(BaseBlock {
+            header: alloy_consensus::Header {
+                number,
+                gas_limit: pool.block_info().block_gas_limit,
+                timestamp: INTEGRATION_POOL_NOW_SECS,
+                ..Default::default()
+            },
+            body: Default::default(),
+        });
+        pool.on_canonical_state_change(CanonicalStateUpdate {
+            new_tip: &block,
+            pending_block_base_fee: 0,
+            pending_block_blob_fee: None,
+            changed_accounts: vec![ChangedAccount { address: sender, nonce, balance: U256::MAX }],
+            mined_transactions: mined,
+            update_kind,
+        });
+    }
+
+    #[tokio::test]
+    async fn nonce_consumed_between_insertion_and_settlement_ends_the_group() {
+        let capture = base_observability_events::TransactionEventCapture::install();
+        let (pool, client) = build_integration_pool();
+        let runtime = candidate_runtime();
+        let pool = pool.with_candidate_runtime(Arc::clone(&runtime));
+        let (group, representative) = candidate_submission(&client, &runtime);
+        let hash = group.representative().hash();
+        pool.add_transaction(TransactionOrigin::Private, representative)
+            .await
+            .expect("the representative carrying its group is admitted");
+
+        // Canonical maintenance runs after the insertion but before ingress settles it.
+        canonical_nonce_update(
+            &pool,
+            1,
+            group.sender(),
+            group.nonce() + 1,
+            Vec::new(),
+            PoolUpdateKind::Commit,
+        );
+        assert!(pool.get(&hash).is_none(), "maintenance removed the stale representative");
+        runtime.ledger.confirm_pooled(group.group_hash(), |hash| pool.get(hash).is_some());
+
+        let entry = runtime.ledger.lookup(&group.group_hash()).expect("ledger keeps the entry");
+        assert_eq!(
+            entry.state,
+            base_execution_candidates::GroupState::Evicted(
+                base_execution_candidates::EvictionReason::NonceConsumed
+            )
+        );
+        let terminals = candidate_events(&capture, &runtime, &group);
+        assert_eq!(terminals.len(), 1, "journaled once at settlement: {terminals:?}");
+        assert_eq!(terminals[0].data["terminal_reason"], "nonce_consumed");
+    }
+
+    #[tokio::test]
+    async fn reorged_out_sibling_stays_suppressed_after_nonce_consumed() {
+        let (pool, client) = build_integration_pool();
+        let runtime = candidate_runtime();
+        let pool = pool.with_candidate_runtime(Arc::clone(&runtime));
+        let (group, representative) = candidate_submission(&client, &runtime);
+        pool.add_transaction(TransactionOrigin::Private, representative)
+            .await
+            .expect("the representative carrying its group is admitted");
+        runtime.ledger.confirm_pooled(group.group_hash(), |hash| pool.get(hash).is_some());
+        let sibling = group.siblings()[1].hash();
+
+        // An unrelated transaction consumes the nonce. A competing branch built earlier mined
+        // sibling S instead, and a further reorg drops S and restores the nonce.
+        canonical_nonce_update(&pool, 1, group.sender(), 1, Vec::new(), PoolUpdateKind::Commit);
+        canonical_nonce_update(&pool, 1, group.sender(), 1, vec![sibling], PoolUpdateKind::Reorg);
+        canonical_nonce_update(&pool, 1, group.sender(), 0, Vec::new(), PoolUpdateKind::Reorg);
+        fund(&client, group.sender());
+
+        // Reth reinjects S without its group, as an external plain transaction.
+        let err = pool
+            .add_transaction(TransactionOrigin::External, plain_sibling(&group, 1))
+            .await
+            .expect_err("a reorged-out sibling stays suppressed through the recovery window");
+        assert!(matches!(err.kind, PoolErrorKind::Other(_)), "got {err:?}");
+        assert!(pool.get(&sibling).is_none());
     }
 
     #[tokio::test]

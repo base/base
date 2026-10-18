@@ -111,6 +111,10 @@ pub struct GroupLedgerEntry {
     /// A terminal event was journaled for this group. Set under the ledger lock by the
     /// transition that journals it, so a group never gets a second terminal.
     pub terminal_journaled: bool,
+    /// A canonical block advanced the sender's nonce past the group's while its admission was
+    /// still `Pending`. Settlement ends the group as `NonceConsumed` if the pool no longer holds
+    /// its representative.
+    pub canonical_nonce_passed: bool,
 }
 
 impl GroupLedgerEntry {
@@ -372,6 +376,7 @@ impl GroupLedger {
                 permanently_ineligible: vec![false; siblings],
                 last_commit: None,
                 terminal_journaled: false,
+                canonical_nonce_passed: false,
             },
         );
         Ok(LedgerAdmission::Created)
@@ -397,6 +402,11 @@ impl GroupLedger {
     /// concurrent `Pending` admission is still inserting and settles itself. When this group's
     /// own representative is already gone because such a group replaced it first, this group
     /// is the replaced one. `is_pooled` reports whether a transaction hash is in the pool.
+    ///
+    /// A representative that is already gone without such a replacement was removed after its
+    /// insertion: by canonical maintenance after the sender's nonce passed the group's, a final
+    /// `Evicted(NonceConsumed)`, or by another path, a provisional `Evicted(Dropped)`. It is
+    /// never marked `Pooled`.
     pub fn confirm_pooled(&self, group_hash: B256, is_pooled: impl Fn(&TxHash) -> bool) {
         let mut terminals = Vec::new();
         {
@@ -427,8 +437,16 @@ impl GroupLedger {
                 if superseded {
                     entry.state = GroupState::Replaced;
                     terminals.extend(entry.take_terminal(TerminalOutcome::Replaced));
-                } else {
+                } else if pooled {
                     entry.state = GroupState::Pooled;
+                } else if entry.canonical_nonce_passed {
+                    entry.state = GroupState::Evicted(EvictionReason::NonceConsumed);
+                    terminals
+                        .extend(entry.take_terminal(TerminalOutcome::Evicted(
+                            EvictionReason::NonceConsumed,
+                        )));
+                } else {
+                    entry.state = GroupState::Evicted(EvictionReason::Dropped);
                 }
             }
         }
@@ -574,10 +592,13 @@ impl GroupLedger {
     /// Run after [`Self::record_landed`] for the same block, so a group whose own sibling used
     /// the nonce lands instead. Otherwise another transaction consumed it, such as a sponsor's
     /// EIP-7702 authorization signed by the sender, and no sibling can execute: a pooled or
-    /// provisionally dropped group becomes a final `Evicted(NonceConsumed)`, journaled now. Its
-    /// sibling tombstones are released at once because no sibling can enter the pool again;
-    /// the entry stays until prune, so resubmission is still `group_terminal`. A `Pending`
-    /// admission is left to settle from its own insertion.
+    /// provisionally dropped group becomes a final `Evicted(NonceConsumed)`, journaled now, and
+    /// stops holding its sender's slot. A `Pending` admission is only flagged: its settlement in
+    /// [`Self::confirm_pooled`] decides, because its insertion may not have happened yet.
+    ///
+    /// Sibling tombstones stay until [`Self::prune`]. A reorg can restore the nonce after a
+    /// competing branch mined a sibling, and reth then reinjects that sibling without its
+    /// group; the tombstone keeps it out of the pool as a plain transaction.
     pub fn record_nonces(&self, accounts: impl IntoIterator<Item = (Address, u64)>) {
         let nonces: HashMap<Address, u64> = accounts.into_iter().collect();
         if nonces.is_empty() {
@@ -586,24 +607,23 @@ impl GroupLedger {
         let mut terminals = Vec::new();
         {
             let mut state = self.state.lock();
-            let mut consumed = Vec::new();
             for entry in state.entries.values_mut() {
-                let open = entry.state == GroupState::Pooled
-                    || entry.state == GroupState::Evicted(EvictionReason::Dropped);
                 let passed = nonces
                     .get(&entry.group.sender())
                     .is_some_and(|nonce| *nonce > entry.group.nonce());
-                if open && passed {
-                    entry.state = GroupState::Evicted(EvictionReason::NonceConsumed);
-                    terminals
-                        .extend(entry.take_terminal(TerminalOutcome::Evicted(
+                if !passed {
+                    continue;
+                }
+                match entry.state {
+                    GroupState::Pending => entry.canonical_nonce_passed = true,
+                    GroupState::Pooled | GroupState::Evicted(EvictionReason::Dropped) => {
+                        entry.state = GroupState::Evicted(EvictionReason::NonceConsumed);
+                        terminals.extend(entry.take_terminal(TerminalOutcome::Evicted(
                             EvictionReason::NonceConsumed,
                         )));
-                    consumed.push(Arc::clone(&entry.group));
+                    }
+                    _ => {}
                 }
-            }
-            for group in &consumed {
-                state.release_tombstones(group);
             }
         }
         self.journal(&terminals);
@@ -1161,7 +1181,10 @@ mod tests {
             GroupState::Evicted(EvictionReason::NonceConsumed)
         );
         assert_eq!(terminals(&capture, &ledger, &consumed), [evicted("nonce_consumed")]);
-        assert!(!ledger.suppresses_plain_reinsertion(&sibling), "tombstones are released");
+        assert!(
+            ledger.suppresses_plain_reinsertion(&sibling),
+            "tombstones guard reorg reinjection until prune"
+        );
         // The sender's only slot is free for its next nonce; the consumed group stays terminal.
         admit(&ledger, &group(&fixture, 1, 3, 0), &[]);
         assert_eq!(
@@ -1172,6 +1195,54 @@ mod tests {
         ledger.record_nonces([(fixture.address(), 1)]);
         ledger.prune(1_000);
         assert_eq!(terminals(&capture, &ledger, &consumed), [evicted("nonce_consumed")]);
+        assert!(!ledger.suppresses_plain_reinsertion(&sibling), "prune releases tombstones");
+    }
+
+    #[test]
+    fn settlement_after_canonical_nonce_consumption_ends_the_group() {
+        let capture = TransactionEventCapture::install();
+        let ledger = GroupLedger::default();
+        let fixture = CandidateFixture::new(CHAIN_ID);
+        let in_flight = group(&fixture, 0, 1, 0);
+        pending(&ledger, &in_flight);
+
+        // Maintenance consumed the nonce and removed the inserted representative before
+        // ingress settled the admission.
+        ledger.record_nonces([(fixture.address(), 1)]);
+        assert_eq!(ledger.lookup(&in_flight.group_hash()).unwrap().state, GroupState::Pending);
+        ledger.confirm_pooled(in_flight.group_hash(), empty_pool);
+
+        assert_eq!(
+            ledger.lookup(&in_flight.group_hash()).unwrap().state,
+            GroupState::Evicted(EvictionReason::NonceConsumed)
+        );
+        assert_eq!(terminals(&capture, &ledger, &in_flight), [evicted("nonce_consumed")]);
+        assert!(ledger.suppresses_plain_reinsertion(&in_flight.siblings()[1].hash()));
+    }
+
+    #[test]
+    fn settlement_without_a_pooled_representative_is_not_pooled() {
+        let capture = TransactionEventCapture::install();
+        let ledger = GroupLedger::default();
+        let fixture = CandidateFixture::new(CHAIN_ID);
+        let removed = group(&fixture, 0, 1, 0);
+        pending(&ledger, &removed);
+
+        // Something else removed the representative after its insertion succeeded.
+        ledger.confirm_pooled(removed.group_hash(), empty_pool);
+
+        assert_eq!(
+            ledger.lookup(&removed.group_hash()).unwrap().state,
+            GroupState::Evicted(EvictionReason::Dropped)
+        );
+        // Provisional, so a canonical landing can still correct it, but the slot is free.
+        assert!(terminals(&capture, &ledger, &removed).is_empty());
+        admit(&ledger, &group(&fixture, 1, 3, 0), &[]);
+        ledger.record_landed(&[removed.siblings()[0].hash()], 1, B256::repeat_byte(0xbb));
+        assert_eq!(
+            terminals(&capture, &ledger, &removed),
+            [(TransactionEventType::TxpoolCandidateLanded, "\"landed\"".to_string())]
+        );
     }
 
     #[test]
