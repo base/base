@@ -99,7 +99,10 @@ impl BaseZkvmPrecompiles {
         spec: BaseSpecId,
         activation_admin_address: Option<Address>,
     ) -> Self {
-        let inner = Self::installed_precompiles(spec, activation_admin_address);
+        let mut inner = BasePrecompiles::new_with_spec(spec)
+            .with_activation_admin_address(activation_admin_address)
+            .install_with_observer(Sp1CycleObserver);
+        Self::install_cycle_trackers(&mut inner);
 
         Self { inner, spec, activation_admin_address }
     }
@@ -108,17 +111,6 @@ impl BaseZkvmPrecompiles {
     #[inline]
     pub fn with_activation_admin_address(self, activation_admin_address: Option<Address>) -> Self {
         Self::new_with_spec_and_activation_admin_address(self.spec, activation_admin_address)
-    }
-
-    fn installed_precompiles(
-        spec: BaseSpecId,
-        activation_admin_address: Option<Address>,
-    ) -> PrecompilesMap {
-        let mut precompiles = BasePrecompiles::new_with_spec(spec)
-            .with_activation_admin_address(activation_admin_address)
-            .install_with_observer(Sp1CycleObserver);
-        Self::install_cycle_trackers(&mut precompiles);
-        precompiles
     }
 
     #[cfg(target_os = "zkvm")]
