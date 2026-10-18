@@ -6758,6 +6758,7 @@ dependencies = [
  "base-common-consensus",
  "base-common-network",
  "base-common-rpc-types",
+ "base-proof-contracts",
  "base-protocol",
  "clap",
  "coins-bip32",
