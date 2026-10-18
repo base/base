@@ -136,6 +136,7 @@ base_metrics::define_metrics! {
     game_finality_time_seconds: histogram,
 
     #[describe("Challenger account balance in wei")]
+    #[no_zero]
     account_balance_wei: gauge,
 }
 
@@ -179,4 +180,39 @@ impl ChallengerMetrics {
     /// (e.g. signature or root mismatch) and is being retried via the ZK
     /// fallback path.
     pub const PROOF_FAILURE_TEE_VALIDATION: &str = "tee_validation_failed";
+}
+
+#[cfg(all(test, feature = "metrics"))]
+mod tests {
+    use metrics_util::{
+        MetricKind,
+        debugging::{DebugValue, DebuggingRecorder},
+    };
+
+    use super::ChallengerMetrics;
+
+    #[test]
+    fn balance_is_absent_until_observed_including_zero() {
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        metrics::with_local_recorder(&recorder, || {
+            ChallengerMetrics::init();
+            assert!(
+                !snapshotter.snapshot().into_vec().iter().any(|(key, _, _, _)| {
+                    key.key().name() == "base_challenger.account_balance_wei"
+                }),
+                "balance must be absent before a successful read"
+            );
+
+            ChallengerMetrics::account_balance_wei().set(0.0);
+            assert!(
+                snapshotter.snapshot().into_vec().iter().any(|(key, _, _, value)| {
+                    key.kind() == MetricKind::Gauge
+                        && key.key().name() == "base_challenger.account_balance_wei"
+                        && *value == DebugValue::Gauge(0.0.into())
+                }),
+                "an observed zero balance must be published"
+            );
+        });
+    }
 }
