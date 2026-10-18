@@ -113,12 +113,6 @@ impl ReorgDetectionResult {
     pub const fn is_reorg(&self) -> bool {
         matches!(self, Self::ReorgDetected { .. })
     }
-
-    /// Returns `true` if no reorganization was detected.
-    #[inline]
-    pub const fn is_no_reorg(&self) -> bool {
-        matches!(self, Self::NoReorg)
-    }
 }
 
 /// Detects chain reorganizations by comparing transaction hash sets.
