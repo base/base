@@ -173,13 +173,9 @@ impl TxDeposit {
         self.rlp_encoded_length() + 1
     }
 
-    fn network_header(&self) -> Header {
-        Header { list: false, payload_length: self.eip2718_encoded_length() }
-    }
-
     /// Network encode the transaction with the given signature.
     pub fn network_encode(&self, out: &mut dyn BufMut) {
-        self.network_header().encode(out);
+        Header { list: false, payload_length: self.eip2718_encoded_length() }.encode(out);
         self.encode_2718(out);
     }
 
