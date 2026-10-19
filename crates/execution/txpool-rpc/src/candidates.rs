@@ -147,21 +147,30 @@ pub struct PendingAdmission<Pool: TransactionPool> {
 
 impl<Pool: TransactionPool> PendingAdmission<Pool> {
     /// Confirms or aborts the ledger entry, removes the in-flight receiver and wakes waiting
-    /// duplicates. Later calls do nothing.
-    pub fn settle(&mut self, inserted: bool) {
-        let Some(outcome) = self.outcome.take() else { return };
-        {
+    /// duplicates. Later calls do nothing and return `false`.
+    ///
+    /// Returns whether the group was accepted. An inserted representative is not accepted when
+    /// the ledger ended the group at settlement because a canonical block consumed its nonce
+    /// after validation; that stale representative is removed from the pool.
+    pub fn settle(&mut self, inserted: bool) -> bool {
+        let Some(outcome) = self.outcome.take() else { return false };
+        let stale = {
             let mut inflight = self.inflight.lock().unwrap_or_else(PoisonError::into_inner);
             inflight.remove(&self.group_hash);
             if inserted {
-                self.runtime
-                    .ledger
-                    .confirm_pooled(self.group_hash, |hash| self.pool.contains(hash));
+                self.runtime.ledger.confirm_pooled(self.group_hash, |hash| self.pool.contains(hash))
             } else {
                 self.runtime.ledger.abort(self.group_hash);
+                None
             }
+        };
+        if let Some(stale) = stale {
+            debug!(group_hash = %self.group_hash, representative = %stale, "removing stale candidate representative");
+            self.pool.remove_transactions(vec![stale]);
         }
-        outcome.send_replace(Some(inserted));
+        let accepted = inserted && stale.is_none();
+        outcome.send_replace(Some(accepted));
+        accepted
     }
 }
 
@@ -451,7 +460,11 @@ where
         )
         .await;
         match inserted {
-            Ok(Ok(_)) => admission.settle(true),
+            Ok(Ok(_)) => {
+                if !admission.settle(true) {
+                    return Err(Self::reject(&CandidateError::GroupTerminal));
+                }
+            }
             Ok(Err(error)) => {
                 admission.settle(false);
                 trace.pool_rejected = true;
@@ -459,10 +472,13 @@ where
             }
             Err(_) => {
                 let pooled = self.pool.contains(&response.representative_hash);
-                admission.settle(pooled);
+                let accepted = admission.settle(pooled);
                 if !pooled {
                     debug!(group_hash = %response.group_hash, "candidate admission timed out");
                     return Err(Self::reject(&CandidateError::AdmissionTimedOut));
+                }
+                if !accepted {
+                    return Err(Self::reject(&CandidateError::GroupTerminal));
                 }
             }
         }
@@ -1254,6 +1270,39 @@ mod tests {
         };
         assert_eq!(terminals(&first), [serde_json::json!("replaced")]);
         assert_eq!(terminals(&second), [serde_json::json!("landed")]);
+    }
+
+    #[tokio::test]
+    async fn admission_whose_nonce_is_consumed_during_insertion_is_terminal() {
+        let capture = TransactionEventCapture::install();
+        let fixture = CandidateFixture::with_key(chain_id(), 0x75);
+        let runtime = runtime(&[fixture.address()]);
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        let api = gated_rpc(GatedValidator { gate: Arc::clone(&gate), accept: true }, &runtime);
+        let (siblings, options) = request(&fixture);
+        let group = fixture.group(&siblings.0, options.envelope.clone());
+
+        let first = tokio::spawn({
+            let api = api.clone();
+            async move { api.send_raw_transaction_candidates(siblings, options).await }
+        });
+        until_pending(&runtime).await;
+        // A canonical block consumes the nonce while the insertion is in flight, and the pool
+        // still accepts the outcome validated before it.
+        runtime.ledger.record_nonces([(group.sender(), group.nonce() + 1)]);
+        gate.add_permits(1);
+
+        let error = first.await.unwrap().expect_err("the group ended at settlement");
+        assert_eq!(label(&error), "group_terminal");
+        assert!(!api.pool.contains(&group.representative().hash()), "stale representative removed");
+        assert_eq!(runtime.ledger.counts(), (0, 1), "the sender's slot is free");
+        assert!(api.lock_inflight().is_empty());
+        let terminals: Vec<_> = group_events(&capture, group.group_hash())
+            .into_iter()
+            .filter(|(kind, _, _)| *kind == TransactionEventType::TxpoolCandidateEvicted)
+            .map(|(_, _, data)| data["terminal_reason"].clone())
+            .collect();
+        assert_eq!(terminals, [serde_json::json!("nonce_consumed")]);
     }
 
     #[tokio::test]
