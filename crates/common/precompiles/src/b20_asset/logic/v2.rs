@@ -1063,7 +1063,7 @@ mod tests {
 
     use alloy_primitives::{Address, B256, FixedBytes, LogData, U256, keccak256};
     use alloy_sol_types::SolEvent;
-    use base_precompile_storage::BasePrecompileError;
+    use base_precompile_storage::{BasePrecompileError, Result};
     use k256::ecdsa::SigningKey;
     use rstest::rstest;
 
