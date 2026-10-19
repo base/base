@@ -1,4 +1,4 @@
-use std::{fmt, sync::Arc, time::Duration};
+use std::{env, ffi::OsString, fmt, sync::Arc, time::Duration};
 
 use alloy_primitives::Address;
 use alloy_provider::{Provider, ProviderBuilder};
@@ -7,8 +7,8 @@ use base_cli_utils::{CliStyles, LogConfig};
 use base_tx_manager::{
     NoopTxMetrics, RpcErrorClassifier, SignerConfig, SimpleTxManager, TxManagerConfig,
 };
-use base_withdrawer::{RpcUrlValueParser, Secret, SecretValueParser};
-use clap::{Args, Parser, Subcommand};
+use base_withdrawer::{RpcUrlValueParser, Secret, SecretValueParser, WithdrawerArgs};
+use clap::{Args, Command, CommandFactory, FromArgMatches, Parser, Subcommand};
 use eyre::{WrapErr, ensure};
 use tokio::time::timeout;
 use url::Url;
@@ -18,9 +18,8 @@ use crate::{AlloyFeeReader, ConfirmJob, FeeJob, FeeJobKind};
 base_cli_utils::define_log_args!("FEE_JOBS");
 base_tx_manager::define_tx_manager_cli!("FEE_JOBS_TX_MANAGER", tx_send_timeout_default = "10m");
 
-/// One-shot fee collection jobs.
-#[derive(Debug, Parser)]
-#[command(name = "fee-jobs", version, about, styles = CliStyles::init())]
+/// One-shot fee collection jobs with sensitive values redacted from parser errors.
+#[derive(Debug, Args)]
 pub struct Cli {
     /// Job to run.
     #[command(subcommand)]
@@ -28,6 +27,66 @@ pub struct Cli {
     /// Logging configuration.
     #[command(flatten)]
     pub logging: LogArgs,
+}
+
+impl CommandFactory for Cli {
+    fn command() -> Command {
+        Self::augment_args(
+            Command::new("fee-jobs").version(env!("CARGO_PKG_VERSION")).styles(CliStyles::init()),
+        )
+        .about("One-shot fee collection jobs.")
+    }
+
+    fn command_for_update() -> Command {
+        Self::augment_args_for_update(
+            Command::new("fee-jobs").version(env!("CARGO_PKG_VERSION")).styles(CliStyles::init()),
+        )
+        .about("One-shot fee collection jobs.")
+    }
+}
+
+impl Parser for Cli {
+    fn parse() -> Self {
+        Self::parse_from(env::args_os())
+    }
+
+    fn try_parse() -> Result<Self, clap::Error> {
+        Self::try_parse_from(env::args_os())
+    }
+
+    fn parse_from<I, T>(itr: I) -> Self
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<OsString> + Clone,
+    {
+        Self::try_parse_from(itr).unwrap_or_else(|error| error.exit())
+    }
+
+    fn try_parse_from<I, T>(itr: I) -> Result<Self, clap::Error>
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<OsString> + Clone,
+    {
+        let mut matches = WithdrawerArgs::parse_matches(Self::command(), itr)?;
+        Self::from_arg_matches_mut(&mut matches)
+    }
+
+    fn update_from<I, T>(&mut self, itr: I)
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<OsString> + Clone,
+    {
+        self.try_update_from(itr).unwrap_or_else(|error| error.exit());
+    }
+
+    fn try_update_from<I, T>(&mut self, itr: I) -> Result<(), clap::Error>
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<OsString> + Clone,
+    {
+        let mut matches = WithdrawerArgs::parse_matches(Self::command_for_update(), itr)?;
+        self.update_from_arg_matches_mut(&mut matches)
+    }
 }
 
 /// Fee collection commands.
@@ -115,13 +174,13 @@ pub struct SweepArgs {
 }
 
 /// Fault-proof fee disbursal confirmation configuration.
-#[derive(Debug, Args)]
+#[derive(Args)]
 pub struct ConfirmArgs {
     /// L1 HTTP RPC URL.
-    #[arg(long, env = "L1_RPC_URL", value_parser = RpcUrlValueParser)]
+    #[arg(long, env = "L1_RPC_URL", hide_env_values = true, value_parser = RpcUrlValueParser)]
     pub l1_rpc_url: Url,
     /// Base L2 HTTP RPC URL.
-    #[arg(long, env = "L2_RPC_URL", value_parser = RpcUrlValueParser)]
+    #[arg(long, env = "L2_RPC_URL", hide_env_values = true, value_parser = RpcUrlValueParser)]
     pub l2_rpc_url: Url,
     /// L1 Optimism portal proxy.
     #[arg(long, env = "OPTIMISM_PORTAL_PROXY_ADDRESS")]
@@ -150,6 +209,24 @@ pub struct ConfirmArgs {
     /// Deadline per withdrawal, including decisions, proof verification and submission.
     #[arg(long, env = "WITHDRAWAL_TIMEOUT", default_value = "10m", value_parser = humantime::parse_duration)]
     pub withdrawal_timeout: Duration,
+}
+
+impl fmt::Debug for ConfirmArgs {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ConfirmArgs")
+            .field("l1_rpc_url", &"[REDACTED]")
+            .field("l2_rpc_url", &"[REDACTED]")
+            .field("optimism_portal_proxy_address", &self.optimism_portal_proxy_address)
+            .field("dispute_game_factory_address", &self.dispute_game_factory_address)
+            .field("anchor_state_registry_address", &self.anchor_state_registry_address)
+            .field("l2_fee_disburser_address", &self.l2_fee_disburser_address)
+            .field("job_runner_key", &self.job_runner_key)
+            .field("num_blocks_to_query", &self.num_blocks_to_query)
+            .field("num_blocks_per_query", &self.num_blocks_per_query)
+            .field("dry_run", &self.dry_run)
+            .field("withdrawal_timeout", &self.withdrawal_timeout)
+            .finish()
+    }
 }
 
 impl Cli {
@@ -198,7 +275,9 @@ impl Cli {
 
 #[cfg(test)]
 mod tests {
-    use clap::Parser;
+    use std::{env, process::Command};
+
+    use clap::{Parser, error::ErrorKind};
     use rstest::rstest;
 
     use super::{Cli, FeeCommand};
@@ -226,6 +305,101 @@ mod tests {
         argv.extend_from_slice(extra);
         let FeeCommand::Confirm(args) = Cli::try_parse_from(argv)?.command else { unreachable!() };
         Ok(args)
+    }
+
+    #[test]
+    fn parser_redacts_unexpected_arguments_and_invalid_values_for_every_command() {
+        let key = "01".repeat(32);
+        let key_flag = format!("--job-runner-key={key}");
+        let url = "https://rpc-user:rpc-password@rpc.example/path-secret?key=query-secret";
+        for command in ["confirm", "disburse", "process", "sweep"] {
+            let invalid_flags: &[&str] = if command == "confirm" {
+                &[
+                    "--num-blocks-per-query",
+                    "--withdrawal-timeout",
+                    "--optimism-portal-proxy-address",
+                    "--l1-rpc-url",
+                ]
+            } else {
+                &["--contract-address", "--rpc-url"]
+            };
+            for value in [key.as_str(), url] {
+                for flag in std::iter::once(None).chain(invalid_flags.iter().copied().map(Some)) {
+                    let mut argv = vec!["fee-jobs", command, &key_flag];
+                    if let Some(flag) = flag {
+                        argv.push(flag);
+                    }
+                    let rejected = if flag.is_some_and(|flag| flag.ends_with("rpc-url")) {
+                        format!("invalid URL {value}")
+                    } else {
+                        value.to_owned()
+                    };
+                    argv.push(&rejected);
+                    let error = Cli::try_parse_from(&argv).unwrap_err();
+                    if flag.is_none() {
+                        assert_eq!(error.kind(), ErrorKind::UnknownArgument);
+                    } else {
+                        assert!(matches!(
+                            error.kind(),
+                            ErrorKind::ValueValidation | ErrorKind::InvalidValue
+                        ));
+                    }
+                    let mut cli = Cli {
+                        command: FeeCommand::Confirm(confirm(&[]).unwrap()),
+                        logging: Default::default(),
+                    };
+                    let update_error = cli.try_update_from(argv).unwrap_err();
+                    let diagnostic = format!("{error} {error:?} {update_error} {update_error:?}");
+                    for secret in
+                        [key.as_str(), "rpc-user", "rpc-password", "path-secret", "query-secret"]
+                    {
+                        assert!(!diagnostic.contains(secret), "secret leaked: {diagnostic}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn confirm_help_and_debug_hide_rpc_credentials() {
+        const URL: &str = "https://rpc-user:rpc-password@rpc.example/path-secret?key=query-secret";
+        if env::var_os("FEE_JOBS_TEST_CHILD").is_some() {
+            let help = Cli::try_parse_from(["fee-jobs", "confirm", "--help"]).unwrap_err();
+            assert_eq!(help.kind(), ErrorKind::DisplayHelp);
+            let mut args = confirm(&[]).unwrap();
+            args.l1_rpc_url = env::var("L1_RPC_URL").unwrap().parse().unwrap();
+            args.l2_rpc_url = env::var("L2_RPC_URL").unwrap().parse().unwrap();
+            let job = ConfirmJob { args };
+            let diagnostic = format!("{help} {:?} {job:?}", job.args);
+            assert!(diagnostic.contains("L1_RPC_URL") && diagnostic.contains("L2_RPC_URL"));
+            for secret in ["rpc-user", "rpc-password", "rpc.example", "path-secret", "query-secret"]
+            {
+                assert!(!diagnostic.contains(secret), "credentials leaked: {diagnostic}");
+            }
+            return;
+        }
+        let output = Command::new(env::current_exe().unwrap())
+            .args(["--exact", "cli::tests::confirm_help_and_debug_hide_rpc_credentials"])
+            .env("FEE_JOBS_TEST_CHILD", "1")
+            .env("L1_RPC_URL", URL)
+            .env("L2_RPC_URL", URL)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
+    }
+
+    #[test]
+    fn parser_preserves_help_version_and_missing_value_errors() {
+        let help = Cli::try_parse_from(["fee-jobs", "--help"]).unwrap_err();
+        assert_eq!(help.kind(), ErrorKind::DisplayHelp);
+        assert!(help.to_string().contains("One-shot fee collection jobs."));
+        let version = Cli::try_parse_from(["fee-jobs", "--version"]).unwrap_err();
+        assert_eq!(version.kind(), ErrorKind::DisplayVersion);
+        assert!(version.to_string().contains(env!("CARGO_PKG_VERSION")));
+        let missing = Cli::try_parse_from(["fee-jobs", "confirm", "--l1-rpc-url"]).unwrap_err();
+        assert!(
+            missing.to_string().contains("a value is required for '--l1-rpc-url <L1_RPC_URL>'")
+        );
     }
 
     #[test]

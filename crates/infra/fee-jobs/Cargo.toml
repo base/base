@@ -22,7 +22,6 @@ alloy-network.workspace = true
 alloy-provider.workspace = true
 base-cli-utils.workspace = true
 base-withdrawer.workspace = true
-alloy-transport.workspace = true
 base-tx-manager.workspace = true
 alloy-primitives.workspace = true
 alloy-signer-local.workspace = true
@@ -37,5 +36,6 @@ alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 rstest.workspace = true
 mockall.workspace = true
 alloy-json-rpc.workspace = true
+alloy-transport.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
 axum = { workspace = true, features = ["http1", "json", "tokio"] }
