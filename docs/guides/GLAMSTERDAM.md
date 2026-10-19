@@ -11,6 +11,7 @@
   - [Slot number (EIP-7843)](#slot-number-eip-7843)
   - [Calldata floor (EIP-7976)](#calldata-floor-eip-7976)
   - [Access-list pricing (EIP-7981)](#access-list-pricing-eip-7981)
+  - [State-access pricing (EIP-8038)](#state-access-pricing-eip-8038)
 - [Not included](#not-included)
 - [References](#references)
 
@@ -18,7 +19,7 @@
 
 - [ ] **Base Transactions (EIP-8430):** Define transaction pricing.
 - [ ] **State creation (EIP-8037):** Choose Base's gas price per byte of new state.
-- [ ] **State access (EIP-8038):** Choose Base's account/storage access and write prices.
+- [ ] **State access (EIP-8038):** Agree on the [proposed account/storage access and write prices](#state-access-pricing-eip-8038) and validate the benchmark basis.
 - [ ] **BAL Bandwidth Analysis:** Compare payload sizes with and without BALs, before and after compression.
 
 ## EIPs
@@ -32,7 +33,7 @@
 | [7843](https://eips.ethereum.org/EIPS/eip-7843) · [Design](#slot-number-eip-7843) | **SLOTNUM opcode:** Exposes the current consensus slot through a new opcode and block-header field. | Use the L2 block number as the slot, rather than Ethereum's beacon slot. |
 | [7976](https://eips.ethereum.org/EIPS/eip-7976) · [Design](#calldata-floor-eip-7976) | **Increase Calldata Floor Cost:** Raises the transaction calldata floor to 64 gas per byte. | Recommend 128 gas/byte instead of L1's 64 to reduce block sizes and calldata growth. |
 | [8037](https://eips.ethereum.org/EIPS/eip-8037) | **State Creation Gas Cost Increase:** Reprices new state and meters state creation separately from execution. | Tune the state-byte price for Base; value TBD. |
-| [8038](https://eips.ethereum.org/EIPS/eip-8038) | **State-access gas cost update:** Revises charges for account and storage accesses and writes. | Tune account/storage access and write prices for Base; values TBD. |
+| [8038](https://eips.ethereum.org/EIPS/eip-8038) · [Design](#state-access-pricing-eip-8038) | **State-access gas cost update:** Revises charges for account and storage accesses and writes. | Re-anchor Reth's benchmark estimates to Base's 200 ms blocks; propose access/write prices at a 40M gas limit. |
 | [7981](https://eips.ethereum.org/EIPS/eip-7981) · [Design](#access-list-pricing-eip-7981) | **Increase Access List Cost:** Charges transaction access lists for their data footprint. | Match EIP-7976's calldata floor: 128 gas/byte. |
 
 ### Include As Is
@@ -198,6 +199,69 @@ Access-list data pricing must match the [EIP-7976 calldata floor](#calldata-floo
 | Address | 20 | 1,280 gas | 2,560 gas |
 | Storage key | 32 | 2,048 gas | 4,096 gas |
 
+### State-access pricing (EIP-8038)
+
+**Proposal:** adopt EIP-8038's access/write decomposition with Base-specific prices. The goal is to keep a block filled with any single repriced operation within the execution budget at Base's block time. These are proposed parameters derived from public L1 benchmarks, not measurements on Base hardware or state.
+
+#### Method
+
+L1 fits per-client operation runtimes and converts them to gas at an anchor rate; its selected prices reflect a six-client bound, not just Reth. The [supporting report](https://github.com/ethereum/EIPs/blob/master/assets/eip-8038/gas-cost-report.md) and current raw/rendered EIP use 75 Mgas/s. Using 100 Mgas/s as the conversion anchor instead would not change Base's values when re-anchoring the same underlying runtimes.
+Base runs a single client, base-reth. For a proposed block limit `B = 40,000,000` and 200 ms blocks, reserve `exec_share = 50%` (100 ms) for execution.
+For each primitive, use `gas = max(today, ceil(reth_gas_equivalent_at_75M × (B / (exec_share × 0.2 s)) / 75,000,000))`, taking the larger Reth account estimate across accounts with/without code.
+Recompute dependent parameters from those floored primitives using the EIP formulas; round `STORAGE_CLEAR_REFUND` down to whole gas.
+
+#### Parameters
+
+All values are gas. The report's Reth inputs are 398 for cold account access (max of 391 and 398), 409 for cold storage access, 6 for warm access, 8,583 for account writes (max of 7,004 and 8,583), and 6,963 for storage writes. Its write column already subtracts L1's selected access price from the combined access/write measurement; use that published write estimate without subtracting access again.
+
+| Parameter | Today | L1 (EIP-8038) | Base (40M) |
+| :--- | ---: | ---: | ---: |
+| `COLD_ACCOUNT_ACCESS` | 2,600 | 3,000 | 2,600 |
+| `COLD_STORAGE_ACCESS` | 2,100 | 2,100 | 2,182 |
+| `WARM_ACCESS` | 100 | 100 | 100 |
+| `ACCOUNT_WRITE` | 6,700 | 9,000 | 45,776 |
+| `STORAGE_WRITE` | 2,800 | 10,000 | 37,136 |
+| `STORAGE_CLEAR_REFUND` | 4,800 | 11,616 | 37,745 |
+| `CREATE_ACCESS` | 7,000 | 12,000 | 48,376 |
+| `ACCESS_LIST_ADDRESS_COST` | 2,400 | 2,900 | 2,500 |
+| `ACCESS_LIST_STORAGE_KEY_COST` | 1,900 | 2,000 | 2,082 |
+| `EXTCODESIZE` / `EXTCODECOPY` warm static cost (second read included) | 100 | 200 | 200 |
+
+Today's write and create values are equivalents extracted from composite charges, not existing standalone constants. The 40M conversion factor is `16/3`: the unfloored primitive results are 2,123 / 2,182 / 32 / 45,776 / 37,136 in the order above. The dependent prices are:
+
+- `STORAGE_CLEAR_REFUND = floor((STORAGE_WRITE + COLD_STORAGE_ACCESS) × 4800/5000) = 37,745`; the existing 20% transaction refund cap remains.
+- `CREATE_ACCESS = ACCOUNT_WRITE + COLD_ACCOUNT_ACCESS = 48,376`.
+- `ACCESS_LIST_ADDRESS_COST = COLD_ACCOUNT_ACCESS - WARM_ACCESS = 2,500`; `ACCESS_LIST_STORAGE_KEY_COST = COLD_STORAGE_ACCESS - WARM_ACCESS = 2,082`. These are access prepayments, separate from EIP-7981's data surcharge.
+- `CALL_VALUE = ACCOUNT_WRITE + 2,300 = 48,076`; the 2,300 stipend is unchanged.
+- `EXTCODESIZE` / `EXTCODECOPY` add one `WARM_ACCESS` for the second database read: warm static cost becomes `2 × WARM_ACCESS = 200`, cold access costs `COLD_ACCOUNT_ACCESS + WARM_ACCESS = 2,700`. Copy and memory charges remain additional.
+
+Prices rise with the block limit at fixed execution share and block time: `ACCOUNT_WRITE` would be 114,440 at 100M and 171,660 at 150M. Revisit parameters whenever the limit or execution budget changes.
+
+#### What users pay
+
+Illustrative additive gas estimates, not transaction replays or `eth_estimateGas` results. Hold all other work and prices fixed and add `82` per cold storage access and `34,336` per storage write to an initially unchanged slot. The stated counts cover those repriced components only; account-access and warm-access deltas are zero. This isolates price changes rather than predicting the full Glamsterdam bill (including EIP-8037 state creation, EIP-2780 intrinsic changes, refunds, and floors).
+
+| Transaction | Assumed cold storage accesses / writes | Today (gas) | Base proposal (gas) |
+| :--- | :---: | ---: | ---: |
+| ETH transfer to existing account | 0 / 0 | 21,000 | 21,000 |
+| ERC-20 transfer to existing holder | 2 / 2 | ~65,000 | ~133,836 |
+| Swap | 4 / 4 | ~150,000 | ~287,672 |
+| Mint | 1 / 1 | ~100,000 | ~134,418 |
+
+#### Touch points
+
+- **Execution.** Override the relevant `GasParams` keys and their dependent prices consistently at activation. The `EXTCODESIZE` / `EXTCODECOPY` second-read charge is a static interpreter-table entry, not a `GasParams` key. Align the dependency's EIP revision before activation; Base's pinned revm 42 implements earlier draft prices.
+- **Interactions.** EIP-8037 state-creation gas is separate from these access/write execution charges. EIP-2780's intrinsic and runtime decomposition consumes these parameters. Base Transaction composite charges built from storage/access primitives must be reconciled with both designs rather than silently retaining old prices.
+- **BALs.** No parallel-read discount is assumed: Base imports serially. Any future optimization needs validation before changing this basis.
+- **Tooling.** Apply the same schedule to execution, transaction admission/building, and RPC gas estimation. Do not alter pre-activation fork behavior.
+
+#### Open questions
+
+1. **Execution budget and client basis.** Is 50% the right execution share, and should Base use Reth-only estimates or retain a six-client bound?
+2. **Validation.** Do the estimates transfer to production-like hardware with Base mainnet state, including cold and warm access? Benchmarks are pending; validate before agreeing on activation parameters.
+3. **Contract and wallet compatibility.** What changes are needed for fixed-gas calls, contracts relying on the 2,300 stipend, and gas estimation? The stipend remains 2,300 but the caller's value-transfer charge increases.
+4. **L1 divergence.** Is the operational and tooling cost of Base-specific prices acceptable, and how should future L1 revisions and Base gas-limit changes update them?
+
 ## Not included
 
 | EIP | Summary | Relevant |
@@ -222,6 +286,7 @@ Access-list data pricing must match the [EIP-7976 calldata floor](#calldata-floo
 - [Base Transactions (EIP-8430)](https://github.com/chunter-cb/EIPs/blob/aa-transaction-type/EIPS/eip-8430.md)
 - [State creation and gas reservoirs (EIP-8037)](https://eips.ethereum.org/EIPS/eip-8037)
 - [Account and storage access pricing (EIP-8038)](https://eips.ethereum.org/EIPS/eip-8038)
+- [EIP-8038 supporting gas-cost report](https://github.com/ethereum/EIPs/blob/master/assets/eip-8038/gas-cost-report.md)
 - [SLOTNUM specification (EIP-7843)](https://eips.ethereum.org/EIPS/eip-7843)
 - [SLOTNUM use-case discussion](https://ethereum-magicians.org/t/eip-7843-slotnum-opcode/22234)
 - [OP Stack L1 consensus context: PREVRANDAO and beacon roots](https://docs.base.org/specifications/base-protocol/execution/l2-execution-engine)
