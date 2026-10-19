@@ -79,10 +79,10 @@ def rpc_batch(url, calls, retries=8):
             # A rate-limited batch comes back as one error object instead of a list.
             if isinstance(body, list) and all("result" in item for item in body):
                 return [item["result"] for item in sorted(body, key=lambda item: item["id"])]
-        except OSError:
-            pass
+        except OSError as error:
+            body = error
         time.sleep(min(2**attempt, 30))
-    raise RuntimeError("RPC batch failed after retries")
+    raise RuntimeError(f"RPC batch failed after retries; last response: {str(body)[:300]}")
 
 
 def classify(tx, receipt):
