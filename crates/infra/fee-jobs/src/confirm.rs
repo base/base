@@ -17,7 +17,7 @@ use base_withdrawer::{
     Withdrawer, WithdrawerConfig, WithdrawerError,
 };
 use eyre::{WrapErr, ensure};
-use tokio::time::{sleep, timeout};
+use tokio::time::timeout;
 use tracing::{error, info, warn};
 
 use crate::{ConfirmArgs, CrossDomainMessenger, FeeDisburser, StandardBridge};
@@ -27,14 +27,19 @@ use crate::{ConfirmArgs, CrossDomainMessenger, FeeDisburser, StandardBridge};
 pub struct ConfirmWindow;
 
 impl ConfirmWindow {
-    /// Rejects oversized lookbacks and splits the entire window into inclusive chunks.
-    pub fn ranges(current: u64, window: u64, chunk: u64) -> eyre::Result<Vec<RangeInclusive<u64>>> {
-        eyre::ensure!(
-            window < current,
-            "number of blocks to query must be smaller than the current block"
-        );
+    /// Rounds the duration up to blocks, clamps at genesis, and splits into inclusive chunks.
+    pub fn ranges(
+        current: u64,
+        lookback: Duration,
+        block_time: Duration,
+        chunk: u64,
+    ) -> eyre::Result<Vec<RangeInclusive<u64>>> {
+        ensure!(!lookback.is_zero(), "lookback must be positive");
+        ensure!(!block_time.is_zero(), "L2 block time must be positive");
+        let blocks =
+            u64::try_from(lookback.as_nanos().div_ceil(block_time.as_nanos())).unwrap_or(u64::MAX);
         eyre::ensure!(chunk > 0, "number of blocks per query must be positive");
-        let mut start = current - window;
+        let mut start = current.saturating_sub(blocks);
         let mut ranges = Vec::new();
         loop {
             let end = start.saturating_add(chunk - 1).min(current);
@@ -55,9 +60,6 @@ pub struct ConfirmJob {
 }
 
 impl ConfirmJob {
-    /// Pause between log queries to limit RPC load.
-    pub const QUERY_PAUSE: Duration = Duration::from_millis(300);
-
     /// Validates the command and constructs a custom fault-proof withdrawer configuration.
     pub fn config(&self) -> eyre::Result<WithdrawerConfig> {
         ensure!(
@@ -85,6 +87,8 @@ impl ConfirmJob {
                     "dispute game factory and anchor state registry must be supplied together"
                 ),
             };
+        ensure!(!self.args.lookback.is_zero(), "lookback must be positive");
+        ensure!(!self.args.l2_block_time.is_zero(), "L2 block time must be positive");
         ensure!(self.args.num_blocks_per_query > 0, "number of blocks per query must be positive");
         ensure!(!self.args.withdrawal_timeout.is_zero(), "withdrawal timeout must be positive");
         let signer: PrivateKeySigner = self.args.job_runner_key.0.parse().map_err(|_| {
@@ -116,15 +120,13 @@ impl ConfirmJob {
         let current = rpc.l2.get_block_number().await.map_err(WithdrawerError::from)?;
         let ranges = ConfirmWindow::ranges(
             current,
-            self.args.num_blocks_to_query,
+            self.args.lookback,
+            self.args.l2_block_time,
             self.args.num_blocks_per_query,
         )?;
         let mut transactions = Vec::new();
         let mut seen = HashSet::new();
-        for (index, range) in ranges.into_iter().enumerate() {
-            if index > 0 {
-                sleep(Self::QUERY_PAUSE).await;
-            }
+        for range in ranges {
             info!(start = %range.start(), end = %range.end(), "querying fee disbursals");
             let filter = Filter::new()
                 .address(self.args.l2_fee_disburser_address)
@@ -435,7 +437,8 @@ mod tests {
                 anchor_state_registry_address: Some(Address::repeat_byte(3)),
                 l2_fee_disburser_address: Address::repeat_byte(4),
                 job_runner_key: Secret("01".repeat(32)),
-                num_blocks_to_query: 9,
+                lookback: Duration::from_secs(18),
+                l2_block_time: Duration::from_secs(2),
                 num_blocks_per_query: 4,
                 dry_run: true,
                 withdrawal_timeout: Duration::from_secs(10),
@@ -605,7 +608,7 @@ mod tests {
             job.args.dispute_game_factory_address = None;
             job.args.anchor_state_registry_address = None;
         }
-        job.args.num_blocks_to_query = 0;
+        job.args.lookback = Duration::from_nanos(1);
         let error = job.run().await.unwrap_err();
         assert!(
             format!("{error:#}").contains("3 withdrawals or disbursal receipts failed"),
@@ -811,7 +814,7 @@ mod tests {
             method => panic!("unexpected RPC method {method}"),
         }).await;
         let mut job = job(&server.url);
-        job.args.num_blocks_to_query = 0;
+        job.args.lookback = Duration::from_nanos(1);
         job.args.dry_run = finalization_error.is_none();
         let capture = LogCapture(Arc::new(Mutex::new(Vec::new())));
         let writer = capture.clone();
@@ -891,20 +894,47 @@ mod tests {
     }
 
     #[rstest]
-    #[case::equal(100)]
-    #[case::larger(101)]
-    fn rejects_window_at_or_above_head(#[case] window: u64) {
-        assert!(
-            ConfirmWindow::ranges(100, window, 3).is_err(),
-            "window >= current block must fail"
-        );
+    #[case::protocol_window(1_000_000, Duration::from_secs(21 * 24 * 60 * 60), Duration::from_secs(2), 1_000_000, vec![92_800..=1_000_000])]
+    #[case::round_up(100, Duration::from_secs(5), Duration::from_secs(2), 3, vec![97..=99, 100..=100])]
+    #[case::subsecond(100, Duration::from_millis(5), Duration::from_millis(2), 3, vec![97..=99, 100..=100])]
+    #[case::genesis_clamp(5, Duration::from_secs(20), Duration::from_secs(2), 4, vec![0..=3, 4..=5])]
+    #[case::at_genesis(0, Duration::from_secs(5), Duration::from_secs(2), 4, vec![0..=0])]
+    #[case::maximum_duration(5, Duration::MAX, Duration::from_nanos(1), 4, vec![0..=3, 4..=5])]
+    #[case::maximum_head(u64::MAX, Duration::from_secs(1), Duration::from_secs(2), 10, vec![u64::MAX - 1..=u64::MAX])]
+    fn duration_window_rounds_up_clamps_and_chunks(
+        #[case] current: u64,
+        #[case] lookback: Duration,
+        #[case] block_time: Duration,
+        #[case] chunk: u64,
+        #[case] expected: Vec<RangeInclusive<u64>>,
+    ) {
+        let ranges = ConfirmWindow::ranges(current, lookback, block_time, chunk);
+        assert_eq!(ranges.as_ref().ok(), Some(&expected), "{ranges:?}");
+    }
+
+    #[rstest]
+    #[case::zero_lookback(Duration::ZERO, Duration::from_secs(2), 3000)]
+    #[case::zero_block_time(Duration::from_secs(5), Duration::ZERO, 3000)]
+    #[case::zero_chunk(Duration::from_secs(5), Duration::from_secs(2), 0)]
+    fn rejects_zero_window_inputs(
+        #[case] lookback: Duration,
+        #[case] block_time: Duration,
+        #[case] chunk: u64,
+    ) {
+        assert!(ConfirmWindow::ranges(100, lookback, block_time, chunk).is_err());
     }
 
     #[test]
-    fn chunks_are_inclusive_contiguous_and_truncated_at_head() {
-        assert_eq!(ConfirmWindow::ranges(100, 9, 4).unwrap(), vec![91..=94, 95..=98, 99..=100]);
-        assert_eq!(ConfirmWindow::ranges(100, 0, 4).unwrap(), vec![100..=100]);
-        assert_eq!(ConfirmWindow::ranges(u64::MAX, 1, 10).unwrap(), vec![u64::MAX - 1..=u64::MAX]);
-        assert!(ConfirmWindow::ranges(100, 1, 0).is_err());
+    fn default_window_needs_303_log_queries() {
+        let ranges = ConfirmWindow::ranges(
+            2_000_000,
+            Duration::from_secs(21 * 24 * 60 * 60),
+            Duration::from_secs(2),
+            3000,
+        )
+        .unwrap();
+        assert_eq!(ranges.len(), 303);
+        assert_eq!(ranges.first().unwrap().start(), &(2_000_000 - 907_200));
+        assert_eq!(ranges.last().unwrap().end(), &2_000_000);
     }
 }
