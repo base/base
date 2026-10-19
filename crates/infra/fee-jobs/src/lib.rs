@@ -2,8 +2,12 @@
 
 mod cli;
 pub use cli::{
-    Cli, DisburseArgs, FeeCommand, JobArgs, LogArgs, ProcessArgs, SweepArgs, TxManagerCli,
+    Cli, ConfirmArgs, DisburseArgs, FeeCommand, JobArgs, LogArgs, ProcessArgs, SweepArgs,
+    TxManagerCli,
 };
+
+mod confirm;
+pub use confirm::{ConfirmJob, ConfirmWindow, FinalizeRevert, PortalErrors};
 
 mod contracts;
 pub use contracts::{BalanceTracker, FeeDisburser, RegistrarController};

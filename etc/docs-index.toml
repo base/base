@@ -443,8 +443,8 @@ summary = "Behavioural e2e test of the challenger: forks L1 into Anvil, patches 
 digest = "8f2b7f4e58"
 
 ["crates/infra/fee-jobs/README.md"]
-summary = "Run disburse, process, and sweep fee jobs with per-command environment variables, preconditions, and transaction manager settings."
-digest = "63f18e304f"
+summary = "Run disburse, process, sweep, and fault-proof confirm fee jobs with command-specific configuration, pending/failure exit semantics, and dry runs."
+digest = "938921c3a3"
 
 ["crates/infra/load-tests/README.md"]
 summary = "Load testing: devnet/sepolia profiles, YAML workloads, calibration, adaptive or proactive validity signing, resource pacing, benchmark/report tools, and rollout limitations."
@@ -480,7 +480,7 @@ digest = "63043098db"
 
 ["crates/infra/withdrawer/README.md"]
 summary = "Configure withdrawer signers and RPCs, inspect latest-mined withdrawal status, and run receipt-wide proving and finalization with fee caps, proof verification, pause handling, and finality checks."
-digest = "af2673c6b9"
+digest = "779bea38ab"
 
 ["crates/infra/zk-benchmarks/README.md"]
 summary = "One-line stub: ZK proof benchmarking utilities for Base load-test runs; no usage or detail beyond that."

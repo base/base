@@ -3,6 +3,8 @@ use alloy_sol_types::sol;
 sol! {
     /// L2 fee disbursement entry points and scheduling getters.
     interface FeeDisburser {
+        /// Fees disbursed by the L2 contract.
+        event FeesDisbursed(uint256 _disbursementTime, uint256 _paidToOptimism, uint256 _totalFeesDisbursed);
         /// Disburses accumulated fees.
         function disburseFees() external;
         /// Timestamp of the last disbursement, in seconds.

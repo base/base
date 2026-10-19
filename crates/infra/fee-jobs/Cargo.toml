@@ -16,9 +16,13 @@ url.workspace = true
 eyre.workspace = true
 humantime.workspace = true
 thiserror.workspace = true
+serde_json.workspace = true
 async-trait.workspace = true
+alloy-network.workspace = true
 alloy-provider.workspace = true
 base-cli-utils.workspace = true
+base-withdrawer.workspace = true
+alloy-transport.workspace = true
 base-tx-manager.workspace = true
 alloy-primitives.workspace = true
 alloy-signer-local.workspace = true
@@ -32,5 +36,6 @@ alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 [dev-dependencies]
 rstest.workspace = true
 mockall.workspace = true
-serde_json.workspace = true
+alloy-json-rpc.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
+axum = { workspace = true, features = ["http1", "json", "tokio"] }

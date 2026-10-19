@@ -122,12 +122,13 @@ impl WithdrawalRpcTransport {
         }
     }
 
-    /// Redacts server messages and data after retry classification; must preserve the code and "execution reverted" marker for revert classification.
+    /// Redacts server diagnostics after retry classification, retaining only valid hex-string data for execution reverts and their code and marker.
     pub fn redact_diagnostic(error: TransportError) -> TransportError {
         let mut error = Self::redact(error);
         if let TransportError::ErrorResp(payload) = &mut error {
             let message = payload.message.trim_start().to_ascii_lowercase();
-            payload.message = if payload.code == 3 || message.starts_with("execution reverted") {
+            let execution_revert = payload.code == 3 || message.starts_with("execution reverted");
+            payload.message = if execution_revert {
                 "execution reverted"
             } else if message.contains(crate::WithdrawalRpc::TX_INDEXING_IN_PROGRESS) {
                 crate::WithdrawalRpc::TX_INDEXING_IN_PROGRESS
@@ -135,8 +136,17 @@ impl WithdrawalRpcTransport {
                 "RPC server rejected request"
             }
             .into();
-            // Provider diagnostics can echo authenticated endpoints or request secrets.
-            payload.data = None;
+            // Only ABI bytes are safe to retain from provider-supplied diagnostics.
+            if !execution_revert
+                || !payload.data.as_ref().is_some_and(|data| {
+                    serde_json::from_str::<String>(data.get()).ok().is_some_and(|data| {
+                        data.strip_prefix("0x")
+                            .is_some_and(|hex| alloy_primitives::hex::decode(hex).is_ok())
+                    })
+                })
+            {
+                payload.data = None;
+            }
         }
         error
     }
@@ -203,5 +213,44 @@ impl Service<RequestPacket> for WithdrawalRpcTransport {
             }
             unreachable!("the initial request attempt always runs")
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_json_rpc::ErrorPayload;
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn redaction_retains_only_hex_execution_revert_data() {
+        for (code, message, data, retained) in [
+            (3, "secret endpoint", json!("0xd9bc01be"), true),
+            (-32000, "execution reverted: secret endpoint", json!("0x730a1074"), true),
+            (3, "execution reverted", json!("0x"), true),
+            (3, "execution reverted", json!("https://secret.endpoint"), false),
+            (3, "execution reverted", json!("0xnothex"), false),
+            (3, "execution reverted", json!("0x123"), false),
+            (3, "execution reverted", json!({"data":"0xd9bc01be"}), false),
+            (-32000, "secret endpoint", json!("0xd9bc01be"), false),
+        ] {
+            let payload: ErrorPayload = serde_json::from_value(json!({
+                "code":code,"message":message,"data":data,
+            }))
+            .unwrap();
+            let error =
+                WithdrawalRpcTransport::redact_diagnostic(TransportError::ErrorResp(payload));
+            let payload = error.as_error_resp().unwrap();
+            assert_eq!(payload.data.is_some(), retained, "code={code}, data={data}");
+            assert!(!payload.message.contains("secret"));
+            if retained {
+                assert_eq!(
+                    serde_json::from_str::<serde_json::Value>(payload.data.as_ref().unwrap().get())
+                        .unwrap(),
+                    data
+                );
+            }
+        }
     }
 }
