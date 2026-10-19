@@ -671,8 +671,8 @@ summary = "Chooser for local environments: Docker and HA devnets, Anvil + local 
 digest = "0951b41580"
 
 ["docs/guides/GLAMSTERDAM.md"]
-summary = "Scopes Base's Glamsterdam EIPs with BAL and SLOTNUM designs, plus calldata and access-list pricing proposals for transaction costs, P2P block sizes, and storage growth."
-digest = "f84c6ccb4f"
+summary = "Scopes Base's Glamsterdam EIPs: BAL, SLOTNUM, calldata/access-list pricing, plus EIP-8037 CPSB at 80M, deployment bounds, transaction pricing, growth tiers, and deposit/AA questions."
+digest = "d08660903c"
 
 ["docs/guides/P2P.md"]
 summary = "Explains the Base P2P stack for newcomers: consensus-layer discv5 and libp2p gossipsub versus execution-layer reth networking, how they interact via Engine API, key files, flags, and glossary."

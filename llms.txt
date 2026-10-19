@@ -13,7 +13,7 @@
 
 - [docs/guides/BLOCK_PRODUCTION_REVIEW.md](docs/guides/BLOCK_PRODUCTION_REVIEW.md): Review guide for block-production-sensitive PRs: mandatory payload size-limit gate across I/O boundaries, taxonomy of halt/stall scenarios (precompiles, builder, flashblocks), and a checklist.
 - [docs/guides/DEVNET.md](docs/guides/DEVNET.md): Chooser for local environments: Docker and HA devnets, Anvil + local Nitro proving, snapshot devnet (base dev), snapshot benchmark harness, with quickstarts, data-reset behavior, and owning docs.
-- [docs/guides/GLAMSTERDAM.md](docs/guides/GLAMSTERDAM.md): Scopes Base's Glamsterdam EIPs with BAL and SLOTNUM designs, plus calldata and access-list pricing proposals for transaction costs, P2P block sizes, and storage growth.
+- [docs/guides/GLAMSTERDAM.md](docs/guides/GLAMSTERDAM.md): Scopes Base's Glamsterdam EIPs: BAL, SLOTNUM, calldata/access-list pricing, plus EIP-8037 CPSB at 80M, deployment bounds, transaction pricing, growth tiers, and deposit/AA questions.
 - [docs/guides/P2P.md](docs/guides/P2P.md): Explains the Base P2P stack for newcomers: consensus-layer discv5 and libp2p gossipsub versus execution-layer reth networking, how they interact via Engine API, key files, flags, and glossary.
 - [docs/guides/RELEASE.md](docs/guides/RELEASE.md): Release process: Start Release creates releases/vX.Y.Z, version sync PR, automatic RC tags and builds per commit, then Publish Release for the final tag, Docker images and binaries.
 - [docs/guides/SNAPSHOT_BENCHMARKS.md](docs/guides/SNAPSHOT_BENCHMARKS.md): How to run repeatable base-bench snapshot benchmarks on the snapshot benchmark harness, aggregate selected runs, and publish to base/benchmark. Use when measuring performance on restored datadirs.
