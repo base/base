@@ -444,7 +444,7 @@ digest = "8f2b7f4e58"
 
 ["crates/infra/fee-jobs/README.md"]
 summary = "Run disburse, process, sweep, and fault-proof confirm fee jobs with command-specific configuration, pending/failure exit semantics, and dry runs."
-digest = "f752c1649f"
+digest = "4bf46cd032"
 
 ["crates/infra/load-tests/README.md"]
 summary = "Load testing: devnet/sepolia profiles, YAML workloads, calibration, adaptive or proactive validity signing, resource pacing, benchmark/report tools, and rollout limitations."

@@ -103,8 +103,6 @@ pub struct ConfirmJob {
 }
 
 impl ConfirmJob {
-    /// Maximum time for a block-number, receipt, log-query, or proof-age read.
-    pub const READ_TIMEOUT: Duration = Duration::from_secs(30);
     /// Pause between log queries to limit RPC load.
     pub const QUERY_PAUSE: Duration = Duration::from_millis(300);
 
@@ -163,10 +161,7 @@ impl ConfirmJob {
 
     /// Queries disbursal transactions in block/log order, deduplicating repeated hashes.
     pub async fn disbursals(&self, rpc: &WithdrawalRpc) -> eyre::Result<Vec<B256>> {
-        let current = timeout(Self::READ_TIMEOUT, rpc.l2.get_block_number())
-            .await
-            .wrap_err("L2 block number read timed out")?
-            .map_err(WithdrawerError::from)?;
+        let current = rpc.l2.get_block_number().await.map_err(WithdrawerError::from)?;
         let ranges = ConfirmWindow::ranges(
             current,
             self.args.num_blocks_to_query,
@@ -184,10 +179,7 @@ impl ConfirmJob {
                 .event_signature(FeeDisburser::FeesDisbursed::SIGNATURE_HASH)
                 .from_block(*range.start())
                 .to_block(*range.end());
-            let mut logs = timeout(Self::READ_TIMEOUT, rpc.l2.get_logs(&filter))
-                .await
-                .wrap_err("fee disbursal log query timed out")?
-                .map_err(WithdrawerError::from)?;
+            let mut logs = rpc.l2.get_logs(&filter).await.map_err(WithdrawerError::from)?;
             logs.sort_by_key(|log| (log.block_number, log.log_index));
             for log in logs {
                 let hash = log
@@ -202,14 +194,15 @@ impl ConfirmJob {
         Ok(transactions)
     }
 
-    /// Fetches and extracts every withdrawal in a disbursal receipt within a bounded read.
+    /// Fetches and extracts every withdrawal in a disbursal receipt with transport-bounded retries.
     pub async fn withdrawals(
         rpc: &WithdrawalRpc,
         transaction: B256,
     ) -> eyre::Result<Vec<Withdrawal>> {
-        let receipt = timeout(Self::READ_TIMEOUT, rpc.l2.get_transaction_receipt(transaction))
+        let receipt = rpc
+            .l2
+            .get_transaction_receipt(transaction)
             .await
-            .wrap_err("L2 receipt read timed out")?
             .map_err(WithdrawerError::from)?
             .ok_or(WithdrawerError::MissingReceipt)?;
         Withdrawal::from_receipt(&receipt).map_err(WithdrawerError::from).map_err(Into::into)
@@ -222,16 +215,12 @@ impl ConfirmJob {
         hash: B256,
         submitter: Address,
     ) -> eyre::Result<()> {
-        let proof = timeout(
-            Self::READ_TIMEOUT,
-            Withdrawer::read(
-                rpc,
-                self.args.optimism_portal_proxy_address,
-                FaultProofPortal::provenWithdrawalsCall { withdrawalHash: hash, submitter },
-            ),
+        let proof = Withdrawer::read(
+            rpc,
+            self.args.optimism_portal_proxy_address,
+            FaultProofPortal::provenWithdrawalsCall { withdrawalHash: hash, submitter },
         )
-        .await
-        .wrap_err("proof timestamp read timed out")??;
+        .await?;
         if proof.timestamp == 0 {
             info!(withdrawal_hash = %hash, "withdrawal pending, just proven");
         } else {
