@@ -1,10 +1,23 @@
 #![doc = include_str!("../README.md")]
 
+mod contracts;
+pub use contracts::{
+    FaultProofPortal, LegacyWithdrawalPortal, WithdrawalDisputeGame, WithdrawalOutputOracle,
+};
+
+mod operation;
+pub use operation::{
+    WithdrawalOutcome, WithdrawalProvingOutput, WithdrawalStatus, Withdrawer, WithdrawerError,
+};
+
 mod config;
-pub use config::{ConfigError, Fees, SignerSource, WithdrawerArgs, WithdrawerConfig};
+pub use config::{
+    ConfigError, Fees, HdPathValueParser, RpcUrlValueParser, SignerSource, WithdrawerArgs,
+    WithdrawerConfig,
+};
 
 mod network;
-pub use network::{Network, NetworkPreset, ProofSystem};
+pub use network::{FaultProofContracts, Network, NetworkPreset, ProofSystem, ResolvedProofSystem};
 
 mod rpc;
 pub use rpc::{BroadcastResult, WithdrawalRpc, WithdrawalRpcError};
@@ -24,5 +37,5 @@ pub use secret::{Secret, SecretValueParser};
 mod withdrawal;
 pub use withdrawal::{
     MessagePassed, OutputRootProof, VerifiedWithdrawalProof, Withdrawal, WithdrawalError,
-    WithdrawalTransaction,
+    WithdrawalPortal, WithdrawalTransaction,
 };

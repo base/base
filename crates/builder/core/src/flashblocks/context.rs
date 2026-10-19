@@ -13,7 +13,7 @@ use alloy_primitives::{Address, BlockHash, Bytes, TxHash, U256};
 use alloy_rpc_types_eth::Withdrawals;
 use base_common_chains::Upgrades;
 use base_common_consensus::{BaseReceipt, BaseTransactionSigned, DepositReceipt, OpTxType};
-use base_common_evm::{BaseReceiptBuilder, BaseSpecId, Eip8130PhaseStatuses, L1BlockInfo};
+use base_common_evm::{BaseReceiptBuilder, BaseSpecId, Eip8130CommittedPhases, L1BlockInfo};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_eip8130::IntrinsicGas;
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
@@ -480,16 +480,16 @@ pub(crate) struct DecisionContext<'a> {
 impl BasePayloadBuilderCtx {
     /// Constructs a receipt for the given transaction.
     ///
-    /// `eip8130_phase_statuses` are the statuses taken from [`Eip8130PhaseStatuses`] right after
-    /// the transaction executed; they are only used for EIP-8130 receipts.
+    /// `eip8130_committed_phases` is the count taken from [`Eip8130CommittedPhases`] right after
+    /// the transaction executed; it is only used for EIP-8130 receipts.
     pub fn build_receipt<E: Evm>(
         &self,
         ctx: ReceiptBuilderCtx<'_, OpTxType, E>,
         deposit_nonce: Option<u64>,
-        eip8130_phase_statuses: Vec<u8>,
+        eip8130_committed_phases: u64,
     ) -> BaseReceipt {
         let receipt_builder = self.evm_config.block_executor_factory().receipt_builder();
-        match receipt_builder.build_receipt(ctx, eip8130_phase_statuses) {
+        match receipt_builder.build_receipt(ctx, eip8130_committed_phases) {
             Ok(receipt) => receipt,
             Err(ctx) => {
                 let receipt = alloy_consensus::Receipt {
@@ -582,7 +582,7 @@ impl BasePayloadBuilderCtx {
                     return Err(PayloadBuilderError::EvmExecutionError(Box::new(err)));
                 }
             };
-            let eip8130_phase_statuses = Eip8130PhaseStatuses::take();
+            let eip8130_committed_phases = Eip8130CommittedPhases::take();
 
             // add gas used by the transaction to cumulative gas used, before creating the receipt
             let gas_used = result.tx_gas_used();
@@ -603,7 +603,7 @@ impl BasePayloadBuilderCtx {
                 cumulative_gas_used: info.cumulative_gas_used,
             };
 
-            info.receipts.push(self.build_receipt(ctx, depositor_nonce, eip8130_phase_statuses));
+            info.receipts.push(self.build_receipt(ctx, depositor_nonce, eip8130_committed_phases));
 
             // commit changes
             evm.db_mut().commit(state);
@@ -805,7 +805,7 @@ impl BasePayloadBuilderCtx {
             let ordering_position = num_txs_considered;
             let tx_hash = *tx.hash();
             let replay_independent = tx.is_eip8130_nonce_free();
-            let has_validity_predicates = !tx.validity_predicates().is_empty();
+            let has_validity_predicates = !tx.validity_conditions().is_empty();
             let validity_handling_start = has_validity_predicates.then(Instant::now);
             let coinbase_tip = tx.coinbase_tip();
             let has_coinbase_tip = coinbase_tip.is_some();
@@ -848,7 +848,7 @@ impl BasePayloadBuilderCtx {
                     let mut recorder =
                         PredicateReadRecorder::new(&mut **evm.db_mut(), &mut info.predicate_loads);
                     ValidityPredicateEvaluation::evaluate(
-                        tx.validity_predicates(),
+                        tx.validity_conditions(),
                         &mut recorder,
                         &predicate_context,
                     )
@@ -856,11 +856,11 @@ impl BasePayloadBuilderCtx {
                     Ok(ValidityPredicateEvaluation::Matched) => None,
                     Ok(ValidityPredicateEvaluation::Unsatisfied {
                         blocker,
-                        blocker_index,
+                        predicate,
                         expired,
                     }) => {
                         predicate_expired = expired;
-                        Some((blocker, blocker_index))
+                        Some((blocker, predicate))
                     }
                     Err(error) => {
                         warn!(
@@ -885,7 +885,7 @@ impl BasePayloadBuilderCtx {
                     "matched"
                 };
                 ValidityMetrics::validity_predicate_evaluations_total(outcome).increment(1);
-                if outcome == "matched" && best_txs.is_resting(tx_hash, tx.validity_predicates()) {
+                if outcome == "matched" && best_txs.is_resting(tx_hash, tx.validity_conditions()) {
                     BuilderMetrics::resting_predicate_shadow_mismatches_total().increment(1);
                     debug!(
                         target: "payload_builder",
@@ -935,7 +935,7 @@ impl BasePayloadBuilderCtx {
                 } else {
                     // State mismatch: retry at a later position or flashblock. Passed nonce
                     // bounds also stay parked until the required block-number expiry.
-                    let (_, blocker_index) = blocking_predicate
+                    let (_, predicate) = blocking_predicate
                         .expect("unsatisfied, non-terminal predicate implies a blocking key");
                     self.defer_current(
                         best_txs,
@@ -945,7 +945,6 @@ impl BasePayloadBuilderCtx {
                         tx_hash,
                         ordering_position,
                     );
-                    let predicate = tx.validity_predicates()[blocker_index].clone();
                     best_txs.rest(tx_hash, &predicate);
                     predicate_index.park(tx_hash, tx, predicate);
                 }
@@ -1305,7 +1304,7 @@ impl BasePayloadBuilderCtx {
                     return Err(PayloadBuilderError::evm(err));
                 }
             };
-            let eip8130_phase_statuses = Eip8130PhaseStatuses::take();
+            let eip8130_committed_phases = Eip8130CommittedPhases::take();
 
             let execution_time = execution_start_time.elapsed();
 
@@ -1407,7 +1406,7 @@ impl BasePayloadBuilderCtx {
                 state: &state,
                 cumulative_gas_used: info.cumulative_gas_used,
             };
-            info.receipts.push(self.build_receipt(ctx, None, eip8130_phase_statuses));
+            info.receipts.push(self.build_receipt(ctx, None, eip8130_committed_phases));
             // The tip is a phase-0 transfer, so it is revenue only if that phase
             // committed; a reverted or policy-blocked phase pays nothing.
             let coinbase_tip = coinbase_tip.filter(|_| {
@@ -1463,17 +1462,15 @@ impl BasePayloadBuilderCtx {
                             &mut info.predicate_loads,
                         );
                         ValidityPredicateEvaluation::evaluate(
-                            parked_transaction.validity_predicates(),
+                            parked_transaction.validity_conditions(),
                             &mut recorder,
                             &predicate_context,
                         )
                     }) {
                         Ok(ValidityPredicateEvaluation::Matched) => None,
                         Ok(ValidityPredicateEvaluation::Unsatisfied {
-                            blocker,
-                            blocker_index,
-                            ..
-                        }) => Some((blocker, blocker_index)),
+                            blocker, predicate, ..
+                        }) => Some((blocker, predicate)),
                         Err(error) => {
                             warn!(
                                 target: "payload_builder",
@@ -1496,8 +1493,7 @@ impl BasePayloadBuilderCtx {
                 if predicate_read_failed {
                     predicate_index.remove(*parked_hash);
                     best_txs.discard_parked(*parked_hash);
-                } else if let Some((_, blocker_index)) = blocking_predicate {
-                    let predicate = parked_transaction.validity_predicates()[blocker_index].clone();
+                } else if let Some((_, predicate)) = blocking_predicate {
                     best_txs.rest(*parked_hash, &predicate);
                     predicate_index.reindex(*parked_hash, predicate);
                 } else {
@@ -1698,7 +1694,7 @@ mod tests {
     use reth_chainspec::ChainSpec;
     use reth_payload_util::PayloadTransactions;
     use reth_primitives_traits::{Recovered, SealedHeader, WithEncoded};
-    use reth_provider::noop::NoopProvider;
+    use reth_provider::{StateProvider, noop::NoopProvider};
     use reth_revm::{State, database::StateProviderDatabase};
 
     use super::*;
@@ -1872,7 +1868,7 @@ mod tests {
     fn cancellation_is_checked_after_each_limit_rejection() {
         let ctx = test_builder_context();
         let mut best_txs = LimitRejectionTransactions::new(0, 2, ctx.cancel.clone());
-        let db = StateProviderDatabase::new(NoopProvider::default());
+        let db = StateProviderDatabase::new(NoopProvider::default().into_evm_state_provider());
         let mut state = State::builder().with_database(db).with_bundle_update().build();
         let mut info = ExecutionInfo::default();
         let limits = ResourceLimits { block_gas_limit: 0, ..Default::default() };
@@ -1901,7 +1897,7 @@ mod tests {
         let ctx = test_builder_context();
         let mut best_txs =
             LimitRejectionTransactions::new(WITHIN_LIMIT, OVER_LIMIT, ctx.cancel.clone());
-        let db = StateProviderDatabase::new(NoopProvider::default());
+        let db = StateProviderDatabase::new(NoopProvider::default().into_evm_state_provider());
         let mut state = State::builder().with_database(db).with_bundle_update().build();
         let mut info = ExecutionInfo::default();
         let limits = ResourceLimits { block_gas_limit: 0, ..Default::default() };
@@ -2078,7 +2074,7 @@ mod tests {
         ctx.config.attributes.no_tx_pool = true;
         ctx.config.attributes.transactions = vec![with_encoded];
 
-        let db = StateProviderDatabase::new(NoopProvider::default());
+        let db = StateProviderDatabase::new(NoopProvider::default().into_evm_state_provider());
         let mut state = State::builder().with_database(db).with_bundle_update().build();
         let err = ctx
             .execute_sequencer_transactions(&mut state)
@@ -2092,7 +2088,7 @@ mod tests {
         // input now succeeds with zero gas consumed and no receipt — this guards against
         // accidentally tightening the legacy code path along with the strict one.
         ctx.config.attributes.no_tx_pool = false;
-        let db = StateProviderDatabase::new(NoopProvider::default());
+        let db = StateProviderDatabase::new(NoopProvider::default().into_evm_state_provider());
         let mut state = State::builder().with_database(db).with_bundle_update().build();
         let info = ctx
             .execute_sequencer_transactions(&mut state)

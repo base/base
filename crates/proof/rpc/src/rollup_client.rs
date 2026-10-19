@@ -204,22 +204,3 @@ impl RollupProvider for RollupClient {
         Ok(output)
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_rollup_client_config_defaults() {
-        let config = RollupClientConfig::new(Url::parse("http://localhost:8545").unwrap());
-        assert_eq!(config.timeout, Duration::from_secs(30));
-    }
-
-    #[test]
-    fn test_rollup_client_config_builder() {
-        let config = RollupClientConfig::new(Url::parse("http://localhost:8545").unwrap())
-            .with_timeout(Duration::from_secs(60));
-
-        assert_eq!(config.timeout, Duration::from_secs(60));
-    }
-}

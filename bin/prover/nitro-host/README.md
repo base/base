@@ -39,8 +39,29 @@ The registrar-facing RPC server exposes:
 - `GET /readyz` returns 200 once the host HTTP server is accepting requests. It
   does not require an onchain-registered signer, so the registrar probes it to
   bootstrap new instances without depending on registration-gated health.
-- When `TEE_PROVER_REGISTRY_ADDRESS` is configured, `GET /healthz` requires a
-  valid onchain signer.
+- When `TEE_PROVER_REGISTRY_ADDRESS` is configured, `GET /healthz` becomes healthy
+  once any enclave signer is valid onchain or its registered image hash matches
+  `--tee-pending-image-hash` / `TEE_PENDING_IMAGE_HASH`. Health then stays healthy,
+  even after deregistration or an L1 RPC failure. Without a pending hash, only a
+  currently valid signer can set this latch. Proving and enclave routing always
+  require current onchain validity, regardless of the health latch.
+
+To deploy the next enclave image before its onchain activation, set
+`TEE_PENDING_IMAGE_HASH` to `keccak256(PCR0_raw_bytes)` for that image, the same
+value as the next `AggregateVerifier.TEE_IMAGE_HASH`. The hash must be nonzero
+and requires `TEE_PROVER_REGISTRY_ADDRESS`. Deploy and register the new provers,
+then execute the onchain task that switches the expected image hash. The pending
+hash flag can then be removed. A signer registered with any other image hash
+cannot make an unlatched health check succeed unless it is valid onchain.
+
+New-image provers pass `/healthz` but cannot prove until the onchain task
+executes, and old-image provers stop proving once it does. Run the new provers
+alongside the old ones in a separate ASG attached to the target group the
+registrar watches, and retire the old provers only after the task lands. Do not
+use a separate target group: the registrar only registers instances in its
+configured target group and deregisters every other onchain signer as an orphan.
+A rolling instance refresh of the existing fleet would replace the old provers
+early and stop proving until the task executes.
 
 ## Security Model
 

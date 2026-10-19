@@ -2120,7 +2120,7 @@ mod tests {
 
         assert_eq!(hash, expected_hash);
         assert!(send_state.has_published());
-        assert!(send_state.critical_error().is_none());
+        assert!(send_state.critical_error_at(Duration::ZERO).is_none());
     }
 
     #[tokio::test]

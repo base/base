@@ -10,12 +10,11 @@ use tracing::{info, warn};
 
 use crate::{BaseProofsStorage, BaseProofsStore, prune::BaseProofStoragePruner};
 
-/// Number of blocks pruned per MDBX write transaction.
+/// Maximum number of blocks pruned per storage commit.
 ///
-/// Each batch is its own write tx, so the per-tx overhead (page allocation, freelist mgmt,
-/// fsync at commit) amortizes over this many blocks. The previous value of 200 caused tx
-/// overhead to dominate catch-up pruning runs; 2000 amortizes the fixed cost ~10x while
-/// keeping per-tx dirty-page sets and free-page reclamation lag bounded.
+/// Each batch commits separately, as one MDBX write transaction or one `RocksDB` write batch.
+/// Batching amortizes per-commit overhead, including synced writes, while bounding
+/// the number of blocks in each commit's write set.
 const PRUNE_BATCH_SIZE: u64 = 2000;
 
 /// Periodic pruner task: constructs the pruner and runs it every interval.
@@ -43,7 +42,7 @@ where
         Self { pruner, retention_blocks, task_run_interval }
     }
 
-    /// Run forever (until `cancel`), executing one prune pass per `task_run_interval`.
+    /// Run until `signal` fires, executing one prune pass per `task_run_interval`.
     pub async fn run(self, mut signal: GracefulShutdown) {
         info!(
             target: "trie::pruner_task",

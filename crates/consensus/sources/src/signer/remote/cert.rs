@@ -56,7 +56,6 @@ impl RemoteSigner {
     pub(super) fn build_tls_config(&self) -> Result<ClientConfig, CertificateError> {
         let mut root_store = RootCertStore::empty();
 
-        // Add custom CA certificate if provided
         if let Some(ca_cert_path) = &self.ca_cert {
             let ca_certs: Vec<CertificateDer<'static>> =
                 CertificateDer::pem_file_iter(ca_cert_path)
@@ -71,7 +70,6 @@ impl RemoteSigner {
 
         let tls_config = ClientConfig::builder().with_root_certificates(root_store);
 
-        // Configure client certificates for mTLS if provided
         match &self.client_cert {
             None => Ok(tls_config.with_no_client_auth()),
             Some(ClientCert { cert, key }) => {
@@ -83,9 +81,9 @@ impl RemoteSigner {
                 let private_key = PrivateKeyDer::from_pem_file(key)
                     .map_err(CertificateError::InvalidPrivateKey)?;
 
-                Ok(tls_config
+                tls_config
                     .with_client_auth_cert(certs, private_key)
-                    .map_err(CertificateError::ConfigureClientAuth)?)
+                    .map_err(CertificateError::ConfigureClientAuth)
             }
         }
     }
@@ -102,7 +100,7 @@ impl RemoteSigner {
             return Ok(None);
         };
 
-        // Clone the builder to avoid borrowing issues
+        // The watcher callback must own a 'static copy of the configuration.
         let builder = self.clone();
         let mut watcher = notify::recommended_watcher(move |res| {
             builder.handle_watcher_event(Arc::clone(&client), res)
@@ -118,8 +116,8 @@ impl RemoteSigner {
 
     /// Handles certificate watcher events
     ///
-    /// This function is called by the certificate watcher when a certificate file is modified.
-    /// It reloads the TLS configuration and updates the client.
+    /// Reloads the HTTP client on modify events and ignores other events.
+    /// Reload errors are logged and leave the existing client unchanged.
     fn handle_watcher_event(
         &self,
         client: Arc<RwLock<RpcClient>>,

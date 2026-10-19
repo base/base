@@ -2,7 +2,6 @@
 
 use std::{
     fmt::Debug,
-    future::Future,
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -210,19 +209,6 @@ impl StorageMetrics {
         base_metrics::time!(OperationMetrics::duration_seconds(operation.as_str()), { f() })
     }
 
-    /// Record a storage operation with timing (async version).
-    pub async fn record_operation_async<F, R>(&self, operation: StorageOperation, f: F) -> R
-    where
-        F: Future<Output = R>,
-    {
-        base_metrics::time!(OperationMetrics::duration_seconds(operation.as_str()), { f.await })
-    }
-
-    /// Record a pre-measured duration for an operation.
-    pub fn record_duration(&self, operation: StorageOperation, duration: Duration) {
-        OperationMetrics::duration_seconds(operation.as_str()).record(duration);
-    }
-
     /// Record multiple items with the same duration.
     pub fn record_duration_per_item(
         &self,
@@ -342,16 +328,6 @@ impl<S> BaseProofsStorageWithMetrics<S> {
             metrics: Arc::new(StorageMetrics),
             tx_acquisitions: Arc::new(AtomicU64::new(0)),
         }
-    }
-
-    /// Get the underlying storage.
-    pub const fn inner(&self) -> &S {
-        &self.storage
-    }
-
-    /// Get the metrics.
-    pub const fn metrics(&self) -> &Arc<StorageMetrics> {
-        &self.metrics
     }
 
     /// Read-only transactions acquired since this wrapper was created. Used by

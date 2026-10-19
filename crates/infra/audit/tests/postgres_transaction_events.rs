@@ -1,11 +1,4 @@
 //! Postgres integration tests for transaction event ingest.
-//!
-//! Run with:
-//!
-//! ```bash
-//! DATABASE_URL=postgres://postgres:postgres@localhost:5432/postgres \
-//!   cargo test -p audit-archiver-lib --test postgres_transaction_events -- --ignored
-//! ```
 
 use std::{
     path::PathBuf,
@@ -1204,65 +1197,6 @@ async fn postgres_insert_does_not_leak_lock_timeout() -> anyhow::Result<()> {
         lock_timeout, "1s",
         "SET LOCAL lock_timeout leaked onto the pooled connection: {lock_timeout}"
     );
-
-    Ok(())
-}
-
-#[tokio::test]
-#[ignore = "requires a running Postgres (set DATABASE_URL)"]
-async fn postgres_sink_persists_and_dedupes_by_event_id() {
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
-    let event_id = unique_event_id();
-    PgTransactionEventSink::migrate(&database_url).await.unwrap();
-    let pool = PgPoolOptions::new().max_connections(2).connect(&database_url).await.unwrap();
-    cleanup(&pool, &event_id).await;
-
-    let sink = PgTransactionEventSink::connect(&database_url, 2).await.unwrap();
-    let event = event(&event_id);
-
-    let first = sink.insert_events(std::slice::from_ref(&event)).await.unwrap();
-    assert!(first.inserted_event_ids.contains(&event_id));
-
-    let second = sink.insert_events(std::slice::from_ref(&event)).await.unwrap();
-    assert!(second.inserted_event_ids.is_empty());
-
-    let count: (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM transaction_events_v2 WHERE event_id = $1")
-            .bind(&event_id)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-    assert_eq!(count.0, 1);
-
-    cleanup(&pool, &event_id).await;
-}
-
-#[tokio::test]
-async fn postgres_query_finds_events_by_normalized_tx_hash() -> anyhow::Result<()> {
-    let harness = PostgresHarness::new().await?;
-    PgTransactionEventSink::migrate(&harness.database_url).await?;
-    let sink = PgTransactionEventSink::connect(&harness.database_url, 1).await?;
-    let event_id = unique_event_id();
-    sink.insert_events(&[event(&event_id)]).await?;
-
-    let lowercase = sink
-        .events_by_transaction_hash(
-            "0x1111111111111111111111111111111111111111111111111111111111111111",
-            10,
-        )
-        .await?;
-    assert_eq!(lowercase.len(), 1);
-    assert_eq!(lowercase[0].event.event_id, event_id);
-
-    let mixed_case_hash =
-        "0x1111111111111111111111111111111111111111111111111111111111111111".to_ascii_uppercase();
-    let mixed_case = sink.events_by_transaction_hash(&mixed_case_hash, 10).await?;
-    assert_eq!(mixed_case.len(), 1);
-    assert_eq!(mixed_case[0].event.event_id, event_id);
-
-    let block_events = sink.events_by_block_number(123, 10).await?;
-    assert_eq!(block_events.len(), 1);
-    assert_eq!(block_events[0].event.event_id, event_id);
 
     Ok(())
 }

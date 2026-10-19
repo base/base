@@ -22,11 +22,6 @@ impl BatchTransaction {
         self.size
     }
 
-    /// Returns if the transaction has reached the max frame count.
-    pub const fn is_full(&self, max_frames: u16) -> bool {
-        self.frames.len() as u16 >= max_frames
-    }
-
     /// Returns the [`BatchTransaction`] as a [`Bytes`].
     pub fn to_bytes(&self) -> Bytes {
         let capacity = self.frames.iter().map(Frame::encoded_len).sum();

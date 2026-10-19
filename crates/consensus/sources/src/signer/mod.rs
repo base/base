@@ -39,7 +39,7 @@ pub enum BlockSignerHandler {
 /// Errors that can occur when starting a block signer.
 #[derive(Debug, thiserror::Error)]
 pub enum BlockSignerStartError {
-    /// An error that can occur when signing a block with a remote signer.
+    /// Returned when starting the remote signer fails.
     #[error(transparent)]
     Remote(#[from] RemoteSignerStartError),
 }
@@ -73,15 +73,13 @@ impl BlockSignerHandler {
         chain_id: ChainId,
         sender_address: Address,
     ) -> Result<Signature, BlockSignerError> {
-        let signature = match self {
+        Ok(match self {
             Self::Local(signer) => {
                 signer.sign_hash_sync(&payload_hash.signature_message(chain_id))?
             }
             Self::Remote(signer) => {
                 signer.sign_block_v1(payload_hash, chain_id, sender_address).await?
             }
-        };
-
-        Ok(signature)
+        })
     }
 }

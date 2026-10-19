@@ -56,7 +56,8 @@ use reth_provider::{
     StateProviderFactory, StorageRootProvider, providers::BlockchainProvider,
     test_utils::create_test_provider_factory_with_node_types,
 };
-use reth_revm::{cached::CachedReads, cancelled::CancelOnDrop};
+use reth_revm::cached::CachedReads;
+use reth_tasks::CancelOnDrop;
 use reth_transaction_pool::noop::NoopTransactionPool;
 use reth_trie_common::HashedStorage;
 

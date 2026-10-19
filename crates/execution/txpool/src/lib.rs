@@ -27,6 +27,9 @@ pub use validator::{BaseL1BlockInfo, BaseTransactionValidator, BaseTxPoolError, 
 
 mod best;
 
+mod conditions;
+pub use conditions::{ValidityBounds, ValidityConditions};
+
 mod validity_signature_mode;
 pub use validity_signature_mode::ValiditySignatureMode;
 
