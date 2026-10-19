@@ -275,7 +275,7 @@ impl Cli {
 
 #[cfg(test)]
 mod tests {
-    use std::{env, process::Command};
+    use std::{env, process::Command, time::Duration};
 
     use alloy_primitives::Address;
     use base_withdrawer::{FaultProofContracts, ProofSystem, Secret};
@@ -303,6 +303,42 @@ mod tests {
         argv.extend_from_slice(extra);
         let FeeCommand::Confirm(args) = Cli::try_parse_from(argv)?.command else { unreachable!() };
         Ok(args)
+    }
+
+    #[test]
+    fn confirm_reads_deployment_environment_and_defaults() {
+        if env::var_os("FEE_JOBS_CONFIRM_ENV_TEST_CHILD").is_some() {
+            let FeeCommand::Confirm(args) =
+                Cli::try_parse_from(["fee-jobs", "confirm"]).unwrap().command
+            else {
+                panic!("expected confirm command");
+            };
+            assert_eq!(args.l1_rpc_url.as_str(), "https://l1.example/");
+            assert_eq!(args.l2_rpc_url.as_str(), "https://l2.example/");
+            assert_eq!(args.optimism_portal_proxy_address, Address::repeat_byte(0x11));
+            assert_eq!(args.l2_fee_disburser_address, Address::repeat_byte(0x44));
+            assert_eq!(args.dispute_game_factory_address, Some(Address::repeat_byte(0x22)));
+            assert_eq!(args.anchor_state_registry_address, Some(Address::repeat_byte(0x33)));
+            assert!(args.job_runner_key.0 == "01".repeat(32));
+            assert_eq!(args.num_blocks_to_query, 1_296_000);
+            assert_eq!(args.num_blocks_per_query, 3000);
+            assert_eq!(args.withdrawal_timeout, Duration::from_secs(600));
+            return;
+        }
+        let output = Command::new(env::current_exe().unwrap())
+            .args(["--exact", "cli::tests::confirm_reads_deployment_environment_and_defaults"])
+            .env_clear()
+            .env("FEE_JOBS_CONFIRM_ENV_TEST_CHILD", "1")
+            .env("L1_RPC_URL", "https://l1.example")
+            .env("L2_RPC_URL", "https://l2.example")
+            .env("OPTIMISM_PORTAL_PROXY_ADDRESS", Address::repeat_byte(0x11).to_string())
+            .env("L2_FEE_DISBURSER_ADDRESS", Address::repeat_byte(0x44).to_string())
+            .env("JOB_RUNNER_KEY", "01".repeat(32))
+            .env("DISPUTE_GAME_FACTORY_ADDRESS", Address::repeat_byte(0x22).to_string())
+            .env("ANCHOR_STATE_REGISTRY_ADDRESS", Address::repeat_byte(0x33).to_string())
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
     }
 
     #[test]

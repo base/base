@@ -37,5 +37,6 @@ rstest.workspace = true
 mockall.workspace = true
 alloy-json-rpc.workspace = true
 alloy-transport.workspace = true
+base-proof-contracts.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
 axum = { workspace = true, features = ["http1", "json", "tokio"] }

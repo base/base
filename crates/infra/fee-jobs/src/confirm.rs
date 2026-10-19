@@ -387,13 +387,18 @@ impl ConfirmJob {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
+    use std::sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    };
 
     use alloy_json_rpc::ErrorPayload;
     use alloy_primitives::U256;
+    use alloy_rpc_types_eth::{Block, Transaction};
     use alloy_transport::TransportError;
     use axum::{Json, Router, routing::post};
-    use base_withdrawer::{MessagePassed, WithdrawalTransaction};
+    use base_proof_contracts::IAnchorStateRegistry;
+    use base_withdrawer::{MessagePassed, WithdrawalDisputeGame, WithdrawalTransaction};
     use rstest::rstest;
     use serde_json::{Value, json};
     use tokio::{net::TcpListener, task::JoinHandle};
@@ -566,6 +571,77 @@ mod tests {
         );
         assert!(!format!("{error:#} {error:?}").contains("secret.endpoint"));
         assert_eq!(*visited.lock().unwrap(), vec![event.withdrawalHash, second.hash()]);
+    }
+
+    #[rstest]
+    #[case::pending(900, false, true)]
+    #[case::paused(1000, true, false)]
+    #[case::already_finalized_during_estimation(1000, false, true)]
+    #[tokio::test]
+    async fn run_handles_pending_paused_and_concurrent_finalization(
+        #[case] now: u64,
+        #[case] paused: bool,
+        #[case] succeeds: bool,
+    ) {
+        let receipt: Value = serde_json::from_str(include_str!(
+            "../../withdrawer/fixtures/synthetic-deposit-withdrawal-receipt.json"
+        ))
+        .unwrap();
+        let estimated = Arc::new(AtomicBool::new(false));
+        let captured = Arc::clone(&estimated);
+        let server = Server::new(move |request| match request["method"].as_str().unwrap() {
+            "eth_blockNumber" | "eth_gasPrice" => json!({"result":"0x64"}),
+            "eth_getLogs" => json!({"result":[fee_log(100, 0, B256::repeat_byte(1))]}),
+            "eth_getTransactionReceipt" => json!({"result":receipt}),
+            "eth_getBlockByNumber" => {
+                let mut block = Block::<Transaction>::default();
+                block.header.inner.timestamp = now;
+                json!({"result":block})
+            }
+            "eth_chainId" => json!({"result":"0x1"}),
+            "eth_getTransactionCount" => json!({"result":"0x0"}),
+            "eth_estimateGas" => {
+                let data: Bytes = serde_json::from_value(request["params"][0]["input"].clone()).unwrap();
+                WithdrawalPortal::finalizeWithdrawalTransactionCall::abi_decode_validate(&data).unwrap();
+                captured.store(true, Ordering::Relaxed);
+                json!({"error":{"code":3,"message":"execution reverted","data":"0x730a1074"}})
+            }
+            "eth_call" => {
+                let data: Bytes = serde_json::from_value(request["params"][0]["input"].clone()).unwrap();
+                macro_rules! reply {
+                    ($call:ty, $($value:expr),* $(,)?) => {
+                        if data[..4] == <$call>::SELECTOR {
+                            return json!({"result":Bytes::from(<$call>::abi_encode_returns_tuple(&($($value,)*)))});
+                        }
+                    };
+                }
+                reply!(FaultProofPortal::disputeGameFactoryCall, Address::repeat_byte(2));
+                reply!(FaultProofPortal::anchorStateRegistryCall, Address::repeat_byte(3));
+                reply!(WithdrawalPortal::finalizedWithdrawalsCall, false);
+                reply!(IAnchorStateRegistry::pausedCall, paused);
+                reply!(FaultProofPortal::provenWithdrawalsCall, Address::repeat_byte(8), 800u64);
+                reply!(IAnchorStateRegistry::isGameBlacklistedCall, false);
+                reply!(IAnchorStateRegistry::isGameRetiredCall, false);
+                reply!(IAnchorStateRegistry::isGameProperCall, true);
+                reply!(IAnchorStateRegistry::isGameRespectedCall, true);
+                reply!(WithdrawalDisputeGame::statusCall, 2u8);
+                reply!(FaultProofPortal::proofMaturityDelaySecondsCall, U256::from(100));
+                reply!(WithdrawalDisputeGame::resolvedAtCall, 700u64);
+                reply!(IAnchorStateRegistry::disputeGameFinalityDelaySecondsCall, U256::from(200));
+                reply!(IAnchorStateRegistry::isGameFinalizedCall, now > 900);
+                reply!(FaultProofPortal::checkWithdrawalCall,);
+                panic!("unexpected contract selector {data}");
+            }
+            method => panic!("unexpected RPC method {method}"),
+        }).await;
+        let mut job = job(&server.url);
+        job.args.num_blocks_to_query = 0;
+        let result = job.run().await;
+        assert_eq!(result.is_ok(), succeeds, "{result:?}");
+        if paused {
+            assert!(format!("{:#}", result.unwrap_err()).contains("paused"));
+        }
+        assert_eq!(estimated.load(Ordering::Relaxed), !paused && now > 900);
     }
 
     #[rstest]

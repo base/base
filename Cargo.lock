@@ -4842,6 +4842,7 @@ dependencies = [
  "async-trait",
  "axum 0.8.9",
  "base-cli-utils",
+ "base-proof-contracts",
  "base-tx-manager",
  "base-withdrawer",
  "clap",
