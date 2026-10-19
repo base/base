@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use alloy_primitives::TxHash;
-use base_execution_txpool::ValidityPredicate;
+use base_execution_txpool::{ValidityConditions, ValidityPredicate};
 use revm::state::EvmState;
 
 /// Work an iterator spent holding back resting transactions since it was last asked.
@@ -30,7 +30,7 @@ pub trait RestingPayloadTransactions {
     fn record_committed_state(&mut self, _state: &EvmState) {}
 
     /// Returns whether a transaction with `predicates` rests under an unchanged predicate.
-    fn is_resting(&self, _transaction_hash: TxHash, _predicates: &[ValidityPredicate]) -> bool {
+    fn is_resting(&self, _transaction_hash: TxHash, _predicates: &ValidityConditions) -> bool {
         false
     }
 

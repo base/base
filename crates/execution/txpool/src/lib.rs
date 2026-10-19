@@ -27,6 +27,9 @@ pub use validator::{BaseL1BlockInfo, BaseTransactionValidator, BaseTxPoolError, 
 
 mod best;
 
+mod conditions;
+pub use conditions::{ValidityBounds, ValidityConditions};
+
 mod validity_signature_mode;
 pub use validity_signature_mode::ValiditySignatureMode;
 
@@ -79,7 +82,9 @@ mod pool_error_label;
 pub use pool_error_label::PoolRejectionLabel;
 
 mod builder;
-pub use builder::{BuilderApiImpl, BuilderApiMetrics, BuilderApiServer, InsertMetering};
+pub use builder::{
+    BuilderApiImpl, BuilderApiMetrics, BuilderApiServer, InsertMetering, MAX_VALIDATED_INSERT_BATCH,
+};
 
 mod wire;
 pub use wire::{
