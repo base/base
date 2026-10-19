@@ -30,6 +30,7 @@ tracing.workspace = true
 derive_more = { workspace = true, features = ["from", "try_into"] }
 
 [dev-dependencies]
+rstest.workspace = true
 proptest.workspace = true
 alloy-primitives = { workspace = true, features = ["rand"] }
 

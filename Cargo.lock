@@ -3332,6 +3332,7 @@ dependencies = [
  "http-body-util",
  "hyper 1.11.0",
  "hyper-util",
+ "iai-callgrind",
  "jsonrpsee",
  "jsonrpsee-core",
  "jsonrpsee-types",
@@ -5321,6 +5322,7 @@ dependencies = [
  "derive_more 2.1.1",
  "proptest",
  "revm",
+ "rstest",
  "thiserror 2.0.19",
  "tracing",
 ]
