@@ -212,7 +212,7 @@ impl ConfirmJob {
         }
     }
 
-    /// Processes one withdrawal, rechecking readiness after a failed finalization.
+    /// Processes one withdrawal without hiding signed finalization failures.
     pub async fn confirm_withdrawal(
         &self,
         withdrawer: &Withdrawer,
@@ -266,6 +266,11 @@ impl ConfirmJob {
                         }
                         Ok(false)
                     }
+                    Err(
+                        error @ (WithdrawerError::TargetCallFailed { .. }
+                        | WithdrawerError::MissingFinalizationEvent { .. }
+                        | WithdrawerError::Unconfirmed { .. }),
+                    ) => Err(error.into()),
                     Err(error) => match withdrawer.status(rpc, proofs, withdrawal, submitter).await
                     {
                         Ok(WithdrawalStatus::Finalized) => {
@@ -438,7 +443,7 @@ mod tests {
         }
     }
 
-    fn disbursal_receipt() -> Value {
+    fn disbursal_receipt(sender: Address, relay_sender: Address, from: Address) -> Value {
         let mut receipt: Value = serde_json::from_str(include_str!(
             "../../withdrawer/fixtures/synthetic-deposit-withdrawal-receipt.json"
         ))
@@ -446,15 +451,15 @@ mod tests {
         let log: alloy_rpc_types_eth::Log =
             serde_json::from_value(receipt["logs"][0].clone()).unwrap();
         let mut event = MessagePassed::decode_log(&log.inner).unwrap().data;
-        event.sender = Predeploys::L2_CROSS_DOMAIN_MESSENGER;
+        event.sender = sender;
         event.data = CrossDomainMessenger::relayMessageCall {
             _nonce: event.nonce,
-            _sender: Predeploys::L2_STANDARD_BRIDGE,
+            _sender: relay_sender,
             _target: Address::repeat_byte(5),
             _value: event.value,
             _minGasLimit: U256::ZERO,
             _message: StandardBridge::finalizeBridgeETHCall {
-                _from: Address::repeat_byte(4),
+                _from: from,
                 _to: Address::repeat_byte(6),
                 _amount: event.value,
                 _extraData: Bytes::new(),
@@ -536,7 +541,11 @@ mod tests {
     async fn continues_after_failed_receipts_and_withdrawals_and_returns_failure(
         #[case] expected: bool,
     ) {
-        let mut receipt = disbursal_receipt();
+        let mut receipt = disbursal_receipt(
+            Predeploys::L2_CROSS_DOMAIN_MESSENGER,
+            Predeploys::L2_STANDARD_BRIDGE,
+            Address::repeat_byte(4),
+        );
         let log: alloy_rpc_types_eth::Log =
             serde_json::from_value(receipt["logs"][0].clone()).unwrap();
         let event = MessagePassed::decode_log(&log.inner).unwrap().data;
@@ -607,39 +616,74 @@ mod tests {
     }
 
     #[rstest]
-    #[case::pending(900, false, Some(WithdrawalStatus::Finalize), false, Some(1))]
+    #[case::pending(900, false, Some(WithdrawalStatus::Finalize), false, Some(1), None)]
     #[case::pending_proof_age_read_fails(
         900,
         false,
         Some(WithdrawalStatus::Finalize),
         true,
-        Some(1)
+        Some(1),
+        None
     )]
-    #[case::paused(1000, true, Some(WithdrawalStatus::Finalize), false, None)]
+    #[case::paused(1000, true, Some(WithdrawalStatus::Finalize), false, None, None)]
     #[case::already_finalized_during_estimation(
         1000,
         false,
         Some(WithdrawalStatus::Finalized),
         false,
-        Some(0)
+        Some(0),
+        None
     )]
-    #[case::not_ready_during_estimation(1000, false, Some(WithdrawalStatus::NotReady { ready_at: 900, waiting_for_game: false }), false, Some(1))]
+    #[case::not_ready_during_estimation(1000, false, Some(WithdrawalStatus::NotReady { ready_at: 900, waiting_for_game: false }), false, Some(1), None)]
     #[case::proof_invalidated_during_estimation(
         1000,
         false,
         Some(WithdrawalStatus::Prove),
         false,
-        Some(1)
+        Some(1),
+        None
     )]
     #[case::still_ready_during_estimation(
         1000,
         false,
         Some(WithdrawalStatus::Finalize),
         false,
+        None,
         None
     )]
-    #[case::paused_during_estimation(1000, false, Some(WithdrawalStatus::Paused), false, None)]
-    #[case::recheck_read_fails(1000, false, None, false, None)]
+    #[case::paused_during_estimation(
+        1000,
+        false,
+        Some(WithdrawalStatus::Paused),
+        false,
+        None,
+        None
+    )]
+    #[case::recheck_read_fails(1000, false, None, false, None, None)]
+    #[case::target_call_failed(
+        1000,
+        false,
+        Some(WithdrawalStatus::Finalized),
+        false,
+        None,
+        Some("target call failed")
+    )]
+    #[case::missing_event(
+        1000,
+        false,
+        Some(WithdrawalStatus::Finalized),
+        false,
+        None,
+        Some("no portal finalization event")
+    )]
+    #[case::unconfirmed(
+        1000,
+        false,
+        Some(WithdrawalStatus::Finalized),
+        false,
+        None,
+        Some("was signed")
+    )]
     #[tokio::test]
     async fn run_handles_pending_paused_races_and_unrelated_withdrawals(
         #[case] now: u64,
@@ -647,23 +691,64 @@ mod tests {
         #[case] recheck: Option<WithdrawalStatus>,
         #[case] proof_age_fails: bool,
         #[case] pending: Option<usize>,
+        #[case] finalization_error: Option<&'static str>,
+        #[values(
+            None,
+            Some((Address::repeat_byte(9), Predeploys::L2_STANDARD_BRIDGE, Address::repeat_byte(4))),
+            Some((Predeploys::L2_CROSS_DOMAIN_MESSENGER, Address::repeat_byte(9), Address::repeat_byte(4))),
+            Some((Predeploys::L2_CROSS_DOMAIN_MESSENGER, Predeploys::L2_STANDARD_BRIDGE, Address::repeat_byte(9))),
+        )]
+        unrelated_senders: Option<(Address, Address, Address)>,
     ) {
-        let mut receipt = disbursal_receipt();
+        let mut receipt = disbursal_receipt(
+            Predeploys::L2_CROSS_DOMAIN_MESSENGER,
+            Predeploys::L2_STANDARD_BRIDGE,
+            Address::repeat_byte(4),
+        );
         let log: alloy_rpc_types_eth::Log =
             serde_json::from_value(receipt["logs"][0].clone()).unwrap();
         let hash = MessagePassed::decode_log(&log.inner).unwrap().data.withdrawalHash;
-        let unrelated: Value = serde_json::from_str(include_str!(
-            "../../withdrawer/fixtures/synthetic-deposit-withdrawal-receipt.json"
-        ))
-        .unwrap();
+        let unrelated = if let Some((sender, relay_sender, from)) = unrelated_senders {
+            disbursal_receipt(sender, relay_sender, from)
+        } else {
+            serde_json::from_str(include_str!(
+                "../../withdrawer/fixtures/synthetic-deposit-withdrawal-receipt.json"
+            ))
+            .unwrap()
+        };
         receipt["logs"].as_array_mut().unwrap().push(unrelated["logs"][0].clone());
         let estimated = Arc::new(AtomicBool::new(false));
         let captured = Arc::clone(&estimated);
         let proof_reads = Arc::new(Mutex::new(0));
+        let status_reads = Arc::new(Mutex::new(0));
+        let captured_status_reads = Arc::clone(&status_reads);
         let server = Server::new(move |request| match request["method"].as_str().unwrap() {
             "eth_blockNumber" | "eth_gasPrice" => json!({"result":"0x64"}),
             "eth_getLogs" => json!({"result":[fee_log(100, 0, B256::repeat_byte(1))]}),
-            "eth_getTransactionReceipt" => json!({"result":receipt}),
+            "eth_getTransactionReceipt" if request["params"][0] == json!(B256::repeat_byte(1)) => json!({"result":receipt}),
+            "eth_getTransactionReceipt" => {
+                if finalization_error == Some("was signed") {
+                    return json!({"error":{"code":3,"message":"receipt unavailable"}});
+                }
+                let mut mined = receipt.clone();
+                mined["type"] = json!("0x0");
+                mined["transactionHash"] = request["params"][0].clone();
+                mined["logs"] = json!([]);
+                if finalization_error == Some("target call failed") {
+                    let event = WithdrawalPortal::WithdrawalFinalized {
+                        withdrawalHash: hash,
+                        success: false,
+                    }.encode_log_data();
+                    let mut log = receipt["logs"][0].clone();
+                    log["address"] = json!(Address::repeat_byte(1));
+                    log["transactionHash"] = request["params"][0].clone();
+                    log["topics"] = json!(event.topics());
+                    log["data"] = json!(event.data);
+                    mined["logs"] = json!([log]);
+                }
+                json!({"result":mined})
+            }
+            "eth_sendRawTransaction" => json!({"result":B256::repeat_byte(7)}),
             "eth_getBlockByNumber" => {
                 let mut block = Block::<Transaction>::default();
                 block.header.inner.timestamp = now;
@@ -676,6 +761,9 @@ mod tests {
                 let call = WithdrawalPortal::finalizeWithdrawalTransactionCall::abi_decode_validate(&data).unwrap();
                 assert_eq!(call.withdrawal.data, MessagePassed::decode_log(&log.inner).unwrap().data.data);
                 captured.store(true, Ordering::Relaxed);
+                if finalization_error.is_some() {
+                    return json!({"result":"0x10000"});
+                }
                 json!({"error":{"code":3,"message":"execution reverted: https://user:password@secret.endpoint","data":"0xdeadbeef"}})
             }
             "eth_call" => {
@@ -693,6 +781,7 @@ mod tests {
                 if data[..4] == WithdrawalPortal::finalizedWithdrawalsCall::SELECTOR {
                     let call = WithdrawalPortal::finalizedWithdrawalsCall::abi_decode(&data).unwrap();
                     assert_eq!(call.withdrawalHash, hash, "unrelated withdrawal was processed");
+                    *captured_status_reads.lock().unwrap() += 1;
                     if estimated && recheck.is_none() {
                         return json!({"error":{"code":-32000,"message":"execution reverted: secret.endpoint"}});
                     }
@@ -723,6 +812,7 @@ mod tests {
         }).await;
         let mut job = job(&server.url);
         job.args.num_blocks_to_query = 0;
+        job.args.dry_run = finalization_error.is_none();
         let capture = LogCapture(Arc::new(Mutex::new(Vec::new())));
         let writer = capture.clone();
         let subscriber =
@@ -736,18 +826,35 @@ mod tests {
             assert!(logs.contains("failed withdrawals or disbursal receipts count=0"), "{logs}");
         } else {
             let error = result.unwrap_err();
-            if !paused {
+            if let Some(message) = finalization_error {
+                assert!(format!("{error:#}").contains(message), "{error:#}");
+                assert!(matches!(
+                    error.downcast_ref::<WithdrawerError>(),
+                    Some(
+                        WithdrawerError::TargetCallFailed { .. }
+                            | WithdrawerError::MissingFinalizationEvent { .. }
+                            | WithdrawerError::Unconfirmed { .. }
+                    )
+                ));
+                assert_eq!(
+                    *status_reads.lock().unwrap(),
+                    1,
+                    "must not recheck a signed finalization"
+                );
+            } else if !paused {
                 assert!(matches!(
                     error.downcast_ref::<WithdrawerError>(),
                     Some(WithdrawerError::Request(error))
                         if error.as_error_resp().is_some_and(|payload| payload.code == 3)
                 ));
             }
-            assert!(format!("{error:#}").contains(if paused {
-                "paused"
-            } else {
-                "execution reverted"
-            }));
+            if finalization_error.is_none() {
+                assert!(format!("{error:#}").contains(if paused {
+                    "paused"
+                } else {
+                    "execution reverted"
+                }));
+            }
             assert_eq!(
                 format!("{error:#}").contains("could not recheck withdrawal status"),
                 recheck.is_none()
