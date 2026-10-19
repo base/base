@@ -417,7 +417,7 @@ is pointed at and talks to the same prover-service.
 | `CHALLENGER_E2E_QUIET_WINDOW` | No (default `90s`) | Positive-case (and Path 2 skip) observation window |
 | `CHALLENGER_E2E_DISPUTE_TIMEOUT` | No (default `45m`) | Budget for each SNARK / dispute; sized for a real proof, generous in `mock` mode |
 | `CHALLENGER_E2E_POLL_INTERVAL` | No (default `5s`) | Driver poll interval |
-| `CHALLENGER_E2E_DRIVER_COMMIT` | No | `base/base` commit the driver was built from; the image sets it, and it is only logged |
+| `CHALLENGER_E2E_DRIVER_COMMIT` | No | `base/base` commit the driver was built from, for the image to set; it is only logged, as `unknown` when unset |
 | `CHALLENGER_E2E_L2_RETRY_BUDGET` | No (default `10m`) | How long an L2 read that fails like an unavailable node is retried before the run fails as an infrastructure failure (exit code 75) |
 
 `anvil` must be on `PATH`. The challenger under test must be reachable on

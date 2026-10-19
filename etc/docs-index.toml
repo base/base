@@ -436,7 +436,7 @@ digest = "1e4810a82c"
 
 ["crates/infra/challenger-e2e/README.md"]
 summary = "Behavioural e2e test of the challenger: forks L1 into Anvil, patches real games; the default `all` scenario covers Paths 1-4 on one fork by reviving nullified verifiers. Lists scenarios and env vars."
-digest = "d35796ff67"
+digest = "8f2b7f4e58"
 
 ["crates/infra/fee-jobs/README.md"]
 summary = "Run disburse, process, and sweep fee jobs with per-command environment variables, preconditions, and transaction manager settings."

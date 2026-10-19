@@ -1557,10 +1557,17 @@ impl ChallengerE2e {
     /// Logs the version the challenger under test reports in `base_info`.
     ///
     /// The challenger is a separate image, pinned separately, so this is the
-    /// driver's only view of what it is testing. Best effort: a missing series
-    /// is logged as unknown rather than failing the run.
+    /// driver's only view of what it is testing. Best effort: a failed scrape or
+    /// a missing series is logged as unknown rather than failing the run, and a
+    /// failed scrape logs its error first so the two can be told apart.
     async fn log_challenger_build(config: &Config) {
-        let scrape = Scrape::fetch(&config.challenger_metrics_url).await.unwrap_or_default();
+        let scrape = match Scrape::fetch(&config.challenger_metrics_url).await {
+            Ok(scrape) => scrape,
+            Err(error) => {
+                warn!(phase = %Phase::Setup, error = %error, "failed to read the challenger's base_info");
+                Scrape::default()
+            }
+        };
         info!(
             phase = %Phase::Setup,
             challenger_version = scrape.label_value("base_info", "version").unwrap_or("unknown"),

@@ -177,8 +177,8 @@ pub struct Config {
     pub poll_interval: Duration,
 
     /// `base/base` commit the driver was built from, logged at startup so a run
-    /// names the code it ran. The binary cannot discover it itself; the image
-    /// sets it from the commit it builds.
+    /// names the code it ran. The binary cannot discover it itself, so the image
+    /// has to set it from the commit it builds; unset, it is logged as unknown.
     #[arg(long = "driver-commit", env = "CHALLENGER_E2E_DRIVER_COMMIT")]
     pub driver_commit: Option<String>,
 
