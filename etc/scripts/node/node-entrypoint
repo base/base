@@ -98,18 +98,20 @@ if [[ -n "${BASE_NODE_L2_ENGINE_AUTH:-}" && -n "${BASE_NODE_L2_ENGINE_AUTH_RAW:-
     ADDITIONAL_ARGS="$ADDITIONAL_ARGS --authrpc.jwtsecret=$BASE_NODE_L2_ENGINE_AUTH"
 fi
 
-if PUBLIC_IP=$(get_public_ip); then
-  echo "fetched public IP is: $PUBLIC_IP"
-else
-  echo "Could not retrieve public IP."
-  exit 8
-fi
-export BASE_NODE_P2P_ADVERTISE_IP=$PUBLIC_IP
-
 MODE="rpc"
 if [[ -n "${BASE_NODE_SOURCE_L2_RPC:-}" ]]; then
   echo "Running in follow mode because BASE_NODE_SOURCE_L2_RPC is set"
   MODE="follow"
+fi
+
+# Only rpc mode runs consensus P2P. A failed lookup must not keep the node down.
+if [[ "$MODE" == "rpc" && -z "${BASE_NODE_P2P_ADVERTISE_IP:-}" ]]; then
+  if PUBLIC_IP=$(get_public_ip); then
+    echo "fetched public IP is: $PUBLIC_IP"
+    export BASE_NODE_P2P_ADVERTISE_IP=$PUBLIC_IP
+  else
+    echo "WARNING: could not retrieve public IP; set BASE_NODE_P2P_ADVERTISE_IP to advertise consensus P2P" 1>&2
+  fi
 fi
 
 mkdir -p "$RETH_DATA_DIR"

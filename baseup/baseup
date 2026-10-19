@@ -594,7 +594,7 @@ add_selected_bin() {
     normalized="$(normalize_bin_name "$1")" || error "Unknown binary '$1'. Valid values: base, basectl, all (discontinued: base-reth-node, base-consensus)."
 
     if array_contains "$normalized" "${DISCONTINUED_BINS[@]}"; then
-        warn "$normalized is discontinued and only published in older releases; use 'base execution' or 'base consensus' instead."
+        warn "$normalized is discontinued and only published in older releases; install 'base' and run 'base rpc' (or 'base follow') instead."
     fi
 
     if [[ "$normalized" == "all" ]]; then
