@@ -1,12 +1,11 @@
 ## Flashblocks RPC Integration Tests
 
-The suites under this directory exercise `base-flashblocks-node` the same way external
-consumers do — by linking against the published library instead of the crate's `cfg(test)` build.
+The suites under this directory exercise `base-flashblocks-node` by linking against its library
+build with the `test-utils` feature enabled, not the crate's `cfg(test)` build.
 Running them from `tests/` ensures:
 
-1. **Single compilation unit:** both the tests and `base_reth_test_utils` depend on the standard
-   library build, so types like `Flashblock` stay aligned (no duplicate definitions across lib/test
-   targets and no `E0308` mismatches on channels).
+1. **Shared library types:** integration tests use the library's exported types and `base_test_utils`
+   for shared test helpers, without a separate `cfg(test)` build of the library.
 2. **Public API coverage:** integration tests only touch exported items, which makes it easy to
    detect when a public surface change would break downstream users.
 
