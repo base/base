@@ -351,10 +351,11 @@ that left the pool another way, such as admin removal or pool-full eviction, is
 `dropped` only once the recovery window closes, because a canonical landing can
 still correct it.
 
-Disabled selection. A node started without candidates, or one whose selection
-is disabled at runtime with `admin_setCandidateSelectionEnabled`, emits no
-ingress candidate events; the ledger still journals terminal events for groups
-admitted earlier.
+Disabled selection. A node started without candidates registers no
+`base_sendSwapTransaction` and emits none of these events. While selection is
+disabled at runtime with `admin_setCandidateSelectionEnabled`, ingress journals
+admissions with `data.selection: ignored` and starts no group; the ledger still
+journals terminal events for groups admitted earlier.
 
 Canonicality caveat: builder events are local payload construction signals, not
 canonical-chain or consensus-finality observations. A builder event with
