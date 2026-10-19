@@ -264,21 +264,21 @@ At the 0.005 gwei minimum base fee and $2,450/ETH, CPSB 1,000 gives a **nominal 
 
 Illustrative source-template arithmetic, **not transaction replays, gas-limit recommendations, or exact post-fork quotes**. Combine EIP-8037 with [EIP-8038's BAL scenarios](https://github.com/base/base/blob/918b4c0b9df9ce63e2cfb3a2ccc342d60978a19f/docs/guides/GLAMSTERDAM.md#80m-bal-scenarios) and EIP-2780's ordinary zero-value intrinsic base. At 80M, assumed effective speedup `s = 2` retains the 40M access/write prices; `s = 1` uses higher prices. Neither speedup is measured or selected for activation, and gains already credited in upstream benchmarks must not be counted twice.
 
-| Transaction template (gas, approximate) | Today | 40M: CPSB 533 | 80M: CPSB 1,000, `s = 2` | 80M: CPSB 1,000, `s = 1` |
-|---|---:|---:|---:|---:|
-| x402 USDC EIP-3009, existing recipient holding | 85,788 | 227,136 | 257,024 | 417,340 |
-| x402 USDC EIP-3009, new recipient holding | 102,888 | 261,248 | 321,024 | 481,340 |
-| USDC ERC-20 transfer, existing holder | 45,059 | 125,777 | 125,777 | 232,284 |
-| USDC ERC-20 transfer, new holder | 62,159 | 159,889 | 189,777 | 296,284 |
-| B20 all-allow transfer, existing holder (conditional) | 38,000 | 118,636 | 118,636 | 221,316 |
-| B20 all-allow transfer, new holder (conditional) | 55,100 | 152,748 | 182,636 | 285,316 |
-| Uniswap v3 single-hop, existing holdings | 125,000 | 466,452 | 466,452 | 864,086 |
+| Transaction template (approximate) | Today (gas) | Today (USD) | 40M: CPSB 533 (gas) | 40M (USD) | 80M: CPSB 1,000, `s = 2` (gas) | 80M `s = 2` (USD) | 80M: CPSB 1,000, `s = 1` (gas) | 80M `s = 1` (USD) |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| x402 USDC EIP-3009, existing recipient holding | 85,788 | $0.0010509 | 227,136 | $0.0027824 | 257,024 | $0.0031485 | 417,340 | $0.0051124 |
+| x402 USDC EIP-3009, new recipient holding | 102,888 | $0.0012604 | 261,248 | $0.0032003 | 321,024 | $0.0039325 | 481,340 | $0.0058964 |
+| USDC ERC-20 transfer, existing holder | 45,059 | $0.00055197 | 125,777 | $0.0015408 | 125,777 | $0.0015408 | 232,284 | $0.0028455 |
+| USDC ERC-20 transfer, new holder | 62,159 | $0.00076145 | 159,889 | $0.0019586 | 189,777 | $0.0023248 | 296,284 | $0.0036295 |
+| B20 all-allow transfer, existing holder (conditional) | 38,000 | $0.00046550 | 118,636 | $0.0014533 | 118,636 | $0.0014533 | 221,316 | $0.0027111 |
+| B20 all-allow transfer, new holder (conditional) | 55,100 | $0.00067498 | 152,748 | $0.0018712 | 182,636 | $0.0022373 | 285,316 | $0.0034951 |
+| Uniswap v3 single-hop, existing holdings | 125,000 | $0.0015313 | 466,452 | $0.0057140 | 466,452 | $0.0057140 | 864,086 | $0.010585 |
+
+USD = L2 base fee only at the 0.005 gwei minimum and $2,450/ETH; excludes priority fees and L1 data fees. More capacity cannot lower a base fee already at the minimum.
 
 The model retains today's unrepriced work as a remainder. For a slot read before writing, future execution is `STORAGE_WRITE + 100` (46,254 at 40M/80M `s = 2`; 92,409 at 80M `s = 1`), plus 34,112 / 64,000 state gas for each zero-to-nonzero slot. Cold-slot prices are 2,182 / 4,363 and cold-account prices 2,600 / 4,246; intrinsic bases are 14,600 / 16,246. Selected cold-slot/runtime-cold-account/existing-write/new-write counts are USDC 5/1/2/0, x402 7/3/2/1, B20 4/0/2/0, and v3 10/3/8/0; a new holding replaces one existing write with a new write. x402/v3 also include one/two extra 100-gas `EXT*` second reads. Counts are conditional source inventories, not receipt traces.
 
 The [direct EIP-3009 flow](https://github.com/coinbase/x402/blob/0e6e8c55d86b4f14234fb6e49a4052074fb93e57/typescript/packages/mechanisms/evm/src/exact/facilitator/eip3009-utils.ts#L309-L347) creates a fresh **64-byte authorization-nonce slot every successful payment**, even between existing holders. New holding means a zero-to-nonzero token balance, not a new account leaf; payer balances remain nonzero. B20 figures require fork-correct native-adapter pricing and state metering: today's native precompile adapter does not charge EIP-8037 state gas or automatically inherit EVM overrides. The v3 template assumes eight changed, originally nonzero writes including an overwritten oracle observation and finite allowance, no tick crossings, no protocol fee, and no ETH wrap/unwrap. Clear/restore refunds, new pool words, different routers and larger calldata need separate modeling; these short paths do not bind the calldata floor. Facilitators with fixed gas limits must update them; the direct-payment figures do not quote Permit2 or smart-wallet flows.
-
-At 0.005 gwei and $2,450/ETH, 1M gas costs **$0.01225** in L2 base fee: the existing-holder x402 row is approximately **$0.00105 / $0.00278 / $0.00315 / $0.00511** across the columns, excluding priority and L1 data fees. More capacity cannot lower a base fee already at the minimum.
 
 #### Base-specific interactions
 
