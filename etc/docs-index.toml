@@ -339,8 +339,8 @@ summary = "BaseBeaconConsensus for execution-layer block header/body validation 
 digest = "0880f777ff"
 
 ["crates/execution/eip8130-rpc-node/README.md"]
-summary = "Node extension wiring the standalone EIP-8130 eth_getTransactionCount override; self-gates via Eip8130RpcMode (Defer when flashblocks already overrides, else Register). Use for RPC override conflicts."
-digest = "2d0cf30e0d"
+summary = "Node extension wiring EIP-8130 eth_getTransactionCount, eth_estimateGas and eth_call overrides via Eip8130RpcMode; use to coordinate ownership with flashblocks."
+digest = "ef2acd3f6b"
 
 ["crates/execution/eip8130-rpc/README.md"]
 summary = "EIP-8130 RPC helpers: ChannelNonceReader for 2D nonce reads by nonce_key and Eip8130GasEstimator, one simulation for eth_estimateGas and eth_call. Use when debugging AA nonce, call or gas RPCs."
