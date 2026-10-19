@@ -63,12 +63,15 @@ std::thread_local! {
 ///
 /// The u32s match op-geth's Go port.
 ///
+/// # Panics
+///
+/// If `input` is longer than `u32::MAX` bytes. op-geth wraps its u32 positions for such inputs,
+/// which this port does not replicate; transactions are far smaller.
+///
 /// <https://github.com/Vectorized/solady/blob/5315d937d79b335c668896d7533ac603adac5315/js/solady.js>
 /// <https://github.com/ethereum-optimism/op-geth/blob/647c346e2bef36219cc7b47d76b1cb87e7ca29e4/core/types/rollup_cost.go#L411>
 pub fn flz_compress_len(input: &[u8]) -> u32 {
-    // Positions are u32 like op-geth's, which only addresses the first `len mod 2^32` bytes.
-    // Truncating keeps the unchecked loads below in bounds for inputs of 4 GiB and more.
-    let input = &input[..input.len() as u32 as usize];
+    assert!(u32::try_from(input.len()).is_ok(), "FastLZ input longer than u32::MAX bytes");
     #[cfg(feature = "std")]
     if input.len() <= REUSED_HTAB_MAX_INPUT_LEN {
         // Falls back to a fresh table if the thread-local is being destroyed or already borrowed.
@@ -88,6 +91,13 @@ pub fn flz_compress_len(input: &[u8]) -> u32 {
             return size;
         }
     }
+    compress_len_fresh(input)
+}
+
+/// [`compress_len`] with a zeroed stack table, for large inputs or when the reused table is
+/// unavailable. Kept out of line so other calls don't pay for its large frame and stack probes.
+#[inline(never)]
+fn compress_len_fresh(input: &[u8]) -> u32 {
     compress_len(input, &mut [0; HTAB_LEN], 0)
 }
 
@@ -149,25 +159,26 @@ const fn literals(r: u32, size: u32) -> u32 {
     if r != 0 { size + r + 1 } else { size }
 }
 
-/// Number of bytes compared at `p` and `q` up to and including the first mismatch, capped at
-/// `r - q`. Compares eight bytes at a time; `r` never exceeds `input.len() - 4`.
+/// Number of bytes compared at `p < q` up to and including the first mismatch, capped at
+/// `n = r - q`. Matches are only accepted with `q <= r - 8`, so `n >= 8`, and `r` never exceeds
+/// `input.len() - 4`.
 fn cmp(input: &[u8], p: u32, q: u32, r: u32) -> u32 {
     let (p, q, n) = (p as usize, q as usize, (r - q) as usize);
+    debug_assert!(n >= 8);
+    let diff_at = |l: usize| u64_at(input, p + l) ^ u64_at(input, q + l);
+    let mismatch = |l: usize, diff: u64| (l + diff.trailing_zeros() as usize / 8 + 1) as u32;
     let mut l = 0;
-    while l + 8 <= n {
-        let diff = u64_at(input, p + l) ^ u64_at(input, q + l);
+    while l + 8 < n {
+        let diff = diff_at(l);
         if diff != 0 {
-            return (l + diff.trailing_zeros() as usize / 8 + 1) as u32;
+            return mismatch(l, diff);
         }
         l += 8;
     }
-    while l < n {
-        if input[p + l] != input[q + l] {
-            return (l + 1) as u32;
-        }
-        l += 1;
-    }
-    n as u32
+    // The final word overlaps bytes already known equal, so it finds the remainder's first
+    // mismatch.
+    let diff = diff_at(n - 8);
+    if diff != 0 { mismatch(n - 8, diff) } else { n as u32 }
 }
 
 const fn flz_match(l: u32, size: u32) -> u32 {
@@ -249,12 +260,24 @@ mod tests {
     }
 
     /// The straightforward byte-at-a-time port (op-geth / solady) with a fresh table per call.
+    /// Self-contained, including the original 64-bit hash, so it shares no code with the
+    /// implementation under test.
     fn reference_compress_len(input: &[u8]) -> u32 {
+        let hash = |v: u32| ((u64::from(v) * 2654435769) >> 19) as usize & 0x1fff;
+        let literals = |r: u32, size: u32| {
+            let size = size + 0x21 * (r / 0x20);
+            let r = r % 0x20;
+            if r != 0 { size + r + 1 } else { size }
+        };
+        let flz_match = |l: u32, size: u32| {
+            let size = size + 3 * ((l - 1) / 262);
+            if (l - 1) % 262 >= 6 { size + 3 } else { size + 2 }
+        };
         let byte_u24 = |i: u32| {
             let i = i as usize;
             u32::from(input[i]) | u32::from(input[i + 1]) << 8 | u32::from(input[i + 2]) << 16
         };
-        let mut htab = [0u32; HTAB_LEN];
+        let mut htab = [0u32; 8192];
         let mut idx: u32 = 2;
         let idx_limit = if input.len() < 13 { 0 } else { input.len() as u32 - 13 };
         let (mut anchor, mut size) = (0, 0);
@@ -262,7 +285,7 @@ mod tests {
             let mut r: u32;
             loop {
                 let seq = byte_u24(idx);
-                let h = hash(seq) as usize;
+                let h = hash(seq);
                 r = htab[h];
                 htab[h] = idx;
                 let distance = idx - r;
@@ -292,7 +315,7 @@ mod tests {
             size = flz_match(len, size);
             idx += len;
             for _ in 0..2 {
-                htab[hash(byte_u24(idx)) as usize] = idx;
+                htab[hash(byte_u24(idx))] = idx;
                 idx += 1;
             }
             anchor = idx;
@@ -381,6 +404,29 @@ mod tests {
         for len in [1000, 20_000, 131_072] {
             let input = vec![7; len];
             assert_eq!(flz_compress_len(&input), reference_compress_len(&input), "len {len}");
+        }
+    }
+
+    #[test]
+    fn test_flz_compress_len_matches_reference_at_boundaries() {
+        let random = |seed: u64, len: usize| build_input(&[(0, len, seed)]);
+        // Matches ending at every offset across several comparison words.
+        let block = random(1, 64);
+        for k in 0..40 {
+            let mut input = block.clone();
+            input.extend_from_slice(&block[..k]);
+            input.push(!block[k]);
+            input.extend(random(2, 32));
+            assert_eq!(flz_compress_len(&input), reference_compress_len(&input), "match {k}");
+        }
+        // Repeats on either side of the maximum match distance.
+        for distance in 8189..8196 {
+            let mut input = block.clone();
+            input.extend(random(3, distance - block.len()));
+            input.extend_from_slice(&block);
+            input.extend(random(4, 32));
+            let (actual, expected) = (flz_compress_len(&input), reference_compress_len(&input));
+            assert_eq!(actual, expected, "distance {distance}");
         }
     }
 
