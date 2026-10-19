@@ -475,63 +475,52 @@ mod tests {
         assert_activated(&mut storage, true);
     }
 
-    #[test]
-    fn set_admin_reverts_when_state_backed_admin_is_disabled() {
+    #[rstest]
+    #[case::state_backed_admin_is_disabled(
+        STATIC_ADMIN_CONFIG,
+        NEW_ADMIN,
+        ADMIN,
+        false,
+        BasePrecompileError::revert(IActivationRegistry::AdminStorageNotEnabled {})
+    )]
+    #[case::zero_address(
+        STATE_ADMIN_CONFIG,
+        Address::ZERO,
+        ADMIN,
+        false,
+        BasePrecompileError::revert(IActivationRegistry::ZeroAdminAddress {})
+    )]
+    #[case::unauthorized_caller(
+        STATE_ADMIN_CONFIG,
+        NEW_ADMIN,
+        NEW_ADMIN,
+        false,
+        BasePrecompileError::revert(IActivationRegistry::Unauthorized { caller: NEW_ADMIN })
+    )]
+    #[case::static_context(
+        STATE_ADMIN_CONFIG,
+        NEW_ADMIN,
+        ADMIN,
+        true,
+        BasePrecompileError::revert(IActivationRegistry::StaticCallNotAllowed {})
+    )]
+    fn set_admin_reverts(
+        #[case] admin_config: ActivationAdminConfig,
+        #[case] new_admin: Address,
+        #[case] caller: Address,
+        #[case] is_static: bool,
+        #[case] expected_error: BasePrecompileError,
+    ) {
         let mut storage = HashMapStorageProvider::new(1);
-        storage.set_caller(ADMIN);
+        storage.set_caller(caller);
+        storage.set_static(is_static);
 
         let err = StorageCtx::enter(&mut storage, |ctx| {
-            ActivationRegistryStorage::new(ctx).set_admin(NEW_ADMIN, STATIC_ADMIN_CONFIG)
+            ActivationRegistryStorage::new(ctx).set_admin(new_admin, admin_config)
         })
         .unwrap_err();
 
-        assert_eq!(
-            err,
-            BasePrecompileError::revert(IActivationRegistry::AdminStorageNotEnabled {})
-        );
-    }
-
-    #[test]
-    fn set_admin_reverts_for_zero_address() {
-        let mut storage = HashMapStorageProvider::new(1);
-        storage.set_caller(ADMIN);
-
-        let err = StorageCtx::enter(&mut storage, |ctx| {
-            ActivationRegistryStorage::new(ctx).set_admin(Address::ZERO, STATE_ADMIN_CONFIG)
-        })
-        .unwrap_err();
-
-        assert_eq!(err, BasePrecompileError::revert(IActivationRegistry::ZeroAdminAddress {}));
-    }
-
-    #[test]
-    fn set_admin_reverts_for_unauthorized_caller() {
-        let mut storage = HashMapStorageProvider::new(1);
-        storage.set_caller(NEW_ADMIN);
-
-        let err = StorageCtx::enter(&mut storage, |ctx| {
-            ActivationRegistryStorage::new(ctx).set_admin(NEW_ADMIN, STATE_ADMIN_CONFIG)
-        })
-        .unwrap_err();
-
-        assert_eq!(
-            err,
-            BasePrecompileError::revert(IActivationRegistry::Unauthorized { caller: NEW_ADMIN })
-        );
-    }
-
-    #[test]
-    fn set_admin_reverts_in_static_context() {
-        let mut storage = HashMapStorageProvider::new(1);
-        storage.set_caller(ADMIN);
-        storage.set_static(true);
-
-        let err = StorageCtx::enter(&mut storage, |ctx| {
-            ActivationRegistryStorage::new(ctx).set_admin(NEW_ADMIN, STATE_ADMIN_CONFIG)
-        })
-        .unwrap_err();
-
-        assert_eq!(err, BasePrecompileError::revert(IActivationRegistry::StaticCallNotAllowed {}));
+        assert_eq!(err, expected_error);
     }
 
     #[test]
