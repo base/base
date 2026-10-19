@@ -14,9 +14,8 @@ use base_node_runner::BaseNodeRunner;
 use base_observability_events::GlobalTransactionEventWriter;
 use base_shadow_indexer::{ShadowIndexerConfig, ShadowIndexerExtension};
 use base_txpool_rpc::{
-    SendRawTransactionCandidatesConfig, SendRawTransactionCandidatesExtension,
-    SendRawTransactionValidityConfig, SendRawTransactionValidityExtension, TxPoolRpcConfig,
-    TxPoolRpcExtension,
+    SendRawTransactionValidityConfig, SendRawTransactionValidityExtension,
+    SendSwapTransactionConfig, SendSwapTransactionExtension, TxPoolRpcConfig, TxPoolRpcExtension,
 };
 
 type BuilderCli = Cli<Args>;
@@ -85,14 +84,12 @@ fn main() {
             },
         );
         if let Some(runtime) = candidate_runtime {
-            runner.install_ext::<SendRawTransactionCandidatesExtension>(
-                SendRawTransactionCandidatesConfig {
-                    runtime,
-                    max_expiry_secs: candidate_max_expiry_secs,
-                    sequencer_url: None,
-                    sequencer_headers: Vec::new(),
-                },
-            );
+            runner.install_ext::<SendSwapTransactionExtension>(SendSwapTransactionConfig {
+                runtime,
+                max_expiry_secs: candidate_max_expiry_secs,
+                sequencer_url: None,
+                sequencer_headers: Vec::new(),
+            });
         }
         runner.install_ext::<ShadowIndexerExtension>(shadow_indexer_config);
         StandardBaseRethNode::install_upgrade_signal_runtime_extension(&mut runner, &rollup_args)?;

@@ -1,4 +1,4 @@
-//! Candidate-group (`base_sendRawTransactionCandidates`) CLI arguments.
+//! Swap Lane (`base_sendSwapTransaction`) and candidate selection CLI arguments.
 
 use core::time::Duration;
 use std::{path::PathBuf, sync::Arc};
@@ -14,14 +14,14 @@ use base_execution_payload_builder::{
 };
 use eyre::WrapErr;
 
-/// Provisional maximum group lifetime past the next block, in seconds.
+/// Provisional maximum swap transaction lifetime past the next block, in seconds.
 pub const DEFAULT_CANDIDATE_MAX_EXPIRY_SECS: u64 = 60;
 
-/// Candidate-group ingress and builder selection settings. Everything is off by default.
+/// Swap Lane ingress and builder candidate selection settings. Everything is off by default.
 #[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
 pub struct CandidateArgs {
-    /// Registers `base_sendRawTransactionCandidates` at startup. When off the method is
-    /// unregistered and returns `-32601`.
+    /// Registers `base_sendSwapTransaction` at startup. When off the method is unregistered and
+    /// returns `-32601`.
     #[arg(long = "txpool.candidates.enabled", default_value = "false")]
     pub candidates_enabled: bool,
 
@@ -37,15 +37,15 @@ pub struct CandidateArgs {
     #[arg(long = "txpool.candidates.principals-file")]
     pub principals_file: Option<PathBuf>,
 
-    /// Maximum siblings per group.
+    /// Maximum transactions per swap, counting the default transaction and its alternatives.
     #[arg(long = "txpool.candidates.max-siblings", default_value_t = DEFAULT_MAX_SIBLINGS)]
     pub max_siblings: usize,
 
-    /// Maximum gas limit of any one sibling.
+    /// Maximum gas limit of any one swap transaction.
     #[arg(long = "txpool.candidates.max-sibling-gas", default_value_t = DEFAULT_MAX_SIBLING_GAS)]
     pub max_sibling_gas: u64,
 
-    /// Maximum group lifetime past the next block, in seconds.
+    /// Maximum swap transaction lifetime past the next block, in seconds.
     #[arg(
         long = "txpool.candidates.max-expiry-secs",
         default_value_t = DEFAULT_CANDIDATE_MAX_EXPIRY_SECS
