@@ -480,7 +480,7 @@ digest = "63043098db"
 
 ["crates/infra/withdrawer/README.md"]
 summary = "Configure withdrawer signers and RPCs, inspect latest-mined withdrawal status, and run receipt-wide proving and finalization with fee caps, proof verification, pause handling, and finality checks."
-digest = "af2673c6b9"
+digest = "76e9cfa389"
 
 ["crates/infra/zk-benchmarks/README.md"]
 summary = "One-line stub: ZK proof benchmarking utilities for Base load-test runs; no usage or detail beyond that."
@@ -672,7 +672,7 @@ digest = "0951b41580"
 
 ["docs/guides/GLAMSTERDAM.md"]
 summary = "Scopes Base's Glamsterdam EIPs with BAL and SLOTNUM designs, plus calldata and access-list pricing proposals for transaction costs, P2P block sizes, and storage growth."
-digest = "5934f501aa"
+digest = "f84c6ccb4f"
 
 ["docs/guides/P2P.md"]
 summary = "Explains the Base P2P stack for newcomers: consensus-layer discv5 and libp2p gossipsub versus execution-layer reth networking, how they interact via Engine API, key files, flags, and glossary."
