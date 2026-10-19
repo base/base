@@ -6776,6 +6776,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-withdrawer-bin"
+version = "0.0.0"
+dependencies = [
+ "base-withdrawer",
+ "clap",
+ "eyre",
+ "tokio",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "base-witness-diff"
 version = "0.0.0"
 dependencies = [
