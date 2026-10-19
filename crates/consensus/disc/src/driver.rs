@@ -189,6 +189,7 @@ impl Discv5Driver {
             let mut removal_interval = tokio::time::interval(remove_dur);
             let mut interval = tokio::time::interval(self.interval);
             let mut store_interval = tokio::time::interval(self.store_interval);
+            let (verified_sender, mut verified_recv) = channel::<Enr>(1024);
 
             // Step 1: Start the discovery service.
             let Ok(s) = self.init().await else {
@@ -321,11 +322,13 @@ impl Discv5Driver {
                                 // verified session and adds the node to the table.
                                 if Self::should_verify_advertised_socket(self.disc.ip_mode(), &enr, socket) {
                                     let ping = self.disc.send_ping(enr.clone());
+                                    let (verified_sender, verified) = (verified_sender.clone(), enr.clone());
                                     tokio::spawn(async move {
                                         match ping.await {
                                             Ok(_) => {
                                                 debug!(target: "discovery", observed = %socket, "Unverifiable ENR answered ping at its advertised socket");
                                                 Metrics::discovery_event("unverifiable_enr_verified").increment(1.0);
+                                                let _ = verified_sender.try_send(verified);
                                             }
                                             Err(err) => {
                                                 debug!(target: "discovery", observed = %socket, error = ?err, "Unverifiable ENR did not answer ping at its advertised socket");
@@ -339,6 +342,14 @@ impl Discv5Driver {
                                 }
                             }
                             _ => {}
+                        }
+                    }
+                    Some(enr) = verified_recv.recv() => {
+                        // discv5 only inserts a node when a session is established, so a ping
+                        // over an existing session would not re-add a node that a session from
+                        // another port just removed.
+                        if let Err(err) = self.disc.add_enr(enr) {
+                            debug!(target: "discovery", error = ?err, "Failed to add verified ENR");
                         }
                     }
                     _ = interval.tick() => {
@@ -405,7 +416,7 @@ mod tests {
     use base_common_chains::ChainConfig;
     use discv5::{
         ConfigBuilder,
-        enr::{CombinedKey, CombinedPublicKey},
+        enr::{CombinedKey, CombinedPublicKey, k256::ecdsa::SigningKey},
         handler::NodeContact,
     };
     use tempfile::tempdir;
@@ -675,14 +686,12 @@ mod tests {
 
     /// Starts a driver listening on `listen_port` whose ENR advertises `advertised_port`.
     fn start_driver(
+        secret_key: SigningKey,
         listen_port: u16,
         advertised_port: u16,
         bootnodes: BootNodes,
         bootstore: std::path::PathBuf,
     ) -> Discv5Handler {
-        let CombinedKey::Secp256k1(secret_key) = CombinedKey::generate_secp256k1() else {
-            unreachable!()
-        };
         let localhost = IpAddr::V4(Ipv4Addr::LOCALHOST);
         let listen = SocketAddr::new(localhost, listen_port);
         let (handle, _) = Discv5Driver::builder(
@@ -702,6 +711,24 @@ mod tests {
     /// Chain ID with no hardcoded bootnodes, so the test never leaves localhost.
     const TEST_CHAIN_ID: u64 = 7_777_777;
 
+    fn generate_key() -> SigningKey {
+        let CombinedKey::Secp256k1(secret_key) = CombinedKey::generate_secp256k1() else {
+            unreachable!()
+        };
+        secret_key
+    }
+
+    async fn wait_for_table_entry(node: &Discv5Handler, id: NodeId, deadline: Instant) {
+        loop {
+            let table = node.table_enrs().await.unwrap();
+            if table.iter().any(|enr| enr.node_id() == id) {
+                return;
+            }
+            assert!(Instant::now() < deadline, "{id} never entered the table");
+            sleep(Duration::from_millis(200)).await;
+        }
+    }
+
     #[tokio::test]
     async fn admits_peer_whose_packets_leave_from_a_translated_port() {
         let dir = tempdir().unwrap();
@@ -709,6 +736,7 @@ mod tests {
         // Observer, e.g. a bootnode, with a plain socket.
         let observer_port = free_udp_port();
         let observer = start_driver(
+            generate_key(),
             observer_port,
             observer_port,
             BootNodes(vec![]),
@@ -722,22 +750,32 @@ mod tests {
         let peer_port = free_udp_port();
         let forwarded =
             spawn_port_forward(SocketAddr::from((Ipv4Addr::LOCALHOST, peer_port))).await;
+        let peer_key = generate_key();
         let peer = start_driver(
+            peer_key.clone(),
             peer_port,
             forwarded.port(),
-            BootNodes(vec![BootNode::Enr(observer_enr)]),
+            BootNodes(vec![BootNode::Enr(observer_enr.clone())]),
             dir.path().join("b.json"),
         );
         let peer_id = peer.local_enr().await.unwrap().node_id();
 
+        wait_for_table_entry(&observer, peer_id, Instant::now() + Duration::from_secs(20)).await;
+
+        // The peer's NAT port changes: a new session from another port fails verification
+        // and discv5 removes the peer. The ping that follows travels over the session the
+        // observer already has with the advertised socket, so only the driver can re-add it.
+        let moved = start_driver(
+            peer_key,
+            free_udp_port(),
+            forwarded.port(),
+            BootNodes(vec![BootNode::Enr(observer_enr.clone())]),
+            dir.path().join("c.json"),
+        );
         let deadline = Instant::now() + Duration::from_secs(20);
-        loop {
-            let table = observer.table_enrs().await.unwrap();
-            if table.iter().any(|enr| enr.node_id() == peer_id) {
-                break;
-            }
-            assert!(Instant::now() < deadline, "peer never entered the observer's table");
-            sleep(Duration::from_millis(200)).await;
-        }
+        wait_for_table_entry(&moved, observer_enr.node_id(), deadline).await;
+        // Let the observer process the new session before checking its table.
+        sleep(Duration::from_secs(1)).await;
+        wait_for_table_entry(&observer, peer_id, Instant::now() + Duration::from_secs(5)).await;
     }
 }
