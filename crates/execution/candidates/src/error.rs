@@ -43,7 +43,8 @@ pub enum CandidateError {
         /// Sibling index in envelope order; `0` for a default transaction without alternatives.
         index: usize,
     },
-    /// A sibling is not a plain EIP-1559 transaction, or its sender is EIP-7702-delegated.
+    /// A sibling, or a default transaction submitted alone, is not a plain EIP-1559
+    /// transaction. An EIP-7702-delegated sender is [`Self::SenderDelegated`] instead.
     #[error("sibling {index} has an unsupported transaction type")]
     SiblingTypeUnsupported {
         /// Sibling index in envelope order; `0` for a default transaction without alternatives.
@@ -127,7 +128,7 @@ pub enum CandidateError {
     CombinedWithValidity,
     /// v0 rejects EIP-7702-delegated senders (design §4.2): delegated code can move the sender's
     /// balance or nonce independently of the siblings.
-    #[error("EIP-7702-delegated senders cannot submit candidate groups")]
+    #[error("EIP-7702-delegated senders cannot submit swap transactions")]
     SenderDelegated,
 }
 
