@@ -29,7 +29,6 @@ base-consensus-engine = { workspace = true, optional = true }
 tracing = { workspace = true, optional = true, features = ["std"] }
 
 [features]
-test-utils = [ "base-consensus-engine?/test-utils" ]
 engine-validation = [
 	"dep:alloy-provider",
 	"dep:backon",

@@ -5,7 +5,7 @@ use alloc::vec::Vec;
 use alloy_consensus::{Receipt, ReceiptWithBloom, TxReceipt};
 use alloy_primitives::{Address, Bytes};
 use alloy_serde::OtherFields;
-use base_common_consensus::{BaseReceipt, BaseReceiptEnvelope, DepositReceipt};
+use base_common_consensus::{BaseReceipt, BaseReceiptEnvelope, DepositReceipt, Eip8130Receipt};
 use serde::{Deserialize, Serialize};
 
 use crate::BaseLogResponse;
@@ -319,11 +319,10 @@ impl From<BaseTransactionReceipt> for BaseReceiptEnvelope {
             BaseReceipt::Eip7702(receipt) => {
                 Self::Eip7702(convert_standard_receipt(receipt, logs_bloom))
             }
-            BaseReceipt::Eip8130(receipt) => {
-                // The consensus envelope only carries the standard receipt; the
-                // EIP-8130 `phaseStatuses` live on the RPC receipt, not in RLP.
-                Self::Eip8130(convert_standard_receipt(receipt.inner, logs_bloom))
-            }
+            BaseReceipt::Eip8130(receipt) => Self::Eip8130(
+                convert_standard_receipt(receipt.inner, logs_bloom)
+                    .map_receipt(|inner| Eip8130Receipt::new(inner, receipt.committed_phases)),
+            ),
             BaseReceipt::Deposit(receipt) => {
                 Self::Deposit(convert_standard_receipt(receipt.inner, logs_bloom).map_receipt(
                     |inner| DepositReceipt {
@@ -416,7 +415,8 @@ mod tests {
             "to": "0x4200000000000000000000000000000000000015",
             "transactionHash": "0xb7c74afdeb7c89fb9de2c312f49b38cb7a850ba36e064734c5223a477e83fdc9",
             "transactionIndex": "0x0",
-            "type": "0x79"
+            "type": "0x79",
+            "committedPhases": "0x0"
         }"#;
 
         let mut receipt: BaseTransactionReceipt = serde_json::from_str(s).unwrap();

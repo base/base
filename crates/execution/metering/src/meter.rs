@@ -711,7 +711,7 @@ where
     }
 
     // Create state database
-    let state_db = StateProviderDatabase::new(state_provider);
+    let state_db = StateProviderDatabase::new(state_provider.into_evm_state_provider());
     let mut db = State::builder().with_database(state_db).with_bundle_update().build();
 
     // Override sender nonces to match their first transaction's nonce and collect

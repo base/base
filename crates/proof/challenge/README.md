@@ -8,12 +8,11 @@ ZK-proof dispute game challenger.
 ## Overview
 
 - **Driver**: Main polling loop that ties together scanning, validation, proof requests, and dispute submission.
-- **Scanner**: Scans the `DisputeGameFactory` for `IN_PROGRESS` dispute games and classifies each into a `GameCategory` (`InvalidTeeProposal`, `FraudulentZkChallenge`, or `InvalidZkProposal`) based on prover state.
+- **Scanner**: Scans the `DisputeGameFactory` for `IN_PROGRESS` dispute games and classifies each into a `GameCategory` (`InvalidTeeProposal`, `FraudulentZkChallenge`, `InvalidZkProposal`, or `InvalidDualProposal`) based on prover state.
 - **Validator**: Verifies final and intermediate output roots for each `CandidateGame` by fetching L2 block headers and `L2ToL1MessagePasser` storage proofs, recomputing expected roots via `OutputRoot`, and comparing them against onchain claims.
 - **Pending**: Tracks in-flight proof sessions through a `ProofPhase` lifecycle (`AwaitingProof` → `ReadyToSubmit` or `NeedsRetry`).
 - **Submitter**: Submits dispute transactions onchain (`nullify()` / `challenge()`) for invalid games.
-- **Bond**: Multi-phase bond credit claim lifecycle (`NeedsResolve` → `NeedsUnlock` → `AwaitingDelay` → `NeedsWithdraw`).
-- **Verify**: Account proof verification against a state root using Merkle Patricia Trie proofs.
+- **Bond**: Resolves dispute games, unlocks bond credits, and withdraws them once the withdrawal delay has elapsed.
 - **Error**: Challenge submission error types.
 - **Service**: Full challenger service lifecycle (init, wiring, driver loop, shutdown).
 - **Config**: Configuration types and validation.

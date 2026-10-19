@@ -41,9 +41,6 @@ pub enum L1BlockInfoError {
     /// DA foootprint gas scalar constant conversion error
     #[error("could not convert DA footprint gas scalar constant")]
     DaFootprintGasScalarConversion,
-    /// Base upgrades not active
-    #[error("Base upgrades are not active")]
-    UpgradesNotActive,
 }
 
 /// Base Block Executor Errors
@@ -52,12 +49,6 @@ pub enum BaseBlockExecutionError {
     /// Error when trying to parse L1 block info
     #[error(transparent)]
     L1BlockInfo(#[from] L1BlockInfoError),
-    /// Thrown when force deploy of create2deployer code fails.
-    #[error("failed to force create2deployer account code")]
-    ForceCreate2DeployerFail,
-    /// Thrown when a database account could not be loaded.
-    #[error("failed to load account {_0}")]
-    AccountLoadFailed(alloy_primitives::Address),
 }
 
 impl From<BaseBlockExecutionError> for BlockExecutionError {

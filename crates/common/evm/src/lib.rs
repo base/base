@@ -46,8 +46,8 @@ mod eip8130;
 #[cfg(feature = "std")]
 pub use eip8130::{Eip8130Executor, Eip8130Outcome};
 
-mod eip8130_phase_statuses;
-pub use eip8130_phase_statuses::Eip8130PhaseStatuses;
+mod eip8130_committed_phases;
+pub use eip8130_committed_phases::Eip8130CommittedPhases;
 
 mod factory;
 pub use factory::BaseEvmFactory;

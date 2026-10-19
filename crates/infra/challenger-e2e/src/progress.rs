@@ -77,6 +77,11 @@ impl Progress {
         self.plan.iter().position(|p| *p == phase).map_or(0, |i| i + 1)
     }
 
+    /// The phase running now, if any.
+    pub(crate) fn phase(&self) -> Option<Phase> {
+        self.current.map(|(phase, _)| phase)
+    }
+
     /// Marks `phase` as running.
     pub(crate) fn start(&mut self, phase: Phase) {
         let step = self.position(phase);
@@ -135,6 +140,7 @@ impl Progress {
             phase = %phase,
             verdict = %Verdict::Fail,
             elapsed_ms,
+            infra = crate::Unavailable::is_infra(cause),
             error = %cause,
             "{} failed",
             phase.label()

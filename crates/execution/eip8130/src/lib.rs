@@ -62,3 +62,6 @@ pub use transaction::{AppliedTransaction, TransactionAuthorizer};
 
 mod fee;
 pub use fee::{FeeCheck, FeeError};
+
+#[cfg(test)]
+pub mod test_utils;

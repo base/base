@@ -430,15 +430,14 @@ async fn test_pending_without_flashblocks_snapshot() -> Result<()> {
     let simulated: serde_json::Value = client
         .request("eth_simulateV1", json!([{ "blockStateCalls": [{ "calls": [call] }] }, "pending"]))
         .await?;
-    // Base's local_pending_block returns latest, so regular log filtering falls through
-    // to range validation and rejects an end above the canonical head, even for pending-only.
-    let mut log_errors = Vec::new();
+    // Without a local pending block, pending log bounds resolve to the canonical head.
+    // The executed engine payload's creation log must not leak into either range.
+    let mut pending_logs = Vec::new();
     for from in ["pending", "earliest"] {
-        let result: Result<serde_json::Value, _> = client
+        let logs: serde_json::Value = client
             .request("eth_getLogs", json!([{ "fromBlock": from, "toBlock": "pending" }]))
-            .await;
-        log_errors
-            .push(result.err().and_then(|error| error.as_error_resp().map(|error| error.code)));
+            .await?;
+        pending_logs.push(logs);
     }
     let expected_output = format!("0x{:064x}", 42);
     assert_eq!(
@@ -449,7 +448,7 @@ async fn test_pending_without_flashblocks_snapshot() -> Result<()> {
             "call": output,
             "executesContractForGas": gas > latest_gas,
             "simulatedCall": simulated[0]["calls"][0]["returnData"],
-            "logErrors": log_errors,
+            "logs": pending_logs,
         }),
         json!({
             "blockHash": prepared.new_block_hash,
@@ -458,7 +457,7 @@ async fn test_pending_without_flashblocks_snapshot() -> Result<()> {
             "call": expected_output,
             "executesContractForGas": true,
             "simulatedCall": expected_output,
-            "logErrors": [-32602, -32602],
+            "logs": [[], []],
         }),
     );
 

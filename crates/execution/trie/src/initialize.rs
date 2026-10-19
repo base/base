@@ -566,10 +566,10 @@ mod tests {
 
                 use alloy_primitives::{Address, U256, keccak256};
                 use reth_db::{
-                    Database,
+                    Database, DatabaseEnv,
                     cursor::DbCursorRW,
                     table::{Decode, Encode},
-                    test_utils::create_test_rw_db,
+                    test_utils::{TempDatabase, create_test_rw_db},
                     transaction::DbTxMut,
                 };
                 use reth_primitives_traits::Account;
@@ -1068,15 +1068,36 @@ mod tests {
                     );
                 }
 
-                #[test]
-                fn test_initialize_resumes_hashed_accounts_with_no_dups() {
+                /// Creates a source DB and a proofs store anchored at genesis for resume tests.
+                fn resume_setup() -> (Arc<TempDatabase<DatabaseEnv>>, TempDir, Arc<$storage>) {
                     let db = create_test_rw_db();
                     let dir = TempDir::new().unwrap();
                     let store = Arc::new($storage::new(dir.path()).expect("env"));
-
                     store
                         .set_initial_state_anchor(BlockNumHash::new(0, B256::default()))
                         .expect("set anchor");
+                    (db, dir, store)
+                }
+
+                /// Runs one legacy-layout initialization step over the current source DB.
+                fn run_step<DB: Database>(
+                    db: &DB,
+                    store: &Arc<$storage>,
+                    step: impl FnOnce(
+                        &InitializationJob<DB::TX, Arc<$storage>>,
+                    ) -> Result<(), BaseProofsStorageError>,
+                ) {
+                    let job = InitializationJob::new(
+                        Arc::clone(store),
+                        db.tx().unwrap(),
+                        RethTrieStorageLayout::Legacy,
+                    );
+                    step(&job).unwrap();
+                }
+
+                #[test]
+                fn test_initialize_resumes_hashed_accounts_with_no_dups() {
+                    let (db, _dir, store) = resume_setup();
 
                     // Phase 1 in source: k1, k2
                     let k1 = k(1);
@@ -1098,15 +1119,7 @@ mod tests {
                     }
 
                     // Initialization #1
-                    {
-                        let tx = db.tx().unwrap();
-                        let job = InitializationJob::new(
-                            Arc::clone(&store),
-                            tx,
-                            RethTrieStorageLayout::Legacy,
-                        );
-                        job.initialize_hashed_accounts(None).unwrap();
-                    }
+                    run_step(&db, &store, |job| job.initialize_hashed_accounts(None));
 
                     // Resume point must be k2 (max)
                     assert_eq!(
@@ -1134,15 +1147,7 @@ mod tests {
                     }
 
                     // Initialization #2 (restart)
-                    {
-                        let tx = db.tx().unwrap();
-                        let job = InitializationJob::new(
-                            Arc::clone(&store),
-                            tx,
-                            RethTrieStorageLayout::Legacy,
-                        );
-                        job.initialize_hashed_accounts(Some(k2)).unwrap();
-                    }
+                    run_step(&db, &store, |job| job.initialize_hashed_accounts(Some(k2)));
 
                     // Now resume point must be k4
                     assert_eq!(
@@ -1172,13 +1177,7 @@ mod tests {
 
                 #[test]
                 fn test_initialize_resumes_hashed_storages_with_no_dups() {
-                    let db = create_test_rw_db();
-                    let dir = TempDir::new().unwrap();
-                    let store = Arc::new($storage::new(dir.path()).expect("env"));
-
-                    store
-                        .set_initial_state_anchor(BlockNumHash::new(0, B256::default()))
-                        .expect("set anchor");
+                    let (db, _dir, store) = resume_setup();
 
                     let a1 = k(0x10);
                     let a2 = k(0x20);
@@ -1201,15 +1200,7 @@ mod tests {
                     }
 
                     // Initialization #1
-                    {
-                        let tx = db.tx().unwrap();
-                        let job = InitializationJob::new(
-                            Arc::clone(&store),
-                            tx,
-                            RethTrieStorageLayout::Legacy,
-                        );
-                        job.initialize_hashed_storages(None).unwrap();
-                    }
+                    run_step(&db, &store, |job| job.initialize_hashed_storages(None));
 
                     // Latest key must be (a2, s21) because a2 > a1
                     let last1 = store
@@ -1229,16 +1220,9 @@ mod tests {
                     }
 
                     // Initialization #2
-                    {
-                        let tx = db.tx().unwrap();
-                        let job = InitializationJob::new(
-                            Arc::clone(&store),
-                            tx,
-                            RethTrieStorageLayout::Legacy,
-                        );
+                    run_step(&db, &store, |job| {
                         job.initialize_hashed_storages(Some(HashedStorageKey::new(a2, s21)))
-                            .unwrap();
-                    }
+                    });
 
                     // Latest key now must be (a2, s22)
                     let last2 = store
@@ -1274,13 +1258,7 @@ mod tests {
 
                 #[test]
                 fn test_initialize_resumes_accounts_trie_with_no_dups() {
-                    let db = create_test_rw_db();
-                    let dir = TempDir::new().unwrap();
-                    let store = Arc::new($storage::new(dir.path()).expect("env"));
-
-                    store
-                        .set_initial_state_anchor(BlockNumHash::new(0, B256::default()))
-                        .expect("set anchor");
+                    let (db, _dir, store) = resume_setup();
 
                     let p1 = StoredNibbles(Nibbles::from_nibbles_unchecked(vec![1]));
                     let p2 = StoredNibbles(Nibbles::from_nibbles_unchecked(vec![2]));
@@ -1297,15 +1275,7 @@ mod tests {
                     }
 
                     // Initialization #1
-                    {
-                        let tx = db.tx().unwrap();
-                        let job = InitializationJob::new(
-                            Arc::clone(&store),
-                            tx,
-                            RethTrieStorageLayout::Legacy,
-                        );
-                        job.initialize_accounts_trie(None).unwrap();
-                    }
+                    run_step(&db, &store, |job| job.initialize_accounts_trie(None));
 
                     assert_eq!(
                         store.initial_state_anchor().expect("get anchor").latest_account_trie_key,
@@ -1322,15 +1292,7 @@ mod tests {
                     }
 
                     // Initialization #2
-                    {
-                        let tx = db.tx().unwrap();
-                        let job = InitializationJob::new(
-                            Arc::clone(&store),
-                            tx,
-                            RethTrieStorageLayout::Legacy,
-                        );
-                        job.initialize_accounts_trie(Some(p2.clone())).unwrap();
-                    }
+                    run_step(&db, &store, |job| job.initialize_accounts_trie(Some(p2.clone())));
 
                     assert_eq!(
                         store.initial_state_anchor().expect("get anchor").latest_account_trie_key,
@@ -1352,13 +1314,7 @@ mod tests {
 
                 #[test]
                 fn test_initialize_resumes_storages_trie_with_no_dups() {
-                    let db = create_test_rw_db();
-                    let dir = TempDir::new().unwrap();
-                    let store = Arc::new($storage::new(dir.path()).expect("env"));
-
-                    store
-                        .set_initial_state_anchor(BlockNumHash::new(0, B256::default()))
-                        .expect("set anchor");
+                    let (db, _dir, store) = resume_setup();
 
                     let a1 = k(0x10);
                     let a2 = k(0x20);
@@ -1391,15 +1347,7 @@ mod tests {
                     }
 
                     // Initialization #1
-                    {
-                        let tx = db.tx().unwrap();
-                        let job = InitializationJob::new(
-                            Arc::clone(&store),
-                            tx,
-                            RethTrieStorageLayout::Legacy,
-                        );
-                        job.initialize_storages_trie(None).unwrap();
-                    }
+                    run_step(&db, &store, |job| job.initialize_storages_trie(None));
 
                     // Latest must be (a2, n2) because a2 > a1
                     let last1 = store
@@ -1426,19 +1374,12 @@ mod tests {
                     }
 
                     // Initialization #2
-                    {
-                        let tx = db.tx().unwrap();
-                        let job = InitializationJob::new(
-                            Arc::clone(&store),
-                            tx,
-                            RethTrieStorageLayout::Legacy,
-                        );
+                    run_step(&db, &store, |job| {
                         job.initialize_storages_trie(Some(StorageTrieKey::new(
                             a2,
                             StoredNibbles::from(n2.0),
                         )))
-                        .unwrap();
-                    }
+                    });
 
                     // Latest must now be (a2,n3)
                     let last2 = store

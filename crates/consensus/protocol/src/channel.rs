@@ -60,10 +60,6 @@ impl Channel {
     /// the RLP.
     pub const MAX_RLP_BYTES: u64 = 10_000_000;
 
-    /// Maximum amount of bytes that will be read from a channel when the Fjord upgrade is
-    /// activated. This limit is set when decoding the RLP.
-    pub const FJORD_MAX_RLP_BYTES: u64 = 100_000_000;
-
     /// Create a new [`Channel`] with the given [`ChannelId`] and [`BlockInfo`].
     pub fn new(id: ChannelId, open_block: BlockInfo) -> Self {
         Self { id, open_block, inputs: HashMap::default(), ..Default::default() }

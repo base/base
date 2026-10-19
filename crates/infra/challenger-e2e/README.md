@@ -33,6 +33,17 @@ no real proof in it. TEE requests are refused with a non-retryable error, so
 the challenger falls back to ZK at once — the branch every zeronet run takes
 anyway, because the throwaway challenger key is not a registered TEE proposer.
 
+By default the mock also fails the first attempt of every proof session the
+challenger requests (`CHALLENGER_E2E_MOCK_FAULT=fail-first`). Like the real
+service, it keeps a failed session failed until the same session is re-sent
+with `retry_failed` (a resend without it is rejected with `FAILED_PRECONDITION`),
+and only then proves it. A dispute can therefore only land
+if the challenger noticed the failure and re-requested the proof, and each
+dispute assertion also checks the mock's record: the session behind the
+challenger's proof shows one injected failure and at least one requeue. The
+driver's own staging requests use a different prover address and are never
+failed. `none` turns the fault off.
+
 Those proofs only land because the fork's verifiers are replaced too. Both
 verifiers of each game under test get the runtime of
 `contracts/MockVerifier.sol` for the whole run (`src/mock_verifier.rs`). It
@@ -78,7 +89,8 @@ delta on B. Both are generated per run and never leave the pod.
 One process, one fork, two TEE-only in-progress games (newest-first, lookback
 50, ≥1 intermediate root, all above the anchor game). Game A is Path 1 / Path 2
 skip. Game B is Path 4, followed by Path 3 only when the TEE proof is removed
-first. The run bails if fewer than two such games exist.
+first. The run bails if fewer than two such games exist, as an infrastructure
+failure (see [When a dependency is down](#when-a-dependency-is-down)).
 
 Games are also filtered on their **aggregation program**. Every hash on an
 `AggregateVerifier` is `immutable`, so a verification-key rotation deploys a new
@@ -316,11 +328,13 @@ answerable without reading the whole stream. Note the prefix: the driver's
 | Every Path 3 outcome, all runs | `@data.message.fields.phase:path3` |
 | A phase that ran but was not asserted | `@data.message.fields.verdict:skip` |
 | What one run actually asserted | `"scenario complete"` — has `phases_asserted` |
-| Which scenario a run was | `"starting scenario"` — has `scenario`, both keys, the timeouts |
+| Which scenario a run was | `"starting scenario"` — has `scenario`, both keys, the timeouts, and `driver_commit` |
+| What a run tested | `"challenger under test"` — has `challenger_version`, `challenger_binary`; `"forked L1"` — has `fork_block` |
 | A named contract revert | `"reverted with"` |
 | Where a run is, phase by phase | `"started" OR "finished" OR "failed" OR "skipped"` with `@data.message.fields.phase:*` |
 | Which phase a failed run died in | `"failed" @data.message.fields.verdict:fail` — has `phase`, and `elapsed_ms` unless the error came between two phases (charged to the next one) |
 | Every planned phase of one run, with timings | `"run summary"` — has `results`, e.g. `setup=pass(41.2s) quiet-window=pass(95.0s) path3=pass(22.4s) bystanders=pass(1.8s)` |
+| A failure that was not the challenger's | `@data.message.fields.infra:true` — on both `failed` and `challenger E2E test failed` |
 | A wait that is taking long | `"still waiting for"` — has `waiting_for`, `elapsed_s`, `budget_s` |
 | One step of a phase | `@data.message.fields.what:"waiting for two challenger scans"` — with `phase`, `step`, `steps` |
 | A quiet window in progress | `"still observing"` — has `observing`, `elapsed_s`, `window_s` |
@@ -351,6 +365,44 @@ Two fields worth knowing:
   proof runs. A `tee-first` run reaches Path 3 in situ instead, tagged
   `reached=in-situ`; the staged Path 3 on game C runs either way.
 
+## When a dependency is down
+
+A run depends on two things outside the pod: the L2 RPC, for canonical roots,
+and the chain's recent games, to corrupt. When either is unavailable the run
+cannot test anything, and failing it as if the challenger had regressed sends
+whoever triages it after the wrong component. The driver keeps the two apart:
+
+- **It checks the L2 RPC before it needs it.** Setup reads the state proof
+  behind each selected game's final root — the read every path makes to compute
+  the canonical root it corrupts — and so does every path, right before its
+  patch. A read that fails the way an unavailable node does (`no state found`, a
+  missing block, a refused connection, an HTTP 502/503/504/429 from a load
+  balancer, whatever its body says) is retried for
+  `CHALLENGER_E2E_L2_RETRY_BUDGET`, which covers a node restart.
+- **It reads L2 state at every dispute timeout, and when a patch fails.** The
+  challenger validates against the same node, so a timeout while that node
+  serves no state is the node's failure. A patch also reads and writes the fork,
+  so its failure is the node's only if the node is down then too. The read is 64
+  blocks below the head, so a backend that has not caught up to it is not
+  mistaken for an outage, and the failure is only excused if 3 reads 5s apart
+  all fail.
+- **Too few eligible games is not the challenger's failure either**, whether
+  the proposer is stalled or the implementation has just rotated.
+- **Setup is excused for any transient RPC failure until the challenger is
+  released**, such as the fork's upstream L1 RPC resetting a connection. Until
+  then the run has only read the chain into a fork of its own, and a retried
+  pod starts over on a fresh one. From the release on it is not: a challenger
+  that crashes on start fails the wait for its first scan with `connection
+  refused`. Later phases are not excused either, because a dispute timeout can
+  carry a transport error from a fork that died.
+
+These failures carry `infra=true`, and the binary exits with **75**
+(`EX_TEMPFAIL`) instead of 1, so the Workflow can retry them without retrying a
+real regression. Clap's `2` stays a usage error, so a misconfigured Job is not
+retried as an outage either. Any other
+failure, including an L2 read that fails for another reason (a header hash or
+state proof that does not verify), stays a plain failure.
+
 ## Required environment
 
 `BASE_CHALLENGER_*` is shared with the challenger under test — both read the
@@ -368,6 +420,7 @@ is pointed at and talks to the same prover-service.
 | `CHALLENGER_E2E_ANVIL_PORT` | No (default `18545`) | Fork port; not 8545, which the production challenger reserves for its signer sidecar |
 | `CHALLENGER_E2E_PROVER` | No (default `mock`) | `mock` for the in-pod prover and mock verifiers, `real` for the live prover-service |
 | `CHALLENGER_E2E_MOCK_PROVING_TIME` | No (default `5s`) | How long the mock reports each proof as running |
+| `CHALLENGER_E2E_MOCK_FAULT` | No (default `fail-first`) | `fail-first` fails the first attempt of each challenger proof session, so every dispute also tests the retry; `none` disables it |
 | `CHALLENGER_E2E_SCENARIO` | No (default `all`) | `all` for every path on one fork (three games), or the cheaper subsets `path1-path2` and `path3` for `real` prover runs |
 | `CHALLENGER_E2E_ENV_FILE` | No (default `/shared/challenger.env`) | Handshake file that releases the challenger; the chart's sidecar waits on the default. Override only to run the pair outside the pod |
 | `CHALLENGER_E2E_CHALLENGER_METRICS_URL` | No (default `http://127.0.0.1:7300/metrics`) | Prometheus endpoint of the challenger under test |
@@ -376,6 +429,8 @@ is pointed at and talks to the same prover-service.
 | `CHALLENGER_E2E_QUIET_WINDOW` | No (default `90s`) | Positive-case (and Path 2 skip) observation window |
 | `CHALLENGER_E2E_DISPUTE_TIMEOUT` | No (default `45m`) | Budget for each SNARK / dispute; sized for a real proof, generous in `mock` mode |
 | `CHALLENGER_E2E_POLL_INTERVAL` | No (default `5s`) | Driver poll interval |
+| `CHALLENGER_E2E_DRIVER_COMMIT` | No | `base/base` commit the driver was built from, for the image to set; it is only logged, as `unknown` when unset |
+| `CHALLENGER_E2E_L2_RETRY_BUDGET` | No (default `10m`) | How long an L2 read that fails like an unavailable node is retried before the run fails as an infrastructure failure (exit code 75) |
 
 `anvil` must be on `PATH`. The challenger under test must be reachable on
 `CHALLENGER_E2E_CHALLENGER_METRICS_URL` and must be configured with a local

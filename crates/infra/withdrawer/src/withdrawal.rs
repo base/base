@@ -459,34 +459,6 @@ mod tests {
     }
 
     #[test]
-    fn expands_inline_nodes_into_separate_proof_elements() {
-        let mut keys = [Nibbles::unpack(B256::ZERO), Nibbles::unpack(B256::ZERO)];
-        keys[1].set_at(63, 1);
-        let value = alloy_rlp::encode(U256::from(1));
-        let mut builder =
-            HashBuilder::default().with_proof_retainer(ProofRetainer::from_iter([keys[1]]));
-        for key in keys {
-            builder.add_leaf(key, &value);
-        }
-        let root = builder.root();
-        let portal_proof: Vec<Bytes> = builder
-            .take_proof_nodes()
-            .into_nodes_sorted()
-            .into_iter()
-            .map(|(_, node)| node)
-            .collect();
-        // eth_getProof omits nodes embedded in their parent.
-        let rpc_proof: Vec<Bytes> =
-            portal_proof.iter().filter(|node| node.len() >= 32).cloned().collect();
-        verify_proof(root, keys[1], Some(value), &rpc_proof).unwrap();
-        assert_eq!((rpc_proof.len(), portal_proof.len()), (1, 3));
-        assert_eq!(
-            VerifiedWithdrawalProof::expand_inline_nodes(&rpc_proof, &keys[1]).unwrap(),
-            portal_proof
-        );
-    }
-
-    #[test]
     fn verifies_geth_and_reth_shaped_inline_proofs_identically() {
         let mut keys = [Nibbles::unpack(B256::ZERO), Nibbles::unpack(B256::ZERO)];
         keys[1].set_at(63, 1);
@@ -505,6 +477,7 @@ mod tests {
             .collect();
         let geth_proof: Vec<Bytes> =
             reth_proof.iter().filter(|node| node.len() >= 32).cloned().collect();
+        assert_eq!((geth_proof.len(), reth_proof.len()), (1, 3));
         for proof in [&geth_proof, &reth_proof] {
             let stripped = VerifiedWithdrawalProof::strip_inline_nodes(proof, &keys[1]);
             verify_proof(root, keys[1], Some(value.clone()), stripped).unwrap();

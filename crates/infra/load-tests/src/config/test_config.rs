@@ -552,13 +552,6 @@ impl TestConfig {
         })
     }
 
-    /// Returns the checksummed funder address string, if the key resolves successfully.
-    ///
-    /// Checks the override first, then falls back to `FUNDER_KEY` env var.
-    pub fn funder_key_address(override_key: Option<&str>) -> Option<String> {
-        Self::resolve_funder_key(override_key).ok().map(|s| s.address().to_string())
-    }
-
     /// Parses the duration string into a Duration.
     pub fn parse_duration(&self) -> Result<Option<Duration>> {
         self.duration

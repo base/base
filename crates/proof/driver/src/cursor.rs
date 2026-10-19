@@ -5,7 +5,6 @@
 
 use alloc::collections::{btree_map::BTreeMap, vec_deque::VecDeque};
 
-use alloy_primitives::map::HashMap;
 use base_protocol::{BlockInfo, L2BlockInfo};
 
 use crate::TipCursor;
@@ -18,14 +17,10 @@ use crate::TipCursor;
 pub struct PipelineCursor {
     /// The maximum number of cached L1/L2 mappings before evicting old entries.
     pub capacity: usize,
-    /// The channel timeout in blocks used to size the initial cache capacity.
-    pub channel_timeout: u64,
     /// The current L1 origin block that the pipeline is processing.
     pub origin: BlockInfo,
     /// Ordered list of L1 origin block numbers for cache eviction policy.
     pub origins: VecDeque<u64>,
-    /// Mapping from L1 block numbers to their corresponding [`BlockInfo`].
-    pub origin_infos: HashMap<u64, BlockInfo>,
     /// Mapping from L1 origin block numbers to their corresponding L2 tips.
     pub tips: BTreeMap<u64, TipCursor>,
 }
@@ -37,9 +32,7 @@ impl PipelineCursor {
 
         let mut origins = VecDeque::with_capacity(capacity);
         origins.push_back(origin.number);
-        let mut origin_infos = HashMap::default();
-        origin_infos.insert(origin.number, origin);
-        Self { capacity, channel_timeout, origin, origins, origin_infos, tips: Default::default() }
+        Self { capacity, origin, origins, tips: Default::default() }
     }
 
     /// Returns the current L1 origin block being processed by the pipeline.
@@ -74,7 +67,6 @@ impl PipelineCursor {
 
         self.origin = origin;
         self.origins.push_back(origin.number);
-        self.origin_infos.insert(origin.number, origin);
         self.tips.insert(origin.number, l2_tip_block);
     }
 }
