@@ -86,11 +86,9 @@ impl RemoteSignerHandler {
             sender_address,
         };
 
-        // Make JSON-RPC call to the custom method
         let response: SignResponse =
             self.client.read().await.request("opsigner_signBlockPayload", &params).await?;
 
-        // Parse the hex signature
         let signature_bytes =
             alloy_primitives::hex::decode(response.signature.trim_start_matches("0x"))
                 .map_err(RemoteSignerError::InvalidSignatureHex)?;

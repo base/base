@@ -39,7 +39,7 @@ pub enum BlockSignerHandler {
 /// Errors that can occur when starting a block signer.
 #[derive(Debug, thiserror::Error)]
 pub enum BlockSignerStartError {
-    /// An error that can occur when signing a block with a remote signer.
+    /// Returned when starting the remote signer fails.
     #[error(transparent)]
     Remote(#[from] RemoteSignerStartError),
 }
