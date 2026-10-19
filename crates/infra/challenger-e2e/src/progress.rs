@@ -78,11 +78,8 @@ impl Progress {
     }
 
     /// The phase running now, if any.
-    pub(crate) const fn phase(&self) -> Option<Phase> {
-        match self.current {
-            Some((phase, _)) => Some(phase),
-            None => None,
-        }
+    pub(crate) fn phase(&self) -> Option<Phase> {
+        self.current.map(|(phase, _)| phase)
     }
 
     /// Marks `phase` as running.
