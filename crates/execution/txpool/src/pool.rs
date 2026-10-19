@@ -123,7 +123,7 @@ pub struct BaseTransactionPool<
     /// deadline eviction, so a same-nonce submission cannot race the sweep.
     /// Validation itself remains outside this lock.
     protocol_admission_lock: Arc<Mutex<()>>,
-    /// Candidate-selection state, when `base_sendRawTransactionCandidates` is enabled.
+    /// Candidate-selection state, when `base_sendSwapTransaction` is enabled.
     candidates: Option<Arc<CandidateRuntime>>,
 }
 

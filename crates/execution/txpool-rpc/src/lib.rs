@@ -9,10 +9,11 @@
 
 mod candidates;
 pub use candidates::{
-    AdminCandidateSelectionApiImpl, AdminCandidateSelectionApiServer, CandidateAdmissionTrace,
-    CandidateSiblings, CandidateSubmissionResponse, DEFAULT_CANDIDATE_ADMISSION_TIMEOUT,
-    InflightAdmissions, PendingAdmission, SendRawTransactionCandidatesApiImpl,
-    SendRawTransactionCandidatesApiServer, SendRawTransactionCandidatesOptions,
+    AdminCandidateSelectionApiImpl, AdminCandidateSelectionApiServer,
+    DEFAULT_CANDIDATE_ADMISSION_TIMEOUT, InflightAdmissions, PendingAdmission,
+    SEND_SWAP_TRANSACTION_METHOD, SendSwapTransactionApiImpl, SendSwapTransactionApiServer,
+    SwapAdmissionTrace, SwapAlternatives, SwapSelection, SwapTerms, SwapTransactionOptions,
+    SwapTransactionResponse,
 };
 
 mod rpc;
@@ -26,7 +27,7 @@ pub use rpc::{
 mod extension;
 pub use extension::{
     DEFAULT_MAX_VALIDITY_EXPIRY_SECS, DEFAULT_MAX_VALIDITY_PREDICATES,
-    SendRawTransactionCandidatesConfig, SendRawTransactionCandidatesExtension,
-    SendRawTransactionValidityConfig, SendRawTransactionValidityExtension, TxPoolRpcConfig,
-    TxPoolRpcExtension, ValiditySignatureMode,
+    SendRawTransactionValidityConfig, SendRawTransactionValidityExtension,
+    SendSwapTransactionConfig, SendSwapTransactionExtension, TxPoolRpcConfig, TxPoolRpcExtension,
+    ValiditySignatureMode,
 };

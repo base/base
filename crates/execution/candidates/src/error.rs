@@ -6,9 +6,25 @@
 /// and used as a metric label.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum CandidateError {
-    /// The method is registered, but candidate admission is runtime-disabled.
-    #[error("candidate admission is disabled")]
-    Disabled,
+    /// A request carries alternatives but no signed `selection`.
+    #[error("alternatives require a signed selection")]
+    SelectionRequired,
+    /// A request carries a `selection` but no alternatives.
+    #[error("a selection requires alternatives")]
+    SelectionWithoutAlternatives,
+    /// The default transaction is not the selection envelope's representative:
+    /// `siblingHashes[defaultIndex]` under `DEFAULT_SIBLING`, `siblingHashes[0]` under `DROP`.
+    #[error("the default transaction is not the selection envelope's default")]
+    DefaultMismatch,
+    /// A request without a selection carries no `expiryBlock`.
+    #[error("expiryBlock is required")]
+    ExpiryRequired,
+    /// A top-level option disagrees with the signed selection envelope.
+    #[error("{field} does not match the selection envelope")]
+    SelectionFieldMismatch {
+        /// The disagreeing option.
+        field: &'static str,
+    },
     /// Fewer than two siblings.
     #[error("a candidate group needs at least two siblings")]
     TooFewSiblings,
@@ -24,13 +40,13 @@ pub enum CandidateError {
     /// A sibling is not a decodable, recoverable EIP-2718 transaction.
     #[error("failed to decode sibling {index}")]
     SiblingDecodeFailed {
-        /// Sibling index in the request.
+        /// Sibling index in envelope order; `0` for a default transaction without alternatives.
         index: usize,
     },
     /// A sibling is not a plain EIP-1559 transaction, or its sender is EIP-7702-delegated.
     #[error("sibling {index} has an unsupported transaction type")]
     SiblingTypeUnsupported {
-        /// Sibling index in the request.
+        /// Sibling index in envelope order; `0` for a default transaction without alternatives.
         index: usize,
     },
     /// Siblings do not share one sender.
@@ -119,7 +135,11 @@ impl CandidateError {
     /// Returns the stable label from design §2.5.
     pub const fn as_label(&self) -> &'static str {
         match self {
-            Self::Disabled => "candidates_disabled",
+            Self::SelectionRequired => "selection_required",
+            Self::SelectionWithoutAlternatives => "selection_without_alternatives",
+            Self::DefaultMismatch => "default_mismatch",
+            Self::ExpiryRequired => "expiry_required",
+            Self::SelectionFieldMismatch { .. } => "selection_mismatch",
             Self::TooFewSiblings => "too_few_siblings",
             Self::TooManySiblings { .. } => "too_many_siblings",
             Self::RequestTooLarge => "request_too_large",
