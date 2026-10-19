@@ -3,7 +3,7 @@
 use alloy_primitives::U256;
 use base_common_genesis::BaseUpgrade;
 
-use crate::{UpgradeSignal, UpgradeSignalMode, UpgradeSignalSchedule};
+use crate::{PackedProtocolVersion, UpgradeSignal, UpgradeSignalMode, UpgradeSignalSchedule};
 
 /// Upgrade signal metric layer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -176,11 +176,9 @@ impl UpgradeSignalMetrics {
     ///
     /// Expects a contract-read packed semver value; non-semver inputs decode to garbage.
     pub fn protocol_version_to_f64(protocol_version: U256) -> f64 {
-        let limbs = protocol_version.as_limbs();
-        let major = limbs[1] >> 32;
-        let minor = limbs[1] & u64::from(u32::MAX);
-        let patch = limbs[0] >> 32;
-        (major * 1_000_000 + minor * 1_000 + patch) as f64
+        let v = PackedProtocolVersion::new(protocol_version);
+        (u64::from(v.major()) * 1_000_000 + u64::from(v.minor()) * 1_000 + u64::from(v.patch()))
+            as f64
     }
 }
 

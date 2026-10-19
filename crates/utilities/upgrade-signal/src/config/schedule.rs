@@ -71,14 +71,6 @@ impl UpgradeSignalConfig {
             <= PackedProtocolVersion::new(self.node_protocol_version)
     }
 
-    /// Returns true if this node supports the minimum protocol version attached to `signal`.
-    ///
-    /// This is the pure version comparison ([`Self::supports_protocol_version`]) independent of the
-    /// signal's activation timing, so it is meaningful even for an upgrade that is not yet scheduled.
-    pub fn supports_signal_protocol_version(&self, signal: &UpgradeSignal) -> bool {
-        self.supports_protocol_version(signal.protocol_version)
-    }
-
     /// Returns an error if a positive activation timestamp omits its minimum protocol version.
     ///
     /// This malformed-signal check applies to every signal read from L1.
@@ -87,7 +79,7 @@ impl UpgradeSignalConfig {
         signal: &UpgradeSignal,
     ) -> Result<(), UpgradeSignalError> {
         if signal.activation_timestamp > 0 && signal.protocol_version == U256::ZERO {
-            return Err(UpgradeSignalError::missing_protocol_version(
+            return Err(UpgradeSignalError::MissingProtocolVersion(
                 signal.upgrade_id.contract_id().to_string(),
             ));
         }
@@ -107,7 +99,7 @@ impl UpgradeSignalConfig {
             return Ok(());
         }
 
-        if self.supports_signal_protocol_version(signal) {
+        if self.supports_protocol_version(signal.protocol_version) {
             return Ok(());
         }
 
@@ -628,7 +620,7 @@ mod tests {
     }
 
     #[test]
-    fn schedule_validation_rejects_missing_protocol_version() {
+    fn schedule_validation_rejects_missing_minimum_version() {
         let config = UpgradeSignalConfig::new(address!("0000000000000000000000000000000000000001"));
         let schedule = malformed_schedule(&config);
 

@@ -6,10 +6,9 @@
 //! answer returned by the public `base_upgradeReadiness` RPC (and rendered by the `basectl
 //! upgrade-readiness` subcommand).
 //!
-//! The report is deliberately built from the *same* predicates the live node uses —
-//! [`UpgradeSignalConfig::supports_signal_protocol_version`] and
-//! [`UpgradeSignalConfig::signal_fails_closed`] — so it can never disagree with what the node
-//! actually does at activation.
+//! The report uses the live node's protocol-version comparison
+//! ([`UpgradeSignalConfig::supports_protocol_version`]) and fail-closed predicate
+//! ([`UpgradeSignalConfig::signal_fails_closed`]) to keep readiness and halt decisions consistent.
 
 use alloy_primitives::U256;
 use serde::{Deserialize, Serialize};
@@ -121,7 +120,7 @@ impl UpgradeSignalConfig {
                 required_protocol_version: PackedProtocolVersion::new(signal.protocol_version)
                     .to_string(),
                 activation_timestamp: signal.activation_timestamp,
-                supported: self.supports_signal_protocol_version(signal),
+                supported: self.supports_protocol_version(signal.protocol_version),
                 malformed: self.validate_signal_has_protocol_version(signal).is_err(),
                 would_halt: applies_live && self.signal_fails_closed(signal, now_secs, lead_secs),
             })
