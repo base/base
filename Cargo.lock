@@ -4301,6 +4301,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-execution-candidates"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus 2.4.1",
+ "alloy-eips 2.4.1",
+ "alloy-primitives",
+ "alloy-serde 2.4.1",
+ "alloy-signer 2.4.1",
+ "alloy-signer-local 2.4.1",
+ "alloy-sol-types",
+ "base-common-consensus",
+ "base-observability-events",
+ "parking_lot",
+ "rstest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+]
+
+[[package]]
 name = "base-execution-chainspec"
 version = "0.0.0"
 dependencies = [
