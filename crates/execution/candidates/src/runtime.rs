@@ -9,7 +9,8 @@ use crate::{CandidateAccessPolicy, CandidateLimits, GroupLedger};
 
 /// Per-process runtime kill switch (design §8.4).
 ///
-/// Off: ingress returns `candidates_disabled`, and pooled groups follow lifecycle step 4. A
+/// Off: ingress admits a request's default transaction alone and ignores its alternatives, and
+/// pooled groups follow lifecycle step 4. A
 /// single process switch is not a cluster switch; operators must flip every potential leader.
 #[derive(Debug)]
 pub struct CandidateSwitch {
