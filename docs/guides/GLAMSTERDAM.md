@@ -206,47 +206,47 @@ Access-list data pricing must match the [EIP-7976 calldata floor](#calldata-floo
 #### Method
 
 L1 fits per-client operation runtimes and converts them to gas at an anchor rate; its selected prices reflect a six-client bound, not just Reth. The [supporting report](https://github.com/ethereum/EIPs/blob/master/assets/eip-8038/gas-cost-report.md) and current raw/rendered EIP use 75 Mgas/s. Using 100 Mgas/s as the conversion anchor instead would not change Base's values when re-anchoring the same underlying runtimes.
-Base runs a single client, base-reth. For a proposed block limit `B = 40,000,000` and 200 ms blocks, reserve `exec_share = 50%` (100 ms) for execution.
-For each primitive, use `gas = max(today, ceil(reth_gas_equivalent_at_75M × (B / (exec_share × 0.2 s)) / 75,000,000))`, taking the larger Reth account estimate across accounts with/without code.
+Base runs a single client, base-reth. For a proposed block limit `B = 40,000,000` and 200 ms blocks, reserve `exec_share = 50%` (100 ms) for execution and define `k = (B / (exec_share × 0.2 s)) / 75,000,000`.
+For access primitives, use `access = max(today, ceil(reth_access_at_75M × k))`. For writes, reconstruct the report's combined measurement before scaling: `write = max(today, ceil((reth_write_residual_at_75M + L1_selected_access) × k) - Base_access)`, using the corresponding floored Base cold access and the larger account estimate across accounts with/without code.
 Recompute dependent parameters from those floored primitives using the EIP formulas; round `STORAGE_CLEAR_REFUND` down to whole gas.
 
 #### Parameters
 
-All values are gas. The report's Reth inputs are 398 for cold account access (max of 391 and 398), 409 for cold storage access, 6 for warm access, 8,583 for account writes (max of 7,004 and 8,583), and 6,963 for storage writes. Its write column already subtracts L1's selected access price from the combined access/write measurement; use that published write estimate without subtracting access again.
+All values are gas. The report's Reth access inputs are 398 for cold accounts (max of 391 and 398), 409 for cold storage, and 6 for warm access. Its write residuals are 8,583 for accounts (max of 7,004 and 8,583) and 6,963 for storage, after subtracting L1's selected access prices of 3,000 and 2,100. Restore those subtracted prices to recover combined access/write estimates of 11,583 and 9,063; scale the combined estimates, then subtract Base's floored access prices. Scaling only the residuals would not preserve the combined measured cost.
 
 | Parameter | Today | L1 (EIP-8038) | Base (40M) |
 | :--- | ---: | ---: | ---: |
 | `COLD_ACCOUNT_ACCESS` | 2,600 | 3,000 | 2,600 |
 | `COLD_STORAGE_ACCESS` | 2,100 | 2,100 | 2,182 |
 | `WARM_ACCESS` | 100 | 100 | 100 |
-| `ACCOUNT_WRITE` | 6,700 | 9,000 | 45,776 |
-| `STORAGE_WRITE` | 2,800 | 10,000 | 37,136 |
-| `STORAGE_CLEAR_REFUND` | 4,800 | 11,616 | 37,745 |
-| `CREATE_ACCESS` | 7,000 | 12,000 | 48,376 |
+| `ACCOUNT_WRITE` | 6,700 | 9,000 | 59,176 |
+| `STORAGE_WRITE` | 2,800 | 10,000 | 46,154 |
+| `STORAGE_CLEAR_REFUND` | 4,800 | 11,616 | 46,402 |
+| `CREATE_ACCESS` | 7,000 | 12,000 | 61,776 |
 | `ACCESS_LIST_ADDRESS_COST` | 2,400 | 2,900 | 2,500 |
 | `ACCESS_LIST_STORAGE_KEY_COST` | 1,900 | 2,000 | 2,082 |
 | `EXTCODESIZE` / `EXTCODECOPY` warm static cost (second read included) | 100 | 200 | 200 |
 
-Today's write and create values are equivalents extracted from composite charges, not existing standalone constants. The 40M conversion factor is `16/3`: the unfloored primitive results are 2,123 / 2,182 / 32 / 45,776 / 37,136 in the order above. The dependent prices are:
+Today's write and create values are equivalents extracted from composite charges, not existing standalone constants. The 40M conversion factor is `16/3`: unfloored account/storage/warm access results are 2,123 / 2,182 / 32. The combined account/storage write costs scale to 61,776 / 48,336; subtracting Base access gives `ACCOUNT_WRITE = 61,776 - 2,600 = 59,176` and `STORAGE_WRITE = 48,336 - 2,182 = 46,154`. The dependent prices are:
 
-- `STORAGE_CLEAR_REFUND = floor((STORAGE_WRITE + COLD_STORAGE_ACCESS) × 4800/5000) = 37,745`; the existing 20% transaction refund cap remains.
-- `CREATE_ACCESS = ACCOUNT_WRITE + COLD_ACCOUNT_ACCESS = 48,376`.
+- `STORAGE_CLEAR_REFUND = floor((STORAGE_WRITE + COLD_STORAGE_ACCESS) × 4800/5000) = 46,402`; the existing 20% transaction refund cap remains.
+- `CREATE_ACCESS = ACCOUNT_WRITE + COLD_ACCOUNT_ACCESS = 61,776`.
 - `ACCESS_LIST_ADDRESS_COST = COLD_ACCOUNT_ACCESS - WARM_ACCESS = 2,500`; `ACCESS_LIST_STORAGE_KEY_COST = COLD_STORAGE_ACCESS - WARM_ACCESS = 2,082`. These are access prepayments, separate from EIP-7981's data surcharge.
-- `CALL_VALUE = ACCOUNT_WRITE + 2,300 = 48,076`; the 2,300 stipend is unchanged.
+- `CALL_VALUE = ACCOUNT_WRITE + 2,300 = 61,476`; the 2,300 stipend is unchanged.
 - `EXTCODESIZE` / `EXTCODECOPY` add one `WARM_ACCESS` for the second database read: warm static cost becomes `2 × WARM_ACCESS = 200`, cold access costs `COLD_ACCOUNT_ACCESS + WARM_ACCESS = 2,700`. Copy and memory charges remain additional.
 
-Prices rise with the block limit at fixed execution share and block time: `ACCOUNT_WRITE` would be 114,440 at 100M and 171,660 at 150M. Revisit parameters whenever the limit or execution budget changes.
+Prices rise with the block limit at fixed execution share and block time: recomputing both combined write costs and Base access gives `ACCOUNT_WRITE = 154,440 - 5,307 = 149,133` at 100M and `231,660 - 7,960 = 223,700` at 150M. Revisit parameters whenever the limit or execution budget changes.
 
 #### What users pay
 
-Illustrative additive gas estimates, not transaction replays or `eth_estimateGas` results. Hold all other work and prices fixed and add `82` per cold storage access and `34,336` per storage write to an initially unchanged slot. The stated counts cover those repriced components only; account-access and warm-access deltas are zero. This isolates price changes rather than predicting the full Glamsterdam bill (including EIP-8037 state creation, EIP-2780 intrinsic changes, refunds, and floors).
+Illustrative additive gas estimates, not transaction replays or `eth_estimateGas` results. Hold all other work and prices fixed and add `82` per cold storage access and `43,354` per storage write to an initially unchanged slot. The stated counts cover those repriced components only; account-access and warm-access deltas are zero. This isolates price changes rather than predicting the full Glamsterdam bill (including EIP-8037 state creation, EIP-2780 intrinsic changes, refunds, and floors).
 
 | Transaction | Assumed cold storage accesses / writes | Today (gas) | Base proposal (gas) |
 | :--- | :---: | ---: | ---: |
 | ETH transfer to existing account | 0 / 0 | 21,000 | 21,000 |
-| ERC-20 transfer to existing holder | 2 / 2 | ~65,000 | ~133,836 |
-| Swap | 4 / 4 | ~150,000 | ~287,672 |
-| Mint | 1 / 1 | ~100,000 | ~134,418 |
+| ERC-20 transfer to existing holder | 2 / 2 | ~65,000 | ~151,872 |
+| Swap | 4 / 4 | ~150,000 | ~323,744 |
+| Mint | 1 / 1 | ~100,000 | ~143,436 |
 
 #### Touch points
 
