@@ -17,7 +17,7 @@ pub use config::{
 };
 
 mod network;
-pub use network::{Network, NetworkPreset, ProofSystem};
+pub use network::{FaultProofContracts, Network, NetworkPreset, ProofSystem, ResolvedProofSystem};
 
 mod rpc;
 pub use rpc::{BroadcastResult, WithdrawalRpc, WithdrawalRpcError};
