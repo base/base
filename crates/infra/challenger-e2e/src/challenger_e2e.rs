@@ -710,13 +710,29 @@ impl ChallengerE2e {
         let balance_before = provider.get_balance(challenger.address()).await?;
 
         progress::step(Phase::Bonds, 2, 4, "waiting for the challenger to resolve and unlock");
+        // A game resolved any other way is never unlocked, because the challenger
+        // claims only bonds paid to it, so it ends the wait at once rather than
+        // running out the dispute timeout and blaming the challenger.
         Self::poll_until(
             config,
             config.dispute_timeout,
             "the challenger to resolve the game it won and unlock the bond",
-            || async { Ok(verifier.bond_unlocked(game).await?.then_some(())) },
+            || async {
+                let status = verifier.status(game).await?;
+                if status != GameStatus::InProgress {
+                    let recipient = verifier.bond_recipient(game).await?;
+                    if status != GameStatus::ChallengerWins || recipient != challenger.address() {
+                        return Ok(Some(Err(eyre!(
+                            "game {game} resolved as {status:?} with bond recipient {recipient}, \
+                             but the challenger {} won it",
+                            challenger.address()
+                        ))));
+                    }
+                }
+                Ok(verifier.bond_unlocked(game).await?.then_some(Ok(())))
+            },
         )
-        .await?;
+        .await??;
         let (status, recipient) =
             tokio::try_join!(verifier.status(game), verifier.bond_recipient(game))?;
         ensure!(
@@ -1736,7 +1752,9 @@ impl ChallengerE2e {
     ///
     /// The challenger claims bonds for its own key only, as production claims
     /// for its own. The scan interval is short so the bonds phase takes
-    /// seconds; the bond scan is skipped until a game it can claim exists.
+    /// seconds. The scan then reads every game in the lookback window on each
+    /// challenger step, in every scenario, and acts only once a game it can
+    /// claim is over.
     fn release_challenger(
         path: &Path,
         fork_url: &Url,
