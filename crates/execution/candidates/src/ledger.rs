@@ -403,17 +403,27 @@ impl GroupLedger {
     /// own representative is already gone because such a group replaced it first, this group
     /// is the replaced one. `is_pooled` reports whether a transaction hash is in the pool.
     ///
-    /// A representative that is already gone without such a replacement was removed after its
-    /// insertion: by canonical maintenance after the sender's nonce passed the group's, a final
-    /// `Evicted(NonceConsumed)`, or by another path, a provisional `Evicted(Dropped)`. It is
-    /// never marked `Pooled`.
-    pub fn confirm_pooled(&self, group_hash: B256, is_pooled: impl Fn(&TxHash) -> bool) {
+    /// A group whose sender's canonical nonce passed its own while it was `Pending` ends as a
+    /// final `Evicted(NonceConsumed)` at settlement. The pool can still hold its representative:
+    /// reth inserts an outcome validated against the state before that block, and it ignores
+    /// account changes for senders it did not track yet. This method then returns that
+    /// representative's hash, and the caller must remove it from the pool.
+    ///
+    /// Otherwise, a representative that is already gone without a replacement was removed by
+    /// another path after its insertion: a provisional `Evicted(Dropped)`. It is never marked
+    /// `Pooled`.
+    pub fn confirm_pooled(
+        &self,
+        group_hash: B256,
+        is_pooled: impl Fn(&TxHash) -> bool,
+    ) -> Option<TxHash> {
         let mut terminals = Vec::new();
+        let mut stale = None;
         {
             let mut state = self.state.lock();
-            let Some(entry) = state.entries.get(&group_hash) else { return };
+            let entry = state.entries.get(&group_hash)?;
             if entry.state != GroupState::Pending {
-                return;
+                return None;
             }
             let (sender, nonce) = (entry.group.sender(), entry.group.nonce());
             let pooled = is_pooled(&entry.group.representative().hash());
@@ -437,20 +447,23 @@ impl GroupLedger {
                 if superseded {
                     entry.state = GroupState::Replaced;
                     terminals.extend(entry.take_terminal(TerminalOutcome::Replaced));
-                } else if pooled {
-                    entry.state = GroupState::Pooled;
                 } else if entry.canonical_nonce_passed {
                     entry.state = GroupState::Evicted(EvictionReason::NonceConsumed);
                     terminals
                         .extend(entry.take_terminal(TerminalOutcome::Evicted(
                             EvictionReason::NonceConsumed,
                         )));
+                    let representative = entry.group.representative().hash();
+                    stale = pooled.then_some(representative);
+                } else if pooled {
+                    entry.state = GroupState::Pooled;
                 } else {
                     entry.state = GroupState::Evicted(EvictionReason::Dropped);
                 }
             }
         }
         self.journal(&terminals);
+        stale
     }
 
     /// Journals final transitions collected under the lock.
@@ -1218,6 +1231,30 @@ mod tests {
         );
         assert_eq!(terminals(&capture, &ledger, &in_flight), [evicted("nonce_consumed")]);
         assert!(ledger.suppresses_plain_reinsertion(&in_flight.siblings()[1].hash()));
+    }
+
+    #[test]
+    fn stale_pooled_representative_after_nonce_consumption_is_returned_for_removal() {
+        let capture = TransactionEventCapture::install();
+        let ledger = GroupLedger::default();
+        let fixture = CandidateFixture::new(CHAIN_ID);
+        let stale = group(&fixture, 0, 1, 0);
+        pending(&ledger, &stale);
+
+        // The nonce was consumed while validation was done, then the pool inserted the stale
+        // outcome anyway.
+        ledger.record_nonces([(fixture.address(), 1)]);
+        let removal = ledger.confirm_pooled(stale.group_hash(), |_| true);
+
+        assert_eq!(removal, Some(stale.representative().hash()));
+        assert_eq!(
+            ledger.lookup(&stale.group_hash()).unwrap().state,
+            GroupState::Evicted(EvictionReason::NonceConsumed)
+        );
+        assert_eq!(terminals(&capture, &ledger, &stale), [evicted("nonce_consumed")]);
+        assert_eq!(ledger.counts(), (0, 1), "the sender's slot is free");
+        assert!(ledger.suppresses_plain_reinsertion(&stale.siblings()[1].hash()));
+        assert_eq!(ledger.confirm_pooled(stale.group_hash(), |_| true), None, "settles once");
     }
 
     #[test]
