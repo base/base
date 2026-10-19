@@ -431,13 +431,13 @@ impl BatcherService {
         // fees. The shadow batcher posts with its own key on purpose.
         if self.config.shadow.is_none() {
             let system_config = rollup_config.l1_system_config_address;
-            let authorized = Self::rpc_retry("system-config-batcher", retry, rpc_timeout, || {
+            let batcher_hash = Self::rpc_retry("system-config-batcher", retry, rpc_timeout, || {
                 SystemConfigBatcher::fetch(&l1_provider, system_config)
             })
             .await?;
-            if authorized != signer_address {
+            if batcher_hash != signer_address.into_word() {
                 eyre::bail!(
-                    "signer {signer_address} is not the batcher {authorized} authorized by the L1 \
+                    "signer {signer_address} is not the batcher {batcher_hash} authorized by the L1 \
                      SystemConfig at {system_config}"
                 );
             }
@@ -865,8 +865,9 @@ mod tests {
         assert_eq!(
             error.to_string(),
             format!(
-                "signer {signer} is not the batcher {authorized} authorized by the L1 \
-                 SystemConfig at {SYSTEM_CONFIG}"
+                "signer {signer} is not the batcher {batcher_hash} authorized by the L1 \
+                 SystemConfig at {SYSTEM_CONFIG}",
+                batcher_hash = authorized.into_word(),
             )
         );
     }
