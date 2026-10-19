@@ -262,17 +262,21 @@ At the 0.005 gwei minimum base fee and $2,450/ETH, CPSB 1,000 gives a **nominal 
 
 #### Pricing impact
 
+Each gas figure is the **TOTAL transaction gas**: execution + EIP-8037 state gas in the proposed scenarios; today shows the legacy total.
+
 Illustrative source-template arithmetic, **not transaction replays, gas-limit recommendations, or exact post-fork quotes**. Combine EIP-8037 with [EIP-8038's BAL scenarios](https://github.com/base/base/blob/918b4c0b9df9ce63e2cfb3a2ccc342d60978a19f/docs/guides/GLAMSTERDAM.md#80m-bal-scenarios) and EIP-2780's ordinary zero-value intrinsic base. At 80M, assumed effective speedup `s = 2` retains the 40M access/write prices; `s = 1` uses higher prices. Neither speedup is measured or selected for activation, and gains already credited in upstream benchmarks must not be counted twice.
 
-| Transaction template (approximate) | Today (gas) | Today (USD) | 40M: CPSB 533 (gas) | 40M (USD) | 80M: CPSB 1,000, `s = 2` (gas) | 80M `s = 2` (USD) | 80M: CPSB 1,000, `s = 1` (gas) | 80M `s = 1` (USD) |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| x402 USDC EIP-3009, existing recipient holding | 85,788 | $0.0010509 | 227,136 | $0.0027824 | 257,024 | $0.0031485 | 417,340 | $0.0051124 |
-| x402 USDC EIP-3009, new recipient holding | 102,888 | $0.0012604 | 261,248 | $0.0032003 | 321,024 | $0.0039325 | 481,340 | $0.0058964 |
-| USDC ERC-20 transfer, existing holder | 45,059 | $0.00055197 | 125,777 | $0.0015408 | 125,777 | $0.0015408 | 232,284 | $0.0028455 |
-| USDC ERC-20 transfer, new holder | 62,159 | $0.00076145 | 159,889 | $0.0019586 | 189,777 | $0.0023248 | 296,284 | $0.0036295 |
-| B20 all-allow transfer, existing holder (conditional) | 38,000 | $0.00046550 | 118,636 | $0.0014533 | 118,636 | $0.0014533 | 221,316 | $0.0027111 |
-| B20 all-allow transfer, new holder (conditional) | 55,100 | $0.00067498 | 152,748 | $0.0018712 | 182,636 | $0.0022373 | 285,316 | $0.0034951 |
-| Uniswap v3 single-hop, existing holdings | 125,000 | $0.0015313 | 466,452 | $0.0057140 | 466,452 | $0.0057140 | 864,086 | $0.010585 |
+| Transaction template (approximate) | New state per tx | Today (gas) | Today (USD) | 40M: CPSB 533 (gas) | 40M (USD) | 80M: CPSB 1,000, `s = 2` (gas) | 80M `s = 2` (USD) | 80M: CPSB 1,000, `s = 1` (gas) | 80M `s = 1` (USD) |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| x402 USDC EIP-3009, existing recipient holding | 1 slot (64 B) | 85,788 | $0.0010509 | 227,136 | $0.0027824 | 257,024 | $0.0031485 | 417,340 | $0.0051124 |
+| x402 USDC EIP-3009, new recipient holding | 2 slots (128 B) | 102,888 | $0.0012604 | 261,248 | $0.0032003 | 321,024 | $0.0039325 | 481,340 | $0.0058964 |
+| USDC ERC-20 transfer, existing holder | None | 45,059 | $0.00055197 | 125,777 | $0.0015408 | 125,777 | $0.0015408 | 232,284 | $0.0028455 |
+| USDC ERC-20 transfer, new holder | 1 slot (64 B) | 62,159 | $0.00076145 | 159,889 | $0.0019586 | 189,777 | $0.0023248 | 296,284 | $0.0036295 |
+| B20 all-allow transfer, existing holder (conditional) | None | 38,000 | $0.00046550 | 118,636 | $0.0014533 | 118,636 | $0.0014533 | 221,316 | $0.0027111 |
+| B20 all-allow transfer, new holder (conditional) | 1 slot (64 B) | 55,100 | $0.00067498 | 152,748 | $0.0018712 | 182,636 | $0.0022373 | 285,316 | $0.0034951 |
+| Uniswap v3 single-hop, existing holdings | None | 125,000 | $0.0015313 | 466,452 | $0.0057140 | 466,452 | $0.0057140 | 864,086 | $0.010585 |
+
+State gas included = new slots × 64 × CPSB: 34,112 per slot at 533 (40M), 64,000 at 1,000 (80M). The v3 swap and existing-holder transfers create no new state, so their increase is entirely execution gas from the EIP-8038 write prices, not CPSB.
 
 USD = L2 base fee only at the 0.005 gwei minimum and $2,450/ETH; excludes priority fees and L1 data fees. More capacity cannot lower a base fee already at the minimum.
 
