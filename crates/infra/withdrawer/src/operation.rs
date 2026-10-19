@@ -14,11 +14,11 @@ use base_proof_contracts::{GameStatus, IAnchorStateRegistry, IDisputeGameFactory
 use thiserror::Error;
 
 use crate::{
-    FaultProofPortal, LegacyWithdrawalPortal, MessagePassed, PreparedWithdrawalTransaction,
-    ProofSystem, VerifiedWithdrawalProof, Withdrawal, WithdrawalDisputeGame, WithdrawalError,
-    WithdrawalOutputOracle, WithdrawalPortal, WithdrawalRpc, WithdrawalRpcError,
-    WithdrawalRpcTransport, WithdrawalSigner, WithdrawalSignerError, WithdrawalTransactionError,
-    WithdrawerConfig,
+    FaultProofContracts, FaultProofPortal, LegacyWithdrawalPortal, MessagePassed,
+    PreparedWithdrawalTransaction, ProofSystem, ResolvedProofSystem, VerifiedWithdrawalProof,
+    Withdrawal, WithdrawalDisputeGame, WithdrawalError, WithdrawalOutputOracle, WithdrawalPortal,
+    WithdrawalRpc, WithdrawalRpcError, WithdrawalRpcTransport, WithdrawalSigner,
+    WithdrawalSignerError, WithdrawalTransactionError, WithdrawerConfig,
 };
 
 /// Next step determined from the portal and proof contracts.
@@ -55,6 +55,20 @@ pub struct WithdrawalOutcome {
 /// Failure of a complete withdrawal operation.
 #[derive(Debug, Error)]
 pub enum WithdrawerError {
+    /// Custom proof contracts differ from the portal's trusted contracts.
+    #[error("configured {configured} do not match portal-reported {reported}")]
+    ProofContractsMismatch {
+        /// Contracts required by the custom configuration.
+        configured: FaultProofContracts,
+        /// Contracts reported by the configured portal.
+        reported: FaultProofContracts,
+    },
+    /// The fault-proof portal reported an unusable contract address.
+    #[error("portal returned a zero address for {contract}")]
+    ZeroPortalProofContract {
+        /// Contract view that returned zero.
+        contract: &'static str,
+    },
     /// A lower-level RPC operation failed.
     #[error(transparent)]
     Rpc(WithdrawalRpcError),
@@ -182,6 +196,7 @@ impl Withdrawer {
         let mut pending_transaction = None;
         tokio::time::timeout(self.config.timeout, async {
             let rpc = WithdrawalRpc::new(&self.config)?;
+            let proofs = self.resolve_proof_system(&rpc).await?;
             let signer = WithdrawalSigner::new(&self.config.signer).await?;
             let receipt = rpc
                 .l2
@@ -192,13 +207,13 @@ impl Withdrawer {
             let mut outcomes = Vec::with_capacity(withdrawals.len());
             for withdrawal in withdrawals {
                 pending_transaction = None;
-                let status = self.status(&rpc, &withdrawal, signer.address()).await?;
+                let status = self.status(&rpc, proofs, &withdrawal, signer.address()).await?;
                 let hash = withdrawal.hash();
                 tracing::info!(withdrawal_hash = %hash, ?status, "withdrawal decision");
                 let transaction_hash = match status {
                     WithdrawalStatus::Prove | WithdrawalStatus::Finalize => {
                         let calldata = if status == WithdrawalStatus::Prove {
-                            self.prove_calldata(&rpc, &withdrawal).await?
+                            self.prove_calldata(&rpc, proofs, &withdrawal).await?
                         } else {
                             WithdrawalPortal::finalizeWithdrawalTransactionCall {
                                 withdrawal: withdrawal.transaction.clone(),
@@ -237,10 +252,60 @@ impl Withdrawer {
         })?
     }
 
-    /// Reads the next action without preparing, signing, or submitting a transaction.
+    /// Reads and validates the portal's proof contracts, or keeps the configured legacy oracle.
+    pub async fn resolve_proof_system(
+        &self,
+        rpc: &WithdrawalRpc,
+    ) -> Result<ResolvedProofSystem, WithdrawerError> {
+        match self.config.network.proofs {
+            ProofSystem::FaultProofs { expected } => {
+                let portal = self.config.network.portal;
+                let reported = FaultProofContracts {
+                    dispute_game_factory: Self::read(
+                        rpc,
+                        portal,
+                        FaultProofPortal::disputeGameFactoryCall {},
+                    )
+                    .await?,
+                    anchor_state_registry: Self::read(
+                        rpc,
+                        portal,
+                        FaultProofPortal::anchorStateRegistryCall {},
+                    )
+                    .await?,
+                };
+                for (contract, address) in [
+                    (
+                        FaultProofPortal::disputeGameFactoryCall::SIGNATURE,
+                        reported.dispute_game_factory,
+                    ),
+                    (
+                        FaultProofPortal::anchorStateRegistryCall::SIGNATURE,
+                        reported.anchor_state_registry,
+                    ),
+                ] {
+                    if address.is_zero() {
+                        return Err(WithdrawerError::ZeroPortalProofContract { contract });
+                    }
+                }
+                if let Some(configured) = expected
+                    && configured != reported
+                {
+                    return Err(WithdrawerError::ProofContractsMismatch { configured, reported });
+                }
+                Ok(ResolvedProofSystem::FaultProofs(reported))
+            }
+            ProofSystem::OutputOracle { l2_output_oracle } => {
+                Ok(ResolvedProofSystem::OutputOracle { l2_output_oracle })
+            }
+        }
+    }
+
+    /// Reads the next action using this run's resolved contracts without preparing or signing.
     pub async fn status(
         &self,
         rpc: &WithdrawalRpc,
+        proofs: ResolvedProofSystem,
         withdrawal: &Withdrawal,
         submitter: Address,
     ) -> Result<WithdrawalStatus, WithdrawerError> {
@@ -255,10 +320,14 @@ impl Withdrawer {
         {
             return Ok(WithdrawalStatus::Finalized);
         }
-        let (ready_at, waiting_for_game, game_finalized) = match self.config.network.proofs {
-            ProofSystem::FaultProofs { anchor_state_registry, .. } => {
-                if Self::read(rpc, anchor_state_registry, IAnchorStateRegistry::pausedCall {})
-                    .await?
+        let (ready_at, waiting_for_game, game_finalized) = match proofs {
+            ResolvedProofSystem::FaultProofs(contracts) => {
+                if Self::read(
+                    rpc,
+                    contracts.anchor_state_registry,
+                    IAnchorStateRegistry::pausedCall {},
+                )
+                .await?
                 {
                     return Ok(WithdrawalStatus::Paused);
                 }
@@ -269,8 +338,12 @@ impl Withdrawer {
                 )
                 .await?;
                 if proof.timestamp == 0
-                    || !Self::game_eligible(rpc, anchor_state_registry, proof.disputeGameProxy)
-                        .await?
+                    || !Self::game_eligible(
+                        rpc,
+                        contracts.anchor_state_registry,
+                        proof.disputeGameProxy,
+                    )
+                    .await?
                 {
                     return Ok(WithdrawalStatus::Prove);
                 }
@@ -288,7 +361,7 @@ impl Withdrawer {
                 if !waiting {
                     let delay = Self::read(
                         rpc,
-                        anchor_state_registry,
+                        contracts.anchor_state_registry,
                         IAnchorStateRegistry::disputeGameFinalityDelaySecondsCall {},
                     )
                     .await?;
@@ -296,13 +369,13 @@ impl Withdrawer {
                 }
                 let finalized = Self::read(
                     rpc,
-                    anchor_state_registry,
+                    contracts.anchor_state_registry,
                     IAnchorStateRegistry::isGameFinalizedCall { game: proof.disputeGameProxy },
                 )
                 .await?;
                 (ready_at, waiting, finalized)
             }
-            ProofSystem::OutputOracle { l2_output_oracle } => {
+            ResolvedProofSystem::OutputOracle { l2_output_oracle } => {
                 if Self::read(rpc, portal, LegacyWithdrawalPortal::pausedCall {}).await? {
                     return Ok(WithdrawalStatus::Paused);
                 }
@@ -352,7 +425,7 @@ impl Withdrawer {
         if head.header.timestamp < ready_at || waiting_for_game || !game_finalized {
             return Ok(WithdrawalStatus::NotReady { ready_at, waiting_for_game });
         }
-        if matches!(self.config.network.proofs, ProofSystem::FaultProofs { .. }) {
+        if matches!(proofs, ResolvedProofSystem::FaultProofs(_)) {
             // The portal can enforce proof-validity gates beyond the timing reported here.
             Self::read(
                 rpc,
@@ -408,14 +481,18 @@ impl Withdrawer {
     pub async fn proving_output(
         &self,
         rpc: &WithdrawalRpc,
+        proofs: ResolvedProofSystem,
         withdrawal: &Withdrawal,
     ) -> Result<(WithdrawalProvingOutput, VerifiedWithdrawalProof), WithdrawerError> {
         let block = U256::from(withdrawal.block_number);
-        match self.config.network.proofs {
-            ProofSystem::FaultProofs { dispute_game_factory, anchor_state_registry } => {
-                let mut count =
-                    Self::read(rpc, dispute_game_factory, IDisputeGameFactory::gameCountCall {})
-                        .await?;
+        match proofs {
+            ResolvedProofSystem::FaultProofs(contracts) => {
+                let mut count = Self::read(
+                    rpc,
+                    contracts.dispute_game_factory,
+                    IDisputeGameFactory::gameCountCall {},
+                )
+                .await?;
                 let withdrawal_timestamp = rpc
                     .l2
                     .get_block_by_number(withdrawal.block_number.into())
@@ -431,7 +508,7 @@ impl Withdrawer {
                         count -= U256::from(1);
                         let game = Self::read(
                             rpc,
-                            dispute_game_factory,
+                            contracts.dispute_game_factory,
                             IDisputeGameFactory::gameAtIndexCall { index: count },
                         )
                         .await?;
@@ -465,7 +542,7 @@ impl Withdrawer {
                         };
                         let finalized = Self::read(
                             rpc,
-                            anchor_state_registry,
+                            contracts.anchor_state_registry,
                             IAnchorStateRegistry::isGameFinalizedCall { game: game.proxy },
                         )
                         .await?;
@@ -486,7 +563,8 @@ impl Withdrawer {
                     };
                     let Some(candidate) = candidate else { break };
                     let Some(output) =
-                        Self::game_proving_output(rpc, anchor_state_registry, candidate).await?
+                        Self::game_proving_output(rpc, contracts.anchor_state_registry, candidate)
+                            .await?
                     else {
                         continue;
                     };
@@ -516,7 +594,7 @@ impl Withdrawer {
                     return Err(error);
                 }
             }
-            ProofSystem::OutputOracle { l2_output_oracle } => {
+            ResolvedProofSystem::OutputOracle { l2_output_oracle } => {
                 let latest = Self::read(
                     rpc,
                     l2_output_oracle,
@@ -583,9 +661,10 @@ impl Withdrawer {
     pub async fn prove_calldata(
         &self,
         rpc: &WithdrawalRpc,
+        proofs: ResolvedProofSystem,
         withdrawal: &Withdrawal,
     ) -> Result<Bytes, WithdrawerError> {
-        let (output, verified) = self.proving_output(rpc, withdrawal).await?;
+        let (output, verified) = self.proving_output(rpc, proofs, withdrawal).await?;
         Ok(WithdrawalPortal::proveWithdrawalTransactionCall {
             withdrawal: withdrawal.transaction.clone(),
             outputIndex: output.index,
@@ -807,6 +886,9 @@ mod tests {
     #[derive(Debug, Clone)]
     struct Scenario {
         fault: bool,
+        portal_factory: Address,
+        portal_registry: Address,
+        portal_error: Option<Value>,
         proven: u64,
         finalized: bool,
         pending_finalized: bool,
@@ -851,6 +933,9 @@ mod tests {
         fn default() -> Self {
             Self {
                 fault: true,
+                portal_factory: Address::repeat_byte(2),
+                portal_registry: Address::repeat_byte(3),
+                portal_error: None,
                 proven: 0,
                 finalized: false,
                 pending_finalized: false,
@@ -1028,8 +1113,10 @@ mod tests {
             config.network.l1_chain_id = None;
             config.network.proofs = if scenario.fault {
                 ProofSystem::FaultProofs {
-                    dispute_game_factory: Address::repeat_byte(2),
-                    anchor_state_registry: Address::repeat_byte(3),
+                    expected: Some(FaultProofContracts {
+                        dispute_game_factory: Address::repeat_byte(2),
+                        anchor_state_registry: Address::repeat_byte(3),
+                    }),
                 }
             } else {
                 ProofSystem::OutputOracle { l2_output_oracle: Address::repeat_byte(2) }
@@ -1152,6 +1239,46 @@ mod tests {
                     macro_rules! reply {
                         ($call:ty, $($value:expr),* $(,)?) => {
                             if input[..4] == <$call>::SELECTOR { return Ok(json!(Bytes::from(<$call>::abi_encode_returns_tuple(&($($value,)*))))); }
+                        }
+                    }
+                    let target: Address = serde_json::from_value(params[0]["to"].clone()).unwrap();
+                    if input[..4] == FaultProofPortal::disputeGameFactoryCall::SELECTOR
+                        || input[..4] == FaultProofPortal::anchorStateRegistryCall::SELECTOR
+                    {
+                        assert_eq!(target, crate::NetworkPreset::BaseMainnet.resolve().portal);
+                        if let Some(error) = &self.portal_error {
+                            return Err(error.clone());
+                        }
+                        reply!(FaultProofPortal::disputeGameFactoryCall, self.portal_factory);
+                        reply!(FaultProofPortal::anchorStateRegistryCall, self.portal_registry);
+                    }
+                    if self.fault {
+                        if [
+                            IDisputeGameFactory::gameCountCall::SELECTOR,
+                            IDisputeGameFactory::gameAtIndexCall::SELECTOR,
+                        ]
+                        .contains(&input[..4].try_into().unwrap())
+                            && target != self.portal_factory
+                        {
+                            return Err(
+                                json!({"code":3,"message":"execution reverted: wrong factory"}),
+                            );
+                        }
+                        if [
+                            IAnchorStateRegistry::pausedCall::SELECTOR,
+                            IAnchorStateRegistry::isGameBlacklistedCall::SELECTOR,
+                            IAnchorStateRegistry::isGameRetiredCall::SELECTOR,
+                            IAnchorStateRegistry::isGameProperCall::SELECTOR,
+                            IAnchorStateRegistry::isGameRespectedCall::SELECTOR,
+                            IAnchorStateRegistry::isGameFinalizedCall::SELECTOR,
+                            IAnchorStateRegistry::disputeGameFinalityDelaySecondsCall::SELECTOR,
+                        ]
+                        .contains(&input[..4].try_into().unwrap())
+                            && target != self.portal_registry
+                        {
+                            return Err(
+                                json!({"code":3,"message":"execution reverted: wrong registry"}),
+                            );
                         }
                     }
                     let claim: B256 = if self.wrong_root {
@@ -1344,6 +1471,23 @@ mod tests {
     }
 
     impl Harness {
+        fn assert_portal_reads(&self, expected: usize) {
+            let requests = self.requests.lock().unwrap();
+            for selector in [
+                FaultProofPortal::disputeGameFactoryCall::SELECTOR,
+                FaultProofPortal::anchorStateRegistryCall::SELECTOR,
+            ] {
+                let input = json!(Bytes::copy_from_slice(&selector));
+                let count = requests
+                    .iter()
+                    .filter(|request| {
+                        request["method"] == "eth_call" && request["params"][0]["input"] == input
+                    })
+                    .count();
+                assert_eq!(count, expected, "portal address view must be read once per run");
+            }
+        }
+
         fn assert_proven_game(&self, index: u64) {
             let sent = self.sent.lock().unwrap();
             assert_eq!(sent.len(), 1);
@@ -1366,7 +1510,9 @@ mod tests {
             .unwrap();
             let withdrawal = Withdrawal::from_receipt(&receipt).unwrap().remove(0);
             let signer = WithdrawalSigner::new(&self.config.signer).await.unwrap();
-            Withdrawer::new(self.config.clone()).status(&rpc, &withdrawal, signer.address()).await
+            let flow = Withdrawer::new(self.config.clone());
+            let proofs = flow.resolve_proof_system(&rpc).await?;
+            flow.status(&rpc, proofs, &withdrawal, signer.address()).await
         }
 
         fn assert_sent(&self, selector: [u8; 4], count: usize) {
@@ -1405,6 +1551,165 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn preset_uses_portal_contracts_for_proving_and_finalizing() {
+        for (proven, selector) in [
+            (0, WithdrawalPortal::proveWithdrawalTransactionCall::SELECTOR),
+            (100, WithdrawalPortal::finalizeWithdrawalTransactionCall::SELECTOR),
+        ] {
+            let mut server = Scenario {
+                proven,
+                portal_factory: Address::repeat_byte(4),
+                portal_registry: Address::repeat_byte(5),
+                ..Default::default()
+            }
+            .start()
+            .await;
+            server.config.network.proofs = crate::NetworkPreset::BaseMainnet.resolve().proofs;
+            let outcomes =
+                server.run().await.expect("preset must use the portal's proof contracts");
+            assert!(outcomes[0].transaction_hash.is_some());
+            server.assert_sent(selector, 1);
+            server.assert_portal_reads(1);
+        }
+    }
+
+    #[tokio::test]
+    async fn custom_contract_mismatch_stops_before_signing() {
+        for (factory, registry, dry) in [(4, 3, false), (2, 5, false), (4, 5, false), (4, 5, true)]
+        {
+            let mut server = Scenario {
+                portal_factory: Address::repeat_byte(factory),
+                portal_registry: Address::repeat_byte(registry),
+                dry,
+                ..Default::default()
+            }
+            .start()
+            .await;
+            // An invalid signing key makes signer construction observable without a signing mock.
+            server.config.signer = crate::SignerSource::PrivateKey(crate::Secret(B256::ZERO));
+            let error = server.run().await.unwrap_err();
+            assert!(
+                matches!(error, WithdrawerError::ProofContractsMismatch { .. }),
+                "expected a contract mismatch before signer construction, got {error}"
+            );
+            let message = error.to_string();
+            for (configured, reported) in [(2, factory), (3, registry)] {
+                if configured != reported {
+                    assert!(
+                        message.contains(&Address::repeat_byte(configured).to_string()),
+                        "missing configured address: {message}"
+                    );
+                    assert!(
+                        message.contains(&Address::repeat_byte(reported).to_string()),
+                        "missing portal address: {message}"
+                    );
+                }
+            }
+            assert!(server.sent.lock().unwrap().is_empty());
+            assert!(server.requests.lock().unwrap().iter().all(|request| !matches!(
+                request["method"].as_str(),
+                Some("eth_estimateGas" | "eth_getTransactionCount" | "eth_sendRawTransaction")
+            )));
+        }
+    }
+
+    #[tokio::test]
+    async fn portal_contract_failure_keeps_a_redacted_source_before_signing() {
+        let mut server = Scenario {
+            portal_error: Some(json!({
+                "code": -32000,
+                "message": "https://user:portal-secret@rpc.invalid/key",
+                "data": "portal-secret",
+            })),
+            ..Default::default()
+        }
+        .start()
+        .await;
+        server.config.signer = crate::SignerSource::PrivateKey(crate::Secret(B256::ZERO));
+        let error = server.run().await.unwrap_err();
+        assert!(matches!(error, WithdrawerError::Request(_)));
+        assert!(error.source().is_some());
+        let mut diagnostic = String::new();
+        let mut source = Some(&error as &dyn StdError);
+        while let Some(error) = source {
+            diagnostic.push_str(&format!("{error} {error:?} "));
+            source = error.source();
+        }
+        assert!(diagnostic.contains("-32000"));
+        assert!(!diagnostic.contains("portal-secret"), "credentials leaked: {diagnostic}");
+        assert!(server.sent.lock().unwrap().is_empty());
+        assert_eq!(*server.estimates.lock().unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn zero_portal_contracts_fail_before_signing_including_dry_runs() {
+        for (factory, registry, contract) in [
+            (
+                Address::ZERO,
+                Address::repeat_byte(3),
+                FaultProofPortal::disputeGameFactoryCall::SIGNATURE,
+            ),
+            (
+                Address::repeat_byte(2),
+                Address::ZERO,
+                FaultProofPortal::anchorStateRegistryCall::SIGNATURE,
+            ),
+        ] {
+            for dry in [false, true] {
+                let mut server = Scenario {
+                    portal_factory: factory,
+                    portal_registry: registry,
+                    dry,
+                    ..Default::default()
+                }
+                .start()
+                .await;
+                server.config.signer = crate::SignerSource::PrivateKey(crate::Secret(B256::ZERO));
+                let error = server.run().await.unwrap_err();
+                assert!(
+                    matches!(error, WithdrawerError::ZeroPortalProofContract { contract: actual } if actual == contract)
+                );
+                assert!(server.sent.lock().unwrap().is_empty());
+                assert_eq!(*server.estimates.lock().unwrap(), 0);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn preset_dry_run_resolves_contracts_before_preparing() {
+        let mut server = Scenario {
+            dry: true,
+            portal_factory: Address::repeat_byte(4),
+            portal_registry: Address::repeat_byte(5),
+            ..Default::default()
+        }
+        .start()
+        .await;
+        server.config.network.proofs = crate::NetworkPreset::BaseMainnet.resolve().proofs;
+        let outcomes = server.run().await.unwrap();
+        assert_eq!(outcomes[0].status, WithdrawalStatus::Prove);
+        assert!(outcomes[0].transaction_hash.is_none());
+        assert_eq!(*server.estimates.lock().unwrap(), 1);
+        assert!(server.sent.lock().unwrap().is_empty());
+        server.assert_portal_reads(1);
+    }
+
+    #[tokio::test]
+    async fn portal_contracts_are_read_once_per_receipt_run() {
+        let server =
+            Scenario { proven: 100, second_withdrawal: true, ..Default::default() }.start().await;
+        for run in 1..=2 {
+            let outcomes = server.run().await.unwrap();
+            assert_eq!(outcomes.len(), 2);
+            server.assert_sent(
+                WithdrawalPortal::finalizeWithdrawalTransactionCall::SELECTOR,
+                2 * run,
+            );
+            server.assert_portal_reads(run);
+        }
+    }
+
+    #[tokio::test]
     async fn proves_then_finalizes_both_proof_systems() {
         for fault in [false, true] {
             for (proven, status, selector) in [
@@ -1427,6 +1732,7 @@ mod tests {
                 assert_eq!(outcomes[0].status, status);
                 assert!(outcomes[0].transaction_hash.is_some());
                 server.assert_sent(selector, 1);
+                server.assert_portal_reads(if fault { 2 } else { 0 });
             }
         }
     }
@@ -1804,7 +2110,11 @@ mod tests {
             .unwrap();
             let withdrawal = Withdrawal::from_receipt(&receipt).unwrap().remove(0);
             let flow = Withdrawer::new(server.config.clone());
-            assert_eq!(flow.status(&rpc, &withdrawal, Address::ZERO).await.unwrap(), expected);
+            let proofs = flow.resolve_proof_system(&rpc).await.unwrap();
+            assert_eq!(
+                flow.status(&rpc, proofs, &withdrawal, Address::ZERO).await.unwrap(),
+                expected
+            );
             assert!(server.sent.lock().unwrap().is_empty());
         }
     }
@@ -2074,7 +2384,7 @@ mod tests {
         for error in [server.status().await.unwrap_err(), server.run().await.unwrap_err()] {
             assert!(matches!(error, WithdrawerError::Decode { .. }));
             let diagnostic = format!("{error} {error:?}");
-            assert!(diagnostic.contains(WithdrawalPortal::finalizedWithdrawalsCall::SIGNATURE));
+            assert!(diagnostic.contains(FaultProofPortal::disputeGameFactoryCall::SIGNATURE));
             assert!(diagnostic.contains("TypeCheckFail"));
             assert!(!diagnostic.contains("61616161"), "response bytes leaked: {diagnostic}");
         }

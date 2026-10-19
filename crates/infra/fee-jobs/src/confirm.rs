@@ -11,9 +11,9 @@ use alloy_rpc_types_eth::Filter;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolCall, SolError, SolEvent, sol};
 use base_withdrawer::{
-    FaultProofPortal, Fees, Network, ProofSystem, Secret, SignerSource, Withdrawal,
-    WithdrawalPortal, WithdrawalRpc, WithdrawalSigner, WithdrawalStatus, Withdrawer,
-    WithdrawerConfig, WithdrawerError,
+    FaultProofContracts, FaultProofPortal, Fees, Network, ProofSystem, ResolvedProofSystem, Secret,
+    SignerSource, Withdrawal, WithdrawalPortal, WithdrawalRpc, WithdrawalSigner, WithdrawalStatus,
+    Withdrawer, WithdrawerConfig, WithdrawerError,
 };
 use eyre::{WrapErr, ensure};
 use tokio::time::{sleep, timeout};
@@ -117,16 +117,24 @@ impl ConfirmJob {
             "RPC URLs must use HTTP or HTTPS"
         );
         ensure!(
-            [
-                self.args.optimism_portal_proxy_address,
-                self.args.dispute_game_factory_address,
-                self.args.anchor_state_registry_address,
-                self.args.l2_fee_disburser_address
-            ]
-            .into_iter()
-            .all(|address| address != Address::ZERO),
+            [self.args.optimism_portal_proxy_address, self.args.l2_fee_disburser_address]
+                .into_iter()
+                .chain(self.args.dispute_game_factory_address)
+                .chain(self.args.anchor_state_registry_address)
+                .all(|address| address != Address::ZERO),
             "contract addresses must not be zero"
         );
+        let expected =
+            match (self.args.dispute_game_factory_address, self.args.anchor_state_registry_address)
+            {
+                (Some(dispute_game_factory), Some(anchor_state_registry)) => {
+                    Some(FaultProofContracts { dispute_game_factory, anchor_state_registry })
+                }
+                (None, None) => None,
+                _ => eyre::bail!(
+                    "dispute game factory and anchor state registry must be supplied together"
+                ),
+            };
         ensure!(self.args.num_blocks_per_query > 0, "number of blocks per query must be positive");
         ensure!(!self.args.withdrawal_timeout.is_zero(), "withdrawal timeout must be positive");
         let signer: PrivateKeySigner = self.args.job_runner_key.0.parse().map_err(|_| {
@@ -137,10 +145,7 @@ impl ConfirmJob {
             network: Network {
                 l2_rpc_url: self.args.l2_rpc_url.clone(),
                 portal: self.args.optimism_portal_proxy_address,
-                proofs: ProofSystem::FaultProofs {
-                    dispute_game_factory: self.args.dispute_game_factory_address,
-                    anchor_state_registry: self.args.anchor_state_registry_address,
-                },
+                proofs: ProofSystem::FaultProofs { expected },
                 l1_chain_id: None,
             },
             withdrawal: B256::ZERO,
@@ -264,13 +269,14 @@ impl ConfirmJob {
         &self,
         withdrawer: &Withdrawer,
         rpc: &WithdrawalRpc,
+        proofs: ResolvedProofSystem,
         signer: &WithdrawalSigner,
         withdrawal: &Withdrawal,
         pending_transaction: &mut Option<B256>,
     ) -> eyre::Result<bool> {
         let hash = withdrawal.hash();
         let submitter = signer.address();
-        let status = match withdrawer.status(rpc, withdrawal, submitter).await {
+        let status = match withdrawer.status(rpc, proofs, withdrawal, submitter).await {
             Ok(status) => status,
             Err(error) => return self.finalize_error(rpc, hash, submitter, error).await,
         };
@@ -288,7 +294,7 @@ impl ConfirmJob {
                 Ok(true)
             }
             WithdrawalStatus::Prove => {
-                let calldata = withdrawer.prove_calldata(rpc, withdrawal).await?;
+                let calldata = withdrawer.prove_calldata(rpc, proofs, withdrawal).await?;
                 withdrawer.submit(rpc, signer, calldata, None, pending_transaction).await?;
                 if self.args.dry_run {
                     info!(withdrawal_hash = %hash, "dry run proof prepared");
@@ -325,8 +331,11 @@ impl ConfirmJob {
     pub async fn run(self) -> eyre::Result<()> {
         let config = self.config()?;
         let rpc = WithdrawalRpc::new(&config).map_err(WithdrawerError::from)?;
-        let signer = WithdrawalSigner::new(&config.signer).await.map_err(WithdrawerError::from)?;
         let withdrawer = Withdrawer::new(config);
+        let proofs = withdrawer.resolve_proof_system(&rpc).await?;
+        let signer = WithdrawalSigner::new(&withdrawer.config.signer)
+            .await
+            .map_err(WithdrawerError::from)?;
         let transactions = self.disbursals(&rpc).await?;
         let mut pending = Vec::new();
         let mut failed = Vec::new();
@@ -349,6 +358,7 @@ impl ConfirmJob {
                     self.confirm_withdrawal(
                         &withdrawer,
                         &rpc,
+                        proofs,
                         &signer,
                         &withdrawal,
                         &mut pending_transaction,
@@ -435,8 +445,8 @@ mod tests {
                 l1_rpc_url: url.clone(),
                 l2_rpc_url: url.clone(),
                 optimism_portal_proxy_address: Address::repeat_byte(1),
-                dispute_game_factory_address: Address::repeat_byte(2),
-                anchor_state_registry_address: Address::repeat_byte(3),
+                dispute_game_factory_address: Some(Address::repeat_byte(2)),
+                anchor_state_registry_address: Some(Address::repeat_byte(3)),
                 l2_fee_disburser_address: Address::repeat_byte(4),
                 job_runner_key: Secret("01".repeat(32)),
                 num_blocks_to_query: 9,
@@ -494,8 +504,13 @@ mod tests {
         assert_eq!(queries[0]["topics"], json!([FeeDisburser::FeesDisbursed::SIGNATURE_HASH]));
     }
 
+    #[rstest]
+    #[case::discovered(false)]
+    #[case::expected(true)]
     #[tokio::test]
-    async fn continues_after_failed_receipts_and_withdrawals_and_returns_failure() {
+    async fn continues_after_failed_receipts_and_withdrawals_and_returns_failure(
+        #[case] expected: bool,
+    ) {
         let mut receipt: Value = serde_json::from_str(include_str!(
             "../../withdrawer/fixtures/synthetic-deposit-withdrawal-receipt.json"
         ))
@@ -533,6 +548,12 @@ mod tests {
             "eth_getTransactionReceipt" => json!({"result":receipt}),
             "eth_call" => {
                 let data: Bytes = serde_json::from_value(request["params"][0]["input"].clone()).unwrap();
+                if data.as_ref() == FaultProofPortal::disputeGameFactoryCall::SELECTOR {
+                    return json!({"result":Bytes::from(FaultProofPortal::disputeGameFactoryCall::abi_encode_returns(&Address::repeat_byte(2)))});
+                }
+                if data.as_ref() == FaultProofPortal::anchorStateRegistryCall::SELECTOR {
+                    return json!({"result":Bytes::from(FaultProofPortal::anchorStateRegistryCall::abi_encode_returns(&Address::repeat_byte(3)))});
+                }
                 let call = WithdrawalPortal::finalizedWithdrawalsCall::abi_decode(&data).unwrap();
                 captured.lock().unwrap().push(call.withdrawalHash);
                 if call.withdrawalHash == event.withdrawalHash {
@@ -544,6 +565,10 @@ mod tests {
             _ => unreachable!(),
         }).await;
         let mut job = job(&server.url);
+        if !expected {
+            job.args.dispute_game_factory_address = None;
+            job.args.anchor_state_registry_address = None;
+        }
         job.args.num_blocks_to_query = 0;
         let error = job.run().await.unwrap_err();
         assert!(
@@ -552,6 +577,28 @@ mod tests {
         );
         assert!(!format!("{error:#} {error:?}").contains("secret.endpoint"));
         assert_eq!(*visited.lock().unwrap(), vec![event.withdrawalHash, second.hash()]);
+    }
+
+    #[rstest]
+    #[case::mismatch(Address::repeat_byte(5), "do not match")]
+    #[case::zero(Address::ZERO, "zero address")]
+    #[tokio::test]
+    async fn rejects_invalid_portal_contracts_before_scanning(
+        #[case] factory: Address,
+        #[case] message: &str,
+    ) {
+        let server = Server::new(move |request| {
+            assert_eq!(request["method"], "eth_call");
+            let data: Bytes = serde_json::from_value(request["params"][0]["input"].clone()).unwrap();
+            if data.as_ref() == FaultProofPortal::disputeGameFactoryCall::SELECTOR {
+                json!({"result": Bytes::from(FaultProofPortal::disputeGameFactoryCall::abi_encode_returns(&factory))})
+            } else {
+                assert_eq!(data.as_ref(), FaultProofPortal::anchorStateRegistryCall::SELECTOR);
+                json!({"result": Bytes::from(FaultProofPortal::anchorStateRegistryCall::abi_encode_returns(&Address::repeat_byte(3)))})
+            }
+        }).await;
+        let error = job(&server.url).run().await.unwrap_err();
+        assert!(error.to_string().contains(message), "{error:#}");
     }
 
     fn revert(data: Option<Bytes>) -> WithdrawerError {

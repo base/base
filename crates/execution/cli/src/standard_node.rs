@@ -745,10 +745,10 @@ impl StandardBaseRethNode {
         // Feature extensions. Several use `replace_configured` (which is overwrite,
         // not compose) on overlapping RPC methods, so install order would otherwise
         // silently decide which one wins. Coordination is enforced by self-gating:
-        //   - FlashblocksExtension: registers eth_getTransactionCount (and others)
-        //     iff flashblocks is enabled.
-        //   - Eip8130RpcExtension: registers eth_getTransactionCount iff flashblocks
-        //     is NOT (see `Eip8130RpcMode` below).
+        //   - FlashblocksExtension: registers eth_getTransactionCount, eth_estimateGas
+        //     and eth_call (among others) iff flashblocks is enabled.
+        //   - Eip8130RpcExtension: registers eth_getTransactionCount, eth_estimateGas
+        //     and eth_call iff flashblocks is disabled (see `Eip8130RpcMode` below).
         //   - ProofsHistoryExtension: registers eth_getProof variants (disjoint from
         //     the above, so it can sit anywhere in the chain).
         // New extensions touching the same RPC methods MUST be added to this

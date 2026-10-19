@@ -44,11 +44,6 @@ impl BlockExpiryIndex {
         Self::default()
     }
 
-    /// Registers `hash` through the inclusive `last_valid_block`.
-    pub fn insert(&mut self, hash: TxHash, last_valid_block: u64) {
-        self.insert_with_flashblock(hash, last_valid_block, None);
-    }
-
     /// Registers an inclusive block and optional flashblock deadline.
     pub fn insert_with_flashblock(
         &mut self,
@@ -67,8 +62,12 @@ impl BlockExpiryIndex {
 
     /// Removes `hash` from the index if present.
     pub fn remove(&mut self, hash: &TxHash) {
-        if let Some(position) = self.by_hash.remove(hash) {
-            self.remove_from_position(position, hash);
+        let Some(position) = self.by_hash.remove(hash) else { return };
+        if let Some(hashes) = self.by_position.get_mut(&position) {
+            hashes.remove(hash);
+            if hashes.is_empty() {
+                self.by_position.remove(&position);
+            }
         }
     }
 
@@ -115,16 +114,6 @@ impl BlockExpiryIndex {
     pub fn is_empty(&self) -> bool {
         self.by_hash.is_empty()
     }
-
-    /// Removes a hash from its indexed deadline, dropping empty positions.
-    pub fn remove_from_position(&mut self, position: ExpiryPosition, hash: &TxHash) {
-        if let Some(hashes) = self.by_position.get_mut(&position) {
-            hashes.remove(hash);
-            if hashes.is_empty() {
-                self.by_position.remove(&position);
-            }
-        }
-    }
 }
 
 #[cfg(test)]
@@ -138,9 +127,9 @@ mod tests {
     #[test]
     fn drains_blocks_through_committed_head() {
         let mut index = BlockExpiryIndex::new();
-        index.insert(hash(1), 100);
-        index.insert(hash(2), 101);
-        index.insert(hash(3), 99);
+        index.insert_with_flashblock(hash(1), 100, None);
+        index.insert_with_flashblock(hash(2), 101, None);
+        index.insert_with_flashblock(hash(3), 99, None);
 
         // After block 99 commits, deadlines in blocks 100 and 101 remain live.
         let expired = index.drain_expired(99);
@@ -157,7 +146,7 @@ mod tests {
     #[test]
     fn tx_expires_when_its_last_valid_block_commits() {
         let mut index = BlockExpiryIndex::new();
-        index.insert(hash(1), 100);
+        index.insert_with_flashblock(hash(1), 100, None);
 
         assert!(index.drain_expired(99).is_empty());
         assert_eq!(index.drain_expired(100), vec![hash(1)]);
@@ -166,8 +155,8 @@ mod tests {
     #[test]
     fn reinsert_replaces_previous_bound() {
         let mut index = BlockExpiryIndex::new();
-        index.insert(hash(1), 100);
-        index.insert(hash(1), 200);
+        index.insert_with_flashblock(hash(1), 100, None);
+        index.insert_with_flashblock(hash(1), 200, None);
 
         assert!(index.drain_expired(150).is_empty());
         assert_eq!(index.len(), 1);
@@ -177,8 +166,8 @@ mod tests {
     #[test]
     fn remove_drops_tracking() {
         let mut index = BlockExpiryIndex::new();
-        index.insert(hash(1), 100);
-        index.insert(hash(2), 100);
+        index.insert_with_flashblock(hash(1), 100, None);
+        index.insert_with_flashblock(hash(2), 100, None);
         index.remove(&hash(1));
 
         assert_eq!(index.len(), 1);
@@ -188,7 +177,7 @@ mod tests {
     #[test]
     fn remove_of_unknown_hash_is_noop() {
         let mut index = BlockExpiryIndex::new();
-        index.insert(hash(1), 100);
+        index.insert_with_flashblock(hash(1), 100, None);
         index.remove(&hash(9));
         assert_eq!(index.len(), 1);
     }
@@ -196,7 +185,7 @@ mod tests {
     #[test]
     fn maximum_block_deadline_expires_without_overflow() {
         let mut index = BlockExpiryIndex::new();
-        index.insert(hash(1), u64::MAX);
+        index.insert_with_flashblock(hash(1), u64::MAX, None);
         index.insert_with_flashblock(hash(2), u64::MAX, Some(1));
 
         assert!(index.drain_expired(u64::MAX - 1).is_empty());
@@ -211,7 +200,7 @@ mod tests {
         let mut index = BlockExpiryIndex::new();
         index.insert_with_flashblock(hash(1), 101, Some(2));
         index.insert_with_flashblock(hash(2), 100, Some(2));
-        index.insert(hash(3), 100);
+        index.insert_with_flashblock(hash(3), 100, None);
         assert!(index.drain_published(100, 1).is_empty());
         assert_eq!(index.drain_published(100, 2), vec![hash(2)]);
         assert!(index.drain_published(100, 9).is_empty());

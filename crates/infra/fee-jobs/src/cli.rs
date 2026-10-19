@@ -185,12 +185,12 @@ pub struct ConfirmArgs {
     /// L1 Optimism portal proxy.
     #[arg(long, env = "OPTIMISM_PORTAL_PROXY_ADDRESS")]
     pub optimism_portal_proxy_address: Address,
-    /// L1 dispute game factory.
-    #[arg(long, env = "DISPUTE_GAME_FACTORY_ADDRESS")]
-    pub dispute_game_factory_address: Address,
-    /// L1 anchor state registry.
-    #[arg(long, env = "ANCHOR_STATE_REGISTRY_ADDRESS")]
-    pub anchor_state_registry_address: Address,
+    /// Expected L1 dispute game factory, checked against the portal.
+    #[arg(long, env = "DISPUTE_GAME_FACTORY_ADDRESS", requires = "anchor_state_registry_address")]
+    pub dispute_game_factory_address: Option<Address>,
+    /// Expected L1 anchor state registry, checked against the portal.
+    #[arg(long, env = "ANCHOR_STATE_REGISTRY_ADDRESS", requires = "dispute_game_factory_address")]
+    pub anchor_state_registry_address: Option<Address>,
     /// L2 fee disburser to query.
     #[arg(long, env = "L2_FEE_DISBURSER_ADDRESS")]
     pub l2_fee_disburser_address: Address,
@@ -277,6 +277,8 @@ impl Cli {
 mod tests {
     use std::{env, process::Command};
 
+    use alloy_primitives::Address;
+    use base_withdrawer::{FaultProofContracts, ProofSystem, Secret};
     use clap::{Parser, error::ErrorKind};
     use rstest::rstest;
 
@@ -293,10 +295,6 @@ mod tests {
             "https://l2.example",
             "--optimism-portal-proxy-address",
             "0x1111111111111111111111111111111111111111",
-            "--dispute-game-factory-address",
-            "0x2222222222222222222222222222222222222222",
-            "--anchor-state-registry-address",
-            "0x3333333333333333333333333333333333333333",
             "--l2-fee-disburser-address",
             "0x4444444444444444444444444444444444444444",
             "--job-runner-key",
@@ -411,6 +409,44 @@ mod tests {
         assert!(format!("{error:#}").contains("JOB_RUNNER_KEY"));
     }
 
+    #[rstest]
+    #[case::discovered(&[], None)]
+    #[case::expected(&[
+        "--dispute-game-factory-address", "0x2222222222222222222222222222222222222222",
+        "--anchor-state-registry-address", "0x3333333333333333333333333333333333333333",
+    ], Some(FaultProofContracts {
+        dispute_game_factory: Address::repeat_byte(0x22),
+        anchor_state_registry: Address::repeat_byte(0x33),
+    }))]
+    fn confirm_accepts_discovered_or_expected_proof_contracts(
+        #[case] flags: &[&str],
+        #[case] expected: Option<FaultProofContracts>,
+    ) {
+        let mut args = confirm(flags).unwrap();
+        args.job_runner_key = Secret("01".repeat(32));
+        assert_eq!(
+            ConfirmJob { args }.config().unwrap().network.proofs,
+            ProofSystem::FaultProofs { expected },
+        );
+    }
+
+    #[rstest]
+    #[case::factory("--dispute-game-factory-address")]
+    #[case::registry("--anchor-state-registry-address")]
+    fn confirm_requires_both_expected_proof_contracts(#[case] flag: &str) {
+        let error = confirm(&[flag, "0x2222222222222222222222222222222222222222"]).unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::MissingRequiredArgument);
+        let mut args = confirm(&[]).unwrap();
+        if flag == "--dispute-game-factory-address" {
+            args.dispute_game_factory_address = Some(Address::repeat_byte(2));
+        } else {
+            args.anchor_state_registry_address = Some(Address::repeat_byte(3));
+        }
+        assert!(
+            ConfirmJob { args }.config().unwrap_err().to_string().contains("supplied together")
+        );
+    }
+
     #[test]
     fn confirm_rejects_zero_addresses_non_http_urls_and_zero_limits() {
         for address in [
@@ -423,8 +459,14 @@ mod tests {
             let zero = Default::default();
             match address {
                 "--optimism-portal-proxy-address" => args.optimism_portal_proxy_address = zero,
-                "--dispute-game-factory-address" => args.dispute_game_factory_address = zero,
-                "--anchor-state-registry-address" => args.anchor_state_registry_address = zero,
+                "--dispute-game-factory-address" => {
+                    args.dispute_game_factory_address = Some(zero);
+                    args.anchor_state_registry_address = Some(Address::repeat_byte(3));
+                }
+                "--anchor-state-registry-address" => {
+                    args.anchor_state_registry_address = Some(zero);
+                    args.dispute_game_factory_address = Some(Address::repeat_byte(2));
+                }
                 _ => args.l2_fee_disburser_address = zero,
             }
             assert!(ConfirmJob { args }.config().unwrap_err().to_string().contains("zero"));
