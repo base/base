@@ -3080,7 +3080,6 @@ dependencies = [
  "base-batcher-core",
  "base-batcher-encoder",
  "base-batcher-service",
- "base-cli-utils",
  "base-runtime",
  "base-tx-manager",
  "clap",
@@ -3088,6 +3087,8 @@ dependencies = [
  "humantime",
  "metrics",
  "metrics-exporter-prometheus",
+ "tokio",
+ "tokio-util",
  "tracing",
  "url",
 ]
