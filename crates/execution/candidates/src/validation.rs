@@ -28,13 +28,16 @@ pub const DEFAULT_MAX_SIBLING_GAS: u64 = 5_000_000;
 /// Static size and gas bounds applied at ingress.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CandidateLimits {
-    /// Maximum siblings per group; at most [`MAX_SIBLINGS_CEILING`].
+    /// Maximum transactions per swap, counting the default transaction and its alternatives;
+    /// at most [`MAX_SIBLINGS_CEILING`].
     pub max_siblings: usize,
-    /// Maximum encoded size of one sibling.
+    /// Maximum encoded size of one transaction, including a default transaction submitted
+    /// alone.
     pub max_sibling_bytes: usize,
     /// Maximum encoded size of all siblings in a request.
     pub max_request_bytes: usize,
-    /// Maximum shared sibling gas limit.
+    /// Maximum gas limit of any swap transaction: the shared limit of a group's siblings, and
+    /// the limit of a default transaction submitted alone.
     pub max_sibling_gas: u64,
 }
 
@@ -146,8 +149,9 @@ impl CandidateValidator {
 
     /// Checks a default transaction submitted without alternatives.
     ///
-    /// It gets the per-member size, type and gas bounds of a set, so a request is admissible
-    /// the same way whether or not selection applies to it. The pool checks the rest.
+    /// It gets the per-member size, type and gas bounds of a set, including
+    /// [`CandidateLimits::max_sibling_gas`], so a request is admissible the same way whether or
+    /// not selection applies to it. The pool checks the rest.
     pub fn validate_default(&self, raw: &Bytes) -> Result<CandidateSibling, CandidateError> {
         if raw.len() > self.limits.max_sibling_bytes {
             return Err(CandidateError::RequestTooLarge);

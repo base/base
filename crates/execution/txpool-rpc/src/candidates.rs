@@ -7,14 +7,16 @@ use std::{
 };
 
 use alloy_consensus::BlockHeader;
-use alloy_primitives::{B256, Bytes, Signature, TxHash, U256};
+use alloy_primitives::{Address, B256, Bytes, Signature, TxHash, U256};
 use base_common_chains::Upgrades;
 use base_execution_candidates::{
     CandidateEnvelope, CandidateError, CandidateGroup, CandidateRuntime, CandidateValidator,
     ExpiryWindow, GroupLedger, GroupState, GroupSummary, LedgerAdmission,
 };
 use base_execution_rpc::SequencerClient;
-use base_execution_txpool::{BasePooledTransaction, ValidityOperator, ValidityPredicate};
+use base_execution_txpool::{
+    BasePooledTransaction, ValidityOperator, ValidityPredicate, ValiditySignatureMetrics,
+};
 use base_observability_events::{
     TransactionEventProducer, TransactionEventType, transaction_event,
 };
@@ -81,11 +83,13 @@ pub struct SwapTransactionOptions {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selection: Option<SwapSelection>,
     /// Last block in which the transaction may land (inclusive). Required without a
-    /// `selection`; with one it defaults to the envelope's `expiryBlock` and must equal it.
+    /// `selection`; with one it defaults to the envelope's `expiryBlock` and must equal it, even
+    /// while selection is disabled and the selection is ignored.
     #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
     pub expiry_block: Option<u64>,
     /// Upper bound, in wei, on the Swap Lane access charge; zero when omitted. With a
-    /// `selection` it defaults to the envelope's `maxAccessCharge` and must equal it.
+    /// `selection` it defaults to the envelope's `maxAccessCharge` and must equal it, even while
+    /// selection is disabled.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_access_charge: Option<U256>,
 }
@@ -110,7 +114,11 @@ impl SwapTransactionOptions {
     }
 
     /// Resolves the submission's terms. A selection envelope supplies any value the request
-    /// omits; a value given in both places must match. The selection need not be applied.
+    /// omits; a value given in both places must match.
+    ///
+    /// The check runs whether or not the selection is applied, so a request is valid or invalid
+    /// the same way under either kill-switch state: with selection disabled, a mismatch is still
+    /// `selection_mismatch` although the envelope's signature is not verified.
     pub fn terms(&self) -> Result<SwapTerms, CandidateError> {
         let Some(selection) = &self.selection else {
             return Ok(SwapTerms {
@@ -146,6 +154,12 @@ pub struct SwapTransactionResponse {
     /// Alternative hashes, in envelope order. Present only when selection applied.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub alternative_hashes: Vec<TxHash>,
+    /// `expiryBlock` in effect for a default transaction pooled alone. Present only when selection
+    /// did not apply. Admission is idempotent by transaction hash, so an exact resubmission
+    /// reports the expiry of the transaction already pooled, whatever `expiryBlock` it carried,
+    /// and omits it if that transaction was pooled without a block expiry.
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
+    pub expiry_block: Option<u64>,
     /// The request carried alternatives, but selection is disabled, so only the default
     /// transaction was admitted. Omitted when `false`.
     #[serde(default, skip_serializing_if = "core::ops::Not::not")]
@@ -165,6 +179,7 @@ impl From<&CandidateGroup> for SwapTransactionResponse {
                 .copied()
                 .filter(|hash| *hash != default)
                 .collect(),
+            expiry_block: None,
             alternatives_ignored: false,
         }
     }
@@ -175,6 +190,10 @@ impl From<&CandidateGroup> for SwapTransactionResponse {
 pub trait SendSwapTransactionApi {
     /// Submits a signed default transaction and, optionally, signed alternatives from which the
     /// builder selects at most one to include instead.
+    ///
+    /// While selection is disabled, alternatives are ignored and the selection's signature is
+    /// not verified, but `expiryBlock` and `maxAccessCharge` given alongside a selection must
+    /// still match its envelope (`selection_mismatch`).
     #[method(name = "sendSwapTransaction")]
     async fn send_swap_transaction(
         &self,
@@ -374,14 +393,15 @@ where
         }))
     }
 
-    /// Rejects EIP-7702-delegated senders of a candidate group (design §4.2).
-    pub fn ensure_sender_not_delegated(&self, group: &CandidateGroup) -> RpcResult<()> {
+    /// Rejects EIP-7702-delegated senders of swap transactions (design §4.2), with or without
+    /// alternatives.
+    pub fn ensure_sender_not_delegated(&self, sender: Address) -> RpcResult<()> {
         let state = self
             .provider
             .latest()
             .map_err(|error| Self::internal(format!("failed to open latest state: {error}")))?;
         let code = state
-            .account_code(&group.sender())
+            .account_code(&sender)
             .map_err(|error| Self::internal(format!("failed to read sender code: {error}")))?;
         if code.is_some_and(|code| code.is_eip7702()) {
             return Err(Self::reject(&CandidateError::SenderDelegated));
@@ -431,6 +451,10 @@ where
     /// Routes a submission: a candidate group when it carries alternatives and selection is
     /// enabled, otherwise the default transaction alone. Fills `trace` as the join keys become
     /// known.
+    ///
+    /// Shape and term checks run before routing, so with selection disabled an ignored
+    /// selection is not verified but its terms must still match (see
+    /// [`SwapTransactionOptions::terms`]).
     pub async fn submit(
         &self,
         transaction: Bytes,
@@ -456,7 +480,15 @@ where
     /// It is pooled with Private origin, so it is never propagated, under a `block_number <=
     /// expiryBlock` validity predicate: the pool evicts it and the builder skips it after
     /// `expiryBlock`. No ledger group is created. Its sender must still be an allowlisted
-    /// principal; v0 prices no work for it, so `maxAccessCharge` is recorded but not charged.
+    /// principal that is not EIP-7702-delegated; v0 prices no work for it, so `maxAccessCharge`
+    /// is recorded but not charged.
+    ///
+    /// The synthesized predicate is unsigned: the sender did not sign it, ingress derives it
+    /// from `expiryBlock`, so it is exempt from `ValiditySignatureMode`. A node whose builder
+    /// ingress requires signed validity sidecars would refuse it if it were forwarded there.
+    ///
+    /// Admission is idempotent by transaction hash: an exact resubmission returns success with
+    /// the pooled transaction's expiry and changes nothing.
     pub async fn submit_single(
         &self,
         transaction: Bytes,
@@ -475,6 +507,9 @@ where
         if window.is_some_and(|window| !window.contains(terms.expiry_block)) {
             return Err(Self::reject(&CandidateError::ExpiryOutOfWindow));
         }
+        self.ensure_sender_not_delegated(default.transaction.signer())?;
+        // Allowlist membership only: pricing and quotas are per-group until a Swap Lane admission
+        // policy exists.
         let principal = self
             .runtime
             .policy
@@ -484,14 +519,24 @@ where
         if self.runtime.ledger.suppresses_plain_reinsertion(&hash) {
             return Err(Self::reject(&CandidateError::RepresentativeConflict));
         }
-        let response = SwapTransactionResponse {
+        let mut response = SwapTransactionResponse {
             transaction_hash: hash,
             group_hash: None,
             alternative_hashes: Vec::new(),
+            expiry_block: Some(terms.expiry_block),
             alternatives_ignored: trace.alternatives_ignored,
         };
-        if self.pool.contains(&hash) {
+        if let Some(pooled) = self.pool.get(&hash) {
             trace.duplicate = true;
+            response.expiry_block = pooled.transaction.validity_predicates().iter().find_map(
+                |predicate| match predicate {
+                    ValidityPredicate::BlockNumber {
+                        op: ValidityOperator::LessThanOrEqual,
+                        value,
+                    } => u64::try_from(*value).ok(),
+                    _ => None,
+                },
+            );
             return Ok(response);
         }
 
@@ -518,6 +563,7 @@ where
                 return Err(Self::reject(&CandidateError::AdmissionTimedOut));
             }
         }
+        ValiditySignatureMetrics::accepted("ingress", "unsigned").increment(1);
         info!(
             tx_hash = %hash,
             expiry_block = terms.expiry_block,
@@ -554,7 +600,7 @@ where
             })?;
         trace.group_hash = Some(group.group_hash());
         trace.transaction_hash = Some(group.representative().hash());
-        self.ensure_sender_not_delegated(&group)?;
+        self.ensure_sender_not_delegated(group.sender())?;
         let group = Arc::new(group);
         let response = SwapTransactionResponse::from(group.as_ref());
         let group_hash = group.group_hash();
@@ -1221,6 +1267,7 @@ mod tests {
                 transaction_hash: default_hash,
                 group_hash: None,
                 alternative_hashes: vec![],
+                expiry_block: Some(selection(&options).envelope.expiry_block),
                 alternatives_ignored: true,
             }
         );
@@ -1257,8 +1304,15 @@ mod tests {
         );
         assert_eq!(runtime.ledger.counts(), (0, 0), "no ledger group");
 
-        // An exact resubmission returns the same response.
-        assert_eq!(api.send_swap_transaction(default, Some(options)).await.unwrap(), response);
+        // An exact resubmission returns the same response, and reports the pooled expiry even
+        // when it asks for another one.
+        assert_eq!(response.expiry_block, Some(100));
+        assert_eq!(
+            api.send_swap_transaction(default.clone(), Some(options)).await.unwrap(),
+            response
+        );
+        let later = SwapTransactionOptions { expiry_block: Some(101), ..Default::default() };
+        assert_eq!(api.send_swap_transaction(default, Some(later)).await.unwrap(), response);
         assert_eq!(pool.pool_size().total, 1);
     }
 
@@ -1419,6 +1473,42 @@ mod tests {
 
         let error = api.send_swap_transaction(default, Some(options)).await.unwrap_err();
         assert_eq!(label(&error), "sender_delegated");
+
+        // A default transaction alone gets the same check.
+        let (default, options) = single(&fixture, 0);
+        let error = api.send_swap_transaction(default, Some(options)).await.unwrap_err();
+        assert_eq!(label(&error), "sender_delegated");
+        assert_eq!(api.pool.pool_size().total, 0);
+    }
+
+    #[tokio::test]
+    async fn disabled_selection_ignores_a_selection_signed_by_another_key() {
+        let capture = TransactionEventCapture::install();
+        let fixture = CandidateFixture::with_key(chain_id(), 0x78);
+        let runtime = runtime(&[fixture.address()]);
+        runtime.switch.set(false);
+        let pool = pool();
+        let api = rpc(provider(), pool.clone(), &runtime, MAX_EXPIRY_SECS);
+        let (default, mut options) = request(&fixture);
+        let other_key = CandidateFixture::with_key(chain_id(), 0x79);
+        let selection = options.selection.as_mut().unwrap();
+        selection.signature = other_key.sign(&selection.envelope);
+
+        let response = api.send_swap_transaction(default, Some(options)).await.unwrap();
+        assert!(response.alternatives_ignored);
+        assert_eq!(response.group_hash, None);
+        assert!(pool.contains(&response.transaction_hash));
+        assert_eq!(runtime.ledger.counts(), (0, 0));
+
+        let instance = serde_json::json!(format!("{:016x}", runtime.ledger.instance()));
+        let admissions: Vec<_> = capture
+            .events()
+            .into_iter()
+            .filter(|event| event.data.get("candidate_instance") == Some(&instance))
+            .collect();
+        assert_eq!(admissions.len(), 1, "{admissions:?}");
+        assert_eq!(admissions[0].event_type, TransactionEventType::TxpoolSendSwapTransaction);
+        assert_eq!(admissions[0].data["selection"], "ignored");
     }
 
     #[tokio::test]
@@ -1450,6 +1540,7 @@ mod tests {
             transaction_hash: TxHash::repeat_byte(0x22),
             group_hash: Some(B256::repeat_byte(0x11)),
             alternative_hashes: vec![TxHash::repeat_byte(0x33)],
+            expiry_block: None,
             alternatives_ignored: false,
         };
         let sequencer = MockServer::start();
@@ -1509,6 +1600,7 @@ mod tests {
             transaction_hash: TxHash::repeat_byte(0x22),
             group_hash: None,
             alternative_hashes: vec![],
+            expiry_block: None,
             alternatives_ignored: false,
         };
         assert_eq!(
