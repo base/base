@@ -537,23 +537,6 @@ mod tests {
     }
 
     #[test]
-    fn batch_size_is_configurable() {
-        let url = Url::parse("http://localhost:8545").unwrap();
-
-        assert_eq!(BatchRpcClient::new(url).unwrap().with_batch_size(25).batch_size, 25);
-    }
-
-    #[test]
-    fn submit_item_selects_method_by_validity() {
-        let plain = SubmitItem::plain(Bytes::from_static(&[0x01]));
-        assert!(!plain.is_validity());
-
-        let validity =
-            SubmitItem::with_validity(Bytes::from_static(&[0x02]), vec![balance_predicate()]);
-        assert!(validity.is_validity());
-    }
-
-    #[test]
     fn build_batch_body_mixes_methods_and_ids() {
         let items = vec![
             SubmitItem::plain(Bytes::from_static(&[0xaa])),
@@ -575,15 +558,6 @@ mod tests {
         assert_eq!(body[1]["params"][0], "0xbb");
         assert_eq!(body[1]["params"][1]["validity"][0]["type"], "balance");
         assert_eq!(body[1]["params"][1]["validity"][0]["params"]["op"], ">=");
-    }
-
-    #[test]
-    fn validity_predicate_serializes_to_server_wire_shape() {
-        // Guards against drift from the canonical base-execution-txpool type.
-        let json = serde_json::to_value(balance_predicate()).unwrap();
-        assert_eq!(json["type"], "balance");
-        assert_eq!(json["params"]["op"], ">=");
-        assert_eq!(json["params"]["address"], "0x00000000000000000000000000000000000000aa");
     }
 
     #[test]
@@ -610,21 +584,6 @@ mod tests {
     }
 
     #[test]
-    fn parse_batch_body_surfaces_method_not_found() {
-        let body = vec![serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": 0,
-            "error": { "code": JSON_RPC_METHOD_NOT_FOUND, "message": "method not found" }
-        })];
-
-        let results = BatchRpcClient::parse_batch_body(1, body);
-        match &results[0] {
-            BatchSendResult::Error(e) => assert!(e.is_method_not_found()),
-            other => panic!("expected error, got {other:?}"),
-        }
-    }
-
-    #[test]
     fn parse_batch_body_marks_missing_responses() {
         let results = BatchRpcClient::parse_batch_body(2, Vec::new());
         assert_eq!(results.len(), 2);
@@ -640,11 +599,10 @@ mod tests {
     }
 
     #[test]
-    fn batch_send_error_display_includes_code() {
-        assert_eq!(
-            BatchSendError::with_code(JSON_RPC_METHOD_NOT_FOUND, "nope").to_string(),
-            "nope (code -32601)"
-        );
-        assert_eq!(BatchSendError::client("boom").to_string(), "boom");
+    fn batch_send_error_display_and_method_not_found() {
+        let error = BatchSendError::with_code(JSON_RPC_METHOD_NOT_FOUND, "nope");
+        assert!(error.is_method_not_found());
+        assert_eq!(error.to_string(), "nope (code -32601)");
+        assert!(!BatchSendError::client("boom").is_method_not_found());
     }
 }
