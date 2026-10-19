@@ -134,6 +134,14 @@ impl CandidateFixture {
         (raw, envelope, signature)
     }
 
+    /// Splits envelope-ordered `raw` into the default transaction (the envelope's
+    /// representative) and its alternatives, as `base_sendSwapTransaction` carries them.
+    pub fn split_default(raw: &[Bytes], envelope: &CandidateEnvelope) -> (Bytes, Vec<Bytes>) {
+        let mut alternatives = raw.to_vec();
+        let default = alternatives.remove(envelope.representative_index());
+        (default, alternatives)
+    }
+
     /// Validates `raw` under `envelope` without an expiry window, panicking on rejection.
     pub fn group(&self, raw: &[Bytes], envelope: CandidateEnvelope) -> CandidateGroup {
         let signature = self.sign(&envelope);

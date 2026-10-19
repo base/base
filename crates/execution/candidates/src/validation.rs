@@ -5,7 +5,7 @@ use alloy_consensus::{
     transaction::{Recovered, SignerRecoverable},
 };
 use alloy_eips::eip2718::Decodable2718;
-use alloy_primitives::{B256, Bytes, Signature};
+use alloy_primitives::{B256, Bytes, Signature, keccak256};
 use base_common_consensus::BaseTransactionSigned;
 
 use crate::{
@@ -99,6 +99,68 @@ impl CandidateValidator {
         let group = CandidateGroup::new(envelope, signature, self.chain_id, siblings);
         Self::check_signature(&group)?;
         Ok(group)
+    }
+
+    /// Validates a default transaction with alternatives under a signed selection envelope.
+    ///
+    /// The set (default plus alternatives) gets the bounds of [`Self::check_bounds`] first; then
+    /// [`Self::arrange`] puts it in envelope order and [`Self::validate`] runs.
+    pub fn validate_selection(
+        &self,
+        default: &Bytes,
+        alternatives: &[Bytes],
+        envelope: CandidateEnvelope,
+        signature: Signature,
+        expiry: Option<ExpiryWindow>,
+    ) -> Result<CandidateGroup, CandidateError> {
+        let set: Vec<Bytes> = core::iter::once(default).chain(alternatives).cloned().collect();
+        self.check_bounds(&set)?;
+        let ordered = Self::arrange(default, alternatives, &envelope)?;
+        self.validate(&ordered, envelope, signature, expiry)
+    }
+
+    /// Orders a default transaction and its alternatives as the envelope lists them.
+    ///
+    /// The default transaction must be the envelope's representative: `siblingHashes[defaultIndex]`
+    /// under `DEFAULT_SIBLING`, `siblingHashes[0]` under `DROP`. The alternatives fill the other
+    /// positions, in envelope order.
+    pub fn arrange(
+        default: &Bytes,
+        alternatives: &[Bytes],
+        envelope: &CandidateEnvelope,
+    ) -> Result<Vec<Bytes>, CandidateError> {
+        if envelope.sibling_hashes.len() != alternatives.len() + 1 {
+            return Err(CandidateError::EnvelopeHashMismatch);
+        }
+        let index = envelope.representative_index();
+        if index > alternatives.len() {
+            return Err(CandidateError::EnvelopeInvalid { reason: "default index" });
+        }
+        if envelope.sibling_hashes[index] != keccak256(default) {
+            return Err(CandidateError::DefaultMismatch);
+        }
+        let mut ordered = alternatives.to_vec();
+        ordered.insert(index, default.clone());
+        Ok(ordered)
+    }
+
+    /// Checks a default transaction submitted without alternatives.
+    ///
+    /// It gets the per-member size, type and gas bounds of a set, so a request is admissible
+    /// the same way whether or not selection applies to it. The pool checks the rest.
+    pub fn validate_default(&self, raw: &Bytes) -> Result<CandidateSibling, CandidateError> {
+        if raw.len() > self.limits.max_sibling_bytes {
+            return Err(CandidateError::RequestTooLarge);
+        }
+        let sibling = Self::decode(core::slice::from_ref(raw))?
+            .pop()
+            .ok_or(CandidateError::SiblingDecodeFailed { index: 0 })?;
+        if sibling.transaction.inner().gas_limit() > self.limits.max_sibling_gas {
+            return Err(CandidateError::SiblingGasLimitTooHigh {
+                max: self.limits.max_sibling_gas,
+            });
+        }
+        Ok(sibling)
     }
 
     /// Checks sibling count and request byte bounds before any decoding.
@@ -397,6 +459,78 @@ mod tests {
             let signature = fixture.sign(&envelope);
             validator().validate(&raw, envelope, signature, window()).unwrap();
         }
+    }
+
+    #[rstest]
+    #[case::default_sibling_first(3, 0, 1)]
+    #[case::default_sibling_last(3, 2, 1)]
+    #[case::drop_uses_the_first(3, 2, 0)]
+    fn selection_puts_the_default_at_the_representative(
+        #[case] count: usize,
+        #[case] default_index: u8,
+        #[case] fallback_mode: u8,
+    ) {
+        let fixture = CandidateFixture::new(CHAIN_ID);
+        let (raw, mut envelope, _) = fixture.submission(count, default_index);
+        envelope.fallback_mode = fallback_mode;
+        let signature = fixture.sign(&envelope);
+        let (default, alternatives) = CandidateFixture::split_default(&raw, &envelope);
+
+        let group = validator()
+            .validate_selection(&default, &alternatives, envelope.clone(), signature, window())
+            .unwrap();
+        assert_eq!(group.representative().encoded, default);
+        assert_eq!(group.siblings().len(), count);
+        assert_eq!(group.group_hash(), envelope.signing_hash(CHAIN_ID));
+    }
+
+    #[test]
+    fn selection_rejects_a_default_that_is_not_the_representative() {
+        let fixture = CandidateFixture::new(CHAIN_ID);
+        let (raw, envelope, signature) = fixture.submission(3, 1);
+        let error = validator()
+            .validate_selection(&raw[0], &raw[1..], envelope.clone(), signature, window())
+            .unwrap_err();
+        assert_eq!(error.as_label(), "default_mismatch");
+
+        let (default, alternatives) = CandidateFixture::split_default(&raw, &envelope);
+        let error = validator()
+            .validate_selection(&default, &alternatives[..1], envelope, signature, window())
+            .unwrap_err();
+        assert_eq!(error.as_label(), "envelope_hash_mismatch");
+    }
+
+    #[test]
+    fn selection_bounds_count_the_default() {
+        let fixture = CandidateFixture::new(CHAIN_ID);
+        let (raw, envelope, signature) = fixture.submission(5, 0);
+        let (default, alternatives) = CandidateFixture::split_default(&raw, &envelope);
+        let error = validator()
+            .validate_selection(&default, &alternatives, envelope, signature, window())
+            .unwrap_err();
+        assert_eq!(error.as_label(), "too_many_siblings");
+    }
+
+    #[test]
+    fn default_without_alternatives_gets_member_bounds() {
+        let fixture = CandidateFixture::new(CHAIN_ID);
+        let (raw, _, _) = fixture.submission(2, 0);
+        let sibling = validator().validate_default(&raw[0]).unwrap();
+        assert_eq!(sibling.encoded, raw[0]);
+        assert_eq!(sibling.transaction.signer(), fixture.address());
+
+        let mut capped = validator();
+        capped.limits.max_sibling_gas = 1;
+        assert_eq!(
+            capped.validate_default(&raw[0]).unwrap_err().as_label(),
+            "sibling_gas_limit_too_high"
+        );
+        capped.limits.max_sibling_bytes = 10;
+        assert_eq!(capped.validate_default(&raw[0]).unwrap_err(), CandidateError::RequestTooLarge);
+        assert_eq!(
+            validator().validate_default(&fixture.legacy_sibling(0)).unwrap_err(),
+            CandidateError::SiblingTypeUnsupported { index: 0 }
+        );
     }
 
     #[test]

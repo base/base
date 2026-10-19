@@ -301,7 +301,7 @@ and `data.build_duration_ms`. Build-stopped events use `data.reason` to
 distinguish control-flow stops such as payload resolution winning before
 publish.
 
-Candidate groups (`base_sendRawTransactionCandidates`): every candidate event
+Candidate groups (`base_sendSwapTransaction` with alternatives): every candidate event
 carries `data.group_hash`, the group's join key, and no sibling bytes, plus
 `data.candidate_instance`, a random per-process identifier.
 
