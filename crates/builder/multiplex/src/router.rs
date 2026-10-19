@@ -109,11 +109,6 @@ impl MultiplexRouter {
         }
     }
 
-    /// Returns whether Denim selects the basic builder at `timestamp`.
-    pub fn basic_selected_at(&self, timestamp: u64) -> bool {
-        self.chain_spec.is_denim_active_at_timestamp(timestamp)
-    }
-
     /// Returns the recorded route for a payload, defaulting unknown payloads to flashblocks.
     pub fn basic_selected_for_payload(&self, payload_id: PayloadId) -> bool {
         self.payload_routes
@@ -191,7 +186,8 @@ impl MultiplexRouter {
         tx: tokio::sync::oneshot::Sender<Result<PayloadId, PayloadBuilderError>>,
     ) -> BoxFuture<'static, ()> {
         let payload_id = input.payload_id();
-        let selected_basic = self.basic_selected_at(input.attributes.timestamp());
+        let selected_basic =
+            self.chain_spec.is_denim_active_at_timestamp(input.attributes.timestamp());
         self.record_payload_route(payload_id, selected_basic);
 
         let mut shadow_attributes = input.attributes.clone();
