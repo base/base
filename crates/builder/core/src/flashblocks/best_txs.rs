@@ -4,7 +4,7 @@ use std::{collections::HashSet, marker::PhantomData, time::Instant};
 
 use alloy_primitives::{Address, TxHash, map::B256Set};
 use base_execution_payload_builder::{ParkablePayloadTransactions, ParkedPredicateIndex};
-use base_execution_txpool::{BasePooledTx, ValidityPredicate};
+use base_execution_txpool::{BasePooledTx, ValidityConditions, ValidityPredicate};
 use reth_payload_util::PayloadTransactions;
 use revm::state::EvmState;
 
@@ -137,10 +137,10 @@ where
 
             if self.resting_predicate_mode.is_enforced()
                 && !self.resting.is_empty()
-                && !tx.validity_predicates().is_empty()
+                && !tx.validity_conditions().is_empty()
             {
                 let started = Instant::now();
-                let resting = self.is_resting(hash, tx.validity_predicates());
+                let resting = self.is_resting(hash, tx.validity_conditions());
                 if resting {
                     self.inner.park_current();
                     self.parked_resting.insert(hash);
@@ -228,7 +228,7 @@ where
 
     /// A hash re-added to the pool with a batch that no longer contains the recorded predicate
     /// does not rest.
-    fn is_resting(&self, transaction_hash: TxHash, predicates: &[ValidityPredicate]) -> bool {
+    fn is_resting(&self, transaction_hash: TxHash, predicates: &ValidityConditions) -> bool {
         self.resting.predicate(transaction_hash).is_some_and(|blocker| predicates.contains(blocker))
     }
 
@@ -807,7 +807,7 @@ mod tests {
         iterator.refresh_iterator(parkable(&pool));
         let yielded = iterator.next(()).unwrap();
         assert_eq!(*yielded.hash(), *resting.hash());
-        assert!(iterator.is_resting(*resting.hash(), yielded.validity_predicates()));
+        assert!(iterator.is_resting(*resting.hash(), yielded.validity_conditions()));
     }
 
     #[test]
@@ -821,6 +821,6 @@ mod tests {
 
         iterator.rest(*resting.hash(), &predicates[0]);
 
-        assert!(!iterator.is_resting(*resting.hash(), predicates));
+        assert!(!iterator.is_resting(*resting.hash(), resting.transaction.validity_conditions()));
     }
 }
