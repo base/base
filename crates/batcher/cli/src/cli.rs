@@ -8,10 +8,10 @@ use std::{
 use alloy_primitives::Address;
 use base_batcher_core::{ThrottleConfig, ThrottleStrategy};
 use base_batcher_service::{BatcherConfig, BatcherService, ShadowConfig};
-use base_cli_utils::RuntimeManager;
 use base_runtime::TokioRuntime;
 use base_tx_manager::SignerConfig;
 use clap::Parser;
+use tokio_util::sync::CancellationToken;
 use url::Url;
 
 base_tx_manager::define_signer_cli!("BASE_BATCHER");
@@ -402,14 +402,21 @@ impl BatcherArgs {
         })
     }
 
-    /// Execute the batcher.
-    pub async fn exec(self, metrics_enabled: bool) -> eyre::Result<()> {
+    /// Execute the batcher until `cancellation` is cancelled.
+    pub async fn exec(
+        self,
+        metrics_enabled: bool,
+        cancellation: CancellationToken,
+    ) -> eyre::Result<()> {
         let config = self.into_config(metrics_enabled)?;
-        let rt = TokioRuntime::new();
-        let _signal_handle = RuntimeManager::install_signal_handler(rt.token().clone());
+        let rt = TokioRuntime::with_token(cancellation.clone());
 
-        let service = BatcherService::new(config);
-        service.setup(rt).await?.run().await
+        let setup = BatcherService::new(config).setup(rt);
+        let ready = tokio::select! {
+            ready = setup => ready?,
+            () = cancellation.cancelled() => return Ok(()),
+        };
+        ready.run().await
     }
 }
 

@@ -24,23 +24,19 @@ mod tests {
         holesky::{HOLESKY_BPO1_TIMESTAMP, HOLESKY_BPO2_TIMESTAMP},
         sepolia::{SEPOLIA_BPO1_TIMESTAMP, SEPOLIA_BPO2_TIMESTAMP},
     };
+    use rstest::rstest;
 
     use super::*;
 
-    #[test]
-    fn l1_config_all_chains() {
-        let devnet_chain_id = Devnet::CHAIN_ID;
-        let mainnet_chain_id = u64::from(NamedChain::Mainnet);
-        let sepolia_chain_id = u64::from(NamedChain::Sepolia);
-        let holesky_chain_id = u64::from(NamedChain::Holesky);
-        let hoodi_chain_id = u64::from(NamedChain::Hoodi);
-
-        assert!(L1_CONFIGS.get(&devnet_chain_id).is_some());
-        assert!(L1_CONFIGS.get(&mainnet_chain_id).is_some());
-        assert!(L1_CONFIGS.get(&sepolia_chain_id).is_some());
-        assert!(L1_CONFIGS.get(&holesky_chain_id).is_some());
-        assert!(L1_CONFIGS.get(&hoodi_chain_id).is_some());
-        assert!(L1_CONFIGS.get(&99999).is_none());
+    #[rstest]
+    #[case::devnet(Devnet::CHAIN_ID, true)]
+    #[case::mainnet(u64::from(NamedChain::Mainnet), true)]
+    #[case::sepolia(u64::from(NamedChain::Sepolia), true)]
+    #[case::holesky(u64::from(NamedChain::Holesky), true)]
+    #[case::hoodi(u64::from(NamedChain::Hoodi), true)]
+    #[case::unknown_chain(99999, false)]
+    fn l1_config_all_chains(#[case] chain_id: u64, #[case] expected: bool) {
+        assert_eq!(L1_CONFIGS.contains_key(&chain_id), expected);
     }
 
     #[test]

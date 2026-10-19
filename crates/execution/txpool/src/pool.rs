@@ -4,9 +4,9 @@ use std::{collections::HashMap, fmt, sync::Arc};
 
 use alloy_eips::{
     eip4844::{BlobAndProofV1, BlobAndProofV2, BlobCellsAndProofsV1},
-    eip7594::BlobTransactionSidecarVariant,
+    eip7594::{BlobCellMask, BlobTransactionSidecarVariant},
 };
-use alloy_primitives::{Address, B128, B256, TxHash, U256, map::AddressSet};
+use alloy_primitives::{Address, B256, TxHash, U256, map::AddressSet};
 use base_common_precompiles::NonceManagerStorage;
 use futures::StreamExt;
 use parking_lot::{Mutex, RwLock};
@@ -30,7 +30,7 @@ use crate::{
     Admission, BasePooledTx, BaseTransactionValidator, FlashblockExpiry, GuardLimits, GuardMetrics,
     InvalidationCause, InvalidationKey, LimitRejection, MempoolGuard, ParkableBestTransactions,
     ParkableTransactionPool, ParkedBestTransactions, PredicateContext, StateDiffInvalidation,
-    ValidityPoolMetrics, ValidityPredicate,
+    ValidityPoolMetrics,
     best::MergeBestTransactions,
     two_d_nonce_pool::{InsertOutcome, LaneId, LaneUpdate, SidecarLimits, TwoDNoncePool},
 };
@@ -448,9 +448,7 @@ where
     /// predicates, or `None` when they impose no finite block bound.
     fn validity_block_expiry_bound(validated: &TransactionValidationOutcome<T>) -> Option<u64> {
         let transaction = validated.as_valid_transaction()?;
-        crate::ValidityPredicate::block_expiry_bound(
-            transaction.transaction().validity_predicates(),
-        )
+        transaction.transaction().validity_conditions().block().expiry_bound()
     }
 
     /// Optional flashblock upper bound, paired with the block bound for pool eviction.
@@ -458,7 +456,7 @@ where
         validated: &TransactionValidationOutcome<T>,
     ) -> Option<u64> {
         let transaction = validated.as_valid_transaction()?;
-        ValidityPredicate::flashblock_expiry_bound(transaction.transaction().validity_predicates())
+        transaction.transaction().validity_conditions().flashblock().expiry_bound()
     }
 
     /// Rejects a late arrival whose deadline is behind the published position.
@@ -474,10 +472,7 @@ where
                 block_number: position.block_number,
                 flashblock_index: position.flashblock_index.saturating_add(1),
             };
-            if ValidityPredicate::is_batch_expired(
-                transaction.transaction().validity_predicates(),
-                &next,
-            ) {
+            if transaction.transaction().validity_conditions().is_expired(&next) {
                 return Err(reth_transaction_pool::error::PoolError::other(
                     hash,
                     "validity deadline expired at published flashblock",
@@ -567,7 +562,7 @@ where
     fn has_validity_predicates(validated: &TransactionValidationOutcome<T>) -> bool {
         validated
             .as_valid_transaction()
-            .is_some_and(|transaction| !transaction.transaction().validity_predicates().is_empty())
+            .is_some_and(|transaction| !transaction.transaction().validity_conditions().is_empty())
     }
 
     fn reconcile_guard(&self) {
@@ -839,7 +834,7 @@ where
                     .limit_class()
                     .map(|class| class.classification_generation);
                 let admission = Self::admission_for(&validated.transaction);
-                let is_validity = !validated.transaction.validity_predicates().is_empty();
+                let is_validity = !validated.transaction.validity_conditions().is_empty();
                 let sender = validated.sender();
                 let mut outcome = nonce_pool.insert_validated(validated, state_nonce)?;
                 nonce_pool.record_validated_balance(sender, balance, balance_epoch);
@@ -1166,22 +1161,39 @@ where
         origin: TransactionOrigin,
         transactions: Vec<Self::Transaction>,
     ) -> Vec<PoolResult<AddedTransactionOutcome>> {
-        let mut results = Vec::with_capacity(transactions.len());
-        for transaction in transactions {
-            results.push(self.add_transaction(origin, transaction).await);
-        }
-        results
+        self.add_transactions_with_origins(
+            transactions.into_iter().map(|transaction| (origin, transaction)).collect(),
+        )
+        .await
     }
 
     async fn add_transactions_with_origins(
         &self,
         transactions: Vec<(TransactionOrigin, Self::Transaction)>,
     ) -> Vec<PoolResult<AddedTransactionOutcome>> {
-        let mut results = Vec::with_capacity(transactions.len());
-        for (origin, transaction) in transactions {
-            results.push(self.add_transaction(origin, transaction).await);
+        if transactions.iter().any(|(_, transaction)| self.is_sidecar_transaction(transaction)) {
+            let mut results = Vec::with_capacity(transactions.len());
+            for (origin, transaction) in transactions {
+                results.push(self.add_transaction(origin, transaction).await);
+            }
+            return results;
         }
-        results
+        // Protocol validation reads canonical state, never pool contents. Every
+        // transaction is validated against one snapshot taken when the batch
+        // job starts and admitted in order only after the whole batch is
+        // validated, so outcomes match per-transaction adds unless the
+        // canonical head or the pool changes concurrently in that window.
+        let keys: Vec<_> = transactions
+            .iter()
+            .map(|(origin, tx)| (*origin, *tx.hash(), tx.sender(), tx.nonce()))
+            .collect();
+        let validated = self.validator().validate_transactions(transactions).await;
+        keys.into_iter()
+            .zip(validated)
+            .map(|((origin, hash, sender, nonce), validated)| {
+                self.add_validated_protocol_transaction(origin, hash, sender, nonce, validated)
+            })
+            .collect()
     }
 
     fn transaction_event_listener(&self, tx_hash: TxHash) -> Option<TransactionEvents> {
@@ -1410,6 +1422,17 @@ where
         let mut hashes = self.protocol_pool.all_transaction_hashes();
         hashes.extend(self.nonce_pool.read().all_hashes());
         hashes
+    }
+
+    fn all_transactions_by_sender(
+        &self,
+        sender: Address,
+    ) -> AllPoolTransactions<Self::Transaction> {
+        let mut transactions = self.protocol_pool.all_transactions_by_sender(sender);
+        let nonce_pool = self.nonce_pool.read();
+        transactions.pending.extend(nonce_pool.pending_transactions_by_sender(sender));
+        transactions.queued.extend(nonce_pool.queued_transactions_by_sender(sender));
+        transactions
     }
 
     fn remove_transactions(
@@ -1672,9 +1695,9 @@ where
     fn get_blobs_for_versioned_hashes_v4(
         &self,
         versioned_hashes: &[B256],
-        indices_bitarray: B128,
+        cell_mask: BlobCellMask,
     ) -> Result<Vec<Option<BlobCellsAndProofsV1>>, BlobStoreError> {
-        self.protocol_pool.get_blobs_for_versioned_hashes_v4(versioned_hashes, indices_bitarray)
+        self.protocol_pool.get_blobs_for_versioned_hashes_v4(versioned_hashes, cell_mask)
     }
 
     fn has_blobs_for_versioned_hashes(
@@ -2095,8 +2118,9 @@ mod tests {
 
     use super::*;
     use crate::{
-        BaseL1BlockInfo, BaseOrdering, BasePooledTransaction, LimitClass, ValidityOperator,
-        ValidityPredicate, WatchSet,
+        BaseL1BlockInfo, BaseOrdering, BasePooledTransaction, BuilderApiImpl, BuilderApiServer,
+        LimitClass, NoExtensions, ValidatedTransaction, ValidityOperator, ValidityPredicate,
+        WatchSet,
     };
 
     fn test_chain_id() -> u64 {
@@ -2449,19 +2473,20 @@ mod tests {
     }
 
     fn signed_1559(signer: &PrivateKeySigner, nonce: u64) -> BasePooledTransaction {
-        signed_1559_with_priority_fee(signer, nonce, 0)
+        signed_1559_with_fees(signer, nonce, 1_000, 0)
     }
 
-    fn signed_1559_with_priority_fee(
+    fn signed_1559_with_fees(
         signer: &PrivateKeySigner,
         nonce: u64,
+        max_fee_per_gas: u128,
         max_priority_fee_per_gas: u128,
     ) -> BasePooledTransaction {
         let tx = TxEip1559 {
             chain_id: test_chain_id(),
             nonce,
             gas_limit: 50_000,
-            max_fee_per_gas: 1_000,
+            max_fee_per_gas,
             max_priority_fee_per_gas,
             to: TxKind::Call(Address::repeat_byte(0xEE)),
             value: U256::ZERO,
@@ -2482,6 +2507,196 @@ mod tests {
         max_fee_per_gas: u128,
     ) -> BasePooledTransaction {
         signed_8130(signer, nonce_key, nonce_sequence, expiry, max_fee_per_gas, 1_000_000)
+    }
+
+    #[tokio::test]
+    async fn sender_snapshot_includes_both_nonce_lanes_and_filters_other_senders() {
+        let (pool, client) = build_integration_pool();
+        let sender = signer();
+        let other = signer();
+        fund(&client, sender.address());
+        fund(&client, other.address());
+
+        let protocol_pending = signed_1559(&sender, 0);
+        let protocol_queued = signed_1559(&sender, 2);
+        let sidecar_pending = signed_channel_tx(&sender, U256::from(1), 0, 1_000);
+        let sidecar_queued = signed_channel_tx(&sender, U256::from(1), 2, 1_000);
+        let mut expected_pending = vec![*protocol_pending.hash(), *sidecar_pending.hash()];
+        let mut expected_queued = vec![*protocol_queued.hash(), *sidecar_queued.hash()];
+
+        for transaction in [
+            protocol_pending,
+            protocol_queued,
+            sidecar_pending,
+            sidecar_queued,
+            signed_1559(&other, 0),
+        ] {
+            pool.add_transaction(TransactionOrigin::External, transaction).await.unwrap();
+        }
+
+        let snapshot = pool.all_transactions_by_sender(sender.address());
+        let mut pending =
+            snapshot.pending.iter().map(|transaction| *transaction.hash()).collect::<Vec<_>>();
+        let mut queued =
+            snapshot.queued.iter().map(|transaction| *transaction.hash()).collect::<Vec<_>>();
+        pending.sort_unstable();
+        queued.sort_unstable();
+        expected_pending.sort_unstable();
+        expected_queued.sort_unstable();
+        assert_eq!(pending, expected_pending);
+        assert_eq!(queued, expected_queued);
+    }
+
+    #[tokio::test]
+    async fn batch_add_matches_sequential_add() {
+        let (funded, unfunded) = (signer(), signer());
+        let batch = [
+            signed_1559(&funded, 0),
+            signed_1559(&funded, 1),
+            signed_1559(&funded, 0),
+            signed_1559(&funded, 3),
+            signed_1559(&unfunded, 0),
+            signed_1559(&funded, 2),
+        ];
+        let batch = batch.map(|tx| (TransactionOrigin::Local, tx)).to_vec();
+        let (batched, pool) = assert_batch_matches_sequential(batch, &[funded.address()]).await;
+        assert!(
+            matches!(batched[4], Err(ref e) if matches!(e.kind, PoolErrorKind::InvalidTransaction(_)))
+        );
+        assert_eq!(pool.pool_size().pending, 4);
+    }
+
+    #[tokio::test]
+    async fn batch_add_matches_sequential_add_for_in_batch_replacements() {
+        let sender = signer();
+        let replacement = signed_1559_with_fees(&sender, 0, 2_000, 0);
+        let replacement_hash = *replacement.hash();
+        // A 5% bump over the replacement is below the pool's 10% price bump.
+        let batch = [
+            signed_1559_with_fees(&sender, 0, 1_000, 0),
+            replacement,
+            signed_1559_with_fees(&sender, 0, 2_100, 0),
+        ];
+        let batch = batch.map(|tx| (TransactionOrigin::Local, tx)).to_vec();
+        let (batched, pool) = assert_batch_matches_sequential(batch, &[sender.address()]).await;
+        assert!(batched[1].is_ok());
+        assert!(
+            matches!(batched[2], Err(ref e) if matches!(e.kind, PoolErrorKind::ReplacementUnderpriced))
+        );
+        assert!(pool.get(&replacement_hash).is_some());
+    }
+
+    #[tokio::test]
+    async fn batch_add_matches_sequential_add_with_mixed_origins() {
+        let (first, second) = (signer(), signer());
+        let batch = vec![
+            (TransactionOrigin::Local, signed_1559(&first, 0)),
+            (TransactionOrigin::External, signed_1559(&second, 0)),
+            (TransactionOrigin::Private, signed_1559(&first, 1)),
+        ];
+        let expected: Vec<_> = batch.iter().map(|(origin, tx)| (*tx.hash(), *origin)).collect();
+        let (batched, pool) =
+            assert_batch_matches_sequential(batch, &[first.address(), second.address()]).await;
+        assert!(batched.iter().all(Result::is_ok));
+        for (hash, origin) in expected {
+            assert_eq!(pool.get(&hash).expect("pooled").origin, origin);
+        }
+    }
+
+    #[tokio::test]
+    async fn batch_with_a_sidecar_transaction_matches_sequential_add() {
+        let sender = signer();
+        let sidecar = self_paid_eoa_8130(&sender, U256::from(2), 0, 0, 1_000);
+        let sidecar_hash = *sidecar.hash();
+        let batch = vec![
+            (TransactionOrigin::Local, signed_1559(&sender, 0)),
+            (TransactionOrigin::Local, sidecar),
+            (TransactionOrigin::Local, signed_1559(&sender, 1)),
+        ];
+        let (batched, pool) = assert_batch_matches_sequential(batch, &[sender.address()]).await;
+        assert!(batched.iter().all(Result::is_ok));
+        assert!(pool.nonce_pool.read().contains(&sidecar_hash));
+    }
+
+    /// Adds `batch` one transaction at a time to one fresh pool and as one
+    /// batch to another, both funding `funded`, and asserts the same outcome
+    /// per transaction and the same pool size. Returns the batched outcomes
+    /// and pool.
+    async fn assert_batch_matches_sequential(
+        batch: Vec<(TransactionOrigin, BasePooledTransaction)>,
+        funded: &[Address],
+    ) -> (Vec<PoolResult<AddedTransactionOutcome>>, IntegrationPool) {
+        // `PoolErrorKind` is not `PartialEq`; compare errors by hash and message.
+        let comparable = |results: &[PoolResult<AddedTransactionOutcome>]| {
+            results
+                .iter()
+                .map(|result| match result {
+                    Ok(outcome) => Ok(outcome.clone()),
+                    Err(error) => Err((error.hash, error.kind.to_string())),
+                })
+                .collect::<Vec<_>>()
+        };
+        let (sequential_pool, client) = build_integration_pool();
+        funded.iter().for_each(|account| fund(&client, *account));
+        let mut sequential = Vec::new();
+        for (origin, transaction) in batch.clone() {
+            sequential.push(sequential_pool.add_transaction(origin, transaction).await);
+        }
+
+        let (batch_pool, client) = build_integration_pool();
+        funded.iter().for_each(|account| fund(&client, *account));
+        let batched = batch_pool.add_transactions_with_origins(batch).await;
+
+        assert_eq!(comparable(&batched), comparable(&sequential));
+        let size = |pool: &IntegrationPool| (pool.pool_size().pending, pool.pool_size().queued);
+        assert_eq!(size(&batch_pool), size(&sequential_pool));
+        (batched, batch_pool)
+    }
+
+    #[tokio::test]
+    async fn rpc_batch_insert_matches_single_inserts() {
+        let (funded, unfunded) = (signer(), signer());
+        let wire = |tx: BasePooledTransaction| {
+            let recovered = tx.clone_into_consensus();
+            ValidatedTransaction {
+                sender: recovered.signer(),
+                raw: recovered.inner().encoded_2718().into(),
+                metering: None,
+                extensions: NoExtensions::default(),
+            }
+        };
+        let mut undecodable = wire(signed_1559(&funded, 4));
+        undecodable.raw = Bytes::from_static(&[0x02, 0xff]);
+        let batch = vec![
+            wire(signed_1559(&funded, 0)),
+            wire(signed_1559(&funded, 1)),
+            wire(signed_1559(&funded, 0)),
+            undecodable,
+            wire(signed_1559(&unfunded, 0)),
+            wire(signed_1559(&funded, 2)),
+        ];
+
+        let (single_pool, client) = build_integration_pool();
+        fund(&client, funded.address());
+        let single = BuilderApiImpl::new(single_pool.clone());
+        let mut expected = Vec::new();
+        for tx in batch.clone() {
+            expected.push(single.insert_validated_transaction(tx).await.err());
+        }
+
+        let (batch_pool, client) = build_integration_pool();
+        fund(&client, funded.address());
+        let batched =
+            BuilderApiImpl::new(batch_pool.clone()).insert_validated_transactions(batch).await;
+
+        assert_eq!(batched.unwrap(), expected);
+        assert_eq!(
+            expected.iter().map(Option::is_none).collect::<Vec<_>>(),
+            [true, true, false, false, false, true]
+        );
+        let size = |pool: &IntegrationPool| (pool.pool_size().pending, pool.pool_size().queued);
+        assert_eq!(size(&batch_pool), size(&single_pool));
+        assert_eq!(size(&batch_pool), (3, 0));
     }
 
     #[tokio::test]
@@ -3412,7 +3627,7 @@ mod tests {
         client.add_account(attacker.address(), ExtendedAccount::new(0, balance));
         fund(&client, honest.address());
 
-        let honest_tx = signed_1559_with_priority_fee(&honest, 0, 1);
+        let honest_tx = signed_1559_with_fees(&honest, 0, 1_000, 1);
         let honest_hash = *honest_tx.hash();
         pool.add_transaction(TransactionOrigin::External, honest_tx).await.unwrap();
 
@@ -3609,7 +3824,7 @@ mod tests {
         fund(client, honest.address());
         let balance = U256::from(10) * tipping_fees();
         client.add_account(attacker.address(), ExtendedAccount::new(0, balance));
-        let honest_tx = signed_1559_with_priority_fee(&honest, 0, 1);
+        let honest_tx = signed_1559_with_fees(&honest, 0, 1_000, 1);
         let honest_hash = *honest_tx.hash();
         pool.add_transaction(TransactionOrigin::External, honest_tx).await.unwrap();
         (honest_hash, balance)

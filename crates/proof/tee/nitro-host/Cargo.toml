@@ -48,7 +48,7 @@ tokio-vsock.workspace = true
 [dev-dependencies]
 reqwest.workspace = true
 alloy-genesis.workspace = true
-tokio = { workspace = true, features = ["macros", "rt"] }
+tokio = { workspace = true, features = ["macros", "rt", "test-util"] }
 base-common-genesis = { workspace = true, features = ["serde", "std"] }
 base-proof-primitives = { workspace = true, features = ["test-utils"] }
 

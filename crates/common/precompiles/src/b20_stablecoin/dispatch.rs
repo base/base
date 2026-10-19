@@ -349,6 +349,7 @@ mod tests {
     use alloy_sol_types::{SolCall, SolError, SolValue};
     use base_common_genesis::BaseUpgrade;
     use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
+    use rstest::rstest;
 
     use crate::{
         B20StablecoinToken, FakePolicyAccounting, IB20, InMemoryTokenAccounting,
@@ -385,21 +386,14 @@ mod tests {
         )
     }
 
-    /// Decimals always returns 6 regardless of what the underlying accounting stores.
-    ///
-    /// During the factory bootstrap window the storage slot is uninitialized and would
-    /// return 0 if read directly. Hard-coding 6 in the dispatch eliminates that window.
-    #[test]
-    fn decimals_returns_fixed_six_regardless_of_storage() {
-        // Token with decimals = 0 in storage (simulates an uninitialized slot).
-        let mut uninitialized = make_stablecoin_token_with_decimals(0);
+    // Uninitialized storage reads 0 during factory bootstrap; dispatch must still return 6.
+    #[rstest]
+    #[case(0)]
+    #[case(18)]
+    fn decimals_returns_fixed_six_regardless_of_storage(#[case] stored: u8) {
+        let mut token = make_stablecoin_token_with_decimals(stored);
         let calldata = IB20::decimalsCall {}.abi_encode();
-        let result = call_inner(&mut uninitialized, &calldata);
-        assert_eq!(U256::abi_decode(&result).unwrap(), U256::from(6u8));
-
-        // Token with decimals = 18 in storage (default for InMemoryTokenAccounting).
-        let mut default = make_stablecoin_token_with_decimals(18);
-        let result = call_inner(&mut default, &calldata);
+        let result = call_inner(&mut token, &calldata);
         assert_eq!(U256::abi_decode(&result).unwrap(), U256::from(6u8));
     }
 

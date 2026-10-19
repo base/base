@@ -15,7 +15,10 @@ use coins_bip39::{English, Mnemonic};
 use thiserror::Error;
 use url::Url;
 
-use crate::{Network, NetworkPreset, ProofSystem, Secret, SecretValueParser};
+use crate::{FaultProofContracts, Network, NetworkPreset, ProofSystem, Secret, SecretValueParser};
+
+// Set after `augment_args`, which otherwise uses the rustdoc of `WithdrawerArgs` as the help text.
+const WITHDRAWER_ABOUT: &str = "Prove or finalize OP Stack withdrawals";
 
 /// Parses RPC endpoints without including rejected values in clap errors.
 #[derive(Debug, Clone)]
@@ -94,10 +97,10 @@ pub struct WithdrawerArgs {
     /// Custom Optimism portal.
     #[arg(long, requires_all = ["l2_rpc_url", "proofs"])]
     pub portal: Option<Address>,
-    /// Custom dispute game factory.
+    /// Expected custom dispute game factory, checked against the portal.
     #[arg(long, requires_all = ["portal", "anchor_state_registry"])]
     pub dispute_game_factory: Option<Address>,
-    /// Custom anchor state registry.
+    /// Expected custom anchor state registry, checked against the portal.
     #[arg(long, requires = "dispute_game_factory", conflicts_with = "l2_output_oracle")]
     pub anchor_state_registry: Option<Address>,
     /// Custom legacy L2 output oracle.
@@ -236,8 +239,10 @@ impl WithdrawerArgs {
                 l2_rpc_url: url.clone(),
                 portal,
                 proofs: ProofSystem::FaultProofs {
-                    dispute_game_factory: factory,
-                    anchor_state_registry: registry,
+                    expected: Some(FaultProofContracts {
+                        dispute_game_factory: factory,
+                        anchor_state_registry: registry,
+                    }),
                 },
                 l1_chain_id: None,
             }),
@@ -255,10 +260,12 @@ impl WithdrawerArgs {
 impl CommandFactory for WithdrawerArgs {
     fn command() -> Command {
         Self::augment_args(Command::new("withdrawer").version(env!("CARGO_PKG_VERSION")))
+            .about(WITHDRAWER_ABOUT)
     }
 
     fn command_for_update() -> Command {
         Self::augment_args_for_update(Command::new("withdrawer").version(env!("CARGO_PKG_VERSION")))
+            .about(WITHDRAWER_ABOUT)
     }
 }
 
@@ -356,7 +363,7 @@ pub enum Fees {
 pub struct WithdrawerConfig {
     /// L1 RPC endpoint.
     pub l1_rpc_url: Url,
-    /// L2 endpoint and L1 contracts.
+    /// L2 endpoint, portal, and proof-system expectations.
     pub network: Network,
     /// L2 withdrawal transaction hash.
     pub withdrawal: B256,

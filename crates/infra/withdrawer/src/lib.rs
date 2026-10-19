@@ -6,7 +6,9 @@ pub use contracts::{
 };
 
 mod operation;
-pub use operation::{WithdrawalStatus, Withdrawer, WithdrawerError};
+pub use operation::{
+    WithdrawalOutcome, WithdrawalProvingOutput, WithdrawalStatus, Withdrawer, WithdrawerError,
+};
 
 mod config;
 pub use config::{
@@ -15,7 +17,7 @@ pub use config::{
 };
 
 mod network;
-pub use network::{Network, NetworkPreset, ProofSystem};
+pub use network::{FaultProofContracts, Network, NetworkPreset, ProofSystem, ResolvedProofSystem};
 
 mod rpc;
 pub use rpc::{BroadcastResult, WithdrawalRpc, WithdrawalRpcError};
