@@ -29,6 +29,10 @@ const PROMPT_RESPONSE: Duration = Duration::from_secs(1);
 /// An L1 provider whose block lookups never complete, like a stalled L1 proxy.
 ///
 /// Log lookups either succeed with no logs or stall too, depending on `logs_stall`.
+///
+/// Hand-rolled rather than `mockall`: these integration tests need lookups that never resolve,
+/// which a mock's synchronous `returning` closure cannot express, and the crate's `cfg(test)`
+/// automocks are not compiled for integration tests.
 struct StalledL1Fetcher {
     logs_stall: bool,
 }
