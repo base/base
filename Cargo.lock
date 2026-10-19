@@ -3604,6 +3604,7 @@ dependencies = [
  "auto_impl",
  "base-common-genesis",
  "revm",
+ "rstest",
  "spin 0.10.1",
 ]
 
