@@ -100,6 +100,8 @@ base_metrics::define_metrics! {
     #[describe("Validity transactions admitted to the pool, labeled by whether the admission replaced an existing same-sender/nonce transaction or added a new pool entry")]
     #[label(name = "outcome", default = ["added", "replaced"])]
     admitted: counter,
+    #[describe("Fill-immediately-or-kill transactions evicted by the pool because a canonical block they were pending for could have included them")]
+    fill_or_kill_expired: counter,
 }
 
 impl ValidityPoolMetrics {
@@ -110,6 +112,11 @@ impl ValidityPoolMetrics {
     /// `replaced` over that sum is the replacement rate.
     pub fn record_admission(replaced: bool) {
         Self::admitted(if replaced { "replaced" } else { "added" }).increment(1);
+    }
+
+    /// Records flagged transactions evicted at a canonical block they were satisfiable in.
+    pub fn record_fill_or_kill_expired(count: usize) {
+        Self::fill_or_kill_expired().increment(count as u64);
     }
 }
 

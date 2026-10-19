@@ -127,9 +127,10 @@ where
 
             if self.rejection_cache.is_rejected(&hash) {
                 BuilderMetrics::rejection_cache_hits().increment(1);
-                // Only intrinsically invalid transactions enter this cache. Their nonce-lane
-                // descendants cannot execute across the resulting gap, so exclude the lane for
-                // this iterator rather than treating the rejected head as committed.
+                // Cached transactions are intrinsically invalid or killed fill-immediately-or-kill
+                // bids; neither will be included. Their nonce-lane descendants cannot execute
+                // across the resulting gap, so exclude the lane for this iterator rather than
+                // treating the rejected head as committed.
                 self.inner.mark_invalid(tx.sender(), tx.nonce());
                 self.current_transaction = None;
                 continue;

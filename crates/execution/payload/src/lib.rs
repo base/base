@@ -43,6 +43,9 @@ pub use metrics::{BuilderMetrics, ValidityMetrics};
 mod deferrals;
 pub use deferrals::BlockDeferrals;
 
+mod fill_or_kill;
+pub use fill_or_kill::{FillOrKillTracker, Kill, KillReason, PinnedState, PredicateWriteJournal};
+
 mod inclusion;
 pub use inclusion::{FLOW_STANDARD, FLOW_VALIDITY, InclusionFlow, InclusionTracker};
 

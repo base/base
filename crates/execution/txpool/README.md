@@ -46,6 +46,32 @@ modules.merge_configured(api.into_rpc())?;
 Extension payloads must serialize as a JSON map (a braced struct, not a unit struct) and must avoid
 `u128`/`i128` fields, which `serde_json` cannot represent through `#[serde(flatten)]`.
 
+### Fill-immediately-or-kill
+
+Set `fill_immediately_or_kill: true` alongside `validity` to have the transaction land in the
+first block in which its predicates hold, against the state they first held on, or be dropped
+without paying gas. It requires non-empty predicates and defaults to `false`. The full contract,
+scenarios, and limits are in [`docs/guides/FILL_IMMEDIATELY_OR_KILL.md`](../../../docs/guides/FILL_IMMEDIATELY_OR_KILL.md).
+
+In the block being built, the builder keeps a journal of every write to a balance, nonce, or
+storage slot. When a flagged transaction's predicates hold, it replays that journal to find the
+earliest position in the block at which they held. If any location the predicates read was written
+after that position, the transaction is killed; otherwise it executes as usual. The write that
+makes the predicates true is not a conflict, so a backrun still fills behind its trigger. A flagged
+transaction whose predicates held during the block but which the block closed without is killed
+too. Conflicts are read-after-write only: another transaction that merely reads the same state
+never kills, and any transaction that writes it does, whether or not it carries predicates.
+
+A kill is final: the builder evicts the transaction and records it in its rejection cache, and
+every pool independently evicts a flagged transaction once a canonical block it was pending for
+could have included it. Submit a new, separately signed transaction to bid again.
+
+Limits: a flagged transaction admitted after the block containing the competitor is a fresh bid,
+so bound `block_number` to the block the bid was computed against; a transaction forwarded to a
+new sequencer leader during the block in which it was killed may fill once there; writes to a
+watched location by unrelated transactions (such as the sender's own earlier transaction) kill as
+well.
+
 ### Signed validity predicates
 
 `TransactionValidity` carries off-chain predicates separately from the signed Ethereum
@@ -91,10 +117,12 @@ The domain is `{ name: "Base Transaction Validity", version: "1", chainId }`;
 
 ```text
 ValidityPredicate(uint8 kind,uint8 operator,address account,uint256 slot,uint256 mask,uint256 value)
-ValidityAuthorization(bytes32 transactionHash,ValidityPredicate[] validity)
+ValidityAuthorization(bytes32 transactionHash,ValidityPredicate[] validity,bool fillImmediatelyOrKill)
 ```
 
 `transactionHash` hashes the complete signed EIP-2718 transaction envelope.
+`fillImmediatelyOrKill` must match the submitted `fill_immediately_or_kill` flag (`false` when
+omitted), so an intermediary can neither strip nor add it.
 `kind` is balance = 0, storage = 1, block number = 2, flashblock index = 3, nonce = 4.
 `operator` is `<` = 0, `<=` = 1, `=` = 2, `!=` = 3, `>` = 4, `>=` = 5.
 Balance and nonce predicates use `account`; storage uses `account`, `slot`, and `mask`.

@@ -967,6 +967,11 @@ where
 
         // Build the final block WITH state root computed
         let (final_payload, _, _) = build_block(state, ctx, info, FlashblockId::default(), true)?;
+        // Kills are applied once, here: the final block carries every executed transaction,
+        // including those of a flashblock cancelled before publication, so the writes behind each
+        // kill land with it. Flagged transactions that were satisfied but never included are
+        // killed now that the block is closed.
+        self.evict_killed(ctx, info);
 
         self.emit_final_inclusion_events(ctx, &final_payload);
 
@@ -980,6 +985,37 @@ where
         );
 
         Ok(final_payload)
+    }
+
+    /// Removes the block's killed fill-immediately-or-kill transactions from the pool and caches
+    /// them as rejected, so a mempool re-forward cannot re-admit one whose predicates still hold
+    /// in a later block.
+    fn evict_killed(&self, ctx: &BasePayloadBuilderCtx, info: &mut ExecutionInfo) {
+        // Reported against the block's own limits: the flashblock targets no longer apply.
+        let limits = ResourceLimits {
+            block_gas_limit: ctx.block_gas_limit(),
+            tx_data_limit: ctx.builder_config.da_config.max_da_tx_size(),
+            block_data_limit: ctx.builder_config.da_config.max_da_block_size(),
+            da_footprint_gas_scalar: info.da_footprint_scalar,
+            block_da_footprint_limit: ctx.extra.target_da_footprint_for_batch,
+            tx_execution_time_limit_us: ctx.builder_config.max_execution_time_per_tx_us,
+            block_uncompressed_size_limit: ctx.builder_config.max_uncompressed_block_size,
+        };
+        let killed = ctx.finish_fill_or_kill(info, &limits);
+        if killed.is_empty() {
+            return;
+        }
+        self.config.rejection_cache.mark_rejected(&killed);
+        BuilderMetrics::rejection_cache_insertions().increment(killed.len() as u64);
+        BuilderMetrics::rejection_cache_size()
+            .set(self.config.rejection_cache.entry_count() as f64);
+        self.config.metering_provider.remove(&killed);
+        info!(
+            target: "payload_builder",
+            count = killed.len(),
+            "evicted fill-immediately-or-kill transactions from pool",
+        );
+        self.pool.remove_transactions(killed);
     }
 
     fn emit_final_inclusion_events(

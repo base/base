@@ -180,8 +180,11 @@ async fn signed_validity_forwarding_is_included_by_an_enforcing_builder() -> Res
         block_expiry_bound(ingress.get_block_number().await?),
     ];
     let client = RpcClient::builder().http(system.l2_client_rpc_url()?);
-    let unsigned =
-        SendRawTransactionValidityOptions { validity: validity.clone(), validity_signature: None };
+    let unsigned = SendRawTransactionValidityOptions {
+        validity: validity.clone(),
+        validity_signature: None,
+        fill_immediately_or_kill: false,
+    };
     let error = client
         .request::<_, B256>("base_sendRawTransactionValidity", (raw.clone(), unsigned))
         .await
@@ -194,11 +197,15 @@ async fn signed_validity_forwarding_is_included_by_an_enforcing_builder() -> Res
         L2_CHAIN_ID,
         tx_hash,
         &validity,
+        false,
     ))?;
     // Signing is independent of the evaluation order used during forwarding.
     validity.reverse();
-    let options =
-        SendRawTransactionValidityOptions { validity, validity_signature: Some(signature) };
+    let options = SendRawTransactionValidityOptions {
+        validity,
+        validity_signature: Some(signature),
+        fill_immediately_or_kill: false,
+    };
     let submitted: B256 = client.request("base_sendRawTransactionValidity", (raw, options)).await?;
     assert_eq!(submitted, tx_hash);
     let receipt = builder.wait_for_receipt(tx_hash, TX_RECEIPT_TIMEOUT).await?;
@@ -454,7 +461,14 @@ async fn test_matching_validity_predicates_are_forwarded_and_included() -> Resul
     let tx_hash: B256 = rpc_client
         .request(
             "base_sendRawTransactionValidity",
-            (raw_tx, SendRawTransactionValidityOptions { validity, validity_signature: None }),
+            (
+                raw_tx,
+                SendRawTransactionValidityOptions {
+                    validity,
+                    validity_signature: None,
+                    fill_immediately_or_kill: false,
+                },
+            ),
         )
         .await?;
 
@@ -509,6 +523,7 @@ async fn test_validity_transaction_submitted_directly_to_builder_is_included() -
                         block_expiry_bound(current_block),
                     ],
                     validity_signature: None,
+                    fill_immediately_or_kill: false,
                 },
             ),
         )
@@ -563,6 +578,7 @@ async fn test_eip8130_validity_transaction_is_included_by_native_builder() -> Re
                         block_expiry_bound(current_block),
                     ],
                     validity_signature: None,
+                    fill_immediately_or_kill: false,
                 },
             ),
         )
@@ -615,6 +631,7 @@ async fn test_validity_transaction_lands_after_balance_predicate_becomes_true() 
                         block_expiry_bound(current_block),
                     ],
                     validity_signature: None,
+                    fill_immediately_or_kill: false,
                 },
             ),
         )
@@ -687,6 +704,7 @@ async fn test_validity_transaction_lands_after_nonce_predicate_becomes_true() ->
                         block_expiry_bound(current_block),
                     ],
                     validity_signature: None,
+                    fill_immediately_or_kill: false,
                 },
             ),
         )
@@ -764,6 +782,7 @@ async fn test_validity_block_predicates_defer_and_expire_transactions() -> Resul
                         block_expiry_bound(current_block),
                     ],
                     validity_signature: None,
+                    fill_immediately_or_kill: false,
                 },
             ),
         )
@@ -787,6 +806,7 @@ async fn test_validity_block_predicates_defer_and_expire_transactions() -> Resul
                         },
                     ],
                     validity_signature: None,
+                    fill_immediately_or_kill: false,
                 },
             ),
         )
@@ -810,6 +830,7 @@ async fn test_validity_block_predicates_defer_and_expire_transactions() -> Resul
                         block_expiry_bound(current_block),
                     ],
                     validity_signature: None,
+                    fill_immediately_or_kill: false,
                 },
             ),
         )
@@ -898,7 +919,11 @@ async fn test_invalid_validity_batches_are_rejected_at_mempool_ingress() -> Resu
                 "base_sendRawTransactionValidity",
                 (
                     raw_tx.clone(),
-                    SendRawTransactionValidityOptions { validity, validity_signature: None },
+                    SendRawTransactionValidityOptions {
+                        validity,
+                        validity_signature: None,
+                        fill_immediately_or_kill: false,
+                    },
                 ),
             )
             .await

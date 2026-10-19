@@ -271,7 +271,13 @@ pre-Denim rebuilds of the same payload report a deferral again. Reindexing an al
 transaction when its blocker changes does not emit another
 `BUILDER_DEFERRED`. `BUILDER_EXPIRED` is the terminal discard for builder-side
 windows that can never become valid again, such as an expired bundle validity
-window or an expired position predicate. `BUILDER_ACCEPTED` and
+window or an expired position predicate. It is also emitted for a killed
+fill-immediately-or-kill transaction, with `fill_immediately_or_kill_state_overwritten`
+when state its predicates read was written after they first held in the block,
+or `fill_immediately_or_kill_unfilled` when the block closed with the predicates
+satisfied but the transaction not included; the builder evicts and caches it as
+rejected when the payload is finalized. The flashblocks builder emits it once per
+block; the native builder emits it only for a payload it returns. `BUILDER_ACCEPTED` and
 `BUILDER_INCLUDED` are unchanged; correlate a deferral with a later
 accept/include by `tx_hash` within the same `payload_id`/flashblock window. A
 parking-capacity miss stays `BUILDER_REJECTED` with

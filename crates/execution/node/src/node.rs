@@ -30,7 +30,7 @@ use base_execution_rpc::{
 use base_execution_txpool::{
     BaseOrdering, BasePooledTransaction, BasePooledTx, BaseTransactionPool,
     BaseTransactionValidator, GuardLimits, ParkableTransactionPool, TimestampedTransaction,
-    maintain_state_diff_invalidation,
+    maintain_fill_or_kill_expiry, maintain_state_diff_invalidation,
 };
 use reth_chain_state::CanonStateSubscriptions;
 use reth_chainspec::{BaseFeeParams, ChainSpecProvider, EthChainSpec, Hardforks};
@@ -942,6 +942,16 @@ where
         ctx.task_executor().spawn_critical_task(
             "mempool-invalidation",
             maintain_state_diff_invalidation(transaction_pool.clone(), state_diff_events),
+        );
+        let fill_or_kill_events =
+            BroadcastStream::new(ctx.provider().subscribe_to_canonical_state());
+        ctx.task_executor().spawn_critical_task(
+            "mempool-fill-or-kill-expiry",
+            maintain_fill_or_kill_expiry(
+                transaction_pool.clone(),
+                ctx.provider().clone(),
+                fill_or_kill_events,
+            ),
         );
 
         info!(
