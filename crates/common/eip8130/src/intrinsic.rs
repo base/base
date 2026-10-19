@@ -274,8 +274,8 @@ impl IntrinsicGas {
         let mut revoke_change_count = 0u32;
         // All account changes in a transaction target the same (`sender`) packed
         // account-state slot: a create bootstraps it and every config change bumps
-        // a sequence in it. Only the first such access is a cold zero-to-nonzero
-        // write; once warmed, later config-change bumps are warm SLOAD + reset.
+        // a sequence in it. Only the first such access is priced as a cold
+        // zero-to-nonzero write; later bumps are warm SLOAD + dirty SSTORE.
         let mut account_state_touched = false;
         for change in &tx.account_changes {
             match change {
@@ -289,8 +289,8 @@ impl IntrinsicGas {
                     // Bootstrap `account_state` (`local_sequence = 1` and the
                     // default-EOA-revoked flag) before installing initial actors.
                     // This is the first (cold) write to the packed slot, so a
-                    // later config change on the same account only pays the warm
-                    // reset.
+                    // later config change on the same account only pays a warm
+                    // SLOAD + dirty SSTORE.
                     account_changes =
                         account_changes.saturating_add(Eip8130GasSchedule::ACCOUNT_STATE_SET_COST);
                     account_state_touched = true;
@@ -298,11 +298,11 @@ impl IntrinsicGas {
                     // the two policy slots (`policy_manager` + `policy_commitment`)
                     // when it attaches a 52-byte `policyData` — a policy initial
                     // actor is 3 slot-sets versus 1 for a non-policy actor.
-                    // Attachment is length-based (base/eip-8130 #95), decoupled
-                    // from `SCOPE_POLICY`. These slot writes are metered per actor,
-                    // mirroring the `ConfigChange` per-slot accounting below —
-                    // creation must not register actors for free relative to a
-                    // later config change authorizing the same set.
+                    // Attachment is length-based and decoupled from `SCOPE_POLICY`.
+                    // These slot writes are metered per actor, mirroring the
+                    // `ConfigChange` per-slot accounting below — creation must not
+                    // register actors for free relative to a later config change
+                    // authorizing the same set.
                     for actor in &entry.initial_actors {
                         let mut cost = Eip8130GasSchedule::ACTOR_SLOT_SET_COST;
                         if !actor.policy_data.is_empty() {
@@ -319,9 +319,9 @@ impl IntrinsicGas {
                     // One packed account-state fetch supplies lock status and both
                     // sequence channels; the final write advances the selected
                     // channel. The first access to this slot in the transaction is
-                    // a cold zero-to-nonzero write; any earlier create or config
-                    // change already warmed it, so a subsequent bump is only a warm
-                    // SLOAD + reset.
+                    // priced as a cold zero-to-nonzero write; any earlier create or
+                    // config change already warmed and modified it, so a subsequent
+                    // bump is only a warm SLOAD + dirty SSTORE.
                     let state_cost = if account_state_touched {
                         Eip8130GasSchedule::CONFIG_CHANGE_STATE_COST_SUBSEQUENT
                     } else {
@@ -618,8 +618,8 @@ impl IntrinsicGas {
     /// Whether an authorize op's ABI-encoded
     /// `(bytes32 actorId, ActorConfig, bytes policyData)` `payload` attaches a
     /// policy — i.e. carries a 52-byte `policyData`. Attachment is length-based
-    /// (base/eip-8130 #95) and decoupled from `SCOPE_POLICY`, matching the slots
-    /// execution actually writes.
+    /// and decoupled from `SCOPE_POLICY`, matching the slots execution actually
+    /// writes.
     ///
     /// The params encoding is four static head words (`actorId`, `authenticator`,
     /// `expiry`, `scope`) then the `policyData` offset word, and the `policyData`
@@ -725,9 +725,8 @@ mod tests {
 
     #[test]
     fn authorize_attaches_policy_reads_the_policy_length_not_the_scope_bit() {
-        // Drift tripwire: attachment is length-based (base/eip-8130 #95). A
-        // 52-byte `policyData` attaches regardless of scope; an empty one does
-        // not attach even with SCOPE_POLICY set.
+        // Attachment is length-based: a 52-byte `policyData` attaches regardless
+        // of scope; an empty one does not attach even with `SCOPE_POLICY` set.
         let actor_id = B256::repeat_byte(0x11);
         let attached = (
             actor_id,
@@ -1036,8 +1035,8 @@ mod tests {
         assert_eq!(gas.account_changes, expected);
 
         // Attaching a 52-byte `policyData` makes the authorize also write the two
-        // policy slots — attachment is length-based (base/eip-8130 #95), so the
-        // scope bits are irrelevant here.
+        // policy slots — attachment is length-based, so the scope bits are
+        // irrelevant here.
         let policy_payload = (
             B256::repeat_byte(0x11),
             ActorConfigAbi {
@@ -1103,8 +1102,8 @@ mod tests {
     #[test]
     fn subsequent_same_account_config_changes_pay_warm_state_bump() {
         // Two config changes on the same (sender) account: the first pays the cold
-        // zero-to-nonzero state write, the second only a warm SLOAD + reset because
-        // the packed slot was already warmed and written by the first.
+        // zero-to-nonzero state write, the second only a warm SLOAD + dirty SSTORE
+        // because the packed slot was already warmed and written by the first.
         let cc = || SignedAccountChanges {
             channel: AccountChangeChannel::Multichain,
             sequence: 0,

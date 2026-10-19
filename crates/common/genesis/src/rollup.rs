@@ -221,11 +221,6 @@ impl RollupConfig {
         config
     }
 
-    /// Clears all timestamp-based upgrade activation times.
-    pub fn clear_upgrade_activation_timestamps(&mut self) {
-        self.upgrades.clear_activation_timestamps();
-    }
-
     /// Clears a timestamp-based upgrade activation time by contract upgrade ID.
     pub const fn clear_upgrade_activation_timestamp(&mut self, upgrade_id: BaseUpgrade) {
         self.upgrades.clear_activation_timestamp(upgrade_id)
@@ -393,20 +388,6 @@ impl RollupConfig {
         })
     }
 
-    /// Returns the L2 block number at which the genesis-only Zenith testing gate activates.
-    ///
-    /// If Zenith is not configured or the block time is zero, returns [`None`].
-    pub fn zenith_activation_block_number(&self) -> Option<u64> {
-        let zenith_timestamp = self.upgrade_activation_timestamp(BaseUpgrade::Zenith)?;
-        let block_time = self.block_time;
-
-        if block_time == 0 {
-            return None;
-        }
-
-        Some(zenith_timestamp.saturating_sub(self.genesis.l2_time).div_ceil(block_time))
-    }
-
     /// Returns the deterministic timestamp of an L2 block in milliseconds.
     ///
     /// Before Denim activation, this matches the legacy whole-second schedule exactly.
@@ -436,15 +417,6 @@ impl RollupConfig {
     pub fn l2_block_timestamp_parts(&self, block_number: u64) -> (u64, u16) {
         let full_millis = self.l2_block_timestamp_millis(block_number);
         (full_millis.saturating_div(1_000), (full_millis % 1_000) as u16)
-    }
-
-    /// Computes the lower-bound block number for a timestamp, relative to the L2 genesis time and
-    /// the block time.
-    ///
-    /// This uses floor division, so multiple blocks can share the same seconds-denominated
-    /// timestamp while still mapping to the same lower bound.
-    pub const fn block_number_lower_bound_from_timestamp(&self, timestamp: u64) -> u64 {
-        timestamp.saturating_sub(self.genesis.l2_time).saturating_div(self.block_time)
     }
 
     /// Checks the scalar value in Ecotone.
@@ -1047,7 +1019,7 @@ mod tests {
             ForkCondition::Timestamp(700)
         );
 
-        cfg.clear_upgrade_activation_timestamps();
+        cfg.upgrades.clear_activation_timestamps();
 
         assert_eq!(cfg.upgrades, UpgradeConfig::default());
     }
@@ -1268,54 +1240,9 @@ mod tests {
         crate::RuntimeUpgradeRegistry::clear_chain(chain_id);
     }
 
-    fn rollup_config_with_zenith(
-        genesis_l2_time: u64,
-        block_time: u64,
-        zenith_time: Option<u64>,
-    ) -> RollupConfig {
-        RollupConfig {
-            genesis: ChainGenesis { l2_time: genesis_l2_time, ..Default::default() },
-            block_time,
-            upgrades: UpgradeConfig {
-                base: BaseUpgradeConfig { zenith: zenith_time, ..Default::default() },
-                ..Default::default()
-            },
-            ..Default::default()
-        }
-    }
-
-    #[test]
-    fn zenith_activation_block_number_derives_from_genesis_config() {
-        assert_eq!(
-            rollup_config_with_zenith(10, 2, Some(15)).zenith_activation_block_number(),
-            Some(3)
-        );
-        assert_eq!(rollup_config_with_zenith(10, 2, None).zenith_activation_block_number(), None);
-    }
-
-    #[test]
-    fn zenith_activation_block_number_returns_none_for_zero_block_time() {
-        assert_eq!(
-            rollup_config_with_zenith(100, 0, Some(101)).zenith_activation_block_number(),
-            None
-        );
-    }
-
     #[test]
     fn l2_block_full_millis_saturates() {
         let saturating = rollup_config_with_denim(u64::MAX, u64::MAX, None);
         assert_eq!(saturating.l2_block_timestamp_millis(1), u64::MAX);
-    }
-
-    #[test]
-    fn test_compute_block_number_lower_bound_from_time() {
-        let cfg = RollupConfig {
-            genesis: ChainGenesis { l2_time: 10, ..Default::default() },
-            block_time: 2,
-            ..Default::default()
-        };
-
-        assert_eq!(cfg.block_number_lower_bound_from_timestamp(20), 5);
-        assert_eq!(cfg.block_number_lower_bound_from_timestamp(30), 10);
     }
 }

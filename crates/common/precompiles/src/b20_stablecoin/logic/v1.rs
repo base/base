@@ -670,26 +670,19 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> Stablecoin<S, A> for Stableco
 
 #[cfg(test)]
 mod tests {
-    use alloc::{
-        collections::BTreeMap,
-        string::{String, ToString},
-        vec,
-        vec::Vec,
-    };
+    use alloc::{string::ToString, vec};
 
-    use alloy_primitives::{Address, B256, LogData, U256, keccak256};
+    use alloy_primitives::{Address, B256, U256, keccak256};
     use alloy_sol_types::SolEvent;
-    use base_precompile_storage::{BasePrecompileError, Result};
+    use base_precompile_storage::BasePrecompileError;
     use k256::ecdsa::SigningKey;
+    use rstest::{fixture, rstest};
 
     use crate::{
-        B20_MAX_SUPPLY_CAP, B20PolicyType, B20StablecoinToken, B20TokenRole, IB20, PackedPolicy,
-        PermitArgs, PolicyAccounting, PolicyRegistryStorage, PolicyVersion, Stablecoin,
-        StablecoinAccounting, StablecoinV1, Token, TokenAccounting, TransferPolicyIds,
+        B20PolicyType, B20StablecoinToken, B20TokenRole, FakePolicyAccounting, IB20,
+        InMemoryTokenAccounting, PermitArgs, PolicyRegistryStorage, PolicyVersion, Stablecoin,
+        StablecoinV1, Token, TokenAccounting,
     };
-
-    // --- Self-contained in-memory fakes (no dependency on `common::test_utils`, so shared test
-    //     scaffolding can never drift this frozen version's coverage) ---
 
     const TOKEN: Address = Address::repeat_byte(0x22);
     const ADMIN: Address = Address::repeat_byte(0xAD);
@@ -702,276 +695,30 @@ mod tests {
     const PRIVATE_KEY: [u8; 32] =
         alloy_primitives::hex!("ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
 
-    /// Minimal `StablecoinAccounting` backed by in-memory maps.
-    #[derive(Debug)]
-    struct FakeAccounting {
-        initialized: bool,
-        balances: BTreeMap<Address, U256>,
-        allowances: BTreeMap<(Address, Address), U256>,
-        total_supply: U256,
-        supply_cap: U256,
-        name: String,
-        symbol: String,
-        currency: String,
-        paused: U256,
-        nonces: BTreeMap<Address, U256>,
-        contract_uri: String,
-        roles: BTreeMap<(B256, Address), bool>,
-        role_member_counts: BTreeMap<B256, U256>,
-        role_admins: BTreeMap<B256, B256>,
-        policy_ids: BTreeMap<B256, u64>,
-        events: Vec<LogData>,
+    /// Accounting seeded with the stablecoin metadata these tests assume.
+    fn accounting() -> InMemoryTokenAccounting {
+        let mut accounting = InMemoryTokenAccounting::new(TOKEN);
+        accounting.name = "USD Coin".to_string();
+        accounting.symbol = "USDC".to_string();
+        accounting.currency = "USD".to_string();
+        accounting
     }
 
-    impl FakeAccounting {
-        fn new() -> Self {
-            Self {
-                initialized: true,
-                balances: BTreeMap::new(),
-                allowances: BTreeMap::new(),
-                total_supply: U256::ZERO,
-                supply_cap: B20_MAX_SUPPLY_CAP,
-                name: "USD Coin".to_string(),
-                symbol: "USDC".to_string(),
-                currency: "USD".to_string(),
-                paused: U256::ZERO,
-                nonces: BTreeMap::new(),
-                contract_uri: String::new(),
-                roles: BTreeMap::new(),
-                role_member_counts: BTreeMap::new(),
-                role_admins: BTreeMap::new(),
-                policy_ids: BTreeMap::new(),
-                events: Vec::new(),
-            }
-        }
-    }
+    type Tok = B20StablecoinToken<InMemoryTokenAccounting, FakePolicyAccounting>;
 
-    impl TokenAccounting for FakeAccounting {
-        fn token_address(&self) -> Address {
-            TOKEN
-        }
-        fn is_initialized(&self) -> Result<bool> {
-            Ok(self.initialized)
-        }
-        fn balance_of(&self, account: Address) -> Result<U256> {
-            Ok(self.balances.get(&account).copied().unwrap_or(U256::ZERO))
-        }
-        fn set_balance(&mut self, account: Address, balance: U256) -> Result<()> {
-            self.balances.insert(account, balance);
-            Ok(())
-        }
-        fn allowance(&self, owner: Address, spender: Address) -> Result<U256> {
-            Ok(self.allowances.get(&(owner, spender)).copied().unwrap_or(U256::ZERO))
-        }
-        fn set_allowance(&mut self, owner: Address, spender: Address, amount: U256) -> Result<()> {
-            self.allowances.insert((owner, spender), amount);
-            Ok(())
-        }
-        fn total_supply(&self) -> Result<U256> {
-            Ok(self.total_supply)
-        }
-        fn set_total_supply(&mut self, supply: U256) -> Result<()> {
-            self.total_supply = supply;
-            Ok(())
-        }
-        fn supply_cap(&self) -> Result<U256> {
-            Ok(self.supply_cap)
-        }
-        fn set_supply_cap(&mut self, cap: U256) -> Result<()> {
-            self.supply_cap = cap;
-            Ok(())
-        }
-        fn name(&self) -> Result<String> {
-            Ok(self.name.clone())
-        }
-        fn set_name(&mut self, name: String) -> Result<()> {
-            self.name = name;
-            Ok(())
-        }
-        fn symbol(&self) -> Result<String> {
-            Ok(self.symbol.clone())
-        }
-        fn set_symbol(&mut self, symbol: String) -> Result<()> {
-            self.symbol = symbol;
-            Ok(())
-        }
-        fn decimals(&self) -> Result<u8> {
-            Ok(6)
-        }
-        fn paused(&self) -> Result<U256> {
-            Ok(self.paused)
-        }
-        fn set_paused(&mut self, vectors: U256) -> Result<()> {
-            self.paused = vectors;
-            Ok(())
-        }
-        fn nonce(&self, owner: Address) -> Result<U256> {
-            Ok(self.nonces.get(&owner).copied().unwrap_or(U256::ZERO))
-        }
-        fn increment_nonce(&mut self, owner: Address) -> Result<()> {
-            let n = self.nonces.entry(owner).or_insert(U256::ZERO);
-            *n += U256::ONE;
-            Ok(())
-        }
-        fn contract_uri(&self) -> Result<String> {
-            Ok(self.contract_uri.clone())
-        }
-        fn set_contract_uri(&mut self, uri: String) -> Result<()> {
-            self.contract_uri = uri;
-            Ok(())
-        }
-        fn has_role(&self, role: B256, account: Address) -> Result<bool> {
-            Ok(self.roles.get(&(role, account)).copied().unwrap_or(false))
-        }
-        fn set_role(&mut self, role: B256, account: Address, enabled: bool) -> Result<()> {
-            self.roles.insert((role, account), enabled);
-            Ok(())
-        }
-        fn role_member_count(&self, role: B256) -> Result<U256> {
-            Ok(self.role_member_counts.get(&role).copied().unwrap_or(U256::ZERO))
-        }
-        fn set_role_member_count(&mut self, role: B256, count: U256) -> Result<()> {
-            self.role_member_counts.insert(role, count);
-            Ok(())
-        }
-        fn role_admin(&self, role: B256) -> Result<B256> {
-            Ok(self.role_admins.get(&role).copied().unwrap_or(B256::ZERO))
-        }
-        fn set_role_admin(&mut self, role: B256, admin_role: B256) -> Result<()> {
-            self.role_admins.insert(role, admin_role);
-            Ok(())
-        }
-        fn policy_id(&self, policy_scope: B256) -> Result<u64> {
-            Ok(self.policy_ids.get(&policy_scope).copied().unwrap_or(0))
-        }
-        fn set_policy_id(&mut self, policy_scope: B256, policy_id: u64) -> Result<()> {
-            self.policy_ids.insert(policy_scope, policy_id);
-            Ok(())
-        }
-
-        fn transfer_policy_ids(&self) -> Result<TransferPolicyIds> {
-            TransferPolicyIds::read_individually(self)
-        }
-        fn emit_event(&mut self, log: LogData) -> Result<()> {
-            self.events.push(log);
-            Ok(())
-        }
-        fn metered_keccak256(&self, data: &[u8]) -> Result<B256> {
-            Ok(keccak256(data))
-        }
-        fn deduct_gas(&self, _gas: u64) -> Result<()> {
-            Ok(())
-        }
-    }
-
-    impl StablecoinAccounting for FakeAccounting {
-        fn currency(&self) -> Result<String> {
-            Ok(self.currency.clone())
-        }
-    }
-
-    /// Minimal [`PolicyAccounting`] backed by in-memory maps.
-    #[derive(Debug)]
-    struct FakePolicyAccounting {
-        caller: Address,
-        initialized: bool,
-        policies: BTreeMap<u64, U256>,
-        members: BTreeMap<(u64, Address), bool>,
-        pending_admins: BTreeMap<u64, Address>,
-        next_counter: u64,
-        events: Vec<LogData>,
-    }
-
-    impl FakePolicyAccounting {
-        fn new() -> Self {
-            Self {
-                caller: ADMIN,
-                initialized: false,
-                policies: BTreeMap::new(),
-                members: BTreeMap::new(),
-                pending_admins: BTreeMap::new(),
-                next_counter: 0,
-                events: Vec::new(),
-            }
-        }
-
-        fn allow(&mut self, policy_id: u64, account: Address) {
-            self.create_existing_policy(policy_id);
-            self.members.insert((policy_id, account), true);
-        }
-
-        fn create_existing_policy(&mut self, policy_id: u64) {
-            self.policies.insert(policy_id, PackedPolicy::new(Address::ZERO).into_u256());
-        }
-    }
-
-    impl PolicyAccounting for FakePolicyAccounting {
-        fn caller(&self) -> Address {
-            self.caller
-        }
-        fn read_policy_word(&self, policy_id: u64) -> Result<U256> {
-            Ok(self.policies.get(&policy_id).copied().unwrap_or(U256::ZERO))
-        }
-        fn write_policy_word(&mut self, policy_id: u64, word: U256) -> Result<()> {
-            self.policies.insert(policy_id, word);
-            Ok(())
-        }
-        fn read_member(&self, policy_id: u64, account: Address) -> Result<bool> {
-            Ok(self.members.get(&(policy_id, account)).copied().unwrap_or(false))
-        }
-        fn set_member(&mut self, policy_id: u64, account: Address) -> Result<()> {
-            self.members.insert((policy_id, account), true);
-            Ok(())
-        }
-        fn delete_member(&mut self, policy_id: u64, account: Address) -> Result<()> {
-            self.members.remove(&(policy_id, account));
-            Ok(())
-        }
-        fn read_pending_admin(&self, policy_id: u64) -> Result<Address> {
-            Ok(self.pending_admins.get(&policy_id).copied().unwrap_or(Address::ZERO))
-        }
-        fn write_pending_admin(&mut self, policy_id: u64, admin: Address) -> Result<()> {
-            self.pending_admins.insert(policy_id, admin);
-            Ok(())
-        }
-        fn delete_pending_admin(&mut self, policy_id: u64) -> Result<()> {
-            self.pending_admins.remove(&policy_id);
-            Ok(())
-        }
-        fn read_next_counter(&self) -> Result<u64> {
-            Ok(self.next_counter)
-        }
-        fn write_next_counter(&mut self, counter: u64) -> Result<()> {
-            self.next_counter = counter;
-            Ok(())
-        }
-        fn emit_event(&mut self, log: LogData) -> Result<()> {
-            self.events.push(log);
-            Ok(())
-        }
-        fn mark_initialized(&mut self) -> Result<()> {
-            self.initialized = true;
-            Ok(())
-        }
-
-        // This fake does not exercise composite policies.
-        fn read_children(&self, _policy_id: u64) -> Result<Vec<u64>> {
-            Ok(Vec::new())
-        }
-
-        fn write_children(&mut self, _policy_id: u64, _child_policy_ids: &[u64]) -> Result<()> {
-            Ok(())
-        }
-    }
-
-    type Tok = B20StablecoinToken<FakeAccounting, FakePolicyAccounting>;
-
+    #[fixture]
     fn token() -> Tok {
         B20StablecoinToken::with_storage_and_policy(
-            FakeAccounting::new(),
-            FakePolicyAccounting::new(),
+            accounting(),
+            FakePolicyAccounting::with_caller(ADMIN),
             PolicyVersion::V1,
         )
+    }
+
+    #[fixture]
+    fn funded_token(mut token: Tok) -> Tok {
+        fund(&mut token, ALICE, U256::from(100u64));
+        token
     }
 
     /// Grants `role` to `account` and keeps the admin member-count consistent.
@@ -1023,19 +770,16 @@ mod tests {
 
     // --- transfer ---
 
-    #[test]
-    fn transfer_moves_balance_and_emits_transfer() {
-        let mut tok = token();
-        fund(&mut tok, ALICE, U256::from(100u64));
+    #[rstest]
+    fn transfer_moves_balance_and_emits_transfer(#[from(funded_token)] mut tok: Tok) {
         LOGIC.transfer(&mut tok, ALICE, BOB, U256::from(30u64), true).unwrap();
         assert_eq!(tok.accounting().balance_of(ALICE).unwrap(), U256::from(70u64));
         assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(30u64));
         assert_eq!(last_event_sig(&tok), IB20::Transfer::SIGNATURE_HASH);
     }
 
-    #[test]
-    fn transfer_reverts_on_zero_receiver() {
-        let mut tok = token();
+    #[rstest]
+    fn transfer_reverts_on_zero_receiver(#[from(token)] mut tok: Tok) {
         fund(&mut tok, ALICE, U256::from(10u64));
         let err =
             LOGIC.transfer(&mut tok, ALICE, Address::ZERO, U256::from(1u64), true).unwrap_err();
@@ -1045,9 +789,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn transfer_reverts_on_insufficient_balance() {
-        let mut tok = token();
+    #[rstest]
+    fn transfer_reverts_on_insufficient_balance(#[from(token)] mut tok: Tok) {
         fund(&mut tok, ALICE, U256::from(10u64));
         let err = LOGIC.transfer(&mut tok, ALICE, BOB, U256::from(50u64), true).unwrap_err();
         assert_eq!(
@@ -1060,9 +803,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn transfer_reverts_when_paused() {
-        let mut tok = token();
+    #[rstest]
+    fn transfer_reverts_when_paused(#[from(token)] mut tok: Tok) {
         fund(&mut tok, ALICE, U256::from(10u64));
         LOGIC.pause(&mut tok, ADMIN, vec![IB20::PausableFeature::TRANSFER], true).unwrap();
         let err = LOGIC.transfer(&mut tok, ALICE, BOB, U256::from(1u64), true).unwrap_err();
@@ -1074,10 +816,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn transfer_unprivileged_enforces_transfer_policies() {
-        let mut tok = token();
-        fund(&mut tok, ALICE, U256::from(100u64));
+    #[rstest]
+    fn transfer_unprivileged_enforces_transfer_policies(#[from(funded_token)] mut tok: Tok) {
         // ALLOWLIST with no members → sender/receiver policy checks revert.
         const POLICY: u64 = (1u64 << 56) | 7;
         tok.accounting_mut().set_policy_id(B20PolicyType::TransferSender.id(), POLICY).unwrap();
@@ -1093,29 +833,23 @@ mod tests {
 
     // --- transfer_from ---
 
-    #[test]
-    fn transfer_from_decrements_finite_allowance() {
-        let mut tok = token();
-        fund(&mut tok, ALICE, U256::from(100u64));
+    #[rstest]
+    fn transfer_from_decrements_finite_allowance(#[from(funded_token)] mut tok: Tok) {
         tok.accounting_mut().set_allowance(ALICE, BOB, U256::from(40u64)).unwrap();
         LOGIC.transfer_from(&mut tok, BOB, ALICE, BOB, U256::from(30u64), true).unwrap();
         assert_eq!(tok.accounting().allowance(ALICE, BOB).unwrap(), U256::from(10u64));
         assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(30u64));
     }
 
-    #[test]
-    fn transfer_from_infinite_allowance_is_not_decremented() {
-        let mut tok = token();
-        fund(&mut tok, ALICE, U256::from(100u64));
+    #[rstest]
+    fn transfer_from_infinite_allowance_is_not_decremented(#[from(funded_token)] mut tok: Tok) {
         tok.accounting_mut().set_allowance(ALICE, BOB, U256::MAX).unwrap();
         LOGIC.transfer_from(&mut tok, BOB, ALICE, BOB, U256::from(30u64), true).unwrap();
         assert_eq!(tok.accounting().allowance(ALICE, BOB).unwrap(), U256::MAX);
     }
 
-    #[test]
-    fn transfer_from_reverts_on_insufficient_allowance() {
-        let mut tok = token();
-        fund(&mut tok, ALICE, U256::from(100u64));
+    #[rstest]
+    fn transfer_from_reverts_on_insufficient_allowance(#[from(funded_token)] mut tok: Tok) {
         tok.accounting_mut().set_allowance(ALICE, BOB, U256::from(5u64)).unwrap();
         let err =
             LOGIC.transfer_from(&mut tok, BOB, ALICE, BOB, U256::from(30u64), true).unwrap_err();
@@ -1131,17 +865,15 @@ mod tests {
 
     // --- approve ---
 
-    #[test]
-    fn approve_sets_allowance_and_emits() {
-        let mut tok = token();
+    #[rstest]
+    fn approve_sets_allowance_and_emits(#[from(token)] mut tok: Tok) {
         LOGIC.approve(&mut tok, ALICE, BOB, U256::from(50u64)).unwrap();
         assert_eq!(tok.accounting().allowance(ALICE, BOB).unwrap(), U256::from(50u64));
         assert_eq!(last_event_sig(&tok), IB20::Approval::SIGNATURE_HASH);
     }
 
-    #[test]
-    fn approve_reverts_on_zero_spender() {
-        let mut tok = token();
+    #[rstest]
+    fn approve_reverts_on_zero_spender(#[from(token)] mut tok: Tok) {
         let err = LOGIC.approve(&mut tok, ALICE, Address::ZERO, U256::from(1u64)).unwrap_err();
         assert_eq!(
             err,
@@ -1151,9 +883,8 @@ mod tests {
 
     // --- mint ---
 
-    #[test]
-    fn mint_privileged_increases_supply_and_balance() {
-        let mut tok = token();
+    #[rstest]
+    fn mint_privileged_increases_supply_and_balance(#[from(token)] mut tok: Tok) {
         tok.policy_storage_mut().allow(0, BOB); // MintReceiver policy is enforced even when privileged
         LOGIC.mint(&mut tok, ADMIN, BOB, U256::from(100u64), true).unwrap();
         assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(100u64));
@@ -1161,9 +892,8 @@ mod tests {
         assert_eq!(last_event_sig(&tok), IB20::Transfer::SIGNATURE_HASH);
     }
 
-    #[test]
-    fn mint_reverts_over_supply_cap() {
-        let mut tok = token();
+    #[rstest]
+    fn mint_reverts_over_supply_cap(#[from(token)] mut tok: Tok) {
         tok.accounting_mut().set_supply_cap(U256::from(50u64)).unwrap();
         let err = LOGIC.mint(&mut tok, ADMIN, BOB, U256::from(100u64), true).unwrap_err();
         assert_eq!(
@@ -1175,9 +905,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn mint_unprivileged_requires_mint_role() {
-        let mut tok = token();
+    #[rstest]
+    fn mint_unprivileged_requires_mint_role(#[from(token)] mut tok: Tok) {
         let err = LOGIC.mint(&mut tok, ALICE, BOB, U256::from(1u64), false).unwrap_err();
         assert_eq!(
             err,
@@ -1190,10 +919,8 @@ mod tests {
 
     // --- burn / burn_blocked ---
 
-    #[test]
-    fn burn_requires_role_then_decreases_supply() {
-        let mut tok = token();
-        fund(&mut tok, ALICE, U256::from(100u64));
+    #[rstest]
+    fn burn_requires_role_then_decreases_supply(#[from(funded_token)] mut tok: Tok) {
         let err = LOGIC.burn(&mut tok, ALICE, U256::from(1u64)).unwrap_err();
         assert_eq!(
             err,
@@ -1209,10 +936,8 @@ mod tests {
         assert_eq!(last_event_sig(&tok), IB20::Transfer::SIGNATURE_HASH);
     }
 
-    #[test]
-    fn burn_blocked_destroys_from_unauthorized_account() {
-        let mut tok = token();
-        fund(&mut tok, ALICE, U256::from(100u64));
+    #[rstest]
+    fn burn_blocked_destroys_from_unauthorized_account(#[from(funded_token)] mut tok: Tok) {
         // ALWAYS_BLOCK => ALICE is unauthorized/blocked; privileged skips the role check.
         tok.accounting_mut()
             .set_policy_id(
@@ -1225,10 +950,8 @@ mod tests {
         assert_eq!(last_event_sig(&tok), IB20::BurnedBlocked::SIGNATURE_HASH);
     }
 
-    #[test]
-    fn burn_blocked_reverts_when_account_not_blocked() {
-        let mut tok = token();
-        fund(&mut tok, ALICE, U256::from(100u64));
+    #[rstest]
+    fn burn_blocked_reverts_when_account_not_blocked(#[from(funded_token)] mut tok: Tok) {
         // Default ALWAYS_ALLOW authorizes ALICE => not blocked.
         let err = LOGIC.burn_blocked(&mut tok, ADMIN, ALICE, U256::from(1u64), true).unwrap_err();
         assert_eq!(err, BasePrecompileError::revert(IB20::AccountNotBlocked { account: ALICE }));
@@ -1236,9 +959,8 @@ mod tests {
 
     // --- pause ---
 
-    #[test]
-    fn pause_and_unpause_toggle_feature_bit() {
-        let mut tok = token();
+    #[rstest]
+    fn pause_and_unpause_toggle_feature_bit(#[from(token)] mut tok: Tok) {
         LOGIC.pause(&mut tok, ADMIN, vec![IB20::PausableFeature::MINT], true).unwrap();
         assert!(LOGIC.is_paused(&tok, IB20::PausableFeature::MINT).unwrap());
         assert!(!LOGIC.is_paused(&tok, IB20::PausableFeature::TRANSFER).unwrap());
@@ -1248,9 +970,8 @@ mod tests {
 
     /// `SEIZE` is Cobalt-only. The Beryl wire rejects it at decode; this pins the matching
     /// logic-layer allowlist so V1 does not accept it via direct logic calls either.
-    #[test]
-    fn pause_unpause_and_is_paused_reject_seize() {
-        let mut tok = token();
+    #[rstest]
+    fn pause_unpause_and_is_paused_reject_seize(#[from(token)] mut tok: Tok) {
         let expected = BasePrecompileError::enum_conversion_error();
         assert_eq!(
             LOGIC.pause(&mut tok, ADMIN, vec![IB20::PausableFeature::SEIZE], true).unwrap_err(),
@@ -1263,16 +984,14 @@ mod tests {
         assert_eq!(LOGIC.is_paused(&tok, IB20::PausableFeature::SEIZE).unwrap_err(), expected);
     }
 
-    #[test]
-    fn pause_reverts_on_empty_feature_set() {
-        let mut tok = token();
+    #[rstest]
+    fn pause_reverts_on_empty_feature_set(#[from(token)] mut tok: Tok) {
         let err = LOGIC.pause(&mut tok, ADMIN, vec![], true).unwrap_err();
         assert_eq!(err, BasePrecompileError::revert(IB20::EmptyFeatureSet {}));
     }
 
-    #[test]
-    fn paused_features_reports_active_set() {
-        let mut tok = token();
+    #[rstest]
+    fn paused_features_reports_active_set(#[from(token)] mut tok: Tok) {
         LOGIC
             .pause(
                 &mut tok,
@@ -1287,17 +1006,15 @@ mod tests {
 
     // --- config / metadata ---
 
-    #[test]
-    fn update_supply_cap_sets_and_emits() {
-        let mut tok = token();
+    #[rstest]
+    fn update_supply_cap_sets_and_emits(#[from(token)] mut tok: Tok) {
         LOGIC.update_supply_cap(&mut tok, ADMIN, U256::from(1_000u64), true).unwrap();
         assert_eq!(tok.accounting().supply_cap().unwrap(), U256::from(1_000u64));
         assert_eq!(last_event_sig(&tok), IB20::SupplyCapUpdated::SIGNATURE_HASH);
     }
 
-    #[test]
-    fn update_supply_cap_reverts_below_current_supply() {
-        let mut tok = token();
+    #[rstest]
+    fn update_supply_cap_reverts_below_current_supply(#[from(token)] mut tok: Tok) {
         fund(&mut tok, ALICE, U256::from(500u64));
         let err = LOGIC.update_supply_cap(&mut tok, ADMIN, U256::from(100u64), true).unwrap_err();
         assert_eq!(
@@ -1309,9 +1026,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn update_name_emits_name_updated_and_domain_changed() {
-        let mut tok = token();
+    #[rstest]
+    fn update_name_emits_name_updated_and_domain_changed(#[from(token)] mut tok: Tok) {
         LOGIC.update_name(&mut tok, ADMIN, "New Name".to_string(), true).unwrap();
         assert_eq!(tok.accounting().name().unwrap(), "New Name");
         let events = &tok.accounting().events;
@@ -1321,26 +1037,23 @@ mod tests {
 
     // --- roles ---
 
-    #[test]
-    fn grant_role_privileged_grants_and_emits() {
-        let mut tok = token();
+    #[rstest]
+    fn grant_role_privileged_grants_and_emits(#[from(token)] mut tok: Tok) {
         LOGIC.grant_role(&mut tok, ADMIN, B20TokenRole::Mint.id(), ALICE, true).unwrap();
         assert!(tok.accounting().has_role(B20TokenRole::Mint.id(), ALICE).unwrap());
         assert_eq!(last_event_sig(&tok), IB20::RoleGranted::SIGNATURE_HASH);
     }
 
-    #[test]
-    fn revoke_role_privileged_revokes_and_emits() {
-        let mut tok = token();
+    #[rstest]
+    fn revoke_role_privileged_revokes_and_emits(#[from(token)] mut tok: Tok) {
         grant(&mut tok, B20TokenRole::Mint.id(), ALICE);
         LOGIC.revoke_role(&mut tok, ADMIN, B20TokenRole::Mint.id(), ALICE, true).unwrap();
         assert!(!tok.accounting().has_role(B20TokenRole::Mint.id(), ALICE).unwrap());
         assert_eq!(last_event_sig(&tok), IB20::RoleRevoked::SIGNATURE_HASH);
     }
 
-    #[test]
-    fn revoke_last_admin_is_rejected() {
-        let mut tok = token();
+    #[rstest]
+    fn revoke_last_admin_is_rejected(#[from(token)] mut tok: Tok) {
         grant(&mut tok, B20TokenRole::DefaultAdmin.id(), ADMIN);
         let err = LOGIC
             .revoke_role(&mut tok, ADMIN, B20TokenRole::DefaultAdmin.id(), ADMIN, true)
@@ -1348,9 +1061,8 @@ mod tests {
         assert_eq!(err, BasePrecompileError::revert(IB20::LastAdminCannotRenounce {}));
     }
 
-    #[test]
-    fn grant_role_unchecked_bumps_admin_count() {
-        let mut tok = token();
+    #[rstest]
+    fn grant_role_unchecked_bumps_admin_count(#[from(token)] mut tok: Tok) {
         LOGIC
             .grant_role_unchecked(&mut tok, B20TokenRole::DefaultAdmin.id(), ADMIN, TOKEN)
             .unwrap();
@@ -1363,26 +1075,23 @@ mod tests {
 
     // --- policy ---
 
-    #[test]
-    fn update_policy_sets_new_id() {
-        let mut tok = token();
+    #[rstest]
+    fn update_policy_sets_new_id(#[from(token)] mut tok: Tok) {
         tok.policy_storage_mut().create_existing_policy(7);
         LOGIC.update_policy(&mut tok, ADMIN, B20PolicyType::TransferSender.id(), 7, true).unwrap();
         assert_eq!(tok.accounting().policy_id(B20PolicyType::TransferSender.id()).unwrap(), 7);
     }
 
-    #[test]
-    fn update_policy_reverts_when_policy_missing() {
-        let mut tok = token();
+    #[rstest]
+    fn update_policy_reverts_when_policy_missing(#[from(token)] mut tok: Tok) {
         let err = LOGIC
             .update_policy(&mut tok, ADMIN, B20PolicyType::TransferSender.id(), 99, true)
             .unwrap_err();
         assert_eq!(err, BasePrecompileError::revert(IB20::PolicyNotFound { policyId: 99 }));
     }
 
-    #[test]
-    fn policy_id_rejects_unsupported_scope() {
-        let tok = token();
+    #[rstest]
+    fn policy_id_rejects_unsupported_scope(#[from(token)] tok: Tok) {
         let scope = B256::repeat_byte(0xEE);
         let err = LOGIC.policy_id(&tok, scope).unwrap_err();
         assert_eq!(
@@ -1393,9 +1102,8 @@ mod tests {
 
     // --- permit ---
 
-    #[test]
-    fn permit_sets_allowance_and_increments_nonce() {
-        let mut tok = token();
+    #[rstest]
+    fn permit_sets_allowance_and_increments_nonce(#[from(token)] mut tok: Tok) {
         let owner = anvil_owner();
         let args = signed_permit(&tok, owner, BOB, U256::from(500u64), U256::MAX);
         LOGIC.permit(&mut tok, CHAIN_ID, U256::ZERO, args).unwrap();
@@ -1403,9 +1111,8 @@ mod tests {
         assert_eq!(tok.accounting().nonce(owner).unwrap(), U256::ONE);
     }
 
-    #[test]
-    fn permit_reverts_when_expired() {
-        let mut tok = token();
+    #[rstest]
+    fn permit_reverts_when_expired(#[from(token)] mut tok: Tok) {
         let owner = anvil_owner();
         let args = signed_permit(&tok, owner, BOB, U256::from(1u64), U256::from(10u64));
         let err = LOGIC.permit(&mut tok, CHAIN_ID, U256::from(11u64), args).unwrap_err();
@@ -1415,9 +1122,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn permit_replay_is_rejected() {
-        let mut tok = token();
+    #[rstest]
+    fn permit_replay_is_rejected(#[from(token)] mut tok: Tok) {
         let owner = anvil_owner();
         let args = signed_permit(&tok, owner, BOB, U256::from(1u64), U256::MAX);
         LOGIC.permit(&mut tok, CHAIN_ID, U256::ZERO, args.clone()).unwrap();
@@ -1427,23 +1133,20 @@ mod tests {
 
     // --- reads ---
 
-    #[test]
-    fn currency_reads_storage() {
-        let tok = token();
+    #[rstest]
+    fn currency_reads_storage(#[from(token)] tok: Tok) {
         assert_eq!(LOGIC.currency(&tok).unwrap(), "USD");
     }
 
-    #[test]
-    fn is_initialized_reflects_storage() {
-        let mut tok = token();
+    #[rstest]
+    fn is_initialized_reflects_storage(#[from(token)] mut tok: Tok) {
         assert!(LOGIC.is_initialized(&tok).unwrap());
         tok.accounting_mut().initialized = false;
         assert!(!LOGIC.is_initialized(&tok).unwrap());
     }
 
-    #[test]
-    fn domain_separator_is_deterministic_and_chain_specific() {
-        let tok = token();
+    #[rstest]
+    fn domain_separator_is_deterministic_and_chain_specific(#[from(token)] tok: Tok) {
         assert_eq!(
             LOGIC.domain_separator(&tok, CHAIN_ID).unwrap(),
             LOGIC.domain_separator(&tok, CHAIN_ID).unwrap()

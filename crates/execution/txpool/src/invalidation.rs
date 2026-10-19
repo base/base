@@ -134,19 +134,6 @@ impl WatchSet {
         true
     }
 
-    /// Builds a watch set from an iterator of keys, de-duplicating as it goes.
-    #[must_use]
-    pub fn from_keys<I>(keys: I) -> Self
-    where
-        I: IntoIterator<Item = InvalidationKey>,
-    {
-        let mut set = Self::new();
-        for key in keys {
-            set.push(key);
-        }
-        set
-    }
-
     /// Returns the keys in this watch set.
     #[must_use]
     pub fn keys(&self) -> &[InvalidationKey] {
@@ -174,15 +161,6 @@ impl WatchSet {
     #[must_use]
     pub fn contains(&self, key: &InvalidationKey) -> bool {
         self.keys.contains(key)
-    }
-}
-
-impl<'a> IntoIterator for &'a WatchSet {
-    type Item = &'a InvalidationKey;
-    type IntoIter = std::slice::Iter<'a, InvalidationKey>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.keys.iter()
     }
 }
 
@@ -358,7 +336,8 @@ mod tests {
         assert_eq!(watch.len(), 1);
         assert!(watch.contains(&key));
 
-        let mut watch = WatchSet::from_keys([key, key, InvalidationKey::ProtocolNonce(addr(1))]);
+        let mut watch =
+            WatchSet::new().watch(key).watch(key).watch(InvalidationKey::ProtocolNonce(addr(1)));
         assert_eq!(watch.len(), 2);
         assert!(!watch.push(key));
         assert_eq!(watch.len(), 2);

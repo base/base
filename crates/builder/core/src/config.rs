@@ -194,13 +194,6 @@ impl BuilderConfig {
         self
     }
 
-    /// Sets the flashblocks interval in milliseconds.
-    #[must_use]
-    pub const fn with_flashblocks_interval_ms(mut self, ms: u64) -> Self {
-        self.flashblocks_interval = Duration::from_millis(ms);
-        self
-    }
-
     /// Sets the maximum uncompressed block size.
     #[must_use]
     pub const fn with_max_uncompressed_block_size(
@@ -218,13 +211,6 @@ impl BuilderConfig {
         metering_wait_duration: Option<Duration>,
     ) -> Self {
         self.metering_wait_duration = metering_wait_duration;
-        self
-    }
-
-    /// Sets whether build-loop state reads are timed.
-    #[must_use]
-    pub const fn with_state_provider_metrics(mut self, enabled: bool) -> Self {
-        self.state_provider_metrics = enabled;
         self
     }
 

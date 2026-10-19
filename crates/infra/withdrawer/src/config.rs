@@ -1,8 +1,14 @@
-use std::{env, ffi::OsString, time::Duration};
+use std::{
+    env,
+    ffi::{OsStr, OsString},
+    time::Duration,
+};
 
 use alloy_primitives::{Address, B256};
 use clap::{
-    ArgGroup, ArgMatches, Args, Command, CommandFactory, FromArgMatches, Parser, error::ErrorKind,
+    Arg, ArgGroup, ArgMatches, Args, Command, CommandFactory, FromArgMatches, Parser,
+    builder::TypedValueParser,
+    error::{ContextKind, ContextValue, ErrorKind},
 };
 use coins_bip32::path::DerivationPath;
 use coins_bip39::{English, Mnemonic};
@@ -11,6 +17,65 @@ use url::Url;
 
 use crate::{Network, NetworkPreset, ProofSystem, Secret, SecretValueParser};
 
+// Set after `augment_args`, which otherwise uses the rustdoc of `WithdrawerArgs` as the help text.
+const WITHDRAWER_ABOUT: &str = "Prove or finalize OP Stack withdrawals";
+
+/// Parses RPC endpoints without including rejected values in clap errors.
+#[derive(Debug, Clone)]
+pub struct RpcUrlValueParser;
+
+impl TypedValueParser for RpcUrlValueParser {
+    type Value = Url;
+
+    fn parse_ref(
+        &self,
+        _cmd: &Command,
+        arg: Option<&Arg>,
+        value: &OsStr,
+    ) -> Result<Self::Value, clap::Error> {
+        value
+            .to_str()
+            .map_or_else(
+                || Err("check its format".to_owned()),
+                |value| Url::parse(value).map_err(|error| error.to_string()),
+            )
+            .map_err(|reason| {
+                let message = arg.and_then(Arg::get_long).map_or_else(
+                    || format!("invalid RPC URL: {reason}"),
+                    |flag| format!("invalid RPC URL for --{flag}: {reason}"),
+                );
+                clap::Error::raw(ErrorKind::ValueValidation, message)
+            })
+    }
+}
+
+/// Parses derivation paths with fixed error reasons and no rejected values in clap errors.
+#[derive(Debug, Clone)]
+pub struct HdPathValueParser;
+
+impl TypedValueParser for HdPathValueParser {
+    type Value = DerivationPath;
+
+    fn parse_ref(
+        &self,
+        _cmd: &Command,
+        arg: Option<&Arg>,
+        value: &OsStr,
+    ) -> Result<Self::Value, clap::Error> {
+        value
+            .to_str()
+            .ok_or("invalid derivation path")
+            .and_then(WithdrawerArgs::parse_hd_path)
+            .map_err(|reason| {
+                let message = arg.and_then(Arg::get_long).map_or_else(
+                    || format!("invalid derivation path: {reason}"),
+                    |flag| format!("invalid derivation path for --{flag}: {reason}"),
+                );
+                clap::Error::raw(ErrorKind::ValueValidation, message)
+            })
+    }
+}
+
 /// Command-line withdrawal settings before cross-field validation.
 #[derive(Debug, Clone, Args)]
 #[command(name = "withdrawer")]
@@ -18,7 +83,7 @@ use crate::{Network, NetworkPreset, ProofSystem, Secret, SecretValueParser};
 #[command(group(ArgGroup::new("proofs").args(["dispute_game_factory", "l2_output_oracle"])))]
 pub struct WithdrawerArgs {
     /// L1 RPC endpoint.
-    #[arg(long)]
+    #[arg(long, value_parser = RpcUrlValueParser)]
     pub l1_rpc_url: Url,
     /// L2 withdrawal transaction hash.
     #[arg(long)]
@@ -27,7 +92,7 @@ pub struct WithdrawerArgs {
     #[arg(long, value_enum, conflicts_with_all = ["l2_rpc_url", "portal", "dispute_game_factory", "anchor_state_registry", "l2_output_oracle"])]
     pub network: Option<NetworkPreset>,
     /// Custom L2 RPC endpoint.
-    #[arg(long, requires = "portal")]
+    #[arg(long, requires = "portal", value_parser = RpcUrlValueParser)]
     pub l2_rpc_url: Option<Url>,
     /// Custom Optimism portal.
     #[arg(long, requires_all = ["l2_rpc_url", "proofs"])]
@@ -52,7 +117,7 @@ pub struct WithdrawerArgs {
     #[arg(long, group = "signer")]
     pub ledger: bool,
     /// Mnemonic or Ledger derivation path.
-    #[arg(long, default_value = "m/44'/60'/0'/0/0", conflicts_with = "private_key", value_parser = Self::parse_hd_path)]
+    #[arg(long, default_value = "m/44'/60'/0'/0/0", conflicts_with = "private_key", value_parser = HdPathValueParser)]
     pub hd_path: DerivationPath,
     /// Explicit gas limit, bypassing estimation.
     #[arg(long, conflicts_with = "gas_multiplier", value_parser = clap::value_parser!(u64).range(1..))]
@@ -87,32 +152,45 @@ pub struct WithdrawerArgs {
 }
 
 impl WithdrawerArgs {
-    /// Parses arguments without echoing tokens when signing secrets are present.
+    /// Parses arguments with safe flag names and reasons, without echoing rejected values.
     pub fn parse_matches<I, T>(command: Command, itr: I) -> Result<ArgMatches, clap::Error>
     where
         I: IntoIterator<Item = T>,
         T: Into<OsString> + Clone,
     {
-        let args = itr.into_iter().map(Into::into).collect::<Vec<OsString>>();
-        let has_secret = args.iter().any(|arg| {
-            arg == "--mnemonic"
-                || arg == "--private-key"
-                || arg.as_encoded_bytes().starts_with(b"--mnemonic=")
-                || arg.as_encoded_bytes().starts_with(b"--private-key=")
-        });
-        command.try_get_matches_from(args).map_err(|error| {
-            if has_secret
+        command.try_get_matches_from(itr).map_err(|error| {
+            if error.kind() == ErrorKind::InvalidValue
                 && matches!(
-                    error.kind(),
-                    ErrorKind::UnknownArgument
-                        | ErrorKind::InvalidSubcommand
-                        | ErrorKind::InvalidValue
-                        | ErrorKind::ValueValidation
-                        | ErrorKind::TooManyValues
-                        | ErrorKind::InvalidUtf8
+                    error.get(ContextKind::InvalidValue),
+                    Some(ContextValue::String(value)) if value.is_empty()
                 )
             {
-                clap::Error::raw(error.kind(), "invalid arguments; signing secrets are redacted")
+                return error;
+            }
+            // For these errors, InvalidArg is the declared argument, not the rejected value.
+            if matches!(error.kind(), ErrorKind::InvalidValue | ErrorKind::ValueValidation)
+                && let Some(arg) = error.get(ContextKind::InvalidArg)
+            {
+                return clap::Error::raw(
+                    error.kind(),
+                    format!("invalid value for '{arg}'; the value is redacted"),
+                );
+            }
+            // Redacting value parsers return raw errors without rejected-value context.
+            if matches!(
+                error.kind(),
+                ErrorKind::UnknownArgument
+                    | ErrorKind::InvalidSubcommand
+                    | ErrorKind::InvalidValue
+                    | ErrorKind::TooManyValues
+                    | ErrorKind::InvalidUtf8
+            ) || (error.kind() == ErrorKind::ValueValidation
+                && error.get(ContextKind::InvalidValue).is_some())
+            {
+                clap::Error::raw(
+                    error.kind(),
+                    "invalid arguments; potentially sensitive values are redacted",
+                )
             } else {
                 error
             }
@@ -179,15 +257,17 @@ impl WithdrawerArgs {
 
 impl CommandFactory for WithdrawerArgs {
     fn command() -> Command {
-        Self::augment_args(Command::new("withdrawer"))
+        Self::augment_args(Command::new("withdrawer").version(env!("CARGO_PKG_VERSION")))
+            .about(WITHDRAWER_ABOUT)
     }
 
     fn command_for_update() -> Command {
-        Self::augment_args_for_update(Command::new("withdrawer"))
+        Self::augment_args_for_update(Command::new("withdrawer").version(env!("CARGO_PKG_VERSION")))
+            .about(WITHDRAWER_ABOUT)
     }
 }
 
-// clap can echo stray secret words before any value parser gets to redact them.
+// clap can echo stray secrets and RPC URLs before any value parser can redact them.
 impl Parser for WithdrawerArgs {
     fn parse() -> Self {
         Self::parse_from(env::args_os())
@@ -561,6 +641,74 @@ mod tests {
     }
 
     #[test]
+    fn invalid_rpc_urls_do_not_echo_credentials() {
+        for flag in ["--l1-rpc-url", "--l2-rpc-url"] {
+            let mut argv = base();
+            if flag == "--l1-rpc-url" {
+                argv.remove(1);
+            }
+            let value = "https://user:example-password@";
+            argv.extend([flag.into(), value.into()]);
+            let error = WithdrawerArgs::try_parse_from(argv).unwrap_err();
+            assert_eq!(error.kind(), ErrorKind::ValueValidation);
+            let diagnostic = format!("{error} {error:?}");
+            assert!(diagnostic.contains("invalid RPC URL"));
+            assert!(diagnostic.contains(flag));
+            assert!(diagnostic.contains("empty host"));
+            assert!(!diagnostic.contains(value));
+            assert!(!diagnostic.contains("example-password"), "credentials leaked: {diagnostic}");
+        }
+    }
+
+    #[test]
+    fn invalid_values_name_flags_without_echoing_values() {
+        for (flag, value, kind, reason) in [
+            ("--network", "base-mainet", ErrorKind::InvalidValue, None),
+            ("--timeout", "bogus", ErrorKind::ValueValidation, None),
+            ("--private-key", "private-secret-not-hex", ErrorKind::ValueValidation, None),
+            (
+                "--hd-path",
+                "m/2147483648",
+                ErrorKind::ValueValidation,
+                Some("derivation path indices must be between 0 and 2147483647"),
+            ),
+        ] {
+            let error = args(&[flag, value]).unwrap_err();
+            assert_eq!(error.kind(), kind);
+            let diagnostic = format!("{error} {error:?}");
+            assert!(diagnostic.contains(flag), "missing flag: {diagnostic}");
+            assert!(!diagnostic.contains(value), "rejected value leaked: {diagnostic}");
+            if let Some(reason) = reason {
+                assert!(diagnostic.contains(reason), "missing reason: {diagnostic}");
+            }
+        }
+
+        let error = WithdrawerArgs::try_parse_from([
+            "withdrawer",
+            "--withdrawal",
+            HASH,
+            "--private-key",
+            KEY,
+            "--l1-rpc-url",
+        ])
+        .unwrap_err();
+        let diagnostic = error.to_string();
+        assert!(diagnostic.contains("a value is required for '--l1-rpc-url <L1_RPC_URL>'"));
+        assert!(!diagnostic.contains("redacted"));
+    }
+
+    #[test]
+    fn stray_rpc_urls_do_not_echo_credentials_without_signing_flags() {
+        let error = args(&["https://user:example-password@l2.example"]).unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::UnknownArgument);
+        let diagnostic = format!("{error} {error:?}");
+        assert!(diagnostic.contains("potentially sensitive values are redacted"));
+        for credential in ["user", "example-password"] {
+            assert!(!diagnostic.contains(credential), "credentials leaked: {diagnostic}");
+        }
+    }
+
+    #[test]
     fn secrets_can_come_from_the_environment() {
         if env::var_os("WITHDRAWER_TEST_CHILD").is_some() {
             let parsed = args(&[]).unwrap();
@@ -798,7 +946,7 @@ mod tests {
         };
         assert_eq!(path.derivation_string(), "m/1");
         let unknown = args(&["--unknown-without-secret"]).unwrap_err().to_string();
-        assert!(unknown.contains("--unknown-without-secret"));
+        assert!(unknown.contains("potentially sensitive values are redacted"));
         let conflict = args(&[&format!("--private-key={KEY}"), &format!("--mnemonic={PHRASE}")])
             .unwrap_err()
             .to_string();

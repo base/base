@@ -3,7 +3,7 @@ use std::{collections::VecDeque, sync::Arc};
 
 use alloy_consensus::TxEip1559;
 use alloy_eips::{BlockNumberOrTag, eip1559::MIN_PROTOCOL_BASE_FEE, eip2718::Encodable2718};
-use alloy_primitives::{Address, Bytes, TxHash, TxKind, U256, hex};
+use alloy_primitives::{Address, Bytes, TxHash, TxKind, U256};
 use alloy_provider::{PendingTransactionBuilder, Provider, RootProvider};
 use base_common_consensus::{BaseTxEnvelope, BaseTypedTransaction};
 use base_common_network::Base;
@@ -96,12 +96,6 @@ impl TransactionBuilder {
     /// Sets the calldata input bytes.
     pub fn with_input(mut self, input: Bytes) -> Self {
         self.tx.input = input;
-        self
-    }
-
-    /// Sets calldata that immediately reverts (`PUSH1 0 PUSH1 0 REVERT`).
-    pub fn with_revert(mut self) -> Self {
-        self.tx.input = hex!("60006000fd").into();
         self
     }
 
@@ -245,16 +239,6 @@ impl TransactionPoolObserver {
         matches!(self.tx_status(txhash), Some(TransactionEvent::Pending))
     }
 
-    /// Returns `true` if the transaction is currently queued.
-    pub fn is_queued(&self, txhash: TxHash) -> bool {
-        matches!(self.tx_status(txhash), Some(TransactionEvent::Queued))
-    }
-
-    /// Returns `true` if the transaction has been discarded from the pool.
-    pub fn is_dropped(&self, txhash: TxHash) -> bool {
-        matches!(self.tx_status(txhash), Some(TransactionEvent::Discarded))
-    }
-
     /// Counts how many observed transactions currently have the given status.
     pub fn count(&self, status: TransactionEvent) -> usize {
         self.observations.iter().filter(|tx| tx.value().back() == Some(&status)).count()
@@ -270,19 +254,9 @@ impl TransactionPoolObserver {
         self.count(TransactionEvent::Queued)
     }
 
-    /// Returns the number of discarded transactions.
-    pub fn dropped_count(&self) -> usize {
-        self.count(TransactionEvent::Discarded)
-    }
-
     /// Returns the history of pool events for a transaction.
     pub fn history(&self, txhash: TxHash) -> Option<Vec<TransactionEvent>> {
         self.observations.get(&txhash).map(|history| history.iter().cloned().collect())
-    }
-
-    /// Logs all observed transaction pool events at debug level.
-    pub fn print_all(&self) {
-        debug!(observations = ?self.observations, "TxPool");
     }
 
     /// Returns `true` if the transaction is either pending or queued in the pool.

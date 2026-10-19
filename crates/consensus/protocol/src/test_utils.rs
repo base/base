@@ -51,13 +51,6 @@ pub struct TestBatchValidator {
     pub base_blocks: Vec<BaseBlock>,
 }
 
-impl TestBatchValidator {
-    /// Creates a new [`TestBatchValidator`] with the given origin and batches.
-    pub const fn new(blocks: Vec<L2BlockInfo>, base_blocks: Vec<BaseBlock>) -> Self {
-        Self { blocks, short_circuit: false, base_blocks }
-    }
-}
-
 #[async_trait]
 impl BatchValidationProvider for TestBatchValidator {
     type Error = TestBatchValidatorError;

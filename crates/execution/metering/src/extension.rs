@@ -20,19 +20,6 @@ pub struct MeteringExtension {
     pub metered_opcodes: MeteredOpcodes,
 }
 
-impl MeteringExtension {
-    /// Creates a new metering extension.
-    pub fn new(enabled: bool, flashblocks_config: Option<FlashblocksConfig>) -> Self {
-        Self { enabled, flashblocks_config, metered_opcodes: MeteredOpcodes::default() }
-    }
-
-    /// Sets the opcodes and precompiles to track for gas metering.
-    pub fn with_metered_opcodes(mut self, opcodes: MeteredOpcodes) -> Self {
-        self.metered_opcodes = opcodes;
-        self
-    }
-}
-
 impl BaseNodeExtension for MeteringExtension {
     /// Applies the extension to the supplied hooks.
     fn apply(self: Box<Self>, hooks: NodeHooks) -> NodeHooks {

@@ -152,6 +152,21 @@ pub struct Config {
     )]
     pub dispute_timeout: Duration,
 
+    /// How long the driver keeps retrying an L2 RPC read that fails the way an
+    /// unavailable node does (`no state found`, a refused connection, an HTTP
+    /// 502/503/504/429 from a load balancer), before it gives up and fails the
+    /// run as an infrastructure failure.
+    ///
+    /// Covers a node restart. The challenger reads the same node, so while it
+    /// is down no dispute can be expected of the challenger either.
+    #[arg(
+        long = "l2-retry-budget",
+        env = "CHALLENGER_E2E_L2_RETRY_BUDGET",
+        default_value = "10m",
+        value_parser = humantime::parse_duration
+    )]
+    pub l2_retry_budget: Duration,
+
     /// Interval between driver polls of the fork and the metrics endpoint.
     #[arg(
         long = "poll-interval",
@@ -160,6 +175,12 @@ pub struct Config {
         value_parser = humantime::parse_duration
     )]
     pub poll_interval: Duration,
+
+    /// `base/base` commit the driver was built from, logged at startup so a run
+    /// names the code it ran. The binary cannot discover it itself, so the image
+    /// has to set it from the commit it builds; unset, it is logged as unknown.
+    #[arg(long = "driver-commit", env = "CHALLENGER_E2E_DRIVER_COMMIT")]
+    pub driver_commit: Option<String>,
 
     /// Fork block, recorded at startup. Every block after it was mined on the
     /// fork, so it bounds the scan for the challenger's own transactions.

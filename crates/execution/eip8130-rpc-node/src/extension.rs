@@ -29,15 +29,6 @@ pub struct Eip8130RpcExtension {
     mode: Eip8130RpcMode,
 }
 
-impl Eip8130RpcExtension {
-    /// Creates a new extension. Pass [`Eip8130RpcMode::Register`] on
-    /// nodes without flashblocks; pass [`Eip8130RpcMode::Defer`] when
-    /// flashblocks is already registering the override.
-    pub const fn new(mode: Eip8130RpcMode) -> Self {
-        Self { mode }
-    }
-}
-
 impl BaseNodeExtension for Eip8130RpcExtension {
     fn apply(self: Box<Self>, hooks: NodeHooks) -> NodeHooks {
         match self.mode {
@@ -59,6 +50,6 @@ impl FromExtensionConfig for Eip8130RpcExtension {
     type Config = Eip8130RpcMode;
 
     fn from_config(mode: Eip8130RpcMode) -> Self {
-        Self::new(mode)
+        Self { mode }
     }
 }
