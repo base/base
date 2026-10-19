@@ -7,10 +7,12 @@ pub use cli::{
 };
 
 mod confirm;
-pub use confirm::{ConfirmJob, ConfirmWindow, FinalizeRevert, PortalErrors};
+pub use confirm::{ConfirmJob, ConfirmWindow};
 
 mod contracts;
-pub use contracts::{BalanceTracker, FeeDisburser, RegistrarController};
+pub use contracts::{
+    BalanceTracker, CrossDomainMessenger, FeeDisburser, RegistrarController, StandardBridge,
+};
 
 mod client;
 pub use client::AlloyFeeReader;

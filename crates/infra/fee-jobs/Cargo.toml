@@ -16,7 +16,6 @@ url.workspace = true
 eyre.workspace = true
 humantime.workspace = true
 thiserror.workspace = true
-serde_json.workspace = true
 async-trait.workspace = true
 alloy-network.workspace = true
 alloy-provider.workspace = true
@@ -25,6 +24,7 @@ base-withdrawer.workspace = true
 base-tx-manager.workspace = true
 alloy-primitives.workspace = true
 alloy-signer-local.workspace = true
+base-common-consensus.workspace = true
 tokio = { workspace = true, features = ["time"] }
 tracing = { workspace = true, features = ["std"] }
 serde = { workspace = true, features = ["derive"] }
@@ -35,8 +35,8 @@ alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 [dev-dependencies]
 rstest.workspace = true
 mockall.workspace = true
-alloy-json-rpc.workspace = true
-alloy-transport.workspace = true
+serde_json.workspace = true
 base-proof-contracts.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
+tracing-subscriber = { workspace = true, features = ["fmt"] }
 axum = { workspace = true, features = ["http1", "json", "tokio"] }

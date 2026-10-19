@@ -5,11 +5,12 @@ use std::{
 };
 
 use alloy_network::TxSigner;
-use alloy_primitives::{Address, B256, Bytes};
+use alloy_primitives::{Address, B256};
 use alloy_provider::Provider;
 use alloy_rpc_types_eth::Filter;
 use alloy_signer_local::PrivateKeySigner;
-use alloy_sol_types::{SolCall, SolError, SolEvent, sol};
+use alloy_sol_types::{SolCall, SolEvent};
+use base_common_consensus::Predeploys;
 use base_withdrawer::{
     FaultProofContracts, FaultProofPortal, Fees, Network, ProofSystem, ResolvedProofSystem, Secret,
     SignerSource, Withdrawal, WithdrawalPortal, WithdrawalRpc, WithdrawalSigner, WithdrawalStatus,
@@ -17,58 +18,9 @@ use base_withdrawer::{
 };
 use eyre::{WrapErr, ensure};
 use tokio::time::{sleep, timeout};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
-use crate::{ConfirmArgs, FeeDisburser};
-
-sol! {
-    /// Portal finalization errors.
-    interface PortalErrors {
-        /// The registered proof is still maturing.
-        error OptimismPortal_ProofNotOldEnough();
-        /// The game's root claim is not currently valid.
-        error OptimismPortal_InvalidRootClaim();
-        /// The withdrawal has already been consumed.
-        error OptimismPortal_AlreadyFinalized();
-    }
-}
-
-/// Non-fatal portal reverts during finalization or readiness checks.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FinalizeRevert {
-    /// The proof or its dispute game is not ready.
-    Pending,
-    /// Another execution already consumed the withdrawal.
-    AlreadyFinalized,
-}
-
-impl FinalizeRevert {
-    /// Classifies redacted RPC revert data, including wrapped submission failures.
-    pub fn classify(error: &WithdrawerError) -> Option<Self> {
-        let error = match error {
-            WithdrawerError::Unconfirmed { source, .. } => return Self::classify(source),
-            WithdrawerError::Request(error) => error,
-            _ => return None,
-        };
-        let data: String =
-            serde_json::from_str(error.as_error_resp()?.data.as_ref()?.get()).ok()?;
-        let data: Bytes = data.parse().ok()?;
-        let selector = data.get(..4)?;
-        if selector == PortalErrors::OptimismPortal_ProofNotOldEnough::SELECTOR
-            || selector == PortalErrors::OptimismPortal_InvalidRootClaim::SELECTOR
-        {
-            Some(Self::Pending)
-        } else if selector == PortalErrors::OptimismPortal_AlreadyFinalized::SELECTOR {
-            Some(Self::AlreadyFinalized)
-        } else if alloy_sol_types::Revert::abi_decode(&data)
-            .is_ok_and(|revert| revert.reason.contains("proven withdrawal has not matured yet"))
-        {
-            Some(Self::Pending)
-        } else {
-            None
-        }
-    }
-}
+use crate::{ConfirmArgs, CrossDomainMessenger, FeeDisburser, StandardBridge};
 
 /// Inclusive L2 log-query ranges.
 #[derive(Debug)]
@@ -194,8 +146,9 @@ impl ConfirmJob {
         Ok(transactions)
     }
 
-    /// Fetches and extracts every withdrawal in a disbursal receipt with transport-bounded retries.
+    /// Extracts only the `FeeDisburser`'s authenticated ETH bridge withdrawals from a receipt.
     pub async fn withdrawals(
+        &self,
         rpc: &WithdrawalRpc,
         transaction: B256,
     ) -> eyre::Result<Vec<Withdrawal>> {
@@ -205,55 +158,61 @@ impl ConfirmJob {
             .await
             .map_err(WithdrawerError::from)?
             .ok_or(WithdrawerError::MissingReceipt)?;
-        Withdrawal::from_receipt(&receipt).map_err(WithdrawerError::from).map_err(Into::into)
+        let withdrawals = Withdrawal::from_receipt(&receipt)
+            .map_err(WithdrawerError::from)?
+            .into_iter()
+            .filter(|withdrawal| {
+                let matches = self.is_fee_withdrawal(withdrawal);
+                if !matches {
+                    warn!(withdrawal_hash = %withdrawal.hash(), "skipping withdrawal not sent by the FeeDisburser");
+                }
+                matches
+            })
+            .collect::<Vec<_>>();
+        ensure!(!withdrawals.is_empty(), "receipt has no FeeDisburser bridge withdrawals");
+        Ok(withdrawals)
+    }
+
+    /// Authenticates the bridge sender and original caller inside the messenger envelope.
+    pub fn is_fee_withdrawal(&self, withdrawal: &Withdrawal) -> bool {
+        if withdrawal.transaction.sender != Predeploys::L2_CROSS_DOMAIN_MESSENGER {
+            return false;
+        }
+        let Ok(relay) = CrossDomainMessenger::relayMessageCall::abi_decode_validate(
+            &withdrawal.transaction.data,
+        ) else {
+            return false;
+        };
+        relay._sender == Predeploys::L2_STANDARD_BRIDGE
+            && StandardBridge::finalizeBridgeETHCall::abi_decode_validate(&relay._message)
+                .is_ok_and(|call| call._from == self.args.l2_fee_disburser_address)
     }
 
     /// Logs the onchain proof age against the local clock, or the absence of a mined proof.
-    pub async fn log_pending(
-        &self,
-        rpc: &WithdrawalRpc,
-        hash: B256,
-        submitter: Address,
-    ) -> eyre::Result<()> {
-        let proof = Withdrawer::read(
+    pub async fn log_pending(&self, rpc: &WithdrawalRpc, hash: B256, submitter: Address) {
+        let proof = match Withdrawer::read(
             rpc,
             self.args.optimism_portal_proxy_address,
             FaultProofPortal::provenWithdrawalsCall { withdrawalHash: hash, submitter },
         )
-        .await?;
+        .await
+        {
+            Ok(proof) => proof,
+            Err(error) => {
+                warn!(withdrawal_hash = %hash, error = %format_args!("{error:#}"), "could not read pending withdrawal proof age");
+                return;
+            }
+        };
         if proof.timestamp == 0 {
             info!(withdrawal_hash = %hash, "withdrawal pending, just proven");
         } else {
-            let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+            let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
             info!(withdrawal_hash = %hash, proof_timestamp = proof.timestamp,
                 proof_age_seconds = now.saturating_sub(proof.timestamp), "withdrawal pending");
         }
-        Ok(())
     }
 
-    /// Handles readiness/finalization reverts; returns whether the withdrawal is pending.
-    pub async fn finalize_error(
-        &self,
-        rpc: &WithdrawalRpc,
-        hash: B256,
-        submitter: Address,
-        error: WithdrawerError,
-    ) -> eyre::Result<bool> {
-        match FinalizeRevert::classify(&error) {
-            Some(FinalizeRevert::Pending) => {
-                info!(withdrawal_hash = %hash, error = %format_args!("{error:#}"), "withdrawal not ready");
-                self.log_pending(rpc, hash, submitter).await?;
-                Ok(true)
-            }
-            Some(FinalizeRevert::AlreadyFinalized) => {
-                info!(withdrawal_hash = %hash, "withdrawal already finalized");
-                Ok(false)
-            }
-            None => Err(error.into()),
-        }
-    }
-
-    /// Processes one withdrawal; prove failures are terminal, while readiness reverts can be pending.
+    /// Processes one withdrawal, rechecking readiness after a failed finalization.
     pub async fn confirm_withdrawal(
         &self,
         withdrawer: &Withdrawer,
@@ -265,10 +224,7 @@ impl ConfirmJob {
     ) -> eyre::Result<bool> {
         let hash = withdrawal.hash();
         let submitter = signer.address();
-        let status = match withdrawer.status(rpc, proofs, withdrawal, submitter).await {
-            Ok(status) => status,
-            Err(error) => return self.finalize_error(rpc, hash, submitter, error).await,
-        };
+        let status = withdrawer.status(rpc, proofs, withdrawal, submitter).await?;
         info!(withdrawal_hash = %hash, ?status, "withdrawal decision");
         match status {
             WithdrawalStatus::Finalized => {
@@ -279,7 +235,7 @@ impl ConfirmJob {
                 eyre::bail!("withdrawal portal or anchor state registry is paused")
             }
             WithdrawalStatus::NotReady { .. } => {
-                self.log_pending(rpc, hash, submitter).await?;
+                self.log_pending(rpc, hash, submitter).await;
                 Ok(true)
             }
             WithdrawalStatus::Prove => {
@@ -310,7 +266,22 @@ impl ConfirmJob {
                         }
                         Ok(false)
                     }
-                    Err(error) => self.finalize_error(rpc, hash, submitter, error).await,
+                    Err(error) => match withdrawer.status(rpc, proofs, withdrawal, submitter).await
+                    {
+                        Ok(WithdrawalStatus::Finalized) => {
+                            info!(withdrawal_hash = %hash, "withdrawal already finalized");
+                            Ok(false)
+                        }
+                        Ok(WithdrawalStatus::NotReady { .. } | WithdrawalStatus::Prove) => {
+                            info!(withdrawal_hash = %hash, error = %format_args!("{error:#}"), "withdrawal not ready");
+                            self.log_pending(rpc, hash, submitter).await;
+                            Ok(true)
+                        }
+                        Ok(_) => Err(error.into()),
+                        Err(recheck_error) => Err(error).wrap_err(format!(
+                            "could not recheck withdrawal status: {recheck_error:#}"
+                        )),
+                    },
                 }
             }
         }
@@ -330,7 +301,7 @@ impl ConfirmJob {
         let mut failed = Vec::new();
         let mut last_error = None;
         for transaction in transactions {
-            let withdrawals = match Self::withdrawals(&rpc, transaction).await {
+            let withdrawals = match self.withdrawals(&rpc, transaction).await {
                 Ok(withdrawals) => withdrawals,
                 Err(error) => {
                     error!(transaction_hash = %transaction, error = %format_args!("{error:#}"), "could not extract disbursal withdrawals");
@@ -387,24 +358,40 @@ impl ConfirmJob {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+    use std::{
+        io::{self, Write},
+        sync::{
+            Arc, Mutex,
+            atomic::{AtomicBool, Ordering},
+        },
     };
 
-    use alloy_json_rpc::ErrorPayload;
-    use alloy_primitives::U256;
+    use alloy_primitives::{Bytes, U256};
     use alloy_rpc_types_eth::{Block, Transaction};
-    use alloy_transport::TransportError;
     use axum::{Json, Router, routing::post};
     use base_proof_contracts::IAnchorStateRegistry;
     use base_withdrawer::{MessagePassed, WithdrawalDisputeGame, WithdrawalTransaction};
     use rstest::rstest;
     use serde_json::{Value, json};
     use tokio::{net::TcpListener, task::JoinHandle};
+    use tracing::instrument::WithSubscriber;
     use url::Url;
 
     use super::*;
+
+    #[derive(Clone)]
+    struct LogCapture(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for LogCapture {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
 
     struct Server {
         url: Url,
@@ -449,6 +436,50 @@ mod tests {
                 withdrawal_timeout: Duration::from_secs(10),
             },
         }
+    }
+
+    fn disbursal_receipt() -> Value {
+        let mut receipt: Value = serde_json::from_str(include_str!(
+            "../../withdrawer/fixtures/synthetic-deposit-withdrawal-receipt.json"
+        ))
+        .unwrap();
+        let log: alloy_rpc_types_eth::Log =
+            serde_json::from_value(receipt["logs"][0].clone()).unwrap();
+        let mut event = MessagePassed::decode_log(&log.inner).unwrap().data;
+        event.sender = Predeploys::L2_CROSS_DOMAIN_MESSENGER;
+        event.data = CrossDomainMessenger::relayMessageCall {
+            _nonce: event.nonce,
+            _sender: Predeploys::L2_STANDARD_BRIDGE,
+            _target: Address::repeat_byte(5),
+            _value: event.value,
+            _minGasLimit: U256::ZERO,
+            _message: StandardBridge::finalizeBridgeETHCall {
+                _from: Address::repeat_byte(4),
+                _to: Address::repeat_byte(6),
+                _amount: event.value,
+                _extraData: Bytes::new(),
+            }
+            .abi_encode()
+            .into(),
+        }
+        .abi_encode()
+        .into();
+        event.withdrawalHash = Withdrawal {
+            transaction: WithdrawalTransaction {
+                nonce: event.nonce,
+                sender: event.sender,
+                target: event.target,
+                value: event.value,
+                gasLimit: event.gasLimit,
+                data: event.data.clone(),
+            },
+            block_number: 1,
+        }
+        .hash();
+        let encoded = event.encode_log_data();
+        receipt["logs"][0]["topics"] = json!(encoded.topics());
+        receipt["logs"][0]["data"] = json!(encoded.data);
+        receipt
     }
 
     fn fee_log(block: u64, index: u64, transaction: B256) -> Value {
@@ -505,10 +536,7 @@ mod tests {
     async fn continues_after_failed_receipts_and_withdrawals_and_returns_failure(
         #[case] expected: bool,
     ) {
-        let mut receipt: Value = serde_json::from_str(include_str!(
-            "../../withdrawer/fixtures/synthetic-deposit-withdrawal-receipt.json"
-        ))
-        .unwrap();
+        let mut receipt = disbursal_receipt();
         let log: alloy_rpc_types_eth::Log =
             serde_json::from_value(receipt["logs"][0].clone()).unwrap();
         let event = MessagePassed::decode_log(&log.inner).unwrap().data;
@@ -533,12 +561,17 @@ mod tests {
         second_log["topics"] = json!(second_event.topics());
         second_log["data"] = json!(second_event.data);
         receipt["logs"].as_array_mut().unwrap().push(second_log);
+        let unrelated: Value = serde_json::from_str(include_str!(
+            "../../withdrawer/fixtures/synthetic-deposit-withdrawal-receipt.json"
+        ))
+        .unwrap();
         let visited = Arc::new(Mutex::new(Vec::new()));
         let captured = Arc::clone(&visited);
         let server = Server::new(move |request| match request["method"].as_str().unwrap() {
             "eth_blockNumber" => json!({"result":"0x64"}),
-            "eth_getLogs" => json!({"result":[fee_log(100, 0, B256::repeat_byte(1)), fee_log(100, 1, B256::repeat_byte(2))]}),
+            "eth_getLogs" => json!({"result":[fee_log(100, 0, B256::repeat_byte(1)), fee_log(100, 1, B256::repeat_byte(2)), fee_log(100, 2, B256::repeat_byte(3))]}),
             "eth_getTransactionReceipt" if request["params"][0] == json!(B256::repeat_byte(1)) => json!({"result":null}),
+            "eth_getTransactionReceipt" if request["params"][0] == json!(B256::repeat_byte(3)) => json!({"result":unrelated}),
             "eth_getTransactionReceipt" => json!({"result":receipt}),
             "eth_call" => {
                 let data: Bytes = serde_json::from_value(request["params"][0]["input"].clone()).unwrap();
@@ -566,7 +599,7 @@ mod tests {
         job.args.num_blocks_to_query = 0;
         let error = job.run().await.unwrap_err();
         assert!(
-            format!("{error:#}").contains("2 withdrawals or disbursal receipts failed"),
+            format!("{error:#}").contains("3 withdrawals or disbursal receipts failed"),
             "{error:#}"
         );
         assert!(!format!("{error:#} {error:?}").contains("secret.endpoint"));
@@ -574,21 +607,59 @@ mod tests {
     }
 
     #[rstest]
-    #[case::pending(900, false, true)]
-    #[case::paused(1000, true, false)]
-    #[case::already_finalized_during_estimation(1000, false, true)]
+    #[case::pending(900, false, Some(WithdrawalStatus::Finalize), false, Some(1))]
+    #[case::pending_proof_age_read_fails(
+        900,
+        false,
+        Some(WithdrawalStatus::Finalize),
+        true,
+        Some(1)
+    )]
+    #[case::paused(1000, true, Some(WithdrawalStatus::Finalize), false, None)]
+    #[case::already_finalized_during_estimation(
+        1000,
+        false,
+        Some(WithdrawalStatus::Finalized),
+        false,
+        Some(0)
+    )]
+    #[case::not_ready_during_estimation(1000, false, Some(WithdrawalStatus::NotReady { ready_at: 900, waiting_for_game: false }), false, Some(1))]
+    #[case::proof_invalidated_during_estimation(
+        1000,
+        false,
+        Some(WithdrawalStatus::Prove),
+        false,
+        Some(1)
+    )]
+    #[case::still_ready_during_estimation(
+        1000,
+        false,
+        Some(WithdrawalStatus::Finalize),
+        false,
+        None
+    )]
+    #[case::paused_during_estimation(1000, false, Some(WithdrawalStatus::Paused), false, None)]
+    #[case::recheck_read_fails(1000, false, None, false, None)]
     #[tokio::test]
-    async fn run_handles_pending_paused_and_concurrent_finalization(
+    async fn run_handles_pending_paused_races_and_unrelated_withdrawals(
         #[case] now: u64,
         #[case] paused: bool,
-        #[case] succeeds: bool,
+        #[case] recheck: Option<WithdrawalStatus>,
+        #[case] proof_age_fails: bool,
+        #[case] pending: Option<usize>,
     ) {
-        let receipt: Value = serde_json::from_str(include_str!(
+        let mut receipt = disbursal_receipt();
+        let log: alloy_rpc_types_eth::Log =
+            serde_json::from_value(receipt["logs"][0].clone()).unwrap();
+        let hash = MessagePassed::decode_log(&log.inner).unwrap().data.withdrawalHash;
+        let unrelated: Value = serde_json::from_str(include_str!(
             "../../withdrawer/fixtures/synthetic-deposit-withdrawal-receipt.json"
         ))
         .unwrap();
+        receipt["logs"].as_array_mut().unwrap().push(unrelated["logs"][0].clone());
         let estimated = Arc::new(AtomicBool::new(false));
         let captured = Arc::clone(&estimated);
+        let proof_reads = Arc::new(Mutex::new(0));
         let server = Server::new(move |request| match request["method"].as_str().unwrap() {
             "eth_blockNumber" | "eth_gasPrice" => json!({"result":"0x64"}),
             "eth_getLogs" => json!({"result":[fee_log(100, 0, B256::repeat_byte(1))]}),
@@ -602,9 +673,10 @@ mod tests {
             "eth_getTransactionCount" => json!({"result":"0x0"}),
             "eth_estimateGas" => {
                 let data: Bytes = serde_json::from_value(request["params"][0]["input"].clone()).unwrap();
-                WithdrawalPortal::finalizeWithdrawalTransactionCall::abi_decode_validate(&data).unwrap();
+                let call = WithdrawalPortal::finalizeWithdrawalTransactionCall::abi_decode_validate(&data).unwrap();
+                assert_eq!(call.withdrawal.data, MessagePassed::decode_log(&log.inner).unwrap().data.data);
                 captured.store(true, Ordering::Relaxed);
-                json!({"error":{"code":3,"message":"execution reverted","data":"0x730a1074"}})
+                json!({"error":{"code":3,"message":"execution reverted: https://user:password@secret.endpoint","data":"0xdeadbeef"}})
             }
             "eth_call" => {
                 let data: Bytes = serde_json::from_value(request["params"][0]["input"].clone()).unwrap();
@@ -617,9 +689,24 @@ mod tests {
                 }
                 reply!(FaultProofPortal::disputeGameFactoryCall, Address::repeat_byte(2));
                 reply!(FaultProofPortal::anchorStateRegistryCall, Address::repeat_byte(3));
-                reply!(WithdrawalPortal::finalizedWithdrawalsCall, false);
-                reply!(IAnchorStateRegistry::pausedCall, paused);
-                reply!(FaultProofPortal::provenWithdrawalsCall, Address::repeat_byte(8), 800u64);
+                let estimated = captured.load(Ordering::Relaxed);
+                if data[..4] == WithdrawalPortal::finalizedWithdrawalsCall::SELECTOR {
+                    let call = WithdrawalPortal::finalizedWithdrawalsCall::abi_decode(&data).unwrap();
+                    assert_eq!(call.withdrawalHash, hash, "unrelated withdrawal was processed");
+                    if estimated && recheck.is_none() {
+                        return json!({"error":{"code":-32000,"message":"execution reverted: secret.endpoint"}});
+                    }
+                }
+                if data[..4] == FaultProofPortal::provenWithdrawalsCall::SELECTOR {
+                    let mut reads = proof_reads.lock().unwrap();
+                    *reads += 1;
+                    if proof_age_fails && *reads > 1 {
+                        return json!({"error":{"code":3,"message":"execution reverted: secret.endpoint"}});
+                    }
+                }
+                reply!(WithdrawalPortal::finalizedWithdrawalsCall, estimated && recheck == Some(WithdrawalStatus::Finalized));
+                reply!(IAnchorStateRegistry::pausedCall, paused || estimated && recheck == Some(WithdrawalStatus::Paused));
+                reply!(FaultProofPortal::provenWithdrawalsCall, Address::repeat_byte(8), if estimated && recheck == Some(WithdrawalStatus::Prove) { 0u64 } else { 800u64 });
                 reply!(IAnchorStateRegistry::isGameBlacklistedCall, false);
                 reply!(IAnchorStateRegistry::isGameRetiredCall, false);
                 reply!(IAnchorStateRegistry::isGameProperCall, true);
@@ -628,7 +715,7 @@ mod tests {
                 reply!(FaultProofPortal::proofMaturityDelaySecondsCall, U256::from(100));
                 reply!(WithdrawalDisputeGame::resolvedAtCall, 700u64);
                 reply!(IAnchorStateRegistry::disputeGameFinalityDelaySecondsCall, U256::from(200));
-                reply!(IAnchorStateRegistry::isGameFinalizedCall, now > 900);
+                reply!(IAnchorStateRegistry::isGameFinalizedCall, now > 900 && !(estimated && matches!(recheck, Some(WithdrawalStatus::NotReady { .. }))));
                 reply!(FaultProofPortal::checkWithdrawalCall,);
                 panic!("unexpected contract selector {data}");
             }
@@ -636,11 +723,41 @@ mod tests {
         }).await;
         let mut job = job(&server.url);
         job.args.num_blocks_to_query = 0;
-        let result = job.run().await;
-        assert_eq!(result.is_ok(), succeeds, "{result:?}");
-        if paused {
-            assert!(format!("{:#}", result.unwrap_err()).contains("paused"));
+        let capture = LogCapture(Arc::new(Mutex::new(Vec::new())));
+        let writer = capture.clone();
+        let subscriber =
+            tracing_subscriber::fmt().with_ansi(false).with_writer(move || writer.clone()).finish();
+        let result = job.run().with_subscriber(subscriber).await;
+        assert_eq!(result.is_ok(), pending.is_some(), "{result:?}");
+        let logs = String::from_utf8(capture.0.lock().unwrap().clone()).unwrap();
+        assert!(logs.contains("skipping withdrawal not sent by the FeeDisburser"));
+        if let Some(pending) = pending {
+            assert!(logs.contains(&format!("pending withdrawals count={pending}")), "{logs}");
+            assert!(logs.contains("failed withdrawals or disbursal receipts count=0"), "{logs}");
+        } else {
+            let error = result.unwrap_err();
+            if !paused {
+                assert!(matches!(
+                    error.downcast_ref::<WithdrawerError>(),
+                    Some(WithdrawerError::Request(error))
+                        if error.as_error_resp().is_some_and(|payload| payload.code == 3)
+                ));
+            }
+            assert!(format!("{error:#}").contains(if paused {
+                "paused"
+            } else {
+                "execution reverted"
+            }));
+            assert_eq!(
+                format!("{error:#}").contains("could not recheck withdrawal status"),
+                recheck.is_none()
+            );
+            assert!(!format!("{error:#} {error:?}").contains("secret.endpoint"));
         }
+        if proof_age_fails {
+            assert!(logs.contains("could not read pending withdrawal proof age"), "{logs}");
+        }
+        assert!(!logs.contains("secret.endpoint"));
         assert_eq!(estimated.load(Ordering::Relaxed), !paused && now > 900);
     }
 
@@ -664,43 +781,6 @@ mod tests {
         }).await;
         let error = job(&server.url).run().await.unwrap_err();
         assert!(error.to_string().contains(message), "{error:#}");
-    }
-
-    fn revert(data: Option<Bytes>) -> WithdrawerError {
-        let mut payload = json!({"code":3,"message":"execution reverted: secret endpoint"});
-        if let Some(data) = data {
-            payload["data"] = json!(data);
-        }
-        WithdrawerError::from(TransportError::ErrorResp(
-            serde_json::from_value::<ErrorPayload>(payload).unwrap(),
-        ))
-    }
-
-    #[rstest]
-    #[case::proof_age("0xd9bc01be".parse().unwrap(), Some(FinalizeRevert::Pending))]
-    #[case::root_claim("0x332a57f8".parse().unwrap(), Some(FinalizeRevert::Pending))]
-    #[case::finalized("0x730a1074".parse().unwrap(), Some(FinalizeRevert::AlreadyFinalized))]
-    #[case::legacy(alloy_sol_types::Revert::from("OptimismPortal: proven withdrawal has not matured yet").abi_encode().into(), Some(FinalizeRevert::Pending))]
-    #[case::unrelated("0xdeadbeef".parse().unwrap(), None)]
-    fn classifies_redacted_portal_reverts(
-        #[case] data: Bytes,
-        #[case] expected: Option<FinalizeRevert>,
-    ) {
-        assert_eq!(FinalizeRevert::classify(&revert(Some(data))), expected);
-    }
-
-    #[test]
-    fn revert_without_data_is_a_failure() {
-        assert_eq!(FinalizeRevert::classify(&revert(None)), None);
-    }
-
-    #[test]
-    fn unconfirmed_preserves_revert_classification() {
-        let error = WithdrawerError::Unconfirmed {
-            transaction_hash: Default::default(),
-            source: Box::new(revert(Some("0x730a1074".parse().unwrap()))),
-        };
-        assert_eq!(FinalizeRevert::classify(&error), Some(FinalizeRevert::AlreadyFinalized));
     }
 
     #[rstest]
