@@ -27,8 +27,9 @@ even and odd halves of the sample as a precision estimate, and the top gas spend
 Blocks show no storage writes and the public RPC rejects tracing, so ERC-20 Transfer events (up to
 two balance writes each) stand in for them; approvals, pool state and other writes go uncounted.
 
---out maps each class onto load-test types (GENERATOR, split evenly), weighted by transaction count,
-with target_gps from the window's gas per second. Tx shares match mainnet, but the stand-ins use
+--out maps each class onto load-test types (GENERATOR; swap is uniswap_v3 plus aerodrome_cl, and a
+class with two types splits evenly), weighted by transaction count, with target_gps from the window's
+gas per second. Tx shares match mainnet, but the stand-ins use
 less gas per tx than most classes they replace, so matching gas per block takes more txs per block
 (the config header gives the ratio from LOAD_GAS_PER_TX). Reverts run as successful b20 calls:
 the generator has no failing-call type.
@@ -90,8 +91,8 @@ CONFIG_TEMPLATE = """\
 # Non-deposit mean per block: {gas} gas, {txs} txs, {transfer_events} ERC-20 Transfer events.
 # Class: share by count / gas, gas/tx -> load-test type:
 {class_lines}
-# Tx shares match mainnet. The stand-ins run other code paths (no Uniswap tick math, EntryPoint
-# validation or failing calls; reverts run as successful b20 calls) and use less gas per tx: about
+# Tx shares match mainnet. The stand-ins run other code paths (no liquidity mint/burn, multi-hop routes,
+# EntryPoint validation or failing calls; reverts run as successful b20 calls) and use less gas per tx: about
 # {load_gas_per_tx} vs mainnet's {gas_per_tx}, so matching gas per block takes {tx_ratio}x mainnet's txs per block.
 # For `base-bench snapshot`: the launcher replaces the RPC URLs and prefunds an ephemeral funder.
 

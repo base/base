@@ -13,8 +13,8 @@
 #   reverted         6.32% /   4.08%,  126051 -> b20
 #   no_logs         30.55% /   7.15%,   45687 -> b20
 #   other            8.07% /   6.20%,  149957 -> b20
-# Tx shares match mainnet. The stand-ins run other code paths (no Uniswap tick math, EntryPoint
-# validation or failing calls; reverts run as successful b20 calls) and use less gas per tx: about
+# Tx shares match mainnet. The stand-ins run other code paths (no liquidity mint/burn, multi-hop routes,
+# EntryPoint validation or failing calls; reverts run as successful b20 calls) and use less gas per tx: about
 # 69331 vs mainnet's 195212, so matching gas per block takes 2.82x mainnet's txs per block.
 # For `base-bench snapshot`: the launcher replaces the RPC URLs and prefunds an ephemeral funder.
 
