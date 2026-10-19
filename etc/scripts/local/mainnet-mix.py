@@ -17,7 +17,7 @@ Each non-deposit transaction takes the first class it matches, in CLASSES order:
     oracle          FeedUpdated event
     token_transfer  ERC-20 transfer or transferFrom call
     approval        only Approval events
-    token_move      ERC-20 Transfer event from any other call
+    token_move      ERC-20 Transfer event (3 topics; ERC-721's 4-topic Transfer is `other`)
     reverted        failed
     no_logs         succeeded without logs
     other           anything else
@@ -166,7 +166,7 @@ def classify(tx, receipt):
         return "token_transfer"
     if topics == {APPROVAL}:
         return "approval"
-    if ERC20_TRANSFER in topics:
+    if any(len(log["topics"]) == 3 and log["topics"][0] == ERC20_TRANSFER for log in receipt["logs"]):
         return "token_move"
     if receipt["status"] == "0x0":
         return "reverted"
@@ -187,7 +187,7 @@ def fetch(url, numbers):
             kind, used = classify(tx, receipt), int(receipt["gasUsed"], 16)
             row["txs"][kind] = row["txs"].get(kind, 0) + 1
             row["gas"][kind] = row["gas"].get(kind, 0) + used
-            row["events"] += sum(1 for log in receipt["logs"] if log["topics"][:1] == [ERC20_TRANSFER])
+            row["events"] += sum(len(log["topics"]) == 3 and log["topics"][0] == ERC20_TRANSFER for log in receipt["logs"])
             if kind == "other":
                 for field, key in (("other_to", tx["to"]), ("other_sel", tx["input"][:10])):
                     row[field][key] = row[field].get(key, 0) + used
