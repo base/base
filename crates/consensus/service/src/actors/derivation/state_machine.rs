@@ -86,6 +86,10 @@ fn transition(
             DerivationStateUpdate::SignalProcessed => {
                 Ok(DerivationState::AwaitingUpdateAfterSignal)
             }
+            // The engine can confirm attributes that were in flight when an engine-side reset
+            // signalled derivation. The engine's safe head is authoritative and it does not resend
+            // an unchanged safe head, so record it and keep waiting.
+            DerivationStateUpdate::NewAttributesConfirmed(_) => Ok(DerivationState::AwaitingL1Data),
             _ => Err(DerivationStateTransitionError::InvalidTransition {
                 state: *state,
                 update: update.clone(),
@@ -108,7 +112,10 @@ fn transition(
             DerivationStateUpdate::SignalProcessed => {
                 Ok(DerivationState::AwaitingUpdateAfterSignal)
             }
-            DerivationStateUpdate::L1DataReceived | DerivationStateUpdate::MoreDataNeeded => {
+            // See `AwaitingL1Data`: a confirmation for attributes sent before a reset is recorded.
+            DerivationStateUpdate::L1DataReceived
+            | DerivationStateUpdate::MoreDataNeeded
+            | DerivationStateUpdate::NewAttributesConfirmed(_) => {
                 Ok(DerivationState::AwaitingSignal)
             }
             _ => Err(DerivationStateTransitionError::InvalidTransition {
@@ -273,6 +280,7 @@ mod tests {
     // AwaitingL1Data valid transitions
     #[case(AwaitingL1Data, L1DataReceived, Deriving)]
     #[case(AwaitingL1Data, SignalProcessed, AwaitingUpdateAfterSignal)]
+    #[case(AwaitingL1Data, NewAttributesConfirmed(block()), AwaitingL1Data)]
     // AwaitingSafeHeadConfirmation valid transitions
     #[case(AwaitingSafeHeadConfirmation, NewAttributesConfirmed(block()), Deriving)]
     #[case(AwaitingSafeHeadConfirmation, SignalProcessed, AwaitingUpdateAfterSignal)]
@@ -281,6 +289,7 @@ mod tests {
     #[case(AwaitingSignal, SignalProcessed, AwaitingUpdateAfterSignal)]
     #[case(AwaitingSignal, L1DataReceived, AwaitingSignal)]
     #[case(AwaitingSignal, MoreDataNeeded, AwaitingSignal)]
+    #[case(AwaitingSignal, NewAttributesConfirmed(block()), AwaitingSignal)]
     // AwaitingUpdateAfterSignal valid transitions
     #[case(AwaitingUpdateAfterSignal, L1DataReceived, Deriving)]
     #[case(AwaitingUpdateAfterSignal, NewAttributesConfirmed(block()), Deriving)]
@@ -312,7 +321,6 @@ mod tests {
     #[case(AwaitingL1Data, ELSyncCompleted(block()))]
     #[case(AwaitingL1Data, MoreDataNeeded)]
     #[case(AwaitingL1Data, NewAttributesDerived(attrs()))]
-    #[case(AwaitingL1Data, NewAttributesConfirmed(block()))]
     #[case(AwaitingL1Data, SignalNeeded)]
     // AwaitingSafeHeadConfirmation invalid transitions
     #[case(AwaitingSafeHeadConfirmation, ELSyncCompleted(block()))]
@@ -322,7 +330,6 @@ mod tests {
     // AwaitingSignal invalid transitions
     #[case(AwaitingSignal, ELSyncCompleted(block()))]
     #[case(AwaitingSignal, NewAttributesDerived(attrs()))]
-    #[case(AwaitingSignal, NewAttributesConfirmed(block()))]
     #[case(AwaitingSignal, SignalNeeded)]
     // AwaitingUpdateAfterSignal invalid transitions
     #[case(AwaitingUpdateAfterSignal, ELSyncCompleted(block()))]

@@ -455,3 +455,163 @@ pub enum DerivationError {
     #[error(transparent)]
     StateTransitionError(#[from] DerivationStateTransitionError),
 }
+
+#[cfg(test)]
+mod tests {
+    //! The pipeline double is hand-rolled because `Pipeline` lives in `base-consensus-derive`, where
+    //! an `automock` would only be compiled for that crate's own tests.
+
+    use std::collections::VecDeque;
+
+    use alloy_eips::BlockNumHash;
+    use base_common_genesis::{RollupConfig, SystemConfig};
+    use base_common_rpc_types_engine::BasePayloadAttributes;
+    use base_protocol::L2BlockInfo;
+    use tokio::sync::oneshot;
+
+    use super::*;
+    use crate::{
+        actors::derivation::engine_client::MockDerivationEngineClient, test_utils::FakeSafeDB,
+    };
+
+    enum ScriptedStep {
+        Produce(Box<AttributesWithParent>),
+        Yield,
+    }
+
+    #[derive(Default)]
+    struct ScriptedPipeline {
+        steps: VecDeque<ScriptedStep>,
+        prepared: Option<AttributesWithParent>,
+        rollup_config: RollupConfig,
+    }
+
+    impl std::fmt::Debug for ScriptedPipeline {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("ScriptedPipeline").field("remaining_steps", &self.steps.len()).finish()
+        }
+    }
+
+    impl ScriptedPipeline {
+        fn new(steps: impl IntoIterator<Item = ScriptedStep>) -> Self {
+            Self { steps: steps.into_iter().collect(), ..Default::default() }
+        }
+    }
+
+    impl Iterator for ScriptedPipeline {
+        type Item = AttributesWithParent;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            self.prepared.take()
+        }
+    }
+
+    impl base_consensus_derive::OriginProvider for ScriptedPipeline {
+        fn origin(&self) -> Option<BlockInfo> {
+            Some(BlockInfo::default())
+        }
+    }
+
+    #[async_trait]
+    impl SignalReceiver for ScriptedPipeline {
+        async fn signal(&mut self, _: Signal) -> base_consensus_derive::PipelineResult<()> {
+            Ok(())
+        }
+    }
+
+    #[async_trait]
+    impl Pipeline for ScriptedPipeline {
+        fn peek(&self) -> Option<&AttributesWithParent> {
+            self.prepared.as_ref()
+        }
+
+        async fn step(&mut self, _: L2BlockInfo) -> StepResult {
+            match self.steps.pop_front() {
+                Some(ScriptedStep::Produce(attributes)) => {
+                    self.prepared = Some(*attributes);
+                    StepResult::PreparedAttributes
+                }
+                Some(ScriptedStep::Yield) | None => {
+                    StepResult::StepFailed(PipelineError::Eof.temp())
+                }
+            }
+        }
+
+        fn rollup_config(&self) -> &RollupConfig {
+            &self.rollup_config
+        }
+
+        async fn system_config_by_l2_hash(
+            &mut self,
+            _: B256,
+        ) -> Result<SystemConfig, PipelineErrorKind> {
+            unimplemented!("not used by the derivation actor")
+        }
+    }
+
+    fn l2_block(number: u64) -> L2BlockInfo {
+        L2BlockInfo {
+            block_info: BlockInfo {
+                number,
+                hash: B256::with_last_byte(number as u8),
+                parent_hash: B256::with_last_byte(number.saturating_sub(1) as u8),
+                timestamp: number,
+            },
+            l1_origin: BlockNumHash::default(),
+            seq_num: number,
+        }
+    }
+
+    fn attributes_on(parent: L2BlockInfo) -> AttributesWithParent {
+        AttributesWithParent {
+            attributes: BasePayloadAttributes::default(),
+            parent,
+            derived_from: Some(BlockInfo::default()),
+            is_last_in_span: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn stale_safe_head_confirmation_after_engine_reset_keeps_derivation_running() {
+        let (request_tx, request_rx) = mpsc::channel(16);
+        let mut engine_client = MockDerivationEngineClient::new();
+        engine_client.expect_send_derived_attributes().times(1).returning(|_| Ok(()));
+        let actor = DerivationActor::new(
+            engine_client,
+            CancellationToken::new(),
+            request_rx,
+            ScriptedPipeline::new([
+                ScriptedStep::Produce(Box::new(attributes_on(l2_block(0)))),
+                ScriptedStep::Yield,
+            ]),
+            Arc::new(FakeSafeDB::new()),
+            watch::channel(None).0,
+        );
+        let actor_handle = tokio::spawn(actor.start(()));
+
+        // EL sync completes at #0. Derivation sends attributes for #1 and awaits confirmation.
+        let requests = [
+            DerivationActorRequest::ProcessEngineSyncCompletionRequest(Box::new(l2_block(0))),
+            // An engine-side reset (e.g. an INVALID forkchoice update while inserting an unsafe
+            // block) signals derivation while the #1 attributes are still in the engine's inbox.
+            // The reset leaves the safe head at #0, so the engine sends only the signal.
+            DerivationActorRequest::ProcessEngineSignalRequest(Box::new(
+                ResetSignal { l2_safe_head: l2_block(0) }.signal(),
+            )),
+            // A new L1 head arrives; the freshly reset pipeline has no data yet and yields.
+            DerivationActorRequest::ProcessL1HeadUpdateRequest(Box::default()),
+            // The engine then consolidates the stale #1 attributes and reports #1 as safe.
+            DerivationActorRequest::ProcessEngineSafeHeadUpdateRequest(Box::new(l2_block(1))),
+        ];
+        for request in requests {
+            request_tx.send(request).await.expect("derivation actor is running");
+        }
+
+        let (state_tx, state_rx) = oneshot::channel();
+        let _ = request_tx.send(DerivationActorRequest::CurrentStateRequest(state_tx)).await;
+        let Ok(state) = state_rx.await else {
+            panic!("derivation actor exited: {:?}", actor_handle.await);
+        };
+        assert_eq!(state, DerivationState::AwaitingL1Data);
+    }
+}
