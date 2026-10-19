@@ -17,7 +17,9 @@ use jsonrpsee::{
     proc_macros::rpc,
     types::{ErrorCode, ErrorObjectOwned},
 };
-use reth_transaction_pool::{TransactionOrigin, TransactionPool};
+use reth_transaction_pool::{
+    AddedTransactionOutcome, PoolResult, PoolTransaction, TransactionOrigin, TransactionPool,
+};
 use serde_json::{Map, json};
 use tracing::debug;
 
@@ -36,6 +38,12 @@ static BUILDER_HOST: LazyLock<String> = LazyLock::new(|| {
     hostname::get().ok().and_then(|name| name.into_string().ok()).unwrap_or_default()
 });
 
+/// Most transactions one `base_insertValidatedTransactions` call may carry.
+///
+/// Equal to the forwarder's cap on an unlimited batch size; forwarders send larger batches as
+/// individual calls.
+pub const MAX_VALIDATED_INSERT_BATCH: usize = 1024;
+
 /// Writes inbound `insertValidatedTransaction` metering into the builder cache.
 pub trait InsertMetering: core::fmt::Debug + Send + Sync + 'static {
     /// Stores metering for `tx_hash`.
@@ -53,9 +61,21 @@ pub trait BuilderApi<E> {
     /// allowing the builder to skip signature verification.
     ///
     /// Returns an error if decoding or pool insertion fails.
-    /// Use JSON-RPC batch requests for efficient bulk submission.
     #[method(name = "insertValidatedTransaction")]
     async fn insert_validated_transaction(&self, tx: ValidatedTransaction<E>) -> RpcResult<()>;
+
+    /// Inserts up to [`MAX_VALIDATED_INSERT_BATCH`] pre-validated transactions in order, as one
+    /// pool batch.
+    ///
+    /// Returns one entry per transaction, in order: `null` where
+    /// `base_insertValidatedTransaction` would have succeeded, otherwise the error it would have
+    /// returned. Fails as a whole for an oversized batch, or when any entry does not deserialize
+    /// as a `ValidatedTransaction`.
+    #[method(name = "insertValidatedTransactions")]
+    async fn insert_validated_transactions(
+        &self,
+        txs: Vec<ValidatedTransaction<E>>,
+    ) -> RpcResult<Vec<Option<ErrorObjectOwned>>>;
 }
 
 /// Server implementation of [`BuilderApi`] backed by a transaction pool.
@@ -136,10 +156,71 @@ where
     E: ValidatedTransactionExtensions<BasePooledTransaction>,
 {
     async fn insert_validated_transaction(&self, tx: ValidatedTransaction<E>) -> RpcResult<()> {
-        debug!(
-            sender = %tx.sender,
-            "rpc::insert_validated_transaction"
-        );
+        debug!(sender = %tx.sender, "rpc::insert_validated_transaction");
+        let (origin, pool_tx, metering) = self.prepare_insert(tx)?;
+        let (tx_hash, encoded_len) = (*pool_tx.hash(), pool_tx.encoded_length());
+        let start = Instant::now();
+        let result = self.pool.add_transaction(origin, pool_tx).await;
+        BuilderApiMetrics::insert_duration().record(start.elapsed().as_secs_f64());
+        self.finish_insert(tx_hash, encoded_len, metering, result)
+    }
+
+    async fn insert_validated_transactions(
+        &self,
+        txs: Vec<ValidatedTransaction<E>>,
+    ) -> RpcResult<Vec<Option<ErrorObjectOwned>>> {
+        debug!(txs = txs.len(), "rpc::insert_validated_transactions");
+        Self::check_batch_size(txs.len())?;
+        let mut results = vec![None; txs.len()];
+        let mut admitted = Vec::with_capacity(txs.len());
+        let mut batch = Vec::with_capacity(txs.len());
+        for (index, tx) in txs.into_iter().enumerate() {
+            match self.prepare_insert(tx) {
+                Ok((origin, pool_tx, metering)) => {
+                    admitted.push((index, *pool_tx.hash(), pool_tx.encoded_length(), metering));
+                    batch.push((origin, pool_tx));
+                }
+                Err(error) => results[index] = Some(error),
+            }
+        }
+        let start = Instant::now();
+        let outcomes = self.pool.add_transactions_with_origins(batch).await;
+        // Each transaction waited for the whole pool batch, as a single insert waits for its own.
+        let elapsed = start.elapsed().as_secs_f64();
+        for ((index, tx_hash, encoded_len, metering), result) in admitted.into_iter().zip(outcomes)
+        {
+            BuilderApiMetrics::insert_duration().record(elapsed);
+            results[index] = self.finish_insert(tx_hash, encoded_len, metering, result).err();
+        }
+        Ok(results)
+    }
+}
+
+impl<P, E> BuilderApiImpl<P, E>
+where
+    E: ValidatedTransactionExtensions<BasePooledTransaction>,
+{
+    /// Rejects a `base_insertValidatedTransactions` call carrying more than
+    /// [`MAX_VALIDATED_INSERT_BATCH`] transactions, before any of them is processed.
+    pub fn check_batch_size(len: usize) -> RpcResult<()> {
+        if len > MAX_VALIDATED_INSERT_BATCH {
+            return Err(ErrorObjectOwned::owned(
+                ErrorCode::InvalidParams.code(),
+                format!(
+                    "batch of {len} transactions exceeds the limit of {MAX_VALIDATED_INSERT_BATCH}"
+                ),
+                None::<()>,
+            ));
+        }
+        Ok(())
+    }
+
+    /// Checks and decodes one wire transaction into the pool transaction and origin it is
+    /// inserted with, plus its metering for [`Self::finish_insert`].
+    fn prepare_insert(
+        &self,
+        tx: ValidatedTransaction<E>,
+    ) -> RpcResult<(TransactionOrigin, BasePooledTransaction, Option<MeterBundleResponse>)> {
         let sender = tx.sender;
         let has_extensions = !tx.extensions.is_empty();
 
@@ -167,7 +248,6 @@ where
                     None::<()>,
                 )
             })?;
-        let tx_hash = *consensus_tx.hash();
         let encoded_len = tx.raw.len();
 
         let recovered = Recovered::new_unchecked(consensus_tx, sender);
@@ -204,14 +284,19 @@ where
 
         // Extension-bearing transactions remain private so normal P2P gossip
         // cannot propagate the raw transaction without its extension metadata.
-        let start = Instant::now();
-        let result = if has_extensions {
-            self.pool.add_transaction(TransactionOrigin::Private, pool_tx).await
-        } else {
-            self.pool.add_external_transaction(pool_tx).await
-        };
-        BuilderApiMetrics::insert_duration().record(start.elapsed().as_secs_f64());
+        let origin =
+            if has_extensions { TransactionOrigin::Private } else { TransactionOrigin::External };
+        Ok((origin, pool_tx, metering))
+    }
 
+    /// Records the pool's verdict on one prepared transaction and maps it to the RPC result.
+    fn finish_insert(
+        &self,
+        tx_hash: TxHash,
+        encoded_len: usize,
+        metering: Option<MeterBundleResponse>,
+        result: PoolResult<AddedTransactionOutcome>,
+    ) -> RpcResult<()> {
         match result {
             Ok(_) => {
                 if let Some(metering) = metering
@@ -224,7 +309,7 @@ where
                     tx_hash,
                     Map::from_iter([("encoded_len".to_string(), json!(encoded_len))]),
                 );
-                debug!(sender = %sender, "inserted validated transaction");
+                debug!(tx_hash = %tx_hash, "inserted validated transaction");
                 BuilderApiMetrics::txs_inserted().increment(1);
                 Ok(())
             }
@@ -238,7 +323,7 @@ where
                         ("error".to_string(), json!(e.to_string())),
                     ]),
                 );
-                debug!(sender = %sender, error = %e, "pool rejected transaction");
+                debug!(tx_hash = %tx_hash, error = %e, "pool rejected transaction");
                 BuilderApiMetrics::txs_rejected(PoolRejectionLabel::from_error(&e)).increment(1);
                 Err(ErrorObjectOwned::owned(
                     ErrorCode::InternalError.code(),
@@ -311,6 +396,27 @@ mod tests {
             metering: None,
             extensions: TransactionValidity { validity, validity_signature: Some(signature) },
         }
+    }
+
+    #[tokio::test]
+    async fn batch_insert_rejects_more_than_the_batch_limit() {
+        let handler = BuilderApiImpl::new(NoopTransactionPool::<BasePooledTransaction>::new());
+        let tx = ValidatedTransaction {
+            sender: Address::ZERO,
+            raw: Bytes::from_static(&[0x02]),
+            metering: None,
+            extensions: NoExtensions::default(),
+        };
+
+        let error = handler
+            .insert_validated_transactions(vec![tx.clone(); MAX_VALIDATED_INSERT_BATCH + 1])
+            .await
+            .unwrap_err();
+        assert_eq!(error.code(), ErrorCode::InvalidParams.code());
+
+        let results =
+            handler.insert_validated_transactions(vec![tx; MAX_VALIDATED_INSERT_BATCH]).await;
+        assert_eq!(results.unwrap().len(), MAX_VALIDATED_INSERT_BATCH);
     }
 
     #[tokio::test]
