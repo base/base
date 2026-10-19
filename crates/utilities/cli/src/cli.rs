@@ -12,8 +12,7 @@ macro_rules! init_common {
 /// Parses CLI arguments with package version and description from the calling crate.
 #[macro_export]
 macro_rules! parse_cli {
-    ($cli_type:ty) => {{ $crate::parse_cli!($cli_type, |cmd| cmd) }};
-    ($cli_type:ty, $customize:expr) => {{
+    ($cli_type:ty) => {{
         use clap::{CommandFactory, FromArgMatches};
 
         let pkg_name = env!("CARGO_PKG_NAME");
@@ -25,7 +24,6 @@ macro_rules! parse_cli {
             .long_version(version)
             .about(description)
             .name(pkg_name);
-        let cmd = ($customize)(cmd);
         let matches = cmd.get_matches();
         <$cli_type>::from_arg_matches(&matches).expect("Parsing args")
     }};
