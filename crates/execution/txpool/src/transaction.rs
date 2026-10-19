@@ -135,9 +135,9 @@ pub enum PoolTransactionExtension {
     /// In-process `meter_bundle` result. The later consumer only forwards `Some`. Boxed so
     /// the extension stays pointer-sized for candidate representatives.
     Metering(Box<MeterBundleResponse>),
-    /// Candidate group carried by a representative submitted through
-    /// `base_sendRawTransactionCandidates`. The representative is only the pool and iterator
-    /// lifecycle identity; the builder selects and commits one sibling.
+    /// Candidate group carried by the default transaction of a `base_sendSwapTransaction`
+    /// request with alternatives. The default (the group's representative) is only the pool
+    /// and iterator lifecycle identity; the builder selects and commits one sibling.
     Candidate(Arc<CandidateGroup>),
 }
 

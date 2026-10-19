@@ -21,11 +21,11 @@ whose `event_time` is already outside its window or more than an hour in the
 future. A retried `event_id` dedupes only within the same UTC hour of its
 `event_time`. `TXPOOL_SEND_RAW_TRANSACTION_VALIDITY` uses the same warm window as
 `TXPOOL_SEND_RAW_TRANSACTION`. `BUILDER_DEFERRED` and `BUILDER_EXPIRED` use the
-same hot window as the other per-attempt builder decisions. Candidate-group
-events follow the same split: `BUILDER_CANDIDATE_ROUND` and
-`BUILDER_CANDIDATE_TRIAL` are hot, `TXPOOL_SEND_RAW_TRANSACTION_CANDIDATES` is
-warm, and `TXPOOL_SEND_RAW_TRANSACTION_CANDIDATES_REJECTED`,
-`TXPOOL_CANDIDATE_LANDED`, and `TXPOOL_CANDIDATE_EVICTED` are cold.
+same hot window as the other per-attempt builder decisions. Swap Lane events
+follow the same split: `BUILDER_CANDIDATE_ROUND` and `BUILDER_CANDIDATE_TRIAL`
+are hot, `TXPOOL_SEND_SWAP_TRANSACTION` is warm, and
+`TXPOOL_SEND_SWAP_TRANSACTION_REJECTED`, `TXPOOL_CANDIDATE_LANDED`, and
+`TXPOOL_CANDIDATE_EVICTED` are cold.
 
 ## Configuration Fields
 
@@ -199,8 +199,8 @@ Mempool/node:
 - `TXPOOL_TRACKING_OVERFLOWED`
 - `TXPOOL_SEND_RAW_TRANSACTION`
 - `TXPOOL_SEND_RAW_TRANSACTION_VALIDITY`
-- `TXPOOL_SEND_RAW_TRANSACTION_CANDIDATES`
-- `TXPOOL_SEND_RAW_TRANSACTION_CANDIDATES_REJECTED`
+- `TXPOOL_SEND_SWAP_TRANSACTION`
+- `TXPOOL_SEND_SWAP_TRANSACTION_REJECTED`
 - `TXPOOL_CANDIDATE_LANDED`
 - `TXPOOL_CANDIDATE_EVICTED`
 
@@ -304,7 +304,7 @@ and `data.build_duration_ms`. Build-stopped events use `data.reason` to
 distinguish control-flow stops such as payload resolution winning before
 publish.
 
-Candidate groups (`base_sendRawTransactionCandidates`): every candidate event
+Candidate groups (`base_sendSwapTransaction` with alternatives): every candidate event
 carries `data.group_hash`, the group's join key, and no sibling bytes, plus
 `data.candidate_instance`, a random per-process identifier.
 
@@ -313,16 +313,22 @@ deserializes `event_type`) must run a release that knows the candidate kinds
 before any builder or node emits them. Older binaries reject unknown
 `event_type` values.
 
-Ingress. `TXPOOL_SEND_RAW_TRANSACTION_CANDIDATES` fires once per admitted group,
-when the representative is pooled, keyed by the representative's `tx_hash`, with
-`data.sibling_hashes`. Its `event_id` depends only on the group, and duplicate
-submissions emit nothing. A refused request gets
-`TXPOOL_SEND_RAW_TRANSACTION_CANDIDATES_REJECTED` with the RPC error label in
-`data.rejection_reason`: `pool_rejected` when the pool refused the
-representative and `internal_error` for an unlabeled failure such as a state
-read. `tx_hash` and `data.group_hash` are present only once the group
-validated, and every rejection has its own `event_id`, so repeated rejections
-are all kept. Proxies forward without journaling.
+Ingress. `TXPOOL_SEND_SWAP_TRANSACTION` fires once per admitted
+`base_sendSwapTransaction` request, when the default transaction is pooled,
+keyed by its `tx_hash`. `data.selection` is `applied` for a candidate group,
+which also carries `data.group_hash` and `data.alternative_hashes` and has an
+`event_id` that depends only on the group. It is `none` for a default
+transaction without alternatives and `ignored` when the request carried
+alternatives while selection was disabled; both carry `data.alternatives` and
+`data.expiry_block` and start no group lifecycle. Duplicate submissions emit
+nothing. A refused request gets `TXPOOL_SEND_SWAP_TRANSACTION_REJECTED` with
+`data.selection`, `data.alternatives`, and the RPC error label in
+`data.rejection_reason`: `pool_rejected` when the pool refused the default
+transaction and `internal_error` for an unlabeled failure such as a state read.
+`tx_hash` is present once the default transaction decoded and
+`data.group_hash` once a selection validated, and every rejection has its own
+`event_id`, so repeated rejections are all kept. Proxies forward without
+journaling.
 
 Builder turns. Each turn that considers a group gets a never-reused
 `data.turn`; builder candidate event IDs include the instance and turn, so two
@@ -357,11 +363,12 @@ leaves the ledger unchanged, since the payload may not land. A group is
 considered at most once per build, so decisions are not deduplicated. These
 are per-payload observations: `BUILDER_ACCEPTED` is provisional.
 
-Measured sizes for a two-sibling group, as serialized JSON: admission 822
-bytes, rejection 548 to 681, round 976 to 987 (each further sibling adds its
-label, about 10 to 25 bytes), trial 869 to 878, accepted 848,
-deferred 804, rejected 831, landed 712, evicted 652 to 661. A turn emits one
-round and one decision, plus one trial per sibling when trial events are on.
+Measured sizes as serialized JSON, for a default transaction with one
+alternative: admission 691 bytes (550 without alternatives), rejection 566 to
+688, round 976 to 987 (each further sibling adds its label, about 10 to 25
+bytes), trial 869 to 878, accepted 848, deferred 804, rejected 831, landed 712,
+evicted 652 to 661. A turn emits one round and one decision, plus one trial per
+sibling when trial events are on.
 
 Terminal events. The node's candidate ledger emits exactly one terminal event
 per admitted group, keyed by the group alone so replays deduplicate.
@@ -383,10 +390,12 @@ that left the pool another way, such as admin removal or pool-full eviction, is
 `dropped` only once the recovery window closes, because a canonical landing can
 still correct it.
 
-Disabled selection. A node started without candidates, or one whose selection
-is disabled at runtime with `admin_setCandidateSelectionEnabled`, emits no
-ingress or builder candidate events; the ledger still journals terminal events
-for groups admitted earlier.
+Disabled selection. A node started without candidates registers no
+`base_sendSwapTransaction` and emits none of these events. While selection is
+disabled at runtime with `admin_setCandidateSelectionEnabled`, ingress journals
+admissions with `data.selection: ignored` and starts no group, and the builder
+emits no candidate events; the ledger still journals terminal events for groups
+admitted earlier.
 
 Canonicality caveat: builder events are local payload construction signals, not
 canonical-chain or consensus-finality observations. A builder event with

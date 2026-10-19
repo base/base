@@ -113,7 +113,7 @@ impl CandidateSelectionRule {
     }
 }
 
-/// JSON form of [`CandidateSet`], as carried in `base_sendRawTransactionCandidates`.
+/// JSON form of [`CandidateSet`], as carried in `base_sendSwapTransaction`'s `selection`.
 ///
 /// Integer fields keep their raw signed values so the signing hash is computed over exactly
 /// what the sender signed; [`crate::CandidateValidator`] checks their ranges.

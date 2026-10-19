@@ -13,9 +13,9 @@ use reth_rpc_server_types::RethRpcModule;
 
 use crate::{
     AdminCandidateSelectionApiImpl, AdminCandidateSelectionApiServer, AdminTxPoolApiImpl,
-    AdminTxPoolApiServer, SendRawTransactionCandidatesApiImpl,
-    SendRawTransactionCandidatesApiServer, SendRawTransactionValidityApiImpl,
-    SendRawTransactionValidityApiServer, TransactionStatusApiImpl, TransactionStatusApiServer,
+    AdminTxPoolApiServer, SendRawTransactionValidityApiImpl, SendRawTransactionValidityApiServer,
+    SendSwapTransactionApiImpl, SendSwapTransactionApiServer, TransactionStatusApiImpl,
+    TransactionStatusApiServer,
 };
 
 /// Configuration for the `TxPool` RPC extension.
@@ -117,15 +117,16 @@ impl FromExtensionConfig for SendRawTransactionValidityExtension {
     }
 }
 
-/// Configuration for `base_sendRawTransactionCandidates` ingress.
+/// Configuration for `base_sendSwapTransaction`, the Swap Lane ingress.
 ///
-/// Install the extension only when `--txpool.candidates.enabled` is set: an unregistered method
-/// returns `-32601`, while a registered but runtime-disabled one returns `candidates_disabled`.
+/// Install the extension only when `--txpool.candidates.enabled` is set; an unregistered method
+/// returns `-32601`. While selection is disabled at runtime, the registered method admits only
+/// default transactions.
 #[derive(Debug, Clone)]
-pub struct SendRawTransactionCandidatesConfig {
+pub struct SendSwapTransactionConfig {
     /// Candidate runtime shared with the pool and the payload builder.
     pub runtime: Arc<CandidateRuntime>,
-    /// Maximum group lifetime past the next block, in seconds.
+    /// Maximum lifetime of a swap transaction past the next block, in seconds.
     pub max_expiry_secs: u64,
     /// Upstream sequencer RPC for proxy nodes.
     pub sequencer_url: Option<String>,
@@ -133,18 +134,18 @@ pub struct SendRawTransactionCandidatesConfig {
     pub sequencer_headers: Vec<String>,
 }
 
-/// Extension registering candidate-group ingress and its admin toggle.
+/// Extension registering Swap Lane ingress and its candidate selection admin toggle.
 #[derive(Debug)]
-pub struct SendRawTransactionCandidatesExtension {
-    config: SendRawTransactionCandidatesConfig,
+pub struct SendSwapTransactionExtension {
+    config: SendSwapTransactionConfig,
 }
 
-impl BaseNodeExtension for SendRawTransactionCandidatesExtension {
+impl BaseNodeExtension for SendSwapTransactionExtension {
     fn apply(self: Box<Self>, builder: NodeHooks) -> NodeHooks {
         let config = self.config;
         builder.add_rpc_module(move |ctx: &mut BaseRpcContext<'_>| {
             let chain_id = ctx.provider().chain_spec().chain_id();
-            let mut api = SendRawTransactionCandidatesApiImpl::new(
+            let mut api = SendSwapTransactionApiImpl::new(
                 ctx.provider().clone(),
                 ctx.pool().clone(),
                 Arc::clone(&config.runtime),
@@ -165,8 +166,8 @@ impl BaseNodeExtension for SendRawTransactionCandidatesExtension {
     }
 }
 
-impl FromExtensionConfig for SendRawTransactionCandidatesExtension {
-    type Config = SendRawTransactionCandidatesConfig;
+impl FromExtensionConfig for SendSwapTransactionExtension {
+    type Config = SendSwapTransactionConfig;
 
     fn from_config(config: Self::Config) -> Self {
         Self { config }
