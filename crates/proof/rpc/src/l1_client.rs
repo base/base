@@ -137,12 +137,12 @@ impl L1Client {
         Ok(Self { provider, headers_cache, receipts_cache, retry_config: config.retry_config })
     }
 
-    /// Returns the headers cache metrics.
+    /// Returns the headers cache.
     pub const fn headers_cache(&self) -> &MeteredCache<B256, Header> {
         &self.headers_cache
     }
 
-    /// Returns the receipts cache metrics.
+    /// Returns the receipts cache.
     pub const fn receipts_cache(&self) -> &MeteredCache<B256, Vec<TransactionReceipt>> {
         &self.receipts_cache
     }
