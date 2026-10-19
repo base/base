@@ -156,8 +156,8 @@ pub struct SwapTransactionResponse {
     pub alternative_hashes: Vec<TxHash>,
     /// `expiryBlock` in effect for a default transaction pooled alone. Present only when selection
     /// did not apply. Admission is idempotent by transaction hash, so an exact resubmission
-    /// reports the expiry of the transaction already pooled, whatever `expiryBlock` it carried,
-    /// and omits it if that transaction was pooled without a block expiry.
+    /// reports the inclusive last block of the transaction already pooled, whatever
+    /// `expiryBlock` it carried, and omits it if that transaction has no block bound.
     #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
     pub expiry_block: Option<u64>,
     /// The request carried alternatives, but selection is disabled, so only the default
@@ -528,15 +528,8 @@ where
         };
         if let Some(pooled) = self.pool.get(&hash) {
             trace.duplicate = true;
-            response.expiry_block = pooled.transaction.validity_predicates().iter().find_map(
-                |predicate| match predicate {
-                    ValidityPredicate::BlockNumber {
-                        op: ValidityOperator::LessThanOrEqual,
-                        value,
-                    } => u64::try_from(*value).ok(),
-                    _ => None,
-                },
-            );
+            response.expiry_block =
+                ValidityPredicate::block_expiry_bound(pooled.transaction.validity_predicates());
             return Ok(response);
         }
 
@@ -1903,5 +1896,70 @@ mod tests {
         assert_eq!(events.len(), 1, "{events:?}");
         assert_eq!(events[0].0, rejected);
         assert_eq!(events[0].2["rejection_reason"], "pool_rejected");
+    }
+
+    #[tokio::test]
+    async fn resubmission_reports_the_tightest_pooled_block_bound() {
+        let fixture = fixture();
+        let runtime = runtime(&[fixture.address()]);
+        let validator = CandidateValidator { limits: runtime.limits, chain_id: chain_id() };
+        let block =
+            |op, value: u64| ValidityPredicate::BlockNumber { op, value: U256::from(value) };
+        let cases = [
+            (0, vec![block(ValidityOperator::LessThan, 101)], 100),
+            (
+                1,
+                vec![
+                    block(ValidityOperator::LessThanOrEqual, 100),
+                    block(ValidityOperator::LessThanOrEqual, 50),
+                ],
+                50,
+            ),
+        ];
+        for (nonce, predicates, expected) in cases {
+            // The validity ingress on the same node pooled it first.
+            let pool = pool();
+            let (default, options) = single(&fixture, nonce);
+            let pooled = validator.validate_default(&default).unwrap();
+            let pooled = BasePooledTransaction::new(pooled.transaction, pooled.encoded.len())
+                .with_validity_predicates(predicates);
+            pool.add_transaction(TransactionOrigin::Private, pooled).await.unwrap();
+
+            let api = rpc(provider(), pool, &runtime, MAX_EXPIRY_SECS);
+            let response = api.send_swap_transaction(default, Some(options)).await.unwrap();
+            assert_eq!(response.expiry_block, Some(expected));
+        }
+    }
+
+    #[tokio::test]
+    async fn fresh_single_admission_counts_one_unsigned_validity_sidecar() {
+        let recorder = metrics_util::debugging::DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        let _guard = metrics::set_default_local_recorder(&recorder);
+        let fixture = fixture();
+        let runtime = runtime(&[fixture.address()]);
+        let api = rpc(provider(), pool(), &runtime, MAX_EXPIRY_SECS);
+        let (default, options) = single(&fixture, 0);
+
+        api.send_swap_transaction(default.clone(), Some(options.clone())).await.unwrap();
+        api.send_swap_transaction(default, Some(options)).await.unwrap();
+
+        let unsigned: Vec<_> = snapshotter
+            .snapshot()
+            .into_vec()
+            .into_iter()
+            .filter(|(key, _, _, _)| {
+                let key = key.key();
+                key.name() == "txpool.validity_signature.accepted"
+                    && key.labels().any(|l| l.key() == "site" && l.value() == "ingress")
+                    && key.labels().any(|l| l.key() == "signature" && l.value() == "unsigned")
+            })
+            .map(|(_, _, _, value)| value)
+            .collect();
+        assert_eq!(
+            unsigned,
+            [metrics_util::debugging::DebugValue::Counter(1)],
+            "the resubmission is not counted again"
+        );
     }
 }
