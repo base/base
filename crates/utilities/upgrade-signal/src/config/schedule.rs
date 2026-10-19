@@ -620,7 +620,7 @@ mod tests {
     }
 
     #[test]
-    fn schedule_validation_rejects_missing_minimum_version() {
+    fn schedule_validation_rejects_missing_protocol_version() {
         let config = UpgradeSignalConfig::new(address!("0000000000000000000000000000000000000001"));
         let schedule = malformed_schedule(&config);
 

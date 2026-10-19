@@ -6,9 +6,10 @@
 //! answer returned by the public `base_upgradeReadiness` RPC (and rendered by the `basectl
 //! upgrade-readiness` subcommand).
 //!
-//! The report uses the live node's protocol-version comparison
-//! ([`UpgradeSignalConfig::supports_protocol_version`]) and fail-closed predicate
-//! ([`UpgradeSignalConfig::signal_fails_closed`]) to keep readiness and halt decisions consistent.
+//! The report is deliberately built from the *same* predicates the live node uses —
+//! [`UpgradeSignalConfig::supports_protocol_version`] and
+//! [`UpgradeSignalConfig::signal_fails_closed`] — so it can never disagree with what the node
+//! actually does at activation.
 
 use alloy_primitives::U256;
 use serde::{Deserialize, Serialize};
