@@ -64,14 +64,12 @@ where
                 )
                 .increment(1);
             }
-        } else {
-            if let Some(name) = &self.misses_metric_name {
-                metrics::counter!(
-                    Arc::clone(name),
-                    "cache_name" => Arc::clone(&self.name),
-                )
-                .increment(1);
-            }
+        } else if let Some(name) = &self.misses_metric_name {
+            metrics::counter!(
+                Arc::clone(name),
+                "cache_name" => Arc::clone(&self.name),
+            )
+            .increment(1);
         }
         value
     }
