@@ -323,7 +323,7 @@ Illustrative additive gas estimates, not transaction replays or `eth_estimateGas
 - [Base L1 derivation and batch format](https://docs.base.org/specifications/base-protocol/consensus/derivation)
 - [Base rollup-node P2P and block gossip specification](https://docs.base.org/specifications/base-protocol/consensus/p2p)
 - [Reth v2.7.0 BAL storage and pruning](https://github.com/paradigmxyz/reth/blob/v2.7.0/crates/storage/provider/src/bal/rocksdb.rs)
-- [Base's pinned Reth fork](https://github.com/base/reth/tree/base-v2.7.0.1)
+- [Base's pinned Reth fork](https://github.com/base/reth/tree/base-v2.7.0.2)
 - [Reth v2.7.0 release notes](https://github.com/paradigmxyz/reth/releases/tag/v2.7.0)
 - [v2.7.0 source and pinned dependencies](https://github.com/paradigmxyz/reth/tree/v2.7.0)
 - [revm's Amsterdam gas rules](https://docs.rs/revm-context-interface/43.0.2/src/revm_context_interface/cfg/gas_params.rs.html)

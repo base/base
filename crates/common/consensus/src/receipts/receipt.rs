@@ -117,7 +117,7 @@ impl<T> BaseReceipt<T> {
             | Self::Eip2930(receipt)
             | Self::Eip1559(receipt)
             | Self::Eip7702(receipt) => receipt.rlp_encoded_fields_length_with_bloom(bloom),
-            Self::Eip8130(receipt) => receipt.inner.rlp_encoded_fields_length_with_bloom(bloom),
+            Self::Eip8130(receipt) => receipt.rlp_encoded_fields_length_with_bloom(bloom),
             Self::Deposit(receipt) => receipt.rlp_encoded_fields_length_with_bloom(bloom),
         }
     }
@@ -132,7 +132,7 @@ impl<T> BaseReceipt<T> {
             | Self::Eip2930(receipt)
             | Self::Eip1559(receipt)
             | Self::Eip7702(receipt) => receipt.rlp_encode_fields_with_bloom(bloom, out),
-            Self::Eip8130(receipt) => receipt.inner.rlp_encode_fields_with_bloom(bloom, out),
+            Self::Eip8130(receipt) => receipt.rlp_encode_fields_with_bloom(bloom, out),
             Self::Deposit(receipt) => receipt.rlp_encode_fields_with_bloom(bloom, out),
         }
     }
@@ -186,12 +186,7 @@ impl<T> BaseReceipt<T> {
             OpTxType::Eip8130 => {
                 let ReceiptWithBloom { receipt, logs_bloom } =
                     RlpDecodableReceipt::rlp_decode_with_bloom(buf)?;
-                // Phase statuses are not part of the consensus receipt encoding;
-                // they are reconstructed from the node's local database, not RLP.
-                Ok(ReceiptWithBloom {
-                    receipt: Self::Eip8130(Eip8130Receipt::new(receipt, Vec::new())),
-                    logs_bloom,
-                })
+                Ok(ReceiptWithBloom { receipt: Self::Eip8130(receipt), logs_bloom })
             }
             OpTxType::Deposit => {
                 let ReceiptWithBloom { receipt, logs_bloom } =
@@ -216,11 +211,7 @@ impl<T> BaseReceipt<T> {
                 receipt.cumulative_gas_used.encode(out);
                 receipt.logs.encode(out);
             }
-            Self::Eip8130(receipt) => {
-                receipt.inner.status.encode(out);
-                receipt.inner.cumulative_gas_used.encode(out);
-                receipt.inner.logs.encode(out);
-            }
+            Self::Eip8130(receipt) => receipt.rlp_encode_fields_without_bloom(out),
             Self::Deposit(receipt) => {
                 receipt.inner.status.encode(out);
                 receipt.inner.cumulative_gas_used.encode(out);
@@ -250,11 +241,7 @@ impl<T> BaseReceipt<T> {
                         + receipt.cumulative_gas_used.length()
                         + receipt.logs.length()
                 }
-                Self::Eip8130(receipt) => {
-                    receipt.inner.status.length()
-                        + receipt.inner.cumulative_gas_used.length()
-                        + receipt.inner.logs.length()
-                }
+                Self::Eip8130(receipt) => receipt.rlp_encoded_fields_length_without_bloom(),
                 Self::Deposit(receipt) => {
                     receipt.inner.status.length()
                         + receipt.inner.cumulative_gas_used.length()
@@ -292,7 +279,7 @@ impl<T> BaseReceipt<T> {
             OpTxType::Eip7702 => Ok(Self::Eip7702(Receipt { status, cumulative_gas_used, logs })),
             OpTxType::Eip8130 => Ok(Self::Eip8130(Eip8130Receipt::new(
                 Receipt { status, cumulative_gas_used, logs },
-                Vec::new(),
+                Decodable::decode(buf)?,
             ))),
             OpTxType::Deposit => Ok(Self::Deposit(DepositReceipt {
                 inner: Receipt { status, cumulative_gas_used, logs },
@@ -480,11 +467,7 @@ impl From<super::BaseReceiptEnvelope> for BaseReceipt {
             super::BaseReceiptEnvelope::Eip2930(receipt) => Self::Eip2930(receipt.receipt),
             super::BaseReceiptEnvelope::Eip1559(receipt) => Self::Eip1559(receipt.receipt),
             super::BaseReceiptEnvelope::Eip7702(receipt) => Self::Eip7702(receipt.receipt),
-            super::BaseReceiptEnvelope::Eip8130(receipt) => {
-                // The consensus envelope carries the standard receipt body; phase
-                // statuses live in the node-local database, not the envelope.
-                Self::Eip8130(Eip8130Receipt::new(receipt.receipt, Vec::new()))
-            }
+            super::BaseReceiptEnvelope::Eip8130(receipt) => Self::Eip8130(receipt.receipt),
             super::BaseReceiptEnvelope::Deposit(receipt) => Self::Deposit(DepositReceipt {
                 deposit_nonce: receipt.receipt.deposit_nonce,
                 deposit_receipt_version: receipt.receipt.deposit_receipt_version,
@@ -509,9 +492,7 @@ impl From<ReceiptWithBloom<BaseReceipt>> for BaseReceiptEnvelope {
                 Self::Eip7702(ReceiptWithBloom { receipt, logs_bloom })
             }
             BaseReceipt::Eip8130(receipt) => {
-                // Drop the phase statuses: the consensus envelope is the standard
-                // receipt body that commits to the receipts-trie root.
-                Self::Eip8130(ReceiptWithBloom { receipt: receipt.inner, logs_bloom })
+                Self::Eip8130(ReceiptWithBloom { receipt, logs_bloom })
             }
             BaseReceipt::Deposit(receipt) => {
                 Self::Deposit(ReceiptWithBloom { receipt, logs_bloom })
@@ -523,8 +504,6 @@ impl From<ReceiptWithBloom<BaseReceipt>> for BaseReceiptEnvelope {
 /// Bincode-compatible serde implementations for opreceipt type.
 #[cfg(all(feature = "serde", feature = "serde-bincode-compat"))]
 pub(super) mod serde_bincode_compat {
-    use alloc::borrow::Cow;
-
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use serde_with::{DeserializeAs, SerializeAs};
 
@@ -559,8 +538,8 @@ pub(super) mod serde_bincode_compat {
         Eip8130 {
             /// Standard receipt body.
             inner: alloy_consensus::serde_bincode_compat::Receipt<'a, alloy_primitives::Log>,
-            /// Per-phase execution statuses.
-            phase_statuses: Cow<'a, [u8]>,
+            /// Number of leading call phases that committed.
+            committed_phases: u64,
         },
     }
 
@@ -573,7 +552,7 @@ pub(super) mod serde_bincode_compat {
                 super::BaseReceipt::Eip7702(receipt) => Self::Eip7702(receipt.into()),
                 super::BaseReceipt::Eip8130(receipt) => Self::Eip8130 {
                     inner: (&receipt.inner).into(),
-                    phase_statuses: Cow::Borrowed(receipt.phase_statuses.as_slice()),
+                    committed_phases: receipt.committed_phases,
                 },
                 super::BaseReceipt::Deposit(receipt) => Self::Deposit(receipt.into()),
             }
@@ -587,9 +566,9 @@ pub(super) mod serde_bincode_compat {
                 BaseReceipt::Eip2930(receipt) => Self::Eip2930(receipt.into()),
                 BaseReceipt::Eip1559(receipt) => Self::Eip1559(receipt.into()),
                 BaseReceipt::Eip7702(receipt) => Self::Eip7702(receipt.into()),
-                BaseReceipt::Eip8130 { inner, phase_statuses } => Self::Eip8130(
-                    super::Eip8130Receipt::new(inner.into(), phase_statuses.into_owned()),
-                ),
+                BaseReceipt::Eip8130 { inner, committed_phases } => {
+                    Self::Eip8130(super::Eip8130Receipt::new(inner.into(), committed_phases))
+                }
                 BaseReceipt::Deposit(receipt) => Self::Deposit(receipt.into()),
             }
         }
@@ -671,7 +650,7 @@ where
 mod tests {
     use alloc::vec;
 
-    use alloy_eips::Encodable2718;
+    use alloy_eips::{Decodable2718, Encodable2718};
     use alloy_primitives::{address, b256, bytes, hex_literal::hex};
     use alloy_rlp::Encodable;
 
@@ -828,46 +807,62 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "reth")]
-    #[test]
-    fn eip8130_compact_roundtrip() {
-        let receipt = BaseReceipt::Eip8130(Eip8130Receipt::new(
+    fn eip8130_receipt(committed_phases: u64) -> BaseReceipt {
+        BaseReceipt::Eip8130(Eip8130Receipt::new(
             Receipt {
-                status: true.into(),
+                status: false.into(),
                 cumulative_gas_used: 21_000,
                 logs: vec![Log::default()],
             },
-            // Phase 0 succeeded, phase 1 reverted (and any later phase skipped).
-            vec![0x01, 0x00],
-        ));
+            committed_phases,
+        ))
+    }
+
+    #[cfg(feature = "reth")]
+    #[test]
+    fn eip8130_compact_roundtrip() {
+        let receipt = eip8130_receipt(1);
 
         let mut buf = Vec::new();
         let len = receipt.to_compact(&mut buf);
         let (decoded, _) = BaseReceipt::from_compact(&buf, len);
 
-        // The phase statuses survive the database (Compact) roundtrip even though
-        // they are excluded from the consensus RLP encoding.
         assert_eq!(decoded, receipt);
-        let BaseReceipt::Eip8130(decoded) = decoded else { panic!("expected 8130 receipt") };
-        assert_eq!(decoded.phase_statuses, vec![0x01, 0x00]);
     }
 
     #[test]
-    fn eip8130_rlp_roundtrip_excludes_phase_statuses() {
-        // An 8130 receipt RLP-encodes exactly like a standard receipt, so phase
-        // statuses are dropped on the RLP roundtrip (they live only in the
-        // node-local database). This keeps the receipts-trie root standard.
-        let receipt = BaseReceipt::Eip8130(Eip8130Receipt::new(
-            Receipt { status: true.into(), cumulative_gas_used: 21_000, logs: Vec::<Log>::new() },
-            vec![0x01, 0x00],
-        ));
+    fn eip8130_rlp_roundtrips_committed_phases() {
+        let receipt = eip8130_receipt(1);
 
         let mut buf = Vec::new();
         receipt.encode(&mut buf);
+        assert_eq!(buf.len(), receipt.length());
         let decoded: BaseReceipt<Log> = BaseReceipt::decode(&mut &buf[..]).unwrap();
+        assert_eq!(decoded, receipt);
 
-        let BaseReceipt::Eip8130(decoded) = decoded else { panic!("expected 8130 receipt") };
-        assert!(decoded.phase_statuses.is_empty(), "phase statuses must not be in the RLP");
-        assert_eq!(decoded.inner.cumulative_gas_used, 21_000);
+        let with_bloom = receipt.with_bloom_ref();
+        let encoded = with_bloom.encoded_2718();
+        assert_eq!(encoded.len(), with_bloom.encode_2718_len());
+        let decoded =
+            ReceiptWithBloom::<BaseReceipt>::decode_2718(&mut encoded.as_slice()).unwrap();
+        assert_eq!(decoded.receipt, receipt);
+    }
+
+    #[test]
+    fn eip8130_consensus_encoding_commits_to_which_phase_failed() {
+        let first_failed = eip8130_receipt(0).with_bloom_ref().encoded_2718();
+        let second_failed = eip8130_receipt(1).with_bloom_ref().encoded_2718();
+        assert_ne!(first_failed, second_failed);
+    }
+
+    #[test]
+    fn eip8130_envelope_roundtrips_committed_phases() {
+        let receipt = eip8130_receipt(1);
+        let envelope = BaseReceiptEnvelope::from(receipt.clone().into_with_bloom());
+
+        assert_eq!(envelope.encoded_2718(), receipt.with_bloom_ref().encoded_2718());
+        let decoded =
+            BaseReceiptEnvelope::decode_2718(&mut envelope.encoded_2718().as_slice()).unwrap();
+        assert_eq!(BaseReceipt::from(decoded), receipt);
     }
 }

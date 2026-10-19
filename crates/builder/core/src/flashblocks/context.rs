@@ -13,7 +13,7 @@ use alloy_primitives::{Address, BlockHash, Bytes, TxHash, U256};
 use alloy_rpc_types_eth::Withdrawals;
 use base_common_chains::Upgrades;
 use base_common_consensus::{BaseReceipt, BaseTransactionSigned, DepositReceipt, OpTxType};
-use base_common_evm::{BaseReceiptBuilder, BaseSpecId, Eip8130PhaseStatuses, L1BlockInfo};
+use base_common_evm::{BaseReceiptBuilder, BaseSpecId, Eip8130CommittedPhases, L1BlockInfo};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_eip8130::IntrinsicGas;
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
@@ -480,16 +480,16 @@ pub(crate) struct DecisionContext<'a> {
 impl BasePayloadBuilderCtx {
     /// Constructs a receipt for the given transaction.
     ///
-    /// `eip8130_phase_statuses` are the statuses taken from [`Eip8130PhaseStatuses`] right after
-    /// the transaction executed; they are only used for EIP-8130 receipts.
+    /// `eip8130_committed_phases` is the count taken from [`Eip8130CommittedPhases`] right after
+    /// the transaction executed; it is only used for EIP-8130 receipts.
     pub fn build_receipt<E: Evm>(
         &self,
         ctx: ReceiptBuilderCtx<'_, OpTxType, E>,
         deposit_nonce: Option<u64>,
-        eip8130_phase_statuses: Vec<u8>,
+        eip8130_committed_phases: u64,
     ) -> BaseReceipt {
         let receipt_builder = self.evm_config.block_executor_factory().receipt_builder();
-        match receipt_builder.build_receipt(ctx, eip8130_phase_statuses) {
+        match receipt_builder.build_receipt(ctx, eip8130_committed_phases) {
             Ok(receipt) => receipt,
             Err(ctx) => {
                 let receipt = alloy_consensus::Receipt {
@@ -582,7 +582,7 @@ impl BasePayloadBuilderCtx {
                     return Err(PayloadBuilderError::EvmExecutionError(Box::new(err)));
                 }
             };
-            let eip8130_phase_statuses = Eip8130PhaseStatuses::take();
+            let eip8130_committed_phases = Eip8130CommittedPhases::take();
 
             // add gas used by the transaction to cumulative gas used, before creating the receipt
             let gas_used = result.tx_gas_used();
@@ -603,7 +603,7 @@ impl BasePayloadBuilderCtx {
                 cumulative_gas_used: info.cumulative_gas_used,
             };
 
-            info.receipts.push(self.build_receipt(ctx, depositor_nonce, eip8130_phase_statuses));
+            info.receipts.push(self.build_receipt(ctx, depositor_nonce, eip8130_committed_phases));
 
             // commit changes
             evm.db_mut().commit(state);
@@ -1305,7 +1305,7 @@ impl BasePayloadBuilderCtx {
                     return Err(PayloadBuilderError::evm(err));
                 }
             };
-            let eip8130_phase_statuses = Eip8130PhaseStatuses::take();
+            let eip8130_committed_phases = Eip8130CommittedPhases::take();
 
             let execution_time = execution_start_time.elapsed();
 
@@ -1407,7 +1407,7 @@ impl BasePayloadBuilderCtx {
                 state: &state,
                 cumulative_gas_used: info.cumulative_gas_used,
             };
-            info.receipts.push(self.build_receipt(ctx, None, eip8130_phase_statuses));
+            info.receipts.push(self.build_receipt(ctx, None, eip8130_committed_phases));
             // The tip is a phase-0 transfer, so it is revenue only if that phase
             // committed; a reverted or policy-blocked phase pays nothing.
             let coinbase_tip = coinbase_tip.filter(|_| {
@@ -1698,7 +1698,7 @@ mod tests {
     use reth_chainspec::ChainSpec;
     use reth_payload_util::PayloadTransactions;
     use reth_primitives_traits::{Recovered, SealedHeader, WithEncoded};
-    use reth_provider::noop::NoopProvider;
+    use reth_provider::{StateProvider, noop::NoopProvider};
     use reth_revm::{State, database::StateProviderDatabase};
 
     use super::*;
@@ -1872,7 +1872,7 @@ mod tests {
     fn cancellation_is_checked_after_each_limit_rejection() {
         let ctx = test_builder_context();
         let mut best_txs = LimitRejectionTransactions::new(0, 2, ctx.cancel.clone());
-        let db = StateProviderDatabase::new(NoopProvider::default());
+        let db = StateProviderDatabase::new(NoopProvider::default().into_evm_state_provider());
         let mut state = State::builder().with_database(db).with_bundle_update().build();
         let mut info = ExecutionInfo::default();
         let limits = ResourceLimits { block_gas_limit: 0, ..Default::default() };
@@ -1901,7 +1901,7 @@ mod tests {
         let ctx = test_builder_context();
         let mut best_txs =
             LimitRejectionTransactions::new(WITHIN_LIMIT, OVER_LIMIT, ctx.cancel.clone());
-        let db = StateProviderDatabase::new(NoopProvider::default());
+        let db = StateProviderDatabase::new(NoopProvider::default().into_evm_state_provider());
         let mut state = State::builder().with_database(db).with_bundle_update().build();
         let mut info = ExecutionInfo::default();
         let limits = ResourceLimits { block_gas_limit: 0, ..Default::default() };
@@ -2078,7 +2078,7 @@ mod tests {
         ctx.config.attributes.no_tx_pool = true;
         ctx.config.attributes.transactions = vec![with_encoded];
 
-        let db = StateProviderDatabase::new(NoopProvider::default());
+        let db = StateProviderDatabase::new(NoopProvider::default().into_evm_state_provider());
         let mut state = State::builder().with_database(db).with_bundle_update().build();
         let err = ctx
             .execute_sequencer_transactions(&mut state)
@@ -2092,7 +2092,7 @@ mod tests {
         // input now succeeds with zero gas consumed and no receipt — this guards against
         // accidentally tightening the legacy code path along with the strict one.
         ctx.config.attributes.no_tx_pool = false;
-        let db = StateProviderDatabase::new(NoopProvider::default());
+        let db = StateProviderDatabase::new(NoopProvider::default().into_evm_state_provider());
         let mut state = State::builder().with_database(db).with_bundle_update().build();
         let info = ctx
             .execute_sequencer_transactions(&mut state)

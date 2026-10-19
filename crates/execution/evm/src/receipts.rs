@@ -17,7 +17,7 @@ impl BaseReceiptBuilder for BaseRethReceiptBuilder {
     fn build_receipt<'a, E: Evm>(
         &self,
         ctx: ReceiptBuilderCtx<'a, OpTxType, E>,
-        eip8130_phase_statuses: Vec<u8>,
+        eip8130_committed_phases: u64,
     ) -> Result<Self::Receipt, Box<ReceiptBuilderCtx<'a, OpTxType, E>>> {
         match ctx.tx_type {
             OpTxType::Deposit => Err(Box::new(ctx)),
@@ -37,7 +37,7 @@ impl BaseReceiptBuilder for BaseRethReceiptBuilder {
                     OpTxType::Eip7702 => BaseReceipt::Eip7702(receipt),
                     OpTxType::Deposit => unreachable!(),
                     OpTxType::Eip8130 => {
-                        BaseReceipt::Eip8130(Eip8130Receipt::new(receipt, eip8130_phase_statuses))
+                        BaseReceipt::Eip8130(Eip8130Receipt::new(receipt, eip8130_committed_phases))
                     }
                 })
             }

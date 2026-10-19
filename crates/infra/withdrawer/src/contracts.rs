@@ -3,6 +3,10 @@ use alloy_sol_types::sol;
 sol! {
     /// Fault-proof portal reads.
     interface FaultProofPortal {
+        /// Factory trusted for withdrawal proofs.
+        function disputeGameFactory() external view returns (address);
+        /// Registry trusted for game validity and finality.
+        function anchorStateRegistry() external view returns (address);
         /// Proof registered by the given submitter.
         function provenWithdrawals(bytes32 withdrawalHash, address submitter)
             external view returns (address disputeGameProxy, uint64 timestamp);

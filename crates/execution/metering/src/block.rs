@@ -10,7 +10,7 @@ use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
 use eyre::{Result as EyreResult, eyre};
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
 use reth_primitives_traits::Block as BlockT;
-use reth_provider::{HeaderProvider, StateProviderFactory};
+use reth_provider::{HeaderProvider, StateProvider, StateProviderFactory};
 use reth_revm::{database::StateProviderDatabase, db::State};
 
 use crate::types::{MeterBlockResponse, MeterBlockTransactions};
@@ -52,7 +52,7 @@ where
     let state_provider = provider.state_by_block_hash(parent_hash)?;
 
     // Create state database from parent state
-    let state_db = StateProviderDatabase::new(&state_provider);
+    let state_db = StateProviderDatabase::new((&state_provider).into_evm_state_provider());
     let mut db = State::builder().with_database(state_db).with_bundle_update().build();
 
     // Set up block attributes from the actual block header

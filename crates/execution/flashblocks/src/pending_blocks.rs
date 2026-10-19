@@ -8,7 +8,7 @@ use alloy_rpc_types::{BlockTransactions, Withdrawal, state::StateOverride};
 use alloy_rpc_types_engine::PayloadId;
 use alloy_rpc_types_eth::{Filter, Header as RPCHeader, Log};
 use arc_swap::Guard;
-use base_common_consensus::{BaseTxReceipt, OpTxType};
+use base_common_consensus::{BaseReceipt, BaseTxReceipt, OpTxType};
 use base_common_evm::{BaseHaltReason, BaseTxResult, L1BlockInfo as PendingL1BlockInfo};
 use base_common_flashblocks::{ExecutionPayloadBaseV1, Flashblock};
 use base_common_network::Base;
@@ -599,15 +599,20 @@ impl PendingBlocks {
             })
             .flatten();
 
-        let eip8130_phase_statuses =
-            self.get_receipt(*tx_hash).and_then(|r| r.phase_statuses.clone()).unwrap_or_default();
+        let eip8130_committed_phases = self
+            .get_receipt(*tx_hash)
+            .and_then(|r| match &r.inner.inner.receipt {
+                BaseReceipt::Eip8130(receipt) => Some(receipt.committed_phases),
+                _ => None,
+            })
+            .unwrap_or_default();
 
         let base_tx_result = BaseTxResult {
             inner: eth_tx_result,
             is_deposit,
             sender,
             depositor,
-            eip8130_phase_statuses,
+            eip8130_committed_phases,
         };
 
         Some(base_tx_result)
@@ -819,7 +824,7 @@ mod tests {
     };
     use alloy_provider::network::TransactionResponse;
     use alloy_rpc_types_engine::PayloadId;
-    use base_common_consensus::{BaseReceipt, BaseTxEnvelope, TxDeposit};
+    use base_common_consensus::{BaseTxEnvelope, TxDeposit};
     use base_common_flashblocks::{
         ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
     };

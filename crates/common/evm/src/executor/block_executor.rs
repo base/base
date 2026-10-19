@@ -26,7 +26,7 @@ use revm::{
 
 use crate::{
     BaseBlockExecutionCtx, BaseBlockExecutionError, BaseReceiptBuilder, BaseTime, BaseTxEnv,
-    BaseTxResult, DEPOSIT_TRANSACTION_TYPE, EIP8130_TRANSACTION_TYPE, Eip8130PhaseStatuses,
+    BaseTxResult, DEPOSIT_TRANSACTION_TYPE, EIP8130_TRANSACTION_TYPE, Eip8130CommittedPhases,
     L1BlockInfo, canyon,
 };
 
@@ -260,10 +260,10 @@ where
             let hash = tx.tx().trie_hash();
             BlockExecutionError::evm(err, hash)
         })?;
-        let eip8130_phase_statuses = if tx.tx().ty() == EIP8130_TRANSACTION_TYPE {
-            Eip8130PhaseStatuses::take()
+        let eip8130_committed_phases = if tx.tx().ty() == EIP8130_TRANSACTION_TYPE {
+            Eip8130CommittedPhases::take()
         } else {
-            Vec::new()
+            0
         };
 
         // Fetch the depositor account from the database for the deposit nonce.
@@ -282,7 +282,7 @@ where
             is_deposit,
             sender: *tx.signer(),
             depositor,
-            eip8130_phase_statuses,
+            eip8130_committed_phases,
         })
     }
 
@@ -292,7 +292,7 @@ where
             is_deposit,
             sender: _,
             depositor,
-            eip8130_phase_statuses,
+            eip8130_committed_phases,
         } = output;
 
         let tx_gas_used = result.tx_gas_used();
@@ -315,7 +315,7 @@ where
                     evm: &self.evm,
                     state: &state,
                 },
-                eip8130_phase_statuses,
+                eip8130_committed_phases,
             ) {
                 Ok(receipt) => receipt,
                 Err(ctx) => {
@@ -830,11 +830,11 @@ mod tests {
         }
     }
 
-    /// The per-phase statuses of an EIP-8130 transaction travel with its execution result, so a
-    /// receipt built on a different thread from the one that executed the transaction (as in a
-    /// split execute-on-worker, commit-on-coordinator pipeline) still sees them.
+    /// The committed phase count of an EIP-8130 transaction travels with its execution result, so
+    /// a receipt built on a different thread from the one that executed the transaction (as in a
+    /// split execute-on-worker, commit-on-coordinator pipeline) still sees it.
     #[test]
-    fn eip8130_phase_statuses_survive_execution_on_another_thread() {
+    fn eip8130_committed_phases_survive_execution_on_another_thread() {
         const CHAIN_ID: u64 = 8453;
         const TIMESTAMP: u64 = 1_000;
         const BLOCK_GAS_LIMIT: u64 = 30_000_000;
@@ -915,6 +915,6 @@ mod tests {
         .expect("execution thread panicked")
         .expect("EIP-8130 transaction is included");
 
-        assert_eq!(result.eip8130_phase_statuses, vec![0x01, 0x00]);
+        assert_eq!(result.eip8130_committed_phases, 1);
     }
 }
