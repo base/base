@@ -146,7 +146,7 @@ impl SnapshotArgs {
         };
         let mut config = DevnetConfig::snapshot(
             self.builder_datadir,
-            self.client_datadir,
+            Some(self.client_datadir),
             SnapshotChainConfig { chain: self.chain, rollup_config: self.rollup_config },
         )?;
         config.use_stable_ports = self.stable_ports;

@@ -223,10 +223,12 @@ hash/timestamp/gas/transaction count, phase-specific Prometheus diagnostics, and
 validator replays that range. A run fails if either role lacks a sample for a measured block or if
 their canonical hashes differ. When metrics are available for another load-test failure, they are
 written before the command returns the error.
+Omit `--client-datadir` to run only the builder and the standalone sequencer: the run skips the
+validator phase and its outputs.
 
 `--output-dir` is one self-contained `base/benchmark` run directory. It receives
-`benchmark-result.json`, `metadata.json`, `metrics-sequencer.json`, `metrics-validator.json`, and
-`load-test-result.json`. Set `BASE_BENCH_CLIENT_VERSION` to a stable
+`benchmark-result.json`, `metadata.json`, `metrics-sequencer.json`, `load-test-result.json`, and,
+with a client datadir, `metrics-validator.json`. Set `BASE_BENCH_CLIENT_VERSION` to a stable
 build label when the report should compare commits or releases. The role metrics contain
 `gas/per_block`, `gas/per_second`, `transactions/per_block`, `transactions/per_second`, and selected
 Reth Prometheus diagnostics. `BlockNumber` uses two-second-equivalent measurement units: each 2s
