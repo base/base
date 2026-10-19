@@ -83,9 +83,9 @@ impl RemoteSigner {
                 let private_key = PrivateKeyDer::from_pem_file(key)
                     .map_err(CertificateError::InvalidPrivateKey)?;
 
-                Ok(tls_config
+                tls_config
                     .with_client_auth_cert(certs, private_key)
-                    .map_err(CertificateError::ConfigureClientAuth)?)
+                    .map_err(CertificateError::ConfigureClientAuth)
             }
         }
     }

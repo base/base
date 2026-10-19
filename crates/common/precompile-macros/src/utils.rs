@@ -96,30 +96,6 @@ pub(crate) fn to_snake_case(s: &str) -> String {
     result
 }
 
-/// Converts a string from `snake_case` to `camelCase`.
-pub(crate) fn to_camel_case(s: &str) -> String {
-    let mut result = String::new();
-    let mut first_word = true;
-
-    for word in s.split('_') {
-        if word.is_empty() {
-            continue;
-        }
-
-        if first_word {
-            result.push_str(word);
-            first_word = false;
-        } else {
-            let mut chars = word.chars();
-            if let Some(first) = chars.next() {
-                result.push_str(&first.to_uppercase().collect::<String>());
-                result.push_str(chars.as_str());
-            }
-        }
-    }
-    result
-}
-
 /// Extracts `#[slot(N)]`, `#[base_slot(N)]` attributes from a field.
 pub(crate) fn extract_attributes(attrs: &[Attribute]) -> syn::Result<ExtractedAttributes> {
     let mut slot_attr: Option<U256> = None;
@@ -310,14 +286,6 @@ mod tests {
         assert_eq!(to_snake_case("updateQuoteToken"), "update_quote_token");
         assert_eq!(to_snake_case("DOMAIN_SEPARATOR"), "DOMAIN_SEPARATOR");
         assert_eq!(to_snake_case("ERC20Token"), "erc20_token");
-    }
-
-    #[test]
-    fn test_to_camel_case() {
-        assert_eq!(to_camel_case("balance_of"), "balanceOf");
-        assert_eq!(to_camel_case("transfer_from"), "transferFrom");
-        assert_eq!(to_camel_case("update_quote_token"), "updateQuoteToken");
-        assert_eq!(to_camel_case("name"), "name");
     }
 
     #[test]

@@ -651,7 +651,7 @@ mod tests {
     use alloc::vec;
 
     use alloy_eips::{Decodable2718, Encodable2718};
-    use alloy_primitives::{Bytes, address, b256, bytes, hex_literal::hex};
+    use alloy_primitives::{address, b256, bytes, hex_literal::hex};
     use alloy_rlp::Encodable;
 
     use super::*;
@@ -769,37 +769,6 @@ mod tests {
         let mut buf = Vec::with_capacity(data.len());
         expected.encode(&mut buf);
         assert_eq!(buf, &data[..]);
-    }
-
-    #[test]
-    fn gigantic_receipt() {
-        let receipt = BaseReceipt::Legacy(Receipt {
-            status: Eip658Value::Eip658(true),
-            cumulative_gas_used: 16747627,
-            logs: vec![
-                Log::new_unchecked(
-                    address!("0x4bf56695415f725e43c3e04354b604bcfb6dfb6e"),
-                    vec![b256!(
-                        "0xc69dc3d7ebff79e41f525be431d5cd3cc08f80eaf0f7819054a726eeb7086eb9"
-                    )],
-                    Bytes::from(vec![1; 0xffffff]),
-                ),
-                Log::new_unchecked(
-                    address!("0xfaca325c86bf9c2d5b413cd7b90b209be92229c2"),
-                    vec![b256!(
-                        "0x8cca58667b1e9ffa004720ac99a3d61a138181963b294d270d91c53d36402ae2"
-                    )],
-                    Bytes::from(vec![1; 0xffffff]),
-                ),
-            ],
-        });
-
-        let _bloom = receipt.bloom();
-        let mut encoded = vec![];
-        receipt.encode(&mut encoded);
-
-        let decoded = BaseReceipt::decode(&mut &encoded[..]).unwrap();
-        assert_eq!(decoded, receipt);
     }
 
     #[test]

@@ -99,11 +99,6 @@ impl ExtendedSubscriptionKind {
             Self::Base(_) => None,
         }
     }
-
-    /// Returns true if this is a flashblocks-specific subscription.
-    pub const fn is_flashblocks(&self) -> bool {
-        matches!(self, Self::Base(_))
-    }
 }
 
 #[cfg(test)]

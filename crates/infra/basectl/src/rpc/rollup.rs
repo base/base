@@ -32,9 +32,9 @@ const ROLLUP_CONFIG_POLL_INTERVAL: Duration = Duration::from_secs(5);
 /// typed `eth_syncing` response (`Info(SyncInfo)` while syncing, `None`
 /// otherwise).
 ///
-/// Doctor (Phase 2.8) reuses this to compute `unsafe.timestamp -
-/// safe.timestamp` for its safe-head-recency check, gated on whether the
-/// EL is actively syncing.
+/// Doctor reuses this for its safe-head-recency check, which grades the
+/// unsafe-to-safe block lag and reports timestamp lag. The check is skipped
+/// while the EL is actively syncing.
 #[derive(Debug, Clone)]
 pub struct SyncStatusReport {
     /// Rollup node `optimism_syncStatus` response.

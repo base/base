@@ -19,6 +19,3 @@ pub use engine_state::TestEngineStateBuilder;
 
 mod misc;
 pub use misc::test_block_info;
-
-mod provider;
-pub use provider::{MockL1Provider, MockL2Provider};

@@ -100,7 +100,7 @@ impl RemoteSigner {
         // Start certificate watcher if client certificates are configured
         let watcher_handle = self.start_certificate_watcher(Arc::clone(&client)).await?;
 
-        Ok(RemoteSignerHandler { client, watcher_handle, address: self.address })
+        Ok(RemoteSignerHandler { client, _watcher_handle: watcher_handle, address: self.address })
     }
 
     /// Builds an HTTP client with certificate handling for the remote signer
@@ -116,6 +116,6 @@ impl RemoteSigner {
         // Set headers
         client_builder = client_builder.default_headers(self.headers.clone());
 
-        client_builder.build().map_err(RemoteSignerStartError::HTTPClientBuild)
+        Ok(client_builder.build()?)
     }
 }

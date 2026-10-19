@@ -32,8 +32,8 @@ pub struct RemoteSignerHandler {
     pub(super) client: Arc<RwLock<RpcClient>>,
     /// The address of the signer.
     pub(super) address: Address,
-    /// The watcher handle for certificate watching.
-    pub(super) watcher_handle: Option<RecommendedWatcher>,
+    /// Held only to keep the certificate watcher running until the handler drops.
+    pub(super) _watcher_handle: Option<RecommendedWatcher>,
 }
 
 /// Errors that can occur when using the remote signer
@@ -64,11 +64,6 @@ pub enum RemoteSignerError {
 }
 
 impl RemoteSignerHandler {
-    /// Returns true if certificate watching is enabled
-    pub const fn is_certificate_watching_enabled(&self) -> bool {
-        self.watcher_handle.is_some()
-    }
-
     /// Signs a block payload hash using the remote signer via JSON-RPC
     pub async fn sign_block_v1(
         &self,
@@ -92,14 +87,8 @@ impl RemoteSignerHandler {
         };
 
         // Make JSON-RPC call to the custom method
-        let response: SignResponse = {
-            self.client
-                .read()
-                .await
-                .request("opsigner_signBlockPayload", &params)
-                .await
-                .map_err(RemoteSignerError::SigningRPCError)?
-        };
+        let response: SignResponse =
+            self.client.read().await.request("opsigner_signBlockPayload", &params).await?;
 
         // Parse the hex signature
         let signature_bytes =
@@ -110,9 +99,6 @@ impl RemoteSignerHandler {
             return Err(RemoteSignerError::InvalidSignatureLength(signature_bytes.len()));
         }
 
-        let signature = Signature::from_raw(signature_bytes.as_slice())
-            .map_err(RemoteSignerError::SignatureError)?;
-
-        Ok(signature)
+        Ok(Signature::from_raw(signature_bytes.as_slice())?)
     }
 }

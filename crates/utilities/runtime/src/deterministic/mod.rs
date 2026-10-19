@@ -41,14 +41,12 @@ pub struct Config {
     /// Panic after this many polling cycles. Guards against busy-loop livelocks.
     /// Recommended: `Some(1_000_000)` for tests.
     pub cycle_limit: Option<u64>,
-    /// Panic if virtual time exceeds this duration. Guards against runaway sleepers.
-    pub timeout: Option<Duration>,
 }
 
 impl Config {
     /// Create a configuration with the given seed and no limits.
     pub const fn seeded(seed: u64) -> Self {
-        Self { seed, cycle_limit: None, timeout: None }
+        Self { seed, cycle_limit: None }
     }
 }
 
@@ -118,12 +116,6 @@ impl Runner {
             }
 
             executor.skip_idle_time();
-            if let Some(timeout) = config.timeout {
-                assert!(
-                    *executor.time.lock().unwrap() <= timeout,
-                    "runtime stalled: virtual time exceeded {timeout:?}"
-                );
-            }
             executor.wake_ready_sleepers();
             executor.assert_liveness();
         }

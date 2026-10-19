@@ -78,7 +78,7 @@ impl ShadowIndexerExEx {
             // `fully_processed` is only false when the writer channel has closed, which is
             // terminal: every subsequent send would fail identically. Stop consuming instead
             // of looping, otherwise we never emit `FinishedHeight` again and the ExEx manager's
-            // notification buffer grows unbounded (and `send_row` logs on every block).
+            // notification buffer grows unbounded (and `send_write` logs on every block).
             if !fully_processed {
                 warn!(
                     target: "base::shadow-indexer",

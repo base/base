@@ -32,11 +32,6 @@ impl JwtValidator {
         self.secret
     }
 
-    /// Consumes the validator and returns the JWT secret.
-    pub const fn into_inner(self) -> JwtSecret {
-        self.secret
-    }
-
     /// Check if an error is related to JWT signature validation.
     ///
     /// Walks the error chain to detect JWT authentication failures by

@@ -170,14 +170,6 @@ impl BatchValidity {
         matches!(self, Self::Drop(_))
     }
 
-    /// Returns the drop reason if the batch was dropped.
-    pub const fn drop_reason(&self) -> Option<BatchDropReason> {
-        match self {
-            Self::Drop(reason) => Some(*reason),
-            _ => None,
-        }
-    }
-
     /// Returns whether the batch is outdated.
     pub const fn is_outdated(&self) -> bool {
         matches!(self, Self::Past)
@@ -201,13 +193,6 @@ mod tests {
         assert!(BatchValidity::Drop(BatchDropReason::ParentHashMismatch).is_drop());
         assert!(BatchValidity::Past.is_outdated());
         assert!(BatchValidity::Future.is_future());
-    }
-
-    #[test]
-    fn test_drop_reason() {
-        let validity = BatchValidity::Drop(BatchDropReason::EmptyTransaction);
-        assert_eq!(validity.drop_reason(), Some(BatchDropReason::EmptyTransaction));
-        assert!(BatchValidity::Accept.drop_reason().is_none());
     }
 
     #[test]
