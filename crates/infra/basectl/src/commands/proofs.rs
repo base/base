@@ -1746,6 +1746,7 @@ mod tests {
         ExecutionStats, GetProofResponse, ProofResult, ProofStatus, ProofSummary, ProofType,
         SnarkPlonkProofResult, ZkBackend, ZkProofResult, ZkVm,
     };
+    use rstest::rstest;
     use url::Url;
 
     use super::{
@@ -1893,25 +1894,115 @@ mod tests {
         assert_eq!(value["result"]["proofType"], "compressed");
     }
 
-    #[test]
-    fn propose_pretty_output_smoke() {
-        let outcome = ProofsProposeJson::submitted(
-            "mainnet",
-            &prover_rpc(),
+    #[rstest]
+    #[case::propose(
+        |output: &mut Vec<u8>| print_propose_pretty_to(
+            output,
+            &ProofsProposeJson::submitted(
+                "mainnet",
+                &prover_rpc(),
+                "propose-session",
+                &sample_propose_request(),
+            ),
+        ),
+        &[
+            "session id",
             "propose-session",
-            &sample_propose_request(),
-        );
+            "4001..=5000 (1000 block(s))",
+            "every 100 block(s)",
+            "submitted",
+            "basectl proofs status propose-session",
+        ],
+        &[],
+    )]
+    #[case::status(
+        |output: &mut Vec<u8>| print_status_pretty_to(
+            output,
+            &ProofsStatusJson::from_response(
+                "mainnet",
+                &prover_rpc(),
+                "session-1",
+                &succeeded_response(),
+            ),
+        ),
+        &[
+            "status      succeeded",
+            "proof type  compressed",
+            "zk vm       sp1",
+            "proof size  2B",
+        ],
+        &[],
+    )]
+    #[case::list(
+        |output: &mut Vec<u8>| print_list_pretty_to(
+            output,
+            &ProofsListJson::from_response(
+                "mainnet", &prover_rpc(), 0, 50, None, 1, &[sample_summary()],
+            ),
+        ),
+        &[
+            "total       1",
+            "showing     1 (offset 0, limit 50)",
+            "session-list-1 type=compressed status=failed",
+            "error: witness generation failed",
+        ],
+        &[],
+    )]
+    #[case::games_list(
+        |output: &mut Vec<u8>| print_games_list_pretty_to(
+            output,
+            &GamesListJson::from_games(
+                "mainnet",
+                &prover_rpc(),
+                Address::repeat_byte(0xFF),
+                100,
+                &[sample_game_summary()],
+                false,
+            ),
+        ),
+        &[
+            "total games  100",
+            "[42]",
+            "blocks 4001..=5000",
+            "zk=<none>",
+            "status=in_progress",
+        ],
+        &["older matches may exist"],
+    )]
+    #[case::game_details(
+        |output: &mut Vec<u8>| print_game_details_pretty_to(
+            output,
+            &GameDetailsJson::from_details(
+                "mainnet",
+                &prover_rpc(),
+                Address::repeat_byte(0xFF),
+                &sample_game_details(),
+            ),
+        ),
+        &[
+            "blocks",
+            "4001..=5000 (1000 block(s))",
+            "10 (every 100 block(s))",
+            "zk prover",
+            "<none>",
+        ],
+        &[],
+    )]
+    fn pretty_output_contains_expected_rows(
+        #[case] render: fn(&mut Vec<u8>) -> anyhow::Result<()>,
+        #[case] expected: &[&str],
+        #[case] unexpected: &[&str],
+    ) {
         let mut output = Vec::new();
-
-        print_propose_pretty_to(&mut output, &outcome).unwrap();
+        render(&mut output).unwrap();
         let rendered = String::from_utf8(output).unwrap();
 
-        assert!(rendered.contains("session id"));
-        assert!(rendered.contains("propose-session"));
-        assert!(rendered.contains("4001..=5000 (1000 block(s))"));
-        assert!(rendered.contains("every 100 block(s)"));
-        assert!(rendered.contains("submitted"));
-        assert!(rendered.contains("basectl proofs status propose-session"));
+        for text in expected {
+            assert!(rendered.contains(text), "missing {text:?} in output:\n{rendered}");
+        }
+        for text in unexpected {
+            assert!(!rendered.contains(text), "unexpected {text:?} in output:\n{rendered}");
+        }
     }
 
     #[test]
@@ -2071,47 +2162,6 @@ mod tests {
     }
 
     #[test]
-    fn status_pretty_output_includes_result_rows() {
-        let status = ProofsStatusJson::from_response(
-            "mainnet",
-            &prover_rpc(),
-            "session-1",
-            &succeeded_response(),
-        );
-        let mut output = Vec::new();
-
-        print_status_pretty_to(&mut output, &status).unwrap();
-        let rendered = String::from_utf8(output).unwrap();
-
-        assert!(rendered.contains("status      succeeded"));
-        assert!(rendered.contains("proof type  compressed"));
-        assert!(rendered.contains("zk vm       sp1"));
-        assert!(rendered.contains("proof size  2B"));
-    }
-
-    #[test]
-    fn list_pretty_output_smoke() {
-        let list = ProofsListJson::from_response(
-            "mainnet",
-            &prover_rpc(),
-            0,
-            50,
-            None,
-            1,
-            &[sample_summary()],
-        );
-        let mut output = Vec::new();
-
-        print_list_pretty_to(&mut output, &list).unwrap();
-        let rendered = String::from_utf8(output).unwrap();
-
-        assert!(rendered.contains("total       1"));
-        assert!(rendered.contains("showing     1 (offset 0, limit 50)"));
-        assert!(rendered.contains("session-list-1 type=compressed status=failed"));
-        assert!(rendered.contains("error: witness generation failed"));
-    }
-
-    #[test]
     fn list_pretty_output_handles_empty() {
         let list = ProofsListJson::from_response("mainnet", &prover_rpc(), 0, 50, None, 0, &[]);
         let mut output = Vec::new();
@@ -2205,30 +2255,6 @@ mod tests {
     }
 
     #[test]
-    fn games_list_pretty_output() {
-        let factory = Address::repeat_byte(0xFF);
-        let list = GamesListJson::from_games(
-            "mainnet",
-            &prover_rpc(),
-            factory,
-            100,
-            &[sample_game_summary()],
-            false,
-        );
-        let mut output = Vec::new();
-
-        print_games_list_pretty_to(&mut output, &list).unwrap();
-        let rendered = String::from_utf8(output).unwrap();
-
-        assert!(rendered.contains("total games  100"));
-        assert!(rendered.contains("[42]"));
-        assert!(rendered.contains("blocks 4001..=5000"));
-        assert!(rendered.contains("zk=<none>"));
-        assert!(rendered.contains("status=in_progress"));
-        assert!(!rendered.contains("older matches may exist"));
-    }
-
-    #[test]
     fn games_list_pretty_output_handles_empty() {
         let factory = Address::repeat_byte(0xFF);
         let list = GamesListJson::from_games("mainnet", &prover_rpc(), factory, 0, &[], false);
@@ -2275,27 +2301,6 @@ mod tests {
         assert!(value.get("zkProver").is_none());
         assert!(value.get("counteredIndex").is_none());
         assert!(value["expectedResolution"].is_string());
-    }
-
-    #[test]
-    fn game_details_pretty_output() {
-        let factory = Address::repeat_byte(0xFF);
-        let details = GameDetailsJson::from_details(
-            "mainnet",
-            &prover_rpc(),
-            factory,
-            &sample_game_details(),
-        );
-        let mut output = Vec::new();
-
-        print_game_details_pretty_to(&mut output, &details).unwrap();
-        let rendered = String::from_utf8(output).unwrap();
-
-        assert!(rendered.contains("blocks"));
-        assert!(rendered.contains("4001..=5000 (1000 block(s))"));
-        assert!(rendered.contains("10 (every 100 block(s))"));
-        assert!(rendered.contains("zk prover"));
-        assert!(rendered.contains("<none>"));
     }
 
     #[test]
