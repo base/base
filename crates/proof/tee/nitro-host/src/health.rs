@@ -1,11 +1,13 @@
 //! Registration-gated health check for the nitro prover.
 //!
-//! Delegates signer validity checks to [`RegistrationChecker`], which is shared
-//! with the proving guard in `server.rs`.
+//! Delegates to [`RegistrationChecker`], accepting a currently valid signer or
+//! a registered image matching the optional pending hash. Health latches after
+//! either condition succeeds. The shared proving guard and enclave routing
+//! still require current onchain validity.
 
 use std::sync::Arc;
 
-use alloy_primitives::Address;
+use alloy_primitives::{Address, B256};
 use base_health::{HealthzApiServer, HealthzResponse};
 use jsonrpsee::core::{RpcResult, async_trait};
 
@@ -18,13 +20,15 @@ pub struct RegistrationHealthConfig {
     pub registry_address: Address,
     /// L1 JSON-RPC endpoint URL.
     pub l1_rpc_url: String,
+    /// Optional nonzero `keccak256(PCR0)` accepted by health before onchain activation.
+    pub pending_image_hash: Option<B256>,
 }
 
 /// JSON-RPC handler for registration-gated health checks.
 ///
-/// Uses the shared [`RegistrationChecker`] with a latching policy: once the
-/// signer has been confirmed valid, health stays healthy forever (avoids ASG
-/// replacement on transient L1 failures).
+/// Uses the shared [`RegistrationChecker`]. Once a signer is valid or has the
+/// configured pending image hash, health stays healthy forever to avoid ASG
+/// replacement on transient L1 failures.
 pub struct RegistrationHealthzRpc {
     version: &'static str,
     checker: Arc<RegistrationChecker>,
