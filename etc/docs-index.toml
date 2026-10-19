@@ -99,8 +99,8 @@ summary = "Stub README for the TEE prover binary that runs inside an AWS Nitro E
 digest = "8cb5c613d8"
 
 ["bin/prover/nitro-host/README.md"]
-summary = "Nitro TEE prover host worker: server and local subcommands, worker mode, env setup, readyz and healthz health checks, and the internal-only RPC security model."
-digest = "bc56bbd532"
+summary = "Nitro TEE prover host worker: server and local subcommands, env setup, registration-gated health, pending image rollout, and the internal-only RPC security model."
+digest = "8295c3cb02"
 
 ["bin/prover/service/README.md"]
 summary = "Prover service binary: Postgres-backed requester and worker JSON-RPC APIs that queue proofs and lease jobs to external workers; covers the security model for the unauthenticated APIs."
@@ -339,8 +339,8 @@ summary = "BaseBeaconConsensus for execution-layer block header/body validation 
 digest = "0880f777ff"
 
 ["crates/execution/eip8130-rpc-node/README.md"]
-summary = "Node extension wiring the standalone EIP-8130 eth_getTransactionCount override; self-gates via Eip8130RpcMode (Defer when flashblocks already overrides, else Register). Use for RPC override conflicts."
-digest = "2d0cf30e0d"
+summary = "Node extension wiring EIP-8130 eth_getTransactionCount, eth_estimateGas and eth_call overrides via Eip8130RpcMode; use to coordinate ownership with flashblocks."
+digest = "ef2acd3f6b"
 
 ["crates/execution/eip8130-rpc/README.md"]
 summary = "EIP-8130 RPC helpers: ChannelNonceReader for 2D nonce reads by nonce_key and Eip8130GasEstimator, one simulation for eth_estimateGas and eth_call. Use when debugging AA nonce, call or gas RPCs."
@@ -359,12 +359,12 @@ summary = "Proofs-history ExEx: versioned MDBX trie store serving historical eth
 digest = "13927f28e4"
 
 ["crates/execution/flashblocks-node/README.md"]
-summary = "FlashblocksExtension for the Base node: install_ext usage (install last), CLI flags (--flashblocks-url, --max-pending-blocks-depth, cached-execution), and the state, subscriber, RPC components."
-digest = "557e4ec2a8"
+summary = "FlashblocksExtension: install_ext usage (install last), CLI flags (--flashblocks-url, --max-pending-blocks-depth, --flashblocks.ping-interval), and state, subscriber, RPC components."
+digest = "5eef3d06ed"
 
 ["crates/execution/flashblocks-node/tests/README.md"]
-summary = "Explains why flashblocks-node integration tests live in tests/ (public API only, single compilation unit with test utils) versus private-internals unit tests in src/. Read before adding tests."
-digest = "7c092292d5"
+summary = "Explains flashblocks-node integration tests: library builds with test-utils enabled, base_test_utils helpers, and public API coverage versus private-internals unit tests in src/."
+digest = "8e11c58a53"
 
 ["crates/execution/flashblocks/README.md"]
 summary = "Flashblocks pending-state management: StateProcessor, subscriber, reconciler, the staleness invariant and depth limit, canonical reconciliation, and pending-aware RPC methods and subscriptions."

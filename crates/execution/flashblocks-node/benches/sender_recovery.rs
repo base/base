@@ -1,7 +1,6 @@
 //! Benchmark for sender recovery performance.
 //!
-//! Compares sequential vs parallel ECDSA sender recovery
-//! as requested in <https://github.com/base/base/issues/282>
+//! Compares sequential vs parallel ECDSA sender recovery.
 
 use alloy_consensus::transaction::SignerRecoverable;
 use alloy_primitives::{Address, B256};
@@ -80,7 +79,6 @@ fn load_real_transactions() -> Vec<BaseTransactionSigned> {
 fn sender_recovery_benches(c: &mut Criterion) {
     let mut group = c.benchmark_group("sender_recovery_synthetic");
 
-    // Test with 30, 40, and 100 transactions as requested in issue #282
     for tx_count in [30, 40, 100] {
         let transactions = generate_transactions(tx_count);
 

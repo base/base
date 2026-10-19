@@ -1504,6 +1504,13 @@ mod tests {
             self.is_registered_signer(signer).await
         }
 
+        async fn signer_image_hash(
+            &self,
+            _signer: Address,
+        ) -> std::result::Result<B256, ContractError> {
+            unreachable!("registrar does not read signer image hashes")
+        }
+
         async fn is_registered_signer(
             &self,
             signer: Address,
