@@ -32,8 +32,8 @@ By default, `baseup` installs every binary this repo publishes in GitHub release
 - `base`
 - `basectl`
 
-`base-reth-node` and `base-consensus` are discontinued; use `base execution` and `base consensus`
-instead. `baseup -i <older-tag> --bin base-reth-node` (or `base-consensus`) still installs them from
+`base-reth-node` and `base-consensus` are discontinued; install `base` and run `base rpc` (or
+`base follow`) instead. `baseup -i <older-tag> --bin base-reth-node` (or `base-consensus`) still installs them from
 releases that published them, with a warning.
 
 ## Verification
