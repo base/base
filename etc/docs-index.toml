@@ -287,8 +287,8 @@ summary = "libp2p GossipSub networking for unsafe blocks (GossipDriver, BlockHan
 digest = "c3038ce0c7"
 
 ["crates/consensus/peers/README.md"]
-summary = "Peer identity types ported from reth (PeerId, NodeRecord, AnyNode, discv5 Enr) and how they relate. Use when parsing or converting node records for discovery or admin RPC."
-digest = "f10fb0af43"
+summary = "Peer identity types ported from reth (PeerId, NodeRecord, discv5 Enr) and how they relate. Use when parsing or converting node records for discovery."
+digest = "3d980ddbcd"
 
 ["crates/consensus/protocol/README.md"]
 summary = "Shared protocol types (batches, frames, channels, BlockInfo, L1 info per upgrade, output roots) and the Denim L1 origin rule for 200ms blocks. Use when touching batch or origin logic."
