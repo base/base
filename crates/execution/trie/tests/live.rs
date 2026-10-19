@@ -20,7 +20,8 @@ use reth_node_api::{NodePrimitives, NodeTypesWithDB};
 use reth_primitives_traits::{Block as _, RecoveredBlock, crypto::secp256k1::sign_message};
 use reth_provider::{
     BlockHashReader as _, BlockWriter as _, ExecutionOutcome, HashedPostStateProvider,
-    LatestStateProviderRef, ProviderFactory, StateProvider, StateRootProvider, StorageSettingsCache,
+    LatestStateProviderRef, ProviderFactory, StateProvider, StateRootProvider,
+    StorageSettingsCache,
     providers::{BlockchainProvider, ProviderNodeTypes},
     test_utils::create_test_provider_factory_with_chain_spec,
 };
