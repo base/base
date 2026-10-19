@@ -278,33 +278,16 @@ impl AuthenticatorDispatch {
 mod tests {
     use alloy_primitives::{Address, B256, Bytes, U256, address, keccak256};
     use alloy_sol_types::SolValue;
-    use k256::ecdsa::{Signature as K256Signature, SigningKey as K256SigningKey};
+    use k256::ecdsa::Signature as K256Signature;
     use p256::ecdsa::{
         Signature as P256Sig, SigningKey as P256SigningKey, signature::hazmat::PrehashSigner,
     };
     use sha2::{Digest, Sha256};
 
     use super::*;
+    use crate::test_utils::{addr, key, sig};
 
     const HASH: B256 = B256::repeat_byte(0x42);
-
-    fn k1_key() -> K256SigningKey {
-        K256SigningKey::from_slice(&[0x11u8; 32]).unwrap()
-    }
-
-    fn k1_address(key: &K256SigningKey) -> Address {
-        let point = key.verifying_key().to_encoded_point(false);
-        Address::from_slice(&keccak256(&point.as_bytes()[1..])[12..])
-    }
-
-    /// 65-byte `r || s || v` signature over `HASH`, `v` in `{27, 28}` (low-s).
-    fn k1_sig(key: &K256SigningKey, hash: B256) -> [u8; 65] {
-        let (sig, recid) = key.sign_prehash_recoverable(hash.as_slice()).unwrap();
-        let mut out = [0u8; 65];
-        out[..64].copy_from_slice(&sig.to_bytes());
-        out[64] = recid.to_byte() + 27;
-        out
-    }
 
     fn p256_key() -> P256SigningKey {
         P256SigningKey::from_slice(&[0x22u8; 32]).unwrap()
@@ -335,21 +318,21 @@ mod tests {
 
     #[test]
     fn ecrecover_native_resolves_eoa_actor_id() {
-        let key = k1_key();
+        let key = key(0x11);
         let out = AuthenticatorDispatch::authenticate(
             HASH,
             Eip8130Constants::K1_AUTHENTICATOR,
-            &k1_sig(&key, HASH),
+            &sig(&key, HASH),
         )
         .unwrap();
-        let expected = AuthenticatorDispatch::address_actor_id(k1_address(&key));
+        let expected = AuthenticatorDispatch::address_actor_id(addr(&key));
         assert_eq!(out, DispatchOutcome::Authenticated { actor_id: expected });
     }
 
     #[test]
     fn ecrecover_requires_v_27_or_28() {
-        let key = k1_key();
-        let mut sig = k1_sig(&key, HASH);
+        let key = key(0x11);
+        let mut sig = sig(&key, HASH);
         sig[64] -= 27; // 0 or 1: invalid for the EVM ecrecover sentinel.
         assert_eq!(
             AuthenticatorDispatch::authenticate(HASH, Eip8130Constants::K1_AUTHENTICATOR, &sig,),
@@ -362,7 +345,7 @@ mod tests {
         // EIP-2 low-s: the malleable upper-half-s counterpart of a valid signature
         // (negate s, flip the recovery parity) recovers the same signer but MUST be
         // rejected so the transaction id cannot be malleated.
-        let key = k1_key();
+        let key = key(0x11);
         let (sig, recid) = key.sign_prehash_recoverable(HASH.as_slice()).unwrap();
         let s_high = -*sig.s();
         let high = K256Signature::from_scalars(sig.r().to_bytes(), s_high.to_bytes()).unwrap();

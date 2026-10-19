@@ -345,13 +345,13 @@ impl TransactionAuthorizer {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Address, B256, Bytes, U256, address, keccak256};
+    use alloy_primitives::{Address, B256, Bytes, U256, address};
     use alloy_sol_types::{SolValue, sol};
     use base_common_consensus::{
         AccountChangeChannel, ChangeType, CreateEntry, Delegation, Eip8130Constants, InitialActor,
         SignedAccountChanges, SignedChange, TxEip8130,
     };
-    use base_precompile_storage::{Handler, HashMapStorageProvider, StorageCtx};
+    use base_precompile_storage::Handler;
     use k256::ecdsa::SigningKey as K256SigningKey;
     use rstest::rstest;
 
@@ -381,67 +381,11 @@ mod tests {
     use super::*;
     use crate::{
         AccountChangeApplier, ApplyError, AuthorizeError, AuthorizedActor, ConfigChangeAuthorizer,
+        test_utils::{
+            K1, LOCAL, NOW, actor_id, addr, auth_blob, key, pack, pack_default_eoa_scope,
+            pack_state, sig, tx_with, with_storage,
+        },
     };
-
-    const NOW: u64 = 1_000;
-    const LOCAL: u64 = 8453;
-    const K1: Address = Eip8130Constants::K1_AUTHENTICATOR;
-
-    fn key(byte: u8) -> K256SigningKey {
-        K256SigningKey::from_slice(&[byte; 32]).unwrap()
-    }
-
-    fn addr(key: &K256SigningKey) -> Address {
-        let point = key.verifying_key().to_encoded_point(false);
-        Address::from_slice(&keccak256(&point.as_bytes()[1..])[12..])
-    }
-
-    fn actor_id(account: Address) -> B256 {
-        AccountConfigurationStorage::self_actor_id(account)
-    }
-
-    /// 65-byte `r || s || v` signature over `hash`, `v` in `{27, 28}`, low-s.
-    fn sig(key: &K256SigningKey, hash: B256) -> Vec<u8> {
-        let (signature, recid) = key.sign_prehash_recoverable(hash.as_slice()).unwrap();
-        let mut out = vec![0u8; 65];
-        out[..64].copy_from_slice(&signature.to_bytes());
-        out[64] = recid.to_byte() + 27;
-        out
-    }
-
-    /// `authenticator(20) || data`.
-    fn auth_blob(authenticator: Address, data: &[u8]) -> Bytes {
-        let mut out = Vec::with_capacity(20 + data.len());
-        out.extend_from_slice(authenticator.as_slice());
-        out.extend_from_slice(data);
-        Bytes::from(out)
-    }
-
-    /// Canonical Solidity packing of `ActorConfig` (authenticator 0..160, expiry
-    /// 160..208, scope 208..224).
-    fn pack(authenticator: Address, scope: u16, expiry: u64) -> U256 {
-        U256::from_be_slice(authenticator.as_slice())
-            | (U256::from(expiry) << 160)
-            | (U256::from(scope) << 208)
-    }
-
-    /// Canonical Solidity packing of `AccountState` (`multichain`, `local`
-    /// sequences, `flags`, and the `lock_union`; `local` is the low uint32
-    /// local-channel sequence, local epoch left zero).
-    fn pack_state(multichain: u64, local: u64, flags: u8, lock_union: u64) -> U256 {
-        let mut b = [0u8; 32];
-        b[24..32].copy_from_slice(&multichain.to_be_bytes());
-        b[20..24].copy_from_slice(&local.to_be_bytes()[4..]); // uint32 localSequence
-        b[15] = flags;
-        b[9..15].copy_from_slice(&lock_union.to_be_bytes()[2..]); // uint48 lockUnion
-        U256::from_be_bytes(b)
-    }
-
-    /// Packs the inline secp256k1 self actor's `default_eoa_scope` (bits
-    /// 232..248).
-    fn pack_default_eoa_scope(scope: u16) -> U256 {
-        U256::from(scope) << 232
-    }
 
     /// A [`SignedAccountChanges`] batch whose `signature` is a fresh signature
     /// over its own digest.
@@ -465,28 +409,6 @@ mod tests {
         change
     }
 
-    fn tx_with(
-        sender: Option<Address>,
-        payer: Option<Address>,
-        account_changes: Vec<AccountChange>,
-    ) -> TxEip8130 {
-        TxEip8130 {
-            chain_id: LOCAL,
-            sender,
-            nonce_key: U256::ZERO,
-            nonce_sequence: 0,
-            valid_after: 0,
-            valid_before: 0,
-            max_priority_fee_per_gas: 1_000_000_000,
-            max_fee_per_gas: 5_000_000_000,
-            gas_limit: 250_000,
-            account_changes,
-            calls: Vec::new(),
-            metadata: Bytes::new(),
-            payer,
-        }
-    }
-
     /// Signs `tx` as an EOA (bare `sender_auth`, no payer) and authorizes it.
     fn eoa_signed(tx: TxEip8130, sender: &K256SigningKey) -> Eip8130Signed {
         let hash = tx.sender_signature_hash();
@@ -505,11 +427,6 @@ mod tests {
             auth_blob(K1, &sig(payer, tx.payer_signature_hash(sender_account)))
         });
         Eip8130Signed::new(tx, auth_blob(K1, &sig(sender, sender_hash)), payer_auth)
-    }
-
-    fn with_storage<R>(body: impl FnOnce(&mut AccountConfigurationStorage<'_>) -> R) -> R {
-        let mut storage = HashMapStorageProvider::new(1);
-        StorageCtx::enter(&mut storage, |ctx| body(&mut AccountConfigurationStorage::new(ctx)))
     }
 
     #[test]
@@ -963,21 +880,7 @@ mod tests {
         let mut changes = vec![AccountChange::Create(create)];
         changes.extend(extra_changes);
 
-        let tx = TxEip8130 {
-            chain_id: LOCAL,
-            sender: Some(derived),
-            nonce_key: U256::ZERO,
-            nonce_sequence: 0,
-            valid_after: 0,
-            valid_before: 0,
-            max_priority_fee_per_gas: 1_000_000_000,
-            max_fee_per_gas: 5_000_000_000,
-            gas_limit: 250_000,
-            account_changes: changes,
-            calls: vec![],
-            metadata: Bytes::new(),
-            payer: None,
-        };
+        let tx = tx_with(Some(derived), None, changes);
         let hash = tx.sender_signature_hash();
         let signed = Eip8130Signed::new(tx, auth_blob(K1, &sig(signer, hash)), Bytes::new());
         (derived, signed)
