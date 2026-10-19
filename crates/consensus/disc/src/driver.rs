@@ -347,8 +347,11 @@ impl Discv5Driver {
                     Some(enr) = verified_recv.recv() => {
                         // discv5 only inserts a node when a session is established, so a ping
                         // over an existing session would not re-add a node that a session from
-                        // another port just removed.
-                        if let Err(err) = self.disc.add_enr(enr) {
+                        // another port just removed. `add_enr` marks the node disconnected, so
+                        // skip nodes the new session already inserted.
+                        if self.disc.find_enr(&enr.node_id()).is_none()
+                            && let Err(err) = self.disc.add_enr(enr)
+                        {
                             debug!(target: "discovery", error = ?err, "Failed to add verified ENR");
                         }
                     }
@@ -761,6 +764,10 @@ mod tests {
         let peer_id = peer.local_enr().await.unwrap().node_id();
 
         wait_for_table_entry(&observer, peer_id, Instant::now() + Duration::from_secs(20)).await;
+        sleep(Duration::from_millis(500)).await;
+        let infos = observer.table_infos().await.unwrap();
+        let (_, _, status) = infos.iter().find(|(id, _, _)| *id == peer_id).unwrap();
+        assert!(status.is_connected(), "verified peer marked {status:?}");
 
         // The peer's NAT port changes: a new session from another port fails verification
         // and discv5 removes the peer. The ping that follows travels over the session the
