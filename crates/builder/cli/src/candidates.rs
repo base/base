@@ -41,7 +41,8 @@ pub struct CandidateArgs {
     #[arg(long = "txpool.candidates.max-siblings", default_value_t = DEFAULT_MAX_SIBLINGS)]
     pub max_siblings: usize,
 
-    /// Maximum gas limit of any one swap transaction.
+    /// Maximum gas limit of any one swap transaction, including a default transaction submitted
+    /// alone.
     #[arg(long = "txpool.candidates.max-sibling-gas", default_value_t = DEFAULT_MAX_SIBLING_GAS)]
     pub max_sibling_gas: u64,
 
