@@ -19,7 +19,6 @@ pub struct MetricsCollector {
     transactions: Vec<TransactionMetrics>,
     submitted_count: u64,
     failed_count: u64,
-    reverted_count: u64,
     failure_reasons: HashMap<String, u64>,
     rolling: RollingWindow,
     flashblocks_rolling: RollingWindow,
@@ -45,7 +44,6 @@ impl MetricsCollector {
             transactions: Vec::new(),
             submitted_count: 0,
             failed_count: 0,
-            reverted_count: 0,
             failure_reasons: HashMap::new(),
             rolling: RollingWindow::new(),
             flashblocks_rolling: RollingWindow::new(),
@@ -110,7 +108,7 @@ impl MetricsCollector {
         blocks_total: usize,
         blocks_failed: usize,
     ) {
-        let mut reverted = 0;
+        let mut reverted = 0u64;
         let mut matched = 0;
         for tx in &mut self.transactions {
             let Some(receipt) = receipts.get(&tx.tx_hash) else {
@@ -124,7 +122,6 @@ impl MetricsCollector {
             }
             matched += 1;
         }
-        self.reverted_count = reverted;
         let total = self.transactions.len();
         let missing = total - matched;
         self.receipt_coverage = ReceiptCoverage {
@@ -196,11 +193,6 @@ impl MetricsCollector {
         self.undrained_gas = gas;
     }
 
-    /// Returns the number of confirmed transactions that reverted.
-    pub const fn reverted_count(&self) -> u64 {
-        self.reverted_count
-    }
-
     /// Generates a summary of collected metrics.
     ///
     /// `wall_clock_duration` is used as a fallback when block timestamps are
@@ -246,7 +238,6 @@ impl MetricsCollector {
         self.transactions.clear();
         self.submitted_count = 0;
         self.failed_count = 0;
-        self.reverted_count = 0;
         self.failure_reasons.clear();
         self.rolling = RollingWindow::new();
         self.flashblocks_rolling = RollingWindow::new();
@@ -501,7 +492,6 @@ mod tests {
         let summary = collector.summarize(Duration::from_secs(1), None);
         assert_eq!(summary.gas.total_gas, 66_000, "gas backfilled from receipts");
         assert_eq!(summary.throughput.total_reverted, 1, "exactly one tx reverted");
-        assert_eq!(collector.reverted_count(), 1, "reverted_count set by apply_receipts");
         assert!(summary.receipt_coverage.is_complete(), "all txs matched, no failed blocks");
         assert_eq!(summary.receipt_coverage.transactions_matched, 2, "both txs enriched");
         assert_eq!(summary.receipt_coverage.transactions_missing, 0, "no missing receipts");
@@ -521,7 +511,6 @@ mod tests {
         let summary = collector.summarize(Duration::from_secs(1), None);
         assert_eq!(summary.gas.total_gas, 30_000, "only matched tx contributes gas");
         assert_eq!(summary.throughput.total_reverted, 0, "no reverts");
-        assert_eq!(collector.reverted_count(), 0, "unmatched tx stays non-reverted");
         let rc = summary.receipt_coverage;
         assert!(!rc.is_complete(), "one tx missing a receipt makes coverage incomplete");
         assert_eq!(rc.transactions_total, 2, "two confirmed txs");

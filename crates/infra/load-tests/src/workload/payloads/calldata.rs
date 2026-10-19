@@ -44,12 +44,6 @@ impl CalldataPayload {
     }
 }
 
-impl Default for CalldataPayload {
-    fn default() -> Self {
-        Self { max_size: 128, min_size: 0, repeat_count: 1 }
-    }
-}
-
 #[async_trait]
 impl Payload for CalldataPayload {
     fn name(&self) -> &'static str {
