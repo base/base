@@ -213,6 +213,71 @@ async fn l5_no_cross_actor_deadlock() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn stale_safe_head_confirmation_keeps_derivation_running() {
+    // A reset can orphan attributes already sent to the engine. If the engine consolidates them
+    // after derivation has gone idle, derivation receives a safe head it is not waiting for. It
+    // must adopt it and keep running, not fail the transition and stop the node.
+    let mut driver = Driver::new();
+    let node_id = driver
+        .spawn_node(
+            NodeMode::Validator,
+            HarnessBuilder::new()
+                .with_reset_recovery_support()
+                .with_scripted_el_responses((0..6).map(|_| valid_fcu())),
+        )
+        .await;
+    let (fake_l1, safedb, derivation_tx) = {
+        let harness = driver.harness(node_id);
+        (
+            harness.fake_l1().clone(),
+            harness.fake_safedb_handle().clone(),
+            harness.derivation_request_sender(),
+        )
+    };
+
+    // The first block completes EL sync; derivation then runs out of L1 data and goes idle.
+    fake_l1.extend(block(1, B256::ZERO, hash_for(1), 1)).await;
+    driver.tick(20).await;
+    assert_eq!(
+        driver.harness(node_id).derivation_state().await,
+        crate::DerivationState::AwaitingL1Data,
+        "derivation must be idle before the stale confirmation arrives"
+    );
+    let safedb_before = safedb.latest().await;
+
+    // `extend` hands the engine attributes derivation never sent and confirms them to derivation.
+    fake_l1.extend(block(2, hash_for(1), hash_for(2), 2)).await;
+    driver.tick(20).await;
+
+    assert_eq!(
+        driver.harness(node_id).derivation_state().await,
+        crate::DerivationState::AwaitingL1Data,
+        "derivation must survive a confirmation it was not waiting for"
+    );
+    assert_eq!(
+        safedb.latest().await,
+        safedb_before,
+        "a stale confirmation has no inclusion block and must not be recorded in the SafeDB"
+    );
+
+    derivation_tx
+        .send(crate::DerivationActorRequest::ProcessL1HeadUpdateRequest(Box::new(block(
+            3,
+            hash_for(2),
+            hash_for(3),
+            3,
+        ))))
+        .await
+        .expect("derivation actor must accept the next L1 head");
+    driver.tick(20).await;
+    assert_eq!(
+        driver.harness(node_id).derivation_state().await,
+        crate::DerivationState::AwaitingL1Data,
+        "derivation must keep processing L1 heads after the stale confirmation"
+    );
+}
+
+#[tokio::test(start_paused = true)]
 async fn sequencer_recovers_when_el_becomes_ready_after_bootstrap_probe() {
     let mut driver = Driver::new();
     let initial_head = L2BlockInfo {
