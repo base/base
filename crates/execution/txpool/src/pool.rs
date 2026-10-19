@@ -2602,7 +2602,7 @@ mod tests {
         // Distinct millisecond `valid_before` bounds, each inside the nonce-free
         // admission window `(now_ms, now_ms + NONCE_FREE_MAX_EXPIRY_WINDOW]`, so
         // each is a separately-tracked sidecar member; `cap` stays far below the
-        // 20_000 ms window.
+        // 30_000 ms window.
         let mut admitted = Vec::new();
         for offset in 0..cap {
             let transaction = self_paid_eoa_8130(
