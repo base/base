@@ -30,13 +30,13 @@ use crate::{
     AlloyL1BlockFetcher, CheckpointActor, CheckpointClient, CheckpointDB, CheckpointWriter,
     Conductor, ConductorClient, DelayedL1OriginSelectorProvider, DerivationActor, EngineActor,
     EngineActorRequest, EngineConfig, EngineProcessor, EngineRequestReceiver, EngineRpcProcessor,
-    L1OriginSelector, L1WatcherActor, L1WatcherQueryProcessor, NetworkActor, NetworkBuilder,
-    NetworkConfig, NodeActor, NodeOperatingMode, PayloadBuilder, PrefetchedChainProvider,
-    PreparedL1Origin, QueuedDerivationEngineClient, QueuedEngineDerivationClient,
-    QueuedEngineRpcClient, QueuedL1WatcherDerivationClient, QueuedNetworkEngineClient,
-    QueuedSequencerAdminAPIClient, QueuedSequencerEngineClient, RecoveryModeGuard, RpcActor,
-    RpcContext, SequencerActor, SequencerConfig, SequencerEngineRequestCoordinator,
-    UpgradeSignalNodeConfig, ValidatorEngineRequestHandler,
+    L1OriginSelector, L1WatcherActor, L1WatcherQueryExecutor, L1WatcherQueryProcessor,
+    NetworkActor, NetworkBuilder, NetworkConfig, NodeActor, NodeOperatingMode, PayloadBuilder,
+    PrefetchedChainProvider, PreparedL1Origin, QueuedDerivationEngineClient,
+    QueuedEngineDerivationClient, QueuedEngineRpcClient, QueuedL1WatcherDerivationClient,
+    QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient, QueuedSequencerEngineClient,
+    RecoveryModeGuard, RpcActor, RpcContext, SequencerActor, SequencerConfig,
+    SequencerEngineRequestCoordinator, UpgradeSignalNodeConfig, ValidatorEngineRequestHandler,
     actors::{BlockStream, NetworkInboundData, QueuedUnsafePayloadGossipClient},
 };
 
@@ -73,7 +73,8 @@ pub struct L1Config {
     pub beacon_client: OnlineBeaconClient,
     /// The general L1 execution JSON-RPC provider.
     pub engine_provider: RootProvider,
-    /// How frequently to poll L1 for a new finalized block.
+    /// How frequently to poll L1 for new finalized and safe blocks, both of which advance once
+    /// per L1 epoch.
     ///
     /// The right value depends on the L1 finality cadence:
     /// - Ethereum mainnet/Sepolia: one epoch (~384 s = 32 slots × 12 s)
@@ -434,30 +435,44 @@ impl RollupNode {
             BlockNumberOrTag::Latest,
             Duration::from_secs(HEAD_STREAM_POLL_INTERVAL),
         )?;
+        let safe_stream = BlockStream::new_as_stream(
+            self.l1_config.engine_provider.clone(),
+            BlockNumberOrTag::Safe,
+            self.l1_config.finalized_poll_interval,
+        )?;
         let finalized_stream = BlockStream::new_as_stream(
             self.l1_config.engine_provider.clone(),
             BlockNumberOrTag::Finalized,
             self.l1_config.finalized_poll_interval,
         )?;
+        let (l1_safe_tx, l1_safe_rx) = watch::channel(None);
+        let (l1_finalized_tx, l1_finalized_rx) = watch::channel(None);
 
         // Create the [`L1WatcherActor`]. Previously known as the DA watcher actor.
         let l1_watcher = L1WatcherActor::new(
             Arc::clone(&self.config),
             AlloyL1BlockFetcher(self.l1_config.engine_provider.clone()),
             l1_head_updates_tx.clone(),
+            l1_safe_tx,
+            l1_finalized_tx,
             QueuedL1WatcherDerivationClient::new(derivation_actor_request_tx),
             Some(signer),
             cancellation.clone(),
             head_stream,
+            safe_stream,
             finalized_stream,
             self.l1_config.verifier_l1_confs,
             l1_head_number,
         );
         let l1_query_processor = L1WatcherQueryProcessor::new(
-            Arc::clone(&self.config),
-            AlloyL1BlockFetcher(self.l1_config.engine_provider.clone()),
+            L1WatcherQueryExecutor::new(
+                Arc::clone(&self.config),
+                l1_head_updates_tx.subscribe(),
+                l1_safe_rx,
+                l1_finalized_rx,
+                derivation_origin_rx,
+            ),
             l1_query_rx,
-            derivation_origin_rx,
             cancellation.clone(),
         );
         // One refresher instance is shared between the metrics actor (live auto-apply) and the
