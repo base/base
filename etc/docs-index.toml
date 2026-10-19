@@ -99,8 +99,8 @@ summary = "Stub README for the TEE prover binary that runs inside an AWS Nitro E
 digest = "8cb5c613d8"
 
 ["bin/prover/nitro-host/README.md"]
-summary = "Nitro TEE prover host worker: server and local subcommands, worker mode, env setup, readyz and healthz health checks, and the internal-only RPC security model."
-digest = "bc56bbd532"
+summary = "Nitro TEE prover host worker: server and local subcommands, env setup, registration-gated health, pending image rollout, and the internal-only RPC security model."
+digest = "8295c3cb02"
 
 ["bin/prover/service/README.md"]
 summary = "Prover service binary: Postgres-backed requester and worker JSON-RPC APIs that queue proofs and lease jobs to external workers; covers the security model for the unauthenticated APIs."
@@ -133,6 +133,10 @@ digest = "78830928d8"
 ["bin/websocket-proxy/README.md"]
 summary = "Stub README for websocket-proxy, a fan-out proxy that relays upstream WebSocket messages to downstream clients with optional auth, rate limiting, and brotli compression."
 digest = "f4bc5bde6b"
+
+["bin/withdrawer/README.md"]
+summary = "Run the withdrawer CLI to prove or finalize all withdrawals in a receipt, with dry runs, stderr logging, and optional Ledger signing."
+digest = "f133e3160f"
 
 ["bin/zk-benchmarks/README.md"]
 summary = "Stub README for the ZK proof benchmarking binary for load-test runs, delegating to the base-zk-benchmarks library."
@@ -335,8 +339,8 @@ summary = "BaseBeaconConsensus for execution-layer block header/body validation 
 digest = "0880f777ff"
 
 ["crates/execution/eip8130-rpc-node/README.md"]
-summary = "Node extension wiring the standalone EIP-8130 eth_getTransactionCount override; self-gates via Eip8130RpcMode (Defer when flashblocks already overrides, else Register). Use for RPC override conflicts."
-digest = "2d0cf30e0d"
+summary = "Node extension wiring EIP-8130 eth_getTransactionCount, eth_estimateGas and eth_call overrides via Eip8130RpcMode; use to coordinate ownership with flashblocks."
+digest = "ef2acd3f6b"
 
 ["crates/execution/eip8130-rpc/README.md"]
 summary = "EIP-8130 RPC helpers: ChannelNonceReader for 2D nonce reads by nonce_key and Eip8130GasEstimator, one simulation for eth_estimateGas and eth_call. Use when debugging AA nonce, call or gas RPCs."
@@ -355,12 +359,12 @@ summary = "Proofs-history ExEx: versioned MDBX trie store serving historical eth
 digest = "13927f28e4"
 
 ["crates/execution/flashblocks-node/README.md"]
-summary = "FlashblocksExtension for the Base node: install_ext usage (install last), CLI flags (--flashblocks-url, --max-pending-blocks-depth, cached-execution), and the state, subscriber, RPC components."
-digest = "557e4ec2a8"
+summary = "FlashblocksExtension: install_ext usage (install last), CLI flags (--flashblocks-url, --max-pending-blocks-depth, --flashblocks.ping-interval), and state, subscriber, RPC components."
+digest = "5eef3d06ed"
 
 ["crates/execution/flashblocks-node/tests/README.md"]
-summary = "Explains why flashblocks-node integration tests live in tests/ (public API only, single compilation unit with test utils) versus private-internals unit tests in src/. Read before adding tests."
-digest = "7c092292d5"
+summary = "Explains flashblocks-node integration tests: library builds with test-utils enabled, base_test_utils helpers, and public API coverage versus private-internals unit tests in src/."
+digest = "8e11c58a53"
 
 ["crates/execution/flashblocks/README.md"]
 summary = "Flashblocks pending-state management: StateProcessor, subscriber, reconciler, the staleness invariant and depth limit, canonical reconciliation, and pending-aware RPC methods and subscriptions."
@@ -436,7 +440,7 @@ digest = "1e4810a82c"
 
 ["crates/infra/challenger-e2e/README.md"]
 summary = "Behavioural e2e test of the challenger: forks L1 into Anvil, patches real games; the default `all` scenario covers Paths 1-4 on one fork by reviving nullified verifiers. Lists scenarios and env vars."
-digest = "2f68994283"
+digest = "8f2b7f4e58"
 
 ["crates/infra/fee-jobs/README.md"]
 summary = "Run disburse, process, and sweep fee jobs with per-command environment variables, preconditions, and transaction manager settings."
@@ -476,7 +480,7 @@ digest = "63043098db"
 
 ["crates/infra/withdrawer/README.md"]
 summary = "Configure withdrawer signers and RPCs, inspect latest-mined withdrawal status, and run receipt-wide proving and finalization with fee caps, proof verification, pause handling, and finality checks."
-digest = "78ef2b1e61"
+digest = "76e9cfa389"
 
 ["crates/infra/zk-benchmarks/README.md"]
 summary = "One-line stub: ZK proof benchmarking utilities for Base load-test runs; no usage or detail beyond that."
@@ -668,7 +672,7 @@ digest = "0951b41580"
 
 ["docs/guides/GLAMSTERDAM.md"]
 summary = "Scopes Base's Glamsterdam EIPs: BAL, SLOTNUM, calldata/access-list pricing, plus EIP-8037 CPSB at 80M, deployment bounds, transaction pricing, growth tiers, and deposit/AA questions."
-digest = "c9d3732708"
+digest = "288ce47afa"
 
 ["docs/guides/P2P.md"]
 summary = "Explains the Base P2P stack for newcomers: consensus-layer discv5 and libp2p gossipsub versus execution-layer reth networking, how they interact via Engine API, key files, flags, and glossary."

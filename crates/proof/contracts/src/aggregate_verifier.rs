@@ -1042,7 +1042,6 @@ pub fn encode_claim_credit_calldata() -> Bytes {
 
 #[cfg(test)]
 mod tests {
-    use alloy_sol_types::SolCall as _;
 
     use super::*;
 

@@ -212,7 +212,7 @@ Access-list data pricing must match the [EIP-7976 calldata floor](#calldata-floo
 - **Reservoir and rollback.** Follow EIP-8037's reservoir, refill, frame-merge, rollback, and refund rules. State charges draw from the reservoir first, then regular gas; undoing state creation restores the appropriate pools. The reservoir is inside the signed transaction gas limit, not an extra budget.
 - **Transaction admission.** EIP-7825's 16,777,216 cap applies to regular execution gas, not total execution plus state gas. For ordinary transactions, require `min(16,777,216, tx.gas) <= execution_gas_available` and `tx.gas <= state_gas_available`, where each available budget is `B` minus its cumulative counter.
 
-**Version note.** Base's pinned revm 42 skips the EIP-7825 total-gas check when EIP-8037 is enabled; enabling it does not retain a 16.7M total cap. The [current upstream revision](https://github.com/ethereum/EIPs/blob/5ef380124bd68d09c02fa90d0de0f2455f37d5ee/EIPS/eip-8037.md) also caps `tx.gas` at 4,294,967,295. Adopt that bound when aligning the dependency before activation; the 80M block admission bound is tighter. These are proposed activation rules, not today's deployed Base gas schedule.
+**Version note.** Base's pinned [revm 43](https://docs.rs/revm-handler/43.0.3/src/revm_handler/validation.rs.html) skips the EIP-7825 total-gas check when EIP-8037 is enabled; enabling it does not retain a 16.7M total cap. The [current upstream revision](https://github.com/ethereum/EIPs/blob/5ef380124bd68d09c02fa90d0de0f2455f37d5ee/EIPS/eip-8037.md) also caps `tx.gas` at 4,294,967,295. Adopt that bound when aligning the dependency before activation; the 80M block admission bound is tighter. These are proposed activation rules, not today's deployed Base gas schedule.
 
 #### Parameters
 
@@ -329,7 +329,7 @@ At 0.005 gwei and $2,450/ETH, 1M gas costs **$0.01225** in L2 base fee: the exis
 - [Base L1 derivation and batch format](https://docs.base.org/specifications/base-protocol/consensus/derivation)
 - [Base rollup-node P2P and block gossip specification](https://docs.base.org/specifications/base-protocol/consensus/p2p)
 - [Reth v2.7.0 BAL storage and pruning](https://github.com/paradigmxyz/reth/blob/v2.7.0/crates/storage/provider/src/bal/rocksdb.rs)
-- [Base's pinned Reth fork](https://github.com/base/reth/tree/base-v2.7.0.1)
+- [Base's pinned Reth fork](https://github.com/base/reth/tree/base-v2.7.0.2)
 - [Reth v2.7.0 release notes](https://github.com/paradigmxyz/reth/releases/tag/v2.7.0)
 - [v2.7.0 source and pinned dependencies](https://github.com/paradigmxyz/reth/tree/v2.7.0)
 - [revm's Amsterdam gas rules](https://docs.rs/revm-context-interface/43.0.2/src/revm_context_interface/cfg/gas_params.rs.html)

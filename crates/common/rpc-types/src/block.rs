@@ -179,9 +179,9 @@ impl<T: alloy_consensus::Sealable> reth_rpc_convert::FromConsensusHeader<T>
 {
     fn from_consensus_header(
         header: reth_primitives_traits::SealedHeader<T>,
-        block_size: usize,
+        block_size: Option<usize>,
     ) -> Self {
-        Self::new(Header::from_consensus(header.into(), None, Some(U256::from(block_size))))
+        Self::new(Header::from_consensus(header.into(), None, block_size.map(U256::from)))
     }
 }
 

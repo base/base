@@ -67,7 +67,8 @@ impl BaseCommand {
         match self {
             Self::Batcher(batcher) => {
                 chain_resolver.reject_for_reth_command("base batcher")?;
-                RuntimeManager::new().run_until_ctrl_c((*batcher).exec(metrics_enabled))
+                RuntimeManager::new()
+                    .run_until_shutdown(|cancel| (*batcher).exec(metrics_enabled, cancel))
             }
             Self::Bootnode(bootnode) => (*bootnode).run(chain_resolver.resolve()?, metrics_enabled),
             Self::Rpc(rpc) => (*rpc).run(chain_resolver.resolve()?),
