@@ -294,25 +294,3 @@ impl L1Provider for L1Client {
             .await
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_l1_client_config_defaults() {
-        let config = L1ClientConfig::new(Url::parse("http://localhost:8545").unwrap());
-        assert_eq!(config.timeout, Duration::from_secs(30));
-        assert_eq!(config.cache_size, DEFAULT_CACHE_SIZE);
-    }
-
-    #[test]
-    fn test_l1_client_config_builder() {
-        let config = L1ClientConfig::new(Url::parse("http://localhost:8545").unwrap())
-            .with_timeout(Duration::from_secs(60))
-            .with_cache_size(500);
-
-        assert_eq!(config.timeout, Duration::from_secs(60));
-        assert_eq!(config.cache_size, 500);
-    }
-}

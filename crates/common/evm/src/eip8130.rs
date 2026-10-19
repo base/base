@@ -44,8 +44,8 @@
 //! Protocol-injected account-change logs (`ActorAuthorized`, `ActorRevoked`,
 //! `AccountCreated`) are written to the journal during the
 //! pre-call apply step and surface in the transaction receipt ahead of any
-//! `calls` logs. Per-phase receipt status (`phaseStatuses`) is reported on the
-//! EIP-8130 receipt; the overall transaction status (all-phases-succeeded vs
+//! `calls` logs. The number of committed phases (`committedPhases`) is reported
+//! on the EIP-8130 receipt; the overall transaction status (all-phases-succeeded vs
 //! reverted) is reported through the returned [`ExecutionResult`] variant
 //! ([`ExecutionResult::Success`] vs [`ExecutionResult::Revert`]).
 //!
@@ -87,7 +87,7 @@ use revm::{
 
 use crate::{
     BaseContext, BaseContextTr, BaseEvm, BaseHaltReason, BaseSpecId, BaseTime, BaseTransaction,
-    BaseTransactionError, BaseTxTr, BaseUpgrade, Eip8130ExecutionMode, Eip8130PhaseStatuses,
+    BaseTransactionError, BaseTxTr, BaseUpgrade, Eip8130CommittedPhases, Eip8130ExecutionMode,
     L1BlockInfo, handler::BaseHandler,
 };
 
@@ -200,11 +200,10 @@ struct CallsResult {
     /// the return data of the last call (empty when `calls` was empty), which
     /// is what an EIP-8130 `eth_call` returns.
     output: Bytes,
-    /// Per-phase execution status, one entry per phase in `calls` and in phase
-    /// order: `0x01` if the phase committed, `0x00` if it reverted or was skipped
-    /// because an earlier phase reverted. Empty when `calls` was empty. This is
-    /// the EIP-8130 `phaseStatuses` array surfaced through the receipt.
-    phase_statuses: Vec<u8>,
+    /// Number of leading phases in `calls` that committed. Phases run in order
+    /// and stop at the first revert, so every phase at or after this index
+    /// reverted or was skipped. This is the EIP-8130 receipt's `committedPhases`.
+    committed_phases: u64,
 }
 
 /// Executes enshrined EIP-8130 transactions against the block-execution journal.
@@ -240,11 +239,11 @@ impl Eip8130Executor {
                 Journal: core::fmt::Debug + JournalExt,
             >,
     {
-        // Discard any phase statuses a previous transaction may have leaked into
-        // the thread-local slot (e.g. via a panic caught between its `set` and the
-        // `transact` caller's `take`), so this transaction's result can only ever
-        // carry its own statuses. See [`Eip8130PhaseStatuses`] panic safety.
-        Eip8130PhaseStatuses::clear();
+        // Discard any committed phase count a previous transaction may have leaked
+        // into the thread-local slot (e.g. via a panic caught between its `set` and
+        // the `transact` caller's `take`), so this transaction's result can only
+        // ever carry its own count. See [`Eip8130CommittedPhases`] panic safety.
+        Eip8130CommittedPhases::clear();
 
         // The signed envelope is cloned out of the context because the pipeline
         // borrows `ctx` mutably (journal/account access) while needing the
@@ -355,7 +354,7 @@ impl Eip8130Executor {
 
         let inspection =
             Self::start_inspection(evm, outcome.sender, encoded.clone(), outcome.gas_limit);
-        let mut calls =
+        let calls =
             match Self::execute_calls(evm, &signed, &outcome, outcome.execution_gas_available) {
                 Ok(calls) => calls,
                 Err(err) => {
@@ -418,17 +417,17 @@ impl Eip8130Executor {
         evm.ctx().local_mut().clear();
         evm.frame_stack().clear();
 
-        // Hand the per-phase statuses to the caller of `Evm::transact`, which takes
-        // them on this thread as soon as the call returns and carries them with the
-        // execution result to the receipt builder (see [`Eip8130PhaseStatuses`]).
-        // `transact` can only return a `ResultAndState`, whose `output` already
-        // carries the transaction's revert data. Published as the last step before
-        // returning — after the transaction is fully settled and committed — so
-        // neither a `settle_fees` error nor a panic in the journal teardown above
-        // can leave stale statuses in the slot for the next transaction; only the
-        // allocation-free result construction below runs before the caller's
-        // `take`.
-        Eip8130PhaseStatuses::set(core::mem::take(&mut calls.phase_statuses));
+        // Hand the committed phase count to the caller of `Evm::transact`, which
+        // takes it on this thread as soon as the call returns and carries it with
+        // the execution result to the receipt builder (see
+        // [`Eip8130CommittedPhases`]). `transact` can only return a
+        // `ResultAndState`, whose `output` already carries the transaction's revert
+        // data. Published as the last step before returning — after the transaction
+        // is fully settled and committed — so neither a `settle_fees` error nor a
+        // panic in the journal teardown above can leave a stale count in the slot
+        // for the next transaction; only the allocation-free result construction
+        // below runs before the caller's `take`.
+        Eip8130CommittedPhases::set(calls.committed_phases);
 
         // The gas refund is already folded into `gas_used` (via `net_used` in
         // `settle_fees`), so the `refunded` counter is left 0.
@@ -1356,10 +1355,7 @@ impl Eip8130Executor {
         // Signed transaction-level refund counter: refunds are accounted across
         // the whole transaction, not per call. See [`CallsResult::refund`].
         let mut refund: i64 = 0;
-        let total_phases = signed.tx().calls.len();
-        // One status byte per phase; phases not reached after a revert are filled
-        // with `0x00` below.
-        let mut phase_statuses: Vec<u8> = Vec::with_capacity(total_phases);
+        let mut committed_phases: u64 = 0;
         let mut last_output = Bytes::new();
 
         for phase in &signed.tx().calls {
@@ -1434,16 +1430,14 @@ impl Eip8130Executor {
 
             if phase_reverted {
                 evm.ctx_mut().journal_mut().checkpoint_revert(checkpoint);
-                // This phase reverted; record it and report every remaining
-                // (unexecuted) phase as reverted too, per EIP-8130.
-                phase_statuses.push(0x00);
-                phase_statuses.resize(total_phases, 0x00);
+                // This phase and every remaining (unexecuted) phase count as
+                // reverted, per EIP-8130, so the count stops here.
                 return Ok(CallsResult {
                     call_gas_spent: pool.saturating_sub(remaining),
                     refund,
                     reverted: true,
                     output: phase_output,
-                    phase_statuses,
+                    committed_phases,
                 });
             }
 
@@ -1454,7 +1448,7 @@ impl Eip8130Executor {
             // surfaces a database error. Committed phases are only durable once
             // `commit_tx` runs.
             evm.ctx_mut().journal_mut().checkpoint_commit();
-            phase_statuses.push(0x01);
+            committed_phases += 1;
             refund = refund.saturating_add(phase_refund);
         }
 
@@ -1463,7 +1457,7 @@ impl Eip8130Executor {
             refund,
             reverted: false,
             output: last_output,
-            phase_statuses,
+            committed_phases,
         })
     }
 
@@ -2281,7 +2275,7 @@ mod tests {
             refund: 0,
             reverted: false,
             output: Bytes::new(),
-            phase_statuses: Vec::new(),
+            committed_phases: 0,
         };
         assert_eq!(
             Eip8130Executor::billable_gas(&base, &cheap),
@@ -4521,7 +4515,7 @@ mod tests {
 
         assert!(matches!(outcome.result, ExecutionResult::Revert { .. }));
         assert_eq!(outcome.result.tx_gas_used(), signed.tx().gas_limit);
-        assert_eq!(Eip8130PhaseStatuses::take(), vec![0x01, 0x00, 0x00]);
+        assert_eq!(Eip8130CommittedPhases::take(), 1);
         let slot0 = |address: Address| {
             outcome
                 .state

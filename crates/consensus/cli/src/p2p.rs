@@ -4,7 +4,7 @@ use std::{
     fs,
     net::{IpAddr, SocketAddr},
     num::{NonZeroUsize, ParseIntError},
-    ops::{Deref, DerefMut},
+    ops::Deref,
     path::PathBuf,
 };
 
@@ -323,12 +323,6 @@ impl Deref for P2PArgs {
 
     fn deref(&self) -> &Self::Target {
         &self.network
-    }
-}
-
-impl DerefMut for P2PArgs {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.network
     }
 }
 

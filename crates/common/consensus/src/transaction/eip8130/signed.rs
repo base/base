@@ -829,50 +829,19 @@ impl Transaction for Eip8130Signed {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{address, bytes};
+    use alloy_primitives::address;
     #[cfg(feature = "reth")]
     use reth_codecs::Compact;
+    use rstest::rstest;
 
     use super::*;
-    use crate::transaction::eip8130::{
-        account_changes::{AccountChange, Delegation},
-        call::Call,
-    };
+    use crate::test_utils::sample_signed_8130;
 
-    fn sample_signed(payer_present: bool) -> Eip8130Signed {
-        let tx = TxEip8130 {
-            chain_id: 8453,
-            sender: Some(address!("0x00000000000000000000000000000000000000aa")),
-            nonce_key: U256::from(7u64),
-            nonce_sequence: 3,
-            valid_after: 0,
-            valid_before: 0,
-            max_priority_fee_per_gas: 1_000_000_000,
-            max_fee_per_gas: 5_000_000_000,
-            gas_limit: 250_000,
-            account_changes: vec![AccountChange::Delegation(Delegation { target: Address::ZERO })],
-            calls: vec![vec![Call {
-                to: address!("0x00000000000000000000000000000000000000bb"),
-                value: U256::ZERO,
-                data: bytes!("01020304"),
-            }]],
-            metadata: bytes!("c0ffee"),
-            payer: if payer_present {
-                Some(address!("0x00000000000000000000000000000000000000cc"))
-            } else {
-                None
-            },
-        };
-        Eip8130Signed::new(
-            tx,
-            bytes!("deadbeef"),
-            if payer_present { bytes!("cafebabe") } else { Bytes::new() },
-        )
-    }
-
-    #[test]
-    fn eip2718_roundtrip_self_pay() {
-        let signed = sample_signed(false);
+    #[rstest]
+    #[case::self_pay(false)]
+    #[case::sponsored(true)]
+    fn eip2718_roundtrip(#[case] payer_present: bool) {
+        let signed = sample_signed_8130(payer_present);
         let mut buf = Vec::new();
         signed.encode_2718(&mut buf);
         assert_eq!(buf[0], Eip8130Constants::EIP8130_TX_TYPE);
@@ -883,17 +852,8 @@ mod tests {
     }
 
     #[test]
-    fn eip2718_roundtrip_sponsored() {
-        let signed = sample_signed(true);
-        let mut buf = Vec::new();
-        signed.encode_2718(&mut buf);
-        let decoded = Eip8130Signed::decode_2718(&mut buf.as_slice()).unwrap();
-        assert_eq!(signed, decoded);
-    }
-
-    #[test]
     fn rlp_envelope_roundtrip() {
-        let signed = sample_signed(true);
+        let signed = sample_signed_8130(true);
         let mut buf = Vec::new();
         signed.encode(&mut buf);
         let decoded = Eip8130Signed::decode(&mut buf.as_slice()).unwrap();
@@ -901,25 +861,14 @@ mod tests {
     }
 
     #[cfg(feature = "reth")]
-    #[test]
-    fn compact_roundtrip() {
-        let signed = sample_signed(true);
-        let mut buf = Vec::new();
-        let len = signed.to_compact(&mut buf);
-        let (decoded, remaining) = Eip8130Signed::from_compact(&buf, len);
-
-        assert_eq!(decoded, signed);
-        assert!(remaining.is_empty());
-    }
-
-    #[cfg(feature = "reth")]
-    #[test]
-    fn compact_decode_preserves_trailing_bytes() {
-        let signed = sample_signed(true);
-        let trailing = [0xDE, 0xAD, 0xBE, 0xEF];
+    #[rstest]
+    #[case::no_trailing(&[])]
+    #[case::trailing_bytes(&[0xDE, 0xAD, 0xBE, 0xEF])]
+    fn compact_roundtrip(#[case] trailing: &[u8]) {
+        let signed = sample_signed_8130(true);
         let mut buf = Vec::new();
         let _ = signed.to_compact(&mut buf);
-        buf.extend_from_slice(&trailing);
+        buf.extend_from_slice(trailing);
 
         let (decoded, remaining) = Eip8130Signed::from_compact(&buf, buf.len());
 
@@ -929,7 +878,7 @@ mod tests {
 
     #[test]
     fn hash_is_keccak_of_eip2718_payload() {
-        let signed = sample_signed(false);
+        let signed = sample_signed_8130(false);
         let mut buf = Vec::new();
         signed.encode_2718(&mut buf);
         assert_eq!(*signed.hash(), keccak256(&buf));
@@ -937,20 +886,20 @@ mod tests {
 
     #[test]
     fn hash_is_deterministic() {
-        let signed = sample_signed(false);
+        let signed = sample_signed_8130(false);
         assert_eq!(signed.hash(), signed.hash());
     }
 
     #[test]
     fn ty_byte() {
-        let signed = sample_signed(false);
+        let signed = sample_signed_8130(false);
         assert_eq!(signed.ty(), Eip8130Constants::EIP8130_TX_TYPE);
         assert_eq!(signed.type_flag(), Some(Eip8130Constants::EIP8130_TX_TYPE));
     }
 
     #[test]
     fn typed_decode_rejects_wrong_type() {
-        let signed = sample_signed(false);
+        let signed = sample_signed_8130(false);
         let mut buf = Vec::new();
         signed.rlp_encode_signed(&mut buf);
         let res = Eip8130Signed::typed_decode(0x00, &mut buf.as_slice());
@@ -959,7 +908,7 @@ mod tests {
 
     #[test]
     fn explicit_sender_returns_field() {
-        let signed = sample_signed(false);
+        let signed = sample_signed_8130(false);
         assert_eq!(
             signed.explicit_sender(),
             Some(address!("0x00000000000000000000000000000000000000aa"))
@@ -968,7 +917,7 @@ mod tests {
 
     #[test]
     fn admission_static_reports_each_rejection() {
-        let signed = sample_signed(false);
+        let signed = sample_signed_8130(false);
         assert_eq!(signed.validate_admission_static(8453), Ok(()));
         assert_eq!(
             signed.validate_admission_static(84532),
@@ -998,7 +947,7 @@ mod tests {
         // normalization is covered separately by
         // `seconds_denominated_bounds_are_normalized_to_milliseconds`.
         let now = 1_700_000_000_000;
-        let mut tx = sample_signed(false).into_tx();
+        let mut tx = sample_signed_8130(false).into_tx();
         // Nonce-bearing upper bound is inclusive: valid at `now == valid_before`,
         // expired only once `now` is strictly past it.
         tx.valid_before = now - 1;
@@ -1048,7 +997,7 @@ mod tests {
         // millisecond equivalents (EIP-8130 Timestamp Normalization).
         let now_secs = 1_700_000_000u64;
         let now_ms = now_secs * 1_000;
-        let mut tx = sample_signed(false).into_tx();
+        let mut tx = sample_signed_8130(false).into_tx();
 
         // Nonce-bearing: a seconds `valid_before` one second in the future is
         // still valid; one second in the past is expired.
@@ -1093,7 +1042,7 @@ mod tests {
     #[cfg(feature = "k256")]
     #[test]
     fn recover_eoa_sender_returns_none_for_configured_actor() {
-        let signed = sample_signed(false);
+        let signed = sample_signed_8130(false);
         assert!(signed.explicit_sender().is_some());
         assert_eq!(signed.recover_eoa_sender().unwrap(), None);
     }
@@ -1107,7 +1056,7 @@ mod tests {
         let signer = PrivateKeySigner::random();
         let expected = signer.address();
 
-        let mut tx = sample_signed(false).into_tx();
+        let mut tx = sample_signed_8130(false).into_tx();
         tx.sender = None;
         let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
         let sender_auth = Bytes::from(signature.as_bytes().to_vec());
@@ -1123,7 +1072,7 @@ mod tests {
         use alloy_signer_local::PrivateKeySigner;
 
         let signer = PrivateKeySigner::random();
-        let mut tx = sample_signed(false).into_tx();
+        let mut tx = sample_signed_8130(false).into_tx();
         tx.sender = None;
         let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
         let mut bytes = signature.as_bytes().to_vec();
@@ -1141,7 +1090,7 @@ mod tests {
     #[cfg(feature = "k256")]
     #[test]
     fn recover_eoa_sender_rejects_malformed_payload() {
-        let mut tx = sample_signed(false).into_tx();
+        let mut tx = sample_signed_8130(false).into_tx();
         tx.sender = None;
         // 64 bytes is one short of a valid ECDSA r||s||v payload.
         let signed = Eip8130Signed::new(tx, Bytes::from(vec![0u8; 64]), Bytes::new());
@@ -1165,7 +1114,7 @@ mod tests {
         let signer = PrivateKeySigner::random();
         let expected = signer.address();
 
-        let mut tx = sample_signed(false).into_tx();
+        let mut tx = sample_signed_8130(false).into_tx();
         tx.sender = None;
         let hash = tx.sender_signature_hash();
 
@@ -1189,7 +1138,7 @@ mod tests {
     #[cfg(feature = "k256")]
     #[test]
     fn recover_eoa_sender_unchecked_returns_none_for_configured_actor() {
-        let signed = sample_signed(false);
+        let signed = sample_signed_8130(false);
         assert!(signed.explicit_sender().is_some());
         assert_eq!(signed.recover_eoa_sender_unchecked().unwrap(), None);
     }
@@ -1197,7 +1146,7 @@ mod tests {
     #[cfg(feature = "serde")]
     #[test]
     fn serde_roundtrip_recomputes_hash() {
-        let signed = sample_signed(true);
+        let signed = sample_signed_8130(true);
         let json = serde_json::to_string(&signed).unwrap();
 
         assert!(!json.contains("\"hash\""));
@@ -1210,7 +1159,7 @@ mod tests {
     #[cfg(feature = "serde")]
     #[test]
     fn serde_deserialize_computes_hash_from_payload() {
-        let signed = sample_signed(false);
+        let signed = sample_signed_8130(false);
         let mut value = serde_json::to_value(&signed).unwrap();
         value
             .as_object_mut()

@@ -1,4 +1,3 @@
-use alloy_network::EthereumWallet;
 use alloy_primitives::{Address, U256};
 use alloy_signer_local::PrivateKeySigner;
 use rand::{Rng, SeedableRng, rngs::StdRng};
@@ -25,21 +24,10 @@ impl FundedAccount {
         Self { address, signer, balance: U256::ZERO, nonce: 0 }
     }
 
-    /// Sets the account balance.
-    pub const fn with_balance(mut self, balance: U256) -> Self {
-        self.balance = balance;
-        self
-    }
-
     /// Sets the account nonce.
     pub const fn with_nonce(mut self, nonce: u64) -> Self {
         self.nonce = nonce;
         self
-    }
-
-    /// Converts the account into an Ethereum wallet.
-    pub fn into_wallet(self) -> EthereumWallet {
-        EthereumWallet::from(self.signer)
     }
 
     /// Gets the next nonce and increments.
@@ -103,16 +91,6 @@ impl AccountPool {
     /// Returns a mutable slice of all accounts.
     pub fn accounts_mut(&mut self) -> &mut [FundedAccount] {
         &mut self.accounts
-    }
-
-    /// Gets an account by index.
-    pub fn get(&self, index: usize) -> Option<&FundedAccount> {
-        self.accounts.get(index)
-    }
-
-    /// Gets a mutable account by index.
-    pub fn get_mut(&mut self, index: usize) -> Option<&mut FundedAccount> {
-        self.accounts.get_mut(index)
     }
 
     /// Gets a random account from the pool.

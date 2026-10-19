@@ -155,11 +155,7 @@ impl MultiplexRouter {
                 biased;
                 Some(()) = responses.next(), if !responses.is_empty() => {}
                 command = rx.recv() => match command {
-                    Some(command) => {
-                        if let Some(response) = self.handle_command(command) {
-                            responses.push(response);
-                        }
-                    }
+                    Some(command) => responses.push(self.handle_command(command)),
                     None => break,
                 }
             }
@@ -170,21 +166,21 @@ impl MultiplexRouter {
     pub fn handle_command(
         &mut self,
         command: PayloadServiceCommand<BaseEngineTypes>,
-    ) -> Option<BoxFuture<'static, ()>> {
+    ) -> BoxFuture<'static, ()> {
         match command {
             PayloadServiceCommand::BuildNewPayload(input, _span, tx) => {
-                Some(self.handle_build_new_payload(*input, tx))
+                self.handle_build_new_payload(*input, tx)
             }
             PayloadServiceCommand::BestPayload(payload_id, tx) => {
-                Some(self.handle_best_payload(payload_id, tx))
+                self.handle_best_payload(payload_id, tx)
             }
             PayloadServiceCommand::PayloadTimestamp(payload_id, tx) => {
-                Some(self.handle_payload_timestamp(payload_id, tx))
+                self.handle_payload_timestamp(payload_id, tx)
             }
             PayloadServiceCommand::Resolve(payload_id, kind, tx) => {
-                Some(self.handle_resolve(payload_id, kind, tx))
+                self.handle_resolve(payload_id, kind, tx)
             }
-            PayloadServiceCommand::Subscribe(tx) => Some(self.handle_subscribe(tx)),
+            PayloadServiceCommand::Subscribe(tx) => self.handle_subscribe(tx),
         }
     }
 

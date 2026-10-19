@@ -42,12 +42,7 @@ impl NetworkTransactionBuilder<Base> for BaseTransactionRequest {
 
     #[doc(alias = "output_transaction_type_checked")]
     fn output_tx_type_checked(&self) -> Option<OpTxType> {
-        self.as_ref().buildable_type().map(|tx_ty| match tx_ty {
-            TxType::Eip1559 | TxType::Eip4844 => OpTxType::Eip1559,
-            TxType::Eip2930 => OpTxType::Eip2930,
-            TxType::Eip7702 => OpTxType::Eip7702,
-            TxType::Legacy => OpTxType::Legacy,
-        })
+        self.as_ref().buildable_type().map(|_| self.output_tx_type())
     }
 
     fn prep_for_submission(&mut self) {

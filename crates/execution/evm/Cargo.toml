@@ -28,8 +28,8 @@ alloy-evm.workspace = true
 alloy-eips.workspace = true
 alloy-consensus.workspace = true
 alloy-primitives.workspace = true
-alloy-rpc-types-eth = { workspace = true, optional = true }
 base-common-chains.workspace = true
+alloy-rpc-types-eth = { workspace = true, optional = true }
 base-common-evm = { workspace = true, features = ["std", "reth"] }
 base-common-consensus = { workspace = true, features = ["evm", "reth"] }
 base-common-rpc-types-engine = { workspace = true, features = ["reth"] }
@@ -46,6 +46,7 @@ thiserror.workspace = true
 [dev-dependencies]
 alloy-genesis.workspace = true
 base-protocol.workspace = true
+reth-storage-api.workspace = true
 base-common-genesis.workspace = true
 reth-evm = { workspace = true, features = ["test-utils"] }
 reth-revm = { workspace = true, features = ["test-utils"] }

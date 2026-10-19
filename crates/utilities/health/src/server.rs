@@ -21,33 +21,6 @@ use tokio_util::sync::CancellationToken;
 use tracing::info;
 
 // ---------------------------------------------------------------------------
-// Shared state
-// ---------------------------------------------------------------------------
-
-/// State shared across all HTTP handlers.
-#[derive(Clone)]
-struct ServerState {
-    /// Set to `true` once the service has completed initialisation.
-    ready: Arc<AtomicBool>,
-}
-
-impl ServerState {
-    /// `GET /healthz` — liveness probe.
-    async fn liveness() -> StatusCode {
-        StatusCode::OK
-    }
-
-    /// `GET /readyz` — readiness probe.
-    async fn readiness(State(state): State<Self>) -> StatusCode {
-        if state.ready.load(Ordering::Relaxed) {
-            StatusCode::OK
-        } else {
-            StatusCode::SERVICE_UNAVAILABLE
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -65,11 +38,19 @@ impl HealthServer {
     /// health routes with other middleware. For the common case of a
     /// standalone health server, prefer [`serve`](Self::serve) instead.
     pub fn router(ready: Arc<AtomicBool>) -> Router {
-        let state = ServerState { ready };
         Router::new()
-            .route("/healthz", get(ServerState::liveness))
-            .route("/readyz", get(ServerState::readiness))
-            .with_state(state)
+            .route("/healthz", get(|| async { StatusCode::OK }))
+            .route(
+                "/readyz",
+                get(|State(ready): State<Arc<AtomicBool>>| async move {
+                    if ready.load(Ordering::Relaxed) {
+                        StatusCode::OK
+                    } else {
+                        StatusCode::SERVICE_UNAVAILABLE
+                    }
+                }),
+            )
+            .with_state(ready)
     }
 
     /// Starts the health HTTP server.

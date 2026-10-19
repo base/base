@@ -19,7 +19,3 @@ tracing = { workspace = true, features = ["std"] }
 axum = { workspace = true, features = ["tokio", "http1"] }
 base-health = { workspace = true, features = ["axum-server"] }
 clap = { workspace = true, features = ["derive", "env", "std"] }
-
-[dev-dependencies]
-reqwest = { workspace = true, features = ["json"] }
-tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

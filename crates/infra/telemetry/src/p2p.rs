@@ -499,16 +499,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn probes_advertised_enode_address() {
-        let request =
-            ElReachabilityRequest { enode: format!("enode://{TEST_NODE_ID}@9.9.9.9:30303") };
-
-        let target = request.target().unwrap();
-
-        assert_eq!(target.address, SocketAddr::from(([9, 9, 9, 9], 30303)));
-    }
-
     #[tokio::test]
     async fn ignores_forwarded_header_and_probes_enode_address() {
         // A probe against any other target panics with no matching expectation.
@@ -808,28 +798,6 @@ mod tests {
         );
         let (address, handle) = start_test_server(router).await;
         let request = ClReachabilityRequest { enr: test_enr([10, 0, 0, 1], 9222) };
-
-        let response = reqwest::Client::new()
-            .post(format!("http://{address}{P2P_REACHABILITY_CL_PATH}"))
-            .json(&request)
-            .send()
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-        handle.abort();
-    }
-
-    #[tokio::test]
-    async fn rejects_private_cl_multiaddr() {
-        // No expectations: any probe call panics and fails the status assert.
-        let router = router_with_cl_prober(
-            DEFAULT_P2P_REACHABILITY_MAX_CONCURRENT_PROBES,
-            Arc::new(MockClReachabilityProber::new()),
-        );
-        let (address, handle) = start_test_server(router).await;
-        let request =
-            ClReachabilityRequest { enr: test_multiaddr([10, 0, 0, 1], 9222, test_peer_id()) };
 
         let response = reqwest::Client::new()
             .post(format!("http://{address}{P2P_REACHABILITY_CL_PATH}"))

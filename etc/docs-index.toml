@@ -68,7 +68,7 @@ digest = "4be70960df"
 
 ["bin/challenger-e2e/README.md"]
 summary = "Challenger end-to-end test binary: forks L1 into a pod-local Anvil and checks the challenger scans valid games without disputing; intended as a K8s Job."
-digest = "9d88297895"
+digest = "194a67b022"
 
 ["bin/challenger/README.md"]
 summary = "ZK-proof dispute game challenger binary that parses CLI arguments, builds a validated config, and delegates to base_challenger::ChallengerService::run()."
@@ -99,8 +99,8 @@ summary = "Stub README for the TEE prover binary that runs inside an AWS Nitro E
 digest = "8cb5c613d8"
 
 ["bin/prover/nitro-host/README.md"]
-summary = "Nitro TEE prover host worker: server and local subcommands, worker mode, env setup, readyz and healthz health checks, and the internal-only RPC security model."
-digest = "bc56bbd532"
+summary = "Nitro TEE prover host worker: server and local subcommands, env setup, registration-gated health, pending image rollout, and the internal-only RPC security model."
+digest = "8295c3cb02"
 
 ["bin/prover/service/README.md"]
 summary = "Prover service binary: Postgres-backed requester and worker JSON-RPC APIs that queue proofs and lease jobs to external workers; covers the security model for the unauthenticated APIs."
@@ -128,11 +128,15 @@ digest = "3734daa645"
 
 ["bin/snark-e2e/README.md"]
 summary = "Stub README for the SNARK PLONK end-to-end verification binary: submits a one-block prove request, polls, and verifies the receipt; meant for K8s CronJobs."
-digest = "8c4856e58a"
+digest = "78830928d8"
 
 ["bin/websocket-proxy/README.md"]
 summary = "Stub README for websocket-proxy, a fan-out proxy that relays upstream WebSocket messages to downstream clients with optional auth, rate limiting, and brotli compression."
 digest = "f4bc5bde6b"
+
+["bin/withdrawer/README.md"]
+summary = "Run the withdrawer CLI to prove or finalize all withdrawals in a receipt, with dry runs, stderr logging, and optional Ledger signing."
+digest = "f133e3160f"
 
 ["bin/zk-benchmarks/README.md"]
 summary = "Stub README for the ZK proof benchmarking binary for load-test runs, delegating to the base-zk-benchmarks library."
@@ -208,7 +212,7 @@ digest = "766777915d"
 
 ["crates/common/eip8130/README.md"]
 summary = "Engine-neutral no_std EIP-8130 primitives (intrinsic gas schedule, nonce manager slot derivation) shared by revm and EVM2 paths. Use when changing EIP-8130 gas pricing or nonce slots."
-digest = "e0d063f6c5"
+digest = "43da7b1398"
 
 ["crates/common/evm/README.md"]
 summary = "Base revm-based EVM support: upgrade-to-SpecId mapping, BaseEvmFactory, block executors, receipt builders, and create2 deployer handling. Use when changing per-upgrade execution rules."
@@ -287,8 +291,8 @@ summary = "libp2p GossipSub networking for unsafe blocks (GossipDriver, BlockHan
 digest = "c3038ce0c7"
 
 ["crates/consensus/peers/README.md"]
-summary = "Peer identity types ported from reth (PeerId, NodeRecord, AnyNode, discv5 Enr) and how they relate. Use when parsing or converting node records for discovery or admin RPC."
-digest = "f10fb0af43"
+summary = "Peer identity types ported from reth (PeerId, NodeRecord, discv5 Enr) and how they relate. Use when parsing or converting node records for discovery."
+digest = "3d980ddbcd"
 
 ["crates/consensus/protocol/README.md"]
 summary = "Shared protocol types (batches, frames, channels, BlockInfo, L1 info per upgrade, output roots) and the Denim L1 origin rule for 200ms blocks. Use when touching batch or origin logic."
@@ -335,8 +339,8 @@ summary = "BaseBeaconConsensus for execution-layer block header/body validation 
 digest = "0880f777ff"
 
 ["crates/execution/eip8130-rpc-node/README.md"]
-summary = "Node extension wiring the standalone EIP-8130 eth_getTransactionCount override; self-gates via Eip8130RpcMode (Defer when flashblocks already overrides, else Register). Use for RPC override conflicts."
-digest = "2d0cf30e0d"
+summary = "Node extension wiring EIP-8130 eth_getTransactionCount, eth_estimateGas and eth_call overrides via Eip8130RpcMode; use to coordinate ownership with flashblocks."
+digest = "ef2acd3f6b"
 
 ["crates/execution/eip8130-rpc/README.md"]
 summary = "EIP-8130 RPC helpers: ChannelNonceReader for 2D nonce reads by nonce_key and Eip8130GasEstimator, one simulation for eth_estimateGas and eth_call. Use when debugging AA nonce, call or gas RPCs."
@@ -355,12 +359,12 @@ summary = "Proofs-history ExEx: versioned MDBX trie store serving historical eth
 digest = "13927f28e4"
 
 ["crates/execution/flashblocks-node/README.md"]
-summary = "FlashblocksExtension for the Base node: install_ext usage (install last), CLI flags (--flashblocks-url, --max-pending-blocks-depth, cached-execution), and the state, subscriber, RPC components."
-digest = "557e4ec2a8"
+summary = "FlashblocksExtension: install_ext usage (install last), CLI flags (--flashblocks-url, --max-pending-blocks-depth, --flashblocks.ping-interval), and state, subscriber, RPC components."
+digest = "5eef3d06ed"
 
 ["crates/execution/flashblocks-node/tests/README.md"]
-summary = "Explains why flashblocks-node integration tests live in tests/ (public API only, single compilation unit with test utils) versus private-internals unit tests in src/. Read before adding tests."
-digest = "7c092292d5"
+summary = "Explains flashblocks-node integration tests: library builds with test-utils enabled, base_test_utils helpers, and public API coverage versus private-internals unit tests in src/."
+digest = "8e11c58a53"
 
 ["crates/execution/flashblocks/README.md"]
 summary = "Flashblocks pending-state management: StateProcessor, subscriber, reconciler, the staleness invariant and depth limit, canonical reconciliation, and pending-aware RPC methods and subscriptions."
@@ -436,7 +440,7 @@ digest = "1e4810a82c"
 
 ["crates/infra/challenger-e2e/README.md"]
 summary = "Behavioural e2e test of the challenger: forks L1 into Anvil, patches real games; the default `all` scenario covers Paths 1-4 on one fork by reviving nullified verifiers. Lists scenarios and env vars."
-digest = "a085a1e104"
+digest = "8f2b7f4e58"
 
 ["crates/infra/fee-jobs/README.md"]
 summary = "Run disburse, process, and sweep fee jobs with per-command environment variables, preconditions, and transaction manager settings."
@@ -475,8 +479,8 @@ summary = "Alpha WebSocket proxy fanning out Flashblocks from rollup-boost to do
 digest = "63043098db"
 
 ["crates/infra/withdrawer/README.md"]
-summary = "Withdrawer configuration, signers, retrying RPC clients, capped L1 transaction preparation and signing, withdrawal extraction, and inclusion proof verification against onchain output claims."
-digest = "40cc2a03ee"
+summary = "Configure withdrawer signers and RPCs, inspect latest-mined withdrawal status, and run receipt-wide proving and finalization with fee caps, proof verification, pause handling, and finality checks."
+digest = "76e9cfa389"
 
 ["crates/infra/zk-benchmarks/README.md"]
 summary = "One-line stub: ZK proof benchmarking utilities for Base load-test runs; no usage or detail beyond that."
@@ -488,7 +492,7 @@ digest = "0208dada05"
 
 ["crates/proof/challenge/README.md"]
 summary = "base-challenger: ZK-proof dispute game challenger; module tour covering scanner, validator, pending proof phases, submitter, bond lifecycle, and config. Use to find where challenger logic lives."
-digest = "5e8a931c81"
+digest = "7dbd673958"
 
 ["crates/proof/client/README.md"]
 summary = "base-proof-client: runtime-agnostic prologue/driver/epilogue orchestration of a fault or ZK proof run with injected oracle, hint writer and EVM factory; InvalidClaim on root mismatch."
@@ -527,8 +531,8 @@ summary = "base-proof SDK: oracle-backed derivation and execution pieces (Oracle
 digest = "0cdfb06654"
 
 ["crates/proof/proposer/README.md"]
-summary = "base-proposer: TEE-based output proposer; requests a TEE-signed proposal, verifies locally, submits via DisputeGameFactory. Explains stateless on-chain parent game recovery each tick."
-digest = "4f414183f1"
+summary = "base-proposer: TEE-based output proposer with local output-root verification, DisputeGameFactory submission, and forward-walk parent game recovery from the anchor root with a cached tip."
+digest = "b843d99887"
 
 ["crates/proof/prover-service/README.md"]
 summary = "base-prover-service: JSON-RPC contract and service for proof requests, status polling and worker-claimed ZK/TEE jobs via the proof_requests queue; backends live in worker hosts."
@@ -551,8 +555,8 @@ summary = "base-proof-rpc: Alloy-backed L1Client, L2Client and RollupClient trai
 digest = "7bbd42adf6"
 
 ["crates/proof/submission/README.md"]
-summary = "base-proof-submission: shared helpers to submit verifyProposalProof, proof-bearing challenge() and nullify() txs and classify non-retryable reverts; leaves game-selection policy to callers."
-digest = "c0cd2b9ea2"
+summary = "base-proof-submission: shared helpers to submit verifyProposalProof and classify non-retryable reverts; leaves game-selection policy to callers."
+digest = "fc77fd57ea"
 
 ["crates/proof/tee/nitro-enclave/README.md"]
 summary = "base-proof-tee-nitro-enclave: code that runs inside the AWS Nitro Enclave (vsock listener, proof client pipeline, ECDSA signing, NSM access, attestation verification)."
@@ -596,7 +600,7 @@ digest = "c2ed1875a8"
 
 ["crates/utilities/balance-monitor/README.md"]
 summary = "Describes BalanceMonitorLayer, an alloy ProviderLayer that polls an account balance at a fixed interval and publishes it through a tokio watch channel for onchain balance monitoring in services."
-digest = "cbf93709e9"
+digest = "cbb0b58371"
 
 ["crates/utilities/cli/README.md"]
 summary = "Overview of base-cli-utils: parse_cli!, register_version_metrics!, define_log_args!, define_metrics_args! macros and RuntimeManager (tokio runtime, signal shutdown). Use when building Base binaries."
@@ -665,9 +669,10 @@ digest = "393c4961d6"
 ["docs/guides/DEVNET.md"]
 summary = "Chooser for local environments: Docker and HA devnets, Anvil + local Nitro proving, snapshot devnet (base dev), snapshot benchmark harness, with quickstarts, data-reset behavior, and owning docs."
 digest = "0951b41580"
+
 ["docs/guides/GLAMSTERDAM.md"]
 summary = "Scopes Base's Glamsterdam EIPs with BAL and SLOTNUM designs, plus calldata and access-list pricing proposals for transaction costs, P2P block sizes, and storage growth."
-digest = "5934f501aa"
+digest = "f84c6ccb4f"
 
 ["docs/guides/P2P.md"]
 summary = "Explains the Base P2P stack for newcomers: consensus-layer discv5 and libp2p gossipsub versus execution-layer reth networking, how they interact via Engine API, key files, flags, and glossary."
