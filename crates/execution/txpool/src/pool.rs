@@ -4424,6 +4424,66 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn stale_validation_inserted_after_nonce_consumption_ends_the_group() {
+        let capture = base_observability_events::TransactionEventCapture::install();
+        let (pool, client) = build_integration_pool();
+        let runtime = candidate_runtime();
+        let pool = pool.with_candidate_runtime(Arc::clone(&runtime));
+        let (group, representative) = candidate_submission(&client, &runtime);
+        let hash = group.representative().hash();
+
+        // `add_transaction` validates, then inserts. Run the two steps apart so the canonical
+        // block lands after validation against the old state and before the insertion.
+        let (sender, nonce) = (group.sender(), group.nonce());
+        let validated =
+            pool.validator().validate_transaction(TransactionOrigin::Private, representative).await;
+        assert!(validated.is_valid(), "validated against the state before the block");
+
+        // A canonical block consumes the nonce. Reth does not track the sender yet, so it
+        // ignores the account change and still inserts the stale outcome.
+        canonical_nonce_update(&pool, 1, sender, nonce + 1, Vec::new(), PoolUpdateKind::Commit);
+        client.add_account(sender, ExtendedAccount::new(nonce + 1, U256::MAX));
+        pool.add_validated_protocol_transaction(
+            TransactionOrigin::Private,
+            hash,
+            sender,
+            nonce,
+            validated,
+        )
+        .expect("the pool inserts the stale validated outcome");
+        assert!(pool.get(&hash).is_some(), "the pool holds a representative with a used nonce");
+
+        let stale =
+            runtime.ledger.confirm_pooled(group.group_hash(), |hash| pool.get(hash).is_some());
+        assert_eq!(stale, Some(hash), "settlement hands back the stale representative");
+        pool.remove_transactions(vec![hash]);
+        assert!(pool.get(&hash).is_none());
+        let entry = runtime.ledger.lookup(&group.group_hash()).expect("ledger keeps the entry");
+        assert_eq!(
+            entry.state,
+            base_execution_candidates::GroupState::Evicted(
+                base_execution_candidates::EvictionReason::NonceConsumed
+            )
+        );
+        let terminals = candidate_events(&capture, &runtime, &group);
+        assert_eq!(terminals.len(), 1, "journaled once at settlement: {terminals:?}");
+        assert_eq!(terminals[0].data["terminal_reason"], "nonce_consumed");
+        assert_eq!(runtime.ledger.counts(), (0, 1), "the sender's slot is free");
+        assert!(runtime.ledger.suppresses_plain_reinsertion(&group.siblings()[1].hash()));
+
+        // A later block that does not touch the sender changes nothing.
+        canonical_nonce_update(
+            &pool,
+            2,
+            Address::repeat_byte(0x77),
+            5,
+            Vec::new(),
+            PoolUpdateKind::Commit,
+        );
+        assert_eq!(candidate_events(&capture, &runtime, &group).len(), 1);
+    }
+
+    #[tokio::test]
     async fn reorged_out_sibling_stays_suppressed_after_nonce_consumed() {
         let (pool, client) = build_integration_pool();
         let runtime = candidate_runtime();
