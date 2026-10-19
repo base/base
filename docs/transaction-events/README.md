@@ -21,10 +21,10 @@ whose `event_time` is already outside its window or more than an hour in the
 future. A retried `event_id` dedupes only within the same UTC hour of its
 `event_time`. `TXPOOL_SEND_RAW_TRANSACTION_VALIDITY` uses the same warm window as
 `TXPOOL_SEND_RAW_TRANSACTION`. `BUILDER_DEFERRED` and `BUILDER_EXPIRED` use the
-same hot window as the other per-attempt builder decisions. Candidate-group
-events follow the same split: `TXPOOL_SEND_RAW_TRANSACTION_CANDIDATES` is
-warm, and `TXPOOL_SEND_RAW_TRANSACTION_CANDIDATES_REJECTED`,
-`TXPOOL_CANDIDATE_LANDED`, and `TXPOOL_CANDIDATE_EVICTED` are cold.
+same hot window as the other per-attempt builder decisions. Swap Lane events
+follow the same split: `TXPOOL_SEND_SWAP_TRANSACTION` is warm, and
+`TXPOOL_SEND_SWAP_TRANSACTION_REJECTED`, `TXPOOL_CANDIDATE_LANDED`, and
+`TXPOOL_CANDIDATE_EVICTED` are cold.
 
 ## Configuration Fields
 
@@ -198,8 +198,8 @@ Mempool/node:
 - `TXPOOL_TRACKING_OVERFLOWED`
 - `TXPOOL_SEND_RAW_TRANSACTION`
 - `TXPOOL_SEND_RAW_TRANSACTION_VALIDITY`
-- `TXPOOL_SEND_RAW_TRANSACTION_CANDIDATES`
-- `TXPOOL_SEND_RAW_TRANSACTION_CANDIDATES_REJECTED`
+- `TXPOOL_SEND_SWAP_TRANSACTION`
+- `TXPOOL_SEND_SWAP_TRANSACTION_REJECTED`
 - `TXPOOL_CANDIDATE_LANDED`
 - `TXPOOL_CANDIDATE_EVICTED`
 
@@ -310,19 +310,26 @@ deserializes `event_type`) must run a release that knows the candidate kinds
 before any builder or node emits them. Older binaries reject unknown
 `event_type` values.
 
-Ingress. `TXPOOL_SEND_RAW_TRANSACTION_CANDIDATES` fires once per admitted group,
-when the representative is pooled, keyed by the representative's `tx_hash`, with
-`data.sibling_hashes`. Its `event_id` depends only on the group, and duplicate
-submissions emit nothing. A refused request gets
-`TXPOOL_SEND_RAW_TRANSACTION_CANDIDATES_REJECTED` with the RPC error label in
-`data.rejection_reason`: `pool_rejected` when the pool refused the
-representative and `internal_error` for an unlabeled failure such as a state
-read. `tx_hash` and `data.group_hash` are present only once the group
-validated, and every rejection has its own `event_id`, so repeated rejections
-are all kept. Proxies forward without journaling.
+Ingress. `TXPOOL_SEND_SWAP_TRANSACTION` fires once per admitted
+`base_sendSwapTransaction` request, when the default transaction is pooled,
+keyed by its `tx_hash`. `data.selection` is `applied` for a candidate group,
+which also carries `data.group_hash` and `data.alternative_hashes` and has an
+`event_id` that depends only on the group. It is `none` for a default
+transaction without alternatives and `ignored` when the request carried
+alternatives while selection was disabled; both carry `data.alternatives` and
+`data.expiry_block` and start no group lifecycle. Duplicate submissions emit
+nothing. A refused request gets `TXPOOL_SEND_SWAP_TRANSACTION_REJECTED` with
+`data.selection`, `data.alternatives`, and the RPC error label in
+`data.rejection_reason`: `pool_rejected` when the pool refused the default
+transaction and `internal_error` for an unlabeled failure such as a state read.
+`tx_hash` is present once the default transaction decoded and
+`data.group_hash` once a selection validated, and every rejection has its own
+`event_id`, so repeated rejections are all kept. Proxies forward without
+journaling.
 
-Measured sizes for a two-sibling group, as serialized JSON: admission 822
-bytes, rejection 548 to 681, landed 712, evicted 652 to 661.
+Measured sizes, as serialized JSON: group admission with one alternative 691
+bytes, admission without alternatives 550, rejection 566 to 688, landed 712,
+evicted 652 to 661.
 
 Terminal events. The node's candidate ledger emits exactly one terminal event
 per admitted group, keyed by the group alone so replays deduplicate.

@@ -167,18 +167,20 @@ pub enum TransactionEventType {
     /// `data.validity_predicates`.
     #[serde(rename = "TXPOOL_SEND_RAW_TRANSACTION_VALIDITY")]
     TxpoolSendRawTransactionValidity,
-    /// A candidate group was admitted through `base_sendRawTransactionCandidates`.
+    /// A transaction was admitted through `base_sendSwapTransaction`, the Swap Lane endpoint.
     ///
-    /// Emitted once the representative is pooled, keyed by the representative's
-    /// `tx_hash`; `data.group_hash` joins the group's builder events.
-    #[serde(rename = "TXPOOL_SEND_RAW_TRANSACTION_CANDIDATES")]
-    TxpoolSendRawTransactionCandidates,
-    /// `base_sendRawTransactionCandidates` rejected a candidate group.
+    /// Emitted once the default transaction is pooled, keyed by its `tx_hash`.
+    /// `data.selection` is `applied` for a candidate group, whose `data.group_hash`
+    /// joins the group's builder events; `none` without alternatives; or `ignored`
+    /// when selection was disabled and only the default transaction was admitted.
+    #[serde(rename = "TXPOOL_SEND_SWAP_TRANSACTION")]
+    TxpoolSendSwapTransaction,
+    /// `base_sendSwapTransaction` rejected a submission.
     ///
-    /// `data.rejection_reason` is the RPC error label. `tx_hash` is the
-    /// representative when the group decoded far enough to know it.
-    #[serde(rename = "TXPOOL_SEND_RAW_TRANSACTION_CANDIDATES_REJECTED")]
-    TxpoolSendRawTransactionCandidatesRejected,
+    /// `data.rejection_reason` is the RPC error label. `tx_hash` is the default
+    /// transaction when the request decoded far enough to know it.
+    #[serde(rename = "TXPOOL_SEND_SWAP_TRANSACTION_REJECTED")]
+    TxpoolSendSwapTransactionRejected,
     /// A candidate group's sibling was mined in a canonical block. Terminal: a group gets
     /// exactly one of this or [`Self::TxpoolCandidateEvicted`].
     #[serde(rename = "TXPOOL_CANDIDATE_LANDED")]
@@ -262,10 +264,8 @@ impl fmt::Display for TransactionEventType {
             Self::TxpoolValidatedInsertRejected => "TXPOOL_VALIDATED_INSERT_REJECTED",
             Self::TxpoolSendRawTransaction => "TXPOOL_SEND_RAW_TRANSACTION",
             Self::TxpoolSendRawTransactionValidity => "TXPOOL_SEND_RAW_TRANSACTION_VALIDITY",
-            Self::TxpoolSendRawTransactionCandidates => "TXPOOL_SEND_RAW_TRANSACTION_CANDIDATES",
-            Self::TxpoolSendRawTransactionCandidatesRejected => {
-                "TXPOOL_SEND_RAW_TRANSACTION_CANDIDATES_REJECTED"
-            }
+            Self::TxpoolSendSwapTransaction => "TXPOOL_SEND_SWAP_TRANSACTION",
+            Self::TxpoolSendSwapTransactionRejected => "TXPOOL_SEND_SWAP_TRANSACTION_REJECTED",
             Self::TxpoolCandidateLanded => "TXPOOL_CANDIDATE_LANDED",
             Self::TxpoolCandidateEvicted => "TXPOOL_CANDIDATE_EVICTED",
             Self::BuilderConsidered => "BUILDER_CONSIDERED",
