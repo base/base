@@ -237,6 +237,30 @@ Today's write and create values are equivalents extracted from composite charges
 
 Prices rise with the block limit at fixed execution share and block time: recomputing both combined write costs and Base access gives `ACCOUNT_WRITE = 154,440 - 5,307 = 149,133` at 100M and `231,660 - 7,960 = 223,700` at 150M. Revisit parameters whenever the limit or execution budget changes.
 
+#### 80M BAL scenarios
+
+Keep the 40M serial proposal above as the reference; the following post-Glamsterdam scenarios do not select a speedup for activation. Model an effective execution speedup `s` at 80M gas per 200 ms as `factor = (B / (exec_share × 0.2 seconds × s)) / 75,000,000 = (32/3)/s`, with `exec_share = 50%`.
+With no speedup, the higher limit scales combined access/write prices rather than adding modeled cold-write capacity within the fixed execution budget; floors and rounding mean individual prices do not all double.
+Each speedup is an assumption to confirm on production-like hardware. Reads prefetched from the BAL and writes/state-root work may not speed up equally, so a single `s` is only a sensitivity model.
+Upstream EIP-8038 benchmarks already credit some BAL optimizations: validate any additional Base speedup relative to that benchmark baseline, rather than counting the same gain twice.
+
+Apply the same access floors, combined-write scaling, and dependent formulas as above. Values are gas; refund values are rounded down.
+
+| Parameter | 40M serial (`s = 1`) | 80M (`s = 1`) | 80M (`s = 1.5`) | 80M (`s = 2`) | 80M (`s = 3`) |
+| :--- | ---: | ---: | ---: | ---: | ---: |
+| `COLD_ACCOUNT_ACCESS` | 2,600 | 4,246 | 2,831 | 2,600 | 2,600 |
+| `COLD_STORAGE_ACCESS` | 2,182 | 4,363 | 2,909 | 2,182 | 2,100 |
+| `WARM_ACCESS` | 100 | 100 | 100 | 100 | 100 |
+| `ACCOUNT_WRITE` | 59,176 | 119,306 | 79,537 | 59,176 | 38,584 |
+| `STORAGE_WRITE` | 46,154 | 92,309 | 61,539 | 46,154 | 30,124 |
+| `STORAGE_CLEAR_REFUND` | 46,402 | 92,805 | 61,870 | 46,402 | 30,935 |
+| `CREATE_ACCESS` | 61,776 | 123,552 | 82,368 | 61,776 | 41,184 |
+| `CALL_VALUE` | 61,476 | 121,606 | 81,837 | 61,476 | 40,884 |
+| `ACCESS_LIST_ADDRESS_COST` | 2,500 | 4,146 | 2,731 | 2,500 | 2,500 |
+| `ACCESS_LIST_STORAGE_KEY_COST` | 2,082 | 4,263 | 2,809 | 2,082 | 2,000 |
+| `EXTCODESIZE` / `EXTCODECOPY` warm static cost | 200 | 200 | 200 | 200 | 200 |
+| `EXTCODESIZE` / `EXTCODECOPY` cold access cost | 2,700 | 4,346 | 2,931 | 2,700 | 2,700 |
+
 #### What users pay
 
 Illustrative additive gas estimates, not transaction replays or `eth_estimateGas` results. Hold all other work and prices fixed and add `82` per cold storage access and `43,354` per storage write to an initially unchanged slot. The stated counts cover those repriced components only; account-access and warm-access deltas are zero. This isolates price changes rather than predicting the full Glamsterdam bill (including EIP-8037 state creation, EIP-2780 intrinsic changes, refunds, and floors).
@@ -252,7 +276,7 @@ Illustrative additive gas estimates, not transaction replays or `eth_estimateGas
 
 - **Execution.** Override the relevant `GasParams` keys and their dependent prices consistently at activation. The `EXTCODESIZE` / `EXTCODECOPY` second-read charge is a static interpreter-table entry, not a `GasParams` key. Align the dependency's EIP revision before activation; Base's pinned revm 42 implements earlier draft prices.
 - **Interactions.** EIP-8037 state-creation gas is separate from these access/write execution charges. EIP-2780's intrinsic and runtime decomposition consumes these parameters. Base Transaction composite charges built from storage/access primitives must be reconciled with both designs rather than silently retaining old prices.
-- **BALs.** No parallel-read discount is assumed: Base imports serially. Any future optimization needs validation before changing this basis.
+- **BALs.** The primary 40M proposal assumes no parallel-read discount: Base imports serially. The 80M scenarios illustrate possible additional speedups, not measured gains; validate them before changing this basis.
 - **Tooling.** Apply the same schedule to execution, transaction admission/building, and RPC gas estimation. Do not alter pre-activation fork behavior.
 
 #### Open questions
@@ -261,6 +285,7 @@ Illustrative additive gas estimates, not transaction replays or `eth_estimateGas
 2. **Validation.** Do the estimates transfer to production-like hardware with Base mainnet state, including cold and warm access? Benchmarks are pending; validate before agreeing on activation parameters.
 3. **Contract and wallet compatibility.** What changes are needed for fixed-gas calls, contracts relying on the 2,300 stipend, and gas estimation? The stipend remains 2,300 but the caller's value-transfer charge increases.
 4. **L1 divergence.** Is the operational and tooling cost of Base-specific prices acceptable, and how should future L1 revisions and Base gas-limit changes update them?
+5. **BAL speedup at activation.** Which effective speedup `s`, if any, should Base adopt at an 80M limit, based on measured gains beyond those already reflected in the upstream benchmarks?
 
 ## Not included
 
