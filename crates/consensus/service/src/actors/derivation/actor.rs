@@ -298,17 +298,23 @@ where
                     parent_hash: B256::ZERO,
                     timestamp: 0,
                 });
-                // A confirmation while derivation is idle is for attributes sent before a reset,
-                // whose inclusion block the reset discarded. Keying it by epoch origin would
-                // report the block safe at an earlier L1 block than it was, so leave the SafeDB
-                // unchanged.
+                // A confirmation while derivation is idle arrives after a reset or a flush moved
+                // derivation on without it. After a reset the inclusion block was discarded, and
+                // keying the entry by epoch origin would report the block safe at an earlier L1
+                // block than it was, so leave the SafeDB unchanged.
                 let stale = matches!(
                     self.derivation_state_machine.current_state(),
                     DerivationState::AwaitingL1Data | DerivationState::AwaitingSignal
                 );
-                if !stale
-                    && let Err(e) =
-                        self.safe_head_listener.safe_head_updated(*safe_head, l1_block).await
+                if stale {
+                    warn!(
+                        target: "derivation",
+                        state = ?self.derivation_state_machine.current_state(),
+                        block = %safe_head.block_info.number,
+                        "Safe head confirmation arrived while derivation was idle; adopting it without a SafeDB entry"
+                    );
+                } else if let Err(e) =
+                    self.safe_head_listener.safe_head_updated(*safe_head, l1_block).await
                 {
                     error!(target: "derivation", error = %e, "failed to record safe head update");
                 }

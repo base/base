@@ -86,9 +86,10 @@ fn transition(
             DerivationStateUpdate::SignalProcessed => {
                 Ok(DerivationState::AwaitingUpdateAfterSignal)
             }
-            // The engine can confirm attributes that were in flight when a reset signalled
-            // derivation. The engine's safe head is authoritative and it does not resend an
-            // unchanged safe head, so adopt it as the derivation base and keep waiting.
+            // The engine can confirm a block after derivation has gone idle, for example attributes
+            // that were in flight when a reset signalled derivation, or the replacement block
+            // built after a flush. The engine's safe head is authoritative and it does not resend
+            // an unchanged safe head, so adopt it as the derivation base and keep waiting.
             DerivationStateUpdate::NewAttributesConfirmed(_) => Ok(DerivationState::AwaitingL1Data),
             _ => Err(DerivationStateTransitionError::InvalidTransition {
                 state: *state,
@@ -112,7 +113,7 @@ fn transition(
             DerivationStateUpdate::SignalProcessed => {
                 Ok(DerivationState::AwaitingUpdateAfterSignal)
             }
-            // A confirmation for attributes sent before a reset; see `AwaitingL1Data`.
+            // A confirmation that arrives after derivation went idle; see `AwaitingL1Data`.
             DerivationStateUpdate::L1DataReceived
             | DerivationStateUpdate::MoreDataNeeded
             | DerivationStateUpdate::NewAttributesConfirmed(_) => {
@@ -159,8 +160,9 @@ fn transition(
 /// When new [`base_protocol::AttributesWithParent`] are derived, they must be sent to the EL,
 /// and the EL must confirm them by creating a new L2 safe head from them prior to further
 /// derivation. There will be at most one [`base_protocol::AttributesWithParent`] awaiting
-/// confirmation at any given time. A reset can orphan attributes already sent to the EL; if the
-/// EL confirms them later, the confirmation still moves the derivation base.
+/// confirmation at any given time. A reset can orphan attributes already sent to the EL, and a
+/// flush can be followed by a replacement block; if the EL confirms either after derivation has
+/// gone idle, the confirmation still moves the derivation base.
 ///
 /// ## Signal handling
 /// Certain conditions require a [`base_consensus_derive::Signal`] to be processed by the
