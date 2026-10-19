@@ -796,7 +796,7 @@ impl BasePayloadBuilderCtx {
             let ordering_position = num_txs_considered;
             let tx_hash = *tx.hash();
             let replay_independent = tx.eip8130_replay_id().is_some();
-            let has_validity_predicates = !tx.validity_predicates().is_empty();
+            let has_validity_predicates = !tx.validity_conditions().is_empty();
             let validity_handling_start = has_validity_predicates.then(Instant::now);
             let coinbase_tip = tx.as_eip8130().and_then(|signed| CoinbaseTip::decode(signed.tx()));
             let has_coinbase_tip = coinbase_tip.is_some();
@@ -839,7 +839,7 @@ impl BasePayloadBuilderCtx {
                     let mut recorder =
                         PredicateReadRecorder::new(&mut **evm.db_mut(), &mut info.predicate_loads);
                     ValidityPredicateEvaluation::evaluate(
-                        tx.validity_predicates(),
+                        tx.validity_conditions(),
                         &mut recorder,
                         &predicate_context,
                     )
@@ -847,11 +847,11 @@ impl BasePayloadBuilderCtx {
                     Ok(ValidityPredicateEvaluation::Matched) => None,
                     Ok(ValidityPredicateEvaluation::Unsatisfied {
                         blocker,
-                        blocker_index,
+                        predicate,
                         expired,
                     }) => {
                         predicate_expired = expired;
-                        Some((blocker, blocker_index))
+                        Some((blocker, predicate))
                     }
                     Err(error) => {
                         warn!(
@@ -876,7 +876,7 @@ impl BasePayloadBuilderCtx {
                     "matched"
                 };
                 ValidityMetrics::validity_predicate_evaluations_total(outcome).increment(1);
-                if outcome == "matched" && best_txs.is_resting(tx_hash, tx.validity_predicates()) {
+                if outcome == "matched" && best_txs.is_resting(tx_hash, tx.validity_conditions()) {
                     BuilderMetrics::resting_predicate_shadow_mismatches_total().increment(1);
                     debug!(
                         target: "payload_builder",
@@ -926,7 +926,7 @@ impl BasePayloadBuilderCtx {
                 } else {
                     // State mismatch: retry at a later position or flashblock. Passed nonce
                     // bounds also stay parked until the required block-number expiry.
-                    let (_, blocker_index) = blocking_predicate
+                    let (_, predicate) = blocking_predicate
                         .expect("unsatisfied, non-terminal predicate implies a blocking key");
                     self.defer_current(
                         best_txs,
@@ -936,7 +936,6 @@ impl BasePayloadBuilderCtx {
                         tx_hash,
                         ordering_position,
                     );
-                    let predicate = tx.validity_predicates()[blocker_index].clone();
                     best_txs.rest(tx_hash, &predicate);
                     predicate_index.park(tx_hash, tx, predicate);
                 }
@@ -1445,17 +1444,15 @@ impl BasePayloadBuilderCtx {
                             &mut info.predicate_loads,
                         );
                         ValidityPredicateEvaluation::evaluate(
-                            parked_transaction.validity_predicates(),
+                            parked_transaction.validity_conditions(),
                             &mut recorder,
                             &predicate_context,
                         )
                     }) {
                         Ok(ValidityPredicateEvaluation::Matched) => None,
                         Ok(ValidityPredicateEvaluation::Unsatisfied {
-                            blocker,
-                            blocker_index,
-                            ..
-                        }) => Some((blocker, blocker_index)),
+                            blocker, predicate, ..
+                        }) => Some((blocker, predicate)),
                         Err(error) => {
                             warn!(
                                 target: "payload_builder",
@@ -1478,8 +1475,7 @@ impl BasePayloadBuilderCtx {
                 if predicate_read_failed {
                     predicate_index.remove(*parked_hash);
                     best_txs.discard_parked(*parked_hash);
-                } else if let Some((_, blocker_index)) = blocking_predicate {
-                    let predicate = parked_transaction.validity_predicates()[blocker_index].clone();
+                } else if let Some((_, predicate)) = blocking_predicate {
                     best_txs.rest(*parked_hash, &predicate);
                     predicate_index.reindex(*parked_hash, predicate);
                 } else {

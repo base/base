@@ -184,7 +184,7 @@ where
         let Some(effective_tip) = transaction.effective_tip_per_gas(base_fee) else {
             return Priority::None;
         };
-        let predicates = transaction.validity_predicates().len();
+        let predicates = transaction.validity_conditions().len();
         if let Some(signed) = transaction.as_eip8130()
             && let Some(tip) = CoinbaseTip::decode(signed.tx())
         {
@@ -606,6 +606,25 @@ mod tests {
 
         assert!(ordering.priority(&standard, 0) > ordering.priority(&one_predicate, 0));
         assert!(ordering.priority(&one_predicate, 0) > ordering.priority(&two_predicates, 0));
+    }
+
+    #[test]
+    fn priority_fee_preserves_submitted_predicate_tiebreak() {
+        let ordering = UnifiedTipOrdering::<BasePooledTransaction>::default();
+        let predicates = vec![block_number_predicate(), block_number_predicate()];
+        let transaction =
+            eip8130_pooled(10, 2, 21_000, None).with_validity_predicates(predicates.clone());
+        let same_fee_and_count =
+            eip1559_pooled(1, 10, 2, 21_000).with_validity_predicates(predicates);
+        let fewer_predicates = eip1559_pooled(2, 10, 2, 21_000)
+            .with_validity_predicates(vec![block_number_predicate()]);
+
+        assert_eq!(
+            ordering.priority(&transaction, 0),
+            ordering.priority(&same_fee_and_count, 0),
+            "compilation must preserve duplicate predicates when ranking priority-fee bids"
+        );
+        assert!(ordering.priority(&fewer_predicates, 0) > ordering.priority(&transaction, 0));
     }
 
     #[test]
