@@ -18,7 +18,7 @@ use base_common_consensus::{BaseTransaction, CoinbaseTip, Predeploys};
 use base_common_evm::L1BlockInfo;
 use base_execution_eip8130::IntrinsicGas;
 use base_execution_txpool::{
-    BasePooledTx, GuardMetrics, ParkableTransactionPool, PredicateContext, ValidityPredicate,
+    BasePooledTx, GuardMetrics, ParkableTransactionPool, PredicateContext,
     estimated_da_size::DataAvailabilitySized,
 };
 use base_observability_events::{
@@ -950,7 +950,7 @@ where
                 continue;
             }
 
-            let has_validity_predicates = !tx.validity_predicates().is_empty();
+            let has_validity_predicates = !tx.validity_conditions().is_empty();
             let coinbase_tip = tx.as_eip8130().and_then(|signed| CoinbaseTip::decode(signed.tx()));
             let has_coinbase_tip = coinbase_tip.is_some();
             // Every validity candidate ends with a decision event, so there is no separate
@@ -958,11 +958,7 @@ where
             if has_validity_predicates {
                 validity_consideration_index += 1;
             }
-            if tx
-                .validity_predicates()
-                .iter()
-                .any(|predicate| matches!(predicate, ValidityPredicate::FlashblockIndex { .. }))
-            {
+            if tx.validity_conditions().flashblock().is_present() {
                 ValidityMetrics::validity_predicate_evaluations_total("unsupported").increment(1);
                 emit_native_validity_event!(
                     self,
@@ -1024,7 +1020,7 @@ where
                         &mut predicate_loads,
                     );
                     ValidityPredicateEvaluation::evaluate(
-                        tx.validity_predicates(),
+                        tx.validity_conditions(),
                         &mut recorder,
                         &predicate_context,
                     )
@@ -1064,7 +1060,7 @@ where
                     }
                     Ok(ValidityPredicateEvaluation::Unsatisfied {
                         blocker,
-                        blocker_index,
+                        predicate,
                         expired: false,
                     }) => {
                         ValidityMetrics::validity_predicate_evaluations_total("not_satisfied")
@@ -1088,7 +1084,6 @@ where
                                 }
                             );
                         }
-                        let predicate = tx.validity_predicates()[blocker_index].clone();
                         predicate_index.park(tx_hash, tx, predicate);
                         continue;
                     }
@@ -1420,7 +1415,7 @@ where
                         &mut predicate_loads,
                     );
                     ValidityPredicateEvaluation::evaluate(
-                        parked_transaction.validity_predicates(),
+                        parked_transaction.validity_conditions(),
                         &mut recorder,
                         &predicate_context,
                     )
@@ -1434,13 +1429,11 @@ where
                         predicate_index.remove(parked_hash);
                         best_txs.promote(parked_hash);
                     }
-                    Ok(ValidityPredicateEvaluation::Unsatisfied { blocker_index, .. }) => {
+                    Ok(ValidityPredicateEvaluation::Unsatisfied { predicate, .. }) => {
                         ValidityMetrics::validity_predicate_evaluations_total(
                             "rescan_not_satisfied",
                         )
                         .increment(1);
-                        let predicate =
-                            parked_transaction.validity_predicates()[blocker_index].clone();
                         predicate_index.reindex(parked_hash, predicate);
                     }
                     Err(error) => {
