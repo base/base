@@ -29,7 +29,6 @@ base-common-genesis.workspace = true
 
 [dev-dependencies]
 rstest.workspace = true
-tokio = { workspace = true, features = ["full"] }
 
 [features]
 std = [
