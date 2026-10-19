@@ -668,7 +668,7 @@ digest = "0951b41580"
 
 ["docs/guides/GLAMSTERDAM.md"]
 summary = "Scopes Base's Glamsterdam EIPs with BAL and SLOTNUM designs, calldata and access-list pricing, and EIP-8038 state-access prices re-anchored to 200 ms blocks with validation questions."
-digest = "792d88349d"
+digest = "3ac74d223f"
 
 ["docs/guides/P2P.md"]
 summary = "Explains the Base P2P stack for newcomers: consensus-layer discv5 and libp2p gossipsub versus execution-layer reth networking, how they interact via Engine API, key files, flags, and glossary."

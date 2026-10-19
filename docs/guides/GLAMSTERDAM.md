@@ -205,7 +205,7 @@ Access-list data pricing must match the [EIP-7976 calldata floor](#calldata-floo
 
 #### Method
 
-L1 fits per-client operation runtimes and converts them to gas at an anchor rate; its selected prices reflect a six-client bound, not just Reth. The [supporting report](https://github.com/ethereum/EIPs/blob/master/assets/eip-8038/gas-cost-report.md) and current raw/rendered EIP use 75 Mgas/s. Using 100 Mgas/s as the conversion anchor instead would not change Base's values when re-anchoring the same underlying runtimes.
+L1 fits per-client operation runtimes and converts them to gas at an anchor rate; its selected prices reflect a six-client bound, not just Reth. The [raw EIP source](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-8038.md) and [supporting report](https://github.com/ethereum/EIPs/blob/master/assets/eip-8038/gas-cost-report.md) use 75 Mgas/s; rendered versions have also cited 100 Mgas/s. Using either conversion anchor would not change Base's values when re-anchoring the same underlying runtimes.
 Base runs a single client, base-reth. For a proposed block limit `B = 40,000,000` and 200 ms blocks, reserve `exec_share = 50%` (100 ms) for execution and define `k = (B / (exec_share × 0.2 s)) / 75,000,000`.
 For access primitives, use `access = max(today, ceil(reth_access_at_75M × k))`. For writes, reconstruct the report's combined measurement before scaling: `write = max(today, ceil((reth_write_residual_at_75M + L1_selected_access) × k) - Base_access)`, using the corresponding floored Base cold access and the larger account estimate across accounts with/without code.
 Recompute dependent parameters from those floored primitives using the EIP formulas; round `STORAGE_CLEAR_REFUND` down to whole gas.
