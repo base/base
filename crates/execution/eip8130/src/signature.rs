@@ -159,11 +159,9 @@ mod tests {
     use base_precompile_storage::Handler;
 
     use super::*;
-    use crate::test_utils::{addr, key, pack, sig, with_storage};
+    use crate::test_utils::{K1, NOW, addr, key, pack, sig, with_storage};
 
-    const NOW: u64 = 1_000;
     const CHAIN_ID: u64 = 8453;
-    const K1: Address = Eip8130Constants::K1_AUTHENTICATOR;
     const ACCOUNT: Address = address!("0x00000000000000000000000000000000000000aa");
     const HASH: B256 = B256::repeat_byte(0x42);
 

@@ -1089,10 +1089,12 @@ mod tests {
     use revm::state::Bytecode;
 
     use super::*;
-    use crate::{AccountCreated, ActorAuthorized, ActorRevoked, test_utils::with_storage};
+    use crate::{
+        AccountCreated, ActorAuthorized, ActorRevoked,
+        test_utils::{K1, with_storage},
+    };
 
     const ACCOUNT: Address = address!("0x00000000000000000000000000000000000000a1");
-    const K1: Address = Eip8130Constants::K1_AUTHENTICATOR;
     const AUTHENTICATOR: Address = address!("0x00000000000000000000000000000000000000bb");
     const MANAGER: Address = address!("0x00000000000000000000000000000000000000cc");
     const COMMITMENT: B256 =

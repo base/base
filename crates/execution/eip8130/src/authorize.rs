@@ -310,7 +310,7 @@ impl ActorAuthorizer {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{U256, address, keccak256};
+    use alloy_primitives::{Bytes, U256, address, keccak256};
     use base_precompile_storage::Handler;
     use k256::ecdsa::SigningKey as K256SigningKey;
     use p256::ecdsa::{
@@ -319,10 +319,9 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-    use crate::test_utils::{actor_id, addr, key, pack, sig, with_storage};
+    use crate::test_utils::{NOW, actor_id, addr, auth_blob, key, pack, sig, with_storage};
 
     const HASH: B256 = B256::repeat_byte(0x42);
-    const NOW: u64 = 1_000;
     const ACCOUNT: Address = address!("0x00000000000000000000000000000000000000a1");
 
     /// Packs an `AccountState` word carrying the inline secp256k1 self config
@@ -353,21 +352,13 @@ mod tests {
         (data, keccak256([x, y].concat()))
     }
 
-    /// `authenticator(20) || data`.
-    fn blob(authenticator: Address, data: &[u8]) -> Vec<u8> {
-        let mut out = Vec::with_capacity(20 + data.len());
-        out.extend_from_slice(authenticator.as_slice());
-        out.extend_from_slice(data);
-        out
-    }
-
     #[test]
     fn implicit_eoa_authorizes_unrestricted_owner() {
         let key = key(0x11);
         let account = addr(&key);
         // The k1 blob whose signer recovers to the account: a live default EOA
         // (flag unset, no explicit self entry) resolves to the unrestricted owner.
-        let auth = blob(Eip8130Constants::K1_AUTHENTICATOR, &sig(&key, HASH));
+        let auth = auth_blob(Eip8130Constants::K1_AUTHENTICATOR, &sig(&key, HASH));
         with_storage(|acc| {
             let resolved = ActorAuthorizer::authenticate_actor(acc, account, HASH, &auth, NOW);
             assert_eq!(resolved.unwrap(), ResolvedActor::unrestricted(actor_id(account)));
@@ -378,7 +369,7 @@ mod tests {
     fn default_eoa_revoked_self_is_rejected() {
         let key = key(0x11);
         let account = addr(&key);
-        let auth = blob(Eip8130Constants::K1_AUTHENTICATOR, &sig(&key, HASH));
+        let auth = auth_blob(Eip8130Constants::K1_AUTHENTICATOR, &sig(&key, HASH));
         with_storage(|acc| {
             // DEFAULT_EOA_REVOKED set: the inline k1 self is disabled (revoked, or a
             // non-k1 self is the live self authenticator), so a k1 signature
@@ -396,7 +387,7 @@ mod tests {
         let key = key(0x11);
         let account = addr(&key);
         let self_id = actor_id(account);
-        let auth = blob(Eip8130Constants::K1_AUTHENTICATOR, &sig(&key, HASH));
+        let auth = auth_blob(Eip8130Constants::K1_AUTHENTICATOR, &sig(&key, HASH));
         with_storage(|acc| {
             // Flag unset with an inline scope: the self key is live but scoped, and
             // resolves from the account-state slot alone (no `actor_config` read).
@@ -416,7 +407,7 @@ mod tests {
     fn expired_self_is_rejected() {
         let key = key(0x11);
         let account = addr(&key);
-        let auth = blob(Eip8130Constants::K1_AUTHENTICATOR, &sig(&key, HASH));
+        let auth = auth_blob(Eip8130Constants::K1_AUTHENTICATOR, &sig(&key, HASH));
         with_storage(|acc| {
             // Inline expiry in the past: the self key is no longer valid.
             acc.account_state.at_mut(&account).write(pack_self(0, NOW - 1, false)).unwrap();
@@ -433,7 +424,7 @@ mod tests {
         let account = addr(&key);
         let self_id = actor_id(account);
         let manager = address!("0x00000000000000000000000000000000000000d4");
-        let auth = blob(Eip8130Constants::K1_AUTHENTICATOR, &sig(&key, HASH));
+        let auth = auth_blob(Eip8130Constants::K1_AUTHENTICATOR, &sig(&key, HASH));
         with_storage(|acc| {
             // Inline SCOPE_POLICY set: the self key is gated and resolves its policy
             // target from `policy_manager[self][account]`.
@@ -455,7 +446,7 @@ mod tests {
         let key = key(0x11);
         // Signer recovers to a non-account address with no registered actor entry.
         let id = actor_id(addr(&key));
-        let auth = blob(Eip8130Constants::K1_AUTHENTICATOR, &sig(&key, HASH));
+        let auth = auth_blob(Eip8130Constants::K1_AUTHENTICATOR, &sig(&key, HASH));
         with_storage(|acc| {
             assert_eq!(
                 ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW),
@@ -469,7 +460,7 @@ mod tests {
 
     struct BoundActor {
         authenticator: Address,
-        auth: Vec<u8>,
+        auth: Bytes,
         actor_id: B256,
     }
 
@@ -477,7 +468,7 @@ mod tests {
         let key = key(byte);
         BoundActor {
             authenticator: Eip8130Constants::K1_AUTHENTICATOR,
-            auth: blob(Eip8130Constants::K1_AUTHENTICATOR, &sig(&key, HASH)),
+            auth: auth_blob(Eip8130Constants::K1_AUTHENTICATOR, &sig(&key, HASH)),
             actor_id: actor_id(addr(&key)),
         }
     }
@@ -487,7 +478,7 @@ mod tests {
         let (data, id) = p256_blob(&key, HASH);
         BoundActor {
             authenticator: Eip8130Contracts::P256_AUTHENTICATOR,
-            auth: blob(Eip8130Contracts::P256_AUTHENTICATOR, &data),
+            auth: auth_blob(Eip8130Contracts::P256_AUTHENTICATOR, &data),
             actor_id: id,
         }
     }
@@ -561,7 +552,7 @@ mod tests {
     fn ecrecover_unbound_actor_is_rejected() {
         let key = key(0x22);
         let id = actor_id(addr(&key));
-        let auth = blob(Eip8130Constants::K1_AUTHENTICATOR, &sig(&key, HASH));
+        let auth = auth_blob(Eip8130Constants::K1_AUTHENTICATOR, &sig(&key, HASH));
         with_storage(|acc| {
             assert_eq!(
                 ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW),
@@ -578,7 +569,7 @@ mod tests {
         let key = key(0x22);
         let id = actor_id(addr(&key));
         let manager = address!("0x00000000000000000000000000000000000000d4");
-        let auth = blob(Eip8130Constants::K1_AUTHENTICATOR, &sig(&key, HASH));
+        let auth = auth_blob(Eip8130Constants::K1_AUTHENTICATOR, &sig(&key, HASH));
         with_storage(|acc| {
             acc.actors
                 .at_mut(&id)
@@ -594,12 +585,12 @@ mod tests {
     }
 
     /// `DELEGATE || delegate_account(20) || K1_AUTHENTICATOR || nested_sig`.
-    fn delegate_auth(delegate_account: Address, nested_key: &K256SigningKey) -> Vec<u8> {
+    fn delegate_auth(delegate_account: Address, nested_key: &K256SigningKey) -> Bytes {
         let mut data = Vec::new();
         data.extend_from_slice(delegate_account.as_slice());
         data.extend_from_slice(Eip8130Constants::K1_AUTHENTICATOR.as_slice());
         data.extend_from_slice(&sig(nested_key, HASH));
-        blob(Eip8130Contracts::DELEGATE_AUTHENTICATOR, &data)
+        auth_blob(Eip8130Contracts::DELEGATE_AUTHENTICATOR, &data)
     }
 
     #[test]
@@ -740,7 +731,7 @@ mod tests {
         data.extend_from_slice(delegate_account.as_slice());
         data.extend_from_slice(Eip8130Contracts::DELEGATE_AUTHENTICATOR.as_slice());
         data.extend_from_slice(&[0u8; 65]);
-        let auth = blob(Eip8130Contracts::DELEGATE_AUTHENTICATOR, &data);
+        let auth = auth_blob(Eip8130Contracts::DELEGATE_AUTHENTICATOR, &data);
         with_storage(|acc| {
             assert_eq!(
                 ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW),
@@ -853,7 +844,7 @@ mod tests {
     #[test]
     fn zero_authenticator_selector_is_rejected() {
         // `address(0)` is the empty sentinel, never a valid authenticator selector.
-        let auth = blob(Address::ZERO, &[0u8; 65]);
+        let auth = auth_blob(Address::ZERO, &[0u8; 65]);
         with_storage(|acc| {
             assert_eq!(
                 ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW),
@@ -865,7 +856,7 @@ mod tests {
     #[test]
     fn non_canonical_authenticator_is_rejected() {
         let authenticator = address!("0x00000000000000000000000000000000deadbeef");
-        let auth = blob(authenticator, &[0u8; 65]);
+        let auth = auth_blob(authenticator, &[0u8; 65]);
         with_storage(|acc| {
             assert_eq!(
                 ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW),
