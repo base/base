@@ -14,7 +14,7 @@ mod backtrace;
 pub use backtrace::Backtracing;
 
 mod prometheus;
-pub use prometheus::{BuildError, MetricsConfig, PrometheusServer};
+pub use prometheus::{BuildError, MetricsConfig};
 
 mod styles;
 pub use styles::CliStyles;
