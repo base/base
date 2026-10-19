@@ -4831,8 +4831,8 @@ dependencies = [
 name = "base-fee-jobs"
 version = "0.0.0"
 dependencies = [
- "alloy-json-rpc 2.4.1",
- "alloy-network 2.4.1",
+ "alloy-json-rpc 2.5.0",
+ "alloy-network 2.5.0",
  "alloy-primitives",
  "alloy-provider",
  "alloy-rpc-types-eth 2.5.0",
