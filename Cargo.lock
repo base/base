@@ -3087,6 +3087,7 @@ dependencies = [
  "humantime",
  "metrics",
  "metrics-exporter-prometheus",
+ "tokio",
  "tokio-util",
  "tracing",
  "url",

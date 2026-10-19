@@ -409,10 +409,14 @@ impl BatcherArgs {
         cancellation: CancellationToken,
     ) -> eyre::Result<()> {
         let config = self.into_config(metrics_enabled)?;
-        let rt = TokioRuntime::with_token(cancellation);
+        let rt = TokioRuntime::with_token(cancellation.clone());
 
-        let service = BatcherService::new(config);
-        service.setup(rt).await?.run().await
+        let setup = BatcherService::new(config).setup(rt);
+        let ready = tokio::select! {
+            ready = setup => ready?,
+            () = cancellation.cancelled() => return Ok(()),
+        };
+        ready.run().await
     }
 }
 
