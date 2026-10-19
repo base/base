@@ -726,6 +726,10 @@ impl AggregateBenchmarkArgs {
                 metadata.runs.len(),
             );
             let run = metadata.runs.into_iter().next().expect("validated metadata run count");
+            if run.result.validator_metrics.is_some() {
+                let path = run_output_dir.join("metrics-validator.json");
+                eyre::ensure!(path.is_file(), "run artifact is missing: {}", path.display());
+            }
             let output_name =
                 run_output_dir.file_name().and_then(|name| name.to_str()).ok_or_else(|| {
                     eyre::eyre!(
@@ -1740,7 +1744,7 @@ real_token_setup:
     }
 
     #[test]
-    fn aggregate_accepts_builder_only_runs() {
+    fn aggregate_requires_validator_metrics_only_for_validator_runs() {
         let root = tempfile::tempdir().unwrap();
         let run = write_aggregate_run(
             root.path(),
@@ -1750,18 +1754,23 @@ real_token_setup:
             "2026-09-03T00:00:00.000Z",
         );
         fs::remove_file(run.join("metrics-validator.json")).unwrap();
+        let aggregate = || {
+            AggregateBenchmarkArgs {
+                output_dir: root.path().to_path_buf(),
+                run_output_dirs: vec![run.clone()],
+                versioned_pages: false,
+            }
+            .run()
+        };
+        let error = aggregate().unwrap_err();
+        assert!(error.to_string().contains("run artifact is missing"));
+
         let mut metadata: serde_json::Value =
             serde_json::from_slice(&fs::read(run.join("metadata.json")).unwrap()).unwrap();
         metadata["runs"][0]["result"].as_object_mut().unwrap().remove("validatorMetrics");
         fs::write(run.join("metadata.json"), serde_json::to_vec(&metadata).unwrap()).unwrap();
 
-        AggregateBenchmarkArgs {
-            output_dir: root.path().to_path_buf(),
-            run_output_dirs: vec![run],
-            versioned_pages: false,
-        }
-        .run()
-        .unwrap();
+        aggregate().unwrap();
     }
 
     #[test]
