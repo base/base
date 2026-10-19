@@ -289,15 +289,31 @@ where
                 // granularity: each batch's outcome is tracked at the L1 block where it landed.
                 //
                 // `pending_derived_from` is set in `attempt_derivation` just before the attrs
-                // are sent to the engine. It is `None` only for EL-sync safe heads that were
-                // not produced by local derivation; in that case fall back to epoch origin.
+                // are sent to the engine. It is `None` for safe heads not produced by local
+                // derivation (EL sync, or the engine's safe head after a reset); in that case
+                // fall back to epoch origin.
                 let l1_block = self.pending_derived_from.take().unwrap_or(BlockInfo {
                     number: safe_head.l1_origin.number,
                     hash: safe_head.l1_origin.hash,
                     parent_hash: B256::ZERO,
                     timestamp: 0,
                 });
-                if let Err(e) =
+                // A confirmation while derivation is idle arrives after a reset or a flush moved
+                // derivation on without it. After a reset the inclusion block was discarded, and
+                // keying the entry by epoch origin would report the block safe at an earlier L1
+                // block than it was, so leave the SafeDB unchanged.
+                let stale = matches!(
+                    self.derivation_state_machine.current_state(),
+                    DerivationState::AwaitingL1Data | DerivationState::AwaitingSignal
+                );
+                if stale {
+                    warn!(
+                        target: "derivation",
+                        state = ?self.derivation_state_machine.current_state(),
+                        block = %safe_head.block_info.number,
+                        "Safe head confirmation arrived while derivation was idle; adopting it without a SafeDB entry"
+                    );
+                } else if let Err(e) =
                     self.safe_head_listener.safe_head_updated(*safe_head, l1_block).await
                 {
                     error!(target: "derivation", error = %e, "failed to record safe head update");

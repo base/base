@@ -86,6 +86,11 @@ fn transition(
             DerivationStateUpdate::SignalProcessed => {
                 Ok(DerivationState::AwaitingUpdateAfterSignal)
             }
+            // The engine can confirm a block after derivation has gone idle, for example attributes
+            // that were in flight when a reset signalled derivation, or the replacement block
+            // built after a flush. The engine's safe head is authoritative and it does not resend
+            // an unchanged safe head, so adopt it as the derivation base and keep waiting.
+            DerivationStateUpdate::NewAttributesConfirmed(_) => Ok(DerivationState::AwaitingL1Data),
             _ => Err(DerivationStateTransitionError::InvalidTransition {
                 state: *state,
                 update: update.clone(),
@@ -108,7 +113,10 @@ fn transition(
             DerivationStateUpdate::SignalProcessed => {
                 Ok(DerivationState::AwaitingUpdateAfterSignal)
             }
-            DerivationStateUpdate::L1DataReceived | DerivationStateUpdate::MoreDataNeeded => {
+            // A confirmation that arrives after derivation went idle; see `AwaitingL1Data`.
+            DerivationStateUpdate::L1DataReceived
+            | DerivationStateUpdate::MoreDataNeeded
+            | DerivationStateUpdate::NewAttributesConfirmed(_) => {
                 Ok(DerivationState::AwaitingSignal)
             }
             _ => Err(DerivationStateTransitionError::InvalidTransition {
@@ -152,7 +160,9 @@ fn transition(
 /// When new [`base_protocol::AttributesWithParent`] are derived, they must be sent to the EL,
 /// and the EL must confirm them by creating a new L2 safe head from them prior to further
 /// derivation. There will be at most one [`base_protocol::AttributesWithParent`] awaiting
-/// confirmation at any given time.
+/// confirmation at any given time. A reset can orphan attributes already sent to the EL, and a
+/// flush can be followed by a replacement block; if the EL confirms either after derivation has
+/// gone idle, the confirmation still moves the derivation base.
 ///
 /// ## Signal handling
 /// Certain conditions require a [`base_consensus_derive::Signal`] to be processed by the
@@ -273,6 +283,7 @@ mod tests {
     // AwaitingL1Data valid transitions
     #[case(AwaitingL1Data, L1DataReceived, Deriving)]
     #[case(AwaitingL1Data, SignalProcessed, AwaitingUpdateAfterSignal)]
+    #[case(AwaitingL1Data, NewAttributesConfirmed(block()), AwaitingL1Data)]
     // AwaitingSafeHeadConfirmation valid transitions
     #[case(AwaitingSafeHeadConfirmation, NewAttributesConfirmed(block()), Deriving)]
     #[case(AwaitingSafeHeadConfirmation, SignalProcessed, AwaitingUpdateAfterSignal)]
@@ -281,6 +292,7 @@ mod tests {
     #[case(AwaitingSignal, SignalProcessed, AwaitingUpdateAfterSignal)]
     #[case(AwaitingSignal, L1DataReceived, AwaitingSignal)]
     #[case(AwaitingSignal, MoreDataNeeded, AwaitingSignal)]
+    #[case(AwaitingSignal, NewAttributesConfirmed(block()), AwaitingSignal)]
     // AwaitingUpdateAfterSignal valid transitions
     #[case(AwaitingUpdateAfterSignal, L1DataReceived, Deriving)]
     #[case(AwaitingUpdateAfterSignal, NewAttributesConfirmed(block()), Deriving)]
@@ -312,7 +324,6 @@ mod tests {
     #[case(AwaitingL1Data, ELSyncCompleted(block()))]
     #[case(AwaitingL1Data, MoreDataNeeded)]
     #[case(AwaitingL1Data, NewAttributesDerived(attrs()))]
-    #[case(AwaitingL1Data, NewAttributesConfirmed(block()))]
     #[case(AwaitingL1Data, SignalNeeded)]
     // AwaitingSafeHeadConfirmation invalid transitions
     #[case(AwaitingSafeHeadConfirmation, ELSyncCompleted(block()))]
@@ -322,7 +333,6 @@ mod tests {
     // AwaitingSignal invalid transitions
     #[case(AwaitingSignal, ELSyncCompleted(block()))]
     #[case(AwaitingSignal, NewAttributesDerived(attrs()))]
-    #[case(AwaitingSignal, NewAttributesConfirmed(block()))]
     #[case(AwaitingSignal, SignalNeeded)]
     // AwaitingUpdateAfterSignal invalid transitions
     #[case(AwaitingUpdateAfterSignal, ELSyncCompleted(block()))]
