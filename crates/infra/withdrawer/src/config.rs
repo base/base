@@ -17,6 +17,9 @@ use url::Url;
 
 use crate::{Network, NetworkPreset, ProofSystem, Secret, SecretValueParser};
 
+// Set after `augment_args`, which otherwise uses the rustdoc of `WithdrawerArgs` as the help text.
+const WITHDRAWER_ABOUT: &str = "Prove or finalize OP Stack withdrawals";
+
 /// Parses RPC endpoints without including rejected values in clap errors.
 #[derive(Debug, Clone)]
 pub struct RpcUrlValueParser;
@@ -255,10 +258,12 @@ impl WithdrawerArgs {
 impl CommandFactory for WithdrawerArgs {
     fn command() -> Command {
         Self::augment_args(Command::new("withdrawer").version(env!("CARGO_PKG_VERSION")))
+            .about(WITHDRAWER_ABOUT)
     }
 
     fn command_for_update() -> Command {
         Self::augment_args_for_update(Command::new("withdrawer").version(env!("CARGO_PKG_VERSION")))
+            .about(WITHDRAWER_ABOUT)
     }
 }
 
