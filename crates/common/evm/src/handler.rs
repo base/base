@@ -534,6 +534,20 @@ mod tests {
         assert_eq!(gas.refunded(), 0);
     }
 
+    /// Guards the assumption behind the `eip8037_child_gas` tests below: Base never maps to an
+    /// Ethereum spec at or after Amsterdam, so revm's EIP-8037 state gas stays off on every Base
+    /// upgrade. Those tests mirror revm's reservoir accounting, not Base-specific behavior. When
+    /// this test fails, Glamsterdam is being wired up: re-verify them against revm.
+    #[test]
+    fn test_eip8037_state_gas_disabled_on_all_base_upgrades() {
+        for upgrade in BaseUpgrade::EXECUTION_VARIANTS {
+            let cfg = CfgEnv::new().with_spec_and_mainnet_gas_params(BaseSpecId::new(upgrade));
+            assert!(!cfg.enable_amsterdam_eip8037, "EIP-8037 enabled on {upgrade:?}");
+        }
+    }
+
+    /// Child gas with state gas set by hand. EIP-8037 is off on Base today, so this state is not
+    /// reachable in production; see `test_eip8037_state_gas_disabled_on_all_base_upgrades`.
     fn eip8037_child_gas() -> Gas {
         let mut gas = Gas::new(100);
         let tracker = gas.tracker_mut();
@@ -572,16 +586,17 @@ mod tests {
     }
 
     #[test]
-    fn test_state_gas_propagated_to_parent_on_ok() {
+    fn test_returned_reservoir_reconciles_state_gas_spill_on_ok() {
         let ctx = Context::base()
             .with_tx(BaseTransaction::builder().base(TxEnv::builder().gas_limit(100)).build_fill())
             .with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Regolith)));
 
         let gas = call_last_frame_return(ctx, InstructionResult::Stop, eip8037_child_gas());
         assert_eq!(gas.state_gas_spent(), 20);
-        assert_eq!(gas.state_gas_spilled(), 10);
-        assert_eq!(gas.reservoir(), 30);
-        assert_eq!(gas.remaining(), 50);
+        // Returned reservoir first repays spilled regular gas; only the excess remains reserved.
+        assert_eq!(gas.state_gas_spilled(), 0);
+        assert_eq!(gas.reservoir(), 20);
+        assert_eq!(gas.remaining(), 60);
     }
 
     #[test]
@@ -765,6 +780,62 @@ mod tests {
     #[test]
     fn test_osaka_opcodes_activated_azul() {
         assert_eq!(BaseSpecId::new(BaseUpgrade::Azul).into_eth_spec(), SpecId::OSAKA);
+    }
+
+    /// EIP-6780 preserves existing contracts from Ecotone onward, while contracts created
+    /// and destroyed in the same transaction are still deleted on both sides of the fork.
+    #[rstest]
+    #[case::canyon(BaseUpgrade::Canyon, true)]
+    #[case::ecotone(BaseUpgrade::Ecotone, false)]
+    fn test_selfdestruct_fork_behavior(
+        #[case] upgrade: BaseUpgrade,
+        #[case] deletes_existing: bool,
+        #[values(false, true)] created: bool,
+    ) {
+        let caller = Address::repeat_byte(0x11);
+        let contract = if created { caller.create(0) } else { Address::repeat_byte(0x42) };
+        let mut db = InMemoryDB::default();
+        db.insert_account_info(
+            caller,
+            AccountInfo { balance: U256::from(1_000_000), ..Default::default() },
+        );
+        if !created {
+            // Read a parent slot, then transfer the balance to CALLER with SELFDESTRUCT.
+            db.insert_account_info(
+                contract,
+                AccountInfo {
+                    balance: U256::from(100),
+                    nonce: 1,
+                    code: Some(Bytecode::new_legacy(bytes!("6001545033FF"))),
+                    ..Default::default()
+                },
+            );
+            db.insert_account_storage(contract, U256::from(1), U256::from(11)).unwrap();
+        }
+        let tx = BaseTransaction::builder()
+            .base(
+                TxEnv::builder()
+                    .caller(caller)
+                    .gas_limit(100_000)
+                    .kind(if created { TxKind::Create } else { TxKind::Call(contract) })
+                    .data(if created { bytes!("33FF") } else { Bytes::new() }),
+            )
+            .enveloped_tx(Some(bytes!("FACADE")))
+            .build_fill();
+        let mut evm = Context::base()
+            .with_db(db)
+            .with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(upgrade)))
+            .with_chain(L1BlockInfo { l2_block: Some(U256::ZERO), ..Default::default() })
+            .build_with_inspector(NoOpInspector {});
+        let result = evm.inspect_tx(tx).unwrap();
+        assert!(result.result.is_success());
+        let account = &result.state[&contract];
+        assert_eq!(account.is_selfdestructed(), created || deletes_existing);
+        if !created && !deletes_existing {
+            assert_eq!(account.info.nonce, 1);
+            assert_eq!(account.info.balance, U256::ZERO);
+            assert_eq!(account.storage[&U256::from(1)].present_value(), U256::from(11));
+        }
     }
 
     /// Runs CLZ bytecode (`PUSH1 0x80, CLZ, PUSH1 0x00, MSTORE, PUSH1 0x20, PUSH1 0x00, RETURN`)
