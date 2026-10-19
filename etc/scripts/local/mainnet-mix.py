@@ -143,7 +143,7 @@ def rpc_batch(url, calls, retries=8):
             # A rate-limited batch comes back as one error object instead of a list.
             if isinstance(body, list) and all("result" in item for item in body):
                 return [item["result"] for item in sorted(body, key=lambda item: item["id"])]
-        except OSError as error:
+        except (OSError, ValueError) as error:  # ValueError: a non-JSON body, e.g. a Cloudflare page
             body = error
         time.sleep(min(2**attempt, 30))
     raise RuntimeError(f"RPC batch failed after retries; last response: {str(body)[:300]}")
@@ -174,9 +174,7 @@ def classify(tx, receipt):
 
 
 def fetch(url, numbers):
-    calls = []
-    for n in numbers:
-        calls += [("eth_getBlockByNumber", [hex(n), True]), ("eth_getBlockReceipts", [hex(n)])]
+    calls = [call for n in numbers for call in (("eth_getBlockByNumber", [hex(n), True]), ("eth_getBlockReceipts", [hex(n)]))]
     results = rpc_batch(url, calls)
     rows = []
     for n, block, receipts in zip(numbers, results[::2], results[1::2]):
@@ -199,7 +197,9 @@ def sample(url, blocks, cache, workers):
     done = {}
     if cache and os.path.exists(cache):
         with open(cache) as f:
-            done = {row["n"]: row for row in map(json.loads, f)}
+            *lines, partial = f.read().split("\n")
+        os.truncate(cache, os.path.getsize(cache) - len(partial.encode()))  # drop a row cut off mid-write
+        done = {row["n"]: row for row in map(json.loads, filter(None, lines))}
     todo = [n for n in blocks if n not in done]
     batches = [todo[i:i + BLOCKS_PER_BATCH] for i in range(0, len(todo), BLOCKS_PER_BATCH)]
     with open(cache or os.devnull, "a") as out, ThreadPoolExecutor(workers) as pool:
