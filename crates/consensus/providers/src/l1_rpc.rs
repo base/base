@@ -1,4 +1,4 @@
-//! Shared HTTP providers for consensus L1 execution and Beacon API requests.
+//! Shared HTTP providers for consensus L1 execution JSON-RPC requests.
 
 use std::time::Duration;
 
@@ -7,11 +7,20 @@ use alloy_rpc_client::RpcClient;
 use reqwest::Client;
 use url::Url;
 
-/// Default request timeout for consensus L1 HTTP clients.
+/// Default request timeout for general consensus L1 execution JSON-RPC clients.
 ///
-/// General L1 execution JSON-RPC and Beacon API requests use this deadline unless their caller
-/// supplies an explicit timeout.
-pub const L1_RPC_TIMEOUT: Duration = Duration::from_secs(15);
+/// Budget: this must stay well under the shortest deadline of a synchronous caller that waits on
+/// an L1 execution request. The tightest known caller is op-conductor's health check, which
+/// waits at most 10s on each `optimism_syncStatus` call; an inner L1 deadline at or above that
+/// turns a stalled L1 endpoint into a failed health check on every node at once. 5s also stays
+/// at or under proxyd's default 5s backend timeout, so the proxy rather than this client reports
+/// a stalled backend first.
+///
+/// Requests that can carry large responses tolerate this deadline rather than needing a longer
+/// one: when a derivation receipt or full-block fetch times out, the pipeline yields and retries
+/// it on its next trigger, such as the next L1 head notification, so a slow request delays
+/// derivation instead of failing it. The sequencer hot path uses its own, shorter deadline.
+pub const L1_RPC_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Constructs standard consensus L1 HTTP providers.
 #[derive(Debug, Clone, Copy, Default)]

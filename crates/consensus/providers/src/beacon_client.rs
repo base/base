@@ -139,11 +139,19 @@ pub struct OnlineBeaconClient {
 }
 
 impl OnlineBeaconClient {
+    /// Default request timeout for Beacon API requests.
+    ///
+    /// The beacon client serves only the derivation pipeline's blob fetches, which no synchronous
+    /// caller waits on, so it keeps a longer deadline than [`crate::L1_RPC_TIMEOUT`]: a blob
+    /// response carries up to a full block of hex-encoded blobs, and a beacon node may have to
+    /// reconstruct blobs from data columns before it can answer.
+    pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(15);
+
     /// Creates a new [`OnlineBeaconClient`] from the provided base URL string.
     ///
-    /// Requests use the default [`crate::L1_RPC_TIMEOUT`] deadline.
+    /// Requests use the [`Self::DEFAULT_TIMEOUT`] deadline.
     pub fn new_http(base: String) -> Self {
-        Self::with_timeout(base, crate::L1_RPC_TIMEOUT)
+        Self::with_timeout(base, Self::DEFAULT_TIMEOUT)
     }
 
     fn with_timeout(mut base: String, timeout: Duration) -> Self {

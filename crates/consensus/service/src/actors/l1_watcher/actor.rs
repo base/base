@@ -24,6 +24,7 @@ use tokio::{
         mpsc::{self},
         watch,
     },
+    time::{Instant, sleep_until},
 };
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
 
@@ -41,16 +42,28 @@ use crate::{
 pub struct LogRetrier;
 
 impl LogRetrier {
-    /// Fetch logs matching `filter` with capped exponential backoff, trying up to 10 times.
+    /// Total wall-clock budget for fetching the logs of one L1 head, across all attempts and
+    /// backoff sleeps.
     ///
-    /// Returns `Ok(Some(logs))` on success, `Ok(None)` if `cancel` fires during a backoff sleep,
-    /// or `Err(`[`L1WatcherActorError::RetriesExhausted`]`)` once all attempts fail.
+    /// Exhausting the budget fails the actor, which shuts the node down. That restart is the
+    /// current recovery path when the fetch is pinned to a block hash that L1 has reorged away,
+    /// and it reloads the unsafe block signer from the `SystemConfig` contract after rotations
+    /// the watcher missed while it was stalled here. The budget therefore has to outlast
+    /// typical L1 proxy outages (30-60s observed) without restarting every replica that shares
+    /// the proxy. It is a wall-clock bound rather than an attempt count so that outage
+    /// tolerance does not shrink when the per-request L1 timeout is lowered: 150s matches the
+    /// previous worst case of ten attempts at a 15s request timeout.
+    pub const RETRY_BUDGET: Duration = Duration::from_secs(150);
+
+    /// Fetch logs matching `filter`, retrying with capped exponential backoff until a request
+    /// succeeds, `cancel` fires, or `retry_budget` elapses.
     ///
-    /// Provider failures, including request timeouts, use the same bounded retry path. Exhausting
-    /// those attempts returns an actor error so the node service can shut down instead of waiting
-    /// indefinitely on an L1 request.
+    /// Returns `Ok(Some(logs))` on success, `Ok(None)` once `cancel` fires (during a backoff
+    /// sleep or while a request is in flight), or
+    /// `Err(`[`L1WatcherActorError::RetriesExhausted`]`)` once `retry_budget` elapses, including
+    /// while a request is still in flight.
     ///
-    /// `initial_backoff` and `max_backoff` are caller-supplied so tests can use tiny values.
+    /// The backoff and budget durations are caller-supplied so tests can use tiny values.
     pub async fn fetch_logs_with_retry<F>(
         provider: &F,
         filter: Filter,
@@ -58,41 +71,47 @@ impl LogRetrier {
         block_info: BlockInfo,
         initial_backoff: Duration,
         max_backoff: Duration,
+        retry_budget: Duration,
     ) -> Result<Option<Vec<Log>>, L1WatcherActorError<BlockInfo>>
     where
         F: L1BlockFetcher,
     {
-        const MAX_RETRIES: u32 = 10;
-
+        let deadline = Instant::now() + retry_budget;
         let mut backoff = initial_backoff;
-        for attempt in 1..=MAX_RETRIES {
-            match provider.get_logs(filter.clone()).await {
+        let mut attempt: u64 = 0;
+        while Instant::now() < deadline {
+            attempt += 1;
+            let result = select! {
+                _ = cancel.cancelled() => return Ok(None),
+                _ = sleep_until(deadline) => break,
+                result = provider.get_logs(filter.clone()) => result,
+            };
+            match result {
                 Ok(logs) => return Ok(Some(logs)),
-                Err(e) => {
-                    warn!(
-                        target: "l1_watcher",
-                        error = %e,
-                        block_hash = %block_info.hash,
-                        block_number = block_info.number,
-                        attempt,
-                        "Failed to fetch logs for L1 head"
-                    );
-                    if attempt < MAX_RETRIES {
-                        select! {
-                            _ = cancel.cancelled() => return Ok(None),
-                            _ = tokio::time::sleep(backoff) => {}
-                        }
-                        backoff = (backoff * 2).min(max_backoff);
-                    }
-                }
+                Err(e) => warn!(
+                    target: "l1_watcher",
+                    error = %e,
+                    block_hash = %block_info.hash,
+                    block_number = block_info.number,
+                    attempt,
+                    backoff_ms = backoff.as_millis() as u64,
+                    "Failed to fetch logs for L1 head; retrying"
+                ),
             }
+            select! {
+                _ = cancel.cancelled() => return Ok(None),
+                _ = sleep_until(deadline.min(Instant::now() + backoff)) => {}
+            }
+            backoff = (backoff * 2).min(max_backoff);
         }
 
         error!(
             target: "l1_watcher",
             block_hash = %block_info.hash,
             block_number = block_info.number,
-            "Exhausted retries fetching logs for L1 head"
+            attempts = attempt,
+            retry_budget_ms = retry_budget.as_millis() as u64,
+            "Exhausted retry budget fetching logs for L1 head"
         );
         Err(L1WatcherActorError::RetriesExhausted)
     }
@@ -274,8 +293,8 @@ where
                             .address(filter_address)
                             .select(derivation_block.hash);
 
-                        // Log requests are retried with bounded backoff. If all attempts time out
-                        // or otherwise fail, the actor returns an error instead of hanging.
+                        // Log requests are retried within a time budget; exhausting it fails the
+                        // actor, and `None` means shutdown.
                         let Some(logs) = LogRetrier::fetch_logs_with_retry(
                             &self.l1_provider,
                             filter,
@@ -283,6 +302,7 @@ where
                             derivation_block,
                             INITIAL_BACKOFF,
                             MAX_BACKOFF,
+                            LogRetrier::RETRY_BUDGET,
                         )
                         .await?
                         else {
@@ -363,16 +383,21 @@ mod tests {
 
     struct MockFetcher {
         call_count: Arc<AtomicU32>,
+        call_times: Arc<Mutex<Vec<tokio::time::Instant>>>,
         fail_count: u32,
     }
 
     impl MockFetcher {
         fn always_fail() -> Self {
-            Self { call_count: Arc::new(AtomicU32::new(0)), fail_count: u32::MAX }
+            Self::fail_times(u32::MAX)
         }
 
         fn fail_times(n: u32) -> Self {
-            Self { call_count: Arc::new(AtomicU32::new(0)), fail_count: n }
+            Self {
+                call_count: Arc::new(AtomicU32::new(0)),
+                call_times: Arc::new(Mutex::new(Vec::new())),
+                fail_count: n,
+            }
         }
 
         fn always_succeed() -> Self {
@@ -385,12 +410,32 @@ mod tests {
         type Error = String;
 
         async fn get_logs(&self, _: Filter) -> Result<Vec<Log>, Self::Error> {
+            self.call_times.lock().unwrap().push(tokio::time::Instant::now());
             let count = self.call_count.fetch_add(1, Ordering::SeqCst);
             if count < self.fail_count { Err("transient error".to_string()) } else { Ok(vec![]) }
         }
 
         async fn get_block(&self, _: BlockId) -> Result<Option<Block>, Self::Error> {
             Ok(None)
+        }
+    }
+
+    /// Fetcher whose requests never complete, like a stalled L1 endpoint.
+    ///
+    /// Hand-rolled because a mockall `returning` closure must produce the method's result
+    /// immediately, so it cannot express a request that never resolves.
+    struct HangingFetcher;
+
+    #[async_trait]
+    impl L1BlockFetcher for HangingFetcher {
+        type Error = String;
+
+        async fn get_logs(&self, _: Filter) -> Result<Vec<Log>, Self::Error> {
+            std::future::pending().await
+        }
+
+        async fn get_block(&self, _: BlockId) -> Result<Option<Block>, Self::Error> {
+            std::future::pending().await
         }
     }
 
@@ -558,7 +603,7 @@ mod tests {
     }
 
     // ---------------------------------------------------------------------------
-    // LogRetrier tests (unchanged)
+    // LogRetrier tests
     // ---------------------------------------------------------------------------
 
     #[tokio::test]
@@ -571,59 +616,155 @@ mod tests {
             dummy_block(),
             Duration::from_nanos(1),
             Duration::from_nanos(1),
+            LogRetrier::RETRY_BUDGET,
         )
         .await;
         assert!(matches!(result, Ok(Some(_))));
     }
 
-    #[tokio::test]
-    async fn fetch_logs_retries_and_eventually_succeeds() {
+    #[tokio::test(start_paused = true)]
+    async fn fetch_logs_keeps_retrying_within_the_budget_until_l1_recovers() {
         let cancel = CancellationToken::new();
-        let result = LogRetrier::fetch_logs_with_retry(
-            &MockFetcher::fail_times(3),
-            Filter::new(),
-            &cancel,
-            dummy_block(),
-            Duration::from_nanos(1),
-            Duration::from_nanos(1),
-        )
-        .await;
-        assert!(matches!(result, Ok(Some(_))));
-    }
-
-    #[tokio::test]
-    async fn fetch_logs_exhausted_retries_returns_error() {
-        let cancel = CancellationToken::new();
-        let fetcher = MockFetcher::always_fail();
+        let fetcher = MockFetcher::fail_times(50);
         let call_count = Arc::clone(&fetcher.call_count);
         let result = LogRetrier::fetch_logs_with_retry(
             &fetcher,
             Filter::new(),
             &cancel,
             dummy_block(),
-            Duration::from_nanos(1),
-            Duration::from_nanos(1),
+            Duration::from_millis(50),
+            Duration::from_millis(500),
+            LogRetrier::RETRY_BUDGET,
         )
         .await;
-        assert!(matches!(result, Err(L1WatcherActorError::RetriesExhausted)));
-        assert_eq!(call_count.load(Ordering::SeqCst), 10);
+        assert!(matches!(result, Ok(Some(_))));
+        assert_eq!(call_count.load(Ordering::SeqCst), 51);
     }
 
-    #[tokio::test]
-    async fn fetch_logs_cancelled_during_backoff_returns_none() {
+    #[tokio::test(start_paused = true)]
+    async fn fetch_logs_gives_up_when_a_request_hangs_past_the_budget() {
         let cancel = CancellationToken::new();
-        // Pre-cancel so the very first backoff sleep resolves to the cancel arm.
-        cancel.cancel();
+        let started = tokio::time::Instant::now();
+        let result = tokio::time::timeout(
+            2 * LogRetrier::RETRY_BUDGET,
+            LogRetrier::fetch_logs_with_retry(
+                &HangingFetcher,
+                Filter::new(),
+                &cancel,
+                dummy_block(),
+                Duration::from_millis(50),
+                Duration::from_millis(500),
+                LogRetrier::RETRY_BUDGET,
+            ),
+        )
+        .await
+        .expect("the retry budget must bound an in-flight request");
+        assert!(matches!(result, Err(L1WatcherActorError::RetriesExhausted)));
+        assert_eq!(started.elapsed(), LogRetrier::RETRY_BUDGET);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn fetch_logs_spaces_failed_attempts_by_capped_backoff() {
+        let cancel = CancellationToken::new();
+        let fetcher = MockFetcher::always_fail();
+        let call_times = Arc::clone(&fetcher.call_times);
         let result = LogRetrier::fetch_logs_with_retry(
-            &MockFetcher::always_fail(),
+            &fetcher,
             Filter::new(),
             &cancel,
             dummy_block(),
-            Duration::from_secs(10), // long sleep ensures only the cancel arm fires
-            Duration::from_secs(10),
+            Duration::from_secs(1),
+            Duration::from_secs(4),
+            Duration::from_secs(20),
         )
         .await;
-        assert!(matches!(result, Ok(None)));
+        assert!(matches!(result, Err(L1WatcherActorError::RetriesExhausted)));
+
+        let call_times = call_times.lock().unwrap();
+        let gaps: Vec<u64> =
+            call_times.windows(2).map(|pair| (pair[1] - pair[0]).as_secs()).collect();
+        assert_eq!(gaps, [1, 2, 4, 4, 4, 4]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn fetch_logs_stops_attempting_once_the_budget_elapses_during_backoff() {
+        let cancel = CancellationToken::new();
+        let fetcher = MockFetcher::always_fail();
+        let call_times = Arc::clone(&fetcher.call_times);
+        let budget = Duration::from_secs(30);
+        let started = tokio::time::Instant::now();
+        let result = LogRetrier::fetch_logs_with_retry(
+            &fetcher,
+            Filter::new(),
+            &cancel,
+            dummy_block(),
+            Duration::from_secs(20),
+            Duration::from_secs(20),
+            budget,
+        )
+        .await;
+        assert!(matches!(result, Err(L1WatcherActorError::RetriesExhausted)));
+        assert_eq!(started.elapsed(), budget);
+        let offsets: Vec<u64> =
+            call_times.lock().unwrap().iter().map(|at| (*at - started).as_secs()).collect();
+        assert_eq!(offsets, [0, 20]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn fetch_logs_cancelled_during_backoff_returns_without_waiting_out_the_sleep() {
+        let cancel = CancellationToken::new();
+        let fetcher = MockFetcher::always_fail();
+        let call_count = Arc::clone(&fetcher.call_count);
+        let started = tokio::time::Instant::now();
+        let retrier = tokio::spawn({
+            let cancel = cancel.clone();
+            async move {
+                LogRetrier::fetch_logs_with_retry(
+                    &fetcher,
+                    Filter::new(),
+                    &cancel,
+                    dummy_block(),
+                    Duration::from_secs(3600),
+                    Duration::from_secs(3600),
+                    Duration::from_secs(7200),
+                )
+                .await
+            }
+        });
+
+        // Yielding keeps the runtime busy, so paused time does not auto-advance meanwhile.
+        while call_count.load(Ordering::SeqCst) == 0 {
+            tokio::task::yield_now().await;
+        }
+        cancel.cancel();
+        assert!(matches!(retrier.await.unwrap(), Ok(None)));
+        assert_eq!(started.elapsed(), Duration::ZERO);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn fetch_logs_cancelled_during_in_flight_request_returns_none() {
+        let cancel = CancellationToken::new();
+        let retrier = tokio::spawn({
+            let cancel = cancel.clone();
+            async move {
+                LogRetrier::fetch_logs_with_retry(
+                    &HangingFetcher,
+                    Filter::new(),
+                    &cancel,
+                    dummy_block(),
+                    Duration::from_millis(50),
+                    Duration::from_millis(500),
+                    LogRetrier::RETRY_BUDGET,
+                )
+                .await
+            }
+        });
+
+        tokio::time::sleep(LogRetrier::RETRY_BUDGET / 2).await;
+        cancel.cancel();
+        let cancelled_at = tokio::time::Instant::now();
+        assert!(matches!(retrier.await.unwrap(), Ok(None)));
+        assert_eq!(cancelled_at.elapsed(), Duration::ZERO);
     }
 
     // ---------------------------------------------------------------------------
