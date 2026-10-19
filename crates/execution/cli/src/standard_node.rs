@@ -380,11 +380,13 @@ pub struct RpcStandardNodeArgs {
     #[arg(long = "rollup.payer", value_name = "PAYER_URL")]
     pub payer_url: Option<String>,
 
-    /// Serve `payer_getTerms` from one shared entry, refetched at most once a second.
+    /// Serve `payer_getTerms` from one shared entry, refetched at most every 5 seconds.
     ///
-    /// Leave this off unless the payer returns the same terms for every request.
-    #[arg(long = "rollup.payer-cache")]
-    pub payer_cache: bool,
+    /// Defaults to on when the payer is reached through `--rollup.sequencer`, whose payer returns
+    /// the same terms for every request, and off for a separate `--rollup.payer`. Override with
+    /// `--rollup.payer-cache=true|false`.
+    #[arg(long = "rollup.payer-cache", value_name = "BOOL")]
+    pub payer_cache: Option<bool>,
 
     /// Builder RPC endpoints for transaction forwarding (one forwarder per URL), used by mempool nodes
     #[arg(
@@ -489,16 +491,26 @@ pub struct RpcStandardNodeArgs {
 }
 
 impl RpcStandardNodeArgs {
-    /// Payer proxy target. `--rollup.payer` wins; otherwise the sequencer URL is used.
+    /// Payer proxy target. `--rollup.payer` wins; otherwise the sequencer URL is used when it
+    /// is HTTP, since the payer client cannot speak websocket. The `payer_getTerms` cache
+    /// defaults to on only through the sequencer.
     fn payer_upstream(&self) -> Option<PayerRpcConfig> {
         let sequencer = self.rollup_args.sequencer.clone();
-        let upstream_url = self.payer_url.clone().or_else(|| sequencer.clone())?;
-        let upstream_headers = if self.payer_url.is_none() || self.payer_url == sequencer {
-            self.rollup_args.sequencer_headers.clone()
-        } else {
-            Vec::new()
-        };
-        Some(PayerRpcConfig { upstream_url, upstream_headers, cache_get_terms: self.payer_cache })
+        let upstream_url = self
+            .payer_url
+            .clone()
+            .or_else(|| sequencer.clone().filter(|url| Self::is_http_url(url)))?;
+        let via_sequencer = self.payer_url.is_none() || self.payer_url == sequencer;
+        let upstream_headers =
+            if via_sequencer { self.rollup_args.sequencer_headers.clone() } else { Vec::new() };
+        let cache_get_terms = self.payer_cache.unwrap_or(via_sequencer);
+        Some(PayerRpcConfig { upstream_url, upstream_headers, cache_get_terms })
+    }
+
+    fn is_http_url(url: &str) -> bool {
+        url.split_once("://").is_some_and(|(scheme, _)| {
+            scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https")
+        })
     }
 }
 
@@ -851,7 +863,11 @@ impl StandardBaseRethNode {
         runner.install_ext::<TxForwardingExtension>(tx_forwarding_config);
         if let Some(payer) = args.rpc.payer_upstream() {
             runner.install_ext::<PayerRpcExtension>(payer);
-        } else if args.rpc.payer_cache {
+        } else if args.rpc.rollup_args.sequencer.is_some() {
+            warn!(
+                "payer RPC proxy disabled: --rollup.sequencer is not an HTTP URL and --rollup.payer is unset"
+            );
+        } else if args.rpc.payer_cache.is_some() {
             warn!(
                 "--rollup.payer-cache has no effect without --rollup.payer or --rollup.sequencer"
             );
@@ -1065,18 +1081,17 @@ mod tests {
             inline_simulation_queue_capacity: DEFAULT_INLINE_SIMULATION_QUEUE_CAPACITY,
             inline_simulation_timeout_ms: DEFAULT_INLINE_SIMULATION_TIMEOUT_MS,
             payer_url: None,
-            payer_cache: false,
+            payer_cache: None,
         }
     }
 
     #[test]
-    fn payer_upstream_defaults_to_the_sequencer_and_cache_is_opt_in() {
+    fn payer_upstream_caches_by_default_only_through_the_sequencer() {
         let mut args = default_rpc_standard_node_args();
         assert!(args.payer_upstream().is_none());
 
         args.rollup_args.sequencer = Some("http://sequencer".into());
         args.rollup_args.sequencer_headers = vec!["X-Demo=1".into()];
-        args.payer_cache = true;
         assert_eq!(
             args.payer_upstream(),
             Some(PayerRpcConfig {
@@ -1085,12 +1100,49 @@ mod tests {
                 cache_get_terms: true,
             })
         );
+        args.payer_cache = Some(false);
+        assert!(!args.payer_upstream().expect("sequencer").cache_get_terms);
 
+        args.payer_cache = None;
         args.payer_url = Some("http://payer".into());
         let upstream = args.payer_upstream().expect("payer url");
         assert_eq!(upstream.upstream_url, "http://payer");
         assert!(upstream.upstream_headers.is_empty());
-        assert!(upstream.cache_get_terms);
+        assert!(!upstream.cache_get_terms);
+        args.payer_cache = Some(true);
+        assert!(args.payer_upstream().expect("payer url").cache_get_terms);
+    }
+
+    #[test]
+    fn payer_cache_flag_takes_an_explicit_value() {
+        let parse = |flags: &[&str]| {
+            CommandParser::<RpcStandardNodeArgs>::try_parse_from(
+                ["reth"].iter().chain(flags).copied(),
+            )
+            .map(|parsed| parsed.args.payer_cache)
+        };
+
+        assert_eq!(parse(&[]).unwrap(), None);
+        assert_eq!(parse(&["--rollup.payer-cache=false"]).unwrap(), Some(false));
+        assert_eq!(parse(&["--rollup.payer-cache", "true"]).unwrap(), Some(true));
+        assert!(parse(&["--rollup.payer-cache"]).is_err());
+    }
+
+    #[test]
+    fn payer_upstream_skips_a_websocket_sequencer() {
+        let mut args = default_rpc_standard_node_args();
+        args.rollup_args.sequencer = Some("ws://sequencer:8546".into());
+        assert!(args.payer_upstream().is_none());
+
+        args.rollup_args.sequencer = Some("HTTPS://sequencer".into());
+        assert_eq!(
+            args.payer_upstream().expect("https sequencer").upstream_url,
+            "HTTPS://sequencer"
+        );
+
+        args.rollup_args.sequencer = Some("ws://sequencer:8546".into());
+        args.payer_url = Some("http://payer".into());
+        assert_eq!(args.payer_upstream().expect("payer url").upstream_url, "http://payer");
     }
 
     #[test]

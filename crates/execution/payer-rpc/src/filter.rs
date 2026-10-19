@@ -11,11 +11,12 @@ use thiserror::Error;
 pub struct PayerRequestFilter;
 
 impl PayerRequestFilter {
-    /// Maximum JSON size of a payer request, in bytes.
-    pub const MAX_REQUEST_BYTES: usize = 128 * 1024;
-
     /// Maximum decoded `payer_sendTransaction` payload, in bytes.
     pub const MAX_TRANSACTION_BYTES: usize = 128 * 1024;
+
+    /// Maximum JSON size of a payer request, in bytes: a hex-encoded
+    /// [`Self::MAX_TRANSACTION_BYTES`] payload plus 32 kibibytes for `context` and framing.
+    pub const MAX_REQUEST_BYTES: usize = 2 * Self::MAX_TRANSACTION_BYTES + 32 * 1024;
 
     /// Maximum number of `calls` or `frames` entries.
     pub const MAX_INTENT_LEN: usize = 64;
@@ -38,9 +39,10 @@ impl PayerRequestFilter {
 
         match (Self::intent_field(object.get("calls"))?, Self::intent_field(object.get("frames"))?)
         {
+            (IntentField::Absent, IntentField::Absent) => Ok(()),
             (IntentField::Array(calls), IntentField::Absent) => Self::validate_calls(calls),
             (IntentField::Absent, IntentField::Array(frames)) => Self::validate_frames(frames),
-            _ => Err(PayerRequestError::IntentShape),
+            (IntentField::Array(_), IntentField::Array(_)) => Err(PayerRequestError::IntentShape),
         }
     }
 
@@ -90,7 +92,7 @@ impl PayerRequestFilter {
     }
 
     fn validate_calls(calls: &[Value]) -> Result<(), PayerRequestError> {
-        if calls.is_empty() || calls.len() > Self::MAX_INTENT_LEN {
+        if calls.len() > Self::MAX_INTENT_LEN {
             return Err(PayerRequestError::InvalidCalls);
         }
         if calls.iter().any(|call| call.get("to").and_then(Value::as_str).is_none()) {
@@ -130,11 +132,11 @@ pub enum PayerRequestError {
     /// `payer_getTerms` is missing a sender address.
     #[error("payer_getTerms requires from")]
     MissingFrom,
-    /// `payer_getTerms` does not carry exactly one of `calls` or `frames`.
-    #[error("payer_getTerms requires exactly one of calls or frames")]
+    /// `payer_getTerms` carries both `calls` and `frames`, or one of them is not a list.
+    #[error("payer_getTerms accepts at most one of calls or frames, as a list")]
     IntentShape,
-    /// `calls` is empty, too long, or missing `to`.
-    #[error("payer_getTerms calls must be a non-empty list of call objects")]
+    /// `calls` is too long or a call is missing `to`.
+    #[error("payer_getTerms calls must be a list of call objects")]
     InvalidCalls,
     /// `frames` is empty or too long.
     #[error("payer_getTerms frames must be a non-empty list")]
@@ -180,7 +182,7 @@ mod tests {
     }
 
     #[test]
-    fn get_terms_requires_exactly_one_intent() {
+    fn get_terms_accepts_at_most_one_intent() {
         let mut both = terms();
         both["frames"] = json!([{ "mode": "0x2" }]);
         assert_eq!(
@@ -190,10 +192,11 @@ mod tests {
 
         let mut neither = terms();
         neither.as_object_mut().unwrap().remove("calls");
-        assert_eq!(
-            PayerRequestFilter::validate_get_terms(&neither, CHAIN_ID),
-            Err(PayerRequestError::IntentShape)
-        );
+        assert!(PayerRequestFilter::validate_get_terms(&neither, CHAIN_ID).is_ok());
+
+        let mut no_calls = terms();
+        no_calls["calls"] = json!([]);
+        assert!(PayerRequestFilter::validate_get_terms(&no_calls, CHAIN_ID).is_ok());
     }
 
     #[test]
@@ -208,6 +211,21 @@ mod tests {
                 "context": { "appId": "demo" }
             }))
             .is_ok()
+        );
+    }
+
+    #[test]
+    fn send_transaction_accepts_exactly_the_transaction_size_cap() {
+        let at_cap = hex::encode_prefixed(vec![0x02; PayerRequestFilter::MAX_TRANSACTION_BYTES]);
+        assert!(
+            PayerRequestFilter::validate_send_transaction(&json!({ "transaction": at_cap }))
+                .is_ok()
+        );
+
+        let over = hex::encode_prefixed(vec![0x02; PayerRequestFilter::MAX_TRANSACTION_BYTES + 1]);
+        assert_eq!(
+            PayerRequestFilter::validate_send_transaction(&json!({ "transaction": over })),
+            Err(PayerRequestError::InvalidTransaction)
         );
     }
 }

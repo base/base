@@ -94,10 +94,16 @@ where
         if let Some(cached) = cache.get() {
             return Ok(TermsCache::order_for(request, cached));
         }
-        match self.client.request::<_, Value>("payer_getTerms", (request,)).await {
+        // The cached body is shared, so it must carry the payer's own token order rather than
+        // the order this caller's `preferredTokens` would produce.
+        let mut shared_request = request.clone();
+        if let Some(object) = shared_request.as_object_mut() {
+            object.remove("preferredTokens");
+        }
+        match self.client.request::<_, Value>("payer_getTerms", (&shared_request,)).await {
             Ok(response) => {
                 cache.insert(&response);
-                Ok(response)
+                Ok(TermsCache::order_for(request, response))
             }
             Err(error) => {
                 let SequencerClientError::HttpError(inner) = &error;
@@ -275,7 +281,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn refetches_terms_after_a_requote_and_serves_them_while_the_payer_is_unreachable() {
+    async fn refetches_terms_after_a_payment_rejection_and_serves_them_while_the_payer_is_unreachable()
+     {
         let sequencer = MockServer::start();
         let mut terms = sequencer.mock(|when, then| {
             when.method(POST).body_includes("payer_getTerms");
@@ -342,18 +349,19 @@ mod tests {
             }]
         });
         let mock = sequencer.mock(|when, then| {
-            when.method(POST).body_includes("payer_getTerms");
+            when.method(POST).body_includes("payer_getTerms").body_excludes("preferredTokens");
             rpc_result(then, response.clone());
         });
         let client = SequencerClient::new_http_with_headers(sequencer.base_url(), vec![]).unwrap();
         let api = PayerApiImpl::new(everest_provider(), client, true);
-        api.get_terms(terms_request(1)).await.unwrap();
 
-        let mut request = terms_request(2);
-        request["preferredTokens"] = json!([usdc]);
-        let ordered = api.get_terms(request).await.unwrap();
+        let mut prefers_usdc = terms_request(1);
+        prefers_usdc["preferredTokens"] = json!([usdc]);
+        let first = api.get_terms(prefers_usdc).await.unwrap();
+        let no_preference = api.get_terms(terms_request(2)).await.unwrap();
 
-        assert_eq!(ordered["options"][0]["tokens"][0]["symbol"], "USDC");
+        assert_eq!(first["options"][0]["tokens"][0]["symbol"], "USDC");
+        assert_eq!(no_preference["options"][0]["tokens"][0]["symbol"], "ETH");
         mock.assert_calls(1);
     }
 

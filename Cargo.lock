@@ -4595,7 +4595,7 @@ dependencies = [
 name = "base-execution-payer-rpc"
 version = "0.0.0"
 dependencies = [
- "alloy-consensus 2.4.1",
+ "alloy-consensus 2.5.0",
  "alloy-primitives",
  "base-common-chains",
  "base-common-consensus",

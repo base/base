@@ -11,7 +11,7 @@ mod cache;
 pub use cache::{GET_TERMS_FRESH_FOR, MAX_GET_TERMS_CACHE_SECS, TermsCache};
 
 mod extension;
-pub use extension::{PayerRpcConfig, PayerRpcExtension};
+pub use extension::{PAYER_UPSTREAM_TIMEOUT, PayerRpcConfig, PayerRpcExtension};
 
 mod filter;
 pub use filter::{PayerRequestError, PayerRequestFilter};

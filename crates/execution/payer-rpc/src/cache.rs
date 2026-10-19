@@ -11,12 +11,17 @@ use tokio::sync::{Mutex as AsyncMutex, MutexGuard};
 /// Upper bound on a cached `payer_getTerms` response, in seconds.
 pub const MAX_GET_TERMS_CACHE_SECS: u64 = 300;
 
-/// How long a fetched response is served before the next request refetches
-/// it: about the payer's market poll, so faster blocks add no upstream calls.
-pub const GET_TERMS_FRESH_FOR: Duration = Duration::from_secs(1);
+/// How long a fetched response is served before the next request refetches it.
+///
+/// Serving rates this old relies on the payer honoring any rate it quoted within the offer
+/// `ttl`, with each served `ttl` reduced by the entry's age.
+pub const GET_TERMS_FRESH_FOR: Duration = Duration::from_secs(5);
 
-/// Payer rejection codes that mean cached terms may be stale.
-const STALE_TERMS_CODES: [&str; 2] = ["PAYMENT_INSUFFICIENT", "TEMPORARILY_UNAVAILABLE"];
+/// Rejection for a phase-0 credit below the payer's current rate.
+const PAYMENT_INSUFFICIENT: &str = "PAYMENT_INSUFFICIENT";
+
+/// Rejection while the payer is paused or cannot price.
+const TEMPORARILY_UNAVAILABLE: &str = "TEMPORARILY_UNAVAILABLE";
 
 /// One shared `payer_getTerms` body, refetched on demand at most every
 /// [`GET_TERMS_FRESH_FOR`].
@@ -98,10 +103,12 @@ impl TermsCache {
         *self.lock() = None;
     }
 
-    /// Marks the response stale after `rejection`, a `payer_sendTransaction`
-    /// error's `data`, says the payer requoted or paused, so the next request
-    /// refetches. Ignored while a response refetched for that reason is
-    /// fresh, so rejections refetch at most once per [`GET_TERMS_FRESH_FOR`].
+    /// Marks the response stale when `rejection`, a `payer_sendTransaction`
+    /// error's `data`, sends the wallet back to `payer_getTerms`: the payer
+    /// paused, or rejected the payment without a `requote` to re-sign with. The
+    /// next request then refetches. Ignored while a response refetched for that
+    /// reason is fresh, so rejections refetch at most once per
+    /// [`GET_TERMS_FRESH_FOR`].
     pub fn invalidate(&self, rejection: Option<&Value>) {
         self.invalidate_at(rejection, Instant::now());
     }
@@ -147,14 +154,21 @@ impl TermsCache {
     }
 
     fn invalidate_at(&self, rejection: Option<&Value>, now: Instant) {
-        let code = rejection.and_then(|data| data.get("code")).and_then(Value::as_str);
-        if !code.is_some_and(|code| STALE_TERMS_CODES.contains(&code)) {
+        if !rejection.is_some_and(Self::requires_new_terms) {
             return;
         }
         if let Some(entry) =
             self.lock().as_mut().filter(|entry| !(entry.forced && entry.fresh(now)))
         {
             entry.stale = true;
+        }
+    }
+
+    fn requires_new_terms(rejection: &Value) -> bool {
+        match rejection.get("code").and_then(Value::as_str) {
+            Some(TEMPORARILY_UNAVAILABLE) => true,
+            Some(PAYMENT_INSUFFICIENT) => rejection.get("requote").is_none_or(Value::is_null),
+            _ => false,
         }
     }
 
@@ -213,7 +227,7 @@ mod tests {
     }
 
     fn rejection(code: &str) -> Value {
-        json!({ "code": code, "message": "requote" })
+        json!({ "code": code, "reason": "rejected" })
     }
 
     #[test]
@@ -224,7 +238,8 @@ mod tests {
 
         cache.insert_at(&terms(60), fetched_at);
 
-        assert_eq!(cache.get_at(fetched_at + Duration::from_millis(999)), Some(terms(60)));
+        let last_fresh = fetched_at + GET_TERMS_FRESH_FOR - Duration::from_millis(1);
+        assert!(cache.get_at(last_fresh).is_some());
         assert!(cache.get_at(fetched_at + GET_TERMS_FRESH_FOR).is_none());
     }
 
@@ -250,6 +265,18 @@ mod tests {
 
         assert!(cache.get().is_none());
         assert_eq!(cache.get_stale(), Some(terms(60)));
+    }
+
+    #[test]
+    fn keeps_serving_after_a_rejection_with_a_requote() {
+        let cache = TermsCache::new();
+        cache.insert(&terms(60));
+        let mut requoted = rejection("PAYMENT_INSUFFICIENT");
+        requoted["requote"] = json!({ "token": "native", "paymentAmount": "0x2", "rate": "0x1" });
+
+        cache.invalidate(Some(&requoted));
+
+        assert!(cache.get().is_some());
     }
 
     #[test]

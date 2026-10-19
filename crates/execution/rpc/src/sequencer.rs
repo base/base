@@ -1,6 +1,10 @@
 //! Helpers for Base-specific RPC implementations.
 
-use std::{str::FromStr, sync::Arc, time::Instant};
+use std::{
+    str::FromStr,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use alloy_json_rpc::{RpcRecv, RpcSend};
 use alloy_primitives::{B256, hex};
@@ -80,12 +84,42 @@ impl SequencerClient {
 
     /// Creates an HTTP sequencer client synchronously, with optional `header=value` headers.
     ///
+    /// The client has no request timeout. Use [`Self::new_http_with_headers_and_timeout`] when a
+    /// hung upstream must not hold the caller open.
+    ///
     /// # Errors
     ///
     /// Returns an error for a non-HTTP URL, invalid headers, or HTTP client construction.
     pub fn new_http_with_headers(
         sequencer_endpoint: impl Into<String>,
         headers: Vec<String>,
+    ) -> Result<Self, Error> {
+        Self::new_http(sequencer_endpoint, headers, None)
+    }
+
+    /// Creates an HTTP sequencer client whose whole request, including connect, is bounded by
+    /// `timeout`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a non-HTTP URL, invalid headers, or HTTP client construction.
+    pub fn new_http_with_headers_and_timeout(
+        sequencer_endpoint: impl Into<String>,
+        headers: Vec<String>,
+        timeout: Duration,
+    ) -> Result<Self, Error> {
+        Self::new_http(sequencer_endpoint, headers, Some(timeout))
+    }
+
+    /// Creates an HTTP sequencer client. `timeout` bounds the whole request when set.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a non-HTTP URL, invalid headers, or HTTP client construction.
+    pub fn new_http(
+        sequencer_endpoint: impl Into<String>,
+        headers: Vec<String>,
+        timeout: Option<Duration>,
     ) -> Result<Self, Error> {
         let sequencer_endpoint = sequencer_endpoint.into();
         if !matches!(
@@ -95,6 +129,9 @@ impl SequencerClient {
             return Err(Error::InvalidScheme(sequencer_endpoint));
         }
         let mut builder = alloy_reqwest::Client::builder().use_rustls_tls();
+        if let Some(timeout) = timeout {
+            builder = builder.timeout(timeout);
+        }
         if !headers.is_empty() {
             let mut header_map = alloy_reqwest::header::HeaderMap::new();
             for header in headers {
@@ -188,9 +225,23 @@ pub struct SequencerClientInner {
 
 #[cfg(test)]
 mod tests {
+    use std::{error::Error, io::Read, net::TcpListener, sync::mpsc, thread};
+
     use alloy_primitives::U64;
+    use alloy_transport_http::reqwest::Error as ReqwestError;
 
     use super::*;
+
+    fn error_is_reqwest_timeout(error: &(impl Error + 'static)) -> bool {
+        let mut current = Some(error as &dyn Error);
+        while let Some(err) = current {
+            if err.downcast_ref::<ReqwestError>().is_some_and(ReqwestError::is_timeout) {
+                return true;
+            }
+            current = err.source();
+        }
+        false
+    }
 
     #[tokio::test]
     async fn test_http_body_str() {
@@ -227,5 +278,33 @@ mod tests {
             body,
             r#"{"method":"eth_getBlockByNumber","params":["0xa"],"id":0,"jsonrpc":"2.0"}"#
         );
+    }
+
+    #[tokio::test]
+    async fn http_request_timeout_fails_a_silent_upstream() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let (release, blocked) = mpsc::channel::<()>();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buf = [0_u8; 1024];
+            let _ = stream.read(&mut buf);
+            let _ = blocked.recv();
+        });
+
+        let client = SequencerClient::new_http_with_headers_and_timeout(
+            format!("http://{address}"),
+            Vec::new(),
+            Duration::from_millis(200),
+        )
+        .unwrap();
+        let error = client
+            .request::<(u64,), U64>("eth_chainId", (0,))
+            .await
+            .expect_err("silent upstream should time out");
+        assert!(error_is_reqwest_timeout(&error), "expected a reqwest timeout, got {error:?}");
+
+        drop(release);
+        server.join().unwrap();
     }
 }
