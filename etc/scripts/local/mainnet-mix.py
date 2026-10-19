@@ -140,8 +140,8 @@ def rpc_batch(url, calls, retries=8):
         try:
             with urllib.request.urlopen(urllib.request.Request(url, payload.encode(), headers), timeout=120) as r:
                 body = json.load(r)
-            # A rate-limited batch comes back as one error object instead of a list.
-            if isinstance(body, list) and all("result" in item for item in body):
+            # Rate limits return one error object, not a list; a block past a lagging backend's head is null.
+            if isinstance(body, list) and all(item.get("result") is not None for item in body):
                 return [item["result"] for item in sorted(body, key=lambda item: item["id"])]
         except (OSError, ValueError) as error:  # ValueError: a non-JSON body, e.g. a Cloudflare page
             body = error
