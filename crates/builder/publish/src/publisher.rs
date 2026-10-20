@@ -5,7 +5,7 @@ use base_ring_buffer::RingBuffer;
 use parking_lot::RwLock;
 use serde::Serialize;
 use tokio::sync::broadcast;
-use tokio_tungstenite::tungstenite::Utf8Bytes;
+use tokio_tungstenite::tungstenite::Message;
 use tokio_util::sync::CancellationToken;
 use tracing::{Level, info, span};
 
@@ -21,7 +21,7 @@ pub struct StreamPosition {
 }
 
 /// A broadcast payload paired with its position.
-pub type PositionedPayload = (StreamPosition, Utf8Bytes);
+pub type PositionedPayload = (StreamPosition, Message);
 
 /// Default broadcast channel capacity.
 const DEFAULT_CHANNEL_CAPACITY: usize = 100;
@@ -44,7 +44,7 @@ pub struct WebSocketPublisher {
     cancel: CancellationToken,
     pipe: broadcast::Sender<PositionedPayload>,
     metrics: Arc<dyn PublisherMetrics>,
-    ring_buffer: Arc<RwLock<RingBuffer<StreamPosition, Utf8Bytes>>>,
+    ring_buffer: Arc<RwLock<RingBuffer<StreamPosition, Message>>>,
 }
 
 impl WebSocketPublisher {
@@ -105,13 +105,17 @@ impl WebSocketPublisher {
         block_number: u64,
         index: u64,
     ) -> Result<usize, serde_json::Error> {
-        Ok(self.publish_json(serde_json::to_string(payload)?, block_number, index))
+        Ok(self.publish_message(
+            Message::text(serde_json::to_string(payload)?),
+            block_number,
+            index,
+        ))
     }
 
-    /// Broadcasts an already-serialized JSON message, like [`Self::publish`].
+    /// Broadcasts an already-encoded text or binary message, like [`Self::publish`].
     ///
     /// Returns the byte size of the message.
-    pub fn publish_json(&self, json: String, block_number: u64, index: u64) -> usize {
+    pub fn publish_message(&self, message: Message, block_number: u64, index: u64) -> usize {
         let publish_span = span!(
             Level::INFO,
             "publish_flashblock",
@@ -121,20 +125,19 @@ impl WebSocketPublisher {
         );
         let _publish_span_guard = publish_span.enter();
 
-        let size = json.len();
+        let size = message.len();
         publish_span.record("byte_size", size);
-        let utf8_bytes = Utf8Bytes::from(json);
         let position = StreamPosition { block_number, index };
 
         {
             let mut buf = self.ring_buffer.write();
-            buf.push(position, utf8_bytes.clone());
+            buf.push(position, message.clone());
         }
 
         // Ignore SendError — there may be zero receivers when no clients
         // are connected. The entry is already stored in the ring buffer
         // for replay on future connections.
-        let _ = self.pipe.send((position, utf8_bytes));
+        let _ = self.pipe.send((position, message));
         self.metrics.on_payload_size(size);
         size
     }
@@ -160,7 +163,7 @@ mod tests {
     use std::time::Duration;
 
     use futures::StreamExt;
-    use tokio_tungstenite::{connect_async, tungstenite::Message};
+    use tokio_tungstenite::connect_async;
 
     use super::*;
 
@@ -186,7 +189,22 @@ mod tests {
         assert!(size > 0);
 
         let msg = client.next().await.unwrap().unwrap();
-        assert_eq!(msg, Message::Text(Utf8Bytes::from(r#"{"block":42}"#)));
+        assert_eq!(msg, Message::text(r#"{"block":42}"#));
+    }
+
+    #[tokio::test]
+    async fn publish_binary_message_end_to_end() {
+        let addr = ephemeral_addr();
+        let publisher = WebSocketPublisher::new(addr).unwrap();
+
+        let (mut client, _) = connect_async(format!("ws://{addr}")).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let size = publisher.publish_message(Message::binary(vec![1u8, 2, 3]), 1, 0);
+        assert_eq!(size, 3);
+
+        let msg = client.next().await.unwrap().unwrap();
+        assert_eq!(msg, Message::binary(vec![1u8, 2, 3]));
     }
 
     #[tokio::test]
@@ -201,7 +219,7 @@ mod tests {
         publisher.publish(&serde_json::json!({"test": true}), 1, 0).unwrap();
 
         let msg = client.next().await.unwrap().unwrap();
-        assert_eq!(msg, Message::Text(Utf8Bytes::from(r#"{"test":true}"#)));
+        assert_eq!(msg, Message::text(r#"{"test":true}"#));
     }
 
     #[tokio::test]

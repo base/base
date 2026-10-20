@@ -8,10 +8,7 @@ use tokio::{
     net::TcpStream,
     sync::broadcast::{self, Receiver, error::RecvError},
 };
-use tokio_tungstenite::{
-    WebSocketStream,
-    tungstenite::{Message, Utf8Bytes},
-};
+use tokio_tungstenite::{WebSocketStream, tungstenite::Message};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
@@ -30,7 +27,7 @@ pub struct BroadcastLoop {
     cancel: CancellationToken,
     metrics: Arc<dyn PublisherMetrics>,
     receiver: Receiver<PositionedPayload>,
-    ring_buffer: Arc<RwLock<RingBuffer<StreamPosition, Utf8Bytes>>>,
+    ring_buffer: Arc<RwLock<RingBuffer<StreamPosition, Message>>>,
     resume_from: Option<StreamPosition>,
 }
 
@@ -47,7 +44,7 @@ impl BroadcastLoop {
         metrics: Arc<dyn PublisherMetrics>,
         cancel: CancellationToken,
         receiver: Receiver<PositionedPayload>,
-        ring_buffer: Arc<RwLock<RingBuffer<StreamPosition, Utf8Bytes>>>,
+        ring_buffer: Arc<RwLock<RingBuffer<StreamPosition, Message>>>,
         resume_from: Option<StreamPosition>,
     ) -> Self {
         Self { stream, metrics, cancel, receiver, ring_buffer, resume_from }
@@ -88,7 +85,7 @@ impl BroadcastLoop {
                 payload = self.receiver.recv() => match payload {
                     Ok((_position, data)) => {
                         debug!(payload = ?data, "Broadcasted payload");
-                        if let Err(e) = self.stream.send(Message::Text(data)).await {
+                        if let Err(e) = self.stream.send(data).await {
                             self.metrics.on_send_error();
                             debug!(peer_addr = %peer_addr, error = %e, "Closing subscription");
                             break;
@@ -135,7 +132,7 @@ impl BroadcastLoop {
     ///   during phase 1, skipping messages identical to one already sent.
     async fn replay(&mut self, cutoff: &StreamPosition) -> Result<(), ReplayError> {
         // Phase 1: snapshot ring buffer and replay.
-        // `Utf8Bytes` is reference-counted (`bytes::Bytes`), so cloning is O(1)
+        // `Message` payloads are reference-counted (`bytes::Bytes`), so cloning is O(1)
         // per entry. Lock hold time is bounded by entry count, not payload size.
         let (snapshot, stale) = {
             let buf = self.ring_buffer.read();
@@ -191,8 +188,8 @@ impl BroadcastLoop {
     }
 
     /// Sends a single message during the replay phase with a timeout.
-    async fn send_replay_message(&mut self, data: Utf8Bytes) -> Result<(), ReplayError> {
-        tokio::time::timeout(REPLAY_SEND_TIMEOUT, self.stream.send(Message::Text(data)))
+    async fn send_replay_message(&mut self, data: Message) -> Result<(), ReplayError> {
+        tokio::time::timeout(REPLAY_SEND_TIMEOUT, self.stream.send(data))
             .await
             .map_err(|_| ReplayError::SendTimeout)?
             .map_err(ReplayError::WebSocket)?;
@@ -283,10 +280,10 @@ mod tests {
 
         let (mut client, _) = connect_async(format!("ws://{addr}")).await.unwrap();
 
-        tx.send((StreamPosition { block_number: 1, index: 0 }, Utf8Bytes::from("hello"))).unwrap();
+        tx.send((StreamPosition { block_number: 1, index: 0 }, Message::text("hello"))).unwrap();
 
         let msg = client.next().await.unwrap().unwrap();
-        assert_eq!(msg, Message::Text(Utf8Bytes::from("hello")));
+        assert_eq!(msg, Message::text("hello"));
 
         cancel.cancel();
         let _ = server_handle.await;
@@ -366,7 +363,7 @@ mod tests {
         for i in 0..5 {
             let _ = tx.send((
                 StreamPosition { block_number: 1, index: i },
-                Utf8Bytes::from(format!("msg{i}")),
+                Message::text(format!("msg{i}")),
             ));
         }
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -415,9 +412,9 @@ mod tests {
 
         {
             let mut buf = ring_buffer.write();
-            buf.push(StreamPosition { block_number: 1, index: 0 }, Utf8Bytes::from("a"));
-            buf.push(StreamPosition { block_number: 1, index: 1 }, Utf8Bytes::from("b"));
-            buf.push(StreamPosition { block_number: 2, index: 0 }, Utf8Bytes::from("c"));
+            buf.push(StreamPosition { block_number: 1, index: 0 }, Message::text("a"));
+            buf.push(StreamPosition { block_number: 1, index: 1 }, Message::text("b"));
+            buf.push(StreamPosition { block_number: 2, index: 0 }, Message::text("c"));
         }
 
         // cutoff == latest entry: no entries to replay, not stale.
@@ -461,9 +458,9 @@ mod tests {
 
         {
             let mut buf = ring_buffer.write();
-            buf.push(StreamPosition { block_number: 1, index: 0 }, Utf8Bytes::from("a"));
-            buf.push(StreamPosition { block_number: 2, index: 0 }, Utf8Bytes::from("b"));
-            buf.push(StreamPosition { block_number: 3, index: 0 }, Utf8Bytes::from("c"));
+            buf.push(StreamPosition { block_number: 1, index: 0 }, Message::text("a"));
+            buf.push(StreamPosition { block_number: 2, index: 0 }, Message::text("b"));
+            buf.push(StreamPosition { block_number: 3, index: 0 }, Message::text("c"));
             // oldest is now (2, 0); (1, 0) was evicted
         }
 

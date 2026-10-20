@@ -37,9 +37,9 @@ pub struct BuilderConfig {
     /// Inverted sampling frequency in blocks. 1 - each block, 100 - every 100th block.
     pub sampling_ratio: u64,
 
-    /// The address of the websockets endpoint that listens for subscriptions to
-    /// new flashblocks updates.
-    pub flashblocks_ws_addr: SocketAddr,
+    /// The address of the builder WebSocket stream: flashblocks before Denim, and
+    /// native blocks in basic-only mode.
+    pub stream_ws_addr: SocketAddr,
 
     /// How often a flashblock is produced. This is independent of the block time of the chain.
     pub flashblocks_interval: Duration,
@@ -114,7 +114,7 @@ impl core::fmt::Debug for BuilderConfig {
             .field("da_config", &self.da_config)
             .field("gas_limit_config", &self.gas_limit_config)
             .field("sampling_ratio", &self.sampling_ratio)
-            .field("flashblocks_ws_addr", &self.flashblocks_ws_addr)
+            .field("stream_ws_addr", &self.stream_ws_addr)
             .field("flashblocks_interval", &self.flashblocks_interval)
             .field("flashblocks_leeway_time", &self.flashblocks_leeway_time)
             .field("max_gas_per_txn", &self.max_gas_per_txn)
@@ -140,7 +140,7 @@ impl Default for BuilderConfig {
             block_time_leeway: Duration::from_millis(500),
             da_config: BaseDAConfig::default(),
             gas_limit_config: GasLimitConfig::default(),
-            flashblocks_ws_addr: SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), 1111),
+            stream_ws_addr: SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), 1111),
             flashblocks_interval: Duration::from_millis(250),
             flashblocks_leeway_time: Duration::from_millis(50),
             sampling_ratio: 100,
@@ -165,7 +165,7 @@ impl BuilderConfig {
     /// Creates a new [`BuilderConfig`] suitable for testing with a randomized flashblocks port.
     pub fn for_tests() -> Self {
         Self {
-            flashblocks_ws_addr: SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0),
+            stream_ws_addr: SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0),
             flashblocks_interval: Duration::from_millis(200),
             flashblocks_leeway_time: Duration::from_millis(100),
             block_time: Duration::from_secs(1),

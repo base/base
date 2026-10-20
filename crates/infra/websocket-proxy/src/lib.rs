@@ -6,9 +6,6 @@ pub use auth::*;
 mod client;
 pub use client::*;
 
-mod filter;
-pub use filter::*;
-
 mod metrics;
 pub use metrics::*;
 

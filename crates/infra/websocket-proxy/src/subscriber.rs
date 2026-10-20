@@ -78,37 +78,34 @@ impl Default for SubscriberOptions {
 /// Maintains a persistent websocket connection to an upstream server, automatically
 /// reconnecting with exponential backoff and monitoring liveness via ping/pong.
 ///
-/// Tracks the block number of the last received block message. On reconnect,
-/// appends a `block_number` query parameter to the URI so the upstream
-/// publisher can replay missed blocks.
+/// Text and binary payloads are passed to the handler unchanged. The subscriber
+/// keeps no position, so a reconnect resumes at the upstream's live tail.
 pub struct WebsocketSubscriber<F>
 where
-    F: Fn(String) + Send + Sync + 'static,
+    F: Fn(bytes::Bytes) + Send + Sync + 'static,
 {
     uri: Uri,
     uri_label: String,
     handler: F,
     backoff: ExponentialBackoff,
     options: SubscriberOptions,
-    last_block_number: Option<u64>,
 }
 
 impl<F> std::fmt::Debug for WebsocketSubscriber<F>
 where
-    F: Fn(String) + Send + Sync + 'static,
+    F: Fn(bytes::Bytes) + Send + Sync + 'static,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("WebsocketSubscriber")
             .field("uri", &self.uri)
             .field("options", &self.options)
-            .field("last_block_number", &self.last_block_number)
             .finish_non_exhaustive()
     }
 }
 
 impl<F> WebsocketSubscriber<F>
 where
-    F: Fn(String) + Send + Sync + 'static,
+    F: Fn(bytes::Bytes) + Send + Sync + 'static,
 {
     /// Creates a new subscriber targeting the given URI with the provided message handler.
     pub fn new(uri: Uri, handler: F, options: SubscriberOptions) -> Self {
@@ -120,7 +117,7 @@ where
         };
 
         let uri_label = uri.to_string();
-        Self { uri, uri_label, handler, backoff, options, last_block_number: None }
+        Self { uri, uri_label, handler, backoff, options }
     }
 
     /// Runs the subscriber loop, reconnecting on failure until the token is cancelled.
@@ -175,29 +172,12 @@ where
         }
     }
 
-    /// Builds the connection URI, appending the resume block number if one is tracked.
-    fn connect_uri(&self) -> Uri {
-        let Some(block_number) = self.last_block_number else {
-            return self.uri.clone();
-        };
-
-        let base = self.uri.to_string();
-        let separator = if self.uri.query().is_some() { "&" } else { "?" };
-        let with_params = format!("{base}{separator}block_number={block_number}");
-
-        with_params.parse().unwrap_or_else(|e| {
-            warn!(error = %e, uri = %with_params, "Failed to parse reconnect URI, falling back to base URI");
-            self.uri.clone()
-        })
-    }
-
     async fn connect_and_listen(&mut self) -> Result<(), Error> {
-        let connect_uri = self.connect_uri();
-        info!(message = "connecting to websocket", uri = %connect_uri);
+        info!(message = "connecting to websocket", uri = %self.uri);
 
         Metrics::upstream_connection_attempts().increment(1);
 
-        let (ws_stream, _) = match connect_async(&connect_uri).await {
+        let (ws_stream, _) = match connect_async(&self.uri).await {
             Ok(connection) => {
                 Metrics::upstream_connection_successes().increment(1);
                 connection
@@ -208,7 +188,7 @@ where
             }
         };
 
-        info!(message = "websocket connection established", uri = %connect_uri);
+        info!(message = "websocket connection established", uri = %self.uri);
 
         Metrics::upstream_connections().increment(1);
         self.backoff.reset();
@@ -267,7 +247,7 @@ where
     }
 
     async fn handle_message(
-        &mut self,
+        &self,
         message: Result<Message, Error>,
         pong_deadline: &mut Instant,
         pong_timeout: Duration,
@@ -286,28 +266,14 @@ where
 
         match msg {
             Message::Text(text) => {
-                trace!(
-                    message = "received text message",
-                    uri = %self.uri,
-                    payload = text.as_str()
-                );
+                trace!(message = "received text message", uri = %self.uri, size = text.len());
                 Metrics::upstream_messages(self.uri_label.clone()).increment(1);
-
-                // Update position tracking before calling handler so that if
-                // the connection drops immediately after, reconnection resumes
-                // from the latest delivered message rather than re-processing it.
-                if let Some(block_number) = parse_block_number(text.as_str()) {
-                    self.last_block_number = Some(block_number);
-                }
-
-                (self.handler)(text.to_string());
+                (self.handler)(text.into());
             }
             Message::Binary(data) => {
-                warn!(
-                    message = "received binary message, unsupported",
-                    uri = %self.uri,
-                    size = data.len()
-                );
+                trace!(message = "received binary message", uri = %self.uri, size = data.len());
+                Metrics::upstream_messages(self.uri_label.clone()).increment(1);
+                (self.handler)(data);
             }
             Message::Pong(_) => {
                 trace!(message = "received pong from upstream", uri = %self.uri);
@@ -322,19 +288,6 @@ where
 
         Ok(())
     }
-}
-
-/// Extracts the top-level `blockNumber` from a block stream JSON payload.
-///
-/// Uses a minimal typed struct to avoid materializing the entire JSON tree.
-#[derive(serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct BlockNumberExtract {
-    block_number: u64,
-}
-
-fn parse_block_number(data: &str) -> Option<u64> {
-    serde_json::from_str::<BlockNumberExtract>(data).ok().map(|extract| extract.block_number)
 }
 
 #[cfg(test)]
@@ -357,7 +310,7 @@ mod tests {
 
     struct MockServer {
         addr: SocketAddr,
-        message_sender: broadcast::Sender<String>,
+        message_sender: broadcast::Sender<Message>,
         shutdown: CancellationToken,
     }
 
@@ -365,7 +318,7 @@ mod tests {
         async fn new() -> Self {
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let addr = listener.local_addr().unwrap();
-            let (tx, _) = broadcast::channel::<String>(100);
+            let (tx, _) = broadcast::channel::<Message>(100);
             let shutdown = CancellationToken::new();
             let shutdown_clone = shutdown.clone();
             let tx_clone = tx.clone();
@@ -400,7 +353,7 @@ mod tests {
 
         async fn handle_connection(
             stream: TcpStream,
-            tx: broadcast::Sender<String>,
+            tx: broadcast::Sender<Message>,
             shutdown: CancellationToken,
         ) {
             let ws_stream = match accept_async(stream).await {
@@ -422,8 +375,8 @@ mod tests {
                     }
                     msg = rx.recv() => {
                         match msg {
-                            Ok(text) => {
-                                if let Err(e) = ws_sender.send(Message::Text(text.into())).await {
+                            Ok(msg) => {
+                                if let Err(e) = ws_sender.send(msg).await {
                                     eprintln!("Error sending message: {e}");
                                     break;
                                 }
@@ -439,9 +392,9 @@ mod tests {
 
         async fn send_message(
             &self,
-            msg: &str,
-        ) -> Result<usize, broadcast::error::SendError<String>> {
-            self.message_sender.send(msg.to_string())
+            msg: Message,
+        ) -> Result<usize, broadcast::error::SendError<Message>> {
+            self.message_sender.send(msg)
         }
 
         async fn shutdown(self) {
@@ -491,7 +444,7 @@ mod tests {
             }
         });
 
-        let listener_fn = move |_data: String| {
+        let listener_fn = move |_data: bytes::Bytes| {
             // Handler for received messages - not needed for this test
         };
 
@@ -531,7 +484,7 @@ mod tests {
         let received_messages = Arc::new(Mutex::new(Vec::new()));
         let received_clone = Arc::clone(&received_messages);
 
-        let listener = move |data: String| {
+        let listener = move |data: bytes::Bytes| {
             if let Ok(mut messages) = received_clone.lock() {
                 messages.push(data);
             }
@@ -563,13 +516,13 @@ mod tests {
 
         sleep(Duration::from_millis(500)).await;
 
-        let _ = server1.send_message("Message from server 1").await;
-        let _ = server2.send_message("Message from server 2").await;
+        let _ = server1.send_message(Message::text("Message from server 1")).await;
+        let _ = server2.send_message(Message::binary(&b"Message from server 2"[..])).await;
 
         sleep(Duration::from_millis(500)).await;
 
-        let _ = server1.send_message("Another message from server 1").await;
-        let _ = server2.send_message("Another message from server 2").await;
+        let _ = server1.send_message(Message::text("Another message from server 1")).await;
+        let _ = server2.send_message(Message::binary(&b"Another message from server 2"[..])).await;
 
         sleep(Duration::from_millis(500)).await;
 
@@ -588,45 +541,13 @@ mod tests {
 
         assert_eq!(messages.len(), 4);
 
-        assert!(messages.contains(&"Message from server 1".to_string()));
-        assert!(messages.contains(&"Message from server 2".to_string()));
-        assert!(messages.contains(&"Another message from server 1".to_string()));
-        assert!(messages.contains(&"Another message from server 2".to_string()));
-
-        assert!(!messages.is_empty());
-    }
-
-    #[test]
-    fn parse_block_number_valid() {
-        let payload = r#"{"blockNumber":123,"header":{},"transactions":[],"receipts":[]}"#;
-        assert_eq!(parse_block_number(payload), Some(123));
-    }
-
-    #[test]
-    fn connect_uri_without_position() {
-        let uri: Uri = "ws://localhost:9999/ws".parse().unwrap();
-        let subscriber =
-            WebsocketSubscriber::new(uri.clone(), |_: String| {}, SubscriberOptions::default());
-        assert_eq!(subscriber.connect_uri(), uri);
-    }
-
-    #[test]
-    fn connect_uri_with_position() {
-        let uri: Uri = "ws://localhost:9999/ws".parse().unwrap();
-        let mut subscriber =
-            WebsocketSubscriber::new(uri, |_: String| {}, SubscriberOptions::default());
-        subscriber.last_block_number = Some(100);
-        let connect_uri = subscriber.connect_uri();
-        assert_eq!(connect_uri.to_string(), "ws://localhost:9999/ws?block_number=100");
-    }
-
-    #[test]
-    fn connect_uri_with_existing_query() {
-        let uri: Uri = "ws://localhost:9999/ws?token=abc".parse().unwrap();
-        let mut subscriber =
-            WebsocketSubscriber::new(uri, |_: String| {}, SubscriberOptions::default());
-        subscriber.last_block_number = Some(200);
-        let connect_uri = subscriber.connect_uri();
-        assert_eq!(connect_uri.to_string(), "ws://localhost:9999/ws?token=abc&block_number=200");
+        for expected in [
+            &b"Message from server 1"[..],
+            b"Message from server 2",
+            b"Another message from server 1",
+            b"Another message from server 2",
+        ] {
+            assert!(messages.iter().any(|message| message.as_ref() == expected));
+        }
     }
 }

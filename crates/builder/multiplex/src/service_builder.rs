@@ -140,8 +140,7 @@ where
             );
 
         if self.basic_only {
-            let ws_pub =
-                Arc::new(WebSocketPublisher::new(self.builder_config.flashblocks_ws_addr)?);
+            let ws_pub = Arc::new(WebSocketPublisher::new(self.builder_config.stream_ws_addr)?);
             ctx.task_executor().spawn_critical_task(
                 "basic payload builder service",
                 Box::pin(basic_payload_service),

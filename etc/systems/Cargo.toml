@@ -144,7 +144,7 @@ alloy-json-rpc.workspace = true
 # base-alloy
 base-common-consensus.workspace = true
 base-common-flashblocks.workspace = true
-base-common-rpc-types-engine.workspace = true
+base-common-rpc-types-engine = { workspace = true, features = ["std"] }
 
 # proof
 base-optimism-rpc.workspace = true
@@ -160,9 +160,11 @@ reth-primitives-traits.workspace = true
 sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "chrono", "json", "migrate", "macros", "tls-native-tls"] }
 
 # misc
+snap.workspace = true
 anyhow.workspace = true
 futures.workspace = true
 indicatif.workspace = true
+ethereum_ssz.workspace = true
 tokio-tungstenite.workspace = true
 
 [[bench]]

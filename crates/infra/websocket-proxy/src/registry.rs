@@ -22,7 +22,6 @@ fn get_message_size(msg: &Message) -> u64 {
 #[derive(Clone, Debug)]
 pub struct Registry {
     sender: Sender<Message>,
-    compressed: bool,
     ping_enabled: bool,
     pong_timeout_ms: u64,
     send_timeout_ms: Duration,
@@ -32,23 +31,20 @@ impl Registry {
     /// Creates a new registry with the given broadcast sender and configuration.
     pub const fn new(
         sender: Sender<Message>,
-        compressed: bool,
         ping_enabled: bool,
         pong_timeout_ms: u64,
         send_timeout_ms: Duration,
     ) -> Self {
-        Self { sender, compressed, ping_enabled, pong_timeout_ms, send_timeout_ms }
+        Self { sender, ping_enabled, pong_timeout_ms, send_timeout_ms }
     }
 
-    /// Subscribes a client to the broadcast channel and forwards matching messages.
+    /// Subscribes a client to the broadcast channel and forwards every message.
     pub async fn subscribe(&self, client: ClientConnection) {
         info!(message = "subscribing client", client = client.id());
 
         let mut receiver = self.sender.subscribe();
         Metrics::new_connections().increment(1);
 
-        let filter = client.filter.clone();
-        let compressed = self.compressed;
         let client_id = client.id();
         let (mut ws_sender, ws_receiver) = client.websocket.split();
 
@@ -60,50 +56,40 @@ impl Registry {
                 broadcast_result = receiver.recv() => {
                     match broadcast_result {
                         Ok(msg) => {
-                            let msg_bytes = match &msg {
-                                Message::Binary(data) => data.as_ref(),
-                                _ => &[],
-                            };
-                            if filter.matches(msg_bytes, compressed) {
-                                trace!(message = "filter matched for client", client = client_id, filter = ?filter);
+                            let send_start = Instant::now();
+                            let msg_size = get_message_size(&msg);
+                            let send_result = timeout(self.send_timeout_ms, ws_sender.send(msg)).await;
+                            let send_duration = send_start.elapsed();
 
-                                let send_start = Instant::now();
-                                let msg_size = get_message_size(&msg);
-                                let send_result = timeout(self.send_timeout_ms, ws_sender.send(msg)).await;
-                                let send_duration = send_start.elapsed();
+                            Metrics::message_send_duration().record(send_duration);
 
-                                Metrics::message_send_duration().record(send_duration);
-
-                                match send_result {
-                                    Ok(Ok(())) => {
-                                        // Success - message sent
-                                        trace!(message = "message sent to client", client = client_id);
-                                        Metrics::sent_messages().increment(1);
-                                        Metrics::bytes_broadcasted().increment(msg_size);
-                                    }
-                                    Ok(Err(e)) => {
-                                        // Send failed (connection error)
-                                        warn!(
-                                            message = "failed to send data to client",
-                                            client = client_id,
-                                            error = e.to_string()
-                                        );
-                                        Metrics::failed_messages().increment(1);
-                                        break;
-                                    }
-                                    Err(_) => {
-                                        // Timeout - client too slow
-                                        warn!(
-                                            message = "send timeout - disconnecting slow client",
-                                            client = client_id,
-                                            timeout_ms = self.send_timeout_ms.as_millis()
-                                        );
-                                        Metrics::failed_messages().increment(1);
-                                        break;
-                                    }
+                            match send_result {
+                                Ok(Ok(())) => {
+                                    // Success - message sent
+                                    trace!(message = "message sent to client", client = client_id);
+                                    Metrics::sent_messages().increment(1);
+                                    Metrics::bytes_broadcasted().increment(msg_size);
                                 }
-                            } else {
-                                trace!(client_id = %client_id, "Filter did not match");
+                                Ok(Err(e)) => {
+                                    // Send failed (connection error)
+                                    warn!(
+                                        message = "failed to send data to client",
+                                        client = client_id,
+                                        error = e.to_string()
+                                    );
+                                    Metrics::failed_messages().increment(1);
+                                    break;
+                                }
+                                Err(_) => {
+                                    // Timeout - client too slow
+                                    warn!(
+                                        message = "send timeout - disconnecting slow client",
+                                        client = client_id,
+                                        timeout_ms = self.send_timeout_ms.as_millis()
+                                    );
+                                    Metrics::failed_messages().increment(1);
+                                    break;
+                                }
                             }
                         }
                         Err(RecvError::Closed) => {

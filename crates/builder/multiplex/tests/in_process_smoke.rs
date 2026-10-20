@@ -126,7 +126,7 @@ impl RunningNode {
 
 fn test_builder_config() -> BuilderConfig {
     let mut config = BuilderConfig::default();
-    config.flashblocks_ws_addr.set_port(available_port());
+    config.stream_ws_addr.set_port(available_port());
     config
 }
 

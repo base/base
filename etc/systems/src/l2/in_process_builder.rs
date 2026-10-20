@@ -160,12 +160,12 @@ impl InProcessBuilder {
         let builder_config = BuilderConfig {
             block_time: config.block_time,
             block_time_leeway: Duration::from_secs(20),
-            flashblocks_ws_addr: SocketAddr::new(Ipv4Addr::LOCALHOST.into(), flashblocks_port),
+            stream_ws_addr: SocketAddr::new(Ipv4Addr::LOCALHOST.into(), flashblocks_port),
             flashblocks_interval: Duration::from_millis(200),
             ..Default::default()
         };
 
-        let flashblocks_ws_addr = builder_config.flashblocks_ws_addr;
+        let stream_ws_addr = builder_config.stream_ws_addr;
 
         let da_config = builder_config.da_config.clone();
         let gas_limit_config = builder_config.gas_limit_config.clone();
@@ -267,7 +267,7 @@ impl InProcessBuilder {
             ws_api_addr,
             engine_addr,
             metrics_addr,
-            flashblocks_port: flashblocks_ws_addr.port(),
+            flashblocks_port: stream_ws_addr.port(),
             p2p_port,
             data_dir: data_path,
             _node_exit_future: node_exit_future,

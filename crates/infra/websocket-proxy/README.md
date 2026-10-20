@@ -2,24 +2,22 @@
 
 ## Overview
 
-WebSocket proxy that subscribes to the sequencer builder's block stream and broadcasts each
-sealed block to downstream clients, minimizing connections to the sequencer and restricting
-access. Supports optional Brotli compression for downstream clients.
+WebSocket proxy that relays the sequencer builder's block stream to downstream clients,
+minimizing connections to the sequencer and restricting access. Supports optional Brotli
+compression for downstream clients.
 
-Each message is a `BlockStreamPayloadV1` (see `base-common-rpc-types`): the block number, the
-RPC-format header with `timestampMs`, the EIP-2718 encoded transactions, and the consensus
-receipts. The proxy forwards messages unchanged. It reads `blockNumber` to resume after
-reconnecting upstream, and it reads receipt logs and transactions for the `/ws/{api_key}/filter`
-endpoint.
+The proxy is payload-agnostic: it forwards each upstream text or binary frame unchanged, without
+parsing, filtering, replaying, or deduplicating it. Downstream clients receive every message as
+a binary frame.
 
-Each message is a single WebSocket frame of at most `16 MiB`, which matches common client defaults.
-The builder skips a block whose message would exceed that limit, so clients that see a gap in
-`blockNumber` should fetch the missing block over RPC.
+After Denim the builder publishes each sealed block in the P2P block encoding: a snappy-compressed
+SSZ `BaseExecutionPayloadEnvelope` (32-byte parent beacon block root, then the SSZ execution
+payload). These are the bytes the sequencer signs for P2P gossip, without the signature. Clients
+decode, validate, and execute each block, and derive receipts and logs locally.
 
-Blocks are published when the sequencer seals them, before they become canonical. A failed
-insert, a sequencer failover, or an unsafe reorg can produce a second message with the same
-`blockNumber` and a different hash. Key blocks on `header.hash` and `header.parentHash`, not on
-`blockNumber`, and treat a repeated number as a replacement.
+The stream is best effort and live-only. Blocks are published when the sequencer seals them,
+before they become canonical, so clients may see gaps, duplicates, or reorged blocks. A
+reconnect starts at the live tail. Recover missed or historical blocks over P2P or RPC.
 
 ## Usage
 

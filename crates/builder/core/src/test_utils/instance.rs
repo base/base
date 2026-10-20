@@ -291,13 +291,13 @@ impl LocalInstance {
 
     /// Returns the WebSocket URL for the flashblocks publisher.
     pub fn flashblocks_ws_url(&self) -> String {
-        let ipaddr = self.builder_config.flashblocks_ws_addr.ip();
+        let ipaddr = self.builder_config.stream_ws_addr.ip();
         let ipaddr = if ipaddr.is_unspecified() {
             std::net::IpAddr::V4(Ipv4Addr::LOCALHOST)
         } else {
             ipaddr
         };
-        let port = self.builder_config.flashblocks_ws_addr.port();
+        let port = self.builder_config.stream_ws_addr.port();
         format!("ws://{ipaddr}:{port}/")
     }
 

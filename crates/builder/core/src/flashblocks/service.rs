@@ -55,7 +55,7 @@ impl FlashblocksServiceBuilder {
         let (built_payload_tx, built_payload_rx) = tokio::sync::mpsc::channel(16);
 
         let ws_pub: Arc<WebSocketPublisher> =
-            WebSocketPublisher::new(self.config.flashblocks_ws_addr)?.into();
+            WebSocketPublisher::new(self.config.stream_ws_addr)?.into();
         let payload_builder = BasePayloadBuilder::new(
             BaseEvmConfig::base(ctx.chain_spec()),
             pool,

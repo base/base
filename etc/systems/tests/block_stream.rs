@@ -4,10 +4,11 @@ use std::{collections::BTreeMap, time::Duration};
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_provider::Provider;
-use base_common_rpc_types::BlockStreamPayloadV1;
+use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadV4};
 use base_system_tests::SystemTestStackBuilder;
-use eyre::{OptionExt, Result, WrapErr};
+use eyre::{OptionExt, Result, WrapErr, eyre};
 use futures::StreamExt;
+use ssz::Decode;
 use tokio::time::timeout;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
@@ -16,6 +17,8 @@ const L2_CHAIN_ID: u64 = 84538453;
 const DENIM_ACTIVATION_BLOCK: u64 = 1;
 const VERIFIED_BLOCKS: u64 = 9;
 const STREAM_TIMEOUT: Duration = Duration::from_secs(45);
+/// SSZ prefix holding the parent beacon block root, ahead of the execution payload.
+const PARENT_BEACON_BLOCK_ROOT_LEN: usize = 32;
 
 #[tokio::test]
 async fn basic_builder_streams_every_block() -> Result<()> {
@@ -37,11 +40,16 @@ async fn basic_builder_streams_every_block() -> Result<()> {
     let mut blocks = BTreeMap::new();
     timeout(STREAM_TIMEOUT, async {
         while blocks.len() < VERIFIED_BLOCKS as usize {
-            let Message::Text(text) = messages.next().await.ok_or_eyre("stream closed")?? else {
+            let Message::Binary(data) = messages.next().await.ok_or_eyre("stream closed")?? else {
                 continue;
             };
-            let payload: BlockStreamPayloadV1 = serde_json::from_str(&text)?;
-            blocks.insert(payload.block_number, payload);
+            let ssz = snap::raw::Decoder::new().decompress_vec(&data)?;
+            let payload = BaseExecutionPayloadV4::from_ssz_bytes(
+                ssz.get(PARENT_BEACON_BLOCK_ROOT_LEN..).ok_or_eyre("payload too short")?,
+            )
+            .map_err(|error| eyre!("invalid SSZ payload: {error:?}"))?;
+            let payload = BaseExecutionPayload::V4(payload);
+            blocks.insert(payload.block_number(), payload);
         }
         Ok::<_, eyre::Error>(())
     })
@@ -49,25 +57,14 @@ async fn basic_builder_streams_every_block() -> Result<()> {
     .wrap_err("timed out waiting for streamed blocks")??;
 
     let first_block = *blocks.keys().next().ok_or_eyre("no blocks streamed")?;
-    let mut previous_timestamp_ms = None;
     for number in first_block..first_block + VERIFIED_BLOCKS {
         let streamed = blocks.get(&number).ok_or_eyre(format!("block {number} not streamed"))?;
         let canonical = builder
             .get_block_by_number(BlockNumberOrTag::Number(number))
             .await?
             .ok_or_eyre("builder block missing")?;
-        assert_eq!(streamed.header.hash, canonical.header.hash, "block {number} hash mismatch");
-        assert_eq!(streamed.transactions.len(), canonical.transactions.len());
-        assert_eq!(streamed.receipts.len(), streamed.transactions.len());
-
-        let timestamp_ms = streamed
-            .header
-            .timestamp_ms
-            .ok_or_eyre(format!("block {number} has no timestampMs"))?;
-        if let Some(previous) = previous_timestamp_ms {
-            assert_eq!(timestamp_ms - previous, 200, "block {number} cadence mismatch");
-        }
-        previous_timestamp_ms = Some(timestamp_ms);
+        assert_eq!(streamed.block_hash(), canonical.header.hash, "block {number} hash mismatch");
+        assert_eq!(streamed.transactions().len(), canonical.transactions.len());
     }
 
     Ok(())

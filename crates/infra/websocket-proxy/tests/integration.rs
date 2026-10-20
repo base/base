@@ -43,8 +43,7 @@ impl TestHarness {
 
     fn new_with_auth(addr: SocketAddr, auth: Option<Authentication>) -> Self {
         let (sender, _) = broadcast::channel(5);
-        let registry =
-            Registry::new(sender.clone(), false, false, 120000, Duration::from_millis(1000));
+        let registry = Registry::new(sender.clone(), false, 120000, Duration::from_millis(1000));
         let rate_limited = Arc::new(InMemoryRateLimit::new(3, 10));
 
         Self {
@@ -370,20 +369,18 @@ async fn test_authentication_rejects_unknown_api_keys_with_401() {
 
     // Send a well-formed WebSocket upgrade request so the request reaches the handler's
     // authentication check instead of being rejected by the upgrade extractor.
-    for path in ["ws/invalid-key", "ws/invalid-key/filter"] {
-        let response = reqwest::Client::new()
-            .get(format!("http://{}/{path}", harness.server_addr))
-            .header(reqwest::header::CONNECTION, "upgrade")
-            .header(reqwest::header::UPGRADE, "websocket")
-            .header(reqwest::header::SEC_WEBSOCKET_KEY, "dGhlIHNhbXBsZSBub25jZQ==")
-            .header(reqwest::header::SEC_WEBSOCKET_VERSION, "13")
-            .send()
-            .await
-            .unwrap();
+    let response = reqwest::Client::new()
+        .get(format!("http://{}/ws/invalid-key", harness.server_addr))
+        .header(reqwest::header::CONNECTION, "upgrade")
+        .header(reqwest::header::UPGRADE, "websocket")
+        .header(reqwest::header::SEC_WEBSOCKET_KEY, "dGhlIHNhbXBsZSBub25jZQ==")
+        .header(reqwest::header::SEC_WEBSOCKET_VERSION, "13")
+        .send()
+        .await
+        .unwrap();
 
-        assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED);
-        assert_eq!(response.text().await.unwrap(), "{\"message\":\"Invalid API key\"}");
-    }
+    assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED);
+    assert_eq!(response.text().await.unwrap(), "{\"message\":\"Invalid API key\"}");
 }
 
 #[tokio::test]
@@ -391,7 +388,7 @@ async fn test_ping_timeout_disconnects_client() {
     let addr = TestHarness::alloc_port().await;
 
     let (sender, _) = broadcast::channel(5);
-    let registry = Registry::new(sender.clone(), false, true, 1000, Duration::from_millis(1000));
+    let registry = Registry::new(sender.clone(), true, 1000, Duration::from_millis(1000));
     let rate_limited = Arc::new(InMemoryRateLimit::new(3, 10));
 
     let mut harness = TestHarness {

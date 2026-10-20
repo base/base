@@ -3,22 +3,20 @@ use std::{fmt, net::SocketAddr, sync::Arc};
 use axum::{
     Error, Router,
     body::Body,
-    extract::{ConnectInfo, Path, Query, State, WebSocketUpgrade},
+    extract::{ConnectInfo, Path, State, WebSocketUpgrade},
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::{any, get},
 };
 pub use base_trusted_proxy::TrustedProxyConfig;
 use http::HeaderMap;
-use serde::Deserialize;
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, info, warn};
+use tracing::info;
 
 use crate::{
     auth::Authentication,
     client::ClientConnection,
-    filter::{FilterType, MatchMode},
     metrics::Metrics,
     rate_limit::{RateLimit, RateLimitError, RateLimitType},
     registry::Registry,
@@ -76,13 +74,6 @@ impl fmt::Debug for Server {
     }
 }
 
-#[derive(Deserialize)]
-struct FilterQuery {
-    addresses: Option<String>,
-    topics: Option<String>,
-    r#match: Option<String>,
-}
-
 impl Server {
     /// Creates a new server with the given configuration.
     pub fn new(
@@ -110,9 +101,7 @@ impl Server {
 
         if self.authentication.is_some() {
             info!("Authentication is enabled");
-            router = router
-                .route("/ws/{api_key}", any(authenticated_websocket_handler))
-                .route("/ws/{api_key}/filter", any(authenticated_filter_websocket_handler));
+            router = router.route("/ws/{api_key}", any(authenticated_websocket_handler));
         } else {
             info!("Public endpoint is enabled");
             router = router.route("/ws", any(unauthenticated_websocket_handler));
@@ -145,40 +134,6 @@ async fn healthz_handler() -> impl IntoResponse {
     StatusCode::OK
 }
 
-// Parse comma-separated values into Vec<String>
-fn parse_comma_separated(input: Option<String>) -> Vec<String> {
-    input
-        .map(|s| {
-            s.split(',')
-                .map(|item| item.trim().to_string())
-                .filter(|item| !item.is_empty())
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-fn create_filter_from_query(query: FilterQuery) -> FilterType {
-    let addresses = parse_comma_separated(query.addresses);
-    let topics = parse_comma_separated(query.topics);
-
-    // Parse match mode, default to "any" if not specified
-    let match_mode = match query.r#match.as_deref() {
-        Some("all") => MatchMode::All,
-        Some("any") | None => MatchMode::Any,
-        Some(other) => {
-            warn!(param = %other, "Invalid match parameter, defaulting to 'any'");
-            MatchMode::Any
-        }
-    };
-
-    let filter = FilterType::new_combined_with_mode(addresses.clone(), topics.clone(), match_mode);
-    debug!(
-        "Created filter: {:?} from addresses: {:?}, topics: {:?}, match_mode: {:?}",
-        filter, addresses, topics, match_mode
-    );
-    filter
-}
-
 async fn authenticated_websocket_handler(
     State(state): State<ServerState>,
     ws: WebSocketUpgrade,
@@ -190,23 +145,7 @@ async fn authenticated_websocket_handler(
         return *response;
     }
 
-    websocket_handler(state, ws, addr, headers, FilterType::None)
-}
-
-async fn authenticated_filter_websocket_handler(
-    State(state): State<ServerState>,
-    ws: WebSocketUpgrade,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    headers: HeaderMap,
-    Path(api_key): Path<String>,
-    query: Query<FilterQuery>,
-) -> impl IntoResponse {
-    if let Err(response) = state.authenticate(&api_key) {
-        return *response;
-    }
-
-    let filter = create_filter_from_query(query.0);
-    websocket_handler(state, ws, addr, headers, filter)
+    websocket_handler(state, ws, addr, headers)
 }
 
 async fn unauthenticated_websocket_handler(
@@ -215,7 +154,7 @@ async fn unauthenticated_websocket_handler(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
 ) -> impl IntoResponse {
-    websocket_handler(state, ws, addr, headers, FilterType::None)
+    websocket_handler(state, ws, addr, headers)
 }
 
 fn websocket_handler(
@@ -223,7 +162,6 @@ fn websocket_handler(
     ws: WebSocketUpgrade,
     addr: SocketAddr,
     headers: HeaderMap,
-    filter: FilterType,
 ) -> Response {
     let connect_addr = addr.ip();
     let client_addr = state.trusted_proxy_config.client_ip(connect_addr, &headers);
@@ -269,76 +207,7 @@ fn websocket_handler(
             )
         })
         .on_upgrade(async move |socket| {
-            let client = ClientConnection::new(client_addr, ticket, socket, filter);
+            let client = ClientConnection::new(client_addr, ticket, socket);
             state.registry.subscribe(client).await;
         })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::filter::FilterType;
-
-    #[test]
-    fn test_parse_comma_separated() {
-        // Test single value
-        let single = Some("0x123".to_string());
-        assert_eq!(parse_comma_separated(single), vec!["0x123"]);
-
-        // Test multiple values
-        let multiple = Some("0x123, 0x456 ,0x789".to_string());
-        assert_eq!(parse_comma_separated(multiple), vec!["0x123", "0x456", "0x789"]);
-
-        // Test empty
-        assert_eq!(parse_comma_separated(None), Vec::<String>::new());
-
-        // Test empty string
-        let empty = Some(String::new());
-        assert_eq!(parse_comma_separated(empty), Vec::<String>::new());
-
-        // Test with empty values
-        let with_empty = Some("0x123,,0x456".to_string());
-        assert_eq!(parse_comma_separated(with_empty), vec!["0x123", "0x456"]);
-    }
-
-    #[test]
-    fn test_create_filter_from_query() {
-        // Test addresses only
-        let query =
-            FilterQuery { addresses: Some("0x123,0x456".to_string()), topics: None, r#match: None };
-        let filter = create_filter_from_query(query);
-        match filter {
-            FilterType::Addresses(_) => (),
-            _ => panic!("Expected Addresses filter"),
-        }
-
-        // Test topics only
-        let query =
-            FilterQuery { addresses: None, topics: Some("0xabc,0xdef".to_string()), r#match: None };
-        let filter = create_filter_from_query(query);
-        match filter {
-            FilterType::Topics(_) => (),
-            _ => panic!("Expected Topics filter"),
-        }
-
-        // Test combined
-        let query = FilterQuery {
-            addresses: Some("0x123".to_string()),
-            topics: Some("0xabc".to_string()),
-            r#match: Some("all".to_string()),
-        };
-        let filter = create_filter_from_query(query);
-        match filter {
-            FilterType::Combined { .. } => (),
-            _ => panic!("Expected Combined filter"),
-        }
-
-        // Test none
-        let query = FilterQuery { addresses: None, topics: None, r#match: None };
-        let filter = create_filter_from_query(query);
-        match filter {
-            FilterType::None => (),
-            _ => panic!("Expected None filter"),
-        }
-    }
 }

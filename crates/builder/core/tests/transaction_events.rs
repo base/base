@@ -249,7 +249,7 @@ async fn expired_flashblock_predicate_releases_same_nonce_before_block_seals() -
     const BLOCK_BUILD_TIMEOUT: Duration = Duration::from_secs(3);
 
     let mut config = BuilderConfig::for_tests().with_block_time_ms(2000);
-    config.flashblocks_ws_addr.set_port(get_available_port());
+    config.stream_ws_addr.set_port(get_available_port());
     let instance = LocalInstanceBuilder::new(config)
         .install_ext::<BuilderApiExtension>(
             BuilderApiExtensionConfig::new(DEFAULT_MAX_VALIDITY_PREDICATES).with_noop_metering(),

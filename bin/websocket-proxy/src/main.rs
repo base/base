@@ -2,7 +2,7 @@
 
 use std::{io::Write, net::SocketAddr, sync::Arc, time::Duration};
 
-use axum::{extract::ws::Message, http::Uri};
+use axum::{body::Bytes, extract::ws::Message, http::Uri};
 use base_cli_utils::LogConfig;
 use clap::Parser;
 use dotenvy::dotenv;
@@ -211,27 +211,26 @@ async fn main() {
     let (send, _rec) = broadcast::channel(args.message_buffer_size);
     let sender = send.clone();
 
-    let listener = move |data: String| {
-        trace!(message = "received data", data = data);
+    let listener = move |data: Bytes| {
+        trace!(message = "received data", size = data.len());
         // Subtract one from receiver count, as we have to keep one receiver open at all times (see _rec)
         // to avoid the channel being closed. However this is not an active client connection.
         Metrics::active_connections().set((send.receiver_count() - 1) as f64);
 
         let message_data = if args.enable_compression {
-            let data_bytes = data.as_bytes();
             let mut compressed_data_bytes = Vec::new();
             {
                 let mut compressor =
                     brotli::CompressorWriter::new(&mut compressed_data_bytes, 4096, 5, 22);
-                compressor.write_all(data_bytes).unwrap();
+                compressor.write_all(&data).unwrap();
             }
             Metrics::bytes_compressed().increment(compressed_data_bytes.len() as u64);
-            compressed_data_bytes
+            compressed_data_bytes.into()
         } else {
-            data.into_bytes()
+            data
         };
 
-        match send.send(message_data.into()) {
+        match send.send(Message::Binary(message_data)) {
             Ok(_) => {
                 Metrics::broadcast_queue_size().set(send.len() as f64);
             }
@@ -298,7 +297,6 @@ async fn main() {
 
     let registry = Registry::new(
         sender,
-        args.enable_compression,
         args.client_ping_enabled,
         args.client_pong_timeout_ms,
         Duration::from_millis(args.client_send_timeout_ms),

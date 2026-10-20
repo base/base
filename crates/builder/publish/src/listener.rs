@@ -4,7 +4,7 @@ use std::sync::Arc;
 use base_ring_buffer::RingBuffer;
 use parking_lot::RwLock;
 use tokio::{net::TcpListener, sync::broadcast::Receiver, time::timeout};
-use tokio_tungstenite::{accept_hdr_async, tungstenite::Utf8Bytes};
+use tokio_tungstenite::{accept_hdr_async, tungstenite::Message};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
@@ -21,7 +21,7 @@ pub struct Listener {
     listener: TcpListener,
     metrics: Arc<dyn PublisherMetrics>,
     receiver: Receiver<PositionedPayload>,
-    ring_buffer: Arc<RwLock<RingBuffer<StreamPosition, Utf8Bytes>>>,
+    ring_buffer: Arc<RwLock<RingBuffer<StreamPosition, Message>>>,
     cancel: CancellationToken,
 }
 
@@ -39,7 +39,7 @@ impl Listener {
         listener: TcpListener,
         metrics: Arc<dyn PublisherMetrics>,
         receiver: Receiver<PositionedPayload>,
-        ring_buffer: Arc<RwLock<RingBuffer<StreamPosition, Utf8Bytes>>>,
+        ring_buffer: Arc<RwLock<RingBuffer<StreamPosition, Message>>>,
         cancel: CancellationToken,
     ) -> Self {
         Self { listener, metrics, receiver, ring_buffer, cancel }
@@ -163,7 +163,7 @@ mod tests {
 
     use futures::StreamExt;
     use tokio::sync::broadcast;
-    use tokio_tungstenite::{connect_async, tungstenite::Message};
+    use tokio_tungstenite::connect_async;
 
     use super::*;
 
@@ -224,11 +224,11 @@ mod tests {
 
         tokio::time::sleep(Duration::from_millis(50)).await;
 
-        tx.send((StreamPosition { block_number: 1, index: 0 }, Utf8Bytes::from("test-payload")))
+        tx.send((StreamPosition { block_number: 1, index: 0 }, Message::text("test-payload")))
             .unwrap();
 
         let msg = client.next().await.unwrap().unwrap();
-        assert_eq!(msg, Message::Text(Utf8Bytes::from("test-payload")));
+        assert_eq!(msg, Message::text("test-payload"));
 
         cancel.cancel();
         let _ = handle.await;
@@ -273,13 +273,13 @@ mod tests {
 
         tokio::time::sleep(Duration::from_millis(50)).await;
 
-        tx.send((StreamPosition { block_number: 1, index: 0 }, Utf8Bytes::from("broadcast-msg")))
+        tx.send((StreamPosition { block_number: 1, index: 0 }, Message::text("broadcast-msg")))
             .unwrap();
 
         let msg1 = client1.next().await.unwrap().unwrap();
         let msg2 = client2.next().await.unwrap().unwrap();
-        assert_eq!(msg1, Message::Text(Utf8Bytes::from("broadcast-msg")));
-        assert_eq!(msg2, Message::Text(Utf8Bytes::from("broadcast-msg")));
+        assert_eq!(msg1, Message::text("broadcast-msg"));
+        assert_eq!(msg2, Message::text("broadcast-msg"));
 
         cancel.cancel();
         let _ = handle.await;
@@ -343,9 +343,9 @@ mod tests {
         // Pre-populate the ring buffer with entries.
         {
             let mut buf = ring_buffer.write();
-            buf.push(StreamPosition { block_number: 100, index: 0 }, Utf8Bytes::from("msg-100-0"));
-            buf.push(StreamPosition { block_number: 100, index: 1 }, Utf8Bytes::from("msg-100-1"));
-            buf.push(StreamPosition { block_number: 101, index: 0 }, Utf8Bytes::from("msg-101-0"));
+            buf.push(StreamPosition { block_number: 100, index: 0 }, Message::text("msg-100-0"));
+            buf.push(StreamPosition { block_number: 100, index: 1 }, Message::text("msg-100-1"));
+            buf.push(StreamPosition { block_number: 101, index: 0 }, Message::text("msg-101-0"));
         }
 
         let handle = tokio::spawn({
@@ -364,10 +364,10 @@ mod tests {
                 .unwrap();
 
         let msg1 = client.next().await.unwrap().unwrap();
-        assert_eq!(msg1, Message::Text(Utf8Bytes::from("msg-100-1")));
+        assert_eq!(msg1, Message::text("msg-100-1"));
 
         let msg2 = client.next().await.unwrap().unwrap();
-        assert_eq!(msg2, Message::Text(Utf8Bytes::from("msg-101-0")));
+        assert_eq!(msg2, Message::text("msg-101-0"));
 
         cancel.cancel();
         let _ = handle.await;

@@ -397,7 +397,7 @@ impl Args {
             warn!("deprecated builder resource limit flags are ignored");
         }
 
-        let flashblocks_ws_addr = SocketAddr::new(
+        let stream_ws_addr = SocketAddr::new(
             self.flashblocks.flashblocks_addr.parse()?,
             self.flashblocks.flashblocks_port,
         );
@@ -409,7 +409,7 @@ impl Args {
             da_config: Default::default(),
             gas_limit_config: Default::default(),
             sampling_ratio: self.sampling_ratio,
-            flashblocks_ws_addr,
+            stream_ws_addr,
             flashblocks_interval: Duration::from_millis(self.flashblocks.flashblocks_block_time),
             flashblocks_leeway_time: Duration::from_millis(
                 self.flashblocks.flashblocks_leeway_time,

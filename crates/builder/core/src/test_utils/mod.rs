@@ -60,8 +60,8 @@ pub async fn setup_test_instance_with_builder_config(
     mut config: BuilderConfig,
 ) -> eyre::Result<LocalInstance> {
     clear_otel_env_vars();
-    if config.flashblocks_ws_addr.port() == 0 {
-        config.flashblocks_ws_addr.set_port(get_available_port());
+    if config.stream_ws_addr.port() == 0 {
+        config.stream_ws_addr.set_port(get_available_port());
     }
     LocalInstance::new(config).await
 }
@@ -73,8 +73,8 @@ pub async fn setup_test_instance_with_node_config(
     node_config: NodeConfig<BaseChainSpec>,
 ) -> eyre::Result<LocalInstance> {
     clear_otel_env_vars();
-    if builder_config.flashblocks_ws_addr.port() == 0 {
-        builder_config.flashblocks_ws_addr.set_port(get_available_port());
+    if builder_config.stream_ws_addr.port() == 0 {
+        builder_config.stream_ws_addr.set_port(get_available_port());
     }
     LocalInstance::new_with_node_config(builder_config, node_config).await
 }
