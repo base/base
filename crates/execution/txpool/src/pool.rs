@@ -474,7 +474,11 @@ where
     /// Reth reinjects reorged-out transactions without sidecars, which would turn a candidate
     /// sibling into an ordinary transaction. While candidates are enabled this suppresses any
     /// sidecar-free transaction whose hash the ledger retains as a sibling, whatever its origin;
-    /// the group must be resubmitted. The pool backup saves only `Local` transactions, so it
+    /// the group must be resubmitted. A suppressed hash that was a group's canonical winner was
+    /// reorged out, so its `Landed` group is reopened
+    /// ([`GroupLedger::reopen_reorged`](base_execution_candidates::GroupLedger::reopen_reorged))
+    /// and the identical group, or the winner alone, is admitted again. The pool backup saves only
+    /// `Local` transactions, so it
     /// never carries Private candidate representatives. The ledger is not restart-durable, which
     /// is why enabling candidates requires acknowledging an ephemeral ledger.
     fn reject_plain_candidate_reinsertion(
@@ -489,7 +493,13 @@ where
         }
         let hash = *transaction.hash();
         if candidates.ledger.suppresses_plain_reinsertion(&hash) {
-            debug!(tx_hash = %hash, origin = ?origin, "suppressed plain reinsertion of a candidate sibling");
+            let reopened = candidates.ledger.reopen_reorged(&hash);
+            debug!(
+                tx_hash = %hash,
+                origin = ?origin,
+                reopened,
+                "suppressed plain reinsertion of a candidate sibling"
+            );
             return Err(reth_transaction_pool::error::PoolError::other(
                 hash,
                 "candidate siblings cannot be inserted as plain transactions",
@@ -4517,6 +4527,47 @@ mod tests {
             .expect_err("a reorged-out sibling stays suppressed through the recovery window");
         assert!(matches!(err.kind, PoolErrorKind::Other(_)), "got {err:?}");
         assert!(pool.get(&sibling).is_none());
+    }
+
+    #[tokio::test]
+    async fn reorged_out_winner_reopens_its_group_for_resubmission() {
+        let (pool, client) = build_integration_pool();
+        let runtime = candidate_runtime();
+        let pool = pool.with_candidate_runtime(Arc::clone(&runtime));
+        let (group, representative) = candidate_submission(&client, &runtime);
+        pool.add_transaction(TransactionOrigin::Private, representative.clone())
+            .await
+            .expect("the representative carrying its group is admitted");
+        runtime.ledger.confirm_pooled(group.group_hash(), |hash| pool.get(hash).is_some());
+        let winner = group.siblings()[1].hash();
+
+        // Block 1 mines sibling 1, then a reorg removes block 1 and restores the nonce.
+        canonical_nonce_update(&pool, 1, group.sender(), 1, vec![winner], PoolUpdateKind::Commit);
+        canonical_nonce_update(&pool, 1, group.sender(), 0, Vec::new(), PoolUpdateKind::Reorg);
+        fund(&client, group.sender());
+
+        // Reth reinjects the winner without its group: still suppressed, but the group reopens.
+        pool.add_transaction(TransactionOrigin::External, plain_sibling(&group, 1))
+            .await
+            .expect_err("a reinjected winner is not pooled as a plain transaction");
+        assert!(runtime.ledger.lookup(&group.group_hash()).is_none(), "the landed entry reopens");
+        assert!(
+            !runtime.ledger.suppresses_plain_reinsertion(&winner),
+            "the winner may be submitted alone"
+        );
+        assert_eq!(
+            runtime.ledger.create(
+                Arc::clone(group.descriptor()),
+                base_execution_candidates::PrincipalId(1),
+                1,
+                |hash| pool.get(hash).is_some()
+            ),
+            Ok(base_execution_candidates::LedgerAdmission::Created),
+            "the identical group is admitted again"
+        );
+        pool.add_transaction(TransactionOrigin::Private, representative)
+            .await
+            .expect("the resubmitted representative is pooled");
     }
 
     #[tokio::test]
