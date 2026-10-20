@@ -68,9 +68,9 @@ pub struct L1ClientArgs {
     /// the verifier derives from the latest L1 head with no confirmation delay.
     #[arg(long = "l1.verifier-confs", default_value = "0", env = "BASE_NODE_VERIFIER_L1_CONFS")]
     pub l1_verifier_confs: u64,
-    /// Interval, in milliseconds, between polls of the L1 `finalized` block tag. This governs how
-    /// quickly the node observes new L1 finality checkpoints and, in turn, advances its finalized
-    /// L2 head. Controlled via `BASE_NODE_FINALIZED_POLL_INTERVAL_MS`. When unset, a
+    /// Interval, in milliseconds, between polls of the L1 `finalized` and `safe` block tags. This
+    /// governs how quickly the node observes new L1 finality checkpoints and, in turn, advances its
+    /// finalized L2 head. Controlled via `BASE_NODE_FINALIZED_POLL_INTERVAL_MS`. When unset, a
     /// chain-specific default is used (one L1 epoch, ~384s, on Ethereum mainnet/Sepolia).
     #[arg(
         long = "l1.finalized-poll-interval-ms",

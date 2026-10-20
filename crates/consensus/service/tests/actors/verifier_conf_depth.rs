@@ -27,10 +27,9 @@ use base_consensus_node::{
     L1WatcherQueryExecutor, NodeActor,
 };
 use base_consensus_providers::{AlloyChainProviderError, ConfDepthProvider, L1HeadNumber};
-use base_consensus_rpc::L1WatcherQueries;
 use base_protocol::BlockInfo;
 use futures::Stream;
-use tokio::sync::{oneshot, watch};
+use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
 // ---------------------------------------------------------------------------
@@ -52,9 +51,6 @@ impl MockL1Fetcher {
     fn block_info_for_id(&self, id: BlockId) -> Option<BlockInfo> {
         match id {
             BlockId::Number(BlockNumberOrTag::Number(number)) => self.blocks.get(&number).copied(),
-            BlockId::Number(BlockNumberOrTag::Latest) => {
-                self.blocks.values().max_by_key(|block| block.number).copied()
-            }
             _ => None,
         }
     }
@@ -140,16 +136,20 @@ async fn l1_watcher_and_conf_depth_provider_end_to_end() {
 
     // Stream the head at block 100.
     let head_stream: BoxedBlockStream = Box::pin(futures::stream::iter(vec![block_at(100)]));
+    let safe_stream: BoxedBlockStream = Box::pin(futures::stream::pending());
     let finalized_stream: BoxedBlockStream = Box::pin(futures::stream::pending());
 
     let actor = L1WatcherActor::new(
         Arc::new(RollupConfig::default()),
         fetcher,
         l1_head_tx,
+        watch::channel(None).0,
+        watch::channel(None).0,
         derivation_client.clone(),
         None,
         cancel,
         head_stream,
+        safe_stream,
         finalized_stream,
         conf_depth,
         Arc::clone(&l1_head_number),
@@ -232,16 +232,20 @@ async fn l1_head_atomic_holds_real_head_not_delayed() {
     // Stream multiple heads.
     let head_stream: BoxedBlockStream =
         Box::pin(futures::stream::iter(vec![block_at(20), block_at(30), block_at(50)]));
+    let safe_stream: BoxedBlockStream = Box::pin(futures::stream::pending());
     let finalized_stream: BoxedBlockStream = Box::pin(futures::stream::pending());
 
     let actor = L1WatcherActor::new(
         Arc::new(RollupConfig::default()),
         fetcher,
         l1_head_tx,
+        watch::channel(None).0,
+        watch::channel(None).0,
         derivation_client.clone(),
         None,
         cancel,
         head_stream,
+        safe_stream,
         finalized_stream,
         conf_depth,
         Arc::clone(&l1_head_number),
@@ -267,22 +271,26 @@ async fn sync_status_reports_derivation_origin_separately_from_live_head_with_ve
     let conf_depth: u64 = 4;
     let l1_head_number: L1HeadNumber = Arc::new(AtomicU64::new(0));
     let blocks: Vec<BlockInfo> = (90..=100).map(block_at).collect();
-    let fetcher = MockL1Fetcher::with_blocks(blocks.clone());
+    let fetcher = MockL1Fetcher::with_blocks(blocks);
 
     let derivation_client = RecordingDerivationClient::default();
-    let (l1_head_tx, _l1_head_rx) = watch::channel(None);
+    let (l1_head_tx, l1_head_rx) = watch::channel(None);
     let cancel = CancellationToken::new();
     let head_stream: BoxedBlockStream = Box::pin(futures::stream::iter(vec![block_at(100)]));
+    let safe_stream: BoxedBlockStream = Box::pin(futures::stream::pending());
     let finalized_stream: BoxedBlockStream = Box::pin(futures::stream::pending());
 
     let actor = L1WatcherActor::new(
         Arc::new(RollupConfig::default()),
         fetcher,
         l1_head_tx,
+        watch::channel(None).0,
+        watch::channel(None).0,
         derivation_client.clone(),
         None,
         cancel,
         head_stream,
+        safe_stream,
         finalized_stream,
         conf_depth,
         Arc::clone(&l1_head_number),
@@ -295,16 +303,17 @@ async fn sync_status_reports_derivation_origin_separately_from_live_head_with_ve
     assert_eq!(derivation_origin.number, 96);
 
     let (_derivation_origin_tx, derivation_origin_rx) = watch::channel(Some(derivation_origin));
+    let (_l1_safe_tx, l1_safe_rx) = watch::channel(None);
+    let (_l1_finalized_tx, l1_finalized_rx) = watch::channel(None);
     let executor = L1WatcherQueryExecutor::new(
         Arc::new(RollupConfig::default()),
-        Arc::new(MockL1Fetcher::with_blocks(blocks)),
+        l1_head_rx,
+        l1_safe_rx,
+        l1_finalized_rx,
         derivation_origin_rx,
     );
-    let (sender, receiver) = oneshot::channel();
 
-    executor.execute(L1WatcherQueries::L1State(sender)).await;
-
-    let state = receiver.await.expect("state query should return a response");
+    let state = executor.l1_state();
     assert_eq!(state.current_l1.map(|block| block.number), Some(96));
     assert_eq!(state.head_l1.map(|block| block.number), Some(100));
     assert_ne!(
