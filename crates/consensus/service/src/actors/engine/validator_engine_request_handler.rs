@@ -75,6 +75,18 @@ where
                 };
 
                 match request {
+                    EngineActorRequest::PrepareSequencerStart { result_tx, .. } => {
+                        if result_tx
+                            .send(Err(EngineClientError::RequestError(
+                                "sequencer start is unsupported by validator engine handler"
+                                    .to_string(),
+                            )))
+                            .await
+                            .is_err()
+                        {
+                            warn!(target: "engine", "Sequencer start response receiver dropped");
+                        }
+                    }
                     EngineActorRequest::BuildRequest(request) => {
                         let BuildRequest { attributes, result_tx, otel_cx } = *request;
                         let client = Arc::clone(self.processor.client());
@@ -120,12 +132,12 @@ where
                                 .await?;
                         }
                     }
-                    EngineActorRequest::ProcessSafeL2SignalRequest(safe_signal) => {
+                    EngineActorRequest::ProcessDerivedAttributesRequest(attributes) => {
                         self.processor.enqueue(EngineTask::Consolidate(Box::new(
                             ConsolidateTask::new(
                                 Arc::clone(self.processor.client()),
                                 Arc::clone(self.processor.rollup()),
-                                safe_signal,
+                                *attributes,
                             ),
                         )));
                     }

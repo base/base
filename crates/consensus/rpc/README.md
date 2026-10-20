@@ -16,6 +16,11 @@ Consensus RPC is an internal control-plane endpoint. The `opp2p_*` and opt-in
 `admin_*` methods rely on private-network controls instead of application
 authentication. Restrict access to trusted operators; never expose it publicly.
 
+When `--rpc.execution-forwarding-endpoint` is set, the server forwards the methods
+it does not serve to the execution client endpoint the flag names. Every method of
+that endpoint then becomes reachable through the consensus RPC port, so point the
+flag only at an endpoint whose whole API the trusted operators may call.
+
 ## RPC Methods
 
 ### `optimism_syncStatus`
@@ -26,6 +31,11 @@ Returns the current sync status of the node.
 
 **Returns:**
 - `SyncStatus`: Current L1/L2 block references including unsafe, safe, and finalized heads.
+
+### `admin_recoverMode`
+
+Returns whether sequencer recovery mode is enabled. Takes no parameters and returns a boolean,
+or an error if the sequencer is unavailable.
 
 ## Usage
 

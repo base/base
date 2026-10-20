@@ -315,6 +315,7 @@ const fn empty_manifest(block: u64) -> SnapshotManifest {
         base_url: None,
         reth_version: None,
         components: BTreeMap::new(),
+        extensions: BTreeMap::new(),
     }
 }
 
@@ -369,6 +370,7 @@ fn manifest_with_seeded_hashes(
         base_url: None,
         reth_version: None,
         components: comps,
+        extensions: BTreeMap::new(),
     }
 }
 
@@ -1572,7 +1574,7 @@ async fn e2e_stop_upload_restart_real_container() -> Result<()> {
 
     docker.start_container(&container_name, None::<StartContainerOptions>).await?;
 
-    let container_manager = DockerContainerManager::new("/var/run/docker.sock")?;
+    let container_manager = DockerContainerManager::connect_with_defaults()?;
 
     assert!(
         container_manager.is_running(&container_name).await?,

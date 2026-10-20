@@ -12,7 +12,7 @@ use evm2::{
 };
 
 use crate::{
-    BaseEvmTypes, BaseForkActivations, BaseTime, Canyon, IntrinsicGas, Zenith,
+    BaseEvmTypes, BaseForkActivations, BaseTime, Canyon, Everest, IntrinsicGas,
     transaction::BaseTxEnvelope,
 };
 
@@ -111,6 +111,23 @@ impl core::fmt::Display for DaFootprintAboveGasLimit {
 
 impl core::error::Error for DaFootprintAboveGasLimit {}
 
+/// Error returned for an EIP-8130 transaction, whose enshrined execution path this engine does not
+/// implement yet.
+///
+/// The `0x79` receipt commits to the number of call phases that committed, which only the
+/// enshrined execution path can produce, so the transaction is rejected before execution rather
+/// than included with a receipt that disagrees with the reference executor.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Eip8130ExecutionUnsupported;
+
+impl core::fmt::Display for Eip8130ExecutionUnsupported {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("EIP-8130 transaction execution is not supported by this engine")
+    }
+}
+
+impl core::error::Error for Eip8130ExecutionUnsupported {}
+
 /// Block-boundary context for pre-execution system calls.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct BaseBlockExecutionCtx {
@@ -139,7 +156,7 @@ pub struct BlockExecutionResult {
 /// the block's state delta.
 ///
 /// The flow is [`apply_pre_execution`](Self::apply_pre_execution) (block-boundary system calls),
-/// then [`apply_transition_hooks`](Self::apply_transition_hooks) (the Canyon/Denim/Zenith
+/// then [`apply_transition_hooks`](Self::apply_transition_hooks) (the Canyon/Denim/Everest
 /// irregular state transitions), then [`execute_transaction`](Self::execute_transaction) per
 /// transaction (running it through the registry, building its receipt with running cumulative gas,
 /// and committing its state into a [`BlockStateAccumulator`]), then [`finish`](Self::finish). The
@@ -213,7 +230,7 @@ impl<'a> BaseBlockExecutor<'a> {
 
     /// Applies the Base transition-block irregular state changes, in the reference order: the
     /// Canyon create2-deployer force-deploy, the Denim `BaseTime` predeploy install, then the
-    /// Zenith EIP-8130 system-account stub. Each is fork-gated on `chain_spec` at this block's
+    /// Everest EIP-8130 system-account stub. Each is fork-gated on `chain_spec` at this block's
     /// timestamp and commits its state into the block state. Must run after
     /// [`apply_pre_execution`](Self::apply_pre_execution) and before any transactions.
     pub fn apply_transition_hooks(
@@ -228,7 +245,7 @@ impl<'a> BaseBlockExecutor<'a> {
             &mut self.block_state,
         )?;
         BaseTime::ensure_predeploy(chain_spec, timestamp, &mut self.evm, &mut self.block_state)?;
-        Zenith::ensure_eip8130_system_accounts(
+        Everest::ensure_eip8130_system_accounts(
             chain_spec,
             timestamp,
             &mut self.evm,
@@ -295,6 +312,10 @@ impl<'a> BaseBlockExecutor<'a> {
             0
         };
 
+        if tx.as_eip8130().is_some() {
+            return Err(HandlerError::external(Eip8130ExecutionUnsupported));
+        }
+
         // The deposit receipt records the depositor's nonce *before* the deposit executes (and
         // bumps it), read untracked so it does not perturb execution. Matches the reference.
         let deposit_nonce = if is_deposit {
@@ -341,8 +362,6 @@ impl<'a> BaseBlockExecutor<'a> {
                 1 => BaseReceiptEnvelope::Eip2930(receipt),
                 2 => BaseReceiptEnvelope::Eip1559(receipt),
                 4 => BaseReceiptEnvelope::Eip7702(receipt),
-                // 0x79 is the enshrined EIP-8130 account-abstraction transaction.
-                0x79 => BaseReceiptEnvelope::Eip8130(receipt),
                 // Legacy (type 0) uses the legacy receipt shape. These type bytes mirror the
                 // handlers registered in tx_registry(); the assert flags any registered type that
                 // gains a handler but not a receipt arm here (which would mis-type its receipt).

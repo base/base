@@ -498,12 +498,12 @@ impl SpanBatch {
                     return BatchValidity::Drop(BatchDropReason::Eip7702PreIsthmus);
                 }
 
-                // If Zenith is not active yet and the transaction is an 8130, drop the batch.
-                if !cfg.is_zenith_active(batch.timestamp)
+                // If Everest is not active yet and the transaction is an 8130, drop the batch.
+                if !cfg.is_everest_active(batch.timestamp)
                     && tx.as_ref().first() == Some(&(OpTxType::Eip8130 as u8))
                 {
-                    warn!(target: "batch_span", tx_index = i, "EIP-8130 transactions are not supported pre-Zenith");
-                    return BatchValidity::Drop(BatchDropReason::Eip8130PreZenith);
+                    warn!(target: "batch_span", tx_index = i, "EIP-8130 transactions are not supported pre-Everest");
+                    return BatchValidity::Drop(BatchDropReason::Eip8130PreEverest);
                 }
             }
         }
@@ -749,13 +749,14 @@ impl SpanBatch {
 
 #[cfg(test)]
 mod tests {
-    use alloc::{string::ToString, vec};
+    use alloc::vec;
 
     use alloy_consensus::{Header, SignableTransaction, TxLegacy, constants::EIP1559_TX_TYPE_ID};
     use alloy_eips::BlockNumHash;
     use alloy_primitives::{B256, Bytes, Signature, b256};
     use base_common_consensus::{BaseBlock, BaseTxEnvelope};
     use base_common_genesis::{BaseUpgradeConfig, ChainGenesis, UpgradeConfig};
+    use rstest::rstest;
     use tracing::Level;
 
     use super::*;
@@ -926,44 +927,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_check_batch_missing_l1_block_input() {
-        let (trace_store, _guard) = crate::capture_traces!();
-
-        let cfg = RollupConfig::default();
-        let l1_blocks = vec![];
-        let l2_safe_head = L2BlockInfo::default();
-        let inclusion_block = BlockInfo::default();
-        let mut fetcher: TestBatchValidator = TestBatchValidator::default();
-        let batch = SpanBatch::default();
-        assert_eq!(
-            batch.check_batch(&cfg, &l1_blocks, l2_safe_head, &inclusion_block, &mut fetcher).await,
-            BatchValidity::Undecided
-        );
-        let logs = trace_store.get_by_level(Level::WARN);
-        assert_eq!(logs.len(), 1);
-        assert!(logs[0].contains("missing L1 block input, cannot proceed with batch checking"));
-    }
-
-    #[tokio::test]
-    async fn test_check_batches_is_empty() {
-        let (trace_store, _guard) = crate::capture_traces!();
-
-        let cfg = RollupConfig::default();
-        let l1_blocks = vec![BlockInfo::default()];
-        let l2_safe_head = L2BlockInfo::default();
-        let inclusion_block = BlockInfo::default();
-        let mut fetcher: TestBatchValidator = TestBatchValidator::default();
-        let batch = SpanBatch::default();
-        assert_eq!(
-            batch.check_batch(&cfg, &l1_blocks, l2_safe_head, &inclusion_block, &mut fetcher).await,
-            BatchValidity::Undecided
-        );
-        let logs = trace_store.get_by_level(Level::WARN);
-        assert_eq!(logs.len(), 1);
-        assert!(logs[0].contains("empty span batch, cannot proceed with batch checking"));
-    }
-
-    #[tokio::test]
     async fn test_singular_batches_outdated_l1_origin() {
         let l1_block = BlockInfo { number: 10, timestamp: 20, ..Default::default() };
         let l1_blocks = vec![l1_block];
@@ -997,60 +960,6 @@ mod tests {
             batch.get_singular_batches(&l1_blocks, l2_safe_head),
             Err(SpanBatchError::MissingL1Origin),
         );
-    }
-
-    #[tokio::test]
-    async fn test_eager_block_missing_origins() {
-        let (trace_store, _guard) = crate::capture_traces!();
-
-        let cfg = RollupConfig::default();
-        let block = BlockInfo { number: 9, ..Default::default() };
-        let l1_blocks = vec![block];
-        let l2_safe_head = L2BlockInfo::default();
-        let inclusion_block = BlockInfo::default();
-        let mut fetcher: TestBatchValidator = TestBatchValidator::default();
-        let first = SpanBatchElement { epoch_num: 10, ..Default::default() };
-        let batch = SpanBatch { batches: vec![first], ..Default::default() };
-        assert_eq!(
-            batch.check_batch(&cfg, &l1_blocks, l2_safe_head, &inclusion_block, &mut fetcher).await,
-            BatchValidity::Undecided
-        );
-        let logs = trace_store.get_by_level(Level::INFO);
-        assert_eq!(logs.len(), 1);
-        let str = alloc::format!(
-            "eager batch wants to advance current epoch {:?}, but could not without more L1 blocks",
-            block.id()
-        );
-        assert!(logs[0].contains(&str));
-    }
-
-    #[tokio::test]
-    async fn test_check_batch_delta_inactive() {
-        let (trace_store, _guard) = crate::capture_traces!();
-
-        let cfg = RollupConfig {
-            upgrades: UpgradeConfig { delta_time: Some(10), ..Default::default() },
-            ..Default::default()
-        };
-        let block = BlockInfo { number: 10, timestamp: 9, ..Default::default() };
-        let l1_blocks = vec![block];
-        let l2_safe_head = L2BlockInfo::default();
-        let inclusion_block = BlockInfo::default();
-        let mut fetcher: TestBatchValidator = TestBatchValidator::default();
-        let first = SpanBatchElement { epoch_num: 10, timestamp: 10, ..Default::default() };
-        let batch = SpanBatch { batches: vec![first], ..Default::default() };
-        assert_eq!(
-            batch.check_batch(&cfg, &l1_blocks, l2_safe_head, &inclusion_block, &mut fetcher).await,
-            BatchValidity::Drop(BatchDropReason::SpanBatchPreDelta)
-        );
-        let logs = trace_store.get_by_level(Level::WARN);
-        assert_eq!(logs.len(), 1);
-        let str = alloc::format!(
-            "received SpanBatch (id {:?}) with L1 origin (timestamp {}) before Delta upgrade",
-            block.id(),
-            block.timestamp
-        );
-        assert!(logs[0].contains(&str));
     }
 
     #[tokio::test]
@@ -1112,1532 +1021,575 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn test_check_batch_out_of_order() {
-        let (trace_store, _guard) = crate::capture_traces!();
+    const PARENT_HASH: B256 =
+        b256!("1111111111111111111111111111111111111111000000000000000000000000");
+    const L1_HASH: B256 = b256!("3333333333333333333333333333333333333333000000000000000000000000");
+    const PAYLOAD_HASH: B256 =
+        b256!("0e2ee9abe94ee4514b170d7039d8151a7469d434a8575dbab5bd4187a27732dd");
 
-        let cfg = RollupConfig {
-            upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
-            block_time: 10,
-            genesis: ChainGenesis { l2_time: 10, ..Default::default() },
-            ..Default::default()
-        };
-        let block = BlockInfo { number: 10, timestamp: 10, ..Default::default() };
-        let l1_blocks = vec![block];
-        let l2_safe_head = L2BlockInfo {
-            block_info: BlockInfo { timestamp: 10, ..Default::default() },
-            ..Default::default()
-        };
-        let inclusion_block = BlockInfo::default();
-        let mut fetcher: TestBatchValidator = TestBatchValidator::default();
-        let first = SpanBatchElement { epoch_num: 10, timestamp: 21, ..Default::default() };
-        let batch = SpanBatch { batches: vec![first], ..Default::default() };
-        assert_eq!(
-            batch.check_batch(&cfg, &l1_blocks, l2_safe_head, &inclusion_block, &mut fetcher).await,
-            BatchValidity::Future
-        );
-        let logs = trace_store.get_by_level(Level::WARN);
-        assert_eq!(logs.len(), 1);
-        assert!(logs[0].contains(
-            "received out-of-order batch for future processing after next batch (21 > 20)"
-        ));
+    /// The expected tracing output of a check: the level and the fragments of its only event.
+    type ExpectedLog = Option<(Level, &'static [&'static str])>;
+
+    /// Everything [`SpanBatch::check_batch`] takes. The default is a valid two-block span batch
+    /// that overlaps the safe head, so each case overrides only what it exercises.
+    struct Scenario {
+        cfg: RollupConfig,
+        l1_blocks: Vec<BlockInfo>,
+        safe_head: L2BlockInfo,
+        inclusion_block: BlockInfo,
+        fetcher: TestBatchValidator,
+        batch: SpanBatch,
     }
 
-    #[tokio::test]
-    async fn test_check_batch_no_new_blocks() {
-        let (trace_store, _guard) = crate::capture_traces!();
-
-        let cfg = RollupConfig {
-            upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
-            block_time: 10,
-            genesis: ChainGenesis { l2_time: 10, ..Default::default() },
-            ..Default::default()
-        };
-        let block = BlockInfo { number: 10, timestamp: 10, ..Default::default() };
-        let l1_blocks = vec![block];
-        let l2_safe_head = L2BlockInfo {
-            block_info: BlockInfo { timestamp: 10, ..Default::default() },
-            ..Default::default()
-        };
-        let inclusion_block = BlockInfo::default();
-        let mut fetcher: TestBatchValidator = TestBatchValidator::default();
-        let first = SpanBatchElement { epoch_num: 10, timestamp: 10, ..Default::default() };
-        let batch = SpanBatch { batches: vec![first], ..Default::default() };
-        assert_eq!(
-            batch.check_batch(&cfg, &l1_blocks, l2_safe_head, &inclusion_block, &mut fetcher).await,
-            BatchValidity::Drop(BatchDropReason::SpanBatchNoNewBlocksPreHolocene)
-        );
-        let logs = trace_store.get_by_level(Level::WARN);
-        assert_eq!(logs.len(), 1);
-        assert!(logs[0].contains("span batch has no new blocks after safe head"));
-    }
-
-    #[tokio::test]
-    async fn test_check_batch_overlapping_blocks_tx_count_mismatch() {
-        let (trace_store, _guard) = crate::capture_traces!();
-
-        let cfg = RollupConfig {
-            upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
-            block_time: 10,
-            max_sequencer_drift: 1000,
-            genesis: ChainGenesis {
-                l2: BlockNumHash { number: 10, ..Default::default() },
-                l2_time: 20,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let l1_blocks = gen_l1_blocks(9, 3, 0, 10);
-        let l2_safe_head = L2BlockInfo {
-            block_info: BlockInfo { number: 10, timestamp: 20, ..Default::default() },
-            l1_origin: BlockNumHash { number: 11, ..Default::default() },
-            ..Default::default()
-        };
-        let inclusion_block = BlockInfo::default();
-        let mut fetcher: TestBatchValidator = TestBatchValidator {
-            base_blocks: vec![BaseBlock {
-                header: Header { number: 9, ..Default::default() },
-                body: alloy_consensus::BlockBody {
-                    transactions: Vec::new(),
-                    ommers: Vec::new(),
-                    withdrawals: None,
-                },
-            }],
-            blocks: vec![
-                L2BlockInfo {
-                    block_info: BlockInfo { number: 8, timestamp: 0, ..Default::default() },
+    impl Default for Scenario {
+        fn default() -> Self {
+            Self {
+                cfg: cfg(),
+                l1_blocks: vec![l1_block(11)],
+                safe_head: L2BlockInfo {
+                    block_info: BlockInfo {
+                        number: 41,
+                        timestamp: 10,
+                        hash: PARENT_HASH,
+                        ..Default::default()
+                    },
                     l1_origin: BlockNumHash { number: 9, ..Default::default() },
                     ..Default::default()
                 },
-                L2BlockInfo {
-                    block_info: BlockInfo { number: 9, timestamp: 10, ..Default::default() },
-                    l1_origin: BlockNumHash { number: 10, ..Default::default() },
+                inclusion_block: BlockInfo { number: 50, ..Default::default() },
+                fetcher: TestBatchValidator { blocks: vec![l2_parent(9)], ..Default::default() },
+                batch: batch(vec![element(10, 10), element(11, 20)]),
+            }
+        }
+    }
+
+    impl Scenario {
+        /// Runs the check and asserts its validity and its single logged event.
+        async fn assert_check(mut self, expected: BatchValidity, log: ExpectedLog) {
+            let (trace_store, _guard) = crate::capture_traces!();
+            let validity = self
+                .batch
+                .check_batch(
+                    &self.cfg,
+                    &self.l1_blocks,
+                    self.safe_head,
+                    &self.inclusion_block,
+                    &mut self.fetcher,
+                )
+                .await;
+            assert_eq!(validity, expected);
+            let Some((level, fragments)) = log else {
+                assert!(trace_store.is_empty());
+                return;
+            };
+            let logs = trace_store.get_by_level(level);
+            assert_eq!(logs.len(), 1, "{logs:?}");
+            for fragment in fragments {
+                assert!(logs[0].contains(fragment), "{fragment:?} not in {:?}", logs[0]);
+            }
+        }
+    }
+
+    fn cfg() -> RollupConfig {
+        RollupConfig {
+            seq_window_size: 100,
+            upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
+            block_time: 10,
+            genesis: ChainGenesis {
+                l2: BlockNumHash { number: 41, ..Default::default() },
+                l2_time: 10,
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    fn l1_block(number: u64) -> BlockInfo {
+        BlockInfo { number, timestamp: 10, hash: L1_HASH, ..Default::default() }
+    }
+
+    /// The L2 block before the safe head, which the default batch overlaps.
+    fn l2_parent(l1_origin: u64) -> L2BlockInfo {
+        L2BlockInfo {
+            block_info: BlockInfo {
+                number: 40,
+                timestamp: 10,
+                hash: PARENT_HASH,
+                ..Default::default()
+            },
+            l1_origin: BlockNumHash { number: l1_origin, ..Default::default() },
+            ..Default::default()
+        }
+    }
+
+    fn element(epoch_num: u64, timestamp: u64) -> SpanBatchElement {
+        SpanBatchElement { epoch_num, timestamp, ..Default::default() }
+    }
+
+    fn element_with(epoch_num: u64, timestamp: u64, tx: &[u8]) -> SpanBatchElement {
+        SpanBatchElement {
+            transactions: vec![Bytes::copy_from_slice(tx)],
+            ..element(epoch_num, timestamp)
+        }
+    }
+
+    fn batch(batches: Vec<SpanBatchElement>) -> SpanBatch {
+        SpanBatch {
+            batches,
+            parent_check: FixedBytes::<20>::from_slice(&PARENT_HASH[..20]),
+            l1_origin_check: FixedBytes::<20>::from_slice(&L1_HASH[..20]),
+            ..Default::default()
+        }
+    }
+
+    fn empty_block(number: u64, transactions: Vec<BaseTxEnvelope>) -> BaseBlock {
+        BaseBlock {
+            header: Header { number, ..Default::default() },
+            body: alloy_consensus::BlockBody {
+                transactions,
+                ommers: Vec::new(),
+                withdrawals: None,
+            },
+        }
+    }
+
+    fn cfg_with_genesis_hash(l2: BlockNumHash, l1: BlockNumHash) -> RollupConfig {
+        RollupConfig { genesis: ChainGenesis { l2, l1, ..cfg().genesis }, ..cfg() }
+    }
+
+    /// A scenario whose middle block carries `tx`, which sits between two valid filler txs.
+    fn scenario_with_tx(upgrades: UpgradeConfig, tx: &[u8]) -> Scenario {
+        let filler = [EIP1559_TX_TYPE_ID];
+        let l1_blocks = gen_l1_blocks(9, 3, 0, 10);
+        Scenario {
+            cfg: RollupConfig { max_sequencer_drift: 100, upgrades, ..cfg() },
+            batch: SpanBatch {
+                l1_origin_check: FixedBytes::<20>::from_slice(&l1_blocks[0].hash[..20]),
+                ..batch(vec![
+                    element_with(10, 20, &filler),
+                    element_with(10, 20, tx),
+                    element_with(11, 20, &filler),
+                ])
+            },
+            l1_blocks,
+            ..Default::default()
+        }
+    }
+
+    /// A scenario that overlaps the safe head and reaches the overlap checks.
+    fn overlap_scenario(base_blocks: Vec<BaseBlock>) -> Scenario {
+        let l1_blocks = gen_l1_blocks(9, 3, 0, 10);
+        let l2 = |number, timestamp, l1_origin| L2BlockInfo {
+            block_info: BlockInfo { number, timestamp, ..Default::default() },
+            l1_origin: BlockNumHash { number: l1_origin, ..Default::default() },
+            ..Default::default()
+        };
+        Scenario {
+            cfg: RollupConfig {
+                max_sequencer_drift: 1000,
+                genesis: ChainGenesis {
+                    l2: BlockNumHash { number: 10, ..Default::default() },
+                    l2_time: 20,
                     ..Default::default()
                 },
-                L2BlockInfo {
-                    block_info: BlockInfo { number: 10, timestamp: 20, ..Default::default() },
-                    l1_origin: BlockNumHash { number: 11, ..Default::default() },
+                ..cfg()
+            },
+            safe_head: l2(10, 20, 11),
+            fetcher: TestBatchValidator {
+                base_blocks,
+                blocks: vec![l2(8, 0, 9), l2(9, 10, 10), l2(10, 20, 11)],
+                ..Default::default()
+            },
+            batch: SpanBatch {
+                batches: vec![element_with(10, 10, &[EIP1559_TX_TYPE_ID]), element(11, 60)],
+                ..Default::default()
+            },
+            l1_blocks,
+            ..Default::default()
+        }
+    }
+
+    fn eip1559_tx() -> BaseTxEnvelope {
+        BaseTxEnvelope::Eip1559(alloy_consensus::Signed::new_unchecked(
+            alloy_consensus::TxEip1559 {
+                gas_limit: 2,
+                max_fee_per_gas: 1,
+                max_priority_fee_per_gas: 1,
+                to: alloy_primitives::TxKind::Create,
+                value: alloy_primitives::U256::from(3),
+                ..Default::default()
+            },
+            Signature::test_signature(),
+            B256::ZERO,
+        ))
+    }
+
+    fn drift_scenario(l1_blocks: Vec<BlockInfo>, elements: Vec<SpanBatchElement>) -> Scenario {
+        Scenario {
+            cfg: RollupConfig { max_sequencer_drift: 0, ..cfg() },
+            batch: SpanBatch {
+                l1_origin_check: FixedBytes::<20>::from_slice(&l1_blocks[1].hash[..20]),
+                ..batch(elements)
+            },
+            l1_blocks,
+            fetcher: TestBatchValidator::default(),
+            ..Default::default()
+        }
+    }
+
+    #[rstest]
+    #[case::missing_l1_block_input(
+        Scenario { l1_blocks: vec![], batch: SpanBatch::default(), ..Default::default() },
+        BatchValidity::Undecided,
+        Some((Level::WARN, &["missing L1 block input, cannot proceed with batch checking"][..]))
+    )]
+    #[case::empty_batch(
+        Scenario { batch: SpanBatch::default(), ..Default::default() },
+        BatchValidity::Undecided,
+        Some((Level::WARN, &["empty span batch, cannot proceed with batch checking"][..]))
+    )]
+    #[case::eager_block_missing_origins(
+        Scenario {
+            l1_blocks: vec![l1_block(9)],
+            batch: batch(vec![element(10, 10)]),
+            ..Default::default()
+        },
+        BatchValidity::Undecided,
+        Some((
+            Level::INFO,
+            &["eager batch wants to advance current epoch", "but could not without more L1 blocks"][..],
+        ))
+    )]
+    #[case::delta_inactive(
+        Scenario {
+            cfg: RollupConfig {
+                upgrades: UpgradeConfig { delta_time: Some(10), ..Default::default() },
+                ..cfg()
+            },
+            l1_blocks: vec![BlockInfo { number: 10, timestamp: 9, ..Default::default() }],
+            batch: batch(vec![element(10, 10)]),
+            ..Default::default()
+        },
+        BatchValidity::Drop(BatchDropReason::SpanBatchPreDelta),
+        Some((Level::WARN, &["before Delta upgrade"][..]))
+    )]
+    #[case::out_of_order(
+        Scenario { l1_blocks: vec![l1_block(10)], batch: batch(vec![element(10, 21)]), ..Default::default() },
+        BatchValidity::Future,
+        Some((
+            Level::WARN,
+            &["received out-of-order batch for future processing after next batch (21 > 20)"][..],
+        ))
+    )]
+    #[case::no_new_blocks(
+        Scenario { l1_blocks: vec![l1_block(10)], batch: batch(vec![element(10, 10)]), ..Default::default() },
+        BatchValidity::Drop(BatchDropReason::SpanBatchNoNewBlocksPreHolocene),
+        Some((Level::WARN, &["span batch has no new blocks after safe head"][..]))
+    )]
+    #[case::overlap_tx_count_mismatch(
+        overlap_scenario(vec![empty_block(9, vec![])]),
+        BatchValidity::Drop(BatchDropReason::OverlappedTxCountMismatch),
+        Some((
+            Level::WARN,
+            &["Overlapped block's tx count does not match, safe_block_txs: 0, batch_txs: 1"][..],
+        ))
+    )]
+    #[case::overlap_tx_mismatch(
+        overlap_scenario(vec![empty_block(9, vec![eip1559_tx()])]),
+        BatchValidity::Drop(BatchDropReason::OverlappedTxMismatch),
+        Some((Level::WARN, &["overlapped block's transaction does not match"][..]))
+    )]
+    #[case::timestamp_before_l1_origin(
+        Scenario {
+            cfg: RollupConfig {
+                genesis: ChainGenesis { l2_time: 10, ..Default::default() },
+                ..cfg()
+            },
+            l1_blocks: vec![BlockInfo { number: 10, timestamp: 20, ..Default::default() }],
+            safe_head: L2BlockInfo {
+                block_info: BlockInfo { timestamp: 10, ..Default::default() },
+                l1_origin: BlockNumHash { number: 10, ..Default::default() },
+                ..Default::default()
+            },
+            batch: SpanBatch {
+                batches: vec![element(10, 20), element(10, 19), element(10, 30)],
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        BatchValidity::Drop(BatchDropReason::TimestampBeforeL1Origin),
+        Some((
+            Level::WARN,
+            &["batch timestamp is less than L1 origin timestamp, l2_timestamp: 19, l1_timestamp: 20"][..],
+        ))
+    )]
+    #[case::misaligned_timestamp(
+        Scenario {
+            l1_blocks: vec![l1_block(10)],
+            batch: batch(vec![element(10, 11), element(11, 21)]),
+            ..Default::default()
+        },
+        BatchValidity::Drop(BatchDropReason::SpanBatchMisalignedTimestamp),
+        Some((Level::WARN, &["batch has misaligned timestamp, block time is too short"][..]))
+    )]
+    #[case::misaligned_without_overlap(
+        Scenario {
+            cfg: RollupConfig {
+                genesis: ChainGenesis::default(),
+                ..cfg()
+            },
+            l1_blocks: vec![l1_block(10)],
+            safe_head: L2BlockInfo {
+                block_info: BlockInfo { timestamp: 10, ..Default::default() },
+                ..Default::default()
+            },
+            batch: batch(vec![element(10, 8), element(11, 20)]),
+            ..Default::default()
+        },
+        BatchValidity::Drop(BatchDropReason::SpanBatchNotOverlappedExactly),
+        Some((Level::WARN, &["batch has misaligned timestamp, not overlapped exactly"][..]))
+    )]
+    #[case::failed_to_fetch_l2_block(
+        Scenario {
+            l1_blocks: vec![l1_block(10)],
+            fetcher: TestBatchValidator::default(),
+            ..Default::default()
+        },
+        BatchValidity::Undecided,
+        Some((Level::WARN, &["Failed to fetch L2 block", "Block not found"][..]))
+    )]
+    #[case::parent_hash_mismatch(
+        Scenario {
+            l1_blocks: vec![l1_block(10)],
+            fetcher: TestBatchValidator {
+                blocks: vec![L2BlockInfo {
+                    block_info: BlockInfo { number: 41, timestamp: 10, ..Default::default() },
                     ..Default::default()
-                },
+                }],
+                short_circuit: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        BatchValidity::Drop(BatchDropReason::ParentHashMismatch),
+        Some((
+            Level::WARN,
+            &["Parent block mismatch", "expected_block_num", "40", "received_block_num", "41"][..],
+        ))
+    )]
+    #[case::sequence_window_expired(
+        Scenario {
+            cfg: RollupConfig { seq_window_size: 0, ..cfg() },
+            l1_blocks: vec![l1_block(10)],
+            ..Default::default()
+        },
+        BatchValidity::Drop(BatchDropReason::IncludedTooLate),
+        Some((Level::WARN, &["batch was included too late, sequence window expired"][..]))
+    )]
+    #[case::starting_epoch_too_far_ahead(
+        Scenario {
+            l1_blocks: vec![l1_block(10)],
+            safe_head: L2BlockInfo {
+                l1_origin: BlockNumHash { number: 8, ..Default::default() },
+                ..Scenario::default().safe_head
+            },
+            fetcher: TestBatchValidator { blocks: vec![l2_parent(8)], ..Default::default() },
+            ..Default::default()
+        },
+        BatchValidity::Drop(BatchDropReason::EpochTooFarInFuture),
+        Some((
+            Level::WARN,
+            &["Batch is for future epoch too far ahead", "starting_epoch", "next_epoch"][..],
+        ))
+    )]
+    #[case::epoch_hash_mismatch(
+        Scenario {
+            batch: SpanBatch {
+                l1_origin_check: Default::default(),
+                ..batch(vec![element(10, 10), element(11, 20)])
+            },
+            ..Default::default()
+        },
+        BatchValidity::Drop(BatchDropReason::EpochHashMismatch),
+        Some((
+            Level::WARN,
+            &["batch is for different L1 chain, epoch hash does not match"][..],
+        ))
+    )]
+    #[case::need_more_l1_blocks(
+        Scenario { l1_blocks: vec![l1_block(10)], ..Default::default() },
+        BatchValidity::Undecided,
+        Some((Level::INFO, &["need more l1 blocks to check entire origins of span batch"][..]))
+    )]
+    #[case::epoch_too_old(
+        Scenario {
+            safe_head: L2BlockInfo {
+                l1_origin: BlockNumHash { number: 13, ..Default::default() },
+                ..Scenario::default().safe_head
+            },
+            fetcher: TestBatchValidator { blocks: vec![l2_parent(14)], ..Default::default() },
+            ..Default::default()
+        },
+        BatchValidity::Drop(BatchDropReason::EpochTooOld),
+        Some((Level::WARN, &["Dropped batch, epoch is too old", "minimum_epoch"][..]))
+    )]
+    #[case::sequencer_drift_not_adopted_next_origin(
+        drift_scenario(
+            gen_l1_blocks(9, 3, 10, 0),
+            vec![element(10, 20), element(10, 30), element(11, 40)],
+        ),
+        BatchValidity::Drop(BatchDropReason::SequencerDriftNotAdoptedNextOrigin),
+        Some((
+            Level::WARN,
+            &["batch exceeded sequencer time drift without adopting next origin, and next L1 origin would have been valid"][..],
+        ))
+    )]
+    #[case::continuing_with_empty_batch(
+        // The second batch is valid without advancing the origin because its timestamp (30) is
+        // before L1 block 11 (40). The third batch then adopts L1 block 11 at timestamp 40.
+        drift_scenario(
+            gen_l1_blocks(10, 2, 10, 30),
+            vec![element(10, 20), element(10, 30), element(11, 40)],
+        ),
+        BatchValidity::Accept,
+        Some((
+            Level::INFO,
+            &["continuing with empty batch before late L1 block to preserve L2 time invariant"][..],
+        ))
+    )]
+    #[case::sequencer_drift_exceeded(
+        drift_scenario(
+            gen_l1_blocks(9, 3, 10, 0),
+            vec![
+                element_with(10, 20, &[]),
+                element_with(10, 20, &[]),
+                element_with(11, 20, &[]),
             ],
-            ..Default::default()
-        };
-        let first = SpanBatchElement {
-            epoch_num: 10,
-            timestamp: 10,
-            transactions: vec![Bytes(vec![EIP1559_TX_TYPE_ID].into())],
-        };
-        let second = SpanBatchElement { epoch_num: 11, timestamp: 60, ..Default::default() };
-        let batch = SpanBatch { batches: vec![first, second], ..Default::default() };
-        assert_eq!(
-            batch.check_batch(&cfg, &l1_blocks, l2_safe_head, &inclusion_block, &mut fetcher).await,
-            BatchValidity::Drop(BatchDropReason::OverlappedTxCountMismatch)
-        );
-        let logs = trace_store.get_by_level(Level::WARN);
-        assert_eq!(logs.len(), 1);
-        assert!(logs[0].contains(
-            "Overlapped block's tx count does not match, safe_block_txs: 0, batch_txs: 1"
-        ));
-    }
-
-    #[tokio::test]
-    async fn test_check_batch_overlapping_blocks_tx_mismatch() {
-        let (trace_store, _guard) = crate::capture_traces!();
-
-        let cfg = RollupConfig {
-            upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
-            block_time: 10,
-            max_sequencer_drift: 1000,
-            genesis: ChainGenesis {
-                l2: BlockNumHash { number: 10, ..Default::default() },
-                l2_time: 20,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let l1_blocks = gen_l1_blocks(9, 3, 0, 10);
-        let l2_safe_head = L2BlockInfo {
-            block_info: BlockInfo { number: 10, timestamp: 20, ..Default::default() },
-            l1_origin: BlockNumHash { number: 11, ..Default::default() },
-            ..Default::default()
-        };
-        let inclusion_block = BlockInfo::default();
-        let mut fetcher: TestBatchValidator = TestBatchValidator {
-            base_blocks: vec![BaseBlock {
-                header: Header { number: 9, ..Default::default() },
-                body: alloy_consensus::BlockBody {
-                    transactions: vec![base_common_consensus::BaseTxEnvelope::Eip1559(
-                        alloy_consensus::Signed::new_unchecked(
-                            alloy_consensus::TxEip1559 {
-                                chain_id: 0,
-                                nonce: 0,
-                                gas_limit: 2,
-                                max_fee_per_gas: 1,
-                                max_priority_fee_per_gas: 1,
-                                to: alloy_primitives::TxKind::Create,
-                                value: alloy_primitives::U256::from(3),
-                                ..Default::default()
-                            },
-                            alloy_primitives::Signature::test_signature(),
-                            alloy_primitives::B256::ZERO,
-                        ),
-                    )],
-                    ommers: Vec::new(),
-                    withdrawals: None,
-                },
-            }],
-            blocks: vec![
-                L2BlockInfo {
-                    block_info: BlockInfo { number: 8, timestamp: 0, ..Default::default() },
-                    l1_origin: BlockNumHash { number: 9, ..Default::default() },
-                    ..Default::default()
-                },
-                L2BlockInfo {
-                    block_info: BlockInfo { number: 9, timestamp: 10, ..Default::default() },
-                    l1_origin: BlockNumHash { number: 10, ..Default::default() },
-                    ..Default::default()
-                },
-                L2BlockInfo {
-                    block_info: BlockInfo { number: 10, timestamp: 20, ..Default::default() },
-                    l1_origin: BlockNumHash { number: 11, ..Default::default() },
-                    ..Default::default()
-                },
-            ],
-            ..Default::default()
-        };
-        let first = SpanBatchElement {
-            epoch_num: 10,
-            timestamp: 10,
-            transactions: vec![Bytes(vec![EIP1559_TX_TYPE_ID].into())],
-        };
-        let second = SpanBatchElement { epoch_num: 11, timestamp: 60, ..Default::default() };
-        let batch = SpanBatch { batches: vec![first, second], ..Default::default() };
-        assert_eq!(
-            batch.check_batch(&cfg, &l1_blocks, l2_safe_head, &inclusion_block, &mut fetcher).await,
-            BatchValidity::Drop(BatchDropReason::OverlappedTxMismatch)
-        );
-        let logs = trace_store.get_by_level(Level::WARN);
-        assert_eq!(logs.len(), 1);
-        assert!(logs[0].contains("overlapped block's transaction does not match"));
-    }
-
-    #[tokio::test]
-    async fn test_check_batch_block_timestamp_lt_l1_origin() {
-        let (trace_store, _guard) = crate::capture_traces!();
-
-        let cfg = RollupConfig {
-            upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
-            block_time: 10,
-            genesis: ChainGenesis { l2_time: 10, ..Default::default() },
-            ..Default::default()
-        };
-        let l1_block = BlockInfo { number: 10, timestamp: 20, ..Default::default() };
-        let l1_blocks = vec![l1_block];
-        let l2_safe_head = L2BlockInfo {
-            block_info: BlockInfo { timestamp: 10, ..Default::default() },
-            l1_origin: BlockNumHash { number: 10, ..Default::default() },
-            ..Default::default()
-        };
-        let inclusion_block = BlockInfo::default();
-        let mut fetcher: TestBatchValidator = TestBatchValidator::default();
-        let first = SpanBatchElement { epoch_num: 10, timestamp: 20, ..Default::default() };
-        let second = SpanBatchElement { epoch_num: 10, timestamp: 19, ..Default::default() };
-        let third = SpanBatchElement { epoch_num: 10, timestamp: 30, ..Default::default() };
-        let batch = SpanBatch { batches: vec![first, second, third], ..Default::default() };
-        assert_eq!(
-            batch.check_batch(&cfg, &l1_blocks, l2_safe_head, &inclusion_block, &mut fetcher).await,
-            BatchValidity::Drop(BatchDropReason::TimestampBeforeL1Origin)
-        );
-        let logs = trace_store.get_by_level(Level::WARN);
-        assert_eq!(logs.len(), 1);
-        let str = alloc::format!(
-            "batch timestamp is less than L1 origin timestamp, l2_timestamp: 19, l1_timestamp: 20, origin: {:?}",
-            l1_block.id(),
-        );
-        assert!(logs[0].contains(&str));
-    }
-
-    #[tokio::test]
-    async fn test_check_batch_misaligned_timestamp() {
-        let (trace_store, _guard) = crate::capture_traces!();
-
-        let cfg = RollupConfig {
-            upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
-            block_time: 10,
-            genesis: ChainGenesis { l2_time: 10, ..Default::default() },
-            ..Default::default()
-        };
-        let block = BlockInfo { number: 10, timestamp: 10, ..Default::default() };
-        let l1_blocks = vec![block];
-        let l2_safe_head = L2BlockInfo {
-            block_info: BlockInfo { timestamp: 10, ..Default::default() },
-            ..Default::default()
-        };
-        let inclusion_block = BlockInfo::default();
-        let mut fetcher: TestBatchValidator = TestBatchValidator::default();
-        let first = SpanBatchElement { epoch_num: 10, timestamp: 11, ..Default::default() };
-        let second = SpanBatchElement { epoch_num: 11, timestamp: 21, ..Default::default() };
-        let batch = SpanBatch { batches: vec![first, second], ..Default::default() };
-        assert_eq!(
-            batch.check_batch(&cfg, &l1_blocks, l2_safe_head, &inclusion_block, &mut fetcher).await,
-            BatchValidity::Drop(BatchDropReason::SpanBatchMisalignedTimestamp)
-        );
-        let logs = trace_store.get_by_level(Level::WARN);
-        assert_eq!(logs.len(), 1);
-        assert!(logs[0].contains("batch has misaligned timestamp, block time is too short"));
-    }
-
-    #[tokio::test]
-    async fn test_check_batch_misaligned_without_overlap() {
-        let (trace_store, _guard) = crate::capture_traces!();
-
-        let cfg = RollupConfig {
-            upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
-            block_time: 10,
-            ..Default::default()
-        };
-        let block = BlockInfo { number: 10, timestamp: 10, ..Default::default() };
-        let l1_blocks = vec![block];
-        let l2_safe_head = L2BlockInfo {
-            block_info: BlockInfo { timestamp: 10, ..Default::default() },
-            ..Default::default()
-        };
-        let inclusion_block = BlockInfo::default();
-        let mut fetcher: TestBatchValidator = TestBatchValidator::default();
-        let first = SpanBatchElement { epoch_num: 10, timestamp: 8, ..Default::default() };
-        let second = SpanBatchElement { epoch_num: 11, timestamp: 20, ..Default::default() };
-        let batch = SpanBatch { batches: vec![first, second], ..Default::default() };
-        assert_eq!(
-            batch.check_batch(&cfg, &l1_blocks, l2_safe_head, &inclusion_block, &mut fetcher).await,
-            BatchValidity::Drop(BatchDropReason::SpanBatchNotOverlappedExactly)
-        );
-        let logs = trace_store.get_by_level(Level::WARN);
-        assert_eq!(logs.len(), 1);
-        assert!(logs[0].contains("batch has misaligned timestamp, not overlapped exactly"));
-    }
-
-    #[tokio::test]
-    async fn test_check_batch_failed_to_fetch_l2_block() {
-        let (trace_store, _guard) = crate::capture_traces!();
-
-        let cfg = RollupConfig {
-            upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
-            block_time: 10,
-            genesis: ChainGenesis {
-                l2: BlockNumHash { number: 41, ..Default::default() },
-                l2_time: 10,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let block = BlockInfo { number: 10, timestamp: 10, ..Default::default() };
-        let l1_blocks = vec![block];
-        let l2_safe_head = L2BlockInfo {
-            block_info: BlockInfo { number: 41, timestamp: 10, ..Default::default() },
-            ..Default::default()
-        };
-        let inclusion_block = BlockInfo::default();
-        let mut fetcher: TestBatchValidator = TestBatchValidator::default();
-        let first = SpanBatchElement { epoch_num: 10, timestamp: 10, ..Default::default() };
-        let second = SpanBatchElement { epoch_num: 11, timestamp: 20, ..Default::default() };
-        let batch = SpanBatch { batches: vec![first, second], ..Default::default() };
-        // parent number = 41 - (10 - 10) / 10 - 1 = 40
-        assert_eq!(
-            batch.check_batch(&cfg, &l1_blocks, l2_safe_head, &inclusion_block, &mut fetcher).await,
-            BatchValidity::Undecided
-        );
-        let logs = trace_store.get_by_level(Level::WARN);
-        assert_eq!(logs.len(), 1);
-        assert!(
-            logs[0].contains("Failed to fetch L2 block") && logs[0].contains("Block not found")
-        );
-    }
-
-    #[tokio::test]
-    async fn test_check_batch_parent_hash_fail() {
-        let (trace_store, _guard) = crate::capture_traces!();
-
-        let cfg = RollupConfig {
-            upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
-            block_time: 10,
-            genesis: ChainGenesis {
-                l2: BlockNumHash { number: 41, ..Default::default() },
-                l2_time: 10,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let block = BlockInfo { number: 10, timestamp: 10, ..Default::default() };
-        let l1_blocks = vec![block];
-        let l2_safe_head = L2BlockInfo {
-            block_info: BlockInfo { number: 41, timestamp: 10, ..Default::default() },
-            ..Default::default()
-        };
-        let inclusion_block = BlockInfo::default();
-        let l2_block = L2BlockInfo {
-            block_info: BlockInfo { number: 41, timestamp: 10, ..Default::default() },
-            l1_origin: BlockNumHash { number: 9, ..Default::default() },
-            ..Default::default()
-        };
-        let mut fetcher: TestBatchValidator =
-            TestBatchValidator { blocks: vec![l2_block], ..Default::default() };
-        fetcher.short_circuit = true;
-        let first = SpanBatchElement { epoch_num: 10, timestamp: 10, ..Default::default() };
-        let second = SpanBatchElement { epoch_num: 11, timestamp: 20, ..Default::default() };
-        let batch = SpanBatch {
-            batches: vec![first, second],
-            parent_check: FixedBytes::<20>::from_slice(
-                &b256!("1111111111111111111111111111111111111111000000000000000000000000")[..20],
-            ),
-            ..Default::default()
-        };
-        // parent number = 41 - (10 - 10) / 10 - 1 = 40
-        assert_eq!(
-            batch.check_batch(&cfg, &l1_blocks, l2_safe_head, &inclusion_block, &mut fetcher).await,
-            BatchValidity::Drop(BatchDropReason::ParentHashMismatch)
-        );
-        let logs = trace_store.get_by_level(Level::WARN);
-        assert_eq!(logs.len(), 1);
-        assert!(
-            logs[0].contains("Parent block mismatch")
-                && logs[0].contains("expected_block_num")
-                && logs[0].contains("40")
-                && logs[0].contains("received_block_num")
-                && logs[0].contains("41")
-        );
-    }
-
-    #[tokio::test]
-    async fn test_check_sequence_window_expired() {
-        let (trace_store, _guard) = crate::capture_traces!();
-
-        let cfg = RollupConfig {
-            upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
-            block_time: 10,
-            genesis: ChainGenesis {
-                l2: BlockNumHash { number: 41, ..Default::default() },
-                l2_time: 10,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let block = BlockInfo { number: 10, timestamp: 10, ..Default::default() };
-        let l1_blocks = vec![block];
-        let parent_hash = b256!("1111111111111111111111111111111111111111000000000000000000000000");
-        let l2_safe_head = L2BlockInfo {
-            block_info: BlockInfo { number: 41, timestamp: 10, parent_hash, ..Default::default() },
-            ..Default::default()
-        };
-        let inclusion_block = BlockInfo { number: 50, ..Default::default() };
-        let l2_block = L2BlockInfo {
-            block_info: BlockInfo {
-                number: 40,
-                hash: parent_hash,
-                timestamp: 10,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let mut fetcher: TestBatchValidator =
-            TestBatchValidator { blocks: vec![l2_block], ..Default::default() };
-        let first = SpanBatchElement { epoch_num: 10, timestamp: 10, ..Default::default() };
-        let second = SpanBatchElement { epoch_num: 11, timestamp: 20, ..Default::default() };
-        let batch = SpanBatch {
-            batches: vec![first, second],
-            parent_check: FixedBytes::<20>::from_slice(&parent_hash[..20]),
-            ..Default::default()
-        };
-        // parent number = 41 - (10 - 10) / 10 - 1 = 40
-        assert_eq!(
-            batch.check_batch(&cfg, &l1_blocks, l2_safe_head, &inclusion_block, &mut fetcher).await,
-            BatchValidity::Drop(BatchDropReason::IncludedTooLate)
-        );
-        let logs = trace_store.get_by_level(Level::WARN);
-        assert_eq!(logs.len(), 1);
-        assert!(logs[0].contains("batch was included too late, sequence window expired"));
-    }
-
-    #[tokio::test]
-    async fn test_starting_epoch_too_far_ahead() {
-        let (trace_store, _guard) = crate::capture_traces!();
-
-        let cfg = RollupConfig {
-            seq_window_size: 100,
-            upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
-            block_time: 10,
-            genesis: ChainGenesis {
-                l2: BlockNumHash { number: 41, ..Default::default() },
-                l2_time: 10,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let block = BlockInfo { number: 10, timestamp: 10, ..Default::default() };
-        let l1_blocks = vec![block];
-        let parent_hash = b256!("1111111111111111111111111111111111111111000000000000000000000000");
-        let l2_safe_head = L2BlockInfo {
-            block_info: BlockInfo { number: 41, timestamp: 10, parent_hash, ..Default::default() },
-            l1_origin: BlockNumHash { number: 8, ..Default::default() },
-            ..Default::default()
-        };
-        let inclusion_block = BlockInfo { number: 50, ..Default::default() };
-        let l2_block = L2BlockInfo {
-            block_info: BlockInfo {
-                number: 40,
-                hash: parent_hash,
-                timestamp: 10,
-                ..Default::default()
-            },
-            l1_origin: BlockNumHash { number: 8, ..Default::default() },
-            ..Default::default()
-        };
-        let mut fetcher: TestBatchValidator =
-            TestBatchValidator { blocks: vec![l2_block], ..Default::default() };
-        let first = SpanBatchElement { epoch_num: 10, timestamp: 10, ..Default::default() };
-        let second = SpanBatchElement { epoch_num: 11, timestamp: 20, ..Default::default() };
-        let batch = SpanBatch {
-            batches: vec![first, second],
-            parent_check: FixedBytes::<20>::from_slice(&parent_hash[..20]),
-            ..Default::default()
-        };
-        // parent number = 41 - (10 - 10) / 10 - 1 = 40
-        assert_eq!(
-            batch.check_batch(&cfg, &l1_blocks, l2_safe_head, &inclusion_block, &mut fetcher).await,
-            BatchValidity::Drop(BatchDropReason::EpochTooFarInFuture)
-        );
-        let logs = trace_store.get_by_level(Level::WARN);
-        assert_eq!(logs.len(), 1);
-        assert!(
-            logs[0].contains("Batch is for future epoch too far ahead")
-                && logs[0].contains("starting_epoch")
-                && logs[0].contains("next_epoch")
-        );
-    }
-
-    #[tokio::test]
-    async fn test_check_batch_epoch_hash_mismatch() {
-        let (trace_store, _guard) = crate::capture_traces!();
-
-        let cfg = RollupConfig {
-            seq_window_size: 100,
-            upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
-            block_time: 10,
-            genesis: ChainGenesis {
-                l2: BlockNumHash { number: 41, ..Default::default() },
-                l2_time: 10,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let l1_block_hash =
-            b256!("3333333333333333333333333333333333333333000000000000000000000000");
-        let block =
-            BlockInfo { number: 11, timestamp: 10, hash: l1_block_hash, ..Default::default() };
-        let l1_blocks = vec![block];
-        let parent_hash = b256!("1111111111111111111111111111111111111111000000000000000000000000");
-        let l2_safe_head = L2BlockInfo {
-            block_info: BlockInfo {
-                number: 41,
-                timestamp: 10,
-                hash: parent_hash,
-                ..Default::default()
-            },
-            l1_origin: BlockNumHash { number: 9, ..Default::default() },
-            ..Default::default()
-        };
-        let inclusion_block = BlockInfo { number: 50, ..Default::default() };
-        let l2_block = L2BlockInfo {
-            block_info: BlockInfo {
-                number: 40,
-                timestamp: 10,
-                hash: parent_hash,
-                ..Default::default()
-            },
-            l1_origin: BlockNumHash { number: 9, ..Default::default() },
-            ..Default::default()
-        };
-        let mut fetcher: TestBatchValidator =
-            TestBatchValidator { blocks: vec![l2_block], ..Default::default() };
-        let first = SpanBatchElement { epoch_num: 10, timestamp: 10, ..Default::default() };
-        let second = SpanBatchElement { epoch_num: 11, timestamp: 20, ..Default::default() };
-        let batch = SpanBatch {
-            batches: vec![first, second],
-            parent_check: FixedBytes::<20>::from_slice(&parent_hash[..20]),
-            ..Default::default()
-        };
-        assert_eq!(
-            batch.check_batch(&cfg, &l1_blocks, l2_safe_head, &inclusion_block, &mut fetcher).await,
-            BatchValidity::Drop(BatchDropReason::EpochHashMismatch)
-        );
-        let logs = trace_store.get_by_level(Level::WARN);
-        assert_eq!(logs.len(), 1);
-        let str = "batch is for different L1 chain, epoch hash does not match".to_string();
-        assert!(logs[0].contains(&str));
-    }
-
-    #[tokio::test]
-    async fn test_need_more_l1_blocks() {
-        let (trace_store, _guard) = crate::capture_traces!();
-
-        let cfg = RollupConfig {
-            seq_window_size: 100,
-            upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
-            block_time: 10,
-            genesis: ChainGenesis {
-                l2: BlockNumHash { number: 41, ..Default::default() },
-                l2_time: 10,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let l1_block_hash =
-            b256!("3333333333333333333333333333333333333333000000000000000000000000");
-        let block =
-            BlockInfo { number: 10, timestamp: 10, hash: l1_block_hash, ..Default::default() };
-        let l1_blocks = vec![block];
-        let parent_hash = b256!("1111111111111111111111111111111111111111000000000000000000000000");
-        let l2_safe_head = L2BlockInfo {
-            block_info: BlockInfo { number: 41, timestamp: 10, parent_hash, ..Default::default() },
-            l1_origin: BlockNumHash { number: 9, ..Default::default() },
-            ..Default::default()
-        };
-        let inclusion_block = BlockInfo { number: 50, ..Default::default() };
-        let l2_block = L2BlockInfo {
-            block_info: BlockInfo {
-                number: 40,
-                timestamp: 10,
-                hash: parent_hash,
-                ..Default::default()
-            },
-            l1_origin: BlockNumHash { number: 9, ..Default::default() },
-            ..Default::default()
-        };
-        let mut fetcher: TestBatchValidator =
-            TestBatchValidator { blocks: vec![l2_block], ..Default::default() };
-        let first = SpanBatchElement { epoch_num: 10, timestamp: 10, ..Default::default() };
-        let second = SpanBatchElement { epoch_num: 11, timestamp: 20, ..Default::default() };
-        let batch = SpanBatch {
-            batches: vec![first, second],
-            parent_check: FixedBytes::<20>::from_slice(&parent_hash[..20]),
-            l1_origin_check: FixedBytes::<20>::from_slice(&l1_block_hash[..20]),
-            ..Default::default()
-        };
-        assert_eq!(
-            batch.check_batch(&cfg, &l1_blocks, l2_safe_head, &inclusion_block, &mut fetcher).await,
-            BatchValidity::Undecided
-        );
-        let logs = trace_store.get_by_level(Level::INFO);
-        assert_eq!(logs.len(), 1);
-        assert!(logs[0].contains("need more l1 blocks to check entire origins of span batch"));
-    }
-
-    #[tokio::test]
-    async fn test_drop_batch_epoch_too_old() {
-        let (trace_store, _guard) = crate::capture_traces!();
-
-        let cfg = RollupConfig {
-            seq_window_size: 100,
-            upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
-            block_time: 10,
-            genesis: ChainGenesis {
-                l2: BlockNumHash { number: 41, ..Default::default() },
-                l2_time: 10,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let l1_block_hash =
-            b256!("3333333333333333333333333333333333333333000000000000000000000000");
-        let block =
-            BlockInfo { number: 11, timestamp: 10, hash: l1_block_hash, ..Default::default() };
-        let l1_blocks = vec![block];
-        let parent_hash = b256!("1111111111111111111111111111111111111111000000000000000000000000");
-        let l2_safe_head = L2BlockInfo {
-            block_info: BlockInfo { number: 41, timestamp: 10, parent_hash, ..Default::default() },
-            l1_origin: BlockNumHash { number: 13, ..Default::default() },
-            ..Default::default()
-        };
-        let inclusion_block = BlockInfo { number: 50, ..Default::default() };
-        let l2_block = L2BlockInfo {
-            block_info: BlockInfo {
-                number: 40,
-                timestamp: 10,
-                hash: parent_hash,
-                ..Default::default()
-            },
-            l1_origin: BlockNumHash { number: 14, ..Default::default() },
-            ..Default::default()
-        };
-        let mut fetcher: TestBatchValidator =
-            TestBatchValidator { blocks: vec![l2_block], ..Default::default() };
-        let first = SpanBatchElement { epoch_num: 10, timestamp: 10, ..Default::default() };
-        let second = SpanBatchElement { epoch_num: 11, timestamp: 20, ..Default::default() };
-        let batch = SpanBatch {
-            batches: vec![first, second],
-            parent_check: FixedBytes::<20>::from_slice(&parent_hash[..20]),
-            l1_origin_check: FixedBytes::<20>::from_slice(&l1_block_hash[..20]),
-            ..Default::default()
-        };
-        assert_eq!(
-            batch.check_batch(&cfg, &l1_blocks, l2_safe_head, &inclusion_block, &mut fetcher).await,
-            BatchValidity::Drop(BatchDropReason::EpochTooOld)
-        );
-        let logs = trace_store.get_by_level(Level::WARN);
-        assert_eq!(logs.len(), 1);
-        assert!(
-            logs[0].contains("Dropped batch, epoch is too old")
-                && logs[0].contains("minimum_epoch")
-        );
-    }
-
-    #[tokio::test]
-    async fn test_check_batch_exceeds_max_seq_drif() {
-        let (trace_store, _guard) = crate::capture_traces!();
-
-        let cfg = RollupConfig {
-            seq_window_size: 100,
-            max_sequencer_drift: 0,
-            upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
-            block_time: 10,
-            genesis: ChainGenesis {
-                l2: BlockNumHash { number: 41, ..Default::default() },
-                l2_time: 10,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let l1_blocks = gen_l1_blocks(9, 3, 10, 0);
-        let parent_hash = b256!("1111111111111111111111111111111111111111000000000000000000000000");
-        let l2_safe_head = L2BlockInfo {
-            block_info: BlockInfo {
-                number: 41,
-                timestamp: 10,
-                hash: parent_hash,
-                ..Default::default()
-            },
-            l1_origin: BlockNumHash { number: 9, ..Default::default() },
-            ..Default::default()
-        };
-        let inclusion_block = BlockInfo { number: 50, ..Default::default() };
-        let l2_block = L2BlockInfo {
-            block_info: BlockInfo { number: 40, ..Default::default() },
-            ..Default::default()
-        };
-        let mut fetcher: TestBatchValidator =
-            TestBatchValidator { blocks: vec![l2_block], ..Default::default() };
-        let first = SpanBatchElement { epoch_num: 10, timestamp: 20, ..Default::default() };
-        let second = SpanBatchElement { epoch_num: 10, timestamp: 30, ..Default::default() };
-        let third = SpanBatchElement { epoch_num: 11, timestamp: 40, ..Default::default() };
-        let batch = SpanBatch {
-            batches: vec![first, second, third],
-            parent_check: FixedBytes::<20>::from_slice(&parent_hash[..20]),
-            l1_origin_check: FixedBytes::<20>::from_slice(&l1_blocks[1].hash[..20]),
-            ..Default::default()
-        };
-        assert_eq!(
-            batch.check_batch(&cfg, &l1_blocks, l2_safe_head, &inclusion_block, &mut fetcher).await,
-            BatchValidity::Drop(BatchDropReason::SequencerDriftNotAdoptedNextOrigin)
-        );
-        let logs = trace_store.get_by_level(Level::WARN);
-        assert_eq!(logs.len(), 1);
-        assert!(logs[0].contains("batch exceeded sequencer time drift without adopting next origin, and next L1 origin would have been valid"));
-    }
-
-    #[tokio::test]
-    async fn test_continuing_with_empty_batch() {
-        let (trace_store, _guard) = crate::capture_traces!();
-
-        let cfg = RollupConfig {
-            seq_window_size: 100,
-            max_sequencer_drift: 0,
-            upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
-            block_time: 10,
-            genesis: ChainGenesis {
-                l2: BlockNumHash { number: 41, ..Default::default() },
-                l2_time: 10,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        // Create two L1 blocks with number,timestamp: (10,10) and (11,40) so that the second batch
-        // in the span batch is valid even though it doesn't advance the origin, because its
-        // timestamp is 30 < 40. Then the third batch advances the origin to L1 block 11
-        // with timestamp 40, which is also the third batch's timestamp.
-        let l1_blocks = gen_l1_blocks(10, 2, 10, 30);
-        let parent_hash = b256!("1111111111111111111111111111111111111111000000000000000000000000");
-        let l2_safe_head = L2BlockInfo {
-            block_info: BlockInfo {
-                number: 41,
-                timestamp: 10,
-                hash: parent_hash,
-                ..Default::default()
-            },
-            l1_origin: BlockNumHash { number: 9, ..Default::default() },
-            ..Default::default()
-        };
-        let inclusion_block = BlockInfo { number: 50, ..Default::default() };
-        let l2_block = L2BlockInfo {
-            block_info: BlockInfo { number: 40, ..Default::default() },
-            ..Default::default()
-        };
-        let mut fetcher: TestBatchValidator =
-            TestBatchValidator { blocks: vec![l2_block], ..Default::default() };
-        let first = SpanBatchElement { epoch_num: 10, timestamp: 20, transactions: vec![] };
-        let second = SpanBatchElement { epoch_num: 10, timestamp: 30, transactions: vec![] };
-        let third = SpanBatchElement { epoch_num: 11, timestamp: 40, transactions: vec![] };
-        let batch = SpanBatch {
-            batches: vec![first, second, third],
-            parent_check: FixedBytes::<20>::from_slice(&parent_hash[..20]),
-            l1_origin_check: FixedBytes::<20>::from_slice(&l1_blocks[1].hash[..20]),
-            txs: SpanBatchTransactions::default(),
-            ..Default::default()
-        };
-        assert_eq!(
-            batch.check_batch(&cfg, &l1_blocks, l2_safe_head, &inclusion_block, &mut fetcher).await,
-            BatchValidity::Accept
-        );
-        let infos = trace_store.get_by_level(Level::INFO);
-        assert_eq!(infos.len(), 1);
-        assert!(infos[0].contains(
-            "continuing with empty batch before late L1 block to preserve L2 time invariant"
-        ));
-    }
-
-    #[tokio::test]
-    async fn test_check_batch_exceeds_sequencer_time_drift() {
-        let (trace_store, _guard) = crate::capture_traces!();
-
-        let cfg = RollupConfig {
-            seq_window_size: 100,
-            max_sequencer_drift: 0,
-            upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
-            block_time: 10,
-            genesis: ChainGenesis {
-                l2: BlockNumHash { number: 41, ..Default::default() },
-                l2_time: 10,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let l1_blocks = gen_l1_blocks(9, 3, 10, 0);
-        let parent_hash = b256!("1111111111111111111111111111111111111111000000000000000000000000");
-        let l2_safe_head = L2BlockInfo {
-            block_info: BlockInfo {
-                number: 41,
-                timestamp: 10,
-                hash: parent_hash,
-                ..Default::default()
-            },
-            l1_origin: BlockNumHash { number: 9, ..Default::default() },
-            ..Default::default()
-        };
-        let inclusion_block = BlockInfo { number: 50, ..Default::default() };
-        let l2_block = L2BlockInfo {
-            block_info: BlockInfo { number: 40, ..Default::default() },
-            ..Default::default()
-        };
-        let mut fetcher: TestBatchValidator =
-            TestBatchValidator { blocks: vec![l2_block], ..Default::default() };
-        let first = SpanBatchElement {
-            epoch_num: 10,
-            timestamp: 20,
-            transactions: vec![Default::default()],
-        };
-        let second = SpanBatchElement {
-            epoch_num: 10,
-            timestamp: 20,
-            transactions: vec![Default::default()],
-        };
-        let third = SpanBatchElement {
-            epoch_num: 11,
-            timestamp: 20,
-            transactions: vec![Default::default()],
-        };
-        let batch = SpanBatch {
-            batches: vec![first, second, third],
-            parent_check: FixedBytes::<20>::from_slice(&parent_hash[..20]),
-            l1_origin_check: FixedBytes::<20>::from_slice(&l1_blocks[0].hash[..20]),
-            txs: SpanBatchTransactions::default(),
-            ..Default::default()
-        };
-        assert_eq!(
-            batch.check_batch(&cfg, &l1_blocks, l2_safe_head, &inclusion_block, &mut fetcher).await,
-            BatchValidity::Drop(BatchDropReason::SequencerDriftExceeded)
-        );
-        let logs = trace_store.get_by_level(Level::WARN);
-        assert_eq!(logs.len(), 1);
-        assert!(logs[0].contains("batch exceeded sequencer time drift, sequencer must adopt new L1 origin to include transactions again, max_time: 10"));
-    }
-
-    #[tokio::test]
-    async fn test_check_batch_empty_txs() {
-        let (trace_store, _guard) = crate::capture_traces!();
-
-        let cfg = RollupConfig {
-            seq_window_size: 100,
-            max_sequencer_drift: 100,
-            upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
-            block_time: 10,
-            genesis: ChainGenesis {
-                l2: BlockNumHash { number: 41, ..Default::default() },
-                l2_time: 10,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let l1_block_hash =
-            b256!("3333333333333333333333333333333333333333000000000000000000000000");
-        let l1_a =
-            BlockInfo { number: 10, timestamp: 5, hash: l1_block_hash, ..Default::default() };
-        let l1_b =
-            BlockInfo { number: 11, timestamp: 10, hash: l1_block_hash, ..Default::default() };
-        let l1_c =
-            BlockInfo { number: 12, timestamp: 21, hash: l1_block_hash, ..Default::default() };
-        let l1_blocks = vec![l1_a, l1_b, l1_c];
-        let parent_hash = b256!("1111111111111111111111111111111111111111000000000000000000000000");
-        let l2_safe_head = L2BlockInfo {
-            block_info: BlockInfo {
-                number: 41,
-                timestamp: 10,
-                hash: parent_hash,
-                ..Default::default()
-            },
-            l1_origin: BlockNumHash { number: 9, ..Default::default() },
-            ..Default::default()
-        };
-        let inclusion_block = BlockInfo { number: 50, ..Default::default() };
-        let l2_block = L2BlockInfo {
-            block_info: BlockInfo { number: 40, ..Default::default() },
-            ..Default::default()
-        };
-        let mut fetcher: TestBatchValidator =
-            TestBatchValidator { blocks: vec![l2_block], ..Default::default() };
-        let first = SpanBatchElement {
-            epoch_num: 10,
-            timestamp: 20,
-            transactions: vec![Default::default()],
-        };
-        let second = SpanBatchElement {
-            epoch_num: 10,
-            timestamp: 20,
-            transactions: vec![Default::default()],
-        };
-        let third = SpanBatchElement { epoch_num: 11, timestamp: 20, transactions: vec![] };
-        let batch = SpanBatch {
-            batches: vec![first, second, third],
-            parent_check: FixedBytes::<20>::from_slice(&parent_hash[..20]),
-            l1_origin_check: FixedBytes::<20>::from_slice(&l1_block_hash[..20]),
-            txs: SpanBatchTransactions::default(),
-            ..Default::default()
-        };
-        assert_eq!(
-            batch.check_batch(&cfg, &l1_blocks, l2_safe_head, &inclusion_block, &mut fetcher).await,
-            BatchValidity::Drop(BatchDropReason::EmptyTransaction)
-        );
-        let logs = trace_store.get_by_level(Level::WARN);
-        assert_eq!(logs.len(), 1);
-        assert!(logs[0].contains("transaction data must not be empty, but found empty tx"));
-    }
-
-    #[tokio::test]
-    async fn test_check_batch_with_deposit_tx() {
-        let (trace_store, _guard) = crate::capture_traces!();
-
-        let cfg = RollupConfig {
-            seq_window_size: 100,
-            max_sequencer_drift: 100,
-            upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
-            block_time: 10,
-            genesis: ChainGenesis {
-                l2: BlockNumHash { number: 41, ..Default::default() },
-                l2_time: 10,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let l1_blocks = gen_l1_blocks(9, 3, 0, 10);
-        let parent_hash = b256!("1111111111111111111111111111111111111111000000000000000000000000");
-        let l2_safe_head = L2BlockInfo {
-            block_info: BlockInfo {
-                number: 41,
-                timestamp: 10,
-                hash: parent_hash,
-                ..Default::default()
-            },
-            l1_origin: BlockNumHash { number: 9, ..Default::default() },
-            ..Default::default()
-        };
-        let inclusion_block = BlockInfo { number: 50, ..Default::default() };
-        let l2_block = L2BlockInfo {
-            block_info: BlockInfo { number: 40, ..Default::default() },
-            ..Default::default()
-        };
-        let mut fetcher: TestBatchValidator =
-            TestBatchValidator { blocks: vec![l2_block], ..Default::default() };
-        let filler_bytes = Bytes::copy_from_slice(&[EIP1559_TX_TYPE_ID]);
-        let first = SpanBatchElement {
-            epoch_num: 10,
-            timestamp: 20,
-            transactions: vec![filler_bytes.clone()],
-        };
-        let second = SpanBatchElement {
-            epoch_num: 10,
-            timestamp: 20,
-            transactions: vec![Bytes::copy_from_slice(&[OpTxType::Deposit as u8])],
-        };
-        let third =
-            SpanBatchElement { epoch_num: 11, timestamp: 20, transactions: vec![filler_bytes] };
-        let batch = SpanBatch {
-            batches: vec![first, second, third],
-            parent_check: FixedBytes::<20>::from_slice(&parent_hash[..20]),
-            l1_origin_check: FixedBytes::<20>::from_slice(&l1_blocks[0].hash[..20]),
-            txs: SpanBatchTransactions::default(),
-            ..Default::default()
-        };
-        assert_eq!(
-            batch.check_batch(&cfg, &l1_blocks, l2_safe_head, &inclusion_block, &mut fetcher).await,
-            BatchValidity::Drop(BatchDropReason::DepositTransaction)
-        );
-        let logs = trace_store.get_by_level(Level::WARN);
-        assert_eq!(logs.len(), 1);
-        assert!(logs[0].contains("sequencers may not embed any deposits into batch data, but found tx that has one, tx_index: 0"));
-    }
-
-    #[tokio::test]
-    async fn test_check_batch_with_eip7702_tx() {
-        let (trace_store, _guard) = crate::capture_traces!();
-
-        let cfg = RollupConfig {
-            seq_window_size: 100,
-            max_sequencer_drift: 100,
-            upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
-            block_time: 10,
-            genesis: ChainGenesis {
-                l2: BlockNumHash { number: 41, ..Default::default() },
-                l2_time: 10,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let l1_blocks = gen_l1_blocks(9, 3, 0, 10);
-        let parent_hash = b256!("1111111111111111111111111111111111111111000000000000000000000000");
-        let l2_safe_head = L2BlockInfo {
-            block_info: BlockInfo {
-                number: 41,
-                timestamp: 10,
-                hash: parent_hash,
-                ..Default::default()
-            },
-            l1_origin: BlockNumHash { number: 9, ..Default::default() },
-            ..Default::default()
-        };
-        let inclusion_block = BlockInfo { number: 50, ..Default::default() };
-        let l2_block = L2BlockInfo {
-            block_info: BlockInfo { number: 40, ..Default::default() },
-            ..Default::default()
-        };
-        let mut fetcher: TestBatchValidator =
-            TestBatchValidator { blocks: vec![l2_block], ..Default::default() };
-        let filler_bytes = Bytes::copy_from_slice(&[EIP1559_TX_TYPE_ID]);
-        let first = SpanBatchElement {
-            epoch_num: 10,
-            timestamp: 20,
-            transactions: vec![filler_bytes.clone()],
-        };
-        let second = SpanBatchElement {
-            epoch_num: 10,
-            timestamp: 20,
-            transactions: vec![Bytes::copy_from_slice(&[alloy_consensus::TxType::Eip7702 as u8])],
-        };
-        let third =
-            SpanBatchElement { epoch_num: 11, timestamp: 20, transactions: vec![filler_bytes] };
-        let batch = SpanBatch {
-            batches: vec![first, second, third],
-            parent_check: FixedBytes::<20>::from_slice(&parent_hash[..20]),
-            l1_origin_check: FixedBytes::<20>::from_slice(&l1_blocks[0].hash[..20]),
-            txs: SpanBatchTransactions::default(),
-            ..Default::default()
-        };
-        assert_eq!(
-            batch.check_batch(&cfg, &l1_blocks, l2_safe_head, &inclusion_block, &mut fetcher).await,
-            BatchValidity::Drop(BatchDropReason::Eip7702PreIsthmus)
-        );
-        let logs = trace_store.get_by_level(Level::WARN);
-        assert_eq!(logs.len(), 1);
-        assert!(
-            logs[0].contains("EIP-7702 transactions are not supported pre-isthmus")
-                && logs[0].contains("tx_index")
-                && logs[0].contains('0')
-        );
-    }
-
-    #[tokio::test]
-    async fn test_check_batch_with_eip8130_tx() {
-        let (trace_store, _guard) = crate::capture_traces!();
-
-        let cfg = RollupConfig {
-            seq_window_size: 100,
-            max_sequencer_drift: 100,
-            upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
-            block_time: 10,
-            genesis: ChainGenesis {
-                l2: BlockNumHash { number: 41, ..Default::default() },
-                l2_time: 10,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let l1_blocks = gen_l1_blocks(9, 3, 0, 10);
-        let parent_hash = b256!("1111111111111111111111111111111111111111000000000000000000000000");
-        let l2_safe_head = L2BlockInfo {
-            block_info: BlockInfo {
-                number: 41,
-                timestamp: 10,
-                hash: parent_hash,
-                ..Default::default()
-            },
-            l1_origin: BlockNumHash { number: 9, ..Default::default() },
-            ..Default::default()
-        };
-        let inclusion_block = BlockInfo { number: 50, ..Default::default() };
-        let l2_block = L2BlockInfo {
-            block_info: BlockInfo { number: 40, ..Default::default() },
-            ..Default::default()
-        };
-        let mut fetcher: TestBatchValidator =
-            TestBatchValidator { blocks: vec![l2_block], ..Default::default() };
-        let filler_bytes = Bytes::copy_from_slice(&[EIP1559_TX_TYPE_ID]);
-        let first = SpanBatchElement {
-            epoch_num: 10,
-            timestamp: 20,
-            transactions: vec![filler_bytes.clone()],
-        };
-        let second = SpanBatchElement {
-            epoch_num: 10,
-            timestamp: 20,
-            transactions: vec![Bytes::copy_from_slice(&[OpTxType::Eip8130 as u8])],
-        };
-        let third =
-            SpanBatchElement { epoch_num: 11, timestamp: 20, transactions: vec![filler_bytes] };
-        let batch = SpanBatch {
-            batches: vec![first, second, third],
-            parent_check: FixedBytes::<20>::from_slice(&parent_hash[..20]),
-            l1_origin_check: FixedBytes::<20>::from_slice(&l1_blocks[0].hash[..20]),
-            txs: SpanBatchTransactions::default(),
-            ..Default::default()
-        };
-        assert_eq!(
-            batch.check_batch(&cfg, &l1_blocks, l2_safe_head, &inclusion_block, &mut fetcher).await,
-            BatchValidity::Drop(BatchDropReason::Eip8130PreZenith)
-        );
-        let logs = trace_store.get_by_level(Level::WARN);
-        assert_eq!(logs.len(), 1);
-        assert!(
-            logs[0].contains("EIP-8130 transactions are not supported pre-Zenith")
-                && logs[0].contains("tx_index")
-                && logs[0].contains('0')
-        );
-    }
-
-    #[tokio::test]
-    async fn test_check_batch_rejects_eip8130_span_post_zenith() {
-        // Zenith enables EIP-8130 after Denim has disabled Span batches, so
-        // EIP-8130 transactions must use singular batches.
-        let cfg = RollupConfig {
-            seq_window_size: 100,
-            max_sequencer_drift: 100,
-            upgrades: UpgradeConfig {
+        ),
+        BatchValidity::Drop(BatchDropReason::SequencerDriftExceeded),
+        Some((
+            Level::WARN,
+            &["batch exceeded sequencer time drift, sequencer must adopt new L1 origin to include transactions again, max_time: 10"][..],
+        ))
+    )]
+    #[case::empty_tx(
+        scenario_with_tx(UpgradeConfig { delta_time: Some(0), ..Default::default() }, &[]),
+        BatchValidity::Drop(BatchDropReason::EmptyTransaction),
+        Some((Level::WARN, &["transaction data must not be empty, but found empty tx"][..]))
+    )]
+    #[case::deposit_tx(
+        scenario_with_tx(UpgradeConfig { delta_time: Some(0), ..Default::default() }, &[OpTxType::Deposit as u8]),
+        BatchValidity::Drop(BatchDropReason::DepositTransaction),
+        Some((
+            Level::WARN,
+            &["sequencers may not embed any deposits into batch data, but found tx that has one, tx_index: 0"][..],
+        ))
+    )]
+    #[case::eip7702_pre_isthmus(
+        scenario_with_tx(UpgradeConfig { delta_time: Some(0), ..Default::default() }, &[alloy_consensus::TxType::Eip7702 as u8]),
+        BatchValidity::Drop(BatchDropReason::Eip7702PreIsthmus),
+        Some((Level::WARN, &["EIP-7702 transactions are not supported pre-isthmus", "tx_index"][..]))
+    )]
+    #[case::eip8130_pre_everest(
+        scenario_with_tx(UpgradeConfig { delta_time: Some(0), ..Default::default() }, &[OpTxType::Eip8130 as u8]),
+        BatchValidity::Drop(BatchDropReason::Eip8130PreEverest),
+        Some((Level::WARN, &["EIP-8130 transactions are not supported pre-Everest", "tx_index"][..]))
+    )]
+    #[case::eip8130_span_post_everest(
+        // Everest enables EIP-8130 after Denim has disabled span batches, so EIP-8130
+        // transactions must use singular batches.
+        scenario_with_tx(
+            UpgradeConfig {
                 delta_time: Some(0),
-                base: BaseUpgradeConfig { denim: Some(0), zenith: Some(0), ..Default::default() },
+                base: BaseUpgradeConfig { denim: Some(0), everest: Some(0), ..Default::default() },
                 ..Default::default()
             },
-            block_time: 10,
-            genesis: ChainGenesis {
-                l2: BlockNumHash { number: 41, ..Default::default() },
-                l2_time: 10,
-                ..Default::default()
+            &[OpTxType::Eip8130 as u8],
+        ),
+        BatchValidity::Drop(BatchDropReason::SpanBatchPostDenim),
+        Some((Level::WARN, &["Dropping span batch after Denim activation"][..]))
+    )]
+    #[case::failed_to_fetch_payload(
+        Scenario::default(),
+        BatchValidity::Undecided,
+        Some((Level::WARN, &["Failed to fetch block", "L2 Block not found"][..]))
+    )]
+    #[case::failed_to_extract_l2_block_info(
+        Scenario {
+            fetcher: TestBatchValidator {
+                base_blocks: vec![empty_block(41, vec![])],
+                ..Scenario::default().fetcher
             },
             ..Default::default()
-        };
-        let l1_blocks = gen_l1_blocks(9, 3, 0, 10);
-        let parent_hash = b256!("1111111111111111111111111111111111111111000000000000000000000000");
-        let l2_safe_head = L2BlockInfo {
-            block_info: BlockInfo {
-                number: 41,
-                timestamp: 10,
-                hash: parent_hash,
+        },
+        BatchValidity::Drop(BatchDropReason::L2BlockInfoExtractionFailed),
+        Some((
+            Level::WARN,
+            &["failed to extract L2BlockInfo from execution payload", "0e2ee9abe94ee4514b170d7039d8151a7469d434a8575dbab5bd4187a27732dd"][..],
+        ))
+    )]
+    #[case::overlapped_origin_mismatch(
+        Scenario {
+            cfg: cfg_with_genesis_hash(
+                BlockNumHash { number: 41, hash: PAYLOAD_HASH },
+                BlockNumHash::default(),
+            ),
+            fetcher: TestBatchValidator {
+                base_blocks: vec![empty_block(41, vec![])],
+                ..Scenario::default().fetcher
+            },
+            ..Default::default()
+        },
+        BatchValidity::Drop(BatchDropReason::OverlappedL1OriginMismatch),
+        Some((Level::WARN, &["overlapped block's L1 origin number does not match"][..]))
+    )]
+    #[case::overlapped_origin_outdated(
+        Scenario {
+            cfg: RollupConfig {
+                genesis: ChainGenesis {
+                    l2: BlockNumHash { number: 40, hash: PARENT_HASH },
+                    l2_time: 0,
+                    ..Default::default()
+                },
+                ..cfg()
+            },
+            l1_blocks: vec![BlockInfo { number: 10, timestamp: 5, hash: L1_HASH, ..Default::default() }],
+            safe_head: L2BlockInfo {
+                l1_origin: BlockNumHash { number: 10, hash: L1_HASH },
+                ..Scenario::default().safe_head
+            },
+            fetcher: TestBatchValidator {
+                blocks: vec![L2BlockInfo { l1_origin: BlockNumHash { number: 9, ..Default::default() }, ..l2_parent(9) }],
+                base_blocks: vec![empty_block(41, vec![])],
                 ..Default::default()
             },
-            l1_origin: BlockNumHash { number: 9, ..Default::default() },
+            batch: batch(vec![element(9, 10), element(9, 20), element(10, 30)]),
             ..Default::default()
-        };
-        let inclusion_block = BlockInfo { number: 50, ..Default::default() };
-        let l2_block = L2BlockInfo {
-            block_info: BlockInfo { number: 40, ..Default::default() },
+        },
+        BatchValidity::Drop(BatchDropReason::L1OriginBeforeSafeHead),
+        Some((Level::WARN, &["batch L1 origin is before safe head L1 origin"][..]))
+    )]
+    #[case::valid_with_genesis_epoch(
+        Scenario {
+            cfg: cfg_with_genesis_hash(
+                BlockNumHash { number: 41, hash: PAYLOAD_HASH },
+                BlockNumHash { number: 10, ..Default::default() },
+            ),
+            fetcher: TestBatchValidator {
+                base_blocks: vec![empty_block(41, vec![])],
+                ..Scenario::default().fetcher
+            },
             ..Default::default()
-        };
-        let mut fetcher: TestBatchValidator =
-            TestBatchValidator { blocks: vec![l2_block], ..Default::default() };
-        let filler_bytes = Bytes::copy_from_slice(&[EIP1559_TX_TYPE_ID]);
-        let first = SpanBatchElement {
-            epoch_num: 10,
-            timestamp: 20,
-            transactions: vec![filler_bytes.clone()],
-        };
-        let second = SpanBatchElement {
-            epoch_num: 10,
-            timestamp: 20,
-            transactions: vec![Bytes::copy_from_slice(&[OpTxType::Eip8130 as u8])],
-        };
-        let third =
-            SpanBatchElement { epoch_num: 11, timestamp: 20, transactions: vec![filler_bytes] };
-        let batch = SpanBatch {
-            batches: vec![first, second, third],
-            parent_check: FixedBytes::<20>::from_slice(&parent_hash[..20]),
-            l1_origin_check: FixedBytes::<20>::from_slice(&l1_blocks[0].hash[..20]),
-            txs: SpanBatchTransactions::default(),
-            ..Default::default()
-        };
-        assert_eq!(
-            batch.check_batch(&cfg, &l1_blocks, l2_safe_head, &inclusion_block, &mut fetcher).await,
-            BatchValidity::Drop(BatchDropReason::SpanBatchPostDenim)
-        );
-    }
-
+        },
+        BatchValidity::Accept,
+        None
+    )]
     #[tokio::test]
-    async fn test_check_batch_failed_to_fetch_payload() {
-        let (trace_store, _guard) = crate::capture_traces!();
-
-        let cfg = RollupConfig {
-            seq_window_size: 100,
-            upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
-            block_time: 10,
-            genesis: ChainGenesis {
-                l2: BlockNumHash { number: 41, ..Default::default() },
-                l2_time: 10,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let l1_block_hash =
-            b256!("3333333333333333333333333333333333333333000000000000000000000000");
-        let block =
-            BlockInfo { number: 11, timestamp: 10, hash: l1_block_hash, ..Default::default() };
-        let l1_blocks = vec![block];
-        let parent_hash = b256!("1111111111111111111111111111111111111111000000000000000000000000");
-        let l2_safe_head = L2BlockInfo {
-            block_info: BlockInfo { number: 41, timestamp: 10, parent_hash, ..Default::default() },
-            l1_origin: BlockNumHash { number: 9, ..Default::default() },
-            ..Default::default()
-        };
-        let inclusion_block = BlockInfo { number: 50, ..Default::default() };
-        let l2_block = L2BlockInfo {
-            block_info: BlockInfo {
-                number: 40,
-                timestamp: 10,
-                hash: parent_hash,
-                ..Default::default()
-            },
-            l1_origin: BlockNumHash { number: 9, ..Default::default() },
-            ..Default::default()
-        };
-        let mut fetcher: TestBatchValidator =
-            TestBatchValidator { blocks: vec![l2_block], ..Default::default() };
-        let first = SpanBatchElement { epoch_num: 10, timestamp: 10, ..Default::default() };
-        let second = SpanBatchElement { epoch_num: 11, timestamp: 20, ..Default::default() };
-        let batch = SpanBatch {
-            batches: vec![first, second],
-            parent_check: FixedBytes::<20>::from_slice(&parent_hash[..20]),
-            l1_origin_check: FixedBytes::<20>::from_slice(&l1_block_hash[..20]),
-            ..Default::default()
-        };
-        assert_eq!(
-            batch.check_batch(&cfg, &l1_blocks, l2_safe_head, &inclusion_block, &mut fetcher).await,
-            BatchValidity::Undecided
-        );
-        let logs = trace_store.get_by_level(Level::WARN);
-        assert_eq!(logs.len(), 1);
-        assert!(
-            logs[0].contains("Failed to fetch block") && logs[0].contains("L2 Block not found")
-        );
-    }
-
-    #[tokio::test]
-    async fn test_check_batch_failed_to_extract_l2_block_info() {
-        let (trace_store, _guard) = crate::capture_traces!();
-
-        let cfg = RollupConfig {
-            seq_window_size: 100,
-            upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
-            block_time: 10,
-            genesis: ChainGenesis {
-                l2: BlockNumHash { number: 41, ..Default::default() },
-                l2_time: 10,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let l1_block_hash =
-            b256!("3333333333333333333333333333333333333333000000000000000000000000");
-        let block =
-            BlockInfo { number: 11, timestamp: 10, hash: l1_block_hash, ..Default::default() };
-        let l1_blocks = vec![block];
-        let parent_hash = b256!("1111111111111111111111111111111111111111000000000000000000000000");
-        let l2_safe_head = L2BlockInfo {
-            block_info: BlockInfo { number: 41, timestamp: 10, parent_hash, ..Default::default() },
-            l1_origin: BlockNumHash { number: 9, ..Default::default() },
-            ..Default::default()
-        };
-        let inclusion_block = BlockInfo { number: 50, ..Default::default() };
-        let l2_block = L2BlockInfo {
-            block_info: BlockInfo {
-                number: 40,
-                timestamp: 10,
-                hash: parent_hash,
-                ..Default::default()
-            },
-            l1_origin: BlockNumHash { number: 9, ..Default::default() },
-            ..Default::default()
-        };
-        let block = BaseBlock {
-            header: Header { number: 41, ..Default::default() },
-            body: alloy_consensus::BlockBody {
-                transactions: Vec::new(),
-                ommers: Vec::new(),
-                withdrawals: None,
-            },
-        };
-        let mut fetcher: TestBatchValidator = TestBatchValidator {
-            blocks: vec![l2_block],
-            base_blocks: vec![block],
-            ..Default::default()
-        };
-        let first = SpanBatchElement { epoch_num: 10, timestamp: 10, ..Default::default() };
-        let second = SpanBatchElement { epoch_num: 11, timestamp: 20, ..Default::default() };
-        let batch = SpanBatch {
-            batches: vec![first, second],
-            parent_check: FixedBytes::<20>::from_slice(&parent_hash[..20]),
-            l1_origin_check: FixedBytes::<20>::from_slice(&l1_block_hash[..20]),
-            ..Default::default()
-        };
-        assert_eq!(
-            batch.check_batch(&cfg, &l1_blocks, l2_safe_head, &inclusion_block, &mut fetcher).await,
-            BatchValidity::Drop(BatchDropReason::L2BlockInfoExtractionFailed)
-        );
-        let logs = trace_store.get_by_level(Level::WARN);
-        assert_eq!(logs.len(), 1);
-        let str = alloc::format!(
-            "failed to extract L2BlockInfo from execution payload, hash: {:?}",
-            b256!("0e2ee9abe94ee4514b170d7039d8151a7469d434a8575dbab5bd4187a27732dd"),
-        );
-        assert!(logs[0].contains(&str));
-    }
-
-    #[tokio::test]
-    async fn test_overlapped_blocks_origin_mismatch() {
-        let (trace_store, _guard) = crate::capture_traces!();
-
-        let payload_block_hash =
-            b256!("0e2ee9abe94ee4514b170d7039d8151a7469d434a8575dbab5bd4187a27732dd");
-        let cfg = RollupConfig {
-            seq_window_size: 100,
-            upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
-            block_time: 10,
-            genesis: ChainGenesis {
-                l2: BlockNumHash { number: 41, hash: payload_block_hash },
-                l2_time: 10,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let l1_block_hash =
-            b256!("3333333333333333333333333333333333333333000000000000000000000000");
-        let block =
-            BlockInfo { number: 11, timestamp: 10, hash: l1_block_hash, ..Default::default() };
-        let l1_blocks = vec![block];
-        let parent_hash = b256!("1111111111111111111111111111111111111111000000000000000000000000");
-        let l2_safe_head = L2BlockInfo {
-            block_info: BlockInfo { number: 41, timestamp: 10, parent_hash, ..Default::default() },
-            l1_origin: BlockNumHash { number: 9, ..Default::default() },
-            ..Default::default()
-        };
-        let inclusion_block = BlockInfo { number: 50, ..Default::default() };
-        let l2_block = L2BlockInfo {
-            block_info: BlockInfo {
-                number: 40,
-                hash: parent_hash,
-                timestamp: 10,
-                ..Default::default()
-            },
-            l1_origin: BlockNumHash { number: 9, ..Default::default() },
-            ..Default::default()
-        };
-        let block = BaseBlock {
-            header: Header { number: 41, ..Default::default() },
-            body: alloy_consensus::BlockBody {
-                transactions: Vec::new(),
-                ommers: Vec::new(),
-                withdrawals: None,
-            },
-        };
-        let mut fetcher: TestBatchValidator = TestBatchValidator {
-            blocks: vec![l2_block],
-            base_blocks: vec![block],
-            ..Default::default()
-        };
-        let first = SpanBatchElement { epoch_num: 10, timestamp: 10, ..Default::default() };
-        let second = SpanBatchElement { epoch_num: 11, timestamp: 20, ..Default::default() };
-        let batch = SpanBatch {
-            batches: vec![first, second],
-            parent_check: FixedBytes::<20>::from_slice(&parent_hash[..20]),
-            l1_origin_check: FixedBytes::<20>::from_slice(&l1_block_hash[..20]),
-            ..Default::default()
-        };
-        assert_eq!(
-            batch.check_batch(&cfg, &l1_blocks, l2_safe_head, &inclusion_block, &mut fetcher).await,
-            BatchValidity::Drop(BatchDropReason::OverlappedL1OriginMismatch)
-        );
-        let logs = trace_store.get_by_level(Level::WARN);
-        assert_eq!(logs.len(), 1);
-        assert!(logs[0].contains("overlapped block's L1 origin number does not match"));
-    }
-
-    #[tokio::test]
-    async fn test_overlapped_blocks_origin_outdated() {
-        let (trace_store, _guard) = crate::capture_traces!();
-
-        let parent_hash = b256!("1111111111111111111111111111111111111111000000000000000000000000");
-        let cfg = RollupConfig {
-            seq_window_size: 100,
-            upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
-            block_time: 10,
-            genesis: ChainGenesis {
-                l2: BlockNumHash { number: 40, hash: parent_hash },
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let l1_block_hash =
-            b256!("3333333333333333333333333333333333333333000000000000000000000000");
-        let l1_block =
-            BlockInfo { number: 10, timestamp: 5, hash: l1_block_hash, ..Default::default() };
-        let l1_blocks = vec![l1_block];
-        let l2_safe_head = L2BlockInfo {
-            block_info: BlockInfo { number: 41, timestamp: 10, parent_hash, ..Default::default() },
-            l1_origin: l1_block.id(),
-            ..Default::default()
-        };
-        let inclusion_block = BlockInfo { number: 50, ..Default::default() };
-        let l2_parent = L2BlockInfo {
-            block_info: BlockInfo {
-                number: 40,
-                hash: parent_hash,
-                timestamp: 0,
-                ..Default::default()
-            },
-            l1_origin: BlockNumHash { number: 9, ..Default::default() },
-            ..Default::default()
-        };
-        let block = BaseBlock {
-            header: Header { number: 41, ..Default::default() },
-            body: alloy_consensus::BlockBody {
-                transactions: Vec::new(),
-                ommers: Vec::new(),
-                withdrawals: None,
-            },
-        };
-        let mut fetcher: TestBatchValidator = TestBatchValidator {
-            blocks: vec![l2_parent],
-            base_blocks: vec![block],
-            ..Default::default()
-        };
-        let first = SpanBatchElement { epoch_num: 9, timestamp: 10, ..Default::default() };
-        let second = SpanBatchElement { epoch_num: 9, timestamp: 20, ..Default::default() };
-        let third = SpanBatchElement { epoch_num: 10, timestamp: 30, ..Default::default() };
-        let batch = SpanBatch {
-            batches: vec![first, second, third],
-            parent_check: FixedBytes::<20>::from_slice(&parent_hash[..20]),
-            l1_origin_check: FixedBytes::<20>::from_slice(&l1_block_hash[..20]),
-            ..Default::default()
-        };
-        assert_eq!(
-            batch.check_batch(&cfg, &l1_blocks, l2_safe_head, &inclusion_block, &mut fetcher).await,
-            BatchValidity::Drop(BatchDropReason::L1OriginBeforeSafeHead)
-        );
-        let logs = trace_store.get_by_level(Level::WARN);
-        assert_eq!(logs.len(), 1);
-        assert!(logs[0].contains("batch L1 origin is before safe head L1 origin"));
-    }
-
-    #[tokio::test]
-    async fn test_check_batch_valid_with_genesis_epoch() {
-        let (trace_store, _guard) = crate::capture_traces!();
-
-        let payload_block_hash =
-            b256!("0e2ee9abe94ee4514b170d7039d8151a7469d434a8575dbab5bd4187a27732dd");
-        let cfg = RollupConfig {
-            seq_window_size: 100,
-            upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
-            block_time: 10,
-            genesis: ChainGenesis {
-                l2: BlockNumHash { number: 41, hash: payload_block_hash },
-                l1: BlockNumHash { number: 10, ..Default::default() },
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let l1_block_hash =
-            b256!("3333333333333333333333333333333333333333000000000000000000000000");
-        let block =
-            BlockInfo { number: 11, timestamp: 10, hash: l1_block_hash, ..Default::default() };
-        let l1_blocks = vec![block];
-        let parent_hash = b256!("1111111111111111111111111111111111111111000000000000000000000000");
-        let l2_safe_head = L2BlockInfo {
-            block_info: BlockInfo {
-                number: 41,
-                timestamp: 10,
-                hash: parent_hash,
-                ..Default::default()
-            },
-            l1_origin: BlockNumHash { number: 9, ..Default::default() },
-            ..Default::default()
-        };
-        let inclusion_block = BlockInfo { number: 50, ..Default::default() };
-        let l2_block = L2BlockInfo {
-            block_info: BlockInfo {
-                number: 40,
-                hash: parent_hash,
-                timestamp: 10,
-                ..Default::default()
-            },
-            l1_origin: BlockNumHash { number: 9, ..Default::default() },
-            ..Default::default()
-        };
-        let block = BaseBlock {
-            header: Header { number: 41, ..Default::default() },
-            body: alloy_consensus::BlockBody {
-                transactions: Vec::new(),
-                ommers: Vec::new(),
-                withdrawals: None,
-            },
-        };
-        let mut fetcher: TestBatchValidator = TestBatchValidator {
-            blocks: vec![l2_block],
-            base_blocks: vec![block],
-            ..Default::default()
-        };
-        let first = SpanBatchElement { epoch_num: 10, timestamp: 10, ..Default::default() };
-        let second = SpanBatchElement { epoch_num: 11, timestamp: 20, ..Default::default() };
-        let batch = SpanBatch {
-            batches: vec![first, second],
-            parent_check: FixedBytes::<20>::from_slice(&parent_hash[..20]),
-            l1_origin_check: FixedBytes::<20>::from_slice(&l1_block_hash[..20]),
-            ..Default::default()
-        };
-        assert_eq!(
-            batch.check_batch(&cfg, &l1_blocks, l2_safe_head, &inclusion_block, &mut fetcher).await,
-            BatchValidity::Accept
-        );
-        assert!(trace_store.is_empty());
+    async fn test_check_batch(
+        #[case] scenario: Scenario,
+        #[case] expected: BatchValidity,
+        #[case] log: ExpectedLog,
+    ) {
+        scenario.assert_check(expected, log).await;
     }
 }

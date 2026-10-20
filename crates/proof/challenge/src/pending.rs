@@ -349,6 +349,7 @@ pub enum ProofUpdate {
 #[cfg(test)]
 mod tests {
     use std::{
+        num::NonZeroU64,
         sync::{Arc, Mutex},
         time::Duration,
     };
@@ -366,8 +367,8 @@ mod tests {
                 number_of_blocks_to_prove: 1,
                 sequence_window: None,
                 l1_head: None,
-                intermediate_root_interval: None,
                 schedule_l2_block_number: None,
+                intermediate_block_interval: NonZeroU64::MIN,
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,
             },
@@ -513,8 +514,8 @@ mod tests {
                     MockZkProofState {
                         proof_status: ProofStatus::Succeeded,
                         result: Some(ApiProofResult::Tee(TeeProofResult {
+                            intermediate_roots: vec![bad_proposal.output_root],
                             aggregate_proposal: bad_proposal,
-                            proposals: Vec::new(),
                             tee_kind: TeeKind::AwsNitro,
                             tee_signer: Address::repeat_byte(0x11),
                         })),

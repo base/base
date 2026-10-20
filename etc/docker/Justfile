@@ -6,6 +6,8 @@ _base := "-f etc/docker/docker-compose.yml"
 _anvil := "-f etc/docker/docker-compose.yml -f etc/docker/docker-compose.anvil-l1.yml"
 _env := "--env-file etc/docker/devnet-env"
 
+mod snapshot '../just/snapshot.just'
+
 # Show devnet commands
 default:
     @just --justfile {{source_file()}} --list
@@ -307,16 +309,22 @@ _up-devnet compose_profile mode:
     compose_profile={{ quote(compose_profile) }}
     devnet_mode={{ quote(mode) }}
 
-    # Denim is scheduled through devnet-env. Zenith mode additionally schedules the
-    # genesis-only Zenith gate used for future hardfork feature testing.
+    # Denim is scheduled through devnet-env. Everest mode additionally schedules Everest
+    # (EIP-8130). Zenith mode schedules Everest plus the genesis-only Zenith gate used for
+    # future hardfork feature testing.
     case "$devnet_mode" in
       default) ;;
+      everest)
+        export L2_BASE_DENIM_BLOCK="${L2_BASE_DENIM_BLOCK-25}"
+        export L2_BASE_EVEREST_BLOCK="${L2_BASE_EVEREST_BLOCK:-100}"
+        ;;
       zenith)
         export L2_BASE_DENIM_BLOCK="${L2_BASE_DENIM_BLOCK-25}"
+        export L2_BASE_EVEREST_BLOCK="${L2_BASE_EVEREST_BLOCK:-100}"
         export L2_BASE_ZENITH_BLOCK="${L2_BASE_ZENITH_BLOCK:-100}"
         ;;
       *)
-        echo "ERROR: mode must be 'default' or 'zenith' (got '${devnet_mode}')" >&2
+        echo "ERROR: mode must be 'default', 'everest', or 'zenith' (got '${devnet_mode}')" >&2
         exit 1
         ;;
     esac

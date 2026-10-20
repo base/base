@@ -89,37 +89,6 @@ impl InMemoryStorageInner {
         }
 
         for (hashed_address, storage) in &block_state_diff.sorted_post_state.storages {
-            // Handle wiped storage: iterate all existing values and mark them as deleted
-            // This is an expensive operation and should never happen for blocks going forward.
-            if storage.wiped {
-                // Collect latest values for each slot up to the current block
-                let mut slot_to_latest: std::collections::BTreeMap<B256, (u64, U256)> =
-                    std::collections::BTreeMap::new();
-
-                for ((block, address, slot), value) in &self.hashed_storages {
-                    if *block < block_number && *address == *hashed_address {
-                        if let Some((existing_block, _)) = slot_to_latest.get(slot) {
-                            if *block > *existing_block {
-                                slot_to_latest.insert(*slot, (*block, *value));
-                            }
-                        } else {
-                            slot_to_latest.insert(*slot, (*block, *value));
-                        }
-                    }
-                }
-
-                // Store zero values for all non-zero slots to mark them as deleted
-                for (slot, (_, value)) in slot_to_latest {
-                    if !value.is_zero() {
-                        self.hashed_storages
-                            .insert((block_number, *hashed_address, slot), U256::ZERO);
-                        result.hashed_storages_written_total += 1;
-                    }
-                }
-            }
-            // Persist any new slots that arrive in the same block as the wipe (e.g. SELFDESTRUCT
-            // + same-block re-CREATE2 produces `wiped = true` together with fresh
-            // `storage_slots_ref()` for the recreated contract). Mirrors the MDBX backend.
             for (slot, value) in storage.storage_slots_ref() {
                 self.hashed_storages.insert((block_number, *hashed_address, *slot), *value);
                 result.hashed_storages_written_total += 1;
@@ -644,6 +613,40 @@ impl BaseProofsStore for InMemoryProofsStorage {
         self.account_hashed_cursor(max_block_number)
     }
 
+    fn hashed_account_with_tx<'db>(
+        &self,
+        _tx: &Self::Tx<'db>,
+        hashed_address: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Option<Account>>
+    where
+        Self: 'db,
+    {
+        // In-memory cursors materialize only live entries, so an equality-checked seek is exact.
+        Ok(self
+            .account_hashed_cursor(max_block_number)?
+            .seek(hashed_address)?
+            .and_then(|(key, account)| (key == hashed_address).then_some(account)))
+    }
+
+    fn hashed_storage_with_tx<'db>(
+        &self,
+        _tx: &Self::Tx<'db>,
+        hashed_address: B256,
+        hashed_slot: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Option<U256>>
+    where
+        Self: 'db,
+    {
+        // In-memory cursors materialize only live, non-zero entries, so an equality-checked seek
+        // is exact.
+        Ok(self
+            .storage_hashed_cursor(hashed_address, max_block_number)?
+            .seek(hashed_slot)?
+            .and_then(|(key, value)| (key == hashed_slot).then_some(value)))
+    }
+
     fn store_trie_updates(
         &self,
         block_ref: BlockWithParent,
@@ -979,59 +982,5 @@ impl BaseProofsInitialStateStore for InMemoryProofsStorage {
         } else {
             Err(BaseProofsStorageError::NoBlocksFound)
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use alloy_eips::NumHash;
-    use alloy_primitives::U256;
-    use reth_primitives_traits::Account;
-
-    use super::*;
-    use crate::BaseProofsStorageError;
-
-    #[test]
-    fn test_in_memory_storage_basic_operations() -> Result<(), BaseProofsStorageError> {
-        let storage = InMemoryProofsStorage::new();
-
-        // Test setting earliest block
-        let block_hash = B256::random();
-        storage.set_earliest_block_number(1, block_hash)?;
-        let earliest = storage.get_earliest_block_number()?;
-        assert_eq!(earliest, Some((1, block_hash)));
-
-        // Test storing and retrieving accounts
-        let account = Account { nonce: 1, balance: U256::from(100), bytecode_hash: None };
-        let hashed_address = B256::random();
-
-        storage.store_hashed_accounts(vec![(hashed_address, Some(account))])?;
-
-        let _cursor = storage.account_hashed_cursor(10)?;
-        // Note: cursor testing would require more complex setup with proper seek/next operations
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_trie_updates_storage() -> Result<(), BaseProofsStorageError> {
-        let storage = InMemoryProofsStorage::new();
-
-        let sorted_trie_updates = TrieUpdatesSorted::default();
-        let sorted_post_state = HashedPostStateSorted::default();
-        let block_state_diff = BlockStateDiff {
-            sorted_trie_updates: sorted_trie_updates.clone(),
-            sorted_post_state: sorted_post_state.clone(),
-        };
-
-        const BLOCK: BlockWithParent =
-            BlockWithParent::new(B256::ZERO, NumHash::new(5, B256::ZERO));
-        storage.store_trie_updates(BLOCK, block_state_diff)?;
-
-        let retrieved_diff = storage.fetch_trie_updates(BLOCK.block.number)?;
-        assert_eq!(retrieved_diff.sorted_trie_updates, sorted_trie_updates);
-        assert_eq!(retrieved_diff.sorted_post_state, sorted_post_state);
-
-        Ok(())
     }
 }

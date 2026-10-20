@@ -140,6 +140,13 @@ pub struct AggregateBenchmarkArgs {
     /// One or more self-contained snapshot run output directories to include.
     #[arg(required = true, value_name = "RUN_OUTPUT_DIR")]
     pub run_output_dirs: Vec<PathBuf>,
+    /// Emit one report page per client version plus a stable `latest` page.
+    /// Latest keeps the newest run from the last seven days for each
+    /// Scenario / block-time / transaction-payload identity and is stamped
+    /// 1ms after the newest selected run so the visualizer Latest option
+    /// resolves to this page.
+    #[arg(long)]
+    pub versioned_pages: bool,
 }
 
 /// Arguments for one snapshot-backed benchmark case.
@@ -154,15 +161,16 @@ pub struct SnapshotBenchmarkArgs {
     /// Writable builder snapshot datadir.
     #[arg(long, env = "BASE_SNAPSHOT_BUILDER_DATADIR")]
     pub builder_datadir: PathBuf,
-    /// Writable client snapshot datadir for the same chain.
+    /// Writable client snapshot datadir for the same chain. Without it, only the builder runs and
+    /// no follow-client validation or validator metrics are produced.
     #[arg(long, env = "BASE_SNAPSHOT_CLIENT_DATADIR")]
-    pub client_datadir: PathBuf,
+    pub client_datadir: Option<PathBuf>,
     /// Load-test YAML. RPC and Flashblocks URLs are replaced with launched endpoints.
     #[arg(long)]
     pub load_test_config: PathBuf,
     /// Required benchmark artifact directory.
     ///
-    /// Writes `<output-dir>/{benchmark-result.json,metadata.json,metrics-sequencer.json,metrics-validator.json,load-test-result.json}`.
+    /// Writes `<output-dir>/{benchmark-result.json,metadata.json,metrics-sequencer.json,load-test-result.json}`, plus `metrics-validator.json` with `--client-datadir`.
     #[arg(long)]
     pub output_dir: PathBuf,
     /// User-visible scenario identifier for the report series.
@@ -421,7 +429,7 @@ impl LocalBenchmarkArgs {
                     // It fills the visualizer's headline field while the detailed load-test page
                     // renders the native MetricsSummary sidecar.
                     sequencer_metrics: VisualizerSequencerMetrics { gas_per_second },
-                    validator_metrics: VisualizerValidatorMetrics { gas_per_second },
+                    validator_metrics: Some(VisualizerValidatorMetrics { gas_per_second }),
                     artifacts: if complete {
                         BTreeMap::from([(
                             "loadTestResult".to_string(),
@@ -718,6 +726,10 @@ impl AggregateBenchmarkArgs {
                 metadata.runs.len(),
             );
             let run = metadata.runs.into_iter().next().expect("validated metadata run count");
+            if run.result.validator_metrics.is_some() {
+                let path = run_output_dir.join("metrics-validator.json");
+                eyre::ensure!(path.is_file(), "run artifact is missing: {}", path.display());
+            }
             let output_name =
                 run_output_dir.file_name().and_then(|name| name.to_str()).ok_or_else(|| {
                     eyre::eyre!(
@@ -748,6 +760,9 @@ impl AggregateBenchmarkArgs {
         }
 
         let mut runs = selected.into_values().collect::<Vec<_>>();
+        if self.versioned_pages {
+            runs = Self::versioned_pages(runs)?;
+        }
         runs.sort_by(|left, right| {
             let left_time = Self::parse_created_at(left).expect("selected run was validated");
             let right_time = Self::parse_created_at(right).expect("selected run was validated");
@@ -756,13 +771,137 @@ impl AggregateBenchmarkArgs {
         Self::write_metadata_atomically(&output_dir, &VisualizerMetadata { runs })
     }
 
+    /// Re-indexes each configured benchmark cohort into stable version pages and
+    /// a `latest` alias. Sidecar artifacts remain immutable and are referenced
+    /// by both the version page and its latest alias.
+    fn versioned_pages(runs: Vec<VisualizerRun>) -> Result<Vec<VisualizerRun>> {
+        Self::versioned_pages_at(runs, Utc::now())
+    }
+
+    /// Same as [`Self::versioned_pages`], using `now` as the week-window origin.
+    fn versioned_pages_at(
+        runs: Vec<VisualizerRun>,
+        now: DateTime<Utc>,
+    ) -> Result<Vec<VisualizerRun>> {
+        let mut by_cohort = BTreeMap::<String, Vec<VisualizerRun>>::new();
+        for run in runs {
+            let cohort = run
+                .test_config
+                .get("BenchmarkRun")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| eyre::eyre!("run {} is missing string BenchmarkRun", run.id))?
+                .to_owned();
+            by_cohort.entry(cohort).or_default().push(run);
+        }
+
+        let window_start = now - chrono::TimeDelta::days(7);
+        let mut pages = Vec::new();
+        for (cohort, cohort_runs) in by_cohort {
+            let newest = cohort_runs
+                .iter()
+                .map(Self::parse_created_at)
+                .collect::<Result<Vec<_>>>()?
+                .into_iter()
+                .max()
+                .expect("non-empty cohort");
+            let latest_created_at = (newest + chrono::TimeDelta::milliseconds(1))
+                .to_rfc3339_opts(SecondsFormat::Millis, true);
+
+            for run in &cohort_runs {
+                let mut version_page = run.clone();
+                version_page.test_config.insert(
+                    "BenchmarkRun".to_owned(),
+                    serde_json::Value::String(format!(
+                        "{}--{}",
+                        cohort,
+                        Self::page_component(&version_page.result.client_version)
+                    )),
+                );
+                version_page.test_name =
+                    format!("{} - {}", run.test_name, run.result.client_version);
+                pages.push(version_page);
+            }
+
+            let mut latest_by_benchmark = BTreeMap::<String, VisualizerRun>::new();
+            for run in cohort_runs {
+                let created_at = Self::parse_created_at(&run)?;
+                if created_at < window_start {
+                    continue;
+                }
+                let identity = Self::latest_benchmark_key(&run)?;
+                let replace = latest_by_benchmark.get(&identity).is_none_or(|existing| {
+                    created_at
+                        .cmp(&Self::parse_created_at(existing).expect("selected run was validated"))
+                        .then_with(|| {
+                            run.result.client_version.cmp(&existing.result.client_version)
+                        })
+                        .is_ge()
+                });
+                if replace {
+                    latest_by_benchmark.insert(identity, run);
+                }
+            }
+
+            for run in latest_by_benchmark.into_values() {
+                let original_name = run.test_name.clone();
+                let mut latest_page = run;
+                latest_page.test_config.insert(
+                    "BenchmarkRun".to_owned(),
+                    serde_json::Value::String(format!("{cohort}--latest")),
+                );
+                // `ClientVersion` intentionally stays only in the result metadata: it would
+                // otherwise make the visualizer split this stable latest page by version.
+                latest_page.test_config.remove("ClientVersion");
+                latest_page.test_name = format!("Latest - {original_name}");
+                latest_page.created_at = latest_created_at.clone();
+                pages.push(latest_page);
+            }
+        }
+        Ok(pages)
+    }
+
+    /// Identity used to pick one latest-page run per workload cell.
+    fn latest_benchmark_key(run: &VisualizerRun) -> Result<String> {
+        let scenario = Self::config_component(run, "Scenario")?;
+        let block_time = Self::config_component(run, "BlockTimeMilliseconds")?;
+        let payload = Self::config_component(run, "TransactionPayload")?;
+        Ok(format!("{scenario}\0{block_time}\0{payload}"))
+    }
+
+    /// Reads a string or numeric `testConfig` field as a stable identity component.
+    fn config_component(run: &VisualizerRun, key: &str) -> Result<String> {
+        let value = run
+            .test_config
+            .get(key)
+            .ok_or_else(|| eyre::eyre!("run {} is missing testConfig.{key}", run.id))?;
+        if let Some(text) = value.as_str() {
+            return Ok(text.to_owned());
+        }
+        if let Some(number) = value.as_i64() {
+            return Ok(number.to_string());
+        }
+        if let Some(number) = value.as_u64() {
+            return Ok(number.to_string());
+        }
+        Err(eyre::eyre!("run {} testConfig.{key} is not a string or number", run.id))
+    }
+
+    fn page_component(value: &str) -> String {
+        value
+            .chars()
+            .map(|character| match character {
+                'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' | '.' => character,
+                _ => '-',
+            })
+            .collect()
+    }
+
     fn validate_run_artifacts(run_output_dir: &Path) -> Result<()> {
         for file in [
             "metadata.json",
             "benchmark-result.json",
             "load-test-result.json",
             "metrics-sequencer.json",
-            "metrics-validator.json",
         ] {
             let path = run_output_dir.join(file);
             eyre::ensure!(path.is_file(), "run artifact is missing: {}", path.display());
@@ -876,7 +1015,8 @@ impl SnapshotBenchmarkArgs {
                 );
                 eyre::ensure!(
                     result.blocks.len() as u64 == expected_blocks
-                        && result.validator_blocks.len() as u64 == expected_blocks,
+                        && (self.client_datadir.is_none()
+                            || result.validator_blocks.len() as u64 == expected_blocks),
                     "benchmark block metrics do not contain exactly {expected_blocks} blocks"
                 );
             }
@@ -976,23 +1116,33 @@ impl SnapshotBenchmarkArgs {
             .ok_or_else(|| eyre::eyre!("load test did not report a measurement end block"))?;
         let sequencer_metrics = sequencer_metrics.finish(measurement_end).await?;
         stack.stop_sequencer().await?;
-        let client_rpc = stack.client_rpc_url()?;
-        let validator_metrics =
-            PrometheusBlockCollector::start(client_rpc.clone(), stack.client_metrics_url()?)
-                .await?;
-        stack.start_validator().await?;
-        let validator_metrics = validator_metrics.finish(measurement_end).await?;
+        let validator = if self.client_datadir.is_some() {
+            let client_rpc = stack.client_rpc_url()?;
+            let validator_metrics =
+                PrometheusBlockCollector::start(client_rpc.clone(), stack.client_metrics_url()?)
+                    .await?;
+            stack.start_validator().await?;
+            Some((client_rpc, validator_metrics.finish(measurement_end).await?))
+        } else {
+            None
+        };
         let (blocks, validator_blocks) = tokio::try_join!(
             Self::collect_block_metrics(&builder_rpc, &summary, &sequencer_metrics),
-            Self::collect_block_metrics(&client_rpc, &summary, &validator_metrics),
+            async {
+                match &validator {
+                    Some((client_rpc, metrics)) => {
+                        Self::collect_block_metrics(client_rpc, &summary, metrics).await
+                    }
+                    None => Ok(Vec::new()),
+                }
+            },
         )?;
         eyre::ensure!(
-            blocks.len() == validator_blocks.len()
-                && blocks
-                    .iter()
-                    .zip(&validator_blocks)
-                    .all(|(builder, validator)| builder.number == validator.number
-                        && builder.hash == validator.hash),
+            validator.is_none()
+                || (blocks.len() == validator_blocks.len()
+                    && blocks.iter().zip(&validator_blocks).all(|(builder, validator)| {
+                        builder.number == validator.number && builder.hash == validator.hash
+                    })),
             "follow client does not match the builder over the measured block window"
         );
 
@@ -1002,7 +1152,7 @@ impl SnapshotBenchmarkArgs {
             boundary_number: stack.boundary().head.number,
             boundary_hash: stack.boundary().head.hash,
             builder_rpc_url: builder_rpc.to_string(),
-            client_rpc_url: client_rpc.to_string(),
+            client_rpc_url: validator.map(|(client_rpc, _)| client_rpc.to_string()),
             funder_address,
             load_test: summary,
             blocks,
@@ -1122,6 +1272,7 @@ mod tests {
 
     use alloy_primitives::Address;
     use base_load_tests::MetricsSummary;
+    use chrono::{DateTime, SecondsFormat, Utc};
     use clap::Parser;
 
     use super::{
@@ -1196,6 +1347,27 @@ mod tests {
     }
 
     #[test]
+    fn parses_builder_only_snapshot_benchmark() {
+        let cli = BenchmarkCli::parse_from([
+            "base-bench",
+            "snapshot",
+            "--builder-datadir",
+            "/snapshot/builder",
+            "--load-test-config",
+            "load.yaml",
+            "--output-dir",
+            "results/case-a",
+            "--scenario",
+            "example-scenario",
+        ]);
+
+        let Some(BenchmarkCommand::Snapshot(args)) = cli.command else {
+            panic!("expected snapshot benchmark command");
+        };
+        assert!(args.client_datadir.is_none());
+    }
+
+    #[test]
     fn reset_output_dir_removes_stale_artifacts() {
         let output = tempfile::tempdir().unwrap();
         let stale = output.path().join("metadata.json");
@@ -1206,11 +1378,40 @@ mod tests {
         assert!(output.path().is_dir());
         assert!(!stale.exists());
     }
+    fn rfc3339(ts: DateTime<Utc>) -> String {
+        ts.to_rfc3339_opts(SecondsFormat::Millis, true)
+    }
+
+    fn latest_page_runs(runs: &[serde_json::Value]) -> Vec<&serde_json::Value> {
+        runs.iter()
+            .filter(|run| run["testConfig"]["BenchmarkRun"] == "sepolia-transfer-100mgas--latest")
+            .collect()
+    }
 
     fn write_aggregate_run(
         root: &std::path::Path,
         id: &str,
         scenario: &str,
+        client_version: &str,
+        created_at: &str,
+    ) -> std::path::PathBuf {
+        write_aggregate_run_detailed(
+            root,
+            id,
+            scenario,
+            "transfer",
+            200,
+            client_version,
+            created_at,
+        )
+    }
+
+    fn write_aggregate_run_detailed(
+        root: &std::path::Path,
+        id: &str,
+        scenario: &str,
+        transaction_payload: &str,
+        block_time_milliseconds: u64,
         client_version: &str,
         created_at: &str,
     ) -> std::path::PathBuf {
@@ -1235,10 +1436,10 @@ mod tests {
                     "BenchmarkRun": "sepolia-transfer-100mgas",
                     "Scenario": scenario,
                     "ChainId": 84532,
-                    "BlockTimeMilliseconds": 200,
+                    "BlockTimeMilliseconds": block_time_milliseconds,
                     "GasLimit": 400000000,
                     "NodeType": "base-reth-node",
-                    "TransactionPayload": "transfer",
+                    "TransactionPayload": transaction_payload,
                     "ClientVersion": client_version
                 },
                 "result": {
@@ -1521,6 +1722,7 @@ real_token_setup:
         AggregateBenchmarkArgs {
             output_dir: root.path().to_path_buf(),
             run_output_dirs: vec![early, latest, distinct_scenario, distinct_version],
+            versioned_pages: false,
         }
         .run()
         .unwrap();
@@ -1542,6 +1744,146 @@ real_token_setup:
     }
 
     #[test]
+    fn aggregate_requires_validator_metrics_only_for_validator_runs() {
+        let root = tempfile::tempdir().unwrap();
+        let run = write_aggregate_run(
+            root.path(),
+            "builder-only",
+            "transfer-100mgas-200ms",
+            "base/a",
+            "2026-09-03T00:00:00.000Z",
+        );
+        fs::remove_file(run.join("metrics-validator.json")).unwrap();
+        let aggregate = || {
+            AggregateBenchmarkArgs {
+                output_dir: root.path().to_path_buf(),
+                run_output_dirs: vec![run.clone()],
+                versioned_pages: false,
+            }
+            .run()
+        };
+        let error = aggregate().unwrap_err();
+        assert!(error.to_string().contains("run artifact is missing"));
+
+        let mut metadata: serde_json::Value =
+            serde_json::from_slice(&fs::read(run.join("metadata.json")).unwrap()).unwrap();
+        metadata["runs"][0]["result"].as_object_mut().unwrap().remove("validatorMetrics");
+        fs::write(run.join("metadata.json"), serde_json::to_vec(&metadata).unwrap()).unwrap();
+
+        aggregate().unwrap();
+    }
+
+    #[test]
+    fn aggregate_versioned_pages_preserve_history_and_add_latest_alias() {
+        let root = tempfile::tempdir().unwrap();
+        let now = Utc::now();
+        let old = write_aggregate_run(
+            root.path(),
+            "old",
+            "transfer-2s",
+            "base/old",
+            &rfc3339(now - chrono::TimeDelta::hours(2)),
+        );
+        let newest_200ms = write_aggregate_run(
+            root.path(),
+            "new-200ms",
+            "transfer-200ms",
+            "base/new",
+            &rfc3339(now - chrono::TimeDelta::hours(1)),
+        );
+        let newest_2s =
+            write_aggregate_run(root.path(), "new-2s", "transfer-2s", "base/new", &rfc3339(now));
+
+        AggregateBenchmarkArgs {
+            output_dir: root.path().to_path_buf(),
+            run_output_dirs: vec![old, newest_200ms, newest_2s],
+            versioned_pages: true,
+        }
+        .run()
+        .unwrap();
+
+        let metadata: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(root.path().join("metadata.json")).unwrap())
+                .unwrap();
+        let runs = metadata["runs"].as_array().unwrap();
+        assert_eq!(runs.len(), 5);
+        let latest = latest_page_runs(runs);
+        assert_eq!(latest.len(), 2);
+        assert!(latest.iter().all(|run| {
+            run["testName"] == "Latest - Base Sepolia snapshot throughput"
+                && run["createdAt"] == rfc3339(now + chrono::TimeDelta::milliseconds(1))
+                && run["result"]["clientVersion"] == "base/new"
+                && run["testConfig"].get("ClientVersion").is_none()
+        }));
+        assert!(runs.iter().any(|run| {
+            run["testConfig"]["BenchmarkRun"] == "sepolia-transfer-100mgas--base-old"
+                && run["testName"] == "Base Sepolia snapshot throughput - base/old"
+        }));
+    }
+
+    #[test]
+    fn aggregate_versioned_pages_latest_uses_week_window_per_benchmark() {
+        let root = tempfile::tempdir().unwrap();
+        let now = Utc::now();
+        let stale_eth = write_aggregate_run_detailed(
+            root.path(),
+            "stale-eth",
+            "unlimited",
+            "eth-transfer-existing",
+            2000,
+            "base/old",
+            &rfc3339(now - chrono::TimeDelta::days(8)),
+        );
+        let fresh_eth = write_aggregate_run_detailed(
+            root.path(),
+            "fresh-eth",
+            "unlimited",
+            "eth-transfer-existing",
+            2000,
+            "base/new",
+            &rfc3339(now),
+        );
+        let week_b20 = write_aggregate_run_detailed(
+            root.path(),
+            "week-b20",
+            "unlimited",
+            "b20-transfer-existing",
+            2000,
+            "base/old",
+            &rfc3339(now - chrono::TimeDelta::days(2)),
+        );
+
+        AggregateBenchmarkArgs {
+            output_dir: root.path().to_path_buf(),
+            run_output_dirs: vec![stale_eth, fresh_eth, week_b20],
+            versioned_pages: true,
+        }
+        .run()
+        .unwrap();
+
+        let metadata: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(root.path().join("metadata.json")).unwrap())
+                .unwrap();
+        let runs = metadata["runs"].as_array().unwrap();
+        assert_eq!(runs.len(), 5);
+        let latest = latest_page_runs(runs);
+        assert_eq!(latest.len(), 2);
+        assert!(latest.iter().any(|run| {
+            run["id"] == "fresh-eth" && run["result"]["clientVersion"] == "base/new"
+        }));
+        assert!(latest.iter().any(|run| {
+            run["id"] == "week-b20" && run["result"]["clientVersion"] == "base/old"
+        }));
+        assert!(latest.iter().all(|run| run["id"] != "stale-eth"));
+        assert!(latest.iter().all(|run| run["testConfig"].get("ClientVersion").is_none()));
+        assert!(
+            latest.iter().all(|run| {
+                run["createdAt"] == rfc3339(now + chrono::TimeDelta::milliseconds(1))
+            })
+        );
+    }
+
+    #[test]
     fn aggregate_rejects_invalid_artifacts_without_replacing_metadata() {
         let root = tempfile::tempdir().unwrap();
         let prior = b"{\n  \"runs\": [\n    {\"id\": \"preserved\"}\n  ]\n}\n";
@@ -1553,6 +1895,7 @@ real_token_setup:
         let error = AggregateBenchmarkArgs {
             output_dir: root.path().to_path_buf(),
             run_output_dirs: vec![invalid],
+            versioned_pages: false,
         }
         .run()
         .unwrap_err();

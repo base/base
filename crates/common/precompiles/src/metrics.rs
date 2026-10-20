@@ -608,11 +608,6 @@ where
         Self { observer, timer: PrecompileCallTimer::start(), call, error: None }
     }
 
-    /// Updates the current call metadata.
-    pub fn set_call(&mut self, call: PrecompileCallMetric) {
-        self.call = call;
-    }
-
     /// Returns the current call metadata.
     pub const fn call(&self) -> &PrecompileCallMetric {
         &self.call

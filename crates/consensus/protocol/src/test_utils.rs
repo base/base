@@ -2,7 +2,7 @@
 
 use alloc::{boxed::Box, format, string::String, sync::Arc, vec::Vec};
 
-use alloy_primitives::hex;
+use alloy_primitives::{B256, hex};
 use async_trait::async_trait;
 use base_common_consensus::BaseBlock;
 use spin::Mutex;
@@ -51,13 +51,6 @@ pub struct TestBatchValidator {
     pub base_blocks: Vec<BaseBlock>,
 }
 
-impl TestBatchValidator {
-    /// Creates a new [`TestBatchValidator`] with the given origin and batches.
-    pub const fn new(blocks: Vec<L2BlockInfo>, base_blocks: Vec<BaseBlock>) -> Self {
-        Self { blocks, short_circuit: false, base_blocks }
-    }
-}
-
 #[async_trait]
 impl BatchValidationProvider for TestBatchValidator {
     type Error = TestBatchValidatorError;
@@ -73,6 +66,14 @@ impl BatchValidationProvider for TestBatchValidator {
         self.blocks
             .iter()
             .find(|b| b.block_info.number == number)
+            .copied()
+            .ok_or_else(|| TestBatchValidatorError::BlockNotFound)
+    }
+
+    async fn l2_block_info_by_hash(&mut self, hash: B256) -> Result<L2BlockInfo, Self::Error> {
+        self.blocks
+            .iter()
+            .find(|b| b.block_info.hash == hash)
             .copied()
             .ok_or_else(|| TestBatchValidatorError::BlockNotFound)
     }

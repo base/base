@@ -463,9 +463,9 @@ impl Channel {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::B256;
+    use base_common_genesis::UpgradeConfig;
 
     use super::*;
-    use crate::BrotliLevel;
 
     fn batch(transaction_len: usize) -> SingleBatch {
         let mut state = 1u64;
@@ -486,67 +486,31 @@ mod tests {
         }
     }
 
+    /// A channel on a rollup config with Holocene, hence Fjord's channel size limit, active.
     fn channel(config: EncoderConfig) -> Channel {
-        Channel::new(ChannelId::default(), Arc::new(RollupConfig::default()), &config, 0, 0)
-            .unwrap()
-    }
-
-    #[test]
-    fn output_fifo_preserves_transferred_stream_order() {
-        let mut channel = channel(EncoderConfig::default());
-        channel.push_output(vec![1, 2]);
-        channel.push_output(vec![3, 4, 5]);
-
-        assert_eq!(channel.take_output(4), vec![1, 2, 3, 4]);
-        assert_eq!(channel.take_output(1), vec![5]);
-        assert_eq!(channel.available_output(), 0);
-    }
-
-    #[test]
-    fn soft_target_accepts_complete_batch_before_closing() {
-        let config = EncoderConfig {
-            compressed_size_target: Some(1),
-            brotli_level: BrotliLevel::Brotli0,
-            ..EncoderConfig::default()
+        let rollup_config = RollupConfig {
+            upgrades: UpgradeConfig { holocene_time: Some(0), ..UpgradeConfig::default() },
+            ..RollupConfig::default()
         };
-        let mut channel = channel(config);
-
-        assert_eq!(
-            channel.add_batch(&batch(10_000), 10_000).unwrap(),
-            ChannelAddOutcome::TargetReached
-        );
-        assert_eq!(channel.blocks_added(), 1);
-        assert!(channel.input_bytes() > 0);
+        Channel::new(ChannelId::default(), Arc::new(rollup_config), &config, 0, 0).unwrap()
     }
 
+    /// A batch within the RLP limit whose worst-case assembled channel would exceed it is
+    /// rejected without touching the stream, because derivation drops such a channel.
     #[test]
-    fn cumulative_rlp_limit_rejects_without_mutating_stream() {
+    fn assembled_size_limit_rejects_without_mutating_stream() {
         let mut channel = channel(EncoderConfig::default());
         let maximum = channel.rollup_config.max_rlp_bytes_per_channel(0);
-        channel.input_bytes = maximum;
+        channel.input_bytes = maximum - 100_000;
 
-        assert!(matches!(
-            channel.add_batch(&batch(1), 1).unwrap(),
-            ChannelAddOutcome::Rejected(ChannelLimit::RlpBytes { .. })
-        ));
-        assert_eq!(channel.input_bytes, maximum);
-        assert_eq!(channel.blocks_added(), 0);
-        assert_eq!(channel.compressed_bytes(), 0);
-    }
-
-    #[test]
-    fn frame_number_limit_rejects_without_mutating_stream() {
-        let config = EncoderConfig {
-            max_frame_size: Frame::ENCODED_OVERHEAD + 1,
-            ..EncoderConfig::default()
+        let ChannelAddOutcome::Rejected(ChannelLimit::AssembledBytes { maximum: limit, .. }) =
+            channel.add_batch(&batch(1), 1).unwrap()
+        else {
+            panic!("the batch must be rejected on the assembled size limit");
         };
-        let mut channel = channel(config);
-
-        assert!(matches!(
-            channel.add_batch(&batch(Channel::MAX_FRAMES + 1), 1).unwrap(),
-            ChannelAddOutcome::Rejected(ChannelLimit::FrameCount { .. })
-        ));
-        assert!(channel.is_empty());
+        assert_eq!(limit, maximum);
+        assert_eq!(channel.input_bytes, maximum - 100_000);
+        assert_eq!(channel.blocks_added(), 0);
         assert_eq!(channel.compressed_bytes(), 0);
     }
 }

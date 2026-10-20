@@ -32,19 +32,6 @@ where
     derivation_origin: watch::Receiver<Option<BlockInfo>>,
 }
 
-impl<L1Provider> Clone for L1WatcherQueryExecutor<L1Provider>
-where
-    L1Provider: L1BlockFetcher,
-{
-    fn clone(&self) -> Self {
-        Self {
-            rollup_config: Arc::clone(&self.rollup_config),
-            l1_provider: Arc::clone(&self.l1_provider),
-            derivation_origin: self.derivation_origin.clone(),
-        }
-    }
-}
-
 impl<L1Provider> L1WatcherQueryExecutor<L1Provider>
 where
     L1Provider: L1BlockFetcher,
@@ -215,16 +202,9 @@ where
 
     async fn start(self, _: Self::StartData) -> Result<(), Self::Error> {
         let cancellation = self.cancellation.clone();
-        let executor = self.executor.clone();
-        let query_processing = ReceiverStream::new(self.inbound_queries).for_each_concurrent(
-            self.query_concurrency,
-            move |query| {
-                let executor = executor.clone();
-                async move {
-                    executor.execute(query).await;
-                }
-            },
-        );
+        let executor = self.executor;
+        let query_processing = ReceiverStream::new(self.inbound_queries)
+            .for_each_concurrent(self.query_concurrency, |query| executor.execute(query));
 
         tokio::pin!(query_processing);
 

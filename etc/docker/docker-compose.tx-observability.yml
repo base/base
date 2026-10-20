@@ -12,35 +12,6 @@ x-overlay-healthcheck: &overlay-healthcheck
   start_interval: 250ms
 
 services:
-  minio:
-    image: minio/minio:latest
-    container_name: minio
-    ports:
-      - "${MINIO_API_PORT}:9000"
-      - "${MINIO_CONSOLE_PORT}:9001"
-    environment:
-      - MINIO_ROOT_USER=minioadmin
-      - MINIO_ROOT_PASSWORD=minioadmin
-    command: server /data --console-address ":9001"
-    healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
-      <<: *overlay-healthcheck
-      start_period: 5s
-    restart: unless-stopped
-
-  minio-init:
-    image: minio/mc:latest
-    container_name: minio-init
-    depends_on:
-      minio:
-        condition: service_healthy
-    entrypoint: >
-      /bin/sh -c "
-      mc alias set local http://minio:9000 minioadmin minioadmin &&
-      mc mb --ignore-existing local/tips &&
-      echo 'Bucket tips created'
-      "
-
   proxyd:
     build:
       context: .
@@ -76,8 +47,6 @@ services:
       target: audit-archiver
     container_name: audit-archiver
     depends_on:
-      minio-init:
-        condition: service_completed_successfully
       transaction-events-postgres:
         condition: service_healthy
       audit-archiver-migrate:
@@ -89,12 +58,6 @@ services:
       - TIPS_AUDIT_METRICS_ADDR=0.0.0.0
       - TIPS_AUDIT_METRICS_PORT=${AUDIT_METRICS_PORT}
       - TIPS_AUDIT_RPC_PORT=${AUDIT_RPC_PORT}
-      - TIPS_AUDIT_S3_BUCKET=tips
-      - TIPS_AUDIT_S3_CONFIG_TYPE=manual
-      - TIPS_AUDIT_S3_ENDPOINT=http://minio:9000
-      - TIPS_AUDIT_S3_REGION=us-east-1
-      - TIPS_AUDIT_S3_ACCESS_KEY_ID=minioadmin
-      - TIPS_AUDIT_S3_SECRET_ACCESS_KEY=minioadmin
       - TIPS_AUDIT_POSTGRES_URL=postgres://audit_archiver:audit_archiver@transaction-events-postgres:5432/transaction_events?sslmode=disable
     networks:
       default:

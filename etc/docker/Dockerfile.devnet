@@ -25,7 +25,7 @@ RUN go build -o /go/bin/eth2-val-tools .
 # Pin the source revision so setup image builds are reproducible.
 FROM public.ecr.aws/docker/library/golang:1.26-alpine AS base-devnet-builder
 RUN apk add --no-cache git ca-certificates
-ADD https://github.com/base/optimism.git#0066b17c3fe0cbb5ea935de6d5b18d4fc86dc439 /op-deployer
+ADD https://github.com/base/optimism.git#896142b334ea20220aa552e9478e5ec406716911 /op-deployer
 WORKDIR /op-deployer
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \

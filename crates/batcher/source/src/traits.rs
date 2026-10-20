@@ -3,7 +3,7 @@
 use async_trait::async_trait;
 use base_protocol::BlockInfo;
 
-use crate::{L2BlockEvent, SourceError};
+use crate::L2BlockEvent;
 
 /// A source of unsafe L2 blocks, streaming events as they arrive.
 ///
@@ -13,8 +13,10 @@ use crate::{L2BlockEvent, SourceError};
 pub trait UnsafeBlockSource: Send {
     /// Wait for the next L2 block event.
     ///
-    /// Blocks (asynchronously) until a new block or reorg is available.
-    async fn next(&mut self) -> Result<L2BlockEvent, SourceError>;
+    /// Blocks (asynchronously) until a new block or reorg is available, and never resolves
+    /// once nothing more will arrive. Implementations retry transient provider failures
+    /// internally.
+    async fn next(&mut self) -> L2BlockEvent;
 
     /// Reset the source to begin sequential catchup above `safe_head`.
     ///
@@ -24,6 +26,6 @@ pub trait UnsafeBlockSource: Send {
     /// continue delivering subsequent blocks in order.
     ///
     /// The default implementation is a no-op, suitable for sources that do not
-    /// support positional reset (e.g. in-memory test sources).
+    /// support positional reset (e.g. channel-backed test sources).
     fn reset_catchup(&mut self, _safe_head: BlockInfo) {}
 }

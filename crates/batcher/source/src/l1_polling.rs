@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use crate::SourceError;
 
 /// A provider that can return the current L1 head block number by polling.
+#[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait L1HeadPolling: Send + Sync {
     /// Fetch the current L1 head block number.

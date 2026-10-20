@@ -596,7 +596,7 @@ fn gen_load_impl(fields: &[(&Ident, &Type)], packing: &Ident) -> TokenStream {
         let loc_const = PackingConstants::new(name).location();
 
         let (prev_slot_ref, _) =
-            packing::get_neighbor_slot_refs(idx, fields, packing, |(name, _)| name, false);
+            packing::get_neighbor_slot_refs(idx, fields, packing, |(name, _)| name);
 
         let slot_addr = quote! { base_slot + ::alloy_primitives::U256::from(#packing::#loc_const.offset_slots) };
         let packed_ctx = quote! { ::base_precompile_storage::LayoutCtx::packed(#packing::#loc_const.offset_bytes) };
@@ -647,7 +647,7 @@ fn gen_store_impl(fields: &[(&Ident, &Type)], packing: &Ident) -> TokenStream {
         let next_ty = fields.get(idx + 1).map(|(_, ty)| *ty);
 
         let (prev_slot_ref, next_slot_ref) =
-            packing::get_neighbor_slot_refs(idx, fields, packing, |(name, _)| name, false);
+            packing::get_neighbor_slot_refs(idx, fields, packing, |(name, _)| name);
 
         let slot_addr = quote! { base_slot + ::alloy_primitives::U256::from(#packing::#loc_const.offset_slots) };
         let packed_ctx = quote! { ::base_precompile_storage::LayoutCtx::packed(#packing::#loc_const.offset_bytes) };

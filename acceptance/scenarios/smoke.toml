@@ -1,0 +1,25 @@
+schema_version = 1
+id = "smoke"
+description = "Basic production and validator agreement"
+timeout = "6m"
+
+[[checks]]
+id = "chain-identity"
+kind = "chain_id"
+endpoint = "builder"
+expected = 84538453
+timeout = "10s"
+
+[[checks]]
+id = "production"
+kind = "head_progress"
+endpoint = "builder"
+minimum_blocks = 3
+timeout = "30s"
+
+[[checks]]
+id = "validator-converges"
+kind = "heads_converge"
+endpoints = ["builder", "validator"]
+max_lag_blocks = 5
+timeout = "60s"

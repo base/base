@@ -28,7 +28,7 @@ curl -fsSL https://raw.githubusercontent.com/base/base/main/baseup/install | bas
 
 ## Run a Node
 
-This repository now hosts the public Base node previously published from [`base/node`](https://github.com/base/node). Root `docker-compose.yml` pulls `ghcr.io/base/node`. Pass `--build` to compile this tree. `just devnet up` is the local developer stack.
+This repository now hosts the public Base node previously published from [`base/node`](https://github.com/base/node). Root `docker-compose.yml` pulls `ghcr.io/base/node`. Pass `--build` to compile this tree. For local development, see [Run a Local Devnet](#run-a-local-devnet).
 
 1. Set `BASE_NODE_L1_ETH_RPC` and `BASE_NODE_L1_BEACON` in `.env.mainnet` or `.env.sepolia`.
 2. Start the node:
@@ -45,6 +45,15 @@ NODE_TAG=v1.3.0 docker compose up
 ```
 
 See the [docs](https://docs.base.org/base-chain/node-operators/run-a-base-node) for hardware requirements, snapshots, Flashblocks, and historical proofs.
+
+## Run a Local Devnet
+
+| Devnet | Use it for | Start |
+| --- | --- | --- |
+| Docker devnet | A fresh L1 and L2 stack: sequencing, derivation, batching, hardfork activation | `just devnet up-single` |
+| Snapshot devnet | Real Base Mainnet state and contracts, acting as any account, 200ms blocks; no L1 | `just devnet snapshot download --dir <dir>`, then `just devnet snapshot run --dir <dir>` |
+
+Start with the [Run a Local Devnet](https://docs.base.org/build-on-base/run-a-local-devnet) guide. [docs/guides/DEVNET.md](docs/guides/DEVNET.md) covers every local environment in this repository.
 
 ## Base Anvil Package
 

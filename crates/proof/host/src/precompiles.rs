@@ -21,22 +21,20 @@ const ACCELERATED_PRECOMPILES: &[Precompile] = &[
 
 /// Executes an accelerated precompile on [revm].
 pub fn execute<T: Into<Bytes>>(address: Address, input: T, gas: u64) -> Result<Vec<u8>> {
-    if let Some(precompile) =
-        ACCELERATED_PRECOMPILES.iter().find(|precompile| *precompile.address() == address)
-    {
-        let input = input.into();
-        let output = precompile
-            .execute(&input, gas, 0)
-            .map_err(|e| HostError::PrecompileExecutionFailed(e.to_string()))?;
-        if output.is_success() {
-            Ok(output.bytes.into())
-        } else {
-            Err(HostError::PrecompileExecutionFailed(format!(
-                "precompile returned non-success status: {:?}",
-                output.status
-            )))
-        }
+    let precompile = ACCELERATED_PRECOMPILES
+        .iter()
+        .find(|precompile| *precompile.address() == address)
+        .ok_or(HostError::PrecompileNotAccelerated)?;
+    let input = input.into();
+    let output = precompile
+        .execute(&input, gas, 0)
+        .map_err(|e| HostError::PrecompileExecutionFailed(e.to_string()))?;
+    if output.is_success() {
+        Ok(output.bytes.into())
     } else {
-        Err(HostError::PrecompileNotAccelerated)
+        Err(HostError::PrecompileExecutionFailed(format!(
+            "precompile returned non-success status: {:?}",
+            output.status
+        )))
     }
 }

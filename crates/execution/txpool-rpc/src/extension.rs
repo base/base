@@ -1,7 +1,8 @@
 //! `TxPool` RPC extension for registering transaction pool management APIs.
 
+use base_execution_rpc::SequencerClient;
 pub use base_execution_txpool::{
-    DEFAULT_MAX_VALIDITY_EXPIRY_SECS, DEFAULT_MAX_VALIDITY_PREDICATES,
+    DEFAULT_MAX_VALIDITY_EXPIRY_SECS, DEFAULT_MAX_VALIDITY_PREDICATES, ValiditySignatureMode,
 };
 use base_node_runner::{BaseNodeExtension, BaseRpcContext, FromExtensionConfig, NodeHooks};
 use reth_rpc_server_types::RethRpcModule;
@@ -46,12 +47,18 @@ impl BaseNodeExtension for TxPoolRpcExtension {
 }
 
 /// Configuration for local validity-bearing transaction ingress.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct SendRawTransactionValidityConfig {
     /// Maximum number of validity predicates accepted per transaction.
     pub max_validity_predicates: usize,
     /// Maximum validity-transaction lifetime, in seconds.
     pub max_validity_expiry_secs: u64,
+    /// Staged sender-signature policy for validity predicates (default: off).
+    pub validity_signature_mode: ValiditySignatureMode,
+    /// Upstream sequencer RPC for query nodes that proxy rather than build transactions.
+    pub sequencer_url: Option<String>,
+    /// HTTP headers sent to the upstream sequencer, in `name=value` form.
+    pub sequencer_headers: Vec<String>,
 }
 
 impl Default for SendRawTransactionValidityConfig {
@@ -59,6 +66,9 @@ impl Default for SendRawTransactionValidityConfig {
         Self {
             max_validity_predicates: DEFAULT_MAX_VALIDITY_PREDICATES,
             max_validity_expiry_secs: DEFAULT_MAX_VALIDITY_EXPIRY_SECS,
+            validity_signature_mode: ValiditySignatureMode::Off,
+            sequencer_url: None,
+            sequencer_headers: Vec::new(),
         }
     }
 }
@@ -74,12 +84,19 @@ impl BaseNodeExtension for SendRawTransactionValidityExtension {
         let config = self.config;
         builder.add_rpc_module(move |ctx: &mut BaseRpcContext<'_>| {
             let transaction_sender = ctx.registry.eth_api().eth_api().tx_batch_sender().clone();
-            let api = SendRawTransactionValidityApiImpl::with_validity_limits(
+            let mut api = SendRawTransactionValidityApiImpl::with_validity_limits(
                 ctx.provider().clone(),
                 config.max_validity_predicates,
                 config.max_validity_expiry_secs,
                 transaction_sender,
-            );
+            )
+            .with_validity_signature_mode(config.validity_signature_mode);
+            if let Some(url) = &config.sequencer_url {
+                api = api.with_sequencer_client(SequencerClient::new_http_with_headers(
+                    url,
+                    config.sequencer_headers.clone(),
+                )?);
+            }
             ctx.modules.merge_configured(api.into_rpc())?;
             Ok(())
         })

@@ -6,7 +6,7 @@
 use async_trait::async_trait;
 use jsonrpsee::{
     PendingSubscriptionSink, SubscriptionSink,
-    core::{RpcResult, SubscriptionResult, to_json_raw_value},
+    core::{RpcResult, SubscriptionError, SubscriptionResult, to_json_raw_value},
     types::ErrorCode,
 };
 use tracing::warn;
@@ -29,22 +29,22 @@ impl<EngineRpcClient_: EngineRpcClient> DevEngineRpc<EngineRpcClient_> {
     /// Gets an engine queue length watcher for subscriptions.
     async fn engine_queue_length_watcher(
         &self,
-    ) -> Result<tokio::sync::watch::Receiver<usize>, jsonrpsee::core::SubscriptionError> {
-        self.engine_client.dev_subscribe_to_engine_queue_length().await.map_err(|_| jsonrpsee::core::SubscriptionError::from("Internal error. Failed to receive engine task receiver query. The engine query handler is likely closed."))
+    ) -> Result<tokio::sync::watch::Receiver<usize>, SubscriptionError> {
+        self.engine_client.dev_subscribe_to_engine_queue_length().await.map_err(|_| SubscriptionError::from("Internal error. Failed to receive engine task receiver query. The engine query handler is likely closed."))
     }
 
     async fn send_queue_length_update(
         sink: &SubscriptionSink,
         queue_length: &usize,
-    ) -> Result<(), jsonrpsee::core::SubscriptionError> {
+    ) -> Result<(), SubscriptionError> {
         sink.send(to_json_raw_value(queue_length).map_err(|_| {
-            jsonrpsee::core::SubscriptionError::from(
+            SubscriptionError::from(
                 "Internal error. Impossible to convert engine queue length to json",
             )
         })?)
         .await
         .map_err(|_| {
-            jsonrpsee::core::SubscriptionError::from(
+            SubscriptionError::from(
                 "Failed to send engine queue length update. Subscription likely dropped.",
             )
         })

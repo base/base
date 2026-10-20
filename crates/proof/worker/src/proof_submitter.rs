@@ -314,16 +314,17 @@ where
 #[cfg(test)]
 mod tests {
     use std::{
+        num::NonZeroU64,
         sync::{Arc, Mutex},
         time::Duration,
     };
 
     use async_trait::async_trait;
     use base_prover_service_protocol::{
-        GetNextProofRequest, GetNextProofResponse, GetProofSessionRequest, GetProofSessionResponse,
-        ProofJob, ProofJobStatus, ProofRequest, ProofRequestKind, ProofResult,
-        RecordProofSessionRequest, RecordProofSessionResponse, ZkBackend, ZkProofRequest,
-        ZkProofResult, ZkVm,
+        AbandonProofRequest, AbandonProofResponse, GetNextProofRequest, GetNextProofResponse,
+        GetProofSessionRequest, GetProofSessionResponse, ProofJob, ProofJobStatus, ProofRequest,
+        ProofRequestKind, ProofResult, RecordProofSessionRequest, RecordProofSessionResponse,
+        ZkBackend, ZkProofRequest, ZkProofResult, ZkVm,
     };
     use chrono::Utc;
     use tokio::{sync::Notify, time::timeout};
@@ -380,6 +381,13 @@ mod tests {
             _request: HeartbeatRequest,
         ) -> Result<HeartbeatResponse, ProverServiceClientError> {
             panic!("heartbeat is not used by proof submitter tests")
+        }
+
+        async fn abandon_proof(
+            &self,
+            _request: AbandonProofRequest,
+        ) -> Result<AbandonProofResponse, ProverServiceClientError> {
+            panic!("abandon_proof is not used by proof submitter tests")
         }
 
         async fn submit_proof(
@@ -446,8 +454,8 @@ mod tests {
                     number_of_blocks_to_prove: 1,
                     sequence_window: None,
                     l1_head: None,
-                    intermediate_root_interval: None,
                     schedule_l2_block_number: None,
+                    intermediate_block_interval: NonZeroU64::MIN,
                     zk_vm: ZkVm::Sp1,
                     zk_backend: ZkBackend::Cluster,
                 }),

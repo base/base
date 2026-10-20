@@ -24,7 +24,7 @@ use super::{
     payload::{BasePayloadBuilder, BuilderOutputs},
 };
 use crate::{
-    BuilderConfig, RejectedTxForwarder,
+    BuilderConfig,
     traits::{NodeBounds, PoolBounds},
 };
 
@@ -54,17 +54,6 @@ impl FlashblocksServiceBuilder {
     {
         let (built_payload_tx, built_payload_rx) = tokio::sync::mpsc::channel(16);
 
-        let rejected_tx_sender = if let Some(ref url) = self.config.audit_archiver_url {
-            let (tx, rx) = tokio::sync::mpsc::channel(self.config.rejected_tx_channel_size);
-            let forwarder = RejectedTxForwarder::new(url, rx)
-                .map_err(|e| eyre::eyre!("Failed to create rejected tx forwarder: {e}"))?;
-            ctx.task_executor().spawn_task(Box::pin(forwarder.run()));
-            info!(audit_archiver_url = %url, "Rejected transaction forwarder started");
-            Some(tx)
-        } else {
-            None
-        };
-
         let ws_pub: Arc<WebSocketPublisher> =
             WebSocketPublisher::new(self.config.flashblocks_ws_addr)?.into();
         let payload_builder = BasePayloadBuilder::new(
@@ -72,7 +61,7 @@ impl FlashblocksServiceBuilder {
             pool,
             ctx.provider().clone(),
             self.config.clone(),
-            BuilderOutputs { payload_tx: built_payload_tx, ws_pub, rejected_tx_sender },
+            BuilderOutputs { payload_tx: built_payload_tx, ws_pub },
         );
         let payload_generator = BlockPayloadJobGenerator::with_builder(
             ctx.provider().clone(),

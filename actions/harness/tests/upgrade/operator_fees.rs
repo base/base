@@ -374,7 +374,7 @@ async fn isthmus_derivation_crosses_operator_fee_boundary() {
 
     let mut isthmus_block_hash = Default::default();
     let mut block4_hash = Default::default();
-    let mut batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
+    let batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
     for i in 1..=4u64 {
         // All blocks carry user transactions — Isthmus allows user txs at transition.
         let block = builder.build_next_block_with_single_transaction().await;
@@ -465,7 +465,7 @@ async fn jovian_non_empty_transition_batch_generates_deposit_only_block() {
     // Block 3 (ts=6) is the first Jovian block. The batch validator will drop the
     // non-empty batch for that slot with NonEmptyTransitionBlock.
     let mut jovian_block_hash = Default::default();
-    let mut batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
+    let batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
     for i in 1u64..=3 {
         let block = builder.build_next_block_with_single_transaction().await;
         if i == 3 {
@@ -627,7 +627,7 @@ async fn operator_fee_config_update_propagates_to_l1_info() {
         for block in epoch0_blocks {
             source.push(block);
         }
-        let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
+        let batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
         batcher.advance(&mut h.l1).await; // L1 block 2, ts=24
     }
 
@@ -635,7 +635,7 @@ async fn operator_fee_config_update_propagates_to_l1_info() {
     {
         let mut source = ActionL2Source::new();
         source.push(block6);
-        let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
+        let batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
         batcher.advance(&mut h.l1).await; // L1 block 3, ts=36
     }
 

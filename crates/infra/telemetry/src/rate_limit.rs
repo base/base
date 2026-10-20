@@ -18,10 +18,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use base_trusted_proxy::TrustedProxyConfig;
-use governor::{
-    DefaultKeyedRateLimiter, Quota, RateLimiter,
-    clock::{Clock, DefaultClock},
-};
+use governor::{DefaultKeyedRateLimiter, Quota, RateLimiter, clock::Clock};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::debug;
@@ -67,7 +64,6 @@ impl IntoResponse for RateLimitExceeded {
 /// GCRA rate limiter keyed by client IP, applied as Axum middleware.
 pub struct IpRateLimiter {
     limiter: DefaultKeyedRateLimiter<IpAddr>,
-    clock: DefaultClock,
 }
 
 impl fmt::Debug for IpRateLimiter {
@@ -79,9 +75,7 @@ impl fmt::Debug for IpRateLimiter {
 impl IpRateLimiter {
     /// Creates a limiter allowing `per_minute` requests per key.
     pub fn per_minute(per_minute: NonZeroU32) -> Self {
-        let clock = DefaultClock::default();
-        let quota = Quota::per_minute(per_minute);
-        Self { limiter: RateLimiter::dashmap_with_clock(quota, clock.clone()), clock }
+        Self { limiter: RateLimiter::dashmap(Quota::per_minute(per_minute)) }
     }
 
     /// Returns the rate-limit bucket key for `ip`.
@@ -103,7 +97,7 @@ impl IpRateLimiter {
     /// Checks one request for `ip`, returning the retry delay when limited.
     pub fn check(&self, ip: IpAddr) -> Result<(), RateLimitExceeded> {
         self.limiter.check_key(&Self::bucket_key(ip)).map_err(|not_until| RateLimitExceeded {
-            retry_after: not_until.wait_time_from(self.clock.now()),
+            retry_after: not_until.wait_time_from(self.limiter.clock().now()),
         })
     }
 

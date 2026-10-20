@@ -16,8 +16,9 @@ use base_precompile_storage::{BasePrecompileError, Result};
 
 use crate::{
     Asset, AssetAccounting, B20_MAX_SUPPLY_CAP, B20AssetStorage, B20AssetToken, B20CreditRecipient,
-    B20Guards, B20PausableFeature, B20PolicyType, B20TokenRole, Eip712Domain, IB20, IB20Asset,
-    NonZeroAddress, PermitArgs, PolicyAccounting, Token, TransferPolicyIds,
+    B20CreditRecipientStrategy, B20Guards, B20PausableFeature, B20PolicyType, B20TokenRole,
+    Eip712Domain, IB20, IB20Asset, NonZeroAddress, PermitArgs, PolicyAccounting, Token,
+    TransferPolicyIds,
 };
 
 /// `keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)")`
@@ -255,7 +256,8 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV3 {
         privileged: bool,
     ) -> Result<()> {
         B20Guards::ensure_not_paused(token, IB20::PausableFeature::TRANSFER)?;
-        let to = B20CreditRecipient::new(to, token.token_address())
+        let to = B20CreditRecipientStrategy::ExcludingZeroAndSelf
+            .recipient(to, token.token_address())
             .map_err(|_| BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }))?;
         let from = NonZeroAddress::new(caller)
             .map_err(|_| BasePrecompileError::revert(IB20::InvalidSender { sender: caller }))?;
@@ -281,7 +283,8 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV3 {
     ) -> Result<()> {
         B20Guards::ensure_not_paused(token, IB20::PausableFeature::TRANSFER)?;
         // Validate before allowance / transfer-policy-id SLOADs.
-        let to = B20CreditRecipient::new(to, token.token_address())
+        let to = B20CreditRecipientStrategy::ExcludingZeroAndSelf
+            .recipient(to, token.token_address())
             .map_err(|_| BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }))?;
         let from = NonZeroAddress::new(from)
             .map_err(|_| BasePrecompileError::revert(IB20::InvalidSender { sender: from }))?;
@@ -350,7 +353,8 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV3 {
         if !privileged {
             B20Guards::ensure_token_role(token, caller, B20TokenRole::Mint)?;
         }
-        B20CreditRecipient::new(to, token.token_address())
+        B20CreditRecipientStrategy::ExcludingZeroAndSelf
+            .recipient(to, token.token_address())
             .map_err(|_| BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }))?;
         B20Guards::ensure_policy_type(token, B20PolicyType::MintReceiver, to)?;
         let supply = token.accounting().total_supply()?;
@@ -412,7 +416,8 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV3 {
         B20Guards::ensure_token_role(token, caller, B20TokenRole::Seize)?;
         // A valid recipient guards against a disguised burn or a balance stranded on this token;
         // `from != 0` guards against a disguised mint, matching `transfer_inner`.
-        B20CreditRecipient::new(to, token.token_address())
+        B20CreditRecipientStrategy::ExcludingZeroAndSelf
+            .recipient(to, token.token_address())
             .map_err(|_| BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }))?;
         if from == Address::ZERO {
             return Err(BasePrecompileError::revert(IB20::InvalidSender { sender: from }));
@@ -925,7 +930,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV3 {
         Self::OPERATOR_ROLE
     }
 
-    // --- ERC-8056 scheduled multiplier (introduced at AssetV3, Cobalt) ---
+    // --- ERC-8056 scheduled multiplier (introduced at AssetV2, Cobalt) ---
 
     /// Lazy current multiplier: flips to a matured pending target once `now >= effectiveAt`.
     fn multiplier(&self, token: &B20AssetToken<S, A>) -> Result<U256> {
@@ -1063,7 +1068,6 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV3 {
 #[cfg(test)]
 mod tests {
     use alloc::{
-        collections::{BTreeMap, BTreeSet},
         string::{String, ToString},
         vec,
         vec::Vec,
@@ -1071,18 +1075,14 @@ mod tests {
 
     use alloy_primitives::{Address, B256, FixedBytes, LogData, U256, keccak256};
     use alloy_sol_types::SolEvent;
-    use base_precompile_storage::{BasePrecompileError, Result};
+    use base_precompile_storage::BasePrecompileError;
     use k256::ecdsa::SigningKey;
 
     use crate::{
-        Asset, AssetAccounting, AssetV3, B20_MAX_SUPPLY_CAP, B20AssetStorage, B20AssetToken,
-        B20PolicyType, B20TokenRole, B20Variant, IB20, IB20Asset, PackedPolicy, PermitArgs,
-        PolicyAccounting, PolicyRegistryStorage, PolicyVersion, Token, TokenAccounting,
-        TransferPolicyIds,
+        Asset, AssetAccounting, AssetV3, B20AssetStorage, B20AssetToken, B20PolicyType,
+        B20TokenRole, B20Variant, FakePolicyAccounting, IB20, IB20Asset, InMemoryTokenAccounting,
+        PermitArgs, PolicyRegistryStorage, PolicyVersion, Token, TokenAccounting,
     };
-
-    // --- Self-contained in-memory fakes (no dependency on `common::test_utils`, so shared test
-    //     scaffolding can never drift this frozen version's coverage) ---
 
     const TOKEN: Address = Address::repeat_byte(0x21);
     const ADMIN: Address = Address::repeat_byte(0xAD);
@@ -1096,340 +1096,22 @@ mod tests {
     const PRIVATE_KEY: [u8; 32] =
         alloy_primitives::hex!("ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
 
-    /// Minimal `AssetAccounting` backed by in-memory maps.
-    #[derive(Debug)]
-    struct FakeAccounting {
-        initialized: bool,
-        balances: BTreeMap<Address, U256>,
-        allowances: BTreeMap<(Address, Address), U256>,
-        total_supply: U256,
-        supply_cap: U256,
-        name: String,
-        symbol: String,
-        decimals: u8,
-        multiplier: U256,
-        pending_multiplier: u128,
-        pending_effective_at: u64,
-        timestamp: U256,
-        paused: U256,
-        nonces: BTreeMap<Address, U256>,
-        contract_uri: String,
-        roles: BTreeMap<(B256, Address), bool>,
-        role_member_counts: BTreeMap<B256, U256>,
-        role_admins: BTreeMap<B256, B256>,
-        policy_ids: BTreeMap<B256, u64>,
-        extra_metadata: BTreeMap<String, String>,
-        used_announcement_ids: BTreeSet<String>,
-        events: Vec<LogData>,
-        /// Number of `metered_keccak256` calls (interior-mutable so `&self` metering can record).
-        keccak_charges: core::cell::Cell<u64>,
-        /// Cumulative gas passed to `deduct_gas`.
-        gas_deducted: core::cell::Cell<u64>,
+    /// Accounting seeded with the asset metadata and WAD multiplier these tests assume.
+    fn accounting() -> InMemoryTokenAccounting {
+        let mut accounting = InMemoryTokenAccounting::new(TOKEN);
+        accounting.name = "Real World Asset".to_string();
+        accounting.symbol = "RWA".to_string();
+        accounting.decimals = 6;
+        accounting.multiplier = B20AssetStorage::WAD;
+        accounting
     }
 
-    impl FakeAccounting {
-        fn new() -> Self {
-            Self {
-                initialized: true,
-                balances: BTreeMap::new(),
-                allowances: BTreeMap::new(),
-                total_supply: U256::ZERO,
-                supply_cap: B20_MAX_SUPPLY_CAP,
-                name: "Real World Asset".to_string(),
-                symbol: "RWA".to_string(),
-                decimals: 6,
-                multiplier: B20AssetStorage::WAD,
-                pending_multiplier: 0,
-                pending_effective_at: 0,
-                timestamp: U256::ZERO,
-                paused: U256::ZERO,
-                nonces: BTreeMap::new(),
-                contract_uri: String::new(),
-                roles: BTreeMap::new(),
-                role_member_counts: BTreeMap::new(),
-                role_admins: BTreeMap::new(),
-                policy_ids: BTreeMap::new(),
-                extra_metadata: BTreeMap::new(),
-                used_announcement_ids: BTreeSet::new(),
-                events: Vec::new(),
-                keccak_charges: core::cell::Cell::new(0),
-                gas_deducted: core::cell::Cell::new(0),
-            }
-        }
-    }
-
-    impl TokenAccounting for FakeAccounting {
-        fn token_address(&self) -> Address {
-            TOKEN
-        }
-        fn is_initialized(&self) -> Result<bool> {
-            Ok(self.initialized)
-        }
-        fn balance_of(&self, account: Address) -> Result<U256> {
-            Ok(self.balances.get(&account).copied().unwrap_or(U256::ZERO))
-        }
-        fn set_balance(&mut self, account: Address, balance: U256) -> Result<()> {
-            self.balances.insert(account, balance);
-            Ok(())
-        }
-        fn allowance(&self, owner: Address, spender: Address) -> Result<U256> {
-            Ok(self.allowances.get(&(owner, spender)).copied().unwrap_or(U256::ZERO))
-        }
-        fn set_allowance(&mut self, owner: Address, spender: Address, amount: U256) -> Result<()> {
-            self.allowances.insert((owner, spender), amount);
-            Ok(())
-        }
-        fn total_supply(&self) -> Result<U256> {
-            Ok(self.total_supply)
-        }
-        fn set_total_supply(&mut self, supply: U256) -> Result<()> {
-            self.total_supply = supply;
-            Ok(())
-        }
-        fn supply_cap(&self) -> Result<U256> {
-            Ok(self.supply_cap)
-        }
-        fn set_supply_cap(&mut self, cap: U256) -> Result<()> {
-            self.supply_cap = cap;
-            Ok(())
-        }
-        fn name(&self) -> Result<String> {
-            Ok(self.name.clone())
-        }
-        fn set_name(&mut self, name: String) -> Result<()> {
-            self.name = name;
-            Ok(())
-        }
-        fn symbol(&self) -> Result<String> {
-            Ok(self.symbol.clone())
-        }
-        fn set_symbol(&mut self, symbol: String) -> Result<()> {
-            self.symbol = symbol;
-            Ok(())
-        }
-        fn decimals(&self) -> Result<u8> {
-            Ok(self.decimals)
-        }
-        fn paused(&self) -> Result<U256> {
-            Ok(self.paused)
-        }
-        fn set_paused(&mut self, vectors: U256) -> Result<()> {
-            self.paused = vectors;
-            Ok(())
-        }
-        fn nonce(&self, owner: Address) -> Result<U256> {
-            Ok(self.nonces.get(&owner).copied().unwrap_or(U256::ZERO))
-        }
-        fn increment_nonce(&mut self, owner: Address) -> Result<()> {
-            let n = self.nonces.entry(owner).or_insert(U256::ZERO);
-            *n += U256::ONE;
-            Ok(())
-        }
-        fn contract_uri(&self) -> Result<String> {
-            Ok(self.contract_uri.clone())
-        }
-        fn set_contract_uri(&mut self, uri: String) -> Result<()> {
-            self.contract_uri = uri;
-            Ok(())
-        }
-        fn has_role(&self, role: B256, account: Address) -> Result<bool> {
-            Ok(self.roles.get(&(role, account)).copied().unwrap_or(false))
-        }
-        fn set_role(&mut self, role: B256, account: Address, enabled: bool) -> Result<()> {
-            self.roles.insert((role, account), enabled);
-            Ok(())
-        }
-        fn role_member_count(&self, role: B256) -> Result<U256> {
-            Ok(self.role_member_counts.get(&role).copied().unwrap_or(U256::ZERO))
-        }
-        fn set_role_member_count(&mut self, role: B256, count: U256) -> Result<()> {
-            self.role_member_counts.insert(role, count);
-            Ok(())
-        }
-        fn role_admin(&self, role: B256) -> Result<B256> {
-            Ok(self.role_admins.get(&role).copied().unwrap_or(B256::ZERO))
-        }
-        fn set_role_admin(&mut self, role: B256, admin_role: B256) -> Result<()> {
-            self.role_admins.insert(role, admin_role);
-            Ok(())
-        }
-        fn policy_id(&self, policy_scope: B256) -> Result<u64> {
-            Ok(self.policy_ids.get(&policy_scope).copied().unwrap_or(0))
-        }
-        fn set_policy_id(&mut self, policy_scope: B256, policy_id: u64) -> Result<()> {
-            self.policy_ids.insert(policy_scope, policy_id);
-            Ok(())
-        }
-
-        fn transfer_policy_ids(&self) -> Result<TransferPolicyIds> {
-            TransferPolicyIds::read_individually(self)
-        }
-        fn emit_event(&mut self, log: LogData) -> Result<()> {
-            self.events.push(log);
-            Ok(())
-        }
-        fn metered_keccak256(&self, data: &[u8]) -> Result<B256> {
-            self.keccak_charges.set(self.keccak_charges.get() + 1);
-            Ok(keccak256(data))
-        }
-        fn deduct_gas(&self, gas: u64) -> Result<()> {
-            self.gas_deducted.set(self.gas_deducted.get() + gas);
-            Ok(())
-        }
-    }
-
-    impl AssetAccounting for FakeAccounting {
-        fn timestamp(&self) -> Result<U256> {
-            Ok(self.timestamp)
-        }
-        fn multiplier(&self) -> Result<U256> {
-            Ok(self.multiplier)
-        }
-        fn set_multiplier(&mut self, multiplier: U256) -> Result<()> {
-            self.multiplier = multiplier;
-            Ok(())
-        }
-        fn pending_multiplier(&self) -> Result<u128> {
-            Ok(self.pending_multiplier)
-        }
-        fn pending_effective_at(&self) -> Result<u64> {
-            Ok(self.pending_effective_at)
-        }
-        fn set_pending_and_effective_at(
-            &mut self,
-            multiplier: u128,
-            effective_at: u64,
-        ) -> Result<()> {
-            self.pending_multiplier = multiplier;
-            self.pending_effective_at = effective_at;
-            Ok(())
-        }
-        fn clear_pending_multiplier_and_effective_at(&mut self) -> Result<()> {
-            self.pending_multiplier = 0;
-            self.pending_effective_at = 0;
-            Ok(())
-        }
-        fn extra_metadata(&self, key: &str) -> Result<String> {
-            Ok(self.extra_metadata.get(key).cloned().unwrap_or_default())
-        }
-        fn set_extra_metadata_value(&mut self, key: &str, value: String) -> Result<()> {
-            if value.is_empty() {
-                self.extra_metadata.remove(key);
-            } else {
-                self.extra_metadata.insert(key.to_string(), value);
-            }
-            Ok(())
-        }
-        fn is_announcement_id_used(&self, id: &str) -> Result<bool> {
-            Ok(self.used_announcement_ids.contains(id))
-        }
-        fn mark_announcement_id_used(&mut self, id: &str) -> Result<()> {
-            self.used_announcement_ids.insert(id.to_string());
-            Ok(())
-        }
-        fn decimals(&self) -> Result<u8> {
-            Ok(self.decimals)
-        }
-    }
-
-    /// Minimal [`PolicyAccounting`] backed by in-memory maps.
-    #[derive(Debug)]
-    struct FakePolicyAccounting {
-        caller: Address,
-        initialized: bool,
-        policies: BTreeMap<u64, U256>,
-        members: BTreeMap<(u64, Address), bool>,
-        pending_admins: BTreeMap<u64, Address>,
-        next_counter: u64,
-        events: Vec<LogData>,
-    }
-
-    impl FakePolicyAccounting {
-        fn new() -> Self {
-            Self {
-                caller: ADMIN,
-                initialized: false,
-                policies: BTreeMap::new(),
-                members: BTreeMap::new(),
-                pending_admins: BTreeMap::new(),
-                next_counter: 0,
-                events: Vec::new(),
-            }
-        }
-
-        fn create_existing_policy(&mut self, policy_id: u64) {
-            self.policies.insert(policy_id, PackedPolicy::new(Address::ZERO).into_u256());
-        }
-    }
-
-    impl PolicyAccounting for FakePolicyAccounting {
-        fn registry_address(&self) -> Address {
-            Address::repeat_byte(0x02)
-        }
-        fn caller(&self) -> Address {
-            self.caller
-        }
-        fn read_policy_word(&self, policy_id: u64) -> Result<U256> {
-            Ok(self.policies.get(&policy_id).copied().unwrap_or(U256::ZERO))
-        }
-        fn write_policy_word(&mut self, policy_id: u64, word: U256) -> Result<()> {
-            self.policies.insert(policy_id, word);
-            Ok(())
-        }
-        fn read_member(&self, policy_id: u64, account: Address) -> Result<bool> {
-            Ok(self.members.get(&(policy_id, account)).copied().unwrap_or(false))
-        }
-        fn set_member(&mut self, policy_id: u64, account: Address) -> Result<()> {
-            self.members.insert((policy_id, account), true);
-            Ok(())
-        }
-        fn delete_member(&mut self, policy_id: u64, account: Address) -> Result<()> {
-            self.members.remove(&(policy_id, account));
-            Ok(())
-        }
-        fn read_pending_admin(&self, policy_id: u64) -> Result<Address> {
-            Ok(self.pending_admins.get(&policy_id).copied().unwrap_or(Address::ZERO))
-        }
-        fn write_pending_admin(&mut self, policy_id: u64, admin: Address) -> Result<()> {
-            self.pending_admins.insert(policy_id, admin);
-            Ok(())
-        }
-        fn delete_pending_admin(&mut self, policy_id: u64) -> Result<()> {
-            self.pending_admins.remove(&policy_id);
-            Ok(())
-        }
-        fn read_next_counter(&self) -> Result<u64> {
-            Ok(self.next_counter)
-        }
-        fn write_next_counter(&mut self, counter: u64) -> Result<()> {
-            self.next_counter = counter;
-            Ok(())
-        }
-        fn emit_event(&mut self, log: LogData) -> Result<()> {
-            self.events.push(log);
-            Ok(())
-        }
-        fn mark_initialized(&mut self) -> Result<()> {
-            self.initialized = true;
-            Ok(())
-        }
-
-        // This fake does not exercise composite policies.
-        fn read_children(&self, _policy_id: u64) -> Result<Vec<u64>> {
-            Ok(Vec::new())
-        }
-
-        fn write_children(&mut self, _policy_id: u64, _child_policy_ids: &[u64]) -> Result<()> {
-            Ok(())
-        }
-    }
-
-    type Tok = B20AssetToken<FakeAccounting, FakePolicyAccounting>;
+    type Tok = B20AssetToken<InMemoryTokenAccounting, FakePolicyAccounting>;
 
     fn token() -> Tok {
         B20AssetToken::with_storage_and_policy(
-            FakeAccounting::new(),
-            FakePolicyAccounting::new(),
+            accounting(),
+            FakePolicyAccounting::with_caller(ADMIN),
             PolicyVersion::V1,
         )
     }
@@ -1565,6 +1247,58 @@ mod tests {
         );
     }
 
+    // Executor, then sender, then receiver. Each call allows the account the previous gate
+    // checks, so the next PolicyForbids names the next gate.
+    #[test]
+    fn transfer_policy_order_executor_then_sender_then_receiver() {
+        let mut tok = token();
+        fund(&mut tok, ALICE, U256::from(100));
+
+        // Counters 0 and 1 are reserved for ALWAYS_ALLOW / ALWAYS_BLOCK sentinels.
+        const EXECUTOR_POLICY: u64 = (1u64 << 56) | 3;
+        const SENDER_POLICY: u64 = (1u64 << 56) | 4;
+        const RECEIVER_POLICY: u64 = (1u64 << 56) | 5;
+
+        tok.accounting_mut()
+            .set_policy_id(B20PolicyType::TransferExecutor.id(), EXECUTOR_POLICY)
+            .unwrap();
+        tok.accounting_mut()
+            .set_policy_id(B20PolicyType::TransferSender.id(), SENDER_POLICY)
+            .unwrap();
+        tok.accounting_mut()
+            .set_policy_id(B20PolicyType::TransferReceiver.id(), RECEIVER_POLICY)
+            .unwrap();
+
+        let err = LOGIC.transfer(&mut tok, ALICE, BOB, U256::from(10), false).unwrap_err();
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IB20::PolicyForbids {
+                policyScope: B20PolicyType::TransferExecutor.id(),
+                policyId: EXECUTOR_POLICY,
+            })
+        );
+
+        tok.policy_storage_mut().allow(EXECUTOR_POLICY, ALICE);
+        let err = LOGIC.transfer(&mut tok, ALICE, BOB, U256::from(10), false).unwrap_err();
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IB20::PolicyForbids {
+                policyScope: B20PolicyType::TransferSender.id(),
+                policyId: SENDER_POLICY,
+            })
+        );
+
+        tok.policy_storage_mut().allow(SENDER_POLICY, ALICE);
+        let err = LOGIC.transfer(&mut tok, ALICE, BOB, U256::from(10), false).unwrap_err();
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IB20::PolicyForbids {
+                policyScope: B20PolicyType::TransferReceiver.id(),
+                policyId: RECEIVER_POLICY,
+            })
+        );
+    }
+
     // --- transfer_from ---
 
     #[test]
@@ -1595,6 +1329,21 @@ mod tests {
             LOGIC.transfer_from(&mut tok, BOB, ALICE, TOKEN, U256::from(1u64), true).unwrap_err();
 
         assert_eq!(err, BasePrecompileError::revert(IB20::InvalidReceiver { receiver: TOKEN }));
+    }
+
+    #[test]
+    fn transfer_from_reverts_on_zero_receiver() {
+        let mut tok = token();
+        fund(&mut tok, ALICE, U256::from(10u64));
+
+        let err = LOGIC
+            .transfer_from(&mut tok, BOB, ALICE, Address::ZERO, U256::from(1u64), true)
+            .unwrap_err();
+
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IB20::InvalidReceiver { receiver: Address::ZERO })
+        );
     }
 
     // --- approve ---
@@ -1651,6 +1400,19 @@ mod tests {
         let err = LOGIC.mint(&mut tok, ADMIN, TOKEN, U256::from(1u64), true).unwrap_err();
 
         assert_eq!(err, BasePrecompileError::revert(IB20::InvalidReceiver { receiver: TOKEN }));
+        assert_eq!(tok.accounting().total_supply().unwrap(), U256::ZERO);
+    }
+
+    #[test]
+    fn mint_reverts_on_zero_receiver() {
+        let mut tok = token();
+
+        let err = LOGIC.mint(&mut tok, ADMIN, Address::ZERO, U256::from(1u64), true).unwrap_err();
+
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IB20::InvalidReceiver { receiver: Address::ZERO })
+        );
         assert_eq!(tok.accounting().total_supply().unwrap(), U256::ZERO);
     }
 
@@ -1760,6 +1522,21 @@ mod tests {
             .unwrap_err();
 
         assert_eq!(err, BasePrecompileError::revert(IB20::InvalidReceiver { receiver: TOKEN }));
+    }
+
+    #[test]
+    fn seize_reverts_on_token_receiver() {
+        let mut tok = token();
+        fund(&mut tok, ALICE, U256::from(10u64));
+        make_seizable(&mut tok);
+        grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
+
+        let err = LOGIC
+            .seize_with_memo(&mut tok, ADMIN, ALICE, TOKEN, U256::from(1u64), MEMO)
+            .unwrap_err();
+
+        assert_eq!(err, BasePrecompileError::revert(IB20::InvalidReceiver { receiver: TOKEN }));
+        assert_eq!(tok.accounting().balance_of(ALICE).unwrap(), U256::from(10u64));
     }
 
     #[test]
@@ -2240,6 +2017,27 @@ mod tests {
             .unwrap_err();
 
         assert_eq!(err, BasePrecompileError::revert(IB20::InvalidReceiver { receiver: TOKEN }));
+    }
+
+    #[test]
+    fn batch_mint_reverts_on_zero_recipient() {
+        let mut tok = token();
+        grant(&mut tok, B20TokenRole::Mint.id(), ALICE);
+
+        let err = LOGIC
+            .batch_mint(
+                &mut tok,
+                ALICE,
+                vec![BOB, Address::ZERO],
+                vec![U256::from(1u64), U256::from(1u64)],
+                false,
+            )
+            .unwrap_err();
+
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IB20::InvalidReceiver { receiver: Address::ZERO })
+        );
     }
 
     /// PAUSE fires before the role check.
@@ -2747,7 +2545,7 @@ mod tests {
             [0x57, 0x85, 0x4f, 0xc3],
         ] {
             assert!(
-                <AssetV3 as Asset<FakeAccounting, FakePolicyAccounting>>::supports_interface(
+                <AssetV3 as Asset<InMemoryTokenAccounting, FakePolicyAccounting>>::supports_interface(
                     &LOGIC,
                     FixedBytes::new(id)
                 )
@@ -2757,7 +2555,7 @@ mod tests {
         // An arbitrary id is not advertised.
         for id in [[0xde, 0xad, 0xbe, 0xef], [0xff, 0xff, 0xff, 0xff]] {
             assert!(
-                !<AssetV3 as Asset<FakeAccounting, FakePolicyAccounting>>::supports_interface(
+                !<AssetV3 as Asset<InMemoryTokenAccounting, FakePolicyAccounting>>::supports_interface(
                     &LOGIC,
                     FixedBytes::new(id)
                 )
@@ -2772,8 +2570,10 @@ mod tests {
         // setter guards enforce) and the getter that exposes it.
         assert_eq!(AssetV3::MAX_UI_MULTIPLIER, U256::from(u128::MAX));
         let value =
-            <AssetV3 as Asset<FakeAccounting, FakePolicyAccounting>>::max_ui_multiplier(&LOGIC)
-                .unwrap();
+            <AssetV3 as Asset<InMemoryTokenAccounting, FakePolicyAccounting>>::max_ui_multiplier(
+                &LOGIC,
+            )
+            .unwrap();
         assert_eq!(value, U256::from(u128::MAX));
     }
 

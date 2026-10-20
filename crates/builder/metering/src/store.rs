@@ -5,7 +5,10 @@
 //! entries on access, preventing premature eviction of frequently-read data.
 
 use std::{
-    sync::atomic::{AtomicBool, Ordering},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -23,7 +26,7 @@ pub const DEFAULT_METERING_STORE_TTL_SECS: u64 = 30;
 /// Concurrent metering store with LRU eviction.
 pub struct MeteringStore {
     /// LRU cache mapping transaction hash to metering data.
-    cache: Cache<TxHash, MeterBundleResponse>,
+    cache: Cache<TxHash, Arc<MeterBundleResponse>>,
     /// Records when a transaction was committed without metering data.
     ///
     /// Late-arriving data is only terminal for transactions that were already
@@ -87,7 +90,7 @@ impl MeteringStore {
 }
 
 impl MeteringProvider for MeteringStore {
-    fn get(&self, tx_hash: &TxHash) -> Option<MeterBundleResponse> {
+    fn get(&self, tx_hash: &TxHash) -> Option<Arc<MeterBundleResponse>> {
         if !self.metering_enabled.load(Ordering::Relaxed) {
             return None;
         }
@@ -111,7 +114,7 @@ impl MeteringProvider for MeteringStore {
             return;
         }
 
-        self.cache.insert(tx_hash, metering);
+        self.cache.insert(tx_hash, Arc::new(metering));
         BuilderMetrics::metering_store_size().set(self.cache.entry_count() as f64);
     }
 

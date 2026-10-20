@@ -11,9 +11,8 @@ use sp1_sdk::{HashableKey, SP1Proof, SP1Stdin};
 
 /// Build SP1 stdin from collected witness data.
 ///
-/// The intermediate root sampling interval is sourced from `BootInfo` inside the zkVM
-/// (preimage key 9) — the same channel the TEE enclave reads — so it is intentionally not
-/// passed through stdin.
+/// The game's intermediate block interval reaches the range program as a boot preimage, the same
+/// channel the TEE enclave reads, so it is intentionally not passed through stdin.
 pub fn get_sp1_stdin(witness: DefaultWitnessData) -> Result<SP1Stdin> {
     let mut stdin = SP1Stdin::default();
     let buffer = to_bytes::<rkyv::rancor::Error>(&witness)?;

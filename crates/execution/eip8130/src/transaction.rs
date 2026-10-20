@@ -3,7 +3,8 @@
 //! their authorization, then authenticates the final sender/payer signatures
 //! against the resulting post-apply state.
 
-use base_common_consensus::{AccountChange, Delegation, Eip8130Signed};
+use alloy_primitives::{Address, B256};
+use base_common_consensus::{AccountChange, Delegation, Eip8130Constants, Eip8130Signed};
 
 use crate::{
     AccountChangeApplier, AccountConfigurationStorage, ActorTxVerifier, AppliedAccountChanges,
@@ -194,6 +195,113 @@ impl TransactionAuthorizer {
         Ok(AppliedTransaction { actors, config_changes, applied, revoke_discount_slots })
     }
 
+    /// Authorizes `signed` without the Keystore, as before Zenith.
+    ///
+    /// Never reads or writes `AccountConfiguration` storage. Every sender and
+    /// payer is authenticated by native secp256k1 recovery alone, and the
+    /// recovered key is the account's own full-authority key:
+    ///
+    /// - a bare `sender_auth` recovers the sender; a named sender needs
+    ///   `K1_AUTHENTICATOR || sig` recovering to that address;
+    /// - an open payer is whoever signed `payer_auth`; a named payer needs
+    ///   `K1_AUTHENTICATOR || sig` recovering to that address;
+    /// - the only account change is delegation, recorded as a deferred code
+    ///   effect.
+    ///
+    /// Anything else is rejected by [`Self::check_without_keystore`].
+    pub fn authorize_without_keystore(
+        signed: &Eip8130Signed,
+    ) -> Result<AppliedTransaction, TxAuthError> {
+        Self::check_without_keystore(signed)?;
+        let tx = signed.tx();
+
+        let sender = match signed.explicit_sender() {
+            Some(account) => {
+                Self::recover_named_k1(account, tx.sender_signature_hash(), signed.sender_auth())?
+            }
+            None => RecoveredActorId::recover_eoa_sender(signed)
+                .map_err(|_| TxAuthError::SenderRecovery)?
+                .ok_or(TxAuthError::SenderRecovery)?
+                .address(),
+        };
+
+        let payer = match tx.payer {
+            None => None,
+            Some(_) if tx.is_open_payer() => Some(
+                RecoveredActorId::recover_k1(tx.payer_signature_hash(sender), signed.payer_auth())
+                    .map_err(|_| TxAuthError::PayerRecovery)?
+                    .address(),
+            ),
+            Some(account) => Some(Self::recover_named_k1(
+                account,
+                tx.payer_signature_hash(sender),
+                signed.payer_auth(),
+            )?),
+        };
+
+        let mut applied = AppliedAccountChanges::default();
+        for change in &tx.account_changes {
+            let AccountChange::Delegation(Delegation { target }) = change else {
+                return Err(TxAuthError::UnsupportedAccountChange);
+            };
+            if applied.delegation.is_some() {
+                return Err(ApplyError::MultipleDelegations.into());
+            }
+            applied.delegation = Some(DelegationEffect::new(sender, *target));
+        }
+
+        let owner = |account| AuthorizedActor {
+            account,
+            resolved: ResolvedActor::unrestricted(AccountConfigurationStorage::self_actor_id(
+                account,
+            )),
+        };
+        Ok(AppliedTransaction {
+            actors: TxActors { sender: owner(sender), payer: payer.map(owner) },
+            config_changes: Vec::new(),
+            applied,
+            revoke_discount_slots: 0,
+        })
+    }
+
+    /// Checks the shape of `signed` without the Keystore, before any signature
+    /// is recovered: delegation is the only account change, and a named sender
+    /// or payer selects the native secp256k1 authenticator. An open payer's
+    /// `payer_auth` is a raw signature and carries no selector.
+    pub fn check_without_keystore(signed: &Eip8130Signed) -> Result<(), TxAuthError> {
+        let tx = signed.tx();
+        if tx.account_changes.iter().any(|change| !matches!(change, AccountChange::Delegation(_))) {
+            return Err(TxAuthError::UnsupportedAccountChange);
+        }
+        if tx.payer.is_none() && !signed.payer_auth().is_empty() {
+            return Err(TxAuthError::UnexpectedPayerAuth);
+        }
+        let named_k1 =
+            |auth: &[u8]| auth.starts_with(Eip8130Constants::K1_AUTHENTICATOR.as_slice());
+        if (tx.sender.is_some() && !named_k1(signed.sender_auth()))
+            || (tx.payer.is_some() && !tx.is_open_payer() && !named_k1(signed.payer_auth()))
+        {
+            return Err(TxAuthError::UnsupportedAuthenticator);
+        }
+        Ok(())
+    }
+
+    /// Recovers `auth` (`K1_AUTHENTICATOR || r || s || v`) over `hash` and
+    /// requires it to be `account`.
+    fn recover_named_k1(account: Address, hash: B256, auth: &[u8]) -> Result<Address, TxAuthError> {
+        let Some(signature) = auth.strip_prefix(Eip8130Constants::K1_AUTHENTICATOR.as_slice())
+        else {
+            return Err(TxAuthError::UnsupportedAuthenticator);
+        };
+        let recovered = RecoveredActorId::recover_k1(hash, signature)
+            .map_err(|error| TxAuthError::Authorize(AuthorizeError::Authenticate(error)))?
+            .address();
+        if recovered != account {
+            return Err(TxAuthError::SignerMismatch);
+        }
+        Ok(account)
+    }
+
     /// Requires a delegation's final sender to be an admin (unrestricted) actor
     /// on the unlocked account.
     ///
@@ -237,14 +345,15 @@ impl TransactionAuthorizer {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Address, B256, Bytes, U256, address, keccak256};
+    use alloy_primitives::{Address, B256, Bytes, U256, address};
     use alloy_sol_types::{SolValue, sol};
     use base_common_consensus::{
         AccountChangeChannel, ChangeType, CreateEntry, Delegation, Eip8130Constants, InitialActor,
         SignedAccountChanges, SignedChange, TxEip8130,
     };
-    use base_precompile_storage::{Handler, HashMapStorageProvider, StorageCtx};
+    use base_precompile_storage::Handler;
     use k256::ecdsa::SigningKey as K256SigningKey;
+    use rstest::rstest;
 
     sol! {
         /// ABI shape of `AuthorizeActor`'s `ActorConfig` payload field, used only
@@ -272,67 +381,11 @@ mod tests {
     use super::*;
     use crate::{
         AccountChangeApplier, ApplyError, AuthorizeError, AuthorizedActor, ConfigChangeAuthorizer,
+        test_utils::{
+            K1, LOCAL, NOW, actor_id, addr, auth_blob, key, pack, pack_default_eoa_scope,
+            pack_state, sig, tx_with, with_storage,
+        },
     };
-
-    const NOW: u64 = 1_000;
-    const LOCAL: u64 = 8453;
-    const K1: Address = Eip8130Constants::K1_AUTHENTICATOR;
-
-    fn key(byte: u8) -> K256SigningKey {
-        K256SigningKey::from_slice(&[byte; 32]).unwrap()
-    }
-
-    fn addr(key: &K256SigningKey) -> Address {
-        let point = key.verifying_key().to_encoded_point(false);
-        Address::from_slice(&keccak256(&point.as_bytes()[1..])[12..])
-    }
-
-    fn actor_id(account: Address) -> B256 {
-        AccountConfigurationStorage::self_actor_id(account)
-    }
-
-    /// 65-byte `r || s || v` signature over `hash`, `v` in `{27, 28}`, low-s.
-    fn sig(key: &K256SigningKey, hash: B256) -> Vec<u8> {
-        let (signature, recid) = key.sign_prehash_recoverable(hash.as_slice()).unwrap();
-        let mut out = vec![0u8; 65];
-        out[..64].copy_from_slice(&signature.to_bytes());
-        out[64] = recid.to_byte() + 27;
-        out
-    }
-
-    /// `authenticator(20) || data`.
-    fn auth_blob(authenticator: Address, data: &[u8]) -> Bytes {
-        let mut out = Vec::with_capacity(20 + data.len());
-        out.extend_from_slice(authenticator.as_slice());
-        out.extend_from_slice(data);
-        Bytes::from(out)
-    }
-
-    /// Canonical Solidity packing of `ActorConfig` (authenticator 0..160, expiry
-    /// 160..208, scope 208..224).
-    fn pack(authenticator: Address, scope: u16, expiry: u64) -> U256 {
-        U256::from_be_slice(authenticator.as_slice())
-            | (U256::from(expiry) << 160)
-            | (U256::from(scope) << 208)
-    }
-
-    /// Canonical Solidity packing of `AccountState` (`multichain`, `local`
-    /// sequences, `flags`, and the `lock_union`; `local` is the low uint32
-    /// local-channel sequence, local epoch left zero).
-    fn pack_state(multichain: u64, local: u64, flags: u8, lock_union: u64) -> U256 {
-        let mut b = [0u8; 32];
-        b[24..32].copy_from_slice(&multichain.to_be_bytes());
-        b[20..24].copy_from_slice(&local.to_be_bytes()[4..]); // uint32 localSequence
-        b[15] = flags;
-        b[9..15].copy_from_slice(&lock_union.to_be_bytes()[2..]); // uint48 lockUnion
-        U256::from_be_bytes(b)
-    }
-
-    /// Packs the inline secp256k1 self actor's `default_eoa_scope` (bits
-    /// 232..248).
-    fn pack_default_eoa_scope(scope: u16) -> U256 {
-        U256::from(scope) << 232
-    }
 
     /// A [`SignedAccountChanges`] batch whose `signature` is a fresh signature
     /// over its own digest.
@@ -356,28 +409,6 @@ mod tests {
         change
     }
 
-    fn tx_with(
-        sender: Option<Address>,
-        payer: Option<Address>,
-        account_changes: Vec<AccountChange>,
-    ) -> TxEip8130 {
-        TxEip8130 {
-            chain_id: LOCAL,
-            sender,
-            nonce_key: U256::ZERO,
-            nonce_sequence: 0,
-            valid_after: 0,
-            valid_before: 0,
-            max_priority_fee_per_gas: 1_000_000_000,
-            max_fee_per_gas: 5_000_000_000,
-            gas_limit: 250_000,
-            account_changes,
-            calls: Vec::new(),
-            metadata: Bytes::new(),
-            payer,
-        }
-    }
-
     /// Signs `tx` as an EOA (bare `sender_auth`, no payer) and authorizes it.
     fn eoa_signed(tx: TxEip8130, sender: &K256SigningKey) -> Eip8130Signed {
         let hash = tx.sender_signature_hash();
@@ -396,11 +427,6 @@ mod tests {
             auth_blob(K1, &sig(payer, tx.payer_signature_hash(sender_account)))
         });
         Eip8130Signed::new(tx, auth_blob(K1, &sig(sender, sender_hash)), payer_auth)
-    }
-
-    fn with_storage<R>(body: impl FnOnce(&mut AccountConfigurationStorage<'_>) -> R) -> R {
-        let mut storage = HashMapStorageProvider::new(1);
-        StorageCtx::enter(&mut storage, |ctx| body(&mut AccountConfigurationStorage::new(ctx)))
     }
 
     #[test]
@@ -741,116 +767,6 @@ mod tests {
     }
 
     #[test]
-    fn create_and_delegation_in_same_tx_are_mutually_exclusive() {
-        // Create and Delegation are mutually exclusive: Create establishes a
-        // fresh account (code installed by the protocol from the create entry's
-        // bytecode field) while Delegation modifies an *existing* account's
-        // code pointer. Having both in a single transaction is undefined by the
-        // spec and rejected with CreateAndDelegation.
-        let k = key(0x11);
-        let signer_addr = addr(&k);
-        let actor_id_k = B256::from_slice(&{
-            let mut id = [0u8; 32];
-            id[12..].copy_from_slice(signer_addr.as_slice());
-            id
-        });
-        let initial_actors = vec![InitialActor::owner(actor_id_k, K1)];
-        let create_entry = CreateEntry {
-            user_salt: B256::ZERO,
-            code: Bytes::from_static(&[0x60, 0x00]),
-            initial_actors: initial_actors.clone(),
-        };
-        let derived = AccountChangeApplier::compute_address(
-            create_entry.user_salt,
-            create_entry.code.as_ref(),
-            &initial_actors,
-        )
-        .expect("address derivation");
-
-        let delegation = AccountChange::Delegation(Delegation { target: derived });
-        let tx = TxEip8130 {
-            chain_id: LOCAL,
-            sender: Some(derived),
-            nonce_key: U256::ZERO,
-            nonce_sequence: 0,
-            valid_after: 0,
-            valid_before: 0,
-            max_priority_fee_per_gas: 1_000_000_000,
-            max_fee_per_gas: 5_000_000_000,
-            gas_limit: 250_000,
-            account_changes: vec![AccountChange::Create(create_entry), delegation],
-            calls: vec![],
-            metadata: Bytes::new(),
-            payer: None,
-        };
-        let hash = tx.sender_signature_hash();
-        let signed = Eip8130Signed::new(tx, auth_blob(K1, &sig(&k, hash)), Bytes::new());
-        with_storage(|acc| {
-            let err = TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW)
-                .expect_err("create + delegation must be rejected");
-            assert!(
-                matches!(err, TxAuthError::Apply(ApplyError::CreateAndDelegation)),
-                "expected CreateAndDelegation, got {err:?}"
-            );
-        });
-    }
-
-    #[test]
-    fn delegation_then_create_in_same_tx_is_rejected_as_create_and_delegation() {
-        // Reverse ordering of `create_and_delegation_in_same_tx_are_mutually_exclusive`:
-        // a `Delegation` preceding the `Create` is the same semantic violation and
-        // must surface the same `CreateAndDelegation` error, not the position-only
-        // `InvalidCreatePosition` that the create's `index != 0` check would
-        // otherwise produce.
-        let k = key(0x12);
-        let signer_addr = addr(&k);
-        let actor_id_k = B256::from_slice(&{
-            let mut id = [0u8; 32];
-            id[12..].copy_from_slice(signer_addr.as_slice());
-            id
-        });
-        let initial_actors = vec![InitialActor::owner(actor_id_k, K1)];
-        let create_entry = CreateEntry {
-            user_salt: B256::ZERO,
-            code: Bytes::from_static(&[0x60, 0x00]),
-            initial_actors: initial_actors.clone(),
-        };
-        let derived = AccountChangeApplier::compute_address(
-            create_entry.user_salt,
-            create_entry.code.as_ref(),
-            &initial_actors,
-        )
-        .expect("address derivation");
-
-        let delegation = AccountChange::Delegation(Delegation { target: derived });
-        let tx = TxEip8130 {
-            chain_id: LOCAL,
-            sender: Some(derived),
-            nonce_key: U256::ZERO,
-            nonce_sequence: 0,
-            valid_after: 0,
-            valid_before: 0,
-            max_priority_fee_per_gas: 1_000_000_000,
-            max_fee_per_gas: 5_000_000_000,
-            gas_limit: 250_000,
-            account_changes: vec![delegation, AccountChange::Create(create_entry)],
-            calls: vec![],
-            metadata: Bytes::new(),
-            payer: None,
-        };
-        let hash = tx.sender_signature_hash();
-        let signed = Eip8130Signed::new(tx, auth_blob(K1, &sig(&k, hash)), Bytes::new());
-        with_storage(|acc| {
-            let err = TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW)
-                .expect_err("delegation + create must be rejected");
-            assert!(
-                matches!(err, TxAuthError::Apply(ApplyError::CreateAndDelegation)),
-                "expected CreateAndDelegation, got {err:?}"
-            );
-        });
-    }
-
-    #[test]
     fn admin_config_actor_also_passes_final_sender_check() {
         // Account changes are authorized and applied first; the sender/payer
         // signatures are only checked against the resulting post-apply state. A
@@ -964,21 +880,7 @@ mod tests {
         let mut changes = vec![AccountChange::Create(create)];
         changes.extend(extra_changes);
 
-        let tx = TxEip8130 {
-            chain_id: LOCAL,
-            sender: Some(derived),
-            nonce_key: U256::ZERO,
-            nonce_sequence: 0,
-            valid_after: 0,
-            valid_before: 0,
-            max_priority_fee_per_gas: 1_000_000_000,
-            max_fee_per_gas: 5_000_000_000,
-            gas_limit: 250_000,
-            account_changes: changes,
-            calls: vec![],
-            metadata: Bytes::new(),
-            payer: None,
-        };
+        let tx = tx_with(Some(derived), None, changes);
         let hash = tx.sender_signature_hash();
         let signed = Eip8130Signed::new(tx, auth_blob(K1, &sig(signer, hash)), Bytes::new());
         (derived, signed)
@@ -1003,24 +905,38 @@ mod tests {
         });
     }
 
-    #[test]
-    fn create_then_config_change_authorizes_against_freshly_created_account() {
-        // A Create followed by a ConfigChange in the same transaction: the config
-        // change must authorize against the *post-create* actor set (the initial
-        // actor is installed as an unrestricted owner), proving authorize-and-apply
-        // interleaves the two against an evolving state rather than reading a
-        // pre-transaction snapshot where the account does not yet exist.
-        let k = key(0xc5);
-        let signer_addr = addr(&k);
-        let actor_id_val = B256::from_slice(&{
-            let mut id = [0u8; 32];
-            id[12..].copy_from_slice(signer_addr.as_slice());
-            id
-        });
-        let initial_actors = vec![InitialActor::owner(actor_id_val, K1)];
-        // Non-empty code: codeless creates are rejected by the structural
-        // validator before this path, and `apply_create` now enforces the same
-        // `EmptyBytecode` invariant.
+    /// A counterfactual-create transaction scenario: every case builds a
+    /// `Create` for a freshly derived account and varies the account changes,
+    /// signer, and sender around it.
+    #[derive(Clone, Copy)]
+    enum CounterfactualCreate {
+        /// `Create` before `Delegation`: mutually exclusive, so rejected.
+        CreateThenDelegation,
+        /// `Delegation` before `Create`: the same violation, same rejection.
+        DelegationThenCreate,
+        /// `Create` then `ConfigChange`: the config change authorizes against
+        /// the actor set the create installed.
+        CreateThenConfigChange,
+        /// A signer absent from `initial_actors` cannot authorize the create.
+        WrongSigner,
+        /// A create without an explicit sender cannot resolve its derived
+        /// CREATE2 account.
+        MissingSender,
+    }
+
+    #[rstest]
+    #[case::create_then_delegation(CounterfactualCreate::CreateThenDelegation)]
+    #[case::delegation_then_create(CounterfactualCreate::DelegationThenCreate)]
+    #[case::create_then_config_change(CounterfactualCreate::CreateThenConfigChange)]
+    #[case::wrong_signer(CounterfactualCreate::WrongSigner)]
+    #[case::missing_sender(CounterfactualCreate::MissingSender)]
+    fn counterfactual_create_authorization(#[case] scenario: CounterfactualCreate) {
+        let owner = key(0xc1);
+        let signer = match scenario {
+            CounterfactualCreate::WrongSigner => key(0xc2),
+            _ => key(0xc1),
+        };
+        let initial_actors = vec![InitialActor::owner(actor_id(addr(&owner)), K1)];
         let create = CreateEntry {
             user_salt: B256::ZERO,
             code: Bytes::from_static(&[0x60, 0x00]),
@@ -1033,134 +949,66 @@ mod tests {
         )
         .expect("address derivation");
 
-        // Config change signed by the initial actor, bound to the derived account
-        // at the multichain channel's first sequence.
-        let cc = signed_change(derived, K1, &k, AccountChangeChannel::Multichain, 0, vec![]);
-        let tx = TxEip8130 {
-            chain_id: LOCAL,
-            sender: Some(derived),
-            nonce_key: U256::ZERO,
-            nonce_sequence: 0,
-            valid_after: 0,
-            valid_before: 0,
-            max_priority_fee_per_gas: 1_000_000_000,
-            max_fee_per_gas: 5_000_000_000,
-            gas_limit: 250_000,
-            account_changes: vec![AccountChange::Create(create), AccountChange::ConfigChange(cc)],
-            calls: vec![],
-            metadata: Bytes::new(),
-            payer: None,
+        let account_changes = match scenario {
+            CounterfactualCreate::CreateThenDelegation => vec![
+                AccountChange::Create(create),
+                AccountChange::Delegation(Delegation { target: derived }),
+            ],
+            CounterfactualCreate::DelegationThenCreate => vec![
+                AccountChange::Delegation(Delegation { target: derived }),
+                AccountChange::Create(create),
+            ],
+            CounterfactualCreate::CreateThenConfigChange => vec![
+                AccountChange::Create(create),
+                AccountChange::ConfigChange(signed_change(
+                    derived,
+                    K1,
+                    &owner,
+                    AccountChangeChannel::Multichain,
+                    0,
+                    vec![],
+                )),
+            ],
+            CounterfactualCreate::WrongSigner | CounterfactualCreate::MissingSender => {
+                vec![AccountChange::Create(create)]
+            }
         };
-        let hash = tx.sender_signature_hash();
-        let signed = Eip8130Signed::new(tx, auth_blob(K1, &sig(&k, hash)), Bytes::new());
+        let sender = match scenario {
+            CounterfactualCreate::MissingSender => None,
+            _ => Some(derived),
+        };
+        let tx = tx_with(sender, None, account_changes);
+        let signed = match sender {
+            Some(_) => configured_signed(tx, &signer, None),
+            None => eoa_signed(tx, &signer),
+        };
 
         with_storage(|acc| {
-            let out = TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW)
-                .expect("create + config change must authorize against post-create state");
-            assert_eq!(out.actors.sender.account, derived);
-            assert_eq!(out.config_changes.len(), 1, "config change applied after create");
-            assert!(out.applied.created.is_some(), "create entry applied");
-            // `apply_create` sets `local_sequence = 1` as its created/imported
-            // flag; the single multichain config change then advances the
-            // multichain channel to 1 — hence `(multichain, local) == (1, 1)`.
-            assert_eq!(acc.get_change_sequences(derived).unwrap(), (1, 1));
-        });
-    }
-
-    #[test]
-    fn counterfactual_create_wrong_signer_is_rejected() {
-        // A signer not in `initial_actors` must not authorize the create.
-        let owner = key(0xc2);
-        let attacker = key(0xc3);
-        let attacker_addr = addr(&attacker);
-        let actor_id_val = B256::from_slice(&{
-            let mut id = [0u8; 32];
-            id[12..].copy_from_slice(attacker_addr.as_slice());
-            id
-        });
-        let initial_actors = vec![InitialActor::owner(actor_id_val, K1)];
-        let create = CreateEntry {
-            user_salt: B256::ZERO,
-            code: Bytes::from_static(&[0x60, 0x00]),
-            initial_actors: initial_actors.clone(),
-        };
-        let derived = AccountChangeApplier::compute_address(
-            create.user_salt,
-            create.code.as_ref(),
-            &initial_actors,
-        )
-        .unwrap();
-
-        // Sign with `owner`, whose actor_id is NOT in initial_actors.
-        let tx = TxEip8130 {
-            chain_id: LOCAL,
-            sender: Some(derived),
-            nonce_key: U256::ZERO,
-            nonce_sequence: 0,
-            valid_after: 0,
-            valid_before: 0,
-            max_priority_fee_per_gas: 1_000_000_000,
-            max_fee_per_gas: 5_000_000_000,
-            gas_limit: 250_000,
-            account_changes: vec![AccountChange::Create(create)],
-            calls: vec![],
-            metadata: Bytes::new(),
-            payer: None,
-        };
-        let hash = tx.sender_signature_hash();
-        let signed = Eip8130Signed::new(tx, auth_blob(K1, &sig(&owner, hash)), Bytes::new());
-
-        with_storage(|acc| {
-            assert!(
-                matches!(
-                    TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW),
-                    Err(TxAuthError::Authorize(AuthorizeError::AuthenticatorMismatch { .. }))
+            let result = TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW);
+            match scenario {
+                CounterfactualCreate::CreateThenDelegation
+                | CounterfactualCreate::DelegationThenCreate => assert!(
+                    matches!(&result, Err(TxAuthError::Apply(ApplyError::CreateAndDelegation))),
+                    "expected CreateAndDelegation, got {result:?}"
                 ),
-                "signer not in initial_actors must be rejected"
-            );
-        });
-    }
-
-    #[test]
-    fn counterfactual_create_without_explicit_sender_is_rejected() {
-        // A create tx with `sender = None` (EOA path) must be rejected since the
-        // sender address cannot be the derived CREATE2 address.
-        let k = key(0xc4);
-        let signer_addr = addr(&k);
-        let actor_id_val = B256::from_slice(&{
-            let mut id = [0u8; 32];
-            id[12..].copy_from_slice(signer_addr.as_slice());
-            id
-        });
-        let initial_actors = vec![InitialActor::owner(actor_id_val, K1)];
-        let create = CreateEntry {
-            user_salt: B256::ZERO,
-            code: Bytes::from_static(&[0x60, 0x00]),
-            initial_actors,
-        };
-        let tx = TxEip8130 {
-            chain_id: LOCAL,
-            sender: None, // missing explicit sender
-            nonce_key: U256::ZERO,
-            nonce_sequence: 0,
-            valid_after: 0,
-            valid_before: 0,
-            max_priority_fee_per_gas: 1_000_000_000,
-            max_fee_per_gas: 5_000_000_000,
-            gas_limit: 250_000,
-            account_changes: vec![AccountChange::Create(create)],
-            calls: vec![],
-            metadata: Bytes::new(),
-            payer: None,
-        };
-        let hash = tx.sender_signature_hash();
-        let signed = Eip8130Signed::new(tx, Bytes::from(sig(&k, hash)), Bytes::new());
-
-        with_storage(|acc| {
-            assert!(
-                TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW).is_err(),
-                "create without explicit sender must be rejected"
-            );
+                CounterfactualCreate::CreateThenConfigChange => {
+                    let out = result.expect("create + config change must authorize");
+                    assert_eq!(out.actors.sender.account, derived);
+                    assert_eq!(out.config_changes.len(), 1);
+                    assert!(out.applied.created.is_some());
+                    assert_eq!(acc.get_change_sequences(derived).unwrap(), (1, 1));
+                }
+                CounterfactualCreate::WrongSigner => assert!(
+                    matches!(
+                        &result,
+                        Err(TxAuthError::Authorize(AuthorizeError::AuthenticatorMismatch { .. }))
+                    ),
+                    "signer not in initial_actors must be rejected"
+                ),
+                CounterfactualCreate::MissingSender => {
+                    assert!(result.is_err(), "create without explicit sender must be rejected");
+                }
+            }
         });
     }
 
@@ -1188,6 +1036,90 @@ mod tests {
                 matches!(err, TxAuthError::Apply(ApplyError::CreateAndDelegation)),
                 "expected CreateAndDelegation, got {err:?}"
             );
+        });
+    }
+
+    /// Without the Keystore, delegation and native k1 keys (named, bare, or an
+    /// open payer's raw signature) authorize; every other account change or
+    /// authenticator is unsupported.
+    #[test]
+    fn authorizes_without_keystore_only_delegation_and_k1() {
+        let sender_key = key(0x61);
+        let payer_key = key(0x62);
+        let sender = addr(&sender_key);
+        let payer = addr(&payer_key);
+        let p256 = address!("0x0000000000000000000000000000000000000100");
+        let delegation = AccountChange::Delegation(Delegation { target: payer });
+
+        let eoa = eoa_signed(tx_with(None, None, vec![delegation]), &sender_key);
+        let applied = TransactionAuthorizer::authorize_without_keystore(&eoa).unwrap();
+        assert_eq!(applied.actors.sender.account, sender);
+        assert!(applied.actors.sender.resolved.is_admin());
+        assert!(applied.applied.delegation.is_some());
+
+        let named = configured_signed(
+            tx_with(Some(sender), Some(payer), Vec::new()),
+            &sender_key,
+            Some(&payer_key),
+        );
+        let applied = TransactionAuthorizer::authorize_without_keystore(&named).unwrap();
+        assert_eq!(applied.actors.payer.map(|actor| actor.account), Some(payer));
+
+        let open_tx = tx_with(None, Some(Eip8130Constants::OPEN_PAYER), Vec::new());
+        let payer_auth = sig(&payer_key, open_tx.payer_signature_hash(sender));
+        let sender_auth = sig(&sender_key, open_tx.sender_signature_hash());
+        let open = Eip8130Signed::new(open_tx, Bytes::from(sender_auth), Bytes::from(payer_auth));
+        let applied = TransactionAuthorizer::authorize_without_keystore(&open).unwrap();
+        assert_eq!(applied.actors.payer.map(|actor| actor.account), Some(payer));
+
+        let p256_sender = Eip8130Signed::new(
+            tx_with(Some(sender), None, Vec::new()),
+            auth_blob(p256, &[0; 64]),
+            Bytes::new(),
+        );
+        assert!(matches!(
+            TransactionAuthorizer::authorize_without_keystore(&p256_sender),
+            Err(TxAuthError::UnsupportedAuthenticator)
+        ));
+
+        let config_change = eoa_signed(
+            tx_with(
+                None,
+                None,
+                vec![AccountChange::ConfigChange(SignedAccountChanges {
+                    channel: AccountChangeChannel::Local,
+                    sequence: 0,
+                    changes: Vec::new(),
+                    signature: Bytes::new(),
+                })],
+            ),
+            &sender_key,
+        );
+        assert!(matches!(
+            TransactionAuthorizer::authorize_without_keystore(&config_change),
+            Err(TxAuthError::UnsupportedAccountChange)
+        ));
+    }
+
+    /// A self-paid transaction carrying `payer_auth` is rejected on both
+    /// inclusion paths, before and after Zenith.
+    #[test]
+    fn self_pay_with_payer_auth_is_rejected_at_inclusion() {
+        let sender_key = key(0x63);
+        let tx = tx_with(None, None, Vec::new());
+        let sender_auth = sig(&sender_key, tx.sender_signature_hash());
+        let padded =
+            Eip8130Signed::new(tx, Bytes::from(sender_auth), Bytes::from_static(&[0xab; 32]));
+
+        assert!(matches!(
+            TransactionAuthorizer::authorize_without_keystore(&padded),
+            Err(TxAuthError::UnexpectedPayerAuth)
+        ));
+        with_storage(|acc| {
+            assert!(matches!(
+                TransactionAuthorizer::authorize_and_apply(&padded, acc, LOCAL, NOW),
+                Err(TxAuthError::UnexpectedPayerAuth)
+            ));
         });
     }
 }

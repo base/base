@@ -1,6 +1,6 @@
 //! Per-block accounting of payload validity-predicate state loads.
 //!
-//! Evaluating a transaction's validity predicates reads account balances and
+//! Evaluating a transaction's validity predicates reads account balances, nonces, and
 //! contract storage slots from the state the builder is building on. This module
 //! measures the *footprint* of those reads per block — how many accounts and
 //! storage slots predicate evaluation touches, both in total (every read) and
@@ -37,7 +37,7 @@ use revm::{
 /// across the block, i.e. the predicate state footprint.
 #[derive(Debug, Default)]
 pub struct PredicateLoadTracker {
-    /// Total account (balance) reads.
+    /// Total account (balance or nonce) reads.
     account_reads: u64,
     /// Total storage-slot reads.
     slot_reads: u64,
@@ -48,7 +48,7 @@ pub struct PredicateLoadTracker {
 }
 
 impl PredicateLoadTracker {
-    /// Records a single account (balance) read.
+    /// Records a single account (balance or nonce) read.
     pub fn record_account(&mut self, address: Address) {
         self.account_reads += 1;
         self.unique_accounts.insert(address);
@@ -135,7 +135,9 @@ impl<DB: Database> Database for PredicateReadRecorder<'_, DB> {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, U256};
-    use base_execution_txpool::{PredicateContext, ValidityOperator, ValidityPredicate};
+    use base_execution_txpool::{
+        PredicateContext, ValidityConditions, ValidityOperator, ValidityPredicate,
+    };
     use reth_revm::State;
     use revm::{database::InMemoryDB, state::AccountInfo};
 
@@ -154,7 +156,7 @@ mod tests {
         let mut db = InMemoryDB::default();
         db.insert_account_info(
             address,
-            AccountInfo { balance: U256::from(10), ..Default::default() },
+            AccountInfo { balance: U256::from(10), nonce: 2, ..Default::default() },
         );
         db.insert_account_storage(address, slot, U256::from(3)).unwrap();
         let state = State::builder().with_database(db).with_bundle_update().build();
@@ -178,7 +180,9 @@ mod tests {
             op: ValidityOperator::Equal,
             value: U256::from(3),
         };
-        let predicates = [balance, storage];
+        let nonce =
+            ValidityPredicate::Nonce { address, op: ValidityOperator::Equal, value: U256::from(2) };
+        let predicates = ValidityConditions::new(vec![balance, nonce, storage]);
 
         // Evaluate the same batch twice: totals double, unique counts do not.
         for _ in 0..2 {
@@ -190,7 +194,7 @@ mod tests {
             );
         }
 
-        assert_eq!(tracker.account_reads(), 2);
+        assert_eq!(tracker.account_reads(), 4);
         assert_eq!(tracker.slot_reads(), 2);
         assert_eq!(tracker.unique_accounts(), 1);
         assert_eq!(tracker.unique_slots(), 1);
@@ -216,14 +220,14 @@ mod tests {
             op: ValidityOperator::Equal,
             value: U256::from(3),
         };
-        let predicates = [failing_balance, storage];
+        let predicates = ValidityConditions::new(vec![failing_balance.clone(), storage]);
 
         {
             let mut recorder = PredicateReadRecorder::new(&mut state, &mut tracker);
             assert_eq!(
                 ValidityPredicateKey::first_unsatisfied(&predicates, &mut recorder, &context())
                     .unwrap(),
-                Some((0, ValidityPredicateKey::Balance(address)))
+                Some((failing_balance, ValidityPredicateKey::Balance(address)))
             );
         }
 

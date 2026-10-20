@@ -5,16 +5,80 @@ Behavioural end-to-end test of the challenger.
 Forks the target L1 into a pod-local Anvil, hands the fork to a real
 `base-challenger` binary running alongside it, and asserts on what that
 challenger does — first that it leaves valid games alone, then that it
-disputes every classifier path we can stage honestly on that same fork.
+disputes the classifier paths that can run serially on the same fork.
 
 Patching an existing game rather than creating one is what keeps the test
 honest. The games were created and verified on the real chain before the fork
 point, so the `TEEVerifier`, the `TEEProverRegistry` and the game bytecode are
-all real; the challenger's dispute proof is genuinely verified onchain rather
-than waved through by a stub. The corruption itself reuses
+all real. In `real` prover mode the challenger's dispute proof is genuinely
+verified onchain rather than waved through by a stub; the default `mock` mode
+trades that for not touching the shared prover, as described under
+[Prover modes](#prover-modes). The corruption itself reuses
 [`base_zk_fork_dispute::Checkpoint::patch`], which rewrites the CWIA root in the
 game bytecode and repairs the factory's `_disputeGames` registration so lookups
 still resolve.
+
+## Prover modes
+
+`CHALLENGER_E2E_PROVER` decides where proofs come from.
+
+**`mock` (default).** No shared capacity is used: the run never talks to the
+prover-service or its SP1 cluster. The driver serves an in-memory mock of the
+prover-service API on loopback (`src/mock_prover.rs`) and points both its own
+staging step and the challenger at it, the challenger through the env file it
+already waits on. The mock keys sessions on their ID exactly as the real
+service does, reports each one as running for `CHALLENGER_E2E_MOCK_PROVING_TIME`
+so the polling paths run, and then returns a well-formed SP1 PLONK receipt with
+no real proof in it. TEE requests are refused with a non-retryable error, so
+the challenger falls back to ZK at once — the branch every zeronet run takes
+anyway, because the throwaway challenger key is not a registered TEE proposer.
+
+By default the mock also fails the first attempt of every proof session the
+challenger requests (`CHALLENGER_E2E_MOCK_FAULT=fail-first`). Like the real
+service, it keeps a failed session failed until the same session is re-sent
+with `retry_failed` (a resend without it is rejected with `FAILED_PRECONDITION`),
+and only then proves it. A dispute can therefore only land
+if the challenger noticed the failure and re-requested the proof, and each
+dispute assertion also checks the mock's record: the session behind the
+challenger's proof shows one injected failure and at least one requeue. The
+driver's own staging requests use a different prover address and are never
+failed. `none` turns the fault off.
+
+Those proofs only land because the fork's verifiers are replaced too. Both
+verifiers of each game under test get the runtime of
+`contracts/MockVerifier.sol` for the whole run (`src/mock_verifier.rs`). It
+keeps the real verifier's storage and behaves like it except for the proof
+check: `verify` accepts any proof until the verifier is nullified, `nullify`
+keeps the real registered/respected/not-blacklisted/not-retired guard, and
+`nullified()` reads slot 0 like the real `Verifier` base.
+
+With the proof check gone, the one thing a proof established — that the root a
+dispute claims is the canonical root at that index — is asserted by the driver
+instead. After every dispute phase it decodes each successful `challenge` and
+`nullify` the challenger sent to the game and requires the corrupted index and
+its canonical root. The game itself only compares that root with its own stored
+one, so without this a challenger proving the wrong root would still pass.
+
+A right root is not a right proof, though: a real proof also commits to the
+range, L1 head, schedule and prover it was requested for, and a
+journal that does not match the game is rejected. So the mock records every
+SNARK request, and after each dispute the driver requires the challenger to
+have requested exactly the proof that checkpoint needs — one checkpoint's
+blocks, the game's `l1Head`, a schedule pinned to the game's final
+L2 block, and the challenger as prover.
+
+What `mock` cannot catch, by construction: real proof generation, a prover
+built for a different program than the on-chain hashes (the 2026-09-29 zeronet
+failures), SP1 gateway routing, prover-service queueing, and the TEE submission
+path — the challenger never holds a TEE receipt, so the onchain TEE revert and
+the ZK fallback that follows it are not exercised; it falls back on the RPC
+refusal instead. snark-e2e is the
+place for the program check; `real` mode remains for an end-to-end proof.
+
+**`real`.** The live prover-service at `BASE_CHALLENGER_ZK_RPC_URL` and the
+fork's real verifiers, except for the one Path 3 staging transaction described
+below. A `path3` or `all` run costs a 600-block SNARK on the shared cluster, and
+each challenger dispute a 30-block one.
 
 Key **A** (driver) signs setup only (`verifyProposalProof` to stage Path 4).
 Key **B** (challenger) is the only one that may dispute. Attribution is a nonce
@@ -24,17 +88,37 @@ delta on B. Both are generated per run and never leave the pod.
 
 One process, one fork, two TEE-only in-progress games (newest-first, lookback
 50, ≥1 intermediate root, all above the anchor game). Game A is Path 1 / Path 2
-skip. Game B is Path 4 and then whichever path Path 4 leaves behind. The run
-bails if fewer than two such games exist.
+skip. Game B is Path 4, followed by Path 3 only when the TEE proof is removed
+first. The run bails if fewer than two such games exist, as an infrastructure
+failure (see [When a dependency is down](#when-a-dependency-is-down)).
+
+Games are also filtered on their **aggregation program**. Every hash on an
+`AggregateVerifier` is `immutable`, so a verification-key rotation deploys a new
+implementation and registers it on the factory, while every clone created before
+it stays pinned to the old `ZK_AGGREGATE_HASH`. A proof from the current
+prover-service cannot verify against such a clone. The driver therefore reads the
+hash from `gameImpls(gameType)` and skips candidates that do not match — without
+that, a stale clone costs a full SNARK and then reverts `InvalidProof()` at
+submission, roughly 35 minutes in, with nothing in the error naming the rotation.
+When the implementation has changed and the proposer has not yet created enough
+games against it, the run stops during selection and says so.
+
+This filter keeps selection consistent with the factory and nothing more. It
+cannot tell whether the prover-service builds the program the implementation
+expects: a prover upgraded ahead of the on-chain hashes fails at the same
+`verifyProposalProof` with the same `InvalidProof()`, and this check passes.
+That is what the 2026-09-29 zeronet failures were — every selected game
+carried the implementation's current hashes.
 
 The anchor bound is not cosmetic: the scanner starts at one past the anchor
 game's factory index, so a game at or before the anchor is one the challenger
 will never look at, however invalid it is made — the dispute waits below would
 sit out their whole timeout on a game nobody was watching.
 
-Every game in the lookback window other than A and B is snapshotted before the
-challenger boots and re-read at the end (step 7). The per-path assertions below
-are all scoped to A or B, so without that bound a challenger that *also*
+Every game in the lookback window other than the games under test (A and B,
+plus C in `all`) is snapshotted before the challenger boots and re-read at the
+end (step 7). The per-path assertions below are all scoped to the games under
+test, so without that bound a challenger that *also*
 disputes games it was never given would pass the run.
 
 1. **The challenger comes up.** `base_challenger_up` is 1 and at least one scan
@@ -86,34 +170,35 @@ disputes games it was never given would pass the run.
    `counteredIndex` stay set, and a challenger that "defends" a legitimate
    challenge of a wrong TEE root fails here. If it was a TEE nullify there is
    no challenge to leave standing, and the same window proves **idempotence**:
-   the challenger must not dispute a game it has already nullified. Path 2
-   *dispute* (fraudulent ZK against a correct TEE root) is not staged: the real
-   prover cannot produce a wrong-root proof the real verifier accepts. That
-   half stays in the mock driver tests.
+   the challenger must not dispute a game it has already nullified.
+
+   In the `all` and `path1-path2` scenarios, the driver then restores the
+   canonical root while preserving the recorded challenge. That makes the
+   challenge fraudulent without mocking proof verification. The challenger
+   must detect **Path 2 dispute**, clear `zkProver` and `counteredIndex`, and
+   move B's nonce again.
 5. **Path 4 `InvalidDualProposal`.** Game B was staged *before* the challenger
-   was released: A requested a real SNARK of B's canonical roots from
-   `BASE_CHALLENGER_ZK_RPC_URL` (not the fork) and submitted
+   was released: A requested a SNARK of B's canonical roots from
+   `BASE_CHALLENGER_ZK_RPC_URL` (not the fork; the mock prover in `mock` mode)
+   and submitted
    `verifyProposalProof`. `zkProver != 0` and `counteredIndex == 0`. After the
    quiet window, B is patched. The challenger must drop one of B's two proofs.
    B's nonce must advance.
-6. **Whatever Path 4 left behind.** A dual-proof game takes two disputes to
-   clear, and either proof may go first — so which assertion runs is decided by
-   what step 5 observed, not fixed in advance. TEE first (`tee=0`, `zk≠0`) is
-   **Path 3**: the next scan ZK-nullifies (`zkProver == 0`). ZK first is the
-   supported **TEE-fallback** case, where the TEE request or submission failed;
-   that leaves a TEE-only game (`tee≠0`, `zk=0`) and the next scan disputes it
-   as **Path 1**, by nullify or by challenge. Insisting on the TEE proof going
-   first would sit out the whole `CHALLENGER_E2E_DISPUTE_TIMEOUT` on a
-   correctly behaving challenger.
+6. **Whatever Path 4 left behind.** TEE first (`tee=0`, `zk≠0`) is **Path 3**:
+   the next scan ZK-nullifies (`zkProver == 0`). ZK first is the supported
+   **TEE-fallback** case, where the TEE request or submission failed. B is then
+   a TEE-only game over a wrong root — Path 1 again — and the driver revives
+   the ZK verifier the nullify disabled (see below) and requires the challenger
+   to dispute the remaining TEE proof at the same corrupted index. The E2E's
+   throwaway B key is not registered as a TEE proposer, so current deployments
+   take this branch after the TEE submission is rejected with
+   `InvalidProposer(B)`.
 
    Step 5 reads both prover fields in one observation, and a challenger that
    scans faster than `CHALLENGER_E2E_POLL_INTERVAL` may have cleared both
    before the first look; that is a third branch, not a failure. Attribution is
-   therefore one assertion at the end — B's nonce must have advanced by at
-   least two against the baseline taken before the patch — rather than one per
-   step. A per-step delta credits both transactions to the first step whenever
-   the challenger beats the poll, and then demands a third that is never
-   coming.
+   therefore one assertion at the end: B's nonce must advance once for ZK-first
+   Path 4, or twice when TEE-first Path 4 continues through Path 3.
 7. **No collateral damage.** Every bystander game snapshotted in step 0 must
    still read the same `(teeProver, zkProver, counteredIndex)`. Catches what
    the per-game assertions cannot see: a challenger misconfigured on
@@ -130,6 +215,221 @@ disputes games it was never given would pass the run.
    a message that says the check could not be completed rather than that the
    challenger moved something.
 
+## One fork, every path
+
+A successful `nullify` also nullifies the *shared* verifier of its proof type
+(`AggregateVerifier.sol:695-697` → `Verifier.nullify()`). On a real chain that
+stops the proof type for every game until the verifier is redeployed; on the
+fork it used to end the run at the first nullify, which is why Path 2 dispute,
+Path 4's follow-up and Path 3 each needed their own pod.
+
+The default `all` scenario now clears that flag after each dispute phase has
+been asserted (`revive_verifiers`). It stands in for the redeploy and touches
+nothing else: the games keep exactly the state the nullify left, and the flag
+is storage slot 0 on the real `Verifier` and on the mock alike, so this works
+in both prover modes. One run then covers, over three games:
+
+| Game | Phases |
+|---|---|
+| A (TEE-only) | Path 1, Path 2 skip, Path 2 dispute |
+| B (staged dual-proof) | Path 4, then its follow-up: the remaining TEE proof disputed again |
+| C (staged dual-proof) | Path 3, staged as below |
+
+A and B are added to the collateral-damage set once their phases finish, so
+Path 3 must leave them alone too. Path 2 skip and Path 2 dispute need Path 1
+to land as a ZK challenge; after a TEE nullify they are logged as skipped.
+
+`all` ends with **Bonds**, after the bystander check because it patches a game
+outside the ones under test. The challenger is released with
+`BASE_CHALLENGER_BOND_CLAIM_ADDRESSES` set to its own key, as production claims
+for its own, and a 5s bond scan over the games from the oldest one under test.
+Bonds takes the game the challenger won — in progress, challenged, with the
+challenger as ZK prover; B after Path 4's follow-up — and requires the full
+claim:
+
+1. The driver makes the game due. It revives the shared verifiers Path 3
+   nullified, because `resolve` refutes the proof of a nullified verifier,
+   here the challenger's winning challenge. The game's `expectedResolution`
+   (5 days after the challenge) is set to now, and its parent, if still in
+   progress, to `DEFENDER_WINS`. `resolve` requires a resolved parent, and the challenger
+   never resolves a game whose bond is someone else's.
+2. The challenger must `resolve` the game (`CHALLENGER_WINS`, bond recipient =
+   the challenger) and send the first `claimCredit`, which unlocks the bond.
+3. The driver moves the `DelayedWETH` withdrawal's start back by the delay
+   (1 day on zeronet).
+4. The challenger must send the second `claimCredit`: the bond reads as claimed
+   and its balance has grown.
+
+Time is not warped: the challenger compares the `DelayedWETH` unlock timestamp
+against its own wall clock, so on a warped fork it would wait out the delay for
+real. Each patch is read back through the contract's getter, so a storage
+layout that drifts fails the run at the patch (`src/bonds.rs`). With no game
+won, Bonds is logged as skipped.
+
+`path1-path2` and `path3` remain as cheaper subsets for `real` prover runs,
+where every dispute and staged game costs a SNARK on the shared cluster.
+
+## `CHALLENGER_E2E_SCENARIO=path3`
+
+Step 6 only reaches Path 3 when the challenger happens to drop the TEE proof
+first, which current deployments do not: B is not a registered TEE proposer, so
+Path 4 takes the ZK-fallback branch and the run ends there. This scenario stages
+the Path 3 shape directly instead of waiting for it.
+
+Game B is given a SNARK of its canonical roots as in step 5 (real in `real`
+mode, from the mock otherwise). A then drops
+B's TEE proof through the game's own `nullify(TEE, ...)` **while every root is
+still canonical**, waits out every challenger scan that could have seen both
+proofs, and only then patches a root as in step 6. `nullify` only requires the
+proven root to differ from the stored one (`_checkIntermediateRoot`), and the
+TEE verifier is mocked for that call, so it proves a fixed placeholder root at
+index 0. Until the patch B is a valid ZK-only game, which the challenger leaves
+alone.
+
+The wait is what makes the scenario deterministic. A challenger step classifies
+every game from its proofs in one pass, then reads each candidate's roots when it
+gets to it — over a minute later on zeronet's factory. A step that classified B
+with both proofs and read its roots after the patch would dispute it as
+`InvalidDualProposal` (Path 4), clearing the ZK proof while satisfying every
+state assertion below without `InvalidZkProposal` ever being reached; no order of
+the two writes avoids that on its own. So after the TEE nullify the driver waits
+for `games_scanned_total` to advance twice: the second advance comes from a pass
+that began after the step in flight at the nullify had finished. Earlier versions
+assumed the exposure was one Anvil write wide and abandoned the Path 3 claim when
+it was hit, which let a `path3` run go green without testing Path 3. Now
+`invalid_dual_proposal_detected_total` moving during Path 3 **fails** the run.
+
+Waiting for the ZK proof to go is unconditional, and a timeout fails the run —
+the game is invalid, and an E2E that reports success over an undisputed invalid
+game is worse than none.
+
+The end state is ambiguous about how it was reached, so the path is confirmed
+positively too: `invalid_zk_proposal_detected_total` must have advanced since
+staging began. It is a baseline, not an absolute, because in `all` a TEE-first
+Path 4 has already moved it on game B.
+
+Going through `nullify` rather than a storage write means the game reaches the
+exact state a real TEE nullification produces — `proofCount` and `expectedResolution` included —
+rather than the approximation a storage write would leave. A has no enclave to
+sign with, so the game's `TEE_VERIFIER()` is replaced with the mock verifier for
+that one transaction and restored immediately after; the restore is asserted,
+because in `real` mode a fork left with a permissive verifier would pass every
+assertion that follows. (In `mock` mode the code restored is the mock itself.)
+
+A real `nullify(TEE, ...)` also nullifies the TEE verifier *globally*
+(`AggregateVerifier.sol:697` → `Verifier.nullify()`). The mock reaches that
+through the same call, behind the same registry guard, and the flag is storage,
+so it survives the restore; the driver asserts `nullified()` reads true
+afterwards. A restored-but-live verifier would let other games on the fork
+verify TEE proofs that a genuine TEE-first Path 4 would have blocked.
+
+What is left is `(teeProver == 0, zkProver != 0, counteredIndex == 0)` over an
+invalid root — `InvalidZkProposal`. The challenger must clear `zkProver`,
+leave `counteredIndex` at 0, and move B's nonce.
+
+Staging happens *after* the quiet window of step 2, not before it: B is a valid
+dual-proof game until it is patched, so this scenario gets the same positive
+case as every other one. Game A is never corrupted here, so it is added to the
+watch set of step 7 — `snapshot_bystanders` excludes both games under test, and
+without that A would be the one valid game nobody re-reads. One further bound
+covers disputes that revert, which move no game state and are therefore
+invisible to every state comparison: clearing Path 3 takes exactly one dispute
+submission, so the run fails if the challenger submitted more. That count is
+re-read after a further quiet window, because on its own it is sampled the
+moment B's ZK proof disappears and says nothing about the scans that follow —
+and by then the whole fork is quiet, B included, since a fully-nullified game is
+terminal to the scanner.
+
+In `all`, the same staging runs on game C after Path 4 has finished.
+
+## Reading a run in Datadog
+
+Every outcome log carries a `phase` field, and the ones that assert a claim also
+carry `verdict`. Datadog sees each line alone, so these are what make a run
+answerable without reading the whole stream. Note the prefix: the driver's
+`tracing` fields land under `@data.message.fields.*`, not `@*`.
+
+| Want | Query |
+|---|---|
+| Every failed run | `@data.message.fields.verdict:fail` |
+| Every Path 3 outcome, all runs | `@data.message.fields.phase:path3` |
+| A phase that ran but was not asserted | `@data.message.fields.verdict:skip` |
+| What one run actually asserted | `"scenario complete"` — has `phases_asserted` |
+| Which scenario a run was | `"starting scenario"` — has `scenario`, both keys, the timeouts, and `driver_commit` |
+| What a run tested | `"challenger under test"` — has `challenger_version`, `challenger_binary`; `"forked L1"` — has `fork_block` |
+| A named contract revert | `"reverted with"` |
+| Where a run is, phase by phase | `"started" OR "finished" OR "failed" OR "skipped"` with `@data.message.fields.phase:*` |
+| Which phase a failed run died in | `"failed" @data.message.fields.verdict:fail` — has `phase`, and `elapsed_ms` unless the error came between two phases (charged to the next one) |
+| Every planned phase of one run, with timings | `"run summary"` — has `results`, e.g. `setup=pass(41.2s) quiet-window=pass(95.0s) path3=pass(22.4s) bystanders=pass(1.8s)` |
+| A failure that was not the challenger's | `@data.message.fields.infra:true` — on both `failed` and `challenger E2E test failed` |
+| A wait that is taking long | `"still waiting for"` — has `waiting_for`, `elapsed_s`, `budget_s` |
+| One step of a phase | `@data.message.fields.what:"waiting for two challenger scans"` — with `phase`, `step`, `steps` |
+| A quiet window in progress | `"still observing"` — has `observing`, `elapsed_s`, `window_s` |
+
+Progress logs read as a sequence. Each planned phase logs `Path 1 started (3/7)`
+and `Path 1 finished` (with `elapsed_ms`), or `Path 1 failed`. A phase that a
+branch did not reach logs `Path 2 skip skipped: <reason>`. Phases with several
+steps log them numbered, e.g. `Path 3 step 2/5: waiting for two challenger scans`.
+Every wait and observation window logs `still waiting for ...` /
+`still observing ...` every 30 seconds, so a slow run is distinguishable from a
+hung one. The run ends with one `run summary` that lists every planned phase,
+`not-run` included.
+
+`phase` values: `setup`, `quiet-window`, `path1`, `path2-skip`, `path2-dispute`,
+`path3`, `path4`, `bystanders`, `bonds`. `verdict` values: `pass`, `skip`, `fail` on a
+phase; `pass`, `fail` on the run. They are asserted by a unit test because dashboards
+filter on them.
+
+Two fields worth knowing:
+
+- **`phases_asserted`** on `scenario complete` is what the run *claimed to
+  cover*, which is not the same as which logs appeared. For `all` it is built
+  from what ran: `path2-skip` and `path2-dispute` only when Path 1 landed as a
+  ZK challenge.
+- **`branch`** on Path 4 says `tee-first`, `zk-fallback` or `both-cleared`.
+  Today it is always `zk-fallback` on zeronet, because the throwaway key is not
+  a registered TEE proposer, so the follow-up dispute of B's remaining TEE
+  proof runs. A `tee-first` run reaches Path 3 in situ instead, tagged
+  `reached=in-situ`; the staged Path 3 on game C runs either way.
+
+## When a dependency is down
+
+A run depends on two things outside the pod: the L2 RPC, for canonical roots,
+and the chain's recent games, to corrupt. When either is unavailable the run
+cannot test anything, and failing it as if the challenger had regressed sends
+whoever triages it after the wrong component. The driver keeps the two apart:
+
+- **It checks the L2 RPC before it needs it.** Setup reads the state proof
+  behind each selected game's final root — the read every path makes to compute
+  the canonical root it corrupts — and so does every path, right before its
+  patch. A read that fails the way an unavailable node does (`no state found`, a
+  missing block, a refused connection, an HTTP 502/503/504/429 from a load
+  balancer, whatever its body says) is retried for
+  `CHALLENGER_E2E_L2_RETRY_BUDGET`, which covers a node restart.
+- **It reads L2 state at every dispute timeout, and when a patch fails.** The
+  challenger validates against the same node, so a timeout while that node
+  serves no state is the node's failure. A patch also reads and writes the fork,
+  so its failure is the node's only if the node is down then too. The read is 64
+  blocks below the head, so a backend that has not caught up to it is not
+  mistaken for an outage, and the failure is only excused if 3 reads 5s apart
+  all fail.
+- **Too few eligible games is not the challenger's failure either**, whether
+  the proposer is stalled or the implementation has just rotated.
+- **Setup is excused for any transient RPC failure until the challenger is
+  released**, such as the fork's upstream L1 RPC resetting a connection. Until
+  then the run has only read the chain into a fork of its own, and a retried
+  pod starts over on a fresh one. From the release on it is not: a challenger
+  that crashes on start fails the wait for its first scan with `connection
+  refused`. Later phases are not excused either, because a dispute timeout can
+  carry a transport error from a fork that died.
+
+These failures carry `infra=true`, and the binary exits with **75**
+(`EX_TEMPFAIL`) instead of 1, so the Workflow can retry them without retrying a
+real regression. Clap's `2` stays a usage error, so a misconfigured Job is not
+retried as an outage either. Any other
+failure, including an L2 read that fails for another reason (a header hash or
+state proof that does not verify), stays a plain failure.
+
 ## Required environment
 
 `BASE_CHALLENGER_*` is shared with the challenger under test — both read the
@@ -140,17 +440,24 @@ is pointed at and talks to the same prover-service.
 |----------|----------|---------|
 | `BASE_CHALLENGER_L1_ETH_RPC` | Yes | L1 the fork is taken from; only ever read |
 | `BASE_CHALLENGER_L2_ETH_RPC` | Yes | L2 archive RPC for canonical output roots |
-| `BASE_CHALLENGER_ZK_RPC_URL` | Yes | Live prover-service JSON-RPC for Path 4 setup (not the fork) |
+| `BASE_CHALLENGER_ZK_RPC_URL` | Yes | Live prover-service JSON-RPC, used in `real` mode only (not the fork); replaced by the mock's URL in `mock` mode |
 | `BASE_CHALLENGER_DISPUTE_GAME_FACTORY_ADDR` | Yes | `DisputeGameFactory` on L1 |
 | `BASE_CHALLENGER_GAME_TYPE` | Yes | `AggregateVerifier` game type |
 | `BASE_CHALLENGER_ANCHOR_STATE_REGISTRY_ADDR` | Yes | `AnchorStateRegistry` on L1; read to find the scanner's lower bound |
 | `CHALLENGER_E2E_ANVIL_PORT` | No (default `18545`) | Fork port; not 8545, which the production challenger reserves for its signer sidecar |
+| `CHALLENGER_E2E_PROVER` | No (default `mock`) | `mock` for the in-pod prover and mock verifiers, `real` for the live prover-service |
+| `CHALLENGER_E2E_MOCK_PROVING_TIME` | No (default `5s`) | How long the mock reports each proof as running |
+| `CHALLENGER_E2E_MOCK_FAULT` | No (default `fail-first`) | `fail-first` fails the first attempt of each challenger proof session, so every dispute also tests the retry; `none` disables it |
+| `CHALLENGER_E2E_SCENARIO` | No (default `all`) | `all` for every path on one fork (three games), or the cheaper subsets `path1-path2` and `path3` for `real` prover runs |
+| `CHALLENGER_E2E_ENV_FILE` | No (default `/shared/challenger.env`) | Handshake file that releases the challenger; the chart's sidecar waits on the default. Override only to run the pair outside the pod |
 | `CHALLENGER_E2E_CHALLENGER_METRICS_URL` | No (default `http://127.0.0.1:7300/metrics`) | Prometheus endpoint of the challenger under test |
-| `CHALLENGER_E2E_GAME_LOOKBACK` | No (default `50`) | Factory indices searched for two games to corrupt |
+| `CHALLENGER_E2E_GAME_LOOKBACK` | No (default `50`) | Factory indices searched for the games to corrupt (three for `all`, two otherwise) |
 | `CHALLENGER_E2E_STARTUP_TIMEOUT` | No (default `5m`) | Budget for the fork and the first scan |
 | `CHALLENGER_E2E_QUIET_WINDOW` | No (default `90s`) | Positive-case (and Path 2 skip) observation window |
-| `CHALLENGER_E2E_DISPUTE_TIMEOUT` | No (default `45m`) | Budget for each SNARK / dispute; sized for a real proof |
+| `CHALLENGER_E2E_DISPUTE_TIMEOUT` | No (default `45m`) | Budget for each SNARK / dispute; sized for a real proof, generous in `mock` mode |
 | `CHALLENGER_E2E_POLL_INTERVAL` | No (default `5s`) | Driver poll interval |
+| `CHALLENGER_E2E_DRIVER_COMMIT` | No | `base/base` commit the driver was built from, for the image to set; it is only logged, as `unknown` when unset |
+| `CHALLENGER_E2E_L2_RETRY_BUDGET` | No (default `10m`) | How long an L2 read that fails like an unavailable node is retried before the run fails as an infrastructure failure (exit code 75) |
 
 `anvil` must be on `PATH`. The challenger under test must be reachable on
 `CHALLENGER_E2E_CHALLENGER_METRICS_URL` and must be configured with a local

@@ -5,6 +5,7 @@ use std::{cmp::Reverse, collections::BinaryHeap, sync::Arc, time::Instant};
 use alloy_rpc_types_engine::{
     ExecutionPayload, INVALID_FORK_CHOICE_STATE_ERROR, PayloadId, PayloadStatusEnum,
 };
+use alloy_transport::TransportError;
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
 use base_protocol::{AttributesWithParent, BaseBlockConversionError, L2BlockInfo};
@@ -314,6 +315,14 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
     }
 
     /// Fetches the payload from the execution layer using the payload timestamp for versioning.
+    ///
+    /// ## Engine Method Selection
+    /// The method used to fetch the payload from the EL is determined by the payload timestamp.
+    ///
+    /// - `engine_getPayloadV2` is used for payloads with a timestamp before the Ecotone fork.
+    /// - `engine_getPayloadV3` is used for payloads with a timestamp after the Ecotone fork.
+    /// - `engine_getPayloadV4` is used for Isthmus/Jovian payloads before Base Azul.
+    /// - `engine_getPayloadV5` is used for Base Azul / Osaka payloads.
     pub async fn fetch_payload(
         cfg: &RollupConfig,
         engine: &EngineClient_,
@@ -330,12 +339,16 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
         );
 
         let get_payload_version = EngineGetPayloadVersion::from_cfg(cfg, payload_timestamp);
+
+        let get_payload_failed = |e: TransportError| {
+            error!(target: "engine", error = %e, "Payload fetch failed");
+            SealTaskError::GetPayloadFailed(e)
+        };
+
         let payload_envelope = match get_payload_version {
             EngineGetPayloadVersion::V5 => {
-                let payload = engine.get_payload_v5(payload_id).await.map_err(|e| {
-                    error!(target: "engine", error = %e, "Payload fetch failed");
-                    SealTaskError::GetPayloadFailed(e)
-                })?;
+                let payload =
+                    engine.get_payload_v5(payload_id).await.map_err(get_payload_failed)?;
 
                 BaseExecutionPayloadEnvelope {
                     parent_beacon_block_root: payload_attrs
@@ -346,10 +359,8 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
                 }
             }
             EngineGetPayloadVersion::V4 => {
-                let payload = engine.get_payload_v4(payload_id).await.map_err(|e| {
-                    error!(target: "engine", error = %e, "Payload fetch failed");
-                    SealTaskError::GetPayloadFailed(e)
-                })?;
+                let payload =
+                    engine.get_payload_v4(payload_id).await.map_err(get_payload_failed)?;
 
                 BaseExecutionPayloadEnvelope {
                     parent_beacon_block_root: Some(payload.parent_beacon_block_root),
@@ -357,10 +368,8 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
                 }
             }
             EngineGetPayloadVersion::V3 => {
-                let payload = engine.get_payload_v3(payload_id).await.map_err(|e| {
-                    error!(target: "engine", error = %e, "Payload fetch failed");
-                    SealTaskError::GetPayloadFailed(e)
-                })?;
+                let payload =
+                    engine.get_payload_v3(payload_id).await.map_err(get_payload_failed)?;
 
                 BaseExecutionPayloadEnvelope {
                     parent_beacon_block_root: Some(payload.parent_beacon_block_root),
@@ -368,10 +377,8 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
                 }
             }
             EngineGetPayloadVersion::V2 => {
-                let payload = engine.get_payload_v2(payload_id).await.map_err(|e| {
-                    error!(target: "engine", error = %e, "Payload fetch failed");
-                    SealTaskError::GetPayloadFailed(e)
-                })?;
+                let payload =
+                    engine.get_payload_v2(payload_id).await.map_err(get_payload_failed)?;
 
                 BaseExecutionPayloadEnvelope {
                     parent_beacon_block_root: None,

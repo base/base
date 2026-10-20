@@ -34,7 +34,7 @@ image cannot bypass the integrated offline generator. Bump the tag in the setup
 container, smoke test, Justfile, and Compose files when changing this interface.
 
 Compose devnets and the system-test stack use `op-deployer`, built from
-[`base/optimism` at `0066b17c`](https://github.com/base/optimism/tree/0066b17c3fe0cbb5ea935de6d5b18d4fc86dc439).
+[`base/optimism` at `896142b3`](https://github.com/base/optimism/tree/896142b334ea20220aa552e9478e5ec406716911).
 The binary generates both chains offline in one process, applies Base activation
 settings, merges L1 contract allocations with the prefunded genesis template, and
 writes the final execution and rollup configs. Contract artifacts are unpacked
@@ -71,7 +71,7 @@ The `docker-compose.yml` orchestrates a complete local devnet environment with b
 - Unified Base sequencer and validator/RPC nodes on L2
 - The canonical Go `op-batcher` (`op-batcher` service) submitting L2 data to L1
 - The Rust `base batcher` (`base-batcher` service) running in **shadow mode**
-- A shadow validator (`base-shadow-validator` service) deriving the shadow DA
+- A shadow validator (`base-shadow-validator` service) deriving its chain from the shadow DA
 
 All services read configuration from `devnet-env` in this directory. The devnet stores chain data in `.devnet/` which is created on first run.
 
@@ -88,10 +88,18 @@ infrastructure:
   mainnet's runtime config. `--txmgr.cell-proof-time=0` enables Fusaka cell
   proofs from genesis for the local L1 (chain ID 1337), which this version does
   not auto-detect.
-- **Shadow DA — `base-batcher`.** The Rust `base batcher` runs in `--shadow-mode`,
-  posting to `SHADOW_BATCH_INBOX_ADDRESS` from `SHADOW_BATCHER_ADDR` — a distinct,
-  funded dev account, so its L1 nonces never collide with the op-batcher's. It
-  anchors recovery on the shadow validator via `--parity-validator-l2-rpc-url`.
+- **Shadow DA — `base-batcher`.** The Rust `base batcher` runs in shadow mode
+  (`--shadow.enabled`), posting to `SHADOW_BATCH_INBOX_ADDRESS` from
+  `SHADOW_BATCHER_ADDR` — a distinct, funded dev account, so its L1 nonces never
+  collide with the op-batcher's. It reads the blocks to submit through
+  `--sequencer-urls`: the consensus RPC of `base-builder`, which forwards the
+  block reads to its execution client, or the three conductors in the HA
+  devnet, among which it finds the leader. It follows the shadow validator's
+  derivation through `--shadow.validator-rollup-rpc`, checks through
+  `--shadow.inbox` that the batch inbox of the validator's rollup config is
+  `SHADOW_BATCH_INBOX_ADDRESS`, and compares the validator's blocks with the
+  leader sequencer's through `--shadow.validator-l2-rpc`. It runs with
+  `--no-throttle`, which shadow mode requires.
 - **Shadow validator — `base-shadow-validator`.** A validator-mode `rpc` node
   that overrides the batch inbox and batcher sender
   (`--l1.dangerously-override-da-batch-inbox`,
@@ -124,11 +132,14 @@ see the `just prover` recipes and
 The easiest way to interact with Docker is through the Justfile recipes:
 
 ```bash
-just devnet up     # Start fresh devnet (stops existing, clears data, rebuilds)
+just devnet up-single # Start a fresh single-sequencer devnet (stops existing, clears data, rebuilds)
+just devnet up     # Same, with a 3-node HA conductor cluster
 just devnet down   # Stop devnet and remove data
 just devnet logs   # Stream logs from all containers
 just devnet status # Check block numbers and sync status
 ```
+
+To choose between this devnet and the snapshot devnet, see [docs/guides/DEVNET.md](../../docs/guides/DEVNET.md).
 
 ### Single-Anvil L1 local Nitro proving
 
@@ -175,14 +186,13 @@ just anvil-nitro-local up
 Set `L2_BASE_DENIM_BLOCK` to another block to move activation, or set it to an
 empty value to leave Denim unscheduled.
 
-To exercise validity transactions on the native payload builder, the deployment
-must schedule Denim and configure both sides of the forwarding path:
+To exercise validity transactions on the native payload builder, the deployment must schedule Denim and configure both sides
+of the forwarding path:
 
-- builder: `--builder.enable-experimental-validity-transactions` and
-  `--builder.payload-builder-cutover`. The builder flag also registers
+- builder: `--builder.payload-builder-cutover`. The builder always registers
   `base_sendRawTransactionValidity` for direct submission.
-- mempool/client: `--enable-experimental-validity-transactions` and a
-  `--builder-rpc-urls` endpoint targeting the builder
+- mempool/client: `--enable-tx-forwarding` and a `--builder-rpc-urls` endpoint
+  targeting the builder
 
 The default devnet compose files include these flags and schedule Cobalt at
 block 22 and Denim at block 25. Builder selection and block cadence change at
@@ -190,8 +200,15 @@ Denim. Native payload building supports balance,
 storage, and block-number predicates; `flashblock_index` predicates remain specific
 to the Flashblocks builder and are rejected after the Denim cutover.
 
+Everest enables EIP-8130 account-abstraction transactions. Everest mode additionally
+activates Everest at block 100:
+
+```bash
+just devnet up everest
+```
+
 Zenith is the permanently unscheduled, genesis-only gate for future hardfork feature testing.
-Zenith mode additionally activates Zenith at block 100:
+Zenith mode additionally activates Everest and Zenith at block 100:
 
 ```bash
 just devnet up zenith

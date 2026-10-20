@@ -41,7 +41,7 @@ store, P2P transport, conductor behavior, and finality/reset orchestration.
 | L1 chain and miner | Alloy `Header`, block hash chaining, signed `TxEnvelope` bodies, consensus receipts consumed by derivation, RPC-shaped transaction receipts and log metadata for batcher confirmations and L1 events | `L1Miner`, `L1Block`, manual reorg/safe/finalized heads | No tx pool, contract execution, full gas accounting, or beacon sidecar service |
 | L1 calldata DA | Verifier nodes use `EthereumDataSource` and production `CalldataSource` over signed tx bodies | In-memory `ActionL1ChainProvider` backed by `SharedL1Chain` | RPC paging/provider edge cases are not covered by the default action path |
 | L1 blob DA | Verifier nodes use `EthereumDataSource`, production `BlobSource`, versioned hashes from signed EIP-4844 txs, and `ActionBlobProvider` sidecar lookup | Blob sidecars are stored in `L1Block::blob_sidecars` rather than fetched from a beacon API | Beacon API behavior, blob retention windows, and sidecar transport are not modeled |
-| Batcher | `BatchDriver`, `BatchEncoder`, channel manager behavior, Single-batch encoding, signed calldata/blob tx construction | `L1MinerTxManager`, protocol-level Span fixtures for derivation coverage, in-memory L2/L1 event channels, synthetic inclusion receipts | Submission does not use a real RPC tx manager, replacement, fee bumping, or production receipt polling against an RPC provider |
+| Batcher | `BatchDriver`, `BatchEncoder`, Single-batch encoding, signed calldata/blob tx construction | `L1MinerTxManager`, protocol-level Span fixtures for derivation coverage, a `SharedL2Chain` polled by `HarnessBlockSource`, an in-memory L1 head channel, derivation statuses the test reports, synthetic inclusion receipts | Submission does not use a real RPC tx manager, replacement, fee bumping, or production receipt polling against an RPC provider, and no `DerivationStatusPoller` polls a rollup node |
 | Sequencer | L1 origin selection, attributes building, payload construction, real signed L2 user txs | Test actor lifecycle and manual stepping | No real node service loop, txpool/RPC ingress, engine transport, or production unsafe block scheduling |
 | Engine (default) | `BasePayloadBuilder`, Base EVM config, temporary Reth database, state-root comparison | `ActionEngineClient` implements only the Engine API behavior tests need | Simplified payload statuses, forkchoice handling, transaction pool, networking, persistence lifecycle, and Engine API edge cases |
 | Builder (opt-in) | Production `FlashblocksServiceBuilder` + real transaction pool driving a real in-process Reth node over auth IPC (`BuilderBackedEngineClient`); real pool selection, DA/gas limits, metering | `L2Sequencer<BuilderBackedEngineClient>` via `create_l2_sequencer_with_builder`; the production `SequencerActor` drives it, but transactions still arrive via harness injection rather than RPC ingress | Flashblock scheduling is wall-clock based, so pool-dependent tests use the wall-clock timestamp mode (anchor L1+L2 genesis near `now`, within `max_sequencer_drift`) and must land within the inserted-block timeout |
@@ -54,8 +54,7 @@ store, P2P transport, conductor behavior, and finality/reset orchestration.
 Action tests are currently strongest for deterministic protocol-level
 scenarios where the important behavior lives inside the Rust components:
 
-- Batcher channel construction, frame ordering, gap filling, requeueing, and
-  upgrade behavior.
+- Batcher channel construction, requeueing, and recovery after a reset.
 - Sequencer/verifier agreement on derived payloads and state roots.
 - Derivation behavior across upgrade transitions, origin changes, drift,
   deposits, system-config updates, and L1 reorgs.
@@ -156,13 +155,13 @@ Current behavior:
   submission remains staged so tests can model delayed inclusion.
 - Blob submissions link the signed EIP-4844 transaction, versioned hashes,
   sidecars, and mined receipt observed by derivation.
-- Explicit reorg and submission-failure helpers still fire failed receipts so
-  the production `BatchDriver` requeues frames.
+- The submission-failure helper fires failed receipts so the production
+  `BatchDriver` requeues frames.
 
 Remaining gaps:
 
-- There is no real RPC tx manager, mempool, replacement, fee bumping,
-  cancellation, or timeout policy.
+- There is no real RPC tx manager, mempool, replacement, fee bumping, or
+  timeout policy.
 - Receipt polling is driven by explicit test calls instead of a background RPC
   polling task.
 
@@ -198,7 +197,7 @@ The production-shaped synthetic L1/DA implementation is now the default:
    signer recovery and inbox filtering.
 4. Use the L1 event helpers for system-config, operator-fee, and deposit tests
    so derivation reads logs from signed transaction receipts.
-5. Use `Batcher::stage_n_frames`, `Batcher::confirm_staged`, and
+5. Use `Batcher::stage_n_submissions`, `Batcher::observe_l1_block`, and
    `Batcher::staged_count` when a test needs to distinguish submission from L1
    inclusion.
 

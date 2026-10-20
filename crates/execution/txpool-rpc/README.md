@@ -11,11 +11,25 @@ Exposes JSON-RPC APIs for transaction pool administration and transaction lifecy
 `AdminTxPoolApiImpl` provides admin-level pool management, while `TransactionStatusApiImpl`
 allows clients to query the current status of individual transactions by hash. The separate
 `SendRawTransactionValidityExtension` registers local ingress through
-`base_sendRawTransactionValidity` on both mempool/client nodes and builder nodes. Typed
-validity predicates are preserved in the pool (and while forwarding to builders). This endpoint
-is experimental, but predicates are evaluated and enforced by the builder during block
-construction: a transaction is only included at a point where all of its predicates hold, and
-it is evicted once it can no longer be included.
+`base_sendRawTransactionValidity` on forwarding ingress nodes and builders. Typed
+validity predicates and their optional `validity_signature` are preserved in the pool and
+while forwarding to builders. The endpoint is registered at startup. Use one shared
+`--validity-signature-mode off|verify-if-present|required` option on ingress and builders.
+It defaults to `off`, accepting unsigned or signed submissions without signature verification
+and preserving supplied signatures for forwarding. Deploy `verify-if-present` fleet-wide
+to accept unsigned submissions while checking all supplied signatures at raw ingress, migrate clients,
+then enable `required` to reject unsigned predicates. Neither `off` nor optional verification
+protects against signature stripping and unsigned resubmission.
+The trusted `base_insertValidatedTransaction` endpoint checks signature presence only;
+it does not re-verify signatures. Protection requires every forwarding ingress node
+and each builder's raw ingress to run `required`, builders to require signatures on
+insert, and the insert endpoint to be restricted to trusted forwarders. A `required`
+builder receiving from an `off` forwarder still accepts invalid supplied signatures.
+Predicates are enforced during block construction; an unsatisfied transaction is deferred
+and an expired one is evicted. Regular RPC nodes with a configured sequencer URL proxy
+the complete sidecar and upstream error response instead of admitting it locally.
+See the [wallet signing contract](../txpool/README.md#signed-validity-predicates) for
+EIP-712 types, signature encoding, rollout requirements, and security limitations.
 
 ## Usage
 
@@ -28,14 +42,14 @@ base-txpool-rpc = { workspace = true }
 
 ```rust,ignore
 use base_txpool_rpc::{
-    DEFAULT_MAX_VALIDITY_PREDICATES, SendRawTransactionValidityExtension, TxPoolRpcConfig,
+    SendRawTransactionValidityConfig, SendRawTransactionValidityExtension, TxPoolRpcConfig,
     TxPoolRpcExtension,
 };
 
 runner.install_ext::<TxPoolRpcExtension>(TxPoolRpcConfig::default());
-// Install only when the node's explicit experimental validity flag is enabled.
-// The config is the maximum number of validity predicates accepted per transaction.
-runner.install_ext::<SendRawTransactionValidityExtension>(DEFAULT_MAX_VALIDITY_PREDICATES);
+runner.install_ext::<SendRawTransactionValidityExtension>(
+    SendRawTransactionValidityConfig::default(),
+);
 ```
 
 ## License

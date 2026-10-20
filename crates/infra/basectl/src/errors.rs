@@ -364,6 +364,56 @@ pub struct MissingConsensusRpcError {
     pub config_name: String,
 }
 
+/// Error returned when a command cannot resolve a batcher admin RPC URL from flags or config.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[non_exhaustive]
+#[error(
+    "batcher commands need a batcher admin RPC URL.\n\
+     The '{config_name}' config does not set `batcher_rpc`.\n\
+     Override with `--batcher-rpc <url>`, set `BASECTL_BATCHER_RPC`, \
+     or set `batcher_rpc` in your YAML config."
+)]
+pub struct MissingBatcherRpcError {
+    /// The config name selected for the command.
+    pub config_name: String,
+}
+
+/// Error returned by batcher admin RPC helpers.
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum BatcherCommandError {
+    /// The batcher admin client could not be built.
+    #[error("failed to build batcher admin client for {rpc}")]
+    BuildClient {
+        /// The batcher admin RPC URL selected for the command, without credentials.
+        rpc: String,
+        /// The underlying client construction error.
+        #[source]
+        source: JsonRpcClientError,
+    },
+    /// The batcher refused the request, for example a flush while it is stopped.
+    #[error("batcher at {rpc} rejected `{method}`: {message}")]
+    Rejected {
+        /// The batcher admin RPC URL selected for the command, without credentials.
+        rpc: String,
+        /// The admin RPC method that was rejected.
+        method: &'static str,
+        /// The reason given by the batcher.
+        message: String,
+    },
+    /// A batcher admin RPC call failed.
+    #[error("batcher admin RPC method `{method}` failed on {rpc}")]
+    Rpc {
+        /// The batcher admin RPC URL selected for the command, without credentials.
+        rpc: String,
+        /// The admin RPC method that failed.
+        method: &'static str,
+        /// The underlying RPC error.
+        #[source]
+        source: JsonRpcClientError,
+    },
+}
+
 /// Error returned by txpool RPC helpers and command execution.
 #[derive(Debug, Error)]
 #[non_exhaustive]

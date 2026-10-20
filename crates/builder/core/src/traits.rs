@@ -3,13 +3,15 @@
 use alloy_consensus::Header;
 use base_common_consensus::{BasePrimitives, BaseTransactionSigned};
 use base_execution_chainspec::BaseChainSpec;
-use base_execution_txpool::{BasePooledTx, StateDiffInvalidation, TimestampedTransaction};
+use base_execution_txpool::{
+    BasePooledTx, FlashblockExpiry, StateDiffInvalidation, TimestampedTransaction,
+};
 use base_node_core::BaseEngineTypes;
 use reth_node_api::{FullNodeTypes, NodeTypes};
 use reth_provider::{BlockReaderIdExt, ChainSpecProvider, StateProviderFactory};
 use reth_transaction_pool::{TransactionPool, TransactionPoolExt};
 
-use crate::ParkablePayloadTransactions;
+use crate::{ParkablePayloadTransactions, RestingPayloadTransactions};
 
 /// Composite trait bound for a full node type compatible with the Base builder.
 pub trait NodeBounds:
@@ -41,6 +43,7 @@ pub trait PoolBounds:
     > + TransactionPoolExt
     + base_execution_txpool::ParkableTransactionPool
     + StateDiffInvalidation
+    + FlashblockExpiry
     + Unpin
     + 'static
 where
@@ -55,6 +58,7 @@ where
         > + TransactionPoolExt
         + base_execution_txpool::ParkableTransactionPool
         + StateDiffInvalidation
+        + FlashblockExpiry
         + Unpin
         + 'static,
     <Self as TransactionPool>::Transaction: BasePooledTx + TimestampedTransaction,
@@ -81,14 +85,14 @@ impl<T> ClientBounds for T where
 /// Composite trait bound for payload transaction iterators used by the Base builder.
 pub trait PayloadTxsBounds:
     ParkablePayloadTransactions<
-    Transaction: BasePooledTx<Consensus = BaseTransactionSigned> + TimestampedTransaction,
->
+        Transaction: BasePooledTx<Consensus = BaseTransactionSigned> + TimestampedTransaction,
+    > + RestingPayloadTransactions
 {
 }
 
 impl<T> PayloadTxsBounds for T where
     T: ParkablePayloadTransactions<
-        Transaction: BasePooledTx<Consensus = BaseTransactionSigned> + TimestampedTransaction,
-    >
+            Transaction: BasePooledTx<Consensus = BaseTransactionSigned> + TimestampedTransaction,
+        > + RestingPayloadTransactions
 {
 }

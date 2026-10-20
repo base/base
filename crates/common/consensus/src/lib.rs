@@ -10,6 +10,9 @@
 
 extern crate alloc;
 
+/// The system transaction gas limit post-Regolith.
+pub const REGOLITH_SYSTEM_TX_GAS: u64 = 1_000_000;
+
 #[cfg(feature = "evm")]
 use revm as _;
 
@@ -21,20 +24,21 @@ pub use reth_compat::{BaseBlockBody, BasePrimitives, CompactTxDeposit, DepositRe
 mod receipts;
 pub use receipts::{
     BaseReceipt, BaseReceiptEnvelope, BaseTxReceipt, DepositReceipt, DepositReceiptWithBloom,
-    Eip8130Receipt,
+    Eip8130CommittedPhasesError, Eip8130Receipt,
 };
 
 mod transaction;
-#[cfg(feature = "serde")]
-pub use transaction::serde_deposit_tx_rpc;
 pub use transaction::{
     AccountChange, AccountChangeChannel, BasePooledTransaction, BaseTransaction,
     BaseTransactionInfo, BaseTxEnvelope, BaseTypedTransaction, Call, ChangeType, CoinbaseTip,
     CreateEntry, DEPOSIT_TX_TYPE_ID, Delegation, DepositInfo, DepositTransaction,
     EIP8130_REJECTION_MSG, EIP8130_TX_TYPE_ID, Eip8130Constants, Eip8130Contracts, Eip8130Signed,
-    Eip8130StaticError, Eip8130TimestampError, IDefaultAccount, InitialActor, OpTxType, Scope,
-    SignedAccountChanges, SignedChange, TxDeposit, TxEip8130, decode_2718_canonical,
+    Eip8130StaticError, Eip8130StructuralError, Eip8130Structure, Eip8130TimestampError,
+    IDefaultAccount, InitialActor, OpTxType, Scope, SignedAccountChanges, SignedChange, TxDeposit,
+    TxEip8130, decode_2718_canonical,
 };
+#[cfg(feature = "serde")]
+pub use transaction::{Eip8130PayerSerde, serde_deposit_tx_rpc};
 
 mod extra;
 pub use extra::{EIP1559ParamEncoder, EIP1559ParamError, HoloceneExtraData, JovianExtraData};
@@ -44,6 +48,25 @@ pub use source::{
     BaseTimeDepositSource, DepositSourceDomain, DepositSourceDomainIdentifier, L1InfoDepositSource,
     UpgradeDepositSource, UserDepositSource,
 };
+
+mod base_time;
+pub use base_time::{
+    BaseTimeMetadataError, BaseTimeScheduleError, BaseTimeUpdateDecodeError, BaseTimeUpdateError,
+    BaseTimeUpdateTx,
+};
+
+mod info;
+pub use info::{
+    BlockInfoError, DecodeError, L1BlockInfoBedrock, L1BlockInfoBedrockBase,
+    L1BlockInfoBedrockBaseFields, L1BlockInfoBedrockFields, L1BlockInfoBedrockOnlyFields,
+    L1BlockInfoEcotone, L1BlockInfoEcotoneBase, L1BlockInfoEcotoneBaseFields,
+    L1BlockInfoEcotoneFields, L1BlockInfoEcotoneOnlyFields, L1BlockInfoIsthmus,
+    L1BlockInfoIsthmusBaseFields, L1BlockInfoIsthmusFields, L1BlockInfoJovian,
+    L1BlockInfoJovianBaseFields, L1BlockInfoJovianFields, L1BlockInfoTx,
+};
+
+#[cfg(test)]
+pub(crate) mod test_utils;
 
 mod predeploys;
 pub use predeploys::{Deployers, Predeploys, SystemAddresses};

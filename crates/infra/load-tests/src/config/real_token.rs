@@ -1,7 +1,10 @@
 use alloy_primitives::{Address, U256};
 use serde::{Deserialize, Deserializer, Serialize};
 
-use super::test_config::{TxTypeConfig, WeightedTxType};
+use super::{
+    parsing::require_address,
+    test_config::{TxTypeConfig, WeightedTxType},
+};
 use crate::{
     utils::{BaselineError, Result},
     workload::{RealTokenAcquisition, RealTokenPairTokenSetup, RealTokenSetup},
@@ -80,7 +83,7 @@ pub enum RealTokenAcquisitionConfig {
         /// WETH input amount per sender.
         amount_in: U256,
         /// Minimum pair-token output amount.
-        #[serde(default = "default_zero_amount")]
+        #[serde(default)]
         min_amount_out: U256,
     },
     /// Aerodrome Slipstream `exactInputSingle` route.
@@ -96,7 +99,7 @@ pub enum RealTokenAcquisitionConfig {
         /// WETH input amount per sender.
         amount_in: U256,
         /// Minimum pair-token output amount.
-        #[serde(default = "default_zero_amount")]
+        #[serde(default)]
         min_amount_out: U256,
     },
 }
@@ -118,12 +121,7 @@ pub(super) fn parse_real_token_setup(
         ));
     }
 
-    let weth = setup.weth.ok_or_else(|| {
-        BaselineError::Config(
-            "real_token_setup weth is required (set deploy_devnet_swap_harness for fresh-devnet auto-deploy)"
-                .into(),
-        )
-    })?;
+    let weth = require_address(setup.weth, "real_token_setup weth")?;
     let weth_amount_per_sender = setup.weth_amount_per_sender;
     if weth_amount_per_sender == U256::ZERO {
         return Err(BaselineError::Config(
@@ -131,12 +129,7 @@ pub(super) fn parse_real_token_setup(
         ));
     }
 
-    let pair_token = setup.pair_token.token.ok_or_else(|| {
-        BaselineError::Config(
-            "real_token_setup pair_token token is required (set deploy_devnet_swap_harness for fresh-devnet auto-deploy)"
-                .into(),
-        )
-    })?;
+    let pair_token = require_address(setup.pair_token.token, "real_token_setup pair_token token")?;
     if pair_token == weth {
         return Err(BaselineError::Config(
             "real_token_setup pair_token must differ from weth".into(),
@@ -232,12 +225,8 @@ fn parse_real_token_acquisition(
             amount_in,
             min_amount_out,
         } => {
-            let router = router.ok_or_else(|| {
-                BaselineError::Config(
-                    "real_token_setup uniswap_v3_exact_input router is required (set deploy_devnet_swap_harness for fresh-devnet auto-deploy)"
-                        .into(),
-                )
-            })?;
+            let router =
+                require_address(*router, "real_token_setup uniswap_v3_exact_input router")?;
             let max_u24: u32 = (1 << 24) - 1;
             if *fee > max_u24 {
                 return Err(BaselineError::Config(format!(
@@ -262,12 +251,8 @@ fn parse_real_token_acquisition(
             amount_in,
             min_amount_out,
         } => {
-            let router = router.ok_or_else(|| {
-                BaselineError::Config(
-                    "real_token_setup aerodrome_cl_exact_input router is required (set deploy_devnet_swap_harness for fresh-devnet auto-deploy)"
-                        .into(),
-                )
-            })?;
+            let router =
+                require_address(*router, "real_token_setup aerodrome_cl_exact_input router")?;
             if !(-8_388_608..=8_388_607).contains(tick_spacing) {
                 return Err(BaselineError::Config(format!(
                     "real_token_setup acquisition tick_spacing {tick_spacing} exceeds i24 range"
@@ -286,10 +271,6 @@ fn parse_real_token_acquisition(
             })
         }
     }
-}
-
-const fn default_zero_amount() -> U256 {
-    U256::ZERO
 }
 
 const fn default_uniswap_v3_fee() -> u32 {

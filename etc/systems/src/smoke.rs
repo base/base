@@ -21,6 +21,7 @@ use alloy_signer_local::PrivateKeySigner;
 #[cfg(feature = "upgrade-signal")]
 use base_common_genesis::{BaseUpgrade, RollupConfig, RuntimeUpgradeRegistry, UpgradeActivation};
 use base_common_network::Base;
+use base_execution_txpool::ValiditySignatureMode;
 use base_node_runner::BaseNodeExtension;
 use base_tx_forwarding::TxForwardingConfig;
 #[cfg(feature = "upgrade-signal")]
@@ -48,10 +49,12 @@ fn deploy_against_shared_l1(
     runtime: &SharedL1Runtime,
     output_dir: &std::path::Path,
     l2_chain_id: u64,
-) -> Result<(L1GenesisOutput, L2DeploymentOutput, std::fs::File)> {
-    // All consumers share the fixture's funded deployer account. Keep the lock after deployment:
-    // an L2 stack's first batcher setup reads its consensus safe head, so the caller must retain
-    // the lock until the stack has completed its shared-L1 bootstrap.
+) -> Result<(L1GenesisOutput, L2DeploymentOutput)> {
+    // All consumers share the fixture's funded deployer account. Serialize live deployments
+    // across nextest processes so independently constructed op-deployer instances do not race
+    // the account nonce. The lock is released when this function returns: holding it through L2
+    // startup made every other test queue behind this stack's node startup, and the batcher's
+    // bounded wait for the initial safe head covers the startup race instead.
     let deployment_lock_path = std::env::temp_dir()
         .join(format!("base-system-tests-{}.deployment.lock", runtime.network_name));
     let deployment_lock = OpenOptions::new()
@@ -79,7 +82,6 @@ fn deploy_against_shared_l1(
     Ok((
         L1GenesisOutput::from_output_dir(output_dir),
         L2DeploymentOutput::from_output_dir(output_dir),
-        deployment_lock,
     ))
 }
 
@@ -390,10 +392,11 @@ pub struct SystemTestStackBuilder {
     base_beryl_activation_block: Option<u64>,
     base_cobalt_activation_block: Option<u64>,
     base_denim_activation_block: Option<u64>,
+    base_everest_activation_block: Option<u64>,
     base_zenith_activation_block: Option<u64>,
     output_dir: Option<PathBuf>,
     tx_forwarding_config: Option<TxForwardingConfig>,
-    enable_experimental_validity_transactions: bool,
+    validity_signature_mode: ValiditySignatureMode,
     payload_builder_cutover: bool,
     verifier_l1_confs: u64,
     force_batch_submission: bool,
@@ -434,6 +437,7 @@ impl SystemTestStackBuilder {
             || self.base_beryl_activation_block.is_some()
             || self.base_cobalt_activation_block.is_some()
             || self.base_denim_activation_block.is_some()
+            || self.base_everest_activation_block.is_some()
             || self.base_zenith_activation_block.is_some()
     }
 
@@ -496,6 +500,12 @@ impl SystemTestStackBuilder {
         self
     }
 
+    /// Sets the L2 block number at which Base Everest activates.
+    pub const fn with_base_everest_activation_block(mut self, block: u64) -> Self {
+        self.base_everest_activation_block = Some(block);
+        self
+    }
+
     /// Sets the L2 block number at which the genesis-only Base Zenith testing gate activates.
     pub const fn with_base_zenith_activation_block(mut self, block: u64) -> Self {
         self.base_zenith_activation_block = Some(block);
@@ -519,12 +529,6 @@ impl SystemTestStackBuilder {
     /// the `base_insertValidatedTransaction` RPC endpoint.
     pub fn with_tx_forwarding(mut self, config: TxForwardingConfig) -> Self {
         self.tx_forwarding_config = Some(config);
-        self
-    }
-
-    /// Enables experimental validity transaction ingress and builder acceptance.
-    pub const fn with_experimental_validity_transactions(mut self) -> Self {
-        self.enable_experimental_validity_transactions = true;
         self
     }
 
@@ -600,6 +604,12 @@ impl SystemTestStackBuilder {
     /// Delays starting configured shadow sequencers until the active builder reaches `block`.
     pub const fn with_shadow_start_block(mut self, block: u64) -> Self {
         self.shadow_start_block = Some(block);
+        self
+    }
+
+    /// Sets the same staged validity signature policy on forwarding ingress and the builder.
+    pub const fn with_validity_signature_mode(mut self, mode: ValiditySignatureMode) -> Self {
+        self.validity_signature_mode = mode;
         self
     }
 
@@ -757,30 +767,31 @@ impl SystemTestStackBuilder {
             setup = setup.with_base_denim_activation_block(block);
         }
 
+        if let Some(block) = self.base_everest_activation_block {
+            setup = setup.with_base_everest_activation_block(block);
+        }
+
         if let Some(block) = self.base_zenith_activation_block {
             setup = setup.with_base_zenith_activation_block(block);
         }
 
         let shared_l1 = self.shared_l1.clone();
-        let (l1_genesis, l2_deployment, shared_l1_bootstrap_lock) =
-            if let Some(shared_l1) = &shared_l1 {
-                let output_dir = output_dir.clone();
-                let shared_l1 = shared_l1.clone();
-                let (l1_genesis, l2_deployment, deployment_lock) =
-                    tokio::task::spawn_blocking(move || {
-                        deploy_against_shared_l1(&shared_l1, &output_dir, l2_chain_id)
-                    })
+        let (l1_genesis, l2_deployment) = if let Some(shared_l1) = &shared_l1 {
+            let output_dir = output_dir.clone();
+            let shared_l1 = shared_l1.clone();
+            tokio::task::spawn_blocking(move || {
+                deploy_against_shared_l1(&shared_l1, &output_dir, l2_chain_id)
+            })
+            .await
+            .wrap_err("shared L1 deployment task panicked")??
+        } else {
+            let (l1_genesis, l2_deployment) =
+                tokio::task::spawn_blocking(move || setup.generate_genesis())
                     .await
-                    .wrap_err("shared L1 deployment task panicked")??;
-                (l1_genesis, l2_deployment, Some(deployment_lock))
-            } else {
-                let (l1_genesis, l2_deployment) =
-                    tokio::task::spawn_blocking(move || setup.generate_genesis())
-                        .await
-                        .wrap_err("Genesis setup task panicked")?
-                        .wrap_err("Failed to generate L1/L2 genesis")?;
-                (l1_genesis, l2_deployment, None)
-            };
+                    .wrap_err("Genesis setup task panicked")?
+                    .wrap_err("Failed to generate L1/L2 genesis")?;
+            (l1_genesis, l2_deployment)
+        };
 
         let (l1_container_config, l2_container_config) = if self.devnet_config.use_stable_ports {
             let config = &self.devnet_config.stable;
@@ -926,8 +937,7 @@ impl SystemTestStackBuilder {
             l1_slot_duration: slot_duration,
             container_config: l2_container_config,
             tx_forwarding_config: self.tx_forwarding_config,
-            enable_experimental_validity_transactions: self
-                .enable_experimental_validity_transactions,
+            validity_signature_mode: self.validity_signature_mode,
             payload_builder_cutover: self.payload_builder_cutover,
             verifier_l1_confs: self.verifier_l1_confs,
             force_batch_submission: self.force_batch_submission,
@@ -939,12 +949,7 @@ impl SystemTestStackBuilder {
             extra_client_extensions: self.extra_client_extensions,
         };
 
-        // When this stack attached to the shared L1, retain its deployment lock until the L2
-        // bootstrap (including the batcher's initial safe-head wait) is complete. This makes the
-        // lock cover every shared-L1 readiness condition required before batch submission starts.
-        let l2_stack_result = L2Stack::start(l2_config).await;
-        drop(shared_l1_bootstrap_lock);
-        let l2_stack = l2_stack_result.wrap_err("Failed to start L2 stack")?;
+        let l2_stack = L2Stack::start(l2_config).await.wrap_err("Failed to start L2 stack")?;
 
         Ok(SystemTestStack {
             _temp_dir: temp_dir,

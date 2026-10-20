@@ -35,7 +35,6 @@ where
         block_id: Option<BlockId>,
     ) -> ProviderResult<Box<dyn StateProvider + 'a>> {
         let block_id = block_id.unwrap_or_default();
-        // Check whether the distance to the block exceeds the maximum configured window.
         let block_number = self
             .eth_api
             .provider()

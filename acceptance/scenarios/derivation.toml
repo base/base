@@ -1,0 +1,26 @@
+schema_version = 1
+id = "derivation"
+description = "Unsafe production is independently derived into safe heads"
+timeout = "12m"
+
+[[checks]]
+id = "unsafe-production"
+kind = "head_progress"
+endpoint = "builder"
+minimum_blocks = 5
+timeout = "45s"
+
+[[checks]]
+id = "safe-derivation"
+kind = "safe_head_progress"
+endpoint = "validator"
+minimum_blocks = 2
+timeout = "5m"
+
+[[checks]]
+id = "fresh-head"
+kind = "head_fresh"
+endpoint = "builder"
+maximum_age = "15s"
+duration = "20s"
+timeout = "30s"

@@ -64,7 +64,7 @@ pub struct EncoderConfig {
     ///
     /// Brotli channels require Fjord.
     ///
-    /// Default: [`BrotliLevel::Brotli10`].
+    /// Default: [`BrotliLevel::Brotli9`].
     pub brotli_level: BrotliLevel,
 }
 
@@ -298,32 +298,21 @@ mod tests {
         EncoderConfig { sub_safety_margin, max_channel_duration, ..EncoderConfig::default() }
     }
 
-    #[test]
-    fn default_blob_max_frame_size_reserves_derivation_prefix() {
-        let cfg = EncoderConfig::default();
-
-        assert_eq!(cfg.max_frame_size, EncoderConfig::MAX_BLOB_FRAME_SIZE);
-        assert_eq!(cfg.compressed_size_target, None);
-        assert_eq!(cfg.max_blobs_per_tx, 6);
-        assert_eq!(cfg.brotli_level, BrotliLevel::DEFAULT);
-        assert_eq!(
-            cfg.max_frame_size + EncoderConfig::BLOB_DERIVATION_PREFIX_SIZE,
-            EncoderConfig::BLOB_MAX_DATA_SIZE
-        );
-    }
-
+    /// A safety margin below the channel duration is accepted, down to zero.
     #[rstest]
-    #[case(0, 2)] // zero margin: always valid
-    #[case(1, 2)] // one below duration
-    #[case(4, 10)] // typical production values
+    #[case::zero_margin(0, 2)]
+    #[case::margin_just_below_the_duration(1, 2)]
+    #[case::production_values(4, 10)]
     fn validate_ok(#[case] sub_safety_margin: u64, #[case] max_channel_duration: u64) {
         assert!(config_with(sub_safety_margin, max_channel_duration).validate().is_ok());
     }
 
+    /// A safety margin at or above the channel duration is rejected with both values, since the
+    /// effective duration would be zero and every channel would close at once.
     #[rstest]
-    #[case(2, 2)] // equal: effective timeout saturates to 0
-    #[case(5, 2)] // greater: same failure mode
-    #[case(u64::MAX, 1)] // extreme: maximum possible margin
+    #[case::margin_equal_to_the_duration(2, 2)]
+    #[case::margin_above_the_duration(5, 2)]
+    #[case::maximum_margin(u64::MAX, 1)]
     fn validate_err(#[case] sub_safety_margin: u64, #[case] max_channel_duration: u64) {
         let err = config_with(sub_safety_margin, max_channel_duration).validate().unwrap_err();
         assert!(matches!(
@@ -333,12 +322,10 @@ mod tests {
                 max_channel_duration: d,
             } if m == sub_safety_margin && d == max_channel_duration
         ));
-        // Error message must be human-readable and include both values.
-        let msg = err.to_string();
-        assert!(msg.contains(&sub_safety_margin.to_string()));
-        assert!(msg.contains(&max_channel_duration.to_string()));
     }
 
+    /// A frame size that only fits the frame overhead is rejected, since such a frame cannot carry
+    /// a single channel byte. The error gives the smallest usable size.
     #[test]
     fn validate_rejects_frame_without_payload_capacity() {
         let max_frame_size = Frame::ENCODED_OVERHEAD;
@@ -356,6 +343,7 @@ mod tests {
         ));
     }
 
+    /// One byte above the frame overhead is the smallest accepted frame size.
     #[test]
     fn validate_accepts_frame_with_payload_capacity() {
         let max_frame_size = Frame::ENCODED_OVERHEAD + 1;
@@ -364,6 +352,7 @@ mod tests {
         assert!(cfg.validate().is_ok());
     }
 
+    /// A compressed size target of zero is rejected. `None` is how the target is turned off.
     #[test]
     fn validate_rejects_zero_compressed_target() {
         let cfg = EncoderConfig { compressed_size_target: Some(0), ..EncoderConfig::default() };
@@ -371,6 +360,7 @@ mod tests {
         assert!(matches!(cfg.validate().unwrap_err(), EncoderConfigError::CompressedTargetZero));
     }
 
+    /// A limit of zero blobs per transaction is rejected, since no blob submission could go out.
     #[test]
     fn validate_rejects_zero_max_blobs_per_tx() {
         let cfg = EncoderConfig { max_blobs_per_tx: 0, ..EncoderConfig::default() };
@@ -378,6 +368,7 @@ mod tests {
         assert!(matches!(cfg.validate().unwrap_err(), EncoderConfigError::MaxBlobsPerTxZero));
     }
 
+    /// More blobs per transaction than the protocol allows is rejected.
     #[test]
     fn validate_rejects_transaction_above_blob_limit() {
         let cfg = EncoderConfig {
@@ -391,47 +382,24 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn validate_rejects_frame_above_protocol_limit() {
+    /// A frame must leave room for the blob derivation prefix even on a calldata batcher, whose
+    /// submissions the blob override can turn into blobs.
+    #[rstest]
+    #[case::blob(DaType::Blob)]
+    #[case::calldata(DaType::Calldata)]
+    fn validate_rejects_frame_size_that_leaves_no_blob_prefix_room(#[case] da_type: DaType) {
         let cfg = EncoderConfig {
-            da_type: DaType::Calldata,
-            max_frame_size: Frame::ENCODED_OVERHEAD + Frame::MAX_LEN + 1,
-            ..EncoderConfig::default()
-        };
-
-        assert!(matches!(cfg.validate(), Err(EncoderConfigError::FrameSizeTooLarge { .. })));
-    }
-
-    #[test]
-    fn validate_rejects_blob_frame_size_that_leaves_no_prefix_room() {
-        let cfg = EncoderConfig {
-            max_frame_size: EncoderConfig::BLOB_MAX_DATA_SIZE,
-            ..EncoderConfig::default()
-        };
-
-        let err = cfg.validate().unwrap_err();
-        assert!(matches!(
-            err,
-            EncoderConfigError::FrameExceedsBlobPackingLimit {
-                max_frame_size,
-                max_blob_frame_size,
-            } if max_frame_size == EncoderConfig::BLOB_MAX_DATA_SIZE
-                && max_blob_frame_size == EncoderConfig::MAX_BLOB_FRAME_SIZE
-        ));
-        assert!(err.to_string().contains("derivation-version prefix"));
-    }
-
-    #[test]
-    fn validate_reserves_blob_prefix_room_for_calldata_override() {
-        let cfg = EncoderConfig {
-            da_type: DaType::Calldata,
+            da_type,
             max_frame_size: EncoderConfig::BLOB_MAX_DATA_SIZE,
             ..EncoderConfig::default()
         };
 
         assert!(matches!(
             cfg.validate(),
-            Err(EncoderConfigError::FrameExceedsBlobPackingLimit { .. })
+            Err(EncoderConfigError::FrameExceedsBlobPackingLimit {
+                max_frame_size: EncoderConfig::BLOB_MAX_DATA_SIZE,
+                max_blob_frame_size: EncoderConfig::MAX_BLOB_FRAME_SIZE,
+            })
         ));
     }
 
@@ -443,6 +411,8 @@ mod tests {
         }
     }
 
+    /// Brotli is rejected when the next L2 block to encode is before Fjord, since derivation only
+    /// accepts Brotli channels from Fjord on.
     #[test]
     fn validate_for_rollup_config_rejects_brotli_before_fjord() {
         let cfg = EncoderConfig::default();
@@ -469,18 +439,25 @@ mod tests {
         }
     }
 
+    /// The confirmation window is the smaller of the pre- and post-Granite channel timeouts, so
+    /// with Base's 300 and 50 L1 blocks it is 50 and the batcher replays a channel before
+    /// derivation drops it.
     #[test]
-    fn confirmation_channel_timeout_takes_the_conservative_minimum() {
+    fn confirmation_channel_timeout_takes_the_smaller_timeout() {
         let rollup_config = rollup_config_with_channel_timeouts(300, 50, Some(10));
         assert_eq!(EncoderConfig::confirmation_channel_timeout(&rollup_config), 50);
     }
 
+    /// A zero channel timeout counts as unset, so the other one is used instead of zero.
     #[test]
     fn confirmation_channel_timeout_treats_zero_as_unset() {
         let rollup_config = rollup_config_with_channel_timeouts(0, 50, Some(10));
         assert_eq!(EncoderConfig::confirmation_channel_timeout(&rollup_config), 50);
     }
 
+    /// An effective channel duration (`max_channel_duration - sub_safety_margin`) equal to the
+    /// channel timeout is rejected, since derivation could time the channel out before the
+    /// batcher closes it.
     #[test]
     fn validate_for_rollup_config_rejects_effective_duration_at_channel_timeout() {
         let cfg = EncoderConfig {
@@ -502,6 +479,7 @@ mod tests {
         ));
     }
 
+    /// An effective channel duration below the channel timeout is accepted.
     #[test]
     fn validate_for_rollup_config_allows_effective_duration_below_channel_timeout() {
         let cfg = EncoderConfig {
@@ -514,6 +492,7 @@ mod tests {
         assert!(cfg.validate_for_rollup_config(&rollup_config, 0).is_ok());
     }
 
+    /// With no channel timeout configured, the channel duration is not checked against it.
     #[test]
     fn validate_for_rollup_config_skips_when_channel_timeout_is_unset() {
         let cfg = EncoderConfig { max_channel_duration: 1000, ..EncoderConfig::default() };

@@ -26,14 +26,15 @@ use base_shadow_indexer_db::{
     DEFAULT_DATABASE, DEFAULT_PORT, DEFAULT_USERNAME, PgConnectionParams, ShadowDbConfig,
 };
 use base_tx_forwarding::{
-    DEFAULT_INLINE_SIMULATION_QUEUE_CAPACITY, DEFAULT_INLINE_SIMULATION_TIMEOUT_MS,
-    DEFAULT_INLINE_SIMULATION_WORKERS, DEFAULT_MAX_BATCH_SIZE, DEFAULT_MAX_RPS,
-    DEFAULT_RESEND_AFTER_MS, TxForwardingConfig, TxForwardingExtension,
+    DEFAULT_FIFO_PERCENT, DEFAULT_INLINE_SIMULATION_QUEUE_CAPACITY,
+    DEFAULT_INLINE_SIMULATION_TIMEOUT_MS, DEFAULT_INLINE_SIMULATION_WORKERS,
+    DEFAULT_MAX_BATCH_SIZE, DEFAULT_MAX_RPS, DEFAULT_RESEND_AFTER_MS, TxForwardingConfig,
+    TxForwardingExtension,
 };
 use base_txpool_rpc::{
     DEFAULT_MAX_VALIDITY_EXPIRY_SECS, DEFAULT_MAX_VALIDITY_PREDICATES,
     SendRawTransactionValidityConfig, SendRawTransactionValidityExtension, TxPoolRpcConfig,
-    TxPoolRpcExtension,
+    TxPoolRpcExtension, ValiditySignatureMode,
 };
 use base_txpool_tracing::{TxPoolExtension, TxpoolConfig};
 use base_upgrade_signal::{
@@ -347,36 +348,30 @@ pub struct RpcStandardNodeArgs {
     )]
     pub enable_tx_forwarding: bool,
 
-    /// Enable the experimental validity transaction RPC.
-    ///
-    /// When transaction forwarding is enabled, validity predicates are forwarded to builders, which
-    /// evaluate and enforce them during block construction. This can also be enabled on a standalone
-    /// sequencer (e.g. a local devnet) that builds blocks itself, in which case forwarding is not
-    /// required.
-    #[arg(long = "enable-experimental-validity-transactions")]
-    pub enable_experimental_validity_transactions: bool,
-
-    /// Maximum validity predicates accepted per experimental transaction.
+    /// Maximum validity predicates accepted per validity transaction.
     ///
     /// Capped at [`DEFAULT_MAX_VALIDITY_PREDICATES`], the fixed wire ceiling the
     /// request deserializer enforces. Values above it can never be honored and
     /// are rejected at startup rather than silently truncated.
     #[arg(
-        long = "experimental-validity-max-predicates",
+        long = "validity-max-predicates",
         default_value_t = DEFAULT_MAX_VALIDITY_PREDICATES,
         value_parser = clap::builder::RangedU64ValueParser::<usize>::new()
             .range(1..=DEFAULT_MAX_VALIDITY_PREDICATES as u64),
-        requires = "enable_experimental_validity_transactions"
     )]
-    pub experimental_validity_max_predicates: usize,
+    pub validity_max_predicates: usize,
 
-    /// Maximum lifetime, in seconds, for an experimental validity transaction.
+    /// Staged validity signature rollout policy at local forwarding ingress.
+    /// Query nodes proxy the signature unchanged; the sequencer enforces its own policy.
+    #[arg(long = "validity-signature-mode", default_value_t = ValiditySignatureMode::Off)]
+    pub validity_signature_mode: ValiditySignatureMode,
+
+    /// Maximum lifetime, in seconds, for a validity transaction.
     #[arg(
-        long = "experimental-validity-max-expiry-secs",
+        long = "validity-max-expiry-secs",
         default_value_t = DEFAULT_MAX_VALIDITY_EXPIRY_SECS,
-        requires = "enable_experimental_validity_transactions"
     )]
-    pub experimental_validity_max_expiry_secs: u64,
+    pub validity_max_expiry_secs: u64,
 
     /// Builder RPC endpoints for transaction forwarding (one forwarder per URL), used by mempool nodes
     #[arg(
@@ -413,6 +408,38 @@ pub struct RpcStandardNodeArgs {
         requires = "enable_tx_forwarding"
     )]
     pub tx_forwarding_max_rps: u32,
+
+    /// Percentage of forwarded transactions picked oldest-first (0-100).
+    ///
+    /// The rest are picked by highest tip per gas. 100 is pure FIFO. Only matters while a builder
+    /// queue is backed up; with no backlog every pending transaction goes in the next batch.
+    #[arg(
+        long = "tx-forwarding-fifo-percent",
+        value_name = "TX_FORWARDING_FIFO_PERCENT",
+        default_value_t = DEFAULT_FIFO_PERCENT,
+        value_parser = clap::value_parser!(u8).range(0..=100),
+        requires = "enable_tx_forwarding"
+    )]
+    pub tx_forwarding_fifo_percent: u8,
+
+    /// Per-builder forwarding queue capacity [default: 2x the batch size].
+    ///
+    /// A transaction's forwarding order is fixed once it enters this queue, so a deeper queue
+    /// delays the point where FIFO and priority picks apply.
+    #[arg(
+        long = "tx-forwarding-queue-capacity",
+        value_name = "TX_FORWARDING_QUEUE_CAPACITY",
+        value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..),
+        requires = "enable_tx_forwarding"
+    )]
+    pub tx_forwarding_queue_capacity: Option<usize>,
+
+    /// Send each forwarding batch as one `base_insertValidatedTransactions` call.
+    ///
+    /// The builder admits the batch as one pool batch instead of one call per transaction. Every
+    /// builder in `--builder-rpc-urls` must serve that method before this is enabled.
+    #[arg(long = "tx-forwarding-batched-insert", requires = "enable_tx_forwarding")]
+    pub tx_forwarding_batched_insert: bool,
 
     /// Run `meter_bundle` on the mempool node before inserting into the forwarding pool.
     ///
@@ -564,6 +591,9 @@ impl From<&StandardNodeArgs> for TxForwardingConfig {
             .with_resend_after_ms(args.rpc.tx_forwarding_resend_after_ms)
             .with_max_batch_size(args.rpc.tx_forwarding_batch_size)
             .with_max_rps(args.rpc.tx_forwarding_max_rps)
+            .with_fifo_percent(args.rpc.tx_forwarding_fifo_percent)
+            .with_queue_capacity(args.rpc.tx_forwarding_queue_capacity)
+            .with_batched_insert(args.rpc.tx_forwarding_batched_insert)
             .with_inline_simulation(args.rpc.enable_inline_simulation)
             .with_inline_simulation_workers(args.rpc.inline_simulation_workers)
             .with_inline_simulation_queue_capacity(args.rpc.inline_simulation_queue_capacity)
@@ -723,10 +753,10 @@ impl StandardBaseRethNode {
         // Feature extensions. Several use `replace_configured` (which is overwrite,
         // not compose) on overlapping RPC methods, so install order would otherwise
         // silently decide which one wins. Coordination is enforced by self-gating:
-        //   - FlashblocksExtension: registers eth_getTransactionCount (and others)
-        //     iff flashblocks is enabled.
-        //   - Eip8130RpcExtension: registers eth_getTransactionCount iff flashblocks
-        //     is NOT (see `Eip8130RpcMode` below).
+        //   - FlashblocksExtension: registers eth_getTransactionCount, eth_estimateGas
+        //     and eth_call (among others) iff flashblocks is enabled.
+        //   - Eip8130RpcExtension: registers eth_getTransactionCount, eth_estimateGas
+        //     and eth_call iff flashblocks is disabled (see `Eip8130RpcMode` below).
         //   - ProofsHistoryExtension: registers eth_getProof variants (disjoint from
         //     the above, so it can sit anywhere in the chain).
         // New extensions touching the same RPC methods MUST be added to this
@@ -774,11 +804,20 @@ impl StandardBaseRethNode {
         runner.install_ext::<MeteringExtension>(metering_config);
         runner.install_ext::<ShadowIndexerExtension>((&args.shadow_indexer).try_into()?);
         let tx_forwarding_config: TxForwardingConfig = (&args).into();
-        if args.rpc.enable_experimental_validity_transactions {
+        // Query nodes proxy validity metadata to their sequencer; forwarders submit locally.
+        if args.rpc.enable_tx_forwarding || args.rpc.rollup_args.sequencer.is_some() {
             runner.install_ext::<SendRawTransactionValidityExtension>(
                 SendRawTransactionValidityConfig {
-                    max_validity_predicates: args.rpc.experimental_validity_max_predicates,
-                    max_validity_expiry_secs: args.rpc.experimental_validity_max_expiry_secs,
+                    max_validity_predicates: args.rpc.validity_max_predicates,
+                    max_validity_expiry_secs: args.rpc.validity_max_expiry_secs,
+                    validity_signature_mode: args.rpc.validity_signature_mode,
+                    sequencer_url: args
+                        .rpc
+                        .rollup_args
+                        .sequencer
+                        .clone()
+                        .filter(|_| !args.rpc.enable_tx_forwarding),
+                    sequencer_headers: args.rpc.rollup_args.sequencer_headers,
                 },
             );
         }
@@ -977,13 +1016,16 @@ mod tests {
             enable_transaction_event_journal: false,
             transaction_event_journal_path: None,
             enable_tx_forwarding: false,
-            enable_experimental_validity_transactions: false,
-            experimental_validity_max_predicates: DEFAULT_MAX_VALIDITY_PREDICATES,
-            experimental_validity_max_expiry_secs: DEFAULT_MAX_VALIDITY_EXPIRY_SECS,
+            validity_max_predicates: DEFAULT_MAX_VALIDITY_PREDICATES,
+            validity_signature_mode: ValiditySignatureMode::Off,
+            validity_max_expiry_secs: DEFAULT_MAX_VALIDITY_EXPIRY_SECS,
             builder_rpc_urls: Vec::new(),
             tx_forwarding_resend_after_ms: DEFAULT_RESEND_AFTER_MS,
             tx_forwarding_batch_size: DEFAULT_MAX_BATCH_SIZE,
             tx_forwarding_max_rps: DEFAULT_MAX_RPS,
+            tx_forwarding_fifo_percent: DEFAULT_FIFO_PERCENT,
+            tx_forwarding_queue_capacity: None,
+            tx_forwarding_batched_insert: false,
             enable_inline_simulation: false,
             inline_simulation_workers: DEFAULT_INLINE_SIMULATION_WORKERS,
             inline_simulation_queue_capacity: DEFAULT_INLINE_SIMULATION_QUEUE_CAPACITY,
@@ -1105,94 +1147,61 @@ mod tests {
         let config = TxForwardingConfig::from(&standard_args);
 
         assert_eq!(standard_args.rpc.rollup_args.sequencer, None);
-        assert!(!standard_args.rpc.enable_experimental_validity_transactions);
-        assert_eq!(
-            standard_args.rpc.experimental_validity_max_predicates,
-            DEFAULT_MAX_VALIDITY_PREDICATES
-        );
-        assert_eq!(
-            standard_args.rpc.experimental_validity_max_expiry_secs,
-            DEFAULT_MAX_VALIDITY_EXPIRY_SECS
-        );
+        assert_eq!(standard_args.rpc.validity_max_predicates, DEFAULT_MAX_VALIDITY_PREDICATES);
+        assert_eq!(standard_args.rpc.validity_max_expiry_secs, DEFAULT_MAX_VALIDITY_EXPIRY_SECS);
         assert!(!config.enabled);
         assert!(config.builder_urls.is_empty());
         assert!(!config.inline_simulation);
     }
 
     #[test]
-    fn experimental_validity_transactions_parse_without_forwarding() {
-        let args = CommandParser::<StandardNodeArgs>::parse_from([
-            "base-reth",
-            "--enable-experimental-validity-transactions",
-        ])
-        .args;
-
-        assert!(args.rpc.enable_experimental_validity_transactions);
-        assert!(!args.rpc.enable_tx_forwarding);
-    }
-
-    #[test]
-    fn experimental_validity_transactions_parse_with_forwarding() {
+    fn validity_args_parse_with_forwarding() {
         let args = CommandParser::<StandardNodeArgs>::parse_from([
             "base-reth",
             "--enable-tx-forwarding",
             "--builder-rpc-urls",
             "http://localhost:8545",
-            "--enable-experimental-validity-transactions",
-            "--experimental-validity-max-predicates",
+            "--validity-max-predicates",
             "8",
-            "--experimental-validity-max-expiry-secs",
+            "--validity-max-expiry-secs",
             "45",
+            "--validity-signature-mode",
+            "verify-if-present",
         ])
         .args;
 
         assert!(args.rpc.enable_tx_forwarding);
-        assert!(args.rpc.enable_experimental_validity_transactions);
-        assert_eq!(args.rpc.experimental_validity_max_predicates, 8);
-        assert_eq!(args.rpc.experimental_validity_max_expiry_secs, 45);
+        assert_eq!(args.rpc.validity_max_predicates, 8);
+        assert_eq!(args.rpc.validity_max_expiry_secs, 45);
+        assert_eq!(args.rpc.validity_signature_mode, ValiditySignatureMode::VerifyIfPresent);
         assert_eq!(args.rpc.builder_rpc_urls.len(), 1);
     }
 
     #[test]
-    fn experimental_validity_max_predicates_rejects_values_above_the_wire_ceiling() {
+    fn validity_max_predicates_rejects_values_above_the_wire_ceiling() {
         // The request deserializer bounds batches at DEFAULT_MAX_VALIDITY_PREDICATES,
         // so a larger configured maximum could never be honored. Reject it at
         // startup instead of silently accepting an unenforceable limit.
         let error = CommandParser::<StandardNodeArgs>::try_parse_from([
             "base-reth",
-            "--enable-experimental-validity-transactions",
-            "--experimental-validity-max-predicates",
+            "--validity-max-predicates",
             &(DEFAULT_MAX_VALIDITY_PREDICATES + 1).to_string(),
         ])
         .expect_err("a maximum above the wire ceiling should be rejected");
 
-        assert!(error.to_string().contains("--experimental-validity-max-predicates"));
+        assert!(error.to_string().contains("--validity-max-predicates"));
     }
 
     #[test]
-    fn experimental_validity_max_predicates_rejects_zero() {
+    fn validity_max_predicates_rejects_zero() {
         let error = CommandParser::<StandardNodeArgs>::try_parse_from([
             "base-reth",
-            "--enable-experimental-validity-transactions",
-            "--experimental-validity-max-predicates",
+            "--validity-max-predicates",
             "0",
         ])
         .expect_err("a maximum of zero should be rejected");
 
-        assert!(error.to_string().contains("--experimental-validity-max-predicates"));
-    }
-
-    #[test]
-    fn experimental_validity_max_predicates_accepts_the_wire_ceiling() {
-        let args = CommandParser::<StandardNodeArgs>::parse_from([
-            "base-reth",
-            "--enable-experimental-validity-transactions",
-            "--experimental-validity-max-predicates",
-            &DEFAULT_MAX_VALIDITY_PREDICATES.to_string(),
-        ])
-        .args;
-
-        assert_eq!(args.rpc.experimental_validity_max_predicates, DEFAULT_MAX_VALIDITY_PREDICATES);
+        assert!(error.to_string().contains("--validity-max-predicates"));
     }
 
     #[test]
@@ -1271,12 +1280,55 @@ mod tests {
     }
 
     #[test]
-    fn programmatic_validity_config_without_forwarding_is_valid() {
-        let mut args = StandardNodeArgs::from(default_rpc_standard_node_args());
-        args.rpc.enable_experimental_validity_transactions = true;
+    fn forwarding_lane_flags_reach_the_config() {
+        let defaults = TxForwardingConfig::from(
+            &CommandParser::<StandardNodeArgs>::parse_from([
+                "base-reth",
+                "--enable-tx-forwarding",
+                "--builder-rpc-urls",
+                "http://localhost:8545",
+            ])
+            .args,
+        );
+        let configured = TxForwardingConfig::from(
+            &CommandParser::<StandardNodeArgs>::parse_from([
+                "base-reth",
+                "--enable-tx-forwarding",
+                "--builder-rpc-urls",
+                "http://localhost:8545",
+                "--tx-forwarding-fifo-percent",
+                "35",
+                "--tx-forwarding-queue-capacity",
+                "64",
+                "--tx-forwarding-batched-insert",
+            ])
+            .args,
+        );
 
-        StandardBaseRethNode::runner(args)
-            .expect("validity transactions should not require forwarding");
+        assert_eq!(defaults.fifo_percent, DEFAULT_FIFO_PERCENT);
+        assert_eq!(defaults.queue_capacity, None);
+        assert!(!defaults.batched_insert);
+        assert_eq!(configured.fifo_percent, 35);
+        assert_eq!(configured.queue_capacity, Some(64));
+        assert!(configured.batched_insert);
+    }
+
+    #[test]
+    fn forwarding_lane_flags_reject_out_of_range_values() {
+        for (flag, value) in
+            [("--tx-forwarding-fifo-percent", "101"), ("--tx-forwarding-queue-capacity", "0")]
+        {
+            let result = CommandParser::<StandardNodeArgs>::try_parse_from([
+                "base-reth",
+                "--enable-tx-forwarding",
+                "--builder-rpc-urls",
+                "http://localhost:8545",
+                flag,
+                value,
+            ]);
+
+            assert!(result.is_err(), "{flag} {value} must be rejected");
+        }
     }
 
     #[test]

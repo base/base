@@ -115,7 +115,7 @@ macro_rules! __define_metrics_impl {
             #[cfg(feature = "metrics")]
             pub fn zero() {
                 $(
-                    $crate::__define_metric_zero!($field, $kind; $(#[$($attr)*])*);
+                    $crate::__metric_zero_defaults!(@collect ($field, $kind) [] $(#[$($attr)*])*);
                 )*
             }
 
@@ -348,15 +348,6 @@ macro_rules! __describe_metric_from_attrs {
     };
 }
 
-/// Internal — emits zeroing code for counters and gauges.
-#[doc(hidden)]
-#[macro_export]
-macro_rules! __define_metric_zero {
-    ($field:ident, $kind:ident; $($attrs:tt)*) => {
-        $crate::__metric_zero_defaults!(@collect ($field, $kind) [] $($attrs)*);
-    };
-}
-
 /// Internal — parses zero defaults from label attributes.
 #[doc(hidden)]
 #[macro_export]
@@ -376,18 +367,14 @@ macro_rules! __metric_zero_defaults {
     (@collect ($field:ident, $kind:ident) [$($labels:tt)*] #[label(name = $label_name:expr, default = [$($default:expr),* $(,)?])] $($rest:tt)*) => {
         $crate::__metric_zero_defaults!(@collect ($field, $kind) [$($labels)* (@defaults [$($default),*])] $($rest)*);
     };
-    (@collect ($field:ident, counter) [] ) => {
-        Self::$field().absolute(0);
+    (@collect ($field:ident, $kind:ident) [] ) => {
+        $crate::__zero_metric!($kind, Self::$field());
     };
-    (@collect ($field:ident, gauge) [] ) => {
-        Self::$field().set(0.0);
-    };
-    (@collect ($field:ident, histogram) [] ) => {};
     (@collect ($field:ident, $kind:ident) [(@defaults [$($d1:expr),*])] ) => {
         {
             let label_values = [$(::metrics::SharedString::from($d1)),*];
             for label in label_values {
-                $crate::__zero_metric_call_1!($field, $kind, label);
+                $crate::__zero_metric!($kind, Self::$field(label));
             }
         }
     };
@@ -397,7 +384,7 @@ macro_rules! __metric_zero_defaults {
             let label2_values = [$(::metrics::SharedString::from($d2)),*];
             for label1 in &label1_values {
                 for label2 in &label2_values {
-                    $crate::__zero_metric_call_2!($field, $kind, label1.clone(), label2.clone());
+                    $crate::__zero_metric!($kind, Self::$field(label1.clone(), label2.clone()));
                 }
             }
         }
@@ -410,7 +397,7 @@ macro_rules! __metric_zero_defaults {
             for label1 in &label1_values {
                 for label2 in &label2_values {
                     for label3 in &label3_values {
-                        $crate::__zero_metric_call_3!($field, $kind, label1.clone(), label2.clone(), label3.clone());
+                        $crate::__zero_metric!($kind, Self::$field(label1.clone(), label2.clone(), label3.clone()));
                     }
                 }
             }
@@ -426,7 +413,7 @@ macro_rules! __metric_zero_defaults {
                 for label2 in &label2_values {
                     for label3 in &label3_values {
                         for label4 in &label4_values {
-                            $crate::__zero_metric_call_4!($field, $kind, label1.clone(), label2.clone(), label3.clone(), label4.clone());
+                            $crate::__zero_metric!($kind, Self::$field(label1.clone(), label2.clone(), label3.clone(), label4.clone()));
                         }
                     }
                 }
@@ -437,54 +424,15 @@ macro_rules! __metric_zero_defaults {
     (@collect ($field:ident, $kind:ident) [$($labels:tt)+] ) => {};
 }
 
-/// Internal — zeroes a single-label metric.
+/// Internal — zeroes a metric handle according to its kind.
 #[doc(hidden)]
 #[macro_export]
-macro_rules! __zero_metric_call_1 {
-    ($field:ident, counter, $label:expr) => {
-        Self::$field($label).absolute(0);
+macro_rules! __zero_metric {
+    (counter, $h:expr) => {
+        $h.absolute(0);
     };
-    ($field:ident, gauge, $label:expr) => {
-        Self::$field($label).set(0.0);
+    (gauge, $h:expr) => {
+        $h.set(0.0);
     };
-    ($field:ident, histogram, $label:expr) => {};
-}
-
-/// Internal — zeroes a two-label metric.
-#[doc(hidden)]
-#[macro_export]
-macro_rules! __zero_metric_call_2 {
-    ($field:ident, counter, $label1:expr, $label2:expr) => {
-        Self::$field($label1, $label2).absolute(0);
-    };
-    ($field:ident, gauge, $label1:expr, $label2:expr) => {
-        Self::$field($label1, $label2).set(0.0);
-    };
-    ($field:ident, histogram, $label1:expr, $label2:expr) => {};
-}
-
-/// Internal — zeroes a three-label metric.
-#[doc(hidden)]
-#[macro_export]
-macro_rules! __zero_metric_call_3 {
-    ($field:ident, counter, $label1:expr, $label2:expr, $label3:expr) => {
-        Self::$field($label1, $label2, $label3).absolute(0);
-    };
-    ($field:ident, gauge, $label1:expr, $label2:expr, $label3:expr) => {
-        Self::$field($label1, $label2, $label3).set(0.0);
-    };
-    ($field:ident, histogram, $label1:expr, $label2:expr, $label3:expr) => {};
-}
-
-/// Internal — zeroes a four-label metric.
-#[doc(hidden)]
-#[macro_export]
-macro_rules! __zero_metric_call_4 {
-    ($field:ident, counter, $label1:expr, $label2:expr, $label3:expr, $label4:expr) => {
-        Self::$field($label1, $label2, $label3, $label4).absolute(0);
-    };
-    ($field:ident, gauge, $label1:expr, $label2:expr, $label3:expr, $label4:expr) => {
-        Self::$field($label1, $label2, $label3, $label4).set(0.0);
-    };
-    ($field:ident, histogram, $label1:expr, $label2:expr, $label3:expr, $label4:expr) => {};
+    (histogram, $h:expr) => {};
 }

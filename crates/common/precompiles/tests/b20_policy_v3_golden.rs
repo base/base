@@ -221,6 +221,47 @@ fn golden_is_authorized_builtins_and_malformed() {
     assert!(!is_authorized(&mut s, 4u64 << 56, ALICE));
 }
 
+/// Bit position of the policy type byte within a policy ID.
+const POLICY_TYPE_SHIFT: u32 = 56;
+/// A counter no test creates a policy under, so every ID built from it is missing.
+const UNCREATED_COUNTER: u64 = 999;
+/// The lowest type byte above `INTERSECT`, i.e. the first malformed policy type.
+const FIRST_MALFORMED_TYPE_BYTE: u8 = PolicyType::INTERSECT as u8 + 1;
+
+/// Builds an ID of the given type byte that was never created. Type bytes with the top bit set
+/// are inverted IDs whose base is also uncreated.
+const fn uncreated_policy_id(type_byte: u8) -> u64 {
+    ((type_byte as u64) << POLICY_TYPE_SHIFT) | UNCREATED_COUNTER
+}
+
+/// Pins today's behavior, including the fail-open `true` for an uncreated BLOCKLIST and
+/// INTERSECT: an uncreated simple or composite policy evaluates as an empty set (BOP-827). Callers
+/// must therefore check `policyExists` when they store a policy ID.
+#[test]
+fn golden_is_authorized_uncreated_simple_and_composite_ids_evaluate_as_empty_sets() {
+    let mut s = fresh();
+    let expected_authorization = [
+        (PolicyType::BLOCKLIST, true),
+        (PolicyType::ALLOWLIST, false),
+        (PolicyType::UNION, false),
+        (PolicyType::INTERSECT, true),
+    ];
+    for (policy_type, expected_authorized) in expected_authorization {
+        let policy_id = uncreated_policy_id(policy_type as u8);
+        let authorized = is_authorized(&mut s, policy_id, ALICE);
+        assert_eq!(authorized, expected_authorized, "uncreated {policy_type:?}");
+    }
+}
+
+#[test]
+fn golden_is_authorized_denies_malformed_and_inverted_uncreated_ids() {
+    let mut s = fresh();
+    for type_byte in FIRST_MALFORMED_TYPE_BYTE..=u8::MAX {
+        let policy_id = uncreated_policy_id(type_byte);
+        assert!(!is_authorized(&mut s, policy_id, ALICE), "type byte {type_byte:#04x} authorized");
+    }
+}
+
 #[test]
 fn golden_is_authorized_empty_policies() {
     let mut s = fresh();
@@ -1218,6 +1259,8 @@ fn v3_op_coverage_checklist(call: IPolicyRegistry::IPolicyRegistryCalls) {
         }
         C::isAuthorized(_) => covered(&[
             golden_is_authorized_builtins_and_malformed,
+            golden_is_authorized_uncreated_simple_and_composite_ids_evaluate_as_empty_sets,
+            golden_is_authorized_denies_malformed_and_inverted_uncreated_ids,
             golden_is_authorized_empty_policies,
         ]),
         C::policyExists(_) => {

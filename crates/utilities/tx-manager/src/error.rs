@@ -76,15 +76,6 @@ pub enum TxManagerError {
     #[error("mempool deadline expired")]
     MempoolDeadlineExpired,
 
-    /// A runtime-backed mempool deadline was checked without a runtime
-    /// timestamp.
-    #[error("runtime mempool deadline requires critical_error_at")]
-    RuntimeMempoolDeadlineMissingTimestamp,
-
-    /// Nonce slot was already reserved.
-    #[error("nonce already reserved")]
-    AlreadyReserved,
-
     /// Nonce arithmetic overflowed `u64::MAX`.
     #[error("nonce overflow")]
     NonceOverflow,
@@ -197,7 +188,7 @@ impl TxManagerError {
     ///
     /// Fee/replacement errors and infrastructure errors are retryable.
     /// Critical errors (nonce conflicts, insufficient funds, reverts,
-    /// deadline expiry, reservation conflicts) are not.
+    /// deadline expiry) are not.
     ///
     /// # Caller requirements
     ///
@@ -411,7 +402,6 @@ mod tests {
     #[case::preserves_casing("Some Unknown ERROR", TxManagerError::Rpc("Some Unknown ERROR".to_string()))]
     #[case::empty_string("", TxManagerError::Rpc(String::new()))]
     #[case::mempool_deadline_not_classified("mempool deadline expired", TxManagerError::Rpc("mempool deadline expired".to_string()))]
-    #[case::already_reserved_not_classified("nonce already reserved", TxManagerError::Rpc("nonce already reserved".to_string()))]
     fn classify_rpc_error(#[case] input: &str, #[case] expected: TxManagerError) {
         let transport_err = error_resp(input);
         assert_eq!(RpcErrorClassifier::classify_rpc_error(&transport_err), expected);
@@ -443,11 +433,6 @@ mod tests {
     #[case::intrinsic_gas_too_low(TxManagerError::IntrinsicGasTooLow, false)]
     #[case::execution_reverted(TxManagerError::ExecutionReverted { reason: None, data: None }, false)]
     #[case::mempool_deadline(TxManagerError::MempoolDeadlineExpired, false)]
-    #[case::runtime_mempool_deadline_missing_timestamp(
-        TxManagerError::RuntimeMempoolDeadlineMissingTimestamp,
-        false
-    )]
-    #[case::already_reserved(TxManagerError::AlreadyReserved, false)]
     #[case::channel_closed(TxManagerError::ChannelClosed, false)]
     #[case::fee_limit_exceeded(TxManagerError::FeeLimitExceeded { fee: 0, ceiling: 0 }, false)]
     #[case::invalid_safe_abort(TxManagerError::InvalidSafeAbortNonceTooLowCount, false)]
@@ -502,11 +487,6 @@ mod tests {
     #[case::intrinsic_gas_too_low(TxManagerError::IntrinsicGasTooLow, "intrinsic gas too low")]
     #[case::execution_reverted(TxManagerError::ExecutionReverted { reason: None, data: None }, "execution reverted")]
     #[case::mempool_deadline(TxManagerError::MempoolDeadlineExpired, "mempool deadline expired")]
-    #[case::runtime_mempool_deadline_missing_timestamp(
-        TxManagerError::RuntimeMempoolDeadlineMissingTimestamp,
-        "runtime mempool deadline requires critical_error_at"
-    )]
-    #[case::already_reserved(TxManagerError::AlreadyReserved, "nonce already reserved")]
     #[case::underpriced(TxManagerError::Underpriced, "transaction underpriced")]
     #[case::replacement_underpriced(
         TxManagerError::ReplacementUnderpriced,

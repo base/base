@@ -1,13 +1,15 @@
 //! RPC implementation for transaction submission, status queries, and pool management.
 
 use alloy_consensus::{BlockHeader, Typed2718};
-use alloy_primitives::{Address, Bytes, TxHash};
+use alloy_primitives::{Address, Bytes, Signature, TxHash};
 use base_common_chains::Upgrades;
 use base_common_consensus::EIP8130_TX_TYPE_ID;
 use base_common_genesis::RollupConfig;
+use base_execution_rpc::SequencerClient;
 use base_execution_txpool::{
     BasePooledTransaction, DEFAULT_MAX_VALIDITY_EXPIRY_SECS, DEFAULT_MAX_VALIDITY_PREDICATES,
-    ValidityPredicate, deserialize_bounded_predicates,
+    TransactionValidity, ValidityAuthorization, ValidityPredicate, ValiditySignatureMetrics,
+    ValiditySignatureMode, deserialize_bounded_predicates,
 };
 use base_observability_events::{
     TransactionEventProducer, TransactionEventType, transaction_event,
@@ -27,12 +29,12 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
 /// Rejection message returned when an EIP-8130 (account abstraction) validity transaction is
-/// submitted before the Zenith hard fork is active at the latest block.
+/// submitted before the Everest hard fork is active at the latest block.
 ///
-/// EIP-8130 validity transactions are fork-gated on Zenith; other transaction types (e.g. EIP-1559)
-/// carry validity predicates under the experimental flag alone.
-pub const VALIDITY_TX_PRE_ZENITH_RPC_ERROR: &str = "EIP-8130 validity transactions are gated behind \
-     the Zenith hard fork; they are not accepted before Zenith is active";
+/// EIP-8130 validity transactions are fork-gated on Everest; other transaction types (e.g. EIP-1559)
+/// carry validity predicates without a fork gate.
+pub const VALIDITY_TX_PRE_EVEREST_RPC_ERROR: &str = "EIP-8130 validity transactions are gated behind \
+     the Everest hard fork; they are not accepted before Everest is active";
 
 /// Legacy full-block cadence used before Denim activates.
 const LEGACY_BLOCK_INTERVAL_MILLIS: u64 = 2_000;
@@ -66,6 +68,9 @@ pub struct SendRawTransactionValidityOptions {
     /// Experimental predicates transported to builders alongside the transaction.
     #[serde(deserialize_with = "deserialize_bounded_predicates")]
     pub validity: Vec<ValidityPredicate>,
+    /// EIP-712 signature authorizing these predicates for the signed transaction hash.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub validity_signature: Option<Signature>,
 }
 
 /// RPC API for transaction status
@@ -79,7 +84,7 @@ pub trait TransactionStatusApi {
 /// Experimental RPC API for submitting a raw transaction with validity criteria.
 #[rpc(server, namespace = "base")]
 pub trait SendRawTransactionValidityApi {
-    /// Submits a raw transaction and transports its currently unenforced validity criteria.
+    /// Submits a raw transaction with predicates enforced during block construction.
     #[method(name = "sendRawTransactionValidity")]
     async fn send_raw_transaction_validity(
         &self,
@@ -116,6 +121,8 @@ pub struct SendRawTransactionValidityApiImpl<Provider> {
     provider: Provider,
     max_validity_predicates: usize,
     max_validity_expiry_secs: u64,
+    validity_signature_mode: ValiditySignatureMode,
+    sequencer_client: Option<SequencerClient>,
     transaction_sender: tokio::sync::mpsc::UnboundedSender<BatchTxRequest<BasePooledTransaction>>,
 }
 
@@ -160,7 +167,27 @@ impl<Provider> SendRawTransactionValidityApiImpl<Provider> {
             BatchTxRequest<BasePooledTransaction>,
         >,
     ) -> Self {
-        Self { provider, max_validity_predicates, max_validity_expiry_secs, transaction_sender }
+        Self {
+            provider,
+            max_validity_predicates,
+            max_validity_expiry_secs,
+            validity_signature_mode: ValiditySignatureMode::Off,
+            sequencer_client: None,
+            transaction_sender,
+        }
+    }
+
+    /// Sets the staged validity-signature rollout policy (default: off).
+    #[must_use]
+    pub const fn with_validity_signature_mode(mut self, mode: ValiditySignatureMode) -> Self {
+        self.validity_signature_mode = mode;
+        self
+    }
+
+    /// Proxies validity submissions to the configured sequencer rather than the local pool.
+    pub fn with_sequencer_client(mut self, client: SequencerClient) -> Self {
+        self.sequencer_client = Some(client);
+        self
     }
 }
 
@@ -184,22 +211,20 @@ where
         Ok(Some((header.number(), header.timestamp())))
     }
 
-    /// Returns the maximum permitted expiry distance in full blocks for the block being built.
-    fn max_validity_expiry_blocks(&self, latest_timestamp: u64) -> u64 {
+    /// Returns the full-block interval, in milliseconds, of the block being built.
+    fn block_interval_millis(&self, latest_timestamp: u64) -> u64 {
         // The target build can be the first Denim block even though the latest committed header
         // is pre-Denim. Check both its parent timestamp and the next legacy block timestamp so
         // the window uses Denim's 200ms full-block cadence at that transition.
         let next_legacy_timestamp =
             latest_timestamp.saturating_add(LEGACY_BLOCK_INTERVAL_MILLIS.saturating_div(1_000));
-        let block_interval_millis =
-            if self.provider.chain_spec().is_denim_active_at_timestamp(latest_timestamp)
-                || self.provider.chain_spec().is_denim_active_at_timestamp(next_legacy_timestamp)
-            {
-                RollupConfig::NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS
-            } else {
-                LEGACY_BLOCK_INTERVAL_MILLIS
-            };
-        self.max_validity_expiry_secs.saturating_mul(1_000).div_ceil(block_interval_millis)
+        if self.provider.chain_spec().is_denim_active_at_timestamp(latest_timestamp)
+            || self.provider.chain_spec().is_denim_active_at_timestamp(next_legacy_timestamp)
+        {
+            RollupConfig::NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS
+        } else {
+            LEGACY_BLOCK_INTERVAL_MILLIS
+        }
     }
 }
 
@@ -263,6 +288,15 @@ where
         tx: Bytes,
         options: SendRawTransactionValidityOptions,
     ) -> RpcResult<TxHash> {
+        if let Some(client) = &self.sequencer_client {
+            return client
+                .request("base_sendRawTransactionValidity", (tx, options))
+                .await
+                .map_err(ErrorObjectOwned::from);
+        }
+
+        let latest = self.latest_block_number_and_timestamp()?;
+
         ValidityPredicate::validate_batch(&options.validity, self.max_validity_predicates)
             .map_err(|error| {
                 ErrorObjectOwned::owned(
@@ -276,13 +310,13 @@ where
         // head exists, also reject bounds already in the past and bounds outside the configured
         // wall-clock window. This validates the submission without injecting or rewriting a
         // predicate.
-        let latest = self.latest_block_number_and_timestamp()?;
         let expiry_validation = match latest {
             Some((latest_block, latest_timestamp)) => {
                 ValidityPredicate::validate_block_expiry_bounds(
                     &options.validity,
                     latest_block.saturating_add(1),
-                    self.max_validity_expiry_blocks(latest_timestamp),
+                    self.max_validity_expiry_secs,
+                    self.block_interval_millis(latest_timestamp),
                 )
             }
             // Before genesis is committed there is no build target from which to measure the
@@ -290,6 +324,9 @@ where
             None => ValidityPredicate::validate_has_block_expiry(&options.validity),
         };
         expiry_validation.map_err(|error| {
+            // The returned message omits the local head; keep it in the log for diagnosing
+            // ingress latency.
+            debug!(error = ?error, "rejected validity transaction block expiry");
             ErrorObjectOwned::owned(ErrorCode::InvalidParams.code(), error.to_string(), None::<()>)
         })?;
 
@@ -302,19 +339,39 @@ where
                 )
             })?;
 
-        // EIP-8130 (account abstraction) validity transactions are fork-gated on Zenith. Other
-        // transaction types (e.g. EIP-1559) carry validity predicates under the experimental flag
-        // alone and are accepted before Zenith activates.
-        let zenith_active = latest.is_some_and(|(_, timestamp)| {
-            self.provider.chain_spec().is_zenith_active_at_timestamp(timestamp)
+        // EIP-8130 (account abstraction) validity transactions are fork-gated on Everest. Other
+        // transaction types (e.g. EIP-1559) carry validity predicates without a fork gate and are
+        // accepted before Everest activates.
+        let everest_active = latest.is_some_and(|(_, timestamp)| {
+            self.provider.chain_spec().is_everest_active_at_timestamp(timestamp)
         });
-        if transaction.ty() == EIP8130_TX_TYPE_ID && !zenith_active {
+        if transaction.ty() == EIP8130_TX_TYPE_ID && !everest_active {
             return Err(ErrorObjectOwned::owned(
                 ErrorCode::InvalidParams.code(),
-                VALIDITY_TX_PRE_ZENITH_RPC_ERROR,
+                VALIDITY_TX_PRE_EVEREST_RPC_ERROR,
                 None::<()>,
             ));
         }
+
+        let signed = options.validity_signature.is_some();
+        let validity = ValidityAuthorization::validate_recovered(
+            &transaction,
+            TransactionValidity {
+                validity: options.validity,
+                validity_signature: options.validity_signature,
+            },
+            self.validity_signature_mode,
+        )
+        .map_err(|error| {
+            ValiditySignatureMetrics::rejected("ingress", error.as_label()).increment(1);
+            ErrorObjectOwned::owned(
+                ErrorCode::InvalidParams.code(),
+                error.to_string(),
+                Some(error.as_label()),
+            )
+        })?;
+        ValiditySignatureMetrics::accepted("ingress", if signed { "signed" } else { "unsigned" })
+            .increment(1);
 
         let tx_hash = *transaction.hash();
         let _ = transaction_event!(
@@ -323,12 +380,12 @@ where
             tx_hash: tx_hash,
             data: {
                 "rpc_method" => "base_sendRawTransactionValidity",
-                "validity_predicates" => &options.validity,
+                "validity_predicates" => &validity.validity,
             },
         );
 
-        // Retain predicates for canonical forwarding to builders.
-        let transaction = transaction.with_validity_predicates(options.validity);
+        // Retain predicates and their authorization for canonical forwarding to builders.
+        let transaction = transaction.with_validity(validity);
         let (response_tx, response_rx) = tokio::sync::oneshot::channel();
         self.transaction_sender
             .send(BatchTxRequest::new(TransactionOrigin::Private, transaction, response_tx))
@@ -393,7 +450,7 @@ mod tests {
         TransactionEventBuilder, TransactionEventCapture, TransactionEventProducer,
         TransactionEventType,
     };
-    use base_test_utils::build_test_genesis_zenith;
+    use base_test_utils::build_test_genesis_everest;
     use httpmock::prelude::*;
     use reth_chainspec::ForkCondition;
     use reth_provider::test_utils::MockEthProvider;
@@ -406,17 +463,200 @@ mod tests {
 
     use super::*;
 
-    /// Provider whose latest header sits after Zenith activation, so the fork gate is open.
-    fn zenith_provider() -> MockEthProvider<BasePrimitives, Arc<BaseChainSpec>> {
-        let mut genesis = build_test_genesis_zenith();
+    fn signed_validity_request(
+        signer: &PrivateKeySigner,
+    ) -> (Bytes, SendRawTransactionValidityOptions) {
+        let raw = signed_eip1559(signer, 0, 1);
+        let tx: BasePooledTransaction =
+            BasePooledTransaction::recover_raw_transaction(&raw).unwrap();
+        let (_, mut options) = validity_request(raw.clone());
+        options.validity_signature = Some(
+            signer
+                .sign_hash_sync(&ValidityAuthorization::signing_hash(
+                    8453,
+                    *tx.hash(),
+                    &options.validity,
+                ))
+                .unwrap(),
+        );
+        (raw, options)
+    }
+
+    #[rstest::rstest]
+    #[case::off_unsigned(ValiditySignatureMode::Off, false, false, false, None)]
+    #[case::off_signed(ValiditySignatureMode::Off, true, false, false, None)]
+    #[case::off_tampered(ValiditySignatureMode::Off, true, true, false, None)]
+    #[case::off_wrong_key(ValiditySignatureMode::Off, true, false, true, None)]
+    #[case::optional_unsigned(ValiditySignatureMode::VerifyIfPresent, false, false, false, None)]
+    #[case::optional_signed(ValiditySignatureMode::VerifyIfPresent, true, false, false, None)]
+    #[case::optional_tampered(
+        ValiditySignatureMode::VerifyIfPresent,
+        true,
+        true,
+        false,
+        Some("invalid")
+    )]
+    #[case::optional_wrong_key(
+        ValiditySignatureMode::VerifyIfPresent,
+        true,
+        false,
+        true,
+        Some("invalid")
+    )]
+    #[case::required_missing(ValiditySignatureMode::Required, false, false, false, Some("missing"))]
+    #[case::required_signed(ValiditySignatureMode::Required, true, false, false, None)]
+    #[case::required_tampered(ValiditySignatureMode::Required, true, true, false, Some("invalid"))]
+    #[case::required_wrong_key(ValiditySignatureMode::Required, true, false, true, Some("invalid"))]
+    #[tokio::test]
+    async fn signature_policy_at_ingress_records_admission_and_rejection(
+        #[case] mode: ValiditySignatureMode,
+        #[case] sign: bool,
+        #[case] tamper: bool,
+        #[case] wrong_key: bool,
+        #[case] reason: Option<&str>,
+    ) {
+        let recorder = metrics_util::debugging::DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        let _guard = metrics::set_default_local_recorder(&recorder);
+        let signer = PrivateKeySigner::random();
+        let (raw, mut options) = signed_validity_request(&signer);
+        if !sign {
+            options.validity_signature = None;
+        }
+        if wrong_key {
+            let tx: BasePooledTransaction =
+                BasePooledTransaction::recover_raw_transaction(&raw).unwrap();
+            options.validity_signature = Some(
+                PrivateKeySigner::random()
+                    .sign_hash_sync(&ValidityAuthorization::signing_hash(
+                        8453,
+                        *tx.hash(),
+                        &options.validity,
+                    ))
+                    .unwrap(),
+            );
+        }
+        if tamper {
+            options.validity.push(ValidityPredicate::Balance {
+                address: Address::ZERO,
+                op: base_execution_txpool::ValidityOperator::Equal,
+                value: U256::ZERO,
+            });
+        }
+        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+        let rpc = SendRawTransactionValidityApiImpl::new(everest_provider(), sender)
+            .with_validity_signature_mode(mode);
+        let response = rpc.send_raw_transaction_validity(raw, options);
+        tokio::pin!(response);
+        if let Some(reason) = reason {
+            let error = response.await.unwrap_err();
+            assert_eq!(error.code(), ErrorCode::InvalidParams.code());
+            assert_eq!(
+                serde_json::from_str::<String>(error.data().unwrap().get()).unwrap(),
+                reason
+            );
+            assert!(matches!(
+                receiver.try_recv(),
+                Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+            ));
+        } else {
+            let queued = tokio::select! {
+                result = &mut response => panic!("valid sidecar failed before pool submission: {result:?}"),
+                request = receiver.recv() => request.expect("valid sidecar should be submitted to the pool"),
+            };
+            drop(queued);
+        }
+        let snapshot = snapshotter.snapshot().into_vec();
+        let expected_name = if reason.is_some() {
+            "txpool.validity_signature.rejected"
+        } else {
+            "txpool.validity_signature.accepted"
+        };
+        let expected_label = reason.unwrap_or(if sign { "signed" } else { "unsigned" });
+        let label_name = if reason.is_some() { "reason" } else { "signature" };
+        assert!(
+            snapshot.iter().any(|(key, _, _, value)| {
+                key.key().name() == expected_name
+                    && key.key().labels().any(|l| l.key() == "site" && l.value() == "ingress")
+                    && key
+                        .key()
+                        .labels()
+                        .any(|l| l.key() == label_name && l.value() == expected_label)
+                    && matches!(value, metrics_util::debugging::DebugValue::Counter(1))
+            }),
+            "signature rollout must be observable through its dedicated metrics"
+        );
+    }
+
+    #[tokio::test]
+    async fn signed_validity_ingress_accepts_eoa_authenticated_eip8130() {
+        let signer = PrivateKeySigner::random();
+        let raw = signed_eip8130(&signer);
+        let tx: BasePooledTransaction =
+            BasePooledTransaction::recover_raw_transaction(&raw).unwrap();
+        let (_, mut options) = validity_request(raw.clone());
+        options.validity_signature = Some(
+            signer
+                .sign_hash_sync(&ValidityAuthorization::signing_hash(
+                    8453,
+                    *tx.hash(),
+                    &options.validity,
+                ))
+                .unwrap(),
+        );
+        let rpc = validity_rpc(everest_provider())
+            .with_validity_signature_mode(ValiditySignatureMode::Required);
+        let error = rpc.send_raw_transaction_validity(raw, options).await.unwrap_err();
+        assert_ne!(error.code(), ErrorCode::InvalidParams.code(), "{error}");
+    }
+
+    #[tokio::test]
+    async fn signed_validity_ingress_default_off_accepts_signed_sidecars() {
+        let (raw, mut options) = signed_validity_request(&PrivateKeySigner::random());
+        let rpc = validity_rpc(everest_provider());
+        let error =
+            rpc.send_raw_transaction_validity(raw.clone(), options.clone()).await.unwrap_err();
+        assert_ne!(error.code(), ErrorCode::InvalidParams.code(), "{error}");
+        options.validity_signature = None;
+        let error = rpc.send_raw_transaction_validity(raw, options).await.unwrap_err();
+        assert_ne!(error.code(), ErrorCode::InvalidParams.code(), "{error}");
+    }
+
+    #[tokio::test]
+    async fn proxy_preserves_signed_validity_even_when_local_enforcement_is_off() {
+        let sequencer = MockServer::start();
+        let (raw, options) = signed_validity_request(&PrivateKeySigner::random());
+        let expected_hash = TxHash::repeat_byte(0x42);
+        let mock = sequencer.mock(|when, then| {
+            when.method(POST).path("/").json_body(json!({
+                "jsonrpc": "2.0", "id": 0, "method": "base_sendRawTransactionValidity",
+                "params": [raw, options],
+            }));
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({"jsonrpc": "2.0", "id": 0, "result": expected_hash}));
+        });
+        let client = SequencerClient::new_http_with_headers(sequencer.base_url(), vec![]).unwrap();
+        let rpc = SendRawTransactionValidityApiImpl::new(
+            pre_everest_provider(),
+            test_transaction_sender(),
+        )
+        .with_sequencer_client(client);
+        assert_eq!(rpc.send_raw_transaction_validity(raw, options).await.unwrap(), expected_hash);
+        mock.assert();
+    }
+
+    /// Provider whose latest header sits after Everest activation, so the fork gate is open.
+    fn everest_provider() -> MockEthProvider<BasePrimitives, Arc<BaseChainSpec>> {
+        let mut genesis = build_test_genesis_everest();
         genesis.config.chain_id = ChainConfig::mainnet().chain_id;
         MockEthProvider::<BasePrimitives>::new()
             .with_chain_spec(Arc::new(BaseChainSpec::from_genesis(genesis)))
             .with_genesis_block()
     }
 
-    /// Provider whose latest header predates Zenith activation, so the fork gate is closed.
-    fn pre_zenith_provider() -> MockEthProvider<BasePrimitives, Arc<BaseChainSpec>> {
+    /// Provider whose latest header predates Everest activation, so the fork gate is closed.
+    fn pre_everest_provider() -> MockEthProvider<BasePrimitives, Arc<BaseChainSpec>> {
         MockEthProvider::<BasePrimitives>::new()
             .with_chain_spec(Arc::new(
                 BaseChainSpecBuilder::base_mainnet().cobalt_activated().build(),
@@ -460,6 +700,7 @@ mod tests {
                         value: U256::from(31),
                     },
                 ],
+                validity_signature: None,
             },
         )
     }
@@ -467,6 +708,11 @@ mod tests {
     fn all_predicate_variants() -> Vec<ValidityPredicate> {
         vec![
             ValidityPredicate::Balance {
+                address: Address::repeat_byte(0x11),
+                op: base_execution_txpool::ValidityOperator::GreaterThanOrEqual,
+                value: U256::from(1),
+            },
+            ValidityPredicate::Nonce {
                 address: Address::repeat_byte(0x11),
                 op: base_execution_txpool::ValidityOperator::GreaterThanOrEqual,
                 value: U256::from(1),
@@ -490,12 +736,12 @@ mod tests {
     }
 
     #[test]
-    fn max_validity_expiry_blocks_uses_the_active_full_block_cadence() {
+    fn block_interval_millis_uses_the_active_full_block_cadence() {
         let legacy = SendRawTransactionValidityApiImpl::new(
-            pre_zenith_provider(),
+            pre_everest_provider(),
             test_transaction_sender(),
         );
-        assert_eq!(legacy.max_validity_expiry_blocks(0), 30);
+        assert_eq!(legacy.block_interval_millis(0), LEGACY_BLOCK_INTERVAL_MILLIS);
 
         let denim_provider = MockEthProvider::<BasePrimitives>::new()
             .with_chain_spec(Arc::new(
@@ -506,7 +752,10 @@ mod tests {
             .with_genesis_block();
         let denim =
             SendRawTransactionValidityApiImpl::new(denim_provider, test_transaction_sender());
-        assert_eq!(denim.max_validity_expiry_blocks(0), 300);
+        assert_eq!(
+            denim.block_interval_millis(0),
+            RollupConfig::NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS
+        );
 
         let transition_provider = MockEthProvider::<BasePrimitives>::new()
             .with_chain_spec(Arc::new(
@@ -517,7 +766,10 @@ mod tests {
             .with_genesis_block();
         let transition =
             SendRawTransactionValidityApiImpl::new(transition_provider, test_transaction_sender());
-        assert_eq!(transition.max_validity_expiry_blocks(0), 300);
+        assert_eq!(
+            transition.block_interval_millis(0),
+            RollupConfig::NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS
+        );
     }
 
     fn signed_eip1559(signer: &PrivateKeySigner, nonce: u64, priority_fee: u128) -> Bytes {
@@ -624,6 +876,14 @@ mod tests {
                     },
                 },
                 {
+                    "type": "nonce",
+                    "params": {
+                        "address": "0x1111111111111111111111111111111111111111",
+                        "op": ">=",
+                        "value": "0x1",
+                    },
+                },
+                {
                     "type": "storage",
                     "params": {
                         "address": "0xabababababababababababababababababababab",
@@ -674,14 +934,17 @@ mod tests {
         let capture = TransactionEventCapture::install();
         let signer = PrivateKeySigner::random();
         let raw = signed_eip1559(&signer, 0, 1);
-        let rpc = validity_rpc(zenith_provider());
-        let options = SendRawTransactionValidityOptions { validity: all_predicate_variants() };
+        let rpc = validity_rpc(everest_provider());
+        let options = SendRawTransactionValidityOptions {
+            validity: all_predicate_variants(),
+            validity_signature: None,
+        };
 
-        let tx_hash = rpc.send_raw_transaction_validity(raw, options).await.unwrap_or_else(|_| {
-            capture.events().first().and_then(|event| event.tx_hash).expect(
-                "admission event should fire before pool insertion even if the noop pool rejects",
-            )
-        });
+        // Captures are shared across parallel tests; identify this transaction from its
+        // envelope, not the first captured event (which may belong to another submission).
+        let expected_hash = alloy_primitives::keccak256(&raw);
+        let tx_hash =
+            rpc.send_raw_transaction_validity(raw, options).await.unwrap_or(expected_hash);
 
         let events: Vec<_> = capture
             .events()
@@ -699,65 +962,133 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn proxies_validity_with_predicates_without_local_submission() {
+        let sequencer = MockServer::start();
+        let raw = Bytes::from_static(&[0x02]);
+        let options = SendRawTransactionValidityOptions {
+            validity: all_predicate_variants(),
+            validity_signature: None,
+        };
+        let expected_hash = TxHash::repeat_byte(0x42);
+        let mock = sequencer.mock(|when, then| {
+            when.method(POST).path("/").header("x-demo", "forwarded").json_body(json!({
+                "jsonrpc": "2.0", "id": 0, "method": "base_sendRawTransactionValidity",
+                "params": [raw, { "validity": options.validity }],
+            }));
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({"jsonrpc": "2.0", "id": 0, "result": expected_hash}));
+        });
+        let client = SequencerClient::new_http_with_headers(
+            sequencer.base_url(),
+            vec!["X-Demo=forwarded".to_string()],
+        )
+        .unwrap();
+        let rpc = SendRawTransactionValidityApiImpl::new(
+            pre_everest_provider(),
+            test_transaction_sender(),
+        )
+        .with_sequencer_client(client);
+        let hash = rpc.send_raw_transaction_validity(raw, options).await.unwrap();
+        assert_eq!(hash, expected_hash);
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn proxy_preserves_sequencer_rejection() {
+        let sequencer = MockServer::start();
+        let raw = Bytes::from_static(&[0x02]);
+        let options =
+            SendRawTransactionValidityOptions { validity: vec![], validity_signature: None };
+        let mock = sequencer.mock(|when, then| {
+            when.method(POST).path("/").json_body(json!({
+                "jsonrpc": "2.0", "id": 0, "method": "base_sendRawTransactionValidity",
+                "params": [raw, { "validity": [] }],
+            }));
+            then.status(200).header("content-type", "application/json").json_body(
+                json!({"jsonrpc": "2.0", "id": 0, "error": {
+                    "code": -32602, "message": "upstream validity rejection"
+                }}),
+            );
+        });
+        let client = SequencerClient::new_http_with_headers(sequencer.base_url(), vec![]).unwrap();
+        let rpc = SendRawTransactionValidityApiImpl::new(
+            pre_everest_provider(),
+            test_transaction_sender(),
+        )
+        .with_sequencer_client(client);
+        let error = rpc.send_raw_transaction_validity(raw, options).await.unwrap_err();
+        assert_eq!(error.code(), -32602);
+        assert_eq!(error.message(), "upstream validity rejection");
+        mock.assert();
+    }
+
     #[test]
     fn send_raw_transaction_validity_method_is_registered() {
         let rpc =
-            SendRawTransactionValidityApiImpl::new(zenith_provider(), test_transaction_sender());
+            SendRawTransactionValidityApiImpl::new(everest_provider(), test_transaction_sender());
         let module = SendRawTransactionValidityApiServer::into_rpc(rpc);
 
         assert!(module.method_names().any(|name| name == "base_sendRawTransactionValidity"));
     }
 
     #[tokio::test]
-    async fn send_raw_transaction_validity_rejects_eip8130_before_zenith() {
+    async fn send_raw_transaction_validity_rejects_eip8130_before_everest() {
         let signer = PrivateKeySigner::random();
         let raw = signed_eip8130(&signer);
         let rpc = SendRawTransactionValidityApiImpl::new(
-            pre_zenith_provider(),
+            pre_everest_provider(),
             test_transaction_sender(),
         );
-        let options = SendRawTransactionValidityOptions { validity: all_predicate_variants() };
+        let options = SendRawTransactionValidityOptions {
+            validity: all_predicate_variants(),
+            validity_signature: None,
+        };
 
         let error = rpc
             .send_raw_transaction_validity(raw, options)
             .await
-            .expect_err("EIP-8130 validity transactions should be rejected before Zenith");
+            .expect_err("EIP-8130 validity transactions should be rejected before Everest");
 
         assert_eq!(error.code(), ErrorCode::InvalidParams.code());
-        assert_eq!(error.message(), VALIDITY_TX_PRE_ZENITH_RPC_ERROR);
+        assert_eq!(error.message(), VALIDITY_TX_PRE_EVEREST_RPC_ERROR);
     }
 
     #[tokio::test]
-    async fn send_raw_transaction_validity_accepts_eip1559_before_zenith() {
-        // EIP-1559 validity transactions are gated by the experimental flag alone, not by Zenith,
-        // so they clear the fork gate before Zenith activates. The admission event fires only once
+    async fn send_raw_transaction_validity_accepts_eip1559_before_everest() {
+        // EIP-1559 validity transactions are not gated by Everest, so they clear the fork gate
+        // before Everest activates. The admission event fires only once
         // the gate is cleared; the noop pool then rejects insertion.
         let capture = TransactionEventCapture::install();
         let signer = PrivateKeySigner::random();
         let raw = signed_eip1559(&signer, 0, 1);
-        let rpc = validity_rpc(pre_zenith_provider());
-        let options = SendRawTransactionValidityOptions { validity: all_predicate_variants() };
+        let rpc = validity_rpc(pre_everest_provider());
+        let options = SendRawTransactionValidityOptions {
+            validity: all_predicate_variants(),
+            validity_signature: None,
+        };
 
         let error = rpc
             .send_raw_transaction_validity(raw, options)
             .await
             .expect_err("the noop pool rejects insertion after the fork gate is cleared");
 
-        assert_ne!(error.message(), VALIDITY_TX_PRE_ZENITH_RPC_ERROR);
+        assert_ne!(error.message(), VALIDITY_TX_PRE_EVEREST_RPC_ERROR);
         assert!(
             capture
                 .events()
                 .iter()
                 .any(|event| event.event_type
                     == TransactionEventType::TxpoolSendRawTransactionValidity),
-            "admission event should fire once the Zenith gate is cleared for EIP-1559"
+            "admission event should fire once the Everest gate is cleared for EIP-1559"
         );
     }
 
     #[tokio::test]
     async fn send_raw_transaction_validity_rejects_malformed_transaction() {
         let rpc =
-            SendRawTransactionValidityApiImpl::new(zenith_provider(), test_transaction_sender());
+            SendRawTransactionValidityApiImpl::new(everest_provider(), test_transaction_sender());
 
         let (raw, options) = validity_request(Bytes::from_static(&[0xff]));
         let error = rpc
@@ -772,7 +1103,7 @@ mod tests {
     #[tokio::test]
     async fn send_raw_transaction_validity_enforces_configured_predicate_limit() {
         let rpc = SendRawTransactionValidityApiImpl::with_max_validity_predicates(
-            zenith_provider(),
+            everest_provider(),
             2,
             test_transaction_sender(),
         );
@@ -792,7 +1123,7 @@ mod tests {
     #[tokio::test]
     async fn send_raw_transaction_validity_rejects_empty_predicates() {
         let rpc =
-            SendRawTransactionValidityApiImpl::new(zenith_provider(), test_transaction_sender());
+            SendRawTransactionValidityApiImpl::new(everest_provider(), test_transaction_sender());
         let (raw, mut options) = validity_request(Bytes::from_static(&[0x02]));
         options.validity.clear();
 
@@ -808,7 +1139,7 @@ mod tests {
     #[tokio::test]
     async fn send_raw_transaction_validity_requires_block_number_expiry() {
         let rpc =
-            SendRawTransactionValidityApiImpl::new(zenith_provider(), test_transaction_sender());
+            SendRawTransactionValidityApiImpl::new(everest_provider(), test_transaction_sender());
         let (raw, mut options) = validity_request(Bytes::from_static(&[0x02]));
         options.validity = vec![ValidityPredicate::BlockNumber {
             op: base_execution_txpool::ValidityOperator::GreaterThanOrEqual,
@@ -828,7 +1159,7 @@ mod tests {
     async fn send_raw_transaction_validity_rejects_block_number_bound_outside_window() {
         // Legacy blocks are 2 seconds, so the default 60-second window permits 30 blocks.
         // With the head at 100, the build target is 101 and the maximum bound is 131.
-        let provider = pre_zenith_provider();
+        let provider = pre_everest_provider();
         provider.add_block(
             B256::repeat_byte(8),
             BaseBlock {
@@ -850,12 +1181,20 @@ mod tests {
 
         assert_eq!(error.code(), ErrorCode::InvalidParams.code());
         assert!(error.message().contains("expires too far in the future"));
+        assert!(
+            error.message().contains("maximum validity window of 60 seconds"),
+            "message should state the window: {error}"
+        );
+        assert!(
+            !error.message().contains("131"),
+            "message must not expose the head-derived maximum: {error}"
+        );
     }
 
     #[tokio::test]
     async fn send_raw_transaction_validity_rejects_storage_value_outside_mask() {
         let rpc =
-            SendRawTransactionValidityApiImpl::new(zenith_provider(), test_transaction_sender());
+            SendRawTransactionValidityApiImpl::new(everest_provider(), test_transaction_sender());
         let (raw, mut options) = validity_request(Bytes::from_static(&[0x02]));
         options.validity = vec![ValidityPredicate::Storage {
             address: Address::repeat_byte(0xab),
@@ -877,7 +1216,7 @@ mod tests {
     #[tokio::test]
     async fn send_raw_transaction_validity_rejects_unsatisfiable_flashblock_index() {
         let rpc =
-            SendRawTransactionValidityApiImpl::new(zenith_provider(), test_transaction_sender());
+            SendRawTransactionValidityApiImpl::new(everest_provider(), test_transaction_sender());
         let (raw, mut options) = validity_request(Bytes::from_static(&[0x02]));
         // A flashblock-index predicate that only holds at index 0, which pooled
         // transactions never reach, would park forever if admitted.
@@ -959,7 +1298,7 @@ mod tests {
         // The genesis block is the latest committed block, so the block being built is 1.
         // A predicate capping inclusion at block 0 can never be satisfied.
         let rpc =
-            SendRawTransactionValidityApiImpl::new(zenith_provider(), test_transaction_sender());
+            SendRawTransactionValidityApiImpl::new(everest_provider(), test_transaction_sender());
         let (raw, mut options) = validity_request(Bytes::from_static(&[0x02]));
         options.validity = vec![ValidityPredicate::BlockNumber {
             op: base_execution_txpool::ValidityOperator::LessThanOrEqual,
@@ -979,7 +1318,7 @@ mod tests {
     async fn send_raw_transaction_validity_rejects_bound_behind_a_later_head() {
         // With the head at block 100, the block being built is 101; `block_number < 101`
         // caps inclusion at block 100, which has already been sealed.
-        let provider = zenith_provider();
+        let provider = everest_provider();
         provider.add_block(
             B256::repeat_byte(7),
             BaseBlock {
@@ -1001,6 +1340,10 @@ mod tests {
 
         assert_eq!(error.code(), ErrorCode::InvalidParams.code());
         assert!(error.message().contains("already expired"), "unexpected message: {error}");
+        assert!(
+            !error.message().contains("101"),
+            "message must not expose the local head: {error}"
+        );
     }
 
     #[tokio::test]
@@ -1011,7 +1354,7 @@ mod tests {
         let capture = TransactionEventCapture::install();
         let signer = PrivateKeySigner::random();
         let raw = signed_eip1559(&signer, 0, 1);
-        let provider = zenith_provider();
+        let provider = everest_provider();
         provider.add_block(
             B256::repeat_byte(7),
             BaseBlock {
@@ -1020,7 +1363,8 @@ mod tests {
             },
         );
         let rpc = validity_rpc(provider);
-        let mut options = SendRawTransactionValidityOptions { validity: vec![] };
+        let mut options =
+            SendRawTransactionValidityOptions { validity: vec![], validity_signature: None };
         options.validity = vec![ValidityPredicate::BlockNumber {
             op: base_execution_txpool::ValidityOperator::Equal,
             value: U256::from(101),

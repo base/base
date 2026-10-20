@@ -108,6 +108,7 @@ impl ChainUpgrades {
         self.set_timestamp(BaseUpgrade::Beryl, upgrades.base.beryl);
         self.set_timestamp(BaseUpgrade::Cobalt, upgrades.base.cobalt);
         self.set_timestamp(BaseUpgrade::Denim, upgrades.base.denim);
+        self.set_timestamp(BaseUpgrade::Everest, upgrades.base.everest);
         self.set_timestamp(BaseUpgrade::Zenith, upgrades.base.zenith);
     }
 
@@ -192,7 +193,12 @@ fn specs_from_config(cfg: &ChainConfig) -> Vec<UpgradeSpec> {
             name: "Cobalt",
             timestamp: cfg.cobalt_timestamp,
         },
-        UpgradeSpec { upgrade: BaseUpgrade::Denim, name: "Denim", timestamp: None },
+        UpgradeSpec { upgrade: BaseUpgrade::Denim, name: "Denim", timestamp: cfg.denim_timestamp },
+        UpgradeSpec {
+            upgrade: BaseUpgrade::Everest,
+            name: "Everest",
+            timestamp: cfg.everest_timestamp,
+        },
         UpgradeSpec { upgrade: BaseUpgrade::Zenith, name: "Zenith", timestamp: None },
     ]
 }
@@ -794,20 +800,7 @@ impl UpgradesView {
             selected_chain: 0,
             selected_check_upgrades: [None; 4],
             tick_count: 0,
-            checks: ChecksPanel {
-                chain_idx: None,
-                upgrade: None,
-                mode: None,
-                rpc_url: String::new(),
-                current: None,
-                results: HashMap::new(),
-                running: false,
-                rx: None,
-                handle: None,
-                last_run_at: None,
-                cursor: None,
-                scroll: 0,
-            },
+            checks: ChecksPanel::default(),
             admin_activity: std::array::from_fn(|_| AdminActivityChainState::default()),
             admin_activity_watcher: AdminActivityWatcher::default(),
             auto_refresh: true,
@@ -1034,7 +1027,7 @@ impl View for UpgradesView {
         match upcoming {
             Some((name, ts)) => {
                 let remaining = ts as i64 - now as i64;
-                render_countdown(frame, outer[1], name, ts, remaining, now, self.tick_count);
+                render_countdown(frame, outer[1], name, ts, remaining, now);
             }
             None => match latest_activated {
                 Some((name, ts)) => {
@@ -1114,7 +1107,6 @@ fn render_countdown(
     ts: u64,
     remaining: i64,
     now: u64,
-    _tick: u64,
 ) {
     let color = zone_color(remaining);
     let msg = zone_message(remaining);
@@ -2326,13 +2318,18 @@ async fn run_beryl_checks_streaming(
         };
     }
 
-    let client = match make_rpc_client(&rpc_url) {
+    let client_result = make_rpc_client(&rpc_url);
+    let connection: Result<&HttpClient, String> = match &client_result {
+        Ok(client) => ClientT::request::<String, _>(client, "eth_blockNumber", rpc_params![])
+            .await
+            .map(|_| client)
+            .map_err(|e| format!("cannot reach {rpc_url}: {e}")),
+        Err(e) => Err(format!("cannot build client for {rpc_url}: {e}")),
+    };
+    let client = match connection {
         Ok(c) => c,
-        Err(e) => {
-            let conn_result = CheckResult {
-                passed: Some(false),
-                detail: format!("cannot build client for {rpc_url}: {e}"),
-            };
+        Err(detail) => {
+            let conn_result = CheckResult { passed: Some(false), detail };
             send_result!("registry precompile", conn_result);
             for &(name, _) in &BERYL_CHECKS[1..] {
                 send_result!(
@@ -2344,24 +2341,8 @@ async fn run_beryl_checks_streaming(
         }
     };
 
-    match ClientT::request::<String, _>(&client, "eth_blockNumber", rpc_params![]).await {
-        Ok(_) => {}
-        Err(e) => {
-            let conn_result =
-                CheckResult { passed: Some(false), detail: format!("cannot reach {rpc_url}: {e}") };
-            send_result!("registry precompile", conn_result);
-            for &(name, _) in &BERYL_CHECKS[1..] {
-                send_result!(
-                    name,
-                    CheckResult { passed: None, detail: "skipped (no connection)".into() }
-                );
-            }
-            return;
-        }
-    }
-
     send_start!("registry precompile");
-    let admin = activation_admin(&client).await;
+    let admin = activation_admin(client).await;
     send_result!("registry precompile", evaluate_beryl_precompile(mode, &admin));
 
     send_start!("registry admin");
@@ -2369,7 +2350,7 @@ async fn run_beryl_checks_streaming(
 
     for &(name, feature) in BERYL_FEATURE_CHECKS {
         send_start!(name);
-        let result = activation_feature_state(&client, feature.id()).await;
+        let result = activation_feature_state(client, feature.id()).await;
         send_result!(name, evaluate_beryl_feature(mode, result));
     }
 }
@@ -2428,13 +2409,18 @@ async fn run_jovian_checks_streaming(
         };
     }
 
-    let client = match make_rpc_client(&rpc_url) {
+    let client_result = make_rpc_client(&rpc_url);
+    let connection: Result<&HttpClient, String> = match &client_result {
+        Ok(client) => ClientT::request::<String, _>(client, "eth_blockNumber", rpc_params![])
+            .await
+            .map(|_| client)
+            .map_err(|e| format!("cannot reach {rpc_url}: {e}")),
+        Err(e) => Err(format!("cannot build client for {rpc_url}: {e}")),
+    };
+    let client = match connection {
         Ok(c) => c,
-        Err(e) => {
-            let conn_result = CheckResult {
-                passed: Some(false),
-                detail: format!("cannot build client for {rpc_url}: {e}"),
-            };
+        Err(detail) => {
+            let conn_result = CheckResult { passed: Some(false), detail };
             send_result!("bn256Pairing limit", conn_result);
             for &(name, _) in &JOVIAN_CHECKS[1..] {
                 send_result!(
@@ -2446,28 +2432,12 @@ async fn run_jovian_checks_streaming(
         }
     };
 
-    match ClientT::request::<String, _>(&client, "eth_blockNumber", rpc_params![]).await {
-        Ok(_) => {}
-        Err(e) => {
-            let conn_result =
-                CheckResult { passed: Some(false), detail: format!("cannot reach {rpc_url}: {e}") };
-            send_result!("bn256Pairing limit", conn_result);
-            for &(name, _) in &JOVIAN_CHECKS[1..] {
-                send_result!(
-                    name,
-                    CheckResult { passed: None, detail: "skipped (no connection)".into() }
-                );
-            }
-            return;
-        }
-    }
-
     // ── bn256Pairing size limit (427 pairs = 81984 bytes is the Jovian cap) ────
     // 428 pairs × 192 bytes = 82176 bytes, which exceeds the Jovian limit.
     // Identity points (all-zero) are valid in bn256Pairing per EIP-197.
     send_start!("bn256Pairing limit");
     let oversized = format!("0x{}", "00".repeat(428 * 192));
-    let r = eth_call(&client, BN256PAIRING_ADDR, &oversized).await;
+    let r = eth_call(client, BN256PAIRING_ADDR, &oversized).await;
     let bn256_check = match (mode, r) {
         (CheckMode::Before, Ok(_)) => CheckResult {
             passed: Some(true),
@@ -2489,7 +2459,7 @@ async fn run_jovian_checks_streaming(
 
     // ── Extra data version byte (0 → 1 at Jovian) ─────────────────────────────
     send_start!("extra data v1");
-    let extra_check = match eth_get_block_by_number_latest(&client).await {
+    let extra_check = match eth_get_block_by_number_latest(client).await {
         Err(e) => CheckResult { passed: Some(false), detail: format!("RPC error: {e}") },
         Ok(block) => {
             let extra_data = block["extraData"].as_str().unwrap_or("0x");
@@ -2518,37 +2488,37 @@ async fn run_jovian_checks_streaming(
 
     // ── GasPriceOracle EIP-1967 implementation slot ───────────────────────────
     send_start!("GPO implementation");
-    let gpo_check =
-        match eth_get_storage_at(&client, GAS_PRICE_ORACLE_ADDR, EIP1967_IMPL_SLOT).await {
-            Err(e) => CheckResult { passed: Some(false), detail: format!("RPC error: {e}") },
-            Ok(slot_val) => {
-                let val = norm(&slot_val);
-                // Slot value is a zero-padded 32-byte address; last 40 hex chars = address.
-                let impl_addr = if val.len() >= 40 { &val[val.len() - 40..] } else { val.as_str() };
-                let expected = match mode {
-                    CheckMode::After => JOVIAN_GPO_IMPL,
-                    CheckMode::Before => ISTHMUS_GPO_IMPL,
-                };
-                let label = match mode {
-                    CheckMode::After => "Jovian",
-                    CheckMode::Before => "Isthmus",
-                };
-                if impl_addr == expected {
-                    CheckResult {
-                        passed: Some(true),
-                        detail: format!("→ 0x{}", impl_addr.get(..8).unwrap_or(impl_addr)),
-                    }
-                } else {
-                    CheckResult {
-                        passed: Some(false),
-                        detail: format!(
-                            "impl=0x{} (expected {label})",
-                            impl_addr.get(..8).unwrap_or(impl_addr)
-                        ),
-                    }
+    let gpo_check = match eth_get_storage_at(client, GAS_PRICE_ORACLE_ADDR, EIP1967_IMPL_SLOT).await
+    {
+        Err(e) => CheckResult { passed: Some(false), detail: format!("RPC error: {e}") },
+        Ok(slot_val) => {
+            let val = norm(&slot_val);
+            // Slot value is a zero-padded 32-byte address; last 40 hex chars = address.
+            let impl_addr = if val.len() >= 40 { &val[val.len() - 40..] } else { val.as_str() };
+            let expected = match mode {
+                CheckMode::After => JOVIAN_GPO_IMPL,
+                CheckMode::Before => ISTHMUS_GPO_IMPL,
+            };
+            let label = match mode {
+                CheckMode::After => "Jovian",
+                CheckMode::Before => "Isthmus",
+            };
+            if impl_addr == expected {
+                CheckResult {
+                    passed: Some(true),
+                    detail: format!("→ 0x{}", impl_addr.get(..8).unwrap_or(impl_addr)),
+                }
+            } else {
+                CheckResult {
+                    passed: Some(false),
+                    detail: format!(
+                        "impl=0x{} (expected {label})",
+                        impl_addr.get(..8).unwrap_or(impl_addr)
+                    ),
                 }
             }
-        };
+        }
+    };
     send_result!("GPO implementation", gpo_check);
 }
 
@@ -2687,13 +2657,18 @@ async fn run_azul_checks_streaming(rpc_url: String, tx: mpsc::Sender<CheckUpdate
         };
     }
 
-    let client = match make_rpc_client(&rpc_url) {
+    let client_result = make_rpc_client(&rpc_url);
+    let connection: Result<&HttpClient, String> = match &client_result {
+        Ok(client) => ClientT::request::<String, _>(client, "eth_blockNumber", rpc_params![])
+            .await
+            .map(|_| client)
+            .map_err(|e| format!("cannot reach {rpc_url}: {e}")),
+        Err(e) => Err(format!("cannot build client for {rpc_url}: {e}")),
+    };
+    let client = match connection {
         Ok(c) => c,
-        Err(e) => {
-            let conn_result = CheckResult {
-                passed: Some(false),
-                detail: format!("cannot build client for {rpc_url}: {e}"),
-            };
+        Err(detail) => {
+            let conn_result = CheckResult { passed: Some(false), detail };
             send_result!("CLZ zero", conn_result);
             for &(name, _) in &AZUL_CHECKS[1..] {
                 send_result!(
@@ -2705,23 +2680,6 @@ async fn run_azul_checks_streaming(rpc_url: String, tx: mpsc::Sender<CheckUpdate
         }
     };
 
-    // Verify the RPC is reachable with a quick eth_blockNumber call.
-    match ClientT::request::<String, _>(&client, "eth_blockNumber", rpc_params![]).await {
-        Ok(_) => {}
-        Err(e) => {
-            let conn_result =
-                CheckResult { passed: Some(false), detail: format!("cannot reach {rpc_url}: {e}") };
-            send_result!("CLZ zero", conn_result);
-            for &(name, _) in &AZUL_CHECKS[1..] {
-                send_result!(
-                    name,
-                    CheckResult { passed: None, detail: "skipped (no connection)".into() }
-                );
-            }
-            return;
-        }
-    }
-
     // ── CLZ opcode (0x1e) ─────────────────────────────────────────────────────
     let clz_cases: &[(&str, &str, &str)] = &[
         ("CLZ zero", CLZ_ZERO_INPUT, CLZ_ZERO_RES),
@@ -2732,13 +2690,13 @@ async fn run_azul_checks_streaming(rpc_url: String, tx: mpsc::Sender<CheckUpdate
     for (name, calldata, expected) in clz_cases {
         send_start!(name);
         let r =
-            eth_call_override(&client, CLZ_PROBE_ADDR, calldata, CLZ_PROBE_ADDR, CLZ_RUNTIME).await;
+            eth_call_override(client, CLZ_PROBE_ADDR, calldata, CLZ_PROBE_ADDR, CLZ_RUNTIME).await;
         send_result!(name, evaluate_opcode_check(name, &r, expected));
     }
 
     // ── MODEXP size limit ──────────────────────────────────────────────────────
     send_start!("MODEXP size limit");
-    let r = eth_call(&client, MODEXP_ADDR, MODEXP_OVERSIZED).await;
+    let r = eth_call(client, MODEXP_ADDR, MODEXP_OVERSIZED).await;
     let modexp_size = r.map_or_else(
         |_| CheckResult {
             passed: Some(true),
@@ -2751,7 +2709,7 @@ async fn run_azul_checks_streaming(rpc_url: String, tx: mpsc::Sender<CheckUpdate
     // ── MODEXP min gas (200 → 500) ─────────────────────────────────────────────
     send_start!("MODEXP min gas");
     let r = eth_call_override(
-        &client,
+        client,
         MODEXP_GAS_PROBE_ADDR,
         "0x",
         MODEXP_GAS_PROBE_ADDR,
@@ -2763,7 +2721,7 @@ async fn run_azul_checks_streaming(rpc_url: String, tx: mpsc::Sender<CheckUpdate
     // ── P256VERIFY gas (3450 → 6900) ───────────────────────────────────────────
     send_start!("P256VERIFY gas");
     let r = eth_call_override(
-        &client,
+        client,
         P256_GAS_PROBE_ADDR,
         "0x",
         P256_GAS_PROBE_ADDR,
@@ -2775,7 +2733,7 @@ async fn run_azul_checks_streaming(rpc_url: String, tx: mpsc::Sender<CheckUpdate
     // ── eth_config RPC method ──────────────────────────────────────────────────
     send_start!("eth_config");
     let cfg_result: Result<serde_json::Value, String> =
-        ClientT::request::<serde_json::Value, _>(&client, "eth_config", rpc_params![])
+        ClientT::request::<serde_json::Value, _>(client, "eth_config", rpc_params![])
             .await
             .map_err(|e| e.to_string());
     let eth_config_check = match cfg_result {
@@ -2814,6 +2772,7 @@ mod tests {
                 beryl: Some(12),
                 cobalt: None,
                 denim: None,
+                everest: None,
                 zenith: None,
             },
             ..UpgradeConfig::default()
@@ -2839,6 +2798,7 @@ mod tests {
                 beryl: None,
                 cobalt: None,
                 denim: None,
+                everest: None,
                 zenith: None,
             },
             ..UpgradeConfig::default()
@@ -2884,6 +2844,7 @@ mod tests {
                 beryl: None,
                 cobalt: None,
                 denim: None,
+                everest: None,
                 zenith: None,
             },
             ..UpgradeConfig::default()

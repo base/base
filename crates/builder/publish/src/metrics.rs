@@ -122,36 +122,3 @@ impl PublisherMetrics for PublishingMetrics {
         Self::replay_stale_position_count().increment(1);
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn noop_publisher_metrics_can_be_constructed_and_called() {
-        let metrics = NoopPublisherMetrics;
-        metrics.on_message_sent();
-        metrics.on_replay_message_sent();
-        metrics.on_connection_opened();
-        metrics.on_connection_closed(Duration::from_secs(10));
-        metrics.on_lagged(42);
-        metrics.on_payload_size(1024);
-        metrics.on_send_error();
-        metrics.on_handshake_error();
-        metrics.on_replay_stale_position();
-    }
-
-    #[test]
-    fn publishing_metrics_can_be_constructed_and_called() {
-        let metrics = PublishingMetrics;
-        metrics.on_message_sent();
-        metrics.on_replay_message_sent();
-        metrics.on_connection_opened();
-        metrics.on_connection_closed(Duration::from_secs(10));
-        metrics.on_lagged(42);
-        metrics.on_payload_size(1024);
-        metrics.on_send_error();
-        metrics.on_handshake_error();
-        metrics.on_replay_stale_position();
-    }
-}

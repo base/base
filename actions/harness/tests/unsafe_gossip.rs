@@ -117,7 +117,7 @@ async fn test_unsafe_chain_advances_safe_catches_up() {
     for block in &blocks {
         source.push(block.clone());
     }
-    let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
+    let batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
     batcher.advance(&mut h.l1).await;
     chain.push(h.l1.tip().clone());
     node.initialize().await;

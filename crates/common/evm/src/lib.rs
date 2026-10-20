@@ -46,8 +46,8 @@ mod eip8130;
 #[cfg(feature = "std")]
 pub use eip8130::{Eip8130Executor, Eip8130Outcome};
 
-mod eip8130_phase_statuses;
-pub use eip8130_phase_statuses::Eip8130PhaseStatuses;
+mod eip8130_committed_phases;
+pub use eip8130_committed_phases::Eip8130CommittedPhases;
 
 mod factory;
 pub use factory::BaseEvmFactory;
@@ -64,8 +64,8 @@ pub use receipt_builder::{AlloyReceiptBuilder, BaseReceiptBuilder};
 mod canyon;
 pub use canyon::ensure_create2_deployer;
 
-mod zenith;
-pub use zenith::ensure_eip8130_system_accounts;
+mod everest;
+pub use everest::ensure_eip8130_system_accounts;
 
 mod executor;
 pub use executor::{

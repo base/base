@@ -14,9 +14,9 @@ use base_common_consensus::{Eip8130Constants, Eip8130Contracts};
 /// are EIP-2028; together they reproduce the EIP-8130 `nonce_key_cost` table
 /// (cold SLOAD + SSTORE set = 22,100; cold SLOAD + warm SSTORE reset = 5,000).
 /// The authenticator execution costs are the chain-policy values for the
-/// enshrined canonical authenticators, set to the EVM precompile costs Base uses
-/// (see the crate docs). The revm-backed `gas_primitives_match_evm_reference`
-/// test in `base-execution-eip8130` is a drift tripwire that pins the EVM
+/// enshrined canonical authenticators, set to the EVM precompile costs Base uses.
+/// The revm-backed `gas_primitives_match_evm_reference` test in
+/// `base-execution-eip8130` is a drift tripwire that pins the EVM
 /// primitives to revm's canonical constants, so an upstream repricing is
 /// surfaced and re-decided deliberately rather than tracked silently.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,6 +44,18 @@ impl Eip8130GasSchedule {
     /// Cost of a non-zero byte of serialized transaction data.
     pub const TX_DATA_NONZERO_BYTE: u64 = 16;
 
+    // ── EIP-7623 calldata floor ──────────────────────────────────────────────
+    /// `TOTAL_COST_FLOOR_PER_TOKEN`: the per-token gas an EIP-7623 transaction
+    /// pays for data availability under the floor branch. An 8130 transaction has
+    /// no single `data` field, so the floor is evaluated over the serialized
+    /// transaction (one token per zero byte, four per non-zero byte). A data-heavy
+    /// transaction whose execution is cheap pays `payload_tokens * this` instead
+    /// of the standard `payload_tokens * TX_DATA_ZERO_BYTE`, so it cannot post data
+    /// availability more cheaply than a standard EIP-7623 transaction on the same
+    /// chain. Pinned to revm's `TOTAL_COST_FLOOR_PER_TOKEN` by the
+    /// `gas_primitives_match_evm_reference` drift tripwire.
+    pub const TX_TOTAL_COST_FLOOR_PER_TOKEN: u64 = 10;
+
     // ── EIP-8130 table values ────────────────────────────────────────────────
     /// Base intrinsic cost for any AA transaction (`AA_BASE_COST`).
     pub const AA_BASE_COST: u64 = Eip8130Constants::EIP8130_BASE_COST;
@@ -56,6 +68,10 @@ impl Eip8130GasSchedule {
     /// a slot on each write).
     pub const NONCE_FREE_COST: u64 =
         2 * Self::COLD_SLOAD + Self::WARM_SLOAD + 3 * Self::SSTORE_RESET;
+    /// `nonce_key_cost` for the protocol nonce (`nonce_key == 0`). It is the
+    /// account nonce, bumped without touching the nonce manager, so the bump is
+    /// covered by `AA_BASE_COST` as it is by a legacy transaction's base cost.
+    pub const PROTOCOL_NONCE_COST: u64 = 0;
     /// `nonce_key_cost` for the first use of a sequence nonce key (cold SLOAD +
     /// SSTORE set).
     pub const NONCE_KEY_FIRST_USE_COST: u64 = Self::COLD_SLOAD + Self::SSTORE_SET;
@@ -73,9 +89,18 @@ impl Eip8130GasSchedule {
     const _DELEGATION_INDICATOR_FITS_U64: () =
         assert!(Eip8130Constants::DELEGATION_INDICATOR_SIZE <= u64::MAX as usize);
     /// Delegation-indicator deposit: `200 × 23` for the `0xef0100 || address`
-    /// indicator (`auto_delegation_cost` and per delegation entry).
+    /// indicator, charged per delegation entry.
     pub const DELEGATION_DEPOSIT_COST: u64 =
         Self::CODE_DEPOSIT_PER_BYTE * Eip8130Constants::DELEGATION_INDICATOR_SIZE as u64;
+    /// `TX_VALUE_COST`: per call with `value > 0` and `to != sender`, covering
+    /// the recipient balance write and the transfer log. Charged statically
+    /// because `to` and `value` are signed fields.
+    pub const TX_VALUE_COST: u64 = 6_000;
+    /// Account-creation charge for a value-bearing call to an account that does
+    /// not exist, charged at dispatch because existence is only known then.
+    pub const NEW_ACCOUNT_COST: u64 = 25_000;
+    /// Upper bound on `payer_auth_cost`, which is metered outside `gas_limit`.
+    pub const MAX_AUTHENTICATION_GAS: u64 = 100_000;
 
     // ── Config-change actor slot writes ──────────────────────────────────────
     //

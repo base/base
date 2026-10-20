@@ -7,7 +7,7 @@ use std::sync::Arc;
 #[cfg(any(target_os = "linux", feature = "local"))]
 use std::time::Duration;
 
-use alloy_primitives::Address;
+use alloy_primitives::{Address, B256};
 use base_cli_utils::{LogConfig, RuntimeManager};
 #[cfg(any(target_os = "linux", feature = "local"))]
 use base_common_chains::rollup_config;
@@ -105,10 +105,31 @@ struct ProverRuntimeArgs {
     #[arg(long, env = "ENABLE_EXPERIMENTAL_WITNESS_ENDPOINT")]
     enable_experimental_witness_endpoint: bool,
 
-    /// `TEEProverRegistry` contract address on L1. When set, proving is guarded
-    /// by onchain signer validity and server `/healthz` is registration-gated.
+    /// `TEEProverRegistry` contract address on L1. Proving and routing require
+    /// current onchain signer validity. `/healthz` latches healthy on a valid
+    /// signer or a registered image matching `--tee-pending-image-hash`.
     #[arg(long, env = "TEE_PROVER_REGISTRY_ADDRESS")]
     tee_prover_registry_address: Option<Address>,
+
+    /// Next image's `keccak256(PCR0)`, matching `AggregateVerifier.TEE_IMAGE_HASH`.
+    /// Nonzero; accepts pre-registered signers for health only, not proving or routing.
+    #[arg(
+        long,
+        env = "TEE_PENDING_IMAGE_HASH",
+        requires = "tee_prover_registry_address",
+        value_parser = Self::parse_pending_image_hash
+    )]
+    tee_pending_image_hash: Option<B256>,
+}
+
+impl ProverRuntimeArgs {
+    fn parse_pending_image_hash(value: &str) -> Result<B256, String> {
+        let hash = value.parse::<B256>().map_err(|error| error.to_string())?;
+        if hash.is_zero() {
+            return Err("pending TEE image hash must be nonzero".into());
+        }
+        Ok(hash)
+    }
 }
 
 #[cfg(any(target_os = "linux", feature = "local"))]
@@ -117,6 +138,7 @@ impl ProverRuntimeArgs {
         self.tee_prover_registry_address.map(|address| RegistrationHealthConfig {
             registry_address: address,
             l1_rpc_url: self.l1_eth_url.clone(),
+            pending_image_hash: self.tee_pending_image_hash,
         })
     }
 
@@ -416,4 +438,72 @@ enum WorkerTransportMode {
     Vsock,
     #[cfg(feature = "local")]
     Local,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn runtime_args(extra: &[&str]) -> Vec<String> {
+        [
+            "nitro-host",
+            "--l1-eth-url",
+            "http://localhost:8545",
+            "--l2-eth-url",
+            "http://localhost:9545",
+            "--l2-node-url",
+            "http://localhost:7545",
+            "--l1-beacon-url",
+            "http://localhost:5052",
+            "--l2-chain-id",
+            "8453",
+        ]
+        .into_iter()
+        .chain(extra.iter().copied())
+        .map(str::to_owned)
+        .collect()
+    }
+
+    #[test]
+    fn pending_hash_requires_registry() {
+        let pending = B256::repeat_byte(1).to_string();
+        let error = ProverRuntimeArgs::try_parse_from(runtime_args(&[
+            "--tee-pending-image-hash",
+            &pending,
+        ]))
+        .err()
+        .expect("pending hash needs a registry");
+        assert_eq!(error.kind(), clap::error::ErrorKind::MissingRequiredArgument);
+    }
+
+    #[test]
+    fn pending_hash_rejects_zero() {
+        let pending = B256::ZERO.to_string();
+        let registry = Address::repeat_byte(1).to_string();
+        let error = ProverRuntimeArgs::try_parse_from(runtime_args(&[
+            "--tee-prover-registry-address",
+            &registry,
+            "--tee-pending-image-hash",
+            &pending,
+        ]))
+        .err()
+        .expect("zero pending hash must be rejected");
+        assert_eq!(error.kind(), clap::error::ErrorKind::ValueValidation);
+    }
+
+    #[cfg(any(target_os = "linux", feature = "local"))]
+    #[test]
+    fn pending_hash_reaches_health_config() {
+        let pending = B256::repeat_byte(1).to_string();
+        let registry = Address::repeat_byte(1).to_string();
+        let runtime = ProverRuntimeArgs::try_parse_from(runtime_args(&[
+            "--tee-prover-registry-address",
+            &registry,
+            "--tee-pending-image-hash",
+            &pending,
+        ]))
+        .unwrap();
+        let config = runtime.registration_health_config().unwrap();
+        assert_eq!(config.pending_image_hash, Some(B256::repeat_byte(1)));
+    }
 }

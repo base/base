@@ -83,6 +83,16 @@ impl ChainUpgradesExt for ChainUpgrades {
             forks.push((BaseUpgrade::Cobalt.boxed(), cobalt));
         }
 
+        let denim = self[BaseUpgrade::Denim];
+        if !matches!(denim, ForkCondition::Never) {
+            forks.push((BaseUpgrade::Denim.boxed(), denim));
+        }
+
+        let everest = self[BaseUpgrade::Everest];
+        if !matches!(everest, ForkCondition::Never) {
+            forks.push((BaseUpgrade::Everest.boxed(), everest));
+        }
+
         ChainHardforks::new(forks)
     }
 }
@@ -105,5 +115,19 @@ mod tests {
         .to_chain_upgrades();
         assert_eq!(upgrades.get(BaseUpgrade::Azul), Some(ForkCondition::Timestamp(1_000_000)));
         assert_eq!(upgrades.get(EthereumHardfork::Osaka), upgrades.get(BaseUpgrade::Azul));
+    }
+
+    #[test]
+    fn denim_and_everest_timestamps_reach_the_execution_schedule() {
+        let upgrades =
+            ChainUpgrades::new(BaseUpgrade::devnet().into_iter().map(|(fork, cond)| match fork {
+                BaseUpgrade::Denim => (fork, ForkCondition::Timestamp(900_000)),
+                BaseUpgrade::Everest => (fork, ForkCondition::Timestamp(950_000)),
+                _ => (fork, cond),
+            }))
+            .to_chain_upgrades();
+
+        assert_eq!(upgrades.get(BaseUpgrade::Denim), Some(ForkCondition::Timestamp(900_000)));
+        assert_eq!(upgrades.get(BaseUpgrade::Everest), Some(ForkCondition::Timestamp(950_000)));
     }
 }

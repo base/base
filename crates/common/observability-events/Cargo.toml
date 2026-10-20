@@ -24,10 +24,14 @@ strum = { workspace = true, features = ["derive"] }
 sha2.workspace = true
 thiserror.workspace = true
 tracing = { workspace = true, features = ["std"] }
-tracing-appender.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+criterion.workspace = true
+
+[[bench]]
+name = "emit"
+harness = false
 
 [features]
 default = [ "metrics" ]

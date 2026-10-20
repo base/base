@@ -65,12 +65,13 @@ impl SequencerCommand {
         consensus_config.upgrade_signal = builder.rollup_args.upgrade_signal.clone();
         let consensus_args = ConsensusNodeArgs::new(consensus_chain, consensus_config);
         let mut rollup_config = consensus_args.load_rollup_config()?;
+        Arc::make_mut(&mut execution_chain).block_time = Some(rollup_config.block_time);
 
         let rollup_args = builder.rollup_args.clone();
         let sequencer_rpc = rollup_args.sequencer.clone();
         let metering_provider: base_builder_core::SharedMeteringProvider =
             Arc::new(builder.build_metering_store());
-        let builder_api_config = builder.builder_api_config()?;
+        let builder_api_config = builder.builder_api_config();
         // The builder journal is the only `GlobalTransactionEventWriter` in this process: the
         // embedded execution config accepts no journal flags, and the execution journal init in
         // `StandardBaseRethNode::runner` is only reached by `base rpc`.
@@ -120,14 +121,13 @@ impl SequencerCommand {
             runner.install_ext::<BuilderApiExtension>(
                 builder_api_config.with_metering_provider(metering_provider),
             );
-            if builder_api_config.accept_experimental_validity_transactions {
-                runner.install_ext::<SendRawTransactionValidityExtension>(
-                    SendRawTransactionValidityConfig {
-                        max_validity_predicates: builder_api_config.max_validity_predicates,
-                        ..Default::default()
-                    },
-                );
-            }
+            runner.install_ext::<SendRawTransactionValidityExtension>(
+                SendRawTransactionValidityConfig {
+                    max_validity_predicates: builder_api_config.max_validity_predicates,
+                    validity_signature_mode: builder_api_config.validity_signature_mode,
+                    ..Default::default()
+                },
+            );
             runner.install_ext::<ShadowIndexerExtension>(shadow_indexer_config);
             StandardBaseRethNode::install_upgrade_signal_runtime_extension(
                 &mut runner,

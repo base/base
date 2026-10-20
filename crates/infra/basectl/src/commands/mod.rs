@@ -1,5 +1,11 @@
 //! CLI parsing and command argument types for basectl.
 
+mod batcher;
+pub use batcher::{
+    BatcherAction, BatcherActionArgs, BatcherActionJson, BatcherCommand, BatcherCommands,
+    BatcherStatusArgs, BatcherStatusJson,
+};
+
 mod block;
 pub use block::{BlockCommand, BlockSummaryJson};
 

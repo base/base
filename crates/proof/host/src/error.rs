@@ -1,4 +1,4 @@
-use std::array::TryFromSliceError;
+use std::{array::TryFromSliceError, time::Duration};
 
 use alloy_primitives::B256;
 use alloy_rlp::Error as RlpError;
@@ -96,6 +96,9 @@ pub enum HostError {
     /// Transport error.
     #[error("Transport error: {0}")]
     Transport(#[from] TransportError),
+    /// Payload witness RPC exceeded its deadline.
+    #[error("debug_executePayload timed out after {0:?}")]
+    PayloadWitnessTimeout(Duration),
     /// RLP decoding error.
     #[error("RLP decoding error: {0}")]
     Rlp(#[from] RlpError),

@@ -6,7 +6,6 @@ mod array;
 mod bytes_like;
 mod mapping;
 mod primitives;
-mod set;
 mod slot;
 mod vec;
 
@@ -16,7 +15,6 @@ use core::cell::RefCell;
 pub use array::ArrayHandler;
 pub use bytes_like::BytesLikeHandler;
 pub use mapping::{Mapping, MappingHandler};
-pub use set::{Set, SetHandler};
 pub use slot::Slot;
 pub use vec::VecHandler;
 

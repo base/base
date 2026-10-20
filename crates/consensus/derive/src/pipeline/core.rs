@@ -4,6 +4,7 @@ use alloc::{boxed::Box, collections::VecDeque, string::ToString, sync::Arc};
 use core::fmt::Debug;
 
 use alloy_eips::BlockNumHash;
+use alloy_primitives::B256;
 use async_trait::async_trait;
 use base_common_genesis::{RollupConfig, SystemConfig};
 use base_protocol::{AttributesWithParent, BatchValidationProvider, BlockInfo, L2BlockInfo};
@@ -85,14 +86,14 @@ where
             }
             current = self
                 .l2_chain_provider
-                .l2_block_info_by_number(current.block_info.number - 1)
+                .l2_block_info_by_hash(current.block_info.parent_hash)
                 .await
                 .map_err(Into::into)?;
         }
 
         let system_config = self
             .l2_chain_provider
-            .system_config_by_number(current.block_info.number, Arc::clone(&self.rollup_config))
+            .system_config_by_l2_hash(current.block_info.hash, Arc::clone(&self.rollup_config))
             .await
             .map_err(Into::into)?;
 
@@ -195,13 +196,13 @@ where
         &self.rollup_config
     }
 
-    /// Returns the [`SystemConfig`] by L2 number.
-    async fn system_config_by_number(
+    /// Returns the [`SystemConfig`] for the L2 block with the given hash.
+    async fn system_config_by_l2_hash(
         &mut self,
-        number: u64,
+        hash: B256,
     ) -> Result<SystemConfig, PipelineErrorKind> {
         self.l2_chain_provider
-            .system_config_by_number(number, Arc::clone(&self.rollup_config))
+            .system_config_by_l2_hash(hash, Arc::clone(&self.rollup_config))
             .await
             .map_err(Into::into)
     }
@@ -259,7 +260,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use alloc::{string::ToString, sync::Arc};
+    use alloc::{string::ToString, sync::Arc, vec};
 
     use alloy_eips::BlockNumHash;
     use alloy_primitives::{Address, B256, address};
@@ -362,7 +363,7 @@ mod tests {
     async fn test_derivation_pipeline_signal_activation() {
         let rollup_config = Arc::new(RollupConfig::default());
         let mut l2_chain_provider = TestL2ChainProvider::default();
-        l2_chain_provider.system_configs.insert(0, SystemConfig::default());
+        l2_chain_provider.system_configs.insert(B256::ZERO, SystemConfig::default());
         let attributes = TestNextAttributes::default();
         let mut pipeline = DerivationPipeline::new(attributes, rollup_config, l2_chain_provider);
 
@@ -399,7 +400,7 @@ mod tests {
     async fn test_derivation_pipeline_signal_reset_ok() {
         let rollup_config = Arc::new(RollupConfig::default());
         let mut l2_chain_provider = TestL2ChainProvider::default();
-        l2_chain_provider.system_configs.insert(0, SystemConfig::default());
+        l2_chain_provider.system_configs.insert(B256::ZERO, SystemConfig::default());
         let attributes = TestNextAttributes::default();
         let mut pipeline = DerivationPipeline::new(attributes, rollup_config, l2_chain_provider);
 
@@ -410,22 +411,71 @@ mod tests {
 
     #[tokio::test]
     async fn test_derivation_pipeline_initial_reset_walks_back() {
-        let rollup_config = Arc::new(RollupConfig {
-            // channel_timeout = 100 so the walk-back will stop at genesis (block 0)
-            ..Default::default()
-        });
+        let rollup_config = Arc::new(RollupConfig { channel_timeout: 1, ..Default::default() });
         let mut l2_chain_provider = TestL2ChainProvider::default();
-        l2_chain_provider.system_configs.insert(0, SystemConfig::default());
+        let genesis_hash = B256::ZERO;
+        let safe_head_hash = B256::with_last_byte(1);
+        l2_chain_provider.blocks = vec![
+            L2BlockInfo {
+                block_info: BlockInfo { hash: genesis_hash, number: 0, ..Default::default() },
+                l1_origin: BlockNumHash { number: 0, ..Default::default() },
+                seq_num: 0,
+            },
+            L2BlockInfo {
+                block_info: BlockInfo {
+                    hash: safe_head_hash,
+                    number: 1,
+                    parent_hash: genesis_hash,
+                    ..Default::default()
+                },
+                l1_origin: BlockNumHash { number: 1, ..Default::default() },
+                seq_num: 0,
+            },
+        ];
+        l2_chain_provider.system_configs.insert(B256::ZERO, SystemConfig::default());
         let attributes = TestNextAttributes::default();
         let mut pipeline = DerivationPipeline::new(attributes, rollup_config, l2_chain_provider);
 
-        // With L2 safe head at genesis (block 0), initial_reset should stop at genesis.
+        // The safe head is non-genesis, so reset must follow its parent hash before stopping at
+        // genesis.
         let l2_safe_head = L2BlockInfo {
-            l1_origin: BlockNumHash { number: 5, hash: Default::default() },
+            block_info: BlockInfo {
+                hash: safe_head_hash,
+                number: 1,
+                parent_hash: genesis_hash,
+                ..Default::default()
+            },
+            l1_origin: BlockNumHash { number: 1, ..Default::default() },
+            seq_num: 0,
+        };
+        let (origin, _) = pipeline.initial_reset(l2_safe_head).await.unwrap();
+        assert_eq!(origin.number, 0);
+    }
+
+    #[tokio::test]
+    async fn test_initial_reset_uses_system_config_for_exact_block_hash() {
+        let canonical_hash = B256::left_padding_from(&[1]);
+        let reorged_hash = B256::left_padding_from(&[2]);
+        let mut l2_chain_provider = TestL2ChainProvider::default();
+        l2_chain_provider
+            .system_configs
+            .insert(canonical_hash, SystemConfig { gas_limit: 123, ..Default::default() });
+        l2_chain_provider
+            .system_configs
+            .insert(reorged_hash, SystemConfig { gas_limit: 456, ..Default::default() });
+        let mut pipeline = DerivationPipeline::new(
+            TestNextAttributes::default(),
+            Arc::new(RollupConfig::default()),
+            l2_chain_provider,
+        );
+
+        // The reset target is the reorged block at the same height as the canonical block.
+        let safe_head = L2BlockInfo {
+            block_info: BlockInfo { hash: reorged_hash, ..Default::default() },
             ..Default::default()
         };
-        let result = pipeline.initial_reset(l2_safe_head).await;
-        assert!(result.is_ok());
+        let (_, system_config) = pipeline.initial_reset(safe_head).await.unwrap();
+        assert_eq!(system_config.gas_limit, 456);
     }
 
     /// On a Granite-straddle safe head — L2 timestamp post-Granite while its L1 origin
@@ -447,6 +497,7 @@ mod tests {
         const CODE_STOP_L1_ORIGIN: u64 = L1_HEAD - RollupConfig::GRANITE_CHANNEL_TIMEOUT;
         const BATCHER_AT_SPEC_STOP: Address = address!("BB00000000000000000000000000000000000002");
         const BATCHER_AT_CODE_STOP: Address = address!("AA00000000000000000000000000000000000001");
+        let block_hash = |number: u64| B256::left_padding_from(&number.to_be_bytes());
 
         let rollup_config = Arc::new(RollupConfig {
             block_time: 2,
@@ -467,8 +518,8 @@ mod tests {
             l2_chain_provider.blocks.push(L2BlockInfo {
                 block_info: BlockInfo {
                     number: n,
-                    hash: B256::with_last_byte((n & 0xff) as u8),
-                    parent_hash: B256::ZERO,
+                    hash: block_hash(n),
+                    parent_hash: block_hash(n - 1),
                     timestamp,
                 },
                 l1_origin: BlockNumHash {
@@ -479,11 +530,11 @@ mod tests {
             });
         }
         l2_chain_provider.system_configs.insert(
-            SPEC_STOP_L1_ORIGIN,
+            block_hash(SPEC_STOP_L1_ORIGIN),
             SystemConfig { batcher_address: BATCHER_AT_SPEC_STOP, ..Default::default() },
         );
         l2_chain_provider.system_configs.insert(
-            CODE_STOP_L1_ORIGIN,
+            block_hash(CODE_STOP_L1_ORIGIN),
             SystemConfig { batcher_address: BATCHER_AT_CODE_STOP, ..Default::default() },
         );
 
@@ -493,8 +544,8 @@ mod tests {
         let safe_head = L2BlockInfo {
             block_info: BlockInfo {
                 number: L1_HEAD,
-                hash: B256::with_last_byte((L1_HEAD & 0xff) as u8),
-                parent_hash: B256::ZERO,
+                hash: block_hash(L1_HEAD),
+                parent_hash: block_hash(L1_HEAD - 1),
                 timestamp: L2_SAFE_HEAD_TIMESTAMP,
             },
             l1_origin: BlockNumHash {

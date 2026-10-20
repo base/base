@@ -4,13 +4,13 @@ use core::fmt::Debug;
 use std::sync::Arc;
 
 use alloy_genesis::ChainConfig;
-use alloy_primitives::Address;
+use alloy_primitives::{Address, B256};
 use async_trait::async_trait;
 use base_common_genesis::{RollupConfig, SystemConfig};
 use base_consensus_derive::{
     DerivationPipeline, EthereumDataSource, OriginProvider, Pipeline, PipelineBuilder,
-    PipelineErrorKind, PipelineResult, PolledAttributesQueueStage, ResetSignal, Signal,
-    SignalReceiver, StatefulAttributesBuilder, StepResult,
+    PipelineErrorKind, PipelineResult, PolledAttributesQueueStage, Signal, SignalReceiver,
+    StatefulAttributesBuilder, StepResult,
 };
 use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
 
@@ -46,64 +46,6 @@ pub struct OnlinePipeline {
 }
 
 impl OnlinePipeline {
-    /// Constructs a new polled derivation pipeline that is initialized.
-    #[allow(clippy::too_many_arguments)]
-    pub async fn new(
-        cfg: Arc<RollupConfig>,
-        l1_cfg: Arc<ChainConfig>,
-        l2_safe_head: L2BlockInfo,
-        blob_provider: OnlineBlobProvider<OnlineBeaconClient>,
-        chain_provider: AlloyChainProvider,
-        l2_chain_provider: AlloyL2ChainProvider,
-        l1_head_number: L1HeadNumber,
-        verifier_l1_confs: u64,
-    ) -> PipelineResult<Self> {
-        let mut pipeline = Self::new_polled(
-            Arc::clone(&cfg),
-            Arc::clone(&l1_cfg),
-            blob_provider,
-            chain_provider,
-            l2_chain_provider,
-            l1_head_number,
-            verifier_l1_confs,
-        );
-
-        // Reset the pipeline to populate the initial L1/L2 cursor and system configuration in L1
-        // Traversal.
-        pipeline.signal(ResetSignal { l2_safe_head }.signal()).await?;
-
-        Ok(pipeline)
-    }
-
-    /// Constructs a new polled derivation pipeline that is uninitialized.
-    ///
-    /// Uses online providers as specified by the arguments.
-    ///
-    /// Before using the returned pipeline, a [`ResetSignal`] must be sent to
-    /// instantiate the pipeline state. [`Self::new`] is a convenience method that
-    /// constructs a new online pipeline and sends the reset signal.
-    #[allow(clippy::too_many_arguments)]
-    pub fn new_polled(
-        cfg: Arc<RollupConfig>,
-        l1_cfg: Arc<ChainConfig>,
-        blob_provider: OnlineBlobProvider<OnlineBeaconClient>,
-        chain_provider: AlloyChainProvider,
-        l2_chain_provider: AlloyL2ChainProvider,
-        l1_head_number: L1HeadNumber,
-        verifier_l1_confs: u64,
-    ) -> Self {
-        Self::new_polled_with_da_batcher_sender_override(
-            cfg,
-            l1_cfg,
-            blob_provider,
-            chain_provider,
-            l2_chain_provider,
-            l1_head_number,
-            verifier_l1_confs,
-            None,
-        )
-    }
-
     /// Constructs a new uninitialized polled derivation pipeline with an optional batcher address
     /// override used only to filter L1 data-availability transactions.
     #[allow(clippy::too_many_arguments)]
@@ -181,11 +123,11 @@ impl Pipeline for OnlinePipeline {
         self.inner.rollup_config()
     }
 
-    /// Returns the [`SystemConfig`] by L2 number.
-    async fn system_config_by_number(
+    /// Returns the [`SystemConfig`] for the L2 block with the given hash.
+    async fn system_config_by_l2_hash(
         &mut self,
-        number: u64,
+        hash: B256,
     ) -> Result<SystemConfig, PipelineErrorKind> {
-        self.inner.system_config_by_number(number).await
+        self.inner.system_config_by_l2_hash(hash).await
     }
 }

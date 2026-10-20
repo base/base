@@ -1,8 +1,8 @@
 //! Storage layout and constants for the activation registry.
 
-use alloy_primitives::{Address, B256, Bytes, address, b256};
+use alloy_primitives::{Address, B256, address, b256};
 use base_precompile_macros::contract;
-use base_precompile_storage::{BasePrecompileError, Handler, Mapping, PrecompileResult, Result};
+use base_precompile_storage::{BasePrecompileError, Handler, Mapping, Result};
 
 use crate::IActivationRegistry;
 
@@ -115,15 +115,6 @@ impl ActivationRegistryStorage<'_> {
     /// Returns true when the feature is activated.
     pub fn is_activated(&self, feature: B256) -> Result<bool> {
         self.features.at(&feature).read()
-    }
-
-    /// Reverts unless the feature is activated.
-    ///
-    /// Both the activated and deactivated paths return `Ok`; callers must inspect
-    /// [`base_precompile_storage::PrecompileOutput::is_revert`] to distinguish an activated feature from an
-    /// ABI revert.
-    pub fn assert_activated(&self, feature: B256) -> PrecompileResult {
-        self.storage.result_output(self.ensure_activated(feature), |()| Bytes::new())
     }
 
     /// Returns `Ok(())` when the feature is activated.
@@ -250,8 +241,7 @@ mod tests {
     use alloy_sol_types::{SolCall, SolEvent};
     use base_common_genesis::BaseUpgrade;
     use base_precompile_storage::{
-        BasePrecompileError, HashMapStorageProvider, PrecompileOutput, Result, StorageCtx,
-        StorageKey,
+        BasePrecompileError, HashMapStorageProvider, Result, StorageCtx, StorageKey,
     };
     use rstest::rstest;
 
@@ -346,13 +336,6 @@ mod tests {
                 expected
             );
         });
-    }
-
-    fn assert_activated_output(storage: &mut HashMapStorageProvider) -> PrecompileOutput {
-        StorageCtx::enter(storage, |ctx| {
-            ActivationRegistryStorage::new(ctx).assert_activated(FEATURE)
-        })
-        .expect("activation assertion should not fail fatally")
     }
 
     #[test]
@@ -492,63 +475,52 @@ mod tests {
         assert_activated(&mut storage, true);
     }
 
-    #[test]
-    fn set_admin_reverts_when_state_backed_admin_is_disabled() {
+    #[rstest]
+    #[case::state_backed_admin_is_disabled(
+        STATIC_ADMIN_CONFIG,
+        NEW_ADMIN,
+        ADMIN,
+        false,
+        BasePrecompileError::revert(IActivationRegistry::AdminStorageNotEnabled {})
+    )]
+    #[case::zero_address(
+        STATE_ADMIN_CONFIG,
+        Address::ZERO,
+        ADMIN,
+        false,
+        BasePrecompileError::revert(IActivationRegistry::ZeroAdminAddress {})
+    )]
+    #[case::unauthorized_caller(
+        STATE_ADMIN_CONFIG,
+        NEW_ADMIN,
+        NEW_ADMIN,
+        false,
+        BasePrecompileError::revert(IActivationRegistry::Unauthorized { caller: NEW_ADMIN })
+    )]
+    #[case::static_context(
+        STATE_ADMIN_CONFIG,
+        NEW_ADMIN,
+        ADMIN,
+        true,
+        BasePrecompileError::revert(IActivationRegistry::StaticCallNotAllowed {})
+    )]
+    fn set_admin_reverts(
+        #[case] admin_config: ActivationAdminConfig,
+        #[case] new_admin: Address,
+        #[case] caller: Address,
+        #[case] is_static: bool,
+        #[case] expected_error: BasePrecompileError,
+    ) {
         let mut storage = HashMapStorageProvider::new(1);
-        storage.set_caller(ADMIN);
+        storage.set_caller(caller);
+        storage.set_static(is_static);
 
         let err = StorageCtx::enter(&mut storage, |ctx| {
-            ActivationRegistryStorage::new(ctx).set_admin(NEW_ADMIN, STATIC_ADMIN_CONFIG)
+            ActivationRegistryStorage::new(ctx).set_admin(new_admin, admin_config)
         })
         .unwrap_err();
 
-        assert_eq!(
-            err,
-            BasePrecompileError::revert(IActivationRegistry::AdminStorageNotEnabled {})
-        );
-    }
-
-    #[test]
-    fn set_admin_reverts_for_zero_address() {
-        let mut storage = HashMapStorageProvider::new(1);
-        storage.set_caller(ADMIN);
-
-        let err = StorageCtx::enter(&mut storage, |ctx| {
-            ActivationRegistryStorage::new(ctx).set_admin(Address::ZERO, STATE_ADMIN_CONFIG)
-        })
-        .unwrap_err();
-
-        assert_eq!(err, BasePrecompileError::revert(IActivationRegistry::ZeroAdminAddress {}));
-    }
-
-    #[test]
-    fn set_admin_reverts_for_unauthorized_caller() {
-        let mut storage = HashMapStorageProvider::new(1);
-        storage.set_caller(NEW_ADMIN);
-
-        let err = StorageCtx::enter(&mut storage, |ctx| {
-            ActivationRegistryStorage::new(ctx).set_admin(NEW_ADMIN, STATE_ADMIN_CONFIG)
-        })
-        .unwrap_err();
-
-        assert_eq!(
-            err,
-            BasePrecompileError::revert(IActivationRegistry::Unauthorized { caller: NEW_ADMIN })
-        );
-    }
-
-    #[test]
-    fn set_admin_reverts_in_static_context() {
-        let mut storage = HashMapStorageProvider::new(1);
-        storage.set_caller(ADMIN);
-        storage.set_static(true);
-
-        let err = StorageCtx::enter(&mut storage, |ctx| {
-            ActivationRegistryStorage::new(ctx).set_admin(NEW_ADMIN, STATE_ADMIN_CONFIG)
-        })
-        .unwrap_err();
-
-        assert_eq!(err, BasePrecompileError::revert(IActivationRegistry::StaticCallNotAllowed {}));
+        assert_eq!(err, expected_error);
     }
 
     #[test]
@@ -619,29 +591,6 @@ mod tests {
 
         assert!(result.is_err());
         assert_activated(&mut storage, initially_active);
-    }
-
-    #[test]
-    fn assert_activated_reverts_when_feature_never_activated() {
-        let mut storage = HashMapStorageProvider::new(1);
-
-        let output = assert_activated_output(&mut storage);
-
-        assert!(output.is_revert());
-        assert_eq!(storage.get_events(ActivationRegistryStorage::ADDRESS).len(), 0);
-    }
-
-    #[test]
-    fn assert_activated_reverts_after_deactivate() {
-        let mut storage = HashMapStorageProvider::new(1);
-
-        activate_feature(&mut storage).unwrap();
-        let activated_output = assert_activated_output(&mut storage);
-        deactivate_feature(&mut storage).unwrap();
-        let deactivated_output = assert_activated_output(&mut storage);
-
-        assert!(!activated_output.is_revert());
-        assert!(deactivated_output.is_revert());
     }
 
     #[test]

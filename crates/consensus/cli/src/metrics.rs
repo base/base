@@ -258,6 +258,7 @@ const UPGRADE_METRIC_LABELS: [(BaseUpgrade, &str); BaseUpgrade::CONTRACT_VARIANT
     (BaseUpgrade::Beryl, "Beryl"),
     (BaseUpgrade::Cobalt, "Cobalt"),
     (BaseUpgrade::Denim, "Denim"),
+    (BaseUpgrade::Everest, "Everest"),
 ];
 
 fn upgrade_metric_label(upgrade: BaseUpgrade) -> Option<&'static str> {
@@ -317,6 +318,7 @@ mod tests {
                     beryl: Some(2_000),
                     cobalt: Some(3_000),
                     denim: None,
+                    everest: None,
                     zenith: None,
                 },
                 ..Default::default()
@@ -372,6 +374,7 @@ mod tests {
                     beryl: Some(1_000),
                     cobalt: Some(2_000),
                     denim: None,
+                    everest: None,
                     zenith: None,
                 },
                 ..Default::default()

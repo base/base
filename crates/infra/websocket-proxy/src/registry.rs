@@ -133,7 +133,7 @@ impl Registry {
 
     fn start_reader(
         &self,
-        ws_receiver: futures::stream::SplitStream<axum::extract::ws::WebSocket>,
+        mut ws_receiver: futures::stream::SplitStream<axum::extract::ws::WebSocket>,
         client_id: String,
         pong_error_tx: tokio::sync::oneshot::Sender<()>,
     ) -> tokio::task::JoinHandle<()> {
@@ -141,7 +141,6 @@ impl Registry {
         let pong_timeout_ms = self.pong_timeout_ms;
 
         tokio::spawn(async move {
-            let mut ws_receiver = ws_receiver;
             let mut last_pong = Instant::now();
             let mut timeout_checker = interval(Duration::from_millis(pong_timeout_ms / 4));
             let pong_timeout = Duration::from_millis(pong_timeout_ms);
@@ -158,8 +157,7 @@ impl Registry {
                             }
                             Some(Ok(Message::Close(_))) => {
                                 trace!(message = "received close from client", client = client_id);
-                                let _ = pong_error_tx.send(());
-                                return;
+                                break;
                             }
                             Some(Ok(Message::Ping(_))) => {
                                 // This is a no-op, but needs to be handled separately from the
@@ -172,8 +170,7 @@ impl Registry {
                                     message = "unexpected inbound frame from client, disconnecting",
                                     client = client_id,
                                 );
-                                let _ = pong_error_tx.send(());
-                                return;
+                                break;
                             }
                             Some(Err(e)) => {
                                 trace!(
@@ -181,13 +178,11 @@ impl Registry {
                                     client = client_id,
                                     error = e.to_string()
                                 );
-                                let _ = pong_error_tx.send(());
-                                return;
+                                break;
                             }
                             None => {
                                 trace!(message = "client connection closed", client = client_id);
-                                let _ = pong_error_tx.send(());
-                                return;
+                                break;
                             }
                         }
                     }
@@ -200,12 +195,12 @@ impl Registry {
                                 elapsed_ms = last_pong.elapsed().as_millis()
                             );
                             Metrics::client_pong_disconnects().increment(1);
-                            let _ = pong_error_tx.send(());
-                            return;
+                            break;
                         }
                     }
                 }
             }
+            let _ = pong_error_tx.send(());
         })
     }
 }

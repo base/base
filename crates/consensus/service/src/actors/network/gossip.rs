@@ -9,11 +9,6 @@ use tokio::sync::mpsc;
 #[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait UnsafePayloadGossipClient: Send + Sync + Debug {
-    /// Returns whether payloads should be sealed privately without commit or gossip.
-    fn seals_privately(&self) -> bool {
-        false
-    }
-
     /// This is a fire-and-forget function that schedules the provided
     /// [`BaseExecutionPayloadEnvelope`] to be gossiped. The implementation should return as
     /// quickly as possible and offers no guarantees that the payload actually was gossiped
@@ -59,13 +54,6 @@ impl QueuedUnsafePayloadGossipClient {
 
 #[async_trait]
 impl UnsafePayloadGossipClient for QueuedUnsafePayloadGossipClient {
-    fn seals_privately(&self) -> bool {
-        match self {
-            Self::Network { .. } => false,
-            Self::Private => true,
-        }
-    }
-
     async fn schedule_execution_payload_gossip(
         &self,
         payload: BaseExecutionPayloadEnvelope,
@@ -111,15 +99,6 @@ mod tests {
             }),
             parent_beacon_block_root: None,
         }
-    }
-
-    #[test]
-    fn private_client_seals_privately() {
-        let client = QueuedUnsafePayloadGossipClient::Private;
-
-        let result = client.seals_privately();
-
-        assert!(result);
     }
 
     #[tokio::test]

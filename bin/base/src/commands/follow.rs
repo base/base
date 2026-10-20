@@ -64,6 +64,7 @@ impl FollowCommand {
             .apply_default_from(&follow_config.l1_rpc_args.l1_eth_rpc);
         let follow_args = ConsensusFollowNodeArgs::new(consensus_chain, follow_config);
         let mut rollup_config = follow_args.load_rollup_config()?;
+        Arc::make_mut(&mut execution_chain).block_time = Some(rollup_config.block_time);
 
         CliRunner::try_default_runtime()?.run_command_until_exit(|ctx| async move {
             execution

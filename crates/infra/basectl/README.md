@@ -5,7 +5,7 @@ CLI parser, command implementations, and interactive monitor for Base infrastruc
 ## Overview
 
 Owns the `basectl` clap parser and all command behavior, including block, sync,
-txpool, peer, proof, conductor, sequencer, and diagnostic workflows. `Cli::run`
+txpool, peer, proof, conductor, sequencer, batcher, and diagnostic workflows. `Cli::run`
 dispatches parsed commands and returns a process outcome.
 
 The crate also provides the interactive terminal monitor for block production,

@@ -32,10 +32,14 @@ pub use egress::DaEgress;
 mod pipeline;
 pub use pipeline::{BatchPipeline, DerivationReconciliation, ReorgError, StepError, StepResult};
 
+mod buffered_block;
+pub use buffered_block::BufferedBlock;
+
 mod encoder;
 pub use encoder::BatchEncoder;
 
 mod metrics;
 pub use metrics::BatcherMetrics;
 
+#[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;

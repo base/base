@@ -1,6 +1,6 @@
 //! Irregular (non-transaction) state transitions for Base block boundaries.
 //!
-//! The Canyon, Denim, and Zenith block-boundary hooks apply *irregular* state changes — direct
+//! The Canyon, Denim, and Everest block-boundary hooks apply *irregular* state changes — direct
 //! edits to account code and storage that are not the result of executing a transaction. This
 //! module provides the two pieces they share: [`BaseForkActivations`], the revm-free fork-schedule
 //! input used to detect activation blocks, and [`IrregularStateChange`], which persists an edit
@@ -32,12 +32,6 @@ pub trait BaseForkActivations {
 impl BaseForkActivations for UpgradeConfig {
     fn is_active_at_timestamp(&self, upgrade: BaseUpgrade, timestamp: u64) -> bool {
         self.activation_timestamp(upgrade).is_some_and(|activation| timestamp >= activation)
-    }
-}
-
-impl<T: BaseForkActivations> BaseForkActivations for &T {
-    fn is_active_at_timestamp(&self, upgrade: BaseUpgrade, timestamp: u64) -> bool {
-        (*self).is_active_at_timestamp(upgrade, timestamp)
     }
 }
 

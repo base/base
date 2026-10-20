@@ -2,7 +2,8 @@
 
 This guide covers repeatable performance measurements on an L1-free Base
 snapshot devnet. It explains how to run `base-bench snapshot`, publish its output
-to `base/benchmark`, and select the exact runs to compare.
+to `base/benchmark`, and select the exact runs to compare. To test applications
+against a snapshot, use `base dev` instead; see [DEVNET.md](DEVNET.md).
 
 The snapshot benchmark is for local performance investigation. It mutates its
 builder and validator datadirs, so every attempt needs a fresh writable datadir pair.
@@ -104,6 +105,7 @@ selected list of its direct-child run directories:
 ```sh
 target/release/base-bench aggregate \
   --output-dir /absolute/path/to/results \
+  --versioned-pages \
   /absolute/path/to/results/run-a \
   /absolute/path/to/results/run-b
 ```
@@ -111,9 +113,15 @@ target/release/base-bench aggregate \
 The command atomically writes `results/metadata.json`. It retains the latest
 `createdAt` entry for every unique report tag set, including the configured
 scenario and block-time tag. This preserves distinct scenarios, block cadences,
-and client versions, but replaces an older repetition with the latest one. It
-does not modify source metadata or scenario labels. `id` remains the unique raw
-artifact identifier and `BenchmarkRun` remains the report cohort/page key.
+and client versions, but replaces an older repetition with the latest one.
+`--versioned-pages` then rewrites `BenchmarkRun` into one page per client
+version plus a `{cohort}--latest` alias. Latest keeps the newest run from the
+last seven days for each Scenario / block-time / transaction-payload identity,
+renames pages so the visualizer dropdown can tell them apart, and stamps latest
+1ms after the newest selected run so the visualizer Latest option resolves to
+that page. It does not modify source metadata or scenario labels. `id` remains
+the unique raw artifact identifier and `BenchmarkRun` remains the report
+cohort/page key.
 
 ## Choose Comparable Runs
 

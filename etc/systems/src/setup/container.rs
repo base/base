@@ -244,6 +244,7 @@ pub struct SetupContainer {
     base_beryl_activation_block: Option<u64>,
     base_cobalt_activation_block: Option<u64>,
     base_denim_activation_block: Option<u64>,
+    base_everest_activation_block: Option<u64>,
     base_zenith_activation_block: Option<u64>,
 }
 
@@ -260,6 +261,7 @@ impl SetupContainer {
             base_beryl_activation_block: None,
             base_cobalt_activation_block: None,
             base_denim_activation_block: None,
+            base_everest_activation_block: None,
             base_zenith_activation_block: None,
         }
     }
@@ -312,6 +314,12 @@ impl SetupContainer {
         self
     }
 
+    /// Sets the L2 block number at which Base Everest activates.
+    pub const fn with_base_everest_activation_block(mut self, block: u64) -> Self {
+        self.base_everest_activation_block = Some(block);
+        self
+    }
+
     /// Sets the L2 block number at which the genesis-only Base Zenith testing gate activates.
     pub const fn with_base_zenith_activation_block(mut self, block: u64) -> Self {
         self.base_zenith_activation_block = Some(block);
@@ -329,7 +337,6 @@ impl SetupContainer {
         let mut container = SetupImage::request()
             .with_wait_for(WaitFor::exit(ExitWaitStrategy::default().with_exit_code(0)))
             .with_startup_timeout(Duration::from_secs(SETUP_TIMEOUT_SECS))
-            .with_network("none")
             .with_env_var("OUTPUT_DIR", "/output")
             .with_env_var("L2_OUTPUT_DIR", "/output/l2")
             .with_env_var("SHARED_DIR", "/output/shared")
@@ -369,6 +376,10 @@ impl SetupContainer {
 
         if let Some(block) = self.base_denim_activation_block {
             container = container.with_env_var("L2_BASE_DENIM_BLOCK", block.to_string());
+        }
+
+        if let Some(block) = self.base_everest_activation_block {
+            container = container.with_env_var("L2_BASE_EVEREST_BLOCK", block.to_string());
         }
 
         if let Some(block) = self.base_zenith_activation_block {

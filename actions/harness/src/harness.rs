@@ -1,6 +1,5 @@
 use std::{fmt::Debug, sync::Arc};
 
-use alloy_eips::BlockNumHash;
 use alloy_genesis::ChainConfig;
 use alloy_signer_local::PrivateKeySigner;
 use base_common_consensus::{BaseBlock, BaseTxEnvelope};
@@ -93,26 +92,19 @@ impl ActionTestHarness {
         block_info_from(self.l1.tip())
     }
 
-    /// Return the L2 genesis [`L2BlockInfo`] anchored to the L1 genesis block.
-    ///
-    /// Convenience method eliminating the repeated 10-line construction used in
-    /// reorg reset tests.
+    /// Return the L2 genesis [`L2BlockInfo`]. Its L1 origin is this harness's L1 block at the
+    /// rollup genesis L1 number, or the first L1 block if that number is not mined yet.
     pub fn l2_genesis(&self) -> L2BlockInfo {
         let genesis_l1_number = self.rollup_config.genesis.l1.number;
         let genesis_l1 =
             self.l1.block_by_number(genesis_l1_number).map(block_info_from).unwrap_or_else(|| {
                 block_info_from(self.l1.chain().first().expect("genesis always present"))
             });
-        L2BlockInfo {
-            block_info: BlockInfo {
-                hash: self.rollup_config.genesis.l2.hash,
-                number: self.rollup_config.genesis.l2.number,
-                parent_hash: Default::default(),
-                timestamp: self.rollup_config.genesis.l2_time,
-            },
-            l1_origin: BlockNumHash { number: genesis_l1.number, hash: genesis_l1.hash },
-            seq_num: 0,
-        }
+        L2BlockInfo::new(
+            BlockInfo::from_l2_genesis(&self.rollup_config.genesis),
+            genesis_l1.id(),
+            0,
+        )
     }
 
     /// Create a [`SupervisedP2P`] / [`TestGossipTransport`] channel pair and
@@ -344,27 +336,6 @@ impl ActionTestHarness {
         };
         L1BlockInfoTx::decode_calldata(sealed.inner().input.as_ref())
             .expect("L1 info calldata must decode")
-    }
-
-    /// Build an [`ActionL2Source`] pre-populated with `n` real [`BaseBlock`]s
-    /// starting from L2 genesis.
-    ///
-    /// Use this when a test needs a ready-made block source and does not
-    /// require direct access to the underlying [`L2Sequencer`].
-    ///
-    /// Note: this is an async operation because the sequencer now uses the
-    /// production engine. If you need a sync source builder, construct the
-    /// sequencer manually and drive it with an async runtime.
-    ///
-    /// [`BaseBlock`]: base_common_consensus::BaseBlock
-    pub async fn create_l2_source(&self, n: u64) -> ActionL2Source {
-        let chain = SharedL1Chain::from_blocks(self.l1.chain().to_vec());
-        let mut sequencer = self.create_l2_sequencer(chain);
-        let mut source = ActionL2Source::new();
-        for _ in 0..n {
-            source.push(sequencer.build_next_block_with_single_transaction().await);
-        }
-        source
     }
 }
 

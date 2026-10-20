@@ -1,0 +1,15 @@
+schema_version = 1
+id = "health"
+description = "Sustained health across builder, validator, RPC, and shadow nodes"
+timeout = "8m"
+
+[[checks]]
+id = "l2-node-health"
+kind = "heads_healthy"
+endpoints = ["builder", "validator", "rpc", "shadow"]
+warmup = "10s"
+duration = "60s"
+minimum_blocks = 3
+maximum_age = "30s"
+max_lag_blocks = 5
+timeout = "90s"

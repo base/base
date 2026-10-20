@@ -1,0 +1,22 @@
+[package]
+name = "base-fee-jobs-bin"
+description = "Base fee collection jobs binary"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "fee-jobs"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+clap.workspace = true
+base-fee-jobs.workspace = true
+base-cli-utils.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

@@ -1,14 +1,13 @@
 //! EIP-8130 2D nonce-manager storage access for the EVM2 engine.
 //!
 //! The nonce manager is a code-less EIP-8130 system account (given the `0xEF` reap-protection stub
-//! by the [`Zenith`](crate::Zenith) transition) that persists per-`(account, nonce_key)` 2D
+//! by the [`Everest`](crate::Everest) transition) that persists per-`(account, nonce_key)` 2D
 //! sequence nonces in the state trie. The engine-neutral slot layout — the system-account address,
 //! the ERC-7201 base slots, and the mapping-slot derivation — lives in
 //! [`base_common_eip8130::NonceManagerSlots`], shared with the revm path so the two engines cannot
 //! diverge. This module provides the EVM2-specific access layer over that layout: the untracked
 //! reads and the channel-nonce increment against an [`Evm`] state. The remaining precompile surface
-//! (ABI dispatch, the `NonceIncremented` events, and the nonce-free replay ring buffer) is layered
-//! on with the EIP-8130 track.
+//! (ABI dispatch and the nonce-free replay ring buffer) is layered on with the EIP-8130 track.
 
 use alloy_primitives::{Address, B256, U256};
 use base_common_eip8130::NonceManagerSlots;
@@ -105,7 +104,7 @@ mod tests {
     const KEY: U256 = U256::from_limbs([7, 0, 0, 0]);
 
     fn evm(db: InMemoryDB) -> Evm<'static, BaseEvmTypes> {
-        let spec = BaseSpecId::new(BaseUpgrade::Zenith);
+        let spec = BaseSpecId::new(BaseUpgrade::Everest);
         Evm::new(
             spec,
             BlockEnv::<BaseEvmTypes>::default(),

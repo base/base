@@ -51,57 +51,14 @@ impl PoolActivation {
             return false;
         }
 
-        // Do not include transactions in the first Ecotone block.
-        if self
-            .rollup_config
-            .is_first_ecotone_block(attributes.payload_attributes.timestamp, parent_timestamp)
-        {
-            return false;
-        }
-
-        // Do not include transactions in the first Fjord block.
-        if self
-            .rollup_config
-            .is_first_fjord_block(attributes.payload_attributes.timestamp, parent_timestamp)
-        {
-            return false;
-        }
-
-        // Do not include transactions in the first Granite block.
-        if self
-            .rollup_config
-            .is_first_granite_block(attributes.payload_attributes.timestamp, parent_timestamp)
-        {
-            return false;
-        }
-
-        // Do not include transactions in the first Holocene block.
-        if self
-            .rollup_config
-            .is_first_holocene_block(attributes.payload_attributes.timestamp, parent_timestamp)
-        {
-            return false;
-        }
-
-        // Do not include transactions in the first Isthmus block.
-        if self
-            .rollup_config
-            .is_first_isthmus_block(attributes.payload_attributes.timestamp, parent_timestamp)
-        {
-            return false;
-        }
-
-        // Do not include transactions in the first Jovian block.
-        // See: `<https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/jovian/derivation.md#activation-block-rules>`
-        if self
-            .rollup_config
-            .is_first_jovian_block(attributes.payload_attributes.timestamp, parent_timestamp)
-        {
-            return false;
-        }
-
-        // Transaction pool transactions are enabled if none of the reasons to disable are satisfied
-        // above.
-        true
+        // Do not include transactions in the first block of each of these upgrades.
+        // Jovian: `<https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/jovian/derivation.md#activation-block-rules>`
+        let timestamp = attributes.payload_attributes.timestamp;
+        !(self.rollup_config.is_first_ecotone_block(timestamp, parent_timestamp)
+            || self.rollup_config.is_first_fjord_block(timestamp, parent_timestamp)
+            || self.rollup_config.is_first_granite_block(timestamp, parent_timestamp)
+            || self.rollup_config.is_first_holocene_block(timestamp, parent_timestamp)
+            || self.rollup_config.is_first_isthmus_block(timestamp, parent_timestamp)
+            || self.rollup_config.is_first_jovian_block(timestamp, parent_timestamp))
     }
 }

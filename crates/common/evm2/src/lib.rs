@@ -6,8 +6,8 @@ pub use spec::BaseSpecId;
 mod canyon;
 pub use canyon::Canyon;
 
-mod zenith;
-pub use zenith::Zenith;
+mod everest;
+pub use everest::Everest;
 
 mod base_time;
 pub use base_time::{BaseTime, BaseTimeTransitionError};
@@ -23,7 +23,8 @@ mod precompiles;
 mod executor;
 pub use executor::{
     BaseBlockExecutionCtx, BaseBlockExecutor, BlockExecutionResult, BlockGasLimitExceeded,
-    CumulativeGasOverflow, DaFootprintAboveGasLimit, PreExecutionError,
+    CumulativeGasOverflow, DaFootprintAboveGasLimit, Eip8130ExecutionUnsupported,
+    PreExecutionError,
 };
 
 mod registry;

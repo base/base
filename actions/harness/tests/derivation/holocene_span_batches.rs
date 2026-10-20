@@ -1,10 +1,12 @@
 //! Action tests for span-batch derivation before and after Holocene.
 
+use alloy_primitives::B256;
 use base_action_harness::{
     ActionTestHarness, BatcherConfig, L1MinerConfig, SharedL1Chain, TestRollupConfigBuilder,
 };
 use base_batcher_encoder::{DaType, EncoderConfig};
 use base_common_consensus::BaseBlock;
+use base_common_genesis::UpgradeConfig;
 
 /// Shared setup helpers for Holocene span-batch action tests.
 #[derive(Debug)]
@@ -288,28 +290,145 @@ async fn pre_holocene_past_singular_does_not_poison_channel() {
     assert_eq!(node.l2_safe_number(), 2);
 }
 
-/// Post-Holocene derivation accepts singular and span batches in the same L1 stream.
+/// Derivation accepts singular and span batches in the same L1 stream, before and after
+/// Holocene.
 #[tokio::test]
-async fn post_holocene_mixed_singular_and_span_batches_derive() {
+async fn mixed_singular_and_span_batches_derive_before_and_after_holocene() {
     let batcher_cfg = HoloceneSpanFixture::batcher_config();
-    let mut harness = HoloceneSpanFixture::post_holocene_harness(&batcher_cfg);
+    for (fork, mut harness) in [
+        ("pre-Holocene", HoloceneSpanFixture::pre_holocene_harness(&batcher_cfg)),
+        ("post-Holocene", HoloceneSpanFixture::post_holocene_harness(&batcher_cfg)),
+    ] {
+        let l1_chain = SharedL1Chain::from_blocks(harness.l1.chain().to_vec());
+        let mut sequencer = harness.create_l2_sequencer(l1_chain);
+        let mut blocks = sequencer.build_next_blocks_with_single_transactions(2).await;
+        let block_1 = blocks.remove(0);
+        let block_2 = blocks.remove(0);
 
-    let l1_chain = SharedL1Chain::from_blocks(harness.l1.chain().to_vec());
-    let mut sequencer = harness.create_l2_sequencer(l1_chain);
-    let mut blocks = sequencer.build_next_blocks_with_single_transactions(2).await;
-    let block_1 = blocks.remove(0);
-    let block_2 = blocks.remove(0);
+        let (mut node, chain) = harness.create_test_rollup_node_from_sequencer(
+            &mut sequencer,
+            SharedL1Chain::from_blocks(harness.l1.chain().to_vec()),
+        );
+        harness.submit_l2_blocks(&chain, batcher_cfg.clone(), vec![block_1]).await;
+        submit_span_fixture(&mut harness, &chain, &batcher_cfg, &[block_2], 100);
 
-    let (mut node, chain) = harness.create_test_rollup_node_from_sequencer(
-        &mut sequencer,
-        SharedL1Chain::from_blocks(harness.l1.chain().to_vec()),
+        node.initialize().await;
+        let derived = node.run_until_idle().await;
+
+        assert_eq!(derived, 2, "{fork}: singular and span batches should both derive");
+        assert_eq!(node.l2_safe_number(), 2, "{fork}: safe head should include both batch formats");
+    }
+}
+
+/// A span batch covering blocks 1–4 where block 3 is the first Jovian block
+/// but contains user transactions, which the upgrade block may not, is
+/// partially rejected. The pipeline derives blocks 1–2 from the span batch,
+/// then fails on block 3 (`NonEmptyTransitionBlock` → `FlushChannel` under Holocene),
+/// dropping the span batch's channel. Blocks 3–4 are never derived from the
+/// span batch.
+///
+/// A single bad block mid-span loses the remaining blocks of the channel, so
+/// blocks 3–4 must be submitted again. This is the key difference from singular
+/// batches where only the offending block is dropped and all others derive fine
+/// (tested in `jovian_non_empty_transition_batch_generates_deposit_only_block`).
+///
+/// Blocks 3, now empty, and 4 then derive from a corrected span batch in a new
+/// channel. `NonEmptyTransitionBlock` only fires for the first Jovian block, not
+/// for earlier upgrades like Ecotone or Isthmus.
+#[tokio::test]
+async fn span_batch_with_non_empty_transition_block_rejected() {
+    // All forks through Isthmus active at genesis. Jovian activates at ts=6
+    // (L2 block 3 with block_time=2). Because only Jovian is "new" at ts=6,
+    // `is_first_jovian_block(6)` returns true and the NonEmptyTransitionBlock
+    // check fires for block 3 alone.
+    let jovian_time = 6u64;
+    let upgrades = UpgradeConfig {
+        canyon_time: Some(0),
+        delta_time: Some(0),
+        ecotone_time: Some(0),
+        fjord_time: Some(0),
+        granite_time: Some(0),
+        holocene_time: Some(0),
+        isthmus_time: Some(0),
+        jovian_time: Some(jovian_time),
+        ..Default::default()
+    };
+    let batcher_cfg = BatcherConfig {
+        encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
+        ..BatcherConfig::default()
+    };
+    let rollup_cfg =
+        TestRollupConfigBuilder::base_mainnet(&batcher_cfg).with_upgrades(upgrades).build();
+    let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
+
+    let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
+    let mut builder = h.create_l2_sequencer(l1_chain);
+
+    // Build 4 L2 blocks. build_next_block_with_single_transaction() includes a user transaction in
+    // every block. Block 3 (ts=6) is the first Jovian block, which must be
+    // deposit-only. Including a user tx here is the deliberate error.
+    let block1 = builder.build_next_block_with_single_transaction().await; // ts=2
+    let block2 = builder.build_next_block_with_single_transaction().await; // ts=4
+    let block3_invalid = builder.build_next_block_with_single_transaction().await; // ts=6
+    let block4 = builder.build_next_block_with_single_transaction().await; // ts=8
+
+    let (mut node, chain) = h.create_test_rollup_node_from_sequencer(
+        &mut builder,
+        SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    harness.submit_l2_blocks(&chain, batcher_cfg.clone(), vec![block_1]).await;
-    submit_span_fixture(&mut harness, &chain, &batcher_cfg, &[block_2], 100);
+
+    // --- Phase 1: submit all 4 blocks as one span fixture (block 3 has user txs) ---
+    h.submit_span_batch_brotli_calldata(
+        &batcher_cfg,
+        &[block1.clone(), block2.clone(), block3_invalid, block4.clone()],
+        0,
+    )
+    .expect("span fixture submission");
+    chain.push(h.l1.tip().clone()); // L1 block 1: span batch with invalid block 3
+
+    // The sequencer registered state roots for blocks 3 and 4 that will not match
+    // what derivation produces (block 3 becomes deposit-only and block 4 has a different
+    // parent). Clear the state root entries so the engine skips validation for these.
+    node.register_block_hash(3, B256::ZERO);
+    node.register_block_hash(4, B256::ZERO);
 
     node.initialize().await;
-    let derived = node.run_until_idle().await;
+    node.run_until_idle().await;
 
-    assert_eq!(derived, 2, "singular and span batches should both derive");
-    assert_eq!(node.l2_safe_number(), 2, "safe head should include both batch formats");
+    // Under Holocene, when the pipeline reaches block 3 in the span batch and
+    // detects a user tx in the upgrade block, it sends FlushChannel (via
+    // BatchStream::flush), discarding the channel entirely. Blocks 1 and 2 were
+    // already emitted as individual batches before the failure, so safe head is 2.
+    assert_eq!(
+        node.l2_safe_number(),
+        2,
+        "blocks 1 and 2 should derive before span batch fails on block 3"
+    );
+
+    // --- Phase 2: resubmit blocks 3–4 with block 3 correctly empty ---
+    //
+    // The primary builder is now at block 4, so build_empty_block() on it would
+    // produce block 5 (wrong timestamp). Instead, create a fresh sequencer
+    // starting from genesis, advance it to block 2's state, then build the
+    // correct recovery blocks 3 (empty, ts=6) and 4 (user tx, ts=8).
+    //
+    // Rebuilding blocks 1–2 deterministically makes the recovery span's parent check match
+    // canonical block 2. `BatchStream` then assigns each span-derived singular the current
+    // safe-head hash when emitting it.
+    {
+        let l1_chain2 = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
+        let mut builder2 = h.create_l2_sequencer(l1_chain2);
+        let _rb1 = builder2.build_next_block_with_single_transaction().await;
+        let _rb2 = builder2.build_next_block_with_single_transaction().await;
+        let block3_empty = builder2.build_empty_block().await;
+        let block4_recovery = builder2.build_next_block_with_single_transaction().await;
+
+        h.submit_span_batch_brotli_calldata(&batcher_cfg, &[block3_empty, block4_recovery], 100)
+            .expect("recovery span fixture submission");
+    }
+    chain.push(h.l1.tip().clone()); // L1 block 2: recovery span batch (blocks 3–4)
+
+    node.run_until_idle().await;
+
+    assert_eq!(node.l2_safe_number(), 4, "after recovery submission, safe head must reach block 4");
 }

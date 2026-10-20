@@ -72,7 +72,7 @@ impl AzulTestEnv {
         expected_safe_head: u64,
         boundary: &str,
     ) {
-        let mut batcher = Batcher::new(
+        let batcher = Batcher::new(
             ActionL2Source::new(),
             &self.harness.rollup_config,
             self.batcher_cfg.clone(),

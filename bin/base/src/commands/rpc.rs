@@ -67,6 +67,7 @@ impl RpcCommand {
         consensus_config.upgrade_signal = execution.standard.rollup_args.upgrade_signal.clone();
         let consensus_args = ConsensusNodeArgs::new(consensus_chain, consensus_config);
         let mut rollup_config = consensus_args.load_rollup_config()?;
+        Arc::make_mut(&mut execution_chain).block_time = Some(rollup_config.block_time);
 
         CliRunner::try_default_runtime()?.run_command_until_exit(|ctx| async move {
             execution
@@ -563,8 +564,7 @@ mod tests {
             "--enable-tx-forwarding",
             "--builder-rpc-urls",
             "http://localhost:8545",
-            "--enable-experimental-validity-transactions",
-            "--experimental-validity-max-predicates",
+            "--validity-max-predicates",
             "8",
         ]));
 
@@ -575,8 +575,7 @@ mod tests {
         let launch_config = rpc.execution.into_launch_config(BaseChainSpec::devnet().into());
 
         assert!(launch_config.standard.rpc.enable_tx_forwarding);
-        assert!(launch_config.standard.rpc.enable_experimental_validity_transactions);
-        assert_eq!(launch_config.standard.rpc.experimental_validity_max_predicates, 8);
+        assert_eq!(launch_config.standard.rpc.validity_max_predicates, 8);
         assert_eq!(launch_config.standard.rpc.builder_rpc_urls.len(), 1);
     }
 

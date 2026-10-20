@@ -12,7 +12,6 @@ use std::{
 };
 
 use alloy_primitives::{TxHash, U256};
-use base_common_consensus::CoinbaseTip;
 use reth_transaction_pool::{PoolTransaction, Priority, TransactionOrdering, ValidPoolTransaction};
 
 use crate::{BasePooledTransaction, BasePooledTx, TimestampedTransaction};
@@ -148,11 +147,14 @@ impl Ord for UnifiedTipPriority {
 
 /// Unified tip-per-gas ordering for standard and EIP-8130 transactions.
 ///
-/// Uses [`CoinbaseTip::decode`] when the transaction is a statically-analyzable
+/// Uses [`BasePooledTx::coinbase_tip`] when the transaction is a statically-analyzable
 /// EIP-8130 coinbase tip; otherwise ranks by `effective_tip_per_gas`. Returns
 /// [`Priority::None`] when `max_fee_per_gas < base_fee`, including for a
-/// decoded coinbase tip. Same bid prefers fewer validity predicates, so
-/// standard transactions beat equally priced advanced transactions.
+/// decoded coinbase tip. A policy-gated sender's tip only counts when the fee
+/// vault is its policy target, and any tip only counts while
+/// [`BasePooledTx::coinbase_tip_backed`] holds. Same bid prefers fewer
+/// validity predicates, so standard transactions beat equally priced advanced
+/// transactions.
 #[derive(Debug)]
 #[non_exhaustive]
 pub struct UnifiedTipOrdering<T = BasePooledTransaction>(PhantomData<T>);
@@ -184,9 +186,8 @@ where
         let Some(effective_tip) = transaction.effective_tip_per_gas(base_fee) else {
             return Priority::None;
         };
-        let predicates = transaction.validity_predicates().len();
-        if let Some(signed) = transaction.as_eip8130()
-            && let Some(tip) = CoinbaseTip::decode(signed.tx(), transaction.sender())
+        let predicates = transaction.validity_conditions().len();
+        if let Some(tip) = transaction.coinbase_tip().filter(|_| transaction.coinbase_tip_backed())
         {
             return Priority::Value(UnifiedTipPriority::new(
                 tip,
@@ -300,11 +301,10 @@ mod tests {
     use alloy_primitives::{Address, Bytes, U256};
     use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
-    use alloy_sol_types::SolCall;
     use base_common_chains::ChainConfig;
     use base_common_consensus::{
         BasePooledTransaction as ConsensusPooledTransaction, BaseTransactionSigned, Call,
-        Eip8130Signed, IDefaultAccount, Predeploys, TxEip8130,
+        Eip8130Signed, Predeploys, TxEip8130,
     };
     use base_test_utils::Account;
     use reth_primitives_traits::Recovered;
@@ -414,12 +414,6 @@ mod tests {
         BasePooledTransaction::new(recovered, len)
     }
 
-    fn encode_execute(target: Address, value: U256) -> Bytes {
-        Bytes::from(
-            IDefaultAccount::executeCall { target, value, data: Default::default() }.abi_encode(),
-        )
-    }
-
     fn eip8130_pooled(
         max_fee_per_gas: u128,
         max_priority_fee_per_gas: u128,
@@ -429,8 +423,9 @@ mod tests {
         let signer = PrivateKeySigner::random();
         let calls = coinbase_tip.map_or_else(Vec::new, |amount| {
             vec![vec![Call {
-                to: signer.address(),
-                data: encode_execute(Predeploys::SEQUENCER_FEE_VAULT, amount),
+                to: Predeploys::SEQUENCER_FEE_VAULT,
+                value: amount,
+                data: Bytes::new(),
             }]]
         });
         let tx = TxEip8130 {
@@ -602,6 +597,22 @@ mod tests {
     }
 
     #[test]
+    fn policy_gated_coinbase_tip_counts_only_when_the_vault_is_the_target() {
+        let ordering = UnifiedTipOrdering::<BasePooledTransaction>::default();
+        let tip = Some(U256::from(63_000));
+        let ungated = eip8130_pooled(10, 0, 21_000, tip);
+        let gated_elsewhere = eip8130_pooled(10, 0, 21_000, tip);
+        gated_elsewhere.set_sender_policy_target(Address::repeat_byte(0x77));
+        let gated_to_vault = eip8130_pooled(10, 0, 21_000, tip);
+        gated_to_vault.set_sender_policy_target(Predeploys::SEQUENCER_FEE_VAULT);
+        let no_tip = eip8130_pooled(10, 0, 21_000, None);
+
+        assert_eq!(ordering.priority(&gated_elsewhere, 0), ordering.priority(&no_tip, 0));
+        assert_eq!(ordering.priority(&gated_to_vault, 0), ordering.priority(&ungated, 0));
+        assert!(ordering.priority(&ungated, 0) > ordering.priority(&no_tip, 0));
+    }
+
+    #[test]
     fn fewer_predicates_win_equal_bid() {
         let ordering = UnifiedTipOrdering::<BasePooledTransaction>::default();
         let standard = eip1559_pooled(1, 10, 2, 21_000);
@@ -612,6 +623,37 @@ mod tests {
 
         assert!(ordering.priority(&standard, 0) > ordering.priority(&one_predicate, 0));
         assert!(ordering.priority(&one_predicate, 0) > ordering.priority(&two_predicates, 0));
+    }
+
+    #[test]
+    fn unbacked_coinbase_tip_preserves_submitted_predicate_tiebreak() {
+        let ordering = UnifiedTipOrdering::<BasePooledTransaction>::default();
+        let predicates = vec![block_number_predicate(), block_number_predicate()];
+        let transaction = eip8130_pooled(10, 2, 21_000, Some(U256::from(63_000)))
+            .with_validity_predicates(predicates.clone());
+        let same_fee_and_count =
+            eip1559_pooled(1, 10, 2, 21_000).with_validity_predicates(predicates);
+        let fewer_predicates = eip1559_pooled(2, 10, 2, 21_000)
+            .with_validity_predicates(vec![block_number_predicate()]);
+
+        assert!(ordering.priority(&transaction, 0) > ordering.priority(&fewer_predicates, 0));
+
+        transaction.set_coinbase_tip_backed(false);
+        let cloned = transaction.clone();
+        assert_eq!(
+            ordering.priority(&cloned, 0),
+            ordering.priority(&same_fee_and_count, 0),
+            "an unbacked tip must fall back to its fee bid without losing duplicate predicates"
+        );
+        assert!(ordering.priority(&fewer_predicates, 0) > ordering.priority(&cloned, 0));
+
+        transaction.set_coinbase_tip_backed(true);
+        assert!(ordering.priority(&transaction, 0) > ordering.priority(&fewer_predicates, 0));
+        assert_eq!(
+            ordering.priority(&cloned, 0),
+            ordering.priority(&same_fee_and_count, 0),
+            "backing is a per-clone snapshot even though compiled conditions are shared"
+        );
     }
 
     #[test]

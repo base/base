@@ -13,32 +13,20 @@ pub(crate) struct ReaderConfig {
     pub(crate) resend_after: Duration,
 
     /// Bounded per-destination queue capacity for outgoing transactions.
+    ///
+    /// A transaction's position is fixed once it is queued, so a deep queue delays the point
+    /// where lane ordering applies.
     pub(crate) channel_capacity: usize,
 
     /// Sleep duration when the pool iterator yields no transactions,
     /// preventing busy-spinning.
     pub(crate) poll_interval: Duration,
+
+    /// Percentage of picks served oldest-first; the rest go to the highest bid.
+    pub(crate) fifo_percent: u8,
 }
 
-impl Default for ReaderConfig {
-    fn default() -> Self {
-        Self {
-            resend_after: Duration::from_secs(4),
-            channel_capacity: 10_000,
-            poll_interval: Duration::from_millis(10),
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn defaults() {
-        let config = ReaderConfig::default();
-        assert_eq!(config.resend_after, Duration::from_secs(4));
-        assert_eq!(config.channel_capacity, 10_000);
-        assert_eq!(config.poll_interval, Duration::from_millis(10));
-    }
+impl ReaderConfig {
+    /// Sleep between passes that found nothing new to send.
+    pub(crate) const POLL_INTERVAL: Duration = Duration::from_millis(10);
 }

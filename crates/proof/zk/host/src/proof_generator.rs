@@ -16,8 +16,8 @@ pub use base_proof_worker::{
 };
 use base_prover_service_client::{ProverServiceClientError, ProverWorkerProvider};
 use base_prover_service_protocol::{
-    BackendSession, BackendSessionState, ProofJob, ProofRequestKind, ProofResult, SessionType,
-    WorkerSubmitProofRequest, ZkBackend,
+    AbandonProofRequest, BackendSession, BackendSessionState, ProofJob, ProofRequestKind,
+    ProofResult, SessionType, WorkerSubmitProofRequest, ZkBackend,
 };
 use chrono::{DateTime, Utc};
 use thiserror::Error;
@@ -155,7 +155,7 @@ where
             "starting zk proof generation"
         );
 
-        let (result, permit) = self
+        let generated = self
             .with_heartbeat_while_generating(&request, async {
                 let result = self.prove_to_completion(&request).await?;
                 let permit = self.tasks.acquire_submission_permit().await;
@@ -184,7 +184,23 @@ where
                     );
                 }
                 _ => {}
-            })?;
+            });
+        let (result, permit) = match generated {
+            Ok(generated) => generated,
+            Err(error) => {
+                if matches!(
+                    error,
+                    ProofGeneratorError::Generate {
+                        source: ZkProverError::BackendSessionFailed { .. }
+                            | ZkProverError::BackendSessionNotFound { .. },
+                        ..
+                    }
+                ) {
+                    self.abandon_generation_failure(&request, &error).await;
+                }
+                return Err(error);
+            }
+        };
 
         let submit_request = WorkerSubmitProofRequest::try_from(ProofSubmitterRequest {
             session_id: request.claim.session_id.clone(),
@@ -207,6 +223,32 @@ where
         );
 
         Ok(())
+    }
+
+    async fn abandon_generation_failure(
+        &self,
+        request: &ProofGeneratorRequest,
+        error: &ProofGeneratorError,
+    ) {
+        if let Err(abandon_error) = self
+            .submitter
+            .client()
+            .abandon_proof(AbandonProofRequest {
+                session_id: request.claim.session_id.clone(),
+                lock_id: request.claim.lock_id.clone(),
+                worker_id: request.claim.worker_id.clone(),
+                error_message: error.to_string(),
+            })
+            .await
+        {
+            warn!(
+                session_id = %request.claim.session_id,
+                lock_id = %request.claim.lock_id,
+                worker_id = %request.claim.worker_id,
+                error = %abandon_error,
+                "failed to abandon zk proof job after generation failure"
+            );
+        }
     }
 
     async fn prove_to_completion(
@@ -299,10 +341,23 @@ where
                 ..
             }) => {
                 let backend_session_id = submit.await?;
-                handle
+                if let Err(error) = handle
                     .record(session_type, backend_session_id.clone(), BackendSessionState::Running)
                     .await
-                    .map_err(|error| ZkProverError::Session(Box::new(error)))?;
+                {
+                    // A cancel that lands between submit and record leaves this backend
+                    // session untracked, so the heartbeat cleanup cannot find it.
+                    if error.is_proof_cancelled() {
+                        self.cancel_backend_session(
+                            request,
+                            prover,
+                            session_type,
+                            &backend_session_id,
+                        )
+                        .await;
+                    }
+                    return Err(ZkProverError::Session(Box::new(error)));
+                }
                 info!(
                     session_id = %request.claim.session_id,
                     backend_session_id = %backend_session_id,
@@ -416,6 +471,63 @@ where
         }
     }
 
+    /// Best-effort stop of any running backend session after the requester cancelled the job.
+    async fn cancel_active_backend_sessions(&self, request: &ProofGeneratorRequest) {
+        let Ok(prover) = self.prover_for(&request.request) else {
+            return;
+        };
+        let handle = ProofSessionHandle::new(
+            self.submitter.client().clone(),
+            request.claim.session_id.clone(),
+            request.claim.lock_id.clone(),
+            request.claim.worker_id.clone(),
+        );
+
+        for session_type in [SessionType::Stark, SessionType::Snark] {
+            let session = match handle.get(session_type).await {
+                Ok(Some(session)) if session.state == BackendSessionState::Running => session,
+                Ok(_) => continue,
+                Err(error) => {
+                    warn!(
+                        session_id = %request.claim.session_id,
+                        ?session_type,
+                        error = %error,
+                        "failed to load backend session for cancellation"
+                    );
+                    continue;
+                }
+            };
+
+            self.cancel_backend_session(request, prover, session_type, &session.backend_session_id)
+                .await;
+        }
+    }
+
+    /// Best-effort stop of one backend session after the requester cancelled the job.
+    async fn cancel_backend_session(
+        &self,
+        request: &ProofGeneratorRequest,
+        prover: &Arc<dyn ZkProver>,
+        session_type: SessionType,
+        backend_session_id: &str,
+    ) {
+        match prover.cancel(backend_session_id).await {
+            Ok(()) => info!(
+                session_id = %request.claim.session_id,
+                backend_session_id = %backend_session_id,
+                ?session_type,
+                "requested backend proof cancellation"
+            ),
+            Err(error) => warn!(
+                session_id = %request.claim.session_id,
+                backend_session_id = %backend_session_id,
+                ?session_type,
+                error = %error,
+                "failed to cancel backend proof session"
+            ),
+        }
+    }
+
     async fn with_heartbeat_while_generating<Output, Generate>(
         &self,
         request: &ProofGeneratorRequest,
@@ -440,6 +552,28 @@ where
                 source,
             }),
             source = &mut heartbeat => {
+                if source.is_proof_cancelled() {
+                    // Skip the drain below: the requester no longer wants this proof, so stop
+                    // generating now and only spend a bounded budget stopping the backend.
+                    if timeout(
+                        DEFAULT_PROOF_GENERATOR_HEARTBEAT_FAILURE_DRAIN_TIMEOUT,
+                        self.cancel_active_backend_sessions(request),
+                    )
+                    .await
+                    .is_err()
+                    {
+                        warn!(
+                            session_id = %request.claim.session_id,
+                            timeout = ?DEFAULT_PROOF_GENERATOR_HEARTBEAT_FAILURE_DRAIN_TIMEOUT,
+                            "timed out cancelling backend proof sessions"
+                        );
+                    }
+                    return Err(ProofGeneratorError::Heartbeat {
+                        session_id: request.claim.session_id.clone(),
+                        source,
+                    });
+                }
+
                 match timeout(
                     DEFAULT_PROOF_GENERATOR_HEARTBEAT_FAILURE_DRAIN_TIMEOUT,
                     &mut generate,

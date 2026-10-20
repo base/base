@@ -21,7 +21,7 @@ pub enum BaseTxEnvelope {
         /// which `TxEnvelope` alone cannot reproduce.
         enveloped: Bytes,
     },
-    /// An enshrined EIP-8130 account-abstraction transaction (type `0x79`, Zenith onwards). Its
+    /// An enshrined EIP-8130 account-abstraction transaction (type `0x79`, Everest onwards). Its
     /// enshrined execution path is layered on with the EIP-8130 track; this variant carries the
     /// signed transaction so the envelope and receipts can already represent it.
     ///
@@ -65,11 +65,6 @@ impl BaseTxEnvelope {
             Self::Eip8130(tx) => Some(tx),
             Self::Deposit(_) | Self::Standard { .. } => None,
         }
-    }
-
-    /// Returns whether this envelope is an EIP-8130 transaction.
-    pub const fn is_eip8130(&self) -> bool {
-        matches!(self, Self::Eip8130(_))
     }
 
     /// Returns the transaction's gas limit.
@@ -154,7 +149,6 @@ mod tests {
         );
         let envelope = BaseTxEnvelope::from(tx);
         assert_eq!(envelope.ty(), EIP8130_TX_TYPE_ID);
-        assert!(envelope.is_eip8130());
         assert!(envelope.as_eip8130().is_some());
         assert_eq!(envelope.gas_limit(), 250_000);
         // An EIP-8130 tx is neither a deposit nor a standard transaction.

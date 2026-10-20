@@ -12,7 +12,7 @@ use reth_engine_tree::tree::instrumented_state::{InstrumentedStateProvider, Stat
 use reth_execution_cache::{
     CachedStateMetrics, CachedStateMetricsSource, CachedStateProvider, ExecutionCache,
 };
-use reth_storage_api::{StateProvider, StateProviderBox};
+use reth_storage_api::{EvmStateProvider, EvmStateProviderBox, StateProvider};
 use revm::state::EvmState;
 use tracing::{debug, warn};
 
@@ -248,7 +248,7 @@ impl ResourceMeteringConfig {
         if !self.is_active() {
             return ResourceThrottlingDecision::Allow(ResourceMeteringUsage::zero(0));
         }
-        let sample = ResourceSample::from_execution(gas_used, state, simulated);
+        let sample = ResourceSample::from_execution(gas_used, state, simulated, &self.schedule);
         let decision = self.schedule.decide_sample(&sample, cumulative);
         self.record_decision(tx_hash, &decision);
         decision
@@ -268,7 +268,8 @@ impl ResourceMeteringConfig {
             return None;
         }
         let simulated = self.simulated_sample(tx_hash);
-        let sample = ResourceSample::from_execution(gas_used, state, simulated.as_ref());
+        let sample =
+            ResourceSample::from_execution(gas_used, state, simulated.as_ref(), &self.schedule);
         self.schedule.evaluate(sample.gas_used, &sample.operations).map_or_else(
             |_| {
                 self.record_decision(tx_hash, &ResourceThrottlingDecision::CalculationFailed);
@@ -440,7 +441,7 @@ impl GasLimitConfig {
 /// Both Base payload builders compose the same stack, so it is constructed here to keep them
 /// from drifting apart.
 pub struct BuilderStateProvider {
-    provider: StateProviderBox,
+    provider: EvmStateProviderBox,
     stats: Option<Arc<StateProviderStats>>,
 }
 
@@ -462,7 +463,7 @@ impl BuilderStateProvider {
     where
         S: StateProvider + Send + 'static,
     {
-        let mut provider: StateProviderBox = Box::new(state_provider);
+        let mut provider: EvmStateProviderBox = Box::new(state_provider.into_evm_state_provider());
         if let Some(cache) = execution_cache {
             provider = Box::new(CachedStateProvider::new(
                 provider,
@@ -489,12 +490,12 @@ impl BuilderStateProvider {
     }
 
     /// Borrows the composed provider.
-    pub fn provider(&self) -> &dyn StateProvider {
+    pub fn provider(&self) -> &dyn EvmStateProvider {
         self.provider.as_ref()
     }
 
     /// Consumes the wrapper, yielding the composed provider.
-    pub fn into_provider(self) -> StateProviderBox {
+    pub fn into_provider(self) -> EvmStateProviderBox {
         self.provider
     }
 }
@@ -617,8 +618,8 @@ mod tests {
     struct MapProvider(std::sync::Mutex<std::collections::HashMap<TxHash, MeterBundleResponse>>);
 
     impl MeteringProvider for MapProvider {
-        fn get(&self, tx_hash: &TxHash) -> Option<MeterBundleResponse> {
-            self.0.lock().unwrap().get(tx_hash).cloned()
+        fn get(&self, tx_hash: &TxHash) -> Option<Arc<MeterBundleResponse>> {
+            self.0.lock().unwrap().get(tx_hash).cloned().map(Arc::new)
         }
     }
 

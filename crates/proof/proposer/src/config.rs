@@ -17,8 +17,6 @@ pub struct ProposerConfig {
     pub dry_run: bool,
     /// URL of the prover RPC endpoint.
     pub prover_rpc: Url,
-    /// Prover RPC request timeout.
-    pub prover_timeout: Duration,
     /// URL of the L1 Ethereum RPC endpoint.
     pub l1_eth_rpc: Url,
     /// URL of the L2 Ethereum RPC endpoint.
@@ -79,10 +77,6 @@ impl ProposerConfig {
             eyre::bail!("anchor-state-registry-addr must be non-zero address");
         }
 
-        if proposer.prover_timeout.is_zero() {
-            eyre::bail!("prover-timeout must be greater than 0");
-        }
-
         if proposer.poll_interval.is_zero() {
             eyre::bail!("poll-interval must be greater than 0");
         }
@@ -117,7 +111,6 @@ impl ProposerConfig {
         Ok(Self {
             dry_run: proposer.dry_run,
             prover_rpc: proposer.prover_rpc,
-            prover_timeout: proposer.prover_timeout,
             l1_eth_rpc: proposer.l1_eth_rpc,
             l2_eth_rpc: proposer.l2_eth_rpc,
             anchor_state_registry_addr: proposer.anchor_state_registry_addr,
@@ -203,11 +196,7 @@ mod tests {
 
     #[test]
     fn test_invalid_values() {
-        let cases: [InvalidCase; 6] = [
-            (
-                |cli| cli.proposer.prover_timeout = Duration::ZERO,
-                "prover-timeout must be greater than 0",
-            ),
+        let cases: [InvalidCase; 5] = [
             (
                 |cli| cli.proposer.poll_interval = Duration::ZERO,
                 "poll-interval must be greater than 0",

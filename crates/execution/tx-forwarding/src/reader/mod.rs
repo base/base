@@ -3,9 +3,13 @@
 mod config;
 pub(super) use config::ReaderConfig;
 
+mod lanes;
+use lanes::{LaneMix, LaneScheduler};
+
 mod metrics;
 
 mod validator;
 
 mod task;
 pub(super) use task::DestinationReader;
+pub use task::ReaderPool;

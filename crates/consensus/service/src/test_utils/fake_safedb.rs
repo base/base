@@ -22,11 +22,6 @@ pub struct FakeSafeDBHandle {
 }
 
 impl FakeSafeDBHandle {
-    /// Returns all stored responses.
-    pub async fn entries(&self) -> Vec<SafeHeadResponse> {
-        self.state.lock().await.entries.clone()
-    }
-
     /// Returns the latest stored safe head, if any.
     pub async fn latest(&self) -> Option<SafeHeadResponse> {
         self.state.lock().await.entries.last().copied()
@@ -35,16 +30,6 @@ impl FakeSafeDBHandle {
     /// Inserts pre-populated responses.
     pub async fn prepopulate(&self, entries: impl IntoIterator<Item = SafeHeadResponse>) {
         self.state.lock().await.entries.extend(entries);
-    }
-
-    /// Blocking pre-population helper.
-    pub fn prepopulate_blocking(&self, entries: impl IntoIterator<Item = SafeHeadResponse>) {
-        self.state.blocking_lock().entries.extend(entries);
-    }
-
-    /// Blocking latest lookup helper.
-    pub fn latest_blocking(&self) -> Option<SafeHeadResponse> {
-        self.state.blocking_lock().entries.last().copied()
     }
 }
 
@@ -70,13 +55,6 @@ impl FakeSafeDB {
     pub async fn with_entries(entries: impl IntoIterator<Item = SafeHeadResponse>) -> Self {
         let db = Self::new();
         db.handle().prepopulate(entries).await;
-        db
-    }
-
-    /// Creates a fake `SafeDB` with pre-populated entries in blocking setup code.
-    pub fn with_entries_blocking(entries: impl IntoIterator<Item = SafeHeadResponse>) -> Self {
-        let db = Self::new();
-        db.handle().prepopulate_blocking(entries);
         db
     }
 

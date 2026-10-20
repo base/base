@@ -1,22 +1,19 @@
 use core::fmt::Debug;
 use std::{
     sync::Arc,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime},
 };
 
 use alloy_consensus::{Eip658Value, Transaction};
-use alloy_eips::{Encodable2718, Typed2718};
+use alloy_eips::{Encodable2718, Typed2718, eip2718::WithEncoded};
 use alloy_evm::Database;
 #[cfg(any(test, feature = "test-utils"))]
 use alloy_primitives::B256;
 use alloy_primitives::{Address, BlockHash, Bytes, TxHash, U256};
 use alloy_rpc_types_eth::Withdrawals;
-use base_bundles::{MeterBundleResponse, RejectedTransaction, RejectionReason};
 use base_common_chains::Upgrades;
-use base_common_consensus::{
-    BaseReceipt, BaseTransactionSigned, CoinbaseTip, DepositReceipt, OpTxType,
-};
-use base_common_evm::{BaseReceiptBuilder, BaseSpecId, L1BlockInfo};
+use base_common_consensus::{BaseReceipt, BaseTransactionSigned, DepositReceipt, OpTxType};
+use base_common_evm::{BaseReceiptBuilder, BaseSpecId, Eip8130CommittedPhases, L1BlockInfo};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_eip8130::IntrinsicGas;
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
@@ -42,18 +39,17 @@ use reth_revm::{State, context::Block};
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction};
 use revm::{DatabaseCommit, context::result::ResultAndState, interpreter::as_u64_saturated};
 use serde::Serialize;
-use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{Level, debug, span, trace, warn};
 
 use crate::{
-    BuilderConfig, BuilderMetrics, ExecutionInfo, ExecutionMeteringLimitExceeded,
+    BlockDeferrals, BuilderConfig, BuilderMetrics, ExecutionInfo, ExecutionMeteringLimitExceeded,
     ParkedPredicateIndex, PayloadTxsBounds, PredicateReadRecorder, ResourceLimits,
     StateChangeEffects, TxResources, TxnExecutionError, TxnOutcome, ValidityPredicateEvaluation,
     transaction_events::{
-        BuilderAcceptedEventData, BuilderConsideredEventData, BuilderDeferredEventData,
-        BuilderExpiredEventData, BuilderRejectedEventData, BuilderTransactionEventContext,
-        emit_builder_transaction_event, rejection_reason_code,
+        BuilderAcceptedEventData, BuilderDeferredEventData, BuilderExpiredEventData,
+        BuilderRejectedEventData, BuilderTransactionEventContext, emit_builder_transaction_event,
+        rejection_reason_code,
     },
 };
 
@@ -272,8 +268,6 @@ pub struct BasePayloadBuilderCtx {
     pub extra: FlashblocksExtraCtx,
     /// Builder configuration containing limits and metering settings.
     pub builder_config: BuilderConfig,
-    /// Sender for forwarding per-block batches of rejected transactions to the audit-archiver.
-    pub rejected_tx_sender: Option<mpsc::Sender<Vec<RejectedTransaction>>>,
 }
 
 impl BasePayloadBuilderCtx {
@@ -430,54 +424,6 @@ impl BasePayloadBuilderCtx {
         self.chain_spec.chain_id()
     }
 
-    fn record_rejected_tx(
-        &self,
-        info: &mut ExecutionInfo,
-        tx_hash: TxHash,
-        reason: RejectionReason,
-        metering: MeterBundleResponse,
-    ) {
-        if self.rejected_tx_sender.is_none() {
-            return;
-        }
-
-        if info.rejected_txs.len() >= self.builder_config.max_rejected_txs_per_block {
-            BuilderMetrics::rejected_tx_per_block_drops().increment(1);
-            return;
-        }
-
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
-        info.rejected_txs.push(RejectedTransaction {
-            tx_hash,
-            block_number: self.block_number(),
-            reason,
-            timestamp: now,
-            metering,
-        });
-    }
-
-    /// Flushes all accumulated rejected transactions to the audit-archiver channel
-    /// as a single per-block batch.
-    pub fn flush_rejected_txs(&self, info: &mut ExecutionInfo) {
-        if info.rejected_txs.is_empty() {
-            return;
-        }
-
-        if let Some(sender) = &self.rejected_tx_sender {
-            let batch = std::mem::take(&mut info.rejected_txs);
-            let batch_size = batch.len();
-            if let Err(e) = sender.try_send(batch) {
-                BuilderMetrics::rejected_tx_channel_drops().increment(batch_size as u64);
-                warn!(
-                    target: "payload_builder",
-                    error = %e,
-                    batch_size,
-                    "Rejected tx channel full or closed, dropping batch"
-                );
-            }
-        }
-    }
-
     fn builder_transaction_event_context(
         &self,
         payload_id: &str,
@@ -505,7 +451,7 @@ impl BasePayloadBuilderCtx {
         ordering_position: Option<u64>,
         data: F,
     ) where
-        D: Serialize,
+        D: Serialize + Send + 'static,
         F: FnOnce() -> D,
     {
         emit_builder_transaction_event(
@@ -533,13 +479,17 @@ pub(crate) struct DecisionContext<'a> {
 
 impl BasePayloadBuilderCtx {
     /// Constructs a receipt for the given transaction.
+    ///
+    /// `eip8130_committed_phases` is the count taken from [`Eip8130CommittedPhases`] right after
+    /// the transaction executed; it is only used for EIP-8130 receipts.
     pub fn build_receipt<E: Evm>(
         &self,
         ctx: ReceiptBuilderCtx<'_, OpTxType, E>,
         deposit_nonce: Option<u64>,
+        eip8130_committed_phases: u64,
     ) -> BaseReceipt {
         let receipt_builder = self.evm_config.block_executor_factory().receipt_builder();
-        match receipt_builder.build_receipt(ctx) {
+        match receipt_builder.build_receipt(ctx, eip8130_committed_phases) {
             Ok(receipt) => receipt,
             Err(ctx) => {
                 let receipt = alloy_consensus::Receipt {
@@ -632,6 +582,7 @@ impl BasePayloadBuilderCtx {
                     return Err(PayloadBuilderError::EvmExecutionError(Box::new(err)));
                 }
             };
+            let eip8130_committed_phases = Eip8130CommittedPhases::take();
 
             // add gas used by the transaction to cumulative gas used, before creating the receipt
             let gas_used = result.tx_gas_used();
@@ -652,7 +603,7 @@ impl BasePayloadBuilderCtx {
                 cumulative_gas_used: info.cumulative_gas_used,
             };
 
-            info.receipts.push(self.build_receipt(ctx, depositor_nonce));
+            info.receipts.push(self.build_receipt(ctx, depositor_nonce, eip8130_committed_phases));
 
             // commit changes
             evm.db_mut().commit(state);
@@ -706,21 +657,10 @@ impl BasePayloadBuilderCtx {
 
     /// [`Self::skip_current`] using the pooled transaction's sender, nonce, and replay ID.
     fn skip_pooled_current<B: PayloadTxsBounds>(best_txs: &mut B, tx: &B::Transaction) {
-        Self::skip_current(best_txs, tx.sender(), tx.nonce(), tx.eip8130_replay_id().is_some());
+        Self::skip_current(best_txs, tx.sender(), tx.nonce(), tx.is_eip8130_nonce_free());
     }
 
-    fn emit_considered(&self, cx: &DecisionContext<'_>, tx_hash: TxHash, ordering_position: u64) {
-        self.emit_builder_decision_event(
-            cx.payload_id,
-            TransactionEventType::BuilderConsidered,
-            tx_hash,
-            Some(ordering_position),
-            || BuilderConsideredEventData::new(cx.info, cx.limits, None),
-        );
-    }
-
-    /// Emits considered + rejected, counts an "other" rejection, and closes the
-    /// current iterator candidate.
+    /// Emits rejected, counts an "other" rejection, and closes the current iterator candidate.
     fn reject_current<B: PayloadTxsBounds>(
         &self,
         best_txs: &mut B,
@@ -729,12 +669,10 @@ impl BasePayloadBuilderCtx {
         tx: &B::Transaction,
         ordering_position: u64,
     ) {
-        let tx_hash = *tx.hash();
-        self.emit_considered(cx, tx_hash, ordering_position);
         self.emit_builder_decision_event(
             cx.payload_id,
             TransactionEventType::BuilderRejected,
-            tx_hash,
+            *tx.hash(),
             Some(ordering_position),
             || BuilderRejectedEventData::new(cx.reason, cx.detail, false, cx.info, cx.limits, None),
         );
@@ -742,8 +680,7 @@ impl BasePayloadBuilderCtx {
         Self::skip_pooled_current(best_txs, tx);
     }
 
-    /// Emits considered + expired, records a permanent rejection, and closes the
-    /// current iterator candidate.
+    /// Emits expired, records a permanent rejection, and closes the current iterator candidate.
     fn expire_current<B: PayloadTxsBounds>(
         &self,
         best_txs: &mut B,
@@ -753,7 +690,6 @@ impl BasePayloadBuilderCtx {
         ordering_position: u64,
     ) {
         let tx_hash = *tx.hash();
-        self.emit_considered(cx, tx_hash, ordering_position);
         self.emit_builder_decision_event(
             cx.payload_id,
             TransactionEventType::BuilderExpired,
@@ -763,57 +699,45 @@ impl BasePayloadBuilderCtx {
         );
         diag.txs_rejected_other += 1;
         diag.permanently_rejected_txs.push(tx_hash);
-        // Same series as the pool-side block eviction: the builder drops the tx
-        // before the pool sweep sees it.
-        GuardMetrics::record_block_expiry_invalidations(1);
         Self::skip_pooled_current(best_txs, tx);
     }
 
-    /// Defers the current validity-gated candidate by parking it for a later flashblock, or, when
-    /// the iterator cannot park it, rejects it and closes the candidate. Emits the matching
-    /// builder-decision event and updates `diag`. Returns `true` when the transaction was parked.
-    fn defer_or_reject_current<B: PayloadTxsBounds>(
+    /// Parks the current validity-gated candidate for a later position or flashblock, emits the
+    /// deferred builder-decision event, and counts it in `diag`.
+    ///
+    /// A parked transaction is re-evaluated on every later flashblock and after every promotion,
+    /// so `BUILDER_DEFERRED` is emitted only when `deferrals` has not already recorded the same
+    /// reason for it in this block. `diag` still counts every park.
+    fn defer_current<B: PayloadTxsBounds>(
         &self,
         best_txs: &mut B,
         diag: &mut FlashblockDiagnostics,
+        deferrals: &mut BlockDeferrals,
         cx: &DecisionContext<'_>,
-        tx: &B::Transaction,
+        tx_hash: TxHash,
         ordering_position: u64,
-    ) -> bool {
-        if best_txs.park_current() {
+    ) {
+        best_txs.park_current();
+        if deferrals.record(tx_hash, cx.reason) {
             self.emit_builder_decision_event(
                 cx.payload_id,
                 TransactionEventType::BuilderDeferred,
-                *tx.hash(),
+                tx_hash,
                 Some(ordering_position),
                 || BuilderDeferredEventData::new(cx.reason, cx.detail, cx.info, cx.limits, None),
             );
-            diag.txs_deferred += 1;
-            true
-        } else {
-            self.emit_builder_decision_event(
-                cx.payload_id,
-                TransactionEventType::BuilderRejected,
-                *tx.hash(),
-                Some(ordering_position),
-                || {
-                    BuilderRejectedEventData::new(
-                        cx.reason, cx.detail, false, cx.info, cx.limits, None,
-                    )
-                },
-            );
-            diag.txs_rejected_other += 1;
-            Self::skip_pooled_current(best_txs, tx);
-            false
         }
+        diag.txs_deferred += 1;
     }
 
     /// Executes the given best transactions and updates the execution info.
     ///
-    /// Returns diagnostics summarizing transaction selection for the flashblock.
-    pub(super) fn execute_best_transactions(
+    /// Returns diagnostics summarizing transaction selection for the flashblock. `deferrals`
+    /// must live for the whole block so deferral events are not repeated across flashblocks.
+    pub fn execute_best_transactions(
         &self,
         info: &mut ExecutionInfo,
+        deferrals: &mut BlockDeferrals,
         db: &mut State<impl Database>,
         best_txs: &mut impl PayloadTxsBounds,
         limits: &ResourceLimits,
@@ -845,6 +769,12 @@ impl BasePayloadBuilderCtx {
 
         let block_number = as_u64_saturated!(self.evm_env.block_env.number);
         let block_timestamp = self.attributes().timestamp();
+        let mut coinbase_tip_affordability = CoinbaseTipAffordability::load(
+            evm.db_mut(),
+            block_number,
+            self.evm_env.cfg_env.spec,
+            u128::from(base_fee),
+        );
         let payload_id = self.payload_id().to_string();
         let mut predicate_index =
             ParkedPredicateIndex::new(self.builder_config.predicate_bucket_ordered_threshold);
@@ -859,6 +789,8 @@ impl BasePayloadBuilderCtx {
         let mut validity_candidates_evaluated = 0_u64;
         let mut validity_candidates_deferred = 0_u64;
         let mut predicate_eval_cutoff_hit = false;
+        // Time spent on validity candidates from yield to the predicate gate decision.
+        let mut validity_handling = Duration::ZERO;
 
         while let Some(tx) = best_txs.next(()) {
             if self.cancel.is_cancelled() {
@@ -872,10 +804,10 @@ impl BasePayloadBuilderCtx {
             num_txs_considered += 1;
             let ordering_position = num_txs_considered;
             let tx_hash = *tx.hash();
-            let replay_independent = tx.eip8130_replay_id().is_some();
-            let has_validity_predicates = !tx.validity_predicates().is_empty();
-            let coinbase_tip =
-                tx.as_eip8130().and_then(|signed| CoinbaseTip::decode(signed.tx(), tx.sender()));
+            let replay_independent = tx.is_eip8130_nonce_free();
+            let has_validity_predicates = !tx.validity_conditions().is_empty();
+            let validity_handling_start = has_validity_predicates.then(Instant::now);
+            let coinbase_tip = tx.coinbase_tip();
             let has_coinbase_tip = coinbase_tip.is_some();
 
             // Defer without evaluating once this flashblock's predicate-eval time budget is
@@ -898,12 +830,13 @@ impl BasePayloadBuilderCtx {
                     tx_hash = ?tx_hash,
                     "deferring validity-gated transaction: predicate evaluation budget exhausted for this flashblock"
                 );
-                self.emit_considered(&cx, tx_hash, ordering_position);
                 ValidityMetrics::validity_predicate_evaluations_total("budget_exhausted")
                     .increment(1);
                 validity_candidates_deferred += 1;
                 predicate_eval_cutoff_hit = true;
-                self.defer_or_reject_current(best_txs, &mut diag, &cx, &tx, ordering_position);
+                self.defer_current(best_txs, &mut diag, deferrals, &cx, tx_hash, ordering_position);
+                validity_handling +=
+                    validity_handling_start.map_or_else(Duration::default, |start| start.elapsed());
                 continue;
             }
 
@@ -915,7 +848,7 @@ impl BasePayloadBuilderCtx {
                     let mut recorder =
                         PredicateReadRecorder::new(&mut **evm.db_mut(), &mut info.predicate_loads);
                     ValidityPredicateEvaluation::evaluate(
-                        tx.validity_predicates(),
+                        tx.validity_conditions(),
                         &mut recorder,
                         &predicate_context,
                     )
@@ -923,11 +856,11 @@ impl BasePayloadBuilderCtx {
                     Ok(ValidityPredicateEvaluation::Matched) => None,
                     Ok(ValidityPredicateEvaluation::Unsatisfied {
                         blocker,
-                        blocker_index,
+                        predicate,
                         expired,
                     }) => {
                         predicate_expired = expired;
-                        Some((blocker, blocker_index))
+                        Some((blocker, predicate))
                     }
                     Err(error) => {
                         warn!(
@@ -952,6 +885,14 @@ impl BasePayloadBuilderCtx {
                     "matched"
                 };
                 ValidityMetrics::validity_predicate_evaluations_total(outcome).increment(1);
+                if outcome == "matched" && best_txs.is_resting(tx_hash, tx.validity_conditions()) {
+                    BuilderMetrics::resting_predicate_shadow_mismatches_total().increment(1);
+                    debug!(
+                        target: "payload_builder",
+                        tx_hash = ?tx_hash,
+                        "resting validity transaction matched when evaluated"
+                    );
+                }
             }
             if predicate_read_failed || blocking_predicate.is_some() {
                 let (reason, detail) = if predicate_read_failed {
@@ -981,7 +922,7 @@ impl BasePayloadBuilderCtx {
                 // transaction there could place it behind a lower-priority transaction even though
                 // its predicate may have already been satisfied at its first position. An expired
                 // position predicate is terminal too — no later position can satisfy it — so both
-                // are dropped rather than parked; only recoverable state mismatches are parked.
+                // are dropped rather than parked; state mismatches rely on the block expiry.
                 if predicate_read_failed {
                     // A read failure is only terminal for this scan, so it is not cached.
                     self.reject_current(best_txs, &mut diag, &cx, &tx, ordering_position);
@@ -992,24 +933,27 @@ impl BasePayloadBuilderCtx {
                     // not re-evaluated on subsequent flashblock rebuilds.
                     self.expire_current(best_txs, &mut diag, &cx, &tx, ordering_position);
                 } else {
-                    // Recoverable state mismatch: park under the current blocker to retry at a
-                    // later position or flashblock, or reject if the iterator cannot park it.
-                    self.emit_considered(&cx, tx_hash, ordering_position);
-                    let (_, blocker_index) = blocking_predicate
+                    // State mismatch: retry at a later position or flashblock. Passed nonce
+                    // bounds also stay parked until the required block-number expiry.
+                    let (_, predicate) = blocking_predicate
                         .expect("unsatisfied, non-terminal predicate implies a blocking key");
-                    if self.defer_or_reject_current(
+                    self.defer_current(
                         best_txs,
                         &mut diag,
+                        deferrals,
                         &cx,
-                        &tx,
+                        tx_hash,
                         ordering_position,
-                    ) {
-                        let predicate = tx.validity_predicates()[blocker_index].clone();
-                        predicate_index.park(tx_hash, tx, predicate);
-                    }
+                    );
+                    best_txs.rest(tx_hash, &predicate);
+                    predicate_index.park(tx_hash, tx, predicate);
                 }
+                validity_handling +=
+                    validity_handling_start.map_or_else(Duration::default, |start| start.elapsed());
                 continue;
             }
+            validity_handling +=
+                validity_handling_start.map_or_else(Duration::default, |start| start.elapsed());
 
             if self.builder_config.manifest_precheck_enabled
                 && let Some(manifest) = tx.watch_manifest()
@@ -1043,8 +987,9 @@ impl BasePayloadBuilderCtx {
 
             // EIP-8130 meters payer authentication gas on top of the declared gas limit, so it must
             // be reserved against the block gas budget in addition to `gas_limit`. Reserve a
-            // conservative upper bound (worst-case payer policy gate) derived from the payer auth
-            // blob (`0` for non-8130 / self-pay); see `IntrinsicGas::max_payer_auth_cost`.
+            // conservative upper bound (the payer auth bytes at the EIP-7623 floor rate) derived
+            // from the payer auth blob (`0` for non-8130 / self-pay); see
+            // `IntrinsicGas::max_payer_auth_cost`.
             let tx_payer_auth = match tx.as_eip8130() {
                 Some(signed) => match IntrinsicGas::max_payer_auth_cost(signed) {
                     Ok(payer_auth) => payer_auth,
@@ -1074,7 +1019,7 @@ impl BasePayloadBuilderCtx {
                 None => 0,
             };
 
-            if CoinbaseTipAffordability::unaffordable(&tx, tx_payer_auth, evm.db_mut()) {
+            if coinbase_tip_affordability.unaffordable(&tx, tx_payer_auth, evm.db_mut()) {
                 trace!(
                     target: "payload_builder",
                     tx_hash = ?tx_hash,
@@ -1096,9 +1041,9 @@ impl BasePayloadBuilderCtx {
                 continue;
             }
 
-            let tx = tx.into_consensus();
+            let (tx_encoded, tx) = tx.into_consensus_with2718().split();
             let tx_hash = tx.tx_hash();
-            let tx_uncompressed_size = tx.encode_2718_len() as u64;
+            let tx_uncompressed_size = tx_encoded.len() as u64;
 
             let log_txn = |result: Result<TxnOutcome, TxnExecutionError>| {
                 let result_str = match &result {
@@ -1137,16 +1082,6 @@ impl BasePayloadBuilderCtx {
                     };
                     self.emit_builder_decision_event(
                         &payload_id,
-                        TransactionEventType::BuilderConsidered,
-                        tx_hash,
-                        Some(ordering_position),
-                        || {
-                            BuilderConsideredEventData::new(info, limits, Some(&tx_resources))
-                                .with_metering_wait(tx_age_ms, wait_duration.as_millis())
-                        },
-                    );
-                    self.emit_builder_decision_event(
-                        &payload_id,
                         TransactionEventType::BuilderRejected,
                         tx_hash,
                         Some(ordering_position),
@@ -1180,13 +1115,6 @@ impl BasePayloadBuilderCtx {
                 execution_time_us: predicted_execution_time_us,
                 uncompressed_size: tx_uncompressed_size,
             };
-            self.emit_builder_decision_event(
-                &payload_id,
-                TransactionEventType::BuilderConsidered,
-                tx_hash,
-                Some(ordering_position),
-                || BuilderConsideredEventData::new(info, limits, Some(&tx_resources)),
-            );
 
             // ensure we still have capacity for this transaction
             if let Err(err) = info.is_tx_over_limits(&tx_resources, limits) {
@@ -1218,21 +1146,6 @@ impl BasePayloadBuilderCtx {
                         if err.is_permanent() {
                             diag.permanently_rejected_txs.push(tx_hash);
                         }
-
-                        let ExecutionMeteringLimitExceeded::TransactionExecutionTime(
-                            tx_time_us,
-                            limit_us,
-                        ) = limit_err;
-                        // Only record per-tx execution time limits for the audit trail for now
-                        self.record_rejected_tx(
-                            info,
-                            tx_hash,
-                            RejectionReason::ExecutionTimeExceeded {
-                                tx_time_us: *tx_time_us,
-                                limit_us: *limit_us,
-                            },
-                            resource_usage.unwrap_or_default(),
-                        );
 
                         self.emit_builder_decision_event(
                             &payload_id,
@@ -1322,7 +1235,9 @@ impl BasePayloadBuilderCtx {
             let _tx_span_guard = tx_span.enter();
 
             let execution_start_time = Instant::now();
-            let ResultAndState { result, state } = match evm.transact(&tx) {
+            let ResultAndState { result, state } = match evm
+                .transact(WithEncoded::new(tx_encoded, &tx))
+            {
                 Ok(res) => res,
                 Err(err) => {
                     if let Some(err) = err.as_invalid_tx_err() {
@@ -1389,6 +1304,7 @@ impl BasePayloadBuilderCtx {
                     return Err(PayloadBuilderError::evm(err));
                 }
             };
+            let eip8130_committed_phases = Eip8130CommittedPhases::take();
 
             let execution_time = execution_start_time.elapsed();
 
@@ -1490,7 +1406,12 @@ impl BasePayloadBuilderCtx {
                 state: &state,
                 cumulative_gas_used: info.cumulative_gas_used,
             };
-            info.receipts.push(self.build_receipt(ctx, None));
+            info.receipts.push(self.build_receipt(ctx, None, eip8130_committed_phases));
+            // The tip is a phase-0 transfer, so it is revenue only if that phase
+            // committed; a reverted or policy-blocked phase pays nothing.
+            let coinbase_tip = coinbase_tip.filter(|_| {
+                matches!(info.receipts.last(), Some(BaseReceipt::Eip8130(receipt)) if receipt.phase_committed(0))
+            });
 
             let state_change_effects = if predicate_index.is_empty() {
                 StateChangeEffects::default()
@@ -1498,6 +1419,7 @@ impl BasePayloadBuilderCtx {
                 predicate_index.affected_by_state(&state)
             };
             predicate_bucket_wakeups += state_change_effects.woken_buckets as u64;
+            best_txs.record_committed_state(&state);
 
             // commit changes
             evm.db_mut().commit(state);
@@ -1540,17 +1462,15 @@ impl BasePayloadBuilderCtx {
                             &mut info.predicate_loads,
                         );
                         ValidityPredicateEvaluation::evaluate(
-                            parked_transaction.validity_predicates(),
+                            parked_transaction.validity_conditions(),
                             &mut recorder,
                             &predicate_context,
                         )
                     }) {
                         Ok(ValidityPredicateEvaluation::Matched) => None,
                         Ok(ValidityPredicateEvaluation::Unsatisfied {
-                            blocker,
-                            blocker_index,
-                            ..
-                        }) => Some((blocker, blocker_index)),
+                            blocker, predicate, ..
+                        }) => Some((blocker, predicate)),
                         Err(error) => {
                             warn!(
                                 target: "payload_builder",
@@ -1573,8 +1493,8 @@ impl BasePayloadBuilderCtx {
                 if predicate_read_failed {
                     predicate_index.remove(*parked_hash);
                     best_txs.discard_parked(*parked_hash);
-                } else if let Some((_, blocker_index)) = blocking_predicate {
-                    let predicate = parked_transaction.validity_predicates()[blocker_index].clone();
+                } else if let Some((_, predicate)) = blocking_predicate {
+                    best_txs.rest(*parked_hash, &predicate);
                     predicate_index.reindex(*parked_hash, predicate);
                 } else {
                     predicate_index.remove(*parked_hash);
@@ -1633,6 +1553,14 @@ impl BasePayloadBuilderCtx {
         // the histogram is not flooded with zero observations.
         if let Some(predicate_eval_total) = predicate_eval_total {
             ValidityMetrics::record_predicate_eval_duration(predicate_eval_total);
+        }
+        let resting_stats = best_txs.take_resting_stats();
+        if resting_stats.parked > 0 {
+            BuilderMetrics::resting_predicate_parked_total().increment(resting_stats.parked);
+        }
+        let validity_handling = validity_handling + resting_stats.duration;
+        if !validity_handling.is_zero() {
+            BuilderMetrics::validity_candidate_handling_duration().record(validity_handling);
         }
         ValidityMetrics::record_predicate_evaluation_coverage(
             validity_candidates_evaluated,
@@ -1750,7 +1678,6 @@ impl BasePayloadBuilderCtx {
             cancel: CancellationToken::new(),
             extra: FlashblocksExtraCtx::default(),
             builder_config: crate::BuilderConfig::default(),
-            rejected_tx_sender: None,
         }
     }
 }
@@ -1767,11 +1694,13 @@ mod tests {
     use reth_chainspec::ChainSpec;
     use reth_payload_util::PayloadTransactions;
     use reth_primitives_traits::{Recovered, SealedHeader, WithEncoded};
-    use reth_provider::noop::NoopProvider;
+    use reth_provider::{StateProvider, noop::NoopProvider};
     use reth_revm::{State, database::StateProviderDatabase};
 
     use super::*;
-    use crate::{ParkablePayloadTransactions, test_utils::sign_base_tx};
+    use crate::{
+        ParkablePayloadTransactions, RestingPayloadTransactions, test_utils::sign_base_tx,
+    };
 
     fn test_builder_context() -> BasePayloadBuilderCtx {
         let genesis: serde_json::Value = serde_json::json!({
@@ -1873,10 +1802,10 @@ mod tests {
         }
     }
 
+    impl RestingPayloadTransactions for LimitRejectionTransactions {}
+
     impl ParkablePayloadTransactions for LimitRejectionTransactions {
-        fn park_current(&mut self) -> bool {
-            false
-        }
+        fn park_current(&mut self) {}
 
         fn mark_current_committed(&mut self) {}
 
@@ -1907,10 +1836,10 @@ mod tests {
         }
     }
 
+    impl RestingPayloadTransactions for LifecycleRecorder {}
+
     impl ParkablePayloadTransactions for LifecycleRecorder {
-        fn park_current(&mut self) -> bool {
-            false
-        }
+        fn park_current(&mut self) {}
 
         fn mark_current_committed(&mut self) {
             self.committed += 1;
@@ -1939,13 +1868,19 @@ mod tests {
     fn cancellation_is_checked_after_each_limit_rejection() {
         let ctx = test_builder_context();
         let mut best_txs = LimitRejectionTransactions::new(0, 2, ctx.cancel.clone());
-        let db = StateProviderDatabase::new(NoopProvider::default());
+        let db = StateProviderDatabase::new(NoopProvider::default().into_evm_state_provider());
         let mut state = State::builder().with_database(db).with_bundle_update().build();
         let mut info = ExecutionInfo::default();
         let limits = ResourceLimits { block_gas_limit: 0, ..Default::default() };
 
         let diagnostics = ctx
-            .execute_best_transactions(&mut info, &mut state, &mut best_txs, &limits)
+            .execute_best_transactions(
+                &mut info,
+                &mut BlockDeferrals::default(),
+                &mut state,
+                &mut best_txs,
+                &limits,
+            )
             .expect("cancelled selection should succeed");
 
         assert!(diagnostics.cancelled);
@@ -1962,13 +1897,19 @@ mod tests {
         let ctx = test_builder_context();
         let mut best_txs =
             LimitRejectionTransactions::new(WITHIN_LIMIT, OVER_LIMIT, ctx.cancel.clone());
-        let db = StateProviderDatabase::new(NoopProvider::default());
+        let db = StateProviderDatabase::new(NoopProvider::default().into_evm_state_provider());
         let mut state = State::builder().with_database(db).with_bundle_update().build();
         let mut info = ExecutionInfo::default();
         let limits = ResourceLimits { block_gas_limit: 0, ..Default::default() };
 
         let diagnostics = ctx
-            .execute_best_transactions(&mut info, &mut state, &mut best_txs, &limits)
+            .execute_best_transactions(
+                &mut info,
+                &mut BlockDeferrals::default(),
+                &mut state,
+                &mut best_txs,
+                &limits,
+            )
             .expect("cancelled selection should succeed");
 
         assert!(diagnostics.cancelled);
@@ -2133,7 +2074,7 @@ mod tests {
         ctx.config.attributes.no_tx_pool = true;
         ctx.config.attributes.transactions = vec![with_encoded];
 
-        let db = StateProviderDatabase::new(NoopProvider::default());
+        let db = StateProviderDatabase::new(NoopProvider::default().into_evm_state_provider());
         let mut state = State::builder().with_database(db).with_bundle_update().build();
         let err = ctx
             .execute_sequencer_transactions(&mut state)
@@ -2147,7 +2088,7 @@ mod tests {
         // input now succeeds with zero gas consumed and no receipt — this guards against
         // accidentally tightening the legacy code path along with the strict one.
         ctx.config.attributes.no_tx_pool = false;
-        let db = StateProviderDatabase::new(NoopProvider::default());
+        let db = StateProviderDatabase::new(NoopProvider::default().into_evm_state_provider());
         let mut state = State::builder().with_database(db).with_bundle_update().build();
         let info = ctx
             .execute_sequencer_transactions(&mut state)

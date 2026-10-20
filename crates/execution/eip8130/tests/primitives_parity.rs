@@ -1,16 +1,19 @@
 //! Parity guards for the EIP-8130 gas primitives, which now live in the
 //! engine-neutral `base-common-eip8130` crate and are re-exported here.
 //!
-//! These two checks are kept in `base-execution-eip8130` — rather than beside the
+//! These checks are kept in `base-execution-eip8130` — rather than beside the
 //! primitives — because each pins the revm-free schedule/metering against
-//! something only the revm execution path has: revm's canonical gas constants,
-//! and the validating account-change decoder ([`AccountChangeApplier`]).
+//! something only the revm execution path has: revm's canonical gas constants
+//! and calldata token counter, and the validating account-change decoder
+//! ([`AccountChangeApplier`]).
 
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_sol_types::SolValue;
-use base_common_consensus::Eip8130Constants;
-use base_execution_eip8130::{AccountChangeApplier, Eip8130GasSchedule, IntrinsicGas};
-use revm::interpreter::gas;
+use base_common_consensus::{Eip8130Constants, Eip8130Signed, TxEip8130};
+use base_execution_eip8130::{
+    AccountChangeApplier, Eip8130GasSchedule, IntrinsicGas, IntrinsicGasInput,
+};
+use revm::{context_interface::cfg::gas::get_tokens_in_calldata_istanbul, interpreter::gas};
 
 alloy_sol_types::sol! {
     // Mirror of the contract's `ActorConfig` authorize payload, used only to pin
@@ -40,6 +43,9 @@ fn gas_primitives_match_evm_reference() {
     // (Istanbul) cost, not the EIP-7623 floor token.
     assert_eq!(Eip8130GasSchedule::TX_DATA_ZERO_BYTE, gas::STANDARD_TOKEN_COST);
     assert_eq!(Eip8130GasSchedule::TX_DATA_NONZERO_BYTE, gas::NON_ZERO_BYTE_DATA_COST_ISTANBUL);
+    // The EIP-7623 per-token floor an 8130 transaction pays over its serialized
+    // payload, pinned to revm's `TOTAL_COST_FLOOR_PER_TOKEN`.
+    assert_eq!(Eip8130GasSchedule::TX_TOTAL_COST_FLOOR_PER_TOKEN, gas::TOTAL_COST_FLOOR_PER_TOKEN);
     assert_eq!(Eip8130GasSchedule::CODE_DEPOSIT_PER_BYTE, gas::CODEDEPOSIT);
     assert_eq!(Eip8130GasSchedule::CREATE_BASE_COST, gas::CREATE);
 
@@ -76,6 +82,39 @@ fn gas_primitives_match_evm_reference() {
         2 * gas::COLD_SLOAD_COST + gas::WARM_STORAGE_READ_COST + 3 * gas::WARM_SSTORE_RESET
     );
     assert_eq!(Eip8130GasSchedule::NONCE_FREE_COST, 13_000);
+}
+
+/// `payload` and `payload_floor` count tokens by hand (one per zero byte, four
+/// per non-zero byte) over bytes streamed from several pieces of the
+/// transaction. This pins that count to revm's calldata token counter over the
+/// same sender-billed bytes, so a change to either formula fails here.
+#[test]
+fn payload_token_count_matches_evm_reference() {
+    let mut metadata = vec![0u8; 40];
+    metadata.extend((1..=200u8).collect::<Vec<_>>());
+    let tx = TxEip8130 {
+        chain_id: 8453,
+        gas_limit: 1_000_000,
+        max_fee_per_gas: 1,
+        metadata: Bytes::from(metadata),
+        payer: Some(Address::repeat_byte(0x22)),
+        ..Default::default()
+    };
+    let mut payer_auth = Eip8130Constants::K1_AUTHENTICATOR.to_vec();
+    payer_auth.extend([0xabu8; 65]);
+    let signed = Eip8130Signed::new(tx, Bytes::from(vec![0xcdu8; 65]), Bytes::from(payer_auth));
+    let mut encoded = vec![Eip8130Constants::EIP8130_TX_TYPE];
+    signed.rlp_encode_signed(&mut encoded);
+
+    let gas = IntrinsicGas::compute(
+        &signed,
+        &encoded,
+        &IntrinsicGasInput::new(Address::repeat_byte(0x11), false),
+    )
+    .expect("intrinsic gas");
+    let tokens = get_tokens_in_calldata_istanbul(&signed.encoded_2718_without_payer_auth());
+    assert_eq!(gas.payload, tokens * gas::STANDARD_TOKEN_COST);
+    assert_eq!(gas.payload_floor, tokens * gas::TOTAL_COST_FLOOR_PER_TOKEN);
 }
 
 #[test]
