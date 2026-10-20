@@ -806,8 +806,8 @@ mod tests {
 
     #[test]
     fn transaction_events_init_global_writer_reports_not_configured_when_disabled() {
-        // The enabled path registers a process-global writer, so it is covered by the devnet
-        // transaction-events smoke test instead of unit tests.
+        // Enabled startup is exercised in isolated subprocesses by the unified binary's
+        // sequencer_transaction_events integration tests.
         let status = TransactionEventsArgs::default()
             .init_global_writer()
             .expect("disabled journal init should succeed");
