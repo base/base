@@ -9,7 +9,9 @@ repository.workspace = true
 
 [dependencies]
 rkyv.workspace = true
-openvm = { workspace = true, features = ["std"] }
+# The default bump allocator never frees, and real blocks exhaust the 512 MiB
+# guest address space.
+openvm = { workspace = true, features = ["std", "heap-embedded-alloc"] }
 
 # base-consensus / base-proof
 # EIP-8130 execution without Tokio (`base-proof/std` pulls Tokio).

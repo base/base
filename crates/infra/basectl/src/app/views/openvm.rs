@@ -1,18 +1,18 @@
-//! Live `OpenVM` range prove of one L2 block: witness dump, guest execute, app proof.
+//! Live `OpenVM` range prove of one L2 block: witness dump, then STARK and EVM
+//! proving on an Axiom Edge cluster.
 
 use std::{
     collections::VecDeque,
-    path::{Path, PathBuf},
+    path::PathBuf,
     process::Stdio,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use alloy_primitives::hex;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Layout, Rect},
     prelude::*,
-    widgets::{Block, Borders, LineGauge, Paragraph},
+    widgets::{Block, Borders, LineGauge, Padding, Paragraph},
 };
 use tokio::{
     io::{AsyncBufReadExt, AsyncRead, BufReader},
@@ -26,6 +26,7 @@ use crate::{
     app::{Action, Resources, View},
     config::MonitoringConfig,
     output::{COLOR_ACTIVE_BORDER, COLOR_BASE_BLUE, COLOR_BURN, Format},
+    rpc::{EdgeClient, EdgeProgram, EdgeProofRequest, EdgeProofType},
     tui::{Keybinding, Toast},
 };
 
@@ -37,31 +38,61 @@ const KEYBINDINGS: &[Keybinding] = &[
 
 const LOG_CAP: usize = 200;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-enum Stage {
+/// Axiom Edge manager base URL.
+const EDGE_URL_ENV: &str = "OPENVM_EDGE_URL";
+/// Must match the manager's `EDGE_PROGRAMS` loadout and its
+/// `artifacts/programs/range/1/program.vmexe`.
+const EDGE_PROGRAM_NAME: &str = "range";
+const EDGE_PROGRAM_VERSION: u32 = 1;
+const EDGE_POLL_INTERVAL: Duration = Duration::from_secs(1);
+/// Sent as the manager's per-proof watchdog; its default (300s in dev) is too
+/// short for a real block.
+const EDGE_PROOF_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+/// Lets the manager's watchdog report first so the TUI shows its reason.
+const EDGE_POLL_GRACE: Duration = Duration::from_secs(60);
+
+/// Pipeline steps, in run order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Step {
     Witness,
-    Execute,
     Prove,
-    Done,
+    Wrap,
 }
 
-impl Stage {
+impl Step {
+    const ALL: [Self; 3] = [Self::Witness, Self::Prove, Self::Wrap];
+
     const fn label(self) -> &'static str {
         match self {
-            Self::Witness => "dumping witness",
-            Self::Execute => "executing guest",
-            Self::Prove => "proving",
-            Self::Done => "done",
+            Self::Witness => "Witness",
+            Self::Prove => "Prove",
+            Self::Wrap => "Wrap",
+        }
+    }
+
+    /// Shown until the pipeline reports something more specific.
+    const fn hint(self) -> &'static str {
+        match self {
+            Self::Witness => "picking the safe head",
+            Self::Prove => "STARK on Axiom Edge",
+            Self::Wrap => "root → halo2",
         }
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum CardState {
-    Queued,
-    Running,
-    Ok,
-    Failed,
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum StepStatus {
+    #[default]
+    Pending,
+    Running(Instant),
+    Done(Duration),
+    Failed(Duration),
+}
+
+#[derive(Clone, Debug)]
+struct StepRow {
+    status: StepStatus,
+    detail: String,
 }
 
 #[derive(Clone, Debug)]
@@ -71,10 +102,15 @@ struct LiveRpcs {
     l1_beacon_rpc: Url,
     l2_rpc: Url,
     l2_node_rpc: Url,
+    edge: EdgeClient,
 }
 
 impl LiveRpcs {
-    fn from_config(config: &MonitoringConfig) -> Result<Self, String> {
+    fn from_env(config: &MonitoringConfig) -> Result<Self, String> {
+        Self::from_config(config, std::env::var(EDGE_URL_ENV).ok().as_deref())
+    }
+
+    fn from_config(config: &MonitoringConfig, edge_url: Option<&str>) -> Result<Self, String> {
         let hint = "`basectl -c zeronet` has both.";
         let l1_beacon_rpc = config
             .l1_beacon_rpc
@@ -84,12 +120,19 @@ impl LiveRpcs {
             .consensus_node_rpc
             .clone()
             .ok_or_else(|| format!("OpenVM prove needs consensus_node_rpc (op-node). {hint}"))?;
+        let edge_url = edge_url.ok_or_else(|| {
+            format!("OpenVM prove needs {EDGE_URL_ENV} (Axiom Edge manager URL).")
+        })?;
+        let edge_url =
+            Url::parse(edge_url).map_err(|error| format!("{EDGE_URL_ENV} is invalid: {error}"))?;
+        let edge = EdgeClient::new(edge_url).map_err(|error| format!("Edge client: {error:#}"))?;
         Ok(Self {
             chain_name: config.name.clone(),
             l1_rpc: config.l1_rpc.clone(),
             l1_beacon_rpc,
             l2_rpc: config.rpc.clone(),
             l2_node_rpc,
+            edge,
         })
     }
 }
@@ -97,63 +140,48 @@ impl LiveRpcs {
 #[derive(Debug)]
 enum LiveEvent {
     Log(String),
-    Stage(Stage),
-    Witness { start: u64, end: u64, bytes: u64 },
-    Digest(String),
-    ExeCommit(String),
-    Failed(String),
-    Done { proof_bytes: Option<u64> },
+    /// Starts a step and finishes every step before it.
+    Enter(Step),
+    Detail(Step, String),
+    /// Fraction of app segments proven, once the segment count is known.
+    Progress(f64),
+    Finished(Result<(), String>),
 }
 
 impl LiveEvent {
-    /// Recognizes the lines `openvm-dump` and `cargo-openvm` print to stdout.
-    fn parse(line: &str) -> Option<Self> {
-        if let Some(rest) = line.strip_prefix("OPENVM_WITNESS ") {
-            let field = |key: &str| {
-                rest.split_whitespace().find_map(|kv| kv.strip_prefix(key)?.parse().ok())
-            };
-            return Some(Self::Witness {
-                start: field("start=")?,
-                end: field("end=")?,
-                bytes: field("bytes=")?,
-            });
-        }
-        if let Some(commit) = line.strip_prefix("exe commit:") {
-            return Some(Self::ExeCommit(commit.trim().to_string()));
-        }
-        // `cargo openvm run` prints the revealed bytes as `Vec<u8>` Debug.
-        let bytes = line.strip_prefix("Execution output:")?.trim();
-        let bytes = bytes.strip_prefix('[')?.strip_suffix(']')?;
-        let bytes: Vec<u8> =
-            bytes.split(',').map(|byte| byte.trim().parse()).collect::<Result<_, _>>().ok()?;
-        Some(Self::Digest(hex::encode_prefixed(bytes)))
+    /// Parses the `OPENVM_WITNESS start=.. end=.. bytes=..` line `openvm-dump`
+    /// prints once the range is chosen (`bytes=0`) and again once it is written.
+    fn parse_witness(line: &str) -> Option<Self> {
+        let rest = line.strip_prefix("OPENVM_WITNESS ")?;
+        let field = |key: &str| -> Option<u64> {
+            rest.split_whitespace().find_map(|kv| kv.strip_prefix(key)?.parse().ok())
+        };
+        let (start, end, bytes) = (field("start=")?, field("end=")?, field("bytes=")?);
+        let size = if bytes == 0 { "fetching".to_string() } else { Format::bytes(bytes) };
+        Some(Self::Detail(Step::Witness, format!("blocks {start} → {end} · {size}")))
     }
 }
 
-/// One in-flight or finished prove. Dropping it kills the pipeline.
+/// One in-flight or finished prove. Dropping it kills the pipeline and cancels
+/// its Edge proof.
 #[derive(Debug)]
 struct LiveProve {
     chain_name: String,
+    edge: EdgeClient,
+    proof_uuid: String,
     rx: mpsc::Receiver<LiveEvent>,
     handle: Option<JoinHandle<()>>,
-    stage: Stage,
     started_at: Instant,
-    stage_started_at: Instant,
-    stage_times: [Option<Duration>; 3],
     finished_at: Option<Instant>,
-    error: Option<String>,
+    steps: [StepRow; 3],
+    progress: Option<f64>,
     log: VecDeque<String>,
-    range: Option<(u64, u64)>,
-    witness_bytes: Option<u64>,
-    digest: Option<String>,
-    exe_commit: Option<String>,
-    proof_bytes: Option<u64>,
 }
 
 impl Drop for LiveProve {
     fn drop(&mut self) {
-        if let Some(handle) = self.handle.take() {
-            handle.abort();
+        if self.running() {
+            self.stop();
         }
     }
 }
@@ -161,32 +189,37 @@ impl Drop for LiveProve {
 impl LiveProve {
     fn start(rpcs: LiveRpcs) -> Self {
         let (tx, rx) = mpsc::channel(256);
-        let chain_name = rpcs.chain_name.clone();
-        Self::new(chain_name, rx, Some(tokio::spawn(run_pipeline(rpcs, tx))))
+        let millis = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis();
+        let chain: String =
+            rpcs.chain_name.chars().filter(|ch| ch.is_ascii_alphanumeric() || *ch == '-').collect();
+        let proof_uuid = format!("basectl-{chain}-{millis}");
+        let mut live =
+            Self::new(rpcs.chain_name.clone(), rpcs.edge.clone(), proof_uuid.clone(), rx);
+        live.handle = Some(tokio::spawn(run_pipeline(rpcs, proof_uuid, tx)));
+        live
     }
 
     fn new(
         chain_name: String,
+        edge: EdgeClient,
+        proof_uuid: String,
         rx: mpsc::Receiver<LiveEvent>,
-        handle: Option<JoinHandle<()>>,
     ) -> Self {
         let now = Instant::now();
+        let mut steps = Step::ALL
+            .map(|step| StepRow { status: StepStatus::Pending, detail: step.hint().into() });
+        steps[Step::Witness as usize].status = StepStatus::Running(now);
         Self {
             chain_name,
+            edge,
+            proof_uuid,
             rx,
-            handle,
-            stage: Stage::Witness,
+            handle: None,
             started_at: now,
-            stage_started_at: now,
-            stage_times: [None; 3],
             finished_at: None,
-            error: None,
+            steps,
+            progress: None,
             log: VecDeque::new(),
-            range: None,
-            witness_bytes: None,
-            digest: None,
-            exe_commit: None,
-            proof_bytes: None,
         }
     }
 
@@ -198,11 +231,20 @@ impl LiveProve {
         self.finished_at.unwrap_or_else(Instant::now).saturating_duration_since(self.started_at)
     }
 
-    fn fail(&mut self, message: String) {
-        self.error = Some(message);
-        self.finished_at = Some(Instant::now());
+    /// Kills the pipeline and cancels its Edge proof. The manager runs one proof
+    /// at a time, so an abandoned proof would make the next start fail with 409.
+    fn stop(&mut self) {
         if let Some(handle) = self.handle.take() {
             handle.abort();
+        }
+        if self.steps[Step::Prove as usize].status == StepStatus::Pending {
+            return;
+        }
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            let (edge, proof_uuid) = (self.edge.clone(), self.proof_uuid.clone());
+            runtime.spawn(async move {
+                let _ = edge.cancel_proof(&proof_uuid).await;
+            });
         }
     }
 
@@ -222,72 +264,138 @@ impl LiveProve {
                 }
                 self.log.push_back(line);
             }
-            LiveEvent::Stage(stage) => self.enter(stage),
-            LiveEvent::Witness { start, end, bytes } => {
-                self.range = Some((start, end));
-                self.witness_bytes = (bytes > 0).then_some(bytes);
-            }
-            LiveEvent::Digest(digest) => self.digest = Some(digest),
-            LiveEvent::ExeCommit(commit) => self.exe_commit = Some(commit),
-            LiveEvent::Failed(message) => {
-                self.fail(message.clone());
-                return Some(Toast::warning(message));
-            }
-            LiveEvent::Done { proof_bytes } => {
-                self.enter(Stage::Done);
-                self.proof_bytes = proof_bytes;
-                self.finished_at = Some(Instant::now());
-                self.handle = None;
-                return Some(Toast::info("OpenVM app proof completed".to_string()));
-            }
+            LiveEvent::Enter(step) => self.enter(step),
+            LiveEvent::Detail(step, detail) => self.steps[step as usize].detail = detail,
+            LiveEvent::Progress(ratio) => self.progress = Some(ratio),
+            LiveEvent::Finished(result) => return Some(self.finish(result)),
         }
         None
     }
 
-    fn enter(&mut self, stage: Stage) {
-        if stage == self.stage {
-            return;
-        }
-        if let Some(slot) = self.stage_times.get_mut(self.stage as usize) {
-            *slot = Some(self.stage_started_at.elapsed());
-        }
-        self.stage = stage;
-        self.stage_started_at = Instant::now();
-    }
-
-    fn card_state(&self, stage: Stage) -> CardState {
-        if self.stage > stage || self.stage == Stage::Done {
-            CardState::Ok
-        } else if self.stage < stage {
-            CardState::Queued
-        } else if self.error.is_some() {
-            CardState::Failed
-        } else {
-            CardState::Running
-        }
-    }
-
-    fn timing(&self, stage: Stage) -> String {
-        match self.card_state(stage) {
-            CardState::Ok => self
-                .stage_times
-                .get(stage as usize)
-                .copied()
-                .flatten()
-                .map_or_else(String::new, |took| format!("took {}", Format::duration(took))),
-            CardState::Running => {
-                format!("elapsed {}", Format::duration(self.stage_started_at.elapsed()))
+    fn enter(&mut self, step: Step) {
+        let now = Instant::now();
+        for row in &mut self.steps[..step as usize] {
+            if let StepStatus::Running(since) = row.status {
+                row.status = StepStatus::Done(now - since);
             }
-            CardState::Failed => "failed".to_string(),
-            CardState::Queued => "queued".to_string(),
         }
+        self.steps[step as usize].status = StepStatus::Running(now);
+    }
+
+    fn finish(&mut self, result: Result<(), String>) -> Toast {
+        if result.is_err() {
+            self.stop();
+        }
+        let now = Instant::now();
+        self.finished_at = Some(now);
+        self.handle = None;
+        for row in &mut self.steps {
+            let StepStatus::Running(since) = row.status else { continue };
+            row.status = match &result {
+                Ok(()) => StepStatus::Done(now - since),
+                Err(error) => {
+                    row.detail.clone_from(error);
+                    StepStatus::Failed(now - since)
+                }
+            };
+        }
+        match result {
+            Ok(()) => Toast::info(format!(
+                "Edge EVM proof completed in {}",
+                Format::duration(self.elapsed())
+            )),
+            Err(error) => Toast::warning(error),
+        }
+    }
+
+    fn render(&self, frame: &mut Frame<'_>, area: Rect) {
+        let keys =
+            if self.running() { " p restart · Esc abort " } else { " p prove again · Esc back " };
+        let block = Block::default()
+            .title(format!(" OpenVM · {} ", self.chain_name))
+            .title(Line::from(format!(" {} ", Format::duration(self.elapsed()))).right_aligned())
+            .title_bottom(keys)
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(COLOR_BASE_BLUE));
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+
+        let [steps, log] =
+            Layout::vertical([Constraint::Length(Step::ALL.len() as u16 + 1), Constraint::Min(0)])
+                .areas(inner);
+        let rows = Layout::vertical([Constraint::Length(1); Step::ALL.len()]).split(steps);
+        for (step, row) in Step::ALL.into_iter().zip(rows.iter()) {
+            self.render_step(frame, *row, step);
+        }
+        self.render_log(frame, log);
+    }
+
+    fn render_step(&self, frame: &mut Frame<'_>, area: Rect, step: Step) {
+        let row = &self.steps[step as usize];
+        let (glyph, color, took) = match row.status {
+            StepStatus::Pending => ('○', Color::DarkGray, None),
+            StepStatus::Running(since) => ('●', COLOR_ACTIVE_BORDER, Some(since.elapsed())),
+            StepStatus::Done(took) => ('✓', COLOR_BURN, Some(took)),
+            StepStatus::Failed(took) => ('✗', Color::Red, Some(took)),
+        };
+        let [head, mut body, clock] =
+            Layout::horizontal([Constraint::Length(12), Constraint::Min(0), Constraint::Length(9)])
+                .areas(area);
+        frame.render_widget(
+            Line::from(vec![
+                Span::styled(format!(" {glyph} "), Style::default().fg(color)),
+                Span::raw(step.label()),
+            ]),
+            head,
+        );
+
+        let detail_color =
+            if matches!(row.status, StepStatus::Failed(_)) { Color::Red } else { Color::Gray };
+        let detail = Line::from(row.detail.as_str()).fg(detail_color);
+        let progress = self.progress.filter(|_| matches!(row.status, StepStatus::Running(_)));
+        if let Some(ratio) = progress.filter(|_| step == Step::Prove) {
+            let [bar, text] =
+                Layout::horizontal([Constraint::Min(8), Constraint::Length(detail.width() as u16)])
+                    .spacing(1)
+                    .areas(body);
+            let gauge = LineGauge::default()
+                .ratio(ratio.clamp(0.0, 1.0))
+                .label("")
+                .filled_symbol("━")
+                .filled_style(Style::default().fg(COLOR_ACTIVE_BORDER))
+                .unfilled_style(Style::default().fg(Color::DarkGray));
+            frame.render_widget(gauge, bar);
+            body = text;
+        }
+        frame.render_widget(detail, body);
+
+        if let Some(took) = took {
+            frame.render_widget(
+                Line::from(format!("{} ", Format::duration(took)))
+                    .right_aligned()
+                    .fg(Color::DarkGray),
+                clock,
+            );
+        }
+    }
+
+    fn render_log(&self, frame: &mut Frame<'_>, area: Rect) {
+        let block = Block::default().padding(Padding::horizontal(1));
+        let height = block.inner(area).height as usize;
+        let lines: Vec<Line<'_>> = self
+            .log
+            .iter()
+            .skip(self.log.len().saturating_sub(height))
+            .map(|line| Line::from(line.as_str()).fg(Color::DarkGray))
+            .collect();
+        frame.render_widget(Paragraph::new(lines).block(block), area);
     }
 }
 
-/// Proves one live L2 block with the local `OpenVM` range guest.
+/// Proves one live L2 block with the `OpenVM` range guest.
 ///
-/// Shells out to `openvm-dump` for the witness, then `cargo openvm run` and
-/// `cargo openvm prove app`, and renders their progress.
+/// Shells out to `openvm-dump` for the witness, then proves it on the Axiom
+/// Edge manager at `OPENVM_EDGE_URL`.
 #[derive(Debug, Default)]
 pub struct OpenVmView {
     live: Option<LiveProve>,
@@ -302,7 +410,7 @@ impl OpenVmView {
 
     fn restart(&mut self, resources: &mut Resources) {
         self.started = true;
-        match LiveRpcs::from_config(&resources.config) {
+        match LiveRpcs::from_env(&resources.config) {
             Ok(rpcs) => {
                 resources.toasts.push(Toast::info(format!(
                     "Proving one {} block with OpenVM",
@@ -328,7 +436,7 @@ impl View for OpenVmView {
         match key.code {
             KeyCode::Esc => {
                 if let Some(live) = self.live.as_mut().filter(|live| live.running()) {
-                    live.fail("aborted".to_string());
+                    resources.toasts.push(live.finish(Err("aborted".to_string())));
                 }
             }
             KeyCode::Char('p') => self.restart(resources),
@@ -348,126 +456,124 @@ impl View for OpenVmView {
     }
 
     fn render(&mut self, frame: &mut Frame<'_>, area: Rect, resources: &Resources) {
-        let Some(live) = self.live.as_ref() else {
-            let hint = LiveRpcs::from_config(&resources.config)
-                .err()
-                .unwrap_or_else(|| "starting…".to_string());
-            let block = Block::default()
-                .title(" OpenVM range ")
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(COLOR_BASE_BLUE));
-            frame.render_widget(
-                Paragraph::new(format!("{hint}\n\np retry")).block(block).fg(Color::Gray),
-                area,
-            );
+        if let Some(live) = self.live.as_ref() {
+            live.render(frame, area);
             return;
-        };
-
-        let range = live.range.map_or_else(String::new, |(start, end)| format!(" {start}→{end}"));
-        let status = match (&live.error, live.stage) {
-            (Some(_), _) => "failed",
-            (None, Stage::Done) => "done",
-            (None, _) => "live",
-        };
+        }
+        let hint =
+            LiveRpcs::from_env(&resources.config).err().unwrap_or_else(|| "starting…".to_string());
         let block = Block::default()
-            .title(format!(" OpenVM range · {}{range} · {status} ", live.chain_name))
+            .title(" OpenVM ")
+            .title_bottom(" p retry ")
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(COLOR_BASE_BLUE));
-        let inner = block.inner(area);
-        frame.render_widget(block, area);
-
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(6),
-                Constraint::Length(4),
-                Constraint::Min(5),
-                Constraint::Length(1),
-            ])
-            .split(inner);
-        render_pipeline(frame, chunks[0], live);
-        render_values(frame, chunks[1], live);
-        render_log(frame, chunks[2], live);
-        render_footer(frame, chunks[3], live);
+            .border_style(Style::default().fg(COLOR_BASE_BLUE))
+            .padding(Padding::horizontal(1));
+        frame.render_widget(Paragraph::new(hint).block(block).fg(Color::Gray), area);
     }
-}
-
-fn openvm_dir() -> PathBuf {
-    workspace_root().join("crates/proof/zk/programs/openvm")
 }
 
 fn workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..")
 }
 
-async fn run_pipeline(rpcs: LiveRpcs, tx: mpsc::Sender<LiveEvent>) {
-    if let Err(error) = run_pipeline_steps(rpcs, &tx).await {
-        let _ = tx.send(LiveEvent::Failed(error)).await;
-    }
+async fn run_pipeline(rpcs: LiveRpcs, proof_uuid: String, tx: mpsc::Sender<LiveEvent>) {
+    let result = prove(&rpcs, &proof_uuid, &tx).await;
+    let _ = tx.send(LiveEvent::Finished(result)).await;
 }
 
-async fn run_pipeline_steps(rpcs: LiveRpcs, tx: &mpsc::Sender<LiveEvent>) -> Result<(), String> {
-    let openvm = openvm_dir();
-    let guest = openvm.join("range/ethereum");
-    let elf = openvm.join("elf");
-    let exe = elf.join("range.vmexe");
-    let input = elf.join("input.json");
-    let pk = elf.join("app.pk");
-    let proof = elf.join("range.app.proof");
-    if !exe.is_file() {
-        return Err("range.vmexe missing. Run `just openvm build-elf` first.".to_string());
-    }
-
+async fn prove(
+    rpcs: &LiveRpcs,
+    proof_uuid: &str,
+    tx: &mpsc::Sender<LiveEvent>,
+) -> Result<(), String> {
+    let elf = workspace_root().join("crates/proof/zk/programs/openvm/elf");
+    // RPCs go through env so cargo's `Running …` line keeps them out of the log.
     let mut dump = Command::new("cargo");
-    dump.args(["run", "-p", "base-openvm-dump", "--", "--l1-rpc", rpcs.l1_rpc.as_str()])
-        .args(["--l1-beacon-rpc", rpcs.l1_beacon_rpc.as_str()])
-        .args(["--l2-rpc", rpcs.l2_rpc.as_str()])
-        .args(["--l2-node-rpc", rpcs.l2_node_rpc.as_str()])
+    dump.args(["run", "-p", "base-openvm-dump", "--"])
+        .env("OPENVM_L1_RPC", rpcs.l1_rpc.as_str())
+        .env("OPENVM_L1_BEACON_RPC", rpcs.l1_beacon_rpc.as_str())
+        .env("OPENVM_L2_RPC", rpcs.l2_rpc.as_str())
+        .env("OPENVM_L2_NODE_RPC", rpcs.l2_node_rpc.as_str())
         .arg("--out-dir")
         .arg(&elf)
         .current_dir(workspace_root())
         .env_remove("RUST_LOG");
-    run_logged(dump, tx, Stage::Witness).await?;
+    run_logged(dump, tx).await.map_err(|error| format!("witness dump {error}"))?;
 
-    let _ = tx.send(LiveEvent::Stage(Stage::Execute)).await;
-    let mut run = cargo_openvm(&guest, &["run"]);
-    run.arg("--exe").arg(&exe).arg("--input").arg(&input);
-    run_logged(run, tx, Stage::Execute).await?;
+    let stdin_path = elf.join("input.bin");
+    let stdin = tokio::fs::read(&stdin_path)
+        .await
+        .map_err(|error| format!("failed to read {}: {error}", stdin_path.display()))?;
+    let _ = tx.send(LiveEvent::Enter(Step::Prove)).await;
 
-    let _ = tx.send(LiveEvent::Stage(Stage::Prove)).await;
-    // App keys depend only on openvm.toml and take well under a second, so
-    // regenerate them rather than risk a key from an older VM config.
-    let mut keygen = cargo_openvm(&guest, &["keygen", "--app-only"]);
-    keygen.arg("--output-dir").arg(&elf);
-    run_logged(keygen, tx, Stage::Prove).await?;
-    let mut prove = cargo_openvm(&guest, &["prove", "app"]);
-    prove
-        .arg("--exe")
-        .arg(&exe)
-        .arg("--input")
-        .arg(&input)
-        .arg("--app-pk")
-        .arg(&pk)
-        .arg("--proof")
-        .arg(&proof);
-    run_logged(prove, tx, Stage::Prove).await?;
+    let edge_error = |error: anyhow::Error| format!("Edge: {error:#}");
+    log(tx, format!("edge: uploading {} input as {proof_uuid}", Format::bytes(stdin.len() as u64)))
+        .await;
+    rpcs.edge.upload_input(proof_uuid, stdin).await.map_err(edge_error)?;
+    let request = EdgeProofRequest {
+        proof_uuid: proof_uuid.to_string(),
+        program: EdgeProgram { name: EDGE_PROGRAM_NAME.to_string(), version: EDGE_PROGRAM_VERSION },
+        proof_type: EdgeProofType::Evm,
+        timeout_secs: EDGE_PROOF_TIMEOUT.as_secs(),
+    };
+    let started = rpcs.edge.start_proof(&request).await.map_err(edge_error)?;
+    log(tx, format!("edge: proving on {} workers", started.num_workers)).await;
 
-    let proof_bytes = std::fs::metadata(&proof).ok().map(|meta| meta.len());
-    let _ = tx.send(LiveEvent::Done { proof_bytes }).await;
-    Ok(())
+    let deadline = Instant::now() + EDGE_PROOF_TIMEOUT + EDGE_POLL_GRACE;
+    let mut last_summary = String::new();
+    let mut wrapping = false;
+    loop {
+        if Instant::now() > deadline {
+            return Err(format!("Edge proof exceeded {}", Format::duration(EDGE_PROOF_TIMEOUT)));
+        }
+        tokio::time::sleep(EDGE_POLL_INTERVAL).await;
+        let state = rpcs.edge.proof_state(proof_uuid).await.map_err(edge_error)?;
+        let segments = state.num_segments.filter(|&segments| segments > 0);
+        let detail = format!(
+            "app {}/{} · leaf {} · internal {}",
+            state.app_proofs_count,
+            segments.map_or_else(|| "?".to_string(), |segments| segments.to_string()),
+            state.leaf_proofs_count,
+            state.internal_proofs_count,
+        );
+        let summary = format!("edge: {} · {detail}", state.status.label());
+        if summary != last_summary {
+            log(tx, summary.clone()).await;
+            last_summary = summary;
+            if let Some(segments) = segments {
+                let ratio = state.app_proofs_count as f64 / segments as f64;
+                let _ = tx.send(LiveEvent::Progress(ratio)).await;
+            }
+            let _ = tx.send(LiveEvent::Detail(Step::Prove, detail)).await;
+        }
+        if state.stark_done() && !wrapping {
+            wrapping = true;
+            let _ = tx.send(LiveEvent::Enter(Step::Wrap)).await;
+        }
+        if state.is_completed() {
+            if let (Some(root), Some(halo2)) =
+                (state.total_root_prove_ms, state.total_halo2_prove_ms)
+            {
+                let detail = format!(
+                    "root {} · halo2 {}",
+                    Format::duration(Duration::from_millis(root)),
+                    Format::duration(Duration::from_millis(halo2))
+                );
+                let _ = tx.send(LiveEvent::Detail(Step::Wrap, detail)).await;
+            }
+            return Ok(());
+        }
+        if state.is_terminal() {
+            return Err(format!("Edge proof {}", state.status));
+        }
+    }
 }
 
-fn cargo_openvm(guest: &Path, subcommand: &[&str]) -> Command {
-    let mut command = Command::new("cargo");
-    command.arg("openvm").args(subcommand).args(["--config", "openvm.toml"]).current_dir(guest);
-    command
+async fn log(tx: &mpsc::Sender<LiveEvent>, line: String) {
+    let _ = tx.send(LiveEvent::Log(line)).await;
 }
 
-async fn run_logged(
-    mut command: Command,
-    tx: &mpsc::Sender<LiveEvent>,
-    stage: Stage,
-) -> Result<(), String> {
+async fn run_logged(mut command: Command, tx: &mpsc::Sender<LiveEvent>) -> Result<(), String> {
     command
         .env("CARGO_TERM_COLOR", "never")
         .env("NO_COLOR", "1")
@@ -478,11 +584,11 @@ async fn run_logged(
     let out_task = child.stdout.take().map(|out| tokio::spawn(pump_lines(out, tx.clone())));
     let err_task = child.stderr.take().map(|err| tokio::spawn(pump_lines(err, tx.clone())));
 
-    let status = child.wait().await.map_err(|error| format!("command failed: {error}"))?;
+    let status = child.wait().await.map_err(|error| format!("failed: {error}"))?;
     for task in [out_task, err_task].into_iter().flatten() {
         let _ = task.await;
     }
-    if status.success() { Ok(()) } else { Err(format!("{} exited {status}", stage.label())) }
+    if status.success() { Ok(()) } else { Err(format!("exited {status}")) }
 }
 
 async fn pump_lines<R: AsyncRead + Unpin>(reader: R, tx: mpsc::Sender<LiveEvent>) {
@@ -492,7 +598,7 @@ async fn pump_lines<R: AsyncRead + Unpin>(reader: R, tx: mpsc::Sender<LiveEvent>
         if line.is_empty() {
             continue;
         }
-        if let Some(event) = LiveEvent::parse(&line) {
+        if let Some(event) = LiveEvent::parse_witness(&line) {
             let _ = tx.send(event).await;
         }
         let _ = tx.send(LiveEvent::Log(line)).await;
@@ -513,226 +619,92 @@ fn strip_ansi(input: &str) -> String {
     out
 }
 
-fn render_pipeline(frame: &mut Frame<'_>, area: Rect, live: &LiveProve) {
-    let cols = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Ratio(1, 3); 3])
-        .split(area);
-
-    let witness = live.witness_bytes.map_or_else(
-        || "dumping rkyv…".to_string(),
-        |bytes| format!("{} rkyv", Format::bytes(bytes)),
-    );
-    let blocks = live.range.map_or_else(
-        || "picking safe head…".to_string(),
-        |(start, end)| format!("blocks {start} → {end}"),
-    );
-    let digest = live.digest.as_deref().map_or_else(|| "boot digest …".to_string(), short_hex);
-    let proof = live.proof_bytes.map_or_else(
-        || "cargo-openvm reports no %".to_string(),
-        |bytes| format!("{} app proof", Format::bytes(bytes)),
-    );
-
-    render_stage_card(frame, cols[0], " Witness ", live, Stage::Witness, [witness, blocks]);
-    render_stage_card(
-        frame,
-        cols[1],
-        " Execute ",
-        live,
-        Stage::Execute,
-        ["cargo openvm run".to_string(), digest],
-    );
-    render_stage_card(
-        frame,
-        cols[2],
-        " App proof ",
-        live,
-        Stage::Prove,
-        ["cargo openvm prove app".to_string(), proof],
-    );
-}
-
-fn render_stage_card(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    title: &str,
-    live: &LiveProve,
-    stage: Stage,
-    lines: [String; 2],
-) {
-    let state = live.card_state(stage);
-    // ponytail: cargo-openvm prints no progress, so a running card pulses off
-    // the wall clock instead of filling. Swap for real telemetry if an OpenVM
-    // host backend ever streams it.
-    let pulse = 0.2 + 0.35 * (live.stage_started_at.elapsed().as_secs_f64() * 1.8).sin().abs();
-    let (ratio, color, border) = match state {
-        CardState::Ok => (1.0, COLOR_BURN, COLOR_BURN),
-        CardState::Running => (pulse, COLOR_ACTIVE_BORDER, COLOR_ACTIVE_BORDER),
-        CardState::Failed => (0.0, Color::Red, Color::Red),
-        CardState::Queued => (0.0, Color::DarkGray, Color::DarkGray),
-    };
-    let block = Block::default()
-        .title(title)
-        .title_bottom(format!(" {} ", live.timing(stage)))
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(border));
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-
-    let [bar, text] = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(inner);
-    let gauge = LineGauge::default()
-        .ratio(ratio)
-        .label("")
-        .filled_style(Style::default().fg(color))
-        .unfilled_style(Style::default().fg(Color::DarkGray));
-    frame.render_widget(gauge, bar);
-    let lines: Vec<Line<'_>> =
-        lines.into_iter().map(|line| Line::from(line).fg(Color::Gray)).collect();
-    frame.render_widget(Paragraph::new(lines), text);
-}
-
-fn render_values(frame: &mut Frame<'_>, area: Rect, live: &LiveProve) {
-    let block = Block::default()
-        .title(" Public values ")
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(COLOR_BASE_BLUE));
-    let value = |value: &Option<String>, pending: &'static str, color: Color| {
-        value.clone().map_or_else(
-            || Span::styled(pending, Style::default().fg(Color::DarkGray)),
-            |value| Span::styled(value, Style::default().fg(color)),
-        )
-    };
-    let text = vec![
-        kv_line("boot digest", value(&live.digest, "keccak256(abi.encode(boot)) …", Color::Cyan)),
-        kv_line("exe commit", value(&live.exe_commit, "…", Color::Gray)),
-    ];
-    frame.render_widget(Paragraph::new(text).block(block), area);
-}
-
-fn render_log(frame: &mut Frame<'_>, area: Rect, live: &LiveProve) {
-    let block = Block::default()
-        .title(" Prove log ")
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(COLOR_BASE_BLUE));
-    let height = block.inner(area).height as usize;
-    let lines: Vec<Line<'_>> = live
-        .log
-        .iter()
-        .skip(live.log.len().saturating_sub(height))
-        .map(|line| Line::from(line.as_str()).fg(Color::Gray))
-        .collect();
-    frame.render_widget(Paragraph::new(lines).block(block), area);
-}
-
-fn render_footer(frame: &mut Frame<'_>, area: Rect, live: &LiveProve) {
-    let hint = match (&live.error, live.running()) {
-        (Some(error), _) => format!("  p retry   Esc back    {error}"),
-        (None, true) => {
-            format!("  p restart   Esc abort    elapsed {}", Format::duration(live.elapsed()))
-        }
-        (None, false) => {
-            format!("  p prove again   Esc back    took {}", Format::duration(live.elapsed()))
-        }
-    };
-    frame.render_widget(Paragraph::new(hint).fg(Color::DarkGray), area);
-}
-
-fn kv_line<'a>(key: &'a str, value: Span<'a>) -> Line<'a> {
-    Line::from(vec![
-        Span::styled(format!("{key:<12}"), Style::default().fg(Color::DarkGray)),
-        value,
-    ])
-}
-
-fn short_hex(hex: &str) -> String {
-    match (hex.get(..6), hex.get(hex.len().saturating_sub(4)..)) {
-        (Some(head), Some(tail)) if hex.len() > 12 => format!("{head}…{tail}"),
-        _ => hex.to_string(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn idle_prove() -> LiveProve {
         let (_tx, rx) = mpsc::channel(1);
-        LiveProve::new("zeronet".to_string(), rx, None)
+        let edge = EdgeClient::new(Url::parse("http://127.0.0.1:1").unwrap()).unwrap();
+        LiveProve::new("zeronet".to_string(), edge, "basectl-p".to_string(), rx)
+    }
+
+    fn screen(live: &LiveProve) -> String {
+        let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(80, 12)).unwrap();
+        terminal.draw(|frame| live.render(frame, frame.area())).unwrap();
+        terminal.backend().buffer().content().iter().map(|cell| cell.symbol()).collect()
     }
 
     #[test]
-    fn rpcs_require_beacon_and_op_node() {
+    fn rpcs_require_beacon_op_node_and_edge_url() {
         let mut config = MonitoringConfig::mainnet();
         config.l1_beacon_rpc = None;
-        assert!(LiveRpcs::from_config(&config).is_err());
+        assert!(LiveRpcs::from_config(&config, Some("http://127.0.0.1:3000")).is_err());
 
         config.l1_beacon_rpc = Some(Url::parse("http://127.0.0.1:5052").unwrap());
         config.consensus_node_rpc = Some(Url::parse("http://127.0.0.1:7545").unwrap());
-        assert_eq!(LiveRpcs::from_config(&config).unwrap().chain_name, "mainnet");
+        let missing = LiveRpcs::from_config(&config, None).unwrap_err();
+        assert!(missing.contains(EDGE_URL_ENV));
+        let rpcs = LiveRpcs::from_config(&config, Some("http://127.0.0.1:3000")).unwrap();
+        assert_eq!(rpcs.chain_name, "mainnet");
     }
 
     #[test]
-    fn parses_dump_and_cargo_openvm_lines() {
-        match LiveEvent::parse("OPENVM_WITNESS start=10 end=11 bytes=43000") {
-            Some(LiveEvent::Witness { start: 10, end: 11, bytes: 43000 }) => {}
+    fn parses_openvm_dump_witness_line() {
+        match LiveEvent::parse_witness("OPENVM_WITNESS start=10 end=11 bytes=0") {
+            Some(LiveEvent::Detail(Step::Witness, detail)) => {
+                assert_eq!(detail, "blocks 10 → 11 · fetching");
+            }
             other => panic!("unexpected {other:?}"),
         }
-        match LiveEvent::parse("exe commit: 0x0089") {
-            Some(LiveEvent::ExeCommit(commit)) => assert_eq!(commit, "0x0089"),
-            other => panic!("unexpected {other:?}"),
-        }
-        match LiveEvent::parse("Execution output: [53, 41, 91, 255]") {
-            Some(LiveEvent::Digest(digest)) => assert_eq!(digest, "0x35295bff"),
-            other => panic!("unexpected {other:?}"),
-        }
-        assert!(LiveEvent::parse("Execution output: [not, bytes]").is_none());
-        assert!(LiveEvent::parse("INFO compiling range").is_none());
+        assert!(LiveEvent::parse_witness("OPENVM_WITNESS start=10").is_none());
+        assert!(LiveEvent::parse_witness("INFO compiling range").is_none());
     }
 
     #[test]
-    fn stages_advance_and_failure_marks_active_card() {
+    fn failure_marks_the_running_step_with_its_reason() {
         let mut live = idle_prove();
-        assert_eq!(live.card_state(Stage::Witness), CardState::Running);
-        assert_eq!(live.card_state(Stage::Prove), CardState::Queued);
+        live.apply(LiveEvent::Enter(Step::Prove));
+        assert!(matches!(live.steps[Step::Witness as usize].status, StepStatus::Done(_)));
+        assert!(matches!(live.steps[Step::Prove as usize].status, StepStatus::Running(_)));
 
-        live.apply(LiveEvent::Stage(Stage::Execute));
-        live.apply(LiveEvent::Stage(Stage::Prove));
-        assert_eq!(live.card_state(Stage::Witness), CardState::Ok);
-        assert!(live.timing(Stage::Execute).starts_with("took"));
-        assert!(live.running());
-
-        assert!(live.apply(LiveEvent::Failed("prove exited 1".to_string())).is_some());
-        assert_eq!(live.card_state(Stage::Prove), CardState::Failed);
-        assert_eq!(live.card_state(Stage::Execute), CardState::Ok);
+        assert!(live.apply(LiveEvent::Finished(Err("Edge proof failed: OOM".into()))).is_some());
+        let prove = &live.steps[Step::Prove as usize];
+        assert!(matches!(prove.status, StepStatus::Failed(_)));
+        assert_eq!(prove.detail, "Edge proof failed: OOM");
+        assert_eq!(live.steps[Step::Wrap as usize].status, StepStatus::Pending);
         assert!(!live.running());
     }
 
     #[test]
-    fn done_completes_every_card() {
+    fn success_completes_every_started_step() {
         let mut live = idle_prove();
-        live.apply(LiveEvent::Done { proof_bytes: Some(14) });
-        for stage in [Stage::Witness, Stage::Execute, Stage::Prove] {
-            assert_eq!(live.card_state(stage), CardState::Ok);
-        }
-        assert_eq!(live.proof_bytes, Some(14));
+        live.apply(LiveEvent::Enter(Step::Prove));
+        live.apply(LiveEvent::Enter(Step::Wrap));
+        live.apply(LiveEvent::Finished(Ok(())));
+        assert!(live.steps.iter().all(|row| matches!(row.status, StepStatus::Done(_))));
         assert!(!live.running());
     }
 
     #[test]
-    fn renders_finished_prove_in_small_terminal() {
+    fn renders_progress_then_failure_reason() {
         let mut live = idle_prove();
-        live.apply(LiveEvent::Witness { start: 5, end: 6, bytes: 43_000 });
-        live.apply(LiveEvent::Digest("0x35295b7a37d3".to_string()));
-        live.apply(LiveEvent::Done { proof_bytes: Some(14_000_000) });
-        let mut view = OpenVmView { live: Some(live), started: true };
-        let resources = Resources::new(MonitoringConfig::mainnet());
+        live.apply(LiveEvent::parse_witness("OPENVM_WITNESS start=5 end=6 bytes=43000").unwrap());
+        live.apply(LiveEvent::Enter(Step::Prove));
+        live.apply(LiveEvent::Progress(0.5));
+        live.apply(LiveEvent::Detail(Step::Prove, "app 7/14 · leaf 0 · internal 0".into()));
+        let running = screen(&live);
+        assert!(running.contains("OpenVM · zeronet"));
+        assert!(running.contains("✓ Witness"));
+        assert!(running.contains("blocks 5 → 6"));
+        assert!(running.contains("● Prove"));
+        assert!(running.contains("app 7/14"));
 
-        let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(60, 20)).unwrap();
-        terminal.draw(|frame| view.render(frame, frame.area(), &resources)).unwrap();
-        let screen: String =
-            terminal.backend().buffer().content().iter().map(|cell| cell.symbol()).collect();
-        assert!(screen.contains("5→6"));
-        assert!(screen.contains("done"));
+        live.apply(LiveEvent::Finished(Err("Edge proof failed: GPU OOM".into())));
+        let failed = screen(&live);
+        assert!(failed.contains("✗ Prove"));
+        assert!(failed.contains("Edge proof failed: GPU OOM"));
+        assert!(failed.contains("○ Wrap"));
     }
 
     #[test]

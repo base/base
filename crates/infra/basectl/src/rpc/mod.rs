@@ -17,6 +17,12 @@ pub use conductor::{
     conductor_resume_node, restart_conductor_node, run_conductor_poller, transfer_conductor_leader,
 };
 
+mod edge;
+pub use edge::{
+    EdgeClient, EdgeProgram, EdgeProofRequest, EdgeProofStarted, EdgeProofState, EdgeProofStatus,
+    EdgeProofType,
+};
+
 mod el;
 pub use el::{
     BacklogBlock, BacklogFetchResult, BacklogProgress, BlockDaInfo, InitialBacklog, TxSummary,
