@@ -24,7 +24,7 @@ BEGIN
     END IF;
 
     EXECUTE format(
-        'CREATE TABLE public.%I (LIKE public.%I INCLUDING DEFAULTS INCLUDING CONSTRAINTS)',
+        'CREATE TABLE public.%I (LIKE public.%I INCLUDING DEFAULTS INCLUDING CONSTRAINTS) WITH (vacuum_truncate = false, toast.vacuum_truncate = false)',
         partition_name,
         parent_name
     );
