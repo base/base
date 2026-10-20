@@ -22,17 +22,15 @@ Each run takes its first nonce from the `pending` block tag, so jobs that share 
 | --- | --- | --- |
 | `--l1-rpc-url` | `L1_RPC_URL` | Required |
 | `--l2-rpc-url` | `L2_RPC_URL` | Required |
-| `--optimism-portal-proxy-address` | `OPTIMISM_PORTAL_PROXY_ADDRESS` | Required |
-| `--dispute-game-factory-address` | `DISPUTE_GAME_FACTORY_ADDRESS` | Optional, requires anchor state registry |
-| `--anchor-state-registry-address` | `ANCHOR_STATE_REGISTRY_ADDRESS` | Optional, requires dispute game factory |
+| `--l1-optimism-portal-address` | `L1_OPTIMISM_PORTAL_ADDRESS` | Required |
 | `--l2-fee-disburser-address` | `L2_FEE_DISBURSER_ADDRESS` | Required |
 | `--job-runner-key` | `JOB_RUNNER_KEY` | Required |
-| `--num-blocks-to-query` | `NUM_BLOCKS_TO_QUERY` | `1296000` |
-| `--num-blocks-per-query` | `NUM_BLOCKS_PER_QUERY` | `3000` |
-| `--withdrawal-timeout` | `WITHDRAWAL_TIMEOUT` | `10m` |
+| `--num-blocks-to-query` | `FEE_JOBS_CONFIRM_NUM_BLOCKS_TO_QUERY` | `1296000` |
+| `--num-blocks-per-query` | `FEE_JOBS_CONFIRM_NUM_BLOCKS_PER_QUERY` | `3000` |
+| `--withdrawal-timeout` | `FEE_JOBS_CONFIRM_WITHDRAWAL_TIMEOUT` | `10m` |
 | `--dry-run` | None | `false` |
 
-Before scanning, the job reads `disputeGameFactory()` and `anchorStateRegistry()` from the configured portal once and uses those contracts for every withdrawal. Supply both optional proof-contract addresses or neither. When supplied, they must be nonzero and match the portal's contracts, not override them. Discovery failures, zero portal addresses, and mismatches fail the run, including dry runs.
+Before scanning, the job reads `disputeGameFactory()` and `anchorStateRegistry()` from the configured portal once and uses those contracts for every withdrawal. Discovery failures and zero portal addresses fail the run, including dry runs.
 
 RPC URLs must use HTTP or HTTPS, and addresses must be nonzero. The lookback must be smaller than the current L2 block number. Log-query chunks contain at most the configured positive block count, cover both ends of `[current - lookback, current]`, and pause 300ms between requests. For block-number, receipt, log-query, and status reads, the transport bounds each HTTP attempt to the smaller of 30 seconds and half the withdrawal timeout, with at most three retries and exponential backoff. Transaction hashes are deduplicated in block/log order.
 

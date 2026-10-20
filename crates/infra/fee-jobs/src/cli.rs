@@ -183,14 +183,8 @@ pub struct ConfirmArgs {
     #[arg(long, env = "L2_RPC_URL", hide_env_values = true, value_parser = RpcUrlValueParser)]
     pub l2_rpc_url: Url,
     /// L1 Optimism portal proxy.
-    #[arg(long, env = "OPTIMISM_PORTAL_PROXY_ADDRESS")]
-    pub optimism_portal_proxy_address: Address,
-    /// Expected L1 dispute game factory, checked against the portal.
-    #[arg(long, env = "DISPUTE_GAME_FACTORY_ADDRESS", requires = "anchor_state_registry_address")]
-    pub dispute_game_factory_address: Option<Address>,
-    /// Expected L1 anchor state registry, checked against the portal.
-    #[arg(long, env = "ANCHOR_STATE_REGISTRY_ADDRESS", requires = "dispute_game_factory_address")]
-    pub anchor_state_registry_address: Option<Address>,
+    #[arg(long, env = "L1_OPTIMISM_PORTAL_ADDRESS")]
+    pub l1_optimism_portal_address: Address,
     /// L2 fee disburser to query.
     #[arg(long, env = "L2_FEE_DISBURSER_ADDRESS")]
     pub l2_fee_disburser_address: Address,
@@ -198,16 +192,16 @@ pub struct ConfirmArgs {
     #[arg(long, env = "JOB_RUNNER_KEY", hide_env_values = true, value_parser = SecretValueParser::<String>::default())]
     pub job_runner_key: Secret<String>,
     /// L2 lookback in blocks; must be smaller than the latest block number.
-    #[arg(long, env = "NUM_BLOCKS_TO_QUERY", default_value_t = 1_296_000)]
+    #[arg(long, env = "FEE_JOBS_CONFIRM_NUM_BLOCKS_TO_QUERY", default_value_t = 1_296_000)]
     pub num_blocks_to_query: u64,
     /// Maximum inclusive block count per log query.
-    #[arg(long, env = "NUM_BLOCKS_PER_QUERY", default_value_t = 3000, value_parser = clap::value_parser!(u64).range(1..))]
+    #[arg(long, env = "FEE_JOBS_CONFIRM_NUM_BLOCKS_PER_QUERY", default_value_t = 3000, value_parser = clap::value_parser!(u64).range(1..))]
     pub num_blocks_per_query: u64,
     /// Prepare transactions without signing or broadcasting them.
     #[arg(long)]
     pub dry_run: bool,
     /// Deadline per withdrawal, including decisions, proof verification and submission.
-    #[arg(long, env = "WITHDRAWAL_TIMEOUT", default_value = "10m", value_parser = humantime::parse_duration)]
+    #[arg(long, env = "FEE_JOBS_CONFIRM_WITHDRAWAL_TIMEOUT", default_value = "10m", value_parser = humantime::parse_duration)]
     pub withdrawal_timeout: Duration,
 }
 
@@ -216,9 +210,7 @@ impl fmt::Debug for ConfirmArgs {
         f.debug_struct("ConfirmArgs")
             .field("l1_rpc_url", &"[REDACTED]")
             .field("l2_rpc_url", &"[REDACTED]")
-            .field("optimism_portal_proxy_address", &self.optimism_portal_proxy_address)
-            .field("dispute_game_factory_address", &self.dispute_game_factory_address)
-            .field("anchor_state_registry_address", &self.anchor_state_registry_address)
+            .field("l1_optimism_portal_address", &self.l1_optimism_portal_address)
             .field("l2_fee_disburser_address", &self.l2_fee_disburser_address)
             .field("job_runner_key", &self.job_runner_key)
             .field("num_blocks_to_query", &self.num_blocks_to_query)
@@ -278,7 +270,6 @@ mod tests {
     use std::{env, process::Command, time::Duration};
 
     use alloy_primitives::Address;
-    use base_withdrawer::{FaultProofContracts, ProofSystem, Secret};
     use clap::{Parser, error::ErrorKind};
     use rstest::rstest;
 
@@ -293,7 +284,7 @@ mod tests {
             "https://l1.example",
             "--l2-rpc-url",
             "https://l2.example",
-            "--optimism-portal-proxy-address",
+            "--l1-optimism-portal-address",
             "0x1111111111111111111111111111111111111111",
             "--l2-fee-disburser-address",
             "0x4444444444444444444444444444444444444444",
@@ -315,27 +306,30 @@ mod tests {
             };
             assert_eq!(args.l1_rpc_url.as_str(), "https://l1.example/");
             assert_eq!(args.l2_rpc_url.as_str(), "https://l2.example/");
-            assert_eq!(args.optimism_portal_proxy_address, Address::repeat_byte(0x11));
+            assert_eq!(args.l1_optimism_portal_address, Address::repeat_byte(0x11));
             assert_eq!(args.l2_fee_disburser_address, Address::repeat_byte(0x44));
-            assert_eq!(args.dispute_game_factory_address, Some(Address::repeat_byte(0x22)));
-            assert_eq!(args.anchor_state_registry_address, Some(Address::repeat_byte(0x33)));
             assert!(args.job_runner_key.0 == "01".repeat(32));
-            assert_eq!(args.num_blocks_to_query, 1_296_000);
-            assert_eq!(args.num_blocks_per_query, 3000);
-            assert_eq!(args.withdrawal_timeout, Duration::from_secs(600));
+            assert_eq!(args.num_blocks_to_query, 100);
+            assert_eq!(args.num_blocks_per_query, 25);
+            assert_eq!(args.withdrawal_timeout, Duration::from_secs(120));
             return;
         }
+        let args = confirm(&[]).unwrap();
+        assert_eq!(args.num_blocks_to_query, 1_296_000);
+        assert_eq!(args.num_blocks_per_query, 3000);
+        assert_eq!(args.withdrawal_timeout, Duration::from_secs(600));
         let output = Command::new(env::current_exe().unwrap())
             .args(["--exact", "cli::tests::confirm_reads_deployment_environment_and_defaults"])
             .env_clear()
             .env("FEE_JOBS_CONFIRM_ENV_TEST_CHILD", "1")
             .env("L1_RPC_URL", "https://l1.example")
             .env("L2_RPC_URL", "https://l2.example")
-            .env("OPTIMISM_PORTAL_PROXY_ADDRESS", Address::repeat_byte(0x11).to_string())
+            .env("L1_OPTIMISM_PORTAL_ADDRESS", Address::repeat_byte(0x11).to_string())
             .env("L2_FEE_DISBURSER_ADDRESS", Address::repeat_byte(0x44).to_string())
             .env("JOB_RUNNER_KEY", "01".repeat(32))
-            .env("DISPUTE_GAME_FACTORY_ADDRESS", Address::repeat_byte(0x22).to_string())
-            .env("ANCHOR_STATE_REGISTRY_ADDRESS", Address::repeat_byte(0x33).to_string())
+            .env("FEE_JOBS_CONFIRM_NUM_BLOCKS_TO_QUERY", "100")
+            .env("FEE_JOBS_CONFIRM_NUM_BLOCKS_PER_QUERY", "25")
+            .env("FEE_JOBS_CONFIRM_WITHDRAWAL_TIMEOUT", "2m")
             .output()
             .unwrap();
         assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
@@ -351,7 +345,7 @@ mod tests {
                 &[
                     "--num-blocks-per-query",
                     "--withdrawal-timeout",
-                    "--optimism-portal-proxy-address",
+                    "--l1-optimism-portal-address",
                     "--l1-rpc-url",
                 ]
             } else {
@@ -445,64 +439,13 @@ mod tests {
         assert!(format!("{error:#}").contains("JOB_RUNNER_KEY"));
     }
 
-    #[rstest]
-    #[case::discovered(&[], None)]
-    #[case::expected(&[
-        "--dispute-game-factory-address", "0x2222222222222222222222222222222222222222",
-        "--anchor-state-registry-address", "0x3333333333333333333333333333333333333333",
-    ], Some(FaultProofContracts {
-        dispute_game_factory: Address::repeat_byte(0x22),
-        anchor_state_registry: Address::repeat_byte(0x33),
-    }))]
-    fn confirm_accepts_discovered_or_expected_proof_contracts(
-        #[case] flags: &[&str],
-        #[case] expected: Option<FaultProofContracts>,
-    ) {
-        let mut args = confirm(flags).unwrap();
-        args.job_runner_key = Secret("01".repeat(32));
-        assert_eq!(
-            ConfirmJob { args }.config().unwrap().network.proofs,
-            ProofSystem::FaultProofs { expected },
-        );
-    }
-
-    #[rstest]
-    #[case::factory("--dispute-game-factory-address")]
-    #[case::registry("--anchor-state-registry-address")]
-    fn confirm_requires_both_expected_proof_contracts(#[case] flag: &str) {
-        let error = confirm(&[flag, "0x2222222222222222222222222222222222222222"]).unwrap_err();
-        assert_eq!(error.kind(), ErrorKind::MissingRequiredArgument);
-        let mut args = confirm(&[]).unwrap();
-        if flag == "--dispute-game-factory-address" {
-            args.dispute_game_factory_address = Some(Address::repeat_byte(2));
-        } else {
-            args.anchor_state_registry_address = Some(Address::repeat_byte(3));
-        }
-        assert!(
-            ConfirmJob { args }.config().unwrap_err().to_string().contains("supplied together")
-        );
-    }
-
     #[test]
     fn confirm_rejects_zero_addresses_non_http_urls_and_zero_limits() {
-        for address in [
-            "--optimism-portal-proxy-address",
-            "--dispute-game-factory-address",
-            "--anchor-state-registry-address",
-            "--l2-fee-disburser-address",
-        ] {
+        for address in ["--l1-optimism-portal-address", "--l2-fee-disburser-address"] {
             let mut args = confirm(&[]).unwrap();
             let zero = Default::default();
             match address {
-                "--optimism-portal-proxy-address" => args.optimism_portal_proxy_address = zero,
-                "--dispute-game-factory-address" => {
-                    args.dispute_game_factory_address = Some(zero);
-                    args.anchor_state_registry_address = Some(Address::repeat_byte(3));
-                }
-                "--anchor-state-registry-address" => {
-                    args.anchor_state_registry_address = Some(zero);
-                    args.dispute_game_factory_address = Some(Address::repeat_byte(2));
-                }
+                "--l1-optimism-portal-address" => args.l1_optimism_portal_address = zero,
                 _ => args.l2_fee_disburser_address = zero,
             }
             assert!(ConfirmJob { args }.config().unwrap_err().to_string().contains("zero"));
