@@ -192,7 +192,7 @@ digest = "76c9d91a5c"
 
 ["crates/builder/publish/README.md"]
 summary = "WebSocket broadcast publisher for the block builder (WebSocketPublisher, Listener, BroadcastLoop, metrics traits). Use when changing how serialized payloads are pushed to connected subscribers."
-digest = "55d5b948f7"
+digest = "5221b3ad79"
 
 ["crates/common/bundles/README.md"]
 summary = "Types for transaction bundles used in resource metering (Bundle, ParsedBundle, AcceptedBundle, MeterBundleResponse). Use when working on base_meterBundle or bundle hashing and DA size helpers."
@@ -621,10 +621,6 @@ digest = "4bc018ccf3"
 ["crates/utilities/retry/README.md"]
 summary = "Shared RetryConfig wrapper over backon exponential retry builders, giving services common delay normalization, jitter, and bounded or unbounded retry limits. Use when adding retry logic."
 digest = "02fa5c4aac"
-
-["crates/utilities/ring-buffer/README.md"]
-summary = "Generic fixed-capacity ring buffer (VecDeque of (I, V) entries) for position-keyed replay; the oldest entry is evicted on push when full."
-digest = "b25b18bc1c"
 
 ["crates/utilities/runtime/README.md"]
 summary = "Async runtime abstraction (Clock, Spawner, Cancellation, Runtime traits) with TokioRuntime for production and a seeded deterministic executor with virtual time for reproducible tests."

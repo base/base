@@ -289,7 +289,6 @@ base-l1-head = { path = "crates/utilities/l1-head" }
 base-reth-cli = { path = "crates/utilities/reth-cli" }
 base-test-utils = { path = "crates/utilities/test-utils" }
 base-tx-manager = { path = "crates/utilities/tx-manager" }
-base-ring-buffer = { path = "crates/utilities/ring-buffer" }
 base-optimism-rpc = { path = "crates/utilities/optimism-rpc" }
 base-trusted-proxy = { path = "crates/utilities/trusted-proxy" }
 base-upgrade-signal = { path = "crates/utilities/upgrade-signal" }

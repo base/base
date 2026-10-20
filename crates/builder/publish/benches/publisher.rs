@@ -1,6 +1,6 @@
 //! Benchmarks for [`WebSocketPublisher`] publish throughput.
 
-use std::{hint::black_box, net::SocketAddr, num::NonZeroUsize, time::Duration};
+use std::{hint::black_box, net::SocketAddr, time::Duration};
 
 use base_builder_publish::WebSocketPublisher;
 use criterion::{Criterion, criterion_group, criterion_main};
@@ -67,8 +67,7 @@ fn sized_payloads() -> Vec<(&'static str, serde_json::Value)> {
 fn publisher_with_subscribers(rt: &Runtime, n: usize) -> WebSocketPublisher {
     rt.block_on(async {
         let addr = ephemeral_addr();
-        let publisher =
-            WebSocketPublisher::with_capacity(addr, 100, NonZeroUsize::new(16).unwrap()).unwrap();
+        let publisher = WebSocketPublisher::with_capacity(addr, 100).unwrap();
 
         for _ in 0..n {
             let (client, _) =
@@ -99,7 +98,7 @@ fn bench_publish(c: &mut Criterion) {
         for &(label, ref payload) in &payloads {
             c.bench_function(&format!("publish/{label}/{sub_count}sub"), |b| {
                 b.iter(|| {
-                    black_box(publisher.publish(payload, 1, 0).unwrap());
+                    black_box(publisher.publish(payload).unwrap());
                 });
             });
         }

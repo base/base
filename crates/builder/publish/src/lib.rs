@@ -17,4 +17,4 @@ mod listener;
 pub use listener::Listener;
 
 mod publisher;
-pub use publisher::{PositionedPayload, StreamPosition, WebSocketPublisher};
+pub use publisher::WebSocketPublisher;

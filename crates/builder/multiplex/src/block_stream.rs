@@ -93,6 +93,6 @@ impl BlockStreamPublisher {
                 return;
             }
         };
-        self.ws_pub.publish_message(Message::binary(compressed), block.number, 0);
+        self.ws_pub.publish_message(Message::binary(compressed));
     }
 }

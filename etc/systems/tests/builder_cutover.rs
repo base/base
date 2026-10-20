@@ -25,7 +25,7 @@ const L2_CHAIN_ID: u64 = 84538453;
 // in CI. A very early activation makes the "pre-cutover" transaction race node startup.
 const DENIM_ACTIVATION_BLOCK: u64 = 25;
 const BLOCK_TIMEOUT: Duration = Duration::from_secs(45);
-const REPLAY_QUIET_TIMEOUT: Duration = Duration::from_secs(2);
+const FLASHBLOCKS_QUIET_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[tokio::test]
 async fn cuts_over_builder_and_block_time_at_denim() -> Result<()> {
@@ -50,6 +50,9 @@ async fn verify_cutover(zenith_activation_block: Option<u64>) -> Result<()> {
         setup = setup.with_base_zenith_activation_block(block);
     }
     let system = setup.build().await?;
+    // The stream is live-only, so subscribe before Denim to observe the last flashblocks.
+    let flashblocks =
+        tokio::spawn(collect_flashblock_positions(system.l2_stack().builder().flashblocks_url()));
     let builder = system.l2_builder_provider()?;
     let client = system.l2_client_provider()?;
     let signer = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_1.private_key)?;
@@ -109,7 +112,10 @@ async fn verify_cutover(zenith_activation_block: Option<u64>) -> Result<()> {
     wait_for_block(&builder, last_verified_block).await?;
     wait_for_block(&client, last_verified_block).await?;
     verify_chain_and_cadence(&builder, &client, last_verified_block).await?;
-    verify_flashblocks_stop_at_denim(&system.l2_stack().builder().flashblocks_url()).await?;
+    let positions = timeout(BLOCK_TIMEOUT, flashblocks)
+        .await
+        .wrap_err("flashblocks stream never went quiet")???;
+    verify_flashblocks_stop_at_denim(&positions);
 
     Ok(())
 }
@@ -224,14 +230,23 @@ async fn verify_chain_and_cadence(
     Ok(())
 }
 
-async fn verify_flashblocks_stop_at_denim(url: &str) -> Result<()> {
-    let replay_url = format!("{url}?block_number=0&flashblock_index=0");
-    let (stream, _) = connect_async(replay_url).await?;
+/// Records `(block_number, index)` for each flashblock until the stream has been quiet for
+/// [`FLASHBLOCKS_QUIET_TIMEOUT`] after the first one.
+async fn collect_flashblock_positions(url: String) -> Result<Vec<(u64, u64)>> {
+    let (stream, _) = connect_async(url).await?;
     let (_, mut messages) = stream.split();
     let mut positions = Vec::new();
 
-    while let Ok(Some(message)) = timeout(REPLAY_QUIET_TIMEOUT, messages.next()).await {
-        let Message::Text(message) = message? else {
+    loop {
+        let message = if positions.is_empty() {
+            messages.next().await
+        } else {
+            match timeout(FLASHBLOCKS_QUIET_TIMEOUT, messages.next()).await {
+                Ok(message) => message,
+                Err(_) => break,
+            }
+        };
+        let Message::Text(message) = message.ok_or_eyre("flashblocks stream closed")?? else {
             continue;
         };
         let flashblock: FlashblocksPayloadV1 = serde_json::from_str(&message)?;
@@ -239,6 +254,10 @@ async fn verify_flashblocks_stop_at_denim(url: &str) -> Result<()> {
         positions.push((metadata.block_number, flashblock.index));
     }
 
+    Ok(positions)
+}
+
+fn verify_flashblocks_stop_at_denim(positions: &[(u64, u64)]) {
     assert!(!positions.is_empty(), "no pre-Denim flashblocks were published");
     assert!(
         positions.iter().any(|(number, _)| *number == DENIM_ACTIVATION_BLOCK - 1),
@@ -248,6 +267,4 @@ async fn verify_flashblocks_stop_at_denim(url: &str) -> Result<()> {
         positions.iter().all(|(number, _)| *number < DENIM_ACTIVATION_BLOCK),
         "post-Denim flashblock published at {positions:?}"
     );
-
-    Ok(())
 }

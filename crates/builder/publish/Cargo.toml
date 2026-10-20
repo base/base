@@ -12,15 +12,11 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-http.workspace = true
 serde.workspace = true
 futures.workspace = true
 tracing.workspace = true
-thiserror.workspace = true
 tokio-util.workspace = true
-parking_lot.workspace = true
 base-metrics.workspace = true
-base-ring-buffer.workspace = true
 tokio-tungstenite.workspace = true
 metrics = { workspace = true, optional = true }
 serde_json = { workspace = true, features = ["std"] }

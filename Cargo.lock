@@ -3424,15 +3424,11 @@ name = "base-builder-publish"
 version = "0.0.0"
 dependencies = [
  "base-metrics",
- "base-ring-buffer",
  "criterion",
  "futures",
- "http 1.4.2",
  "metrics",
- "parking_lot",
  "serde",
  "serde_json",
- "thiserror 2.0.19",
  "tokio",
  "tokio-tungstenite 0.28.0",
  "tokio-util",
@@ -6104,10 +6100,6 @@ version = "0.0.0"
 dependencies = [
  "backon",
 ]
-
-[[package]]
-name = "base-ring-buffer"
-version = "0.0.0"
 
 [[package]]
 name = "base-roxy"

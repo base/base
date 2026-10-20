@@ -26,20 +26,18 @@ base-builder-publish = { git = "https://github.com/base/base" }
 Create a publisher and broadcast messages:
 
 ```rust,ignore
-use std::num::NonZeroUsize;
 use base_builder_publish::WebSocketPublisher;
 
-// Default channel and ring buffer capacity
+// Default channel capacity
 let publisher = WebSocketPublisher::new("127.0.0.1:9999".parse().unwrap())?;
-publisher.publish(&serde_json::json!({"hello": "world"}), 1, 0)?;
+publisher.publish(&serde_json::json!({"hello": "world"}))?;
 
-// Or with custom channel and ring buffer capacities
-let publisher = WebSocketPublisher::with_capacity(
-    "127.0.0.1:9999".parse().unwrap(),
-    256,
-    NonZeroUsize::new(32).unwrap(),
-)?;
+// Or with a custom channel capacity
+let publisher = WebSocketPublisher::with_capacity("127.0.0.1:9999".parse().unwrap(), 256)?;
 ```
+
+Delivery is live-only: a client receives messages published while it is connected, and a client
+that falls behind the channel capacity is disconnected.
 
 ## License
 
