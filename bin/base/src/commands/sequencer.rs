@@ -137,8 +137,10 @@ impl SequencerCommand {
             let _upgrade_countdown_metrics =
                 CliMetrics::spawn_upgrade_countdown_recorder(rollup_config.clone());
 
-            let l2_engine =
-                EngineEndpoint::InMemory(InMemoryTransport { module: launched.auth_module });
+            let l2_engine = EngineEndpoint::InMemory {
+                transport: InMemoryTransport { module: launched.auth_module },
+                engine_api: launched.engine_api,
+            };
             let handle = launched.handle;
             // Keep the execution node handle alive until both services have coordinated shutdown.
             let execution_node = handle.node;

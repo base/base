@@ -5,11 +5,12 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
+use base_common_network::SharedEngineApi;
 use base_execution_payload_builder::{
     RejectionCache,
     config::{BaseDAConfig, GasLimitConfig, ResourceMeteringConfig},
 };
-use base_node_core::args::RollupArgs;
+use base_node_core::{BaseEngineApiBuilder, args::RollupArgs};
 use eyre::{Result, eyre};
 use jsonrpsee::RpcModule;
 use reth_node_builder::{Node, NodeHandle, NodeHandleFor};
@@ -32,6 +33,8 @@ pub struct LaunchedBaseNode {
     /// The fully merged authenticated RPC module (Engine API plus auth-only methods), for
     /// in-process callers that want to skip the auth server's transports.
     pub auth_module: RpcModule<()>,
+    /// The Engine API handler, for in-process callers that want to skip JSON-RPC encoding.
+    pub engine_api: SharedEngineApi,
 }
 
 /// Wraps the Base node configuration and orchestrates builder wiring.
@@ -188,11 +191,15 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
             base_node = base_node.with_rejection_cache(rejection_cache);
         }
         let components = service_builder.build_components(&base_node);
+        let engine_api = Arc::new(OnceLock::new());
+        let add_ons = base_node.add_ons().with_engine_api(
+            BaseEngineApiBuilder::default().with_in_process_sink(Arc::clone(&engine_api)),
+        );
 
         let builder = builder
             .with_types_and_provider::<BaseNode, BlockchainProvider<_>>()
             .with_components(components)
-            .with_add_ons(base_node.add_ons())
+            .with_add_ons(add_ons)
             .on_component_initialized(move |_ctx| Ok(()));
 
         let hooks = extensions.into_iter().fold(NodeHooks::new(), |hooks, ext| ext.apply(hooks));
@@ -212,7 +219,9 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
             .get()
             .cloned()
             .ok_or_else(|| eyre!("auth RPC module was not configured"))?;
-        Ok(LaunchedBaseNode { handle, auth_module })
+        let engine_api =
+            engine_api.get().cloned().ok_or_else(|| eyre!("Engine API was not built"))?;
+        Ok(LaunchedBaseNode { handle, auth_module, engine_api })
     }
 }
 
