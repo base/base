@@ -237,18 +237,98 @@ pub struct LedgerState {
     /// Sibling hash to every retained group that contains it, oldest first. A sibling stays
     /// suppressed while any owner is retained.
     pub tombstones: HashMap<TxHash, Vec<B256>>,
+    /// Committed block of the latest canonical maintenance, which a reorg can lower, so ingress
+    /// settles expiry by the same rule as maintenance.
+    pub committed_block: u64,
 }
 
 impl LedgerState {
-    /// Settles pooled entries whose representative is no longer pooled as
-    /// `Evicted(Dropped)`. Landing is recorded only from canonical inclusion
-    /// ([`GroupLedger::record_landed`]).
-    pub fn reconcile(&mut self, is_pooled: &impl Fn(&TxHash) -> bool) {
+    /// Settles pooled entries whose representative is no longer pooled, and returns the
+    /// terminals to journal. The single rule for maintenance and ingress: once the committed
+    /// head reached the group's expiry block the entry is a final `Evicted(Expired)`; before that
+    /// it is a provisional `Evicted(Dropped)` that canonical landing can still correct. Landing
+    /// is recorded only from canonical inclusion ([`GroupLedger::record_landed`]).
+    pub fn reconcile(&mut self, is_pooled: &impl Fn(&TxHash) -> bool) -> Vec<GroupTerminal> {
+        let committed_block = self.committed_block;
+        let mut terminals = Vec::new();
         for entry in self.entries.values_mut() {
-            if entry.state == GroupState::Pooled && !is_pooled(&entry.descriptor.representative) {
+            if entry.state != GroupState::Pooled || is_pooled(&entry.descriptor.representative) {
+                continue;
+            }
+            if committed_block >= entry.descriptor.expiry_block {
+                entry.state = GroupState::Evicted(EvictionReason::Expired);
+                terminals
+                    .extend(entry.take_terminal(TerminalOutcome::Evicted(EvictionReason::Expired)));
+            } else {
                 entry.state = GroupState::Evicted(EvictionReason::Dropped);
             }
         }
+        terminals
+    }
+
+    /// Creates an entry for a verified group's descriptor, or classifies it as a duplicate.
+    /// Runs after [`Self::reconcile`]; see [`GroupLedger::create`].
+    pub fn admit(
+        &mut self,
+        group: Arc<GroupDescriptor>,
+        principal: PrincipalId,
+        policy_version: u64,
+        is_pooled: &impl Fn(&TxHash) -> bool,
+        limits: &LedgerLimits,
+    ) -> Result<LedgerAdmission, LedgerError> {
+        let group_hash = group.group_hash;
+        if let Some(existing) = self.entries.get(&group_hash) {
+            return match existing.state {
+                state if state.is_terminal() => Err(LedgerError::GroupTerminal),
+                GroupState::Pending => Ok(LedgerAdmission::Pending),
+                _ => Ok(LedgerAdmission::Duplicate),
+            };
+        }
+        let representative = group.representative;
+        if is_pooled(&representative) || self.has_live_owner(&representative) {
+            return Err(LedgerError::RepresentativeConflict);
+        }
+        let (mut sender_groups, mut total) = (0_usize, 0_usize);
+        for entry in self.entries.values().filter(|entry| entry.is_live()) {
+            if entry.descriptor.sender == group.sender && entry.descriptor.nonce == group.nonce {
+                // A replacement takes over this slot when it is confirmed.
+                continue;
+            }
+            total += 1;
+            if entry.descriptor.sender == group.sender {
+                sender_groups += 1;
+            }
+        }
+        if sender_groups >= limits.max_groups_per_sender {
+            return Err(LedgerError::SenderGroupLimit);
+        }
+        if total >= limits.max_groups {
+            return Err(LedgerError::PoolGroupLimit);
+        }
+        for hash in &group.sibling_hashes {
+            let owners = self.tombstones.entry(*hash).or_default();
+            if !owners.contains(&group_hash) {
+                owners.push(group_hash);
+            }
+        }
+        let siblings = group.sibling_hashes.len();
+        self.entries.insert(
+            group_hash,
+            GroupLedgerEntry {
+                descriptor: group,
+                principal,
+                policy_version,
+                state: GroupState::Pending,
+                attempts: 0,
+                work_gas_reserved: 0,
+                work_gas_settled: 0,
+                permanently_ineligible: vec![false; siblings],
+                last_commit: None,
+                terminal_journaled: false,
+                canonical_nonce_passed: false,
+            },
+        );
+        Ok(LedgerAdmission::Created)
     }
 
     /// Returns `true` when a live entry owns `hash` as a sibling.
@@ -344,60 +424,11 @@ impl GroupLedger {
         is_pooled: impl Fn(&TxHash) -> bool,
     ) -> Result<LedgerAdmission, LedgerError> {
         let mut state = self.state.lock();
-        state.reconcile(&is_pooled);
-        let group_hash = group.group_hash;
-        if let Some(existing) = state.entries.get(&group_hash) {
-            return match existing.state {
-                state if state.is_terminal() => Err(LedgerError::GroupTerminal),
-                GroupState::Pending => Ok(LedgerAdmission::Pending),
-                _ => Ok(LedgerAdmission::Duplicate),
-            };
-        }
-        let representative = group.representative;
-        if is_pooled(&representative) || state.has_live_owner(&representative) {
-            return Err(LedgerError::RepresentativeConflict);
-        }
-        let (mut sender_groups, mut total) = (0_usize, 0_usize);
-        for entry in state.entries.values().filter(|entry| entry.is_live()) {
-            if entry.descriptor.sender == group.sender && entry.descriptor.nonce == group.nonce {
-                // A replacement takes over this slot when it is confirmed.
-                continue;
-            }
-            total += 1;
-            if entry.descriptor.sender == group.sender {
-                sender_groups += 1;
-            }
-        }
-        if sender_groups >= self.limits.max_groups_per_sender {
-            return Err(LedgerError::SenderGroupLimit);
-        }
-        if total >= self.limits.max_groups {
-            return Err(LedgerError::PoolGroupLimit);
-        }
-        for hash in &group.sibling_hashes {
-            let owners = state.tombstones.entry(*hash).or_default();
-            if !owners.contains(&group_hash) {
-                owners.push(group_hash);
-            }
-        }
-        let siblings = group.sibling_hashes.len();
-        state.entries.insert(
-            group_hash,
-            GroupLedgerEntry {
-                descriptor: group,
-                principal,
-                policy_version,
-                state: GroupState::Pending,
-                attempts: 0,
-                work_gas_reserved: 0,
-                work_gas_settled: 0,
-                permanently_ineligible: vec![false; siblings],
-                last_commit: None,
-                terminal_journaled: false,
-                canonical_nonce_passed: false,
-            },
-        );
-        Ok(LedgerAdmission::Created)
+        let terminals = state.reconcile(&is_pooled);
+        let admission = state.admit(group, principal, policy_version, &is_pooled, &self.limits);
+        drop(state);
+        self.journal(&terminals);
+        admission
     }
 
     /// Returns the state of `group_hash` after settling entries the pool no longer holds, so a
@@ -408,8 +439,11 @@ impl GroupLedger {
         is_pooled: impl Fn(&TxHash) -> bool,
     ) -> Option<GroupState> {
         let mut state = self.state.lock();
-        state.reconcile(&is_pooled);
-        state.entries.get(group_hash).map(|entry| entry.state)
+        let terminals = state.reconcile(&is_pooled);
+        let group_state = state.entries.get(group_hash).map(|entry| entry.state);
+        drop(state);
+        self.journal(&terminals);
+        group_state
     }
 
     /// Marks a created group pooled after its representative's pool insertion succeeded.
@@ -598,7 +632,7 @@ impl GroupLedger {
         let mut terminals = Vec::new();
         {
             let mut state = self.state.lock();
-            let LedgerState { entries, tombstones } = &mut *state;
+            let LedgerState { entries, tombstones, .. } = &mut *state;
             for hash in mined {
                 for owner in tombstones.get(hash).into_iter().flatten() {
                     if let Some(entry) = entries.get_mut(owner)
@@ -618,6 +652,35 @@ impl GroupLedger {
         }
         self.journal(&terminals);
         landed
+    }
+
+    /// Reopens the group whose canonical winner `hash` was reorged out of the chain, so the
+    /// identical group, or the winner submitted alone, can be admitted again.
+    ///
+    /// Reth reinjects reorged-out transactions without their group. The pool calls this when it
+    /// suppresses such a reinsertion: the `Landed` entry and its sibling tombstones are removed,
+    /// and the next submission starts a fresh entry. The `landed` event already journaled is not
+    /// retracted. Returns `true` when a `Landed` group was reopened.
+    pub fn reopen_reorged(&self, hash: &TxHash) -> bool {
+        let mut state = self.state.lock();
+        let reopened: Vec<B256> = state
+            .tombstones
+            .get(hash)
+            .into_iter()
+            .flatten()
+            .filter(|owner| {
+                state.entries.get(*owner).is_some_and(|entry| {
+                    matches!(entry.state, GroupState::Landed { winner, .. } if winner == *hash)
+                })
+            })
+            .copied()
+            .collect();
+        for owner in &reopened {
+            if let Some(entry) = state.entries.remove(owner) {
+                state.release_tombstones(&entry.descriptor);
+            }
+        }
+        !reopened.is_empty()
     }
 
     /// Ends groups whose sender's canonical account nonce in `accounts` passed the group's nonce.
@@ -682,29 +745,17 @@ impl GroupLedger {
 
     /// Settles `Pooled` entries whose representative is no longer in the pool.
     ///
-    /// Call [`Self::record_landed`] first so a mined sibling is not settled here. When
-    /// `committed_block` has reached the group's expiry block, the next block cannot include the
-    /// group: the pool expired its representative, a final `Evicted(Expired)`. Otherwise the
+    /// Call [`Self::record_landed`] first so a mined sibling is not settled here. Records
+    /// `committed_block` and applies [`LedgerState::reconcile`], the rule ingress shares: when the
+    /// committed head has reached the group's expiry block, the next block cannot include the
+    /// group and the pool expired its representative, a final `Evicted(Expired)`. Otherwise the
     /// representative left by another path, a provisional `Evicted(Dropped)`.
     pub fn reconcile(&self, is_pooled: impl Fn(&TxHash) -> bool, committed_block: u64) {
-        let mut terminals = Vec::new();
-        {
+        let terminals = {
             let mut state = self.state.lock();
-            for entry in state.entries.values_mut() {
-                if entry.state != GroupState::Pooled || is_pooled(&entry.descriptor.representative)
-                {
-                    continue;
-                }
-                if committed_block >= entry.descriptor.expiry_block {
-                    entry.state = GroupState::Evicted(EvictionReason::Expired);
-                    terminals.extend(
-                        entry.take_terminal(TerminalOutcome::Evicted(EvictionReason::Expired)),
-                    );
-                } else {
-                    entry.state = GroupState::Evicted(EvictionReason::Dropped);
-                }
-            }
-        }
+            state.committed_block = committed_block;
+            state.reconcile(&is_pooled)
+        };
         self.journal(&terminals);
     }
 
@@ -719,6 +770,7 @@ impl GroupLedger {
         let mut terminals = Vec::new();
         {
             let mut state = self.state.lock();
+            state.committed_block = committed_block;
             state.entries.retain(|_, entry| {
                 let retained =
                     entry.descriptor.expiry_block.saturating_add(window) >= committed_block;
@@ -736,7 +788,7 @@ impl GroupLedger {
                 }
                 retained
             });
-            let LedgerState { entries, tombstones } = &mut *state;
+            let LedgerState { entries, tombstones, .. } = &mut *state;
             tombstones.retain(|_, owners| {
                 owners.retain(|owner| entries.contains_key(owner));
                 !owners.is_empty()
@@ -768,7 +820,10 @@ mod tests {
     use base_observability_events::{TransactionEventCapture, TransactionEventType};
 
     use super::*;
-    use crate::{CandidateGroup, GroupBudget, test_utils::CandidateFixture};
+    use crate::{
+        CandidateGroup, GroupBudget,
+        test_utils::{CandidateFixture, FIXTURE_EXPIRY_BLOCK},
+    };
 
     const CHAIN_ID: u64 = 8453;
     const PRINCIPAL: PrincipalId = PrincipalId(1);
@@ -994,6 +1049,27 @@ mod tests {
     }
 
     #[test]
+    fn reorged_out_winner_reopens_its_group_for_resubmission() {
+        let ledger = GroupLedger::default();
+        let fixture = CandidateFixture::new(CHAIN_ID);
+        let group = group(&fixture, 0, 1, 0);
+        admit(&ledger, &group, &[]);
+        let winner = group.siblings()[1].hash();
+        ledger.record_landed(&[winner], 12, B256::ZERO);
+        assert!(!ledger.reopen_reorged(&group.representative().hash()), "only a winner reopens");
+
+        // A reorg removed block 12, and reth reinjected the winner without its group.
+        assert!(ledger.reopen_reorged(&winner));
+        assert!(ledger.lookup(&group.group_hash()).is_none());
+        assert!(!ledger.suppresses_plain_reinsertion(&winner), "the winner may return alone");
+        assert_eq!(
+            ledger.create(Arc::clone(group.descriptor()), PRINCIPAL, 1, empty_pool),
+            Ok(LedgerAdmission::Created),
+            "the identical group is admitted again"
+        );
+    }
+
+    #[test]
     fn abort_removes_pending_entry_and_tombstones() {
         let ledger = GroupLedger::default();
         let fixture = CandidateFixture::new(CHAIN_ID);
@@ -1204,6 +1280,24 @@ mod tests {
             terminals(&capture, &ledger, &landed),
             [(TransactionEventType::TxpoolCandidateLanded, "\"landed\"".to_string())]
         );
+    }
+
+    #[test]
+    fn ingress_settles_an_unpooled_group_past_expiry_as_expired() {
+        let capture = TransactionEventCapture::install();
+        let ledger = GroupLedger::default();
+        let fixture = CandidateFixture::new(CHAIN_ID);
+        let group = group(&fixture, 0, 1, 0);
+        admit(&ledger, &group, &[]);
+        // Maintenance saw the expiry block while the representative was still pooled.
+        ledger.reconcile(pool_of(&[&group]), FIXTURE_EXPIRY_BLOCK);
+
+        // The pool then expired it, and an ingress call settles it before maintenance does.
+        assert_eq!(
+            ledger.classify(&group.group_hash(), empty_pool),
+            Some(GroupState::Evicted(EvictionReason::Expired))
+        );
+        assert_eq!(terminals(&capture, &ledger, &group), [evicted("expired")]);
     }
 
     #[test]
