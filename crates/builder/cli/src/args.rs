@@ -17,7 +17,7 @@ use base_observability_events::{
 };
 use tracing::warn;
 
-use crate::{BuilderPath, CandidateArgs};
+use crate::{BuilderPath, CandidateArgs, CandidateCapabilities};
 
 /// Parameters for Flashblocks configuration.
 ///
@@ -355,11 +355,20 @@ impl Default for Args {
 impl Args {
     /// Returns the payload builders this node can route a build to.
     pub const fn builder_path(&self) -> BuilderPath {
-        if self.payload_builder_cutover || self.basic_payload_builder {
-            BuilderPath::Native
+        if self.basic_payload_builder {
+            BuilderPath::BasicOnly
+        } else if self.payload_builder_cutover {
+            BuilderPath::Cutover
         } else {
             BuilderPath::FlashblocksOnly
         }
+    }
+
+    /// Validates the candidate flags against this node's builder routing and block time, and
+    /// builds the candidate capabilities, or `None` when they are off.
+    pub fn candidate_capabilities(&self) -> eyre::Result<Option<CandidateCapabilities>> {
+        self.candidates
+            .capabilities(self.builder_path(), Duration::from_millis(self.chain_block_time))
     }
 
     /// Builds configuration for the builder transaction insertion RPC.
@@ -516,6 +525,26 @@ mod tests {
         let parsed =
             CommandParser::parse_from(["test", "--builder.eip8130-manifest-precheck=false"]);
         assert!(!parsed.args.manifest_precheck_enabled);
+    }
+
+    #[test]
+    fn builder_selection_starts_only_with_the_basic_payload_builder() {
+        let selection = [
+            "--txpool.candidates.enabled",
+            "--txpool.candidates.ephemeral-ledger",
+            "--builder.candidates.enabled",
+        ];
+        let start = |routing: Option<&str>| {
+            let flags = core::iter::once("test").chain(routing).chain(selection);
+            CommandParser::parse_from(flags).args.candidate_capabilities().map(|_| ())
+        };
+
+        assert!(start(None).is_err(), "flashblocks parks every group");
+        assert!(
+            start(Some("--builder.payload-builder-cutover")).is_err(),
+            "flashblocks before Denim"
+        );
+        start(Some("--builder.basic-payload-builder")).expect("the basic builder evaluates groups");
     }
 
     #[test]

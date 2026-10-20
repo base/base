@@ -22,8 +22,10 @@ pub const DEFAULT_CANDIDATE_MAX_EXPIRY_SECS: u64 = 60;
 pub enum BuilderPath {
     /// Only the flashblocks builder runs. It parks candidate groups and never evaluates them.
     FlashblocksOnly,
-    /// The native builder runs, alone or after the payload-builder cutover.
-    Native,
+    /// Both builders run: flashblocks before Denim, the native builder from Denim on.
+    Cutover,
+    /// Only the native (basic) builder runs.
+    BasicOnly,
 }
 
 /// Candidate capabilities a node runs, independent of which ingress endpoints expose them.
@@ -77,7 +79,9 @@ pub struct CandidateArgs {
     )]
     pub max_expiry_secs: u64,
 
-    /// Evaluates candidate groups in the native builder. When off, accepted groups stay parked.
+    /// Evaluates candidate groups in the basic payload builder, so it requires
+    /// `--builder.basic-payload-builder`. When off, the kill switch starts disabled: ingress
+    /// admits a request's default transaction with `selection: ignored` and starts no group.
     #[arg(long = "builder.candidates.enabled", default_value = "false")]
     pub builder_candidates_enabled: bool,
 
@@ -147,8 +151,9 @@ impl Default for CandidateArgs {
 }
 
 impl CandidateArgs {
-    /// Rejects flag combinations that start a node unable to use what it enables.
-    pub fn validate(&self, path: BuilderPath) -> eyre::Result<()> {
+    /// Rejects flag combinations that start a node unable to use what it enables, for builds
+    /// routed along `path` with one block every `block_time`.
+    pub fn validate(&self, path: BuilderPath, block_time: Duration) -> eyre::Result<()> {
         if !self.candidates_enabled {
             eyre::ensure!(
                 !self.builder_candidates_enabled,
@@ -176,10 +181,13 @@ impl CandidateArgs {
         if !self.builder_candidates_enabled {
             return Ok(());
         }
+        // Phase 0 selects only on the basic builder. Under the cutover the flashblocks builder
+        // builds every pre-Denim block and parks candidate groups.
         eyre::ensure!(
-            path == BuilderPath::Native,
-            "--builder.candidates.enabled requires --builder.payload-builder-cutover or \
-             --builder.basic-payload-builder: the flashblocks builder parks candidate groups"
+            path == BuilderPath::BasicOnly,
+            "--builder.candidates.enabled requires --builder.basic-payload-builder: the \
+             flashblocks builder parks candidate groups, including before Denim under \
+             --builder.payload-builder-cutover"
         );
         for (flag, value) in [
             ("--builder.candidates.probe-gas", self.probe_gas),
@@ -190,12 +198,38 @@ impl CandidateArgs {
         ] {
             eyre::ensure!(value > 0, "{flag} must be positive with --builder.candidates.enabled");
         }
+        let block_us = u64::try_from(block_time.as_micros()).unwrap_or(u64::MAX);
+        for (flag, value) in [
+            ("--builder.candidates.eval-wall-cutoff-us", self.eval_wall_cutoff_us),
+            ("--builder.candidates.build-deadline-us", self.build_deadline_us),
+        ] {
+            eyre::ensure!(
+                value < block_us,
+                "{flag} must be below the {block_us}us block time with --builder.candidates.enabled"
+            );
+        }
+        // A build that cannot reserve one full round would defer every maximal group until the
+        // builder falls back; reject the configuration instead.
+        let siblings = self.max_siblings as u64;
+        let full_round = siblings
+            .saturating_mul(self.max_sibling_gas)
+            .saturating_add(siblings.saturating_add(1).saturating_mul(self.probe_gas));
+        eyre::ensure!(
+            full_round <= self.build_work_gas,
+            "--builder.candidates.build-work-gas must cover one full round of {full_round} gas: \
+             --txpool.candidates.max-siblings × --txpool.candidates.max-sibling-gas plus one \
+             --builder.candidates.probe-gas per sibling and one more"
+        );
         Ok(())
     }
 
     /// Validates the flags and builds the candidate capabilities, or `None` when they are off.
-    pub fn capabilities(&self, path: BuilderPath) -> eyre::Result<Option<CandidateCapabilities>> {
-        self.validate(path)?;
+    pub fn capabilities(
+        &self,
+        path: BuilderPath,
+        block_time: Duration,
+    ) -> eyre::Result<Option<CandidateCapabilities>> {
+        self.validate(path, block_time)?;
         if !self.candidates_enabled {
             return Ok(None);
         }
@@ -210,7 +244,8 @@ impl CandidateArgs {
         let runtime = Arc::new(CandidateRuntime {
             ledger: GroupLedger::default(),
             policy: Arc::new(StaticAccessPolicy::new(principals)),
-            switch: CandidateSwitch::new(true),
+            // Ingress starts groups only when a builder here evaluates them.
+            switch: CandidateSwitch::new(self.builder_candidates_enabled),
             limits: CandidateLimits {
                 max_siblings: self.max_siblings,
                 max_sibling_gas: self.max_sibling_gas,
@@ -256,15 +291,23 @@ mod tests {
     const INGRESS: [&str; 2] =
         ["--txpool.candidates.enabled", "--txpool.candidates.ephemeral-ledger"];
 
+    const BUILDER: [&str; 3] = [INGRESS[0], INGRESS[1], "--builder.candidates.enabled"];
+
+    const BLOCK_TIME: Duration = Duration::from_secs(2);
+
     fn rejection(flags: &[&str], path: BuilderPath) -> String {
-        parse(flags).capabilities(path).expect_err("unusable combination").to_string()
+        parse(flags).capabilities(path, BLOCK_TIME).expect_err("unusable combination").to_string()
     }
 
     #[test]
     fn candidates_are_disabled_by_default() {
         let args = CommandParser::parse_from(["test"]).args;
         assert_eq!(args, CandidateArgs::default());
-        assert!(args.capabilities(BuilderPath::FlashblocksOnly).expect("disabled").is_none());
+        assert!(
+            args.capabilities(BuilderPath::FlashblocksOnly, BLOCK_TIME)
+                .expect("disabled")
+                .is_none()
+        );
     }
 
     #[test]
@@ -290,8 +333,10 @@ mod tests {
             "--builder.candidates.probe-gas",
             "50000",
         ]);
-        let capabilities =
-            args.capabilities(BuilderPath::Native).expect("valid flags").expect("enabled");
+        let capabilities = args
+            .capabilities(BuilderPath::BasicOnly, BLOCK_TIME)
+            .expect("valid flags")
+            .expect("enabled");
         std::fs::remove_dir_all(&dir).expect("cleans up");
 
         let policy = &capabilities.runtime.policy;
@@ -304,14 +349,23 @@ mod tests {
 
     #[test]
     fn builder_selection_requires_its_own_flag() {
-        let capabilities = parse(&INGRESS).capabilities(BuilderPath::FlashblocksOnly);
+        let capabilities = parse(&INGRESS).capabilities(BuilderPath::FlashblocksOnly, BLOCK_TIME);
         let capabilities = capabilities.expect("ingress alone is usable").expect("enabled");
-        assert!(capabilities.builder.is_none(), "an absent principals file admits nobody");
+        assert!(capabilities.builder.is_none(), "builder selection stays off without its flag");
+        assert!(
+            !capabilities.runtime.switch.is_enabled(),
+            "ingress starts no group that no builder would evaluate"
+        );
+
+        let capabilities = parse(&BUILDER).capabilities(BuilderPath::BasicOnly, BLOCK_TIME);
+        let capabilities = capabilities.expect("valid flags").expect("enabled");
+        assert!(capabilities.builder.is_some());
+        assert!(capabilities.runtime.switch.is_enabled());
     }
 
     #[test]
     fn enabling_candidates_requires_acknowledging_the_ephemeral_ledger() {
-        let err = rejection(&["--txpool.candidates.enabled"], BuilderPath::Native);
+        let err = rejection(&["--txpool.candidates.enabled"], BuilderPath::BasicOnly);
         assert!(err.contains("ephemeral-ledger"), "got {err}");
     }
 
@@ -319,23 +373,66 @@ mod tests {
     fn max_siblings_past_the_request_ceiling_is_rejected() {
         let err = rejection(
             &[INGRESS[0], INGRESS[1], "--txpool.candidates.max-siblings", "17"],
-            BuilderPath::Native,
+            BuilderPath::BasicOnly,
         );
         assert!(err.contains("max-siblings"), "got {err}");
     }
 
     #[test]
     fn builder_selection_without_the_runtime_is_rejected() {
-        let err = rejection(&["--builder.candidates.enabled"], BuilderPath::Native);
+        let err = rejection(&["--builder.candidates.enabled"], BuilderPath::BasicOnly);
         assert!(err.contains("--txpool.candidates.enabled"), "got {err}");
     }
 
     #[test]
-    fn builder_selection_needs_a_native_builder_path() {
-        let flags = [INGRESS[0], INGRESS[1], "--builder.candidates.enabled"];
-        let err = rejection(&flags, BuilderPath::FlashblocksOnly);
-        assert!(err.contains("parks candidate groups"), "got {err}");
-        assert!(parse(&flags).capabilities(BuilderPath::Native).is_ok());
+    fn builder_selection_runs_only_on_the_basic_builder() {
+        for path in [BuilderPath::FlashblocksOnly, BuilderPath::Cutover] {
+            let err = rejection(&BUILDER, path);
+            assert!(err.contains("--builder.basic-payload-builder"), "{path:?}: got {err}");
+        }
+        assert!(parse(&BUILDER).capabilities(BuilderPath::BasicOnly, BLOCK_TIME).is_ok());
+        assert!(
+            parse(&INGRESS).capabilities(BuilderPath::Cutover, BLOCK_TIME).is_ok(),
+            "ingress alone runs on any routing"
+        );
+    }
+
+    #[test]
+    fn build_work_budget_must_cover_one_full_round() {
+        // Four siblings of 5_000_000 gas plus five 100_000 gas probes.
+        let full_round = DEFAULT_MAX_SIBLINGS as u64 * DEFAULT_MAX_SIBLING_GAS
+            + (DEFAULT_MAX_SIBLINGS as u64 + 1) * DEFAULT_PROBE_GAS;
+        let with_budget = |gas: u64| {
+            let gas = gas.to_string();
+            let mut flags = BUILDER.to_vec();
+            flags.extend(["--builder.candidates.build-work-gas", gas.as_str()]);
+            parse(&flags).capabilities(BuilderPath::BasicOnly, BLOCK_TIME).map(|_| ())
+        };
+
+        let err = with_budget(full_round - 1).expect_err("a full round never fits").to_string();
+        assert!(err.contains("--builder.candidates.build-work-gas"), "got {err}");
+        with_budget(full_round).expect("a full round fits");
+    }
+
+    #[test]
+    fn candidate_time_limits_must_stay_below_the_block_time() {
+        let block_us = BLOCK_TIME.as_micros().to_string();
+        let below_us = (BLOCK_TIME.as_micros() - 1).to_string();
+        for flag in
+            ["--builder.candidates.eval-wall-cutoff-us", "--builder.candidates.build-deadline-us"]
+        {
+            let mut flags = BUILDER.to_vec();
+            flags.extend([flag, block_us.as_str()]);
+            let err = rejection(&flags, BuilderPath::BasicOnly);
+            assert!(err.contains(flag), "{flag}: got {err}");
+
+            let mut flags = BUILDER.to_vec();
+            flags.extend([flag, below_us.as_str()]);
+            assert!(
+                parse(&flags).capabilities(BuilderPath::BasicOnly, BLOCK_TIME).is_ok(),
+                "{flag}"
+            );
+        }
     }
 
     #[test]
@@ -353,7 +450,7 @@ mod tests {
             if builder {
                 flags.push("--builder.candidates.enabled");
             }
-            let err = rejection(&flags, BuilderPath::Native);
+            let err = rejection(&flags, BuilderPath::BasicOnly);
             assert!(err.contains(flag), "{flag}: got {err}");
         }
     }

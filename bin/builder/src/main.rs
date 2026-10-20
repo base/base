@@ -48,7 +48,7 @@ fn main() {
         )?;
 
         let builder_api_config = builder_args.builder_api_config();
-        let candidates = builder_args.candidates.capabilities(builder_args.builder_path())?;
+        let candidates = builder_args.candidate_capabilities()?;
         let candidate_runtime = candidates.as_ref().map(|c| Arc::clone(&c.runtime));
         let candidate_builder = candidates.as_ref().and_then(|c| c.builder.clone());
         let shadow_indexer_config = ShadowIndexerConfig::try_from(&builder_args.shadow_indexer)?;
