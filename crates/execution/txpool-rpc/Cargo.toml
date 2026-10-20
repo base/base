@@ -38,6 +38,7 @@ jsonrpsee.workspace = true
 
 # misc
 serde.workspace = true
+metrics.workspace = true
 tracing.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["sync", "time"] }
@@ -52,7 +53,6 @@ base-test-utils.workspace = true
 
 eyre.workspace = true
 rstest.workspace = true
-metrics.workspace = true
 httpmock.workspace = true
 alloy-eips.workspace = true
 serde_json.workspace = true

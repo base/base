@@ -3,11 +3,11 @@
 use std::sync::Arc;
 
 use alloy_consensus::BlockHeader;
-use alloy_primitives::{B256, Bytes, Signature, TxHash, U256};
+use alloy_primitives::{Address, B256, Bytes, Signature, TxHash, U256};
 use base_common_chains::Upgrades;
 use base_execution_candidates::{
     AccessDenied, CandidateEnvelope, CandidateError, CandidateGroup, CandidateRuntime,
-    CandidateValidator, GroupLedger, LedgerError,
+    CandidateValidator, Capability, LedgerError,
 };
 use base_execution_rpc::SequencerClient;
 use base_execution_txpool::{AdmissionError, AdmissionService, BasePooledTransaction};
@@ -315,7 +315,7 @@ where
         }
         let mut trace = SwapAdmissionTrace::default();
         let result = self.submit(transaction, options.unwrap_or_default(), &mut trace).await;
-        trace.journal(&self.runtime().ledger, &result);
+        trace.journal(self.runtime(), &result);
         result
     }
 }
@@ -375,6 +375,7 @@ where
             Self::reject(&error)
         })?;
         trace.transaction_hash = Some(default.hash());
+        trace.sender = Some(default.transaction.signer());
         let receipt = self
             .admission
             .admit_single(default)
@@ -425,6 +426,7 @@ where
             })?;
         trace.group_hash = Some(group.group_hash());
         trace.transaction_hash = Some(group.representative().hash());
+        trace.sender = Some(group.sender());
         let group = Arc::new(group);
         let response = SwapTransactionResponse::from(group.as_ref());
         let receipt = self
@@ -447,6 +449,11 @@ where
     }
 }
 
+/// Counter of `base_sendSwapTransaction` rejections that are not journaled, by `reason`: requests
+/// that fail before validation or come from a sender the access policy does not authorize for the
+/// requested capability.
+pub const UNJOURNALED_REJECTIONS_METRIC: &str = "txpool.swap_transaction.unjournaled_rejections";
+
 /// Join keys and outcome of one local `base_sendSwapTransaction` request, journaled when it
 /// returns. A request whose future is dropped journals nothing;
 /// [`base_execution_txpool::PendingAdmission`] still settles its ledger entry.
@@ -465,6 +472,8 @@ pub struct SwapAdmissionTrace {
     pub duplicate: bool,
     /// The pool refused the default transaction, so an unlabeled error is `pool_rejected`.
     pub pool_rejected: bool,
+    /// Recovered sender of the default transaction, once it validated.
+    pub sender: Option<Address>,
 }
 
 impl SwapAdmissionTrace {
@@ -473,9 +482,21 @@ impl SwapAdmissionTrace {
     ///
     /// An admission's event ID is the default transaction's hash (plus the group hash for a
     /// group), so a replayed event deduplicates; a duplicate submission returns before
-    /// journaling. Each rejection's ID includes a never-reused [`GroupLedger::next_sequence`],
-    /// because a request may be rejected repeatedly and a malformed one has no hash at all.
-    pub fn journal(&self, ledger: &GroupLedger, result: &RpcResult<SwapTransactionResponse>) {
+    /// journaling. Each rejection's ID includes a never-reused
+    /// [`GroupLedger::next_sequence`](base_execution_candidates::GroupLedger::next_sequence),
+    /// because one sender's request may be rejected repeatedly. Only rejections of a validated
+    /// sender that the access policy authorizes for the requested capability are journaled; any
+    /// other rejection increments [`UNJOURNALED_REJECTIONS_METRIC`] by reason, so callers outside
+    /// the allowlist cannot grow the journal.
+    pub fn journal(&self, runtime: &CandidateRuntime, result: &RpcResult<SwapTransactionResponse>) {
+        let ledger = &runtime.ledger;
+        if let Err(error) = result
+            && !self.authorized(runtime)
+        {
+            metrics::counter!(UNJOURNALED_REJECTIONS_METRIC, "reason" => self.rejection_label(error))
+                .increment(1);
+            return;
+        }
         let instance = format!("{:016x}", ledger.instance());
         let selection = self.selection_label();
         let _ = match result {
@@ -535,6 +556,17 @@ impl SwapAdmissionTrace {
             (_, true) => "ignored",
             _ => "applied",
         }
+    }
+
+    /// Returns `true` when the request's validated sender holds the capability it asked for:
+    /// [`Capability::CandidateSelection`] for a group, [`Capability::SingleAdmission`] otherwise.
+    pub fn authorized(&self, runtime: &CandidateRuntime) -> bool {
+        let capability = if self.group_hash.is_some() {
+            Capability::CandidateSelection
+        } else {
+            Capability::SingleAdmission
+        };
+        self.sender.is_some_and(|sender| runtime.policy.principal(sender, capability).is_some())
     }
 
     /// The stable reason label of a rejection. An error without one is `pool_rejected` when
@@ -776,6 +808,39 @@ mod tests {
                 )
             }
         }
+    }
+
+    #[tokio::test]
+    async fn concurrent_identical_singles_both_return_the_transaction() {
+        let fixture = CandidateFixture::with_key(chain_id(), 0x78);
+        let runtime = runtime(&[fixture.address()]);
+        let validator = GatedValidator::stalled();
+        let pool = Pool::new(
+            validator.clone(),
+            CoinbaseTipOrdering::default(),
+            InMemoryBlobStore::default(),
+            PoolConfig::default(),
+        );
+        let api = rpc(provider(), pool.clone(), &runtime, MAX_EXPIRY_SECS);
+        let (default, options) = single(&fixture, 0);
+        let submit = || {
+            let (api, default, options) = (api.clone(), default.clone(), options.clone());
+            tokio::spawn(async move { api.send_swap_transaction(default, Some(options)).await })
+        };
+        // Both requests pass the pool lookup and wait in validation before either inserts.
+        let (first, second) = (submit(), submit());
+        for _ in 0..16 {
+            tokio::task::yield_now().await;
+        }
+        validator.gate.add_permits(2);
+
+        let wait = Duration::from_secs(5);
+        let first = tokio::time::timeout(wait, first).await.unwrap().unwrap();
+        let second = tokio::time::timeout(wait, second).await.unwrap().unwrap();
+        let first = first.expect("the first submission is admitted");
+        let second = second.expect("the losing duplicate returns the same transaction");
+        assert_eq!(first.transaction_hash, second.transaction_hash);
+        assert!(pool.contains(&first.transaction_hash));
     }
 
     fn gated_rpc(
@@ -1649,33 +1714,63 @@ mod tests {
     async fn repeated_rejections_of_one_group_keep_distinct_ids() {
         let capture = TransactionEventCapture::install();
         let fixture = CandidateFixture::with_key(chain_id(), 0x74);
-        let unregistered = runtime(&[Address::repeat_byte(0x99)]);
-        let api = rpc(provider(), pool(), &unregistered, MAX_EXPIRY_SECS);
+        let runtime = runtime(&[fixture.address()]);
+        let refusing = NoopTransactionPool::<BasePooledTransaction>::new();
+        let api = rpc(provider(), refusing, &runtime, MAX_EXPIRY_SECS);
         let mut group_hash = B256::ZERO;
         for _ in 0..2 {
             let (default, options) = request(&fixture);
             group_hash = selection(&options).envelope.signing_hash(chain_id());
             api.send_swap_transaction(default, Some(options)).await.unwrap_err();
         }
-        // A request that fails before validation has no hash, yet keeps its own identity.
-        for _ in 0..2 {
-            let (_, mut options) = request(&fixture);
-            options.alternatives = SwapAlternatives::default();
-            api.send_swap_transaction(Bytes::new(), Some(options)).await.unwrap_err();
-        }
 
-        let instance = serde_json::json!(format!("{:016x}", unregistered.ledger.instance()));
-        let rejected: Vec<_> = capture
+        let rejected = group_events(&capture, group_hash);
+        assert_eq!(rejected.len(), 2, "{rejected:?}");
+        let instance = serde_json::json!(format!("{:016x}", runtime.ledger.instance()));
+        let ids: std::collections::HashSet<_> = capture
             .events()
             .into_iter()
             .filter(|event| event.data.get("candidate_instance") == Some(&instance))
+            .map(|event| event.event_id)
             .collect();
-        assert_eq!(rejected.len(), 4, "{rejected:?}");
-        let ids: std::collections::HashSet<_> =
-            rejected.iter().map(|event| event.event_id.clone()).collect();
-        assert_eq!(ids.len(), 4, "no rejection deduplicates against another");
-        assert_eq!(group_events(&capture, group_hash).len(), 2);
-        assert!(rejected[2..].iter().all(|event| event.tx_hash.is_none()));
+        assert_eq!(ids.len(), 2, "no rejection deduplicates against another");
+    }
+
+    #[tokio::test]
+    async fn unauthorized_and_malformed_rejections_are_counted_not_journaled() {
+        let capture = TransactionEventCapture::install();
+        let recorder = metrics_util::debugging::DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        let _guard = metrics::set_default_local_recorder(&recorder);
+        let fixture = CandidateFixture::with_key(chain_id(), 0x75);
+        let unregistered = runtime(&[Address::repeat_byte(0x99)]);
+        let api = rpc(provider(), pool(), &unregistered, MAX_EXPIRY_SECS);
+        let (default, options) = request(&fixture);
+        let error = api.send_swap_transaction(default, Some(options)).await.unwrap_err();
+        assert_eq!(label(&error), "principal_not_allowed");
+        let (_, mut options) = request(&fixture);
+        options.alternatives = SwapAlternatives::default();
+        api.send_swap_transaction(Bytes::new(), Some(options)).await.unwrap_err();
+
+        let instance = serde_json::json!(format!("{:016x}", unregistered.ledger.instance()));
+        assert!(
+            capture
+                .events()
+                .iter()
+                .all(|event| event.data.get("candidate_instance") != Some(&instance)),
+            "neither rejection is journaled"
+        );
+        let counted: u64 = snapshotter
+            .snapshot()
+            .into_vec()
+            .into_iter()
+            .filter(|(key, _, _, _)| key.key().name() == UNJOURNALED_REJECTIONS_METRIC)
+            .map(|(_, _, _, value)| match value {
+                metrics_util::debugging::DebugValue::Counter(count) => count,
+                other => panic!("unexpected metric value {other:?}"),
+            })
+            .sum();
+        assert_eq!(counted, 2, "both rejections are counted by reason");
     }
 
     #[test]
@@ -1725,18 +1820,6 @@ mod tests {
         let capture = TransactionEventCapture::install();
         let rejected = TransactionEventType::TxpoolSendSwapTransactionRejected;
 
-        let fixture = CandidateFixture::with_key(chain_id(), 0x72);
-        let unregistered = runtime(&[Address::repeat_byte(0x99)]);
-        let api = rpc(provider(), pool(), &unregistered, MAX_EXPIRY_SECS);
-        let (default, options) = request(&fixture);
-        let group_hash = selection(&options).envelope.signing_hash(chain_id());
-        let representative = selection(&options).envelope.sibling_hashes[1];
-        api.send_swap_transaction(default, Some(options)).await.unwrap_err();
-        let events = group_events(&capture, group_hash);
-        assert_eq!(events.len(), 1, "{events:?}");
-        assert_eq!((events[0].0, events[0].1), (rejected, Some(representative)));
-        assert_eq!(events[0].2["rejection_reason"], "principal_not_allowed");
-
         // A pool error carries no candidate label.
         let fixture = CandidateFixture::with_key(chain_id(), 0x73);
         let runtime = runtime(&[fixture.address()]);
@@ -1748,10 +1831,11 @@ mod tests {
         );
         let (default, options) = request(&fixture);
         let group_hash = selection(&options).envelope.signing_hash(chain_id());
+        let representative = selection(&options).envelope.sibling_hashes[1];
         api.send_swap_transaction(default, Some(options)).await.unwrap_err();
         let events = group_events(&capture, group_hash);
         assert_eq!(events.len(), 1, "{events:?}");
-        assert_eq!(events[0].0, rejected);
+        assert_eq!((events[0].0, events[0].1), (rejected, Some(representative)));
         assert_eq!(events[0].2["rejection_reason"], "pool_rejected");
     }
 }
