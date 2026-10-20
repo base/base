@@ -92,7 +92,7 @@ A new scenario needs an entry in `FlashblockWorkload::MATRIX`, a case in the eve
 
 The workflow runs on `pull_request` and `workflow_dispatch`. On PRs, the measurement steps run only when `etc/scripts/local/affected-crates.py` reports `base-builder-core` as affected (a change to `base-execution-payload-builder` or another dependency affects it too), or a benchmark input changes (`Cargo.toml`, `Cargo.lock`, `.cargo/`, `rust-toolchain.toml`, the compare and comment scripts and their tests, the setup action, or the workflow). Otherwise the job succeeds with a skip note and posts no comment. Comments are skipped on PRs from forks, whose `GITHUB_TOKEN` cannot write. The comment is identified by the `<!-- builder-bench-results -->` marker and updated in place on each push.
 
-The job fails only when the run itself fails, for example when the head commit does not build; the comment then points at the run log. A failure on the base commit is reported in the comment as missing base results.
+The job fails only when its harness fails, such as setup, tree switching, Valgrind installation, comparison-script tests, rendering, or comment posting. The base and head measurement steps use `continue-on-error: true`: a head build or benchmark failure is reported in the comment as missing head results, and a base failure as missing base results.
 
 Cost per affected PR is one `depot-ubuntu-24.04-16` runner for two bench-profile builds and two measurement passes; the base build is mostly served from the sccache cache of `main`. A single pass took 8 to 9 minutes with memory peaking at about 49%; the 8-vCPU runner peaked above 90% while building the bench profile.
 
