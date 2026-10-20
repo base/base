@@ -212,8 +212,8 @@ impl TxManagerError {
 
     /// Returns `true` only for [`TxManagerError::AlreadyKnown`].
     ///
-    /// The send loop uses this to distinguish "already in mempool" (a
-    /// success on resubmission) from actual errors.
+    /// Publication accepts this after a prior successful publish, or on the
+    /// initial broadcast for tracked sends. Otherwise it remains retryable.
     #[must_use]
     pub const fn is_already_known(&self) -> bool {
         matches!(self, Self::AlreadyKnown)
@@ -323,7 +323,11 @@ impl RpcErrorClassifier {
         if lowered.contains("max fee per gas less than block base fee") {
             return TxManagerError::MaxFeePerGasTooLow;
         }
-        if lowered.contains("already known") || lowered.contains("transaction already in pool") {
+        if lowered.contains("already known")
+            || lowered.trim() == "known transaction"
+            || lowered.contains("transaction already in pool")
+            || lowered.contains("transaction already imported")
+        {
             return TxManagerError::AlreadyKnown;
         }
 
@@ -391,7 +395,11 @@ mod tests {
         TxManagerError::MaxFeePerGasTooLow
     )]
     #[case::already_known("already known", TxManagerError::AlreadyKnown)]
+    #[case::known_transaction("known transaction", TxManagerError::AlreadyKnown)]
+    #[case::known_transaction_normalized(" Known Transaction ", TxManagerError::AlreadyKnown)]
+    #[case::unknown_transaction("unknown transaction", TxManagerError::Rpc("unknown transaction".to_string()))]
     #[case::already_in_pool("transaction already in pool", TxManagerError::AlreadyKnown)]
+    #[case::already_imported("transaction already imported", TxManagerError::AlreadyKnown)]
     #[case::case_insensitive_upper("NONCE TOO LOW", TxManagerError::NonceTooLow)]
     #[case::case_insensitive_mixed("Nonce Too Low", TxManagerError::NonceTooLow)]
     #[case::substring_in_context(

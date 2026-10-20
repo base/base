@@ -39,6 +39,14 @@ confirmation.
 - **`RevertDisplay`** — display wrapper for decoded revert reasons.
 - **`TxManagerResult<T>`** — result type alias.
 
+`SimpleTxManager::send_tracked(candidate, &published)` uses the same send pipeline as `TxManager::send` and retains every attempted signed hash in a caller-owned `PublishedTransactions` journal. Read `published.hashes()` after an error, including `SendTimeout`, or after cancelling the send future. Hashes are recorded before broadcast and deduplicated in attempt order. A recorded hash may not have reached the network, but an error does not prove it was rejected. Use a fresh journal for each logical send. Existing error variants and retry classification are unchanged. A successful send returns its confirmed receipt even when its status is zero; callers must check receipt status.
+
+For tracked sends, an already-known broadcast response counts as success even on the initial attempt, since a transport may have replayed a request that the node accepted. Untracked sends accept it only after a prior successful publication; on the initial broadcast it remains a retryable error returned to the caller, and the signed nonce is returned for reuse. Publication returns the submitted transaction's local hash, not a previous replacement's hash.
+
+For tracked sends, any other JSON-RPC broadcast rejection triggers one lookup of the local hash, bounded by `network_timeout`. If the node knows the transaction, publication counts as successful and normal receipt confirmation continues. A missing, failed, or timed-out lookup preserves the original rejection. Reconciled nonces are not returned to the reuse pool after a later send error.
+
+Cancelling a send future does not reconcile the nonce cache. Serialized callers using `with_pending_nonce()` can reset the nonce manager before their next send to refresh the node's pending nonce. Do not reset it while concurrent sends are allocating nonces.
+
 ### Nonce management
 
 - **`NonceManager`** — lazy-initialized nonce cache with mutex-guarded allocation.
@@ -87,7 +95,7 @@ use base_tx_manager::{RpcErrorClassifier, TxManagerError};
 fn handle_rpc_error(transport_err: &alloy_transport::TransportError) {
     let err = RpcErrorClassifier::classify_rpc_error(transport_err);
     if err.is_already_known() {
-        // Transaction is already in the mempool — treat as success on resubmission.
+        // Accept on a tracked send or after a prior successful publication.
     } else if err.is_retryable() {
         // Fee/replacement errors and transient infrastructure errors — retry with backoff.
     } else {

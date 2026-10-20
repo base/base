@@ -16,6 +16,9 @@ pub use candidate::TxCandidate;
 mod fees;
 pub use fees::{BumpedFees, FeeCalculator, FeeOverride, GasPriceCaps};
 
+mod published;
+pub use published::PublishedTransactions;
+
 mod send_state;
 pub use send_state::SendState;
 

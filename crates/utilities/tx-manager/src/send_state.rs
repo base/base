@@ -14,6 +14,8 @@ use crate::{TxManagerError, TxManagerResult};
 /// lifecycle: mined hashes, nonce errors, fee bumps, and mempool deadlines.
 #[derive(Debug)]
 pub struct SendState {
+    /// Optional per-send hash journal, retained by callers across cancellation.
+    pub published: Option<crate::PublishedTransactions>,
     /// Mutable interior state protected by a std Mutex.
     inner: Mutex<SendStateInner>,
     /// Number of nonce-too-low errors before the send loop aborts.
@@ -45,6 +47,7 @@ impl SendState {
             return Err(TxManagerError::InvalidSafeAbortNonceTooLowCount);
         }
         Ok(Self {
+            published: None,
             inner: Mutex::new(SendStateInner {
                 mined_txs: Vec::new(),
                 has_published: false,

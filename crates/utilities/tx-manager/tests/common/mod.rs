@@ -122,7 +122,7 @@ pub async fn publish_simple_tx(
     let prepared = manager.craft_tx(&candidate, None).await.expect("should craft tx");
     let send_state = SendState::new(SAFE_ABORT_DEPTH).expect("should create send state");
     let raw_tx = prepared.raw_tx;
-    let tx_hash = manager.publish_tx(&send_state, &raw_tx, None).await.expect("should publish tx");
+    let tx_hash = manager.publish_tx(&send_state, &raw_tx).await.expect("should publish tx");
     (tx_hash, send_state, raw_tx)
 }
 
