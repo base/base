@@ -7,7 +7,7 @@ pub use cli::{
 };
 
 mod confirm;
-pub use confirm::{ConfirmJob, ConfirmWindow};
+pub use confirm::{ConfirmJob, ConfirmOutcome, ConfirmReport, ConfirmTiming, ConfirmWindow};
 
 mod contracts;
 pub use contracts::{

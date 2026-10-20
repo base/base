@@ -234,7 +234,7 @@ impl Cli {
     pub async fn run(self) -> eyre::Result<()> {
         base_cli_utils::init_tracing!(LogConfig::from(self.logging))?;
         let (kind, rpc_url, contract, args) = match self.command {
-            FeeCommand::Confirm(args) => return ConfirmJob { args }.run().await,
+            FeeCommand::Confirm(args) => return ConfirmJob { args }.run().await?.into_result(),
             FeeCommand::Disburse(args) => {
                 (FeeJobKind::Disburse, args.rpc_url, args.contract_address, args.job)
             }
