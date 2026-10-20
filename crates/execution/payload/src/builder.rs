@@ -494,7 +494,12 @@ impl<Txs> Builder<'_, Txs> {
             Some(executed),
             block_access_list.map(|bal| alloy_rlp::encode(bal).into()),
         );
-        BuilderMetrics::record_inclusion(&info.inclusion);
+        // `no_tx_pool` builds replay consensus input; the payload-builder cutover also sends one
+        // to the unselected builder for every block. Only the builder that composed the block
+        // records its inclusion, matching flashblocks.
+        if !no_tx_pool {
+            BuilderMetrics::record_inclusion(&info.inclusion);
+        }
 
         if no_tx_pool || ctx.is_denim_active() {
             // if `no_tx_pool` is set only transactions from the payload attributes will be included
@@ -1652,6 +1657,29 @@ mod tests {
     #[test]
     fn parallel_state_root_is_used() {
         assert_eq!(build_empty_payload(state_root_handle()), B256::repeat_byte(0x42));
+    }
+
+    #[cfg(feature = "metrics")]
+    #[test]
+    fn only_pool_builds_record_per_block_inclusion() {
+        let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+
+        metrics::with_local_recorder(&recorder, || {
+            build_empty_payload(state_root_handle());
+            assert!(!handle.render().contains("txs_included_per_block"));
+
+            build_pool_payload(
+                pool_payload_context(DENIM_TIMESTAMP),
+                TestParkableTransactions::new(vec![pool_transaction(0)]),
+            );
+        });
+
+        let rendered = handle.render();
+        assert!(
+            rendered.contains(r#"base_builder_txs_included_per_block_count{flow="standard"} 1"#)
+        );
+        assert!(rendered.contains(r#"base_builder_txs_included_per_block_sum{flow="standard"} 1"#));
     }
 
     const DENIM_TIMESTAMP: u64 = 1;
