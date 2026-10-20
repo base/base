@@ -47,7 +47,7 @@ full-block cadence. A default transaction submitted alone carries no validity pr
 stays in the pool like any other Private transaction until it lands, is replaced, has its
 nonce consumed, or is evicted by pool limits.
 
-Delivery. Admitted transactions use Private origin, so devp2p never gossips them, and today
+Delivery: admitted transactions use Private origin, so devp2p never gossips them, and today
 only builders install the endpoint. Builders run no transaction forwarding, so a submission
 reaches only the builder that received it. In a high-availability set only the leader
 builds, so a submission sent to a follower waits there until that node leads. Transaction

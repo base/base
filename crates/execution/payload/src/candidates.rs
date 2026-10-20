@@ -141,7 +141,8 @@ pub struct CandidateBuilderConfig {
 }
 
 impl CandidateBuilderConfig {
-    /// Creates a configuration with default probe gas, wall cutoff and evaluation cap.
+    /// Creates a configuration with the default probe gas, per-build limits, invalid-attempt
+    /// charge and evaluation cap, and trial events off.
     pub const fn new(runtime: Arc<CandidateRuntime>) -> Self {
         Self {
             runtime,
@@ -421,9 +422,11 @@ pub enum SiblingCommit {
 /// A sibling's uncommitted trial.
 #[derive(Debug)]
 pub struct SiblingTrial {
-    /// Gas used, or why the trial is ineligible before scoring.
+    /// Gas used by a trial that succeeded and passed resource checks, or why the trial is
+    /// ineligible before scoring.
     pub outcome: Result<u64, Ineligibility>,
-    /// Gas the EVM consumed, including for reverted, halted and resource-excluded trials.
+    /// Gas the EVM consumed, even when `outcome` is an error because the trial reverted,
+    /// halted or was resource-excluded; zero when pre-EVM validation failed.
     pub gas_used: u64,
     /// The trial's state diff, kept only when a token probe needs it.
     pub state: Option<EvmState>,
@@ -767,8 +770,9 @@ where
 
     /// Ends a turn whose round was interrupted by cancellation, finalization or the deadline.
     ///
-    /// The round's settled work stays charged but its attempt is returned (design §5.7 step 7).
-    /// Cancellation stops the build; the other stops defer the group.
+    /// The round's settled work stays charged, but its attempt is returned (design §5.7 step 7).
+    /// Returns `Some(())` on cancellation, which stops the build. A deadline or finalization
+    /// defers the group and returns `None`.
     pub fn interrupt<B>(
         &self,
         info: &mut ExecutionInfo,
@@ -859,9 +863,11 @@ where
         }
     }
 
-    /// Records the builder's provisional commit of sibling `index` and journals
-    /// `BUILDER_ACCEPTED` for it: `winner`, or `fallback` with the reason fallback ran. The
-    /// commit is per payload, not terminal; canonical landing is journaled by the ledger.
+    /// Records the builder's provisional commit of sibling `index` in this payload and journals
+    /// `BUILDER_ACCEPTED` for it: `winner`, or `fallback` with the reason fallback ran.
+    ///
+    /// The commit is per payload, not terminal. Canonical landing is recorded later by
+    /// [`GroupLedger::record_landed`](base_execution_candidates::GroupLedger::record_landed).
     pub fn landed(&self, turn: CandidateTurn<'_>, index: usize, fallback: Option<FallbackReason>) {
         let group = turn.group;
         let sibling = group.siblings()[index].hash();

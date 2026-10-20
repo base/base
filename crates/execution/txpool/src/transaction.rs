@@ -225,10 +225,10 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
 
     /// Attaches a validated candidate group to its representative.
     ///
-    /// Pool affordability uses the maximum sibling obligation, capped like any pool cost. It is
-    /// cached in the classified-sender cost slot, which plain EIP-1559 siblings never use.
-    /// Replaces any attached metering result. Raw ingress must validate the group first; this
-    /// does not verify it.
+    /// Caches the group's maximum sibling obligation, capped at [`Self::MAX_POOL_COST`], in
+    /// `sender_cost`, a slot plain EIP-1559 transactions do not populate, so the representative's
+    /// pool cost is that obligation. Replaces any attached metering result. Callers must
+    /// validate the group first; this method does not verify it.
     #[must_use]
     pub fn with_candidate_group(mut self, group: Arc<CandidateGroup>) -> Self {
         self.sender_cost = OnceLock::from(group.max_cost().min(Self::MAX_POOL_COST));

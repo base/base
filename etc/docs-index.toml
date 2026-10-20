@@ -324,7 +324,7 @@ digest = "a7737b723a"
 
 ["crates/execution/candidates/README.md"]
 summary = "base-execution-candidates: CandidateSet envelope, GroupDescriptor ledger, block windows, per-capability policy, lifecycle and scoring for base_sendSwapTransaction; off by default."
-digest = "6e9da9d840"
+digest = "8fb5800749"
 
 ["crates/execution/chainspec/README.md"]
 summary = "BaseChainSpec and SUPPORTED_CHAINS CLI resolution, Holocene/Jovian base fee helpers, and Denim timestamp validation rules (custom genesis needs nonzero config.blockTime). Use for chain/fork config."
@@ -416,7 +416,7 @@ digest = "b72a1536e1"
 
 ["crates/execution/txpool-rpc/README.md"]
 summary = "Txpool RPC admin/status APIs, validity submissions with staged signature modes, and base_sendSwapTransaction over the shared AdmissionService; lifetimes, delivery and proxying."
-digest = "18d3fbc526"
+digest = "9c3ecb1375"
 
 ["crates/execution/txpool-tracing/README.md"]
 summary = "Txpool tracing extension: tracks mempool lifecycle events, txpool_transactionStatus RPC, enabling CLI flags, and reth_transaction_tracing_tx_event histogram. Use to debug tx latency or drops."
@@ -700,7 +700,7 @@ digest = "8df3320197"
 
 ["docs/transaction-events/README.md"]
 summary = "Spec for transaction-event/v1, the JSONL business event journal for transaction observability: config fields, envelope, event vocabulary, Vector to audit-archiver ingest, Postgres retention, examples."
-digest = "e82976e3bc"
+digest = "12a6943f60"
 
 ["docs/transaction-events/tips-parity-checklist.md"]
 summary = "Checklist for verifying TIPS UI audit-archiver/Postgres responses match the S3-backed routes (block, txn, bundle, rejected) before switching TIPS_UI_QUERY_BACKEND=audit."

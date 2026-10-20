@@ -313,7 +313,7 @@ deserializes `event_type`) must run a release that knows the candidate kinds
 before any builder or node emits them. Older binaries reject unknown
 `event_type` values.
 
-Ingress. `TXPOOL_SEND_SWAP_TRANSACTION` fires once per admitted
+Ingress: `TXPOOL_SEND_SWAP_TRANSACTION` fires once per admitted
 `base_sendSwapTransaction` request, when the default transaction is pooled,
 keyed by its `tx_hash`. `data.selection` is `applied` for a candidate group,
 which also carries `data.group_hash` and `data.alternative_hashes` and has an
@@ -330,7 +330,7 @@ transaction and `internal_error` for an unlabeled failure such as a state read.
 `event_id`, so repeated rejections are all kept. Proxies forward without
 journaling.
 
-Builder turns. Each turn that considers a group gets a never-reused
+Builder turns: each turn that considers a group gets a never-reused
 `data.turn`; builder candidate event IDs include the instance and turn, so two
 rounds of one group under one `payload_id` are both kept, while a redelivered
 event deduplicates. A round that reserved work emits one
@@ -371,7 +371,7 @@ bytes), trial 869 to 878, accepted 848, deferred 804, rejected 831, landed 712,
 evicted 652 to 661. A turn emits one round and one decision, plus one trial per
 sibling when trial events are on.
 
-Terminal events. The node's candidate ledger emits exactly one terminal event
+Terminal events: the node's candidate ledger emits exactly one terminal event
 per admitted group, keyed by the group alone so replays deduplicate.
 `TXPOOL_CANDIDATE_LANDED` is canonical: a sibling appeared in a canonical
 block's mined transactions, under the winner's `tx_hash` with `block_hash` and
@@ -391,7 +391,7 @@ that left the pool another way, such as admin removal or pool-full eviction, is
 `dropped` only once the recovery window closes, because a canonical landing can
 still correct it.
 
-Disabled selection. A node started without candidates registers no
+Disabled selection: a node started without candidates registers no
 `base_sendSwapTransaction` and emits none of these events. While selection is
 disabled at runtime with `admin_setCandidateSelectionEnabled`, ingress journals
 admissions with `data.selection: ignored` and starts no group, and the builder
