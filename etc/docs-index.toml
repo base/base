@@ -323,8 +323,8 @@ summary = "Upgrade trait and Upgrades registry for Ecotone, Fjord, Isthmus, and 
 digest = "a7737b723a"
 
 ["crates/execution/candidates/README.md"]
-summary = "base-execution-candidates: CandidateSet envelope and validation, GroupLedger, access policy, lifecycle precedence and winner scoring for base_sendSwapTransaction alternatives; off by default."
-digest = "6bb3b29b1b"
+summary = "base-execution-candidates: CandidateSet envelope, GroupDescriptor ledger, block windows, per-capability policy, lifecycle and scoring for base_sendSwapTransaction; off by default."
+digest = "6e9da9d840"
 
 ["crates/execution/chainspec/README.md"]
 summary = "BaseChainSpec and SUPPORTED_CHAINS CLI resolution, Holocene/Jovian base fee helpers, and Denim timestamp validation rules (custom genesis needs nonzero config.blockTime). Use for chain/fork config."

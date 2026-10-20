@@ -14,8 +14,14 @@ pub use envelope::{
     SelectionRule as Eip712SelectionRule,
 };
 
+mod expiry;
+pub use expiry::BlockWindow;
+
 mod error;
 pub use error::CandidateError;
+
+mod identity;
+pub use identity::{GroupBudget, GroupDescriptor};
 
 mod group;
 pub use group::{CandidateGroup, CandidateSibling};
@@ -23,13 +29,13 @@ pub use group::{CandidateGroup, CandidateSibling};
 mod validation;
 pub use validation::{
     CandidateLimits, CandidateValidator, DEFAULT_MAX_REQUEST_BYTES, DEFAULT_MAX_SIBLING_BYTES,
-    DEFAULT_MAX_SIBLING_GAS, DEFAULT_MAX_SIBLINGS, ExpiryWindow,
+    DEFAULT_MAX_SIBLING_GAS, DEFAULT_MAX_SIBLINGS,
 };
 
 mod policy;
 pub use policy::{
-    AccessDenied, AttemptId, CandidateAccessPolicy, ChargeDecision, GroupOutcome, GroupSummary,
-    PrincipalEntry, PrincipalId, PrincipalsFile, StaticAccessPolicy, WorkTicket,
+    AccessDenied, AttemptId, CandidateAccessPolicy, Capability, ChargeDecision, GroupOutcome,
+    GroupSummary, PrincipalEntry, PrincipalId, PrincipalsFile, StaticAccessPolicy, WorkTicket,
 };
 
 mod journal;
@@ -39,8 +45,8 @@ mod ledger;
 pub use ledger::{
     DEFAULT_MAX_EVALUATIONS, DEFAULT_MAX_GROUPS, DEFAULT_MAX_GROUPS_PER_SENDER,
     DEFAULT_RECOVERY_WINDOW_BLOCKS, EvictionReason, GroupLedger, GroupLedgerEntry,
-    GroupReservation, GroupState, LandedCandidate, LedgerAdmission, LedgerLimits, LedgerState,
-    ReserveError,
+    GroupReservation, GroupState, LandedCandidate, LedgerAdmission, LedgerError, LedgerLimits,
+    LedgerState, ReserveError,
 };
 
 mod lifecycle;
