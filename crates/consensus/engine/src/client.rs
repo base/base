@@ -19,7 +19,7 @@ use alloy_transport_http::{
 };
 use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
-use base_common_network::{Base, BaseEngineApi};
+use base_common_network::{Base, BaseEngineApi, SharedEngineApi};
 use base_common_rpc_types_engine::{
     BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5,
     BaseExecutionPayloadV4, BasePayloadAttributes,
@@ -95,8 +95,11 @@ where
     L1Provider: Provider,
     L2Provider: Provider<Base>,
 {
-    /// The L2 engine provider for Engine API calls.
+    /// The L2 provider for L2 reads, such as block and proof queries.
     engine: L2Provider,
+    /// Serves Engine API calls, either over `engine` or directly against an execution node in the
+    /// same process.
+    engine_api: SharedEngineApi,
     /// The L1 chain provider for reading L1 data.
     l1_provider: L1Provider,
     /// The [`RollupConfig`] for determining Engine API versions based on upgrade activations.
@@ -169,18 +172,26 @@ pub enum EngineEndpoint {
     /// A separate execution node reached over HTTP, WebSocket, or IPC.
     Url(Url),
     /// An execution node embedded in the same process.
-    InMemory(InMemoryTransport),
+    InMemory {
+        /// Carries L2 reads as JSON-RPC requests dispatched in memory.
+        transport: InMemoryTransport,
+        /// Calls the Engine API handlers directly, without JSON-RPC encoding.
+        engine_api: SharedEngineApi,
+    },
 }
 
 impl EngineEndpoint {
-    /// Connects a provider to this endpoint. The JWT secret is only used by `Url` endpoints.
+    /// Connects a JSON-RPC provider to this endpoint. The JWT secret is only used by `Url`
+    /// endpoints.
     pub async fn connect<N: Network>(self, jwt: JwtSecret) -> TransportResult<RootProvider<N>> {
         match self {
             Self::Url(url) => {
                 BaseEngineClient::<RootProvider, RootProvider<Base>>::rpc_client::<N>(url, jwt)
                     .await
             }
-            Self::InMemory(transport) => Ok(RootProvider::new(RpcClient::new(transport, true))),
+            Self::InMemory { transport, .. } => {
+                Ok(RootProvider::new(RpcClient::new(transport, true)))
+            }
         }
     }
 }
@@ -209,11 +220,17 @@ impl EngineClientBuilder {
     pub async fn build(
         self,
     ) -> TransportResult<BaseEngineClient<RootProvider, RootProvider<Base>>> {
+        let in_process_engine_api = match &self.l2 {
+            EngineEndpoint::InMemory { engine_api, .. } => Some(engine_api.clone()),
+            EngineEndpoint::Url(_) => None,
+        };
         let engine = self.l2.connect::<Base>(self.l2_jwt).await?;
+        let engine_api =
+            in_process_engine_api.unwrap_or_else(|| SharedEngineApi::new(engine.clone()));
 
         let l1_provider = L1RpcProvider::new_http_with_timeout(self.l1_rpc, self.l1_rpc_timeout);
 
-        Ok(BaseEngineClient { engine, l1_provider, cfg: self.cfg })
+        Ok(BaseEngineClient { engine, engine_api, l1_provider, cfg: self.cfg })
     }
 }
 
@@ -279,7 +296,7 @@ where
         &self,
         payload: ExecutionPayloadInputV2,
     ) -> TransportResult<PayloadStatus> {
-        let call = <L2Provider as BaseEngineApi>::new_payload_v2(&self.engine, payload);
+        let call = self.engine_api.new_payload_v2(payload);
 
         record_call_time(call, Metrics::NEW_PAYLOAD_METHOD).await
     }
@@ -289,11 +306,7 @@ where
         payload: ExecutionPayloadV3,
         parent_beacon_block_root: B256,
     ) -> TransportResult<PayloadStatus> {
-        let call = <L2Provider as BaseEngineApi>::new_payload_v3(
-            &self.engine,
-            payload,
-            parent_beacon_block_root,
-        );
+        let call = self.engine_api.new_payload_v3(payload, parent_beacon_block_root);
 
         record_call_time(call, Metrics::NEW_PAYLOAD_METHOD).await
     }
@@ -303,11 +316,7 @@ where
         payload: BaseExecutionPayloadV4,
         parent_beacon_block_root: B256,
     ) -> TransportResult<PayloadStatus> {
-        let call = <L2Provider as BaseEngineApi>::new_payload_v4(
-            &self.engine,
-            payload,
-            parent_beacon_block_root,
-        );
+        let call = self.engine_api.new_payload_v4(payload, parent_beacon_block_root);
 
         record_call_time(call, Metrics::NEW_PAYLOAD_METHOD).await
     }
@@ -317,11 +326,7 @@ where
         fork_choice_state: ForkchoiceState,
         payload_attributes: Option<BasePayloadAttributes>,
     ) -> TransportResult<ForkchoiceUpdated> {
-        let call = <L2Provider as BaseEngineApi>::fork_choice_updated_v2(
-            &self.engine,
-            fork_choice_state,
-            payload_attributes,
-        );
+        let call = self.engine_api.fork_choice_updated_v2(fork_choice_state, payload_attributes);
 
         record_call_time(call, Metrics::FORKCHOICE_UPDATE_METHOD).await
     }
@@ -331,11 +336,7 @@ where
         fork_choice_state: ForkchoiceState,
         payload_attributes: Option<BasePayloadAttributes>,
     ) -> TransportResult<ForkchoiceUpdated> {
-        let call = <L2Provider as BaseEngineApi>::fork_choice_updated_v3(
-            &self.engine,
-            fork_choice_state,
-            payload_attributes,
-        );
+        let call = self.engine_api.fork_choice_updated_v3(fork_choice_state, payload_attributes);
 
         record_call_time(call, Metrics::FORKCHOICE_UPDATE_METHOD).await
     }
@@ -344,7 +345,7 @@ where
         &self,
         payload_id: PayloadId,
     ) -> TransportResult<ExecutionPayloadEnvelopeV2> {
-        let call = <L2Provider as BaseEngineApi>::get_payload_v2(&self.engine, payload_id);
+        let call = self.engine_api.get_payload_v2(payload_id);
 
         record_call_time(call, Metrics::GET_PAYLOAD_METHOD).await
     }
@@ -353,7 +354,7 @@ where
         &self,
         payload_id: PayloadId,
     ) -> TransportResult<BaseExecutionPayloadEnvelopeV3> {
-        let call = <L2Provider as BaseEngineApi>::get_payload_v3(&self.engine, payload_id);
+        let call = self.engine_api.get_payload_v3(payload_id);
 
         record_call_time(call, Metrics::GET_PAYLOAD_METHOD).await
     }
@@ -362,7 +363,7 @@ where
         &self,
         payload_id: PayloadId,
     ) -> TransportResult<BaseExecutionPayloadEnvelopeV4> {
-        let call = <L2Provider as BaseEngineApi>::get_payload_v4(&self.engine, payload_id);
+        let call = self.engine_api.get_payload_v4(payload_id);
 
         record_call_time(call, Metrics::GET_PAYLOAD_METHOD).await
     }
@@ -371,7 +372,7 @@ where
         &self,
         payload_id: PayloadId,
     ) -> TransportResult<BaseExecutionPayloadEnvelopeV5> {
-        let call = <L2Provider as BaseEngineApi>::get_payload_v5(&self.engine, payload_id);
+        let call = self.engine_api.get_payload_v5(payload_id);
 
         record_call_time(call, Metrics::GET_PAYLOAD_METHOD).await
     }
@@ -380,8 +381,7 @@ where
         &self,
         block_hashes: Vec<BlockHash>,
     ) -> TransportResult<ExecutionPayloadBodiesV1> {
-        <L2Provider as BaseEngineApi>::get_payload_bodies_by_hash_v1(&self.engine, block_hashes)
-            .await
+        self.engine_api.get_payload_bodies_by_hash_v1(block_hashes).await
     }
 
     async fn get_payload_bodies_by_range_v1(
@@ -389,22 +389,21 @@ where
         start: u64,
         count: u64,
     ) -> TransportResult<ExecutionPayloadBodiesV1> {
-        <L2Provider as BaseEngineApi>::get_payload_bodies_by_range_v1(&self.engine, start, count)
-            .await
+        self.engine_api.get_payload_bodies_by_range_v1(start, count).await
     }
 
     async fn get_client_version_v1(
         &self,
         client_version: ClientVersionV1,
     ) -> TransportResult<Vec<ClientVersionV1>> {
-        <L2Provider as BaseEngineApi>::get_client_version_v1(&self.engine, client_version).await
+        self.engine_api.get_client_version_v1(client_version).await
     }
 
     async fn exchange_capabilities(
         &self,
         capabilities: Vec<String>,
     ) -> TransportResult<Vec<String>> {
-        <L2Provider as BaseEngineApi>::exchange_capabilities(&self.engine, capabilities).await
+        self.engine_api.exchange_capabilities(capabilities).await
     }
 }
 

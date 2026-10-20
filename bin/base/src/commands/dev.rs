@@ -81,8 +81,10 @@ impl DevCommand {
             let mut runner = BaseNodeRunner::new(RollupArgs::default());
             runner.install_ext::<ImpersonationRpcExtension>(impersonation.clone());
             let launched = runner.launch(builder).await?;
-            let engine =
-                EngineEndpoint::InMemory(InMemoryTransport { module: launched.auth_module });
+            let engine = EngineEndpoint::InMemory {
+                transport: InMemoryTransport { module: launched.auth_module },
+                engine_api: launched.engine_api,
+            };
             let handle = launched.handle;
             let rpc = handle.node.rpc_server_handle();
             info!(

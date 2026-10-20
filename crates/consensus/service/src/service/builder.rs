@@ -205,7 +205,7 @@ impl RollupNodeBuilder {
 
         let l2_provider = match self.engine_config.l2_endpoint.clone() {
             EngineEndpoint::Url(url) => EngineEndpoint::Url(Self::derivation_l2_provider_url(url)),
-            in_memory @ EngineEndpoint::InMemory(_) => in_memory,
+            in_memory @ EngineEndpoint::InMemory { .. } => in_memory,
         }
         .connect::<Base>(self.engine_config.l2_jwt_secret)
         .await?;
