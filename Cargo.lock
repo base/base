@@ -5399,7 +5399,6 @@ dependencies = [
  "rstest",
  "spin 0.10.1",
  "thiserror 2.0.19",
- "tokio",
  "tracing",
 ]
 
