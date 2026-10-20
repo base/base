@@ -7,4 +7,6 @@ mod args;
 pub use args::{Args, FlashblocksArgs, TransactionEventsArgs};
 
 mod candidates;
-pub use candidates::{CandidateArgs, DEFAULT_CANDIDATE_MAX_EXPIRY_SECS};
+pub use candidates::{
+    BuilderPath, CandidateArgs, CandidateCapabilities, DEFAULT_CANDIDATE_MAX_EXPIRY_SECS,
+};

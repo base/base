@@ -1,6 +1,6 @@
 //! `TxPool` RPC extension for registering transaction pool management APIs.
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use base_execution_candidates::CandidateRuntime;
 use base_execution_rpc::SequencerClient;
@@ -8,8 +8,11 @@ use base_execution_txpool::AdmissionService;
 pub use base_execution_txpool::{
     DEFAULT_MAX_VALIDITY_EXPIRY_SECS, DEFAULT_MAX_VALIDITY_PREDICATES, ValiditySignatureMode,
 };
-use base_node_runner::{BaseNodeExtension, BaseRpcContext, FromExtensionConfig, NodeHooks};
+use base_node_runner::{
+    BaseNodeAdapter, BaseNodeExtension, BaseRpcContext, FromExtensionConfig, NodeHooks,
+};
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
+use reth_node_api::{FullNodeComponents, FullNodeTypes};
 use reth_rpc_server_types::RethRpcModule;
 
 use crate::{
@@ -118,21 +121,67 @@ impl FromExtensionConfig for SendRawTransactionValidityExtension {
     }
 }
 
-/// Configuration for `base_sendSwapTransaction`, the Swap Lane ingress.
+/// The [`AdmissionService`] over the Base node's provider and pool.
+pub type NodeAdmissionService = AdmissionService<
+    <BaseNodeAdapter as FullNodeTypes>::Provider,
+    <BaseNodeAdapter as FullNodeComponents>::Pool,
+>;
+
+/// Candidate capabilities shared by every ingress adapter in the process, independent of any
+/// one endpoint.
 ///
-/// Install the extension only when `--txpool.candidates.enabled` is set; an unregistered method
-/// returns `-32601`. While selection is disabled at runtime, the registered method admits only
-/// default transactions.
+/// Clones share one [`NodeAdmissionService`], created on first use from the node's provider
+/// and pool, so every adapter built from this configuration sees the same in-flight
+/// admissions.
 #[derive(Debug, Clone)]
-pub struct SendSwapTransactionConfig {
+pub struct CandidateCapabilityConfig {
     /// Candidate runtime shared with the pool and the payload builder.
     pub runtime: Arc<CandidateRuntime>,
     /// Lifetime of an admitted candidate group past the next block, in seconds.
     pub group_lifetime_secs: u64,
-    /// Upstream node that proxy-mode ingress forwards every submission to, unchanged.
+    admission: Arc<OnceLock<Arc<NodeAdmissionService>>>,
+}
+
+impl CandidateCapabilityConfig {
+    /// Creates the capability configuration over `runtime`.
+    pub fn new(runtime: Arc<CandidateRuntime>, group_lifetime_secs: u64) -> Self {
+        Self { runtime, group_lifetime_secs, admission: Arc::default() }
+    }
+
+    /// Returns the process's admission service, creating it from `ctx` on first use.
+    pub fn admission(&self, ctx: &BaseRpcContext<'_>) -> Arc<NodeAdmissionService> {
+        Arc::clone(self.admission.get_or_init(|| {
+            Arc::new(AdmissionService::new(
+                ctx.provider().clone(),
+                ctx.pool().clone(),
+                Arc::clone(&self.runtime),
+                self.group_lifetime_secs,
+            ))
+        }))
+    }
+}
+
+/// Settings of the `base_sendSwapTransaction` endpoint itself.
+#[derive(Debug, Clone, Default)]
+pub struct SwapEndpointConfig {
+    /// Upstream node that proxy-mode ingress forwards every submission to, unchanged, instead
+    /// of admitting locally.
     pub sequencer_url: Option<String>,
-    /// HTTP headers sent to the upstream sequencer, in `name=value` form.
+    /// HTTP headers sent to the upstream node, in `name=value` form.
     pub sequencer_headers: Vec<String>,
+}
+
+/// Configuration for `base_sendSwapTransaction`, the Swap Lane ingress.
+///
+/// Install the extension only when the candidate capabilities run; an unregistered method
+/// returns `-32601`. While selection is disabled at runtime, the registered method admits only
+/// default transactions.
+#[derive(Debug, Clone)]
+pub struct SendSwapTransactionConfig {
+    /// Capabilities the endpoint admits into.
+    pub capabilities: CandidateCapabilityConfig,
+    /// Endpoint settings.
+    pub endpoint: SwapEndpointConfig,
 }
 
 /// Extension registering Swap Lane ingress and its candidate selection admin toggle.
@@ -146,21 +195,16 @@ impl BaseNodeExtension for SendSwapTransactionExtension {
         let config = self.config;
         builder.add_rpc_module(move |ctx: &mut BaseRpcContext<'_>| {
             let chain_id = ctx.provider().chain_spec().chain_id();
-            let admission = Arc::new(AdmissionService::new(
-                ctx.provider().clone(),
-                ctx.pool().clone(),
-                Arc::clone(&config.runtime),
-                config.group_lifetime_secs,
-            ));
-            let mut api = SendSwapTransactionApiImpl::new(admission, chain_id);
-            if let Some(url) = &config.sequencer_url {
+            let capabilities = &config.capabilities;
+            let mut api = SendSwapTransactionApiImpl::new(capabilities.admission(ctx), chain_id);
+            if let Some(url) = &config.endpoint.sequencer_url {
                 api = api.with_sequencer_client(SequencerClient::new_http_with_headers(
                     url,
-                    config.sequencer_headers.clone(),
+                    config.endpoint.sequencer_headers.clone(),
                 )?);
             }
             ctx.modules.merge_configured(api.into_rpc())?;
-            let admin = AdminCandidateSelectionApiImpl::new(Arc::clone(&config.runtime));
+            let admin = AdminCandidateSelectionApiImpl::new(Arc::clone(&capabilities.runtime));
             ctx.modules.merge_if_module_configured(RethRpcModule::Admin, admin.into_rpc())?;
             Ok(())
         })

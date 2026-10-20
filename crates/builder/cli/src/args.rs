@@ -17,7 +17,7 @@ use base_observability_events::{
 };
 use tracing::warn;
 
-use crate::CandidateArgs;
+use crate::{BuilderPath, CandidateArgs};
 
 /// Parameters for Flashblocks configuration.
 ///
@@ -353,6 +353,15 @@ impl Default for Args {
 }
 
 impl Args {
+    /// Returns the payload builders this node can route a build to.
+    pub const fn builder_path(&self) -> BuilderPath {
+        if self.payload_builder_cutover || self.basic_payload_builder {
+            BuilderPath::Native
+        } else {
+            BuilderPath::FlashblocksOnly
+        }
+    }
+
     /// Builds configuration for the builder transaction insertion RPC.
     pub const fn builder_api_config(&self) -> BuilderApiExtensionConfig {
         BuilderApiExtensionConfig::new(self.validity_max_predicates)

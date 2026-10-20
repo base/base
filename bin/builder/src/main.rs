@@ -14,8 +14,9 @@ use base_node_runner::BaseNodeRunner;
 use base_observability_events::GlobalTransactionEventWriter;
 use base_shadow_indexer::{ShadowIndexerConfig, ShadowIndexerExtension};
 use base_txpool_rpc::{
-    SendRawTransactionValidityConfig, SendRawTransactionValidityExtension,
-    SendSwapTransactionConfig, SendSwapTransactionExtension, TxPoolRpcConfig, TxPoolRpcExtension,
+    CandidateCapabilityConfig, SendRawTransactionValidityConfig,
+    SendRawTransactionValidityExtension, SendSwapTransactionConfig, SendSwapTransactionExtension,
+    SwapEndpointConfig, TxPoolRpcConfig, TxPoolRpcExtension,
 };
 
 type BuilderCli = Cli<Args>;
@@ -47,9 +48,9 @@ fn main() {
         )?;
 
         let builder_api_config = builder_args.builder_api_config();
-        let candidate_runtime = builder_args.candidates.runtime()?;
-        let candidate_builder = builder_args.candidates.builder_config(candidate_runtime.as_ref());
-        let candidate_max_expiry_secs = builder_args.candidates.max_expiry_secs;
+        let candidates = builder_args.candidates.capabilities(builder_args.builder_path())?;
+        let candidate_runtime = candidates.as_ref().map(|c| Arc::clone(&c.runtime));
+        let candidate_builder = candidates.as_ref().and_then(|c| c.builder.clone());
         let shadow_indexer_config = ShadowIndexerConfig::try_from(&builder_args.shadow_indexer)?;
         let payload_builder_cutover = builder_args.payload_builder_cutover;
         let basic_payload_builder = builder_args.basic_payload_builder;
@@ -83,12 +84,13 @@ fn main() {
                 ..Default::default()
             },
         );
-        if let Some(runtime) = candidate_runtime {
+        if let Some(candidates) = candidates {
             runner.install_ext::<SendSwapTransactionExtension>(SendSwapTransactionConfig {
-                runtime,
-                max_expiry_secs: candidate_max_expiry_secs,
-                sequencer_url: None,
-                sequencer_headers: Vec::new(),
+                capabilities: CandidateCapabilityConfig::new(
+                    candidates.runtime,
+                    candidates.group_lifetime_secs,
+                ),
+                endpoint: SwapEndpointConfig::default(),
             });
         }
         runner.install_ext::<ShadowIndexerExtension>(shadow_indexer_config);
