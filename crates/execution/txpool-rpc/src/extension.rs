@@ -130,34 +130,49 @@ pub type NodeAdmissionService = AdmissionService<
 /// Candidate capabilities shared by every ingress adapter in the process, independent of any
 /// one endpoint.
 ///
-/// Clones share one [`NodeAdmissionService`], created on first use from the node's provider
-/// and pool, so every adapter built from this configuration sees the same in-flight
-/// admissions.
+/// Clones share one [`AdmissionService`], created on first use from the node's provider and
+/// pool, so every adapter built from this configuration sees the same in-flight admissions.
+/// The provider and pool default to the Base node's.
 #[derive(Debug, Clone)]
-pub struct CandidateCapabilityConfig {
+pub struct CandidateCapabilityConfig<
+    Provider = <BaseNodeAdapter as FullNodeTypes>::Provider,
+    Pool = <BaseNodeAdapter as FullNodeComponents>::Pool,
+> {
     /// Candidate runtime shared with the pool and the payload builder.
     pub runtime: Arc<CandidateRuntime>,
     /// Lifetime of an admitted candidate group past the next block, in seconds.
     pub group_lifetime_secs: u64,
-    admission: Arc<OnceLock<Arc<NodeAdmissionService>>>,
+    admission: Arc<OnceLock<Arc<AdmissionService<Provider, Pool>>>>,
 }
 
-impl CandidateCapabilityConfig {
+impl<Provider, Pool> CandidateCapabilityConfig<Provider, Pool> {
     /// Creates the capability configuration over `runtime`.
     pub fn new(runtime: Arc<CandidateRuntime>, group_lifetime_secs: u64) -> Self {
         Self { runtime, group_lifetime_secs, admission: Arc::default() }
     }
 
-    /// Returns the process's admission service, creating it from `ctx` on first use.
-    pub fn admission(&self, ctx: &BaseRpcContext<'_>) -> Arc<NodeAdmissionService> {
+    /// Returns the process's admission service, creating it over `provider` and `pool` on
+    /// first use; later calls ignore their arguments.
+    pub fn admission_from(
+        &self,
+        provider: Provider,
+        pool: Pool,
+    ) -> Arc<AdmissionService<Provider, Pool>> {
         Arc::clone(self.admission.get_or_init(|| {
             Arc::new(AdmissionService::new(
-                ctx.provider().clone(),
-                ctx.pool().clone(),
+                provider,
+                pool,
                 Arc::clone(&self.runtime),
                 self.group_lifetime_secs,
             ))
         }))
+    }
+}
+
+impl CandidateCapabilityConfig {
+    /// Returns the process's admission service, creating it from `ctx` on first use.
+    pub fn admission(&self, ctx: &BaseRpcContext<'_>) -> Arc<NodeAdmissionService> {
+        self.admission_from(ctx.provider().clone(), ctx.pool().clone())
     }
 }
 

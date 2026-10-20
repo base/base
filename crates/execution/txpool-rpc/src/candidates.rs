@@ -597,6 +597,7 @@ mod tests {
     use tokio::sync::watch;
 
     use super::*;
+    use crate::CandidateCapabilityConfig;
 
     type TestProvider = MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>;
     type TestPool = Pool<
@@ -855,7 +856,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn adapters_sharing_one_admission_service_share_inflight_admissions() {
+    async fn adapters_built_from_one_capability_config_share_inflight_admissions() {
         let fixture = fixture();
         let runtime = runtime(&[fixture.address()]);
         let gate = Arc::new(tokio::sync::Semaphore::new(0));
@@ -865,14 +866,17 @@ mod tests {
             InMemoryBlobStore::default(),
             PoolConfig::default(),
         );
-        let admission = Arc::new(AdmissionService::new(
-            provider(),
-            pool,
-            Arc::clone(&runtime),
-            MAX_EXPIRY_SECS,
-        ));
-        let first = SendSwapTransactionApiImpl::new(Arc::clone(&admission), chain_id());
-        let second = SendSwapTransactionApiImpl::new(Arc::clone(&admission), chain_id());
+        // Each adapter obtains its service from its own clone of the capability configuration,
+        // as separately installed endpoints do.
+        let capabilities = CandidateCapabilityConfig::new(Arc::clone(&runtime), MAX_EXPIRY_SECS);
+        let first = SendSwapTransactionApiImpl::new(
+            capabilities.clone().admission_from(provider(), pool.clone()),
+            chain_id(),
+        );
+        let second = SendSwapTransactionApiImpl::new(
+            capabilities.admission_from(provider(), pool),
+            chain_id(),
+        );
         let (default, options) = request(&fixture);
 
         let pending = tokio::spawn({
@@ -882,8 +886,10 @@ mod tests {
         until_pending(&runtime).await;
         // The second adapter finds the first one's admission in flight and waits for it,
         // instead of creating its own entry or reporting acceptance early.
-        let duplicate =
-            tokio::spawn(async move { second.send_swap_transaction(default, Some(options)).await });
+        let duplicate = tokio::spawn({
+            let second = second.clone();
+            async move { second.send_swap_transaction(default, Some(options)).await }
+        });
         for _ in 0..10 {
             tokio::task::yield_now().await;
         }
@@ -893,7 +899,7 @@ mod tests {
         assert!(pending.await.unwrap().is_err());
         let duplicate = duplicate.await.unwrap().expect_err("the duplicate mirrors the failure");
         assert_eq!(label(&duplicate), "concurrent_submission_failed");
-        assert!(admission.lock_inflight().is_empty());
+        assert!(second.admission.lock_inflight().is_empty());
         assert_eq!(runtime.ledger.counts(), (0, 0));
     }
 
