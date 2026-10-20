@@ -13,7 +13,7 @@ Block builder library for Base. Provides flashblocks payload building infrastruc
 
 ## Features
 
-- `jemalloc`: Use jemalloc allocator (default).
+- `jemalloc`: Use jemalloc allocator.
 - `jemalloc-prof`: Enable jemalloc profiling.
 - `testing`: Enable testing utilities and framework.
 

@@ -7,6 +7,16 @@ mod cli;
 mod commands;
 mod config;
 
+#[cfg(all(feature = "mimalloc", feature = "jemalloc"))]
+use rustfs_mimalloc as _;
+
+// mimalloc is the default allocator. An explicitly enabled `jemalloc` feature (for example via
+// `jemalloc-prof` profiling builds) takes precedence so heap profiling keeps working.
+#[cfg(all(feature = "mimalloc", not(feature = "jemalloc")))]
+#[global_allocator]
+static ALLOC: rustfs_mimalloc::MiMalloc = rustfs_mimalloc::MiMalloc;
+
+#[cfg(feature = "jemalloc")]
 #[global_allocator]
 static ALLOC: reth_cli_util::allocator::Allocator = reth_cli_util::allocator::new_allocator();
 
