@@ -2015,7 +2015,8 @@ mod tests {
         let writer = capture.clone();
         let subscriber =
             tracing_subscriber::fmt().with_ansi(false).with_writer(move || writer.clone()).finish();
-        let result = server.run().with_subscriber(subscriber).await;
+        let _guard = tracing::subscriber::set_default(subscriber);
+        let result = server.run().await;
         let error = result.unwrap_err();
         let WithdrawerError::Unconfirmed { transaction_hashes, source } = &error else {
             panic!("missing broadcast hash: {error:?}");
@@ -2024,6 +2025,11 @@ mod tests {
         assert_eq!(*transaction_hash, *server.sent.lock().unwrap()[0].tx_hash());
         assert!(matches!(**source, WithdrawerError::Timeout(_)), "{source:?}");
         let logs = String::from_utf8(capture.0.lock().unwrap().clone()).unwrap();
+        assert!(
+            logs.lines()
+                .any(|line| line.contains("receipt query failed") && line.contains("error=")),
+            "missing receipt warning with error field: {logs}"
+        );
         for secret in ["password", "host.invalid", "secret-value"] {
             assert!(!logs.contains(secret), "server-supplied secret leaked in warning: {logs}");
         }
