@@ -7,22 +7,19 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
-mod app;
-pub use app::{ConsensusCli, ConsensusCommands, LogArgs, MetricsArgs};
-
 mod bootnode;
-pub use bootnode::{Bootnode, BootnodeEnr, BootnodeP2PArgs, resolve_host};
+pub use bootnode::{BootnodeP2PArgs, resolve_host};
 
 mod chain;
-pub use chain::{ConsensusChainArgs, GlobalConsensusChainArgs};
+pub use chain::ConsensusChainArgs;
 
 mod config;
 pub use config::{ConfigError, L1ConfigFile, L2ConfigFile};
 
 mod follow;
 pub use follow::{
-    ConsensusFollowNodeArgs, ConsensusFollowNodeCommand, ConsensusFollowNodeConfigArgs,
-    EmbeddedConsensusFollowNodeConfigArgs, FollowNodeOverrides,
+    ConsensusFollowNodeArgs, ConsensusFollowNodeConfigArgs, EmbeddedConsensusFollowNodeConfigArgs,
+    FollowNodeOverrides,
 };
 
 mod l1;
@@ -36,9 +33,8 @@ pub use metrics::CliMetrics;
 
 mod node;
 pub use node::{
-    ConsensusNodeArgs, ConsensusNodeCommand, ConsensusNodeConfigArgs, ConsensusNodeOverrides,
-    ConsensusNodeStartOptions, EmbeddedConsensusNodeConfigArgs,
-    EmbeddedSequencerConsensusNodeConfigArgs,
+    ConsensusNodeArgs, ConsensusNodeConfigArgs, ConsensusNodeOverrides, ConsensusNodeStartOptions,
+    EmbeddedConsensusNodeConfigArgs, EmbeddedSequencerConsensusNodeConfigArgs,
 };
 
 mod rpc;

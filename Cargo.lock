@@ -3235,25 +3235,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-builder-bin"
-version = "0.0.0"
-dependencies = [
- "base-builder-cli",
- "base-builder-core",
- "base-builder-metering",
- "base-builder-multiplex",
- "base-cli-utils",
- "base-execution-cli",
- "base-node-runner",
- "base-observability-events",
- "base-reth-cli",
- "base-shadow-indexer",
- "base-txpool-rpc",
- "clap",
- "reth-cli-util",
-]
-
-[[package]]
 name = "base-builder-cli"
 version = "0.0.0"
 dependencies = [
@@ -3903,15 +3884,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-consensus"
-version = "0.0.0"
-dependencies = [
- "base-cli-utils",
- "base-consensus-cli",
- "clap",
-]
-
-[[package]]
 name = "base-consensus-cli"
 version = "0.0.0"
 dependencies = [
@@ -3923,7 +3895,6 @@ dependencies = [
  "alloy-signer 2.5.0",
  "alloy-signer-local 2.5.0",
  "backon",
- "base-cli-utils",
  "base-common-chains",
  "base-common-genesis",
  "base-common-network",
@@ -3947,9 +3918,7 @@ dependencies = [
  "libp2p",
  "metrics",
  "reqwest 0.13.4",
- "reth-node-core",
  "rstest",
- "serde",
  "serde_json",
  "strum 0.27.2",
  "tempfile",
@@ -6163,17 +6132,6 @@ dependencies = [
  "tempfile",
  "tracing",
  "zstd",
-]
-
-[[package]]
-name = "base-reth-node"
-version = "0.0.0"
-dependencies = [
- "base-cli-utils",
- "base-execution-cli",
- "base-reth-cli",
- "clap",
- "reth-cli-util",
 ]
 
 [[package]]

@@ -44,6 +44,8 @@ NETWORK_ENV=.env.sepolia docker compose up --build
 NODE_TAG=v1.3.0 docker compose up
 ```
 
+Upgrading from the two-service compose file (`execution` + `node`)? Pass `--remove-orphans` once, for example `docker compose up -d --remove-orphans`, so the old `execution` container releases its ports.
+
 See the [docs](https://docs.base.org/base-chain/node-operators/run-a-base-node) for hardware requirements, snapshots, Flashblocks, and historical proofs.
 
 ## Run a Local Devnet
