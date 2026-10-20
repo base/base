@@ -21,6 +21,8 @@ sol! {
     }
 
     /// EIP-712 candidate envelope. Its signing hash is the group's identity (`groupHash`).
+    ///
+    /// It carries no expiry: the node bounds each admitted group with its configured lifetime.
     #[derive(Debug, PartialEq, Eq)]
     struct CandidateSet {
         /// Sender of every sibling and signer of the envelope.
@@ -41,8 +43,6 @@ sol! {
         uint16 maxEvaluations;
         /// Upper bound, in wei, on any access charge.
         uint256 maxAccessCharge;
-        /// Last block in which the group may land (inclusive).
-        uint64 expiryBlock;
         /// `0` = attestation only, `1` = delayed full replay allowed.
         uint8 disclosure;
     }
@@ -144,9 +144,6 @@ pub struct CandidateEnvelope {
     pub max_evaluations: u16,
     /// See [`CandidateSet::maxAccessCharge`].
     pub max_access_charge: U256,
-    /// See [`CandidateSet::expiryBlock`].
-    #[serde(with = "alloy_serde::quantity")]
-    pub expiry_block: u64,
     /// See [`CandidateSet::disclosure`].
     #[serde(with = "alloy_serde::quantity")]
     pub disclosure: u8,
@@ -177,7 +174,6 @@ impl CandidateEnvelope {
             maxWorkGas: self.max_work_gas,
             maxEvaluations: self.max_evaluations,
             maxAccessCharge: self.max_access_charge,
-            expiryBlock: self.expiry_block,
             disclosure: self.disclosure,
         }
     }
@@ -250,6 +246,11 @@ impl CandidateEnvelope {
 mod tests {
     use super::*;
 
+    /// `envelope()`'s signing hash on chain 8453 for the `CandidateSet` type without `expiryBlock`.
+    const VECTOR_HASH: B256 = alloy_primitives::b256!(
+        "0x9e23362520ef2253cd5a9050ca90436e4c4c7c18f2c5f411d94fa69c41517773"
+    );
+
     fn envelope() -> CandidateEnvelope {
         CandidateEnvelope {
             sender: Address::repeat_byte(0x11),
@@ -267,7 +268,6 @@ mod tests {
             max_work_gas: 1_000_000,
             max_evaluations: 3,
             max_access_charge: U256::ZERO,
-            expiry_block: 100,
             disclosure: 0,
         }
     }
@@ -277,7 +277,7 @@ mod tests {
         let json = serde_json::to_value(envelope()).unwrap();
         assert_eq!(json["nonce"], "0x7");
         assert_eq!(json["rule"]["scoreVersion"], "0x1");
-        assert_eq!(json["expiryBlock"], "0x64");
+        assert_eq!(json["maxWorkGas"], "0xf4240");
         let decoded: CandidateEnvelope = serde_json::from_value(json).unwrap();
         assert_eq!(decoded, envelope());
     }
@@ -319,5 +319,27 @@ mod tests {
         assert_eq!(env.representative_index(), 1);
         env.fallback_mode = 0;
         assert_eq!(env.representative_index(), 0);
+    }
+
+    #[test]
+    fn signed_type_carries_no_expiry() {
+        // Groups get a server-side lifetime; the sender signs no expiry block.
+        let type_string = CandidateSet::eip712_encode_type();
+        assert!(!type_string.contains("expiryBlock"), "{type_string}");
+        let mut json = serde_json::to_value(envelope()).unwrap();
+        json["expiryBlock"] = serde_json::json!("0x64");
+        assert!(serde_json::from_value::<CandidateEnvelope>(json).is_err());
+    }
+
+    #[test]
+    fn signed_type_and_hash_vector() {
+        assert_eq!(
+            CandidateSet::eip712_encode_type(),
+            "CandidateSet(address sender,uint64 nonce,bytes32[] siblingHashes,SelectionRule rule,\
+             uint8 fallbackMode,uint8 defaultIndex,uint64 maxWorkGas,uint16 maxEvaluations,\
+             uint256 maxAccessCharge,uint8 disclosure)SelectionRule(uint8 kind,uint8 scoreVersion,\
+             address token,address recipient,uint256 minDelta)"
+        );
+        assert_eq!(envelope().signing_hash(8453), VECTOR_HASH);
     }
 }

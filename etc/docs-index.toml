@@ -323,8 +323,8 @@ summary = "Upgrade trait and Upgrades registry for Ecotone, Fjord, Isthmus, and 
 digest = "a7737b723a"
 
 ["crates/execution/candidates/README.md"]
-summary = "base-execution-candidates: CandidateSet envelope and validation, GroupLedger, access policy, lifecycle precedence and winner scoring for base_sendSwapTransaction alternatives; off by default."
-digest = "6bb3b29b1b"
+summary = "base-execution-candidates: CandidateSet envelope, GroupDescriptor ledger, block windows, per-capability policy, lifecycle and scoring for base_sendSwapTransaction; off by default."
+digest = "6e9da9d840"
 
 ["crates/execution/chainspec/README.md"]
 summary = "BaseChainSpec and SUPPORTED_CHAINS CLI resolution, Holocene/Jovian base fee helpers, and Denim timestamp validation rules (custom genesis needs nonzero config.blockTime). Use for chain/fork config."
@@ -700,7 +700,7 @@ digest = "8df3320197"
 
 ["docs/transaction-events/README.md"]
 summary = "Spec for transaction-event/v1, the JSONL business event journal for transaction observability: config fields, envelope, event vocabulary, Vector to audit-archiver ingest, Postgres retention, examples."
-digest = "54d044fecb"
+digest = "3b0dfc570f"
 
 ["docs/transaction-events/tips-parity-checklist.md"]
 summary = "Checklist for verifying TIPS UI audit-archiver/Postgres responses match the S3-backed routes (block, txn, bundle, rejected) before switching TIPS_UI_QUERY_BACKEND=audit."
