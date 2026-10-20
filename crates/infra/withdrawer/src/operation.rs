@@ -14,11 +14,12 @@ use base_tx_manager::{NoopTxMetrics, SimpleTxManager, TxCandidate, TxManager, Tx
 use thiserror::Error;
 
 use crate::{
-    BroadcastJournal, FaultProofContracts, FaultProofPortal, LegacyWithdrawalPortal, MessagePassed,
-    PreparedWithdrawalTransaction, ProofSystem, ResolvedProofSystem, VerifiedWithdrawalProof,
-    Withdrawal, WithdrawalDisputeGame, WithdrawalError, WithdrawalOutputOracle, WithdrawalPortal,
-    WithdrawalRpc, WithdrawalRpcError, WithdrawalRpcTransport, WithdrawalSigner,
-    WithdrawalSignerError, WithdrawalTransactionError, WithdrawerConfig,
+    BroadcastJournal, ConfigError, FaultProofContracts, FaultProofPortal, LegacyWithdrawalPortal,
+    MessagePassed, PreparedWithdrawalTransaction, ProofSystem, ResolvedProofSystem,
+    VerifiedWithdrawalProof, Withdrawal, WithdrawalDisputeGame, WithdrawalError,
+    WithdrawalOutputOracle, WithdrawalPortal, WithdrawalRpc, WithdrawalRpcError,
+    WithdrawalRpcTransport, WithdrawalSigner, WithdrawalSignerError, WithdrawalTransactionError,
+    WithdrawerConfig,
 };
 
 /// Next step determined from the portal and proof contracts.
@@ -55,6 +56,9 @@ pub struct WithdrawalOutcome {
 /// Failure of a complete withdrawal operation.
 #[derive(Debug, Error)]
 pub enum WithdrawerError {
+    /// Withdrawal configuration cannot satisfy the submission deadline.
+    #[error(transparent)]
+    Config(#[from] ConfigError),
     /// Custom proof contracts differ from the portal's trusted contracts.
     #[error("configured {configured} do not match portal-reported {reported}")]
     ProofContractsMismatch {
@@ -286,8 +290,7 @@ impl Withdrawer {
             &self.config.l1_rpc_url,
             &self.config,
             journal,
-        )
-        .map_err(WithdrawerError::from)?;
+        )?;
         let chain_id =
             tokio::time::timeout(self.config.tx_manager.network_timeout, provider.get_chain_id())
                 .await

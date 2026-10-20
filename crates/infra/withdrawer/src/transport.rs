@@ -15,7 +15,7 @@ use tower::Service;
 use tracing::{instrument::WithSubscriber, subscriber::NoSubscriber};
 use url::Url;
 
-use crate::{BroadcastJournal, WithdrawerConfig};
+use crate::{BroadcastJournal, WithdrawerConfig, WithdrawerError};
 
 /// Bounded exponential retries and credential-safe errors over reqwest HTTP.
 #[derive(Clone)]
@@ -71,12 +71,11 @@ impl WithdrawalRpcTransport {
         url: &Url,
         config: &WithdrawerConfig,
         journal: BroadcastJournal,
-    ) -> Result<RootProvider<N>, TransportError> {
+    ) -> Result<RootProvider<N>, WithdrawerError> {
         if !matches!(url.scheme(), "http" | "https") {
-            return Err(TransportErrorKind::non_retryable_str("RPC URL must use HTTP(S)"));
+            return Err(TransportErrorKind::non_retryable_str("RPC URL must use HTTP(S)").into());
         }
-        let attempt_timeout =
-            config.submission_request_timeout().map_err(TransportErrorKind::custom)?;
+        let attempt_timeout = config.submission_request_timeout()?;
         let client = reqwest::Client::builder()
             .timeout(attempt_timeout)
             .build()
@@ -314,6 +313,31 @@ mod tests {
     use tokio::net::TcpListener;
 
     use super::*;
+
+    #[test]
+    fn submission_deadline_error_preserves_configuration_cause() {
+        let mut config = WithdrawerConfig::try_from(
+            crate::WithdrawerArgs::try_parse_from([
+                "withdrawer",
+                "--l1-rpc-url=http://localhost:8545",
+                "--withdrawal",
+                &B256::ZERO.to_string(),
+                "--private-key",
+                &B256::repeat_byte(1).to_string(),
+            ])
+            .unwrap(),
+        )
+        .unwrap();
+        config.tx_manager.network_timeout = config.retry_delay;
+        let error = WithdrawalRpcTransport::connect_for_submission::<Ethereum>(
+            &config.l1_rpc_url,
+            &config,
+            BroadcastJournal::default(),
+        )
+        .unwrap_err();
+        assert!(matches!(error, WithdrawerError::Config(crate::ConfigError::RetryDeadline)));
+        assert!(error.to_string().contains("--tx-manager.network-timeout"));
+    }
 
     #[tokio::test]
     async fn lost_broadcast_response_is_reconciled_before_the_manager_deadline() {

@@ -87,7 +87,7 @@ impl ConfirmJob {
         let signer: PrivateKeySigner = self.args.job_runner_key.0.parse().map_err(|_| {
             eyre::eyre!("JOB_RUNNER_KEY must be a valid 32-byte secp256k1 key in hex")
         })?;
-        Ok(WithdrawerConfig {
+        let config = WithdrawerConfig {
             l1_rpc_url: self.args.l1_rpc_url.clone(),
             network: Network {
                 l2_rpc_url: self.args.l2_rpc_url.clone(),
@@ -103,7 +103,13 @@ impl ConfirmJob {
             timeout: self.args.withdrawal_timeout,
             max_retries: 3,
             retry_delay: Duration::from_secs(2),
-        })
+        };
+        config.submission_request_timeout().map_err(|_| {
+            eyre::eyre!(
+                "FEE_JOBS_TX_MANAGER_NETWORK_TIMEOUT / --tx-manager.network-timeout must leave time for HTTP attempts after the fixed 2 s retry delay"
+            )
+        })?;
+        Ok(config)
     }
 
     /// Queries disbursal transactions in block/log order, deduplicating repeated hashes.
@@ -456,6 +462,19 @@ mod tests {
                 dry_run: true,
                 withdrawal_timeout: Duration::from_secs(10),
             },
+        }
+    }
+
+    #[test]
+    fn rejects_submission_deadline_at_or_below_retry_delay() {
+        let mut job = job(&"http://localhost:8545".parse().unwrap());
+        for timeout in [Duration::from_secs(1), Duration::from_secs(2)] {
+            job.args.tx_manager.network_timeout = timeout;
+            let error = job.config().unwrap_err().to_string();
+            assert!(error.contains("FEE_JOBS_TX_MANAGER_NETWORK_TIMEOUT"));
+            assert!(error.contains("--tx-manager.network-timeout"));
+            assert!(error.contains("fixed 2 s retry delay"));
+            assert!(!error.contains("--retry-delay"));
         }
     }
 
