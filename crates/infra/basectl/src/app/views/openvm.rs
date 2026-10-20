@@ -46,10 +46,13 @@ const EDGE_PROGRAM_NAME: &str = "range";
 const EDGE_PROGRAM_VERSION: u32 = 1;
 const EDGE_POLL_INTERVAL: Duration = Duration::from_secs(1);
 /// Sent as the manager's per-proof watchdog; its default (300s in dev) is too
-/// short for a real block.
-const EDGE_PROOF_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+/// short for a real block, whose app segments alone take ~30 min on the dev cluster.
+const EDGE_PROOF_TIMEOUT: Duration = Duration::from_secs(90 * 60);
 /// Lets the manager's watchdog report first so the TUI shows its reason.
 const EDGE_POLL_GRACE: Duration = Duration::from_secs(60);
+/// `OpenVM`'s default segment budget (`15 << 30` bytes), plus the guest memory
+/// image each segment uploads, overflows the 24 GB L4s the Edge workers run on.
+const EDGE_SEGMENT_MEMORY_BYTES: u64 = 8 << 30;
 
 /// Pipeline steps, in run order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -515,6 +518,7 @@ async fn prove(
         program: EdgeProgram { name: EDGE_PROGRAM_NAME.to_string(), version: EDGE_PROGRAM_VERSION },
         proof_type: EdgeProofType::Evm,
         timeout_secs: EDGE_PROOF_TIMEOUT.as_secs(),
+        segment_memory: Some(EDGE_SEGMENT_MEMORY_BYTES),
     };
     let started = rpcs.edge.start_proof(&request).await.map_err(edge_error)?;
     log(tx, format!("edge: proving on {} workers", started.num_workers)).await;

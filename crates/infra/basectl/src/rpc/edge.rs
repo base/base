@@ -43,6 +43,10 @@ pub struct EdgeProofRequest {
     pub proof_type: EdgeProofType,
     /// Per-proof watchdog, overriding the manager's `[proof] timeout_secs`.
     pub timeout_secs: u64,
+    /// Segment trace-memory budget in bytes, overriding the workers'
+    /// `default_segment_memory` and `OpenVM`'s default. Does not change keys.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub segment_memory: Option<u64>,
 }
 
 /// `POST /start_proof` success body.
@@ -227,10 +231,11 @@ mod tests {
             program: EdgeProgram { name: "range".to_string(), version: 1 },
             proof_type: EdgeProofType::Evm,
             timeout_secs: 1800,
+            segment_memory: Some(8 << 30),
         };
         assert_eq!(
             serde_json::to_string(&request).unwrap(),
-            r#"{"proof_uuid":"p","program":{"name":"range","version":1},"proof_type":"evm","timeout_secs":1800}"#
+            r#"{"proof_uuid":"p","program":{"name":"range","version":1},"proof_type":"evm","timeout_secs":1800,"segment_memory":8589934592}"#
         );
     }
 }
