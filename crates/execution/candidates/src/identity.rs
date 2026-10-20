@@ -11,12 +11,13 @@ pub struct GroupBudget {
     pub max_evaluations: u16,
 }
 
-/// What the ledger and the pool need to track a group: its identity, its nonce slot, its
-/// members, its lifetime and its budget.
+/// What the ledger and the pool track for a verified group: its identity, sender and nonce,
+/// member hashes, expiry block and work budget.
 ///
-/// Derive it only from a verified submission, such as [`crate::CandidateGroup::descriptor`].
-/// It carries no signature, selection rule or transaction bytes, so another submission format
-/// can reuse the ledger by producing one.
+/// Derive a descriptor only from a verified submission, such as
+/// [`crate::CandidateGroup::descriptor`]. It carries no signature, selection rule or
+/// transaction bytes, so another submission format can reuse [`crate::GroupLedger`] by
+/// producing a descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GroupDescriptor {
     /// Group identity.

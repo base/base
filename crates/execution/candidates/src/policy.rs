@@ -12,8 +12,8 @@ use crate::{GroupBudget, GroupDescriptor};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Deserialize)]
 pub struct PrincipalId(pub u64);
 
-/// A policy-gated capability. One principal identity holds a separate entitlement and work
-/// budget for each capability it may use.
+/// A policy-gated capability. One principal identity holds a separate entitlement for each
+/// capability it may use, and a separate work budget for each capability that reserves work.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Capability {
@@ -24,7 +24,8 @@ pub enum Capability {
 }
 
 impl Capability {
-    /// The capabilities a principals-file entry grants when it lists none: the Swap Lane's.
+    /// The capabilities granted to a principals-file entry that omits `capabilities`: both
+    /// Swap Lane capabilities, [`Self::CandidateSelection`] and [`Self::SingleAdmission`].
     pub fn swap_lane() -> Vec<Self> {
         vec![Self::CandidateSelection, Self::SingleAdmission]
     }
@@ -147,7 +148,8 @@ pub trait CandidateAccessPolicy: Send + Sync + Debug {
     /// Settles a ticket at actual work and releases the unused reservation.
     fn settle(&self, ticket: WorkTicket, gas_used: u64);
 
-    /// Computes the (beta: would-)charge once a group finishes.
+    /// Computes a finished group's charge: what the planned formula would charge, and what is
+    /// actually charged (zero during the beta).
     fn finalize(&self, principal: PrincipalId, outcome: GroupOutcome) -> ChargeDecision;
 }
 
@@ -182,7 +184,7 @@ pub struct PrincipalsFile {
 ///
 /// An empty registry admits nobody. Quota is a lifetime work-gas total per principal and
 /// capability, shared by all of the principal's senders; reservations count against it until
-/// settled.
+/// settled. Only [`Capability::CandidateSelection`] reserves work today.
 #[derive(Debug, Default)]
 pub struct StaticAccessPolicy {
     senders: HashMap<Address, PrincipalId>,

@@ -324,7 +324,7 @@ digest = "a7737b723a"
 
 ["crates/execution/candidates/README.md"]
 summary = "base-execution-candidates: CandidateSet envelope, GroupDescriptor ledger, block windows, per-capability policy, lifecycle and scoring for base_sendSwapTransaction; off by default."
-digest = "6e9da9d840"
+digest = "8fb5800749"
 
 ["crates/execution/chainspec/README.md"]
 summary = "BaseChainSpec and SUPPORTED_CHAINS CLI resolution, Holocene/Jovian base fee helpers, and Denim timestamp validation rules (custom genesis needs nonzero config.blockTime). Use for chain/fork config."

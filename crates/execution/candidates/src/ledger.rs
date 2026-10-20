@@ -113,8 +113,9 @@ pub struct GroupLedgerEntry {
     /// transition that journals it, so a group never gets a second terminal.
     pub terminal_journaled: bool,
     /// A canonical block advanced the sender's nonce past the group's while its admission was
-    /// still `Pending`. Settlement ends the group as `NonceConsumed` if the pool no longer holds
-    /// its representative.
+    /// still `Pending`. Unless a same-nonce group already superseded it, settlement ends the
+    /// group as `NonceConsumed` and returns its representative for removal if the pool still
+    /// holds it.
     pub canonical_nonce_passed: bool,
 }
 
@@ -413,22 +414,25 @@ impl GroupLedger {
 
     /// Marks a created group pooled after its representative's pool insertion succeeded.
     ///
-    /// Only a `Pending` entry moves: one that already reached a final state (landed while
-    /// insertion was in flight, say) stays final. A same-sender, same-nonce group is
-    /// `Replaced` only if it was pooled and the pool no longer holds its representative; a
-    /// concurrent `Pending` admission is still inserting and settles itself. When this group's
-    /// own representative is already gone because such a group replaced it first, this group
-    /// is the replaced one. `is_pooled` reports whether a transaction hash is in the pool.
+    /// Only a `Pending` entry transitions; an entry that already reached a final state (for
+    /// example, `Landed` while insertion was in flight) stays final. `is_pooled` reports whether
+    /// a transaction hash is in the pool.
     ///
-    /// A group whose sender's canonical nonce passed its own while it was `Pending` ends as a
-    /// final `Evicted(NonceConsumed)` at settlement. The pool can still hold its representative:
-    /// reth inserts an outcome validated against the state before that block, and it ignores
-    /// account changes for senders it did not track yet. This method then returns that
-    /// representative's hash, and the caller must remove it from the pool.
+    /// Same-sender, same-nonce `Pooled` groups whose representative left the pool become
+    /// `Replaced`; a concurrent `Pending` admission is still inserting and settles itself. This
+    /// group then takes the first outcome that applies:
     ///
-    /// Otherwise, a representative that is already gone without a replacement was removed by
-    /// another path after its insertion: a provisional `Evicted(Dropped)`. It is never marked
-    /// `Pooled`.
+    /// - **Replaced:** another same-nonce `Pooled` group still has its representative pooled
+    ///   and this group's is gone, so that group replaced it first.
+    /// - **Nonce consumed:** a canonical block advanced the sender's nonce past the group's
+    ///   while it was `Pending`, so the group ends as a final `Evicted(NonceConsumed)`. The pool
+    ///   can still hold its representative, because reth inserts an outcome validated against
+    ///   the state before that block and ignores account changes for senders it did not track
+    ///   yet. This method then returns that representative's hash, and the caller must remove it
+    ///   from the pool.
+    /// - **Pooled:** its representative is in the pool.
+    /// - **Dropped:** its representative is gone without a replacement, so another path removed
+    ///   it after insertion. The group becomes a provisional `Evicted(Dropped)`, never `Pooled`.
     pub fn confirm_pooled(
         &self,
         group_hash: B256,
@@ -676,10 +680,12 @@ impl GroupLedger {
         self.journal(terminal.as_slice());
     }
 
-    /// Settles pooled entries whose representative is no longer pooled. Past the group's
-    /// expiry block (the next block after `committed_block` cannot include it) the pool expired
-    /// the representative, a final `Evicted(Expired)`; otherwise it left by another path,
-    /// `Evicted(Dropped)`. Run canonical landing first so a mined sibling is not settled here.
+    /// Settles `Pooled` entries whose representative is no longer in the pool.
+    ///
+    /// Call [`Self::record_landed`] first so a mined sibling is not settled here. When
+    /// `committed_block` has reached the group's expiry block, the next block cannot include the
+    /// group: the pool expired its representative, a final `Evicted(Expired)`. Otherwise the
+    /// representative left by another path, a provisional `Evicted(Dropped)`.
     pub fn reconcile(&self, is_pooled: impl Fn(&TxHash) -> bool, committed_block: u64) {
         let mut terminals = Vec::new();
         {
@@ -702,9 +708,12 @@ impl GroupLedger {
         self.journal(&terminals);
     }
 
-    /// Drops entries whose recovery window ended before `committed_block`, and the tombstones
-    /// no retained entry owns. A retired `Dropped` entry can no longer land, so its terminal is
-    /// journaled now; a still-live one expired without the pool noticing.
+    /// Removes entries whose recovery window (the expiry block plus `recovery_window_blocks`)
+    /// ended before `committed_block`, and the tombstones no retained entry owns.
+    ///
+    /// A removed entry that has not journaled its terminal journals it now: `Evicted(Dropped)`
+    /// for a provisionally dropped entry, which can no longer land, and `Evicted(Expired)` for a
+    /// `Pending` or `Pooled` entry that the pool never settled.
     pub fn prune(&self, committed_block: u64) {
         let window = self.limits.recovery_window_blocks;
         let mut terminals = Vec::new();

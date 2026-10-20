@@ -1,14 +1,14 @@
 # base-execution-candidates
 
-Builder-side candidate selection for `base_sendSwapTransaction`, the Swap Lane submission
-endpoint.
+Domain types, validation and the in-memory group ledger for builder-side candidate selection
+("just-in-time routing") behind `base_sendSwapTransaction`, the Swap Lane submission endpoint.
 
 A sender submits a signed default transaction and, optionally, signed alternatives that share
 its nonce, plus a signed EIP-712 envelope (`CandidateSet`) that states how to choose between
 them. The default transaction is the envelope's representative; together they are the group's
-siblings. The builder
-simulates the siblings at the exact block position where the group executes, picks the
-winner by the sender's rule, and commits only the winner.
+siblings. At the exact block position where the group executes, the builder trials the
+siblings without committing them, picks the winner by the sender's rule, and commits only the
+winner, or applies the signed fallback policy.
 
 This crate holds the builder-independent parts:
 
