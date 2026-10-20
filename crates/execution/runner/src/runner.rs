@@ -1,13 +1,17 @@
 //! Contains the [`BaseNodeRunner`], which is responsible for configuring and launching a Base node.
 
-use std::fmt;
+use std::{
+    fmt,
+    sync::{Arc, OnceLock},
+};
 
 use base_execution_payload_builder::{
     RejectionCache,
     config::{BaseDAConfig, GasLimitConfig, ResourceMeteringConfig},
 };
 use base_node_core::args::RollupArgs;
-use eyre::Result;
+use eyre::{Result, eyre};
+use jsonrpsee::RpcModule;
 use reth_node_builder::{Node, NodeHandle, NodeHandleFor};
 use reth_provider::providers::BlockchainProvider;
 use tracing::info;
@@ -25,6 +29,9 @@ type StartedCallback = Box<dyn FnOnce() -> Result<()> + Send + 'static>;
 pub struct LaunchedBaseNode {
     /// The underlying reth node handle.
     pub handle: NodeHandleFor<BaseNode>,
+    /// The fully merged authenticated RPC module (Engine API plus auth-only methods), for
+    /// in-process callers that want to skip the auth server's transports.
+    pub auth_module: RpcModule<()>,
 }
 
 /// Wraps the Base node configuration and orchestrates builder wiring.
@@ -144,7 +151,7 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
     /// Applies all Base-specific wiring to the supplied builder, launches the node, and waits for
     /// shutdown.
     pub async fn run(self, builder: BaseNodeBuilder) -> Result<()> {
-        let LaunchedBaseNode { handle: NodeHandle { node: _node, node_exit_future } } =
+        let LaunchedBaseNode { handle: NodeHandle { node: _node, node_exit_future }, .. } =
             self.launch(builder).await?;
         node_exit_future.await?;
         Ok(())
@@ -192,8 +199,20 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
         let hooks = started_callbacks
             .into_iter()
             .fold(hooks, |hooks, callback| hooks.add_node_started_hook(move |_| callback()));
+        // Registered after every extension so the captured module includes all merged auth methods.
+        let auth_module = Arc::new(OnceLock::new());
+        let captured = Arc::clone(&auth_module);
+        let hooks = hooks.add_rpc_module(move |ctx| {
+            let _ = captured.set(ctx.auth_module.module_mut().clone());
+            Ok(())
+        });
 
-        Ok(LaunchedBaseNode { handle: hooks.apply_to(builder).launch().await? })
+        let handle = hooks.apply_to(builder).launch().await?;
+        let auth_module = auth_module
+            .get()
+            .cloned()
+            .ok_or_else(|| eyre!("auth RPC module was not configured"))?;
+        Ok(LaunchedBaseNode { handle, auth_module })
     }
 }
 

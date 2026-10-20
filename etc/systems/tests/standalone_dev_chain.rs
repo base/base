@@ -28,6 +28,7 @@ use base_common_genesis::{
 use base_common_network::{Base, BaseEngineApi};
 use base_common_rpc_types::BaseTransactionRequest;
 use base_consensus_derive::AttributesBuilder;
+use base_consensus_engine::EngineEndpoint;
 use base_consensus_node::{
     EngineConfig, NodeOperatingMode, StandaloneAttributesBuilder, StandaloneDevChain,
     StandaloneDevError, StandaloneDevState, StandaloneImpersonationQueue,
@@ -166,7 +167,7 @@ async fn standalone_dev_chain_persists_and_restores_schedule() -> Result<()> {
     let genesis_hash = canonical.genesis.l2.hash;
     let engine = EngineConfig {
         config: Arc::new(canonical.clone()),
-        l2_url: engine_url.clone(),
+        l2_endpoint: EngineEndpoint::Url(engine_url.clone()),
         l2_jwt_secret: jwt_secret,
         l1_url: Url::parse("http://127.0.0.1:1")?,
         mode: NodeOperatingMode::Sequencer,
@@ -299,7 +300,7 @@ async fn standalone_dev_chain_persists_and_restores_schedule() -> Result<()> {
         let chain = StandaloneDevChain::open(&datadir, canonical.clone())?;
         let headers = builder.provider.clone();
         Ok(tokio::spawn(chain.run(
-            engine_url.clone(),
+            EngineEndpoint::Url(engine_url.clone()),
             jwt_secret,
             move |number| headers.header_by_number(number),
             queue.clone(),
