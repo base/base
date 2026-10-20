@@ -911,6 +911,20 @@ mod tests {
                     matches!(outcome, ConfirmOutcome::Pending { timing: Some(ConfirmTiming { ready_at: 901, l1_timestamp, waiting_for_game: false }) } if *l1_timestamp == now),
                     "{outcome:?}"
                 );
+                let seconds_until_earliest_ready = if now < 900 { 2 } else { 0 };
+                assert!(
+                    logs.lines().any(|line| {
+                        line.contains(
+                            "withdrawal pending; game resolution may delay readiness further",
+                        ) && line.contains(&format!("withdrawal_hash={hash}"))
+                            && line.contains("ready_at=901")
+                            && line.contains(&format!("l1_timestamp={now}"))
+                            && line.contains(&format!(
+                                "seconds_until_earliest_ready={seconds_until_earliest_ready}"
+                            ))
+                    }),
+                    "missing pending timing log for {hash}: {logs}"
+                );
             } else {
                 assert!(matches!(outcome, ConfirmOutcome::Pending { timing: None }));
             }
