@@ -194,10 +194,15 @@ pub struct ConfirmArgs {
     /// Local signing key in hex, with or without a 0x prefix.
     #[arg(long, env = "JOB_RUNNER_KEY", hide_env_values = true, value_parser = SecretValueParser::<String>::default())]
     pub job_runner_key: Secret<String>,
-    /// L2 lookback in blocks; must be smaller than the latest block number.
-    #[arg(long, env = "FEE_JOBS_CONFIRM_NUM_BLOCKS_TO_QUERY", default_value_t = 1_296_000)]
-    pub num_blocks_to_query: u64,
-    /// Maximum inclusive block count per log query.
+    /// L2 lookback covering the slowest finalization path: a successful `AggregateVerifier`
+    /// challenge (resolution about 10 days after the proof), then a re-prove against a new game
+    /// that needs its own 5-day `SLOW_FINALIZATION_DELAY`, plus the cron interval and slack.
+    #[arg(long, env = "FEE_JOBS_CONFIRM_LOOKBACK", default_value = "21d", value_parser = humantime::parse_duration)]
+    pub lookback: Duration,
+    /// L2 block time used to convert the lookback to a block count, rounded up.
+    #[arg(long, env = "FEE_JOBS_CONFIRM_L2_BLOCK_TIME", default_value = "2s", value_parser = humantime::parse_duration)]
+    pub l2_block_time: Duration,
+    /// Maximum inclusive block count per log query; sepolia.base.org allows about 200.
     #[arg(long, env = "FEE_JOBS_CONFIRM_NUM_BLOCKS_PER_QUERY", default_value_t = 3000, value_parser = clap::value_parser!(u64).range(1..))]
     pub num_blocks_per_query: u64,
     /// Prepare transactions without signing or broadcasting them.
@@ -216,7 +221,8 @@ impl fmt::Debug for ConfirmArgs {
             .field("l1_optimism_portal_address", &self.l1_optimism_portal_address)
             .field("l2_fee_disburser_address", &self.l2_fee_disburser_address)
             .field("job_runner_key", &self.job_runner_key)
-            .field("num_blocks_to_query", &self.num_blocks_to_query)
+            .field("lookback", &self.lookback)
+            .field("l2_block_time", &self.l2_block_time)
             .field("num_blocks_per_query", &self.num_blocks_per_query)
             .field("dry_run", &self.dry_run)
             .field("withdrawal_timeout", &self.withdrawal_timeout)
@@ -312,14 +318,16 @@ mod tests {
             assert_eq!(args.l1_optimism_portal_address, Address::repeat_byte(0x11));
             assert_eq!(args.l2_fee_disburser_address, Address::repeat_byte(0x44));
             assert!(args.job_runner_key.0 == "01".repeat(32));
-            assert_eq!(args.num_blocks_to_query, 100);
+            assert_eq!(args.lookback, Duration::from_secs(3 * 24 * 60 * 60));
+            assert_eq!(args.l2_block_time, Duration::from_secs(1));
             assert_eq!(args.num_blocks_per_query, 25);
             assert_eq!(args.withdrawal_timeout, Duration::from_secs(120));
             assert_eq!(ConfirmJob { args }.config().unwrap().tx_manager.num_confirmations, 37);
             return;
         }
         let args = confirm(&[]).unwrap();
-        assert_eq!(args.num_blocks_to_query, 1_296_000);
+        assert_eq!(args.lookback, Duration::from_secs(21 * 24 * 60 * 60));
+        assert_eq!(args.l2_block_time, Duration::from_secs(2));
         assert_eq!(args.num_blocks_per_query, 3000);
         assert_eq!(args.withdrawal_timeout, Duration::from_secs(600));
         let output = Command::new(env::current_exe().unwrap())
@@ -332,7 +340,8 @@ mod tests {
             .env("L1_OPTIMISM_PORTAL_ADDRESS", Address::repeat_byte(0x11).to_string())
             .env("L2_FEE_DISBURSER_ADDRESS", Address::repeat_byte(0x44).to_string())
             .env("JOB_RUNNER_KEY", "01".repeat(32))
-            .env("FEE_JOBS_CONFIRM_NUM_BLOCKS_TO_QUERY", "100")
+            .env("FEE_JOBS_CONFIRM_LOOKBACK", "3d")
+            .env("FEE_JOBS_CONFIRM_L2_BLOCK_TIME", "1s")
             .env("FEE_JOBS_CONFIRM_NUM_BLOCKS_PER_QUERY", "25")
             .env("FEE_JOBS_CONFIRM_WITHDRAWAL_TIMEOUT", "2m")
             .output()
@@ -349,6 +358,8 @@ mod tests {
             let invalid_flags: &[&str] = if command == "confirm" {
                 &[
                     "--num-blocks-per-query",
+                    "--lookback",
+                    "--l2-block-time",
                     "--withdrawal-timeout",
                     "--l1-optimism-portal-address",
                     "--l1-rpc-url",
@@ -467,8 +478,10 @@ mod tests {
             assert!(!format!("{error:?}").contains("secret"));
         }
         assert!(confirm(&["--num-blocks-per-query", "0"]).is_err());
-        let args = confirm(&["--withdrawal-timeout", "0s"]).unwrap();
-        assert!(ConfirmJob { args }.config().unwrap_err().to_string().contains("positive"));
+        for flag in ["--lookback", "--l2-block-time", "--withdrawal-timeout"] {
+            let args = confirm(&[flag, "0s"]).unwrap();
+            assert!(ConfirmJob { args }.config().unwrap_err().to_string().contains("positive"));
+        }
     }
 
     #[rstest]
