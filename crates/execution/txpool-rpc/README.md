@@ -53,6 +53,11 @@ reaches only the builder that received it. In a high-availability set only the l
 builds, so a submission sent to a follower waits there until that node leads. Transaction
 forwarding skips candidate groups, so even on a forwarding node a group would stay local.
 Proxy mode (`sequencer_url`) forwards every request unchanged to one upstream node.
+The planned direction is mempool fan-out: install the endpoint on mempool nodes, have
+transaction forwarding carry admitted singles, and add a group-aware extension to
+`base_insertValidatedTransaction` so every builder receives candidate groups.
+`AdmissionService` and `GroupDescriptor` do not depend on the swap RPC, so a mempool node's
+endpoint and a builder's trusted insert path can admit through them.
 
 ## Usage
 
