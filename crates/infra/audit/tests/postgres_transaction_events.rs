@@ -354,7 +354,7 @@ async fn postgres_fresh_database_runs_partitioned_migrations() -> anyhow::Result
         sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
             .fetch_all(&pool)
             .await?;
-    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6]);
+    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7]);
 
     Ok(())
 }
@@ -381,7 +381,7 @@ async fn postgres_migrations_skip_io_concurrency_without_database_ownership() ->
         sqlx::query_scalar("SELECT version FROM _sqlx_migrations WHERE success ORDER BY version")
             .fetch_all(&migration)
             .await?;
-    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6]);
+    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7]);
     let io_concurrency: String =
         sqlx::query_scalar("SHOW effective_io_concurrency").fetch_one(&migration).await?;
     assert_eq!(io_concurrency, "1");
@@ -516,6 +516,58 @@ async fn postgres_schema_is_partitioned_by_class_then_day() -> anyhow::Result<()
         })
         .collect();
     assert_eq!(hot_partitions(&pool).await?, expected);
+
+    Ok(())
+}
+
+/// 007 turns off vacuum truncation, which takes an ACCESS EXCLUSIVE lock that
+/// blocks inserts, on day partitions seeded before it ran and on partitions
+/// created after it, including their TOAST tables.
+#[tokio::test]
+async fn postgres_day_partitions_disable_vacuum_truncate() -> anyhow::Result<()> {
+    let harness = PostgresHarness::new().await?;
+    harness.create_grantee_roles().await?;
+    let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
+    Migrator::new(migrations_through(6)?).await?.run(&pool).await?;
+    let seeded_partitions = hot_partitions(&pool).await?;
+    assert!(!seeded_partitions.is_empty());
+
+    PgTransactionEventSink::migrate(&harness.database_url).await?;
+    let new_day = Utc::now().date_naive() + chrono::Duration::days(30);
+    let created: bool =
+        sqlx::query_scalar("SELECT public.transaction_events_v2_create_partition('warm', $1)")
+            .bind(new_day)
+            .fetch_one(&pool)
+            .await?;
+    assert!(created);
+
+    let partitions: Vec<(String, bool)> = sqlx::query_as(
+        "SELECT c.relname::text, \
+                COALESCE(c.reloptions @> ARRAY['vacuum_truncate=false'], false) \
+                AND COALESCE(t.reloptions @> ARRAY['vacuum_truncate=false'], false) \
+         FROM pg_inherits i \
+         JOIN pg_class c ON c.oid = i.inhrelid \
+         JOIN pg_class t ON t.oid = c.reltoastrelid \
+         WHERE i.inhparent IN ( \
+             'transaction_events_v2_hot'::regclass, \
+             'transaction_events_v2_warm'::regclass, \
+             'transaction_events_v2_cold'::regclass) \
+         ORDER BY 1",
+    )
+    .fetch_all(&pool)
+    .await?;
+    let names: Vec<&str> = partitions.iter().map(|(name, _)| name.as_str()).collect();
+    for seeded in &seeded_partitions {
+        assert!(names.contains(&seeded.as_str()), "{seeded} has no TOAST table");
+    }
+    let new_partition = format!("transaction_events_v2_warm_{}", new_day.format("%Y%m%d"));
+    assert!(names.contains(&new_partition.as_str()), "{new_partition} has no TOAST table");
+    let truncating: Vec<&str> = partitions
+        .iter()
+        .filter(|(_, disabled)| !disabled)
+        .map(|(name, _)| name.as_str())
+        .collect();
+    assert!(truncating.is_empty(), "partitions still allow vacuum truncation: {truncating:?}");
 
     Ok(())
 }
