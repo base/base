@@ -249,31 +249,28 @@ impl Eip8130Constants {
     /// exceeds a short window"), a tight window bounds the replay surface in the
     /// absence of nonce state.
     ///
-    /// Sized at 20 seconds (20,000 ms, ~10 Base block times at 2s) so a single
-    /// `valid_before` picked by a client stays inside the window on every node
-    /// despite the spread between each node's head-block timestamp and
-    /// wall-clock time (followers lag the sequencer), while still keeping the
-    /// nonce-free replay surface small.
+    /// Sized at 30 seconds (30,000 ms), equal to the on-chain inclusion window,
+    /// so the mempool admits every `valid_before` that consensus would accept.
     ///
     /// # Invariant: must stay `<=` the on-chain inclusion window
     ///
     /// This is only the mempool *pre-filter*; the authoritative, consensus-critical
-    /// window is `NonceManagerStorage::NONCE_FREE_EXPIRY_WINDOW` (currently
-    /// **30,000 ms**), enforced against the block timestamp when the nonce-free
-    /// replay entry is recorded at inclusion. This value MUST remain `<=` that
-    /// on-chain window (a compile-time assertion in `base-execution-txpool`
-    /// enforces this) so the pool never admits a transaction whose `valid_before`
-    /// the block-inclusion check would reject (which would waste block space on
-    /// transactions that can never land). The gap between the two (20,000 vs
-    /// 30,000 ms) is deliberate headroom that also absorbs the skew between the
-    /// pool's reference clock and the inclusion block timestamp.
+    /// window is `NonceManagerStorage::NONCE_FREE_EXPIRY_WINDOW` (30,000 ms),
+    /// enforced against the block timestamp when the nonce-free replay entry is
+    /// recorded at inclusion. This value MUST remain `<=` that on-chain window (a
+    /// compile-time assertion in `base-execution-txpool` enforces this) so the
+    /// pool never admits a transaction whose `valid_before` the block-inclusion
+    /// check would reject. Equality needs no headroom: the pool measures from the
+    /// head-block timestamp, and any block that includes the transaction has a
+    /// later timestamp, so `valid_before <= head + window` always implies
+    /// `valid_before <= inclusion + window`.
     ///
-    /// Raising this at or beyond the on-chain window is a coordinated **consensus /
+    /// Raising this beyond the on-chain window is a coordinated **consensus /
     /// fork-level** change: the on-chain `NONCE_FREE_EXPIRY_WINDOW` must be raised
     /// too, and `NonceManagerStorage::REPLAY_BUFFER_CAPACITY` resized to keep
     /// `peak nonce-free throughput x window` within capacity (see the buffer-sizing
     /// invariant test in `base-common-precompiles`).
-    pub const NONCE_FREE_MAX_EXPIRY_WINDOW: u64 = 20_000;
+    pub const NONCE_FREE_MAX_EXPIRY_WINDOW: u64 = 30_000;
 
     /// Seconds/milliseconds split for validity-bound normalization, from
     /// EIP-8130's Timestamp Normalization section (`10^11`).

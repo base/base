@@ -1027,7 +1027,7 @@ mod tests {
         tx.valid_after = 0;
         tx.nonce_key = Eip8130Constants::NONCE_KEY_MAX;
         tx.nonce_sequence = 0;
-        tx.valid_before = now_secs + 10; // +10 s == +10_000 ms, within the 20_000 ms window
+        tx.valid_before = now_secs + 10; // +10 s == +10_000 ms, within the 30_000 ms window
         assert_eq!(
             Eip8130Signed::new(tx.clone(), Bytes::new(), Bytes::new()).validate_timestamp(now_ms),
             Ok(())
