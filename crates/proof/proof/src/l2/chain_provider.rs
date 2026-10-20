@@ -30,19 +30,12 @@ pub struct OracleL2ChainProvider<T: CommsClient> {
     oracle: Arc<T>,
     /// The derivation pipeline cursor
     cursor: Option<Arc<RwLock<PipelineCursor>>>,
-    /// The L2 chain ID to use for the provider's hints.
-    chain_id: Option<u64>,
 }
 
 impl<T: CommsClient> OracleL2ChainProvider<T> {
     /// Creates a new [`OracleL2ChainProvider`] with the given boot information and oracle client.
     pub const fn new(l2_head: B256, rollup_config: Arc<RollupConfig>, oracle: Arc<T>) -> Self {
-        Self { l2_head, rollup_config, oracle, cursor: None, chain_id: None }
-    }
-
-    /// Sets the L2 chain ID to use for the provider's hints.
-    pub const fn set_chain_id(&mut self, chain_id: Option<u64>) {
-        self.chain_id = chain_id;
+        Self { l2_head, rollup_config, oracle, cursor: None }
     }
 
     /// Updates the derivation pipeline cursor
@@ -141,7 +134,6 @@ impl<T: CommsClient + Send + Sync> OracleL2ChainProvider<T> {
         // Fetch the transactions in the block.
         HintType::L2Transactions
             .with_data(&[header_hash.as_ref()])
-            .with_data(self.chain_id.map_or_else(Vec::new, |id| id.to_be_bytes().to_vec()))
             .send(self.oracle.as_ref())
             .await?;
         let trie_walker = OrderedListWalker::try_new_hydrated(transactions_root, self)
@@ -215,11 +207,7 @@ impl<T: CommsClient> TrieDBProvider for OracleL2ChainProvider<T> {
     fn bytecode_by_hash(&self, hash: B256) -> Result<Bytes, OracleProviderError> {
         // Fetch the bytecode preimage from the caching oracle.
         crate::block_on(async move {
-            HintType::L2Code
-                .with_data(&[hash.as_slice()])
-                .with_data(self.chain_id.map_or_else(Vec::new, |id| id.to_be_bytes().to_vec()))
-                .send(self.oracle.as_ref())
-                .await?;
+            HintType::L2Code.with_data(&[hash.as_slice()]).send(self.oracle.as_ref()).await?;
             self.oracle
                 .get(PreimageKey::new_keccak256(*hash))
                 .await
@@ -233,7 +221,6 @@ impl<T: CommsClient> TrieDBProvider for OracleL2ChainProvider<T> {
         crate::block_on(async move {
             HintType::L2BlockHeader
                 .with_data(&[hash.as_slice()])
-                .with_data(self.chain_id.map_or_else(Vec::new, |id| id.to_be_bytes().to_vec()))
                 .send(self.oracle.as_ref())
                 .await?;
             let header_bytes = self.oracle.get(PreimageKey::new_keccak256(*hash)).await?;
@@ -250,7 +237,6 @@ impl<T: CommsClient> TrieHinter for OracleL2ChainProvider<T> {
         crate::block_on(async move {
             HintType::L2AccountProof
                 .with_data(&[block_number.to_be_bytes().as_ref(), address.as_slice()])
-                .with_data(self.chain_id.map_or_else(Vec::new, |id| id.to_be_bytes().to_vec()))
                 .send(self.oracle.as_ref())
                 .await
         })
@@ -269,7 +255,6 @@ impl<T: CommsClient> TrieHinter for OracleL2ChainProvider<T> {
                     address.as_slice(),
                     slot.to_be_bytes::<32>().as_ref(),
                 ])
-                .with_data(self.chain_id.map_or_else(Vec::new, |id| id.to_be_bytes().to_vec()))
                 .send(self.oracle.as_ref())
                 .await
         })
@@ -286,7 +271,6 @@ impl<T: CommsClient> TrieHinter for OracleL2ChainProvider<T> {
 
             HintType::L2PayloadWitness
                 .with_data(&[parent_hash.as_slice(), &encoded_attributes])
-                .with_data(self.chain_id.map_or_else(Vec::new, |id| id.to_be_bytes().to_vec()))
                 .send(self.oracle.as_ref())
                 .await
         })

@@ -171,8 +171,8 @@ pub struct DevnetSnapshotConfig {
     pub chain: SnapshotChainConfig,
     /// Writable snapshot datadir used by the builder.
     pub builder_datadir: PathBuf,
-    /// Writable snapshot datadir used by the client.
-    pub client_datadir: PathBuf,
+    /// Writable snapshot datadir used by the follow client. Without it, only the builder runs.
+    pub client_datadir: Option<PathBuf>,
     /// Expected L2 chain ID stored in both datadirs.
     pub expected_chain_id: u64,
     /// Optional expected snapshot head. The launcher discovers it when omitted.
@@ -351,7 +351,7 @@ impl DevnetConfig {
     /// Returns an L1-free Base snapshot configuration for a resolved chain input.
     pub fn snapshot(
         builder_datadir: PathBuf,
-        client_datadir: PathBuf,
+        client_datadir: Option<PathBuf>,
         chain: SnapshotChainConfig,
     ) -> Result<Self> {
         let resolved = chain.resolve()?;
@@ -391,12 +391,7 @@ impl DevnetConfig {
             snapshot.expected_chain_id,
             self.l2_chain_id
         );
-        ensure!(
-            snapshot.builder_datadir != snapshot.client_datadir,
-            "builder and client snapshot datadirs must be distinct"
-        );
         ensure!(snapshot.builder_datadir.is_dir(), "builder snapshot datadir does not exist");
-        ensure!(snapshot.client_datadir.is_dir(), "client snapshot datadir does not exist");
         ensure!(
             snapshot.block_gas_limit != Some(0),
             "snapshot block gas limit override must be greater than zero"
@@ -406,9 +401,18 @@ impl DevnetConfig {
             "snapshot EIP-1559 elasticity override must be greater than zero"
         );
 
+        let Some(client_datadir) = &snapshot.client_datadir else {
+            return Ok(());
+        };
+        ensure!(
+            &snapshot.builder_datadir != client_datadir,
+            "builder and client snapshot datadirs must be distinct"
+        );
+        ensure!(client_datadir.is_dir(), "client snapshot datadir does not exist");
+
         let builder_datadir = std::fs::canonicalize(&snapshot.builder_datadir)
             .wrap_err("Failed to resolve builder snapshot datadir")?;
-        let client_datadir = std::fs::canonicalize(&snapshot.client_datadir)
+        let client_datadir = std::fs::canonicalize(client_datadir)
             .wrap_err("Failed to resolve client snapshot datadir")?;
         ensure!(
             builder_datadir != client_datadir,
@@ -479,7 +483,7 @@ mod tests {
         std::fs::create_dir_all(&builder).unwrap();
         std::fs::create_dir_all(&client).unwrap();
         let config =
-            DevnetConfig::snapshot(builder, client, SnapshotChainConfig::default()).unwrap();
+            DevnetConfig::snapshot(builder, Some(client), SnapshotChainConfig::default()).unwrap();
 
         assert_eq!(config.l1_chain_id, 1);
         assert_eq!(config.l2_chain_id, 8453);
@@ -491,6 +495,15 @@ mod tests {
         assert_eq!(snapshot.block_interval.snapshot_block_gas_limit(), 10_000_000_000);
         assert_eq!(snapshot.eip1559_elasticity_override, None);
         config.validate().expect("Base mainnet snapshot config should be valid");
+    }
+
+    #[test]
+    fn snapshot_client_datadir_is_optional() {
+        let builder = TempDir::new().unwrap();
+        let config =
+            DevnetConfig::snapshot(builder.path().into(), None, SnapshotChainConfig::default())
+                .unwrap();
+        config.validate().expect("builder-only snapshot config should be valid");
     }
 
     #[test]
@@ -539,7 +552,7 @@ mod tests {
         let datadir = TempDir::new().unwrap();
         let datadir = datadir.path().to_path_buf();
         let config =
-            DevnetConfig::snapshot(datadir.clone(), datadir, SnapshotChainConfig::default())
+            DevnetConfig::snapshot(datadir.clone(), Some(datadir), SnapshotChainConfig::default())
                 .unwrap();
 
         let error = config.validate().expect_err("shared snapshot datadir should be rejected");
@@ -555,7 +568,7 @@ mod tests {
         symlink(datadir.path(), &alias).unwrap();
         let config = DevnetConfig::snapshot(
             datadir.path().to_path_buf(),
-            alias,
+            Some(alias),
             SnapshotChainConfig::default(),
         )
         .unwrap();

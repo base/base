@@ -30,14 +30,14 @@ use base_common_precompiles::{
     Asset, AssetAccounting, AssetV1, AssetVersion, AssetVersions, B20_MAX_SUPPLY_CAP, B20AssetInit,
     B20AssetStorage, B20AssetToken, B20PolicyType, B20TokenRole, FakePolicyAccounting, IB20,
     IB20Asset, NoopPrecompileCallObserver, PolicyVersion, TokenAccounting,
-    UpgradeGatedStorageFeatures,
 };
 use base_precompile_storage::{BasePrecompileError, Handler, HashMapStorageProvider, StorageCtx};
 
 mod common;
 use common::{
-    ADMIN, ALICE, BOB, CAROL, CHAIN_ID, MEMO, POLICY_ID, TOKEN, anvil_owner, bless_or_assert_gas,
-    bless_or_assert_root, hash_token_state, ok_true, signed_permit, u,
+    ADMIN, ALICE, BOB, CAROL, CHAIN_ID, MEMO, POLICY_ID, TOKEN, allow0, anvil_owner,
+    assert_token_root as assert_root, bless_or_assert_gas, fund, give_role, last_topic0, ok_true,
+    signed_permit, storage_at, u,
 };
 
 // --- fixtures ---------------------------------------------------------------
@@ -129,10 +129,7 @@ const ROOT_ANNOUNCE: B256 =
 /// Fresh provider with an initialized `Base Asset` at [`TOKEN`], matching the factory
 /// bootstrap: the multiplier slot is left physically zero and the getter normalizes it to WAD.
 fn fresh() -> HashMapStorageProvider {
-    let mut storage = HashMapStorageProvider::new_with_storage_features(
-        CHAIN_ID,
-        UpgradeGatedStorageFeatures::from_upgrade(BaseUpgrade::Beryl),
-    );
+    let mut storage = storage_at(BaseUpgrade::Beryl);
     StorageCtx::enter(&mut storage, |ctx| {
         let mut token = B20AssetStorage::from_address(TOKEN, ctx);
         token
@@ -148,86 +145,18 @@ fn fresh() -> HashMapStorageProvider {
     storage
 }
 
-/// Mutates raw token storage through the accounting port (test setup only).
-fn seed(storage: &mut HashMapStorageProvider, f: impl FnOnce(&mut B20AssetStorage<'_>)) {
-    StorageCtx::enter(storage, |ctx| {
-        let mut token = B20AssetStorage::from_address(TOKEN, ctx);
-        f(&mut token);
-    });
-}
-
-/// Reads token state through the accounting port.
-fn read<R>(storage: &mut HashMapStorageProvider, f: impl FnOnce(&B20AssetStorage<'_>) -> R) -> R {
-    StorageCtx::enter(storage, |ctx| f(&B20AssetStorage::from_address(TOKEN, ctx)))
-}
-
-/// Drives one op through the resolver-gated (`Beryl` -> V1) unprivileged path.
-fn op(
-    storage: &mut HashMapStorageProvider,
-    caller: Address,
-    policy: FakePolicyAccounting,
-    calldata: Vec<u8>,
-) -> Result<Bytes, BasePrecompileError> {
-    storage.set_caller(caller);
-    StorageCtx::enter(storage, |ctx| {
-        let version =
-            AssetVersions::from_base_upgrade(BaseUpgrade::Beryl).expect("Beryl activates V1");
-        B20AssetToken::with_storage_and_policy(
-            B20AssetStorage::from_address(TOKEN, ctx),
-            policy,
-            PolicyVersion::V1,
-        )
-        .route(ctx, &calldata, version, false, NoopPrecompileCallObserver)
-    })
-}
-
-/// Drives one op through V1 with factory-init privilege (guards skipped).
-fn op_privileged(
-    storage: &mut HashMapStorageProvider,
-    caller: Address,
-    policy: FakePolicyAccounting,
-    calldata: Vec<u8>,
-) -> Result<Bytes, BasePrecompileError> {
-    storage.set_caller(caller);
-    StorageCtx::enter(storage, |ctx| {
-        B20AssetToken::with_storage_and_policy(
-            B20AssetStorage::from_address(TOKEN, ctx),
-            policy,
-            PolicyVersion::V1,
-        )
-        .route(ctx, &calldata, AssetVersion::V1, true, NoopPrecompileCallObserver)
-    })
-}
-
-/// Topic-0 (signature hash) of the last event emitted by the token.
-fn last_topic0(storage: &HashMapStorageProvider) -> B256 {
-    storage.get_events(TOKEN).last().expect("an emitted event").topics()[0]
-}
-
-/// Asserts the token's storage hash, or prints it under `BLESS_GOLDEN` for (re)pinning.
-#[track_caller]
-fn assert_root(label: &str, storage: HashMapStorageProvider, expected: B256) {
-    bless_or_assert_root(label, hash_token_state(storage, TOKEN), expected);
-}
-
-/// Grants `role` to `who` and bumps the role member count (setup only).
-fn give_role(token: &mut B20AssetStorage<'_>, role: B256, who: Address) {
-    token.set_role(role, who, true).unwrap();
-    let next = token.role_member_count(role).unwrap() + U256::ONE;
-    token.set_role_member_count(role, next).unwrap();
-}
-
-/// Credits `who` with `amount` and grows total supply to match (setup only).
-fn fund(token: &mut B20AssetStorage<'_>, who: Address, amount: U256) {
-    let balance = token.balance_of(who).unwrap();
-    token.set_balance(who, balance + amount).unwrap();
-    let supply = token.total_supply().unwrap();
-    token.set_total_supply(supply + amount).unwrap();
-}
-
 /// The asset operator role id: `keccak256("OPERATOR_ROLE")` (V1 pins this equality).
 fn operator_role() -> B256 {
     keccak256("OPERATOR_ROLE")
+}
+
+crate::token_golden_harness! {
+    storage: B20AssetStorage,
+    token: B20AssetToken,
+    versions: AssetVersions,
+    version: AssetVersion::V1,
+    upgrade: BaseUpgrade::Beryl,
+    policy: PolicyVersion::V1,
 }
 
 /// The V1 EIP-712 domain separator for the token at [`TOKEN`] on [`CHAIN_ID`].
@@ -1502,10 +1431,7 @@ fn dispatch_reverts_before_beryl() {
 #[test]
 fn dispatch_reverts_when_uninitialized() {
     // No `fresh()` init and no marker bytecode => is_initialized is false.
-    let mut s = HashMapStorageProvider::new_with_storage_features(
-        CHAIN_ID,
-        UpgradeGatedStorageFeatures::from_upgrade(BaseUpgrade::Beryl),
-    );
+    let mut s = storage_at(BaseUpgrade::Beryl);
     let calldata = IB20::balanceOfCall { account: ALICE }.abi_encode();
     let out = StorageCtx::enter(&mut s, |ctx| {
         B20AssetToken::with_storage_and_policy(
@@ -1894,10 +1820,7 @@ fn golden_revoke_role_noop_when_not_held() {
 #[test]
 fn golden_dispatch_no_observer_wrapper_reverts_uninitialized() {
     // Exercises the no-observer `dispatch()` wrapper + the is_initialized=false gate.
-    let mut s = HashMapStorageProvider::new_with_storage_features(
-        CHAIN_ID,
-        UpgradeGatedStorageFeatures::from_upgrade(BaseUpgrade::Beryl),
-    );
+    let mut s = storage_at(BaseUpgrade::Beryl);
     s.set_caller(ALICE);
     let calldata = IB20::balanceOfCall { account: ALICE }.abi_encode();
     let out = StorageCtx::enter(&mut s, |ctx| {
@@ -2498,36 +2421,6 @@ fn golden_announce_unprivileged_requires_role() {
 // schedule-independent signal instead: the SLOAD / SSTORE / KECCAK256 op counts a
 // call performs. These are the storage-access footprint that drives real gas, so a
 // change here (e.g. an extra SLOAD in V1) is caught even when bytes/state/events match.
-
-/// Runs `calldata` privileged after `setup`, returning `(sload, sstore, keccak256)` counts.
-fn gas(
-    setup: impl FnOnce(&mut B20AssetStorage<'_>),
-    caller: Address,
-    policy: FakePolicyAccounting,
-    calldata: Vec<u8>,
-) -> (u64, u64, u64) {
-    let mut s = fresh();
-    seed(&mut s, setup);
-    s.set_caller(caller);
-    s.reset_counters();
-    StorageCtx::enter(&mut s, |ctx| {
-        B20AssetToken::with_storage_and_policy(
-            B20AssetStorage::from_address(TOKEN, ctx),
-            policy,
-            PolicyVersion::V1,
-        )
-        .route(ctx, &calldata, AssetVersion::V1, true, NoopPrecompileCallObserver)
-    })
-    .expect("gas-footprint op must succeed");
-    (s.counter_sload(), s.counter_sstore(), s.counter_keccak256())
-}
-
-/// An `FakePolicyAccounting` authorizing `who` under the default (0) scope.
-fn allow0(who: Address) -> FakePolicyAccounting {
-    let mut p = FakePolicyAccounting::new();
-    p.allow(0, who);
-    p
-}
 
 #[test]
 fn golden_gas_footprints() {
