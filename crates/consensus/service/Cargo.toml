@@ -84,6 +84,10 @@ reqwest.workspace = true
 # metrics
 metrics = { workspace = true, optional = true }
 
+# `test-utils` feature dependencies
+alloy-network = { workspace = true, optional = true }
+base-common-rpc-types = { workspace = true, optional = true }
+
 [dev-dependencies]
 rand.workspace = true
 rstest.workspace = true
@@ -92,17 +96,11 @@ mockall.workspace = true
 httpmock.workspace = true
 tempfile.workspace = true
 arbitrary.workspace = true
-alloy-network.workspace = true
 tracing-subscriber.workspace = true
 base-node-runner = { workspace = true, features = ["test-utils"] }
-base-common-rpc-types.workspace = true
-base-protocol = { workspace = true, features = ["test-utils"] }
-tokio = { workspace = true, features = ["test-util"] }
+base-consensus-node = { path = ".", features = ["test-utils"] }
 alloy-primitives = { workspace = true, features = ["k256"] }
 metrics-util = { workspace = true, features = ["debugging"] }
-base-common-genesis = { workspace = true, features = ["test-utils"] }
-base-consensus-derive = { workspace = true, features = ["test-utils"] }
-base-consensus-engine = { workspace = true, features = ["test-utils"] }
 alloy-consensus = { workspace = true, features = ["arbitrary", "std"] }
 base-common-consensus = { workspace = true, features = ["arbitrary", "k256"] }
 alloy-rpc-types-engine = { workspace = true, features = ["arbitrary", "std"] }
@@ -121,4 +119,13 @@ metrics = [
 	"dep:metrics",
 	"libp2p/metrics",
 	"tower-http/metrics",
+]
+test-utils = [
+	"base-common-genesis/test-utils",
+	"base-consensus-derive/test-utils",
+	"base-consensus-engine/test-utils",
+	"base-protocol/test-utils",
+	"dep:alloy-network",
+	"dep:base-common-rpc-types",
+	"tokio/test-util",
 ]
