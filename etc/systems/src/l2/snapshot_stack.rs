@@ -261,6 +261,9 @@ impl SnapshotL2Stack {
     }
 
     /// Anchors the deterministic local block schedule at the first post-snapshot block.
+    ///
+    /// The two-second cadence keeps the legacy schedule, so it clears any configured Denim
+    /// activation and rejects snapshot heads that are already past Denim.
     pub fn anchored_rollup_config(
         mut config: RollupConfig,
         boundary_number: u64,
@@ -270,6 +273,12 @@ impl SnapshotL2Stack {
         let first_block_number = boundary_number
             .checked_add(1)
             .ok_or_else(|| eyre::eyre!("snapshot boundary block number overflow"))?;
+        if block_interval == DevnetBlockInterval::TwoSeconds {
+            ensure!(
+                !config.is_denim_active(config.l2_block_timestamp(boundary_number)),
+                "two-second snapshot continuation requires a pre-Denim snapshot head"
+            );
+        }
         let blocks_since_genesis = first_block_number
             .checked_sub(config.genesis.l2.number)
             .ok_or_else(|| eyre::eyre!("snapshot boundary predates configured L2 genesis"))?;
@@ -279,8 +288,13 @@ impl SnapshotL2Stack {
         config.genesis.l2_time = first_block_timestamp
             .checked_sub(legacy_elapsed)
             .ok_or_else(|| eyre::eyre!("snapshot is too far ahead to anchor locally"))?;
-        if block_interval == DevnetBlockInterval::TwoHundredMilliseconds {
-            config.set_upgrade_activation_timestamp(BaseUpgrade::Denim, first_block_timestamp);
+        match block_interval {
+            DevnetBlockInterval::TwoSeconds => {
+                config.clear_upgrade_activation_timestamp(BaseUpgrade::Denim);
+            }
+            DevnetBlockInterval::TwoHundredMilliseconds => {
+                config.set_upgrade_activation_timestamp(BaseUpgrade::Denim, first_block_timestamp);
+            }
         }
         let (planned_timestamp, planned_millis) =
             config.l2_block_timestamp_parts(first_block_number);
@@ -292,15 +306,21 @@ impl SnapshotL2Stack {
     }
 
     /// Builds the execution chain specification for a local snapshot schedule.
+    ///
+    /// Denim activates at the anchor for the 200ms cadence and never for the two-second cadence,
+    /// matching [`Self::anchored_rollup_config`].
     pub fn chain_spec(
         mut chain_spec: BaseChainSpec,
         first_block_timestamp: u64,
         block_interval: DevnetBlockInterval,
     ) -> BaseChainSpec {
-        if block_interval == DevnetBlockInterval::TwoHundredMilliseconds {
-            chain_spec
-                .set_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(first_block_timestamp));
-        }
+        let denim = match block_interval {
+            DevnetBlockInterval::TwoSeconds => ForkCondition::Never,
+            DevnetBlockInterval::TwoHundredMilliseconds => {
+                ForkCondition::Timestamp(first_block_timestamp)
+            }
+        };
+        chain_spec.set_fork(BaseUpgrade::Denim, denim);
         chain_spec
     }
 
@@ -491,6 +511,34 @@ mod tests {
 
         assert_eq!(config.l2_block_timestamp_parts(30_000_001), (2_000_000_000, 0));
         assert_eq!(config.l2_block_timestamp_parts(30_000_002), (2_000_000_002, 0));
+        assert!(!config.is_denim_active(u64::MAX));
+    }
+
+    #[test]
+    fn two_second_cl_and_el_never_activate_denim() {
+        let chain_spec = SnapshotL2Stack::chain_spec(
+            BaseChainSpec::mainnet(),
+            2_000_000_000,
+            DevnetBlockInterval::TwoSeconds,
+        );
+
+        assert_eq!(chain_spec.fork(BaseUpgrade::Denim), ForkCondition::Never);
+    }
+
+    #[test]
+    fn two_second_schedule_rejects_denim_snapshot_head() {
+        let mut canonical = ChainConfig::mainnet().rollup_config();
+        canonical.set_upgrade_activation_timestamp(BaseUpgrade::Denim, canonical.genesis.l2_time);
+
+        let error = SnapshotL2Stack::anchored_rollup_config(
+            canonical,
+            30_000_000,
+            2_000_000_000,
+            DevnetBlockInterval::TwoSeconds,
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("pre-Denim snapshot head"));
     }
 
     #[test]
