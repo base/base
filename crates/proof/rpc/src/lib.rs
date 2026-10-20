@@ -10,7 +10,7 @@ mod config;
 pub use config::DEFAULT_CACHE_SIZE;
 
 mod cache;
-pub use cache::{CacheMetrics, MeteredCache};
+pub use cache::MeteredCache;
 
 mod error;
 pub use error::{RpcError, RpcResult};

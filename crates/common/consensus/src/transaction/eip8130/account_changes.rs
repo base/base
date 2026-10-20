@@ -49,36 +49,6 @@ impl Decodable for Scope {
 impl Scope {
     /// Unrestricted scope (actor valid in all contexts).
     pub const UNRESTRICTED: Self = Self(Eip8130Constants::SCOPE_UNRESTRICTED);
-
-    /// Returns the raw bitmask.
-    pub const fn bits(&self) -> u16 {
-        self.0
-    }
-
-    /// Returns true if the scope grants the ungated `SCOPE_OPERATOR` context.
-    pub const fn has_operator(&self) -> bool {
-        self.0 & Eip8130Constants::SCOPE_OPERATOR != 0
-    }
-
-    /// Returns true if the scope enables policy gating.
-    pub const fn has_policy(&self) -> bool {
-        self.0 & Eip8130Constants::SCOPE_POLICY != 0
-    }
-
-    /// Returns true if the scope grants the nonce context.
-    pub const fn has_nonce(&self) -> bool {
-        self.0 & Eip8130Constants::SCOPE_NONCE != 0
-    }
-
-    /// Returns true if the scope grants self-pay (`payer == sender`).
-    pub const fn has_self_payer(&self) -> bool {
-        self.0 & Eip8130Constants::SCOPE_SELF_PAYER != 0
-    }
-
-    /// Returns true if the scope grants sponsorship (`payer != sender`).
-    pub const fn has_sponsor_payer(&self) -> bool {
-        self.0 & Eip8130Constants::SCOPE_SPONSOR_PAYER != 0
-    }
 }
 
 /// Initial actor installed on a newly-created account.
@@ -523,23 +493,6 @@ mod tests {
     use alloy_primitives::{address, b256, bytes};
 
     use super::*;
-
-    #[test]
-    fn scope_bit_helpers() {
-        let s = Scope(
-            Eip8130Constants::SCOPE_OPERATOR
-                | Eip8130Constants::SCOPE_POLICY
-                | Eip8130Constants::SCOPE_NONCE
-                | Eip8130Constants::SCOPE_SELF_PAYER
-                | Eip8130Constants::SCOPE_SPONSOR_PAYER,
-        );
-        assert!(s.has_operator());
-        assert!(s.has_policy());
-        assert!(s.has_nonce());
-        assert!(s.has_self_payer());
-        assert!(s.has_sponsor_payer());
-        assert!(!Scope::UNRESTRICTED.has_operator());
-    }
 
     #[test]
     fn change_type_roundtrip() {

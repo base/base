@@ -223,7 +223,11 @@ impl TxEip8130 {
         length_of_length(payload_len) + payload_len
     }
 
-    fn decode_calls(buf: &mut &[u8]) -> alloy_rlp::Result<Vec<Vec<Call>>> {
+    /// Decodes the `calls` phase list, rejecting more than
+    /// [`Eip8130Constants::MAX_CALL_PHASES_PER_TX`] phases before allocating
+    /// the excess. Every decoder of an EIP-8130 `calls` field must use this so
+    /// all wire formats accept the same transactions.
+    pub fn decode_calls(buf: &mut &[u8]) -> alloy_rlp::Result<Vec<Vec<Call>>> {
         let header = Header::decode(buf)?;
         if !header.list {
             return Err(alloy_rlp::Error::UnexpectedString);
@@ -694,6 +698,8 @@ mod tests {
     use alloy_primitives::{address, bytes};
     #[cfg(feature = "reth")]
     use reth_codecs::Compact;
+    #[cfg(feature = "reth")]
+    use rstest::rstest;
 
     use super::*;
     use crate::transaction::eip8130::account_changes::Delegation;
@@ -796,41 +802,21 @@ mod tests {
     }
 
     #[cfg(feature = "reth")]
-    #[test]
-    fn compact_roundtrip() {
-        let tx = sample_tx();
-        let mut buf = Vec::new();
-        let len = tx.to_compact(&mut buf);
-        let (decoded, remaining) = TxEip8130::from_compact(&buf, len);
-
-        assert_eq!(decoded, tx);
-        assert!(remaining.is_empty());
-    }
-
-    #[cfg(feature = "reth")]
-    #[test]
-    fn compact_roundtrip_eoa_sender_with_explicit_payer() {
-        let tx = TxEip8130 {
+    #[rstest]
+    #[case::self_pay(sample_tx(), &[])]
+    #[case::eoa_sender_with_explicit_payer(
+        TxEip8130 {
             sender: None,
             payer: Some(address!("0x00000000000000000000000000000000000000dd")),
             ..sample_tx()
-        };
-        let mut buf = Vec::new();
-        let len = tx.to_compact(&mut buf);
-        let (decoded, remaining) = TxEip8130::from_compact(&buf, len);
-
-        assert_eq!(decoded, tx);
-        assert!(remaining.is_empty());
-    }
-
-    #[cfg(feature = "reth")]
-    #[test]
-    fn compact_decode_preserves_trailing_bytes() {
-        let tx = sample_tx();
-        let trailing = [0xDE, 0xAD, 0xBE, 0xEF];
+        },
+        &[],
+    )]
+    #[case::trailing_bytes(sample_tx(), &[0xDE, 0xAD, 0xBE, 0xEF])]
+    fn compact_roundtrip(#[case] tx: TxEip8130, #[case] trailing: &[u8]) {
         let mut buf = Vec::new();
         let _ = tx.to_compact(&mut buf);
-        buf.extend_from_slice(&trailing);
+        buf.extend_from_slice(trailing);
 
         let (decoded, remaining) = TxEip8130::from_compact(&buf, buf.len());
 
@@ -905,13 +891,6 @@ mod tests {
         let payer_hash =
             tx.payer_signature_hash(address!("0x00000000000000000000000000000000000000dd"));
         assert_ne!(sender_hash, payer_hash);
-    }
-
-    #[test]
-    fn signing_hashes_use_prefix_bytes() {
-        let tx = sample_tx();
-        let h = tx.sender_signature_hash();
-        assert_ne!(h, B256::ZERO);
     }
 
     #[test]

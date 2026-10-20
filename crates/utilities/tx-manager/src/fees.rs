@@ -54,33 +54,17 @@ impl FeeCalculator {
     /// Returns the minimum replacement value that satisfies geth's
     /// tx-replacement rules.
     ///
-    /// * **Regular transactions** (`is_blob = false`): 10 % bump →
-    ///   `x + x / 10`, but always at least `x + 1` when `x > 0`.
-    /// * **Blob transactions** (`is_blob = true`): 100 % bump →
-    ///   `x + x` (i.e. `2 × x`), but always at least `x + 1` when `x > 0`.
-    /// * When `x == 0`, returns `0` (there is no fee to bump).
+    /// * **Regular transactions** (`is_blob = false`): 10 % bump → `x + x / 10`.
+    /// * **Blob transactions** (`is_blob = true`): 100 % bump → `x + x`.
     ///
-    /// The "at least +1" rule prevents stuck bump loops where
-    /// `x / 10 == 0` for small values.
+    /// The result is always at least `x + 1`, since geth requires strictly higher fees.
     ///
     /// Uses saturating arithmetic — the result is capped at [`u128::MAX`]
     /// rather than panicking on overflow.
     #[must_use]
     pub const fn calc_threshold_value(x: u128, is_blob: bool) -> u128 {
-        if x == 0 {
-            return 0;
-        }
-
-        let bump = if is_blob {
-            // 100 % bump: x + x = 2x
-            x
-        } else {
-            // 10 % bump: x / 10, but at least 1
-            let v = x / 10;
-            if v > 0 { v } else { 1 }
-        };
-
-        x.saturating_add(bump)
+        let bump = if is_blob { x } else { x / 10 };
+        x.saturating_add(if bump > 0 { bump } else { 1 })
     }
 
     /// Selects final `(tip, fee_cap)` values that satisfy geth's replacement
@@ -329,7 +313,7 @@ mod tests {
 
     #[rstest]
     // Regular (non-blob) cases
-    #[case::zero_regular(0, false, 0)]
+    #[case::zero_regular(0, false, 1)]
     #[case::one_regular(1, false, 2)]
     #[case::nine_regular(9, false, 10)]
     #[case::ten_regular(10, false, 11)]
@@ -339,7 +323,7 @@ mod tests {
     #[case::small_value_ensures_plus_one(5, false, 6)]
     #[case::saturates_regular(u128::MAX, false, u128::MAX)]
     // Blob cases
-    #[case::zero_blob(0, true, 0)]
+    #[case::zero_blob(0, true, 1)]
     #[case::one_blob(1, true, 2)]
     #[case::ten_blob(10, true, 20)]
     #[case::hundred_blob(100, true, 200)]
@@ -455,7 +439,7 @@ mod tests {
         }
 
         #[test]
-        fn threshold_forward_progress(x in 1..u128::MAX, is_blob: bool) {
+        fn threshold_forward_progress(x in 0..u128::MAX, is_blob: bool) {
             let result = FeeCalculator::calc_threshold_value(x, is_blob);
             prop_assert!(result > x, "threshold {result} did not advance past {x}");
         }

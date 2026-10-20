@@ -31,7 +31,6 @@ base-cli-utils = { workspace = true, features = ["otlp"] }
 
 # Async
 tokio-util.workspace = true
-tokio = { workspace = true, features = ["macros", "rt"] }
 
 # URL / identifiers
 url.workspace = true

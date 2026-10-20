@@ -46,9 +46,7 @@ pub struct OnlineBlobProvider<B: BeaconClient> {
 impl<B: BeaconClient> OnlineBlobProvider<B> {
     /// Creates a new instance of the [`OnlineBlobProvider`].
     ///
-    /// The `genesis_time` and `slot_interval` arguments are _optional_ and the
-    /// [`OnlineBlobProvider`] will attempt to load them dynamically at runtime if they are not
-    /// provided.
+    /// Loads `genesis_time` and `slot_interval` from the beacon client.
     ///
     /// ## Panics
     /// Panics if the genesis time or slot interval cannot be loaded from the beacon client.

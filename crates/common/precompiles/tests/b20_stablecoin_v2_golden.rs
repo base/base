@@ -35,14 +35,15 @@ use base_common_precompiles::{
     B20_MAX_SUPPLY_CAP, B20PolicyType, B20StablecoinInit, B20StablecoinStorage, B20StablecoinToken,
     B20TokenRole, FakePolicyAccounting, IB20, IB20Stablecoin, NoopPrecompileCallObserver,
     PolicyVersion, Stablecoin, StablecoinV2, StablecoinVersion, StablecoinVersions,
-    TokenAccounting, UpgradeGatedStorageFeatures,
+    TokenAccounting,
 };
 use base_precompile_storage::{BasePrecompileError, HashMapStorageProvider, StorageCtx};
 
 mod common;
 use common::{
-    ADMIN, ALICE, BOB, CAROL, CHAIN_ID, MEMO, POLICY_ID, TOKEN, anvil_owner, bless_or_assert_gas,
-    bless_or_assert_root, hash_token_state, ok_true, signed_permit, u,
+    ADMIN, ALICE, BOB, CAROL, CHAIN_ID, MEMO, POLICY_ID, POLICY_ID_2, TOKEN, allow0, anvil_owner,
+    assert_token_root as assert_root, bless_or_assert_gas, fund, give_role, last_topic0, ok_true,
+    seize_receiver_policy, signed_permit, storage_at, u,
 };
 
 // --- fixtures ---------------------------------------------------------------
@@ -51,10 +52,6 @@ const NAME: &str = "Base Dollar";
 const SYMBOL: &str = "bUSD";
 const CURRENCY: &str = "USD";
 const LOGIC: StablecoinV2 = StablecoinV2;
-
-/// A second policy id distinct from [`POLICY_ID`], used where a test needs both a
-/// seize-holder and a seize-receiver scope configured simultaneously.
-const POLICY_ID_2: u64 = (1u64 << 56) | 8;
 
 // --- pinned storage hashes (bless with BLESS_GOLDEN=1; see module docs) --------
 //
@@ -129,10 +126,7 @@ const ROOT_SEIZE: B256 = b256!("9314f58649ea21b77a277a7ac8a0cd455286315bd0454fd7
 
 /// Fresh provider with an initialized `Base Dollar` stablecoin at [`TOKEN`].
 fn fresh() -> HashMapStorageProvider {
-    let mut storage = HashMapStorageProvider::new_with_storage_features(
-        CHAIN_ID,
-        UpgradeGatedStorageFeatures::from_upgrade(BaseUpgrade::Cobalt),
-    );
+    let mut storage = storage_at(BaseUpgrade::Cobalt);
     StorageCtx::enter(&mut storage, |ctx| {
         let mut token = B20StablecoinStorage::from_address(TOKEN, ctx);
         token
@@ -147,85 +141,15 @@ fn fresh() -> HashMapStorageProvider {
     storage
 }
 
-/// Mutates raw token storage through the accounting port (test setup only).
-fn seed(storage: &mut HashMapStorageProvider, f: impl FnOnce(&mut B20StablecoinStorage<'_>)) {
-    StorageCtx::enter(storage, |ctx| {
-        let mut token = B20StablecoinStorage::from_address(TOKEN, ctx);
-        f(&mut token);
-    });
+crate::token_golden_harness! {
+    storage: B20StablecoinStorage,
+    token: B20StablecoinToken,
+    versions: StablecoinVersions,
+    version: StablecoinVersion::V2,
+    upgrade: BaseUpgrade::Cobalt,
+    policy: PolicyVersion::V2,
 }
-
-/// Reads token state through the accounting port.
-fn read<R>(
-    storage: &mut HashMapStorageProvider,
-    f: impl FnOnce(&B20StablecoinStorage<'_>) -> R,
-) -> R {
-    StorageCtx::enter(storage, |ctx| f(&B20StablecoinStorage::from_address(TOKEN, ctx)))
-}
-
-/// Drives one op through the resolver-gated (`Cobalt` -> V2) unprivileged path.
-fn op(
-    storage: &mut HashMapStorageProvider,
-    caller: Address,
-    policy: FakePolicyAccounting,
-    calldata: Vec<u8>,
-) -> Result<Bytes, BasePrecompileError> {
-    storage.set_caller(caller);
-    StorageCtx::enter(storage, |ctx| {
-        let version = StablecoinVersions::from_base_upgrade(BaseUpgrade::Cobalt)
-            .expect("Cobalt activates V2");
-        B20StablecoinToken::with_storage_and_policy(
-            B20StablecoinStorage::from_address(TOKEN, ctx),
-            policy,
-            PolicyVersion::V2,
-        )
-        .route(ctx, &calldata, version, false, NoopPrecompileCallObserver)
-    })
-}
-
-/// Drives one op through V2 with factory-init privilege (guards skipped).
-fn op_privileged(
-    storage: &mut HashMapStorageProvider,
-    caller: Address,
-    policy: FakePolicyAccounting,
-    calldata: Vec<u8>,
-) -> Result<Bytes, BasePrecompileError> {
-    storage.set_caller(caller);
-    StorageCtx::enter(storage, |ctx| {
-        B20StablecoinToken::with_storage_and_policy(
-            B20StablecoinStorage::from_address(TOKEN, ctx),
-            policy,
-            PolicyVersion::V2,
-        )
-        .route(ctx, &calldata, StablecoinVersion::V2, true, NoopPrecompileCallObserver)
-    })
-}
-
-/// Topic-0 (signature hash) of the last event emitted by the token.
-fn last_topic0(storage: &HashMapStorageProvider) -> B256 {
-    storage.get_events(TOKEN).last().expect("an emitted event").topics()[0]
-}
-
-/// Asserts the token's storage hash, or prints it under `BLESS_GOLDEN` for (re)pinning.
-#[track_caller]
-fn assert_root(label: &str, storage: HashMapStorageProvider, expected: B256) {
-    bless_or_assert_root(label, hash_token_state(storage, TOKEN), expected);
-}
-
-/// Grants `role` to `who` and bumps the role member count (setup only).
-fn give_role(token: &mut B20StablecoinStorage<'_>, role: B256, who: Address) {
-    token.set_role(role, who, true).unwrap();
-    let next = token.role_member_count(role).unwrap() + U256::ONE;
-    token.set_role_member_count(role, next).unwrap();
-}
-
-/// Credits `who` with `amount` and grows total supply to match (setup only).
-fn fund(token: &mut B20StablecoinStorage<'_>, who: Address, amount: U256) {
-    let balance = token.balance_of(who).unwrap();
-    token.set_balance(who, balance + amount).unwrap();
-    let supply = token.total_supply().unwrap();
-    token.set_total_supply(supply + amount).unwrap();
-}
+crate::unprivileged_revert_gas_harness!(B20StablecoinStorage);
 
 /// The V2 EIP-712 domain separator for the token at [`TOKEN`] on [`CHAIN_ID`].
 fn domain_separator(storage: &mut HashMapStorageProvider) -> B256 {
@@ -246,14 +170,6 @@ fn make_seizable(token: &mut B20StablecoinStorage<'_>) {
     token.set_policy_id(B20PolicyType::SeizeReceiver.id(), POLICY_ID_2).unwrap();
 }
 
-/// A `FakePolicyAccounting` that authorizes `who` under [`POLICY_ID_2`] (the seize-receiver
-/// scope configured by [`make_seizable`]), leaving [`POLICY_ID`] (seize-holder) with no members.
-fn seize_receiver_policy(who: Address) -> FakePolicyAccounting {
-    let mut policy = FakePolicyAccounting::new();
-    policy.allow(POLICY_ID_2, who);
-    policy
-}
-
 /// Asserts an unprivileged metadata/admin op reverts for a caller lacking `role`.
 #[track_caller]
 fn assert_unprivileged_requires_role(calldata: Vec<u8>, role: B256) {
@@ -266,13 +182,6 @@ fn assert_unprivileged_requires_role(calldata: Vec<u8>, role: B256) {
             neededRole: role,
         })
     );
-}
-
-/// A `FakePolicyAccounting` authorizing `who` under the default (0) scope.
-fn allow0(who: Address) -> FakePolicyAccounting {
-    let mut p = FakePolicyAccounting::new();
-    p.allow(0, who);
-    p
 }
 
 // ============================================================================
@@ -312,10 +221,7 @@ fn dispatch_rejects_nonzero_value() {
 
 #[test]
 fn dispatch_reverts_when_uninitialized() {
-    let mut s = HashMapStorageProvider::new_with_storage_features(
-        CHAIN_ID,
-        UpgradeGatedStorageFeatures::from_upgrade(BaseUpgrade::Cobalt),
-    );
+    let mut s = storage_at(BaseUpgrade::Cobalt);
     let calldata = IB20::balanceOfCall { account: ALICE }.abi_encode();
     let out = StorageCtx::enter(&mut s, |ctx| {
         B20StablecoinToken::with_storage_and_policy(
@@ -338,10 +244,7 @@ fn dispatch_reverts_when_uninitialized() {
 #[test]
 fn golden_dispatch_no_observer_wrapper_reverts_uninitialized() {
     // Exercises the no-observer `dispatch()` wrapper + the is_initialized=false gate.
-    let mut s = HashMapStorageProvider::new_with_storage_features(
-        CHAIN_ID,
-        UpgradeGatedStorageFeatures::from_upgrade(BaseUpgrade::Cobalt),
-    );
+    let mut s = storage_at(BaseUpgrade::Cobalt);
     s.set_caller(ALICE);
     let calldata = IB20::balanceOfCall { account: ALICE }.abi_encode();
     let out = StorageCtx::enter(&mut s, |ctx| {
@@ -1973,58 +1876,6 @@ fn golden_read_role_and_policy_constants() {
 // schedule-independent signal instead: the SLOAD / SSTORE / KECCAK256 op counts a
 // call performs. These are the storage-access footprint that drives real gas, so a
 // change here (e.g. an extra SLOAD in V2) is caught even when bytes/state/events match.
-
-/// Runs `calldata` privileged after `setup`, returning `(sload, sstore, keccak256)` counts.
-fn gas(
-    setup: impl FnOnce(&mut B20StablecoinStorage<'_>),
-    caller: Address,
-    policy: FakePolicyAccounting,
-    calldata: Vec<u8>,
-) -> (u64, u64, u64) {
-    let mut s = fresh();
-    seed(&mut s, setup);
-    s.set_caller(caller);
-    s.reset_counters();
-    StorageCtx::enter(&mut s, |ctx| {
-        B20StablecoinToken::with_storage_and_policy(
-            B20StablecoinStorage::from_address(TOKEN, ctx),
-            policy,
-            PolicyVersion::V2,
-        )
-        .route(ctx, &calldata, StablecoinVersion::V2, true, NoopPrecompileCallObserver)
-    })
-    .expect("gas-footprint op must succeed");
-    (s.counter_sload(), s.counter_sstore(), s.counter_keccak256())
-}
-
-/// Unprivileged reject-path footprint: `(sload, sstore, keccak256)` after `calldata` reverts.
-///
-/// Locks that a zero-address `transfer` rejects before the transfer-policy-id SLOAD
-/// (Cantina #13 / BOP-600). Privileged success-path `gas()` cannot catch that.
-fn gas_unprivileged_revert(
-    setup: impl FnOnce(&mut B20StablecoinStorage<'_>),
-    caller: Address,
-    policy: FakePolicyAccounting,
-    calldata: Vec<u8>,
-) -> (u64, u64, u64) {
-    let mut s = fresh();
-    seed(&mut s, setup);
-    s.set_caller(caller);
-    s.reset_counters();
-    let err = StorageCtx::enter(&mut s, |ctx| {
-        let version = StablecoinVersions::from_base_upgrade(BaseUpgrade::Cobalt)
-            .expect("Cobalt activates V2");
-        B20StablecoinToken::with_storage_and_policy(
-            B20StablecoinStorage::from_address(TOKEN, ctx),
-            policy,
-            PolicyVersion::V2,
-        )
-        .route(ctx, &calldata, version, false, NoopPrecompileCallObserver)
-    })
-    .expect_err("reject-path gas golden must revert");
-    assert_eq!(err, BasePrecompileError::revert(IB20::InvalidReceiver { receiver: Address::ZERO }));
-    (s.counter_sload(), s.counter_sstore(), s.counter_keccak256())
-}
 
 #[test]
 fn golden_transfer_unprivileged_zero_receiver_storage_access() {

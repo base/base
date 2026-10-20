@@ -20,12 +20,6 @@ sol! {
         /// Returns the current anchor game.
         function anchorGame() external view returns (address);
 
-        /// Returns the address of the `DisputeGameFactory`.
-        function disputeGameFactory() external view returns (address);
-
-        /// Returns the respected game type.
-        function respectedGameType() external view returns (uint32);
-
         /// Returns whether a game is finalized.
         function isGameFinalized(address game) external view returns (bool);
 
@@ -34,6 +28,12 @@ sol! {
 
         /// Returns whether a game is retired.
         function isGameRetired(address game) external view returns (bool);
+
+        /// Returns whether a game is registered and eligible for use.
+        function isGameProper(address game) external view returns (bool);
+
+        /// Returns the delay after game resolution before finality.
+        function disputeGameFinalityDelaySeconds() external view returns (uint256);
 
         /// Returns whether a game is respected.
         function isGameRespected(address game) external view returns (bool);

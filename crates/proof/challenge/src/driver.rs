@@ -219,7 +219,6 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager> Driver<L2, P, T> {
                     Ok(None)
                 }
                 ValidatorError::CheckpointCountMismatch { .. }
-                | ValidatorError::InvalidInterval
                 | ValidatorError::InvalidBlockRange { .. } => Err(e.into()),
                 _ => {
                     warn!(

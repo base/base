@@ -314,43 +314,6 @@ impl RollupNode {
         self.start_inner(engine_client, pipeline, l1_head_number, cancellation).await
     }
 
-    /// Starts the rollup node service with a pre-built derivation pipeline.
-    ///
-    /// This is the underlying implementation of [`Self::start`]. It accepts any pipeline
-    /// implementing [`Pipeline`] and [`SignalReceiver`], enabling callers to substitute
-    /// in-memory or test pipelines without modifying `RollupNode` itself.
-    ///
-    /// Production callers should use [`Self::start`], which constructs the standard
-    /// [`OnlinePipeline`] automatically.
-    ///
-    /// **Note:** `verifier_l1_confs` has no effect when using this method. The
-    /// [`ConfDepthProvider`](base_consensus_providers::ConfDepthProvider) is only wired into
-    /// pipelines constructed by [`Self::start`]. If the caller's pipeline needs confirmation
-    /// depth gating, it must enforce that in its own chain provider.
-    pub async fn start_with<P>(&self, pipeline: P) -> Result<(), String>
-    where
-        P: Pipeline + SignalReceiver + Send + Sync + 'static,
-    {
-        let l1_head_number: base_consensus_providers::L1HeadNumber = Arc::new(AtomicU64::new(0));
-        let engine_client =
-            Arc::new(self.engine_config().build_engine_client().await.map_err(|e| e.to_string())?);
-        self.start_inner(engine_client, pipeline, l1_head_number, CancellationToken::new()).await
-    }
-
-    /// Starts the rollup node with a pre-built engine client.
-    ///
-    /// This method enables dependency injection of the engine client, useful for testing
-    /// scenarios where a mock or in-memory engine client should be used instead of
-    /// connecting to a live L2 Engine API.
-    pub async fn start_with_engine_client<E: EngineClient + 'static>(
-        &self,
-        engine_client: Arc<E>,
-    ) -> Result<(), String> {
-        let l1_head_number: base_consensus_providers::L1HeadNumber = Arc::new(AtomicU64::new(0));
-        let pipeline = self.create_pipeline(Arc::clone(&l1_head_number)).await;
-        self.start_inner(engine_client, pipeline, l1_head_number, CancellationToken::new()).await
-    }
-
     async fn start_inner<E, P>(
         &self,
         engine_client: Arc<E>,
@@ -553,6 +516,7 @@ impl RollupNode {
                     recovery_mode,
                     rollup_config: Arc::clone(&self.config),
                     seal_offset: self.sequencer_config.seal_offset,
+                    schedule_delay: Duration::ZERO,
                     unsafe_payload_gossip_client: queued_gossip_client,
                     sealer: None,
                     pending_stop: None,

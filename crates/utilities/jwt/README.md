@@ -8,8 +8,9 @@ JWT secret handling and validation for Base node components.
 ## Overview
 
 - **`JwtValidator`**: Validates JWT secrets against an Engine API via capability exchange.
-- **`default_jwt_secret`**: Loads a JWT from a file or generates a new random secret.
-- **`resolve_jwt_secret`**: Resolves JWT from file path, encoded secret, or default file.
+- **`JwtSecretReader`**: Reads and writes secret files with `read_from_path` and `write_to_path`.
+  `default_jwt_secret` loads a file in the current directory or generates and writes a new random
+  secret. `resolve_jwt_secret` prioritizes a file path, then an encoded secret, then the default file.
 - **`JwtError`**: Errors for loading/parsing JWT secrets.
 - **`JwtValidationError`**: Errors during engine API validation.
 
@@ -25,14 +26,15 @@ base-jwt = { git = "https://github.com/base/base" }
 Load a JWT secret:
 
 ```rust,ignore
-use base_jwt::{JwtSecret, default_jwt_secret, resolve_jwt_secret};
+use alloy_rpc_types_engine::JwtSecret;
+use base_jwt::JwtSecretReader;
 use std::path::Path;
 
 // Load from default file or generate new
-let secret = default_jwt_secret("jwt.hex")?;
+let jwt_secret: JwtSecret = JwtSecretReader::default_jwt_secret("jwt.hex")?;
 
 // Resolve with priority: file > encoded > default
-let secret = resolve_jwt_secret(
+let jwt_secret = JwtSecretReader::resolve_jwt_secret(
     Some(Path::new("/path/to/jwt.hex")),
     None,
     "fallback.hex",

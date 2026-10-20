@@ -7,7 +7,7 @@ Resource metering backend for the Base block builder. Provides a concrete [`Mete
 
 ## Overview
 
-- **`MeteringStore`**: Thread-safe metering data cache using `DashMap` with bounded LRU eviction. Implements `MeteringProvider` from `base-builder-core`.
+- **`MeteringStore`**: Thread-safe metering data cache backed by `moka` with a configured max capacity, LRU eviction policy, and TTL. Implements `MeteringProvider` from `base-builder-core`.
 - **`MeteringStoreExt`**: JSON-RPC extension exposing `base_setMeteringInformation`, `base_setMeteringEnabled`, and `base_clearMeteringInformation` methods.
 
 ## Usage

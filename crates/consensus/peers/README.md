@@ -4,8 +4,8 @@
 
 ## Overview
 
-Networking peer types ported from reth. Provides `PeerId`, `NodeRecord`, and `AnyNode` for
-working with Ethereum network identities across discv4, discv5, and admin RPC contexts.
+Networking peer types ported from reth. Provides `PeerId` and `NodeRecord` for working with
+Ethereum network identities across discv4 and discv5.
 
 Networking Utilities ported from reth.
 
@@ -30,18 +30,12 @@ The most comprehensive node record type is the Ethereum Node Record (`discv5::En
 a signed, versioned record that includes the information from a `NodeRecord` along with
 additional metadata. This is the data structure returned from discovery v5 queries.
 
-When we need to deserialize an identifier that could be any of these three types (`PeerId`,
-`NodeRecord`, and `discv5::Enr`), we use the `AnyNode` type, which is an enum over the
-three types. `AnyNode` is used in reth's `admin_addTrustedPeer` RPC method.
-
 In short, the types are as follows:
 - `PeerId`: A simple public key identifier.
 - `NodeRecord`: A more complete representation of a peer, including IP address and ports.
 - `discv5::Enr`: An Ethereum Node Record, which is a signed, versioned record that includes
   additional metadata. Useful when interacting with discovery v5, or when custom metadata is
   required.
-- `AnyNode`: An enum over `PeerId`, `NodeRecord`, and `discv5::Enr`, useful in
-  deserialization when the type of the node record is not known.
 
 ## Usage
 

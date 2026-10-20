@@ -4,7 +4,10 @@ base_metrics::define_metrics! {
     base_node_disc
 
     #[describe("Events received by the discv5 service")]
-    #[label(name = "type", default = ["discovered", "session_established", "unverifiable_enr"])]
+    #[label(
+        name = "type",
+        default = ["discovered", "session_established", "unverifiable_enr", "unverifiable_enr_verified"]
+    )]
     discovery_event: gauge,
 
     #[describe("ENRs dropped before forwarding to the gossip service")]

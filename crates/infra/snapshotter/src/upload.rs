@@ -510,7 +510,7 @@ impl SnapshotUploader {
                     .key(key)
                     .send()
                     .await
-                    .map_err(|error| UploadAttemptError::retry(error.into()))
+                    .map_err(|error| UploadAttemptError::Retry(error.into()))
             },
             |attempt, error| {
                 warn!(
@@ -648,7 +648,7 @@ impl SnapshotUploader {
         match result {
             Ok(bytes_uploaded) => Ok(bytes_uploaded),
             Err(error) => {
-                self.abort_streaming_multipart_upload(&key, &upload_id).await;
+                self.abort_multipart_upload(&key, &upload_id).await;
                 Err(error)
             }
         }
@@ -676,12 +676,12 @@ impl SnapshotUploader {
                     .body(ByteStream::from(bytes.clone()))
                     .send()
                     .await
-                    .map_err(|error| UploadAttemptError::retry(error.into()))?;
+                    .map_err(|error| UploadAttemptError::Retry(error.into()))?;
 
                 let e_tag = upload_resp
                     .e_tag()
                     .ok_or_else(|| anyhow::anyhow!("no ETag for streamed part {part_number} of {key}"))
-                    .map_err(UploadAttemptError::fatal)?
+                    .map_err(UploadAttemptError::Fatal)?
                     .to_owned();
                 Ok(CompletedPart::builder().part_number(part_number).e_tag(e_tag).build())
             },
@@ -713,39 +713,7 @@ impl SnapshotUploader {
         parts: Vec<CompletedPart>,
     ) -> Result<()> {
         retry_upload(
-            || async {
-                let completed = CompletedMultipartUpload::builder().set_parts(Some(parts.clone())).build();
-                match self
-                    .client
-                    .complete_multipart_upload()
-                    .bucket(&self.bucket)
-                    .key(key)
-                    .upload_id(upload_id)
-                    .multipart_upload(completed)
-                    .send()
-                    .await
-                {
-                    Ok(_) => Ok(()),
-                    Err(error) => {
-                        let error = anyhow::Error::from(error);
-                        if self.remote_object_size(key).await.map_err(UploadAttemptError::fatal)?
-                            == Some(size)
-                        {
-                            warn!(
-                                key = %key,
-                                upload_id,
-                                error = %error,
-                                error_debug = ?error,
-                                size,
-                                "streaming multipart completion response failed after object appeared; treating upload as successful"
-                            );
-                            Ok(())
-                        } else {
-                            Err(UploadAttemptError::retry(error))
-                        }
-                    }
-                }
-            },
+            || async { self.complete_or_confirm(key, upload_id, size, &parts).await },
             |attempt, error| {
                 warn!(
                     key = %key,
@@ -764,7 +732,47 @@ impl SnapshotUploader {
         .await
     }
 
-    async fn abort_streaming_multipart_upload(&self, key: &str, upload_id: &str) {
+    async fn complete_or_confirm(
+        &self,
+        key: &str,
+        upload_id: &str,
+        size: u64,
+        parts: &[CompletedPart],
+    ) -> Result<(), UploadAttemptError> {
+        let completed = CompletedMultipartUpload::builder().set_parts(Some(parts.to_vec())).build();
+        match self
+            .client
+            .complete_multipart_upload()
+            .bucket(&self.bucket)
+            .key(key)
+            .upload_id(upload_id)
+            .multipart_upload(completed)
+            .send()
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(error) => {
+                let error = anyhow::Error::from(error);
+                if self.remote_object_size(key).await.map_err(UploadAttemptError::Fatal)?
+                    == Some(size)
+                {
+                    warn!(
+                        key = %key,
+                        upload_id,
+                        error = %error,
+                        error_debug = ?error,
+                        size,
+                        "multipart completion response failed after object appeared; treating upload as successful"
+                    );
+                    Ok(())
+                } else {
+                    Err(UploadAttemptError::Retry(error))
+                }
+            }
+        }
+    }
+
+    async fn abort_multipart_upload(&self, key: &str, upload_id: &str) {
         match self
             .client
             .abort_multipart_upload()
@@ -775,22 +783,33 @@ impl SnapshotUploader {
             .await
         {
             Ok(_) => {
-                warn!(key = %key, upload_id, "aborted streaming multipart upload after failure")
+                warn!(key = %key, upload_id, "aborted multipart upload after failure")
             }
             Err(error) => error!(
                 key = %key,
                 upload_id,
                 error = %error,
                 error_debug = ?error,
-                "failed to abort streaming multipart upload after failure"
+                "failed to abort multipart upload after failure"
             ),
         }
     }
 
-    /// Lists remote static files with their sizes. Call once and pass the result
-    /// to `generate_manifest` for skip-range computation.
+    /// Lists remote static filenames and sizes for manifest skip-range computation.
     pub async fn list_remote_static_files(&self) -> Result<HashMap<String, u64>> {
-        self.list_remote_objects(&self.static_files_prefix()).await
+        let prefix = self.static_files_prefix();
+        let prefix_with_slash = format!("{prefix}/");
+        let remote: HashMap<String, u64> = self
+            .list_remote_objects(&prefix)
+            .await?
+            .into_iter()
+            .map(|(key, size)| {
+                (key.strip_prefix(&prefix_with_slash).unwrap_or(&key).to_string(), size)
+            })
+            .collect();
+
+        debug!(prefix = %prefix, count = remote.len(), "listed remote objects");
+        Ok(remote)
     }
 
     /// Fetches the most recent `manifest.json` from a prior run, if one exists.
@@ -1112,7 +1131,7 @@ impl SnapshotUploader {
                     .send()
                     .await
                     .map(|_| ())
-                    .map_err(|error| UploadAttemptError::retry(error.into()))
+                    .map_err(|error| UploadAttemptError::Retry(error.into()))
             },
             |attempt, error| {
                 warn!(
@@ -1174,10 +1193,10 @@ impl SnapshotUploader {
         })
     }
 
-    /// Lists all objects under a prefix in the bucket, returning filename → size.
-    async fn list_remote_objects(&self, prefix: &str) -> Result<HashMap<String, u64>> {
+    /// Lists full object keys and sizes under a prefix in listing order, skipping objects without keys.
+    async fn list_remote_objects(&self, prefix: &str) -> Result<Vec<(String, u64)>> {
         let prefix_with_slash = format!("{prefix}/");
-        let mut remote = HashMap::new();
+        let mut remote = Vec::new();
         let mut continuation_token = None;
 
         loop {
@@ -1195,9 +1214,8 @@ impl SnapshotUploader {
 
             for obj in resp.contents() {
                 if let Some(key) = obj.key() {
-                    let filename = key.strip_prefix(&prefix_with_slash).unwrap_or(key).to_string();
                     let size: u64 = obj.size.unwrap_or(0).try_into().unwrap_or(0);
-                    remote.insert(filename, size);
+                    remote.push((key.to_string(), size));
                 }
             }
 
@@ -1208,43 +1226,7 @@ impl SnapshotUploader {
             }
         }
 
-        debug!(prefix = %prefix, count = remote.len(), "listed remote objects");
         Ok(remote)
-    }
-
-    /// Lists full object keys under a prefix.
-    async fn list_remote_keys(&self, prefix: &str) -> Result<Vec<String>> {
-        let prefix_with_slash = format!("{prefix}/");
-        let mut keys = Vec::new();
-        let mut continuation_token = None;
-
-        loop {
-            let mut req =
-                self.client.list_objects_v2().bucket(&self.bucket).prefix(&prefix_with_slash);
-
-            if let Some(token) = continuation_token.take() {
-                req = req.continuation_token(token);
-            }
-
-            let resp = req
-                .send()
-                .await
-                .with_context(|| format!("failed to list objects under {prefix_with_slash}"))?;
-
-            for obj in resp.contents() {
-                if let Some(key) = obj.key() {
-                    keys.push(key.to_string());
-                }
-            }
-
-            if resp.is_truncated() == Some(true) {
-                continuation_token = resp.next_continuation_token().map(String::from);
-            } else {
-                break;
-            }
-        }
-
-        Ok(keys)
     }
 
     /// Returns whether a full object key exists remotely.
@@ -1265,9 +1247,10 @@ impl SnapshotUploader {
         }
     }
 
-    /// Deletes all objects under a prefix and returns the number of deleted keys.
+    /// Deletes all listed objects under a prefix and returns the number of deleted keys.
     async fn delete_prefix(&self, prefix: &str) -> Result<usize> {
-        let keys = self.list_remote_keys(prefix).await?;
+        let keys: Vec<_> =
+            self.list_remote_objects(prefix).await?.into_iter().map(|(key, _)| key).collect();
         if keys.is_empty() {
             return Ok(0);
         }
@@ -1328,27 +1311,16 @@ impl SnapshotUploader {
                 "starting multipart upload"
             );
             progress.start_file(key.clone(), file_size, UploadStage::CreatingMultipart);
-            match self.upload_multipart(file_path, &key, file_size, progress).await {
-                Ok(()) => progress.finish_file(&key),
-                Err(error) => {
-                    progress.fail_file(&key);
-                    return Err(error);
-                }
-            }
+            self.upload_multipart(file_path, &key, file_size, progress)
+                .await
+                .inspect_err(|_| progress.fail_file(&key))?;
         } else {
             debug!(key = %key, size = file_size, "uploading file");
             progress.start_file(key.clone(), file_size, UploadStage::Uploading);
-            match self.upload_single(file_path, &key).await {
-                Ok(()) => {
-                    progress.add_for_file(&key, file_size);
-                    progress.finish_file(&key);
-                }
-                Err(error) => {
-                    progress.fail_file(&key);
-                    return Err(error);
-                }
-            }
+            self.upload_single(file_path, &key).await.inspect_err(|_| progress.fail_file(&key))?;
+            progress.add_for_file(&key, file_size);
         }
+        progress.finish_file(&key);
 
         Ok(())
     }
@@ -1359,7 +1331,7 @@ impl SnapshotUploader {
                 let body = ByteStream::from_path(file_path)
                     .await
                     .with_context(|| format!("failed to read {}", file_path.display()))
-                    .map_err(UploadAttemptError::fatal)?;
+                    .map_err(UploadAttemptError::Fatal)?;
 
                 self.client
                     .put_object()
@@ -1369,7 +1341,7 @@ impl SnapshotUploader {
                     .send()
                     .await
                     .map(|_| ())
-                    .map_err(|error| UploadAttemptError::retry(error.into()))
+                    .map_err(|error| UploadAttemptError::Retry(error.into()))
             },
             |attempt, error| {
                 warn!(
@@ -1420,29 +1392,7 @@ impl SnapshotUploader {
                 .await
             }
             Err(e) => {
-                match self
-                    .client
-                    .abort_multipart_upload()
-                    .bucket(&self.bucket)
-                    .key(key)
-                    .upload_id(&upload_id)
-                    .send()
-                    .await
-                {
-                    Ok(_) => {
-                        warn!(key = %key, upload_id, "aborted multipart upload after failure")
-                    }
-                    Err(abort_error) => {
-                        error!(
-                            key = %key,
-                            upload_id,
-                            error = %abort_error,
-                            error_debug = ?abort_error,
-                            "failed to abort multipart upload after failure"
-                        );
-                    }
-                }
-
+                self.abort_multipart_upload(key, &upload_id).await;
                 Err(e)
             }
         }
@@ -1462,7 +1412,7 @@ impl SnapshotUploader {
                     .key(key)
                     .send()
                     .await
-                    .map_err(|error| UploadAttemptError::retry(error.into()))
+                    .map_err(|error| UploadAttemptError::Retry(error.into()))
             },
             |attempt, error| {
                 warn!(
@@ -1492,38 +1442,7 @@ impl SnapshotUploader {
         retry_upload(
             || async {
                 progress.set_stage(key, UploadStage::CompletingMultipart);
-                let completed =
-                    CompletedMultipartUpload::builder().set_parts(Some(parts.clone())).build();
-                match self
-                    .client
-                    .complete_multipart_upload()
-                    .bucket(&self.bucket)
-                    .key(key)
-                    .upload_id(upload_id)
-                    .multipart_upload(completed)
-                    .send()
-                    .await
-                {
-                    Ok(_) => Ok(()),
-                    Err(error) => {
-                        let error = anyhow::Error::from(error);
-                        if self.remote_object_size(key).await.map_err(UploadAttemptError::fatal)?
-                            == Some(file_size)
-                        {
-                            warn!(
-                                key = %key,
-                                upload_id,
-                                error = %error,
-                                error_debug = ?error,
-                                size = file_size,
-                                "multipart completion response failed after object appeared; treating upload as successful"
-                            );
-                            Ok(())
-                        } else {
-                            Err(UploadAttemptError::retry(error))
-                        }
-                    }
-                }
+                self.complete_or_confirm(key, upload_id, file_size, &parts).await
             },
             |attempt, error| {
                 warn!(
@@ -1603,7 +1522,7 @@ impl SnapshotUploader {
                     .multipart_part_permits
                     .acquire()
                     .await
-                    .map_err(|error| UploadAttemptError::fatal(error.into()))?;
+                    .map_err(|error| UploadAttemptError::Fatal(error.into()))?;
                 let body = ByteStream::read_from()
                     .path(file_path)
                     .offset(offset)
@@ -1613,7 +1532,7 @@ impl SnapshotUploader {
                     .with_context(|| {
                         format!("failed to read part {part_number} of {}", file_path.display())
                     })
-                    .map_err(UploadAttemptError::fatal)?;
+                    .map_err(UploadAttemptError::Fatal)?;
 
                 let upload_resp = self
                     .client
@@ -1625,12 +1544,12 @@ impl SnapshotUploader {
                     .body(body)
                     .send()
                     .await
-                    .map_err(|error| UploadAttemptError::retry(error.into()))?;
+                    .map_err(|error| UploadAttemptError::Retry(error.into()))?;
 
                 let e_tag = upload_resp
                     .e_tag()
                     .ok_or_else(|| anyhow::anyhow!("no ETag for part {part_number} of {key}"))
-                    .map_err(UploadAttemptError::fatal)?
+                    .map_err(UploadAttemptError::Fatal)?
                     .to_string();
 
                 Ok(CompletedPart::builder().part_number(part_number).e_tag(e_tag).build())
@@ -1682,7 +1601,7 @@ impl SnapshotUploader {
                     .send()
                     .await
                     .map(|_| ())
-                    .map_err(|error| UploadAttemptError::retry(error.into()))
+                    .map_err(|error| UploadAttemptError::Retry(error.into()))
             },
             |attempt, error| {
                 warn!(
@@ -1711,16 +1630,6 @@ impl SnapshotUploader {
 enum UploadAttemptError {
     Retry(anyhow::Error),
     Fatal(anyhow::Error),
-}
-
-impl UploadAttemptError {
-    const fn retry(error: anyhow::Error) -> Self {
-        Self::Retry(error)
-    }
-
-    const fn fatal(error: anyhow::Error) -> Self {
-        Self::Fatal(error)
-    }
 }
 
 async fn retry_upload<T, F, Fut, OnRetry, OnSuccess>(

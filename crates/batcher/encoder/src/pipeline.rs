@@ -114,8 +114,8 @@ pub trait BatchPipeline: Send {
 
     /// Estimated DA bytes still awaiting confirmation.
     ///
-    /// Unencoded queued blocks plus channels that are not fully confirmed.
-    /// Deposits are excluded.
+    /// Unencoded queued blocks plus channels that are not fully confirmed, each block counted
+    /// at its [`BufferedBlock`](crate::BufferedBlock) estimate.
     fn da_backlog_bytes(&self) -> u64;
 
     /// Force blob DA on later submissions. No-op unless `da_type` is calldata.

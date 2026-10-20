@@ -50,7 +50,7 @@ use reth_db_common::init::init_genesis;
 use reth_node_api::NodeTypesWithDBAdapter;
 use reth_primitives_traits::Recovered;
 use reth_provider::{
-    ProviderFactory,
+    ProviderFactory, StateProvider,
     test_utils::{MockEthProvider, create_test_provider_factory_with_node_types},
 };
 use reth_revm::{State, database::StateProviderDatabase};
@@ -457,7 +457,7 @@ impl FlashblockWorkloadFixture {
         let mut ctx = self.builder_context();
         let provider = self.provider_factory.latest()?;
         let mut state = State::builder()
-            .with_database(StateProviderDatabase::new(provider))
+            .with_database(StateProviderDatabase::new((&provider).into_evm_state_provider()))
             .with_bundle_update()
             .build();
         let driver = FlashblockBlockDriver {
@@ -472,6 +472,7 @@ impl FlashblockWorkloadFixture {
         let outcome = driver.run_block(
             &mut ctx,
             &mut state,
+            &provider,
             RejectionCache::new(REJECTION_CACHE_MAX_CAPACITY, REJECTION_CACHE_TTL),
             |position| {
                 Self::insert(protocol_pool, std::mem::take(&mut arrivals[position as usize]));
@@ -505,7 +506,12 @@ impl FlashblockWorkloadFixture {
                 pool.best_transactions_with_attributes_and_parking(attributes),
             )
         })
-        .build(StateProviderDatabase::new(&provider), &provider, None, ctx)?;
+        .build(
+            StateProviderDatabase::new((&provider).into_evm_state_provider()),
+            &provider,
+            None,
+            ctx,
+        )?;
         let BuildOutcomeKind::Freeze(payload) = outcome else {
             eyre::bail!("a Denim build must freeze its payload, got {outcome:?}");
         };

@@ -85,16 +85,11 @@ impl BaseTimeCache {
         let timestamp_ms =
             BaseTimeUpdateTx::extract_timestamp_ms(transactions, block_number, block_timestamp)
                 .ok();
-        self.insert(block_hash, timestamp_ms);
-        timestamp_ms
-    }
-
-    /// Caches a timestamp already derived from a loaded block.
-    pub fn insert(&self, block_hash: BlockHash, timestamp_ms: Option<u64>) {
         self.timestamps
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .put(block_hash, timestamp_ms);
+        timestamp_ms
     }
 }
 

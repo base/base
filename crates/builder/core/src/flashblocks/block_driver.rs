@@ -59,6 +59,9 @@ pub struct FlashblockBlockDriver {
 impl FlashblockBlockDriver {
     /// Builds every flashblock of one block and finalizes it with a state root.
     ///
+    /// `proof_provider` reads the same parent state as the execution database, with the full
+    /// proof API needed to compute the finalized block's state root.
+    ///
     /// `next_iterator` is called before each pool flashblock with its zero-based position (the
     /// flashblock index minus one) and returns a fresh
     /// best-transactions iterator over the pool, exactly as the payload builder refreshes
@@ -70,16 +73,14 @@ impl FlashblockBlockDriver {
         &self,
         ctx: &mut BasePayloadBuilderCtx,
         state: &mut State<DB>,
+        proof_provider: &P,
         rejection_cache: RejectionCache,
         mut next_iterator: impl FnMut(u64) -> ParkableBestPayloadTransactions<BasePooledTransaction>,
         mut on_flashblock: impl FnMut(&[TxHash], &[TxHash]),
     ) -> Result<FlashblockBlockOutcome, PayloadBuilderError>
     where
-        DB: alloy_evm::Database<Error = ProviderError>
-            + std::fmt::Debug
-            + AsRef<P>
-            + revm::Database,
-        P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
+        DB: alloy_evm::Database<Error = ProviderError> + std::fmt::Debug + revm::Database,
+        P: StateRootProvider + HashedPostStateProvider + StorageRootProvider + ?Sized,
     {
         ctx.extra.target_flashblock_count = self.flashblocks;
         ctx.extra.gas_per_batch = self.gas_per_flashblock;
@@ -88,7 +89,7 @@ impl FlashblockBlockDriver {
         // and computes its state root only when it skips flashblock building.
         ctx.extra.flashblock_index = 0;
         let mut info = execute_pre_steps(state, ctx)?;
-        build_block(state, ctx, &mut info, FlashblockId::default(), false)?;
+        build_block(state, proof_provider, ctx, &mut info, FlashblockId::default(), false)?;
 
         let mut deferrals = BlockDeferrals::default();
         let mut outcome = FlashblockBlockOutcome::default();
@@ -142,10 +143,11 @@ impl FlashblockBlockDriver {
 
             outcome.considered += diag.txs_considered;
             outcome.deferred += diag.txs_deferred;
-            build_block(state, ctx, &mut info, FlashblockId::default(), false)?;
+            build_block(state, proof_provider, ctx, &mut info, FlashblockId::default(), false)?;
         }
 
-        let (payload, _, _) = build_block(state, ctx, &mut info, FlashblockId::default(), true)?;
+        let (payload, _, _) =
+            build_block(state, proof_provider, ctx, &mut info, FlashblockId::default(), true)?;
         emit_final_inclusion_events(ctx, &payload);
         outcome.included = info.executed_transactions.len() as u64;
         outcome.state_root = payload.block().state_root;

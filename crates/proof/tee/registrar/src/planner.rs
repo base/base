@@ -4,8 +4,9 @@
 //! `CertManager`-oriented plan fields required by hinted registration.
 
 use alloy_primitives::{Address, B256, b256, keccak256};
-use base_proof_tee_nitro_verifier::{AttestationDocument, AttestationVerifier};
+use base_proof_tee_nitro_verifier::{AttestationDocument, AttestationVerifier, CertChain};
 use k256::ecdsa::VerifyingKey;
+use p384::ecdsa::{Signature, VerifyingKey as P384VerifyingKey, signature::Verifier};
 use x509_parser::prelude::{FromDer, X509Version};
 
 use crate::{
@@ -25,6 +26,30 @@ pub const PINNED_ROOT_CERT_HASH: B256 =
 pub struct AttestationPlanner;
 
 impl AttestationPlanner {
+    /// Authenticates every plan field against the pinned-root chain and signed payload.
+    pub fn authenticate_registration_plan(plan: &RegistrationPlan) -> PlannerResult<()> {
+        let envelope = NitroCose::sign1_from_tbs(&plan.attestation_tbs, &plan.signature)?;
+        let canonical = Self::prepare_registration_plan(&envelope)?;
+        if &canonical != plan {
+            return Err(PlannerError::Attestation(
+                "registration plan does not match its signed payload".into(),
+            ));
+        }
+        let certs: Vec<&[u8]> = std::iter::once(plan.root_cert.as_slice())
+            .chain(plan.certs.iter().map(|cert| cert.cert.as_slice()))
+            .collect();
+        let chain = CertChain::from_der(&certs)?;
+        // Attribution must not depend on CertManager's cache or revocation state.
+        chain.verify_chain(0, plan.timestamp)?;
+        let key = P384VerifyingKey::from_sec1_bytes(chain.leaf_public_key()?)
+            .map_err(|e| PlannerError::Attestation(format!("invalid leaf public key: {e}")))?;
+        let signature = Signature::from_slice(&plan.signature).map_err(|e| {
+            PlannerError::Attestation(format!("invalid attestation signature: {e}"))
+        })?;
+        key.verify(&plan.attestation_tbs, &signature)
+            .map_err(|e| PlannerError::Attestation(format!("attestation signature rejected: {e}")))
+    }
+
     /// Parses a raw `COSE_Sign1` Nitro attestation and builds a registration plan.
     ///
     /// Accepts only immutable attestation bytes (no decoded-report mutation path).
@@ -276,6 +301,56 @@ mod tests {
     /// `NitroValidator.t.sol` `test_DecodeAttestationTbs` fixture (Base-shaped: has `public_key`).
     fn base_fixture_attestation() -> Vec<u8> {
         hex::decode(include_str!("testdata/nitro_attestation.hex").trim()).unwrap()
+    }
+
+    #[test]
+    fn authenticate_plan_rejects_unsigned_fields_and_forged_payload() {
+        let plan =
+            AttestationPlanner::prepare_registration_plan(&base_fixture_attestation()).unwrap();
+        AttestationPlanner::authenticate_registration_plan(&plan).unwrap();
+        for field in 0..12 {
+            let mut tampered = plan.clone();
+            match field {
+                0 => tampered.signer = Address::ZERO,
+                1 => tampered.nonce = Some(vec![1; 32]),
+                2 => tampered.timestamp += 1,
+                3 => tampered.pcr0[0] ^= 1,
+                4 => tampered.root_cert_hash = B256::ZERO,
+                5 => tampered.root_cert[0] ^= 1,
+                6 => tampered.leaf_cert_hash = B256::ZERO,
+                7 => tampered.certs[0].cert_hash = B256::ZERO,
+                8 => tampered.certs[0].revocation_id = B256::ZERO,
+                9 => tampered.certs[0].parent_cert_hash = B256::ZERO,
+                10 => tampered.certs[0].kind = CertKind::Leaf,
+                _ => tampered.certs[0].cert[0] ^= 1,
+            }
+            assert!(AttestationPlanner::authenticate_registration_plan(&tampered).is_err());
+        }
+        let forged =
+            AttestationPlanner::prepare_registration_plan(&base_fixture_with_nonce(&[1])).unwrap();
+        assert!(matches!(
+            AttestationPlanner::authenticate_registration_plan(&forged),
+            Err(PlannerError::Attestation(reason)) if reason.contains("signature rejected")
+        ));
+    }
+
+    #[test]
+    fn authenticate_plan_verifies_certificate_signatures_without_a_trusted_prefix() {
+        let raw = base_fixture_attestation();
+        let plan = AttestationPlanner::prepare_registration_plan(&raw).unwrap();
+        for cert in &plan.certs {
+            let mut forged = raw.clone();
+            let offset =
+                forged.windows(cert.cert.len()).position(|part| part == cert.cert).unwrap();
+            forged[offset + cert.cert.len() - 1] ^= 1;
+            let forged = AttestationPlanner::prepare_registration_plan(&forged).unwrap();
+            assert!(matches!(
+                AttestationPlanner::authenticate_registration_plan(&forged),
+                Err(PlannerError::Parse(
+                    base_proof_tee_nitro_verifier::VerifierError::SignatureVerification(_)
+                ))
+            ));
+        }
     }
 
     #[test]

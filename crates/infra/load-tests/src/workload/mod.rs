@@ -20,7 +20,7 @@ mod payloads;
 pub use payloads::{
     AerodromeClPayload, B20TransferPayload, CalldataPayload, DOUBLE_COUNTER_GAS_LIMIT,
     DoubleCounterPayload, Erc20Payload, OsakaPayload, Payload, PrecompileLooper, PrecompilePayload,
-    StoragePayload, TransferPayload, UniswapV3Payload, parse_precompile_id, recover_real_tokens,
+    StoragePayload, TransferPayload, UniswapV3Payload, recover_real_tokens,
 };
 pub(crate) use payloads::{b20_salt_for, b20_token_for};
 

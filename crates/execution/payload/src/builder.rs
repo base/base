@@ -15,10 +15,10 @@ use alloy_rpc_types_debug::ExecutionWitness;
 use alloy_rpc_types_engine::PayloadId;
 use base_common_chains::Upgrades;
 use base_common_consensus::{BaseTransaction, DepositReceiptExt, Predeploys};
-use base_common_evm::L1BlockInfo;
+use base_common_evm::{BaseSpecId, L1BlockInfo};
 use base_execution_eip8130::IntrinsicGas;
 use base_execution_txpool::{
-    BasePooledTx, GuardMetrics, ParkableTransactionPool, PredicateContext, ValidityPredicate,
+    BasePooledTx, GuardMetrics, ParkableTransactionPool, PredicateContext,
     estimated_da_size::DataAvailabilitySized,
 };
 use base_observability_events::{
@@ -40,13 +40,11 @@ use reth_payload_builder_primitives::PayloadBuilderError;
 use reth_payload_primitives::{BuildNextEnv, BuiltPayloadExecutedBlock};
 use reth_payload_util::{NoopPayloadTransactions, PayloadTransactions};
 use reth_primitives_traits::{
-    HeaderTy, NodePrimitives, SealedHeader, SealedHeaderFor, SignedTransaction, TxTy,
+    HeaderTy, NodePrimitives, SealedHeader, SealedHeaderFor, SignedTransaction, TxTy, WithEncoded,
 };
-use reth_revm::{
-    cancelled::CancelOnDrop, database::StateProviderDatabase, db::State,
-    witness::ExecutionWitnessRecord,
-};
+use reth_revm::{database::StateProviderDatabase, db::State, witness::ExecutionWitnessRecord};
 use reth_storage_api::{BlockReader, StateProvider, StateProviderFactory, errors::ProviderError};
+use reth_tasks::CancelOnDrop;
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction, TransactionPool};
 use reth_trie_common::ExecutionWitnessMode;
 use reth_trie_parallel::state_root_task::PayloadStateRootHandle;
@@ -215,14 +213,16 @@ where
             self.config.state_provider_metrics,
         );
         let state = StateProviderDatabase::new(state_provider.provider());
+        // Execution decorators expose EVM reads; retain a full parent-state view for proofs.
+        let proof_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
 
         if ctx.attributes().no_tx_pool() {
-            builder.build(state, state_provider.provider(), state_root_handle, ctx)
+            builder.build(state, proof_provider.as_ref(), state_root_handle, ctx)
         } else {
             // sequencer mode we can reuse cachedreads from previous runs
             builder.build(
                 cached_reads.as_db_mut(state),
-                state_provider.provider(),
+                proof_provider.as_ref(),
                 state_root_handle,
                 ctx,
             )
@@ -529,7 +529,7 @@ impl<Txs> Builder<'_, Txs> {
         }
 
         let mut db = State::builder()
-            .with_database(StateProviderDatabase::new(&state_provider))
+            .with_database(StateProviderDatabase::new((&state_provider).into_evm_state_provider()))
             .with_bundle_update()
             .build();
         let mut builder = ctx.block_builder(&mut db)?;
@@ -552,7 +552,7 @@ impl<Txs> Builder<'_, Txs> {
 
         let mode = ExecutionWitnessMode::default();
         let witness = ExecutionWitnessRecord::new(&db).into_execution_witness(
-            &db.database.0,
+            &state_provider,
             &header_provider,
             block_number,
             mode,
@@ -924,6 +924,12 @@ where
         let mut predicate_eval_cutoff_hit = false;
 
         let block_timestamp = self.attributes().timestamp();
+        let mut coinbase_tip_affordability = CoinbaseTipAffordability::load(
+            builder.evm_mut().db_mut(),
+            block_number,
+            BaseSpecId::from_timestamp(&*self.chain_spec, block_timestamp),
+            u128::from(base_fee),
+        );
         let can_finalize_early = self.is_denim_active();
         let resource_metering = &self.builder_config.resource_metering;
         let mut resource_throttled = 0u64;
@@ -936,7 +942,7 @@ where
             }
 
             let tx_hash = *tx.hash();
-            let replay_independent = tx.eip8130_replay_id().is_some();
+            let replay_independent = tx.is_eip8130_nonce_free();
             if self.builder_config.rejection_cache.is_rejected(&tx_hash) {
                 RejectionCacheMetrics::hits().increment(1);
                 RejectionCacheMetrics::size()
@@ -950,7 +956,7 @@ where
                 continue;
             }
 
-            let has_validity_predicates = !tx.validity_predicates().is_empty();
+            let has_validity_predicates = !tx.validity_conditions().is_empty();
             let coinbase_tip = tx.coinbase_tip();
             let has_coinbase_tip = coinbase_tip.is_some();
             // Every validity candidate ends with a decision event, so there is no separate
@@ -958,11 +964,7 @@ where
             if has_validity_predicates {
                 validity_consideration_index += 1;
             }
-            if tx
-                .validity_predicates()
-                .iter()
-                .any(|predicate| matches!(predicate, ValidityPredicate::FlashblockIndex { .. }))
-            {
+            if tx.validity_conditions().flashblock().is_present() {
                 ValidityMetrics::validity_predicate_evaluations_total("unsupported").increment(1);
                 emit_native_validity_event!(
                     self,
@@ -1024,7 +1026,7 @@ where
                         &mut predicate_loads,
                     );
                     ValidityPredicateEvaluation::evaluate(
-                        tx.validity_predicates(),
+                        tx.validity_conditions(),
                         &mut recorder,
                         &predicate_context,
                     )
@@ -1064,7 +1066,7 @@ where
                     }
                     Ok(ValidityPredicateEvaluation::Unsatisfied {
                         blocker,
-                        blocker_index,
+                        predicate,
                         expired: false,
                     }) => {
                         ValidityMetrics::validity_predicate_evaluations_total("not_satisfied")
@@ -1088,7 +1090,6 @@ where
                                 }
                             );
                         }
-                        let predicate = tx.validity_predicates()[blocker_index].clone();
                         predicate_index.park(tx_hash, tx, predicate);
                         continue;
                     }
@@ -1151,8 +1152,9 @@ where
 
             // EIP-8130 meters payer authentication gas on top of the declared gas limit, so it must
             // be reserved against the block gas budget in addition to `gas_limit`. Reserve a
-            // conservative upper bound (worst-case payer policy gate) derived from the payer auth
-            // blob (`0` for non-8130 / self-pay); see `IntrinsicGas::max_payer_auth_cost`.
+            // conservative upper bound (the payer auth bytes at the EIP-7623 floor rate) derived
+            // from the payer auth blob (`0` for non-8130 / self-pay); see
+            // `IntrinsicGas::max_payer_auth_cost`.
             let tx_payer_auth = match tx.as_eip8130() {
                 Some(signed) => match IntrinsicGas::max_payer_auth_cost(signed) {
                     Ok(payer_auth) => payer_auth,
@@ -1184,7 +1186,7 @@ where
                 None => 0,
             };
 
-            if CoinbaseTipAffordability::unaffordable(
+            if coinbase_tip_affordability.unaffordable(
                 &tx,
                 tx_payer_auth,
                 builder.evm_mut().db_mut(),
@@ -1235,7 +1237,7 @@ where
                 continue;
             }
 
-            let tx = tx.into_consensus();
+            let (tx_encoded, tx) = tx.into_consensus_with2718().split();
 
             let da_footprint_gas_scalar = self
                 .chain_spec
@@ -1293,7 +1295,7 @@ where
             let mut pending_resource_usage = None;
             let mut executed_decision = None;
             let gas_output = match builder.execute_transaction_with_commit_condition(
-                tx.clone(),
+                WithEncoded::new(tx_encoded, tx.clone()),
                 |result| {
                     let result_and_state = result.result();
                     let decision = resource_metering.check_executed_usage(
@@ -1420,7 +1422,7 @@ where
                         &mut predicate_loads,
                     );
                     ValidityPredicateEvaluation::evaluate(
-                        parked_transaction.validity_predicates(),
+                        parked_transaction.validity_conditions(),
                         &mut recorder,
                         &predicate_context,
                     )
@@ -1434,13 +1436,11 @@ where
                         predicate_index.remove(parked_hash);
                         best_txs.promote(parked_hash);
                     }
-                    Ok(ValidityPredicateEvaluation::Unsatisfied { blocker_index, .. }) => {
+                    Ok(ValidityPredicateEvaluation::Unsatisfied { predicate, .. }) => {
                         ValidityMetrics::validity_predicate_evaluations_total(
                             "rescan_not_satisfied",
                         )
                         .increment(1);
-                        let predicate =
-                            parked_transaction.validity_predicates()[blocker_index].clone();
                         predicate_index.reindex(parked_hash, predicate);
                     }
                     Err(error) => {
@@ -1564,10 +1564,9 @@ mod tests {
     use reth_payload_util::{NoopPayloadTransactions, PayloadTransactions};
     use reth_primitives_traits::{Account, SealedHeader, SignedTransaction, WithEncoded};
     use reth_provider::noop::NoopProvider;
-    use reth_revm::{
-        cancelled::CancelOnDrop, database::StateProviderDatabase, db::State,
-        test_utils::StateProviderTest,
-    };
+    use reth_revm::{database::StateProviderDatabase, db::State, test_utils::StateProviderTest};
+    use reth_storage_api::StateProvider;
+    use reth_tasks::CancelOnDrop;
     use reth_transaction_pool::PoolTransaction;
     use reth_trie_common::{HashedPostState, updates::TrieUpdates};
     use reth_trie_parallel::{
@@ -1642,7 +1641,12 @@ mod tests {
         let provider = NoopProvider::default();
         let builder = Builder::new(|_| NoopPayloadTransactions::<BasePooledTransaction>::default());
         let outcome = builder
-            .build(StateProviderDatabase::new(&provider), &provider, Some(state_root_handle), ctx)
+            .build(
+                StateProviderDatabase::new((&provider).into_evm_state_provider()),
+                &provider,
+                Some(state_root_handle),
+                ctx,
+            )
             .expect("empty payload must build");
         let BuildOutcomeKind::Freeze(payload) = outcome else {
             panic!("no-tx-pool payload must freeze")
@@ -1745,7 +1749,12 @@ mod tests {
             );
         }
         Builder::new(|_| transactions)
-            .build(StateProviderDatabase::new(&provider), &provider, Some(state_root_handle()), ctx)
+            .build(
+                StateProviderDatabase::new((&provider).into_evm_state_provider()),
+                &provider,
+                Some(state_root_handle()),
+                ctx,
+            )
             .expect("payload must build")
     }
 
@@ -1792,7 +1801,12 @@ mod tests {
         }
         Builder::new(|_| transactions)
             .with_permanent_eviction(evict)
-            .build(StateProviderDatabase::new(&provider), &provider, Some(state_root_handle()), ctx)
+            .build(
+                StateProviderDatabase::new((&provider).into_evm_state_provider()),
+                &provider,
+                Some(state_root_handle()),
+                ctx,
+            )
             .expect("payload must build")
     }
 
@@ -2755,7 +2769,7 @@ mod tests {
         );
         let provider = test_state_provider();
         let mut db = State::builder()
-            .with_database(StateProviderDatabase::new(&provider))
+            .with_database(StateProviderDatabase::new((&provider).into_evm_state_provider()))
             .with_bundle_update()
             .build();
         db.load_cache_account(Predeploys::L1_BLOCK_INFO).expect("L1 block info must load");
@@ -2853,7 +2867,7 @@ mod tests {
         let instrumented = crate::BuilderStateProvider::new(provider, Some(cache), true);
         let stats = Arc::clone(instrumented.stats().expect("instrumentation enabled"));
 
-        let hit = reth_storage_api::AccountReader::basic_account(
+        let hit = reth_storage_api::EvmStateProvider::basic_account(
             instrumented.provider(),
             &cached_address,
         )
@@ -2865,7 +2879,7 @@ mod tests {
             "read should have been served by the cache, not the provider underneath"
         );
 
-        let miss = reth_storage_api::AccountReader::basic_account(
+        let miss = reth_storage_api::EvmStateProvider::basic_account(
             instrumented.provider(),
             &uncached_address,
         )

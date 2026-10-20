@@ -27,6 +27,9 @@ pub use validator::{BaseL1BlockInfo, BaseTransactionValidator, BaseTxPoolError, 
 
 mod best;
 
+mod conditions;
+pub use conditions::{ValidityBounds, ValidityConditions};
+
 mod validity_signature_mode;
 pub use validity_signature_mode::ValiditySignatureMode;
 
@@ -51,7 +54,8 @@ pub use block_expiry::{BlockExpiryIndex, ExpiryPosition, FlashblockExpiry};
 
 mod transaction;
 pub use transaction::{
-    BasePooledTransaction, BasePooledTx, TimestampedTransaction, unix_time_millis,
+    BasePooledTransaction, BasePooledTx, CoinbaseTipBacking, TimestampedTransaction,
+    unix_time_millis,
 };
 
 mod ordering;
@@ -78,7 +82,9 @@ mod pool_error_label;
 pub use pool_error_label::PoolRejectionLabel;
 
 mod builder;
-pub use builder::{BuilderApiImpl, BuilderApiMetrics, BuilderApiServer, InsertMetering};
+pub use builder::{
+    BuilderApiImpl, BuilderApiMetrics, BuilderApiServer, InsertMetering, MAX_VALIDATED_INSERT_BATCH,
+};
 
 mod wire;
 pub use wire::{
@@ -86,6 +92,7 @@ pub use wire::{
 };
 
 mod two_d_nonce_pool;
+pub use two_d_nonce_pool::SidecarSenderIds;
 
 mod metrics;
 pub use metrics::{GuardMetrics, ValidatorMetrics, ValidityPoolMetrics, ValiditySignatureMetrics};

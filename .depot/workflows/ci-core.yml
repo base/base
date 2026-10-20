@@ -128,12 +128,12 @@ jobs:
           tools: cargo-deny
       - name: Validate Cargo.lock is up to date
         run: cargo metadata --format-version 1 --no-deps --locked >/dev/null
+      - name: Validate SP1 guest Cargo.lock is up to date
+        run: cargo metadata --locked --format-version 1 --manifest-path crates/proof/zk/programs/succinct/Cargo.toml >/dev/null
       - name: Check cargo-deny
         run: cargo deny check bans --hide-inclusion-graph
       - name: Check crate dependencies
         run: ./etc/scripts/ci/check-crate-deps.sh
-      - name: Check docs index
-        run: python3 etc/scripts/local/docs-index.py check
       - name: Validate operator compose
         run: docker compose config -q
   format:

@@ -470,61 +470,6 @@ impl LoadConfig {
         Ok(())
     }
 
-    /// Sets the transaction submission HTTP JSON-RPC URL.
-    pub fn with_rpc_http_url(mut self, url: Url) -> Self {
-        self.transaction_submission_rpcs = vec![url.clone()];
-        self.query_rpc = url;
-        self
-    }
-
-    /// Sets the chain ID.
-    pub const fn with_chain_id(mut self, chain_id: u64) -> Self {
-        self.chain_id = chain_id;
-        self
-    }
-
-    /// Sets the number of test accounts.
-    pub const fn with_account_count(mut self, count: usize) -> Self {
-        self.account_count = count;
-        self
-    }
-
-    /// Sets the seed for deterministic generation (only used if mnemonic is None).
-    pub const fn with_seed(mut self, seed: u64) -> Self {
-        self.seed = seed;
-        self
-    }
-
-    /// Sets the mnemonic for account derivation.
-    pub fn with_mnemonic(mut self, mnemonic: impl Into<String>) -> Self {
-        self.mnemonic = Some(mnemonic.into());
-        self
-    }
-
-    /// Sets the sender offset (skip first N accounts in derivation).
-    pub const fn with_sender_offset(mut self, offset: usize) -> Self {
-        self.sender_offset = offset;
-        self
-    }
-
-    /// Sets the transaction types with weights.
-    pub fn with_transactions(mut self, transactions: Vec<TxConfig>) -> Self {
-        self.transactions = transactions;
-        self
-    }
-
-    /// Sets an optional gas-per-second ceiling.
-    pub const fn with_target_gps(mut self, gps: Option<u64>) -> Self {
-        self.target_gps = gps;
-        self
-    }
-
-    /// Sets the test duration.
-    pub const fn with_duration(mut self, duration: Duration) -> Self {
-        self.duration = Some(duration);
-        self
-    }
-
     /// Sets the test to run indefinitely until stopped via the stop flag or Ctrl-C.
     pub const fn with_continuous(mut self) -> Self {
         self.duration = None;

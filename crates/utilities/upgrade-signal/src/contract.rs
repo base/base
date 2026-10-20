@@ -334,17 +334,15 @@ impl AlloyUpgradeSignalReader {
     /// Reads the schedule, retrying transient provider failures with bounded exponential jitter
     /// before giving up.
     ///
-    /// Used on the startup path, where a single transient L1 error should not abort node launch
-    /// outright; after `max_attempts` failures the last error is returned (fail-fast). This future
+    /// After `max_attempts` provider failures, the last error is returned. This future
     /// is cancellation-safe: dropping it during shutdown cancels an in-flight HTTP request or
     /// retry sleep.
     ///
     /// Only [`UpgradeSignalError::Provider`] errors are retried here. An empty schedule is not a
     /// transient flake at the finalized or safe tags: the tag lags the initializing transaction by
     /// epochs, far longer than the retry budget, so retrying would only delay startup and multiply
-    /// RPC calls without changing the outcome. Empty reads are surfaced immediately; the startup
-    /// path then retries them indefinitely to fail closed, while the manual admin refresh rejects
-    /// them. Decode and protocol-version errors remain fail-fast.
+    /// RPC calls without changing the outcome. Empty reads and decode errors return immediately.
+    /// Protocol-version validation happens after the read.
     pub async fn read_schedule_with_retries(
         &self,
         max_attempts: u32,

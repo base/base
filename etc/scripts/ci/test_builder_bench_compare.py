@@ -42,6 +42,35 @@ def headline(body: str) -> str:
     return next(line for line in body.splitlines() if line.startswith("**Builder benchmarks:**"))
 
 
+class LoadTest(unittest.TestCase):
+    def test_current_iai_and_event_output(self):
+        iai = (
+            '\x1b[1mflashblock_build_iai::flashblock_build::build_block '
+            'resting_backlog:fixture("resting_backlog")\x1b[0m\n'
+            '  Instructions:  1176758077|1200000000 (-1.936827%)\n'
+            'flashblock_build_iai::flashblock_build::build_native_block '
+            'transfers:native_fixture("transfers")\n'
+            '  Instructions:  140099323|N/A\n'
+        )
+        events = (
+            'test block_build_reports_event_volume ... BUILDER_BENCH '
+            '{"key":"flashblocks/resting_backlog","included":1000,"deferrals":45000,'
+            '"events":{"BUILDER_DEFERRED":4500},"wall_ms":123.0}\n'
+        )
+        compare = BuilderBenchCompare(threshold_pct=2.0)
+        result = compare.load(iai, events)
+        self.assertEqual(
+            result,
+            {
+                "flashblocks/resting_backlog": measured(
+                    1_176_758_077, deferrals=45_000, events={"BUILDER_DEFERRED": 4500}
+                ),
+                "native/transfers": Measurement(instructions=140_099_323),
+            },
+        )
+        self.assertEqual(compare.unknown, [])
+
+
 class RenderTest(unittest.TestCase):
     def render(self, base, head, pr_head_sha: str = PR_HEAD_SHA) -> str:
         return BuilderBenchCompare(threshold_pct=2.0).render(

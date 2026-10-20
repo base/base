@@ -1091,18 +1091,21 @@ mod tests {
     }
 
     #[test]
-    fn builtin_chain_specs_schedule_denim_only_on_sepolia() {
-        for spec in [BaseChainSpec::mainnet(), BaseChainSpec::devnet()] {
-            assert_eq!(spec.fork(BaseUpgrade::Denim), ForkCondition::Never);
-            assert!(!spec.is_fork_active_at_timestamp(BaseUpgrade::Denim, 0));
-            assert!(!spec.is_fork_active_at_timestamp(BaseUpgrade::Denim, u64::MAX));
-        }
+    fn builtin_chain_specs_schedule_denim_on_mainnet_and_sepolia() {
+        let devnet = BaseChainSpec::devnet();
+        assert_eq!(devnet.fork(BaseUpgrade::Denim), ForkCondition::Never);
+        assert!(!devnet.is_fork_active_at_timestamp(BaseUpgrade::Denim, 0));
+        assert!(!devnet.is_fork_active_at_timestamp(BaseUpgrade::Denim, u64::MAX));
 
-        let sepolia = BaseChainSpec::sepolia();
-        let denim_timestamp = ChainConfig::sepolia().denim_timestamp.unwrap();
-        assert_eq!(sepolia.fork(BaseUpgrade::Denim), ForkCondition::Timestamp(denim_timestamp));
-        assert!(!sepolia.is_fork_active_at_timestamp(BaseUpgrade::Denim, denim_timestamp - 1));
-        assert!(sepolia.is_fork_active_at_timestamp(BaseUpgrade::Denim, denim_timestamp));
+        for (spec, config) in [
+            (BaseChainSpec::mainnet(), ChainConfig::mainnet()),
+            (BaseChainSpec::sepolia(), ChainConfig::sepolia()),
+        ] {
+            let denim_timestamp = config.denim_timestamp.unwrap();
+            assert_eq!(spec.fork(BaseUpgrade::Denim), ForkCondition::Timestamp(denim_timestamp));
+            assert!(!spec.is_fork_active_at_timestamp(BaseUpgrade::Denim, denim_timestamp - 1));
+            assert!(spec.is_fork_active_at_timestamp(BaseUpgrade::Denim, denim_timestamp));
+        }
     }
 
     #[test]
@@ -1375,7 +1378,7 @@ mod tests {
     fn latest_base_mainnet_fork_id() {
         let base_mainnet_spec = BaseChainSpec::mainnet();
         assert_eq!(
-            base_mainnet_spec.hardfork_fork_id(BaseUpgrade::Cobalt).unwrap(),
+            base_mainnet_spec.hardfork_fork_id(BaseUpgrade::Denim).unwrap(),
             base_mainnet_spec.latest_fork_id()
         )
     }
@@ -1385,7 +1388,7 @@ mod tests {
         let base_mainnet_spec = BaseChainSpec::mainnet();
         let base_mainnet = BaseChainSpecBuilder::base_mainnet().build();
         assert_eq!(
-            base_mainnet_spec.hardfork_fork_id(BaseUpgrade::Cobalt).unwrap(),
+            base_mainnet_spec.hardfork_fork_id(BaseUpgrade::Denim).unwrap(),
             base_mainnet.latest_fork_id()
         )
     }

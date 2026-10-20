@@ -366,50 +366,39 @@ impl ConductorControl {
                 continue;
             };
 
-            match target_node {
-                None => match ConductorApiClient::conductor_transfer_leader(&leader).await {
-                    Ok(()) => {
-                        let observed = wait_for_stable_leader(
-                            nodes,
-                            StableLeaderGoal::ReplacementFor(&leader_name),
-                        )
-                        .await?;
-                        return Ok(format!(
-                            "leadership transferred from {leader_name} to {observed}"
-                        ));
-                    }
-                    Err(error) if is_stale_leader_error(&error) => {
-                        last_error = Some(error.to_string());
-                        tokio::time::sleep(TIMEOUT).await;
-                    }
-                    Err(error) => return Err(anyhow::anyhow!("{error}")),
-                },
+            let result = match target_node {
+                None => ConductorApiClient::conductor_transfer_leader(&leader).await,
                 Some(target_node) => {
                     if leader_name == target_node.name.as_str() {
                         return Ok(format!("leadership already on {}", target_node.name));
                     }
-                    match ConductorApiClient::conductor_transfer_leader_to_server(
+                    ConductorApiClient::conductor_transfer_leader_to_server(
                         &leader,
                         target_node.server_id.clone(),
                         target_node.raft_addr.clone(),
                     )
                     .await
-                    {
-                        Ok(()) => {
-                            let observed = wait_for_stable_leader(
-                                nodes,
-                                StableLeaderGoal::Specific(target_node.name.as_str()),
-                            )
-                            .await?;
-                            return Ok(format!("leadership transferred to {observed}"));
-                        }
-                        Err(error) if is_stale_leader_error(&error) => {
-                            last_error = Some(error.to_string());
-                            tokio::time::sleep(TIMEOUT).await;
-                        }
-                        Err(error) => return Err(anyhow::anyhow!("{error}")),
-                    }
                 }
+            };
+            match result {
+                Ok(()) => {
+                    let goal = target_node
+                        .map_or(StableLeaderGoal::ReplacementFor(&leader_name), |target_node| {
+                            StableLeaderGoal::Specific(target_node.name.as_str())
+                        });
+                    let observed = wait_for_stable_leader(nodes, goal).await?;
+                    return Ok(match target_node {
+                        None => {
+                            format!("leadership transferred from {leader_name} to {observed}")
+                        }
+                        Some(_) => format!("leadership transferred to {observed}"),
+                    });
+                }
+                Err(error) if is_stale_leader_error(&error) => {
+                    last_error = Some(error.to_string());
+                    tokio::time::sleep(TIMEOUT).await;
+                }
+                Err(error) => return Err(anyhow::anyhow!("{error}")),
             }
         }
 

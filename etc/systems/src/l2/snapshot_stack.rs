@@ -54,7 +54,7 @@ pub struct SnapshotL2Stack {
     builder: InProcessBuilder,
     boundary: SnapshotBoundary,
     standalone_consensus: Option<InProcessStandaloneSequencer>,
-    client: InProcessClient,
+    client: Option<InProcessClient>,
     follow_consensus: Option<InProcessFollowConsensus>,
     follow_config: Option<InProcessFollowConsensusConfig>,
     block_interval: DevnetBlockInterval,
@@ -141,12 +141,13 @@ impl SnapshotL2Stack {
             block_interval,
         )?);
 
-        let client = InProcessClient::start(InProcessClientConfig {
+        let builder_rpc_url = builder.rpc_url()?.to_string();
+        let client_config = config.snapshot.client_datadir.map(|datadir| InProcessClientConfig {
             runtime: InProcessNodeRuntime::Host,
             chain_spec: ChainSpecSource::Parsed(chain_spec),
-            datadir: Some(config.snapshot.client_datadir),
+            datadir: Some(datadir),
             jwt_secret,
-            builder_rpc_url: builder.rpc_url()?.to_string(),
+            builder_rpc_url,
             // Snapshot validation replays canonical payloads only after sequencing finishes.
             builder_flashblocks_url: None,
             builder_p2p_enode: builder.p2p_enode(),
@@ -163,29 +164,38 @@ impl SnapshotL2Stack {
             upgrade_signal: None,
             extra_extensions: Vec::new(),
             validity_signature_mode: ValiditySignatureMode::Off,
-        })
-        .await
-        .wrap_err("failed to start snapshot client")?;
-        tokio::try_join!(
-            Self::wait_for_el_ready(builder.rpc_url()?, SNAPSHOT_EL_READY_TIMEOUT),
-            Self::wait_for_el_ready(client.rpc_url()?, SNAPSHOT_EL_READY_TIMEOUT),
-        )?;
+        });
+        let client = match client_config {
+            Some(client_config) => Some(
+                InProcessClient::start(client_config)
+                    .await
+                    .wrap_err("failed to start snapshot client")?,
+            ),
+            None => None,
+        };
+        Self::wait_for_el_ready(builder.rpc_url()?, SNAPSHOT_EL_READY_TIMEOUT).await?;
+        if let Some(client) = &client {
+            Self::wait_for_el_ready(client.rpc_url()?, SNAPSHOT_EL_READY_TIMEOUT).await?;
+        }
         Self::ensure_schedule_anchor_is_future(first_block_timestamp, SystemTime::now())?;
 
         let unused_l1_url = Url::parse("http://127.0.0.1:1").expect("valid unused L1 URL");
-        let follow_config = InProcessFollowConsensusConfig {
-            rollup_config: rollup_config.as_ref().clone(),
-            jwt_secret,
-            l1_rpc_url: unused_l1_url,
-            local_l2_rpc_url: client.rpc_url()?,
-            source_l2_rpc_url: builder.rpc_url()?,
-            l2_engine_url: client.engine_url()?,
-            rpc_port: container.and_then(|value| value.client_consensus_rpc_port),
-            // Keep catch-up observable by the per-block Prometheus scraper. This does not alter
-            // measured execution latency; it only prevents multiple canonical inserts between
-            // scrapes while the validator processes the already-produced range.
-            insert_delay: Duration::from_millis(100),
-            upgrade_signal: None,
+        let follow_config = match &client {
+            Some(client) => Some(InProcessFollowConsensusConfig {
+                rollup_config: rollup_config.as_ref().clone(),
+                jwt_secret,
+                l1_rpc_url: unused_l1_url,
+                local_l2_rpc_url: client.rpc_url()?,
+                source_l2_rpc_url: builder.rpc_url()?,
+                l2_engine_url: client.engine_url()?,
+                rpc_port: container.and_then(|value| value.client_consensus_rpc_port),
+                // Keep catch-up observable by the per-block Prometheus scraper. This does not
+                // alter measured execution latency; it only prevents multiple canonical inserts
+                // between scrapes while the validator processes the already-produced range.
+                insert_delay: Duration::from_millis(100),
+                upgrade_signal: None,
+            }),
+            None => None,
         };
         let mut standalone_consensus =
             InProcessStandaloneSequencer::start(InProcessStandaloneSequencerConfig {
@@ -195,6 +205,7 @@ impl SnapshotL2Stack {
                 l1_info: boundary.l1_info,
                 system_config,
                 prefund,
+                schedule_delay: Duration::ZERO,
             })
             .await
             .wrap_err("failed to start snapshot standalone consensus")?;
@@ -219,7 +230,7 @@ impl SnapshotL2Stack {
             standalone_consensus: Some(standalone_consensus),
             client,
             follow_consensus: None,
-            follow_config: Some(follow_config),
+            follow_config,
             block_interval,
             block_gas_limit,
             rollup_config: canonical_rollup_config,
@@ -255,7 +266,7 @@ impl SnapshotL2Stack {
     pub async fn wait_for_validator(&self) -> Result<()> {
         let target =
             RootProvider::<Base>::new_http(self.builder.rpc_url()?).get_block_number().await?;
-        Self::wait_for_block(self.client.rpc_url()?, target, Duration::from_secs(30))
+        Self::wait_for_block(self.client()?.rpc_url()?, target, Duration::from_secs(30))
             .await
             .wrap_err("snapshot validator did not catch up to the sequencer")
     }
@@ -401,7 +412,7 @@ impl SnapshotL2Stack {
 
     /// Returns the client RPC URL.
     pub fn client_rpc_url(&self) -> Result<Url> {
-        self.client.rpc_url()
+        self.client()?.rpc_url()
     }
 
     /// Returns the builder Prometheus metrics URL.
@@ -411,7 +422,7 @@ impl SnapshotL2Stack {
 
     /// Returns the client Prometheus metrics URL.
     pub fn client_metrics_url(&self) -> Result<Url> {
-        self.client.metrics_url()
+        self.client()?.metrics_url()
     }
 
     /// Returns the builder Flashblocks WebSocket URL.
@@ -433,11 +444,15 @@ impl SnapshotL2Stack {
     /// Verifies both ELs currently report the same block number.
     pub async fn ensure_heads_match(&self) -> Result<()> {
         let builder = RootProvider::<Base>::new_http(self.builder.rpc_url()?);
-        let client = RootProvider::<Base>::new_http(self.client.rpc_url()?);
+        let client = RootProvider::<Base>::new_http(self.client()?.rpc_url()?);
         let (builder_head, client_head) =
             tokio::try_join!(builder.get_block_number(), client.get_block_number())?;
         ensure!(builder_head == client_head, "builder head {builder_head} != client {client_head}");
         Ok(())
+    }
+
+    fn client(&self) -> Result<&InProcessClient> {
+        self.client.as_ref().ok_or_else(|| eyre::eyre!("snapshot stack has no follow client"))
     }
 
     /// Gracefully stops consensus tasks before dropping their execution nodes.
@@ -448,7 +463,9 @@ impl SnapshotL2Stack {
         if let Some(consensus) = self.follow_consensus.take() {
             consensus.shutdown().await;
         }
-        tokio::try_join!(self.builder.shutdown(), self.client.shutdown())?;
+        tokio::try_join!(self.builder.shutdown(), async {
+            if let Some(client) = self.client { client.shutdown().await } else { Ok(()) }
+        })?;
         Ok(())
     }
 }

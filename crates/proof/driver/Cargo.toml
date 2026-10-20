@@ -19,7 +19,6 @@ base-common-genesis.workspace = true
 
 # Alloy
 alloy-rlp.workspace = true
-alloy-evm.workspace = true
 alloy-consensus.workspace = true
 alloy-primitives.workspace = true
 
@@ -36,7 +35,6 @@ async-trait.workspace = true
 [features]
 std = [
 	"alloy-consensus/std",
-	"alloy-evm/std",
 	"alloy-primitives/std",
 	"alloy-rlp/std",
 	"base-common-consensus/std",

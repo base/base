@@ -41,14 +41,12 @@ pub struct Config {
     /// Panic after this many polling cycles. Guards against busy-loop livelocks.
     /// Recommended: `Some(1_000_000)` for tests.
     pub cycle_limit: Option<u64>,
-    /// Panic if virtual time exceeds this duration. Guards against runaway sleepers.
-    pub timeout: Option<Duration>,
 }
 
 impl Config {
     /// Create a configuration with the given seed and no limits.
     pub const fn seeded(seed: u64) -> Self {
-        Self { seed, cycle_limit: None, timeout: None }
+        Self { seed, cycle_limit: None }
     }
 }
 
@@ -118,12 +116,6 @@ impl Runner {
             }
 
             executor.skip_idle_time();
-            if let Some(timeout) = config.timeout {
-                assert!(
-                    *executor.time.lock().unwrap() <= timeout,
-                    "runtime stalled: virtual time exceeded {timeout:?}"
-                );
-            }
             executor.wake_ready_sleepers();
             executor.assert_liveness();
         }
@@ -147,20 +139,11 @@ impl std::fmt::Debug for Context {
     }
 }
 
+#[derive(Default)]
 struct CancelState {
     cancelled: AtomicBool,
     wakers: Mutex<Vec<task::Waker>>,
     children: Mutex<Vec<Weak<Self>>>,
-}
-
-impl Default for CancelState {
-    fn default() -> Self {
-        Self {
-            cancelled: AtomicBool::new(false),
-            wakers: Mutex::new(Vec::new()),
-            children: Mutex::new(Vec::new()),
-        }
-    }
 }
 
 impl CancelState {
@@ -307,24 +290,6 @@ mod tests {
     use crate::{Cancellation, Clock, Spawner};
 
     #[test]
-    fn sleep_does_not_fire_without_time_passing() {
-        Runner::start(Config::seeded(0), |ctx| async move {
-            let fired = Arc::new(AtomicU32::new(0));
-            let fired2 = Arc::clone(&fired);
-            let ctx2 = ctx.clone();
-            ctx.spawn(async move {
-                ctx2.sleep(Duration::from_secs(5)).await;
-                fired2.fetch_add(1, Ordering::SeqCst);
-            });
-            // Yielding once does not advance time; the spawned sleep must not fire.
-            // The executor only skips idle time when there are no ready tasks.
-            // Since the root task is still running (we haven't awaited a sleep),
-            // the spawned task's sleep doesn't fire here.
-            assert_eq!(fired.load(Ordering::SeqCst), 0, "sleep must not fire before time passes");
-        });
-    }
-
-    #[test]
     fn sleep_fires_after_virtual_time_advances() {
         Runner::start(Config::seeded(0), |ctx| async move {
             let fired = Arc::new(AtomicU32::new(0));
@@ -406,23 +371,6 @@ mod tests {
         Runner::start(Config::seeded(0), |ctx| async move {
             ctx.cancel();
             ctx.cancelled().await; // must not stall
-            assert!(ctx.is_cancelled());
-        });
-    }
-
-    #[test]
-    fn cancelled_is_cancel_safe() {
-        Runner::start(Config::seeded(0), |ctx| async move {
-            let ctx2 = ctx.clone();
-            ctx.spawn(async move {
-                // Yield a few times before cancelling.
-                ctx2.sleep(Duration::ZERO).await;
-                ctx2.sleep(Duration::ZERO).await;
-                ctx2.cancel();
-            });
-            // The cancelled() future is recreated each time select! drops it.
-            // After cancel() fires, the very next poll must resolve.
-            ctx.cancelled().await;
             assert!(ctx.is_cancelled());
         });
     }

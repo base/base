@@ -48,18 +48,8 @@ impl RpcBuilder {
         self.enable_admin
     }
 
-    /// Returns the socket address of the [`RpcBuilder`].
-    pub const fn socket(&self) -> SocketAddr {
-        self.socket
-    }
-
     /// Returns the number of times the RPC server will attempt to restart if it stops.
     pub const fn restart_count(&self) -> u32 {
         if self.no_restart { 0 } else { Self::RESTART_ATTEMPTS }
-    }
-
-    /// Sets the given [`SocketAddr`] on the [`RpcBuilder`].
-    pub fn set_addr(self, addr: SocketAddr) -> Self {
-        Self { socket: addr, ..self }
     }
 }

@@ -98,7 +98,8 @@ async fn set_code(provider: &RootProvider, address: Address, code: Bytes) -> Res
         .with_context(|| format!("anvil_setCode failed for {address}"))
 }
 
-async fn set_storage(
+/// Writes one storage word on the fork, and fails unless Anvil confirms it.
+pub(crate) async fn set_storage(
     provider: &RootProvider,
     address: Address,
     slot: U256,
