@@ -49,9 +49,9 @@ alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
 serde = { workspace = true, features = ["derive"] }
+tokio = { workspace = true, features = ["macros", "rt"] }
 tracing-subscriber = { workspace = true, features = ["fmt"] }
 axum = { workspace = true, features = ["http1", "json", "tokio"] }
-tokio = { workspace = true, features = ["macros", "rt", "test-util"] }
 
 [features]
 default = []

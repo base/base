@@ -72,7 +72,6 @@ mod tests {
     struct Script {
         requests: Arc<Mutex<Vec<(Value, tokio::time::Instant)>>>,
         responses: Vec<(StatusCode, Value)>,
-        hung_attempts: usize,
     }
 
     #[derive(Clone)]
@@ -97,15 +96,8 @@ mod tests {
 
     impl Server {
         async fn new(responses: Vec<(StatusCode, Value)>) -> Self {
-            Self::with_hung_attempts(responses, 0).await
-        }
-
-        async fn with_hung_attempts(
-            responses: Vec<(StatusCode, Value)>,
-            hung_attempts: usize,
-        ) -> Self {
             let requests = Arc::new(Mutex::new(Vec::new()));
-            let state = Script { requests: Arc::clone(&requests), responses, hung_attempts };
+            let state = Script { requests: Arc::clone(&requests), responses };
             let router = Router::new()
                 .fallback(post(
                     |State(script): State<Script>, Json(request): Json<Value>| async move {
@@ -115,12 +107,11 @@ mod tests {
                             log.push((request.clone(), tokio::time::Instant::now()));
                             index
                         };
-                        if script.responses.is_empty() || index < script.hung_attempts {
+                        if script.responses.is_empty() {
                             pending::<()>().await;
                         }
-                        let (status, mut response) = script.responses
-                            [(index - script.hung_attempts).min(script.responses.len() - 1)]
-                        .clone();
+                        let (status, mut response) =
+                            script.responses[index.min(script.responses.len() - 1)].clone();
                         if let Some(object) = response.as_object_mut() {
                             object.insert("id".into(), request["id"].clone());
                         }
