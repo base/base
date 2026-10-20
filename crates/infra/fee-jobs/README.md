@@ -22,20 +22,18 @@ Each run takes its first nonce from the `pending` block tag, so jobs that share 
 | --- | --- | --- |
 | `--l1-rpc-url` | `L1_RPC_URL` | Required |
 | `--l2-rpc-url` | `L2_RPC_URL` | Required |
-| `--optimism-portal-proxy-address` | `OPTIMISM_PORTAL_PROXY_ADDRESS` | Required |
-| `--dispute-game-factory-address` | `DISPUTE_GAME_FACTORY_ADDRESS` | Optional, requires anchor state registry |
-| `--anchor-state-registry-address` | `ANCHOR_STATE_REGISTRY_ADDRESS` | Optional, requires dispute game factory |
+| `--l1-optimism-portal-address` | `L1_OPTIMISM_PORTAL_ADDRESS` | Required |
 | `--l2-fee-disburser-address` | `L2_FEE_DISBURSER_ADDRESS` | Required |
 | `--job-runner-key` | `JOB_RUNNER_KEY` | Required |
-| `--lookback` | `LOOKBACK` | `21d` |
-| `--l2-block-time` | `L2_BLOCK_TIME` | `2s` |
-| `--num-blocks-per-query` | `NUM_BLOCKS_PER_QUERY` | `3000` |
-| `--withdrawal-timeout` | `WITHDRAWAL_TIMEOUT` | `10m` |
+| `--lookback` | `FEE_JOBS_CONFIRM_LOOKBACK` | `21d` |
+| `--l2-block-time` | `FEE_JOBS_CONFIRM_L2_BLOCK_TIME` | `2s` |
+| `--num-blocks-per-query` | `FEE_JOBS_CONFIRM_NUM_BLOCKS_PER_QUERY` | `3000` |
+| `--withdrawal-timeout` | `FEE_JOBS_CONFIRM_WITHDRAWAL_TIMEOUT` | `10m` |
 | `--dry-run` | None | `false` |
 
-Before scanning, the job reads `disputeGameFactory()` and `anchorStateRegistry()` from the configured portal once and uses those contracts for every withdrawal. Supply both optional proof-contract addresses or neither. When supplied, they must be nonzero and match the portal's contracts, not override them. Discovery failures, zero portal addresses, and mismatches fail the run, including dry runs.
+Before scanning, the job reads `disputeGameFactory()` and `anchorStateRegistry()` from the configured portal once and uses those contracts for every withdrawal. Discovery failures and zero portal addresses fail the run, including dry runs.
 
-RPC URLs must use HTTP or HTTPS, and addresses must be nonzero. The lookback must cover the delays of the portal's respected game type, the `AggregateVerifier` (game type 621) on Base mainnet. The binding delay is game resolution: `SLOW_FINALIZATION_DELAY` (5 days) for a game with one proof, which a challenge restarts for another 5 days. The portal's `proofMaturityDelaySeconds` (1 day) runs concurrently, and the anchor state registry's `disputeGameFinalityDelaySeconds` is 0. Add the cron interval and slack on top. The lookback and configured L2 block time must be positive durations. The job divides the lookback by the block time, rounds up to a block count, and scans `[current.saturating_sub(blocks), current]`, including block 0 when the lookback reaches past genesis.
+RPC URLs must use HTTP or HTTPS, and addresses must be nonzero. The lookback must cover the slowest path to finalization under the portal's respected game type, the `AggregateVerifier` (game type 621) on Base mainnet. That path is a successful challenge. A game with one proof resolves after `SLOW_FINALIZATION_DELAY` (5 days), and a ZK challenge resets that delay from the challenge time. The challenged game and its descendants then resolve as `CHALLENGER_WINS`, the withdrawal's proof is no longer eligible, and the job re-proves it against a new game on a later run. That game needs its own `SLOW_FINALIZATION_DELAY`. With the proof on day 0 or 1, a challenge by about day 5, resolution about day 10, and a re-prove on the next run, finalization lands around day 16 or 17. The 21-day default leaves about 4 days for cron intervals and slack. The portal's `proofMaturityDelaySeconds` (1 day) runs concurrently with game resolution, and the anchor state registry's `disputeGameFinalityDelaySeconds` is 0. The lookback and configured L2 block time must be positive durations. The job divides the lookback by the block time, rounds up to a block count, and scans `[current.saturating_sub(blocks), current]`, including block 0 when the lookback reaches past genesis.
 
 Log-query chunks contain at most the configured positive block count and cover both ends of the window without gaps or overlaps. Keep `--num-blocks-per-query` configurable for RPC limits; for example, sepolia.base.org allows about 200 blocks per query. With the defaults and sufficient chain history, the scan covers 907,201 blocks in 303 log queries. There is no fixed pause between chunks. For block-number, receipt, log-query, and proof-age reads, the `base-withdrawer` transport bounds each HTTP attempt to the smaller of 30 seconds and half the withdrawal timeout, with at most three retries and exponential backoff, including for HTTP 429 rate-limit responses. Transaction hashes are deduplicated in block/log order.
 
