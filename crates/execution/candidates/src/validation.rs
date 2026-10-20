@@ -52,23 +52,6 @@ impl Default for CandidateLimits {
     }
 }
 
-/// The accepted `expiryBlock` range, measured from the block being built.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ExpiryWindow {
-    /// The next block to be built; `expiryBlock` must be at least this.
-    pub next_block: u64,
-    /// How far past `next_block` `expiryBlock` may be.
-    pub max_blocks: u64,
-}
-
-impl ExpiryWindow {
-    /// Returns `true` when `expiry_block` is inside the window (both ends inclusive).
-    pub const fn contains(&self, expiry_block: u64) -> bool {
-        expiry_block >= self.next_block
-            && expiry_block <= self.next_block.saturating_add(self.max_blocks)
-    }
-}
-
 /// Validates untrusted candidate submissions into [`CandidateGroup`]s.
 #[derive(Debug, Clone, Copy)]
 pub struct CandidateValidator {
@@ -79,27 +62,22 @@ pub struct CandidateValidator {
 }
 
 impl CandidateValidator {
-    /// Runs bounds, decode, uniformity, envelope, expiry and signature checks, in that order.
+    /// Runs bounds, decode, uniformity, envelope and signature checks, in that order.
     ///
-    /// `expiry` is `None` before a canonical head exists; `expiryBlock` is still required to be
-    /// finite, which a `u64` always is.
+    /// `expiry_block` is the node-assigned last block of the group's lifetime, usually
+    /// [`crate::BlockWindow::last_block`] of the configured lifetime from the next block.
     pub fn validate(
         &self,
         raw_siblings: &[Bytes],
         envelope: CandidateEnvelope,
         signature: Signature,
-        expiry: Option<ExpiryWindow>,
+        expiry_block: u64,
     ) -> Result<CandidateGroup, CandidateError> {
         self.check_bounds(raw_siblings)?;
         let siblings = Self::decode(raw_siblings)?;
         self.check_uniformity(&siblings)?;
         Self::check_envelope(&envelope, &siblings)?;
-        if let Some(window) = expiry
-            && !window.contains(envelope.expiry_block)
-        {
-            return Err(CandidateError::ExpiryOutOfWindow);
-        }
-        let group = CandidateGroup::new(envelope, signature, self.chain_id, siblings);
+        let group = CandidateGroup::new(envelope, signature, self.chain_id, siblings, expiry_block);
         Self::check_signature(&group)?;
         Ok(group)
     }
@@ -114,12 +92,12 @@ impl CandidateValidator {
         alternatives: &[Bytes],
         envelope: CandidateEnvelope,
         signature: Signature,
-        expiry: Option<ExpiryWindow>,
+        expiry_block: u64,
     ) -> Result<CandidateGroup, CandidateError> {
         let set: Vec<Bytes> = core::iter::once(default).chain(alternatives).cloned().collect();
         self.check_bounds(&set)?;
         let ordered = Self::arrange(default, alternatives, &envelope)?;
-        self.validate(&ordered, envelope, signature, expiry)
+        self.validate(&ordered, envelope, signature, expiry_block)
     }
 
     /// Orders a default transaction and its alternatives as the envelope lists them.
@@ -323,15 +301,14 @@ mod tests {
         CandidateValidator { limits: CandidateLimits::default(), chain_id: CHAIN_ID }
     }
 
-    fn window() -> Option<ExpiryWindow> {
-        Some(ExpiryWindow { next_block: 10, max_blocks: 300 })
-    }
+    /// A node-assigned lifetime end; validation does not interpret it.
+    const EXPIRY: u64 = 100;
 
     #[test]
     fn accepts_a_well_formed_group() {
         let fixture = CandidateFixture::new(CHAIN_ID);
         let (raw, envelope, signature) = fixture.submission(3, 1);
-        let group = validator().validate(&raw, envelope.clone(), signature, window()).unwrap();
+        let group = validator().validate(&raw, envelope.clone(), signature, EXPIRY).unwrap();
         assert_eq!(group.group_hash(), envelope.signing_hash(CHAIN_ID));
         assert_eq!(group.siblings().len(), 3);
         assert_eq!(group.representative().hash(), envelope.sibling_hashes[1]);
@@ -344,7 +321,7 @@ mod tests {
     fn rejects_sibling_counts_outside_bounds(#[case] count: usize, #[case] label: &str) {
         let fixture = CandidateFixture::new(CHAIN_ID);
         let (raw, envelope, signature) = fixture.submission(count, 0);
-        let error = validator().validate(&raw, envelope, signature, window()).unwrap_err();
+        let error = validator().validate(&raw, envelope, signature, EXPIRY).unwrap_err();
         assert_eq!(error.as_label(), label);
     }
 
@@ -354,7 +331,7 @@ mod tests {
         let (raw, envelope, signature) = fixture.submission(2, 0);
         let mut validator = validator();
         validator.limits.max_sibling_bytes = 10;
-        let error = validator.validate(&raw, envelope, signature, window()).unwrap_err();
+        let error = validator.validate(&raw, envelope, signature, EXPIRY).unwrap_err();
         assert_eq!(error, CandidateError::RequestTooLarge);
     }
 
@@ -363,11 +340,11 @@ mod tests {
         let fixture = CandidateFixture::new(CHAIN_ID);
         let (mut raw, envelope, signature) = fixture.submission(2, 0);
         raw[1] = Bytes::from_static(&[0x02, 0x01]);
-        let error = validator().validate(&raw, envelope.clone(), signature, window()).unwrap_err();
+        let error = validator().validate(&raw, envelope.clone(), signature, EXPIRY).unwrap_err();
         assert_eq!(error, CandidateError::SiblingDecodeFailed { index: 1 });
 
         raw[1] = fixture.legacy_sibling(envelope.nonce);
-        let error = validator().validate(&raw, envelope, signature, window()).unwrap_err();
+        let error = validator().validate(&raw, envelope, signature, EXPIRY).unwrap_err();
         assert_eq!(error, CandidateError::SiblingTypeUnsupported { index: 1 });
     }
 
@@ -402,7 +379,7 @@ mod tests {
         for (second, label) in cases {
             let raw = vec![fixture.encode(base.clone()), second];
             let (envelope, signature) = fixture.sign_for(&raw, 0);
-            let error = validator().validate(&raw, envelope, signature, window()).unwrap_err();
+            let error = validator().validate(&raw, envelope, signature, EXPIRY).unwrap_err();
             assert_eq!(error.as_label(), label);
         }
     }
@@ -413,11 +390,11 @@ mod tests {
         let (raw, envelope, signature) = fixture.submission(2, 0);
         let mut capped = validator();
         capped.limits.max_sibling_gas = 1;
-        let error = capped.validate(&raw, envelope.clone(), signature, window()).unwrap_err();
+        let error = capped.validate(&raw, envelope.clone(), signature, EXPIRY).unwrap_err();
         assert_eq!(error.as_label(), "sibling_gas_limit_too_high");
 
         let foreign = CandidateValidator { chain_id: 1, ..validator() };
-        let error = foreign.validate(&raw, envelope, signature, window()).unwrap_err();
+        let error = foreign.validate(&raw, envelope, signature, EXPIRY).unwrap_err();
         assert_eq!(error.as_label(), "sibling_nonce_mismatch");
     }
 
@@ -427,7 +404,7 @@ mod tests {
         let (raw, mut envelope, _) = fixture.submission(2, 0);
         envelope.sibling_hashes.swap(0, 1);
         let signature = fixture.sign(&envelope);
-        let error = validator().validate(&raw, envelope, signature, window()).unwrap_err();
+        let error = validator().validate(&raw, envelope, signature, EXPIRY).unwrap_err();
         assert_eq!(error, CandidateError::EnvelopeHashMismatch);
     }
 
@@ -440,8 +417,6 @@ mod tests {
     #[case::evaluations(|e: &mut CandidateEnvelope| e.max_evaluations = 0, "envelope_invalid")]
     #[case::work(|e: &mut CandidateEnvelope| e.max_work_gas = 0, "envelope_invalid")]
     #[case::nonce(|e: &mut CandidateEnvelope| e.nonce += 1, "envelope_invalid")]
-    #[case::past(|e: &mut CandidateEnvelope| e.expiry_block = 9, "expiry_out_of_window")]
-    #[case::far(|e: &mut CandidateEnvelope| e.expiry_block = 311, "expiry_out_of_window")]
     fn rejects_invalid_envelope_fields(
         #[case] mutate: fn(&mut CandidateEnvelope),
         #[case] label: &str,
@@ -450,19 +425,8 @@ mod tests {
         let (raw, mut envelope, _) = fixture.submission(2, 0);
         mutate(&mut envelope);
         let signature = fixture.sign(&envelope);
-        let error = validator().validate(&raw, envelope, signature, window()).unwrap_err();
+        let error = validator().validate(&raw, envelope, signature, EXPIRY).unwrap_err();
         assert_eq!(error.as_label(), label);
-    }
-
-    #[test]
-    fn expiry_window_is_inclusive_at_both_ends() {
-        let fixture = CandidateFixture::new(CHAIN_ID);
-        for expiry in [10, 310] {
-            let (raw, mut envelope, _) = fixture.submission(2, 0);
-            envelope.expiry_block = expiry;
-            let signature = fixture.sign(&envelope);
-            validator().validate(&raw, envelope, signature, window()).unwrap();
-        }
     }
 
     #[rstest]
@@ -481,7 +445,7 @@ mod tests {
         let (default, alternatives) = CandidateFixture::split_default(&raw, &envelope);
 
         let group = validator()
-            .validate_selection(&default, &alternatives, envelope.clone(), signature, window())
+            .validate_selection(&default, &alternatives, envelope.clone(), signature, EXPIRY)
             .unwrap();
         assert_eq!(group.representative().encoded, default);
         assert_eq!(group.siblings().len(), count);
@@ -493,13 +457,13 @@ mod tests {
         let fixture = CandidateFixture::new(CHAIN_ID);
         let (raw, envelope, signature) = fixture.submission(3, 1);
         let error = validator()
-            .validate_selection(&raw[0], &raw[1..], envelope.clone(), signature, window())
+            .validate_selection(&raw[0], &raw[1..], envelope.clone(), signature, EXPIRY)
             .unwrap_err();
         assert_eq!(error.as_label(), "default_mismatch");
 
         let (default, alternatives) = CandidateFixture::split_default(&raw, &envelope);
         let error = validator()
-            .validate_selection(&default, &alternatives[..1], envelope, signature, window())
+            .validate_selection(&default, &alternatives[..1], envelope, signature, EXPIRY)
             .unwrap_err();
         assert_eq!(error.as_label(), "envelope_hash_mismatch");
     }
@@ -510,7 +474,7 @@ mod tests {
         let (raw, envelope, signature) = fixture.submission(5, 0);
         let (default, alternatives) = CandidateFixture::split_default(&raw, &envelope);
         let error = validator()
-            .validate_selection(&default, &alternatives, envelope, signature, window())
+            .validate_selection(&default, &alternatives, envelope, signature, EXPIRY)
             .unwrap_err();
         assert_eq!(error.as_label(), "too_many_siblings");
     }
@@ -543,12 +507,25 @@ mod tests {
         let other = CandidateFixture::with_key(CHAIN_ID, 0x99);
         let (raw, envelope, _) = fixture.submission(2, 0);
         let error = validator()
-            .validate(&raw, envelope.clone(), other.sign(&envelope), window())
+            .validate(&raw, envelope.clone(), other.sign(&envelope), EXPIRY)
             .unwrap_err();
         assert_eq!(error, CandidateError::EnvelopeSignerNotSender);
 
         let malformed = Signature::new(U256::ZERO, U256::ZERO, false);
-        let error = validator().validate(&raw, envelope, malformed, window()).unwrap_err();
+        let error = validator().validate(&raw, envelope, malformed, EXPIRY).unwrap_err();
         assert_eq!(error, CandidateError::EnvelopeSignatureInvalid);
+    }
+
+    #[test]
+    fn server_lifetime_sets_expiry_without_changing_the_group_hash() {
+        let fixture = CandidateFixture::new(CHAIN_ID);
+        let (raw, envelope, signature) = fixture.submission(2, 0);
+        let validator =
+            CandidateValidator { limits: CandidateLimits::default(), chain_id: CHAIN_ID };
+        let early = validator.validate(&raw, envelope.clone(), signature, 120).unwrap();
+        let late = validator.validate(&raw, envelope, signature, 150).unwrap();
+        assert_eq!(early.group_hash(), late.group_hash());
+        assert_eq!((early.expiry_block(), late.expiry_block()), (120, 150));
+        assert_eq!(late.descriptor().expiry_block, 150);
     }
 }

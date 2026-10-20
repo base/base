@@ -16,9 +16,6 @@ pub enum CandidateError {
     /// `siblingHashes[defaultIndex]` under `DEFAULT_SIBLING`, `siblingHashes[0]` under `DROP`.
     #[error("the default transaction is not the selection envelope's default")]
     DefaultMismatch,
-    /// A request without a selection carries no `expiryBlock`.
-    #[error("expiryBlock is required")]
-    ExpiryRequired,
     /// A top-level option disagrees with the signed selection envelope.
     #[error("{field} does not match the selection envelope")]
     SelectionFieldMismatch {
@@ -83,9 +80,6 @@ pub enum CandidateError {
     /// The envelope requests a score-read context this node does not implement.
     #[error("unsupported score version")]
     ScoreVersionUnsupported,
-    /// `expiryBlock` is in the past or beyond the configured window.
-    #[error("expiry block is outside the accepted window")]
-    ExpiryOutOfWindow,
     /// The envelope signature is malformed or non-canonical.
     #[error("invalid envelope signature")]
     EnvelopeSignatureInvalid,
@@ -139,7 +133,6 @@ impl CandidateError {
             Self::SelectionRequired => "selection_required",
             Self::SelectionWithoutAlternatives => "selection_without_alternatives",
             Self::DefaultMismatch => "default_mismatch",
-            Self::ExpiryRequired => "expiry_required",
             Self::SelectionFieldMismatch { .. } => "selection_mismatch",
             Self::TooFewSiblings => "too_few_siblings",
             Self::TooManySiblings { .. } => "too_many_siblings",
@@ -155,7 +148,6 @@ impl CandidateError {
             Self::EnvelopeHashMismatch => "envelope_hash_mismatch",
             Self::EnvelopeInvalid { .. } => "envelope_invalid",
             Self::ScoreVersionUnsupported => "score_version_unsupported",
-            Self::ExpiryOutOfWindow => "expiry_out_of_window",
             Self::EnvelopeSignatureInvalid => "envelope_signature_invalid",
             Self::EnvelopeSignerNotSender => "envelope_signer_not_sender",
             Self::GroupTerminal => "group_terminal",

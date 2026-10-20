@@ -1,5 +1,7 @@
 //! A validated candidate group: the signed envelope plus every recovered sibling.
 
+use std::sync::Arc;
+
 use alloy_consensus::{
     Transaction,
     transaction::{Recovered, TxHashRef},
@@ -7,7 +9,7 @@ use alloy_consensus::{
 use alloy_primitives::{Address, B256, Bytes, Signature, TxHash, U256};
 use base_common_consensus::BaseTransactionSigned;
 
-use crate::{CandidateEnvelope, FallbackMode};
+use crate::{CandidateEnvelope, FallbackMode, GroupBudget, GroupDescriptor};
 
 /// One signed sibling and its exact EIP-2718 encoding.
 #[derive(Debug, Clone)]
@@ -41,9 +43,9 @@ impl CandidateSibling {
 pub struct CandidateGroup {
     envelope: CandidateEnvelope,
     signature: Signature,
-    group_hash: B256,
     chain_id: u64,
     siblings: Vec<CandidateSibling>,
+    descriptor: Arc<GroupDescriptor>,
     heap_size: usize,
 }
 
@@ -51,16 +53,31 @@ impl CandidateGroup {
     /// Assembles a group without verifying it.
     ///
     /// Use [`crate::CandidateValidator::validate`] for untrusted input; this constructor only
-    /// computes the derived fields.
+    /// computes the derived fields. `expiry_block` is the node-assigned last block in which the
+    /// group may land; it is not part of the signed envelope or the group hash.
     pub fn new(
         envelope: CandidateEnvelope,
         signature: Signature,
         chain_id: u64,
         siblings: Vec<CandidateSibling>,
+        expiry_block: u64,
     ) -> Self {
-        let group_hash = envelope.signing_hash(chain_id);
+        let descriptor = Arc::new(GroupDescriptor {
+            group_hash: envelope.signing_hash(chain_id),
+            sender: envelope.sender,
+            nonce: envelope.nonce,
+            representative: envelope.sibling_hashes[envelope.representative_index()],
+            sibling_hashes: envelope.sibling_hashes.clone(),
+            expiry_block,
+            budget: GroupBudget {
+                max_work_gas: envelope.max_work_gas,
+                max_evaluations: envelope.max_evaluations,
+            },
+        });
         // Computed once so the pooled entry's reported size never changes while it is pooled.
         let heap_size = core::mem::size_of_val(envelope.sibling_hashes.as_slice())
+            + core::mem::size_of::<GroupDescriptor>()
+            + descriptor.heap_size()
             + siblings
                 .iter()
                 .map(|sibling| {
@@ -78,7 +95,7 @@ impl CandidateGroup {
                         })
                 })
                 .sum::<usize>();
-        Self { envelope, signature, group_hash, chain_id, siblings, heap_size }
+        Self { envelope, signature, chain_id, siblings, descriptor, heap_size }
     }
 
     /// Returns the signed envelope.
@@ -92,8 +109,18 @@ impl CandidateGroup {
     }
 
     /// Returns the EIP-712 signing hash of the envelope, the group's identity.
-    pub const fn group_hash(&self) -> B256 {
-        self.group_hash
+    pub fn group_hash(&self) -> B256 {
+        self.descriptor.group_hash
+    }
+
+    /// Returns the lifecycle descriptor shared with the ledger.
+    pub const fn descriptor(&self) -> &Arc<GroupDescriptor> {
+        &self.descriptor
+    }
+
+    /// Returns the node-assigned last block in which the group may land (inclusive).
+    pub fn expiry_block(&self) -> u64 {
+        self.descriptor.expiry_block
     }
 
     /// Returns the siblings' chain ID.

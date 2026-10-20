@@ -6,11 +6,29 @@ use alloy_primitives::{Address, B256, TxHash, U256};
 use parking_lot::Mutex;
 use serde::Deserialize;
 
-use crate::CandidateError;
+use crate::{GroupBudget, GroupDescriptor};
 
 /// Identity that owns quota; every sender of one principal shares it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Deserialize)]
 pub struct PrincipalId(pub u64);
+
+/// A policy-gated capability. One principal identity holds a separate entitlement and work
+/// budget for each capability it may use.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Capability {
+    /// Candidate-group admission and the per-round work of selecting a winner.
+    CandidateSelection,
+    /// Admission of a default transaction submitted alone, without alternatives.
+    SingleAdmission,
+}
+
+impl Capability {
+    /// The capabilities a principals-file entry grants when it lists none: the Swap Lane's.
+    pub fn swap_lane() -> Vec<Self> {
+        vec![Self::CandidateSelection, Self::SingleAdmission]
+    }
+}
 
 /// The parts of a group the access policy prices.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -19,12 +37,22 @@ pub struct GroupSummary {
     pub group_hash: B256,
     /// Shared sender.
     pub sender: Address,
-    /// Signed lifetime work-gas cap.
-    pub max_work_gas: u64,
-    /// Signed lifetime evaluation cap.
-    pub max_evaluations: u16,
+    /// Lifetime work budget.
+    pub budget: GroupBudget,
     /// Signed upper bound on any charge, in wei.
     pub max_access_charge: U256,
+}
+
+impl GroupSummary {
+    /// Summarizes a verified group for pricing.
+    pub const fn of(group: &GroupDescriptor, max_access_charge: U256) -> Self {
+        Self {
+            group_hash: group.group_hash,
+            sender: group.sender,
+            budget: group.budget,
+            max_access_charge,
+        }
+    }
 }
 
 /// Identity of one evaluation round, used to deduplicate work records and settlement.
@@ -55,16 +83,6 @@ pub enum AccessDenied {
     /// The principal's work quota cannot cover the request.
     #[error("principal quota exhausted")]
     QuotaExhausted,
-}
-
-impl From<AccessDenied> for CandidateError {
-    fn from(denied: AccessDenied) -> Self {
-        match denied {
-            AccessDenied::NotAllowed => Self::PrincipalNotAllowed,
-            AccessDenied::AccessChargeTooLow => Self::AccessChargeTooLow,
-            AccessDenied::QuotaExhausted => Self::PrincipalQuotaExhausted,
-        }
-    }
 }
 
 /// Principal work reserved for one round; settle it exactly once.
@@ -105,9 +123,12 @@ pub struct ChargeDecision {
 }
 
 /// Access-control hook consulted at admission and before every evaluation round.
+///
+/// [`Self::admit`], [`Self::reserve`] and [`Self::settle`] govern
+/// [`Capability::CandidateSelection`]; other capabilities only check entitlement today.
 pub trait CandidateAccessPolicy: Send + Sync + Debug {
-    /// Returns the principal currently authorized for `sender`.
-    fn principal(&self, sender: Address) -> Option<PrincipalId>;
+    /// Returns the principal currently authorized for `sender` to use `capability`.
+    fn principal(&self, sender: Address, capability: Capability) -> Option<PrincipalId>;
 
     /// Returns the registry version that ledger entries bind.
     fn policy_version(&self) -> u64;
@@ -138,6 +159,9 @@ pub struct PrincipalEntry {
     pub id: PrincipalId,
     /// Senders that act for the principal.
     pub senders: Vec<Address>,
+    /// Capabilities the principal may use; absent grants [`Capability::swap_lane`].
+    #[serde(default = "Capability::swap_lane")]
+    pub capabilities: Vec<Capability>,
 }
 
 /// JSON principals file loaded by `--txpool.candidates.principals-file`.
@@ -146,7 +170,8 @@ pub struct PrincipalEntry {
 pub struct PrincipalsFile {
     /// Registry version bound into every ledger entry.
     pub policy_version: u64,
-    /// Per-principal work-gas quota for the life of the process; `None` is unlimited.
+    /// Per-principal [`Capability::CandidateSelection`] work-gas quota for the life of the
+    /// process; `None` is unlimited.
     #[serde(default)]
     pub work_gas_quota: Option<u64>,
     /// Allowlisted principals.
@@ -155,14 +180,16 @@ pub struct PrincipalsFile {
 
 /// Allowlisted zero-charge beta policy (design §6.2).
 ///
-/// An empty registry admits nobody. Quota is a lifetime work-gas total per principal shared by
-/// all of its senders; reservations count against it until settled.
+/// An empty registry admits nobody. Quota is a lifetime work-gas total per principal and
+/// capability, shared by all of the principal's senders; reservations count against it until
+/// settled.
 #[derive(Debug, Default)]
 pub struct StaticAccessPolicy {
     senders: HashMap<Address, PrincipalId>,
+    entitlements: HashMap<PrincipalId, Vec<Capability>>,
     policy_version: u64,
     work_gas_quota: Option<u64>,
-    used: Mutex<HashMap<PrincipalId, u64>>,
+    used: Mutex<HashMap<(PrincipalId, Capability), u64>>,
 }
 
 impl StaticAccessPolicy {
@@ -173,28 +200,36 @@ impl StaticAccessPolicy {
             .iter()
             .flat_map(|entry| entry.senders.iter().map(|sender| (*sender, entry.id)))
             .collect();
+        let entitlements =
+            file.principals.iter().map(|entry| (entry.id, entry.capabilities.clone())).collect();
         Self {
             senders,
+            entitlements,
             policy_version: file.policy_version,
             work_gas_quota: file.work_gas_quota,
             used: Mutex::default(),
         }
     }
 
-    /// Returns the work gas reserved or settled for `principal`.
+    /// Returns the [`Capability::CandidateSelection`] work gas reserved or settled for
+    /// `principal`.
     pub fn used_work_gas(&self, principal: PrincipalId) -> u64 {
-        self.used.lock().get(&principal).copied().unwrap_or_default()
+        self.used
+            .lock()
+            .get(&(principal, Capability::CandidateSelection))
+            .copied()
+            .unwrap_or_default()
     }
 
-    /// Returns whether `principal` is still listed in the principals file.
-    pub fn authorized(&self, principal: PrincipalId) -> bool {
-        self.senders.values().any(|id| *id == principal)
+    /// Returns whether `principal` is listed in the principals file with `capability`.
+    pub fn authorized(&self, principal: PrincipalId, capability: Capability) -> bool {
+        self.entitlements.get(&principal).is_some_and(|granted| granted.contains(&capability))
     }
 }
 
 impl CandidateAccessPolicy for StaticAccessPolicy {
-    fn principal(&self, sender: Address) -> Option<PrincipalId> {
-        self.senders.get(&sender).copied()
+    fn principal(&self, sender: Address, capability: Capability) -> Option<PrincipalId> {
+        self.senders.get(&sender).copied().filter(|id| self.authorized(*id, capability))
     }
 
     fn policy_version(&self) -> u64 {
@@ -202,7 +237,7 @@ impl CandidateAccessPolicy for StaticAccessPolicy {
     }
 
     fn admit(&self, principal: PrincipalId, _group: &GroupSummary) -> Result<(), AccessDenied> {
-        if !self.authorized(principal) {
+        if !self.authorized(principal, Capability::CandidateSelection) {
             return Err(AccessDenied::NotAllowed);
         }
         // Pricing is TBD (design §6); the beta price is zero, so any `maxAccessCharge` covers it.
@@ -220,11 +255,11 @@ impl CandidateAccessPolicy for StaticAccessPolicy {
         attempt: AttemptId,
         gas: u64,
     ) -> Result<WorkTicket, AccessDenied> {
-        if !self.authorized(principal) {
+        if !self.authorized(principal, Capability::CandidateSelection) {
             return Err(AccessDenied::NotAllowed);
         }
         let mut used = self.used.lock();
-        let entry = used.entry(principal).or_default();
+        let entry = used.entry((principal, Capability::CandidateSelection)).or_default();
         let next = entry.saturating_add(gas);
         if self.work_gas_quota.is_some_and(|quota| next > quota) {
             return Err(AccessDenied::QuotaExhausted);
@@ -235,7 +270,9 @@ impl CandidateAccessPolicy for StaticAccessPolicy {
 
     fn settle(&self, ticket: WorkTicket, gas_used: u64) {
         let refund = ticket.reserved_gas.saturating_sub(gas_used);
-        if let Some(entry) = self.used.lock().get_mut(&ticket.principal) {
+        if let Some(entry) =
+            self.used.lock().get_mut(&(ticket.principal, Capability::CandidateSelection))
+        {
             *entry = entry.saturating_sub(refund);
         }
     }
@@ -256,6 +293,7 @@ mod tests {
             principals: vec![PrincipalEntry {
                 id: PrincipalId(1),
                 senders: vec![Address::repeat_byte(1), Address::repeat_byte(2)],
+                capabilities: Capability::swap_lane(),
             }],
         })
     }
@@ -264,8 +302,7 @@ mod tests {
         GroupSummary {
             group_hash: B256::ZERO,
             sender: Address::repeat_byte(1),
-            max_work_gas: 1,
-            max_evaluations: 1,
+            budget: GroupBudget { max_work_gas: 1, max_evaluations: 1 },
             max_access_charge: U256::ZERO,
         }
     }
@@ -277,15 +314,19 @@ mod tests {
     #[test]
     fn empty_registry_admits_nobody() {
         let policy = StaticAccessPolicy::default();
-        assert_eq!(policy.principal(Address::repeat_byte(1)), None);
+        assert_eq!(policy.principal(Address::repeat_byte(1), Capability::CandidateSelection), None);
         assert_eq!(policy.admit(PrincipalId(1), &summary()), Err(AccessDenied::NotAllowed));
     }
 
     #[test]
     fn alias_senders_share_one_principal_quota() {
         let policy = policy(Some(100));
-        let principal = policy.principal(Address::repeat_byte(1)).unwrap();
-        assert_eq!(policy.principal(Address::repeat_byte(2)), Some(principal));
+        let principal =
+            policy.principal(Address::repeat_byte(1), Capability::CandidateSelection).unwrap();
+        assert_eq!(
+            policy.principal(Address::repeat_byte(2), Capability::CandidateSelection),
+            Some(principal)
+        );
         assert_eq!(policy.policy_version(), 3);
 
         let ticket = policy.reserve(principal, attempt(), 60).unwrap();
@@ -309,7 +350,10 @@ mod tests {
         let json = r#"{"policyVersion":2,"workGasQuota":5,"principals":[{"id":7,"senders":["0x0101010101010101010101010101010101010101"]}]}"#;
         let file: PrincipalsFile = serde_json::from_str(json).unwrap();
         let policy = StaticAccessPolicy::new(file);
-        assert_eq!(policy.principal(Address::repeat_byte(1)), Some(PrincipalId(7)));
+        assert_eq!(
+            policy.principal(Address::repeat_byte(1), Capability::CandidateSelection),
+            Some(PrincipalId(7))
+        );
         assert!(
             serde_json::from_str::<PrincipalsFile>(r#"{"policyVersion":1,"principals":[],"x":1}"#)
                 .is_err()
@@ -320,5 +364,20 @@ mod tests {
     fn beta_never_charges() {
         let decision = policy(None).finalize(PrincipalId(1), GroupOutcome::Unlanded);
         assert_eq!(decision.charged, U256::ZERO);
+    }
+
+    #[test]
+    fn entitlements_are_per_capability() {
+        let json = r#"{"policyVersion":1,"principals":[
+            {"id":1,"senders":["0x0101010101010101010101010101010101010101"],"capabilities":["singleAdmission"]},
+            {"id":2,"senders":["0x0202020202020202020202020202020202020202"]}]}"#;
+        let policy = StaticAccessPolicy::new(serde_json::from_str(json).unwrap());
+        let (single, both) = (Address::repeat_byte(1), Address::repeat_byte(2));
+        assert_eq!(policy.principal(single, Capability::SingleAdmission), Some(PrincipalId(1)));
+        assert_eq!(policy.principal(single, Capability::CandidateSelection), None);
+        assert_eq!(policy.admit(PrincipalId(1), &summary()), Err(AccessDenied::NotAllowed));
+        // An entry without capabilities keeps every Swap Lane capability.
+        assert_eq!(policy.principal(both, Capability::SingleAdmission), Some(PrincipalId(2)));
+        assert_eq!(policy.principal(both, Capability::CandidateSelection), Some(PrincipalId(2)));
     }
 }
