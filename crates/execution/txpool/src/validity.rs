@@ -3,6 +3,7 @@
 use std::fmt;
 
 use alloy_primitives::{Address, Signature, U256};
+use base_execution_candidates::BlockWindow;
 use reth_transaction_pool::ValidPoolTransaction;
 use revm::Database;
 use serde::{Deserializer, de};
@@ -348,9 +349,9 @@ impl ValidityPredicate {
     ///
     /// The bound must not precede `current_block`, because every block it
     /// permits has already been sealed. It must also be no later than
-    /// `current_block` plus the number of full blocks that fit in
-    /// `max_expiry_secs` at `block_interval_millis`, so the transaction has a
-    /// bounded lifetime. Lower bounds (`>`, `>=`) and `!=` do not establish expiry.
+    /// the last block of the [`BlockWindow`] of `max_expiry_secs` from
+    /// `current_block` at `block_interval_millis`, rounding a partial block up,
+    /// so the transaction has a bounded lifetime. Lower bounds (`>`, `>=`) and `!=` do not establish expiry.
     /// State predicates ([`Self::Balance`], [`Self::Nonce`], [`Self::Storage`])
     /// do not establish expiry, and flashblock indices reset each block.
     ///
@@ -387,9 +388,9 @@ impl ValidityPredicate {
         if bound < current {
             return Err(ValidityPredicateError::ExpiredBlockBound { index, bound, current_block });
         }
-        let max_expiry_blocks =
-            max_expiry_secs.saturating_mul(1_000).div_ceil(block_interval_millis);
-        let maximum_block = current_block.saturating_add(max_expiry_blocks);
+        let maximum_block =
+            BlockWindow::from_secs(current_block, max_expiry_secs, block_interval_millis)
+                .last_block();
         if bound > U256::from(maximum_block) {
             return Err(ValidityPredicateError::BlockExpiryWindowExceeded {
                 index,
@@ -1544,6 +1545,24 @@ mod tests {
                 "expected {op:?} {value} to be accepted",
             );
         }
+    }
+
+    #[test]
+    fn validate_block_expiry_bounds_rounds_a_partial_block_up() {
+        // 7 s at 2 s blocks admits 4 blocks past the current one, not 3.
+        let bound = |value: u64| {
+            [ValidityPredicate::BlockNumber {
+                op: ValidityOperator::LessThanOrEqual,
+                value: U256::from(value),
+            }]
+        };
+        assert!(
+            ValidityPredicate::validate_block_expiry_bounds(&bound(104), 100, 7, 2_000).is_ok()
+        );
+        assert!(matches!(
+            ValidityPredicate::validate_block_expiry_bounds(&bound(105), 100, 7, 2_000),
+            Err(ValidityPredicateError::BlockExpiryWindowExceeded { maximum_block: 104, .. })
+        ));
     }
 
     #[test]
