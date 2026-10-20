@@ -6,8 +6,7 @@ use reth_rpc_eth_api::{
     helpers::{LoadPendingBlock, SpawnBlocking, pending_block::PendingEnvBuilder},
 };
 use reth_rpc_eth_types::{
-    EthApiError, PendingBlock, block::BlockAndReceipts, builder::config::PendingBlockKind,
-    error::FromEthApiError,
+    EthApiError, PendingBlock, block::BlockAndReceipts, error::FromEthApiError,
 };
 use reth_storage_api::{BlockReaderIdExt, StateProviderBox};
 
@@ -27,11 +26,6 @@ where
     #[inline]
     fn pending_env_builder(&self) -> &dyn PendingEnvBuilder<Self::Evm> {
         self.inner.eth_api.pending_env_builder()
-    }
-
-    #[inline]
-    fn pending_block_kind(&self) -> PendingBlockKind {
-        self.inner.eth_api.pending_block_kind()
     }
 
     /// Returns a [`StateProviderBox`] on a mem-pool built pending block overlaying latest.
