@@ -42,7 +42,7 @@ The flow extracts every withdrawal from the configured L2 transaction receipt an
 
 For lower-level reads, call `Withdrawer::resolve_proof_system(&rpc)` once and retain its `ResolvedProofSystem`. Pass it to `status(&rpc, proofs, &withdrawal, submitter)`, `proving_output`, and `prove_calldata` to reuse the same contracts. `status` performs only reads against the latest mined L1 state. It does not prepare, sign, or submit transactions. `run` uses the same status API with the signer's address.
 
-`WithdrawalStatus` separates onchain decisions from transaction submission. `Finalized` does nothing, `Prove` requires a new proof, `Finalize` permits execution, and `Paused` waits for the anchor state registry (fault proofs) or legacy portal (output oracle) to be unpaused before proving or finalizing. `NotReady` reports an earliest known L1 timestamp with a flag for an unresolved game. The game must resolve before its finality delay can start, so that timestamp is not a promise of readiness.
+`WithdrawalStatus` separates onchain decisions from transaction submission. `Finalized` does nothing, `Prove` requires a new proof, `Finalize` permits execution, and `Paused` waits for the anchor state registry (fault proofs) or legacy portal (output oracle) to be unpaused before proving or finalizing. `NotReady` reports the earliest known ready timestamp (`ready_at`), the L1 head timestamp used to decide readiness (`l1_timestamp`), and a flag for an unresolved game (`waiting_for_game`). The game must resolve before its finality delay can start, so the ready timestamp is not a promise of readiness.
 
 `WithdrawalOutcome` records each withdrawal's hash, decision, and confirmed L1 transaction hash, if any. The flow logs the decision even when it sends nothing.
 
