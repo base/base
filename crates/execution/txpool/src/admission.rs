@@ -12,7 +12,10 @@ use base_execution_candidates::{
     GroupState, GroupSummary, LedgerAdmission, LedgerError, PrincipalId,
 };
 use reth_storage_api::{StateProviderFactory, errors::ProviderError};
-use reth_transaction_pool::{TransactionOrigin, TransactionPool, error::PoolError};
+use reth_transaction_pool::{
+    TransactionOrigin, TransactionPool,
+    error::{PoolError, PoolErrorKind},
+};
 use tokio::sync::watch;
 use tracing::debug;
 
@@ -324,6 +327,13 @@ where
         .await;
         match inserted {
             Ok(Ok(_)) => {}
+            // A concurrent identical submission inserted it between the lookup and this insert.
+            Ok(Err(error))
+                if matches!(error.kind, PoolErrorKind::AlreadyImported)
+                    || self.pool.contains(&hash) =>
+            {
+                return Ok(duplicate);
+            }
             Ok(Err(error)) => return Err(error.into()),
             Err(_) if self.pool.contains(&hash) => {}
             Err(_) => {

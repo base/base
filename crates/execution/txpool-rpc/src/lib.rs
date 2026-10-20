@@ -12,6 +12,7 @@ pub use candidates::{
     AdminCandidateSelectionApiImpl, AdminCandidateSelectionApiServer, SEND_SWAP_TRANSACTION_METHOD,
     SendSwapTransactionApiImpl, SendSwapTransactionApiServer, SwapAdmissionTrace, SwapAlternatives,
     SwapSelection, SwapTerms, SwapTransactionOptions, SwapTransactionResponse,
+    UNJOURNALED_REJECTIONS_METRIC,
 };
 
 mod rpc;
