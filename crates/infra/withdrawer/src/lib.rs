@@ -20,7 +20,7 @@ mod network;
 pub use network::{FaultProofContracts, Network, NetworkPreset, ProofSystem, ResolvedProofSystem};
 
 mod rpc;
-pub use rpc::{BroadcastResult, WithdrawalRpc, WithdrawalRpcError};
+pub use rpc::{WithdrawalRpc, WithdrawalRpcError};
 
 mod transport;
 pub use transport::WithdrawalRpcTransport;
