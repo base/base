@@ -317,7 +317,7 @@ which also carries `data.group_hash` and `data.alternative_hashes` and has an
 `event_id` that depends only on the group. It is `none` for a default
 transaction without alternatives and `ignored` when the request carried
 alternatives while selection was disabled; both carry `data.alternatives` and
-`data.expiry_block` and start no group lifecycle. Duplicate submissions emit
+start no group lifecycle. Duplicate submissions emit
 nothing. A refused request gets `TXPOOL_SEND_SWAP_TRANSACTION_REJECTED` with
 `data.selection`, `data.alternatives`, and the RPC error label in
 `data.rejection_reason`: `pool_rejected` when the pool refused the default
@@ -328,7 +328,7 @@ transaction and `internal_error` for an unlabeled failure such as a state read.
 journaling.
 
 Measured sizes, as serialized JSON: group admission with one alternative 691
-bytes, admission without alternatives 550, rejection 566 to 688, landed 712,
+bytes, admission without alternatives about 530, rejection 566 to 688, landed 712,
 evicted 652 to 661.
 
 Terminal events. The node's candidate ledger emits exactly one terminal event

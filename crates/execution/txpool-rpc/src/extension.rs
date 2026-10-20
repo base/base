@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use base_execution_candidates::CandidateRuntime;
 use base_execution_rpc::SequencerClient;
+use base_execution_txpool::AdmissionService;
 pub use base_execution_txpool::{
     DEFAULT_MAX_VALIDITY_EXPIRY_SECS, DEFAULT_MAX_VALIDITY_PREDICATES, ValiditySignatureMode,
 };
@@ -126,9 +127,9 @@ impl FromExtensionConfig for SendRawTransactionValidityExtension {
 pub struct SendSwapTransactionConfig {
     /// Candidate runtime shared with the pool and the payload builder.
     pub runtime: Arc<CandidateRuntime>,
-    /// Maximum lifetime of a swap transaction past the next block, in seconds.
-    pub max_expiry_secs: u64,
-    /// Upstream sequencer RPC for proxy nodes.
+    /// Lifetime of an admitted candidate group past the next block, in seconds.
+    pub group_lifetime_secs: u64,
+    /// Upstream node that proxy-mode ingress forwards every submission to, unchanged.
     pub sequencer_url: Option<String>,
     /// HTTP headers sent to the upstream sequencer, in `name=value` form.
     pub sequencer_headers: Vec<String>,
@@ -145,13 +146,13 @@ impl BaseNodeExtension for SendSwapTransactionExtension {
         let config = self.config;
         builder.add_rpc_module(move |ctx: &mut BaseRpcContext<'_>| {
             let chain_id = ctx.provider().chain_spec().chain_id();
-            let mut api = SendSwapTransactionApiImpl::new(
+            let admission = Arc::new(AdmissionService::new(
                 ctx.provider().clone(),
                 ctx.pool().clone(),
                 Arc::clone(&config.runtime),
-                chain_id,
-                config.max_expiry_secs,
-            );
+                config.group_lifetime_secs,
+            ));
+            let mut api = SendSwapTransactionApiImpl::new(admission, chain_id);
             if let Some(url) = &config.sequencer_url {
                 api = api.with_sequencer_client(SequencerClient::new_http_with_headers(
                     url,
