@@ -186,16 +186,21 @@ impl CanonicalCatchupSource {
         }
         let (fetched_anchor, result) = self.completed.take()?;
         match result {
-            Ok(payloads) if fetched_anchor == anchor => {
+            Ok(mut payloads) => {
+                if fetched_anchor != anchor {
+                    let applied = payloads.iter().position(|payload| {
+                        payload.execution_payload.block_hash() == anchor.block_info.hash
+                    })?;
+                    payloads.drain(..=applied);
+                }
                 info!(
                     target: "engine",
-                    first = fetched_anchor.block_info.number + 1,
+                    first = anchor.block_info.number + 1,
                     count = payloads.len(),
                     "Fetched canonical catch-up gap from source"
                 );
                 Some(payloads)
             }
-            Ok(_) => None,
             Err(error) => {
                 warn!(target: "engine", error = %error, "Canonical catch-up gap fetch failed");
                 self.back_off();
@@ -327,15 +332,35 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn discards_fetch_when_anchor_moved() {
+    async fn keeps_suffix_when_anchor_advanced_within_fetch() {
         let chain = chain();
         let (anchor, gap) = (info(&chain[&10]), gap(&chain));
         let mut source = serving(chain.clone());
         source.start(anchor, gap);
         source.wait().await;
 
-        assert!(source.take(info(&chain[&11])).is_none());
-        source.start(info(&chain[&11]), CatchupGap { first: 12, ..gap });
+        let payloads = source.take(info(&chain[&11])).expect("suffix above new anchor");
+
+        assert_eq!(payloads, chain.range(12..).map(|(_, block)| block.clone()).collect::<Vec<_>>());
+    }
+
+    #[tokio::test]
+    async fn discards_fetch_when_anchor_left_fetched_chain() {
+        let chain = chain();
+        let (anchor, gap) = (info(&chain[&10]), gap(&chain));
+        let mut source = serving(chain.clone());
+        source.start(anchor, gap);
+        source.wait().await;
+        let reorged = L2BlockInfo {
+            block_info: BlockInfo {
+                hash: B256::with_last_byte(0xaa),
+                ..info(&chain[&11]).block_info
+            },
+            ..anchor
+        };
+
+        assert!(source.take(reorged).is_none());
+        source.start(reorged, CatchupGap { first: 12, ..gap });
         assert!(source.is_fetching(), "a stale result must not back off");
     }
 
