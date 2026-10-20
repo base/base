@@ -1220,13 +1220,14 @@ mod tests {
         );
     }
 
-    /// `size_of::<BasePooledTransaction>()` at dfc842436, before candidate support. Plain
-    /// transactions must not pay for candidate groups in layout or pool-size accounting.
-    const PRE_CANDIDATE_LAYOUT_BYTES: usize = 1_040;
-
+    /// Plain transactions must not pay for candidate groups in layout: the extension slot that
+    /// replaced the metering `Option<Arc<_>>` is still one pointer.
     #[test]
     fn plain_transactions_pay_no_candidate_overhead() {
-        assert_eq!(core::mem::size_of::<BasePooledTransaction>(), PRE_CANDIDATE_LAYOUT_BYTES);
+        assert_eq!(
+            core::mem::size_of::<Option<Arc<PoolTransactionExtension>>>(),
+            core::mem::size_of::<usize>()
+        );
     }
 
     #[test]

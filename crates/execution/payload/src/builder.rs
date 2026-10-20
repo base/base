@@ -3070,7 +3070,10 @@ mod tests {
         let group = Arc::new(fixture.group_expiring(&raw, envelope, expiry_block));
         runtime
             .ledger
-            .create(Arc::clone(group.descriptor()), PrincipalId(1), 0, |_| false)
+            // Earlier test groups stay pooled while this one is admitted.
+            .create(Arc::clone(group.descriptor()), PrincipalId(1), 0, |hash| {
+                *hash != group.representative().hash()
+            })
             .expect("group is admitted");
         runtime.ledger.confirm_pooled(group.group_hash(), |_| true);
         group
@@ -3106,7 +3109,7 @@ mod tests {
         sender_account: Option<Account>,
         /// Other funded senders.
         funded: Vec<Address>,
-        /// Block timestamp; defaults to just before Denim.
+        /// Block timestamp; defaults to Denim activation, where candidate selection runs.
         timestamp: Option<u64>,
     }
 
@@ -3116,7 +3119,7 @@ mod tests {
         transactions: TestParkableTransactions,
         configure: impl FnOnce(&mut BasePayloadBuilderCtx<BaseEvmConfig, BaseChainSpec>),
     ) -> (BuildOutcomeKind<crate::BaseBuiltPayload<BasePrimitives>>, Vec<TxHash>) {
-        let mut ctx = pool_payload_context(build.timestamp.unwrap_or(DENIM_TIMESTAMP - 1));
+        let mut ctx = pool_payload_context(build.timestamp.unwrap_or(DENIM_TIMESTAMP));
         ctx.builder_config.candidates = build.runtime.map(CandidateBuilderConfig::new);
         configure(&mut ctx);
         let sender = build.sender;
@@ -3404,11 +3407,71 @@ mod tests {
         assert!(!entry.state.is_terminal());
     }
 
+    /// Gas one evaluation round of every sibling of `group` reserves under `runtime`.
+    fn full_round_gas(group: &CandidateGroup, runtime: &Arc<CandidateRuntime>) -> u64 {
+        let all: Vec<usize> = (0..group.siblings().len()).collect();
+        BasePayloadBuilderCtx::<BaseEvmConfig, BaseChainSpec>::round_gas(
+            group,
+            &all,
+            &CandidateBuilderConfig::new(Arc::clone(runtime)),
+        )
+    }
+
     #[test]
-    fn candidate_rounds_stay_within_the_build_work_budget() {
+    fn a_second_group_defers_once_the_build_work_budget_is_spent() {
+        let fixture = CandidateFixture::new(8_453);
+        let other = CandidateFixture::with_key(8_453, 0x5a);
+        let runtime = Arc::new(CandidateRuntime {
+            policy: Arc::new(StaticAccessPolicy::new(PrincipalsFile {
+                policy_version: 0,
+                work_gas_quota: None,
+                principals: vec![PrincipalEntry {
+                    id: PrincipalId(1),
+                    senders: vec![fixture.address(), other.address()],
+                    capabilities: Capability::swap_lane(),
+                }],
+            })),
+            ..Arc::into_inner(candidate_runtime(&fixture, true)).expect("sole owner")
+        });
+        let first = candidate_group(&fixture, &runtime, CANDIDATE_RECIPIENT, &[1, 3], |_| {});
+        let second = candidate_group(&other, &runtime, CANDIDATE_RECIPIENT, &[1, 3], |_| {});
+        let one_round = full_round_gas(&first, &runtime);
+
+        let (outcome, _) = build_candidate_payload_with(
+            CandidateBuild {
+                runtime: Some(Arc::clone(&runtime)),
+                sender: fixture.address(),
+                funded: vec![other.address()],
+                ..CandidateBuild::default()
+            },
+            TestParkableTransactions::new(vec![representative(&first), representative(&second)]),
+            |ctx| ctx.builder_config.candidates.as_mut().unwrap().build_work_gas = one_round,
+        );
+
+        // Whichever group the pool yields first spends the budget; the other defers.
+        let included = included_hashes(outcome);
+        let (evaluated, deferred) = if included == [first.siblings()[1].hash()] {
+            (&first, &second)
+        } else {
+            assert_eq!(included, [second.siblings()[1].hash()]);
+            (&second, &first)
+        };
+        let ledger = &runtime.ledger;
+        assert_eq!(ledger.lookup(&evaluated.group_hash()).expect("tracked").attempts, 1);
+        let entry = ledger.lookup(&deferred.group_hash()).expect("group is tracked");
+        assert_eq!((entry.attempts, entry.work_gas_settled), (0, 0), "the other group defers");
+        assert!(!entry.state.is_terminal());
+    }
+
+    #[test]
+    fn a_round_larger_than_the_build_work_budget_applies_the_fallback() {
+        let capture = TransactionEventCapture::install();
         let fixture = CandidateFixture::new(8_453);
         let runtime = candidate_runtime(&fixture, true);
-        let group = candidate_group(&fixture, &runtime, CANDIDATE_RECIPIENT, &[1, 3], |_| {});
+        let fallback = candidate_group(&fixture, &runtime, CANDIDATE_RECIPIENT, &[1, 3], |_| {});
+        let unfit = |ctx: &mut BasePayloadBuilderCtx<BaseEvmConfig, BaseChainSpec>| {
+            ctx.builder_config.candidates.as_mut().unwrap().build_work_gas = 1;
+        };
 
         let (outcome, _) = build_candidate_payload_with(
             CandidateBuild {
@@ -3416,13 +3479,115 @@ mod tests {
                 sender: fixture.address(),
                 ..CandidateBuild::default()
             },
-            TestParkableTransactions::new(vec![representative(&group)]),
-            |ctx| ctx.builder_config.candidates.as_mut().unwrap().build_work_gas = 1,
+            TestParkableTransactions::new(vec![representative(&fallback)]),
+            unfit,
         );
 
-        assert!(included_hashes(outcome).is_empty());
-        let entry = runtime.ledger.lookup(&group.group_hash()).expect("group is tracked");
+        assert_eq!(included_hashes(outcome), [fallback.siblings()[0].hash()]);
+        let entry = runtime.ledger.lookup(&fallback.group_hash()).expect("group is tracked");
         assert_eq!((entry.attempts, entry.work_gas_settled), (0, 0));
+
+        let drop = CandidateFixture::with_key(8_453, 0x5b);
+        let runtime = candidate_runtime(&drop, true);
+        let evicted_group =
+            candidate_group(&drop, &runtime, CANDIDATE_RECIPIENT, &[1, 3], |envelope| {
+                envelope.fallback_mode = 0;
+            });
+        let (outcome, _) = build_candidate_payload_with(
+            CandidateBuild {
+                runtime: Some(Arc::clone(&runtime)),
+                sender: drop.address(),
+                ..CandidateBuild::default()
+            },
+            TestParkableTransactions::new(vec![representative(&evicted_group)]),
+            unfit,
+        );
+        assert!(included_hashes(outcome).is_empty());
+        assert_eq!(
+            candidate_reasons(&capture, &runtime, &evicted_group),
+            [rejected("budget_exhausted"), evicted("budget_exhausted")]
+        );
+    }
+
+    #[test]
+    fn pre_denim_rebuilds_fall_back_without_charging_attempts() {
+        let fixture = CandidateFixture::new(8_453);
+        let runtime = candidate_runtime(&fixture, true);
+        let group =
+            candidate_group(&fixture, &runtime, CANDIDATE_RECIPIENT, &[1, 3, 2], |envelope| {
+                envelope.default_index = 2;
+            });
+        let drop = CandidateFixture::with_key(8_453, 0x5c);
+        let drop_runtime = candidate_runtime(&drop, true);
+        let parked =
+            candidate_group(&drop, &drop_runtime, CANDIDATE_RECIPIENT, &[1, 3], |envelope| {
+                envelope.fallback_mode = 0;
+            });
+
+        // Before Denim the payload job rebuilds the same block; no rebuild evaluates.
+        for _ in 0..3 {
+            let (outcome, _) = build_candidate_payload_with(
+                CandidateBuild {
+                    runtime: Some(Arc::clone(&runtime)),
+                    sender: fixture.address(),
+                    timestamp: Some(DENIM_TIMESTAMP - 1),
+                    ..CandidateBuild::default()
+                },
+                TestParkableTransactions::new(vec![representative(&group)]),
+                |_| {},
+            );
+            assert_eq!(included_hashes(outcome), [group.siblings()[2].hash()]);
+            let (outcome, _) = build_candidate_payload_with(
+                CandidateBuild {
+                    runtime: Some(Arc::clone(&drop_runtime)),
+                    sender: drop.address(),
+                    timestamp: Some(DENIM_TIMESTAMP - 1),
+                    ..CandidateBuild::default()
+                },
+                TestParkableTransactions::new(vec![representative(&parked)]),
+                |_| {},
+            );
+            assert!(included_hashes(outcome).is_empty(), "a drop group waits for Denim");
+        }
+        let entry = runtime.ledger.lookup(&group.group_hash()).expect("group is tracked");
+        assert_eq!(entry.attempts, 0, "pre-Denim rebuilds never charge attempts");
+        let entry = drop_runtime.ledger.lookup(&parked.group_hash()).expect("group is tracked");
+        assert_eq!(entry.attempts, 0);
+        assert!(!entry.state.is_terminal());
+    }
+
+    #[test]
+    fn permanently_excluded_siblings_do_not_count_against_the_group_budget() {
+        let fixture = CandidateFixture::new(8_453);
+        let runtime = candidate_runtime(&fixture, true);
+        let values = [1, 3, 2];
+        let probe = candidate_group(
+            &fixture,
+            &candidate_runtime(&fixture, true),
+            CANDIDATE_RECIPIENT,
+            &values,
+            |_| {},
+        );
+        let open_round = BasePayloadBuilderCtx::<BaseEvmConfig, BaseChainSpec>::round_gas(
+            &probe,
+            &[0, 1],
+            &CandidateBuilderConfig::new(Arc::clone(&runtime)),
+        );
+        // The budget covers the two open siblings, not the excluded third.
+        let group = candidate_group(&fixture, &runtime, CANDIDATE_RECIPIENT, &values, |envelope| {
+            envelope.max_work_gas = open_round;
+        });
+        runtime.ledger.mark_permanently_ineligible(group.group_hash(), 2);
+
+        let included = included_hashes(build_candidate_payload(
+            Some(Arc::clone(&runtime)),
+            TestParkableTransactions::new(vec![representative(&group)]),
+            fixture.address(),
+        ));
+
+        assert_eq!(included, [group.siblings()[1].hash()]);
+        let entry = runtime.ledger.lookup(&group.group_hash()).expect("group is tracked");
+        assert_eq!(entry.attempts, 1, "the open siblings were evaluated");
     }
 
     #[test]

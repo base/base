@@ -24,8 +24,9 @@ use base_common_consensus::{BaseTransactionSigned, TxDeposit};
 use base_execution_candidates::{
     AccessDenied, AttemptId, CandidateGroup, CandidateRuntime, CandidateSelectionRule,
     CandidateSibling, Capability, DEFAULT_MAX_EVALUATIONS, DEFAULT_PROBE_GAS, DeferReason,
-    EvictionReason, FallbackMode, FallbackReason, GroupLifecycle, Ineligibility, ParkReason,
-    ProbeResult, ReserveError, ScoreRead, TrialOutcome, TurnContext, TurnDecision, WinnerSelection,
+    EvictionReason, FallbackMode, FallbackReason, GroupLedgerEntry, GroupLifecycle, Ineligibility,
+    ParkReason, ProbeResult, ReserveError, ScoreRead, TrialOutcome, TurnContext, TurnDecision,
+    WinnerSelection,
 };
 use base_execution_txpool::{BasePooledTransaction, estimated_da_size::DataAvailabilitySized};
 use base_observability_events::{
@@ -515,17 +516,21 @@ where
             runtime.policy.principal(group.sender(), Capability::CandidateSelection)
                 == Some(entry.principal)
         });
-        let all: Vec<usize> = (0..group.siblings().len()).collect();
-        let full_round_gas = Self::round_gas(group, &all, config);
         let decision = GroupLifecycle::before_evaluation(&TurnContext {
             target_block: limits.block_number,
             expiry_block: group.expiry_block(),
             ledger_available: entry.is_some(),
             principal_authorized,
-            selection_enabled: runtime.switch.is_enabled(),
+            // Selection runs only on Denim-active one-shot builds. Before Denim the payload job
+            // rebuilds the same block, and each rebuild would consume an attempt, so a group
+            // takes the disabled path instead: its default sibling, or parked until Denim.
+            selection_enabled: runtime.switch.is_enabled() && self.is_denim_active(),
             fallback: group.fallback(),
             group_budget_exhausted: entry.as_ref().is_some_and(|entry| {
-                entry.budget_exhausted(full_round_gas, config.server_max_evaluations)
+                entry.budget_exhausted(
+                    Self::open_round_gas(group, entry, config),
+                    config.server_max_evaluations,
+                )
             }),
             build_budget_available: scan.has_time(config),
         });
@@ -573,6 +578,17 @@ where
 
         // Reserve build work, then principal work, so neither failure consumes an attempt.
         let round_gas = Self::round_gas(group, &round.siblings, config);
+        // A round that cannot fit even an empty build would defer forever: apply the signed
+        // fallback, as an exhausted group budget does, without consuming an attempt.
+        if round_gas > config.build_work_gas {
+            let decision = match group.fallback() {
+                FallbackMode::DefaultSibling => {
+                    TurnDecision::Fallback(FallbackReason::BudgetExhausted)
+                }
+                FallbackMode::Drop => TurnDecision::Evict(EvictionReason::BudgetExhausted),
+            };
+            return self.decide(info, builder, best_txs, turn, decision, scan);
+        }
         if scan.work_gas.saturating_add(round_gas) > config.build_work_gas {
             let decision = TurnDecision::Defer(DeferReason::BuildBudget);
             return Ok(self.apply_decision(info, best_txs, turn, decision));
@@ -661,7 +677,10 @@ where
             }
             None => {
                 let budget_remains = runtime.ledger.lookup(&group_hash).is_some_and(|entry| {
-                    !entry.budget_exhausted(full_round_gas, config.server_max_evaluations)
+                    !entry.budget_exhausted(
+                        Self::open_round_gas(group, &entry, config),
+                        config.server_max_evaluations,
+                    )
                 });
                 GroupLifecycle::after_evaluation(false, group.fallback(), budget_remains)
             }
@@ -1059,6 +1078,19 @@ where
                 }
             }
         }
+    }
+
+    /// Work reservation for a round over every sibling not permanently excluded, the round a
+    /// group-budget check must cover.
+    pub fn open_round_gas(
+        group: &CandidateGroup,
+        entry: &GroupLedgerEntry,
+        config: &CandidateBuilderConfig,
+    ) -> u64 {
+        let open: Vec<usize> = (0..group.siblings().len())
+            .filter(|index| !entry.permanently_ineligible.get(*index).copied().unwrap_or(false))
+            .collect();
+        Self::round_gas(group, &open, config)
     }
 
     /// Conservative work reservation for a round over `round` siblings (design §5.6.1).

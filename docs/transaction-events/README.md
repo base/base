@@ -321,13 +321,18 @@ which also carries `data.group_hash` and `data.alternative_hashes` and has an
 transaction without alternatives and `ignored` when the request carried
 alternatives while selection was disabled; both carry `data.alternatives` and
 start no group lifecycle. Duplicate submissions emit
-nothing. A refused request gets `TXPOOL_SEND_SWAP_TRANSACTION_REJECTED` with
-`data.selection`, `data.alternatives`, and the RPC error label in
-`data.rejection_reason`: `pool_rejected` when the pool refused the default
-transaction and `internal_error` for an unlabeled failure such as a state read.
-`tx_hash` is present once the default transaction decoded and
-`data.group_hash` once a selection validated, and every rejection has its own
-`event_id`, so repeated rejections are all kept. Proxies forward without
+nothing. A refused request from a validated sender that the access policy
+authorizes for the requested capability gets
+`TXPOOL_SEND_SWAP_TRANSACTION_REJECTED` with `data.selection`,
+`data.alternatives`, and the RPC error label in `data.rejection_reason`:
+`pool_rejected` when the pool refused the default transaction and
+`internal_error` for an unlabeled failure such as a state read. `tx_hash` is
+the default transaction's hash, `data.group_hash` is present once a selection
+validated, and every rejection has its own `event_id`, so repeated rejections
+are all kept. Other refusals, such as malformed requests and senders outside the
+allowlist, journal nothing and increment the
+`txpool.swap_transaction.unjournaled_rejections` counter by `reason`, so callers
+outside the allowlist cannot grow the journal. Proxies forward without
 journaling.
 
 Builder turns: each turn that considers a group gets a never-reused
@@ -397,6 +402,12 @@ disabled at runtime with `admin_setCandidateSelectionEnabled`, ingress journals
 admissions with `data.selection: ignored` and starts no group, and the builder
 emits no candidate events; the ledger still journals terminal events for groups
 admitted earlier.
+
+The native builder evaluates candidate groups only on Denim-active builds,
+which build each payload once. On a pre-Denim build, which the payload job
+rebuilds repeatedly, it takes the runtime-disabled path instead: a group whose
+signed fallback is the default sibling commits that sibling, a drop group stays
+parked until Denim, and no build charges an evaluation attempt.
 
 Canonicality caveat: builder events are local payload construction signals, not
 canonical-chain or consensus-finality observations. A builder event with
