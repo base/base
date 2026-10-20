@@ -331,7 +331,7 @@ Measured sizes, as serialized JSON: group admission with one alternative 691
 bytes, admission without alternatives about 530, rejection 566 to 688, landed 712,
 evicted 652 to 661.
 
-Terminal events. The node's candidate ledger emits exactly one terminal event
+Terminal events: the node's candidate ledger emits exactly one terminal event
 per admitted group, keyed by the group alone so replays deduplicate.
 `TXPOOL_CANDIDATE_LANDED` is canonical: a sibling appeared in a canonical
 block's mined transactions, under the winner's `tx_hash` with `block_hash` and
