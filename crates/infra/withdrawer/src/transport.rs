@@ -38,7 +38,7 @@ impl fmt::Debug for WithdrawalRpcTransport {
 }
 
 impl WithdrawalRpcTransport {
-    /// Maximum duration of one HTTP attempt, further capped at half the operation timeout.
+    /// Maximum duration of one HTTP attempt, further capped by operation and submission deadlines.
     pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
     /// Builds a typed HTTP provider with bounded requests and retries, without network I/O.
@@ -75,8 +75,10 @@ impl WithdrawalRpcTransport {
         if !matches!(url.scheme(), "http" | "https") {
             return Err(TransportErrorKind::non_retryable_str("RPC URL must use HTTP(S)"));
         }
+        let attempt_timeout =
+            config.submission_request_timeout().map_err(TransportErrorKind::custom)?;
         let client = reqwest::Client::builder()
-            .timeout(Self::REQUEST_TIMEOUT.min(config.timeout / 2))
+            .timeout(attempt_timeout)
             .build()
             .map_err(|error| Self::redact(TransportErrorKind::custom(error)))?;
         Ok(RootProvider::new(ClientBuilder::default().transport(
@@ -303,12 +305,86 @@ mod tests {
     };
 
     use alloy_json_rpc::Id;
+    use alloy_network::{Ethereum, EthereumWallet};
     use alloy_primitives::B256;
     use axum::{Json, Router, http::StatusCode, response::IntoResponse, routing::post};
+    use base_tx_manager::{NoopTxMetrics, SendState, SimpleTxManager};
+    use clap::Parser;
     use serde_json::{Value, json};
     use tokio::net::TcpListener;
 
     use super::*;
+
+    #[tokio::test]
+    async fn lost_broadcast_response_is_reconciled_before_the_manager_deadline() {
+        let broadcasts = Arc::new(AtomicUsize::new(0));
+        let attempts = Arc::clone(&broadcasts);
+        let app = Router::new().route(
+            "/",
+            post(move |Json(request): Json<Value>| {
+                let attempts = Arc::clone(&attempts);
+                async move {
+                    if request["method"] == "eth_chainId" {
+                        return Json(json!({
+                            "jsonrpc": "2.0", "id": request["id"], "result": "0x1",
+                        }));
+                    }
+                    assert_eq!(request["method"], "eth_sendRawTransaction");
+                    if attempts.fetch_add(1, Ordering::SeqCst) == 0 {
+                        std::future::pending::<()>().await;
+                    }
+                    Json(json!({
+                        "jsonrpc": "2.0", "id": request["id"],
+                        "error": {"code": -32000, "message": "already known"},
+                    }))
+                }
+            }),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let config = WithdrawerConfig::try_from(
+            crate::WithdrawerArgs::try_parse_from([
+                "withdrawer",
+                "--l1-rpc-url",
+                &url,
+                "--withdrawal",
+                &B256::ZERO.to_string(),
+                "--private-key",
+                &B256::repeat_byte(1).to_string(),
+                "--tx-manager.network-timeout=1s",
+                "--retry-delay=100ms",
+            ])
+            .unwrap(),
+        )
+        .unwrap();
+        let journal = BroadcastJournal::default();
+        let provider = WithdrawalRpcTransport::connect_for_submission::<Ethereum>(
+            &config.l1_rpc_url,
+            &config,
+            journal.clone(),
+        )
+        .unwrap();
+        let signer = crate::WithdrawalSigner::new(&config.signer).await.unwrap();
+        let manager = SimpleTxManager::from_wallet(
+            provider,
+            EthereumWallet::from(signer),
+            config.tx_manager.clone(),
+            1,
+            Arc::new(NoopTxMetrics),
+        )
+        .await
+        .unwrap();
+        let raw = Bytes::from_static(&[2, 3]);
+        let send_state = SendState::new(config.tx_manager.safe_abort_nonce_too_low_count).unwrap();
+        let started = tokio::time::Instant::now();
+        let result = manager.publish_tx(&send_state, &raw, None).await;
+        server.abort();
+        assert_eq!(result.unwrap(), keccak256(&raw));
+        assert!(started.elapsed() < config.tx_manager.network_timeout);
+        assert_eq!(broadcasts.load(Ordering::SeqCst), 2);
+        assert_eq!(journal.hashes(), vec![keccak256(&raw)]);
+    }
 
     #[tokio::test]
     async fn replayed_broadcast_reconciles_only_the_accepted_transaction() {

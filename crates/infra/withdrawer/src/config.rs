@@ -354,6 +354,22 @@ pub struct WithdrawerConfig {
     pub retry_delay: Duration,
 }
 
+impl WithdrawerConfig {
+    /// Bounds submission HTTP attempts so a retry and its backoff fit the network deadline.
+    pub fn submission_request_timeout(&self) -> Result<Duration, ConfigError> {
+        let network_budget = if self.max_retries > 0 {
+            self.tx_manager.network_timeout.saturating_sub(self.retry_delay) / 3
+        } else {
+            self.tx_manager.network_timeout / 2
+        };
+        if network_budget.is_zero() {
+            return Err(ConfigError::RetryDeadline);
+        }
+        // Reserve time beyond two attempts for scheduling and response processing.
+        Ok(crate::WithdrawalRpcTransport::REQUEST_TIMEOUT.min(self.timeout / 2).min(network_budget))
+    }
+}
+
 /// Invalid cross-field operation settings.
 #[derive(Debug, Error)]
 pub enum ConfigError {
@@ -381,6 +397,11 @@ pub enum ConfigError {
     /// Retry count exceeds the supported bound.
     #[error("--max-retries must be at most 32")]
     Retries,
+    /// The network deadline leaves no time for bounded submission attempts.
+    #[error(
+        "--tx-manager.network-timeout must leave time for HTTP attempts after --retry-delay when retries are enabled"
+    )]
+    RetryDeadline,
     /// Exponential retry delay does not fit a Rust duration.
     #[error("exponential retry delay overflows Duration")]
     RetryOverflow,
@@ -426,7 +447,7 @@ impl TryFrom<WithdrawerArgs> for WithdrawerConfig {
             (None, true) if args.ledger => SignerSource::Ledger { path: args.hd_path },
             _ => return Err(ConfigError::Signer),
         };
-        Ok(Self {
+        let config = Self {
             l1_rpc_url: args.l1_rpc_url,
             network,
             withdrawal: args.withdrawal,
@@ -437,7 +458,9 @@ impl TryFrom<WithdrawerArgs> for WithdrawerConfig {
             timeout: args.timeout,
             max_retries: args.max_retries,
             retry_delay: args.retry_delay,
-        })
+        };
+        config.submission_request_timeout()?;
+        Ok(config)
     }
 }
 
@@ -513,9 +536,19 @@ mod tests {
         assert!(signed(&["--max-retries=0"]).is_ok());
         assert!(signed(&["--max-retries=32", "--retry-delay=1ns"]).is_ok());
         let long_delay = format!("--retry-delay={}s", u64::MAX);
-        assert!(signed(&["--max-retries=1", &long_delay]).is_ok());
+        assert!(signed(&["--max-retries=1", &long_delay]).is_err());
         assert!(signed(&["--max-retries=2", &long_delay]).is_err());
         assert!(signed(&["--max-retries=0", &long_delay]).is_ok());
+    }
+
+    #[test]
+    fn submission_retries_require_time_after_the_backoff() {
+        for delay in ["10s", "11s"] {
+            let error = signed(&[&format!("--retry-delay={delay}")]).unwrap_err();
+            assert!(error.contains("--tx-manager.network-timeout"));
+            assert!(error.contains("--retry-delay"));
+            assert!(signed(&["--max-retries=0", &format!("--retry-delay={delay}")]).is_ok());
+        }
     }
 
     #[test]

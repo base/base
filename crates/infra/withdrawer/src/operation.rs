@@ -2278,7 +2278,9 @@ mod tests {
     #[tokio::test]
     async fn manager_network_timeout_is_not_the_operation_deadline() {
         let mut server = Scenario { hang: true, ..Default::default() }.start().await;
-        server.config.tx_manager.network_timeout = Duration::from_millis(10);
+        server.config.tx_manager.network_timeout = Duration::from_millis(100);
+        server.config.max_retries = 3;
+        server.config.retry_delay = Duration::from_millis(1);
         let flow = Withdrawer::new(server.config.clone());
         let signer = WithdrawalSigner::new(&server.config.signer).await.unwrap();
         let error = flow.manager(signer, BroadcastJournal::default()).await.unwrap_err();
