@@ -194,10 +194,11 @@ impl CandidateEnvelope {
         FallbackMode::from_wire(self.fallback_mode)
     }
 
-    /// Returns the index of the pool and iterator lifecycle identity.
+    /// Returns the sibling index of the group's representative: `defaultIndex` under
+    /// `DEFAULT_SIBLING`, otherwise `0`.
     ///
-    /// `defaultIndex` for `DEFAULT_SIBLING`, else `0`. The representative is never the winner's
-    /// identity; resource checks and accounting always use the winning sibling.
+    /// The representative is the group's identity in the pool and its transaction iterator. It
+    /// is never the winner's identity: resource checks and accounting use the winning sibling.
     pub fn representative_index(&self) -> usize {
         match self.fallback() {
             Some(FallbackMode::DefaultSibling) => usize::from(self.default_index),
