@@ -123,7 +123,8 @@ pub struct BaseTransactionPool<
     /// deadline eviction, so a same-nonce submission cannot race the sweep.
     /// Validation itself remains outside this lock.
     protocol_admission_lock: Arc<Mutex<()>>,
-    /// Candidate-selection state, when `base_sendSwapTransaction` is enabled.
+    /// Shared candidate runtime, when candidates are enabled: group expiry, ledger maintenance
+    /// and the guard against reinserting a known sibling as a plain transaction.
     candidates: Option<Arc<CandidateRuntime>>,
 }
 
@@ -1833,8 +1834,8 @@ where
             }
         }
         if let Some(candidates) = &self.candidates {
-            // Before expiry maintenance, so a mined sibling lands instead of expiring, and
-            // before the nonce sweep, so it lands instead of reading as a consumed nonce.
+            // Record canonical landings before `record_nonces` and `expire_by_block`, so a
+            // mined sibling ends as `Landed` rather than `NonceConsumed` or `Expired`.
             candidates.ledger.record_landed(&mined_transactions, block_number, block_hash);
             candidates.ledger.record_nonces(account_nonces);
         }

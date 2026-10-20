@@ -1,6 +1,7 @@
 //! Stable admission errors for candidate groups (design §2.5).
 
-/// Why a candidate group was rejected at ingress.
+/// Why a swap submission, either a default transaction alone or a candidate group, was
+/// rejected at ingress.
 ///
 /// Every variant maps to a stable, low-cardinality label returned as the JSON-RPC error `data`
 /// and used as a metric label.
@@ -13,8 +14,8 @@ pub enum CandidateError {
     #[error("a selection requires alternatives")]
     SelectionWithoutAlternatives,
     /// The default transaction is not the selection envelope's representative:
-    /// `siblingHashes[defaultIndex]` under `DEFAULT_SIBLING`, `siblingHashes[0]` under `DROP`.
-    #[error("the default transaction is not the selection envelope's default")]
+    /// `siblingHashes[defaultIndex]` under `DEFAULT_SIBLING`, or `siblingHashes[0]` under `DROP`.
+    #[error("the default transaction is not the selection envelope's representative")]
     DefaultMismatch,
     /// A top-level option disagrees with the signed selection envelope.
     #[error("{field} does not match the selection envelope")]
@@ -114,10 +115,12 @@ pub enum CandidateError {
     /// The group's pool insertion did not finish within the admission timeout.
     #[error("candidate group admission timed out")]
     AdmissionTimedOut,
-    /// The group ledger is unavailable; admission fails closed.
+    /// The group ledger is unavailable; admission fails closed. Phase 0 ingress always holds
+    /// an in-memory ledger, so it never returns this.
     #[error("candidate ledger unavailable")]
     LedgerUnavailable,
-    /// v0 rejects groups combined with validity predicates.
+    /// v0 rejects groups combined with validity predicates. `base_sendSwapTransaction` cannot
+    /// carry predicates, so Phase 0 ingress never returns this.
     #[error("candidate groups cannot carry validity predicates")]
     CombinedWithValidity,
     /// v0 rejects EIP-7702-delegated senders (design §4.2): delegated code can move the sender's
