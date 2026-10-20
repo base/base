@@ -19,6 +19,9 @@ use tempfile::TempDir;
 use tracing::info;
 use url::Url;
 
+/// `BabyBear` modulus, `2^31 - 2^27 + 1`.
+const BABY_BEAR_MODULUS: u64 = 0x7800_0001;
+
 /// Dump a 1-block `OpenVM` range witness from live RPCs.
 #[derive(Debug, Clone, Parser)]
 #[command(name = "openvm-dump")]
@@ -41,13 +44,14 @@ pub struct OpenVmRangeDump {
     /// Inclusive end block. Defaults to the current safe L2 head.
     #[arg(long, env = "OPENVM_END_BLOCK")]
     pub end_block: Option<u64>,
-    /// Directory that receives `input.json`.
+    /// Directory that receives `input.json` and `input.bin`.
     #[arg(long)]
     pub out_dir: PathBuf,
 }
 
 impl OpenVmRangeDump {
-    /// Resolves the range from op-node (if unset) and writes `<out_dir>/input.json`.
+    /// Resolves the range from op-node (if unset) and writes `<out_dir>/input.json`
+    /// for `cargo openvm` and `<out_dir>/input.bin` for an Axiom Edge manager.
     ///
     /// Prints `OPENVM_WITNESS start=.. end=.. bytes=..` to stdout once the range is
     /// chosen (`bytes=0`) and again after the witness is written. The basectl
@@ -102,6 +106,8 @@ impl OpenVmRangeDump {
         let input_path = self.out_dir.join("input.json");
         fs::write(&input_path, Self::input_json(rkyv))
             .wrap_err("failed to write OpenVM input JSON")?;
+        fs::write(self.out_dir.join("input.bin"), Self::input_stdin(rkyv))
+            .wrap_err("failed to write OpenVM StdIn input")?;
         info!(rkyv_bytes = rkyv.len(), input_path = %input_path.display(), "wrote OpenVM range input");
         Self::announce(start_block, end_block, rkyv.len());
         Ok(())
@@ -115,6 +121,23 @@ impl OpenVmRangeDump {
             write!(hex, "{byte:02x}").expect("writing hex into String is infallible");
         }
         serde_json::json!({ "input": [hex] }).to_string()
+    }
+
+    /// Bincode `openvm_sdk::StdIn<BabyBear>` holding the rkyv bytes as one stream.
+    ///
+    /// Layout: stream count, then per stream its length and one Montgomery-form
+    /// `BabyBear` element per byte, then an empty deferral list. All integers are
+    /// little-endian; lengths are `u64`, elements `u32`.
+    pub fn input_stdin(rkyv: &[u8]) -> Vec<u8> {
+        let mut out = Vec::with_capacity(24 + rkyv.len() * 4);
+        out.extend_from_slice(&1u64.to_le_bytes());
+        out.extend_from_slice(&(rkyv.len() as u64).to_le_bytes());
+        for &byte in rkyv {
+            let montgomery = (u64::from(byte) << 32) % BABY_BEAR_MODULUS;
+            out.extend_from_slice(&(montgomery as u32).to_le_bytes());
+        }
+        out.extend_from_slice(&0u64.to_le_bytes());
+        out
     }
 
     fn announce(start_block: u64, end_block: u64, bytes: usize) {
@@ -131,5 +154,20 @@ mod tests {
     fn input_json_frames_rkyv_with_0x01() {
         let json = OpenVmRangeDump::input_json(&[0xab, 0xcd]);
         assert_eq!(json, r#"{"input":["0x01abcd"]}"#);
+    }
+
+    #[test]
+    fn input_stdin_matches_edge_convert_fixtures() {
+        // `convert_fixtures json-to-stdin` output for `{"input":["0x0100017fff"]}`.
+        let expected = [
+            "0100000000000000",
+            "0400000000000000",
+            "00000000feffff0ff2feff6fe1fdff77",
+            "0000000000000000",
+        ]
+        .concat();
+        let stdin = OpenVmRangeDump::input_stdin(&[0x00, 0x01, 0x7f, 0xff]);
+        let hex: String = stdin.iter().map(|byte| format!("{byte:02x}")).collect();
+        assert_eq!(hex, expected);
     }
 }

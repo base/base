@@ -1,7 +1,9 @@
 # openvm-dump
 
 Fetches one L2 block range from live RPCs and writes the `OpenVM` `--input` JSON
-the range guest expects (`0x01` + rkyv `DefaultWitnessData`).
+the range guest expects (`0x01` + rkyv `DefaultWitnessData`) as `input.json`,
+plus the same witness as a bincode `StdIn` in `input.bin` for an Axiom Edge
+manager's `/upload_input`.
 
 This is the host-side dump for a zeronet (or any) block. It does not start a
 system-test stack.
@@ -16,8 +18,8 @@ cargo run -p base-openvm-dump -- \
 ```
 
 Omit `--start-block` / `--end-block` to dump the current safe L2 head as a
-1-block range. Then:
+1-block range. Then execute it locally:
 
 ```bash
-just openvm prove-zeronet
+just openvm run
 ```

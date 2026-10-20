@@ -38,25 +38,26 @@ Artifacts land in `elf/` (gitignored), same pattern as Succinct.
 ## Showcase
 
 Opens the TUI and proves one live block from the active network (zeronet by
-default): `openvm-dump` fetches the witness from RPCs, `cargo openvm run`
-executes the guest and reveals the boot digest, then `cargo openvm prove app`
-produces the app proof. `cargo-openvm` prints no progress while proving, so the
-active card pulses until it exits.
+default): `openvm-dump` fetches the witness from RPCs, then an Axiom Edge
+manager executes the guest, proves the STARK on its GPU workers, and wraps it
+into an EVM (halo2) proof. Each step is one row; the Prove row fills as app
+segments land, and a failed step shows the reason inline.
 
 ```bash
-just openvm demo
-# or: cargo run -p basectl -- monitor openvm
+OPENVM_EDGE_URL=<edge manager URL> just openvm demo
+# or: OPENVM_EDGE_URL=... cargo run -p basectl -- monitor openvm
 ```
 
 Press `z` from the home menu to open it on the current network. `p` restarts the
-prove and `Esc` aborts it. The network needs `l1_beacon_rpc` and
-`consensus_node_rpc` configured.
+prove and `Esc` aborts it (and cancels the Edge proof). The network needs
+`l1_beacon_rpc` and `consensus_node_rpc` configured. The manager must serve
+program `range` version 1, transpiled from this guest's ELF with the same Edge
+build that generated its keys.
 
-CLI equivalent:
+To re-execute the demo's last witness locally and print the boot digest:
 
 ```bash
-just openvm dump-zeronet
-just openvm prove-zeronet
+just openvm run
 ```
 
 ## Run
