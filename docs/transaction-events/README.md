@@ -310,7 +310,7 @@ before any builder or node emits them. Older binaries reject unknown
 Measured sizes for a two-sibling group, as serialized JSON: landed 712
 bytes, evicted 652 to 661.
 
-Terminal events. The node's candidate ledger emits exactly one terminal event
+Terminal events: the node's candidate ledger emits exactly one terminal event
 per admitted group, keyed by the group alone so replays deduplicate.
 `TXPOOL_CANDIDATE_LANDED` is canonical: a sibling appeared in a canonical
 block's mined transactions, under the winner's `tx_hash` with `block_hash` and
