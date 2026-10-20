@@ -47,7 +47,9 @@ pub struct BaseNodeRunner<SB: PayloadServiceBuilder = DefaultPayloadServiceBuild
     resource_metering: Option<ResourceMeteringConfig>,
     /// Shared rejection cache for permanently rejected transaction hashes.
     rejection_cache: Option<RejectionCache>,
+    /// Candidate runtime shared by ingress, the pool and the payload builder.
     candidate_runtime: Option<Arc<CandidateRuntime>>,
+    /// Candidate selection for the native payload builder (`BasePayloadBuilder`).
     candidate_builder: Option<CandidateBuilderConfig>,
     /// Binary-owned callbacks to run after the node has started.
     started_callbacks: Vec<StartedCallback>,
@@ -119,7 +121,8 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
         self
     }
 
-    /// Shares the candidate runtime with the pool and configures default-builder selection.
+    /// Shares the candidate runtime with the pool and configures candidate selection in the
+    /// native payload builder (`BasePayloadBuilder`).
     pub fn with_candidates(
         mut self,
         runtime: Option<Arc<CandidateRuntime>>,

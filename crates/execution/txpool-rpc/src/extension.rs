@@ -151,8 +151,9 @@ impl<Provider, Pool> CandidateCapabilityConfig<Provider, Pool> {
         Self { runtime, group_lifetime_secs, admission: Arc::default() }
     }
 
-    /// Returns the process's admission service, creating it over `provider` and `pool` on
-    /// first use; later calls ignore their arguments.
+    /// Returns the admission service shared by this configuration and its clones, creating it
+    /// over `provider` and `pool` on first use; later calls return that service and ignore
+    /// their arguments.
     pub fn admission_from(
         &self,
         provider: Provider,

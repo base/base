@@ -41,7 +41,8 @@ pub struct CandidateCapabilities {
 #[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
 pub struct CandidateArgs {
     /// Runs the candidate capabilities (ledger, policy and pool support) and registers
-    /// `base_sendSwapTransaction` at startup. When off the method is unregistered and returns
+    /// `base_sendSwapTransaction` at startup, plus `admin_setCandidateSelectionEnabled` when the
+    /// admin RPC module is enabled. When off, these methods are unregistered and return
     /// `-32601`.
     #[arg(long = "txpool.candidates.enabled", default_value = "false")]
     pub candidates_enabled: bool,
@@ -67,9 +68,9 @@ pub struct CandidateArgs {
     #[arg(long = "txpool.candidates.max-sibling-gas", default_value_t = DEFAULT_MAX_SIBLING_GAS)]
     pub max_sibling_gas: u64,
 
-    /// Lifetime of an admitted candidate group past the next block, in seconds, rounded up to
-    /// whole blocks. Senders sign no expiry; a default transaction submitted alone has no
-    /// node-assigned lifetime.
+    /// Server-assigned lifetime of an admitted candidate group past the next block, in seconds,
+    /// rounded up to whole blocks. Senders sign no expiry. A default transaction submitted
+    /// alone has no node-assigned lifetime.
     #[arg(
         long = "txpool.candidates.max-expiry-secs",
         default_value_t = DEFAULT_CANDIDATE_MAX_EXPIRY_SECS
@@ -91,7 +92,7 @@ pub struct CandidateArgs {
     )]
     pub eval_wall_cutoff_us: u64,
 
-    /// Time after a build's pool scan starts past which no candidate work starts, in
+    /// Time from the start of a build's pool scan after which no new candidate work starts, in
     /// microseconds.
     #[arg(
         long = "builder.candidates.build-deadline-us",
@@ -117,9 +118,9 @@ pub struct CandidateArgs {
     #[arg(long = "txpool.candidates.max-evaluations", default_value_t = DEFAULT_MAX_EVALUATIONS)]
     pub max_evaluations: u16,
 
-    /// Journal a `BUILDER_CANDIDATE_TRIAL` event per sibling outcome. Off by default: round
-    /// events already carry per-outcome counts, and trials multiply event volume by the
-    /// sibling count.
+    /// Journal a `BUILDER_CANDIDATE_TRIAL` event per sibling outcome. Off by default:
+    /// `BUILDER_CANDIDATE_ROUND` already carries each sibling's outcome, and trial events
+    /// multiply event volume by the sibling count.
     #[arg(long = "builder.candidates.trial-events", default_value_t = false)]
     pub trial_events: bool,
 }
@@ -200,9 +201,10 @@ impl CandidateArgs {
         }
         let principals = match &self.principals_file {
             Some(path) => serde_json::from_slice(
-                &std::fs::read(path).wrap_err_with(|| format!("reading {}", path.display()))?,
+                &std::fs::read(path)
+                    .wrap_err_with(|| format!("reading principals file {}", path.display()))?,
             )
-            .wrap_err_with(|| format!("parsing {}", path.display()))?,
+            .wrap_err_with(|| format!("parsing principals file {}", path.display()))?,
             None => PrincipalsFile { policy_version: 0, work_gas_quota: None, principals: vec![] },
         };
         let runtime = Arc::new(CandidateRuntime {

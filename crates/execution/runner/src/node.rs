@@ -53,7 +53,7 @@ pub struct BaseNode {
     pub rejection_cache: RejectionCache,
     /// Candidate runtime shared by ingress, the pool and the payload builder.
     pub candidate_runtime: Option<Arc<CandidateRuntime>>,
-    /// Candidate selection for the default payload builder.
+    /// Candidate selection for the native payload builder (`BasePayloadBuilder`).
     pub candidate_builder: Option<CandidateBuilderConfig>,
 }
 
@@ -108,7 +108,8 @@ impl BaseNode {
         self
     }
 
-    /// Shares the candidate runtime with the pool and configures default-builder selection.
+    /// Shares the candidate runtime with the pool and configures candidate selection in the
+    /// native payload builder (`BasePayloadBuilder`).
     pub fn with_candidates(
         mut self,
         runtime: Option<Arc<CandidateRuntime>>,
