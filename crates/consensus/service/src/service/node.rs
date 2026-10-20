@@ -279,6 +279,7 @@ impl RollupNode {
                 match self.sequencer_config.catchup_source_l2_rpc_url.clone() {
                     Some(url) => coordinator.with_catchup_source(CanonicalCatchupSource::new(
                         Arc::new(RemoteL2Client::new(url)),
+                        Arc::clone(&self.config),
                     )),
                     None => coordinator,
                 },

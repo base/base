@@ -6,9 +6,13 @@ use std::{
     time::{Duration, Instant},
 };
 
+use alloy_consensus::Block;
+use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
 use alloy_primitives::B256;
-use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
-use base_protocol::L2BlockInfo;
+use base_common_consensus::BaseTxEnvelope;
+use base_common_genesis::RollupConfig;
+use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
+use base_protocol::{BaseTimeUpdateTx, L2BlockInfo};
 use futures::{FutureExt, StreamExt, TryStreamExt, stream};
 use thiserror::Error;
 use tokio_util::task::AbortOnDropHandle;
@@ -36,27 +40,60 @@ impl CatchupGap {
         self.last - self.first + 1
     }
 
-    /// Checks that `payloads` chain from `anchor` into `tip_hash`.
+    /// Checks that `payloads` are well-formed and chain from `anchor` into `tip_hash`.
     ///
-    /// `tip_hash` comes from signed gossip, so a linked range is canonical whoever served it.
+    /// Block hashes are recomputed from contents and `tip_hash` comes from signed gossip, so a
+    /// range that passes is canonical whoever served it.
     pub fn verify(
         &self,
+        rollup: &RollupConfig,
         anchor: L2BlockInfo,
         payloads: &[BaseExecutionPayloadEnvelope],
     ) -> Result<(), CatchupSourceError> {
         let mut parent = anchor.block_info.hash;
         let mut number = self.first;
-        for payload in payloads {
-            let payload = &payload.execution_payload;
+        for envelope in payloads {
+            let payload = &envelope.execution_payload;
             if payload.block_number() != number || payload.parent_hash() != parent {
                 return Err(CatchupSourceError::Unlinked { number });
             }
+            Self::validate_block(rollup, envelope)
+                .map_err(|reason| CatchupSourceError::InvalidBlock { number, reason })?;
             parent = payload.block_hash();
             number += 1;
         }
         if number != self.last + 1 || parent != self.tip_hash {
             return Err(CatchupSourceError::Unlinked { number: self.last });
         }
+        Ok(())
+    }
+}
+
+impl CatchupGap {
+    /// Rejects what `InsertTask` would treat as a critical engine error.
+    fn validate_block(
+        rollup: &RollupConfig,
+        envelope: &BaseExecutionPayloadEnvelope,
+    ) -> Result<(), String> {
+        let payload = &envelope.execution_payload;
+        let mut block: Block<BaseTxEnvelope> =
+            payload.clone().try_into_block().map_err(|error| error.to_string())?;
+        block.header.parent_beacon_block_root = envelope.parent_beacon_block_root;
+        if matches!(payload, BaseExecutionPayload::V4(_)) {
+            block.header.requests_hash = Some(EMPTY_REQUESTS_HASH);
+        }
+        if block.header.hash_slow() != payload.block_hash() {
+            return Err("block hash does not match contents".to_string());
+        }
+        BaseTimeUpdateTx::validate_block_timestamp(
+            rollup,
+            &block.body.transactions,
+            block.header.number,
+            block.header.timestamp,
+        )
+        .map_err(|error| error.to_string())?;
+        L2BlockInfo::from_block_and_genesis(&block, &rollup.genesis)
+            .map_err(|error| error.to_string())?;
         Ok(())
     }
 }
@@ -73,6 +110,14 @@ pub enum CatchupSourceError {
     /// The fetch task panicked or was aborted.
     #[error("catch-up fetch task failed")]
     Task,
+    /// A served block is malformed or its hash does not match its contents.
+    #[error("catch-up source block {number} is invalid: {reason}")]
+    InvalidBlock {
+        /// Block number of the invalid block.
+        number: u64,
+        /// Why the block was rejected.
+        reason: String,
+    },
     /// The range does not chain from the unsafe head into the buffered gossip payload.
     #[error("catch-up source block {number} does not link to the canonical chain")]
     Unlinked {
@@ -86,6 +131,7 @@ pub enum CatchupSourceError {
 #[derive(Debug)]
 pub struct CanonicalCatchupSource {
     client: Arc<dyn RemoteClient>,
+    rollup: Arc<RollupConfig>,
     in_flight: Option<(L2BlockInfo, AbortOnDropHandle<CatchupFetchResult>)>,
     completed: Option<(L2BlockInfo, CatchupFetchResult)>,
     retry_at: Option<Instant>,
@@ -102,8 +148,8 @@ impl CanonicalCatchupSource {
     pub const CONCURRENCY: usize = 16;
 
     /// Creates a source backed by `client`.
-    pub fn new(client: Arc<dyn RemoteClient>) -> Self {
-        Self { client, in_flight: None, completed: None, retry_at: None }
+    pub fn new(client: Arc<dyn RemoteClient>, rollup: Arc<RollupConfig>) -> Self {
+        Self { client, rollup, in_flight: None, completed: None, retry_at: None }
     }
 
     /// Whether a fetch is running.
@@ -118,7 +164,8 @@ impl CanonicalCatchupSource {
             return;
         }
         let client = Arc::clone(&self.client);
-        let handle = tokio::spawn(Self::fetch(client, anchor, gap));
+        let rollup = Arc::clone(&self.rollup);
+        let handle = tokio::spawn(Self::fetch(client, rollup, anchor, gap));
         self.in_flight = Some((anchor, AbortOnDropHandle::new(handle)));
     }
 
@@ -164,6 +211,7 @@ impl CanonicalCatchupSource {
 
     async fn fetch(
         client: Arc<dyn RemoteClient>,
+        rollup: Arc<RollupConfig>,
         anchor: L2BlockInfo,
         gap: CatchupGap,
     ) -> CatchupFetchResult {
@@ -174,72 +222,87 @@ impl CanonicalCatchupSource {
         let payloads = tokio::time::timeout(Self::FETCH_TIMEOUT, fetch)
             .await
             .map_err(|_| CatchupSourceError::Timeout)??;
-        gap.verify(anchor, &payloads)?;
+        gap.verify(&rollup, anchor, &payloads)?;
         Ok(payloads)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{future, sync::Arc};
+    use std::{collections::BTreeMap, future, sync::Arc};
 
+    use alloy_consensus::{Block, BlockBody, Header};
     use alloy_eips::BlockNumberOrTag;
-    use alloy_primitives::{Address, B256, Bloom, U256};
-    use alloy_rpc_types_engine::ExecutionPayloadV1;
+    use alloy_primitives::B256;
     use async_trait::async_trait;
+    use base_common_consensus::BaseTxEnvelope;
+    use base_common_genesis::RollupConfig;
     use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
-    use base_protocol::{BlockInfo, L2BlockInfo};
+    use base_consensus_engine::test_utils::l1_info_deposit_tx;
+    use base_protocol::{BlockInfo, L1BlockInfoBedrock, L2BlockInfo};
 
-    use super::{CanonicalCatchupSource, CatchupGap};
+    use super::{CanonicalCatchupSource, CatchupGap, CatchupSourceError};
     use crate::{MockRemoteClient, RemoteClient, RemoteL2ClientError};
 
-    fn hash(number: u64) -> B256 {
-        B256::from(U256::from(number))
+    fn envelope(number: u64, parent_hash: B256) -> BaseExecutionPayloadEnvelope {
+        let block: Block<BaseTxEnvelope> = Block {
+            header: Header { number, parent_hash, timestamp: number, ..Default::default() },
+            body: BlockBody {
+                transactions: vec![l1_info_deposit_tx(L1BlockInfoBedrock::default())],
+                ..Default::default()
+            },
+        };
+        // Round-trip so derived header fields such as the transactions root are populated.
+        let block: Block<BaseTxEnvelope> =
+            BaseExecutionPayload::from_block_unchecked(B256::ZERO, &block)
+                .0
+                .try_into_block()
+                .expect("valid block");
+        let (execution_payload, _) =
+            BaseExecutionPayload::from_block_unchecked(block.header.hash_slow(), &block);
+        BaseExecutionPayloadEnvelope { parent_beacon_block_root: None, execution_payload }
     }
 
-    fn head(number: u64) -> L2BlockInfo {
+    /// Canonical blocks 10..=13; block 10 is the anchor.
+    fn chain() -> BTreeMap<u64, BaseExecutionPayloadEnvelope> {
+        let mut chain = BTreeMap::new();
+        let mut parent = B256::ZERO;
+        for number in 10..=13 {
+            let block = envelope(number, parent);
+            parent = block.execution_payload.block_hash();
+            chain.insert(number, block);
+        }
+        chain
+    }
+
+    fn info(block: &BaseExecutionPayloadEnvelope) -> L2BlockInfo {
         L2BlockInfo {
-            block_info: BlockInfo { number, hash: hash(number), ..Default::default() },
+            block_info: BlockInfo {
+                number: block.execution_payload.block_number(),
+                hash: block.execution_payload.block_hash(),
+                ..Default::default()
+            },
             ..Default::default()
         }
     }
 
-    fn gap() -> CatchupGap {
-        CatchupGap { first: 11, last: 13, tip_hash: hash(13) }
-    }
-
-    fn payload(number: u64, parent_hash: B256) -> BaseExecutionPayloadEnvelope {
-        BaseExecutionPayloadEnvelope {
-            parent_beacon_block_root: None,
-            execution_payload: BaseExecutionPayload::V1(ExecutionPayloadV1 {
-                parent_hash,
-                fee_recipient: Address::ZERO,
-                state_root: B256::ZERO,
-                receipts_root: B256::ZERO,
-                logs_bloom: Bloom::ZERO,
-                prev_randao: B256::ZERO,
-                block_number: number,
-                gas_limit: 30_000_000,
-                gas_used: 0,
-                timestamp: number,
-                extra_data: Default::default(),
-                base_fee_per_gas: U256::ZERO,
-                block_hash: hash(number),
-                transactions: vec![],
-            }),
-        }
+    fn gap(chain: &BTreeMap<u64, BaseExecutionPayloadEnvelope>) -> CatchupGap {
+        CatchupGap { first: 11, last: 13, tip_hash: chain[&13].execution_payload.block_hash() }
     }
 
     fn source(
-        serve: impl Fn(u64) -> Option<B256> + Send + Sync + 'static,
+        serve: impl Fn(u64) -> Result<BaseExecutionPayloadEnvelope, RemoteL2ClientError>
+        + Send
+        + Sync
+        + 'static,
     ) -> CanonicalCatchupSource {
         let mut client = MockRemoteClient::new();
-        client.expect_get_payload_by_number().returning(move |number| {
-            serve(number)
-                .map(|parent| payload(number, parent))
-                .ok_or_else(|| RemoteL2ClientError::BlockNotFound(number.to_string()))
-        });
-        CanonicalCatchupSource::new(Arc::new(client))
+        client.expect_get_payload_by_number().returning(serve);
+        CanonicalCatchupSource::new(Arc::new(client), Arc::new(RollupConfig::default()))
+    }
+
+    fn serving(chain: BTreeMap<u64, BaseExecutionPayloadEnvelope>) -> CanonicalCatchupSource {
+        source(move |number| Ok(chain[&number].clone()))
     }
 
     async fn fetch(
@@ -252,53 +315,74 @@ mod tests {
         source.take(anchor)
     }
 
-    fn numbers(payloads: &[BaseExecutionPayloadEnvelope]) -> Vec<u64> {
-        payloads.iter().map(|payload| payload.execution_payload.block_number()).collect()
-    }
-
     #[tokio::test]
     async fn fetches_linked_gap() {
-        let mut source = source(|number| Some(hash(number - 1)));
+        let chain = chain();
+        let (anchor, gap) = (info(&chain[&10]), gap(&chain));
+        let mut source = serving(chain.clone());
 
-        let payloads = fetch(&mut source, head(10), gap()).await.expect("linked gap");
+        let payloads = fetch(&mut source, anchor, gap).await.expect("linked gap");
 
-        assert_eq!(numbers(&payloads), vec![11, 12, 13]);
+        assert_eq!(payloads, chain.range(11..).map(|(_, block)| block.clone()).collect::<Vec<_>>());
     }
 
     #[tokio::test]
     async fn discards_fetch_when_anchor_moved() {
-        let mut source = source(|number| Some(hash(number - 1)));
-        source.start(head(10), gap());
+        let chain = chain();
+        let (anchor, gap) = (info(&chain[&10]), gap(&chain));
+        let mut source = serving(chain.clone());
+        source.start(anchor, gap);
         source.wait().await;
 
-        assert!(source.take(head(11)).is_none());
-        source.start(head(11), CatchupGap { first: 12, ..gap() });
+        assert!(source.take(info(&chain[&11])).is_none());
+        source.start(info(&chain[&11]), CatchupGap { first: 12, ..gap });
         assert!(source.is_fetching(), "a stale result must not back off");
     }
 
     #[tokio::test]
+    async fn rejects_block_whose_hash_does_not_match_contents() {
+        let chain = chain();
+        let (anchor, gap) = (info(&chain[&10]), gap(&chain));
+        let mut forged = chain.clone();
+        if let BaseExecutionPayload::V1(payload) =
+            &mut forged.get_mut(&12).unwrap().execution_payload
+        {
+            payload.gas_used += 1;
+        }
+        let mut source = serving(forged);
+
+        source.start(anchor, gap);
+        source.wait().await;
+        let (_, result) = source.completed.take().expect("finished");
+
+        assert!(matches!(result, Err(CatchupSourceError::InvalidBlock { number: 12, .. })));
+    }
+
+    #[tokio::test]
     async fn rejects_unlinked_ranges_and_backs_off() {
+        let chain = chain();
+        let (anchor, gap) = (info(&chain[&10]), gap(&chain));
         let forked_anchor = L2BlockInfo {
-            block_info: BlockInfo {
-                number: 10,
-                hash: B256::with_last_byte(0xff),
-                ..Default::default()
-            },
-            ..Default::default()
+            block_info: BlockInfo { hash: B256::with_last_byte(0xff), ..anchor.block_info },
+            ..anchor
         };
+        let missing = chain.clone();
         let cases = [
-            (forked_anchor, gap(), source(|number| Some(hash(number - 1)))),
+            (forked_anchor, gap, serving(chain.clone())),
             (
-                head(10),
-                CatchupGap { tip_hash: B256::with_last_byte(0xee), ..gap() },
-                source(|number| Some(hash(number - 1))),
+                anchor,
+                CatchupGap { tip_hash: B256::with_last_byte(0xee), ..gap },
+                serving(chain.clone()),
             ),
             (
-                head(10),
-                gap(),
-                source(|number| Some(if number == 12 { B256::ZERO } else { hash(number - 1) })),
+                anchor,
+                gap,
+                source(move |number| {
+                    (number != 12)
+                        .then(|| missing[&number].clone())
+                        .ok_or_else(|| RemoteL2ClientError::BlockNotFound(number.to_string()))
+                }),
             ),
-            (head(10), gap(), source(|number| (number != 12).then(|| hash(number - 1)))),
         ];
         for (anchor, gap, mut source) in cases {
             assert!(fetch(&mut source, anchor, gap).await.is_none());
@@ -334,15 +418,18 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn stalled_source_never_blocks_caller_and_times_out() {
-        let mut source = CanonicalCatchupSource::new(Arc::new(StalledClient));
-        source.start(head(10), gap());
+        let chain = chain();
+        let (anchor, gap) = (info(&chain[&10]), gap(&chain));
+        let mut source =
+            CanonicalCatchupSource::new(Arc::new(StalledClient), Arc::new(RollupConfig::default()));
+        source.start(anchor, gap);
 
-        assert!(source.take(head(10)).is_none());
+        assert!(source.take(anchor).is_none());
         assert!(source.is_fetching());
 
         source.wait().await;
-        assert!(source.take(head(10)).is_none());
-        source.start(head(10), gap());
+        assert!(source.take(anchor).is_none());
+        source.start(anchor, gap);
         assert!(!source.is_fetching(), "timed-out fetch must back off");
     }
 }
