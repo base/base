@@ -4602,6 +4602,7 @@ dependencies = [
  "alloy-rpc-types-eth 2.5.0",
  "alloy-signer 2.5.0",
  "alloy-signer-local 2.5.0",
+ "alloy-sol-types",
  "base-common-chains",
  "base-common-consensus",
  "base-common-rpc-types",

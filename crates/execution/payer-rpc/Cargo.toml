@@ -43,14 +43,15 @@ tracing.workspace = true
 [dev-dependencies]
 # base
 base-node-runner = { workspace = true, features = ["test-utils"] }
+base-test-utils = { workspace = true, features = ["contracts"] }
 base-execution-chainspec.workspace = true
-base-test-utils.workspace = true
 
 # reth
 reth-provider = { workspace = true, features = ["test-utils"] }
 
 # alloy
 alloy-signer-local.workspace = true
+alloy-sol-types.workspace = true
 alloy-genesis.workspace = true
 alloy-signer.workspace = true
 
