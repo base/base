@@ -140,8 +140,12 @@ pub struct CanonicalCatchupSource {
 impl CanonicalCatchupSource {
     /// Largest gap fetched; larger gaps close through derivation until they fit.
     pub const MAX_GAP_BLOCKS: u64 = 300;
-    /// Bound on one gap fetch.
-    pub const FETCH_TIMEOUT: Duration = Duration::from_secs(5);
+    /// Minimum bound on one gap fetch.
+    pub const MIN_FETCH_TIMEOUT: Duration = Duration::from_secs(5);
+    /// Fetch time allowed per block on top of [`Self::MIN_FETCH_TIMEOUT`].
+    ///
+    /// The whole range must arrive: a partial prefix does not reach the signed gossip tip.
+    pub const FETCH_TIMEOUT_PER_BLOCK: Duration = Duration::from_millis(100);
     /// Delay before the next fetch after a failed fetch or insert.
     pub const RETRY_DELAY: Duration = Duration::from_secs(5);
     /// Concurrent block requests per fetch.
@@ -224,7 +228,9 @@ impl CanonicalCatchupSource {
             .map(|number| client.get_payload_by_number(number))
             .buffered(Self::CONCURRENCY)
             .try_collect::<Vec<_>>();
-        let payloads = tokio::time::timeout(Self::FETCH_TIMEOUT, fetch)
+        let timeout = Self::MIN_FETCH_TIMEOUT
+            + Self::FETCH_TIMEOUT_PER_BLOCK * u32::try_from(gap.block_count()).unwrap_or(u32::MAX);
+        let payloads = tokio::time::timeout(timeout, fetch)
             .await
             .map_err(|_| CatchupSourceError::Timeout)??;
         gap.verify(&rollup, anchor, &payloads)?;
@@ -234,7 +240,7 @@ impl CanonicalCatchupSource {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeMap, future, sync::Arc};
+    use std::{collections::BTreeMap, future, sync::Arc, time::Duration};
 
     use alloy_consensus::{Block, BlockBody, Header};
     use alloy_eips::BlockNumberOrTag;
@@ -270,9 +276,13 @@ mod tests {
 
     /// Canonical blocks 10..=13; block 10 is the anchor.
     fn chain() -> BTreeMap<u64, BaseExecutionPayloadEnvelope> {
+        chain_to(13)
+    }
+
+    fn chain_to(last: u64) -> BTreeMap<u64, BaseExecutionPayloadEnvelope> {
         let mut chain = BTreeMap::new();
         let mut parent = B256::ZERO;
-        for number in 10..=13 {
+        for number in 10..=last {
             let block = envelope(number, parent);
             parent = block.execution_payload.block_hash();
             chain.insert(number, block);
@@ -456,5 +466,50 @@ mod tests {
         assert!(source.take(anchor).is_none());
         source.start(anchor, gap);
         assert!(!source.is_fetching(), "timed-out fetch must back off");
+    }
+
+    /// Hand-rolled because mockall returns values synchronously and cannot delay a response.
+    #[derive(Debug)]
+    struct SlowClient(BTreeMap<u64, BaseExecutionPayloadEnvelope>);
+
+    #[async_trait]
+    impl RemoteClient for SlowClient {
+        async fn get_block_number(&self, _: BlockNumberOrTag) -> Result<u64, RemoteL2ClientError> {
+            unimplemented!()
+        }
+
+        async fn get_block_info(
+            &self,
+            _: BlockNumberOrTag,
+        ) -> Result<BlockInfo, RemoteL2ClientError> {
+            unimplemented!()
+        }
+
+        async fn get_payload_by_number(
+            &self,
+            number: u64,
+        ) -> Result<BaseExecutionPayloadEnvelope, RemoteL2ClientError> {
+            tokio::time::sleep(Duration::from_millis(400)).await;
+            Ok(self.0[&number].clone())
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn large_gap_gets_more_than_minimum_fetch_time() {
+        let chain = chain_to(210);
+        let anchor = info(&chain[&10]);
+        let gap = CatchupGap {
+            first: 11,
+            last: 210,
+            tip_hash: chain[&210].execution_payload.block_hash(),
+        };
+        let mut source = CanonicalCatchupSource::new(
+            Arc::new(SlowClient(chain)),
+            Arc::new(RollupConfig::default()),
+        );
+
+        let payloads = fetch(&mut source, anchor, gap).await.expect("slow but complete range");
+
+        assert_eq!(payloads.len(), 200);
     }
 }
