@@ -403,6 +403,12 @@ admissions with `data.selection: ignored` and starts no group, and the builder
 emits no candidate events; the ledger still journals terminal events for groups
 admitted earlier.
 
+The native builder evaluates candidate groups only on Denim-active builds,
+which build each payload once. On a pre-Denim build, which the payload job
+rebuilds repeatedly, it takes the runtime-disabled path instead: a group whose
+signed fallback is the default sibling commits that sibling, a drop group stays
+parked until Denim, and no build charges an evaluation attempt.
+
 Canonicality caveat: builder events are local payload construction signals, not
 canonical-chain or consensus-finality observations. A builder event with
 `block_hash` means the builder computed or published that payload shape; it does
