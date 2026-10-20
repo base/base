@@ -16,5 +16,16 @@ pub use extension::{PAYER_UPSTREAM_TIMEOUT, PayerRpcConfig, PayerRpcExtension};
 mod filter;
 pub use filter::{PayerRequestError, PayerRequestFilter};
 
+mod rejection;
+pub use rejection::PayerRejection;
+
 mod rpc;
-pub use rpc::{PAYER_PRE_EVEREST_RPC_ERROR, PayerApiImpl, PayerApiServer};
+pub use rpc::{
+    PAYER_PRE_EVEREST_RPC_ERROR, PAYER_UNREACHABLE_RPC_ERROR, PayerApiImpl, PayerApiServer,
+};
+
+mod simulate;
+pub use simulate::{EthCallSimulator, PhaseZeroSimulator};
+
+mod transaction;
+pub use transaction::{PayerTransaction, PayerTransactionError};

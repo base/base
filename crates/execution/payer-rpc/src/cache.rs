@@ -32,7 +32,7 @@ const TEMPORARILY_UNAVAILABLE: &str = "TEMPORARILY_UNAVAILABLE";
 #[derive(Debug)]
 pub struct TermsCache {
     entry: Mutex<Option<CachedTerms>>,
-    refresh: AsyncMutex<()>,
+    refresh: AsyncMutex<Option<Instant>>,
 }
 
 #[derive(Debug, Clone)]
@@ -77,7 +77,7 @@ impl CachedTerms {
 impl TermsCache {
     /// Creates an empty cache.
     pub fn new() -> Self {
-        Self { entry: Mutex::new(None), refresh: AsyncMutex::new(()) }
+        Self { entry: Mutex::new(None), refresh: AsyncMutex::new(None) }
     }
 
     /// Returns the response while it is fresh and was not invalidated.
@@ -115,7 +115,11 @@ impl TermsCache {
 
     /// Waits for any other refetch to finish, so concurrent misses share one
     /// upstream call.
-    pub async fn refreshing(&self) -> MutexGuard<'_, ()> {
+    ///
+    /// The guard holds when the last refetch failed to reach the payer. Callers
+    /// that queued before that failure reuse it instead of repeating the call,
+    /// so a slow payer delays each of them by one upstream timeout at most.
+    pub async fn refreshing(&self) -> MutexGuard<'_, Option<Instant>> {
         self.refresh.lock().await
     }
 

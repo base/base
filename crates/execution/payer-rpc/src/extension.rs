@@ -2,10 +2,11 @@
 
 use std::time::Duration;
 
+use base_execution_eip8130_rpc::Eip8130EthApiExt;
 use base_execution_rpc::SequencerClient;
 use base_node_runner::{BaseNodeExtension, BaseRpcContext, FromExtensionConfig, NodeHooks};
 
-use crate::{PayerApiImpl, PayerApiServer};
+use crate::{EthCallSimulator, PayerApiImpl, PayerApiServer};
 
 /// Bound on one upstream payer HTTP call, including connect and the response body.
 ///
@@ -41,7 +42,14 @@ impl BaseNodeExtension for PayerRpcExtension {
                 config.upstream_headers.clone(),
                 PAYER_UPSTREAM_TIMEOUT,
             )?;
-            let api = PayerApiImpl::new(ctx.provider().clone(), client, config.cache_get_terms);
+            let simulator =
+                EthCallSimulator::new(Eip8130EthApiExt::new(ctx.registry.eth_api().clone()));
+            let api = PayerApiImpl::new(
+                ctx.provider().clone(),
+                client,
+                simulator,
+                config.cache_get_terms,
+            );
             ctx.modules.merge_configured(api.into_rpc())?;
             Ok(())
         })

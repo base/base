@@ -46,8 +46,8 @@ impl PayerRequestFilter {
         }
     }
 
-    /// Checks a `payer_sendTransaction` body.
-    pub fn validate_send_transaction(request: &Value) -> Result<(), PayerRequestError> {
+    /// Checks a `payer_sendTransaction` body and returns its decoded transaction bytes.
+    pub fn validate_send_transaction(request: &Value) -> Result<Vec<u8>, PayerRequestError> {
         let object = Self::object(request)?;
         let transaction = object
             .get("transaction")
@@ -63,7 +63,7 @@ impl PayerRequestFilter {
         {
             return Err(PayerRequestError::InvalidContext);
         }
-        Ok(())
+        Ok(bytes)
     }
 
     fn object(request: &Value) -> Result<&Map<String, Value>, PayerRequestError> {

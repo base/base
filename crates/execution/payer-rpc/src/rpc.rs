@@ -1,6 +1,6 @@
 //! `payer_getTerms` and `payer_sendTransaction` proxy.
 
-use std::{fmt, sync::Arc};
+use std::{fmt, sync::Arc, time::Instant};
 
 use alloy_consensus::BlockHeader;
 use base_common_chains::Upgrades;
@@ -15,11 +15,14 @@ use reth_storage_api::BlockReaderIdExt;
 use serde_json::Value;
 use tracing::{debug, warn};
 
-use crate::{PayerRequestFilter, TermsCache};
+use crate::{PayerRejection, PayerRequestFilter, PayerTransaction, PhaseZeroSimulator, TermsCache};
 
 /// Rejection returned when `payer_*` is called before Everest activates EIP-8430.
 pub const PAYER_PRE_EVEREST_RPC_ERROR: &str = "payer methods require EIP-8430, which is gated \
      behind Everest; they are not accepted before Everest is active";
+
+/// Error for a `payer_getTerms` that queued behind a refetch which could not reach the payer.
+pub const PAYER_UNREACHABLE_RPC_ERROR: &str = "payer unreachable";
 
 /// Payer methods exposed on the execution RPC.
 ///
@@ -31,41 +34,55 @@ pub trait PayerApi {
     #[method(name = "getTerms")]
     async fn get_terms(&self, request: Value) -> RpcResult<Value>;
 
-    /// Forwards a sender-signed transaction for the payer to co-sign and submit.
+    /// Checks a sender-signed transaction and forwards it for the payer to co-sign and submit.
     #[method(name = "sendTransaction")]
     async fn send_transaction(&self, request: Value) -> RpcResult<Value>;
 }
 
 /// Proxies payer methods to the upstream payer service.
-pub struct PayerApiImpl<Provider> {
+pub struct PayerApiImpl<Provider, Simulator> {
     provider: Provider,
     client: SequencerClient,
+    simulator: Simulator,
     cache: Option<Arc<TermsCache>>,
 }
 
-impl<Provider> fmt::Debug for PayerApiImpl<Provider> {
+impl<Provider, Simulator> fmt::Debug for PayerApiImpl<Provider, Simulator> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PayerApiImpl").field("cache_get_terms", &self.cache.is_some()).finish()
     }
 }
 
-impl<Provider> PayerApiImpl<Provider> {
-    /// Creates a proxy. `cache_get_terms` stores one shared `payer_getTerms` response.
-    pub fn new(provider: Provider, client: SequencerClient, cache_get_terms: bool) -> Self {
-        Self { provider, client, cache: cache_get_terms.then(|| Arc::new(TermsCache::new())) }
+impl<Provider, Simulator> PayerApiImpl<Provider, Simulator> {
+    /// Creates a proxy that runs each `payer_sendTransaction` phase 0 through `simulator`.
+    /// `cache_get_terms` stores one shared `payer_getTerms` response.
+    pub fn new(
+        provider: Provider,
+        client: SequencerClient,
+        simulator: Simulator,
+        cache_get_terms: bool,
+    ) -> Self {
+        Self {
+            provider,
+            client,
+            simulator,
+            cache: cache_get_terms.then(|| Arc::new(TermsCache::new())),
+        }
     }
 }
 
-impl<Provider> PayerApiImpl<Provider>
+impl<Provider, Simulator> PayerApiImpl<Provider, Simulator>
 where
     Provider: BlockReaderIdExt + ChainSpecProvider + Clone,
     Provider::ChainSpec: Upgrades + EthChainSpec,
+    Simulator: PhaseZeroSimulator,
 {
     fn chain_id(&self) -> u64 {
         self.provider.chain_spec().chain().id()
     }
 
-    fn ensure_everest(&self) -> RpcResult<()> {
+    /// The latest block's timestamp, rejecting the call unless Everest is active at it.
+    fn everest_timestamp(&self) -> RpcResult<u64> {
         let header = self.provider.latest_header().map_err(|error| {
             warn!(error = %error, "failed to read latest header for payer fork gate");
             ErrorObjectOwned::owned(
@@ -74,10 +91,35 @@ where
                 None::<()>,
             )
         })?;
-        let active = header.is_some_and(|header| {
-            self.provider.chain_spec().is_everest_active_at_timestamp(header.timestamp())
-        });
-        if active { Ok(()) } else { Err(invalid_params(PAYER_PRE_EVEREST_RPC_ERROR)) }
+        header
+            .map(|header| header.timestamp())
+            .filter(|timestamp| {
+                self.provider.chain_spec().is_everest_active_at_timestamp(*timestamp)
+            })
+            .ok_or_else(|| invalid_params(PAYER_PRE_EVEREST_RPC_ERROR))
+    }
+
+    /// Rejects a transaction the payer would reject, without forwarding it: one that does not
+    /// decode, does not leave a payer to co-sign, lacks a valid sender signature, or whose
+    /// phase 0 fails at the latest block.
+    ///
+    /// A simulation that cannot run passes the transaction on, since the payer checks it too.
+    async fn check_transaction(&self, raw: &[u8], timestamp: u64) -> RpcResult<()> {
+        let keystore = self.provider.chain_spec().is_zenith_active_at_timestamp(timestamp);
+        let transaction =
+            PayerTransaction::decode(raw, self.chain_id(), keystore).map_err(|error| {
+                debug!(error = %error, "rejected payer_sendTransaction transaction before forward");
+                PayerRejection::invalid_transaction(error)
+            })?;
+        let Err(error) = self.simulator.simulate(transaction.phase_zero_request()).await else {
+            return Ok(());
+        };
+        let Some(rejection) = PayerRejection::for_phase_zero(&error) else {
+            warn!(error = %error, "payer_sendTransaction phase 0 could not be simulated");
+            return Ok(());
+        };
+        debug!(error = %error, "payer_sendTransaction phase 0 failed before forward");
+        Err(rejection)
     }
 
     async fn forward(&self, method: &'static str, request: &Value) -> RpcResult<Value> {
@@ -90,9 +132,22 @@ where
         if let Some(cached) = cache.get() {
             return Ok(TermsCache::order_for(request, cached));
         }
-        let _refreshing = cache.refreshing().await;
+        let queued_at = Instant::now();
+        let mut unreachable_at = cache.refreshing().await;
         if let Some(cached) = cache.get() {
             return Ok(TermsCache::order_for(request, cached));
+        }
+        if unreachable_at.is_some_and(|failed_at| failed_at >= queued_at) {
+            return cache
+                .get_stale()
+                .map(|stale| TermsCache::order_for(request, stale))
+                .ok_or_else(|| {
+                    ErrorObjectOwned::owned(
+                        ErrorCode::InternalError.code(),
+                        PAYER_UNREACHABLE_RPC_ERROR,
+                        None::<()>,
+                    )
+                });
         }
         // The cached body is shared, so it must carry the payer's own token order rather than
         // the order this caller's `preferredTokens` would produce.
@@ -100,7 +155,9 @@ where
         if let Some(object) = shared_request.as_object_mut() {
             object.remove("preferredTokens");
         }
-        match self.client.request::<_, Value>("payer_getTerms", (&shared_request,)).await {
+        let result = self.client.request::<_, Value>("payer_getTerms", (&shared_request,)).await;
+        *unreachable_at = None;
+        match result {
             Ok(response) => {
                 cache.insert(&response);
                 Ok(TermsCache::order_for(request, response))
@@ -109,7 +166,10 @@ where
                 let SequencerClientError::HttpError(inner) = &error;
                 if inner.is_error_resp() {
                     cache.clear();
-                } else if let Some(stale) = cache.get_stale() {
+                    return Err(error.into());
+                }
+                *unreachable_at = Some(Instant::now());
+                if let Some(stale) = cache.get_stale() {
                     warn!(error = %error, "payer unreachable; serving cached payer_getTerms");
                     return Ok(TermsCache::order_for(request, stale));
                 }
@@ -120,13 +180,14 @@ where
 }
 
 #[async_trait]
-impl<Provider> PayerApiServer for PayerApiImpl<Provider>
+impl<Provider, Simulator> PayerApiServer for PayerApiImpl<Provider, Simulator>
 where
     Provider: BlockReaderIdExt + ChainSpecProvider + Clone + Send + Sync + 'static,
     Provider::ChainSpec: Upgrades + EthChainSpec,
+    Simulator: PhaseZeroSimulator,
 {
     async fn get_terms(&self, request: Value) -> RpcResult<Value> {
-        self.ensure_everest()?;
+        self.everest_timestamp()?;
         PayerRequestFilter::validate_get_terms(&request, self.chain_id()).map_err(|error| {
             debug!(error = %error, "rejected payer_getTerms before forward");
             invalid_params(error)
@@ -138,11 +199,12 @@ where
     }
 
     async fn send_transaction(&self, request: Value) -> RpcResult<Value> {
-        self.ensure_everest()?;
-        PayerRequestFilter::validate_send_transaction(&request).map_err(|error| {
+        let timestamp = self.everest_timestamp()?;
+        let raw = PayerRequestFilter::validate_send_transaction(&request).map_err(|error| {
             debug!(error = %error, "rejected payer_sendTransaction before forward");
             invalid_params(error)
         })?;
+        self.check_transaction(&raw, timestamp).await?;
         let result = self.forward("payer_sendTransaction", &request).await;
         if let (Err(error), Some(cache)) = (&result, &self.cache) {
             let data = error.data().and_then(|data| serde_json::from_str(data.get()).ok());
@@ -158,11 +220,16 @@ fn invalid_params(error: impl ToString) -> ErrorObjectOwned {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::{sync::Arc, time::Duration};
 
+    use alloy_eips::Encodable2718;
+    use alloy_primitives::{Address, Bytes, U256, hex};
+    use alloy_rpc_types_eth::error::EthRpcErrorCode;
+    use alloy_signer::SignerSync;
+    use alloy_signer_local::PrivateKeySigner;
     use base_common_chains::ChainConfig;
-    use base_common_consensus::BasePrimitives;
-    use base_execution_chainspec::BaseChainSpec;
+    use base_common_consensus::{BasePrimitives, BaseTxEnvelope, Call, Eip8130Signed, TxEip8130};
+    use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_execution_rpc::SequencerClient;
     use base_test_utils::build_test_genesis_everest;
     use httpmock::prelude::*;
@@ -170,6 +237,10 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+    use crate::simulate::MockPhaseZeroSimulator;
+
+    type TestApi =
+        PayerApiImpl<MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>, MockPhaseZeroSimulator>;
 
     fn everest_provider() -> MockEthProvider<BasePrimitives, Arc<BaseChainSpec>> {
         let mut genesis = build_test_genesis_everest();
@@ -179,9 +250,52 @@ mod tests {
             .with_genesis_block()
     }
 
-    fn pre_everest_provider() -> MockEthProvider<BasePrimitives, Arc<BaseChainSpec>> {
-        use base_execution_chainspec::BaseChainSpecBuilder;
+    fn client(sequencer: &MockServer) -> SequencerClient {
+        SequencerClient::new_http_with_headers(sequencer.base_url(), vec![]).unwrap()
+    }
 
+    /// A simulator under which every phase 0 succeeds.
+    fn passing_simulator() -> MockPhaseZeroSimulator {
+        let mut simulator = MockPhaseZeroSimulator::new();
+        simulator.expect_simulate().returning(|_| Ok(()));
+        simulator
+    }
+
+    fn failing_simulator(code: i32, message: &'static str) -> MockPhaseZeroSimulator {
+        let mut simulator = MockPhaseZeroSimulator::new();
+        simulator
+            .expect_simulate()
+            .returning(move |_| Err(ErrorObjectOwned::owned(code, message, Some("0x"))));
+        simulator
+    }
+
+    /// A `payer_sendTransaction` request for an EOA-signed transaction paid by `payer`.
+    fn send_request(payer: Option<Address>) -> Value {
+        let signer = PrivateKeySigner::random();
+        let call = Call { to: Address::repeat_byte(0x11), value: U256::ZERO, data: Bytes::new() };
+        let tx = TxEip8130 {
+            chain_id: ChainConfig::mainnet().chain_id,
+            max_fee_per_gas: 1,
+            gas_limit: 100_000,
+            calls: vec![vec![call]],
+            payer,
+            ..Default::default()
+        };
+        let sender_auth = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap().as_bytes();
+        let signed = Eip8130Signed::new(tx, Bytes::from(sender_auth.to_vec()), Bytes::new());
+        json!({ "transaction": hex::encode_prefixed(BaseTxEnvelope::Eip8130(signed).encoded_2718()) })
+    }
+
+    fn sponsored_request() -> Value {
+        send_request(Some(Address::repeat_byte(0xaa)))
+    }
+
+    fn rejection_data(error: &ErrorObjectOwned) -> Value {
+        assert_eq!(error.code(), PayerRejection::CODE);
+        serde_json::from_str(error.data().expect("rejection data").get()).unwrap()
+    }
+
+    fn pre_everest_provider() -> MockEthProvider<BasePrimitives, Arc<BaseChainSpec>> {
         MockEthProvider::<BasePrimitives>::new()
             .with_chain_spec(Arc::new(
                 BaseChainSpecBuilder::base_mainnet().cobalt_activated().build(),
@@ -214,8 +328,12 @@ mod tests {
             when.method(POST).path("/");
             then.status(500);
         });
-        let client = SequencerClient::new_http_with_headers(sequencer.base_url(), vec![]).unwrap();
-        let api = PayerApiImpl::new(pre_everest_provider(), client, false);
+        let api = PayerApiImpl::new(
+            pre_everest_provider(),
+            client(&sequencer),
+            MockPhaseZeroSimulator::new(),
+            false,
+        );
 
         let error = api.get_terms(terms_request(1)).await.expect_err("pre-everest rejection");
 
@@ -239,8 +357,8 @@ mod tests {
                 .header("content-type", "application/json")
                 .json_body(json!({ "jsonrpc": "2.0", "id": 0, "result": response }));
         });
-        let client = SequencerClient::new_http_with_headers(sequencer.base_url(), vec![]).unwrap();
-        let api = PayerApiImpl::new(everest_provider(), client, true);
+        let api =
+            PayerApiImpl::new(everest_provider(), client(&sequencer), passing_simulator(), true);
 
         let first = api.get_terms(terms_request(1)).await.unwrap();
         let second = api.get_terms(terms_request(2)).await.unwrap();
@@ -264,19 +382,14 @@ mod tests {
         }));
     }
 
-    /// Rejects one `payer_sendTransaction` with `code`.
-    async fn reject_send(
-        api: &PayerApiImpl<
-            impl BlockReaderIdExt + ChainSpecProvider<ChainSpec = Arc<BaseChainSpec>> + Clone + 'static,
-        >,
-        sequencer: &MockServer,
-        code: &str,
-    ) {
+    /// Has the payer reject one `payer_sendTransaction` with `code`.
+    async fn reject_send(api: &TestApi, sequencer: &MockServer, code: &str) {
         let mut mock = sequencer.mock(|when, then| {
             when.method(POST).body_includes("payer_sendTransaction");
             rpc_error(then, code);
         });
-        api.send_transaction(json!({ "transaction": "0x02" })).await.expect_err("rejected");
+        api.send_transaction(sponsored_request()).await.expect_err("rejected");
+        mock.assert_calls(1);
         mock.delete();
     }
 
@@ -288,8 +401,8 @@ mod tests {
             when.method(POST).body_includes("payer_getTerms");
             rpc_result(then, terms_response());
         });
-        let client = SequencerClient::new_http_with_headers(sequencer.base_url(), vec![]).unwrap();
-        let api = PayerApiImpl::new(everest_provider(), client, true);
+        let api =
+            PayerApiImpl::new(everest_provider(), client(&sequencer), passing_simulator(), true);
         api.get_terms(terms_request(1)).await.unwrap();
 
         reject_send(&api, &sequencer, "PAYMENT_INSUFFICIENT").await;
@@ -313,8 +426,8 @@ mod tests {
             when.method(POST).body_includes("payer_getTerms");
             rpc_result(then, terms_response());
         });
-        let client = SequencerClient::new_http_with_headers(sequencer.base_url(), vec![]).unwrap();
-        let api = PayerApiImpl::new(everest_provider(), client, true);
+        let api =
+            PayerApiImpl::new(everest_provider(), client(&sequencer), passing_simulator(), true);
         api.get_terms(terms_request(1)).await.unwrap();
         terms.delete();
 
@@ -352,8 +465,8 @@ mod tests {
             when.method(POST).body_includes("payer_getTerms").body_excludes("preferredTokens");
             rpc_result(then, response.clone());
         });
-        let client = SequencerClient::new_http_with_headers(sequencer.base_url(), vec![]).unwrap();
-        let api = PayerApiImpl::new(everest_provider(), client, true);
+        let api =
+            PayerApiImpl::new(everest_provider(), client(&sequencer), passing_simulator(), true);
 
         let mut prefers_usdc = terms_request(1);
         prefers_usdc["preferredTokens"] = json!([usdc]);
@@ -375,8 +488,8 @@ mod tests {
                 .header("content-type", "application/json")
                 .json_body(json!({ "jsonrpc": "2.0", "id": 0, "result": response }));
         });
-        let client = SequencerClient::new_http_with_headers(sequencer.base_url(), vec![]).unwrap();
-        let api = PayerApiImpl::new(everest_provider(), client, false);
+        let api =
+            PayerApiImpl::new(everest_provider(), client(&sequencer), passing_simulator(), false);
 
         api.get_terms(terms_request(1)).await.unwrap();
         api.get_terms(terms_request(2)).await.unwrap();
@@ -385,9 +498,97 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn requests_queued_behind_an_unreachable_payer_reuse_its_failure() {
+        let sequencer = MockServer::start();
+        let mut terms = sequencer.mock(|when, then| {
+            when.method(POST).body_includes("payer_getTerms");
+            rpc_result(then, terms_response());
+        });
+        let client = SequencerClient::new_http_with_headers_and_timeout(
+            sequencer.base_url(),
+            vec![],
+            Duration::from_millis(200),
+        )
+        .unwrap();
+        let api = PayerApiImpl::new(everest_provider(), client, passing_simulator(), true);
+        api.get_terms(terms_request(1)).await.unwrap();
+        reject_send(&api, &sequencer, "PAYMENT_INSUFFICIENT").await;
+        terms.delete();
+        let slow = sequencer.mock(|when, then| {
+            when.method(POST).body_includes("payer_getTerms");
+            rpc_result(then.delay(Duration::from_secs(1)), terms_response());
+        });
+
+        let (first, second, third) = tokio::join!(
+            api.get_terms(terms_request(1)),
+            api.get_terms(terms_request(2)),
+            api.get_terms(terms_request(3)),
+        );
+
+        for served in [first, second, third] {
+            assert_eq!(served.unwrap(), terms_response());
+        }
+        slow.assert_calls(1);
+    }
+
+    #[tokio::test]
+    async fn rejects_a_transaction_without_a_payer_without_forwarding() {
+        let sequencer = MockServer::start();
+        let mock = sequencer.mock(|when, then| {
+            when.method(POST);
+            then.status(500);
+        });
+        let api = PayerApiImpl::new(
+            everest_provider(),
+            client(&sequencer),
+            MockPhaseZeroSimulator::new(),
+            false,
+        );
+
+        let error = api.send_transaction(send_request(None)).await.expect_err("no payer");
+
+        assert_eq!(rejection_data(&error)["code"], "INVALID_TRANSACTION");
+        mock.assert_calls(0);
+    }
+
+    #[tokio::test]
+    async fn rejects_a_transaction_whose_first_phase_reverts_without_forwarding() {
+        let sequencer = MockServer::start();
+        let mock = sequencer.mock(|when, then| {
+            when.method(POST);
+            then.status(500);
+        });
+        let simulator =
+            failing_simulator(EthRpcErrorCode::ExecutionError.code(), "execution reverted");
+        let api = PayerApiImpl::new(everest_provider(), client(&sequencer), simulator, false);
+
+        let error = api.send_transaction(sponsored_request()).await.expect_err("reverted");
+
+        let data = rejection_data(&error);
+        assert_eq!(data["code"], "EXECUTION_REVERTED");
+        assert_eq!(data["revert"], json!({ "phase": 0, "data": "0x" }));
+        mock.assert_calls(0);
+    }
+
+    #[tokio::test]
+    async fn forwards_a_transaction_whose_first_phase_cannot_be_simulated() {
+        let sequencer = MockServer::start();
+        let mock = sequencer.mock(|when, then| {
+            when.method(POST).body_includes("payer_sendTransaction");
+            rpc_result(then, json!({ "transactionHash": format!("0x{}", "11".repeat(32)) }));
+        });
+        let simulator = failing_simulator(ErrorCode::InternalError.code(), "state unavailable");
+        let api = PayerApiImpl::new(everest_provider(), client(&sequencer), simulator, false);
+
+        api.send_transaction(sponsored_request()).await.unwrap();
+
+        mock.assert_calls(1);
+    }
+
+    #[tokio::test]
     async fn proxies_send_transaction_without_caching() {
         let sequencer = MockServer::start();
-        let request = json!({ "transaction": "0x02" });
+        let request = sponsored_request();
         let mock = sequencer.mock(|when, then| {
             when.method(POST).path("/");
             then.status(200).header("content-type", "application/json").json_body(json!({
@@ -396,8 +597,8 @@ mod tests {
                 "result": { "transactionHash": "0x1111111111111111111111111111111111111111111111111111111111111111" }
             }));
         });
-        let client = SequencerClient::new_http_with_headers(sequencer.base_url(), vec![]).unwrap();
-        let api = PayerApiImpl::new(everest_provider(), client, true);
+        let api =
+            PayerApiImpl::new(everest_provider(), client(&sequencer), passing_simulator(), true);
 
         let result = api.send_transaction(request.clone()).await.unwrap();
         api.send_transaction(request).await.unwrap();
@@ -412,7 +613,9 @@ mod tests {
     #[test]
     fn registers_only_the_enabled_payer_methods() {
         let client = SequencerClient::new_http_with_headers("http://127.0.0.1:9", vec![]).unwrap();
-        let module = PayerApiImpl::new(everest_provider(), client, false).into_rpc();
+        let module =
+            PayerApiImpl::new(everest_provider(), client, MockPhaseZeroSimulator::new(), false)
+                .into_rpc();
         let names: Vec<_> = module.method_names().collect();
 
         assert!(names.contains(&"payer_getTerms"));
