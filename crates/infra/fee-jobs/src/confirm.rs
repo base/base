@@ -332,11 +332,12 @@ impl ConfirmJob {
                             }
                             Ok(WithdrawalStatus::NotReady { ready_at, l1_timestamp, waiting_for_game }) => {
                                 let timing = ConfirmTiming { ready_at, l1_timestamp, waiting_for_game };
+                                info!(withdrawal_hash = %hash, error = %format_args!("{error:#}"), "withdrawal not ready");
                                 timing.log(hash);
                                 Ok(ConfirmOutcome::Pending { timing: Some(timing) })
                             }
                             Ok(WithdrawalStatus::Prove) => {
-                                info!(withdrawal_hash = %hash, "withdrawal pending; a new proof is needed");
+                                info!(withdrawal_hash = %hash, error = %format_args!("{error:#}"), "withdrawal pending; a new proof is needed");
                                 Ok(ConfirmOutcome::Pending { timing: None })
                             }
                             Ok(_) => Err(error.into()),
@@ -967,6 +968,15 @@ mod tests {
                 *captured_proof_reads.lock().unwrap(),
                 2,
                 "each status must read the proof only once"
+            );
+            assert!(
+                logs.lines().any(|line| {
+                    (line.contains("withdrawal not ready")
+                        || line.contains("withdrawal pending; a new proof is needed"))
+                        && line.contains("error=")
+                        && line.contains("execution reverted")
+                }),
+                "{logs}"
             );
         }
         assert!(!logs.contains("secret.endpoint"));
