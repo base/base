@@ -1,5 +1,7 @@
 //! Subprocess coverage of the unified sequencer's builder journal startup contract.
 
+#[cfg(unix)]
+use std::{ffi::OsString, os::unix::ffi::OsStringExt};
 use std::{process::Stdio, time::Duration};
 
 use tempfile::TempDir;
@@ -17,8 +19,12 @@ impl SequencerCli {
     pub fn command(home: &TempDir) -> Command {
         let mut command = Command::new(env!("CARGO_BIN_EXE_base"));
         // Avoid inherited deployment settings changing the startup path under test.
-        for (key, _) in std::env::vars() {
-            if key.starts_with("BASE_") || key.starts_with("BUILDER_") || key.starts_with("OTEL_") {
+        for (key, _) in std::env::vars_os() {
+            let name = key.as_os_str().as_encoded_bytes();
+            if name.starts_with(b"BASE_")
+                || name.starts_with(b"BUILDER_")
+                || name.starts_with(b"OTEL_")
+            {
                 command.env_remove(key);
             }
         }
@@ -86,4 +92,31 @@ async fn sequencer_required_builder_journal_open_failure_aborts_startup() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("failed to initialize required transaction event writer"), "{stderr}");
     assert!(stderr.contains(home.path().to_str().unwrap()), "{stderr}");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn sequencer_startup_tolerates_non_unicode_inherited_environment() {
+    let output = timeout(
+        Duration::from_secs(30),
+        Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "sequencer_required_builder_journal_open_failure_aborts_startup",
+                "--nocapture",
+            ])
+            .env(OsString::from_vec(b"UNRELATED_\xff".to_vec()), "value")
+            .env("UNRELATED_NON_UNICODE_VALUE", OsString::from_vec(vec![0xff]))
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    .expect("non-Unicode environment regression exceeded its deadline")
+    .unwrap();
+    assert!(
+        output.status.success(),
+        "startup failed under non-Unicode environment:\n{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
 }

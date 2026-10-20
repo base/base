@@ -72,9 +72,9 @@ impl SequencerCommand {
         let metering_provider: base_builder_core::SharedMeteringProvider =
             Arc::new(builder.build_metering_store());
         let builder_api_config = builder.builder_api_config();
-        // The builder journal is the only `GlobalTransactionEventWriter` in this process: the
-        // embedded execution config accepts no journal flags, and the execution journal init in
-        // `StandardBaseRethNode::runner` is only reached by `base rpc`.
+        // This command constructs `BaseNodeRunner` directly, bypassing execution journal
+        // initialization in `StandardBaseRethNode::runner`. No other unified subcommand flattens
+        // `BuilderArgs`, so the builder journal is the only global writer initialized here.
         builder.transaction_events.init_global_writer()?;
         // Build the shadow-indexer config before `into_builder_config` consumes `builder`. The
         // config carries an `enabled` flag (false unless ENABLE_SHADOW_INDEXER is set), so the
@@ -187,6 +187,8 @@ impl SequencerCommand {
 
 #[cfg(test)]
 mod tests {
+    use std::process::Command;
+
     use base_consensus_cli::ConsensusNodeConfigArgs;
     use clap::Parser;
 
@@ -414,7 +416,51 @@ mod tests {
     }
 
     #[test]
+    fn builder_transaction_events_journal_defaults_with_exported_environment() {
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "commands::sequencer::tests::builder_transaction_events_journal_defaults_to_disabled",
+                "--nocapture",
+            ])
+            .env("BUILDER_TRANSACTION_EVENTS_ENABLED", "true")
+            .env("BUILDER_TRANSACTION_EVENTS_PATH", "/exported/events.jsonl")
+            .env("BUILDER_TRANSACTION_EVENTS_NETWORK", "exported-network")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "default test failed under exported builder settings:\n{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+    }
+
+    #[test]
     fn builder_transaction_events_journal_defaults_to_disabled() {
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command.args([
+            "--exact",
+            "commands::sequencer::tests::builder_transaction_events_journal_defaults_to_disabled_child",
+            "--ignored",
+        ]);
+        for (key, _) in std::env::vars_os() {
+            if key.as_os_str().as_encoded_bytes().starts_with(b"BUILDER_TRANSACTION_EVENTS_") {
+                command.env_remove(key);
+            }
+        }
+        let output = command.output().unwrap();
+        assert!(
+            output.status.success(),
+            "isolated default parsing failed:\n{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+    }
+
+    #[test]
+    #[ignore = "spawned by builder_transaction_events_journal_defaults_to_disabled with isolated env"]
+    fn builder_transaction_events_journal_defaults_to_disabled_child() {
         let cli = BaseCli::parse_from(sequencer_args(&[
             "base",
             "sequencer",
@@ -427,6 +473,10 @@ mod tests {
         };
 
         assert!(sequencer.builder.transaction_events.global_writer_config().is_none());
+        assert_eq!(
+            sequencer.builder.transaction_events,
+            base_builder_cli::TransactionEventsArgs::default()
+        );
     }
 
     #[test]
