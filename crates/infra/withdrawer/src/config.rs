@@ -121,7 +121,7 @@ pub struct WithdrawerArgs {
     /// Mnemonic or Ledger derivation path.
     #[arg(long, default_value = "m/44'/60'/0'/0/0", conflicts_with = "private_key", value_parser = HdPathValueParser)]
     pub hd_path: DerivationPath,
-    /// Minimum gas limit; gas estimation still runs and can raise this limit.
+    /// Minimum gas limit; gas is always estimated, so this cannot bypass estimation failures.
     #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
     pub gas_limit: Option<u64>,
     /// Transaction management configuration.
@@ -340,7 +340,7 @@ pub struct WithdrawerConfig {
     pub withdrawal: B256,
     /// Selected signing source.
     pub signer: SignerSource,
-    /// Minimum gas limit, applied after gas estimation.
+    /// Minimum gas limit; gas is always estimated, so this cannot bypass estimation failures.
     pub gas_limit: Option<u64>,
     /// Fee bumping, resubmission and confirmation policy.
     pub tx_manager: base_tx_manager::TxManagerConfig,

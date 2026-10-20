@@ -12,7 +12,7 @@ cargo run -p base-withdrawer-bin -- \
   --dry-run
 ```
 
-Prove and finalize transactions use `base-tx-manager` for EIP-1559 fee estimation, fee-bumped resubmission and confirmation depth. Configure it with `--tx-manager.*` flags or `WITHDRAWER_TX_MANAGER_*` environment variables. The default is ten confirmations and a ten-minute send timeout; `--timeout` separately bounds the entire withdrawal operation. `--gas-limit` remains available, but explicit fee and gas multiplier flags have been removed.
+Prove and finalize transactions use `base-tx-manager` for EIP-1559 fee estimation, fee-bumped resubmission and confirmation depth. Configure it with `--tx-manager.*` flags or `WITHDRAWER_TX_MANAGER_*` environment variables. The default is ten confirmations and a ten-minute send timeout; `--timeout` separately bounds the entire withdrawal operation. `--gas-limit` sets a minimum. Gas is always estimated, and this flag cannot bypass a failing estimate. Explicit fee and gas multiplier flags have been removed.
 
 Dry runs log the candidate's target, calldata length and selector, gas limit and estimated gas cost without signing, submitting or constructing a manager. Logs go to stderr; `RUST_LOG` controls their level. A not-ready withdrawal logs its earliest known L1 ready timestamp. Run again after proof and game delays have elapsed. Errors exit nonzero. The submission transport journals every broadcast L1 transaction hash, including fee replacements, before forwarding the request. Failures and cancellation report these hashes so operators can check inclusion. Rerunning is safe because every invocation re-reads withdrawal status before submitting.
 

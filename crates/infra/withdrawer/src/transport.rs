@@ -4,8 +4,9 @@ use std::{
     time::Duration,
 };
 
-use alloy_json_rpc::{RequestPacket, ResponsePacket};
+use alloy_json_rpc::{Request, RequestPacket, Response, ResponsePacket, ResponsePayload};
 use alloy_network::Network;
+use alloy_primitives::{Bytes, keccak256};
 use alloy_provider::RootProvider;
 use alloy_rpc_client::ClientBuilder;
 use alloy_transport::{TransportError, TransportErrorKind, TransportFut, utils::guess_local_url};
@@ -228,6 +229,45 @@ impl Service<RequestPacket> for WithdrawalRpcTransport {
                     Ok(response) => return Ok(response),
                     Err(error) => error,
                 };
+                if attempt > 0
+                    && this.journal.is_some()
+                    && let RequestPacket::Single(request) = &request
+                    && request.method() == "eth_sendRawTransaction"
+                    && let Some(params) = request.params()
+                    && let Ok([raw]) = serde_json::from_str::<[Bytes; 1]>(params.get())
+                {
+                    let hash = keccak256(raw);
+                    let known =
+                        match base_tx_manager::RpcErrorClassifier::classify_rpc_error(&error) {
+                            base_tx_manager::TxManagerError::AlreadyKnown => true,
+                            base_tx_manager::TxManagerError::NonceTooLow => {
+                                let lookup = Request::new(
+                                    "eth_getTransactionByHash",
+                                    request.id().clone(),
+                                    [hash],
+                                )
+                                .serialize()
+                                .expect("transaction hash serializes");
+                                // A consumed nonce alone does not identify the accepted transaction.
+                                matches!(
+                                    this.clone().call(RequestPacket::Single(lookup)).await,
+                                    Ok(ResponsePacket::Single(response))
+                                        if response.try_success_as::<Option<serde_json::Value>>()
+                                            .is_some_and(|result| matches!(result, Ok(Some(_))))
+                                )
+                            }
+                            _ => false,
+                        };
+                    if known {
+                        return Ok(ResponsePacket::Single(Response {
+                            id: request.id().clone(),
+                            payload: ResponsePayload::Success(
+                                serde_json::value::to_raw_value(&hash)
+                                    .expect("transaction hash serializes"),
+                            ),
+                        }));
+                    }
+                }
                 if attempt == this.max_retries || !Self::should_retry(&error) {
                     return Err(if this.redact_errors {
                         // Fee-bump and nonce policy need typed errors, not server diagnostics.
@@ -257,11 +297,96 @@ impl Service<RequestPacket> for WithdrawalRpcTransport {
 
 #[cfg(test)]
 mod tests {
-    use alloy_json_rpc::{Id, Request};
-    use alloy_primitives::{Bytes, keccak256};
-    use serde_json::json;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    use alloy_json_rpc::Id;
+    use alloy_primitives::B256;
+    use axum::{Json, Router, http::StatusCode, response::IntoResponse, routing::post};
+    use serde_json::{Value, json};
+    use tokio::net::TcpListener;
 
     use super::*;
+
+    #[tokio::test]
+    async fn replayed_broadcast_reconciles_only_the_accepted_transaction() {
+        for (retry, rejection, transaction, accepted) in [
+            (true, "already known", Value::Null, true),
+            (true, "nonce too low", json!({"hash": keccak256([2, 3])}), true),
+            (true, "nonce too low", Value::Null, false),
+            (false, "already known", Value::Null, false),
+            (false, "nonce too low", json!({"hash": keccak256([2, 3])}), false),
+        ] {
+            let broadcasts = Arc::new(AtomicUsize::new(0));
+            let attempts = Arc::clone(&broadcasts);
+            let app = Router::new().route(
+                "/",
+                post(move |Json(request): Json<Value>| {
+                    let attempts = Arc::clone(&attempts);
+                    let transaction = transaction.clone();
+                    async move {
+                        if request["method"] == "eth_sendRawTransaction" {
+                            if attempts.fetch_add(1, Ordering::SeqCst) == 0 && retry {
+                                return StatusCode::BAD_GATEWAY.into_response();
+                            }
+                            Json(json!({
+                                "jsonrpc": "2.0", "id": request["id"],
+                                "error": {"code": -32000, "message": rejection},
+                            }))
+                            .into_response()
+                        } else {
+                            assert_eq!(request["method"], "eth_getTransactionByHash");
+                            assert_eq!(request["params"][0], json!(keccak256([2, 3])));
+                            Json(json!({
+                                "jsonrpc": "2.0", "id": request["id"], "result": transaction,
+                            }))
+                            .into_response()
+                        }
+                    }
+                }),
+            );
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let url = format!("http://{}", listener.local_addr().unwrap()).parse().unwrap();
+            let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+            let mut transport = WithdrawalRpcTransport {
+                client: reqwest::Client::new(),
+                url,
+                max_retries: 1,
+                retry_delay: Duration::from_millis(1),
+                redact_errors: true,
+                journal: Some(BroadcastJournal::default()),
+            };
+            let request = Request::new(
+                "eth_sendRawTransaction",
+                Id::Number(7),
+                [Bytes::from_static(&[2, 3])],
+            )
+            .serialize()
+            .unwrap();
+            let result = transport.call(RequestPacket::Single(request)).await;
+            server.abort();
+            if accepted {
+                let ResponsePacket::Single(response) = result.unwrap() else {
+                    panic!("expected a single send response");
+                };
+                assert_eq!(response.id, Id::Number(7));
+                assert_eq!(response.try_success_as::<B256>().unwrap().unwrap(), keccak256([2, 3]));
+            } else {
+                let error = result.unwrap_err();
+                assert_eq!(
+                    base_tx_manager::RpcErrorClassifier::classify_rpc_error(&error),
+                    if rejection == "already known" {
+                        base_tx_manager::TxManagerError::AlreadyKnown
+                    } else {
+                        base_tx_manager::TxManagerError::NonceTooLow
+                    },
+                );
+            }
+            assert_eq!(broadcasts.load(Ordering::SeqCst), if retry { 2 } else { 1 });
+        }
+    }
 
     #[tokio::test]
     async fn failed_broadcasts_retain_distinct_hashes_including_batches() {

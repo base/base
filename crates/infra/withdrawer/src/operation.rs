@@ -105,6 +105,9 @@ pub enum WithdrawerError {
     /// Transaction manager submission failed after credential redaction.
     #[error("transaction manager failed: {0}")]
     TxManager(#[from] TxManagerError),
+    /// A transaction-manager RPC request exceeded its network timeout.
+    #[error("transaction manager network timeout elapsed")]
+    NetworkTimeout(#[source] tokio::time::error::Elapsed),
     /// The operation deadline elapsed.
     #[error("withdrawal operation timed out")]
     Timeout(#[source] tokio::time::error::Elapsed),
@@ -288,7 +291,7 @@ impl Withdrawer {
         let chain_id =
             tokio::time::timeout(self.config.tx_manager.network_timeout, provider.get_chain_id())
                 .await
-                .map_err(WithdrawerError::Timeout)??;
+                .map_err(WithdrawerError::NetworkTimeout)??;
         if let Some(expected) = self.config.network.l1_chain_id
             && expected != chain_id
         {
@@ -2270,6 +2273,17 @@ mod tests {
                 "finalization must use tx-manager EIP-1559 submission"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn manager_network_timeout_is_not_the_operation_deadline() {
+        let mut server = Scenario { hang: true, ..Default::default() }.start().await;
+        server.config.tx_manager.network_timeout = Duration::from_millis(10);
+        let flow = Withdrawer::new(server.config.clone());
+        let signer = WithdrawalSigner::new(&server.config.signer).await.unwrap();
+        let error = flow.manager(signer, BroadcastJournal::default()).await.unwrap_err();
+        assert!(matches!(error, WithdrawerError::NetworkTimeout(_)), "{error:?}");
+        assert_eq!(error.to_string(), "transaction manager network timeout elapsed");
     }
 
     #[tokio::test]
