@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use alloy_primitives::B256;
 use alloy_provider::RootProvider;
 use alloy_transport::TransportError;
@@ -26,8 +24,6 @@ pub struct WithdrawalRpc {
     pub l1: RootProvider,
     /// Base L2 state reads, including deposit receipts and storage proofs.
     pub l2: RootProvider<Base>,
-    /// Deadline for dry-run preparation.
-    pub timeout: Duration,
 }
 
 impl WithdrawalRpc {
@@ -40,7 +36,7 @@ impl WithdrawalRpc {
             .map_err(WithdrawalRpcError::Request)?;
         let l2 = WithdrawalRpcTransport::connect(&config.network.l2_rpc_url, config)
             .map_err(WithdrawalRpcError::Request)?;
-        Ok(Self { l1, l2, timeout: config.timeout })
+        Ok(Self { l1, l2 })
     }
 }
 
@@ -51,6 +47,7 @@ mod tests {
         future::pending,
         io::{self, Write},
         sync::{Arc, Mutex},
+        time::Duration,
     };
 
     use alloy_primitives::{Address, Bytes, U256};
