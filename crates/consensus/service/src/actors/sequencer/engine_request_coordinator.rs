@@ -7,6 +7,7 @@ use std::{
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::B256;
+use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use base_consensus_engine::{
     ConsolidateTask, EngineClient, EngineTask, EngineTaskError, EngineTaskErrorSeverity,
     EngineTaskErrors, FinalizeTask, Metrics as EngineMetrics, SealTaskError,
@@ -20,7 +21,7 @@ use tokio::{
 use tracing::{debug, error, info, warn};
 
 use super::{
-    CanonicalUnsafeCatchup, Conductor, SequencerEngineState, SequencerKind,
+    CanonicalCatchupSource, CanonicalUnsafeCatchup, Conductor, SequencerEngineState, SequencerKind,
     ShadowReconciliationGate,
 };
 use crate::{
@@ -103,6 +104,7 @@ where
     sequencer_stopped: bool,
     sequencer_kind: SequencerKind,
     unsafe_head_tx: watch::Sender<base_protocol::L2BlockInfo>,
+    catchup_source: Option<CanonicalCatchupSource>,
 }
 
 impl<EngineClient_, DerivationClient>
@@ -126,7 +128,14 @@ where
             sequencer_stopped,
             sequencer_kind: mode.into(),
             unsafe_head_tx,
+            catchup_source: None,
         }
+    }
+
+    /// Fills startup catch-up gaps from `source` instead of waiting for derivation.
+    pub fn with_catchup_source(mut self, source: CanonicalCatchupSource) -> Self {
+        self.catchup_source = Some(source);
+        self
     }
 
     const fn is_isolated_active(&self) -> bool {
@@ -380,12 +389,65 @@ where
         Ok(())
     }
 
+    async fn fetch_catchup_gap(
+        &mut self,
+        anchor: base_protocol::L2BlockInfo,
+    ) -> Vec<BaseExecutionPayloadEnvelope> {
+        let SequencerEngineState::CatchingUp { catchup } = &self.sequencer_state else {
+            return Vec::new();
+        };
+        let Some(source) = self.catchup_source.as_mut().filter(|source| source.is_ready()) else {
+            return Vec::new();
+        };
+        let Some(gap) = catchup
+            .gap(anchor)
+            .filter(|gap| gap.block_count() <= CanonicalCatchupSource::MAX_GAP_BLOCKS)
+        else {
+            return Vec::new();
+        };
+
+        let started = Instant::now();
+        match source.fetch(anchor, gap).await {
+            Ok(payloads) => {
+                info!(
+                    target: "engine",
+                    first = gap.first,
+                    last = gap.last,
+                    elapsed = ?started.elapsed(),
+                    "Fetched canonical catch-up gap from source"
+                );
+                payloads
+            }
+            Err(error) => {
+                warn!(
+                    target: "engine",
+                    error = %error,
+                    first = gap.first,
+                    last = gap.last,
+                    "Canonical catch-up gap fetch failed"
+                );
+                Vec::new()
+            }
+        }
+    }
+
     async fn advance_canonical_catchup(&mut self) -> Result<(), EngineError> {
         let anchor = self.processor.engine_state().sync_state.unsafe_head();
-        let payloads = match &mut self.sequencer_state {
-            SequencerEngineState::CatchingUp { catchup } => catchup.contiguous_payloads(anchor),
+        let mut payloads = self.fetch_catchup_gap(anchor).await;
+        let tip = payloads.last().map_or(anchor, |payload| base_protocol::L2BlockInfo {
+            block_info: base_protocol::BlockInfo {
+                number: payload.execution_payload.block_number(),
+                hash: payload.execution_payload.block_hash(),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        match &mut self.sequencer_state {
+            SequencerEngineState::CatchingUp { catchup } => {
+                payloads.extend(catchup.contiguous_payloads(tip));
+            }
             _ => return Ok(()),
-        };
+        }
         if payloads.is_empty() {
             return Ok(());
         }
