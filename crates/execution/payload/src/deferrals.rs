@@ -8,8 +8,9 @@ use parking_lot::Mutex;
 ///
 /// A parked validity transaction is normally deferred again in every block until it is included
 /// or leaves the pool. A block that stops building before reaching it should not restart its
-/// streak, so a short gap is tolerated.
-const DEFERRAL_RETAINED_BLOCKS: u64 = 4;
+/// streak, so a short gap is tolerated. Forty blocks is 8 seconds at the 200ms block time
+/// Denim activates.
+const DEFERRAL_RETAINED_BLOCKS: u64 = 40;
 
 /// Last block in which each transaction was deferred for each reason.
 type DeferralBlocks = HashMap<(TxHash, &'static str), u64>;
