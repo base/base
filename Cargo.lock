@@ -6791,6 +6791,7 @@ dependencies = [
  "base-common-rpc-types",
  "base-proof-contracts",
  "base-protocol",
+ "base-tx-manager",
  "clap",
  "coins-bip32",
  "coins-bip39",

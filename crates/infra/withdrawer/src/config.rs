@@ -17,6 +17,8 @@ use url::Url;
 
 use crate::{FaultProofContracts, Network, NetworkPreset, ProofSystem, Secret, SecretValueParser};
 
+base_tx_manager::define_tx_manager_cli!("WITHDRAWER_TX_MANAGER", tx_send_timeout_default = "10m");
+
 // Set after `augment_args`, which otherwise uses the rustdoc of `WithdrawerArgs` as the help text.
 const WITHDRAWER_ABOUT: &str = "Prove or finalize OP Stack withdrawals";
 
@@ -119,34 +121,22 @@ pub struct WithdrawerArgs {
     /// Mnemonic or Ledger derivation path.
     #[arg(long, default_value = "m/44'/60'/0'/0/0", conflicts_with = "private_key", value_parser = HdPathValueParser)]
     pub hd_path: DerivationPath,
-    /// Explicit gas limit, bypassing estimation.
-    #[arg(long, conflicts_with = "gas_multiplier", value_parser = clap::value_parser!(u64).range(1..))]
+    /// Minimum gas limit; gas is always estimated, so this cannot bypass estimation failures.
+    #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
     pub gas_limit: Option<u64>,
-    /// Legacy gas price in wei.
-    #[arg(long, conflicts_with_all = ["max_fee_per_gas", "max_priority_fee_per_gas"])]
-    pub gas_price: Option<u128>,
-    /// EIP-1559 maximum fee in wei.
-    #[arg(long, requires = "max_priority_fee_per_gas")]
-    pub max_fee_per_gas: Option<u128>,
-    /// EIP-1559 priority fee in wei.
-    #[arg(long, requires = "max_fee_per_gas")]
-    pub max_priority_fee_per_gas: Option<u128>,
-    /// Gas estimation multiplier, finite and at least 1.0.
-    #[arg(long, default_value_t = 1.0)]
-    pub gas_multiplier: f64,
-    /// Safety cap for explicit or estimated per-gas fees in wei.
-    #[arg(long)]
-    pub max_gas_price: Option<u128>,
+    /// Transaction management configuration.
+    #[command(flatten)]
+    pub tx_manager: TxManagerCli,
     /// Simulate without signing or submission.
     #[arg(long)]
     pub dry_run: bool,
     /// Overall operation timeout.
     #[arg(long, default_value = "10m", value_parser = humantime::parse_duration)]
     pub timeout: Duration,
-    /// Retries after the first attempt, at most 32.
+    /// HTTP retries after the first attempt, at most 32; submission RPCs are also bounded by --tx-manager.network-timeout.
     #[arg(long, default_value_t = 3, value_parser = clap::value_parser!(u32).range(..=32))]
     pub max_retries: u32,
-    /// Initial exponential retry delay.
+    /// Initial HTTP retry backoff, subject to the operation and submission RPC deadlines.
     #[arg(long, default_value = "2s", value_parser = humantime::parse_duration)]
     pub retry_delay: Duration,
 }
@@ -339,25 +329,6 @@ impl SignerSource {
     pub const MAX_DERIVATION_DEPTH: usize = u8::MAX as usize;
 }
 
-/// Transaction fee selection in wei per gas.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Fees {
-    /// Estimate fees at submission time.
-    Automatic,
-    /// Legacy transaction.
-    Legacy {
-        /// Gas price.
-        gas_price: u128,
-    },
-    /// EIP-1559 transaction.
-    Eip1559 {
-        /// Maximum total fee.
-        max_fee_per_gas: u128,
-        /// Maximum priority fee.
-        max_priority_fee_per_gas: u128,
-    },
-}
-
 /// Fully resolved operation settings, validated without RPC.
 #[derive(Debug, Clone)]
 pub struct WithdrawerConfig {
@@ -369,26 +340,38 @@ pub struct WithdrawerConfig {
     pub withdrawal: B256,
     /// Selected signing source.
     pub signer: SignerSource,
-    /// Explicit gas limit.
+    /// Minimum gas limit; gas is always estimated, so this cannot bypass estimation failures.
     pub gas_limit: Option<u64>,
-    /// Transaction fee selection.
-    pub fees: Fees,
-    /// Gas estimation multiplier.
-    pub gas_multiplier: f64,
-    /// Safety cap for explicit or estimated per-gas fees.
-    pub max_gas_price: Option<u128>,
+    /// Fee bumping, resubmission and confirmation policy.
+    pub tx_manager: base_tx_manager::TxManagerConfig,
     /// Disable signing and submission.
     pub dry_run: bool,
     /// Overall timeout.
     pub timeout: Duration,
-    /// Retries after the first attempt.
+    /// HTTP retry limit, subject to the operation and transaction-manager network timeouts.
     pub max_retries: u32,
-    /// Initial exponential retry delay.
+    /// Initial HTTP retry backoff, subject to the operation and submission RPC deadlines.
     pub retry_delay: Duration,
 }
 
+impl WithdrawerConfig {
+    /// Bounds submission HTTP attempts so a retry and its backoff fit the network deadline.
+    pub fn submission_request_timeout(&self) -> Result<Duration, ConfigError> {
+        let network_budget = if self.max_retries > 0 {
+            self.tx_manager.network_timeout.saturating_sub(self.retry_delay) / 3
+        } else {
+            self.tx_manager.network_timeout / 2
+        };
+        if network_budget.is_zero() {
+            return Err(ConfigError::RetryDeadline);
+        }
+        // Reserve time beyond two attempts for scheduling and response processing.
+        Ok(crate::WithdrawalRpcTransport::REQUEST_TIMEOUT.min(self.timeout / 2).min(network_budget))
+    }
+}
+
 /// Invalid cross-field operation settings.
-#[derive(Debug, Error, PartialEq, Eq)]
+#[derive(Debug, Error)]
 pub enum ConfigError {
     /// Signer selection is missing or ambiguous.
     #[error("exactly one signing source is required")]
@@ -402,27 +385,23 @@ pub enum ConfigError {
     /// The mnemonic is not a valid English BIP-39 phrase.
     #[error("invalid signing secret; check its format")]
     Mnemonic,
-    /// Gas estimation multiplier is not finite or is below one.
-    #[error("--gas-multiplier must be finite and at least 1.0")]
-    GasMultiplier,
-    /// Explicit gas limit conflicts with a non-default multiplier or is zero.
-    #[error("--gas-limit must be positive and cannot be combined with --gas-multiplier")]
+    /// Explicit gas limit is zero.
+    #[error("--gas-limit must be positive")]
     GasLimit,
-    /// Fee selection mixes modes or omits one EIP-1559 fee.
-    #[error("select legacy --gas-price or both EIP-1559 fees")]
-    Fees,
-    /// Priority fee exceeds the total fee.
-    #[error("--max-priority-fee-per-gas must not exceed --max-fee-per-gas")]
-    PriorityFee,
-    /// An explicit fee exceeds the safety cap.
-    #[error("explicit fee exceeds --max-gas-price")]
-    FeeCap,
+    /// Transaction manager configuration is invalid.
+    #[error("invalid transaction manager config: {0}")]
+    TxManager(#[from] base_tx_manager::ConfigError),
     /// Timeout or retry delay is zero.
     #[error("--timeout and --retry-delay must be positive")]
     ZeroDuration,
     /// Retry count exceeds the supported bound.
     #[error("--max-retries must be at most 32")]
     Retries,
+    /// The network deadline leaves no time for bounded submission attempts.
+    #[error(
+        "--tx-manager.network-timeout must leave time for HTTP attempts after --retry-delay when retries are enabled"
+    )]
+    RetryDeadline,
     /// Exponential retry delay does not fit a Rust duration.
     #[error("exponential retry delay overflows Duration")]
     RetryOverflow,
@@ -433,10 +412,7 @@ impl TryFrom<WithdrawerArgs> for WithdrawerConfig {
 
     fn try_from(args: WithdrawerArgs) -> Result<Self, Self::Error> {
         let network = args.resolve_network()?;
-        if !args.gas_multiplier.is_finite() || args.gas_multiplier < 1.0 {
-            return Err(ConfigError::GasMultiplier);
-        }
-        if args.gas_limit.is_some_and(|limit| limit == 0 || args.gas_multiplier != 1.0) {
+        if args.gas_limit == Some(0) {
             return Err(ConfigError::GasLimit);
         }
         if args.timeout.is_zero() || args.retry_delay.is_zero() {
@@ -450,25 +426,7 @@ impl TryFrom<WithdrawerArgs> for WithdrawerConfig {
         {
             return Err(ConfigError::RetryOverflow);
         }
-        let fees = match (args.gas_price, args.max_fee_per_gas, args.max_priority_fee_per_gas) {
-            (None, None, None) => Fees::Automatic,
-            (Some(gas_price), None, None) => Fees::Legacy { gas_price },
-            (None, Some(max_fee_per_gas), Some(max_priority_fee_per_gas)) => {
-                if max_priority_fee_per_gas > max_fee_per_gas {
-                    return Err(ConfigError::PriorityFee);
-                }
-                Fees::Eip1559 { max_fee_per_gas, max_priority_fee_per_gas }
-            }
-            _ => return Err(ConfigError::Fees),
-        };
-        if let Some(cap) = args.max_gas_price
-            && [args.gas_price, args.max_fee_per_gas, args.max_priority_fee_per_gas]
-                .into_iter()
-                .flatten()
-                .any(|fee| fee > cap)
-        {
-            return Err(ConfigError::FeeCap);
-        }
+        let tx_manager = base_tx_manager::TxManagerConfig::try_from(args.tx_manager.clone())?;
         let signer_count =
             usize::from(args.private_key.is_some()) + usize::from(!args.mnemonic.is_empty());
         #[cfg(feature = "ledger")]
@@ -489,20 +447,20 @@ impl TryFrom<WithdrawerArgs> for WithdrawerConfig {
             (None, true) if args.ledger => SignerSource::Ledger { path: args.hd_path },
             _ => return Err(ConfigError::Signer),
         };
-        Ok(Self {
+        let config = Self {
             l1_rpc_url: args.l1_rpc_url,
             network,
             withdrawal: args.withdrawal,
             signer,
             gas_limit: args.gas_limit,
-            fees,
-            gas_multiplier: args.gas_multiplier,
-            max_gas_price: args.max_gas_price,
+            tx_manager,
             dry_run: args.dry_run,
             timeout: args.timeout,
             max_retries: args.max_retries,
             retry_delay: args.retry_delay,
-        })
+        };
+        config.submission_request_timeout()?;
+        Ok(config)
     }
 }
 
@@ -512,7 +470,7 @@ mod tests {
 
     use clap::{Parser, error::ErrorKind};
 
-    use crate::{Fees, NetworkPreset, ProofSystem, SignerSource, WithdrawerArgs, WithdrawerConfig};
+    use crate::{NetworkPreset, ProofSystem, SignerSource, WithdrawerArgs, WithdrawerConfig};
 
     const HASH: &str = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const KEY: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
@@ -569,10 +527,8 @@ mod tests {
             "--max-retries=33",
             "--max-retries=-1",
             "--gas-limit=0",
-            "-gas-price=1",
             "--dry-run=TRUE",
             "--gas-limit=0x100",
-            "--gas-multiplier=0x1p0",
         ] {
             assert!(signed(&[flag]).is_err(), "accepted {flag}");
         }
@@ -580,9 +536,19 @@ mod tests {
         assert!(signed(&["--max-retries=0"]).is_ok());
         assert!(signed(&["--max-retries=32", "--retry-delay=1ns"]).is_ok());
         let long_delay = format!("--retry-delay={}s", u64::MAX);
-        assert!(signed(&["--max-retries=1", &long_delay]).is_ok());
+        assert!(signed(&["--max-retries=1", &long_delay]).is_err());
         assert!(signed(&["--max-retries=2", &long_delay]).is_err());
         assert!(signed(&["--max-retries=0", &long_delay]).is_ok());
+    }
+
+    #[test]
+    fn submission_retries_require_time_after_the_backoff() {
+        for delay in ["10s", "11s"] {
+            let error = signed(&[&format!("--retry-delay={delay}")]).unwrap_err();
+            assert!(error.contains("--tx-manager.network-timeout"));
+            assert!(error.contains("--retry-delay"));
+            assert!(signed(&["--max-retries=0", &format!("--retry-delay={delay}")]).is_ok());
+        }
     }
 
     #[test]
@@ -787,24 +753,6 @@ mod tests {
     }
 
     #[test]
-    fn gas_multiplier_rejects_nonfinite_and_subunit_values() {
-        for valid in ["1.0", "1.25"] {
-            assert_eq!(
-                signed(&[&format!("--gas-multiplier={valid}")]).unwrap().gas_multiplier,
-                valid.parse::<f64>().unwrap()
-            );
-        }
-        for bad in ["NaN", "inf", "-inf", "0.99", "-1"] {
-            assert!(
-                signed(&[&format!("--gas-multiplier={bad}")]).is_err(),
-                "accepted invalid multiplier {bad}"
-            );
-        }
-        assert!(signed(&["--gas-limit=21000", "--gas-multiplier=1.0"]).is_err());
-        assert!(signed(&["--gas-limit=21000"]).is_ok());
-    }
-
-    #[test]
     fn exactly_one_signer_is_required() {
         assert!(config(&[&format!("--private-key={KEY}")]).is_ok());
         assert!(matches!(
@@ -825,41 +773,6 @@ mod tests {
         }
         #[cfg(not(feature = "ledger"))]
         assert!(args(&["--ledger"]).is_err());
-    }
-
-    #[test]
-    fn fee_modes_enforce_pairs_conflicts_bounds_and_caps() {
-        assert_eq!(
-            signed(&["--gas-price=340282366920938463463374607431768211455"]).unwrap().fees,
-            Fees::Legacy { gas_price: u128::MAX }
-        );
-        assert_eq!(
-            signed(&["--max-fee-per-gas=2", "--max-priority-fee-per-gas=1"]).unwrap().fees,
-            Fees::Eip1559 { max_fee_per_gas: 2, max_priority_fee_per_gas: 1 }
-        );
-        for flags in [
-            vec!["--gas-price=1", "--max-fee-per-gas=2", "--max-priority-fee-per-gas=1"],
-            vec!["--max-fee-per-gas=2"],
-            vec!["--max-priority-fee-per-gas=1"],
-            vec!["--gas-price=2", "--max-gas-price=1"],
-            vec!["--max-fee-per-gas=2", "--max-priority-fee-per-gas=1", "--max-gas-price=1"],
-            vec!["--max-fee-per-gas=1", "--max-priority-fee-per-gas=2"],
-        ] {
-            assert!(signed(&flags).is_err(), "accepted invalid fees {flags:?}");
-        }
-        for name in ["gas-price", "max-fee-per-gas", "max-priority-fee-per-gas", "max-gas-price"] {
-            let error = args(&[
-                &format!("--private-key={KEY}"),
-                &format!("--{name}=340282366920938463463374607431768211456"),
-            ])
-            .unwrap_err();
-            assert_eq!(
-                error.kind(),
-                clap::error::ErrorKind::ValueValidation,
-                "overflow was not rejected by the fee parser for {name}"
-            );
-        }
-        assert!(signed(&["--gas-price=2", "--max-gas-price=2"]).is_ok());
     }
 
     #[test]

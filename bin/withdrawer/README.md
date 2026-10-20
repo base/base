@@ -12,6 +12,9 @@ cargo run -p base-withdrawer-bin -- \
   --dry-run
 ```
 
-Dry runs estimate gas and enforce fee caps without signing or submitting. Logs go to stderr; `RUST_LOG` controls their level. A not-ready withdrawal logs its earliest known L1 ready timestamp. An unresolved dispute game can delay finalization further. Run the command again after the proof and game delays have elapsed. Errors print their cause chain and exit non-zero.
+Prove and finalize transactions use `base-tx-manager` for EIP-1559 fee estimation, fee-bumped resubmission and confirmation depth. Configure it with `--tx-manager.*` flags or `WITHDRAWER_TX_MANAGER_*` environment variables. The default is ten confirmations and a ten-minute send timeout; `--timeout` separately bounds the entire withdrawal operation. `--gas-limit` sets a minimum. Gas is always estimated, and this flag cannot bypass a failing estimate.
+
+Dry runs log the candidate's target, calldata length and selector, gas limit and estimated gas cost without signing, submitting or constructing a manager. Logs go to stderr; `RUST_LOG` controls their level. A not-ready withdrawal logs its earliest known L1 ready timestamp. Run again after proof and game delays have elapsed. Errors exit nonzero. The submission transport journals every broadcast L1 transaction hash, including fee replacements, before forwarding the request. Failures and cancellation report these hashes. Before rerunning, check them for inclusion or wait for them to mine or drop. Withdrawal status reads use only the latest mined L1 state, so a rerun while a transaction is pending can submit a duplicate at the next nonce that reverts and spends gas after the first mines.
 
 Build with `--features ledger` for hardware signing. See the [library README](../../crates/infra/withdrawer/README.md) for signer security, contract checks, fee policy, and timeout behavior.
+Each fee-bumped replacement requires another approval on the Ledger; `--tx-manager.resubmission-timeout` controls the fee-bump interval. Both `--timeout` and `--tx-manager.tx-send-timeout` keep running while you approve replacements.

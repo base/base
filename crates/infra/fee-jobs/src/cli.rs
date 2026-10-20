@@ -176,6 +176,9 @@ pub struct SweepArgs {
 /// Fault-proof fee disbursal confirmation configuration.
 #[derive(Args)]
 pub struct ConfirmArgs {
+    /// Transaction management configuration.
+    #[command(flatten)]
+    pub tx_manager: TxManagerCli,
     /// L1 HTTP RPC URL.
     #[arg(long, env = "L1_RPC_URL", hide_env_values = true, value_parser = RpcUrlValueParser)]
     pub l1_rpc_url: Url,
@@ -319,6 +322,7 @@ mod tests {
             assert_eq!(args.l2_block_time, Duration::from_secs(1));
             assert_eq!(args.num_blocks_per_query, 25);
             assert_eq!(args.withdrawal_timeout, Duration::from_secs(120));
+            assert_eq!(ConfirmJob { args }.config().unwrap().tx_manager.num_confirmations, 37);
             return;
         }
         let args = confirm(&[]).unwrap();
@@ -330,6 +334,7 @@ mod tests {
             .args(["--exact", "cli::tests::confirm_reads_deployment_environment_and_defaults"])
             .env_clear()
             .env("FEE_JOBS_CONFIRM_ENV_TEST_CHILD", "1")
+            .env("FEE_JOBS_TX_MANAGER_NUM_CONFIRMATIONS", "37")
             .env("L1_RPC_URL", "https://l1.example")
             .env("L2_RPC_URL", "https://l2.example")
             .env("L1_OPTIMISM_PORTAL_ADDRESS", Address::repeat_byte(0x11).to_string())
