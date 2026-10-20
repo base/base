@@ -197,8 +197,9 @@ pub struct ConfirmArgs {
     /// Local signing key in hex, with or without a 0x prefix.
     #[arg(long, env = "JOB_RUNNER_KEY", hide_env_values = true, value_parser = SecretValueParser::<String>::default())]
     pub job_runner_key: Secret<String>,
-    /// L2 lookback covering proof maturity (7 days on Base mainnet), dispute game resolution
-    /// and finality delay (3.5 days each), plus the cron interval and slack.
+    /// L2 lookback covering `AggregateVerifier` game resolution (5 days with one proof, restarted
+    /// for another 5 days by a challenge), proof maturity (1 day on Base mainnet), plus the cron
+    /// interval and slack.
     #[arg(long, env = "LOOKBACK", default_value = "21d", value_parser = humantime::parse_duration)]
     pub lookback: Duration,
     /// L2 block time used to convert the lookback to a block count, rounded up.
