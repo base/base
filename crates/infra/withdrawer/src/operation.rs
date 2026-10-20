@@ -1,20 +1,20 @@
-use std::{collections::VecDeque, error::Error as StdError};
+use std::{collections::VecDeque, error::Error as StdError, sync::Arc};
 
-use alloy_consensus::Transaction;
 use alloy_eips::BlockNumberOrTag;
-use alloy_network::TxSigner;
+use alloy_network::{EthereumWallet, TxSigner};
 use alloy_primitives::{Address, B256, Bytes, U256};
-use alloy_provider::Provider;
+use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_eth::{TransactionReceipt, TransactionRequest};
 use alloy_sol_types::{Error as SolError, SolCall, SolEvent};
 use alloy_transport::TransportError;
 use alloy_trie::proof::ProofVerificationError;
 use base_common_consensus::Predeploys;
 use base_proof_contracts::{GameStatus, IAnchorStateRegistry, IDisputeGameFactory};
+use base_tx_manager::{NoopTxMetrics, SimpleTxManager, TxCandidate, TxManager, TxManagerError};
 use thiserror::Error;
 
 use crate::{
-    FaultProofContracts, FaultProofPortal, LegacyWithdrawalPortal, MessagePassed,
+    BroadcastJournal, FaultProofContracts, FaultProofPortal, LegacyWithdrawalPortal, MessagePassed,
     PreparedWithdrawalTransaction, ProofSystem, ResolvedProofSystem, VerifiedWithdrawalProof,
     Withdrawal, WithdrawalDisputeGame, WithdrawalError, WithdrawalOutputOracle, WithdrawalPortal,
     WithdrawalRpc, WithdrawalRpcError, WithdrawalRpcTransport, WithdrawalSigner,
@@ -99,42 +99,49 @@ pub enum WithdrawerError {
     /// Signer construction failed.
     #[error(transparent)]
     Signer(#[from] WithdrawalSignerError),
-    /// Transaction preparation or signing failed.
+    /// Transaction preparation failed.
     #[error(transparent)]
     Transaction(WithdrawalTransactionError),
+    /// Transaction manager submission failed after credential redaction.
+    #[error("transaction manager failed: {0}")]
+    TxManager(#[from] TxManagerError),
     /// The operation deadline elapsed.
     #[error("withdrawal operation timed out")]
     Timeout(#[source] tokio::time::error::Elapsed),
-    /// A signed transaction may have been broadcast or included; check its hash before retrying.
+    /// Broadcast transactions may have reached L1; check their hashes for inclusion.
     #[error(
-        "transaction {transaction_hash} was signed and may have been broadcast or included; check it before retrying: {source}"
+        "transactions {transaction_hashes:?} may have been broadcast or included; check them before retrying: {source}"
     )]
     Unconfirmed {
-        /// Hash of the signed L1 transaction.
-        transaction_hash: B256,
+        /// Every broadcast hash that may have reached L1.
+        transaction_hashes: Vec<B256>,
         /// Submission, receipt, or event validation failure, with credential-bearing details removed.
         #[source]
         source: Box<Self>,
     },
     /// The portal consumed the withdrawal, but its target call failed; it cannot be retried.
     #[error(
-        "withdrawal {withdrawal_hash} finalized in transaction {transaction_hash}, but its target call failed"
+        "withdrawal {withdrawal_hash} finalized in transaction {transaction_hash}, but its target call failed; broadcast transactions: {transaction_hashes:?}"
     )]
     TargetCallFailed {
         /// Hash of the consumed withdrawal.
         withdrawal_hash: B256,
         /// Confirmed L1 finalization transaction.
         transaction_hash: B256,
+        /// All signed transaction versions attempted for this finalization.
+        transaction_hashes: Vec<B256>,
     },
     /// A successful receipt has no matching finalization event from the configured portal.
     #[error(
-        "transaction {transaction_hash} has no portal finalization event for withdrawal {withdrawal_hash}"
+        "transaction {transaction_hash} has no portal finalization event for withdrawal {withdrawal_hash}; broadcast transactions: {transaction_hashes:?}"
     )]
     MissingFinalizationEvent {
         /// Expected withdrawal commitment.
         withdrawal_hash: B256,
         /// Confirmed L1 transaction whose logs were checked.
         transaction_hash: B256,
+        /// All signed transaction versions attempted for this finalization.
+        transaction_hashes: Vec<B256>,
     },
     /// The configured L2 transaction is not included or not found.
     #[error("L2 withdrawal receipt is unavailable")]
@@ -193,11 +200,16 @@ impl Withdrawer {
 
     /// Processes every withdrawal in receipt log order within one shared deadline.
     pub async fn run(&self) -> Result<Vec<WithdrawalOutcome>, WithdrawerError> {
-        let mut pending_transaction = None;
-        tokio::time::timeout(self.config.timeout, async {
+        let pending_transaction = BroadcastJournal::default();
+        let mut manager = None;
+        let result = tokio::time::timeout(self.config.timeout, async {
             let rpc = WithdrawalRpc::new(&self.config)?;
             let proofs = self.resolve_proof_system(&rpc).await?;
             let signer = WithdrawalSigner::new(&self.config.signer).await?;
+            let sender = signer.address();
+            if !self.config.dry_run {
+                manager = Some(self.manager(signer, pending_transaction.clone()).await?);
+            }
             let receipt = rpc
                 .l2
                 .get_transaction_receipt(self.config.withdrawal)
@@ -206,8 +218,8 @@ impl Withdrawer {
             let withdrawals = Withdrawal::from_receipt(&receipt)?;
             let mut outcomes = Vec::with_capacity(withdrawals.len());
             for withdrawal in withdrawals {
-                pending_transaction = None;
-                let status = self.status(&rpc, proofs, &withdrawal, signer.address()).await?;
+                pending_transaction.clear();
+                let status = self.status(&rpc, proofs, &withdrawal, sender).await?;
                 let hash = withdrawal.hash();
                 tracing::info!(withdrawal_hash = %hash, ?status, "withdrawal decision");
                 let transaction_hash = match status {
@@ -223,10 +235,11 @@ impl Withdrawer {
                         };
                         self.submit(
                             &rpc,
-                            &signer,
+                            sender,
+                            manager.as_ref(),
                             calldata,
                             (status == WithdrawalStatus::Finalize).then_some(hash),
-                            &mut pending_transaction,
+                            &pending_transaction,
                         )
                         .await?
                     }
@@ -243,13 +256,55 @@ impl Withdrawer {
             Ok(outcomes)
         })
         .await
-        .map_err(|source| match pending_transaction {
-            Some(transaction_hash) => WithdrawerError::Unconfirmed {
-                transaction_hash,
-                source: Box::new(WithdrawerError::Timeout(source)),
-            },
-            None => WithdrawerError::Timeout(source),
-        })?
+        .map_err(|source| {
+            let transaction_hashes = pending_transaction.hashes();
+            if transaction_hashes.is_empty() {
+                WithdrawerError::Timeout(source)
+            } else {
+                WithdrawerError::Unconfirmed {
+                    transaction_hashes,
+                    source: Box::new(WithdrawerError::Timeout(source)),
+                }
+            }
+        });
+        if let Some(manager) = manager {
+            manager.close();
+        }
+        result?
+    }
+
+    /// Builds a serialized wallet-backed sender using pending nonces.
+    pub async fn manager(
+        &self,
+        signer: WithdrawalSigner,
+        journal: BroadcastJournal,
+    ) -> Result<SimpleTxManager<RootProvider>, WithdrawerError> {
+        let provider = WithdrawalRpcTransport::connect_for_submission(
+            &self.config.l1_rpc_url,
+            &self.config,
+            journal,
+        )
+        .map_err(WithdrawerError::from)?;
+        let chain_id =
+            tokio::time::timeout(self.config.tx_manager.network_timeout, provider.get_chain_id())
+                .await
+                .map_err(WithdrawerError::Timeout)??;
+        if let Some(expected) = self.config.network.l1_chain_id
+            && expected != chain_id
+        {
+            return Err(
+                WithdrawalTransactionError::L1ChainMismatch { expected, actual: chain_id }.into()
+            );
+        }
+        Ok(SimpleTxManager::from_wallet(
+            provider,
+            EthereumWallet::from(signer),
+            self.config.tx_manager.clone(),
+            chain_id,
+            Arc::new(NoopTxMetrics),
+        )
+        .await?
+        .with_pending_nonce())
     }
 
     /// Reads and validates the portal's proof contracts, or keeps the configured legacy oracle.
@@ -675,53 +730,73 @@ impl Withdrawer {
         .into())
     }
 
-    /// Prepares and optionally broadcasts a transaction, recording its hash until receipt validation.
+    /// Estimates a dry run or sends through the manager, retaining hashes on errors and cancellation.
     ///
-    /// Set `finalize_withdrawal` only for finalize calls. After signing, `pending_transaction`
-    /// stays set on broadcast or receipt validation errors or cancellation to report the hash.
+    /// The manager must use this journal and pending nonces, with no concurrent sends.
+    /// Clear the journal before each submission and retain it until the send or deadline resolves.
     pub async fn submit(
         &self,
         rpc: &WithdrawalRpc,
-        signer: &WithdrawalSigner,
+        sender: Address,
+        manager: Option<&SimpleTxManager<RootProvider>>,
         calldata: Bytes,
         finalize_withdrawal: Option<B256>,
-        pending_transaction: &mut Option<B256>,
+        published: &BroadcastJournal,
     ) -> Result<Option<B256>, WithdrawerError> {
-        let prepared = PreparedWithdrawalTransaction::prepare(
-            &self.config,
-            rpc,
-            signer.address(),
-            self.config.network.portal,
-            calldata,
-        )
-        .await?;
         if self.config.dry_run {
-            let transaction = prepared.transaction();
+            let prepared = PreparedWithdrawalTransaction::prepare(
+                &self.config,
+                rpc,
+                sender,
+                self.config.network.portal,
+                calldata,
+            )
+            .await?;
+            let transaction = &prepared.candidate;
             tracing::info!(
                 target = %self.config.network.portal,
-                calldata_length = transaction.input().len(),
-                selector = %Bytes::copy_from_slice(&transaction.input()[..transaction.input().len().min(4)]),
-                gas_limit = transaction.gas_limit(),
+                calldata_length = transaction.tx_data.len(),
+                selector = %Bytes::copy_from_slice(&transaction.tx_data[..transaction.tx_data.len().min(4)]),
+                gas_limit = transaction.gas_limit,
+                max_fee_per_gas = prepared.max_fee_per_gas,
                 maximum_gas_cost = %prepared.maximum_gas_cost(),
                 "dry run prepared withdrawal transaction"
             );
             return Ok(None);
         }
-        let signed = prepared.sign(signer).await?;
-        let hash = *signed.tx_hash();
-        *pending_transaction = Some(hash);
-        tracing::info!(transaction_hash = %hash, "submitting withdrawal transaction");
-        rpc.broadcast(&signed).await.map_err(|source| WithdrawerError::Unconfirmed {
-            transaction_hash: hash,
-            source: Box::new(source.into()),
+        let manager = manager.ok_or_else(|| {
+            TxManagerError::InvalidConfig("missing withdrawal transaction manager".into())
         })?;
-        let receipt = rpc.wait_for_receipt(hash).await.map_err(|source| {
-            WithdrawerError::Unconfirmed { transaction_hash: hash, source: Box::new(source.into()) }
-        })?;
-        if let Some(withdrawal_hash) = finalize_withdrawal {
-            self.check_finalization(&receipt, withdrawal_hash, hash)?;
+        // Withdrawals are serialized, but other jobs can publish with the same account.
+        // Refresh pending state after both completed and cancelled sends.
+        manager.nonce_manager().reset().await;
+        let receipt = manager
+            .send(TxCandidate {
+                to: Some(self.config.network.portal),
+                tx_data: calldata,
+                gas_limit: self.config.gas_limit.unwrap_or_default(),
+                ..Default::default()
+            })
+            .await
+            .map_err(|source| {
+                let source = WithdrawerError::TxManager(source);
+                let transaction_hashes = published.hashes();
+                if transaction_hashes.is_empty() {
+                    source
+                } else {
+                    WithdrawerError::Unconfirmed { transaction_hashes, source: Box::new(source) }
+                }
+            })?;
+        let hash = receipt.transaction_hash;
+        if !receipt.status() {
+            return Err(WithdrawerError::Unconfirmed {
+                transaction_hashes: published.hashes(),
+                source: Box::new(WithdrawalRpcError::Reverted(hash).into()),
+            });
         }
-        *pending_transaction = None;
+        if let Some(withdrawal_hash) = finalize_withdrawal {
+            self.check_finalization(&receipt, withdrawal_hash, hash, &published.hashes())?;
+        }
         tracing::info!(transaction_hash = %hash, "withdrawal transaction confirmed");
         Ok(Some(hash))
     }
@@ -732,6 +807,7 @@ impl Withdrawer {
         receipt: &TransactionReceipt,
         withdrawal_hash: B256,
         transaction_hash: B256,
+        transaction_hashes: &[B256],
     ) -> Result<(), WithdrawerError> {
         for log in receipt.inner.logs() {
             if log.address() != self.config.network.portal
@@ -743,7 +819,7 @@ impl Withdrawer {
             }
             let event = WithdrawalPortal::WithdrawalFinalized::decode_log_validate(&log.inner)
                 .map_err(|error| WithdrawerError::Unconfirmed {
-                    transaction_hash,
+                    transaction_hashes: transaction_hashes.to_vec(),
                     source: Box::new(WithdrawerError::decode_error(
                         WithdrawalPortal::WithdrawalFinalized::SIGNATURE,
                         error,
@@ -753,10 +829,18 @@ impl Withdrawer {
             return if event.success {
                 Ok(())
             } else {
-                Err(WithdrawerError::TargetCallFailed { withdrawal_hash, transaction_hash })
+                Err(WithdrawerError::TargetCallFailed {
+                    withdrawal_hash,
+                    transaction_hash,
+                    transaction_hashes: transaction_hashes.to_vec(),
+                })
             };
         }
-        Err(WithdrawerError::MissingFinalizationEvent { withdrawal_hash, transaction_hash })
+        Err(WithdrawerError::MissingFinalizationEvent {
+            withdrawal_hash,
+            transaction_hash,
+            transaction_hashes: transaction_hashes.to_vec(),
+        })
     }
 
     /// Calls a contract at the latest mined block with redacted provider and decode errors.
@@ -870,7 +954,7 @@ mod tests {
     use alloy_eips::Decodable2718;
     use alloy_primitives::{Address, Bytes, U256};
     use alloy_sol_types::SolCall;
-    use axum::{Json, Router, routing::post};
+    use axum::{Json, Router, response::IntoResponse, routing::post};
     use base_proof_contracts::{IAnchorStateRegistry, IDisputeGameFactory};
     use clap::Parser;
     use serde_json::{Value, json};
@@ -905,6 +989,8 @@ mod tests {
         output_error: Option<Value>,
         broadcast_error: Option<Value>,
         broadcast_hang: bool,
+        initial_broadcast_hang: bool,
+        nonce_step: usize,
         receipt_error: Option<Value>,
         receipt_pending: bool,
         receipt_reverted: bool,
@@ -952,6 +1038,8 @@ mod tests {
                 output_error: None,
                 broadcast_error: None,
                 broadcast_hang: false,
+                initial_broadcast_hang: false,
+                nonce_step: 1,
                 receipt_error: None,
                 receipt_pending: false,
                 receipt_reverted: false,
@@ -1048,6 +1136,7 @@ mod tests {
                 receipt["logs"].as_array_mut().unwrap().push(second);
             }
             let scenario = Arc::new(self);
+            receipt["blockHash"] = fixture["header"]["hash"].clone();
             let mut urls = Vec::new();
             let mut tasks = Vec::new();
             for l2 in [false, true] {
@@ -1064,10 +1153,22 @@ mod tests {
                         let sent = Arc::clone(&sent);
                         let estimates = Arc::clone(&estimates);
                         requests.lock().unwrap().push(request.clone());
+                        let broadcast_attempt = requests
+                            .lock()
+                            .unwrap()
+                            .iter()
+                            .filter(|request| request["method"] == "eth_sendRawTransaction")
+                            .count();
                         let fixture = fixture.clone();
                         let receipt = receipt.clone();
                         async move {
                             if scenario.hang {
+                                std::future::pending::<()>().await;
+                            }
+                            if scenario.initial_broadcast_hang
+                                && request["method"] == "eth_sendRawTransaction"
+                                && broadcast_attempt == 1
+                            {
                                 std::future::pending::<()>().await;
                             }
                             let result = scenario
@@ -1085,6 +1186,7 @@ mod tests {
                                     json!({"jsonrpc":"2.0", "id":request["id"], "error":error})
                                 }
                             })
+                            .into_response()
                         }
                     }),
                 );
@@ -1103,8 +1205,6 @@ mod tests {
                     &B256::ZERO.to_string(),
                     "--private-key",
                     &B256::repeat_byte(1).to_string(),
-                    "--gas-price",
-                    "2",
                 ])
                 .unwrap(),
             )
@@ -1124,6 +1224,9 @@ mod tests {
             config.dry_run = scenario.dry;
             config.max_retries = 0;
             config.timeout = Duration::from_secs(5);
+            config.tx_manager.num_confirmations = 1;
+            config.tx_manager.resubmission_timeout = Duration::from_secs(1);
+            config.tx_manager.receipt_query_interval = Duration::from_millis(100);
             Harness { config, sent, estimates, requests, tasks }
         }
 
@@ -1139,12 +1242,16 @@ mod tests {
             let params = &request["params"];
             Ok(match request["method"].as_str().unwrap() {
                 "eth_chainId" => json!("0x1"),
-                "eth_getTransactionCount" => json!(format!("0x{:x}", sent.lock().unwrap().len())),
+                "eth_maxPriorityFeePerGas" => json!("0x2"),
+                "eth_blockNumber" => json!("0xffffffffffff"),
+                "eth_getTransactionCount" => {
+                    assert_eq!(params[1], "pending");
+                    json!(format!("0x{:x}", sent.lock().unwrap().len() * self.nonce_step))
+                }
                 "eth_estimateGas" => {
                     *estimates.lock().unwrap() += 1;
                     json!("0x10000")
                 }
-                "eth_getTransactionByHash" => Value::Null,
                 "eth_getTransactionReceipt" if l2 => receipt.clone(),
                 "eth_getTransactionReceipt" => {
                     if let Some(error) = &self.receipt_error {
@@ -1207,6 +1314,8 @@ mod tests {
                     }
                     if !l2 {
                         block["timestamp"] = json!(format!("0x{:x}", self.now));
+                        block["baseFeePerGas"] = json!("0x2");
+                        block["hash"] = receipt["blockHash"].clone();
                     }
                     block["transactions"] = json!([]);
                     block
@@ -1853,10 +1962,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dry_run_estimates_and_enforces_fee_cap_without_submission() {
+    async fn dry_run_estimates_without_signing_or_submission() {
         for fault in [false, true] {
             for proven in [0, 100] {
-                let mut server =
+                let server =
                     Scenario { fault, proven, dry: true, ..Default::default() }.start().await;
                 let capture = LogCapture(Arc::new(Mutex::new(Vec::new())));
                 let writer = capture.clone();
@@ -1871,7 +1980,7 @@ mod tests {
                     "calldata_length=",
                     "selector=",
                     "gas_limit=65536",
-                    "maximum_gas_cost=131072",
+                    "maximum_gas_cost=",
                 ] {
                     assert!(logs.contains(field), "missing dry-run field {field}: {logs}");
                 }
@@ -1879,8 +1988,6 @@ mod tests {
                 assert!(outcomes[0].transaction_hash.is_none());
                 assert_eq!(*server.estimates.lock().unwrap(), 1);
                 assert!(server.sent.lock().unwrap().is_empty());
-                server.config.max_gas_price = Some(1);
-                assert!(server.run().await.is_err(), "dry run bypassed fee cap");
             }
         }
     }
@@ -1904,13 +2011,13 @@ mod tests {
             tracing_subscriber::fmt().with_ansi(false).with_writer(move || writer.clone()).finish();
         let result = server.run().with_subscriber(subscriber).await;
         let error = result.unwrap_err();
-        let WithdrawerError::Unconfirmed { transaction_hash, source } = &error else {
+        let WithdrawerError::Unconfirmed { transaction_hashes, source } = &error else {
             panic!("missing broadcast hash: {error:?}");
         };
+        let transaction_hash = &transaction_hashes[0];
         assert_eq!(*transaction_hash, *server.sent.lock().unwrap()[0].tx_hash());
         assert!(matches!(**source, WithdrawerError::Timeout(_)), "{source:?}");
         let logs = String::from_utf8(capture.0.lock().unwrap().clone()).unwrap();
-        assert!(logs.contains("receipt request failed transiently"), "{logs}");
         for secret in ["password", "host.invalid", "secret-value"] {
             assert!(!logs.contains(secret), "server-supplied secret leaked in warning: {logs}");
         }
@@ -1929,14 +2036,76 @@ mod tests {
         .start()
         .await;
         let error = server.run().await.unwrap_err();
-        let WithdrawerError::Unconfirmed { transaction_hash, source } = &error else {
+        let WithdrawerError::Unconfirmed { transaction_hashes, source } = &error else {
             panic!("missing signed hash: {error:?}");
         };
+        let transaction_hash = &transaction_hashes[0];
         assert_eq!(*transaction_hash, *server.sent.lock().unwrap()[0].tx_hash());
-        assert!(matches!(**source, WithdrawerError::Request(_)), "{source:?}");
+        assert!(matches!(**source, WithdrawerError::TxManager(_)), "{source:?}");
         assert!(std::error::Error::source(source.as_ref()).is_some());
         for secret in ["password", "host.invalid", "secret-value"] {
             assert!(!format!("{error} {error:?}").contains(secret));
+        }
+    }
+
+    #[tokio::test]
+    async fn cancelled_initial_publish_refreshes_pending_nonce_for_next_withdrawal() {
+        let server = Scenario { initial_broadcast_hang: true, ..Default::default() }.start().await;
+        let flow = Withdrawer::new(server.config.clone());
+        let rpc = WithdrawalRpc::new(&server.config).unwrap();
+        let signer = WithdrawalSigner::new(&server.config.signer).await.unwrap();
+        let sender = signer.address();
+        let published = BroadcastJournal::default();
+        let manager = flow.manager(signer, published.clone()).await.unwrap();
+        assert!(
+            tokio::time::timeout(
+                Duration::from_millis(200),
+                flow.submit(&rpc, sender, Some(&manager), Bytes::new(), None, &published),
+            )
+            .await
+            .is_err()
+        );
+        assert_eq!(published.hashes().len(), 1);
+        published.clear();
+        flow.submit(&rpc, sender, Some(&manager), Bytes::new(), None, &published).await.unwrap();
+        let sent = server.sent.lock().unwrap();
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0].nonce(), 0);
+    }
+
+    #[tokio::test]
+    async fn serialized_withdrawals_refresh_pending_nonce_advanced_by_another_sender() {
+        let server =
+            Scenario { proven: 100, nonce_step: 3, second_withdrawal: true, ..Default::default() }
+                .start()
+                .await;
+        let outcomes = server.run().await.unwrap();
+        assert_eq!(outcomes.len(), 2);
+        let sent = server.sent.lock().unwrap();
+        assert_eq!(sent.len(), 2);
+        assert_eq!(sent[0].nonce(), 0);
+        assert_eq!(sent[1].nonce(), 3);
+    }
+
+    #[tokio::test]
+    async fn gas_limit_is_a_floor_for_both_dry_runs_and_submissions() {
+        for minimum in [1, 100_000] {
+            let mut server = Scenario::default().start().await;
+            server.config.gas_limit = Some(minimum);
+            let rpc = WithdrawalRpc::new(&server.config).unwrap();
+            let prepared = PreparedWithdrawalTransaction::prepare(
+                &server.config,
+                &rpc,
+                Address::ZERO,
+                server.config.network.portal,
+                Bytes::new(),
+            )
+            .await
+            .unwrap();
+            assert_eq!(prepared.candidate.gas_limit, minimum.max(65536));
+            server.run().await.unwrap();
+            assert_eq!(server.sent.lock().unwrap()[0].gas_limit(), prepared.candidate.gas_limit);
+            assert_eq!(*server.estimates.lock().unwrap(), 2);
         }
     }
 
@@ -1947,9 +2116,10 @@ mod tests {
         server.config.max_retries = 2;
         server.config.retry_delay = Duration::from_millis(1);
         let error = server.run().await.unwrap_err();
-        let WithdrawerError::Unconfirmed { transaction_hash, source } = error else {
+        let WithdrawerError::Unconfirmed { transaction_hashes, source } = error else {
             panic!("missing signed hash: {error:?}");
         };
+        let transaction_hash = transaction_hashes[0];
         assert_eq!(transaction_hash, *server.sent.lock().unwrap()[0].tx_hash());
         assert!(matches!(*source, WithdrawerError::Timeout(_)), "{source:?}");
     }
@@ -1967,11 +2137,12 @@ mod tests {
         .start()
         .await;
         let error = server.run().await.unwrap_err();
-        let WithdrawerError::Unconfirmed { transaction_hash, source } = &error else {
+        let WithdrawerError::Unconfirmed { transaction_hashes, source } = &error else {
             panic!("missing broadcast hash: {error:?}");
         };
+        let transaction_hash = &transaction_hashes[0];
         assert_eq!(*transaction_hash, *server.sent.lock().unwrap()[0].tx_hash());
-        assert!(matches!(**source, WithdrawerError::Request(_)), "{source:?}");
+        assert!(matches!(**source, WithdrawerError::Timeout(_)), "{source:?}");
         assert!(std::error::Error::source(source.as_ref()).is_some());
         for secret in ["password", "host.invalid", "secret-value"] {
             assert!(!format!("{error} {error:?}").contains(secret));
@@ -1983,9 +2154,10 @@ mod tests {
         let mut server = Scenario { receipt_pending: true, ..Default::default() }.start().await;
         server.config.timeout = Duration::from_secs(1);
         let error = server.run().await.unwrap_err();
-        let WithdrawerError::Unconfirmed { transaction_hash, source } = error else {
+        let WithdrawerError::Unconfirmed { transaction_hashes, source } = error else {
             panic!("missing broadcast hash: {error:?}");
         };
+        let transaction_hash = transaction_hashes[0];
         assert_eq!(transaction_hash, *server.sent.lock().unwrap()[0].tx_hash());
         assert!(matches!(*source, WithdrawerError::Timeout(_)), "{source:?}");
     }
@@ -1994,13 +2166,49 @@ mod tests {
     async fn reverted_receipt_retains_broadcast_hash() {
         let server = Scenario { receipt_reverted: true, ..Default::default() }.start().await;
         let error = server.run().await.unwrap_err();
-        let WithdrawerError::Unconfirmed { transaction_hash, source } = error else {
+        let WithdrawerError::Unconfirmed { transaction_hashes, source } = error else {
             panic!("missing broadcast hash: {error:?}");
         };
+        let transaction_hash = transaction_hashes[0];
         assert_eq!(transaction_hash, *server.sent.lock().unwrap()[0].tx_hash());
         assert!(
             matches!(*source, WithdrawerError::Rpc(WithdrawalRpcError::Reverted(hash)) if hash == transaction_hash)
         );
+    }
+
+    #[tokio::test]
+    async fn operation_deadline_after_fee_bump_retains_every_hash() {
+        let mut server = Scenario {
+            proven: 100,
+            receipt_pending: true,
+            finalization_success: None,
+            ..Default::default()
+        }
+        .start()
+        .await;
+        server.config.timeout = Duration::from_secs(3);
+        let error = server.run().await.unwrap_err();
+        let WithdrawerError::Unconfirmed { transaction_hashes, source } = error else {
+            panic!("missing hashes: {error:?}");
+        };
+        assert!(matches!(*source, WithdrawerError::Timeout(_)));
+        let sent = server.sent.lock().unwrap();
+        assert!(sent.len() >= 2, "withdrawal must resubmit with bumped fees");
+        assert_eq!(transaction_hashes, sent.iter().map(|tx| *tx.tx_hash()).collect::<Vec<_>>());
+    }
+
+    #[tokio::test]
+    async fn manager_send_timeout_after_fee_bump_retains_every_hash() {
+        let mut server = Scenario { receipt_pending: true, ..Default::default() }.start().await;
+        server.config.tx_manager.tx_send_timeout = Duration::from_millis(1500);
+        let error = server.run().await.unwrap_err();
+        let WithdrawerError::Unconfirmed { transaction_hashes, source } = error else {
+            panic!("missing hashes: {error:?}");
+        };
+        assert!(matches!(*source, WithdrawerError::TxManager(TxManagerError::SendTimeout)));
+        let sent = server.sent.lock().unwrap();
+        assert!(sent.len() >= 2);
+        assert_eq!(transaction_hashes, sent.iter().map(|tx| *tx.tx_hash()).collect::<Vec<_>>());
     }
 
     #[tokio::test]
@@ -2017,12 +2225,17 @@ mod tests {
                 .await;
                 let result = server.run().await;
                 let transaction_hash = *server.sent.lock().unwrap()[0].tx_hash();
+                assert!(
+                    server.sent.lock().unwrap()[0].is_eip1559(),
+                    "finalization must use tx-manager EIP-1559 submission"
+                );
                 if success {
                     assert_eq!(result.unwrap()[0].transaction_hash, Some(transaction_hash));
                 } else {
                     let WithdrawerError::TargetCallFailed {
                         withdrawal_hash,
                         transaction_hash: actual,
+                        ..
                     } = result.unwrap_err()
                     else {
                         panic!("target failure was not reported");
@@ -2051,6 +2264,10 @@ mod tests {
             let error = server.run().await.unwrap_err();
             assert!(
                 matches!(error, WithdrawerError::MissingFinalizationEvent { transaction_hash, .. } if transaction_hash == *server.sent.lock().unwrap()[0].tx_hash())
+            );
+            assert!(
+                server.sent.lock().unwrap()[0].is_eip1559(),
+                "finalization must use tx-manager EIP-1559 submission"
             );
         }
     }

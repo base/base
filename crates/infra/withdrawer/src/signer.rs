@@ -33,7 +33,7 @@ impl fmt::Debug for WithdrawalSigner {
     }
 }
 
-/// Redacted signer construction and validation errors.
+/// Signer errors that omit key material and include Ledger device diagnostics.
 #[derive(Debug, Error)]
 pub enum WithdrawalSignerError {
     /// The private key is not a nonzero secp256k1 scalar.
@@ -52,9 +52,9 @@ pub enum WithdrawalSignerError {
     #[cfg(feature = "ledger")]
     #[error("could not connect to Ledger; connect and unlock it, then open the Ethereum app")]
     LedgerConnection(#[source] LedgerError),
-    /// The Ledger could not sign the transaction.
+    /// The Ledger could not sign the transaction; the diagnostic includes its cause.
     #[cfg(feature = "ledger")]
-    #[error("Ledger transaction signing failed")]
+    #[error("Ledger transaction signing failed: {0}")]
     LedgerSigning(#[source] alloy_signer::Error),
     /// Signature recovery did not yield the expected signing address.
     #[cfg(feature = "ledger")]
@@ -318,6 +318,24 @@ mod tests {
             let debug = format!("{signer:?}");
             assert!(!debug.contains(&format!("{key:x}")));
             assert!(!debug.contains(PHRASE));
+        }
+    }
+
+    #[cfg(feature = "ledger")]
+    #[test]
+    fn ledger_signing_display_includes_cause() {
+        for (cause, diagnostic) in [
+            (
+                alloy_signer_ledger::LedgerError::UnexpectedNullResponse,
+                "received an unexpected empty response",
+            ),
+            (
+                alloy_signer_ledger::LedgerError::ShortResponse { got: 0, expected: 65 },
+                "bad response; got 0 bytes, expected 65",
+            ),
+        ] {
+            let error = WithdrawalSignerError::LedgerSigning(alloy_signer::Error::other(cause));
+            assert!(error.to_string().contains(diagnostic));
         }
     }
 

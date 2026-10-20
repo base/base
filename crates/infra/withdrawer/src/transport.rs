@@ -14,7 +14,7 @@ use tower::Service;
 use tracing::{instrument::WithSubscriber, subscriber::NoSubscriber};
 use url::Url;
 
-use crate::WithdrawerConfig;
+use crate::{BroadcastJournal, WithdrawerConfig};
 
 /// Bounded exponential retries and credential-safe errors over reqwest HTTP.
 #[derive(Clone)]
@@ -23,6 +23,8 @@ pub struct WithdrawalRpcTransport {
     url: Url,
     max_retries: u32,
     retry_delay: Duration,
+    redact_errors: bool,
+    journal: Option<BroadcastJournal>,
 }
 
 impl fmt::Debug for WithdrawalRpcTransport {
@@ -56,6 +58,34 @@ impl WithdrawalRpcTransport {
                 url: url.clone(),
                 max_retries: config.max_retries,
                 retry_delay: config.retry_delay,
+                redact_errors: false,
+                journal: None,
+            },
+            guess_local_url(url),
+        )))
+    }
+
+    /// Builds a redacting submission provider that records hashes before forwarding requests.
+    pub fn connect_for_submission<N: Network>(
+        url: &Url,
+        config: &WithdrawerConfig,
+        journal: BroadcastJournal,
+    ) -> Result<RootProvider<N>, TransportError> {
+        if !matches!(url.scheme(), "http" | "https") {
+            return Err(TransportErrorKind::non_retryable_str("RPC URL must use HTTP(S)"));
+        }
+        let client = reqwest::Client::builder()
+            .timeout(Self::REQUEST_TIMEOUT.min(config.timeout / 2))
+            .build()
+            .map_err(|error| Self::redact(TransportErrorKind::custom(error)))?;
+        Ok(RootProvider::new(ClientBuilder::default().transport(
+            Self {
+                client,
+                url: url.clone(),
+                max_retries: config.max_retries,
+                retry_delay: config.retry_delay,
+                redact_errors: true,
+                journal: Some(journal),
             },
             guess_local_url(url),
         )))
@@ -152,6 +182,9 @@ impl Service<RequestPacket> for WithdrawalRpcTransport {
     }
 
     fn call(&mut self, request: RequestPacket) -> Self::Future {
+        if let Some(journal) = &self.journal {
+            journal.record(&request);
+        }
         let this = self.clone();
         Box::pin(async move {
             let mut delay = this.retry_delay;
@@ -196,12 +229,75 @@ impl Service<RequestPacket> for WithdrawalRpcTransport {
                     Err(error) => error,
                 };
                 if attempt == this.max_retries || !Self::should_retry(&error) {
-                    return Err(Self::redact(error));
+                    return Err(if this.redact_errors {
+                        // Fee-bump and nonce policy need typed errors, not server diagnostics.
+                        let classified =
+                            base_tx_manager::RpcErrorClassifier::classify_rpc_error(&error);
+                        let mut error = Self::redact_diagnostic(error);
+                        if !matches!(
+                            classified,
+                            base_tx_manager::TxManagerError::Rpc(_)
+                                | base_tx_manager::TxManagerError::ExecutionReverted { .. }
+                        ) && let TransportError::ErrorResp(payload) = &mut error
+                        {
+                            payload.message = classified.to_string().into();
+                        }
+                        error
+                    } else {
+                        Self::redact(error)
+                    });
                 }
                 tokio::time::sleep(delay).await;
                 delay = delay.saturating_mul(2);
             }
             unreachable!("the initial request attempt always runs")
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_json_rpc::{Id, Request};
+    use alloy_primitives::{Bytes, keccak256};
+    use serde_json::json;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn failed_broadcasts_retain_distinct_hashes_including_batches() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap()).parse().unwrap();
+        drop(listener);
+        let journal = BroadcastJournal::default();
+        let mut transport = WithdrawalRpcTransport {
+            client: reqwest::Client::new(),
+            url,
+            max_retries: 1,
+            retry_delay: Duration::from_millis(1),
+            redact_errors: true,
+            journal: Some(journal.clone()),
+        };
+        let request =
+            Request::new("eth_sendRawTransaction", Id::Number(1), [Bytes::from_static(&[2, 3])])
+                .serialize()
+                .unwrap();
+        let replacement =
+            Request::new("eth_sendRawTransaction", Id::Number(4), [Bytes::from_static(&[2, 4])])
+                .serialize()
+                .unwrap();
+        let malformed = Request::new("eth_sendRawTransaction", Id::Number(2), json!(["not hex"]))
+            .serialize()
+            .unwrap();
+        let read = Request::new("eth_call", Id::Number(3), [Bytes::from_static(&[4])])
+            .serialize()
+            .unwrap();
+        assert!(transport.call(RequestPacket::Single(request.clone())).await.is_err());
+        assert!(
+            transport
+                .call(RequestPacket::Batch(vec![request, replacement, malformed, read]))
+                .await
+                .is_err()
+        );
+        assert_eq!(journal.hashes(), vec![keccak256([2, 3]), keccak256([2, 4])]);
     }
 }

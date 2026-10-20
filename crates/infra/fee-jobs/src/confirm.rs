@@ -6,15 +6,16 @@ use std::{
 
 use alloy_network::TxSigner;
 use alloy_primitives::{Address, B256};
-use alloy_provider::Provider;
+use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_eth::Filter;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolCall, SolEvent};
 use base_common_consensus::Predeploys;
+use base_tx_manager::SimpleTxManager;
 use base_withdrawer::{
-    FaultProofContracts, FaultProofPortal, Fees, Network, ProofSystem, ResolvedProofSystem, Secret,
-    SignerSource, Withdrawal, WithdrawalPortal, WithdrawalRpc, WithdrawalSigner, WithdrawalStatus,
-    Withdrawer, WithdrawerConfig, WithdrawerError,
+    BroadcastJournal, FaultProofContracts, FaultProofPortal, Network, ProofSystem,
+    ResolvedProofSystem, Secret, SignerSource, Withdrawal, WithdrawalPortal, WithdrawalRpc,
+    WithdrawalSigner, WithdrawalStatus, Withdrawer, WithdrawerConfig, WithdrawerError,
 };
 use eyre::{WrapErr, ensure};
 use tokio::time::{sleep, timeout};
@@ -45,6 +46,15 @@ impl ConfirmWindow {
             start = end + 1;
         }
     }
+}
+
+/// L1 submission identity and the manager, absent for dry runs.
+#[derive(Debug)]
+pub struct ConfirmSender<'a> {
+    /// Address used for proof selection and gas estimation.
+    pub address: Address,
+    /// Shared manager for serialized L1 sends.
+    pub manager: Option<&'a SimpleTxManager<RootProvider>>,
 }
 
 /// Confirms recent fee disbursals using one serialized L1 signer.
@@ -101,9 +111,7 @@ impl ConfirmJob {
             withdrawal: B256::ZERO,
             signer: SignerSource::PrivateKey(Secret(signer.to_bytes())),
             gas_limit: None,
-            fees: Fees::Automatic,
-            gas_multiplier: 1.0,
-            max_gas_price: None,
+            tx_manager: self.args.tx_manager.clone().try_into()?,
             dry_run: self.args.dry_run,
             timeout: self.args.withdrawal_timeout,
             max_retries: 3,
@@ -218,12 +226,12 @@ impl ConfirmJob {
         withdrawer: &Withdrawer,
         rpc: &WithdrawalRpc,
         proofs: ResolvedProofSystem,
-        signer: &WithdrawalSigner,
+        sender: &ConfirmSender<'_>,
         withdrawal: &Withdrawal,
-        pending_transaction: &mut Option<B256>,
+        pending_transaction: &BroadcastJournal,
     ) -> eyre::Result<bool> {
         let hash = withdrawal.hash();
-        let submitter = signer.address();
+        let submitter = sender.address;
         let status = withdrawer.status(rpc, proofs, withdrawal, submitter).await?;
         info!(withdrawal_hash = %hash, ?status, "withdrawal decision");
         match status {
@@ -240,7 +248,9 @@ impl ConfirmJob {
             }
             WithdrawalStatus::Prove => {
                 let calldata = withdrawer.prove_calldata(rpc, proofs, withdrawal).await?;
-                withdrawer.submit(rpc, signer, calldata, None, pending_transaction).await?;
+                withdrawer
+                    .submit(rpc, submitter, sender.manager, calldata, None, pending_transaction)
+                    .await?;
                 if self.args.dry_run {
                     info!(withdrawal_hash = %hash, "dry run proof prepared");
                 } else {
@@ -255,7 +265,14 @@ impl ConfirmJob {
                 .abi_encode()
                 .into();
                 match withdrawer
-                    .submit(rpc, signer, calldata, Some(hash), pending_transaction)
+                    .submit(
+                        rpc,
+                        submitter,
+                        sender.manager,
+                        calldata,
+                        Some(hash),
+                        pending_transaction,
+                    )
                     .await
                 {
                     Ok(transaction_hash) => {
@@ -301,8 +318,16 @@ impl ConfirmJob {
         let signer = WithdrawalSigner::new(&withdrawer.config.signer)
             .await
             .map_err(WithdrawerError::from)?;
+        let submitter = signer.address();
         let transactions = self.disbursals(&rpc).await?;
+        let pending_transaction = BroadcastJournal::default();
+        let manager = if self.args.dry_run {
+            None
+        } else {
+            Some(withdrawer.manager(signer, pending_transaction.clone()).await?)
+        };
         let mut pending = Vec::new();
+        let sender = ConfirmSender { address: submitter, manager: manager.as_ref() };
         let mut failed = Vec::new();
         let mut last_error = None;
         for transaction in transactions {
@@ -317,26 +342,28 @@ impl ConfirmJob {
             };
             for withdrawal in withdrawals {
                 let hash = withdrawal.hash();
-                let mut pending_transaction = None;
+                pending_transaction.clear();
                 let result = timeout(
                     self.args.withdrawal_timeout,
                     self.confirm_withdrawal(
                         &withdrawer,
                         &rpc,
                         proofs,
-                        &signer,
+                        &sender,
                         &withdrawal,
-                        &mut pending_transaction,
+                        &pending_transaction,
                     ),
                 )
                 .await
                 .unwrap_or_else(|source| {
-                    Err(match pending_transaction {
-                        Some(transaction_hash) => WithdrawerError::Unconfirmed {
-                            transaction_hash,
+                    let transaction_hashes = pending_transaction.hashes();
+                    Err(if transaction_hashes.is_empty() {
+                        WithdrawerError::Timeout(source)
+                    } else {
+                        WithdrawerError::Unconfirmed {
+                            transaction_hashes,
                             source: Box::new(WithdrawerError::Timeout(source)),
-                        },
-                        None => WithdrawerError::Timeout(source),
+                        }
                     }
                     .into())
                 });
@@ -350,6 +377,9 @@ impl ConfirmJob {
                     }
                 }
             }
+        }
+        if let Some(manager) = manager {
+            manager.close();
         }
         info!(count = pending.len(), hashes = ?pending, "pending withdrawals");
         info!(count = failed.len(), hashes = ?failed, "failed withdrawals or disbursal receipts");
@@ -428,6 +458,7 @@ mod tests {
     fn job(url: &Url) -> ConfirmJob {
         ConfirmJob {
             args: ConfirmArgs {
+                tx_manager: crate::TxManagerCli { num_confirmations: 1, ..Default::default() },
                 l1_rpc_url: url.clone(),
                 l2_rpc_url: url.clone(),
                 optimism_portal_proxy_address: Address::repeat_byte(1),
@@ -482,6 +513,7 @@ mod tests {
         }
         .hash();
         let encoded = event.encode_log_data();
+        receipt["blockHash"] = json!(B256::repeat_byte(9));
         receipt["logs"][0]["topics"] = json!(encoded.topics());
         receipt["logs"][0]["data"] = json!(encoded.data);
         receipt
@@ -719,11 +751,13 @@ mod tests {
         receipt["logs"].as_array_mut().unwrap().push(unrelated["logs"][0].clone());
         let estimated = Arc::new(AtomicBool::new(false));
         let captured = Arc::clone(&estimated);
+        let published = Arc::new(Mutex::new(Vec::new()));
+        let sent = Arc::clone(&published);
         let proof_reads = Arc::new(Mutex::new(0));
         let status_reads = Arc::new(Mutex::new(0));
         let captured_status_reads = Arc::clone(&status_reads);
         let server = Server::new(move |request| match request["method"].as_str().unwrap() {
-            "eth_blockNumber" | "eth_gasPrice" => json!({"result":"0x64"}),
+            "eth_blockNumber" | "eth_gasPrice" | "eth_maxPriorityFeePerGas" => json!({"result":"0x64"}),
             "eth_getLogs" => json!({"result":[fee_log(100, 0, B256::repeat_byte(1))]}),
             "eth_getTransactionReceipt" if request["params"][0] == json!(B256::repeat_byte(1)) => json!({"result":receipt}),
             "eth_getTransactionReceipt" => {
@@ -732,6 +766,7 @@ mod tests {
                 }
                 let mut mined = receipt.clone();
                 mined["type"] = json!("0x0");
+                mined["blockNumber"] = json!("0x1");
                 mined["transactionHash"] = request["params"][0].clone();
                 mined["logs"] = json!([]);
                 if finalization_error == Some("target call failed") {
@@ -748,10 +783,16 @@ mod tests {
                 }
                 json!({"result":mined})
             }
-            "eth_sendRawTransaction" => json!({"result":B256::repeat_byte(7)}),
+            "eth_sendRawTransaction" => {
+                let raw: Bytes = serde_json::from_value(request["params"][0].clone()).unwrap();
+                sent.lock().unwrap().push(alloy_primitives::keccak256(raw));
+                json!({"result":B256::repeat_byte(7)})
+            }
             "eth_getBlockByNumber" => {
                 let mut block = Block::<Transaction>::default();
                 block.header.inner.timestamp = now;
+                block.header.inner.base_fee_per_gas = Some(100);
+                block.header.hash = serde_json::from_value(receipt["blockHash"].clone()).unwrap();
                 json!({"result":block})
             }
             "eth_chainId" => json!({"result":"0x1"}),
@@ -813,11 +854,22 @@ mod tests {
         let mut job = job(&server.url);
         job.args.num_blocks_to_query = 0;
         job.args.dry_run = finalization_error.is_none();
+        if finalization_error == Some("was signed") {
+            job.args.withdrawal_timeout = Duration::from_secs(1);
+            job.args.tx_manager.resubmission_timeout = Duration::from_millis(100);
+            job.args.tx_manager.receipt_query_interval = Duration::from_millis(25);
+        }
         let capture = LogCapture(Arc::new(Mutex::new(Vec::new())));
         let writer = capture.clone();
         let subscriber =
             tracing_subscriber::fmt().with_ansi(false).with_writer(move || writer.clone()).finish();
         let result = job.run().with_subscriber(subscriber).await;
+        let published = published.lock().unwrap().clone();
+        assert_eq!(
+            !published.is_empty(),
+            finalization_error.is_some(),
+            "dry runs must not publish"
+        );
         assert_eq!(result.is_ok(), pending.is_some(), "{result:?}");
         let logs = String::from_utf8(capture.0.lock().unwrap().clone()).unwrap();
         assert!(logs.contains("skipping withdrawal not sent by the FeeDisburser"));
@@ -827,6 +879,19 @@ mod tests {
         } else {
             let error = result.unwrap_err();
             if let Some(message) = finalization_error {
+                if message == "was signed" {
+                    let Some(WithdrawerError::Unconfirmed { transaction_hashes, .. }) =
+                        error.downcast_ref::<WithdrawerError>()
+                    else {
+                        panic!("missing signed hashes: {error:#}");
+                    };
+                    assert!(published.len() >= 2, "withdrawal must fee-bump before its deadline");
+                    assert!(published.iter().all(|hash| transaction_hashes.contains(hash)));
+                    assert!(transaction_hashes.len() >= published.len());
+                    assert!(transaction_hashes.len() <= published.len() + 1);
+                }
+                let message =
+                    if message == "was signed" { "may have been broadcast" } else { message };
                 assert!(format!("{error:#}").contains(message), "{error:#}");
                 assert!(matches!(
                     error.downcast_ref::<WithdrawerError>(),
