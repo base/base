@@ -57,7 +57,7 @@ impl PreparedWithdrawalTransaction {
         target: Address,
         input: Bytes,
     ) -> Result<Self, WithdrawalTransactionError> {
-        tokio::time::timeout(rpc.timeout, async {
+        tokio::time::timeout(config.timeout, async {
             let chain_id = rpc.l1.get_chain_id().await?;
             if let Some(expected) = config.network.l1_chain_id
                 && expected != chain_id
