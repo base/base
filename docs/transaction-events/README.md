@@ -310,7 +310,7 @@ deserializes `event_type`) must run a release that knows the candidate kinds
 before any builder or node emits them. Older binaries reject unknown
 `event_type` values.
 
-Ingress. `TXPOOL_SEND_SWAP_TRANSACTION` fires once per admitted
+Ingress: `TXPOOL_SEND_SWAP_TRANSACTION` fires once per admitted
 `base_sendSwapTransaction` request, when the default transaction is pooled,
 keyed by its `tx_hash`. `data.selection` is `applied` for a candidate group,
 which also carries `data.group_hash` and `data.alternative_hashes` and has an
@@ -351,7 +351,7 @@ that left the pool another way, such as admin removal or pool-full eviction, is
 `dropped` only once the recovery window closes, because a canonical landing can
 still correct it.
 
-Disabled selection. A node started without candidates registers no
+Disabled selection: a node started without candidates registers no
 `base_sendSwapTransaction` and emits none of these events. While selection is
 disabled at runtime with `admin_setCandidateSelectionEnabled`, ingress journals
 admissions with `data.selection: ignored` and starts no group; the ledger still

@@ -72,10 +72,10 @@ impl AdmissionReceipt {
 #[derive(Debug, thiserror::Error)]
 pub enum AdmissionError {
     /// The sender is EIP-7702-delegated.
-    #[error("sender is EIP-7702 delegated")]
+    #[error("sender is EIP-7702-delegated")]
     SenderDelegated,
     /// No principal holds the capability for the sender.
-    #[error("sender is not an allowed principal")]
+    #[error("sender is not an authorized principal for this capability")]
     PrincipalNotAllowed,
     /// The access policy refused the group.
     #[error(transparent)]
@@ -84,7 +84,7 @@ pub enum AdmissionError {
     #[error(transparent)]
     Ledger(#[from] LedgerError),
     /// The concurrent admission this one waited on failed.
-    #[error("concurrent submission of the same group failed")]
+    #[error("a concurrent submission of this candidate group failed")]
     ConcurrentSubmissionFailed,
     /// Pool insertion, or the wait for a concurrent one, exceeded the admission timeout.
     #[error("admission timed out")]
@@ -99,10 +99,10 @@ pub enum AdmissionError {
 
 /// Owns a first admission's `Pending` ledger entry and in-flight receiver until it settles.
 ///
-/// Dropping it unsettled, because the request was cancelled, settles the admission from pool
-/// state: confirmed if the representative is pooled, aborted otherwise. Either way the
-/// in-flight entry is removed and waiting duplicates learn the outcome, so no `Pending` entry
-/// outlives its request.
+/// If the request is cancelled before [`Self::settle`] runs, dropping it settles the admission
+/// from pool state: confirmed if the representative is pooled, aborted otherwise. Either way
+/// the in-flight entry is removed and waiting duplicates learn the outcome, so no `Pending`
+/// entry outlives its request.
 #[derive(Debug)]
 pub struct PendingAdmission<Pool: TransactionPool> {
     /// The in-flight map holding this admission's receiver.
@@ -211,12 +211,12 @@ impl<Provider, Pool> AdmissionService<Provider, Pool> {
         &self.runtime
     }
 
-    /// Returns the pool admissions insert into.
+    /// Returns the transaction pool that admissions insert into.
     pub const fn pool(&self) -> &Pool {
         &self.pool
     }
 
-    /// Returns the provider sender state is read from.
+    /// Returns the provider used to read sender state and the latest header.
     pub const fn provider(&self) -> &Provider {
         &self.provider
     }

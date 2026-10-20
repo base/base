@@ -128,7 +128,8 @@ pub struct SwapTransactionResponse {
     /// selection applied.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub group_hash: Option<B256>,
-    /// Alternative hashes, in envelope order. Present only when selection applied.
+    /// The envelope's sibling hashes other than `transactionHash`, in envelope order. Present
+    /// only when selection applied.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub alternative_hashes: Vec<TxHash>,
     /// The request carried alternatives, but selection is disabled, so only the default
@@ -470,10 +471,10 @@ impl SwapAdmissionTrace {
     /// Journals `TXPOOL_SEND_SWAP_TRANSACTION` once per admission, or
     /// `TXPOOL_SEND_SWAP_TRANSACTION_REJECTED` with the error's stable label.
     ///
-    /// An admission is keyed by the default transaction's hash (and a group's hash), so a
-    /// replayed event deduplicates, and duplicate submissions journal nothing. Each rejection
-    /// gets a never-reused identity from `ledger`: a request may be rejected repeatedly, and a
-    /// malformed one has no hash at all.
+    /// An admission's event ID is the default transaction's hash (plus the group hash for a
+    /// group), so a replayed event deduplicates; a duplicate submission returns before
+    /// journaling. Each rejection's ID includes a never-reused [`GroupLedger::next_sequence`],
+    /// because a request may be rejected repeatedly and a malformed one has no hash at all.
     pub fn journal(&self, ledger: &GroupLedger, result: &RpcResult<SwapTransactionResponse>) {
         let instance = format!("{:016x}", ledger.instance());
         let selection = self.selection_label();
