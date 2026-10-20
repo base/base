@@ -1274,7 +1274,7 @@ where
             )
             .await?;
 
-        let new_hash = self.publish_tx(send_state, &prepared.raw_tx).await?;
+        let new_hash = self.publish_tx(send_state, &prepared.raw_tx, Some(old.tx_hash)).await?;
 
         // Record the bump and log only after the transaction has been
         // successfully published to avoid inflating the count on failure.
@@ -1320,7 +1320,7 @@ where
                 return Err(err);
             }
 
-            match self.publish_tx(send_state, raw_tx).await {
+            match self.publish_tx(send_state, raw_tx, None).await {
                 Ok(tx_hash) => return Ok(tx_hash),
                 Err(TxManagerError::NonceTooHigh) if remaining_retries > 0 => {
                     remaining_retries -= 1;
@@ -1351,9 +1351,11 @@ where
     /// A found transaction counts as a successful publish and proceeds to confirmation.
     /// Other errors are forwarded to [`SendState::process_send_error`] for state tracking.
     ///
-    /// Already-known responses refer to the submitted bytes, not a prior replacement.
+    /// On an already-known response, tracked sends return the submitted local hash.
+    /// Untracked sends return `last_tx_hash`, the most recent successful publication's
+    /// hash, so receipt polling continues for the previous transaction.
     ///
-    /// The returned hash never comes from the RPC. It is the decoded envelope's
+    /// Newly submitted hashes never come from the RPC. Each is the decoded envelope's
     /// [`TxEnvelope::tx_hash`], which excludes any EIP-4844 blob sidecar. If `raw_tx`
     /// does not decode as a known envelope, it falls back to `keccak256(raw_tx)`, the
     /// EIP-2718 hash of any typed transaction whose network encoding equals its
@@ -1369,6 +1371,7 @@ where
         &self,
         send_state: &SendState,
         raw_tx: &Bytes,
+        last_tx_hash: Option<B256>,
     ) -> TxManagerResult<B256> {
         let local_tx_hash = match TxEnvelope::decode_2718_exact(raw_tx) {
             Ok(envelope) => *envelope.tx_hash(),
@@ -1418,9 +1421,18 @@ where
                 if classified.is_already_known()
                     && (send_state.published.is_some() || send_state.has_published())
                 {
+                    let hash = if send_state.published.is_some() {
+                        local_tx_hash
+                    } else {
+                        last_tx_hash.ok_or_else(|| {
+                            TxManagerError::InvalidConfig(
+                                "AlreadyKnown but no prior tx hash available; caller must track the hash from publish_tx".into(),
+                            )
+                        })?
+                    };
                     send_state.record_successful_publish();
-                    info!(tx_hash = %local_tx_hash, "transaction already known in mempool, treating as success");
-                    return Ok(local_tx_hash);
+                    info!(tx_hash = %hash, "transaction already known in mempool, treating as success");
+                    return Ok(hash);
                 }
 
                 if send_state.published.is_some()
@@ -1958,7 +1970,7 @@ mod tests {
         let send_state = SendState::new(3).expect("should construct send state");
 
         let tx_hash = manager
-            .publish_tx(&send_state, &raw_tx)
+            .publish_tx(&send_state, &raw_tx, None)
             .await
             .expect("an unexpected RPC hash must not fail publication");
         let confirmed = tokio::time::timeout(
@@ -1986,13 +1998,15 @@ mod tests {
     #[case::tracked_replacement(true, true)]
     #[case::untracked_replacement(false, true)]
     #[tokio::test]
-    async fn already_known_confirms_submitted_hash(
+    async fn already_known_confirms_tracked_local_or_untracked_previous_hash(
         #[case] tracked: bool,
         #[case] previously_published: bool,
     ) {
         let envelope = signed_eip1559();
         let local_tx_hash = *envelope.tx_hash();
-        let (receipt, block) = mined_receipt(local_tx_hash, 10);
+        let previous_tx_hash = B256::with_last_byte(0x42);
+        let expected_hash = if tracked { local_tx_hash } else { previous_tx_hash };
+        let (receipt, block) = mined_receipt(expected_hash, 10);
         let asserter = Asserter::new();
         asserter.push_success(&1u64);
         asserter.push_failure_msg("already known");
@@ -2002,7 +2016,7 @@ mod tests {
         let manager = SimpleTxManager::from_wallet(
             ReceiptHashProvider {
                 inner: ProviderBuilder::default().connect_mocked_client(asserter),
-                local_tx_hash,
+                local_tx_hash: expected_hash,
             },
             EthereumWallet::from(PrivateKeySigner::random()),
             TxManagerConfig { num_confirmations: 1, ..TxManagerConfig::default() },
@@ -2016,7 +2030,14 @@ mod tests {
         if previously_published {
             send_state.record_successful_publish();
         }
-        let hash = manager.publish_tx(&send_state, &envelope.encoded_2718().into()).await.unwrap();
+        let hash = manager
+            .publish_tx(
+                &send_state,
+                &envelope.encoded_2718().into(),
+                previously_published.then_some(previous_tx_hash),
+            )
+            .await
+            .unwrap();
         let confirmed = tokio::time::timeout(
             Duration::from_secs(1),
             SimpleTxManager::<ReceiptHashProvider>::wait_mined(
@@ -2030,8 +2051,8 @@ mod tests {
         .await
         .unwrap()
         .unwrap();
-        assert_eq!(confirmed.transaction_hash, local_tx_hash);
-        assert_eq!(hash, *envelope.tx_hash());
+        assert_eq!(confirmed.transaction_hash, expected_hash);
+        assert_eq!(hash, expected_hash);
         assert!(send_state.has_published());
     }
 
@@ -2151,7 +2172,7 @@ mod tests {
         let send_state = SendState::new(3).expect("should construct send state");
 
         let tx_hash = manager
-            .publish_tx(&send_state, &raw_tx)
+            .publish_tx(&send_state, &raw_tx, None)
             .await
             .expect("an undecodable RPC hash must not fail publication");
 
@@ -2198,7 +2219,7 @@ mod tests {
         .unwrap();
         let send_state = SendState::new(3).unwrap();
 
-        let tracked_hash = manager.publish_tx(&send_state, &raw_tx).await.unwrap();
+        let tracked_hash = manager.publish_tx(&send_state, &raw_tx, None).await.unwrap();
 
         assert_eq!(tracked_hash, canonical_hash);
         assert!(send_state.has_published());
@@ -2222,7 +2243,7 @@ mod tests {
         .unwrap();
         let send_state = SendState::new(3).unwrap();
 
-        assert_eq!(manager.publish_tx(&send_state, &raw_tx).await.unwrap(), expected_hash);
+        assert_eq!(manager.publish_tx(&send_state, &raw_tx, None).await.unwrap(), expected_hash);
         assert!(send_state.has_published());
     }
 
@@ -2270,7 +2291,8 @@ mod tests {
         let send_state = SendState::new(3).unwrap();
         send_state.set_runtime_mempool_deadline(Duration::from_secs(1));
 
-        let result = manager.publish_tx(&send_state, &signed_eip1559().encoded_2718().into()).await;
+        let result =
+            manager.publish_tx(&send_state, &signed_eip1559().encoded_2718().into(), None).await;
 
         assert_eq!(result, Err(TxManagerError::Rpc("transport request failed".into())));
         assert!(!send_state.has_published());
