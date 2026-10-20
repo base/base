@@ -1,6 +1,6 @@
 //! Checks on the sender-signed transaction a `payer_sendTransaction` request carries.
 
-use alloy_primitives::Address;
+use alloy_primitives::{Address, U256};
 use base_common_consensus::{
     BaseTxEnvelope, Eip8130Constants, Eip8130Signed, decode_2718_canonical,
 };
@@ -67,6 +67,23 @@ impl PayerTransaction {
         Ok(Self { signed, sender, signer })
     }
 
+    /// The sender and `nonce_key` whose nonce this transaction uses, or `None` for a nonce-free
+    /// transaction, which relies on its expiry instead.
+    pub fn nonce_channel(&self) -> Option<(Address, U256)> {
+        let nonce_key = self.signed.tx().nonce_key;
+        (nonce_key != Eip8130Constants::NONCE_KEY_MAX).then_some((self.sender, nonce_key))
+    }
+
+    /// Rejects this transaction when `next`, the next unused nonce in its channel, is past its
+    /// `nonce_sequence`. Such a transaction can never be included, such as one replayed from
+    /// chain with its `payer_auth` stripped.
+    pub fn check_nonce(&self, next: U256) -> Result<(), PayerTransactionError> {
+        if U256::from(self.signed.tx().nonce_sequence) < next {
+            return Err(PayerTransactionError::NonceUsed);
+        }
+        Ok(())
+    }
+
     /// This transaction cut to its first call phase, as an EIP-8130 `eth_call` request.
     ///
     /// It keeps the transaction's gas, fees, account changes, validity window, and payer, so the
@@ -123,13 +140,16 @@ pub enum PayerTransactionError {
     /// A declared sender signs with an authenticator other than K1 before the keystore upgrade.
     #[error("a declared sender must sign with the K1 authenticator")]
     UnsupportedSenderAuthenticator,
+    /// The transaction's nonce was already used.
+    #[error("transaction nonce was already used")]
+    NonceUsed,
 }
 
 #[cfg(test)]
 mod tests {
     use alloy_consensus::{Signed, TxEip1559};
     use alloy_eips::Encodable2718;
-    use alloy_primitives::{Bytes, Signature, U256};
+    use alloy_primitives::{Bytes, Signature};
     use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
     use base_common_consensus::{Call, TxEip8130};
@@ -220,6 +240,32 @@ mod tests {
             PayerTransaction::decode(&other_chain, CHAIN_ID, false).unwrap_err(),
             PayerTransactionError::ChainIdMismatch
         );
+    }
+
+    #[test]
+    fn rejects_a_nonce_its_channel_already_used() {
+        let signer = PrivateKeySigner::random();
+        let mut tx = transaction(None, payer());
+        tx.nonce_key = U256::from(7);
+        tx.nonce_sequence = 3;
+        let raw = encode(tx.clone(), signature(&signer, &tx).to_vec(), Bytes::new());
+        let transaction = PayerTransaction::decode(&raw, CHAIN_ID, false).unwrap();
+
+        assert_eq!(transaction.nonce_channel(), Some((signer.address(), U256::from(7))));
+        assert_eq!(transaction.check_nonce(U256::from(4)), Err(PayerTransactionError::NonceUsed));
+        assert_eq!(transaction.check_nonce(U256::from(3)), Ok(()));
+        assert_eq!(transaction.check_nonce(U256::from(2)), Ok(()));
+    }
+
+    #[test]
+    fn leaves_a_nonce_free_transaction_to_its_expiry() {
+        let signer = PrivateKeySigner::random();
+        let mut tx = transaction(None, payer());
+        tx.nonce_key = Eip8130Constants::NONCE_KEY_MAX;
+        tx.valid_before = 1;
+        let raw = encode(tx.clone(), signature(&signer, &tx).to_vec(), Bytes::new());
+
+        assert_eq!(PayerTransaction::decode(&raw, CHAIN_ID, false).unwrap().nonce_channel(), None);
     }
 
     #[test]

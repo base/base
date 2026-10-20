@@ -15,7 +15,7 @@ use reth_storage_api::BlockReaderIdExt;
 use serde_json::Value;
 use tracing::{debug, warn};
 
-use crate::{PayerRejection, PayerRequestFilter, PayerTransaction, PhaseZeroSimulator, TermsCache};
+use crate::{PayerChainState, PayerRejection, PayerRequestFilter, PayerTransaction, TermsCache};
 
 /// Rejection returned when `payer_*` is called before Everest activates EIP-8430.
 pub const PAYER_PRE_EVEREST_RPC_ERROR: &str = "payer methods require EIP-8430, which is gated \
@@ -40,42 +40,42 @@ pub trait PayerApi {
 }
 
 /// Proxies payer methods to the upstream payer service.
-pub struct PayerApiImpl<Provider, Simulator> {
+pub struct PayerApiImpl<Provider, State> {
     provider: Provider,
     client: SequencerClient,
-    simulator: Simulator,
+    state: State,
     cache: Option<Arc<TermsCache>>,
 }
 
-impl<Provider, Simulator> fmt::Debug for PayerApiImpl<Provider, Simulator> {
+impl<Provider, State> fmt::Debug for PayerApiImpl<Provider, State> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PayerApiImpl").field("cache_get_terms", &self.cache.is_some()).finish()
     }
 }
 
-impl<Provider, Simulator> PayerApiImpl<Provider, Simulator> {
-    /// Creates a proxy that runs each `payer_sendTransaction` phase 0 through `simulator`.
+impl<Provider, State> PayerApiImpl<Provider, State> {
+    /// Creates a proxy that checks each `payer_sendTransaction` against `state`.
     /// `cache_get_terms` stores one shared `payer_getTerms` response.
     pub fn new(
         provider: Provider,
         client: SequencerClient,
-        simulator: Simulator,
+        state: State,
         cache_get_terms: bool,
     ) -> Self {
         Self {
             provider,
             client,
-            simulator,
+            state,
             cache: cache_get_terms.then(|| Arc::new(TermsCache::new())),
         }
     }
 }
 
-impl<Provider, Simulator> PayerApiImpl<Provider, Simulator>
+impl<Provider, State> PayerApiImpl<Provider, State>
 where
     Provider: BlockReaderIdExt + ChainSpecProvider + Clone,
     Provider::ChainSpec: Upgrades + EthChainSpec,
-    Simulator: PhaseZeroSimulator,
+    State: PayerChainState,
 {
     fn chain_id(&self) -> u64 {
         self.provider.chain_spec().chain().id()
@@ -100,10 +100,10 @@ where
     }
 
     /// Rejects a transaction the payer would reject, without forwarding it: one that does not
-    /// decode, does not leave a payer to co-sign, lacks a valid sender signature, or whose
-    /// phase 0 fails at the latest block.
+    /// decode, does not leave a payer to co-sign, lacks a valid sender signature, reuses a
+    /// nonce, or whose phase 0 fails at the latest block.
     ///
-    /// A simulation that cannot run passes the transaction on, since the payer checks it too.
+    /// A state read that fails passes the transaction on, since the payer checks it too.
     async fn check_transaction(&self, raw: &[u8], timestamp: u64) -> RpcResult<()> {
         let keystore = self.provider.chain_spec().is_zenith_active_at_timestamp(timestamp);
         let transaction =
@@ -111,7 +111,18 @@ where
                 debug!(error = %error, "rejected payer_sendTransaction transaction before forward");
                 PayerRejection::invalid_transaction(error)
             })?;
-        let Err(error) = self.simulator.simulate(transaction.phase_zero_request()).await else {
+        if let Some((sender, nonce_key)) = transaction.nonce_channel() {
+            match self.state.nonce(sender, nonce_key).await {
+                Ok(next) => transaction.check_nonce(next).map_err(|error| {
+                    debug!(error = %error, "rejected payer_sendTransaction nonce before forward");
+                    PayerRejection::invalid_transaction(error)
+                })?,
+                Err(error) => {
+                    warn!(error = %error, "payer_sendTransaction nonce could not be read");
+                }
+            }
+        }
+        let Err(error) = self.state.simulate(transaction.phase_zero_request()).await else {
             return Ok(());
         };
         let Some(rejection) = PayerRejection::for_phase_zero(&error) else {
@@ -180,11 +191,11 @@ where
 }
 
 #[async_trait]
-impl<Provider, Simulator> PayerApiServer for PayerApiImpl<Provider, Simulator>
+impl<Provider, State> PayerApiServer for PayerApiImpl<Provider, State>
 where
     Provider: BlockReaderIdExt + ChainSpecProvider + Clone + Send + Sync + 'static,
     Provider::ChainSpec: Upgrades + EthChainSpec,
-    Simulator: PhaseZeroSimulator,
+    State: PayerChainState,
 {
     async fn get_terms(&self, request: Value) -> RpcResult<Value> {
         self.everest_timestamp()?;
@@ -237,10 +248,10 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::simulate::MockPhaseZeroSimulator;
+    use crate::{PayerTransactionError, state::MockPayerChainState};
 
     type TestApi =
-        PayerApiImpl<MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>, MockPhaseZeroSimulator>;
+        PayerApiImpl<MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>, MockPayerChainState>;
 
     fn everest_provider() -> MockEthProvider<BasePrimitives, Arc<BaseChainSpec>> {
         let mut genesis = build_test_genesis_everest();
@@ -254,19 +265,24 @@ mod tests {
         SequencerClient::new_http_with_headers(sequencer.base_url(), vec![]).unwrap()
     }
 
-    /// A simulator under which every phase 0 succeeds.
-    fn passing_simulator() -> MockPhaseZeroSimulator {
-        let mut simulator = MockPhaseZeroSimulator::new();
-        simulator.expect_simulate().returning(|_| Ok(()));
-        simulator
+    fn state_error(code: i32, message: &'static str) -> ErrorObjectOwned {
+        ErrorObjectOwned::owned(code, message, Some("0x"))
     }
 
-    fn failing_simulator(code: i32, message: &'static str) -> MockPhaseZeroSimulator {
-        let mut simulator = MockPhaseZeroSimulator::new();
-        simulator
-            .expect_simulate()
-            .returning(move |_| Err(ErrorObjectOwned::owned(code, message, Some("0x"))));
-        simulator
+    /// State under which every nonce is unused and every phase 0 succeeds.
+    fn passing_state() -> MockPayerChainState {
+        let mut state = MockPayerChainState::new();
+        state.expect_nonce().returning(|_, _| Ok(U256::ZERO));
+        state.expect_simulate().returning(|_| Ok(()));
+        state
+    }
+
+    /// State under which every phase 0 fails with `code`.
+    fn failing_simulation(code: i32, message: &'static str) -> MockPayerChainState {
+        let mut state = MockPayerChainState::new();
+        state.expect_nonce().returning(|_, _| Ok(U256::ZERO));
+        state.expect_simulate().returning(move |_| Err(state_error(code, message)));
+        state
     }
 
     /// A `payer_sendTransaction` request for an EOA-signed transaction paid by `payer`.
@@ -331,7 +347,7 @@ mod tests {
         let api = PayerApiImpl::new(
             pre_everest_provider(),
             client(&sequencer),
-            MockPhaseZeroSimulator::new(),
+            MockPayerChainState::new(),
             false,
         );
 
@@ -357,8 +373,7 @@ mod tests {
                 .header("content-type", "application/json")
                 .json_body(json!({ "jsonrpc": "2.0", "id": 0, "result": response }));
         });
-        let api =
-            PayerApiImpl::new(everest_provider(), client(&sequencer), passing_simulator(), true);
+        let api = PayerApiImpl::new(everest_provider(), client(&sequencer), passing_state(), true);
 
         let first = api.get_terms(terms_request(1)).await.unwrap();
         let second = api.get_terms(terms_request(2)).await.unwrap();
@@ -401,8 +416,7 @@ mod tests {
             when.method(POST).body_includes("payer_getTerms");
             rpc_result(then, terms_response());
         });
-        let api =
-            PayerApiImpl::new(everest_provider(), client(&sequencer), passing_simulator(), true);
+        let api = PayerApiImpl::new(everest_provider(), client(&sequencer), passing_state(), true);
         api.get_terms(terms_request(1)).await.unwrap();
 
         reject_send(&api, &sequencer, "PAYMENT_INSUFFICIENT").await;
@@ -426,8 +440,7 @@ mod tests {
             when.method(POST).body_includes("payer_getTerms");
             rpc_result(then, terms_response());
         });
-        let api =
-            PayerApiImpl::new(everest_provider(), client(&sequencer), passing_simulator(), true);
+        let api = PayerApiImpl::new(everest_provider(), client(&sequencer), passing_state(), true);
         api.get_terms(terms_request(1)).await.unwrap();
         terms.delete();
 
@@ -465,8 +478,7 @@ mod tests {
             when.method(POST).body_includes("payer_getTerms").body_excludes("preferredTokens");
             rpc_result(then, response.clone());
         });
-        let api =
-            PayerApiImpl::new(everest_provider(), client(&sequencer), passing_simulator(), true);
+        let api = PayerApiImpl::new(everest_provider(), client(&sequencer), passing_state(), true);
 
         let mut prefers_usdc = terms_request(1);
         prefers_usdc["preferredTokens"] = json!([usdc]);
@@ -488,8 +500,7 @@ mod tests {
                 .header("content-type", "application/json")
                 .json_body(json!({ "jsonrpc": "2.0", "id": 0, "result": response }));
         });
-        let api =
-            PayerApiImpl::new(everest_provider(), client(&sequencer), passing_simulator(), false);
+        let api = PayerApiImpl::new(everest_provider(), client(&sequencer), passing_state(), false);
 
         api.get_terms(terms_request(1)).await.unwrap();
         api.get_terms(terms_request(2)).await.unwrap();
@@ -510,7 +521,7 @@ mod tests {
             Duration::from_millis(200),
         )
         .unwrap();
-        let api = PayerApiImpl::new(everest_provider(), client, passing_simulator(), true);
+        let api = PayerApiImpl::new(everest_provider(), client, passing_state(), true);
         api.get_terms(terms_request(1)).await.unwrap();
         reject_send(&api, &sequencer, "PAYMENT_INSUFFICIENT").await;
         terms.delete();
@@ -541,7 +552,7 @@ mod tests {
         let api = PayerApiImpl::new(
             everest_provider(),
             client(&sequencer),
-            MockPhaseZeroSimulator::new(),
+            MockPayerChainState::new(),
             false,
         );
 
@@ -558,9 +569,9 @@ mod tests {
             when.method(POST);
             then.status(500);
         });
-        let simulator =
-            failing_simulator(EthRpcErrorCode::ExecutionError.code(), "execution reverted");
-        let api = PayerApiImpl::new(everest_provider(), client(&sequencer), simulator, false);
+        let state =
+            failing_simulation(EthRpcErrorCode::ExecutionError.code(), "execution reverted");
+        let api = PayerApiImpl::new(everest_provider(), client(&sequencer), state, false);
 
         let error = api.send_transaction(sponsored_request()).await.expect_err("reverted");
 
@@ -571,14 +582,36 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn forwards_a_transaction_whose_first_phase_cannot_be_simulated() {
+    async fn rejects_a_transaction_whose_nonce_was_used_without_forwarding() {
+        let sequencer = MockServer::start();
+        let mock = sequencer.mock(|when, then| {
+            when.method(POST);
+            then.status(500);
+        });
+        let mut state = MockPayerChainState::new();
+        state.expect_nonce().returning(|_, _| Ok(U256::from(1)));
+        let api = PayerApiImpl::new(everest_provider(), client(&sequencer), state, false);
+
+        let error = api.send_transaction(sponsored_request()).await.expect_err("replayed");
+
+        let data = rejection_data(&error);
+        assert_eq!(data["code"], "INVALID_TRANSACTION");
+        assert_eq!(data["reason"], PayerTransactionError::NonceUsed.to_string());
+        mock.assert_calls(0);
+    }
+
+    #[tokio::test]
+    async fn forwards_a_transaction_whose_state_cannot_be_read() {
         let sequencer = MockServer::start();
         let mock = sequencer.mock(|when, then| {
             when.method(POST).body_includes("payer_sendTransaction");
             rpc_result(then, json!({ "transactionHash": format!("0x{}", "11".repeat(32)) }));
         });
-        let simulator = failing_simulator(ErrorCode::InternalError.code(), "state unavailable");
-        let api = PayerApiImpl::new(everest_provider(), client(&sequencer), simulator, false);
+        let unavailable = || state_error(ErrorCode::InternalError.code(), "state unavailable");
+        let mut state = MockPayerChainState::new();
+        state.expect_nonce().returning(move |_, _| Err(unavailable()));
+        state.expect_simulate().returning(move |_| Err(unavailable()));
+        let api = PayerApiImpl::new(everest_provider(), client(&sequencer), state, false);
 
         api.send_transaction(sponsored_request()).await.unwrap();
 
@@ -597,8 +630,7 @@ mod tests {
                 "result": { "transactionHash": "0x1111111111111111111111111111111111111111111111111111111111111111" }
             }));
         });
-        let api =
-            PayerApiImpl::new(everest_provider(), client(&sequencer), passing_simulator(), true);
+        let api = PayerApiImpl::new(everest_provider(), client(&sequencer), passing_state(), true);
 
         let result = api.send_transaction(request.clone()).await.unwrap();
         api.send_transaction(request).await.unwrap();
@@ -614,7 +646,7 @@ mod tests {
     fn registers_only_the_enabled_payer_methods() {
         let client = SequencerClient::new_http_with_headers("http://127.0.0.1:9", vec![]).unwrap();
         let module =
-            PayerApiImpl::new(everest_provider(), client, MockPhaseZeroSimulator::new(), false)
+            PayerApiImpl::new(everest_provider(), client, MockPayerChainState::new(), false)
                 .into_rpc();
         let names: Vec<_> = module.method_names().collect();
 
