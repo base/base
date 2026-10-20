@@ -969,8 +969,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        FaultProofPortal, LegacyWithdrawalPortal, ProofSystem, Withdrawal, WithdrawalDisputeGame,
-        WithdrawalOutputOracle, WithdrawalPortal, WithdrawerArgs,
+        FaultProofPortal, LegacyWithdrawalPortal, NetworkPreset, ProofSystem, Withdrawal,
+        WithdrawalDisputeGame, WithdrawalOutputOracle, WithdrawalPortal, WithdrawerArgs,
     };
 
     #[derive(Debug, Clone)]
@@ -1965,6 +1965,29 @@ mod tests {
         assert!(outcomes[0].transaction_hash.is_none());
         assert_eq!(*server.estimates.lock().unwrap(), 0);
         assert!(server.sent.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn l1_chain_mismatch_stops_before_estimation_or_submission() {
+        for dry in [false, true] {
+            let mut server = Scenario { proven: 100, dry, ..Default::default() }.start().await;
+            server.config.network.l1_chain_id = Some(NetworkPreset::SEPOLIA_CHAIN_ID);
+            let error = server.run().await.unwrap_err();
+            assert!(
+                matches!(
+                    error,
+                    WithdrawerError::Transaction(WithdrawalTransactionError::L1ChainMismatch {
+                        expected: 11_155_111,
+                        actual: 1,
+                    })
+                ),
+                "unexpected error for dry_run={dry}: {error}"
+            );
+            assert!(server.requests.lock().unwrap().iter().all(|request| !matches!(
+                request["method"].as_str(),
+                Some("eth_estimateGas" | "eth_sendRawTransaction")
+            )));
+        }
     }
 
     #[tokio::test]
