@@ -31,6 +31,29 @@ the complete sidecar and upstream error response instead of admitting it locally
 See the [wallet signing contract](../txpool/README.md#signed-validity-predicates) for
 EIP-712 types, signature encoding, rollout requirements, and security limitations.
 
+## Swap Lane ingress
+
+`SendSwapTransactionExtension` registers `base_sendSwapTransaction` and
+`admin_setCandidateSelectionEnabled` when candidates are enabled. The endpoint parses the
+request, resolves `maxAccessCharge`, routes on the selection kill switch, builds the response
+and journals ingress events. Admission itself runs in the process-shared
+`base_execution_txpool::AdmissionService`. That service owns in-flight duplicate waits,
+cancellation settlement, policy checks and pool insertion, so every adapter that admits
+candidate groups sees the same in-flight state.
+
+The sender signs no expiry. A candidate group expires at a node-assigned block: the
+configured group lifetime past the next block, rounded up to whole blocks at the active
+full-block cadence. A default transaction submitted alone carries no validity predicate. It
+stays in the pool like any other Private transaction until it lands, is replaced, has its
+nonce consumed, or is evicted by pool limits.
+
+Delivery. Admitted transactions use Private origin, so devp2p never gossips them, and today
+only builders install the endpoint. Builders run no transaction forwarding, so a submission
+reaches only the builder that received it. In a high-availability set only the leader
+builds, so a submission sent to a follower waits there until that node leads. Transaction
+forwarding skips candidate groups, so even on a forwarding node a group would stay local.
+Proxy mode (`sequencer_url`) forwards every request unchanged to one upstream node.
+
 ## Usage
 
 Add the dependency to your `Cargo.toml`:

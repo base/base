@@ -15,6 +15,9 @@ use crate::{
 /// Default gas limit for fixture siblings.
 pub const FIXTURE_GAS_LIMIT: u64 = 100_000;
 
+/// Node-assigned expiry block that [`CandidateFixture::group`] gives its groups.
+pub const FIXTURE_EXPIRY_BLOCK: u64 = 100;
+
 /// Default fee cap for fixture siblings.
 pub const FIXTURE_MAX_FEE_PER_GAS: u128 = 1_000_000_000;
 
@@ -83,7 +86,7 @@ impl CandidateFixture {
     }
 
     /// Returns an envelope for `raw` with permissive defaults: native-asset rule measuring the
-    /// sender, `DEFAULT_SIBLING` at `default_index`, expiry block 100.
+    /// sender, `DEFAULT_SIBLING` at `default_index`.
     pub fn envelope_for(&self, raw: &[Bytes], default_index: u8) -> CandidateEnvelope {
         CandidateEnvelope {
             sender: self.address(),
@@ -101,7 +104,6 @@ impl CandidateFixture {
             max_work_gas: 10_000_000,
             max_evaluations: 3,
             max_access_charge: U256::ZERO,
-            expiry_block: 100,
             disclosure: 0,
         }
     }
@@ -142,11 +144,23 @@ impl CandidateFixture {
         (default, alternatives)
     }
 
-    /// Validates `raw` under `envelope` without an expiry window, panicking on rejection.
+    /// Validates `raw` under `envelope` with expiry [`FIXTURE_EXPIRY_BLOCK`], panicking on
+    /// rejection.
     pub fn group(&self, raw: &[Bytes], envelope: CandidateEnvelope) -> CandidateGroup {
+        self.group_expiring(raw, envelope, FIXTURE_EXPIRY_BLOCK)
+    }
+
+    /// Validates `raw` under `envelope` with a node-assigned `expiry_block`, panicking on
+    /// rejection.
+    pub fn group_expiring(
+        &self,
+        raw: &[Bytes],
+        envelope: CandidateEnvelope,
+        expiry_block: u64,
+    ) -> CandidateGroup {
         let signature = self.sign(&envelope);
         CandidateValidator { limits: CandidateLimits::default(), chain_id: self.chain_id }
-            .validate(raw, envelope, signature, None)
+            .validate(raw, envelope, signature, expiry_block)
             .expect("valid fixture group")
     }
 }

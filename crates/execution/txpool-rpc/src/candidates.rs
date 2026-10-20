@@ -1,22 +1,16 @@
 //! `base_sendSwapTransaction`, the Swap Lane submission endpoint, and its runtime kill switch.
 
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex, MutexGuard, PoisonError},
-    time::Duration,
-};
+use std::sync::Arc;
 
 use alloy_consensus::BlockHeader;
-use alloy_primitives::{Address, B256, Bytes, Signature, TxHash, U256};
+use alloy_primitives::{B256, Bytes, Signature, TxHash, U256};
 use base_common_chains::Upgrades;
 use base_execution_candidates::{
-    CandidateEnvelope, CandidateError, CandidateGroup, CandidateRuntime, CandidateValidator,
-    ExpiryWindow, GroupLedger, GroupState, GroupSummary, LedgerAdmission,
+    AccessDenied, CandidateEnvelope, CandidateError, CandidateGroup, CandidateRuntime,
+    CandidateValidator, GroupLedger, LedgerError,
 };
 use base_execution_rpc::SequencerClient;
-use base_execution_txpool::{
-    BasePooledTransaction, ValidityOperator, ValidityPredicate, ValiditySignatureMetrics,
-};
+use base_execution_txpool::{AdmissionError, AdmissionService, BasePooledTransaction};
 use base_observability_events::{
     TransactionEventProducer, TransactionEventType, transaction_event,
 };
@@ -28,9 +22,8 @@ use jsonrpsee::{
 use reth_chainspec::ChainSpecProvider;
 use reth_rpc_eth_types::EthApiError;
 use reth_storage_api::{BlockReaderIdExt, StateProviderFactory};
-use reth_transaction_pool::{TransactionOrigin, TransactionPool};
+use reth_transaction_pool::TransactionPool;
 use serde::{Deserialize, Deserializer, Serialize};
-use tokio::sync::watch;
 use tracing::{debug, info};
 
 use crate::BlockCadence;
@@ -82,11 +75,6 @@ pub struct SwapTransactionOptions {
     /// Required exactly when `alternatives` is non-empty.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selection: Option<SwapSelection>,
-    /// Last block in which the transaction may land (inclusive). Required without a
-    /// `selection`; with one it defaults to the envelope's `expiryBlock` and must equal it, even
-    /// while selection is disabled and the selection is ignored.
-    #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
-    pub expiry_block: Option<u64>,
     /// Upper bound, in wei, on the Swap Lane access charge; zero when omitted. With a
     /// `selection` it defaults to the envelope's `maxAccessCharge` and must equal it, even while
     /// selection is disabled.
@@ -94,11 +82,9 @@ pub struct SwapTransactionOptions {
     pub max_access_charge: Option<U256>,
 }
 
-/// `expiryBlock` and `maxAccessCharge` resolved for one submission.
+/// `maxAccessCharge` resolved for one submission.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SwapTerms {
-    /// Last block in which the transaction may land (inclusive).
-    pub expiry_block: u64,
     /// Upper bound, in wei, on the access charge.
     pub max_access_charge: U256,
 }
@@ -121,22 +107,13 @@ impl SwapTransactionOptions {
     /// `selection_mismatch` although the envelope's signature is not verified.
     pub fn terms(&self) -> Result<SwapTerms, CandidateError> {
         let Some(selection) = &self.selection else {
-            return Ok(SwapTerms {
-                expiry_block: self.expiry_block.ok_or(CandidateError::ExpiryRequired)?,
-                max_access_charge: self.max_access_charge.unwrap_or_default(),
-            });
+            return Ok(SwapTerms { max_access_charge: self.max_access_charge.unwrap_or_default() });
         };
         let envelope = &selection.envelope;
-        if self.expiry_block.is_some_and(|expiry| expiry != envelope.expiry_block) {
-            return Err(CandidateError::SelectionFieldMismatch { field: "expiryBlock" });
-        }
         if self.max_access_charge.is_some_and(|charge| charge != envelope.max_access_charge) {
             return Err(CandidateError::SelectionFieldMismatch { field: "maxAccessCharge" });
         }
-        Ok(SwapTerms {
-            expiry_block: envelope.expiry_block,
-            max_access_charge: envelope.max_access_charge,
-        })
+        Ok(SwapTerms { max_access_charge: envelope.max_access_charge })
     }
 }
 
@@ -154,12 +131,6 @@ pub struct SwapTransactionResponse {
     /// Alternative hashes, in envelope order. Present only when selection applied.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub alternative_hashes: Vec<TxHash>,
-    /// `expiryBlock` in effect for a default transaction pooled alone. Present only when selection
-    /// did not apply. Admission is idempotent by transaction hash, so an exact resubmission
-    /// reports the inclusive last block of the transaction already pooled, whatever
-    /// `expiryBlock` it carried, and omits it if that transaction has no block bound.
-    #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
-    pub expiry_block: Option<u64>,
     /// The request carried alternatives, but selection is disabled, so only the default
     /// transaction was admitted. Omitted when `false`.
     #[serde(default, skip_serializing_if = "core::ops::Not::not")]
@@ -179,7 +150,6 @@ impl From<&CandidateGroup> for SwapTransactionResponse {
                 .copied()
                 .filter(|hash| *hash != default)
                 .collect(),
-            expiry_block: None,
             alternatives_ignored: false,
         }
     }
@@ -192,8 +162,9 @@ pub trait SendSwapTransactionApi {
     /// builder selects at most one to include instead.
     ///
     /// While selection is disabled, alternatives are ignored and the selection's signature is
-    /// not verified, but `expiryBlock` and `maxAccessCharge` given alongside a selection must
-    /// still match its envelope (`selection_mismatch`).
+    /// not verified, but a `maxAccessCharge` given alongside a selection must still match its
+    /// envelope (`selection_mismatch`). Accepted transactions are pooled with Private origin on
+    /// the node that received them; see the crate README for how they reach the sequencer.
     #[method(name = "sendSwapTransaction")]
     async fn send_swap_transaction(
         &self,
@@ -213,122 +184,29 @@ pub trait AdminCandidateSelectionApi {
     async fn set_candidate_selection_enabled(&self, enabled: bool) -> RpcResult<bool>;
 }
 
-/// How long a first admission may spend in pool insertion, and how long an exact duplicate of a
-/// group waits for it. Pool validation normally takes milliseconds.
-pub const DEFAULT_CANDIDATE_ADMISSION_TIMEOUT: Duration = Duration::from_secs(2);
-
-/// Pool insertions in flight, by `groupHash`. The value becomes `Some(inserted)` when the
-/// first request finishes; exact duplicates wait on it instead of reporting acceptance early.
-pub type InflightAdmissions = Arc<Mutex<HashMap<B256, watch::Receiver<Option<bool>>>>>;
-
-/// Local ingress for swap transactions.
+/// Local ingress for swap transactions over the process-shared [`AdmissionService`].
 #[derive(Debug, Clone)]
 pub struct SendSwapTransactionApiImpl<Provider, Pool> {
-    provider: Provider,
-    pool: Pool,
-    runtime: Arc<CandidateRuntime>,
+    admission: Arc<AdmissionService<Provider, Pool>>,
     chain_id: u64,
-    max_expiry_secs: u64,
     sequencer_client: Option<SequencerClient>,
-    inflight: InflightAdmissions,
-    admission_timeout: Duration,
-}
-
-/// Owns a first admission's `Pending` ledger entry and in-flight receiver until it settles.
-///
-/// Dropping it unsettled, because the request was cancelled, settles the admission from pool
-/// state: confirmed if the representative is pooled, aborted otherwise. Either way the
-/// in-flight entry is removed and waiting duplicates learn the outcome, so no `Pending` entry
-/// outlives its request.
-#[derive(Debug)]
-pub struct PendingAdmission<Pool: TransactionPool> {
-    /// The ingress in-flight map holding this admission's receiver.
-    pub inflight: InflightAdmissions,
-    /// The shared candidate runtime holding the `Pending` ledger entry.
-    pub runtime: Arc<CandidateRuntime>,
-    /// The pool the representative is inserted into.
-    pub pool: Pool,
-    /// The admitted group.
-    pub group_hash: B256,
-    /// The representative being inserted.
-    pub representative: TxHash,
-    /// Publishes the outcome to waiting duplicates; `None` once settled.
-    pub outcome: Option<watch::Sender<Option<bool>>>,
-}
-
-impl<Pool: TransactionPool> PendingAdmission<Pool> {
-    /// Confirms or aborts the ledger entry, removes the in-flight receiver and wakes waiting
-    /// duplicates. Later calls do nothing and return `false`.
-    ///
-    /// Returns whether the group was accepted. An inserted representative is not accepted when
-    /// the ledger ended the group at settlement because a canonical block consumed its nonce
-    /// after validation; that stale representative is removed from the pool.
-    pub fn settle(&mut self, inserted: bool) -> bool {
-        let Some(outcome) = self.outcome.take() else { return false };
-        let stale = {
-            let mut inflight = self.inflight.lock().unwrap_or_else(PoisonError::into_inner);
-            inflight.remove(&self.group_hash);
-            if inserted {
-                self.runtime.ledger.confirm_pooled(self.group_hash, |hash| self.pool.contains(hash))
-            } else {
-                self.runtime.ledger.abort(self.group_hash);
-                None
-            }
-        };
-        if let Some(stale) = stale {
-            debug!(group_hash = %self.group_hash, representative = %stale, "removing stale candidate representative");
-            self.pool.remove_transactions(vec![stale]);
-        }
-        let accepted = inserted && stale.is_none();
-        outcome.send_replace(Some(accepted));
-        accepted
-    }
-}
-
-impl<Pool: TransactionPool> Drop for PendingAdmission<Pool> {
-    fn drop(&mut self) {
-        if self.outcome.is_some() {
-            debug!(group_hash = %self.group_hash, "settling abandoned candidate admission");
-            let inserted = self.pool.contains(&self.representative);
-            self.settle(inserted);
-        }
-    }
 }
 
 impl<Provider, Pool> SendSwapTransactionApiImpl<Provider, Pool> {
-    /// Creates local swap ingress over the shared candidate runtime.
-    ///
-    /// `max_expiry_secs` bounds how far past the next block `expiryBlock` may be, converted to
-    /// blocks at the active full-block cadence.
-    pub fn new(
-        provider: Provider,
-        pool: Pool,
-        runtime: Arc<CandidateRuntime>,
-        chain_id: u64,
-        max_expiry_secs: u64,
-    ) -> Self {
-        Self {
-            provider,
-            pool,
-            runtime,
-            chain_id,
-            max_expiry_secs,
-            sequencer_client: None,
-            inflight: InflightAdmissions::default(),
-            admission_timeout: DEFAULT_CANDIDATE_ADMISSION_TIMEOUT,
-        }
+    /// Creates local swap ingress over the shared admission service.
+    pub const fn new(admission: Arc<AdmissionService<Provider, Pool>>, chain_id: u64) -> Self {
+        Self { admission, chain_id, sequencer_client: None }
     }
 
-    /// Overrides [`DEFAULT_CANDIDATE_ADMISSION_TIMEOUT`].
-    pub const fn with_admission_timeout(mut self, timeout: Duration) -> Self {
-        self.admission_timeout = timeout;
-        self
-    }
-
-    /// Proxies submissions unchanged to the sequencer instead of the local pool.
+    /// Proxies submissions unchanged to one upstream node instead of the local pool.
     pub fn with_sequencer_client(mut self, client: SequencerClient) -> Self {
         self.sequencer_client = Some(client);
         self
+    }
+
+    /// Returns the shared candidate runtime.
+    pub fn runtime(&self) -> &CandidateRuntime {
+        self.admission.runtime()
     }
 
     /// Maps a rejection to its `-32602` error with the stable reason label.
@@ -345,68 +223,70 @@ impl<Provider, Pool> SendSwapTransactionApiImpl<Provider, Pool> {
         ErrorObjectOwned::owned(ErrorCode::InternalError.code(), message, None::<()>)
     }
 
-    /// Locks the in-flight map. Ledger transitions between `Pending` and a settled state happen
-    /// under this lock, so a `Pending` entry always has a registered receiver.
-    pub fn lock_inflight(&self) -> MutexGuard<'_, HashMap<B256, watch::Receiver<Option<bool>>>> {
-        self.inflight.lock().unwrap_or_else(PoisonError::into_inner)
+    /// Returns the stable label vocabulary entry for an admission refusal, or `None` for a
+    /// pool refusal or a state read failure, which have no label of their own.
+    pub const fn candidate_error(error: &AdmissionError) -> Option<CandidateError> {
+        Some(match error {
+            AdmissionError::SenderDelegated => CandidateError::SenderDelegated,
+            AdmissionError::PrincipalNotAllowed
+            | AdmissionError::AccessDenied(AccessDenied::NotAllowed) => {
+                CandidateError::PrincipalNotAllowed
+            }
+            AdmissionError::AccessDenied(AccessDenied::AccessChargeTooLow) => {
+                CandidateError::AccessChargeTooLow
+            }
+            AdmissionError::AccessDenied(AccessDenied::QuotaExhausted) => {
+                CandidateError::PrincipalQuotaExhausted
+            }
+            AdmissionError::Ledger(LedgerError::GroupTerminal) => CandidateError::GroupTerminal,
+            AdmissionError::Ledger(LedgerError::RepresentativeConflict) => {
+                CandidateError::RepresentativeConflict
+            }
+            AdmissionError::Ledger(LedgerError::SenderGroupLimit) => {
+                CandidateError::SenderGroupLimit
+            }
+            AdmissionError::Ledger(LedgerError::PoolGroupLimit) => CandidateError::PoolGroupLimit,
+            AdmissionError::ConcurrentSubmissionFailed => {
+                CandidateError::ConcurrentSubmissionFailed
+            }
+            AdmissionError::TimedOut => CandidateError::AdmissionTimedOut,
+            AdmissionError::Pool(_) | AdmissionError::State(_) => return None,
+        })
     }
 
-    /// Waits, at most the admission timeout, for another request's insertion of the same group
-    /// and mirrors its outcome.
-    pub async fn await_inflight(
-        &self,
-        receiver: Option<watch::Receiver<Option<bool>>>,
-        response: SwapTransactionResponse,
-    ) -> RpcResult<SwapTransactionResponse> {
-        let Some(mut receiver) = receiver else {
-            return Err(Self::reject(&CandidateError::ConcurrentSubmissionFailed));
-        };
-        let waited =
-            tokio::time::timeout(self.admission_timeout, receiver.wait_for(Option::is_some)).await;
-        match waited {
-            Err(_) => Err(Self::reject(&CandidateError::AdmissionTimedOut)),
-            Ok(Ok(outcome)) if *outcome == Some(true) => Ok(response),
-            Ok(_) => Err(Self::reject(&CandidateError::ConcurrentSubmissionFailed)),
+    /// Maps an admission refusal to its JSON-RPC error, recording a pool refusal in `trace`.
+    pub fn admission_error(
+        error: AdmissionError,
+        trace: &mut SwapAdmissionTrace,
+    ) -> ErrorObjectOwned {
+        if let Some(label) = Self::candidate_error(&error) {
+            return Self::reject(&label);
+        }
+        match error {
+            AdmissionError::Pool(error) => {
+                trace.pool_rejected = true;
+                ErrorObjectOwned::from(EthApiError::from(error))
+            }
+            error => Self::internal(error.to_string()),
         }
     }
 }
 
 impl<Provider, Pool> SendSwapTransactionApiImpl<Provider, Pool>
 where
-    Provider: BlockReaderIdExt + ChainSpecProvider<ChainSpec: Upgrades> + StateProviderFactory,
+    Provider: BlockReaderIdExt + ChainSpecProvider<ChainSpec: Upgrades>,
 {
-    /// Returns the inclusive window `expiryBlock` must fall in, or `None` before genesis.
-    pub fn expiry_window(&self) -> RpcResult<Option<ExpiryWindow>> {
-        let header = self
-            .provider
+    /// Returns the node-assigned inclusive expiry block for a group admitted now: the
+    /// configured group lifetime past the next block, at the active full-block cadence.
+    pub fn group_expiry_block(&self) -> RpcResult<u64> {
+        let provider = self.admission.provider();
+        let header = provider
             .latest_header()
             .map_err(|error| Self::internal(format!("failed to resolve latest header: {error}")))?;
-        Ok(header.map(|header| {
-            let interval = BlockCadence::full_block_interval_millis(
-                &*self.provider.chain_spec(),
-                header.timestamp(),
-            );
-            ExpiryWindow {
-                next_block: header.number().saturating_add(1),
-                max_blocks: self.max_expiry_secs.saturating_mul(1_000) / interval.max(1),
-            }
-        }))
-    }
-
-    /// Rejects EIP-7702-delegated senders of swap transactions (design §4.2), with or without
-    /// alternatives.
-    pub fn ensure_sender_not_delegated(&self, sender: Address) -> RpcResult<()> {
-        let state = self
-            .provider
-            .latest()
-            .map_err(|error| Self::internal(format!("failed to open latest state: {error}")))?;
-        let code = state
-            .account_code(&sender)
-            .map_err(|error| Self::internal(format!("failed to read sender code: {error}")))?;
-        if code.is_some_and(|code| code.is_eip7702()) {
-            return Err(Self::reject(&CandidateError::SenderDelegated));
-        }
-        Ok(())
+        let (number, timestamp) =
+            header.map_or((0, 0), |header| (header.number(), header.timestamp()));
+        let interval = BlockCadence::full_block_interval_millis(&*provider.chain_spec(), timestamp);
+        Ok(self.admission.group_expiry_block(number.saturating_add(1), interval))
     }
 }
 
@@ -434,7 +314,7 @@ where
         }
         let mut trace = SwapAdmissionTrace::default();
         let result = self.submit(transaction, options.unwrap_or_default(), &mut trace).await;
-        trace.journal(&self.runtime.ledger, &result);
+        trace.journal(&self.runtime().ledger, &result);
         result
     }
 }
@@ -465,7 +345,7 @@ where
         options.check_shape().map_err(|error| Self::reject(&error))?;
         let terms = options.terms().map_err(|error| Self::reject(&error))?;
         match options.selection {
-            Some(selection) if self.runtime.switch.is_enabled() => {
+            Some(selection) if self.runtime().switch.is_enabled() => {
                 self.submit_group(transaction, options.alternatives, selection, trace).await
             }
             selection => {
@@ -475,100 +355,50 @@ where
         }
     }
 
-    /// Admits a default transaction alone (design §5.1 without selection).
+    /// Admits a default transaction alone (design §5.1 without selection) through
+    /// [`AdmissionService::admit_single`].
     ///
-    /// It is pooled with Private origin, so it is never propagated, under a `block_number <=
-    /// expiryBlock` validity predicate: the pool evicts it and the builder skips it after
-    /// `expiryBlock`. No ledger group is created. Its sender must still be an allowlisted
-    /// principal that is not EIP-7702-delegated; v0 prices no work for it, so `maxAccessCharge`
-    /// is recorded but not charged.
-    ///
-    /// The synthesized predicate is unsigned: the sender did not sign it, ingress derives it
-    /// from `expiryBlock`, so it is exempt from `ValiditySignatureMode`. A node whose builder
-    /// ingress requires signed validity sidecars would refuse it if it were forwarded there.
-    ///
-    /// Admission is idempotent by transaction hash: an exact resubmission returns success with
-    /// the pooled transaction's expiry and changes nothing.
+    /// The transaction keeps the per-transaction size, type and gas caps and carries no
+    /// validity predicate. v0 prices no work for it, so `maxAccessCharge` is recorded but not
+    /// charged. An exact resubmission returns the same response and changes nothing.
     pub async fn submit_single(
         &self,
         transaction: Bytes,
         terms: SwapTerms,
         trace: &mut SwapAdmissionTrace,
     ) -> RpcResult<SwapTransactionResponse> {
-        let window = self.expiry_window()?;
-        let validator = CandidateValidator { limits: self.runtime.limits, chain_id: self.chain_id };
+        let validator =
+            CandidateValidator { limits: self.runtime().limits, chain_id: self.chain_id };
         let default = validator.validate_default(&transaction).map_err(|error| {
             debug!(error = %error, label = error.as_label(), "rejected swap transaction");
             Self::reject(&error)
         })?;
-        let hash = default.hash();
-        trace.transaction_hash = Some(hash);
-        trace.expiry_block = Some(terms.expiry_block);
-        if window.is_some_and(|window| !window.contains(terms.expiry_block)) {
-            return Err(Self::reject(&CandidateError::ExpiryOutOfWindow));
+        trace.transaction_hash = Some(default.hash());
+        let receipt = self
+            .admission
+            .admit_single(default)
+            .await
+            .map_err(|error| Self::admission_error(error, trace))?;
+        trace.duplicate = receipt.is_duplicate();
+        if let Some(authorization) = receipt.authorization {
+            info!(
+                tx_hash = %receipt.transaction_hash,
+                max_access_charge = %terms.max_access_charge,
+                alternatives_ignored = trace.alternatives_ignored,
+                principal = authorization.principal.0,
+                "accepted swap transaction"
+            );
         }
-        self.ensure_sender_not_delegated(default.transaction.signer())?;
-        // Allowlist membership only: pricing and quotas are per-group until a Swap Lane admission
-        // policy exists.
-        let principal = self
-            .runtime
-            .policy
-            .principal(default.transaction.signer())
-            .ok_or_else(|| Self::reject(&CandidateError::PrincipalNotAllowed))?;
-        // A sibling the ledger tracks belongs to a group; it cannot also stand alone.
-        if self.runtime.ledger.suppresses_plain_reinsertion(&hash) {
-            return Err(Self::reject(&CandidateError::RepresentativeConflict));
-        }
-        let mut response = SwapTransactionResponse {
-            transaction_hash: hash,
+        Ok(SwapTransactionResponse {
+            transaction_hash: receipt.transaction_hash,
             group_hash: None,
             alternative_hashes: Vec::new(),
-            expiry_block: Some(terms.expiry_block),
             alternatives_ignored: trace.alternatives_ignored,
-        };
-        if let Some(pooled) = self.pool.get(&hash) {
-            trace.duplicate = true;
-            response.expiry_block =
-                ValidityPredicate::block_expiry_bound(pooled.transaction.validity_predicates());
-            return Ok(response);
-        }
-
-        let expiry = ValidityPredicate::BlockNumber {
-            op: ValidityOperator::LessThanOrEqual,
-            value: U256::from(terms.expiry_block),
-        };
-        let pooled = BasePooledTransaction::new(default.transaction, default.encoded.len())
-            .with_validity_predicates(vec![expiry]);
-        let inserted = tokio::time::timeout(
-            self.admission_timeout,
-            self.pool.add_transaction(TransactionOrigin::Private, pooled),
-        )
-        .await;
-        match inserted {
-            Ok(Ok(_)) => {}
-            Ok(Err(error)) => {
-                trace.pool_rejected = true;
-                return Err(ErrorObjectOwned::from(EthApiError::from(error)));
-            }
-            Err(_) if self.pool.contains(&hash) => {}
-            Err(_) => {
-                debug!(tx_hash = %hash, "swap transaction admission timed out");
-                return Err(Self::reject(&CandidateError::AdmissionTimedOut));
-            }
-        }
-        ValiditySignatureMetrics::accepted("ingress", "unsigned").increment(1);
-        info!(
-            tx_hash = %hash,
-            expiry_block = terms.expiry_block,
-            max_access_charge = %terms.max_access_charge,
-            alternatives_ignored = trace.alternatives_ignored,
-            principal = principal.0,
-            "accepted swap transaction"
-        );
-        Ok(response)
+        })
     }
 
-    /// Admits a default transaction and its alternatives as a candidate group (design §5.1).
+    /// Admits a default transaction and its alternatives as a candidate group (design §5.1)
+    /// through [`AdmissionService::admit_group`], with the node-assigned expiry block.
     pub async fn submit_group(
         &self,
         transaction: Bytes,
@@ -576,16 +406,17 @@ where
         selection: SwapSelection,
         trace: &mut SwapAdmissionTrace,
     ) -> RpcResult<SwapTransactionResponse> {
-        // Steps 3-5: bounds, decode, uniformity, envelope, expiry and signature.
-        let window = self.expiry_window()?;
-        let validator = CandidateValidator { limits: self.runtime.limits, chain_id: self.chain_id };
+        // Steps 3-5: bounds, decode, uniformity, envelope and signature.
+        let expiry_block = self.group_expiry_block()?;
+        let validator =
+            CandidateValidator { limits: self.runtime().limits, chain_id: self.chain_id };
         let group = validator
             .validate_selection(
                 &transaction,
                 &alternatives.0,
                 selection.envelope,
                 selection.signature,
-                window,
+                expiry_block,
             )
             .map_err(|error| {
                 debug!(error = %error, label = error.as_label(), "rejected candidate group");
@@ -593,136 +424,31 @@ where
             })?;
         trace.group_hash = Some(group.group_hash());
         trace.transaction_hash = Some(group.representative().hash());
-        self.ensure_sender_not_delegated(group.sender())?;
         let group = Arc::new(group);
         let response = SwapTransactionResponse::from(group.as_ref());
-        let group_hash = group.group_hash();
-
-        // Step 6: an exact duplicate returns the original response before any other check,
-        // but only once the group is actually pooled.
-        let in_flight = {
-            let inflight = self.lock_inflight();
-            match self.runtime.ledger.classify(&group_hash, |hash| self.pool.contains(hash)) {
-                None => None,
-                Some(state) if state.is_terminal() => {
-                    return Err(Self::reject(&CandidateError::GroupTerminal));
-                }
-                Some(GroupState::Pending) => Some(inflight.get(&group_hash).cloned()),
-                Some(_) => {
-                    trace.duplicate = true;
-                    return Ok(response);
-                }
-            }
-        };
-        if let Some(receiver) = in_flight {
-            trace.duplicate = true;
-            return self.await_inflight(receiver, response).await;
+        let receipt = self
+            .admission
+            .admit_group(Arc::clone(&group))
+            .await
+            .map_err(|error| Self::admission_error(error, trace))?;
+        trace.duplicate = receipt.is_duplicate();
+        if let Some(authorization) = receipt.authorization {
+            info!(
+                group_hash = %group.group_hash(),
+                representative = %response.transaction_hash,
+                alternatives = response.alternative_hashes.len(),
+                expiry_block = expiry_block,
+                principal = authorization.principal.0,
+                "accepted candidate group"
+            );
         }
-
-        // Step 7: access policy.
-        let policy = &self.runtime.policy;
-        let principal = policy
-            .principal(group.sender())
-            .ok_or_else(|| Self::reject(&CandidateError::PrincipalNotAllowed))?;
-        let envelope = group.envelope();
-        let summary = GroupSummary {
-            group_hash,
-            sender: group.sender(),
-            max_work_gas: envelope.max_work_gas,
-            max_evaluations: envelope.max_evaluations,
-            max_access_charge: envelope.max_access_charge,
-        };
-        policy
-            .admit(principal, &summary)
-            .map_err(|denied| Self::reject(&CandidateError::from(denied)))?;
-
-        // Step 8: ledger entry, then pool insertion; confirm or abort atomically per group.
-        let created = {
-            let mut inflight = self.lock_inflight();
-            let admission = self
-                .runtime
-                .ledger
-                .create(Arc::clone(&group), principal, policy.policy_version(), |hash| {
-                    self.pool.contains(hash)
-                })
-                .map_err(|error| Self::reject(&error))?;
-            match admission {
-                LedgerAdmission::Duplicate => {
-                    trace.duplicate = true;
-                    return Ok(response);
-                }
-                LedgerAdmission::Pending => Err(inflight.get(&group_hash).cloned()),
-                LedgerAdmission::Created => {
-                    let (sender, receiver) = watch::channel(None);
-                    inflight.insert(group_hash, receiver);
-                    Ok(sender)
-                }
-            }
-        };
-        let outcome = match created {
-            Ok(sender) => sender,
-            Err(receiver) => {
-                trace.duplicate = true;
-                return self.await_inflight(receiver, response).await;
-            }
-        };
-        // From here the guard owns the Pending entry: cancelling this request settles it.
-        let mut admission = PendingAdmission {
-            inflight: Arc::clone(&self.inflight),
-            runtime: Arc::clone(&self.runtime),
-            pool: self.pool.clone(),
-            group_hash,
-            representative: response.transaction_hash,
-            outcome: Some(outcome),
-        };
-        let representative = group.representative();
-        let transaction = BasePooledTransaction::new(
-            representative.transaction.clone(),
-            representative.encoded.len(),
-        )
-        .with_candidate_group(Arc::clone(&group));
-        let inserted = tokio::time::timeout(
-            self.admission_timeout,
-            self.pool.add_transaction(TransactionOrigin::Private, transaction),
-        )
-        .await;
-        match inserted {
-            Ok(Ok(_)) => {
-                if !admission.settle(true) {
-                    return Err(Self::reject(&CandidateError::GroupTerminal));
-                }
-            }
-            Ok(Err(error)) => {
-                admission.settle(false);
-                trace.pool_rejected = true;
-                return Err(ErrorObjectOwned::from(EthApiError::from(error)));
-            }
-            Err(_) => {
-                let pooled = self.pool.contains(&response.transaction_hash);
-                let accepted = admission.settle(pooled);
-                if !pooled {
-                    debug!(group_hash = %group_hash, "candidate admission timed out");
-                    return Err(Self::reject(&CandidateError::AdmissionTimedOut));
-                }
-                if !accepted {
-                    return Err(Self::reject(&CandidateError::GroupTerminal));
-                }
-            }
-        }
-        info!(
-            group_hash = %group_hash,
-            representative = %response.transaction_hash,
-            alternatives = response.alternative_hashes.len(),
-            principal = principal.0,
-            "accepted candidate group"
-        );
         Ok(response)
     }
 }
 
 /// Join keys and outcome of one local `base_sendSwapTransaction` request, journaled when it
-/// returns. A request whose future is dropped journals nothing; [`PendingAdmission`] still settles
-/// its ledger entry.
+/// returns. A request whose future is dropped journals nothing;
+/// [`base_execution_txpool::PendingAdmission`] still settles its ledger entry.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct SwapAdmissionTrace {
     /// Group identity, once a selection validated.
@@ -733,8 +459,6 @@ pub struct SwapAdmissionTrace {
     pub alternatives: usize,
     /// The request carried alternatives, but selection was disabled.
     pub alternatives_ignored: bool,
-    /// `expiryBlock` of a default transaction admitted alone, once resolved.
-    pub expiry_block: Option<u64>,
     /// The request returned, or waited on, an existing admission of the same transaction or
     /// group.
     pub duplicate: bool,
@@ -778,7 +502,6 @@ impl SwapAdmissionTrace {
                     "rpc_method" => SEND_SWAP_TRANSACTION_METHOD,
                     "selection" => selection,
                     "alternatives" => self.alternatives,
-                    "expiry_block" => self.expiry_block,
                     "candidate_instance" => instance,
                 },
             ),
@@ -850,23 +573,28 @@ impl AdminCandidateSelectionApiServer for AdminCandidateSelectionApiImpl {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use alloy_primitives::{Address, U256, keccak256};
     use base_common_chains::ChainConfig;
     use base_common_consensus::BasePrimitives;
     use base_execution_candidates::{
-        CandidateLimits, CandidateSwitch, EvictionReason, GroupLedger, GroupState, PrincipalEntry,
-        PrincipalId, PrincipalsFile, StaticAccessPolicy, test_utils::CandidateFixture,
+        CandidateLimits, CandidateSwitch, Capability, EvictionReason, GroupLedger, GroupState,
+        PrincipalEntry, PrincipalId, PrincipalsFile, StaticAccessPolicy,
+        test_utils::{CandidateFixture, FIXTURE_EXPIRY_BLOCK},
     };
     use base_execution_chainspec::BaseChainSpec;
-    use base_execution_txpool::BasePooledTx;
+    use base_execution_txpool::{BasePooledTx, DEFAULT_ADMISSION_TIMEOUT};
     use base_observability_events::TransactionEventCapture;
     use base_test_utils::build_test_genesis_everest;
     use httpmock::{Method::POST, MockServer};
     use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
     use reth_transaction_pool::{
-        CoinbaseTipOrdering, Pool, PoolConfig, PoolTransaction, TransactionValidationOutcome,
-        blobstore::InMemoryBlobStore, noop::NoopTransactionPool, test_utils::OkValidator,
+        CoinbaseTipOrdering, Pool, PoolConfig, PoolTransaction, TransactionOrigin,
+        TransactionValidationOutcome, blobstore::InMemoryBlobStore, noop::NoopTransactionPool,
+        test_utils::OkValidator,
     };
+    use tokio::sync::watch;
 
     use super::*;
 
@@ -909,7 +637,11 @@ mod tests {
         let policy = StaticAccessPolicy::new(PrincipalsFile {
             policy_version: 1,
             work_gas_quota: None,
-            principals: vec![PrincipalEntry { id: PRINCIPAL, senders: allowed.to_vec() }],
+            principals: vec![PrincipalEntry {
+                id: PRINCIPAL,
+                senders: allowed.to_vec(),
+                capabilities: Capability::swap_lane(),
+            }],
         });
         Arc::new(CandidateRuntime {
             ledger: GroupLedger::default(),
@@ -923,15 +655,11 @@ mod tests {
         provider: TestProvider,
         pool: P,
         runtime: &Arc<CandidateRuntime>,
-        max_expiry_secs: u64,
+        group_lifetime_secs: u64,
     ) -> SendSwapTransactionApiImpl<TestProvider, P> {
-        SendSwapTransactionApiImpl::new(
-            provider,
-            pool,
-            Arc::clone(runtime),
-            chain_id(),
-            max_expiry_secs,
-        )
+        let admission =
+            AdmissionService::new(provider, pool, Arc::clone(runtime), group_lifetime_secs);
+        SendSwapTransactionApiImpl::new(Arc::new(admission), chain_id())
     }
 
     fn request(fixture: &CandidateFixture) -> (Bytes, SwapTransactionOptions) {
@@ -954,11 +682,11 @@ mod tests {
         (default, options)
     }
 
-    /// A default transaction alone, expiring at block 100.
+    /// A default transaction alone.
     fn single(fixture: &CandidateFixture, nonce: u64) -> (Bytes, SwapTransactionOptions) {
         let default =
             fixture.encode(fixture.sibling_tx(nonce, Address::repeat_byte(1), U256::ZERO));
-        (default, SwapTransactionOptions { expiry_block: Some(100), ..Default::default() })
+        (default, SwapTransactionOptions::default())
     }
 
     fn selection(options: &SwapTransactionOptions) -> &SwapSelection {
@@ -1052,6 +780,7 @@ mod tests {
     fn gated_rpc(
         validator: GatedValidator,
         runtime: &Arc<CandidateRuntime>,
+        timeout: Duration,
     ) -> SendSwapTransactionApiImpl<
         TestProvider,
         Pool<GatedValidator, CoinbaseTipOrdering<BasePooledTransaction>, InMemoryBlobStore>,
@@ -1062,7 +791,10 @@ mod tests {
             InMemoryBlobStore::default(),
             PoolConfig::default(),
         );
-        rpc(provider(), pool, runtime, MAX_EXPIRY_SECS)
+        let admission =
+            AdmissionService::new(provider(), pool, Arc::clone(runtime), MAX_EXPIRY_SECS)
+                .with_timeout(timeout);
+        SendSwapTransactionApiImpl::new(Arc::new(admission), chain_id())
     }
 
     /// Yields until the first admission has registered its `Pending` entry.
@@ -1080,7 +812,7 @@ mod tests {
     async fn cancelled_first_admission_releases_inflight_and_pending() {
         let fixture = fixture();
         let runtime = runtime(&[fixture.address()]);
-        let api = gated_rpc(GatedValidator::stalled(), &runtime);
+        let api = gated_rpc(GatedValidator::stalled(), &runtime, DEFAULT_ADMISSION_TIMEOUT);
         let (default, options) = request(&fixture);
 
         let first = tokio::spawn({
@@ -1091,7 +823,7 @@ mod tests {
         first.abort();
         assert!(first.await.unwrap_err().is_cancelled());
 
-        assert!(api.lock_inflight().is_empty(), "no orphaned in-flight receiver");
+        assert!(api.admission.lock_inflight().is_empty(), "no orphaned in-flight receiver");
         assert_eq!(runtime.ledger.counts(), (0, 0), "no orphaned Pending entry");
     }
 
@@ -1099,8 +831,7 @@ mod tests {
     async fn stalled_admission_and_its_duplicates_time_out() {
         let fixture = fixture();
         let runtime = runtime(&[fixture.address()]);
-        let api = gated_rpc(GatedValidator::stalled(), &runtime)
-            .with_admission_timeout(Duration::from_millis(50));
+        let api = gated_rpc(GatedValidator::stalled(), &runtime, Duration::from_millis(50));
         let (default, options) = request(&fixture);
 
         let first = tokio::spawn({
@@ -1119,7 +850,50 @@ mod tests {
         let first = first.await.unwrap().expect_err("a stalled insertion times out");
         assert_eq!(first.data().map(|data| data.get()), Some("\"admission_timeout\""));
         assert!(duplicate.is_err(), "a duplicate never reports acceptance of a stalled group");
-        assert!(api.lock_inflight().is_empty());
+        assert!(api.admission.lock_inflight().is_empty());
+        assert_eq!(runtime.ledger.counts(), (0, 0));
+    }
+
+    #[tokio::test]
+    async fn adapters_sharing_one_admission_service_share_inflight_admissions() {
+        let fixture = fixture();
+        let runtime = runtime(&[fixture.address()]);
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        let pool = Pool::new(
+            GatedValidator { gate: Arc::clone(&gate), accept: false },
+            CoinbaseTipOrdering::default(),
+            InMemoryBlobStore::default(),
+            PoolConfig::default(),
+        );
+        let admission = Arc::new(AdmissionService::new(
+            provider(),
+            pool,
+            Arc::clone(&runtime),
+            MAX_EXPIRY_SECS,
+        ));
+        let first = SendSwapTransactionApiImpl::new(Arc::clone(&admission), chain_id());
+        let second = SendSwapTransactionApiImpl::new(Arc::clone(&admission), chain_id());
+        let (default, options) = request(&fixture);
+
+        let pending = tokio::spawn({
+            let (default, options) = (default.clone(), options.clone());
+            async move { first.send_swap_transaction(default, Some(options)).await }
+        });
+        until_pending(&runtime).await;
+        // The second adapter finds the first one's admission in flight and waits for it,
+        // instead of creating its own entry or reporting acceptance early.
+        let duplicate =
+            tokio::spawn(async move { second.send_swap_transaction(default, Some(options)).await });
+        for _ in 0..10 {
+            tokio::task::yield_now().await;
+        }
+        assert!(!duplicate.is_finished(), "the duplicate waits for the first admission");
+        gate.add_permits(1);
+
+        assert!(pending.await.unwrap().is_err());
+        let duplicate = duplicate.await.unwrap().expect_err("the duplicate mirrors the failure");
+        assert_eq!(label(&duplicate), "concurrent_submission_failed");
+        assert!(admission.lock_inflight().is_empty());
         assert_eq!(runtime.ledger.counts(), (0, 0));
     }
 
@@ -1128,7 +902,11 @@ mod tests {
         let fixture = fixture();
         let runtime = runtime(&[fixture.address()]);
         let gate = Arc::new(tokio::sync::Semaphore::new(0));
-        let api = gated_rpc(GatedValidator { gate: Arc::clone(&gate), accept: false }, &runtime);
+        let api = gated_rpc(
+            GatedValidator { gate: Arc::clone(&gate), accept: false },
+            &runtime,
+            DEFAULT_ADMISSION_TIMEOUT,
+        );
         let (default, options) = request(&fixture);
 
         let first = tokio::spawn({
@@ -1152,7 +930,7 @@ mod tests {
             duplicate.data().map(|data| data.get()),
             Some("\"concurrent_submission_failed\"")
         );
-        assert!(api.lock_inflight().is_empty());
+        assert!(api.admission.lock_inflight().is_empty());
         assert_eq!(runtime.ledger.counts(), (0, 0));
     }
 
@@ -1165,12 +943,18 @@ mod tests {
         let (envelope, signature) =
             (selection(&options).envelope.clone(), selection(&options).signature);
         let group = CandidateValidator { limits: runtime.limits, chain_id: chain_id() }
-            .validate_selection(&default, &options.alternatives.0, envelope, signature, None)
+            .validate_selection(
+                &default,
+                &options.alternatives.0,
+                envelope,
+                signature,
+                FIXTURE_EXPIRY_BLOCK,
+            )
             .unwrap();
         // A first request created the entry; its insertion has not settled.
         let (sender, receiver) = watch::channel(None);
-        api.lock_inflight().insert(group.group_hash(), receiver);
-        runtime.ledger.create(Arc::new(group), PRINCIPAL, 1, |_| false).unwrap();
+        api.admission.lock_inflight().insert(group.group_hash(), receiver);
+        runtime.ledger.create(Arc::clone(group.descriptor()), PRINCIPAL, 1, |_| false).unwrap();
 
         let duplicate = tokio::spawn({
             let api = api.clone();
@@ -1212,7 +996,7 @@ mod tests {
                 &options.alternatives.0,
                 selection(&options).envelope.clone(),
                 selection(&options).signature,
-                None,
+                FIXTURE_EXPIRY_BLOCK,
             )
             .unwrap();
         let representative = group.representative();
@@ -1260,7 +1044,6 @@ mod tests {
                 transaction_hash: default_hash,
                 group_hash: None,
                 alternative_hashes: vec![],
-                expiry_block: Some(selection(&options).envelope.expiry_block),
                 alternatives_ignored: true,
             }
         );
@@ -1271,7 +1054,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn default_alone_is_pooled_privately_until_its_expiry() {
+    async fn default_alone_is_pooled_privately_without_a_validity_predicate() {
         let fixture = fixture();
         let runtime = runtime(&[fixture.address()]);
         let pool = pool();
@@ -1288,45 +1071,19 @@ mod tests {
         let pooled = pool.get(&hash).expect("default pooled");
         assert_eq!(pooled.origin, TransactionOrigin::Private);
         assert!(BasePooledTx::candidate_group(&pooled.transaction).is_none());
-        assert_eq!(
-            pooled.transaction.validity_predicates(),
-            [ValidityPredicate::BlockNumber {
-                op: ValidityOperator::LessThanOrEqual,
-                value: U256::from(100),
-            }]
-        );
+        assert!(pooled.transaction.validity_predicates().is_empty(), "no node-made predicate");
         assert_eq!(runtime.ledger.counts(), (0, 0), "no ledger group");
 
-        // An exact resubmission returns the same response, and reports the pooled expiry even
-        // when it asks for another one.
-        assert_eq!(response.expiry_block, Some(100));
-        assert_eq!(
-            api.send_swap_transaction(default.clone(), Some(options)).await.unwrap(),
-            response
-        );
-        let later = SwapTransactionOptions { expiry_block: Some(101), ..Default::default() };
-        assert_eq!(api.send_swap_transaction(default, Some(later)).await.unwrap(), response);
+        // An exact resubmission returns the same response and changes nothing.
+        assert_eq!(api.send_swap_transaction(default, Some(options)).await.unwrap(), response);
         assert_eq!(pool.pool_size().total, 1);
     }
 
     #[tokio::test]
-    async fn default_alone_still_requires_principal_expiry_and_bounds() {
+    async fn default_alone_still_requires_principal_and_bounds() {
         let fixture = fixture();
         let other = runtime(&[Address::repeat_byte(0x99)]);
         let runtime = runtime(&[fixture.address()]);
-        let api = rpc(provider(), pool(), &runtime, 1);
-
-        let (default, mut options) = single(&fixture, 0);
-        options.expiry_block = None;
-        let error = api.send_swap_transaction(default.clone(), Some(options)).await.unwrap_err();
-        assert_eq!(label(&error), "expiry_required");
-        let error = api.send_swap_transaction(default.clone(), None).await.unwrap_err();
-        assert_eq!(label(&error), "expiry_required");
-
-        // One second is at most ten native blocks; the request expires at block 100.
-        let (_, options) = single(&fixture, 0);
-        let error = api.send_swap_transaction(default, Some(options)).await.unwrap_err();
-        assert_eq!(label(&error), "expiry_out_of_window");
 
         let api = rpc(provider(), pool(), &runtime, MAX_EXPIRY_SECS);
         let (default, options) = single(&fixture, 0);
@@ -1338,6 +1095,33 @@ mod tests {
         let error =
             api.send_swap_transaction(fixture.legacy_sibling(0), Some(options)).await.unwrap_err();
         assert_eq!(label(&error), "sibling_type_unsupported");
+    }
+
+    #[tokio::test]
+    async fn single_admission_needs_its_own_capability() {
+        let fixture = fixture();
+        let policy = StaticAccessPolicy::new(PrincipalsFile {
+            policy_version: 1,
+            work_gas_quota: None,
+            principals: vec![PrincipalEntry {
+                id: PRINCIPAL,
+                senders: vec![fixture.address()],
+                capabilities: vec![Capability::CandidateSelection],
+            }],
+        });
+        let runtime = Arc::new(CandidateRuntime {
+            ledger: GroupLedger::default(),
+            policy: Arc::new(policy),
+            switch: CandidateSwitch::default(),
+            limits: CandidateLimits::default(),
+        });
+        let api = rpc(provider(), pool(), &runtime, MAX_EXPIRY_SECS);
+
+        let (default, options) = single(&fixture, 0);
+        let error = api.send_swap_transaction(default, Some(options)).await.unwrap_err();
+        assert_eq!(label(&error), "principal_not_allowed");
+        let (default, options) = request(&fixture);
+        api.send_swap_transaction(default, Some(options)).await.unwrap();
     }
 
     #[tokio::test]
@@ -1365,11 +1149,6 @@ mod tests {
         let api = rpc(provider(), pool(), &runtime, MAX_EXPIRY_SECS);
 
         let (default, mut options) = request(&fixture);
-        options.expiry_block = Some(selection(&options).envelope.expiry_block + 1);
-        let error = api.send_swap_transaction(default, Some(options)).await.unwrap_err();
-        assert_eq!(label(&error), "selection_mismatch");
-
-        let (default, mut options) = request(&fixture);
         options.max_access_charge =
             Some(selection(&options).envelope.max_access_charge + U256::from(1));
         let error = api.send_swap_transaction(default, Some(options)).await.unwrap_err();
@@ -1377,7 +1156,6 @@ mod tests {
 
         // Matching values are redundant but accepted.
         let (default, mut options) = request(&fixture);
-        options.expiry_block = Some(selection(&options).envelope.expiry_block);
         options.max_access_charge = Some(selection(&options).envelope.max_access_charge);
         api.send_swap_transaction(default, Some(options)).await.unwrap();
     }
@@ -1438,15 +1216,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn expiry_past_the_configured_window_is_rejected() {
+    async fn group_expiry_is_the_configured_lifetime_rounded_up_to_whole_blocks() {
         let fixture = fixture();
         let runtime = runtime(&[fixture.address()]);
-        // One second is at most ten native blocks; the fixture expires at block 100.
-        let api = rpc(provider(), pool(), &runtime, 1);
+        let pool = pool();
+        // On the genesis head at Denim's 200 ms blocks, 7 s is 35 blocks past block 1.
+        let api = rpc(provider(), pool.clone(), &runtime, 7);
         let (default, options) = request(&fixture);
 
-        let error = api.send_swap_transaction(default, Some(options)).await.unwrap_err();
-        assert_eq!(label(&error), "expiry_out_of_window");
+        let response = api.send_swap_transaction(default, Some(options)).await.unwrap();
+
+        let pooled = pool.get(&response.transaction_hash).expect("representative pooled");
+        let group = BasePooledTx::candidate_group(&pooled.transaction).expect("group sidecar");
+        assert_eq!(group.expiry_block(), 36);
+        let entry = runtime.ledger.lookup(&response.group_hash.unwrap()).expect("ledger entry");
+        assert_eq!(entry.descriptor.expiry_block, 36);
     }
 
     #[tokio::test]
@@ -1471,7 +1255,7 @@ mod tests {
         let (default, options) = single(&fixture, 0);
         let error = api.send_swap_transaction(default, Some(options)).await.unwrap_err();
         assert_eq!(label(&error), "sender_delegated");
-        assert_eq!(api.pool.pool_size().total, 0);
+        assert_eq!(api.admission.pool().pool_size().total, 0);
     }
 
     #[tokio::test]
@@ -1533,7 +1317,6 @@ mod tests {
             transaction_hash: TxHash::repeat_byte(0x22),
             group_hash: Some(B256::repeat_byte(0x11)),
             alternative_hashes: vec![TxHash::repeat_byte(0x33)],
-            expiry_block: None,
             alternatives_ignored: false,
         };
         let sequencer = MockServer::start();
@@ -1566,15 +1349,82 @@ mod tests {
         assert_eq!(decoded_default, default);
         assert_eq!(decoded_options, Some(options));
         assert!(params[1]["selection"].get("signature").is_some());
-        assert!(params[1].get("expiryBlock").is_none(), "unset terms are omitted");
+        assert!(params[1].get("maxAccessCharge").is_none(), "unset terms are omitted");
 
         let mut padded = params[1].clone();
         padded["extra"] = serde_json::json!(true);
         assert!(serde_json::from_value::<SwapTransactionOptions>(padded).is_err());
 
-        let single = serde_json::json!({ "expiryBlock": "0x64", "maxAccessCharge": "0x0" });
+        let single = serde_json::json!({ "maxAccessCharge": "0x0" });
         let single: SwapTransactionOptions = serde_json::from_value(single).unwrap();
-        assert_eq!((single.expiry_block, single.max_access_charge), (Some(100), Some(U256::ZERO)));
+        assert_eq!(single.max_access_charge, Some(U256::ZERO));
+        // The node assigns lifetimes; a client expiry is an unknown field, top level or signed.
+        let expiring = serde_json::json!({ "expiryBlock": "0x64" });
+        assert!(serde_json::from_value::<SwapTransactionOptions>(expiring).is_err());
+        let mut signed = params[1].clone();
+        signed["selection"]["envelope"]["expiryBlock"] = serde_json::json!("0x64");
+        assert!(serde_json::from_value::<SwapTransactionOptions>(signed).is_err());
+    }
+
+    #[test]
+    fn wire_shapes_are_stable() {
+        let options = serde_json::json!({
+            "alternatives": ["0x01"],
+            "selection": {
+                "envelope": {
+                    "sender": Address::repeat_byte(1),
+                    "nonce": "0x0",
+                    "siblingHashes": [TxHash::repeat_byte(2), TxHash::repeat_byte(3)],
+                    "rule": {
+                        "kind": "0x0",
+                        "scoreVersion": "0x1",
+                        "token": Address::repeat_byte(4),
+                        "recipient": Address::repeat_byte(5),
+                        "minDelta": "0x1"
+                    },
+                    "fallbackMode": "0x0",
+                    "defaultIndex": "0x0",
+                    "maxWorkGas": "0xf4240",
+                    "maxEvaluations": "0x4",
+                    "maxAccessCharge": "0x0",
+                    "disclosure": "0x0"
+                },
+                "signature": {
+                    "r": "0x1", "s": "0x2", "yParity": "0x0", "v": "0x0"
+                }
+            },
+            "maxAccessCharge": "0x0"
+        });
+        let decoded: SwapTransactionOptions = serde_json::from_value(options.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&decoded).unwrap(), options);
+
+        let response = SwapTransactionResponse {
+            transaction_hash: TxHash::repeat_byte(2),
+            group_hash: Some(B256::repeat_byte(9)),
+            alternative_hashes: vec![TxHash::repeat_byte(3)],
+            alternatives_ignored: false,
+        };
+        assert_eq!(
+            serde_json::to_value(&response).unwrap(),
+            serde_json::json!({
+                "transactionHash": TxHash::repeat_byte(2),
+                "groupHash": B256::repeat_byte(9),
+                "alternativeHashes": [TxHash::repeat_byte(3)]
+            })
+        );
+
+        let error =
+            SendSwapTransactionApiImpl::<(), ()>::reject(&CandidateError::SelectionFieldMismatch {
+                field: "maxAccessCharge",
+            });
+        assert_eq!(
+            serde_json::to_value(&error).unwrap(),
+            serde_json::json!({
+                "code": -32602,
+                "message": error.message(),
+                "data": "selection_mismatch"
+            })
+        );
     }
 
     #[test]
@@ -1593,7 +1443,6 @@ mod tests {
             transaction_hash: TxHash::repeat_byte(0x22),
             group_hash: None,
             alternative_hashes: vec![],
-            expiry_block: None,
             alternatives_ignored: false,
         };
         assert_eq!(
@@ -1760,7 +1609,11 @@ mod tests {
         let fixture = CandidateFixture::with_key(chain_id(), 0x75);
         let runtime = runtime(&[fixture.address()]);
         let gate = Arc::new(tokio::sync::Semaphore::new(0));
-        let api = gated_rpc(GatedValidator { gate: Arc::clone(&gate), accept: true }, &runtime);
+        let api = gated_rpc(
+            GatedValidator { gate: Arc::clone(&gate), accept: true },
+            &runtime,
+            DEFAULT_ADMISSION_TIMEOUT,
+        );
         let (raw, envelope, signature) = fixture.submission(3, 1);
         let group = fixture.group(&raw, envelope.clone());
         let (default, options) = swap(&raw, envelope, signature);
@@ -1777,9 +1630,12 @@ mod tests {
 
         let error = first.await.unwrap().expect_err("the group ended at settlement");
         assert_eq!(label(&error), "group_terminal");
-        assert!(!api.pool.contains(&group.representative().hash()), "stale representative removed");
+        assert!(
+            !api.admission.pool().contains(&group.representative().hash()),
+            "stale representative removed"
+        );
         assert_eq!(runtime.ledger.counts(), (0, 1), "the sender's slot is free");
-        assert!(api.lock_inflight().is_empty());
+        assert!(api.admission.lock_inflight().is_empty());
         let terminals: Vec<_> = group_events(&capture, group.group_hash())
             .into_iter()
             .filter(|(kind, _, _)| *kind == TransactionEventType::TxpoolCandidateEvicted)
@@ -1857,7 +1713,7 @@ mod tests {
         assert_eq!((admissions[0].0, admissions[0].1), (admitted, Some(ignored.transaction_hash)));
         assert_eq!(admissions[0].2["selection"], "ignored");
         assert_eq!(admissions[0].2["alternatives"], 2);
-        assert_eq!(admissions[0].2["expiry_block"], 100);
+        assert!(admissions[0].2.get("expiry_block").is_none());
         assert!(admissions[0].2.get("group_hash").is_none());
         assert_eq!((admissions[1].0, admissions[1].1), (admitted, Some(alone.transaction_hash)));
         assert_eq!(admissions[1].2["selection"], "none");
@@ -1896,70 +1752,5 @@ mod tests {
         assert_eq!(events.len(), 1, "{events:?}");
         assert_eq!(events[0].0, rejected);
         assert_eq!(events[0].2["rejection_reason"], "pool_rejected");
-    }
-
-    #[tokio::test]
-    async fn resubmission_reports_the_tightest_pooled_block_bound() {
-        let fixture = fixture();
-        let runtime = runtime(&[fixture.address()]);
-        let validator = CandidateValidator { limits: runtime.limits, chain_id: chain_id() };
-        let block =
-            |op, value: u64| ValidityPredicate::BlockNumber { op, value: U256::from(value) };
-        let cases = [
-            (0, vec![block(ValidityOperator::LessThan, 101)], 100),
-            (
-                1,
-                vec![
-                    block(ValidityOperator::LessThanOrEqual, 100),
-                    block(ValidityOperator::LessThanOrEqual, 50),
-                ],
-                50,
-            ),
-        ];
-        for (nonce, predicates, expected) in cases {
-            // The validity ingress on the same node pooled it first.
-            let pool = pool();
-            let (default, options) = single(&fixture, nonce);
-            let pooled = validator.validate_default(&default).unwrap();
-            let pooled = BasePooledTransaction::new(pooled.transaction, pooled.encoded.len())
-                .with_validity_predicates(predicates);
-            pool.add_transaction(TransactionOrigin::Private, pooled).await.unwrap();
-
-            let api = rpc(provider(), pool, &runtime, MAX_EXPIRY_SECS);
-            let response = api.send_swap_transaction(default, Some(options)).await.unwrap();
-            assert_eq!(response.expiry_block, Some(expected));
-        }
-    }
-
-    #[tokio::test]
-    async fn fresh_single_admission_counts_one_unsigned_validity_sidecar() {
-        let recorder = metrics_util::debugging::DebuggingRecorder::new();
-        let snapshotter = recorder.snapshotter();
-        let _guard = metrics::set_default_local_recorder(&recorder);
-        let fixture = fixture();
-        let runtime = runtime(&[fixture.address()]);
-        let api = rpc(provider(), pool(), &runtime, MAX_EXPIRY_SECS);
-        let (default, options) = single(&fixture, 0);
-
-        api.send_swap_transaction(default.clone(), Some(options.clone())).await.unwrap();
-        api.send_swap_transaction(default, Some(options)).await.unwrap();
-
-        let unsigned: Vec<_> = snapshotter
-            .snapshot()
-            .into_vec()
-            .into_iter()
-            .filter(|(key, _, _, _)| {
-                let key = key.key();
-                key.name() == "txpool.validity_signature.accepted"
-                    && key.labels().any(|l| l.key() == "site" && l.value() == "ingress")
-                    && key.labels().any(|l| l.key() == "signature" && l.value() == "unsigned")
-            })
-            .map(|(_, _, _, value)| value)
-            .collect();
-        assert_eq!(
-            unsigned,
-            [metrics_util::debugging::DebugValue::Counter(1)],
-            "the resubmission is not counted again"
-        );
     }
 }

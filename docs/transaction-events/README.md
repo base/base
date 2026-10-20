@@ -320,7 +320,7 @@ which also carries `data.group_hash` and `data.alternative_hashes` and has an
 `event_id` that depends only on the group. It is `none` for a default
 transaction without alternatives and `ignored` when the request carried
 alternatives while selection was disabled; both carry `data.alternatives` and
-`data.expiry_block` and start no group lifecycle. Duplicate submissions emit
+start no group lifecycle. Duplicate submissions emit
 nothing. A refused request gets `TXPOOL_SEND_SWAP_TRANSACTION_REJECTED` with
 `data.selection`, `data.alternatives`, and the RPC error label in
 `data.rejection_reason`: `pool_rejected` when the pool refused the default
@@ -351,7 +351,8 @@ round stopped is `interrupted`. The turn ends in at most one decision:
 `BUILDER_ACCEPTED` for the committed sibling with `data.candidate_selection`
 (`winner`, or `fallback` with `data.fallback_reason`), or, against the
 representative, `BUILDER_DEFERRED` for park and defer, `BUILDER_REJECTED` for
-eviction, or `BUILDER_EXPIRED` past `expiryBlock`. The reason field holds the
+eviction, or `BUILDER_EXPIRED` past the group's
+node-assigned expiry block. The reason field holds the
 lifecycle label, such as `all_failed`, `ledger_unavailable`, `deferred_quota`,
 `deferred_build_budget`, `deferred_deadline`, `deferred_finalization`,
 `deferred_unmetered`, `deferred_block_limits`, `deferred_verify_mismatch`,
@@ -364,7 +365,7 @@ considered at most once per build, so decisions are not deduplicated. These
 are per-payload observations: `BUILDER_ACCEPTED` is provisional.
 
 Measured sizes as serialized JSON, for a default transaction with one
-alternative: admission 691 bytes (550 without alternatives), rejection 566 to
+alternative: admission 691 bytes (about 530 without alternatives), rejection 566 to
 688, round 976 to 987 (each further sibling adds its label, about 10 to 25
 bytes), trial 869 to 878, accepted 848, deferred 804, rejected 831, landed 712,
 evicted 652 to 661. A turn emits one round and one decision, plus one trial per
@@ -376,8 +377,8 @@ per admitted group, keyed by the group alone so replays deduplicate.
 block's mined transactions, under the winner's `tx_hash` with `block_hash` and
 `block_number`. Otherwise `TXPOOL_CANDIDATE_EVICTED`, under the
 representative, has `data.terminal_reason`: `replaced` (a same-nonce group
-replaced it), `expired` (pool maintenance passed `expiryBlock`),
-`budget_exhausted`, `revoked`, `permanent_exclusion`, `nonce_consumed`, or
+replaced it), `expired` (pool maintenance passed the group's node-assigned
+expiry block), `budget_exhausted`, `revoked`, `permanent_exclusion`, `nonce_consumed`, or
 `dropped`. `nonce_consumed` is journaled when a canonical block advances the
 sender's nonce past the group's without a sibling landing, for example through
 a sponsor's EIP-7702 authorization or a plain same-nonce transaction, or when
