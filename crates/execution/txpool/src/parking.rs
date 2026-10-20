@@ -378,20 +378,12 @@ where
 mod tests {
     use std::{collections::VecDeque, time::Instant};
 
-    use alloy_eips::eip2718::Encodable2718;
-    use alloy_primitives::Bytes;
-    use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
-    use base_common_chains::ChainConfig;
-    use base_common_consensus::{
-        BasePooledTransaction as ConsensusPooledTransaction, Eip8130Constants, Eip8130Signed,
-        TxEip8130,
-    };
-    use reth_primitives_traits::Recovered;
+    use base_common_consensus::{Eip8130Constants, TxEip8130};
     use reth_transaction_pool::{TransactionOrigin, identifier::TransactionId};
 
     use super::*;
-    use crate::{BaseOrdering, BasePooledTransaction};
+    use crate::{BaseOrdering, BasePooledTransaction, test_utils::TxFixtures};
 
     #[derive(Debug)]
     struct StaticBestTransactions {
@@ -431,28 +423,15 @@ mod tests {
         nonce: u64,
         priority_fee: u128,
     ) -> Arc<ValidPoolTransaction<BasePooledTransaction>> {
-        let tx = TxEip8130 {
-            chain_id: ChainConfig::mainnet().chain_id,
-            sender: None,
-            nonce_key,
-            nonce_sequence: nonce,
-            valid_after: 0,
-            valid_before: u64::from(nonce_key == Eip8130Constants::NONCE_KEY_MAX),
-            max_priority_fee_per_gas: priority_fee,
-            max_fee_per_gas: priority_fee + 10,
-            gas_limit: 50_000,
-            account_changes: Vec::new(),
-            calls: Vec::new(),
-            metadata: Bytes::new(),
-            payer: None,
-        };
-        let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
-        let signed = Eip8130Signed::new(tx, Bytes::from(signature.as_bytes()), Bytes::new());
-        let pooled = ConsensusPooledTransaction::Eip8130(signed);
-        let encoded_length = pooled.encode_2718_len();
-        let transaction = BasePooledTransaction::new(
-            Recovered::new_unchecked(pooled.into(), signer.address()),
-            encoded_length,
+        let transaction = TxFixtures::sign_eip8130(
+            signer,
+            None,
+            TxEip8130 {
+                valid_before: u64::from(nonce_key == Eip8130Constants::NONCE_KEY_MAX),
+                max_priority_fee_per_gas: priority_fee,
+                max_fee_per_gas: priority_fee + 10,
+                ..TxFixtures::eip8130_tx(nonce_key, nonce)
+            },
         );
         Arc::new(ValidPoolTransaction {
             transaction_id: TransactionId::new(0u64.into(), nonce),

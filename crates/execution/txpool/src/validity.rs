@@ -664,14 +664,11 @@ impl ValidatedTransactionExtensions<BasePooledTransaction> for TransactionValidi
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::transaction::Recovered;
-    use alloy_eips::eip2718::Encodable2718;
-    use alloy_primitives::TxKind;
-    use base_common_consensus::{BaseTransactionSigned, TxDeposit};
     use revm::{database::InMemoryDB, state::AccountInfo};
     use serde_json::json;
 
     use super::*;
+    use crate::test_utils::TxFixtures;
 
     /// A predicate context with arbitrary block and flashblock coordinates.
     fn test_context() -> PredicateContext {
@@ -734,44 +731,32 @@ mod tests {
         );
     }
 
-    #[test]
-    fn deserializes_every_comparison_operator() {
-        for (op, expected) in [
-            ("<", ValidityOperator::LessThan),
-            ("<=", ValidityOperator::LessThanOrEqual),
-            ("=", ValidityOperator::Equal),
-            ("!=", ValidityOperator::NotEqual),
-            (">", ValidityOperator::GreaterThan),
-            (">=", ValidityOperator::GreaterThanOrEqual),
-        ] {
-            let predicate: ValidityPredicate = serde_json::from_str(&format!(
-                r#"{{"type":"balance","params":{{"address":"0x1111111111111111111111111111111111111111","op":"{op}","value":"0x0"}}}}"#
-            ))
-            .unwrap();
+    #[rstest::rstest]
+    #[case("<", ValidityOperator::LessThan, true)]
+    #[case("<=", ValidityOperator::LessThanOrEqual, true)]
+    #[case("=", ValidityOperator::Equal, false)]
+    #[case("!=", ValidityOperator::NotEqual, true)]
+    #[case(">", ValidityOperator::GreaterThan, false)]
+    #[case(">=", ValidityOperator::GreaterThanOrEqual, false)]
+    fn comparison_operator_deserializes_and_matches(
+        #[case] symbol: &str,
+        #[case] expected: ValidityOperator,
+        #[case] matches_ten_against_eleven: bool,
+    ) {
+        let predicate: ValidityPredicate = serde_json::from_str(&format!(
+            r#"{{"type":"balance","params":{{"address":"0x1111111111111111111111111111111111111111","op":"{symbol}","value":"0x0"}}}}"#
+        ))
+        .unwrap();
 
-            assert_eq!(
-                predicate,
-                ValidityPredicate::Balance {
-                    address: Address::repeat_byte(0x11),
-                    op: expected,
-                    value: U256::ZERO,
-                }
-            );
-        }
-    }
-
-    #[test]
-    fn comparison_operators_match_expected_values() {
-        for (op, expected) in [
-            (ValidityOperator::LessThan, true),
-            (ValidityOperator::LessThanOrEqual, true),
-            (ValidityOperator::Equal, false),
-            (ValidityOperator::NotEqual, true),
-            (ValidityOperator::GreaterThan, false),
-            (ValidityOperator::GreaterThanOrEqual, false),
-        ] {
-            assert_eq!(op.matches(U256::from(10), U256::from(11)), expected);
-        }
+        assert_eq!(
+            predicate,
+            ValidityPredicate::Balance {
+                address: Address::repeat_byte(0x11),
+                op: expected,
+                value: U256::ZERO,
+            }
+        );
+        assert_eq!(expected.matches(U256::from(10), U256::from(11)), matches_ten_against_eleven);
     }
 
     #[test]
@@ -984,22 +969,7 @@ mod tests {
 
     #[test]
     fn apply_attaches_validity_predicates_to_pooled_transaction() {
-        let signed: BaseTransactionSigned = TxDeposit {
-            source_hash: Default::default(),
-            from: Address::ZERO,
-            to: TxKind::Create,
-            mint: 0,
-            value: U256::ZERO,
-            gas_limit: 21_000,
-            is_system_transaction: false,
-            input: Default::default(),
-        }
-        .into();
-        let encoded_length = signed.encode_2718_len();
-        let transaction = BasePooledTransaction::new(
-            Recovered::new_unchecked(signed, Address::ZERO),
-            encoded_length,
-        );
+        let transaction = TxFixtures::deposit();
         let expected = vec![ValidityPredicate::Storage {
             address: Address::repeat_byte(0x11),
             slot: U256::from(1),
@@ -1017,22 +987,7 @@ mod tests {
 
     #[test]
     fn apply_compiles_timing_before_state_and_preserves_wire_order() {
-        let signed: BaseTransactionSigned = TxDeposit {
-            source_hash: Default::default(),
-            from: Address::ZERO,
-            to: TxKind::Create,
-            mint: 0,
-            value: U256::ZERO,
-            gas_limit: 21_000,
-            input: Default::default(),
-            is_system_transaction: false,
-        }
-        .into();
-        let encoded_length = signed.encode_2718_len();
-        let transaction = BasePooledTransaction::new(
-            Recovered::new_unchecked(signed, Address::ZERO),
-            encoded_length,
-        );
+        let transaction = TxFixtures::deposit();
         let state_predicate = ValidityPredicate::Balance {
             address: Address::ZERO,
             op: ValidityOperator::Equal,
@@ -1194,22 +1149,7 @@ mod tests {
 
     #[test]
     fn apply_rejects_storage_value_outside_mask() {
-        let signed: BaseTransactionSigned = TxDeposit {
-            source_hash: Default::default(),
-            from: Address::ZERO,
-            to: TxKind::Create,
-            mint: 0,
-            value: U256::ZERO,
-            gas_limit: 21_000,
-            is_system_transaction: false,
-            input: Default::default(),
-        }
-        .into();
-        let encoded_length = signed.encode_2718_len();
-        let transaction = BasePooledTransaction::new(
-            Recovered::new_unchecked(signed, Address::ZERO),
-            encoded_length,
-        );
+        let transaction = TxFixtures::deposit();
         let extension = TransactionValidity {
             validity: vec![ValidityPredicate::Storage {
                 address: Address::repeat_byte(0x22),
@@ -1228,22 +1168,7 @@ mod tests {
 
     #[test]
     fn apply_rejects_unsatisfiable_flashblock_index() {
-        let signed: BaseTransactionSigned = TxDeposit {
-            source_hash: Default::default(),
-            from: Address::ZERO,
-            to: TxKind::Create,
-            mint: 0,
-            value: U256::ZERO,
-            gas_limit: 21_000,
-            is_system_transaction: false,
-            input: Default::default(),
-        }
-        .into();
-        let encoded_length = signed.encode_2718_len();
-        let transaction = BasePooledTransaction::new(
-            Recovered::new_unchecked(signed, Address::ZERO),
-            encoded_length,
-        );
+        let transaction = TxFixtures::deposit();
         let extension = TransactionValidity {
             validity: vec![ValidityPredicate::FlashblockIndex {
                 op: ValidityOperator::Equal,
@@ -1259,22 +1184,7 @@ mod tests {
 
     #[test]
     fn apply_accepts_empty_predicates() {
-        let signed: BaseTransactionSigned = TxDeposit {
-            source_hash: Default::default(),
-            from: Address::ZERO,
-            to: TxKind::Create,
-            mint: 0,
-            value: U256::ZERO,
-            gas_limit: 21_000,
-            is_system_transaction: false,
-            input: Default::default(),
-        }
-        .into();
-        let encoded_length = signed.encode_2718_len();
-        let transaction = BasePooledTransaction::new(
-            Recovered::new_unchecked(signed, Address::ZERO),
-            encoded_length,
-        );
+        let transaction = TxFixtures::deposit();
 
         // The builder path legitimately receives ordinary transactions with no
         // predicates; unlike the mempool ingress, `apply` must not reject them.

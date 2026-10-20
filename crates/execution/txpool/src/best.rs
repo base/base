@@ -125,19 +125,16 @@ where
 mod tests {
     use std::{collections::VecDeque, time::Instant};
 
-    use alloy_consensus::{Transaction, transaction::Recovered};
-    use alloy_eips::eip2718::Encodable2718;
-    use alloy_primitives::{Bytes, U256};
-    use alloy_signer::SignerSync;
+    use alloy_consensus::Transaction;
+    use alloy_primitives::U256;
     use alloy_signer_local::PrivateKeySigner;
-    use base_common_chains::ChainConfig;
-    use base_common_consensus::{
-        BasePooledTransaction as ConsensusPooledTransaction, Eip8130Signed, TxEip8130,
-    };
+    use base_common_consensus::TxEip8130;
     use reth_transaction_pool::{TransactionOrigin, identifier::TransactionId};
 
     use super::*;
-    use crate::{BaseOrdering, BasePooledTransaction, TimestampedTransaction};
+    use crate::{
+        BaseOrdering, BasePooledTransaction, TimestampedTransaction, test_utils::TxFixtures,
+    };
 
     #[derive(Debug)]
     struct StaticBestTransactions<T: BasePooledTx> {
@@ -176,10 +173,6 @@ mod tests {
         fn set_skip_blobs(&mut self, _skip_blobs: bool) {}
     }
 
-    fn test_chain_id() -> u64 {
-        ChainConfig::mainnet().chain_id
-    }
-
     fn signer() -> PrivateKeySigner {
         PrivateKeySigner::random()
     }
@@ -209,29 +202,16 @@ mod tests {
         max_fee_per_gas: u128,
         received_at: u128,
     ) -> BasePooledTransaction {
-        let tx = TxEip8130 {
-            chain_id: test_chain_id(),
-            sender: None,
-            nonce_key,
-            nonce_sequence,
-            valid_after: 0,
-            valid_before: 0,
-            max_priority_fee_per_gas,
-            max_fee_per_gas,
-            gas_limit: 50_000,
-            account_changes: Vec::new(),
-            calls: Vec::new(),
-            metadata: Bytes::new(),
-            payer: None,
-        };
-        let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
-        let signed =
-            Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
-        let pooled = ConsensusPooledTransaction::Eip8130(signed);
-        let encoded_length = pooled.encode_2718_len();
-        BasePooledTransaction::new_with_received_at(
-            Recovered::new_unchecked(pooled.into(), signer.address()),
-            encoded_length,
+        TxFixtures::received_at(
+            TxFixtures::sign_eip8130(
+                signer,
+                None,
+                TxEip8130 {
+                    max_priority_fee_per_gas,
+                    max_fee_per_gas,
+                    ..TxFixtures::eip8130_tx(nonce_key, nonce_sequence)
+                },
+            ),
             received_at,
         )
     }
