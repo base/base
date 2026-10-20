@@ -1044,6 +1044,18 @@ where
             // rejection cache: the representative is only the iterator identity and is never
             // executed as plain. Siblings consult the cache individually.
             if let Some(group) = tx.candidate_group().cloned() {
+                // Candidate groups do not support validity predicates: a round never evaluates
+                // them, and its winner or fallback would bypass them. No ingress builds such a
+                // transaction; skip one rather than run it as if its predicates held.
+                if !tx.validity_predicates().is_empty() {
+                    warn!(
+                        target: "payload_builder",
+                        group_hash = %group.group_hash(),
+                        "skipping candidate group carrying validity predicates"
+                    );
+                    Self::skip_current(&mut best_txs, tx.sender(), tx.nonce(), replay_independent);
+                    continue;
+                }
                 let limits = *candidate_limits.get_or_insert_with(|| CandidateBlockLimits {
                     block_number,
                     block_gas_limit,
@@ -1653,8 +1665,9 @@ mod tests {
     use base_common_evm::BaseTime;
     use base_execution_candidates::{
         CandidateEnvelope, CandidateGroup, CandidateLimits, CandidateRuntime, CandidateSwitch,
-        GroupLedger, GroupState, PrincipalEntry, PrincipalId, PrincipalsFile, StaticAccessPolicy,
-        test_utils::CandidateFixture,
+        Capability, GroupLedger, GroupState, PrincipalEntry, PrincipalId, PrincipalsFile,
+        StaticAccessPolicy,
+        test_utils::{CandidateFixture, FIXTURE_EXPIRY_BLOCK},
     };
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_execution_evm::BaseEvmConfig;
@@ -3019,6 +3032,7 @@ mod tests {
                 principals: vec![PrincipalEntry {
                     id: PrincipalId(1),
                     senders: vec![fixture.address()],
+                    capabilities: Capability::swap_lane(),
                 }],
             })),
             switch: CandidateSwitch::new(enabled),
@@ -3034,6 +3048,18 @@ mod tests {
         values: &[u64],
         configure: impl FnOnce(&mut CandidateEnvelope),
     ) -> Arc<CandidateGroup> {
+        candidate_group_expiring(fixture, runtime, to, values, FIXTURE_EXPIRY_BLOCK, configure)
+    }
+
+    /// [`candidate_group`] with a node-assigned `expiry_block`.
+    fn candidate_group_expiring(
+        fixture: &CandidateFixture,
+        runtime: &CandidateRuntime,
+        to: Address,
+        values: &[u64],
+        expiry_block: u64,
+        configure: impl FnOnce(&mut CandidateEnvelope),
+    ) -> Arc<CandidateGroup> {
         let raw: Vec<_> = values
             .iter()
             .map(|value| fixture.encode(fixture.sibling_tx(0, to, U256::from(*value))))
@@ -3041,10 +3067,10 @@ mod tests {
         let mut envelope = fixture.envelope_for(&raw, 0);
         envelope.rule.recipient = CANDIDATE_RECIPIENT;
         configure(&mut envelope);
-        let group = Arc::new(fixture.group(&raw, envelope));
+        let group = Arc::new(fixture.group_expiring(&raw, envelope, expiry_block));
         runtime
             .ledger
-            .create(Arc::clone(&group), PrincipalId(1), 0, |_| false)
+            .create(Arc::clone(group.descriptor()), PrincipalId(1), 0, |_| false)
             .expect("group is admitted");
         runtime.ledger.confirm_pooled(group.group_hash(), |_| true);
         group
@@ -3840,6 +3866,33 @@ mod tests {
     }
 
     #[test]
+    fn candidate_group_carrying_validity_predicates_never_runs() {
+        let capture = TransactionEventCapture::install();
+        let fixture = CandidateFixture::new(8_453);
+        let runtime = candidate_runtime(&fixture, true);
+        let group = candidate_group(&fixture, &runtime, CANDIDATE_RECIPIENT, &[141, 143], |_| {});
+        // Candidate rounds never evaluate validity predicates, so even a satisfiable one must
+        // keep the group out of the payload rather than be silently ignored.
+        let representative =
+            representative(&group).with_validity_predicates(vec![ValidityPredicate::BlockNumber {
+                op: ValidityOperator::LessThanOrEqual,
+                value: U256::from(1_000),
+            }]);
+        let (outcome, _) = build_candidate_payload_with(
+            CandidateBuild {
+                runtime: Some(Arc::clone(&runtime)),
+                sender: fixture.address(),
+                ..CandidateBuild::default()
+            },
+            TestParkableTransactions::new(vec![representative]),
+            |_| {},
+        );
+
+        assert!(included_hashes(outcome).is_empty(), "no sibling or representative commits");
+        assert!(candidate_events(&capture, &runtime, &group).is_empty(), "no round ran");
+    }
+
+    #[test]
     fn candidate_winner_journals_its_round_trials_and_acceptance() {
         let capture = TransactionEventCapture::install();
         let fixture = CandidateFixture::new(8_453);
@@ -3970,9 +4023,14 @@ mod tests {
             )]
         );
 
-        let expired = candidate_group(&fixture, &runtime, CANDIDATE_RECIPIENT, &[114, 116], |e| {
-            e.expiry_block = 0;
-        });
+        let expired = candidate_group_expiring(
+            &fixture,
+            &runtime,
+            CANDIDATE_RECIPIENT,
+            &[114, 116],
+            0,
+            |_| {},
+        );
         build_candidate_turn(&fixture, &runtime, &expired, |_| {});
         assert_eq!(
             candidate_reasons(&capture, &runtime, &expired),
@@ -4125,6 +4183,7 @@ mod tests {
                 principals: vec![PrincipalEntry {
                     id: PrincipalId(1),
                     senders: vec![fixture.address()],
+                    capabilities: Capability::swap_lane(),
                 }],
             })),
             ..Arc::into_inner(candidate_runtime(&fixture, true)).expect("sole owner")

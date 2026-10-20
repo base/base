@@ -457,13 +457,15 @@ where
         }
     }
 
-    /// Returns the block-expiry bound for a validated transaction: its validity predicates'
-    /// finite block bound, or a candidate group's inclusive `expiryBlock`.
+    /// Returns the block-expiry bound for a validated transaction: the earlier of its validity
+    /// predicates' finite block bound and its candidate group's node-assigned inclusive expiry
+    /// block, when either exists.
     fn validity_block_expiry_bound(validated: &TransactionValidationOutcome<T>) -> Option<u64> {
         let transaction = validated.as_valid_transaction()?.transaction();
-        transaction.candidate_group().map(|group| group.envelope().expiry_block).or_else(|| {
-            crate::ValidityPredicate::block_expiry_bound(transaction.validity_predicates())
-        })
+        let group = transaction.candidate_group().map(|group| group.expiry_block());
+        let predicates =
+            crate::ValidityPredicate::block_expiry_bound(transaction.validity_predicates());
+        group.into_iter().chain(predicates).min()
     }
 
     /// Rejects automatic plain insertion of a known candidate sibling (design §4.6).
@@ -4225,7 +4227,12 @@ mod tests {
         let group = Arc::new(fixture.group(&raw, envelope));
         runtime
             .ledger
-            .create(Arc::clone(&group), base_execution_candidates::PrincipalId(1), 0, |_| false)
+            .create(
+                Arc::clone(group.descriptor()),
+                base_execution_candidates::PrincipalId(1),
+                0,
+                |_| false,
+            )
             .expect("group is admitted");
         let representative =
             BasePooledTransaction::recover_raw_transaction(&group.representative().encoded)
@@ -4553,7 +4560,7 @@ mod tests {
         let runtime = candidate_runtime();
         let pool = pool.with_candidate_runtime(Arc::clone(&runtime));
         let (group, representative) = candidate_submission(&client, &runtime);
-        let expiry = group.envelope().expiry_block;
+        let expiry = group.expiry_block();
         let hash = group.representative().hash();
         pool.add_transaction(TransactionOrigin::Private, representative).await.unwrap();
         runtime.ledger.confirm_pooled(group.group_hash(), |hash| pool.get(hash).is_some());
@@ -4584,6 +4591,27 @@ mod tests {
             base_observability_events::TransactionEventType::TxpoolCandidateEvicted
         );
         assert_eq!(terminals[0].data["terminal_reason"], "expired");
+    }
+
+    #[tokio::test]
+    async fn candidate_group_expires_at_the_earlier_of_its_lifetime_and_a_validity_bound() {
+        let (pool, client) = build_integration_pool();
+        let runtime = candidate_runtime();
+        let pool = pool.with_candidate_runtime(Arc::clone(&runtime));
+        let (group, representative) = candidate_submission(&client, &runtime);
+        let bound = group.expiry_block() - 50;
+        let representative =
+            representative.with_validity_predicates(vec![crate::ValidityPredicate::BlockNumber {
+                op: crate::ValidityOperator::LessThanOrEqual,
+                value: alloy_primitives::U256::from(bound),
+            }]);
+        let hash = group.representative().hash();
+        pool.add_transaction(TransactionOrigin::Private, representative).await.unwrap();
+
+        pool.expire_by_block(bound - 1);
+        assert!(pool.get(&hash).is_some());
+        pool.expire_by_block(bound);
+        assert!(pool.get(&hash).is_none(), "the tighter validity bound wins");
     }
 
     /// Events `runtime`'s ledger journaled for `group`.

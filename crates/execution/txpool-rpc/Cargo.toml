@@ -30,7 +30,6 @@ reth-rpc-server-types.workspace = true
 reth-transaction-pool.workspace = true
 
 # alloy
-alloy-serde.workspace = true
 alloy-consensus.workspace = true
 alloy-primitives.workspace = true
 

@@ -10,7 +10,7 @@ use crate::{EvictionReason, FallbackMode};
 pub struct TurnContext {
     /// Block being built.
     pub target_block: u64,
-    /// Signed inclusive expiry.
+    /// The group's node-assigned inclusive expiry block.
     pub expiry_block: u64,
     /// Whether the group ledger is available to this builder.
     pub ledger_available: bool,

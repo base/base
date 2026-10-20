@@ -23,9 +23,9 @@ use base_common_chains::Upgrades;
 use base_common_consensus::{BaseTransactionSigned, TxDeposit};
 use base_execution_candidates::{
     AccessDenied, AttemptId, CandidateGroup, CandidateRuntime, CandidateSelectionRule,
-    CandidateSibling, DEFAULT_MAX_EVALUATIONS, DEFAULT_PROBE_GAS, DeferReason, EvictionReason,
-    FallbackMode, FallbackReason, GroupLifecycle, Ineligibility, ParkReason, ProbeResult,
-    ReserveError, ScoreRead, TrialOutcome, TurnContext, TurnDecision, WinnerSelection,
+    CandidateSibling, Capability, DEFAULT_MAX_EVALUATIONS, DEFAULT_PROBE_GAS, DeferReason,
+    EvictionReason, FallbackMode, FallbackReason, GroupLifecycle, Ineligibility, ParkReason,
+    ProbeResult, ReserveError, ScoreRead, TrialOutcome, TurnContext, TurnDecision, WinnerSelection,
 };
 use base_execution_txpool::{BasePooledTransaction, estimated_da_size::DataAvailabilitySized};
 use base_observability_events::{
@@ -508,14 +508,15 @@ where
         let runtime = &config.runtime;
         let group_hash = group.group_hash();
         let entry = runtime.ledger.lookup(&group_hash).filter(|entry| !entry.state.is_terminal());
-        let principal_authorized = entry
-            .as_ref()
-            .is_some_and(|entry| runtime.policy.principal(group.sender()) == Some(entry.principal));
+        let principal_authorized = entry.as_ref().is_some_and(|entry| {
+            runtime.policy.principal(group.sender(), Capability::CandidateSelection)
+                == Some(entry.principal)
+        });
         let all: Vec<usize> = (0..group.siblings().len()).collect();
         let full_round_gas = Self::round_gas(group, &all, config);
         let decision = GroupLifecycle::before_evaluation(&TurnContext {
             target_block: limits.block_number,
-            expiry_block: group.envelope().expiry_block,
+            expiry_block: group.expiry_block(),
             ledger_available: entry.is_some(),
             principal_authorized,
             selection_enabled: runtime.switch.is_enabled(),
