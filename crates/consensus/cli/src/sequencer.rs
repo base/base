@@ -89,8 +89,7 @@ pub struct SequencerArgs {
     )]
     pub shadow_funding_amount: Option<U256>,
 
-    /// Trusted L2 execution RPC, such as a co-located follower, used to fetch canonical blocks
-    /// missed while the sequencer was down so startup catch-up does not wait for derivation.
+    /// Trusted L2 EL RPC that serves blocks missed while the sequencer was down.
     #[arg(
         long = "sequencer.catchup-source-l2-rpc",
         env = "BASE_NODE_SEQUENCER_CATCHUP_SOURCE_L2_RPC"

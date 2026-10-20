@@ -34,8 +34,7 @@ pub struct SequencerConfig {
     pub conductor_binary_commit: bool,
     /// Request timeout for conductor RPC calls (both JSON-RPC and binary commit).
     pub conductor_rpc_timeout: Duration,
-    /// Trusted L2 execution RPC used to fetch canonical blocks missed while the sequencer was
-    /// down. Startup catch-up otherwise waits for derivation to close that gap.
+    /// Trusted L2 EL RPC that serves blocks missed while the sequencer was down.
     pub catchup_source_l2_rpc_url: Option<Url>,
     /// The confirmation delay for the sequencer.
     pub l1_conf_delay: u64,

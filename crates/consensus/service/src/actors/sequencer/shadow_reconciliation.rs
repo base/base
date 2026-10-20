@@ -121,10 +121,7 @@ impl CanonicalUnsafeCatchup {
         payloads
     }
 
-    /// Returns the missing range between `anchor` and the oldest buffered payload, if any.
-    ///
-    /// Blocks gossiped while the node was down are never re-gossiped, so this gap can otherwise
-    /// close only through derivation.
+    /// Returns the blocks missing between `anchor` and the oldest buffered payload.
     pub fn gap(&self, anchor: L2BlockInfo) -> Option<CatchupGap> {
         let (&oldest, payload) =
             self.payloads.range(anchor.block_info.number.saturating_add(1)..).next()?;

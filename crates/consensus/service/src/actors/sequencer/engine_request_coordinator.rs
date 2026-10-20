@@ -1,13 +1,13 @@
 //! Sequencer ownership and serialized routing of engine requests.
 
 use std::{
+    future,
     sync::Arc,
     time::{Duration, Instant},
 };
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::B256;
-use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use base_consensus_engine::{
     ConsolidateTask, EngineClient, EngineTask, EngineTaskError, EngineTaskErrorSeverity,
     EngineTaskErrors, FinalizeTask, Metrics as EngineMetrics, SealTaskError,
@@ -104,7 +104,7 @@ where
     sequencer_stopped: bool,
     sequencer_kind: SequencerKind,
     unsafe_head_tx: watch::Sender<base_protocol::L2BlockInfo>,
-    catchup_source: Option<CanonicalCatchupSource>,
+    catchup_source: Option<Box<CanonicalCatchupSource>>,
 }
 
 impl<EngineClient_, DerivationClient>
@@ -132,9 +132,9 @@ where
         }
     }
 
-    /// Fills startup catch-up gaps from `source` instead of waiting for derivation.
+    /// Fills catch-up gaps from `source` instead of waiting for derivation.
     pub fn with_catchup_source(mut self, source: CanonicalCatchupSource) -> Self {
-        self.catchup_source = Some(source);
+        self.catchup_source = Some(Box::new(source));
         self
     }
 
@@ -389,51 +389,22 @@ where
         Ok(())
     }
 
-    async fn fetch_catchup_gap(
-        &mut self,
-        anchor: base_protocol::L2BlockInfo,
-    ) -> Vec<BaseExecutionPayloadEnvelope> {
-        let SequencerEngineState::CatchingUp { catchup } = &self.sequencer_state else {
-            return Vec::new();
-        };
-        let Some(source) = self.catchup_source.as_mut().filter(|source| source.is_ready()) else {
-            return Vec::new();
-        };
-        let Some(gap) = catchup
-            .gap(anchor)
-            .filter(|gap| gap.block_count() <= CanonicalCatchupSource::MAX_GAP_BLOCKS)
-        else {
-            return Vec::new();
-        };
-
-        let started = Instant::now();
-        match source.fetch(anchor, gap).await {
-            Ok(payloads) => {
-                info!(
-                    target: "engine",
-                    first = gap.first,
-                    last = gap.last,
-                    elapsed = ?started.elapsed(),
-                    "Fetched canonical catch-up gap from source"
-                );
-                payloads
-            }
-            Err(error) => {
-                warn!(
-                    target: "engine",
-                    error = %error,
-                    first = gap.first,
-                    last = gap.last,
-                    "Canonical catch-up gap fetch failed"
-                );
-                Vec::new()
-            }
-        }
-    }
-
     async fn advance_canonical_catchup(&mut self) -> Result<(), EngineError> {
         let anchor = self.processor.engine_state().sync_state.unsafe_head();
-        let mut payloads = self.fetch_catchup_gap(anchor).await;
+        let SequencerEngineState::CatchingUp { catchup } = &mut self.sequencer_state else {
+            return Ok(());
+        };
+        let mut payloads = Vec::new();
+        if let Some(source) = &mut self.catchup_source {
+            if let Some(gap) = catchup
+                .gap(anchor)
+                .filter(|gap| gap.block_count() <= CanonicalCatchupSource::MAX_GAP_BLOCKS)
+            {
+                source.start(anchor, gap);
+            }
+            payloads = source.take(anchor).unwrap_or_default();
+        }
+        let fetched = !payloads.is_empty();
         let tip = payloads.last().map_or(anchor, |payload| base_protocol::L2BlockInfo {
             block_info: base_protocol::BlockInfo {
                 number: payload.execution_payload.block_number(),
@@ -442,12 +413,7 @@ where
             },
             ..Default::default()
         });
-        match &mut self.sequencer_state {
-            SequencerEngineState::CatchingUp { catchup } => {
-                payloads.extend(catchup.contiguous_payloads(tip));
-            }
-            _ => return Ok(()),
-        }
+        payloads.extend(catchup.contiguous_payloads(tip));
         if payloads.is_empty() {
             return Ok(());
         }
@@ -480,6 +446,9 @@ where
                     severity = ?error.severity(),
                     "Ordered canonical unsafe payload application deferred"
                 );
+                if fetched && let Some(source) = &mut self.catchup_source {
+                    source.back_off();
+                }
                 return match error.severity() {
                     EngineTaskErrorSeverity::Temporary | EngineTaskErrorSeverity::Deferred => {
                         Ok(())
@@ -605,20 +574,27 @@ where
                 let recv_wait_timer = base_metrics::timed!(
                     EngineMetrics::engine_processor_recv_wait_duration_seconds()
                 );
-                let recv_result = if self.processor.engine_state().el_sync_finished {
-                    request_channel.recv().await
-                } else {
-                    tokio::select! {
-                        request = request_channel.recv() => request,
-                        _ = el_sync_probe_interval.tick() => {
-                            drop(recv_wait_timer);
-                            let active_sequencer = self.resolve_bootstrap_role().await
-                                == BootstrapRole::ActiveSequencer;
-                            self.processor
-                                .probe_sequencer_el_sync(active_sequencer)
-                                .await;
-                            continue;
-                        }
+                let el_sync_finished = self.processor.engine_state().el_sync_finished;
+                let catchup_fetched = async {
+                    match &mut self.catchup_source {
+                        Some(source) => source.wait().await,
+                        None => future::pending().await,
+                    }
+                };
+                let recv_result = tokio::select! {
+                    request = request_channel.recv() => request,
+                    () = catchup_fetched => {
+                        drop(recv_wait_timer);
+                        continue;
+                    }
+                    _ = el_sync_probe_interval.tick(), if !el_sync_finished => {
+                        drop(recv_wait_timer);
+                        let active_sequencer = self.resolve_bootstrap_role().await
+                            == BootstrapRole::ActiveSequencer;
+                        self.processor
+                            .probe_sequencer_el_sync(active_sequencer)
+                            .await;
+                        continue;
                     }
                 };
                 drop(recv_wait_timer);
