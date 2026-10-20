@@ -201,8 +201,8 @@ impl ResourceMeteringConfig {
     }
 
     /// Returns `true` when an enforced dimension prices an operation that only a simulated
-    /// `meterBundle` sample reports. Without that sample the dimension is not enforced for the
-    /// transaction.
+    /// `meterBundle` sample reports. Without that sample, a plain transaction is not checked
+    /// against that dimension, while a candidate sibling fails closed as unmetered.
     pub fn requires_simulated_sample(&self) -> bool {
         self.is_active()
             && self.schedule.dimensions.iter().any(|dimension| {

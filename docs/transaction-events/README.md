@@ -330,7 +330,7 @@ transaction and `internal_error` for an unlabeled failure such as a state read.
 `event_id`, so repeated rejections are all kept. Proxies forward without
 journaling.
 
-Builder turns. Each turn that considers a group gets a never-reused
+Builder turns: each turn that considers a group gets a never-reused
 `data.turn`; builder candidate event IDs include the instance and turn, so two
 rounds of one group under one `payload_id` are both kept, while a redelivered
 event deduplicates. A round that reserved work emits one
