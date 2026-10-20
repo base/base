@@ -37,6 +37,8 @@ pub enum WithdrawalStatus {
     NotReady {
         /// Earliest L1 timestamp allowed by the known delays.
         ready_at: u64,
+        /// L1 head timestamp used to decide readiness.
+        l1_timestamp: u64,
         /// Game resolution is still required before its finality delay can start.
         waiting_for_game: bool,
     },
@@ -484,7 +486,11 @@ impl Withdrawer {
             .await?
             .ok_or(WithdrawerError::MissingBlock)?;
         if head.header.timestamp < ready_at || waiting_for_game || !game_finalized {
-            return Ok(WithdrawalStatus::NotReady { ready_at, waiting_for_game });
+            return Ok(WithdrawalStatus::NotReady {
+                ready_at,
+                l1_timestamp: head.header.timestamp,
+                waiting_for_game,
+            });
         }
         if matches!(proofs, ResolvedProofSystem::FaultProofs(_)) {
             // The portal can enforce proof-validity gates beyond the timing reported here.
@@ -1935,12 +1941,20 @@ mod tests {
             let server = Scenario { proven, ..scenario }.start().await;
             assert_eq!(
                 server.status().await.unwrap(),
-                WithdrawalStatus::NotReady { ready_at, waiting_for_game }
+                WithdrawalStatus::NotReady {
+                    ready_at,
+                    l1_timestamp: scenario.now,
+                    waiting_for_game
+                }
             );
             let outcomes = server.run().await.unwrap();
             assert_eq!(
                 outcomes[0].status,
-                WithdrawalStatus::NotReady { ready_at, waiting_for_game }
+                WithdrawalStatus::NotReady {
+                    ready_at,
+                    l1_timestamp: scenario.now,
+                    waiting_for_game
+                }
             );
             assert!(server.sent.lock().unwrap().is_empty());
             assert_eq!(*server.estimates.lock().unwrap(), 0);
@@ -2363,7 +2377,14 @@ mod tests {
     #[tokio::test]
     async fn status_uses_the_first_allowed_l1_timestamp() {
         for (now, expected) in [
-            (300, WithdrawalStatus::NotReady { ready_at: 301, waiting_for_game: false }),
+            (
+                300,
+                WithdrawalStatus::NotReady {
+                    ready_at: 301,
+                    l1_timestamp: 300,
+                    waiting_for_game: false,
+                },
+            ),
             (301, WithdrawalStatus::Finalize),
         ] {
             let server =
