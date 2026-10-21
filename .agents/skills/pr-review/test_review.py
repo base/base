@@ -2,7 +2,7 @@
 """Unit tests for review.py and render.py. Run with `python3 .agents/skills/pr-review/test_review.py`."""
 
 import argparse
-import dataclasses
+import http.server
 import json
 import os
 import subprocess
@@ -51,10 +51,6 @@ def resolved_by_bot(thread_id: str, original: str = "**Major:** One.") -> dict:
     return thread(thread_id, body=render.mark_resolved(f"{render.MARKER}\n{original}", "fixed in `run`"))
 
 
-def dataclasses_replace(agent, **changes):
-    return dataclasses.replace(agent, **changes)
-
-
 def comment(**overrides) -> dict:
     return {"type": "comment", "path": "src/a.rs", "line": 3, "title": "Panics on empty batch",
             "body": "`decode` unwraps the first item. An empty batch panics.", "severity": "major",
@@ -77,12 +73,20 @@ class AgentTests(unittest.TestCase):
     def test_parse_agent_reads_front_matter_and_prompt(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "x.md"
-            path.write_text("---\nstage: review\nwhen: deep, block-production\nmodel: m\n"
-                            "max_budget_usd: 2.5\n---\nDo the thing.\n")
+            path.write_text("---\nstage: review\nwhen: deep, block-production\nmodel: m\n---\nDo the thing.\n")
             agent = review.parse_agent(path)
         self.assertEqual(agent.when, ("deep", "block-production"))
-        self.assertEqual((agent.model, agent.effort, agent.max_budget_usd), ("m", "high", 2.5))
+        self.assertEqual((agent.model, agent.effort, agent.tools, agent.max_budget_usd), ("m", "high", "", None))
         self.assertEqual(agent.prompt, "Do the thing.")
+
+    def test_checked_in_agents_name_explicit_models_and_have_no_tools_or_budget(self) -> None:
+        for agent in review.load_agents():
+            with self.subTest(agent=agent.name):
+                self.assertNotIn(agent.model, ("opus", "sonnet", "haiku"))
+                self.assertEqual((agent.tools, agent.max_budget_usd), ("", None))
+        models = {a.name: a.model for a in review.load_agents()}
+        self.assertEqual(models["decide"], "claude-sonnet-5-5")
+        self.assertEqual(models["council-chair"], "claude-opus-5-5")  # it checks other models' claims
 
     def test_parse_agent_rejects_bad_files(self) -> None:
         bad = {
@@ -91,6 +95,8 @@ class AgentTests(unittest.TestCase):
             "bad stage": "---\nstage: nope\nmodel: m\n---\nx",
             "bad when": "---\nstage: review\nwhen: sometimes\nmodel: m\n---\nx",
             "when on triage": "---\nstage: triage\nwhen: deep\nmodel: m\n---\nx",
+            "tools": "---\nstage: review\nmodel: m\ntools: Read,Grep,Glob\n---\nx",
+            "budget": "---\nstage: review\nmodel: m\nmax_budget_usd: 2.5\n---\nx",
         }
         for label, text in bad.items():
             with self.subTest(label), tempfile.TemporaryDirectory() as tmp:
@@ -693,17 +699,13 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn('[ "$code" -eq 3 ]', self.review_job)
         self.assertIn(f"EXIT_HEAD_MOVED = {review.EXIT_HEAD_MOVED}", (review.SKILL_DIR / "review.py").read_text())
 
-    def step_order(self, job: str) -> list[str]:
-        return [line.strip()[len("- name: "):] if "- name:" in line else line.strip()[len("- uses: "):].split("@")[0]
-                for line in job.splitlines() if line.startswith("      - ")]
-
-    def test_nothing_from_the_pull_request_is_on_disk_when_the_cli_is_installed(self) -> None:
-        # npm reads .npmrc and package.json from the working directory, so installing from inside a checkout of
-        # the pull request would let it influence what is installed in a job that holds secrets.
-        steps = self.step_order(self.review_job)
-        self.assertLess(steps.index("Install Claude Code"), steps.index("actions/checkout"))
-        install = self.review_job.split("- name: Install Claude Code\n", 1)[1].split("\n      - ", 1)[0]
-        self.assertIn("working-directory: ${{ runner.temp }}", install)
+    def test_the_review_job_installs_no_agent_cli_and_hands_the_gateway_settings_to_the_script(self) -> None:
+        # No model gets a CLI session with tools; the script makes the gateway requests itself.
+        for needle in ("npm", "claude-code", "Install Claude Code", "registry.npmjs.org", "ANTHROPIC_"):
+            self.assertNotIn(needle, self.review_job)
+        self.assertIn("LLM_GATEWAY_HOSTNAME: ${{ vars.LLM_GATEWAY_HOSTNAME }}", self.review_job)
+        self.assertIn("LLM_GATEWAY_API_KEY: ${{ secrets.LLM_GATEWAY_API_KEY }}", self.review_job)
+        self.assertIn("${{ vars.LLM_GATEWAY_HOSTNAME }}:443", self.review_job)  # the only model egress
 
     def test_the_review_script_comes_from_the_default_branch_not_the_pull_requests_base(self) -> None:
         self.assertIn("DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}", self.review_job)
@@ -737,42 +739,23 @@ class WorkflowTests(unittest.TestCase):
 
 
 class RepeatTests(unittest.TestCase):
-    """Findings an earlier round posted, and follow-ups, are handled before the caps and only once posted."""
+    """The single decision may repeat itself; build_plan posts each finding and follow-up once."""
 
     def plan(self, actions, **kwargs) -> review.Plan:
         return review.build_plan({"actions": actions}, [thread("open")], review.diff_new_lines(DIFF), **kwargs)
 
-    def test_a_repeat_takes_no_inline_slot_so_a_new_finding_gets_it(self) -> None:
-        seen = {("src/a.rs", f"old {i}") for i in range(3)}
-        actions = [comment(title=f"old {i}", line=1 + i % 3) for i in range(3)] + [comment(title="new", line=2)]
-        plan = self.plan(actions, inline_room=1, seen=seen)
-        self.assertEqual([f.title for f in plan.new], ["new"])
-        self.assertEqual(plan.outside, [])
-
-    def test_a_repeat_within_one_round_is_dropped(self) -> None:
+    def test_a_repeated_finding_is_dropped(self) -> None:
         plan = self.plan([comment(title="Same", line=1), comment(title="same", line=2)])
         self.assertEqual(len(plan.new), 1)
 
     def test_the_same_title_in_another_file_is_a_different_finding(self) -> None:
-        plan = self.plan([comment(title="Same"), comment(title="Same", path="src/b.rs", line=1)],
-                         seen=set())
+        plan = self.plan([comment(title="Same"), comment(title="Same", path="src/b.rs", line=1)])
         self.assertEqual(len(plan.new) + len(plan.outside), 2)
 
-    def test_build_plan_does_not_record_anything_itself(self) -> None:
-        seen: set = set()
-        replied: set = set()
-        self.plan([comment(title="x"), {"type": "reply", "thread_id": "open", "body": "again"}],
-                  seen=seen, replied=replied)
-        self.assertEqual((seen, replied), (set(), set()))
-
-    def test_a_follow_up_that_was_not_posted_does_not_block_a_later_round(self) -> None:
-        # A round's reply is rejected as a repeat only if an earlier round actually posted it.
-        first = self.plan([{"type": "reply", "thread_id": "open", "body": "a"}], replied=set())
-        self.assertEqual(len(first.replies), 1)
-        retry = self.plan([{"type": "reply", "thread_id": "open", "body": "b"}], replied=set())
-        self.assertEqual(len(retry.replies), 1)
-        posted = self.plan([{"type": "reply", "thread_id": "open", "body": "b"}], replied={"open"})
-        self.assertEqual((posted.replies, len(posted.rejected)), ([], 1))
+    def test_a_thread_gets_one_follow_up(self) -> None:
+        plan = self.plan([{"type": "reply", "thread_id": "open", "body": "a"},
+                          {"type": "reply", "thread_id": "open", "body": "b"}])
+        self.assertEqual((len(plan.replies), len(plan.rejected)), (1, 1))
 
     def test_apply_plan_keeps_only_the_replies_it_posted(self) -> None:
         ctx = review.Context(description="d", title="t", files=[], diff=DIFF, pr_number=7, head_sha="abc")
@@ -944,55 +927,129 @@ class WorktreeTests(unittest.TestCase):
                              tree=Path("/the/worktree"))
         with mock.patch.object(review, "pr_context", return_value=ctx), mock.patch.object(
                 review, "run_pipeline", fake_run_pipeline), mock.patch.object(
-                review, "load_agents", return_value=[]):
+                review, "load_agents", return_value=[]), mock.patch.object(review, "preflight"):
             review.main(["--pr", "7"])
         self.assertEqual(seen["cwd"], Path("/the/worktree"))
+
+
+class SourceContextTests(unittest.TestCase):
+    """The snapshot the models read is collected by the script from tracked files only, in a real git repository."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        base = Path(self.tmp.name)
+        self.root, outside = base / "repo", base / "outside"
+        (self.root / "docs" / "guides").mkdir(parents=True)
+        (self.root / "src" / "sub").mkdir(parents=True)
+        outside.mkdir()
+        (outside / "secret.txt").write_text("OUTSIDE-SECRET")
+        (outside / "file.rs").write_text("LINKED-PARENT-SECRET")
+        files = {"AGENTS.md": "AGENTS-GUIDE", "CLAUDE.md": "CLAUDE-GUIDE",
+                 "docs/guides/BLOCK_PRODUCTION_REVIEW.md": "BP-GUIDE", "src/a.rs": "fn a() {} // CHANGED-CODE",
+                 "src/thread.rs": "THREAD-CODE", "src/other.rs": "UNRELATED-CODE", "src/sub/file.rs": "SUB-CODE"}
+        for name, text in files.items():
+            (self.root / name).write_text(text + "\n")
+        (self.root / "src" / "latin1.rs").write_bytes(b"caf\xe9 LATIN1-TEXT\n")
+        (self.root / "src" / "link.rs").symlink_to(outside / "secret.txt")
+        git_in(self.root, "init", "-q")
+        git_in(self.root, "add", "-A")
+        git_in(self.root, "commit", "-qm", "init")
+        # After the commit: untracked secrets, and a tracked file whose parent directory became a link.
+        (self.root / ".env").write_text("UNTRACKED-SECRET")
+        (self.root / "src" / "new.rs").write_text("UNTRACKED-NEW")
+        for child in (self.root / "src" / "sub").iterdir():
+            child.unlink()
+        (self.root / "src" / "sub").rmdir()
+        (self.root / "src" / "sub").symlink_to(outside)
+        self.outside = outside
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def collect(self, files: list[str], thread_paths: tuple[str, ...] = ()) -> str:
+        ctx = review.Context(description="d", title="t", files=files, diff=DIFF,
+                             threads=[{**thread(p), "path": p} for p in thread_paths])
+        return review.collect_source_context(ctx, self.root)
+
+    def test_changed_files_thread_files_and_the_guides_are_included_and_nothing_else(self) -> None:
+        text = self.collect(["src/a.rs"], thread_paths=("src/thread.rs",))
+        for needle in ("CHANGED-CODE", "THREAD-CODE", "AGENTS-GUIDE", "CLAUDE-GUIDE", "BP-GUIDE"):
+            self.assertIn(needle, text)
+        self.assertNotIn("UNRELATED-CODE", text)  # tracked, but neither changed nor under discussion
+        self.assertEqual(text, self.collect(["src/a.rs"], thread_paths=("src/thread.rs",)))  # deterministic
+
+    def test_unsafe_or_unreadable_paths_are_marked_unavailable_and_never_read(self) -> None:
+        unsafe = [".env", "src/new.rs", "../outside/secret.txt", "src/../../outside/secret.txt",
+                  str(self.outside / "secret.txt"), "src/link.rs", "src/sub/file.rs", "src", "src/latin1.rs",
+                  "src/deleted.rs", ".git/config"]
+        text = self.collect(unsafe[:6], thread_paths=tuple(unsafe[6:]) + ("../outside/file.rs",))
+        for secret in ("UNTRACKED-SECRET", "UNTRACKED-NEW", "OUTSIDE-SECRET", "LINKED-PARENT-SECRET", "LATIN1-TEXT",
+                       "repositoryformatversion"):
+            self.assertNotIn(secret, text)
+        self.assertGreaterEqual(text.lower().count("unavailable"), len(unsafe))
+        self.assertIn("AGENTS-GUIDE", text)  # the safe files are still there
+
+    def test_a_large_file_and_the_whole_snapshot_are_bounded_and_say_so(self) -> None:
+        line = "x" * 79
+        big = "\n".join([line] * (review.MAX_SOURCE_FILE_CHARS // 40)) + "\nTAIL-MARKER\n"
+        names = [f"src/big{i}.rs" for i in range(review.MAX_SOURCE_CHARS // review.MAX_SOURCE_FILE_CHARS + 3)]
+        for name in names:
+            (self.root / name).write_text(big)
+        git_in(self.root, "add", *names)
+        git_in(self.root, "commit", "-qm", "big")
+        one = self.collect(names[:1])
+        self.assertNotIn("TAIL-MARKER", one)
+        self.assertIn("truncated", one.lower())
+        everything = self.collect(names)
+        self.assertLessEqual(len(everything), review.MAX_SOURCE_CHARS + 500)
+        self.assertIn("truncated", everything[-200:].lower())
+
+
+GATEWAY_ENV = {"LLM_GATEWAY_HOSTNAME": "gateway.example.com", "LLM_GATEWAY_API_KEY": "sk-test-secret"}
+
+
+def without_gateway_env() -> dict[str, str]:
+    return {k: v for k, v in os.environ.items() if k not in GATEWAY_ENV}
 
 
 class SetupFailureTests(unittest.TestCase):
     """A contributor without the maintainers' gateway must be told what is wrong, in words, quickly."""
 
-    def raw(self, result: str, stdout: str | None = None) -> str:
-        return stdout if stdout is not None else json.dumps({"is_error": True, "result": result})
-
-    def explain(self, result: str, base_url: str | None = "https://gateway.example.com/v1") -> str:
-        with mock.patch.dict(os.environ, {"ANTHROPIC_BASE_URL": base_url or ""}, clear=False):
-            if base_url is None:
-                os.environ.pop("ANTHROPIC_BASE_URL", None)
+    def explain(self, result: str, host: str = "gateway.example.com") -> str:
+        with mock.patch.dict(os.environ, {"LLM_GATEWAY_HOSTNAME": host}):
             return review.explain_model_failure(result) or ""
 
-    def test_every_failure_the_cli_was_seen_to_print_has_a_specific_explanation(self) -> None:
-        # The first column is the CLI's own words, recorded from real runs against a fake server.
+    def test_every_known_model_failure_has_a_specific_explanation(self) -> None:
         cases = {
             "Not logged in · Please run /login": "is not signed in",
             "Invalid API key · Fix external API key": "rejected your credentials",
+            "401": "rejected your credentials",
             "Failed to authenticate. API Error: 403 Your API key does not have permission to use the specified resource.":
                 "will not let your key use",
-            "Failed to authenticate. API Error: 403 litellm.PermissionDeniedError: Access denied to restricted model 'grok-4.7'":
-                "will not let your key use",
+            "403": "will not let your key use",
             "There's an issue with the selected model (m404). It may not exist or you may not have access to it.":
                 "does not exist on",
+            "404": "does not exist on",
             "Credit balance is too low": "no usable credit",
-            "API Error: Connection refused — a firewall or proxy may be blocking it (ECONNREFUSED)": "connection was refused",
-            "API Error: Can't reach the API server — check your internet or DNS (ENOTFOUND)": "address does not resolve",
-            "API Error: 500 Internal server error. This is a server-side issue, usually temporary": "busy or having a problem",
-            "API Error: 529 Overloaded. This is a server-side issue, usually temporary": "busy or having a problem",
-            "API Error: Request rejected (429) · Number of request tokens has exceeded your per-minute rate limit":
-                "busy or having a problem",
+            "<urlopen error [Errno 111] Connection refused>": "connection was refused",
+            "<urlopen error [Errno -2] Name or service not known>": "address does not resolve",
+            "400": "rejected a request as invalid",
+            "500": "busy or having a problem",
+            "529": "busy or having a problem",
+            "429": "busy or having a problem",
         }
         for raw, expected in cases.items():
             with self.subTest(raw=raw[:60]):
                 self.assertIn(expected, self.explain(raw))
 
-    def test_the_service_is_named_by_host_and_never_by_the_whole_url(self) -> None:
-        text = self.explain("API Error: Connection refused (ECONNREFUSED)", "https://user:s3cret@gw.internal:8443/v1?token=abc")
+    def test_the_service_is_named_by_the_gateway_host_only(self) -> None:
+        text = self.explain("Connection refused (ECONNREFUSED)", "gw.internal:8443")
         self.assertIn("gw.internal", text)
-        for secret in ("s3cret", "user:", "token=abc", "8443", "/v1"):
-            self.assertNotIn(secret, text)
-
-    def test_without_a_gateway_the_anthropic_api_is_named(self) -> None:
-        self.assertIn("api.anthropic.com", self.explain("Invalid API key", None))
-        self.assertIn("gateway.example.com", self.explain("Invalid API key"))
+        self.assertNotIn("8443", text)
+        with mock.patch.dict(os.environ, GATEWAY_ENV):
+            self.assertEqual(review.model_target(), "gateway.example.com")
+            self.assertNotIn("sk-test-secret", self.explain("Invalid API key"))
+        self.assertIn("LLM_GATEWAY_HOSTNAME", diagnose.model_service_host(None))  # no other provider is named
 
     def test_a_base_url_that_cannot_be_read_does_not_break_the_message(self) -> None:
         for odd in ("not a url", "http://", "//", ":::", "http://[bad"):
@@ -1018,67 +1075,44 @@ class SetupFailureTests(unittest.TestCase):
             with self.subTest(summary=diagnosis.summary[:50]):
                 self.assertIn("{target}", diagnosis.summary)
 
-    def test_a_missing_claude_cli_is_explained(self) -> None:
-        with mock.patch.object(review.shutil, "which", return_value=None), self.assertRaises(review.SetupError) as caught:
+    def preflight(self, env: dict[str, str]) -> None:
+        """Run preflight with exactly these gateway settings, failing if it starts a process or opens a connection."""
+        forbidden = AssertionError("preflight must only read configuration")
+        with mock.patch.dict(os.environ, {**without_gateway_env(), **env}, clear=True), mock.patch.object(
+                review.subprocess, "run", side_effect=forbidden), mock.patch.object(
+                review.subprocess, "Popen", side_effect=forbidden), mock.patch.object(
+                review.urllib.request, "urlopen", side_effect=forbidden), mock.patch.object(
+                review.urllib.request, "build_opener", side_effect=forbidden):
             review.preflight()
-        self.assertIn("not installed", str(caught.exception))
-        self.assertIn("claude", str(caught.exception))
 
-    def preflight_with(self, auth_stdout: str, call: subprocess.CompletedProcess | Exception):
-        def fake_run(cmd, **kwargs):
-            if cmd[:3] == ["claude", "auth", "status"]:
-                return subprocess.CompletedProcess(cmd, 0, auth_stdout, "")
-            if isinstance(call, Exception):
-                raise call
-            return call
+    def test_a_missing_gateway_setting_is_named(self) -> None:
+        for missing in GATEWAY_ENV:
+            env = {k: v for k, v in GATEWAY_ENV.items() if k != missing}
+            with self.subTest(missing=missing), self.assertRaises(review.SetupError) as caught:
+                self.preflight(env)
+            self.assertIn(missing, str(caught.exception))
+        with self.assertRaises(review.SetupError):
+            self.preflight({**GATEWAY_ENV, "LLM_GATEWAY_API_KEY": ""})
 
-        with mock.patch.object(review.shutil, "which", return_value="/usr/bin/claude"), mock.patch.object(
-                review.subprocess, "run", side_effect=fake_run) as run:
-            review.preflight()
-        return run
+    def test_the_gateway_must_be_a_bare_hostname(self) -> None:
+        for host in ("https://gateway.example.com", "gateway.example.com/v1", "user:pw@gateway.example.com",
+                     "gateway.example.com?key=x", "gateway.example.com#x", "gateway.example.com:99999",
+                     "gateway.example.com:", "gate way.example.com", "../gateway", "-gateway.example.com"):
+            with self.subTest(host=host), self.assertRaises(review.SetupError) as caught:
+                self.preflight({**GATEWAY_ENV, "LLM_GATEWAY_HOSTNAME": host})
+            self.assertNotIn("sk-test-secret", str(caught.exception))
 
-    def test_signed_out_is_reported_before_any_model_call(self) -> None:
-        calls: list[list[str]] = []
+    def test_a_valid_configuration_passes_without_a_network_call_or_a_process(self) -> None:
+        for host in ("gateway.example.com", "gateway.example.com:8443", "127.0.0.1:9443", "localhost"):
+            with self.subTest(host=host):
+                self.preflight({**GATEWAY_ENV, "LLM_GATEWAY_HOSTNAME": host})
 
-        def fake_run(cmd, **kwargs):
-            calls.append(cmd)
-            return subprocess.CompletedProcess(cmd, 1, json.dumps({"loggedIn": False}), "")
-
-        with mock.patch.object(review.shutil, "which", return_value="/usr/bin/claude"), mock.patch.object(
-                review.subprocess, "run", side_effect=fake_run), self.assertRaises(review.SetupError) as caught:
-            review.preflight()
-        self.assertIn("not signed in", str(caught.exception))
-        self.assertIn("claude auth login", str(caught.exception))
-        self.assertEqual([c[:3] for c in calls], [["claude", "auth", "status"]])  # no paid call was made
-
-    def test_a_refused_connection_is_reported_by_the_preflight(self) -> None:
-        failure = subprocess.CompletedProcess(
-            [], 1, json.dumps({"is_error": True, "result": "API Error: Connection refused (ECONNREFUSED)"}), "")
-        with self.assertRaises(review.SetupError) as caught:
-            self.preflight_with(json.dumps({"loggedIn": True}), failure)
-        self.assertIn("connection was refused", str(caught.exception))
-
-    def test_a_preflight_that_gets_no_answer_says_how_long_it_waited(self) -> None:
-        with self.assertRaises(review.SetupError) as caught:
-            self.preflight_with(json.dumps({"loggedIn": True}), subprocess.TimeoutExpired("claude", 60))
-        self.assertIn(f"{review.PREFLIGHT_TIMEOUT_SECONDS} s", str(caught.exception))
-
-    def test_an_error_we_do_not_recognise_still_names_the_service_and_shows_the_raw_text(self) -> None:
-        failure = subprocess.CompletedProcess([], 1, json.dumps({"is_error": True, "result": "Something odd happened"}), "")
-        with mock.patch.dict(os.environ, {"ANTHROPIC_BASE_URL": "https://gateway.example.com"}), \
-                self.assertRaises(review.SetupError) as caught:
-            self.preflight_with(json.dumps({"loggedIn": True}), failure)
-        self.assertIn("Something odd happened", str(caught.exception))
-        self.assertIn("gateway.example.com", str(caught.exception))
-
-    def test_a_working_setup_passes_and_the_call_is_capped_and_cheap(self) -> None:
-        ok = subprocess.CompletedProcess([], 0, json.dumps({"is_error": False, "result": "ok"}), "")
-        run = self.preflight_with(json.dumps({"loggedIn": True}), ok)
-        call = next(c for c in run.call_args_list if c.args[0][:2] == ["claude", "-p"])
-        self.assertEqual(call.kwargs["env"]["CLAUDE_CODE_MAX_RETRIES"], "1")  # the CLI otherwise retries ~3 minutes
-        self.assertEqual(call.kwargs["timeout"], review.PREFLIGHT_TIMEOUT_SECONDS)
-        self.assertIn("--tools", call.args[0])
-        self.assertNotIn("GH_TOKEN", call.kwargs["env"])
+    def test_requests_always_go_to_https_on_the_configured_gateway(self) -> None:
+        with mock.patch.dict(os.environ, {**GATEWAY_ENV, "LLM_GATEWAY_HOSTNAME": "gw.example:8443"}):
+            self.assertEqual(review.gateway_config(), ("https://gw.example:8443/v1/messages", "sk-test-secret"))
+        with mock.patch.dict(os.environ, {**without_gateway_env(), "ANTHROPIC_BASE_URL": "https://api.anthropic.com",
+                                          "ANTHROPIC_API_KEY": "x"}, clear=True), self.assertRaises(review.SetupError):
+            review.gateway_config()  # no fallback to another provider's settings
 
     def test_the_preflight_never_runs_for_a_posting_run_or_when_skipped(self) -> None:
         for argv in (["--pr", "7", "--post"], ["--pr", "7", "--skip-preflight"]):
@@ -1094,13 +1128,12 @@ class SetupFailureTests(unittest.TestCase):
         pre.assert_called_once()
 
     def test_a_setup_problem_exits_with_its_own_status_and_no_traceback(self) -> None:
-        with mock.patch.object(review, "load_agents", return_value=[]), mock.patch.object(
-                review, "preflight", side_effect=review.SetupError("The `claude` CLI is not installed.")), \
-                mock.patch.object(review, "log") as log:
+        with mock.patch.dict(os.environ, without_gateway_env(), clear=True), mock.patch.object(
+                review, "load_agents", return_value=[]), mock.patch.object(review, "log") as log:
             self.assertEqual(review.main(["--pr", "7"]), review.EXIT_SETUP)
         message = " ".join(str(c.args[0]) for c in log.call_args_list)
         self.assertIn("The review could not run.", message)
-        self.assertIn("not installed", message)
+        self.assertIn("LLM_GATEWAY_HOSTNAME", message)
         self.assertIn("Nothing was posted.", message)
         self.assertNotIn("Traceback", message)
 
@@ -1122,11 +1155,35 @@ class SetupFailureTests(unittest.TestCase):
         found = diagnose.explain_github_error("HTTP 401: Bad credentials\nTry authenticating with:  gh auth login")
         self.assertIn("rejected your token", found.summary)
 
-    def test_a_failed_gh_call_raises_the_explained_error(self) -> None:
+    def test_a_failed_initial_pr_read_raises_the_explained_error(self) -> None:
         done = subprocess.CompletedProcess([], 1, "", "HTTP 401: Bad credentials (https://api.github.com/graphql)")
         with mock.patch.object(review.subprocess, "run", return_value=done), self.assertRaises(review.SetupError) as caught:
-            review.run(["gh", "pr", "view", "1"])
+            review.pr_context(1, "base/base")
         self.assertIn("rejected your token", str(caught.exception))
+
+    def test_failed_github_writes_keep_the_actual_error(self) -> None:
+        for method, reason in (("DELETE", "HTTP 404: Not Found"),
+                               ("PATCH", "HTTP 403: Resource not accessible by integration")):
+            done = subprocess.CompletedProcess([], 1, "", reason)
+            with self.subTest(method=method), mock.patch.object(
+                    review.subprocess, "run", return_value=done), self.assertRaises(review.ReviewError) as caught:
+                review.gh(["api", "-X", method, "repos/base/base/issues/comments/55"])
+            self.assertNotIsInstance(caught.exception, review.SetupError)
+            self.assertIn(reason, str(caught.exception))
+
+    def test_a_status_write_failure_does_not_claim_nothing_was_posted(self) -> None:
+        body = render.render_summary(overview=None, new=[], outside=[], threads=[], reopened=set(), fixed=set(),
+                                     failed=[], details="d", repo="base/base", head_sha="a" * 40)
+        done = subprocess.CompletedProcess([], 1, "", "HTTP 403: Resource not accessible by integration")
+        with mock.patch.object(review, "bot_summaries", return_value=[{"id": 55, "body": body}]), \
+                mock.patch.object(review, "status_line", return_value="updated status"), \
+                mock.patch.object(review.subprocess, "run", return_value=done), \
+                mock.patch.object(review, "log") as log:
+            self.assertEqual(review.main(["--pr", "7", "--refresh-status"]), 1)
+        message = " ".join(str(c.args[0]) for c in log.call_args_list)
+        self.assertIn("Resource not accessible by integration", message)
+        self.assertNotIn("Nothing was posted", message)
+        self.assertNotIn("limiting your requests", message)
 
     def test_other_commands_keep_their_plain_error(self) -> None:
         done = subprocess.CompletedProcess([], 1, "", "fatal: not a git repository")
@@ -1499,14 +1556,6 @@ class LimitTests(unittest.TestCase):
             path.write_text("---\nstage: review\nmodel: m\ntimeout_seconds: 90\n---\nx")
             self.assertEqual(review.parse_agent(path).timeout_seconds, 90)
 
-    def test_the_cli_is_run_without_a_timeout_when_the_agent_has_none(self) -> None:
-        agent = review.Agent("a", "review", ("always",), "m", "high", "Read", None, None, None, "p", Path("a.md"))
-        envelope = json.dumps({"is_error": False, "structured_output": {"findings": []}, "total_cost_usd": 0,
-                               "modelUsage": {"m": {}}})
-        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(review, "run", return_value=envelope) as run:
-            review.run_agent(agent, "p", Path(tmp), Path(tmp), None)
-        self.assertIsNone(run.call_args.kwargs["timeout"])
-
     def test_the_review_has_no_whole_run_budget(self) -> None:
         self.assertFalse(hasattr(review, "Budget"))
         self.assertFalse(hasattr(review, "DEFAULT_BUDGET_SECONDS"))
@@ -1522,12 +1571,6 @@ class LimitTests(unittest.TestCase):
         self.assertEqual([c.kwargs["timeout"] for c in run.call_args_list],
                          [review.GH_TIMEOUT_SECONDS, review.GH_TIMEOUT_SECONDS])
 
-    def test_agents_do_not_inherit_github_credentials(self) -> None:
-        with mock.patch.dict(os.environ, {"GH_TOKEN": "x", "GITHUB_TOKEN": "y", "ANTHROPIC_API_KEY": "z"}):
-            env = review.agent_env()
-        self.assertEqual((env.get("GH_TOKEN"), env.get("GITHUB_TOKEN"), env.get("ANTHROPIC_API_KEY")),
-                         (None, None, "z"))
-
 
 def find_workflow() -> Path | None:
     """The review workflow, found by walking up from this file; None if the skill was copied elsewhere."""
@@ -1542,44 +1585,233 @@ WORKFLOW = find_workflow()
 JOB_LIMIT_SECONDS = 30 * 60  # timeout-minutes in claude-review.yml; a test checks that the two agree
 
 
+class GatewayServer:
+    """A loopback HTTP stand-in for the model gateway that records every request it receives.
+
+    Production only builds HTTPS URLs from LLM_GATEWAY_HOSTNAME; tests point `gateway_config` here so that
+    run_agent's real urllib transport, headers, body and response handling are exercised without a network.
+    Each queued response is `(status, body)` or `(status, body, headers)`; a dict body is sent as JSON.
+    """
+
+    def __init__(self, *responses) -> None:
+        self.responses = list(responses)
+        self.requests: list[dict] = []
+        outer = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def handle_one(self) -> None:
+                length = int(self.headers.get("Content-Length") or 0)
+                raw = self.rfile.read(length)
+                outer.requests.append({"method": self.command, "path": self.path, "raw": raw,
+                                       "headers": {k.lower(): v for k, v in self.headers.items()}})
+                status, body, *rest = outer.responses.pop(0) if outer.responses else (500, {"error": "none queued"})
+                data = json.dumps(body).encode() if isinstance(body, (dict, list)) else body
+                self.send_response(status)
+                for key, value in (rest[0] if rest else {}).items():
+                    self.send_header(key, value)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            do_GET = do_POST = do_PUT = handle_one
+
+            def log_message(self, *args) -> None:
+                pass
+
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self.server.server_address[1]}/v1/messages"
+        self.thread = threading.Thread(target=self.server.serve_forever, kwargs={"poll_interval": 0.01},
+                                       daemon=True)
+
+    def __enter__(self) -> "GatewayServer":
+        self.thread.start()
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+
+    def body(self, index: int = -1) -> dict:
+        return json.loads(self.requests[index]["raw"])
+
+
+def message(output, *, model: str = "claude-opus-5-5-20261001", stop_reason: str = "end_turn",
+            blocks: list | None = None) -> dict:
+    """An Anthropic Messages API response whose text is `output` (JSON-encoded unless it is a string)."""
+    text = output if isinstance(output, str) else json.dumps(output)
+    return {"id": "msg_1", "type": "message", "role": "assistant", "model": model, "stop_reason": stop_reason,
+            "content": blocks if blocks is not None else [
+                {"type": "thinking", "thinking": "Looking at the diff.", "signature": "sig"},
+                {"type": "redacted_thinking", "data": "opaque"},
+                {"type": "text", "text": text}],
+            "usage": {"input_tokens": 10, "output_tokens": 5}}
+
+
+TRIAGE_OUTPUT = {"depth": "standard", "block_production_sensitive": False, "reasoning": "r", "focus_areas": []}
+
+
 class AgentRunTests(unittest.TestCase):
+    """run_agent makes exactly one direct gateway request, with no tools, retries, or commands."""
+
     def agent(self, **overrides) -> review.Agent:
-        fields = dict(name="a", stage="review", when=("always",), model="m", effort="high", tools="Read",
-                      timeout_seconds=100, max_budget_usd=None, max_output_tokens=None, prompt="p",
-                      path=Path("a.md"))
+        fields = dict(name="a", stage="review", when=("always",), model="claude-opus-5-5", effort="medium",
+                      tools="", timeout_seconds=None, max_budget_usd=None, max_output_tokens=None,
+                      prompt="You are the reviewer prompt.", path=Path("a.md"))
         return review.Agent(**{**fields, **overrides})
 
-    def envelope(self, **extra) -> str:
-        return json.dumps({"is_error": False, "structured_output": {"findings": []}, "total_cost_usd": 0.1,
-                           "modelUsage": {"resolved-model": {}}, **extra})
+    def call(self, *responses, agent: review.Agent | None = None, url: str | None = None, **kwargs):
+        """Run one agent against a loopback gateway; any attempt to start a process fails the test."""
+        no_commands = AssertionError("a model answer must never run a command")
+        env = {"GH_TOKEN": "gh-secret", "GITHUB_TOKEN": "gh-secret-2", "no_proxy": "*", "NO_PROXY": "*"}
+        with GatewayServer(*responses) as server, tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
+                os.environ, env), mock.patch.object(review, "gateway_config",
+                                                    return_value=(url or server.url, "sk-test-secret")), \
+                mock.patch.object(review.subprocess, "run", side_effect=no_commands), mock.patch.object(
+                review.subprocess, "Popen", side_effect=no_commands), mock.patch.object(
+                review.os, "system", side_effect=no_commands), mock.patch.object(review, "log"):
+            try:
+                result = review.run_agent(agent or self.agent(), "the user prompt", Path(tmp), Path(tmp), None,
+                                          **kwargs)
+            except review.ReviewError as exc:
+                result = exc
+        return result, server
 
-    def call(self, agent: review.Agent, runs: list):
-        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(review, "run", side_effect=runs) as run:
-            result = review.run_agent(agent, "prompt", Path(tmp), Path(tmp), None)
-        return result, run
+    @staticmethod
+    def working_guide() -> str:
+        return review.WORKING_GUIDE.read_text().strip().splitlines()[0]
 
-    def test_max_output_tokens_is_passed_through_settings_only_when_set(self) -> None:
-        _, run = self.call(self.agent(max_output_tokens=32000), [self.envelope()])
-        cmd = run.call_args.args[0]
-        settings = json.loads(cmd[cmd.index("--settings") + 1])
-        self.assertEqual(settings, {"env": {"CLAUDE_CODE_MAX_OUTPUT_TOKENS": "32000"}})
-        _, run = self.call(self.agent(), [self.envelope()])
-        self.assertNotIn("--settings", run.call_args.args[0])
+    @staticmethod
+    def system_text(body: dict) -> str:
+        system = body["system"]
+        return system if isinstance(system, str) else "".join(b.get("text", "") for b in system)
+
+    def test_one_request_carries_the_prompt_schema_and_settings_and_offers_no_tools(self) -> None:
+        result, server = self.call((200, message({"findings": []})))
+        self.assertEqual(result, {"findings": []})
+        [request] = server.requests
+        self.assertEqual((request["method"], request["path"]), ("POST", "/v1/messages"))
+        headers = request["headers"]
+        self.assertTrue(headers.get("x-api-key") == "sk-test-secret"
+                        or headers.get("authorization") == "Bearer sk-test-secret")
+        self.assertNotIn(b"gh-secret", request["raw"] + json.dumps(headers).encode())
+        body = server.body()
+        self.assertEqual((body["model"], body["max_tokens"]), ("claude-opus-5-5", 16000))
+        self.assertFalse(body.get("tools"))
+        self.assertNotIn("tool_choice", body)
+        self.assertEqual(body["output_config"]["effort"], "medium")
+        self.assertEqual(body["output_config"]["format"]["type"], "json_schema")
+        schema = json.loads((review.SCHEMAS_DIR / "review.json").read_text())
+        self.assertEqual(body["output_config"]["format"]["schema"]["required"], schema["required"])
+        system = self.system_text(body)
+        self.assertIn("You are the reviewer prompt.", system)
+        self.assertIn(review.FINDING_GUIDE.read_text().strip()[:200], system)
+        self.assertIn("JSON", system)
+        self.assertEqual([m["role"] for m in body["messages"]], ["user"])
+        self.assertIn("the user prompt", json.dumps(body["messages"]))
+
+    def test_max_tokens_and_the_model_come_from_the_agent_file_or_the_override(self) -> None:
+        _, server = self.call((200, message({"findings": []})), agent=self.agent(max_output_tokens=32000))
+        self.assertEqual(server.body()["max_tokens"], 32000)
+        with GatewayServer((200, message({"findings": []}))) as server, tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.dict(os.environ, {"no_proxy": "*", "NO_PROXY": "*"}), mock.patch.object(
+                review, "gateway_config", return_value=(server.url, "k")):
+            review.run_agent(self.agent(), "p", Path(tmp), Path(tmp), "claude-sonnet-5-5")
+        self.assertEqual(server.body()["model"], "claude-sonnet-5-5")
+
+    def test_the_model_that_really_ran_is_recorded(self) -> None:
+        review.MODELS_RAN.clear()
+        self.call((200, message({"findings": []}, model="claude-opus-5-5-20261001")), agent=self.agent(name="x"))
+        self.assertEqual(review.MODELS_RAN["x"], "claude-opus-5-5-20261001")
+
+    def test_a_bad_answer_fails_once_and_is_never_retried(self) -> None:
+        tool_use = {"type": "tool_use", "id": "t1", "name": "bash", "input": {"command": "cat ~/.ssh/id_rsa"}}
+        server_tool = {"type": "server_tool_use", "id": "t2", "name": "web_fetch", "input": {"url": "https://x"}}
+        cases = {
+            "server error": (500, {"type": "error", "error": {"type": "api_error", "message": "boom"}}),
+            "rate limited": (429, {"type": "error", "error": {"type": "rate_limit_error", "message": "slow"}}),
+            "bad key": (401, {"type": "error", "error": {"type": "authentication_error", "message": "no"}}),
+            "cut off": (200, message({"findings": []}, stop_reason="max_tokens")),
+            "asks for a tool": (200, message({"findings": []}, stop_reason="tool_use",
+                                             blocks=[{"type": "text", "text": "{}"}, tool_use])),
+            "tool block at end_turn": (200, message(None, blocks=[
+                tool_use, {"type": "text", "text": '{"findings": []}'}])),
+            "server tool": (200, message(None, blocks=[server_tool, {"type": "text", "text": '{"findings": []}'}])),
+            "refusal": (200, message({"findings": []}, stop_reason="refusal")),
+            "no text": (200, message(None, blocks=[{"type": "thinking", "thinking": "hm", "signature": "s"}])),
+            "not JSON": (200, message("Here are my findings: none")),
+            "missing field": (200, message({})),
+            "extra field": (200, message({"findings": [], "run": "rm -rf /"})),
+            "wrong type": (200, message({"findings": "none"})),
+            "not an envelope": (200, b"<html>gateway</html>"),
+            "empty body": (200, b""),
+        }
+        for label, response in cases.items():
+            with self.subTest(label):
+                result, server = self.call(response, (200, message({"findings": []})))
+                self.assertIsInstance(result, review.ReviewError)
+                self.assertEqual(len(server.requests), 1)  # the good answer queued second was never asked for
+                self.assertNotIn("sk-test-secret", str(result))
+
+    def test_a_redirect_is_not_followed_and_the_key_goes_nowhere_else(self) -> None:
+        for status in (301, 302, 303, 307, 308):
+            with self.subTest(status=status), GatewayServer((200, message({"findings": []}))) as elsewhere:
+                result, server = self.call((status, b"", {"Location": elsewhere.url}))
+                self.assertIsInstance(result, review.ReviewError)
+                self.assertEqual((len(server.requests), elsewhere.requests), (1, []))
+
+    def test_an_unreachable_gateway_fails_once(self) -> None:
+        with GatewayServer() as closed:
+            url = closed.url
+        result, server = self.call(url=url)
+        self.assertIsInstance(result, review.ReviewError)
+        self.assertEqual(server.requests, [])
+
+    def test_the_answer_is_checked_against_the_stage_schema(self) -> None:
+        agent = self.agent(stage="triage", name="triage")
+        result, _ = self.call((200, message(TRIAGE_OUTPUT)), agent=agent)
+        self.assertEqual(result, TRIAGE_OUTPUT)
+        for bad in ({**TRIAGE_OUTPUT, "depth": "shallow"}, {**TRIAGE_OUTPUT, "focus_areas": ["a"] * 6},
+                    {**TRIAGE_OUTPUT, "block_production_sensitive": "yes"}):
+            with self.subTest(bad=bad):
+                result, server = self.call((200, message(bad)), agent=agent)
+                self.assertIsInstance(result, review.ReviewError)
+                self.assertEqual(len(server.requests), 1)
+        result, server = self.call((200, message({"votes": []})), agent=self.agent(stage="council"),
+                                   schema="votes", label="a.vote")
+        self.assertEqual(result, {"votes": []})
+        finding = {"title": "Boundary failure", "severity": "major", "category": "correctness",
+                   "confidence": "high", "path": "x.rs", "line": 7, "explanation": "Input zero fails."}
+        result, server = self.call((200, message({"findings": [finding]})))
+        self.assertEqual(result, {"findings": [finding]})
+        # The wire schema omits bounds the API cannot enforce; local validation must still enforce them.
+        for changes in ({"line": 0}, {"line": True}, {"severity": "urgent"}, {"command": "touch unsafe"}):
+            with self.subTest(changes=changes):
+                result, server = self.call((200, message({"findings": [{**finding, **changes}]})))
+                self.assertIsInstance(result, review.ReviewError)
+                self.assertEqual(len(server.requests), 1)
+
+    def test_configured_tools_or_budget_are_refused_before_any_request(self) -> None:
+        for overrides in ({"tools": "Read,Grep,Glob"}, {"max_budget_usd": 1.0}):
+            with self.subTest(overrides=overrides):
+                result, server = self.call((200, message({"findings": []})), agent=self.agent(**overrides))
+                self.assertIsInstance(result, review.ReviewError)
+                self.assertEqual(server.requests, [])
 
     def test_agents_that_explore_are_told_to_work_fast_and_the_ones_that_judge_are_not(self) -> None:
+        output = {"triage": TRIAGE_OUTPUT, "chair": {"findings": []},
+                  "decide": {"actions": [], "overview": None, "dropped": []}}
         for stage in review.STAGES:
             with self.subTest(stage=stage):
-                _, run = self.call(self.agent(stage=stage), [self.envelope()])
-                cmd = run.call_args.args[0]
-                prompt = cmd[cmd.index("--append-system-prompt") + 1]
-                self.assertEqual("## Working fast" in prompt, stage in review.EXPLORING_STAGES)
+                _, server = self.call((200, message(output.get(stage, {"findings": []}))),
+                                      agent=self.agent(stage=stage))
+                self.assertEqual(self.working_guide() in self.system_text(server.body()),
+                                 stage in review.EXPLORING_STAGES)
 
     def test_a_ballot_is_not_capped_even_though_a_council_member_casts_it(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(review, "run", return_value=self.envelope()) as run:
-            review.run_agent(self.agent(stage="council"), "p", Path(tmp), Path(tmp), None,
-                             schema="votes", label="m.vote")
-        cmd = run.call_args.args[0]
-        self.assertNotIn("## Working fast", cmd[cmd.index("--append-system-prompt") + 1])
+        _, server = self.call((200, message({"votes": []})), agent=self.agent(stage="council"),
+                              schema="votes", label="m.vote")
+        self.assertNotIn(self.working_guide(), self.system_text(server.body()))
 
     def test_a_cut_off_diff_names_the_files_it_lost(self) -> None:
         def file_diff(name: str) -> str:
@@ -1603,42 +1835,11 @@ class AgentRunTests(unittest.TestCase):
         with mock.patch.object(review, "MAX_DIFF_CHARS", len(diff) + 1):
             self.assertNotIn("cut off", review.change_block(ctx))
 
-    def test_the_decider_and_chair_are_never_capped_on_tool_calls(self) -> None:
-        # They must check every open thread and every claim, however many reads that takes.
-        self.assertFalse({"chair", "decide"} & review.EXPLORING_STAGES)
-
     def test_the_working_guide_has_no_stale_time_claims_and_covers_truncated_diffs(self) -> None:
         text = review.WORKING_GUIDE.read_text()
         self.assertNotIn("hard time limit", text)
         # The guide must use the same words as the note that change_block adds to a cut-off diff.
         self.assertIn("cut off", text)
-
-    def test_pr_settings_are_never_loaded(self) -> None:
-        _, run = self.call(self.agent(), [self.envelope()])
-        cmd = run.call_args.args[0]
-        self.assertEqual(cmd[cmd.index("--setting-sources") + 1], "user")
-
-    def test_the_model_that_really_ran_is_recorded(self) -> None:
-        review.MODELS_RAN.clear()
-        self.call(self.agent(name="alias-agent", model="opus"), [self.envelope()])
-        self.assertEqual(review.MODELS_RAN["alias-agent"], "resolved-model")
-
-    def test_an_empty_answer_is_retried_once(self) -> None:
-        empty = json.dumps({"is_error": False, "structured_output": None, "subtype": "success", "result": ""})
-        result, run = self.call(self.agent(), [empty, self.envelope()])
-        self.assertEqual(result, {"findings": []})
-        self.assertEqual(run.call_count, review.AGENT_ATTEMPTS)
-
-    def test_a_second_failure_is_raised(self) -> None:
-        empty = json.dumps({"is_error": False, "structured_output": None})
-        with self.assertRaises(review.ReviewError):
-            self.call(self.agent(), [empty, empty])
-
-    def test_failures_that_a_retry_cannot_fix_are_not_retried(self) -> None:
-        for reason in ("`claude` timed out after 5s", "API Error: 403 Access denied to restricted model",
-                       "Invalid model name passed in model=x"):
-            with self.subTest(reason=reason), self.assertRaises(review.ReviewError):
-                self.call(self.agent(), [review.ReviewError(reason), self.envelope()])
 
     def test_a_failed_command_keeps_its_full_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1663,26 +1864,11 @@ class AgentRunTests(unittest.TestCase):
             path = Path(tmp) / "x.md"
             path.write_text("---\nstage: review\nmodel: m\nmax_output_tokens: 32000\n---\nx")
             self.assertEqual(review.parse_agent(path).max_output_tokens, 32000)
-        self.assertTrue(any(a.max_output_tokens for a in review.load_agents()), "a Gemini member needs one")
 
 
 class FailureReasonTests(unittest.TestCase):
-    def result(self, stdout: str = "", stderr: str = ""):
-        return mock.Mock(stdout=stdout, stderr=stderr)
-
-    def test_the_api_error_in_stdout_is_reported_not_the_model_warning(self) -> None:
-        reason = review.describe_failure(self.result(
-            stdout=json.dumps({"is_error": True, "result": "API Error: 403 Access denied to restricted model"}),
-            stderr='[claude-code:unrecognized_model] {"model":"grok-4.7"}'))
-        self.assertIn("403", reason)
-        self.assertNotIn("unrecognized_model", reason)
-
     def test_plain_stderr_is_used_when_stdout_is_not_json(self) -> None:
-        self.assertEqual(review.describe_failure(self.result(stdout="", stderr="gh: HTTP 502")), "gh: HTTP 502")
-
-    def test_the_warning_alone_is_better_than_nothing(self) -> None:
-        reason = review.describe_failure(self.result(stderr="[claude-code:unrecognized_model] x"))
-        self.assertTrue(reason)
+        self.assertEqual(review.describe_failure(mock.Mock(stdout="", stderr="gh: HTTP 502")), "gh: HTTP 502")
 
 
 class FakeGh:
@@ -1986,23 +2172,27 @@ class ApplyPlanTests(unittest.TestCase):
         self.assertTrue(item["body"].startswith(render.MARKER))
 
 
-class PipelineFailureTests(unittest.TestCase):
-    """run_pipeline must still produce a decision when individual agents fail."""
+class PipelineTests(unittest.TestCase):
+    """run_pipeline is a fixed sequence: snapshot, triage, reviewers and council, one decision, one posting."""
 
     def setUp(self) -> None:
-        self.ctx = review.Context(description="d", title="t", files=["src/a.rs"], diff=DIFF)
+        self.ctx = review.Context(description="d", title="t", files=["src/a.rs"], diff=DIFF, pr_number=7,
+                                  head_sha="abc", threads=[thread("open", comment_id=11), resolved_by_bot("marked")])
         self.agents = review.load_agents()
-        self.calls: list[str] = []
+        self.events: list[str] = []
+        self.prompts: dict[str, str] = {}
         self.failing: set[str] = set()
-        self.decisions: dict[str, dict] = {}
+        self.posted: list[review.Plan] = []
         self.triage = {"depth": "deep", "block_production_sensitive": False, "reasoning": "r", "focus_areas": []}
+        self.decision: dict = {"actions": [], "overview": "Done.", "dropped": []}
         self.finding = {"title": "t", "severity": "major", "category": "safety", "confidence": "high",
                         "path": "src/a.rs", "line": 1, "explanation": "e"}
 
     def fake_run_agent(self, agent, prompt, cwd, artifacts, model_override, *, schema=None, label=None,
                        **_: object) -> dict:
         label = label or agent.name
-        self.calls.append(label)
+        self.events.append(label)
+        self.prompts[label] = prompt
         if label in self.failing:
             raise review.ReviewError(f"{label} broke")
         review.MODELS_RAN[agent.name] = model_override or agent.model  # what the real run_agent records
@@ -2011,34 +2201,111 @@ class PipelineFailureTests(unittest.TestCase):
         if schema == "votes":
             return {"votes": []}
         if agent.stage == "chair":
-            return {"findings": []}
+            return {"findings": [{**self.finding, "title": "chair merged", "support": "2 of 3"}]}
         if agent.stage == "decide":
-            return self.decisions.get(label, {"actions": [], "overview": None, "dropped": []})
-        return {"findings": [self.finding] if agent.name == "council-adversary" else []}
+            return self.decision
+        if agent.name in ("council-adversary", "review-general"):
+            return {"findings": [{**self.finding, "title": f"from {agent.name}"}]}
+        return {"findings": []}
 
-    def run_pipeline(self, post: bool = False) -> review.Outcome:
-        with mock.patch.object(review, "run_agent", self.fake_run_agent):
-            return review.run_pipeline(self.ctx, self.agents, Path("."), Path("."), None, post=post)
+    def fake_collect(self, ctx, cwd) -> str:
+        self.events.append("snapshot")
+        return "SNAPSHOT-TEXT"
 
-    def test_deep_change_runs_council_votes_chair_and_decide(self) -> None:
-        outcome = self.run_pipeline()
+    def fake_apply(self, plan, ctx, summarize=None) -> list[str]:
+        self.events.append("post")
+        self.posted.append(plan)
+        return []
+
+    def run_pipeline(self, post: bool = False, agents: list | None = None) -> review.Outcome:
+        with mock.patch.object(review, "run_agent", self.fake_run_agent), mock.patch.object(
+                review, "collect_source_context", side_effect=self.fake_collect) as collect, mock.patch.object(
+                review, "apply_plan", self.fake_apply):
+            outcome = review.run_pipeline(self.ctx, agents or self.agents, Path("/the/tree"), Path("."), None,
+                                          post=post)
+        collect.assert_called_once_with(self.ctx, Path("/the/tree"))
+        return outcome
+
+    def test_a_deep_change_runs_each_stage_once_in_order_and_decides_once(self) -> None:
+        outcome = self.run_pipeline(post=True)
         self.assertEqual(outcome.failed, {})
-        self.assertIn("council-chair", self.calls)
-        self.assertIn("council-invariants.vote", self.calls)
-        self.assertEqual(self.calls[-1], "decide")
+        self.assertEqual(self.events[:2], ["snapshot", "triage"])
+        self.assertEqual(self.events[-2:], ["decide", "post"])
+        for label in ("review-general", "council-invariants", "council-invariants.vote", "council-chair"):
+            self.assertEqual(self.events.count(label), 1, label)
+        self.assertEqual([e for e in self.events if e.startswith("decide")], ["decide"])
+        self.assertLess(self.events.index("council-invariants.vote"), self.events.index("council-chair"))
+        self.assertEqual(self.ctx.source_context, "SNAPSHOT-TEXT")
+        for label in ("triage", "review-general", "council-chair", "decide"):
+            self.assertIn("SNAPSHOT-TEXT", self.prompts[label])
 
-    def test_standard_change_skips_the_council(self) -> None:
+    def test_the_one_decision_sees_every_reviewers_findings_and_every_thread(self) -> None:
+        self.run_pipeline()
+        prompt = self.prompts["decide"]
+        for needle in ("from review-general", "chair merged", '"thread_id": "open"', '"thread_id": "marked"'):
+            self.assertIn(needle, prompt)
+
+    def test_a_standard_change_skips_the_council(self) -> None:
         self.triage["depth"] = "standard"
         self.run_pipeline()
-        self.assertFalse([c for c in self.calls if c.startswith("council")])
+        self.assertFalse([e for e in self.events if e.startswith("council")])
+        self.assertEqual(self.events, ["snapshot", "triage", "review-general", "decide"])
+
+    def test_one_decision_may_comment_reply_resolve_and_reopen_and_is_posted_once(self) -> None:
+        self.decision = {"actions": [
+            comment(), {"type": "reply", "thread_id": "open", "body": "more"},
+            {"type": "resolve", "thread_id": "open", "body": "fixed"},
+            {"type": "reopen", "thread_id": "marked", "body": "back"}], "overview": "x", "dropped": []}
+        outcome = self.run_pipeline(post=True)
+        [plan] = self.posted
+        self.assertIs(plan, outcome.plan)
+        self.assertEqual((len(plan.new), len(plan.replies), len(plan.resolves), len(plan.reopens)), (1, 1, 1, 1))
+        self.assertEqual(plan.rejected, [])
+
+    def test_nothing_is_posted_without_post(self) -> None:
+        self.decision = {"actions": [comment()], "overview": "x", "dropped": []}
+        outcome = self.run_pipeline(post=False)
+        self.assertEqual((self.posted, len(outcome.plan.new)), ([], 1))
+
+    def test_inline_comments_stay_under_the_cap(self) -> None:
+        self.decision = {"actions": [comment(title=f"f{i}", line=1 + i % 3)
+                                     for i in range(review.MAX_INLINE_COMMENTS + 5)], "overview": "x", "dropped": []}
+        outcome = self.run_pipeline()
+        self.assertEqual(len(outcome.plan.new), review.MAX_INLINE_COMMENTS)
+        self.assertEqual(len(outcome.plan.outside), 5)
+
+    def test_a_failed_decision_is_reported_as_incomplete_and_applies_nothing(self) -> None:
+        self.failing = {"decide"}
+        outcome = self.run_pipeline(post=True)
+        self.assertIn("decide", outcome.failed)
+        self.assertEqual(outcome.decision["actions"], [])
+        self.assertTrue(outcome.decision["overview"])
+        plan = outcome.plan
+        self.assertEqual((plan.new, plan.outside, plan.replies, plan.resolves, plan.reopens), ([], [], [], [], []))
+        for posted in self.posted:  # if the empty plan is handed to apply_plan at all, it changes nothing
+            self.assertEqual((posted.new, posted.replies, posted.resolves, posted.reopens), ([], [], [], []))
+        self.assertIn("did not finish", " ".join(m for _, n, m in outcome.rows if n == "decide"))
+        summary = review.build_summary(outcome, plan, self.ctx)
+        self.assertIn("decide", summary)
+
+    def test_a_failed_decision_makes_a_local_run_fail(self) -> None:
+        self.failing = {"decide"}
+        outcome = self.run_pipeline()
+        ctx = self.ctx
+        with mock.patch.object(review, "load_agents", return_value=self.agents), mock.patch.object(
+                review, "preflight"), mock.patch.object(review, "local_context", return_value=ctx), \
+                mock.patch.object(review, "run_pipeline", return_value=outcome), mock.patch.object(
+                review, "git", return_value="/tmp\n"), mock.patch.object(review, "status_for", return_value=None), \
+                tempfile.TemporaryDirectory() as tmp, mock.patch("builtins.print"):
+            self.assertEqual(review.main(["--artifacts-dir", tmp]), 1)
 
     def test_triage_failure_runs_everything_and_says_so(self) -> None:
         self.failing = {"triage"}
         outcome = self.run_pipeline()
         self.assertTrue(outcome.triage["block_production_sensitive"])
         self.assertIn("Triage failed", outcome.triage["reasoning"])
-        self.assertIn("review-block-production", self.calls)
-        self.assertIn("council-chair", self.calls)
+        self.assertIn("review-block-production", self.events)
+        self.assertIn("council-chair", self.events)
 
     def test_chair_failure_passes_the_unmerged_findings_on(self) -> None:
         self.failing = {"council-chair"}
@@ -2048,6 +2315,7 @@ class PipelineFailureTests(unittest.TestCase):
         self.assertNotIn("id", finding)
         self.assertNotIn("reported_by", finding)
         self.assertIn("council-adversary", finding["support"])
+        self.assertIn("from council-adversary", self.prompts["decide"])
 
     def test_the_summary_does_not_claim_an_agent_that_failed_ran(self) -> None:
         self.failing = {"council-design"}
@@ -2061,197 +2329,29 @@ class PipelineFailureTests(unittest.TestCase):
         self.failing = {"council-design"}
         outcome = self.run_pipeline()
         self.assertIn("council/council-design", outcome.failed)
-        self.assertIn("council-chair", self.calls)
+        self.assertIn("council-chair", self.events)
 
-    def test_a_failed_final_round_still_yields_a_summary_that_says_so(self) -> None:
-        self.failing = {"decide"}
+    def test_one_reviewer_failing_still_reaches_the_decision(self) -> None:
+        self.failing = {"review-general"}
         outcome = self.run_pipeline()
-        self.assertIn("decide", outcome.failed)
-        self.assertIn("final step failed", outcome.decision["overview"])
+        self.assertIn("review-general", outcome.failed)
+        self.assertIn("review-general", self.prompts["decide"])  # listed among the reviewers that failed
+        self.assertEqual(self.events[-1], "decide")
 
-    def test_every_reviewer_failing_is_an_error(self) -> None:
+    def test_every_reviewer_failing_is_an_error_and_nothing_is_decided(self) -> None:
         self.failing = {"review-general", "council-invariants", "council-adversary", "council-design"}
         with self.assertRaises(review.ReviewError):
-            self.run_pipeline()
+            self.run_pipeline(post=True)
+        self.assertNotIn("decide", self.events)
+        self.assertEqual(self.posted, [])
 
-
-def comment_on_line_one(title: str, **extra) -> dict:
-    return {"type": "comment", "path": "src/a.rs", "line": 1, "title": title, "body": f"{title} happens.",
-            "severity": "major", "category": "safety", **extra}
-
-
-class RoundTests(unittest.TestCase):
-    """Findings are decided and posted as each reviewer finishes; a final round does the threads."""
-
-    def setUp(self) -> None:
-        self.ctx = review.Context(description="d", title="t", files=["src/a.rs"], diff=DIFF, pr_number=7,
-                                  head_sha="abc", threads=[thread("open", comment_id=11)])
-        self.agents = review.load_agents()
-        self.events: list[str] = []
-        self.release = threading.Event()
-        self.round_decisions: dict[str, dict] = {}
-        self.final_decision: dict = {"actions": [], "overview": "Done.", "dropped": []}
-        self.slow = "council-invariants"
-        self.broken: set[str] = set()
-        self.finding = {"title": "f", "severity": "major", "category": "safety", "confidence": "high",
-                        "path": "src/a.rs", "line": 1, "explanation": "e"}
-
-    def fake_run_agent(self, agent, prompt, cwd, artifacts, model_override, *, schema=None, label=None, **_):
-        label = label or agent.name
-        if agent.stage == "decide" and label == "decide.review-general":
-            self.release.set()  # the slow reviewer may finish once the first round has been attempted
-        if label in self.broken:
-            raise review.ReviewError(f"{label} broke")
-        review.MODELS_RAN[agent.name] = agent.model
-        if agent.stage == "triage":
-            return {"depth": "standard", "block_production_sensitive": False, "reasoning": "r", "focus_areas": []}
-        if agent.stage == "decide":
-            if label == "decide":
-                self.events.append("final-round")
-                return self.final_decision
-            self.events.append(f"round:{label.removeprefix('decide.')}")
-            return self.round_decisions.get(label, {"actions": [], "overview": None, "dropped": []})
-        if agent.name == self.slow and self.finding is not None:
-            assert self.release.wait(10), "the first findings were not decided while this reviewer was running"
-        return {"findings": [self.finding] if self.finding is not None else []}
-
-    def apply(self, round_plan: review.Plan, ctx, summarize=None) -> list[str]:
-        self.events.append(f"post:{len(round_plan.new)}c/{len(round_plan.replies)}r")
-        return []
-
-    def run_pipeline(self, post: bool = True, reviewers: str = "review-general") -> review.Outcome:
-        # A standard change with the general reviewer, plus a second reviewer that is slow.
-        agents = [a for a in self.agents if a.stage in ("triage", "decide")]
-        general = next(a for a in self.agents if a.name == "review-general")
-        slow = dataclasses_replace(general, name=self.slow)
-        agents += [general, slow]
-        with mock.patch.object(review, "run_agent", self.fake_run_agent), mock.patch.object(
-                review, "apply_plan", self.apply):
-            return review.run_pipeline(self.ctx, agents, Path("."), Path("."), None, post=post)
-
-    def test_the_first_reviewers_findings_are_posted_while_the_slow_one_is_still_running(self) -> None:
-        self.round_decisions["decide.review-general"] = {"actions": [comment_on_line_one("fast")],
-                                                         "overview": None, "dropped": []}
+    def test_the_pipeline_records_the_threads_it_started_with(self) -> None:
         self.run_pipeline()
-        # The slow reviewer only returns after the first round was decided (see fake_run_agent), and the
-        # first round was posted before the slow reviewer's own round.
-        self.assertLess(self.events.index("round:review-general"), self.events.index(f"round:{self.slow}"))
-        self.assertLess(self.events.index("post:1c/0r"), self.events.index(f"round:{self.slow}"))
-        self.assertEqual(self.events[-2:], ["final-round", "post:0c/0r"])
+        self.assertEqual(self.ctx.earlier_thread_ids, frozenset({"open", "marked"}))
 
-    def test_a_findings_round_may_only_comment_or_reply(self) -> None:
-        self.round_decisions["decide.review-general"] = {"actions": [
-            comment_on_line_one("ok"), {"type": "resolve", "thread_id": "open", "body": "x"},
-            {"type": "reopen", "thread_id": "open", "body": "x"}], "overview": "ignored", "dropped": []}
-        outcome = self.run_pipeline()
-        self.assertEqual((len(outcome.plan.new), outcome.plan.resolves, outcome.plan.reopens), (1, [], []))
-        self.assertEqual(len([r for r in outcome.plan.rejected if "not allowed in this round" in r]), 2)
 
-    def test_the_final_round_may_comment_for_a_problem_no_thread_can_carry(self) -> None:
-        # A thread that cannot be reopened, or that a person closed, needs a new comment from the final round.
-        self.final_decision = {"actions": [comment_on_line_one("late")], "overview": "x", "dropped": []}
-        outcome = self.run_pipeline()
-        self.assertEqual([f.title for f in outcome.plan.new], ["late"])
-
-    def test_the_final_round_takes_findings_from_a_round_that_failed(self) -> None:
-        self.broken = {"decide.review-general"}
-        self.final_decision = {"actions": [comment_on_line_one("recovered")], "overview": "x", "dropped": []}
-        outcome = self.run_pipeline()
-        self.assertEqual([f.title for f in outcome.plan.new], ["recovered"])
-
-    def test_the_final_round_resolves_threads(self) -> None:
-        self.final_decision = {"actions": [{"type": "resolve", "thread_id": "open", "body": "fixed"}],
-                               "overview": "x", "dropped": []}
-        outcome = self.run_pipeline()
-        self.assertEqual([r["thread_id"] for r in outcome.plan.resolves], ["open"])
-
-    def test_the_same_problem_is_not_posted_by_two_rounds(self) -> None:
-        for name in ("review-general", self.slow):
-            self.round_decisions[f"decide.{name}"] = {"actions": [comment_on_line_one("Same problem")],
-                                                       "overview": None, "dropped": []}
-        outcome = self.run_pipeline()
-        self.assertEqual(len(outcome.plan.new), 1)
-
-    def test_inline_comments_across_rounds_stay_under_the_cap(self) -> None:
-        for name in ("review-general", self.slow):
-            self.round_decisions[f"decide.{name}"] = {"actions": [
-                comment_on_line_one(f"{name} {i}", line=1 + (i % 4)) for i in range(review.MAX_INLINE_COMMENTS)],
-                "overview": None, "dropped": []}
-        outcome = self.run_pipeline()
-        self.assertLessEqual(len(outcome.plan.new), review.MAX_INLINE_COMMENTS)
-        self.assertGreaterEqual(len(outcome.plan.new) + len(outcome.plan.outside), review.MAX_INLINE_COMMENTS)
-
-    def test_nothing_is_posted_without_post(self) -> None:
-        self.round_decisions["decide.review-general"] = {"actions": [comment_on_line_one("x")],
-                                                         "overview": None, "dropped": []}
-        outcome = self.run_pipeline(post=False)
-        self.assertFalse([e for e in self.events if e.startswith("post:")])
-        self.assertEqual(len(outcome.plan.new), 1)
-
-    def test_a_reviewer_with_no_findings_needs_no_round(self) -> None:
-        self.finding = None
-        self.run_pipeline()
-        self.assertFalse([e for e in self.events if e.startswith("round:")])
-        self.assertIn("final-round", self.events)
-
-    def test_run_parallel_calls_the_hook_as_each_job_finishes(self) -> None:
-        order: list[tuple[str, set[str]]] = []
-        gate = threading.Event()
-
-        def fast():
-            return "fast"
-
-        def slow():
-            assert gate.wait(10)
-            return "slow"
-
-        def on_done(name, result, running):
-            order.append((name, running))
-            if name == "fast":
-                gate.set()
-
-        results, failures = review.run_parallel({"fast": fast, "slow": slow}, on_done=on_done)
-        self.assertEqual((results, failures), ({"fast": "fast", "slow": "slow"}, {}))
-        self.assertEqual(order, [("fast", {"slow"}), ("slow", set())])
-
-    def test_a_failed_job_is_not_passed_to_the_hook(self) -> None:
-        def boom():
-            raise review.ReviewError("no")
-
-        seen: list[str] = []
-        _, failures = review.run_parallel({"a": boom, "b": lambda: 1}, on_done=lambda n, r, run: seen.append(n))
-        self.assertEqual((seen, list(failures)), (["b"], ["a"]))
-
-    def test_a_follow_up_on_a_thread_is_posted_once_across_rounds(self) -> None:
-        reply = {"type": "reply", "thread_id": "open", "body": "again"}
-        for name in ("review-general", self.slow):
-            self.round_decisions[f"decide.{name}"] = {"actions": [dict(reply)], "overview": None, "dropped": []}
-        self.final_decision = {"actions": [dict(reply)], "overview": "x", "dropped": []}
-        outcome = self.run_pipeline()
-        self.assertEqual([r["thread_id"] for r in outcome.plan.replies], ["open"])
-        self.assertEqual(len([r for r in outcome.plan.rejected if "already got a follow-up" in r]), 2)
-
-    def test_the_final_round_can_comment_when_a_thread_cannot_be_reopened(self) -> None:
-        self.final_decision = {"actions": [comment_on_line_one("back again")], "overview": "x", "dropped": []}
-        outcome = self.run_pipeline()
-        self.assertEqual([f.title for f in outcome.plan.new], ["back again"])
-
-    def test_a_problem_a_findings_round_posted_is_not_posted_again_by_the_final_round(self) -> None:
-        self.round_decisions["decide.review-general"] = {"actions": [comment_on_line_one("Same")],
-                                                         "overview": None, "dropped": []}
-        self.final_decision = {"actions": [comment_on_line_one("same")], "overview": "x", "dropped": []}
-        self.assertEqual(len(self.run_pipeline().plan.new), 1)
-
-    def test_the_incomplete_banner_clears_when_the_final_round_recovers_the_findings(self) -> None:
-        self.broken = {"decide.review-general"}
-        self.final_decision = {"actions": [comment_on_line_one("recovered")], "overview": "x", "dropped": []}
-        outcome = self.run_pipeline()
-        self.assertNotIn("decide/review-general", outcome.failed)
-
-    def test_the_banner_stays_if_the_final_round_failed_too(self) -> None:
-        self.broken = {"decide.review-general", "decide"}
-        outcome = self.run_pipeline()
-        self.assertIn("decide/review-general", outcome.failed)
+class EarlierThreadTests(unittest.TestCase):
+    """apply_plan re-reads the threads; comments this run posted are not "open from earlier"."""
 
     def test_this_runs_own_comments_are_not_counted_as_earlier_threads(self) -> None:
         # Live threads after a round include the one this run just posted; they must not become "open".
@@ -2280,42 +2380,6 @@ class RoundTests(unittest.TestCase):
                 review, "fetch_threads", return_value=[thread("a"), thread("b")]):
             review.apply_plan(review.Plan(), ctx)
         self.assertEqual(len(ctx.threads), 2)
-
-    def test_the_pipeline_records_the_threads_it_started_with(self) -> None:
-        self.run_pipeline(post=False)
-        self.assertEqual(self.ctx.earlier_thread_ids, frozenset({"open"}))
-
-    def test_a_comment_posted_by_an_earlier_round_is_not_shown_as_open_from_earlier(self) -> None:
-        """End to end through the real apply_plan: the live threads include the comment a round just posted."""
-        self.round_decisions["decide.review-general"] = {"actions": [comment_on_line_one("Brand new")],
-                                                         "overview": None, "dropped": []}
-        own = thread("own", comment_id=99, body=f"{render.MARKER}\n🟠 **Major · Safety** — Brand new")
-        prompts: list[str] = []
-        orig = self.fake_run_agent
-
-        def spy(agent, prompt, *args, **kwargs):
-            if (kwargs.get("label") or agent.name) == "decide":
-                prompts.append(prompt)
-            return orig(agent, prompt, *args, **kwargs)
-
-        agents = [a for a in self.agents if a.stage in ("triage", "decide")]
-        general = next(a for a in self.agents if a.name == "review-general")
-        agents += [general, dataclasses_replace(general, name=self.slow)]
-        gh = FakeGh(responses={"pr view": json.dumps({"headRefOid": "abc"})})
-        live = [thread("open", comment_id=11), own]  # what GitHub returns once the first round has posted
-        with mock.patch.object(review, "run_agent", spy), mock.patch.object(review, "gh", gh), mock.patch.object(
-                review, "fetch_threads", return_value=live):
-            outcome = review.run_pipeline(self.ctx, agents, Path("."), Path("."), None, post=True)
-        self.assertEqual([t["thread_id"] for t in self.ctx.threads], ["open"])
-        summary = review.build_summary(outcome, outcome.plan, self.ctx)
-        self.assertIn("Brand new", summary)  # listed once, under "New in this review"
-        self.assertEqual(summary.count("Brand new"), 1)
-        self.assertNotIn('"thread_id": "own"', prompts[-1])  # and the final decider is not asked about it
-
-    def test_the_decider_uses_a_fast_model_and_the_judging_agents_do_not(self) -> None:
-        models = {a.name: a.model for a in self.agents}
-        self.assertEqual(models["decide"], "sonnet")
-        self.assertEqual(models["council-chair"], "opus")  # it checks other models' claims against the code
 
 
 if __name__ == "__main__":

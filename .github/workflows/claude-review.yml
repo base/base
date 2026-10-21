@@ -102,9 +102,8 @@ jobs:
       !cancelled() && needs.authorize.result == 'success' && needs.authorize.outputs.allowed == 'true'
     runs-on:
       group: BaseRunnerGroup
-    # Agents have no time limit of their own, so this is the only bound. About 1 in 9 Opus calls takes 5-13
-    # minutes, and a deep review chains several calls after the slowest reviewer (vote, chair, final round),
-    # so it needs room for a few slow ones. A run that is killed loses the summary, not the findings already posted.
+    # Each stage makes one bounded HTTP request; the job limit also bounds the full review.
+    # Findings are posted only after the single final decision succeeds.
     timeout-minutes: 30
     steps:
       - name: Harden the runner (Block unauthorized outbound calls)
@@ -115,7 +114,6 @@ jobs:
             api.github.com:443
             github.com:443
             objects.githubusercontent.com:443
-            registry.npmjs.org:443
             release-assets.githubusercontent.com:443
             ${{ vars.LLM_GATEWAY_HOSTNAME }}:443
 
@@ -170,15 +168,8 @@ jobs:
             echo "head_sha=$head_sha"
           } >> "$GITHUB_OUTPUT"
 
-      # Nothing from the pull request is on disk yet, so this cannot be influenced by it.
-      - name: Install Claude Code
-        if: steps.pr.outputs.ok == 'true'
-        working-directory: ${{ runner.temp }}
-        run: npm install --global @anthropic-ai/claude-code@2.1.293
-
-      # Agents read the PR's files, so check out the PR head (not the default merge commit) to make the
-      # line numbers they report match the diff that comments are anchored to. Do not leave the job
-      # token in .git/config, where an agent reading untrusted PR content could copy it.
+      # The controller snapshots tracked PR files before inference. Check out the head, not the merge
+      # commit, so line numbers match the diff. Never leave credentials in the reviewed checkout.
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         if: steps.pr.outputs.ok == 'true'
         with:
@@ -189,11 +180,11 @@ jobs:
       # Models, prompts, and which reviewers run are defined in .agents/skills/pr-review/.
       # The script that holds the secrets always comes from a clean checkout of the default branch, never
       # from the pull request: a pull request cannot add or replace files (agents, prompts, or a module that
-      # shadows the standard library) in code it does not control. The agents read the pull request's files
-      # from the working directory, and `--setting-sources user` keeps the PR's own Claude settings and hooks
-      # out. The one exception is the pull request that introduces the pipeline, which has no default-branch
-      # copy yet and runs its own; that is allowed for a `pull_request` run only, whose workflow file is the
-      # PR's own anyway. A `/review` comment never runs a pull request's copy.
+      # shadows the standard library) in code it does not control. The controller reads PR files as data;
+      # no model gets tools, shell access, or a CLI session. The one exception is the pull request that
+      # introduces the pipeline, which has no default-branch copy yet and runs its own; that is allowed
+      # for a `pull_request` run only, whose workflow file is the PR's own anyway. A `/review` comment
+      # never runs a pull request's copy.
       - name: Check out the review pipeline from the default branch
         id: pipeline
         if: steps.pr.outputs.ok == 'true'
@@ -239,8 +230,8 @@ jobs:
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          ANTHROPIC_BASE_URL: https://${{ vars.LLM_GATEWAY_HOSTNAME }}
-          ANTHROPIC_API_KEY: ${{ secrets.LLM_GATEWAY_API_KEY }}
+          LLM_GATEWAY_HOSTNAME: ${{ vars.LLM_GATEWAY_HOSTNAME }}
+          LLM_GATEWAY_API_KEY: ${{ secrets.LLM_GATEWAY_API_KEY }}
 
       - name: Upload review artifacts
         if: always() && steps.pr.outputs.ok == 'true'
