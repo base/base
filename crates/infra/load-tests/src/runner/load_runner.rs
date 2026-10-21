@@ -48,6 +48,7 @@ pub struct LoadRunner {
     pub(super) config: LoadConfig,
     pub(super) config_summary: Option<ConfigSummary>,
     pub(super) client: QueryProvider,
+    pub(super) gas_estimator: Option<crate::rpc::GasEstimator>,
     pub(super) accounts: AccountPool,
     pub(super) generator: WorkloadGenerator,
     pub(super) collector: MetricsCollector,
@@ -172,6 +173,7 @@ impl LoadRunner {
             config,
             config_summary: None,
             client,
+            gas_estimator: None,
             accounts,
             generator,
             collector: MetricsCollector::new(),
@@ -248,6 +250,18 @@ impl LoadRunner {
             debug!(url = %url, "validity endpoint capability probe passed");
         }
         Ok(())
+    }
+
+    /// Applies the shared fork-aware budget after funding initialized its schedule.
+    pub(super) async fn estimate_gas(
+        &self,
+        request: alloy_rpc_types::TransactionRequest,
+        from: Address,
+    ) -> Result<alloy_rpc_types::TransactionRequest> {
+        match &self.gas_estimator {
+            Some(estimator) => estimator.apply(request, from).await,
+            None => crate::rpc::GasEstimator::setup(&self.client, request, from).await,
+        }
     }
 
     pub(super) async fn calibrate_avg_gas(&self) -> Result<u64> {
@@ -343,6 +357,7 @@ impl LoadRunner {
                         self.config.primary_submission_rpc().clone(),
                         EthereumWallet::from(account.signer.clone()),
                     );
+                    let request = self.estimate_gas(request, from).await?;
                     let receipt = provider
                         .send_transaction(request)
                         .await

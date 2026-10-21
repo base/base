@@ -224,6 +224,7 @@ pub(super) async fn prepare(ctx: &mut ChainPrepContext<'_>, setup: &RealTokenSet
                         .with_gas_limit(WETH_DEPOSIT_GAS_LIMIT)
                         .with_max_fee_per_gas(max_fee)
                         .with_max_priority_fee_per_gas(max_priority_fee);
+                    let tx = crate::rpc::GasEstimator::setup(&client, tx, sender).await?;
                     let pending = provider.send_transaction(tx).await.rpc("send WETH deposit")?;
                     trace!(
                         sender = %sender,
@@ -250,6 +251,7 @@ pub(super) async fn prepare(ctx: &mut ChainPrepContext<'_>, setup: &RealTokenSet
                         .with_gas_limit(ERC20_APPROVE_GAS_LIMIT)
                         .with_max_fee_per_gas(max_fee)
                         .with_max_priority_fee_per_gas(max_priority_fee);
+                    let tx = crate::rpc::GasEstimator::setup(&client, tx, sender).await?;
                     let pending = provider.send_transaction(tx).await.rpc("send ERC20 approval")?;
                     trace!(
                         sender = %sender,
@@ -284,6 +286,7 @@ pub(super) async fn prepare(ctx: &mut ChainPrepContext<'_>, setup: &RealTokenSet
                         .with_gas_limit(SETUP_SWAP_GAS_LIMIT)
                         .with_max_fee_per_gas(max_fee)
                         .with_max_priority_fee_per_gas(max_priority_fee);
+                    let tx = crate::rpc::GasEstimator::setup(&client, tx, sender).await?;
                     let pending = provider.send_transaction(tx).await.rpc("send setup swap")?;
                     trace!(
                         sender = %sender,
@@ -422,6 +425,7 @@ pub async fn recover_real_tokens(
                             .with_gas_limit(ERC20_APPROVE_GAS_LIMIT)
                             .with_max_fee_per_gas(max_fee)
                             .with_max_priority_fee_per_gas(max_priority_fee);
+                        let tx = crate::rpc::GasEstimator::setup(&client, tx, sender).await?;
                         let pending =
                             provider.send_transaction(tx).await.rpc("send pair approval")?;
                         trace!(
@@ -455,6 +459,7 @@ pub async fn recover_real_tokens(
                         .with_gas_limit(SETUP_SWAP_GAS_LIMIT)
                         .with_max_fee_per_gas(max_fee)
                         .with_max_priority_fee_per_gas(max_priority_fee);
+                    let tx = crate::rpc::GasEstimator::setup(&client, tx, sender).await?;
                     let pending =
                         provider.send_transaction(tx).await.rpc("send pair-token recovery swap")?;
                     trace!(
@@ -486,6 +491,7 @@ pub async fn recover_real_tokens(
                         .with_gas_limit(WETH_WITHDRAW_GAS_LIMIT)
                         .with_max_fee_per_gas(max_fee)
                         .with_max_priority_fee_per_gas(max_priority_fee);
+                    let tx = crate::rpc::GasEstimator::setup(&client, tx, sender).await?;
                     let pending = provider.send_transaction(tx).await.rpc("send WETH withdraw")?;
                     trace!(
                         sender = %sender,
