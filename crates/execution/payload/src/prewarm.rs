@@ -47,7 +47,7 @@ use std::{
     collections::VecDeque,
     panic::{AssertUnwindSafe, catch_unwind},
     sync::{
-        Arc, Condvar, Mutex,
+        Arc, Condvar, Mutex, PoisonError,
         atomic::{AtomicBool, Ordering},
         mpsc::{Receiver, SyncSender, sync_channel},
     },
@@ -192,7 +192,7 @@ impl PrewarmScheduler {
     /// Closes the scheduler: drops queued keys and wakes every waiting worker.
     pub fn close(&self) {
         self.saturated.store(true, Ordering::Relaxed);
-        let mut state = self.state.lock().expect("prewarm scheduler mutex poisoned");
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         state.closed = true;
         state.queued.clear();
         drop(state);
@@ -207,7 +207,7 @@ impl PrewarmScheduler {
         if self.is_saturated() {
             return false;
         }
-        let mut state = self.state.lock().expect("prewarm scheduler mutex poisoned");
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         if state.closed {
             return false;
         }
@@ -240,7 +240,7 @@ impl PrewarmScheduler {
 
     /// Waits for the next key. Returns `None` once the scheduler is closed.
     pub fn next_key(&self) -> Option<WarmKey> {
-        let mut state = self.state.lock().expect("prewarm scheduler mutex poisoned");
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         loop {
             if state.closed {
                 return None;
@@ -248,7 +248,7 @@ impl PrewarmScheduler {
             if let Some(key) = state.queued.pop_front() {
                 return Some(key);
             }
-            state = self.available.wait(state).expect("prewarm scheduler mutex poisoned");
+            state = self.available.wait(state).unwrap_or_else(PoisonError::into_inner);
         }
     }
 }
@@ -340,7 +340,6 @@ impl PrewarmWorkerPool {
         if self.workers.is_empty() {
             return None;
         }
-        PrewarmMetrics::jobs_total().increment(1);
         let scheduler = Arc::new(PrewarmScheduler::new(&self.config));
         let mut dispatched = false;
         for worker in &self.workers {
@@ -355,6 +354,7 @@ impl PrewarmWorkerPool {
             PrewarmMetrics::jobs_skipped_busy_total().increment(1);
             return None;
         }
+        PrewarmMetrics::jobs_total().increment(1);
         Some(PrewarmJob { scheduler })
     }
 

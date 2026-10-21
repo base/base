@@ -410,6 +410,8 @@ where
         }
 
         if skip_flashblocks_building {
+            // No flashblocks are executed, so nothing will feed the prewarm job.
+            drop(prewarm);
             let total_block_building_time = block_build_start_time.elapsed();
             BuilderMetrics::total_block_built_duration().record(total_block_building_time);
             BuilderMetrics::total_block_built_gauge().set(total_block_building_time);
@@ -527,6 +529,9 @@ where
                     &span,
                     "Payload building complete, target flashblock count reached",
                 );
+                // Prewarmed state is useless once execution ends; release the workers and their
+                // cache handles before the state root computation.
+                drop(prewarm);
                 return self.finalize_payload(&mut state, &proof_provider, &ctx, &mut info);
             }
 
@@ -555,6 +560,9 @@ where
                         &span,
                         "Payload building complete, job cancelled or target flashblock count reached",
                     );
+                    // Prewarmed state is useless once execution ends; release the workers and their
+                    // cache handles before the state root computation.
+                    drop(prewarm);
                     return self.finalize_payload(&mut state, &proof_provider, &ctx, &mut info);
                 }
                 Err(err) => {
@@ -581,6 +589,9 @@ where
                         &span,
                         "Payload building complete, channel closed or job cancelled",
                     );
+                    // Prewarmed state is useless once execution ends; release the workers and their
+                    // cache handles before the state root computation.
+                    drop(prewarm);
                     return self.finalize_payload(&mut state, &proof_provider, &ctx, &mut info);
                 }
             }
