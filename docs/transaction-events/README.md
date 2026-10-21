@@ -355,7 +355,9 @@ hashes stay suppressed until the recovery window closes, so a reorg cannot
 reinsert a sibling without its group.
 
 Reorg reopen: when a reorg removes a landed winner, reth reinjects it without
-its group. The pool still refuses it as a plain transaction, and when the
+its group. The pool still refuses it as a plain transaction, as it refuses any
+known sibling submitted without its group, with or without validity predicates,
+and when the
 sender's canonical account nonce is still at or below the winner's nonce the
 ledger reopens the group: the landed record is removed and the sibling hashes are no longer
 suppressed, so the same `group_hash` can be admitted a second time, or the
