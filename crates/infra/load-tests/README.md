@@ -75,6 +75,31 @@ trigger it. In `off` mode, nodes preserve signatures without checking them; oper
 should deploy `verify-if-present` fleet-wide to verify signed requests while accepting
 legacy clients, and use explicit signing before enabling required enforcement.
 
+## Fork-aware transaction gas budgets
+
+Both `base-load-tester` (the `just load-test` recipes) and `base-bench` use the shared
+runner. At funding, it detects EIP-2780 using a standard `eth_estimateGas` zero-value
+self-transfer from the funded, non-delegated funding EOA: 21,000 before Amsterdam,
+12,000 afterward. Run against one active fork, not across an activation boundary.
+
+Pre-Amsterdam payload budgets are unchanged. On Amsterdam, funding (including
+replacements and affordability), calibration, setup/cleanup, and measured payloads
+use uncapped `eth_estimateGas` with 25% rounded-up headroom, retaining any larger
+legacy budget. This covers EIP-8037 state creation, EIP-8038/2780 access charges,
+and EIP-7976's 64 gas/byte floor without duplicating node pricing in each workload.
+The same budgets apply to plain and validity submissions; payloads and predicates
+are not modified to make a simulation succeed. An estimation revert is an error.
+
+Measured requests are estimated against current canonical state before signing,
+with at most 32 sender jobs estimating concurrently. Future nonces are omitted from
+the simulation only, not the signed transaction. Estimates cannot guarantee success
+after arbitrary state changes, and RPC estimation/signing can bound offered load.
+Pacing still calibrates **receipt gas**, not independent E/S block-budget usage;
+use execution traces and headers to establish regular/state saturation.
+
+The CLZ workload still creates an empty-runtime account; there is no general
+24 KiB/64 KiB deployment workload. Gas budgeting does not change workload semantics.
+
 ## 200ms devnet profile
 
 `examples/denim-devnet.yaml` uses canonical polling at 200ms, without a Flashblocks WebSocket.
