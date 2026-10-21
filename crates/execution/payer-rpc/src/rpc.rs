@@ -4,7 +4,7 @@ use std::{fmt, sync::Arc, time::Instant};
 
 use alloy_consensus::BlockHeader;
 use base_common_chains::Upgrades;
-use base_execution_rpc::{SequencerClient, SequencerClientError};
+use base_execution_rpc::SequencerClient;
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
@@ -176,11 +176,7 @@ where
                 Ok(TermsCache::order_for(request, response))
             }
             Err(error) => {
-                let SequencerClientError::HttpError(inner) = &error;
-                if inner
-                    .as_error_resp()
-                    .is_some_and(|payload| !ProxydError::is_proxyd_error(payload.code))
-                {
+                if !ProxydError::is_unanswered(&error) {
                     cache.clear();
                     return Err(error.into());
                 }
@@ -221,7 +217,17 @@ where
             invalid_params(error)
         })?;
         self.check_transaction(&raw, timestamp).await?;
-        let result = self.forward("payer_sendTransaction", &request).await;
+        let result = self
+            .client
+            .request::<_, Value>("payer_sendTransaction", (&request,))
+            .await
+            .map_err(|error| {
+                if ProxydError::is_unanswered(&error) {
+                    debug!(error = %error, "payer did not answer payer_sendTransaction");
+                    return PayerRejection::temporarily_unavailable(PAYER_UNREACHABLE_RPC_ERROR);
+                }
+                error.into()
+            });
         if let (Err(error), Some(cache)) = (&result, &self.cache) {
             let data = error.data().and_then(|data| serde_json::from_str(data.get()).ok());
             cache.invalidate(data.as_ref());
@@ -402,6 +408,18 @@ mod tests {
         }));
     }
 
+    /// Answers as proxyd does when no payer backend is healthy.
+    fn proxyd_payer_down(then: httpmock::Then) {
+        then.status(503).header("content-type", "application/json").json_body(json!({
+            "jsonrpc": "2.0",
+            "id": 0,
+            "error": {
+                "code": ProxydError::NO_HEALTHY_BACKEND,
+                "message": "no backend is currently healthy to serve traffic"
+            }
+        }));
+    }
+
     /// Has the payer reject one `payer_sendTransaction` with `code`.
     async fn reject_send(api: &TestApi, sequencer: &MockServer, code: &str) {
         let mut mock = sequencer.mock(|when, then| {
@@ -478,14 +496,7 @@ mod tests {
         terms.delete();
         let payer_down = sequencer.mock(|when, then| {
             when.method(POST).body_includes("payer_getTerms");
-            then.status(503).header("content-type", "application/json").json_body(json!({
-                "jsonrpc": "2.0",
-                "id": 0,
-                "error": {
-                    "code": ProxydError::NO_HEALTHY_BACKEND,
-                    "message": "no backend is currently healthy to serve traffic"
-                }
-            }));
+            proxyd_payer_down(then);
         });
 
         assert_eq!(api.get_terms(terms_request(1)).await.unwrap(), terms_response());
@@ -672,6 +683,37 @@ mod tests {
             "0x1111111111111111111111111111111111111111111111111111111111111111"
         );
         mock.assert_calls(2);
+    }
+
+    #[tokio::test]
+    async fn answers_temporarily_unavailable_only_when_the_payer_does_not_answer() {
+        let sequencer = MockServer::start();
+        let mut payer_down = sequencer.mock(|when, then| {
+            when.method(POST).body_includes("payer_sendTransaction");
+            proxyd_payer_down(then);
+        });
+        let api = PayerApiImpl::new(everest_provider(), client(&sequencer), passing_state(), false);
+        let error = api.send_transaction(sponsored_request()).await.expect_err("payer down");
+        assert_eq!(rejection_data(&error)["code"], "TEMPORARILY_UNAVAILABLE");
+        payer_down.delete();
+
+        let unreachable =
+            SequencerClient::new_http_with_headers("http://127.0.0.1:9", vec![]).unwrap();
+        let api = PayerApiImpl::new(everest_provider(), unreachable, passing_state(), false);
+        let error = api.send_transaction(sponsored_request()).await.expect_err("unreachable");
+        assert_eq!(rejection_data(&error)["code"], "TEMPORARILY_UNAVAILABLE");
+
+        sequencer.mock(|when, then| {
+            when.method(POST).body_includes("payer_sendTransaction");
+            then.status(200).header("content-type", "application/json").json_body(json!({
+                "jsonrpc": "2.0",
+                "id": 0,
+                "error": { "code": -32601, "message": "Method not found" }
+            }));
+        });
+        let api = PayerApiImpl::new(everest_provider(), client(&sequencer), passing_state(), false);
+        let error = api.send_transaction(sponsored_request()).await.expect_err("no payer");
+        assert_eq!(error.code(), ErrorCode::MethodNotFound.code());
     }
 
     #[test]

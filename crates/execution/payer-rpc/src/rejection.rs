@@ -21,6 +21,11 @@ impl PayerRejection {
         Self::error(json!({ "code": "INVALID_TRANSACTION", "reason": reason.to_string() }))
     }
 
+    /// A `TEMPORARILY_UNAVAILABLE` rejection with `reason`, which wallets retry shortly.
+    pub fn temporarily_unavailable(reason: impl ToString) -> ErrorObjectOwned {
+        Self::error(json!({ "code": "TEMPORARILY_UNAVAILABLE", "reason": reason.to_string() }))
+    }
+
     /// The rejection for a phase-0 simulation that failed with `error`: `EXECUTION_REVERTED`
     /// for a revert, carrying its data, and `INVALID_TRANSACTION` for a halt or a transaction
     /// the simulation refuses.

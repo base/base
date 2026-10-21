@@ -1,5 +1,7 @@
 //! Errors proxyd answers with itself instead of relaying the payer's response.
 
+use base_execution_rpc::SequencerClientError;
+
 /// JSON-RPC errors proxyd returns in place of the payer's response, when it did not forward the
 /// request or got no usable answer: the payer backend is offline, unhealthy, over capacity,
 /// slow, or malformed, or the caller is over a rate limit.
@@ -40,5 +42,12 @@ impl ProxydError {
                 | Self::BACKEND_NOT_HEALTHY
                 | Self::TOO_MANY_REQUESTS
         )
+    }
+
+    /// Returns whether the payer did not answer `error`: the upstream could not be reached, or
+    /// proxyd answered with one of these errors in its place.
+    pub fn is_unanswered(error: &SequencerClientError) -> bool {
+        let SequencerClientError::HttpError(inner) = error;
+        inner.as_error_resp().is_none_or(|payload| Self::is_proxyd_error(payload.code))
     }
 }
