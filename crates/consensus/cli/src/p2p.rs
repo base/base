@@ -604,14 +604,12 @@ impl P2PArgs {
         l1_rpc_timeout: Duration,
         genesis_signer: Option<alloy_primitives::Address>,
     ) -> Result<NetworkConfig, P2PConfigError> {
-        let peers_lo = self.resolved_peers_lo();
-        let peers_max = self.resolved_peers_max();
-        if !(0 < peers_lo && peers_lo <= self.peers_hi && self.peers_hi <= peers_max) {
+        let (peers_lo, peers_hi, peers_max) =
+            (self.resolved_peers_lo(), self.peers_hi, self.resolved_peers_max());
+        if !(0 < peers_lo && peers_lo <= peers_hi && peers_hi <= peers_max) {
             return Err(eyre::eyre!(
-                "peer limits must satisfy 0 < --p2p.peers.lo ({}) <= --p2p.peers.hi ({}) <= --p2p.peers.max ({})",
-                peers_lo,
-                self.peers_hi,
-                peers_max
+                "peer limits must satisfy 0 < --p2p.peers.lo ({peers_lo}) <= --p2p.peers.hi \
+                 ({peers_hi}) <= --p2p.peers.max ({peers_max})"
             )
             .into());
         }
@@ -725,7 +723,7 @@ impl P2PArgs {
             },
             peer_targets: PeerTargets {
                 low: peers_lo,
-                high: self.peers_hi,
+                high: peers_hi,
                 grace_period: self.peers_grace,
                 ..PeerTargets::new()
             },

@@ -102,8 +102,8 @@ async fn test_node_accepts_peers_above_high_tide_up_to_hard_cap() -> anyhow::Res
     Ok(())
 }
 
-/// A node at its high-tide connection count trims unprotected peers back to its low-tide peer count, keeps
-/// protected peers, and then has room to accept a new peer.
+/// A node at its high-tide connection count trims unprotected peers back to its low-tide peer
+/// count, keeps protected peers, and then has room to accept a new peer.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_full_node_trims_unprotected_peers() -> anyhow::Result<()> {
     let mut builder = TestNetworkBuilder::new()

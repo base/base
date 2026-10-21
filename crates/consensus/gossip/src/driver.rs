@@ -302,13 +302,12 @@ where
         cleared
     }
 
-    /// Dials the given [`Enr`] from discovery, unless the swarm already has
-    /// [`PeerTargets::low`] connected peers.
+    /// Dials the given [`Enr`] from discovery, unless the swarm already has [`PeerTargets::low`]
+    /// peers.
     ///
-    /// Only established peers are counted here (matching op-node's `DiscoveryProcess`): discovery
-    /// forwards bootnodes and `find_node` results in bursts, so counting in-flight dials would
-    /// drop remaining ENRs before any TCP handshake completes. Any overshoot is trimmed by
-    /// [`Self::trim_peers`].
+    /// Pending dials are not counted, matching op-node: discovery forwards ENRs in bursts, so
+    /// counting them would drop the rest of a burst before any handshake completes. Overshoot is
+    /// left to [`Self::trim_peers`].
     pub fn dial(&mut self, enr: Enr) {
         if self.connected_peers() >= self.peer_targets.low as usize {
             trace!(target: "gossip", low = self.peer_targets.low, "At low-tide peer count, not dialing discovered peer");
@@ -372,9 +371,9 @@ where
 
     /// Trims peers once the swarm has at least [`PeerTargets::high`] established connections.
     ///
-    /// Disconnects unprotected peers connected for at least [`PeerTargets::grace_period`], lowest
-    /// gossip score first, until the swarm is back at [`PeerTargets::low`] peers. Returns the number
-    /// of peers disconnected.
+    /// Disconnects unprotected peers connected for at least [`PeerTargets::grace_period`] until
+    /// the swarm is back at [`PeerTargets::low`], trimming peers outside the gossipsub mesh first,
+    /// then lowest gossip score first. Returns the number of peers disconnected.
     pub fn trim_peers(&mut self) -> usize {
         let established = self.swarm.network_info().connection_counters().num_established();
         if established < self.peer_targets.high {
@@ -382,25 +381,35 @@ where
         }
         let connected = self.connected_peers();
 
+        let grace_period = self.peer_targets.grace_period;
         let protected: HashSet<PeerId> =
             self.connection_gate.list_protected_peers().into_iter().collect();
         let gossipsub = &self.swarm.behaviour().gossipsub;
-        let mut candidates: Vec<(PeerId, f64)> = self
+        let mesh_peers: HashSet<&PeerId> =
+            gossipsub.topics().flat_map(|topic| gossipsub.mesh_peers(topic)).collect();
+
+        let mut candidates: Vec<_> = self
             .swarm
             .connected_peers()
-            .filter(|peer_id| !protected.contains(peer_id))
             .filter(|peer_id| {
-                self.peer_connection_start
-                    .get(peer_id)
-                    .is_some_and(|start| start.elapsed() >= self.peer_targets.grace_period)
+                !protected.contains(peer_id)
+                    && self
+                        .peer_connection_start
+                        .get(peer_id)
+                        .is_some_and(|start| start.elapsed() >= grace_period)
             })
-            .map(|peer_id| (*peer_id, gossipsub.peer_score(peer_id).unwrap_or_default()))
+            .map(|peer_id| {
+                let in_mesh = mesh_peers.contains(peer_id);
+                (in_mesh, gossipsub.peer_score(peer_id).unwrap_or_default(), *peer_id)
+            })
             .collect();
-        candidates.sort_by(|a, b| a.1.total_cmp(&b.1));
+        candidates.sort_by(|(a_mesh, a_score, _), (b_mesh, b_score, _)| {
+            a_mesh.cmp(b_mesh).then(a_score.total_cmp(b_score))
+        });
 
         let excess = established.saturating_sub(self.peer_targets.low) as usize;
         let mut trimmed = 0;
-        for (peer_id, _) in candidates.into_iter().take(excess) {
+        for (_, _, peer_id) in candidates.into_iter().take(excess) {
             if self.swarm.disconnect_peer_id(peer_id).is_ok() {
                 trimmed += 1;
             }
@@ -601,9 +610,8 @@ where
                 Metrics::gossipsub_connection("closed").increment(1.0);
                 Metrics::gossip_peer_count().set(peer_count as f64);
 
-                // If this was the last connection to the peer, record the total connection
-                // duration; otherwise keep `peer_connection_start` so the peer stays eligible for
-                // trimming after its grace period.
+                // Keep the start time while other connections to the peer remain, so the peer
+                // stays eligible for trimming.
                 if num_established == 0
                     && let Some(start_time) = self.peer_connection_start.remove(&peer_id)
                 {
