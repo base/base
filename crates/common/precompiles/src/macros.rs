@@ -19,7 +19,7 @@ macro_rules! base_precompile {
                     );
                 }
 
-                let $calldata: ::alloy_primitives::Bytes = input.data.to_vec().into();
+                let $calldata: &[u8] = input.data;
                 let mut provider = ::base_precompile_storage::EvmPrecompileStorageProvider::new_with_storage_features(
                     input,
                     ::revm::context_interface::cfg::GasParams::default(),
