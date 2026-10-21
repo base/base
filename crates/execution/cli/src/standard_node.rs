@@ -500,8 +500,8 @@ pub struct RpcStandardNodeArgs {
 impl RpcStandardNodeArgs {
     /// Payer proxy target, or `None` unless `--rollup.payer-enabled` or `--rollup.payer` is set.
     /// `--rollup.payer` wins; otherwise the sequencer URL is used when it is HTTP, since the
-    /// payer client cannot speak websocket. The `payer_getTerms` cache defaults to on only
-    /// through the sequencer.
+    /// payer client cannot speak websocket. Sequencer headers are sent only to the sequencer,
+    /// and the `payer_getTerms` cache defaults to on only through it.
     fn payer_upstream(&self) -> Option<PayerRpcConfig> {
         let sequencer = self.rollup_args.sequencer.clone();
         let upstream_url = self.payer_url.clone().or_else(|| {
@@ -1117,7 +1117,7 @@ mod tests {
     }
 
     #[test]
-    fn payer_upstream_caches_by_default_only_through_the_sequencer() {
+    fn payer_upstream_sends_sequencer_headers_only_to_the_sequencer() {
         let mut args = default_rpc_standard_node_args();
         args.payer_enabled = true;
         assert!(args.payer_upstream().is_none());
@@ -1132,15 +1132,25 @@ mod tests {
                 cache_get_terms: true,
             })
         );
+
+        args.payer_url = Some("http://payer".into());
+        let upstream = args.payer_upstream().expect("payer url");
+        assert_eq!(upstream.upstream_url, "http://payer");
+        assert!(upstream.upstream_headers.is_empty());
+    }
+
+    #[test]
+    fn payer_upstream_caches_by_default_only_through_the_sequencer() {
+        let mut args = default_rpc_standard_node_args();
+        args.payer_enabled = true;
+        args.rollup_args.sequencer = Some("http://sequencer".into());
+        assert!(args.payer_upstream().expect("sequencer").cache_get_terms);
         args.payer_cache = Some(false);
         assert!(!args.payer_upstream().expect("sequencer").cache_get_terms);
 
         args.payer_cache = None;
         args.payer_url = Some("http://payer".into());
-        let upstream = args.payer_upstream().expect("payer url");
-        assert_eq!(upstream.upstream_url, "http://payer");
-        assert!(upstream.upstream_headers.is_empty());
-        assert!(!upstream.cache_get_terms);
+        assert!(!args.payer_upstream().expect("payer url").cache_get_terms);
         args.payer_cache = Some(true);
         assert!(args.payer_upstream().expect("payer url").cache_get_terms);
     }

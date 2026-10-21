@@ -1,12 +1,12 @@
-//! ERC-8168 `PAYER_REJECTED` errors for transactions rejected before they are forwarded.
+//! ERC-8168 `PAYER_REJECTED` errors the node answers with itself.
 
 use alloy_rpc_types_eth::error::EthRpcErrorCode;
 use base_execution_rpc::SequencerClientError;
 use jsonrpsee::types::{ErrorCode, ErrorObjectOwned};
 use serde_json::{Value, json};
 
-/// Builds the `PAYER_REJECTED` errors a payer returns, for `payer_sendTransaction`
-/// transactions the node rejects itself.
+/// Builds the `PAYER_REJECTED` errors a payer returns, for payer requests the node answers
+/// itself.
 #[derive(Debug)]
 pub struct PayerRejection;
 
