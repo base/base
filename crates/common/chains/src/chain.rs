@@ -179,7 +179,10 @@ mod tests {
             base_mainnet_forks[Cobalt],
             ForkCondition::Timestamp(ChainConfig::mainnet().cobalt_timestamp.unwrap())
         );
-        assert_eq!(base_mainnet_forks[Denim], ForkCondition::Never);
+        assert_eq!(
+            base_mainnet_forks[Denim],
+            ForkCondition::Timestamp(ChainConfig::mainnet().denim_timestamp.unwrap())
+        );
         assert_eq!(base_mainnet_forks[Zenith], ForkCondition::Never);
     }
 
@@ -348,10 +351,12 @@ mod tests {
 
     #[test]
     fn is_denim_active_at_timestamp() {
-        // Denim is unscheduled on Base Mainnet and devnet.
+        // Denim is unscheduled on devnet.
         let base_mainnet_forks = ChainUpgrades::mainnet();
         assert!(!base_mainnet_forks.is_denim_active_at_timestamp(0));
-        assert!(!base_mainnet_forks.is_denim_active_at_timestamp(u64::MAX));
+        assert!(!base_mainnet_forks.is_denim_active_at_timestamp(1_793_901_599));
+        assert!(base_mainnet_forks.is_denim_active_at_timestamp(1_793_901_600));
+        assert!(base_mainnet_forks.is_denim_active_at_timestamp(u64::MAX));
 
         let base_sepolia_forks = ChainUpgrades::sepolia();
         assert!(!base_sepolia_forks.is_denim_active_at_timestamp(0));

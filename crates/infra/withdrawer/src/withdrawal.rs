@@ -193,6 +193,9 @@ impl Withdrawal {
 
     /// Authenticates the header and withdrawal inclusion against an onchain output claim.
     ///
+    /// Storage proof prefixes are verified before expanding inline nodes; unauthenticated nodes
+    /// return a storage proof error without being decoded by the expansion step.
+    ///
     /// Does not establish that the claim is valid: callers must check that its game is proper,
     /// respected, and not resolved as `CHALLENGER_WINS`.
     pub fn verify_proof(
@@ -248,12 +251,11 @@ impl Withdrawal {
         )
         .map_err(WithdrawalError::AccountProof)?;
         let storage_key = Nibbles::unpack(keccak256(slot));
-        let stripped = VerifiedWithdrawalProof::strip_inline_nodes(&storage.proof, &storage_key);
-        verify_proof(
+        let stripped = VerifiedWithdrawalProof::strip_inline_nodes(
+            &storage.proof,
             proof.storage_hash,
-            storage_key,
-            Some(alloy_rlp::encode(storage.value)),
-            stripped,
+            &storage_key,
+            alloy_rlp::encode(storage.value),
         )
         .map_err(WithdrawalError::StorageProof)?;
         let storage_proof = VerifiedWithdrawalProof::expand_inline_nodes(stripped, &storage_key)
@@ -271,24 +273,34 @@ impl Withdrawal {
 }
 
 impl VerifiedWithdrawalProof {
-    /// Drops trailing proof elements that duplicate nodes embedded inline in their parent.
+    /// Verifies a proof and drops trailing elements that duplicate authenticated inline nodes.
     ///
     /// Trie nodes shorter than 32 bytes are inlined in their parent. Geth's `eth_getProof` omits
-    /// them, while reth keeps them as separate elements, which Alloy's verifier rejects. A tail
-    /// is dropped only when it exactly matches the inline nodes along `key`; any other proof is
-    /// returned unchanged so verification still rejects it.
-    pub fn strip_inline_nodes<'a>(proof: &'a [Bytes], key: &Nibbles) -> &'a [Bytes] {
-        (1..proof.len())
-            .map(|len| &proof[..len])
-            .find(|prefix| {
-                Self::expand_inline_nodes(prefix, key).is_ok_and(|expanded| expanded == proof)
-            })
-            .unwrap_or(proof)
+    /// them, while reth keeps them as separate elements, which Alloy's verifier rejects. Each
+    /// candidate prefix must verify against `root`, `key`, and `expected_value` before expansion
+    /// decodes its nodes. A tail is dropped only when it exactly matches the authenticated inline
+    /// nodes along `key`; otherwise the full proof must verify or its verification error is returned.
+    pub fn strip_inline_nodes<'a>(
+        proof: &'a [Bytes],
+        root: B256,
+        key: &Nibbles,
+        expected_value: Vec<u8>,
+    ) -> Result<&'a [Bytes], ProofVerificationError> {
+        for len in 1..proof.len() {
+            let prefix = &proof[..len];
+            if verify_proof(root, *key, Some(expected_value.clone()), prefix).is_ok()
+                && Self::expand_inline_nodes(prefix, key).is_ok_and(|expanded| expanded == proof)
+            {
+                return Ok(prefix);
+            }
+        }
+        verify_proof(root, *key, Some(expected_value), proof)?;
+        Ok(proof)
     }
 
     /// Appends nodes embedded in the proof's final node as separate proof elements.
     ///
-    /// Takes a proof without inline nodes, as Geth returns and Alloy verifies, and returns the
+    /// Takes a verified proof without inline nodes, as Geth returns and Alloy verifies, and returns the
     /// shape reth returns and the portal's `MerkleTrie` requires: every node on the path as its
     /// own proof element. Inlined nodes can only appear at the tail of a path.
     pub fn expand_inline_nodes(
@@ -479,7 +491,9 @@ mod tests {
             reth_proof.iter().filter(|node| node.len() >= 32).cloned().collect();
         assert_eq!((geth_proof.len(), reth_proof.len()), (1, 3));
         for proof in [&geth_proof, &reth_proof] {
-            let stripped = VerifiedWithdrawalProof::strip_inline_nodes(proof, &keys[1]);
+            let stripped =
+                VerifiedWithdrawalProof::strip_inline_nodes(proof, root, &keys[1], value.clone())
+                    .unwrap();
             verify_proof(root, keys[1], Some(value.clone()), stripped).unwrap();
             assert_eq!(
                 VerifiedWithdrawalProof::expand_inline_nodes(stripped, &keys[1]).unwrap(),
@@ -492,9 +506,10 @@ mod tests {
         let mut bytes = tail.to_vec();
         *bytes.last_mut().unwrap() ^= 1;
         *tail = bytes.into();
-        let stripped = VerifiedWithdrawalProof::strip_inline_nodes(&tampered, &keys[1]);
-        assert_eq!(stripped, tampered.as_slice());
-        assert!(verify_proof(root, keys[1], Some(value), stripped).is_err());
+        let error =
+            VerifiedWithdrawalProof::strip_inline_nodes(&tampered, root, &keys[1], value.clone())
+                .unwrap_err();
+        assert_eq!(error, verify_proof(root, keys[1], Some(value), &tampered).unwrap_err());
     }
 
     #[test]
@@ -538,6 +553,20 @@ mod tests {
             withdrawal().verify_proof(&fixture.header, &fixture.proof, fixture.game.root_claim),
             Err(WithdrawalError::StorageProof(_))
         ));
+    }
+
+    #[test]
+    fn rejects_storage_proof_with_overlong_compact_path() {
+        let mut fixture = fixture();
+        let mut path = vec![0x20];
+        path.extend([0; 33]);
+        let malformed_leaf = alloy_rlp::encode(vec![Bytes::from(path), Bytes::from_static(&[1])]);
+        fixture.proof.storage_proof[0].proof.insert(1, malformed_leaf.into());
+        let error = withdrawal()
+            .verify_proof(&fixture.header, &fixture.proof, fixture.game.root_claim)
+            .unwrap_err();
+        assert!(matches!(error, WithdrawalError::StorageProof(_)));
+        assert!(error.source().is_some());
     }
 
     #[test]

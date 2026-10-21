@@ -4170,7 +4170,6 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.19",
  "tokio",
- "tokio-stream",
  "tokio-util",
  "tower 0.5.3",
  "tower-http",
@@ -4651,6 +4650,7 @@ dependencies = [
  "metrics",
  "metrics-exporter-prometheus",
  "moka",
+ "parking_lot",
  "reth-basic-payload-builder",
  "reth-chainspec",
  "reth-engine-tree",
@@ -4867,14 +4867,19 @@ dependencies = [
 name = "base-fee-jobs"
 version = "0.0.0"
 dependencies = [
+ "alloy-network 2.5.0",
  "alloy-primitives",
  "alloy-provider",
  "alloy-rpc-types-eth 2.5.0",
  "alloy-signer-local 2.5.0",
  "alloy-sol-types",
  "async-trait",
+ "axum 0.8.9",
  "base-cli-utils",
+ "base-common-consensus",
+ "base-proof-contracts",
  "base-tx-manager",
+ "base-withdrawer",
  "clap",
  "eyre",
  "humantime",
@@ -4885,6 +4890,7 @@ dependencies = [
  "thiserror 2.0.19",
  "tokio",
  "tracing",
+ "tracing-subscriber",
  "url",
 ]
 
@@ -5427,7 +5433,6 @@ dependencies = [
  "rstest",
  "spin 0.10.1",
  "thiserror 2.0.19",
- "tokio",
  "tracing",
 ]
 
@@ -6820,6 +6825,7 @@ dependencies = [
  "base-common-rpc-types",
  "base-proof-contracts",
  "base-protocol",
+ "base-tx-manager",
  "clap",
  "coins-bip32",
  "coins-bip39",

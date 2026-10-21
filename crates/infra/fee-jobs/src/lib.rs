@@ -2,11 +2,19 @@
 
 mod cli;
 pub use cli::{
-    Cli, DisburseArgs, FeeCommand, JobArgs, LogArgs, ProcessArgs, SweepArgs, TxManagerCli,
+    Cli, ConfirmArgs, DisburseArgs, FeeCommand, JobArgs, LogArgs, ProcessArgs, SweepArgs,
+    TxManagerCli,
+};
+
+mod confirm;
+pub use confirm::{
+    ConfirmJob, ConfirmOutcome, ConfirmReport, ConfirmSender, ConfirmTiming, ConfirmWindow,
 };
 
 mod contracts;
-pub use contracts::{BalanceTracker, FeeDisburser, RegistrarController};
+pub use contracts::{
+    BalanceTracker, CrossDomainMessenger, FeeDisburser, RegistrarController, StandardBridge,
+};
 
 mod client;
 pub use client::AlloyFeeReader;

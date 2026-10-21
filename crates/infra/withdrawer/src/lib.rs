@@ -12,7 +12,7 @@ pub use operation::{
 
 mod config;
 pub use config::{
-    ConfigError, Fees, HdPathValueParser, RpcUrlValueParser, SignerSource, WithdrawerArgs,
+    ConfigError, HdPathValueParser, RpcUrlValueParser, SignerSource, TxManagerCli, WithdrawerArgs,
     WithdrawerConfig,
 };
 
@@ -20,10 +20,16 @@ mod network;
 pub use network::{FaultProofContracts, Network, NetworkPreset, ProofSystem, ResolvedProofSystem};
 
 mod rpc;
-pub use rpc::{BroadcastResult, WithdrawalRpc, WithdrawalRpcError};
+pub use rpc::{WithdrawalRpc, WithdrawalRpcError};
 
 mod transport;
 pub use transport::WithdrawalRpcTransport;
+
+mod journal;
+pub use journal::BroadcastJournal;
+
+mod submission;
+pub use submission::{MaybeIncluded, SubmitError, WithdrawalSender};
 
 mod signer;
 pub use signer::{WithdrawalSigner, WithdrawalSignerError};
