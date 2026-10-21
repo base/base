@@ -842,12 +842,25 @@ mod tests {
             let output = executor.execute_transaction_without_commit(&tx).expect("clear storage");
             assert!(output.inner.result.result.is_success(), "storage clear succeeds");
             let regular = output.inner.result.result.gas().block_regular_gas_used();
+            let state = output.inner.result.result.gas().block_state_gas_used();
             let fee = executor.commit_transaction(output).tx_gas_used();
-            assert!(regular > fee, "ordinary refund reduces charged gas");
+            // PUSH1 + PUSH0 cost 5. Jovian: 21_000 + 5_000 + 5, minus 4_800 refund.
+            // Amsterdam: 15_000 + 12_100 + 5, minus min(11_616, 27_105 / 5) = 5_421.
+            let (expected_regular, expected_fee, expected_header) = if upgrade == BaseUpgrade::Denim {
+                (27_105, 21_684, 27_105)
+            } else {
+                (26_005, 21_205, 21_205)
+            };
+            assert_eq!(regular, expected_regular, "storage clear regular gas before refund");
+            assert_eq!(state, 0, "clearing an existing slot creates no state");
+            assert_eq!(fee, expected_fee, "storage clear charged gas after capped refund");
             let (_, result) = executor.finish().expect("finish clear block");
-            assert_eq!(result.receipts[0].cumulative_gas_used(), fee, "receipt retains refund");
-            let expected = if upgrade == BaseUpgrade::Denim { regular } else { fee };
-            assert_eq!(result.gas_used, expected, "fork-appropriate refund accounting");
+            assert_eq!(
+                result.receipts[0].cumulative_gas_used(),
+                expected_fee,
+                "storage clear receipt retains the exact capped refund"
+            );
+            assert_eq!(result.gas_used, expected_header, "fork-appropriate storage clear header gas");
         }
     }
 
@@ -926,9 +939,18 @@ mod tests {
             let state = output.inner.result.result.gas().block_state_gas_used();
             let fee = executor.commit_transaction(output).tx_gas_used();
             if amsterdam {
+                // EIP-2780/7976 floor: (12_000 + 12_000) + 65_550 * 64 = 4_219_200.
+                // Spent regular: 24_000 + (65_540 * 4 + 10 * 16) + 2_049 * 2
+                // + 16 opcode gas + 2_048 * 3 copy + (2_048 * 3 + 2_048^2 / 512)
+                // + 2_048 * 6 deployed-code hashing = 323_202.
+                // State: (120 + 65_536) * 1_530 = 100_453_680; no refund.
+                assert_eq!(regular, 4_219_200, "64 KiB regular gas is the calldata floor");
                 assert_eq!(state, 100_453_680, "64 KiB state gas at L1 CPSB 1530");
-                assert!(regular < state, "deployment is state dominated");
-                assert_ne!(fee, state, "receipt gas is not the block state dimension");
+                assert_eq!(fee, 100_776_882, "64 KiB receipt gas is spent regular plus state");
+            } else {
+                assert_eq!(regular, 21_000, "historical first self-transfer regular gas");
+                assert_eq!(state, 0, "historical first self-transfer creates no state");
+                assert_eq!(fee, 21_000, "historical first self-transfer charged gas");
             }
             let transfer = Recovered::new_unchecked(
                 BaseTxEnvelope::Legacy(
@@ -951,19 +973,28 @@ mod tests {
             let transfer_state = output.inner.result.result.gas().block_state_gas_used();
             let transfer_fee = executor.commit_transaction(output).tx_gas_used();
             let (_, result) = executor.finish().expect("finish block");
+            let expected_transfer = if amsterdam { 12_000 } else { 21_000 };
+            assert_eq!(transfer_regular, expected_transfer, "second self-transfer regular gas");
+            assert_eq!(transfer_state, 0, "second self-transfer creates no state");
+            assert_eq!(transfer_fee, expected_transfer, "second self-transfer charged gas");
+            assert_eq!(
+                result.receipts[0].cumulative_gas_used(),
+                if amsterdam { 100_776_882 } else { 21_000 },
+                "first receipt contains exact charged gas"
+            );
             assert_eq!(
                 result.receipts.last().unwrap().cumulative_gas_used(),
-                fee + transfer_fee,
+                if amsterdam { 100_788_882 } else { 42_000 },
                 "receipts retain scalar charged gas"
             );
             if amsterdam {
                 assert_eq!(
                     result.gas_used,
-                    (regular + transfer_regular).max(state + transfer_state),
-                    "header uses max of summed dimensions, not summed transaction maxima"
+                    100_453_680,
+                    "header is max(4_219_200 + 12_000, 100_453_680 + 0)"
                 );
             } else {
-                assert_eq!(result.gas_used, fee + transfer_fee, "historical receipt accounting");
+                assert_eq!(result.gas_used, 42_000, "historical header sums both 21_000 receipts");
             }
         }
     }
