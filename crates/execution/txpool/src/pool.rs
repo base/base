@@ -8,6 +8,7 @@ use alloy_eips::{
 };
 use alloy_primitives::{Address, B256, TxHash, U256, map::AddressSet};
 use base_common_precompiles::NonceManagerStorage;
+use base_execution_eip8130::{FeeCheck, IntrinsicGas};
 use futures::StreamExt;
 use parking_lot::{Mutex, RwLock};
 use reth_eth_wire_types::HandleMempoolData;
@@ -21,6 +22,7 @@ use reth_transaction_pool::{
     TransactionListenerKind, TransactionOrigin, TransactionPool, TransactionPoolExt,
     TransactionValidationOutcome, TransactionValidationTaskExecutor, TransactionValidator,
     ValidPoolTransaction,
+    error::InvalidPoolTransactionError,
     pool::{AddedTransactionState, QueuedReason, TransactionEvent},
 };
 use tokio::{
@@ -485,6 +487,38 @@ where
         Ok(())
     }
 
+    /// Rechecks an EIP-8130 transaction against the pool's block gas limit, which can
+    /// move after validation, as reth's protocol pool does for every transaction at
+    /// insert. Execution reserves `gas_limit + payer_auth` against the block, and an
+    /// unpriceable payer authentication never fits.
+    fn ensure_eip8130_fits_block_gas_limit(
+        &self,
+        hash: TxHash,
+        validated: &TransactionValidationOutcome<T>,
+    ) -> PoolResult<()> {
+        let Some(transaction) = validated.as_valid_transaction().map(|valid| valid.transaction())
+        else {
+            return Ok(());
+        };
+        let Some(signed) = transaction.as_eip8130() else {
+            return Ok(());
+        };
+        let reserved_gas = IntrinsicGas::max_payer_auth_cost(signed)
+            .map_or(u64::MAX, |payer_auth| {
+                FeeCheck::max_chargeable_gas(transaction.gas_limit(), payer_auth)
+            });
+        let block_gas_limit = self.protocol_pool.block_info().block_gas_limit;
+        if reserved_gas > block_gas_limit {
+            return Err(reth_transaction_pool::error::PoolError::new(
+                hash,
+                reth_transaction_pool::error::PoolErrorKind::InvalidTransaction(
+                    InvalidPoolTransactionError::ExceedsGasLimit(reserved_gas, block_gas_limit),
+                ),
+            ));
+        }
+        Ok(())
+    }
+
     /// Records a transaction's last valid block in the block-expiry index,
     /// dropping any replaced transaction's stale entry in the same pass so a
     /// fee-bump replacement does not orphan the old hash until its expiry block.
@@ -675,6 +709,7 @@ where
         // Reject stale validation before reth can replace the currently pooled transaction.
         self.ensure_protocol_classification_current(hash, &validated)?;
         self.ensure_not_published_expired(hash, &validated)?;
+        self.ensure_eip8130_fits_block_gas_limit(hash, &validated)?;
         let replaced = self.protocol_replacement_hash(sender, nonce);
         // Reserve guard capacity before reth publishes insertion events. A
         // tracked replacement bypasses this check and is reaccounted after the
@@ -818,7 +853,9 @@ where
         let flashblock_expiry_bound = Self::validity_flashblock_expiry_bound(&validated);
         let _admission_guard = self.protocol_admission_lock.lock();
         if let Some(transaction) = validated.as_valid_transaction() {
-            self.ensure_not_published_expired(*transaction.transaction().hash(), &validated)?;
+            let hash = *transaction.transaction().hash();
+            self.ensure_not_published_expired(hash, &validated)?;
+            self.ensure_eip8130_fits_block_gas_limit(hash, &validated)?;
         }
         match validated {
             TransactionValidationOutcome::Valid {
@@ -828,23 +865,6 @@ where
                 state_nonce,
                 ..
             } => {
-                // The protocol pool rechecks the block gas limit at insert, which
-                // can have moved since validation. Like reth's protocol-pool check
-                // (`TxGasLimitMoreThanAvailableBlockGas`), this deliberately compares the
-                // declared `gas_limit` only; admission validation bounds `gas_limit + payer_auth`.
-                let block_gas_limit = self.protocol_pool.block_info().block_gas_limit;
-                let gas_limit = transaction.transaction().gas_limit();
-                if gas_limit > block_gas_limit {
-                    return Err(reth_transaction_pool::error::PoolError::new(
-                        *transaction.transaction().hash(),
-                        reth_transaction_pool::error::PoolErrorKind::InvalidTransaction(
-                            reth_transaction_pool::error::InvalidPoolTransactionError::ExceedsGasLimit(
-                                gas_limit,
-                                block_gas_limit,
-                            ),
-                        ),
-                    ));
-                }
                 // Keep the sidecar lock order consistent everywhere: nonce_pool before listeners.
                 let mut nonce_pool = self.nonce_pool.write();
                 let mut listeners = self.listeners.write();
@@ -1126,6 +1146,7 @@ where
             let _admission_guard = self.protocol_admission_lock.lock();
             self.ensure_protocol_classification_current(hash, &validated)?;
             self.ensure_not_published_expired(hash, &validated)?;
+            self.ensure_eip8130_fits_block_gas_limit(hash, &validated)?;
             let replaced = self.protocol_replacement_hash(sender, nonce);
             let pre_admitted = self.pre_admit_protocol_transaction(hash, replaced, &validated)?;
             // Capture the block-expiry bound and validity-lane flag before
@@ -2140,7 +2161,6 @@ mod tests {
     };
     use base_common_evm::BaseSpecId;
     use base_execution_chainspec::BaseChainSpec;
-    use base_execution_eip8130::IntrinsicGas;
     use base_execution_evm::BaseEvmConfig;
     use base_test_utils::build_test_genesis_everest;
     use futures::{FutureExt, StreamExt, future::join_all};
@@ -2149,11 +2169,8 @@ mod tests {
     use reth_tasks::Runtime;
     use reth_transaction_pool::{
         CanonicalStateUpdate, PoolConfig, PoolUpdateKind, PriceBumpConfig, SubPoolLimit,
-        TransactionOrigin,
-        blobstore::InMemoryBlobStore,
-        error::{InvalidPoolTransactionError, PoolErrorKind},
-        identifier::TransactionId,
-        validate::EthTransactionValidatorBuilder,
+        TransactionOrigin, blobstore::InMemoryBlobStore, error::PoolErrorKind,
+        identifier::TransactionId, validate::EthTransactionValidatorBuilder,
     };
 
     use super::*;
@@ -3273,6 +3290,43 @@ mod tests {
         }
     }
 
+    /// Reth applies the minimum priority fee to local submissions too, so a local
+    /// EIP-8130 transaction is rejected exactly as a local EIP-1559 one is.
+    #[tokio::test]
+    async fn minimum_priority_fee_applies_to_local_submissions_of_every_type() {
+        let (pool, client) = build_integration_pool_with_policies(PoolPolicies {
+            minimum_priority_fee: Some(10),
+            ..Default::default()
+        });
+        let signer = signer();
+        fund(&client, signer.address());
+
+        let eip1559 = signed_1559_with_fees(&signer, 0, POLICY_MAX_FEE, 9);
+        let mut transactions = vec![eip1559];
+        transactions.extend(EIP8130_ROUTES.map(|nonce_key| {
+            sign_eoa_8130(
+                &signer,
+                TxEip8130 { max_priority_fee_per_gas: 9, ..policy_tx(nonce_key) },
+            )
+        }));
+        for transaction in transactions {
+            let hash = *transaction.hash();
+            let error = pool
+                .add_transaction(TransactionOrigin::Local, transaction)
+                .await
+                .expect_err("a local tip below the minimum is rejected");
+            assert!(
+                matches!(
+                    invalid_kind(&error),
+                    InvalidPoolTransactionError::PriorityFeeBelowMinimum {
+                        minimum_priority_fee: 10
+                    }
+                ),
+                "transaction {hash}: {error:?}"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn eip8130_routes_enforce_the_block_gas_limit() {
         let (pool, client) = build_integration_pool_with_policies(PoolPolicies {
@@ -3492,6 +3546,37 @@ mod tests {
                 ),
                 "nonce key {nonce_key}: {error:?}"
             );
+        }
+    }
+
+    /// The insert-time recheck bounds `gas_limit + payer_auth`, as validation does,
+    /// so a sponsored transaction whose `gas_limit` alone fits the moved block gas
+    /// limit is still rejected.
+    #[tokio::test]
+    async fn eip8130_insert_recheck_includes_payer_authentication() {
+        let (pool, client) = build_integration_pool();
+        let (signer, payer) = (signer(), signer());
+        fund(&client, payer.address());
+        pool.set_block_info(BlockInfo { block_gas_limit: POLICY_GAS_LIMIT, ..pool.block_info() });
+
+        for nonce_key in EIP8130_ROUTES {
+            let transaction = sponsored_policy_tx(&signer, &payer, nonce_key, POLICY_GAS_LIMIT + 1);
+            let error =
+                pool.add_transaction(TransactionOrigin::External, transaction).await.expect_err(
+                    "gas_limit plus payer authentication exceeds the pool's block gas limit",
+                );
+            assert!(
+                matches!(
+                    invalid_kind(&error),
+                    InvalidPoolTransactionError::ExceedsGasLimit(gas, limit)
+                        if *gas == POLICY_GAS_LIMIT + 1 && *limit == POLICY_GAS_LIMIT
+                ),
+                "nonce key {nonce_key}: {error:?}"
+            );
+            let transaction = sponsored_policy_tx(&signer, &payer, nonce_key, POLICY_GAS_LIMIT);
+            pool.add_transaction(TransactionOrigin::External, transaction)
+                .await
+                .expect("gas_limit plus payer authentication at the block gas limit is admitted");
         }
     }
 
