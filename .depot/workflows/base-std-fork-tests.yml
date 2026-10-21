@@ -276,6 +276,7 @@ jobs:
           shopt -s nullglob
 
           result_files=("$RUNNER_TEMP"/fork-test-results/results/*.tsv)
+          mock_only_counts=()
           body="$RUNNER_TEMP/fork-test-comment.md"
           overall=success
 
@@ -284,12 +285,12 @@ jobs:
             echo
             echo '### Base Std historical fork tests'
             echo
-            echo '| Fork | Result | Passed | Failed | Skipped | Mock-only | base/base | base-anvil | base-std |'
-            echo '|---|---|---:|---:|---:|---:|---|---|---|'
+            echo '| Fork | Result | Passed | Failed | Skipped | base/base | base-anvil | base-std |'
+            echo '|---|---|---:|---:|---:|---|---|---|'
 
             if [ ${#result_files[@]} -eq 0 ]; then
               overall=failure
-              echo '| unknown | failure: no results | 0 | 0 | 0 | 0 | unknown | unknown | unknown |'
+              echo '| unknown | failure: no results | 0 | 0 | 0 | unknown | unknown | unknown |'
             else
               for result_file in "${result_files[@]}"; do
                 IFS=$'\t' read -r fork status passed failed skipped mock_only base_sha base_anvil_sha base_std_sha < "$result_file"
@@ -302,12 +303,16 @@ jobs:
                 base_link="[\`${base_sha:0:8}\`](https://github.com/base/base/commit/${base_sha})"
                 base_anvil_link="[\`${base_anvil_sha:0:8}\`](https://github.com/base/base-anvil/commit/${base_anvil_sha})"
                 base_std_link="[\`${base_std_sha:0:8}\`](https://github.com/base/base-std/commit/${base_std_sha})"
-                echo "| $fork | $display_status | $passed | $failed | $skipped | $mock_only | $base_link | $base_anvil_link | $base_std_link |"
+                echo "| $fork | $display_status | $passed | $failed | $skipped | $base_link | $base_anvil_link | $base_std_link |"
+                mock_only_counts+=("$fork $mock_only")
               done
             fi
 
-            echo
-            echo "Mock-only tests open with \`vm.skip(livePrecompiles)\` because they only run against base-std's Solidity mocks."
+            if [ ${#mock_only_counts[@]} -gt 0 ]; then
+              echo
+              joined=$(printf '%s, ' "${mock_only_counts[@]}")
+              echo "Skipped excludes tests that open with \`vm.skip(livePrecompiles)\` because they only run against base-std's Solidity mocks: ${joined%, }."
+            fi
             echo
             echo "[View run]($WORKFLOW_RUN_URL)"
           } > "$body"
