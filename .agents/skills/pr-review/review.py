@@ -347,6 +347,8 @@ def run_agent(agent: Agent, user_prompt: str, cwd: Path, artifacts: Path, model_
     output_schema = json.loads(schema_text)
     request = urllib.request.Request(endpoint, method="POST", headers={
         "Content-Type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01",
+        # Identify this client; the gateway's edge rejects urllib's default browser signature.
+        "User-Agent": "base-pr-review/1.0",
     }, data=json.dumps({
         "model": model, "max_tokens": agent.max_output_tokens or 16000,
         "system": system_prompt, "messages": [{"role": "user", "content": user_prompt}],

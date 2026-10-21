@@ -59,10 +59,14 @@ MODEL_RULES: tuple[tuple[re.Pattern[str], Diagnosis], ...] = tuple(
         (r"credit balance|billing|quota|insufficient",
          Diagnosis("The account behind your key has no usable credit or quota on {target}.",
                    "Add credit or use another key; then run the review again.")),
-        (r"restricted model|not allowed to use|permission_error|does not have permission|\b403\b",
+        (r"restricted model|not allowed to use|permission_error|does not have permission",
          Diagnosis("{target} will not let your key use one of the models this review is set up to use.",
                    "Ask whoever runs your gateway to allow it, or use a model you can use for every stage: "
                    "`just review --model claude-sonnet-5-5`.")),
+        (r"\b403\b",
+         Diagnosis("The request to {target} was denied (HTTP 403).",
+                   "Check gateway or proxy access logs: this status alone cannot distinguish a blocked client "
+                   "or network from a key, endpoint, or model permission problem.")),
         (r"issue with the selected model|invalid model name|model_not_found|not_found_error|\b404\b",
          Diagnosis("A model this review is set up to use does not exist on {target}.",
                    "Use one you have for every stage with `--model <name>`, for example "
