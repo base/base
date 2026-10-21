@@ -21,7 +21,9 @@ use base_execution_eip8130::IntrinsicGas;
 use revm::{
     Database as _, DatabaseCommit,
     context::{Block, result::ResultAndState},
+    context_interface::Cfg,
     database::DatabaseCommitExt,
+    primitives::hardfork::SpecId,
 };
 
 use crate::{
@@ -45,6 +47,10 @@ pub struct BaseBlockExecutor<Evm, R: BaseReceiptBuilder, Spec> {
     pub receipts: Vec<R::Receipt>,
     /// Total gas used by executed transactions.
     pub gas_used: u64,
+    /// Regular gas consumed before transaction refunds (EIP-7778/8037).
+    pub block_regular_gas_used: u64,
+    /// State gas consumed after reservoir refills (EIP-8037).
+    pub block_state_gas_used: u64,
     /// DA footprint.
     ///
     /// This is only set for blocks post-Jovian activation.
@@ -73,6 +79,8 @@ where
             receipt_builder,
             receipts: Vec::new(),
             gas_used: 0,
+            block_regular_gas_used: 0,
+            block_state_gas_used: 0,
             da_footprint_used: 0,
             ctx,
         }
@@ -165,6 +173,7 @@ where
             Receipt: TxReceipt,
         >,
     Spec: Upgrades,
+    E::Spec: Into<SpecId>,
 {
     type Transaction = R::Transaction;
     type Receipt = R::Receipt;
@@ -222,13 +231,33 @@ where
         // `gas_limit + payer_auth`, since payer authentication is metered on top of the declared
         // gas_limit (see `reserved_block_gas`); for every other transaction it is `gas_limit`.
         let reserved_gas = Self::reserved_block_gas(&tx_env, tx.tx().gas_limit())?;
-        let block_available_gas = self.evm.block().gas_limit().saturating_sub(self.gas_used);
-        if reserved_gas > block_available_gas && (self.is_regolith || !is_deposit) {
+        // Amsterdam reserves independent regular and state budgets, as on L1.
+        let amsterdam = self.evm.cfg_env().enable_amsterdam_eip8037;
+        let gas_used = if amsterdam { self.block_regular_gas_used } else { self.gas_used };
+        let block_available_gas = self.evm.block().gas_limit().saturating_sub(gas_used);
+        // Deposits bypass the transaction cap and can report their full limit on failure.
+        let regular_gas = if amsterdam && !is_deposit {
+            reserved_gas.min(self.evm.cfg_env().tx_gas_limit_cap())
+        } else {
+            reserved_gas
+        };
+        if regular_gas > block_available_gas && (self.is_regolith || !is_deposit) {
             return Err(BlockValidationError::TransactionGasLimitMoreThanAvailableBlockGas {
-                transaction_gas_limit: reserved_gas,
+                transaction_gas_limit: regular_gas,
                 block_available_gas,
             }
             .into());
+        }
+        if amsterdam {
+            let state_gas_available =
+                self.evm.block().gas_limit().saturating_sub(self.block_state_gas_used);
+            if reserved_gas > state_gas_available {
+                return Err(BlockValidationError::TransactionGasLimitMoreThanAvailableBlockGas {
+                    transaction_gas_limit: reserved_gas,
+                    block_available_gas: state_gas_available,
+                }
+                .into());
+            }
         }
 
         let da_footprint_used = if self
@@ -299,6 +328,8 @@ where
         let state_gas_used = result.gas().block_state_gas_used();
 
         self.gas_used += tx_gas_used;
+        self.block_regular_gas_used += result.gas().block_regular_gas_used();
+        self.block_state_gas_used += state_gas_used;
 
         if self.spec.is_jovian_active_at_timestamp(self.evm.block().timestamp().saturating_to())
             && !is_deposit
@@ -356,13 +387,18 @@ where
 
         let legacy_gas_used =
             self.receipts.last().map(|r| r.cumulative_gas_used()).unwrap_or_default();
+        let gas_used = if self.evm.cfg_env().enable_amsterdam_eip8037 {
+            self.block_regular_gas_used.max(self.block_state_gas_used)
+        } else {
+            legacy_gas_used
+        };
 
         Ok((
             self.evm,
             BlockExecutionResult {
                 receipts: self.receipts,
                 requests: Default::default(),
-                gas_used: legacy_gas_used,
+                gas_used,
                 blob_gas_used: self.da_footprint_used,
             },
         ))
@@ -391,10 +427,10 @@ mod tests {
         EvmEnv, EvmFactory, ToTxEnv, block::BlockExecutorFactory, precompiles::PrecompilesMap,
     };
     use alloy_hardforks::ForkCondition;
-    use alloy_primitives::{Address, Bytes, Signature, U256, address, bytes, keccak256, uint};
+    use alloy_primitives::{Address, Bytes, Sealable, Signature, U256, address, bytes, keccak256, uint};
     use base_common_chains::{BaseUpgradeExt, ChainUpgrades};
     use base_common_consensus::{
-        BaseTxEnvelope, Call, Eip8130Constants, Eip8130Signed, Predeploys, TxEip8130,
+        BaseTxEnvelope, Call, Eip8130Constants, Eip8130Signed, Predeploys, TxDeposit, TxEip8130,
     };
     use base_common_genesis::BaseUpgrade;
     use k256::ecdsa::SigningKey;
@@ -672,6 +708,258 @@ mod tests {
         assert!(result.blob_gas_used > result.gas_used);
     }
 
+    /// Failed deposits report uncapped regular gas, so admission reserves their full limit.
+    #[test]
+    fn amsterdam_block_gas_failed_deposit_above_cap() {
+        let mut db = prepare_jovian_db(0);
+        let target = Address::with_last_byte(0x45);
+        let code = bytes!("fe");
+        db.insert_account(
+            target,
+            AccountInfo {
+                code_hash: keccak256(&code),
+                code: Some(Bytecode::new_raw(code)),
+                ..Default::default()
+            },
+        );
+        let receipt_builder = AlloyReceiptBuilder::default();
+        let upgrades = ChainUpgrades::mainnet();
+        let evm = Context::base()
+            .with_db(&mut db)
+            .with_block(BlockEnv {
+                timestamp: U256::from(1_900_000_000u64),
+                gas_limit: 40_000_000,
+                ..Default::default()
+            })
+            .modify_cfg_chained(|cfg| {
+                cfg.set_spec_and_mainnet_gas_params(BaseSpecId::new(BaseUpgrade::Denim));
+            })
+            .build_with_inspector(NoOpInspector {});
+        let mut executor = BaseBlockExecutor::new(
+            evm,
+            BaseBlockExecutionCtx::default(),
+            &upgrades,
+            &receipt_builder,
+        );
+        let deposit = |gas_limit| {
+            Recovered::new_unchecked(
+                BaseTxEnvelope::from(
+                    TxDeposit {
+                        from: Address::ZERO,
+                        to: target.into(),
+                        gas_limit,
+                        ..Default::default()
+                    }
+                    .seal_slow(),
+                ),
+                Address::ZERO,
+            )
+        };
+        let output = executor
+            .execute_transaction_without_commit(&deposit(10_000_000))
+            .expect("first failed deposit is included");
+        assert!(!output.inner.result.result.is_success(), "invalid opcode fails deposit");
+        executor.commit_transaction(output);
+        assert!(
+            matches!(
+                executor.execute_transaction_without_commit(&deposit(35_000_000)),
+                Err(BlockExecutionError::Validation(
+                    BlockValidationError::TransactionGasLimitMoreThanAvailableBlockGas {
+                        transaction_gas_limit: 35_000_000,
+                        block_available_gas: 30_000_000,
+                    }
+                ))
+            ),
+            "above-cap deposit cannot overfill regular capacity"
+        );
+        let output = executor
+            .execute_transaction_without_commit(&deposit(30_000_000))
+            .expect("uncapped deposit exactly fills remaining regular budget");
+        executor.commit_transaction(output);
+        let (_, result) = executor.finish().expect("finish failed-deposit block");
+        assert_eq!(result.gas_used, 40_000_000, "full failed-deposit gas counts");
+        assert_eq!(
+            result.receipts.last().unwrap().cumulative_gas_used(),
+            40_000_000,
+            "failed-deposit receipts retain full charged gas"
+        );
+    }
+
+    /// Ordinary storage refunds reduce receipt fees but not Amsterdam block capacity.
+    #[test]
+    fn amsterdam_block_gas_refunds() {
+        for upgrade in [BaseUpgrade::Jovian, BaseUpgrade::Denim] {
+            let mut db = prepare_jovian_db(0);
+            let target = Address::with_last_byte(0x44);
+            let code = bytes!("60005f5500");
+            db.insert_account_with_storage(
+                target,
+                AccountInfo {
+                    code_hash: keccak256(&code),
+                    code: Some(Bytecode::new_raw(code)),
+                    ..Default::default()
+                },
+                HashMap::from_iter([(U256::ZERO, U256::from(1))]),
+            );
+            let upgrades = ChainUpgrades::mainnet();
+            let receipt_builder = AlloyReceiptBuilder::default();
+            let evm = Context::base()
+                .with_db(&mut db)
+                .with_block(BlockEnv { gas_limit: 120_000_000, ..Default::default() })
+                .modify_cfg_chained(|cfg| {
+                    cfg.set_spec_and_mainnet_gas_params(BaseSpecId::new(upgrade));
+                })
+                .build_with_inspector(NoOpInspector {});
+            let mut executor = BaseBlockExecutor::new(
+                evm,
+                BaseBlockExecutionCtx::default(),
+                &upgrades,
+                &receipt_builder,
+            );
+            let tx = Recovered::new_unchecked(
+                BaseTxEnvelope::Legacy(
+                    TxLegacy {
+                        gas_limit: 100_000,
+                        to: target.into(),
+                        ..Default::default()
+                    }
+                    .into_signed(Signature::new(
+                        Default::default(),
+                        Default::default(),
+                        Default::default(),
+                    )),
+                ),
+                Address::ZERO,
+            );
+            let output = executor.execute_transaction_without_commit(&tx).expect("clear storage");
+            assert!(output.inner.result.result.is_success(), "storage clear succeeds");
+            let regular = output.inner.result.result.gas().block_regular_gas_used();
+            let fee = executor.commit_transaction(output).tx_gas_used();
+            assert!(regular > fee, "ordinary refund reduces charged gas");
+            let (_, result) = executor.finish().expect("finish clear block");
+            assert_eq!(result.receipts[0].cumulative_gas_used(), fee, "receipt retains refund");
+            let expected = if upgrade == BaseUpgrade::Denim { regular } else { fee };
+            assert_eq!(result.gas_used, expected, "fork-appropriate refund accounting");
+        }
+    }
+
+    /// Checks real deployment and transfer results through the public executor API.
+    #[test]
+    fn amsterdam_block_gas_deployment_and_mixed_block() {
+        for upgrade in [BaseUpgrade::Jovian, BaseUpgrade::Denim, BaseUpgrade::Everest] {
+            let amsterdam = upgrade != BaseUpgrade::Jovian;
+            let mut db = prepare_jovian_db(0);
+            db.insert_account(
+                Address::ZERO,
+                AccountInfo {
+                    balance: U256::from(10u64).pow(U256::from(18u64)),
+                    ..Default::default()
+                },
+            );
+            let upgrades = ChainUpgrades::mainnet();
+            let receipt_builder = AlloyReceiptBuilder::default();
+            let evm = Context::base()
+                .with_db(&mut db)
+                .with_block(BlockEnv {
+                    timestamp: U256::from(1_900_000_000u64),
+                    gas_limit: 120_000_000,
+                    ..Default::default()
+                })
+                .modify_cfg_chained(|cfg| {
+                    cfg.set_spec_and_mainnet_gas_params(BaseSpecId::new(upgrade));
+                })
+                .build_with_inspector(NoOpInspector {});
+            let mut executor = BaseBlockExecutor::new(
+                evm,
+                BaseBlockExecutionCtx::default(),
+                &upgrades,
+                &receipt_builder,
+            );
+            // Return 64 KiB of zero bytecode; Jovian retains its 24 KiB code-size limit.
+            let mut initcode = bytes!("62010000600e5f39620100005ff3").to_vec();
+            initcode.resize(14 + 65_536, 0);
+            let deployment = TxLegacy {
+                gas_limit: 115_000_000,
+                input: initcode.into(),
+                ..Default::default()
+            };
+            let deployment = Recovered::new_unchecked(
+                BaseTxEnvelope::Legacy(deployment.into_signed(Signature::new(
+                    Default::default(),
+                    Default::default(),
+                    Default::default(),
+                ))),
+                Address::ZERO,
+            );
+            // Pre-Amsterdam rejects the oversized deployment; test historical accounting
+            // with a transfer instead, without changing its code-size or gas-cap rules.
+            let first = if amsterdam {
+                deployment
+            } else {
+                Recovered::new_unchecked(
+                    BaseTxEnvelope::Legacy(
+                        TxLegacy {
+                            gas_limit: 100_000,
+                            to: Address::ZERO.into(),
+                            ..Default::default()
+                        }
+                        .into_signed(Signature::new(
+                            Default::default(),
+                            Default::default(),
+                            Default::default(),
+                        )),
+                    ),
+                    Address::ZERO,
+                )
+            };
+            let output = executor.execute_transaction_without_commit(&first).expect("first tx");
+            assert!(output.inner.result.result.is_success(), "first transaction succeeds");
+            let regular = output.inner.result.result.gas().block_regular_gas_used();
+            let state = output.inner.result.result.gas().block_state_gas_used();
+            let fee = executor.commit_transaction(output).tx_gas_used();
+            if amsterdam {
+                assert_eq!(state, 100_453_680, "64 KiB state gas at L1 CPSB 1530");
+                assert!(regular < state, "deployment is state dominated");
+                assert_ne!(fee, state, "receipt gas is not the block state dimension");
+            }
+            let transfer = Recovered::new_unchecked(
+                BaseTxEnvelope::Legacy(
+                    TxLegacy {
+                        nonce: 1,
+                        gas_limit: 100_000,
+                        to: Address::ZERO.into(),
+                        ..Default::default()
+                    }
+                    .into_signed(Signature::new(
+                        Default::default(),
+                        Default::default(),
+                        Default::default(),
+                    )),
+                ),
+                Address::ZERO,
+            );
+            let output = executor.execute_transaction_without_commit(&transfer).expect("mixed tx");
+            let transfer_regular = output.inner.result.result.gas().block_regular_gas_used();
+            let transfer_state = output.inner.result.result.gas().block_state_gas_used();
+            let transfer_fee = executor.commit_transaction(output).tx_gas_used();
+            let (_, result) = executor.finish().expect("finish block");
+            assert_eq!(
+                result.receipts.last().unwrap().cumulative_gas_used(),
+                fee + transfer_fee,
+                "receipts retain scalar charged gas"
+            );
+            if amsterdam {
+                assert_eq!(
+                    result.gas_used,
+                    (regular + transfer_regular).max(state + transfer_state),
+                    "header uses max of summed dimensions, not summed transaction maxima"
+                );
+            } else {
+                assert_eq!(result.gas_used, fee + transfer_fee, "historical receipt accounting");
+            }
+        }
+    }
+
     /// Builds a signed EIP-8130 transaction with the given `gas_limit`. When
     /// `with_payer` is set, a distinct payer is named with a resolvable k1 payer
     /// auth blob (`K1_AUTHENTICATOR || sig`), so `payer_auth` is non-zero.
@@ -897,7 +1185,7 @@ mod tests {
                     ..Default::default()
                 })
                 .modify_cfg_chained(|cfg| {
-                    cfg.spec = BaseSpecId::new(BaseUpgrade::Everest);
+                    cfg.set_spec_and_mainnet_gas_params(BaseSpecId::new(BaseUpgrade::Everest));
                     cfg.chain_id = CHAIN_ID;
                 })
                 .build_with_inspector(NoOpInspector {});
@@ -916,5 +1204,27 @@ mod tests {
         .expect("EIP-8130 transaction is included");
 
         assert_eq!(result.eip8130_phase_statuses, vec![0x01, 0x00]);
+        let regular = result.inner.result.result.gas().block_regular_gas_used();
+        let state = result.inner.result.result.gas().block_state_gas_used();
+        let charged = result.inner.result.result.tx_gas_used();
+        let mut db = prepare_jovian_db(0);
+        let receipt_builder = AlloyReceiptBuilder::default();
+        let upgrades = ChainUpgrades::mainnet();
+        let evm = Context::base()
+            .with_db(&mut db)
+            .modify_cfg_chained(|cfg| {
+                cfg.set_spec_and_mainnet_gas_params(BaseSpecId::new(BaseUpgrade::Everest));
+            })
+            .build_with_inspector(NoOpInspector {});
+        let mut executor = BaseBlockExecutor::new(
+            evm,
+            BaseBlockExecutionCtx::default(),
+            &upgrades,
+            &receipt_builder,
+        );
+        executor.commit_transaction(result);
+        let (_, block) = executor.finish().expect("finish native transaction block");
+        assert_eq!(block.gas_used, regular.max(state), "native tx reports count in block gas");
+        assert_eq!(block.receipts[0].cumulative_gas_used(), charged, "native receipt uses charged gas");
     }
 }
