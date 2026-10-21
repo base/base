@@ -13,6 +13,7 @@ workspace = true
 
 [dependencies]
 # workspace
+base-metrics.workspace = true
 base-node-runner.workspace = true
 base-common-chains.workspace = true
 base-common-genesis.workspace = true
@@ -62,3 +63,7 @@ alloy-signer-local.workspace = true
 metrics-util = { workspace = true, features = ["debugging"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
 reth-transaction-pool = { workspace = true, features = ["test-utils"] }
+
+[features]
+default = [ "metrics" ]
+metrics = [ "base-metrics/metrics" ]

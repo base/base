@@ -26,7 +26,7 @@ use reth_transaction_pool::TransactionPool;
 use serde::{Deserialize, Deserializer, Serialize};
 use tracing::{debug, info};
 
-use crate::BlockCadence;
+use crate::{BlockCadence, SwapTransactionMetrics};
 
 /// The Swap Lane submission method.
 pub const SEND_SWAP_TRANSACTION_METHOD: &str = "base_sendSwapTransaction";
@@ -449,11 +449,6 @@ where
     }
 }
 
-/// Counter of `base_sendSwapTransaction` rejections that are not journaled, by `reason`: requests
-/// that fail before validation or come from a sender the access policy does not authorize for the
-/// requested capability.
-pub const UNJOURNALED_REJECTIONS_METRIC: &str = "txpool.swap_transaction.unjournaled_rejections";
-
 /// Join keys and outcome of one local `base_sendSwapTransaction` request, journaled when it
 /// returns. A request whose future is dropped journals nothing;
 /// [`base_execution_txpool::PendingAdmission`] still settles its ledger entry.
@@ -486,14 +481,15 @@ impl SwapAdmissionTrace {
     /// [`GroupLedger::next_sequence`](base_execution_candidates::GroupLedger::next_sequence),
     /// because one sender's request may be rejected repeatedly. Only rejections of a validated
     /// sender that the access policy authorizes for the requested capability are journaled; any
-    /// other rejection increments [`UNJOURNALED_REJECTIONS_METRIC`] by reason, so callers outside
+    /// other rejection increments [`SwapTransactionMetrics::unjournaled_rejections`] by reason, so
+    /// callers outside
     /// the allowlist cannot grow the journal.
     pub fn journal(&self, runtime: &CandidateRuntime, result: &RpcResult<SwapTransactionResponse>) {
         let ledger = &runtime.ledger;
         if let Err(error) = result
             && !self.authorized(runtime)
         {
-            metrics::counter!(UNJOURNALED_REJECTIONS_METRIC, "reason" => self.rejection_label(error))
+            SwapTransactionMetrics::unjournaled_rejections(self.rejection_label(error))
                 .increment(1);
             return;
         }
@@ -1770,7 +1766,9 @@ mod tests {
             .snapshot()
             .into_vec()
             .into_iter()
-            .filter(|(key, _, _, _)| key.key().name() == UNJOURNALED_REJECTIONS_METRIC)
+            .filter(|(key, _, _, _)| {
+                key.key().name() == "txpool.swap_transaction.unjournaled_rejections"
+            })
             .map(|(_, _, _, value)| match value {
                 metrics_util::debugging::DebugValue::Counter(count) => count,
                 other => panic!("unexpected metric value {other:?}"),
