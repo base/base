@@ -14,7 +14,7 @@ use base_node_runner::BaseNodeRunner;
 use base_observability_events::GlobalTransactionEventWriter;
 use base_shadow_indexer::{ShadowIndexerConfig, ShadowIndexerExtension};
 use base_txpool_rpc::{
-    CandidateCapabilityConfig, SendRawTransactionValidityConfig,
+    CandidateCapabilityConfig, CandidateEvaluation, SendRawTransactionValidityConfig,
     SendRawTransactionValidityExtension, SendSwapTransactionConfig, SendSwapTransactionExtension,
     SwapEndpointConfig, TxPoolRpcConfig, TxPoolRpcExtension,
 };
@@ -91,6 +91,11 @@ fn main() {
                     candidates.group_lifetime_secs,
                 ),
                 endpoint: SwapEndpointConfig::default(),
+                evaluation: if candidates.builder.is_some() {
+                    CandidateEvaluation::Builder
+                } else {
+                    CandidateEvaluation::IngressOnly
+                },
             });
         }
         runner.install_ext::<ShadowIndexerExtension>(shadow_indexer_config);
