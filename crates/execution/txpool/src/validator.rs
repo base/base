@@ -74,14 +74,17 @@ pub enum BaseTxPoolError {
         /// Static validation label for the failure.
         reason: &'static str,
     },
-    /// The transaction failed because of its `sender_auth` or `payer_auth`.
+    /// The transaction failed a check whose outcome depends on its
+    /// `sender_auth` or `payer_auth`: the authentication itself, or a limit
+    /// that counts their bytes or gas (encoded size, intrinsic gas, the
+    /// EIP-7825 cap, the DA footprint).
     ///
     /// The transaction hash does not cover either field, so anyone can attach
-    /// invalid authentication to a valid body under that body's hash. This
-    /// error is therefore not a bad transaction: the network layer must not
-    /// cache the hash as invalid, or a copy with junk authentication would
-    /// block the valid transaction.
-    #[error("EIP-8130 authentication failed: {reason}")]
+    /// invalid or oversized authentication to a valid body under that body's
+    /// hash. This error is therefore not a bad transaction: the network layer
+    /// must not cache the hash as invalid, or such a copy would block the
+    /// valid transaction.
+    #[error("EIP-8130 authentication-dependent check failed: {reason}")]
     Eip8130Authentication {
         /// Static validation label for the failure.
         reason: &'static str,
@@ -1202,7 +1205,9 @@ where
             &IntrinsicGasInput::worst_case(sender, nonce_key_first_use, keystore),
         )
         .map_err(|err| {
-            Self::eip8130_error(match err {
+            // Both failures are decided by the authenticators named in
+            // `sender_auth` / `payer_auth`, which the hash does not cover.
+            Self::eip8130_auth_error(match err {
                 IntrinsicGasError::PayerAuthGasExceeded(_) => {
                     "payer authentication gas exceeds MAX_AUTHENTICATION_GAS"
                 }
@@ -1220,12 +1225,19 @@ where
         }
         // EIP-7825 (from Azul): `gas_limit` plus the payer authentication
         // metered on top of it is bounded by the per-transaction gas cap,
-        // matching execution.
+        // matching execution. A `gas_limit` over the cap on its own is a bad
+        // body; one pushed over only by `payer_auth` gas is not, because the
+        // hash does not cover `payer_auth`.
         if self.chain_spec().is_azul_active_at_timestamp(now)
             && FeeCheck::max_chargeable_gas(signed.tx().gas_limit, intrinsic.payer_auth)
                 > MAX_TX_GAS_LIMIT_OSAKA
         {
-            return Err(InvalidTransactionError::GasLimitTooHigh.into());
+            if signed.tx().gas_limit > MAX_TX_GAS_LIMIT_OSAKA {
+                return Err(InvalidTransactionError::GasLimitTooHigh.into());
+            }
+            return Err(Self::eip8130_auth_error(
+                "gas limit plus payer authentication gas exceeds the per-transaction cap",
+            ));
         }
 
         let payer_account = state
@@ -1877,10 +1889,14 @@ where
         &self,
         signed: &Eip8130Signed,
     ) -> Result<(), InvalidPoolTransactionError> {
+        // The encoded size counts `sender_auth` and `payer_auth`, which the
+        // hash does not cover, so an oversized copy of a valid body must not
+        // mark that body's hash as bad.
         let size = signed.encode_2718_len();
         let limit = self.inner.max_tx_input_bytes();
         if size > limit {
-            return Err(InvalidPoolTransactionError::OversizedData { size, limit });
+            tracing::debug!(size, limit, "EIP-8130 transaction exceeds max_tx_input_bytes");
+            return Err(Self::eip8130_auth_error("encoded size exceeds max_tx_input_bytes"));
         }
         // Cheap shape checks run before the fork gate and signature recovery.
         Eip8130Structure::validate(signed).map_err(Self::map_structural_error)?;
@@ -1988,14 +2004,21 @@ where
                 );
                 let block_gas_limit = self.inner.block_gas_limit();
                 if da_footprint > block_gas_limit {
-                    return TransactionValidationOutcome::Invalid(
-                        valid_tx.into_transaction(),
+                    // An EIP-8130 DA size counts its authentication, which the
+                    // hash does not cover, so it must not mark the hash as bad.
+                    let error = if valid_tx.transaction().as_eip8130().is_some() {
+                        Self::eip8130_auth_error("DA footprint exceeds block gas limit")
+                    } else {
                         InvalidPoolTransactionError::other(
                             BaseTxPoolError::DaFootprintExceedsBlockGasLimit {
                                 transaction_da_footprint: da_footprint,
                                 block_gas_limit,
                             },
-                        ),
+                        )
+                    };
+                    return TransactionValidationOutcome::Invalid(
+                        valid_tx.into_transaction(),
+                        error,
                     );
                 }
             }
@@ -2601,17 +2624,33 @@ mod tests {
     #[test]
     fn rejects_eip8130_over_encoded_size_limit() {
         let signed = sign_eoa_eip8130(minimal_valid_eoa_tx());
-        let size = signed.encode_2718_len();
-        let limit = size - 1;
-        let validator = build_test_validator_with_max_tx_input_bytes(limit);
+        let validator = build_test_validator_with_max_tx_input_bytes(signed.encode_2718_len() - 1);
 
-        assert!(matches!(
+        assert_auth_error(
             validator.validate_eip8130_structural(&signed),
-            Err(InvalidPoolTransactionError::OversizedData {
-                size: rejected_size,
-                limit: rejected_limit,
-            }) if rejected_size == size && rejected_limit == limit
-        ));
+            "encoded size exceeds max_tx_input_bytes",
+        );
+    }
+
+    /// A copy of a valid transaction with padded `sender_auth` shares its hash,
+    /// so rejecting the oversized copy must not mark that hash as bad.
+    #[test]
+    fn oversized_auth_copy_does_not_mark_valid_hash_bad() {
+        let signed = sign_eoa_eip8130(TxEip8130 {
+            sender: Some(Address::repeat_byte(0xaa)),
+            ..minimal_valid_eoa_tx()
+        });
+        let mut padded_auth = signed.sender_auth().to_vec();
+        padded_auth.resize(padded_auth.len() + 1024, 0);
+        let padded =
+            Eip8130Signed::new(signed.tx().clone(), Bytes::from(padded_auth), Bytes::new());
+        assert_eq!(signed.hash(), padded.hash());
+
+        let validator = build_test_validator_with_max_tx_input_bytes(signed.encode_2718_len());
+        assert_auth_error(
+            validator.validate_eip8130_structural(&padded),
+            "encoded size exceeds max_tx_input_bytes",
+        );
     }
 
     #[test]
