@@ -488,9 +488,14 @@ impl LoadRunner {
     /// Runs the load test and returns metrics summary.
     pub async fn run(&mut self) -> Result<MetricsSummary> {
         if self.gas_estimator.is_none() {
-            let sender = self.accounts.accounts().first()
-                .ok_or_else(|| BaselineError::Config("load requires a funded sender".into()))?.address;
-            self.gas_estimator = Some(crate::rpc::GasEstimator::detect(self.client.clone(), sender).await?);
+            let sender = self
+                .accounts
+                .accounts()
+                .first()
+                .ok_or_else(|| BaselineError::Config("load requires a funded sender".into()))?
+                .address;
+            self.gas_estimator =
+                Some(crate::rpc::GasEstimator::detect(self.client.clone(), sender).await?);
         }
 
         if self.b20_run_salt.is_none()
@@ -1546,12 +1551,18 @@ impl LoadRunner {
                                 gas: Some(prepared.gas_limit),
                                 ..Default::default()
                             };
-                            prepared.gas_limit = estimator.apply(request, prepared.from).await?.gas
+                            prepared.gas_limit = estimator
+                                .apply(request, prepared.from)
+                                .await?
+                                .gas
                                 .expect("estimated request has gas");
                         }
                         Ok::<_, BaselineError>(job)
                     }
-                })).buffered(32).try_collect().await?;
+                }))
+                .buffered(32)
+                .try_collect()
+                .await?;
             }
 
             let base_fee = *config.base_fee_rx.borrow_and_update();

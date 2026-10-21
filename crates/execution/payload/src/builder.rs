@@ -731,6 +731,10 @@ impl ExecutionInfo {
     ///
     /// Amsterdam checks independent regular/state budgets; `amsterdam_tx_gas_cap` is the
     /// regular-gas cap, while the full reservation must fit the remaining state budget.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "admission keeps independent gas, DA, and fork-specific limits explicit"
+    )]
     pub fn is_tx_over_limits(
         &self,
         tx_da_size: u64,

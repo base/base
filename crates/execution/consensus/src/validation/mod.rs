@@ -867,7 +867,8 @@ mod tests {
     #[test]
     fn amsterdam_block_gas_header_validation() {
         for amsterdam in [false, true] {
-            let chainspec = if amsterdam { amsterdam_chainspec() } else { pre_amsterdam_chainspec() };
+            let chainspec =
+                if amsterdam { amsterdam_chainspec() } else { pre_amsterdam_chainspec() };
             let receipts = vec![deposit_receipt()];
             let mut header = canonical_header(AMSTERDAM_TIMESTAMP, &receipts);
             let receipt_gas = header.gas_used;
