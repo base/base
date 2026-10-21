@@ -7,6 +7,7 @@ use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use base_consensus_disc::LocalNode;
+use base_consensus_gossip::{ConnectionLimitsConfig, PeerTargets};
 use base_consensus_node::{
     EngineClientResult, NetworkActor, NetworkBuilder, NetworkEngineClient, NodeActor,
 };
@@ -25,6 +26,8 @@ pub(crate) struct TestNetworkBuilder {
     chain_id: u64,
     unsafe_block_signer: Address,
     custom_keypair: Option<Keypair>,
+    connection_limits_config: Option<ConnectionLimitsConfig>,
+    peer_targets: Option<PeerTargets>,
 }
 
 impl TestNetworkBuilder {
@@ -35,7 +38,28 @@ impl TestNetworkBuilder {
     pub(crate) fn new() -> Self {
         let chain_id = rand::rng().next_u64();
 
-        Self { chain_id, unsafe_block_signer: Address::ZERO, custom_keypair: None }
+        Self {
+            chain_id,
+            unsafe_block_signer: Address::ZERO,
+            custom_keypair: None,
+            connection_limits_config: None,
+            peer_targets: None,
+        }
+    }
+
+    /// Sets the peer count targets for the next network built.
+    pub(crate) const fn with_peer_targets(mut self, peer_targets: PeerTargets) -> Self {
+        self.peer_targets = Some(peer_targets);
+        self
+    }
+
+    /// Sets the connection limits configuration for the next network built.
+    pub(crate) const fn with_connection_limits_config(
+        mut self,
+        config: ConnectionLimitsConfig,
+    ) -> Self {
+        self.connection_limits_config = Some(config);
+        self
     }
 
     /// Sets a sequencer keypair for the network.
@@ -85,7 +109,7 @@ impl TestNetworkBuilder {
         gossip_multiaddr.push(Protocol::Tcp(0));
 
         // Create a new network actor. No external connections
-        let builder = NetworkBuilder::new(
+        let mut builder = NetworkBuilder::new(
             // Create a new rollup config. We don't need to specify any of the fields.
             self.rollup_config(),
             self.unsafe_block_signer,
@@ -96,6 +120,13 @@ impl TestNetworkBuilder {
             Some(BlockSigner::Local(local_node_key.into())),
         )
         .with_bootnodes(bootnodes.into_iter().map(Into::into).collect::<Vec<BootNode>>().into());
+
+        if let Some(connection_limits_config) = self.connection_limits_config.take() {
+            builder = builder.with_connection_limits_config(connection_limits_config);
+        }
+        if let Some(peer_targets) = self.peer_targets.take() {
+            builder = builder.with_peer_targets(peer_targets);
+        }
 
         let (blocks_tx, blocks_rx) = mpsc::channel(1024);
         let (inbound_data, actor) = NetworkActor::new(

@@ -33,7 +33,7 @@ use tokio::{
 
 use crate::{
     Behaviour, BlockHandler, ConnectionGate, ConnectionGater, ConnectionLimitsConfig, Event,
-    GossipDriverBuilder, Handler, HandlerEncodeError, Metrics, PublishError,
+    GossipDriverBuilder, Handler, HandlerEncodeError, Metrics, PeerTargets, PublishError,
 };
 
 /// Configuration applied when constructing a [`GossipDriver`].
@@ -45,6 +45,8 @@ pub struct GossipDriverConfig {
     pub peer_monitoring: Option<PeerMonitoring>,
     /// The configured libp2p connection limits enforced by the swarm.
     pub connection_limits_config: ConnectionLimitsConfig,
+    /// Peer count targets for discovery dialing and trimming.
+    pub peer_targets: PeerTargets,
 }
 
 /// A driver for a [`Swarm`] instance.
@@ -71,6 +73,8 @@ pub struct GossipDriver<G: ConnectionGate> {
     pub connection_gate: G,
     /// The configured libp2p connection limits enforced by the swarm.
     pub connection_limits_config: ConnectionLimitsConfig,
+    /// Peer count targets for discovery dialing and trimming.
+    pub peer_targets: PeerTargets,
     /// Tracks ping times for peers.
     pub ping: Arc<Mutex<HashMap<PeerId, Duration>>>,
     /// Next check for obsolete block topics. Kept across polls so busy traffic
@@ -113,6 +117,7 @@ where
             peer_connection_start: Default::default(),
             connection_gate: gate,
             connection_limits_config: config.connection_limits_config,
+            peer_targets: config.peer_targets,
             ping: Arc::new(Mutex::new(Default::default())),
             next_topic_retirement: TokioInstant::now(),
         };
@@ -297,8 +302,13 @@ where
         cleared
     }
 
-    /// Dials the given [`Enr`].
+    /// Dials the given [`Enr`] from discovery, unless the swarm already has
+    /// [`PeerTargets::low`] peers.
     pub fn dial(&mut self, enr: Enr) {
+        if self.connected_peers() >= self.peer_targets.low as usize {
+            trace!(target: "gossip", low = self.peer_targets.low, "At low-tide peer count, not dialing discovered peer");
+            return;
+        }
         let validation = EnrValidation::validate(&enr, self.handler.rollup_config.l2_chain_id.id());
         if validation.is_invalid() {
             trace!(target: "gossip", chain_id = %self.handler.rollup_config.l2_chain_id.id(), validation = %validation, "Invalid Base ENR");
@@ -353,6 +363,48 @@ where
                 Metrics::dial_peer_error("connection_error").increment(1.0);
             }
         }
+    }
+
+    /// Trims peers once the swarm has at least [`PeerTargets::high`] established connections.
+    ///
+    /// Disconnects unprotected peers connected for at least [`PeerTargets::grace_period`], lowest
+    /// gossip score first, until the swarm is back at [`PeerTargets::low`] peers. Returns the number
+    /// of peers disconnected.
+    pub fn trim_peers(&mut self) -> usize {
+        let established = self.swarm.network_info().connection_counters().num_established();
+        if established < self.peer_targets.high {
+            return 0;
+        }
+        let connected = self.connected_peers();
+
+        let protected: HashSet<PeerId> =
+            self.connection_gate.list_protected_peers().into_iter().collect();
+        let gossipsub = &self.swarm.behaviour().gossipsub;
+        let mut candidates: Vec<(PeerId, f64)> = self
+            .swarm
+            .connected_peers()
+            .filter(|peer_id| !protected.contains(peer_id))
+            .filter(|peer_id| {
+                self.peer_connection_start
+                    .get(peer_id)
+                    .is_some_and(|start| start.elapsed() >= self.peer_targets.grace_period)
+            })
+            .map(|peer_id| (*peer_id, gossipsub.peer_score(peer_id).unwrap_or_default()))
+            .collect();
+        candidates.sort_by(|a, b| a.1.total_cmp(&b.1));
+
+        let excess = connected.saturating_sub(self.peer_targets.low as usize);
+        let mut trimmed = 0;
+        for (peer_id, _) in candidates.into_iter().take(excess) {
+            if self.swarm.disconnect_peer_id(peer_id).is_ok() {
+                trimmed += 1;
+            }
+        }
+
+        if trimmed > 0 {
+            info!(target: "gossip", trimmed, peer_count = connected - trimmed, low = self.peer_targets.low, "Trimmed peers at the high-tide connection count");
+        }
+        trimmed
     }
 
     /// Aborts every outbound connection attempt currently tracked as pending.

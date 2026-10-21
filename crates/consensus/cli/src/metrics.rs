@@ -45,8 +45,14 @@ impl CliMetrics {
     /// The advertised udp port via P2P.
     pub const P2P_ADVERTISE_UDP_PORT: &'static str = "base_node_advertise_udp";
 
+    /// The low-tide peer count.
+    pub const P2P_PEERS_LO: &'static str = "base_node_peers_lo";
+
     /// The high-tide peer count.
     pub const P2P_PEERS_HI: &'static str = "base_node_peers_hi";
+
+    /// The hard cap on established libp2p connections.
+    pub const P2P_PEERS_MAX: &'static str = "base_node_peers_max";
 
     /// The maximum number of outbound libp2p connections that may be pending at once.
     pub const P2P_MAX_PENDING_OUTGOING: &'static str = "base_node_max_pending_outgoing";
@@ -105,7 +111,9 @@ impl CliMetrics {
                     Self::P2P_ADVERTISE_UDP_PORT,
                     p2p.advertise_udp_port.map_or_else(|| "auto".to_string(), |p| p.to_string())
                 ),
+                (Self::P2P_PEERS_LO, p2p.peers_lo.to_string()),
                 (Self::P2P_PEERS_HI, p2p.peers_hi.to_string()),
+                (Self::P2P_PEERS_MAX, p2p.peers_max.unwrap_or(p2p.peers_hi).to_string()),
                 (Self::P2P_MAX_PENDING_OUTGOING, p2p.max_pending_outgoing.to_string()),
                 (Self::P2P_IDENTIFY_PEERSTORE_SIZE, p2p.identify_peerstore_size.to_string()),
                 (Self::P2P_GOSSIP_MESH_D, p2p.gossip_mesh_d.to_string()),

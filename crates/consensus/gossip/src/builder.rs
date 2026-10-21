@@ -14,7 +14,7 @@ use tokio::sync::watch::{self};
 use crate::{
     Behaviour, BlockHandler, ConnectionLimitsConfig, DEFAULT_MAX_ESTABLISHED_CONNECTIONS,
     DEFAULT_MAX_IDENTIFY_PEERSTORE_PEERS, GaterConfig, GossipDriver, GossipDriverBuilderError,
-    GossipDriverConfig, Handler,
+    GossipDriverConfig, Handler, PeerTargets,
 };
 
 /// A builder for the [`GossipDriver`].
@@ -41,6 +41,8 @@ pub struct GossipDriverBuilder {
     gater_config: Option<GaterConfig>,
     /// The connection limits enforced by the libp2p swarm.
     connection_limits_config: ConnectionLimitsConfig,
+    /// Peer count targets for discovery dialing and trimming.
+    peer_targets: PeerTargets,
     /// Maximum number of peers to retain identify metadata for.
     max_identify_peerstore_peers: NonZeroUsize,
     /// Topic scoring. Disabled by default.
@@ -67,6 +69,7 @@ impl GossipDriverBuilder {
             connection_limits_config: ConnectionLimitsConfig::new(
                 DEFAULT_MAX_ESTABLISHED_CONNECTIONS,
             ),
+            peer_targets: PeerTargets::new(),
             max_identify_peerstore_peers: DEFAULT_MAX_IDENTIFY_PEERSTORE_PEERS,
             rollup_config,
             topic_scoring: false,
@@ -82,6 +85,12 @@ impl GossipDriverBuilder {
     /// Sets the connection limits enforced by the libp2p swarm.
     pub const fn with_connection_limits_config(mut self, config: ConnectionLimitsConfig) -> Self {
         self.connection_limits_config = config;
+        self
+    }
+
+    /// Sets the peer count targets for discovery dialing and trimming.
+    pub const fn with_peer_targets(mut self, peer_targets: PeerTargets) -> Self {
+        self.peer_targets = peer_targets;
         self
     }
 
@@ -260,6 +269,7 @@ impl GossipDriverBuilder {
                     max_identify_peerstore_peers,
                     peer_monitoring: self.peer_monitoring,
                     connection_limits_config,
+                    peer_targets: self.peer_targets,
                 },
             ),
             signer_tx,

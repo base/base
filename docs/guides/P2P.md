@@ -474,7 +474,7 @@ The `connection_limits` behaviour caps pending and established connections and s
 protocol. It is the first field because libp2p calls each behaviour's connection hooks in field
 order, so it rejects excess connections before the other behaviours allocate handlers. By default
 it allows 30 established connections, 5 pending inbound, 16 pending outbound and 1 per peer. The
-CLI sets the established cap from `--p2p.peers.hi` and the pending outbound cap from
+CLI sets the established cap from `--p2p.peers.max` (default `--p2p.peers.hi`) and the pending outbound cap from
 `--p2p.max-pending-outgoing`.
 
 The `ping` behaviour sends periodic keepalive pings to connected peers and measures round-trip
@@ -494,8 +494,9 @@ around a block's contents — transactions, state root, gas used, etc.), selects
 the appropriate topic
 based on the block's timestamp and active upgrade, encodes it with version-appropriate
 serialization, and publishes it to gossipsub. Its `dial()` method takes an ENR from discovery,
-validates the chain ID, extracts the TCP multiaddr (a self-describing network address format used by
-libp2p, e.g. `/ip4/192.168.1.1/tcp/9222`), checks the connection gate, and initiates a connection.
+skips it if the node already has `--p2p.peers.lo` peers, validates the chain ID, extracts the TCP
+multiaddr (a self-describing network address format used by libp2p, e.g.
+`/ip4/192.168.1.1/tcp/9222`), checks the connection gate, and initiates a connection.
 
 
 ### Putting it all together: the Network Actor

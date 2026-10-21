@@ -16,7 +16,8 @@ use base_consensus_derive::ChainProvider;
 use base_consensus_disc::LocalNode;
 use base_consensus_gossip::{
     ConnectionLimitsConfig, DEFAULT_MAX_IDENTIFY_PEERSTORE_PEERS,
-    DEFAULT_MAX_PENDING_OUTGOING_CONNECTIONS, DEFAULT_PENDING_DIAL_TIMEOUT, GaterConfig,
+    DEFAULT_MAX_PENDING_OUTGOING_CONNECTIONS, DEFAULT_PEERS_HI, DEFAULT_PEERS_LO,
+    DEFAULT_PENDING_DIAL_TIMEOUT, GaterConfig, PeerTargets,
 };
 use base_consensus_node::NetworkConfig;
 use base_consensus_peers::{BootNode, BootStoreFile, PeerMonitoring, PeerScoreLevel};
@@ -85,10 +86,19 @@ pub struct P2PNetworkArgs {
     /// UDP port to bind Discv5 to. Same as TCP port if left 0.
     #[arg(long = "p2p.listen.udp", default_value = "9223", env = "BASE_NODE_P2P_LISTEN_UDP_PORT")]
     pub listen_udp_port: u16,
-    /// High-tide peer count. The node starts pruning peer connections slowly after reaching this
-    /// number.
-    #[arg(long = "p2p.peers.hi", default_value = "30", env = "BASE_NODE_P2P_PEERS_HI")]
+    /// Low-tide peer count. Discovery stops dialing new peers at this count, and trimming
+    /// disconnects peers back down to it.
+    #[arg(long = "p2p.peers.lo", default_value_t = DEFAULT_PEERS_LO, env = "BASE_NODE_P2P_PEERS_LO")]
+    pub peers_lo: u32,
+    /// High-tide peer count. Once the node has this many established connections, it trims
+    /// unprotected peers past their grace period back down to `p2p.peers.lo`.
+    #[arg(long = "p2p.peers.hi", default_value_t = DEFAULT_PEERS_HI, env = "BASE_NODE_P2P_PEERS_HI")]
     pub peers_hi: u32,
+    /// Hard cap on established libp2p connections, above which new connections are refused.
+    /// Defaults to `p2p.peers.hi`. Set it higher to keep accepting peers, including protected
+    /// ones, between trims.
+    #[arg(long = "p2p.peers.max", env = "BASE_NODE_P2P_PEERS_MAX")]
+    pub peers_max: Option<u32>,
     /// Maximum number of outbound libp2p connections that may be pending at once.
     #[arg(
         long = "p2p.max-pending-outgoing",
@@ -583,6 +593,17 @@ impl P2PArgs {
         l1_rpc_timeout: Duration,
         genesis_signer: Option<alloy_primitives::Address>,
     ) -> Result<NetworkConfig, P2PConfigError> {
+        let peers_max = self.peers_max.unwrap_or(self.peers_hi);
+        if !(self.peers_lo <= self.peers_hi && self.peers_hi <= peers_max) {
+            return Err(eyre::eyre!(
+                "peer limits must satisfy --p2p.peers.lo ({}) <= --p2p.peers.hi ({}) <= --p2p.peers.max ({})",
+                self.peers_lo,
+                self.peers_hi,
+                peers_max
+            )
+            .into());
+        }
+
         // Note: the advertised address is contained in the ENR for external peers from the
         // discovery layer to use.
 
@@ -688,7 +709,13 @@ impl P2PArgs {
             },
             connection_limits_config: ConnectionLimitsConfig {
                 max_pending_outgoing: self.max_pending_outgoing,
-                ..ConnectionLimitsConfig::new(self.peers_hi)
+                ..ConnectionLimitsConfig::new(peers_max)
+            },
+            peer_targets: PeerTargets {
+                low: self.peers_lo,
+                high: self.peers_hi,
+                grace_period: self.peers_grace,
+                ..PeerTargets::new()
             },
             max_identify_peerstore_peers: self.identify_peerstore_size,
             bootnodes,

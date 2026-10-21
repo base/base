@@ -90,6 +90,9 @@ impl NetworkDriver {
         let mut pending_dial_pruner = tokio::time::interval(PENDING_DIAL_PRUNE_INTERVAL);
         pending_dial_pruner.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
+        let mut peer_trimmer = tokio::time::interval(self.gossip.peer_targets.trim_interval);
+        peer_trimmer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
         // Start the block signer if it is configured.
         let signer =
             OptionFuture::from(self.signer.map(async |s| s.start().await)).await.transpose()?;
@@ -102,6 +105,7 @@ impl NetworkDriver {
             peer_score_inspector,
             gater_pruner,
             pending_dial_pruner,
+            peer_trimmer,
             signer,
         })
     }

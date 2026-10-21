@@ -54,6 +54,16 @@ pub const DEFAULT_MAX_ESTABLISHED_CONNECTIONS: u32 = 30;
 /// The default maximum number of established libp2p connections per peer.
 pub const DEFAULT_MAX_ESTABLISHED_CONNECTIONS_PER_PEER: u32 = 1;
 
+/// The default low-tide peer count, matching op-node's `p2p.peers.lo`.
+pub const DEFAULT_PEERS_LO: u32 = 20;
+
+/// The default high-tide peer count, matching op-node's `p2p.peers.hi`.
+pub const DEFAULT_PEERS_HI: u32 = 30;
+
+/// The default grace period before a new peer may be trimmed, matching op-node's
+/// `p2p.peers.grace`.
+pub const DEFAULT_PEERS_GRACE: Duration = Duration::from_secs(30);
+
 /// Domain tag for malformed snappy messages in gossip message IDs.
 const DOMAIN_INVALID_SNAPPY: [u8; 4] = [0x0, 0x0, 0x0, 0x0];
 
@@ -88,6 +98,10 @@ pub const DEFAULT_PENDING_DIAL_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// How often the network actor aborts outbound dials that exceeded their pending timeout.
 pub const PENDING_DIAL_PRUNE_INTERVAL: Duration = Duration::from_secs(5);
+
+/// The default interval between `GossipDriver::trim_peers` calls, matching op-node's connection
+/// manager silence period.
+pub const DEFAULT_PEER_TRIM_INTERVAL: Duration = Duration::from_secs(60);
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 // Config Building
@@ -140,6 +154,44 @@ impl From<ConnectionLimitsConfig> for ConnectionLimits {
             .with_max_established_outgoing(Some(config.max_established_outgoing))
             .with_max_established(Some(config.max_established))
             .with_max_established_per_peer(Some(config.max_established_per_peer))
+    }
+}
+
+/// Soft peer count targets in the style of op-node's connection manager, enforced by trimming
+/// rather than by refusing connections.
+///
+/// Discovery stops dialing at `low` peers, leaving room for inbound connections. Every
+/// `trim_interval`, if the swarm has at least `high` established connections, the driver
+/// disconnects unprotected peers that have been connected for at least `grace_period` until the
+/// count is back at `low`. Connections above `high` are only refused at the hard
+/// [`ConnectionLimitsConfig::max_established`] cap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PeerTargets {
+    /// Peer count at which discovery stops dialing and to which trimming reduces the swarm.
+    pub low: u32,
+    /// Established connection count at which trimming starts.
+    pub high: u32,
+    /// How long a newly connected peer is exempt from trimming.
+    pub grace_period: Duration,
+    /// How often the network actor checks whether to trim.
+    pub trim_interval: Duration,
+}
+
+impl PeerTargets {
+    /// Creates peer targets with op-node's defaults.
+    pub const fn new() -> Self {
+        Self {
+            low: DEFAULT_PEERS_LO,
+            high: DEFAULT_PEERS_HI,
+            grace_period: DEFAULT_PEERS_GRACE,
+            trim_interval: DEFAULT_PEER_TRIM_INTERVAL,
+        }
+    }
+}
+
+impl Default for PeerTargets {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

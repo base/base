@@ -5,7 +5,7 @@ use std::num::NonZeroUsize;
 use alloy_primitives::Address;
 use base_common_genesis::RollupConfig;
 use base_consensus_disc::LocalNode;
-use base_consensus_gossip::{ConnectionLimitsConfig, GaterConfig};
+use base_consensus_gossip::{ConnectionLimitsConfig, GaterConfig, PeerTargets};
 use base_consensus_peers::{BootNodes, BootStoreFile, PeerMonitoring, PeerScoreLevel};
 use base_consensus_sources::BlockSigner;
 use libp2p::{Multiaddr, identity::Keypair};
@@ -45,6 +45,8 @@ pub struct NetworkConfig {
     pub gater_config: GaterConfig,
     /// The connection limits enforced by the libp2p swarm.
     pub connection_limits_config: ConnectionLimitsConfig,
+    /// Peer count targets for discovery dialing and trimming.
+    pub peer_targets: PeerTargets,
     /// Maximum number of peers to retain identify metadata for.
     pub max_identify_peerstore_peers: NonZeroUsize,
     /// An optional list of bootnode ENRs to start the node with.
@@ -97,6 +99,7 @@ impl NetworkConfig {
             bootstore: Default::default(),
             gater_config: Default::default(),
             connection_limits_config: Default::default(),
+            peer_targets: Default::default(),
             max_identify_peerstore_peers:
                 base_consensus_gossip::DEFAULT_MAX_IDENTIFY_PEERSTORE_PEERS,
             gossip_config: base_consensus_gossip::default_config(),
