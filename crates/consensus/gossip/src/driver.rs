@@ -1031,6 +1031,8 @@ mod tests {
         assert_eq!(driver.clear_pending_connections(), 0);
     }
 
+    // Linux routes the entire 127.0.0.0/8 range to loopback without configuring an alias.
+    #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn fresh_dial_port_avoids_listener_on_another_interface() {
         for reuse in [true, false] {
