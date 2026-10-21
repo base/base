@@ -22,7 +22,7 @@ These example activation timestamps are 2030-03-17 17:46:40 UTC / 12:46:40 EST. 
 
 ## Pinned implementation inventory
 
-The stack pins revm **43.0.3** and Base Reth **base-v2.7.0.1**, commit `de52d8204b08e52b4dc719d7b4e59b6c7ef93b2c`. Paths below are relative to the named upstream Cargo package. These are implementation snapshots, not a promise that future revisions of the Amsterdam meta-EIP have the same contents.
+The stack pins revm **43.0.3**, alloy-evm **0.39.0**, and Base Reth **base-v2.7.0.1**, commit `de52d8204b08e52b4dc719d7b4e59b6c7ef93b2c`. Paths below are relative to the named upstream Cargo package. These are implementation snapshots, not a promise that future revisions of the Amsterdam meta-EIP have the same contents.
 
 | EIP | Upstream implementation and gate | Base status |
 | --- | --- | --- |
@@ -39,20 +39,48 @@ The stack pins revm **43.0.3** and Base Reth **base-v2.7.0.1**, commit `de52d820
 | 8024, extended stack operations | `revm-interpreter-43.0.2/src/instructions/stack.rs:63,80,97` | Amsterdam-gated DUPN/SWAPN/EXCHANGE; no additional enable flag |
 | 7843, slot number | `revm-interpreter-43.0.2/src/instructions/block_info.rs:83` | Header slot already wired to L2 block number by BAL base; **gap:** Base EVM environment currently sets `slot_num=0`, so opcode/header parity is not established |
 | 7904, compute cost analysis | Informational in [EIP-7773](https://eips.ethereum.org/EIPS/eip-7773); no independent activation switch | Not a separate consensus activation |
-| 7778, block gas without refunds | `revm-context-interface-43.0.2/src/result.rs:271` exposes pre-refund `block_regular_gas_used()` | **Integration gap:** Base payload accounting still accumulates `tx_gas_used()`; full L1 block-accounting parity is not established |
+| 7778, block gas without refunds | `revm-context-interface-43.0.2/src/result.rs:271` exposes pre-refund `block_regular_gas_used()` | Wired with 8037 in the shared executor, basic builder and post-execution validation; header gas uses the maximum of independent regular/state totals, not receipt totals |
 | 7997, deterministic factory | Chain-state requirement at canonical address `0x4e59b44847b379578588920cA78FbF26c0B4956C`, already referenced by `Eip8130Contracts::CREATE2_FACTORY` (`crates/common/consensus/src/transaction/eip8130/addresses.rs:36-41`); not an execution-client implementation gap | A custom genesis may need the factory in its `alloc` if tests exercise it; this PR does not provision it |
 | 7688, 7732, 8045, 8061, 8282 | Ethereum consensus-layer changes in the Amsterdam meta-EIP | Outside Base EL spec selection; no L1 consensus behavior imported |
 
 No additional Amsterdam enable switch was found disabled in Base's production `BaseEvmEnvBuilder::cfg_env`: it calls `with_spec_and_mainnet_gas_params`, enabling 8037/2780 and retaining upstream defaults for 7708/8246. Optional simulation bypass features do not themselves disable consensus checks. This baseline does not implement unverified or missing meta-EIP items.
 
+## Amsterdam block gas accounting
+
+At Denim and later, the shared executor and basic builder mirror the pinned Ethereum implementation:
+
+- Per transaction, charged gas is `max(total spent - ordinary refund, calldata floor)`. Receipts accumulate this scalar value, including deposits. The header no longer has to equal the last receipt's `cumulativeGasUsed`.
+- Block regular gas is `E = max(total spent - final state spend, calldata floor)`, **before ordinary gas refunds** (EIP-7778). Block state gas is `S = final state spend`, after state-reservoir refills. Refill applies only to state created and removed within the same transaction; SELFDESTRUCT does not create such a refill.
+- The block header uses `gasUsed = max(sum(E), sum(S))`, not `sum(max(E, S))` or summed receipt gas. Both budgets are bounded by the existing block gas limit.
+- Before inclusion, `min(tx.gas, 16777216)` must fit the remaining regular budget, and **the full `tx.gas`** must fit the remaining state budget. Native transactions retain the existing additional payer-auth reservation. Deposits instead reserve their **full declared gas in both budgets**: they bypass the ordinary transaction cap and can report their full limit as regular gas on failure. Base's pre-Regolith deposit admission exemption is unchanged. Deposits and L1-info transactions count the regular/state usage reported by Base execution, without changing minting or fee rules.
+- Pre-Amsterdam admission, header gas and receipt semantics remain unchanged. Consensus still enforces `header.gasUsed <= header.gasLimit`; Amsterdam post-execution validation compares the header to execution's dual-budget result.
+
+Sources: alloy-evm `src/eth/block.rs:203-235,254-280,338-350`; Reth `crates/ethereum/payload/src/lib.rs:265-281,377-380,436-441`; revm-context-interface `src/result.rs:263-292`; [EIP-8037](https://eips.ethereum.org/EIPS/eip-8037), [EIP-7778](https://eips.ethereum.org/EIPS/eip-7778), [EIP-7825](https://eips.ethereum.org/EIPS/eip-7825). The pinned Amsterdam implementation applies the EIP-7825 cap to regular gas, rather than rejecting a state-heavy transaction solely because its declared gas exceeds that cap.
+
+**Existing Base fee policy is retained:** Jovian calculates the next base fee using `max(parent.gasUsed, parent DA footprint)`, now receiving the corrected Amsterdam header value. Existing chain/extra-data elasticity, denominator, minimum base fee and block gas-limit controls are unchanged (`crates/execution/chainspec/src/basefee.rs:63-83`). This imports L1 Amsterdam block accounting, not Ethereum's separate fee-policy parameters. No Base-tuned CPSB, state-gas price or new capacity ratio is introduced.
+
 ## Builder caveats and validation scope
 
-`--builder.max_gas_per_txn` compares `result.tx_gas_used()` in `crates/builder/core/src/flashblocks/context.rs:1333-1349`. It is a builder admission policy, not a new Amsterdam regular-gas-only cap. State-heavy transactions can therefore meet a different builder-policy bound from the EVM regular-gas cap. This baseline does not redesign that policy. Payload cumulative accounting also uses `tx_gas_used()`; BAL budgeting remains inherited from the stack.
+`--builder.max_gas_per_txn` is unchanged. It is a builder policy, not the upstream EIP-7825 regular-gas cap of **16,777,216**. The basic builder uses Amsterdam's independent block budgets and retains BAL budgeting. Native EIP-8430/type `0x79` pricing is intentionally unchanged for now; its reported regular/state gas is included in those block counters, including the existing conservative payer-auth reservation.
 
-The focused environment regression covers pre-Denim, Denim, pre-Everest and Everest, the upstream configuration flags, code-deposit state gas, the gas-table zero/nonzero calldata floor, CALL-value pricing, code/initcode limits, and the retained Azul cap. The calldata check omits recipient/value decomposition and is not a full runtime transaction-floor test. It does not prove full block-building, deposit, AA, slot-opcode or transfer-log conformance. No devnet, node or load test is part of this baseline.
+The focused environment regression covers pre-Denim, Denim, pre-Everest and Everest, the upstream configuration flags, code-deposit state gas, the gas-table zero/nonzero calldata floor, CALL-value pricing, code/initcode limits, and the retained Azul cap. The calldata check omits recipient/value decomposition and is not a full runtime transaction-floor test. Additional executor, builder and consensus tests cover Amsterdam block accounting, ordinary storage refunds, state-heavy/mixed blocks, admission boundaries and native transaction accounting. These checks do not establish full deposit, slot-opcode or transfer-log conformance.
 
 Run the focused check with:
 
 ```sh
 cargo test -p base-execution-evm everest_inherits_amsterdam_l1_parameters -- --test-threads=1
+cargo test -p base-common-evm amsterdam_block_gas -- --test-threads=1
+cargo test -p base-common-evm eip8130_phase_statuses_survive_execution_on_another_thread -- --test-threads=1
+cargo test -p base-execution-payload-builder amsterdam_block_gas -- --test-threads=1
+cargo test -p base-execution-consensus amsterdam_block_gas -- --test-threads=1
 ```
+
+## Local verification
+
+A light local devnet rerun used 120,000,000 block gas, Denim/Everest active at genesis and 200 ms runtime cadence. Existing/new-recipient ETH transfers, ERC-20/WETH transfers, 24 KiB and 64 KiB deployments, four fresh SSTOREs and a real L1 deposit succeeded. All eight sampled user-transaction blocks and the deposit block matched `max(sum(E), sum(S))` in debug traces and were canonically imported by the follower.
+
+For the 64 KiB block, regular gas summed to **4,299,587** and state gas to **100,453,680**. Before this integration its header reported summed receipt gas, **100,857,269**. Afterward its header correctly reports **100,453,680**, while the receipt sum remains **100,857,269** and the deployment's receipt gas remains **100,776,882**. The follower's raw BAL matched the builder's bytes and both header commitments.
+
+The 115M declared-gas deployment was admitted at 120M and rejected after the local L1 SystemConfig lowered the block limit to 40M; the limit was restored to 120M. The existing `--builder.max_gas_per_txn=40000000` flag did not prevent its inclusion by the basic builder; that flag was not changed. Ten consecutive timestamp intervals were 200 ms. This is a smoke test, not a throughput benchmark.
+
+Native `0x79` execution/commit accounting is covered by a unit test; no native transaction was submitted on this devnet. Safe/finalized derivation was not qualified. The local logs retained temporary follower L1-origin lookup resets and L1 beacon/validator timeouts; the tested unsafe canonical imports and BAL checks succeeded. No load test was run, and all task-created devnet containers/network were removed.
