@@ -2,19 +2,18 @@ use std::{collections::HashSet, ops::RangeInclusive, time::Duration};
 
 use alloy_network::TxSigner;
 use alloy_primitives::{Address, B256};
-use alloy_provider::{Provider, RootProvider};
+use alloy_provider::Provider;
 use alloy_rpc_types_eth::Filter;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolCall, SolEvent};
 use base_common_consensus::Predeploys;
-use base_tx_manager::SimpleTxManager;
 use base_withdrawer::{
-    BroadcastJournal, Network, ProofSystem, ResolvedProofSystem, Secret, SignerSource, Withdrawal,
-    WithdrawalPortal, WithdrawalRpc, WithdrawalSigner, WithdrawalStatus, Withdrawer,
-    WithdrawerConfig, WithdrawerError,
+    Network, ProofSystem, ResolvedProofSystem, Secret, SignerSource, SubmitError, Withdrawal,
+    WithdrawalPortal, WithdrawalRpc, WithdrawalSender, WithdrawalSigner, WithdrawalStatus,
+    Withdrawer, WithdrawerConfig, WithdrawerError,
 };
 use eyre::{WrapErr, ensure};
-use tokio::time::timeout;
+use tokio::time::{Instant, timeout_at};
 use tracing::{error, info, warn};
 
 use crate::{ConfirmArgs, CrossDomainMessenger, FeeDisburser, StandardBridge};
@@ -55,7 +54,7 @@ pub struct ConfirmSender<'a> {
     /// Address used for proof selection and gas estimation.
     pub address: Address,
     /// Shared manager for serialized L1 sends.
-    pub manager: Option<&'a SimpleTxManager<RootProvider>>,
+    pub manager: Option<&'a WithdrawalSender>,
 }
 
 /// Readiness timing from the L1 head used by the withdrawal status check.
@@ -265,7 +264,7 @@ impl ConfirmJob {
                 .is_ok_and(|call| call._from == self.args.l2_fee_disburser_address)
     }
 
-    /// Processes one withdrawal, retaining typed failures and signed finalization errors.
+    /// Processes one withdrawal within its deadline, rechecking only unpublished finalizations.
     pub async fn confirm_withdrawal(
         &self,
         withdrawer: &Withdrawer,
@@ -273,12 +272,15 @@ impl ConfirmJob {
         proofs: ResolvedProofSystem,
         sender: &ConfirmSender<'_>,
         withdrawal: &Withdrawal,
-        pending_transaction: &BroadcastJournal,
     ) -> ConfirmOutcome {
+        let deadline = Instant::now() + self.args.withdrawal_timeout;
         let result: eyre::Result<ConfirmOutcome> = async {
             let hash = withdrawal.hash();
             let submitter = sender.address;
-            let status = withdrawer.status(rpc, proofs, withdrawal, submitter).await?;
+            let status =
+                timeout_at(deadline, withdrawer.status(rpc, proofs, withdrawal, submitter))
+                    .await
+                    .map_err(WithdrawerError::Timeout)??;
             info!(withdrawal_hash = %hash, ?status, "withdrawal decision");
             match status {
                 WithdrawalStatus::Finalized => {
@@ -294,10 +296,14 @@ impl ConfirmJob {
                     Ok(ConfirmOutcome::Pending { timing: Some(timing) })
                 }
                 WithdrawalStatus::Prove => {
-                    let calldata = withdrawer.prove_calldata(rpc, proofs, withdrawal).await?;
+                    let calldata =
+                        timeout_at(deadline, withdrawer.prove_calldata(rpc, proofs, withdrawal))
+                            .await
+                            .map_err(WithdrawerError::Timeout)??;
                     let transaction_hash = withdrawer
-                        .submit(rpc, submitter, sender.manager, calldata, None, pending_transaction)
-                        .await?;
+                        .submit(rpc, submitter, sender.manager, calldata, None, deadline)
+                        .await
+                        .map_err(WithdrawerError::from)?;
                     if self.args.dry_run {
                         info!(withdrawal_hash = %hash, "dry run proof prepared");
                     } else {
@@ -312,42 +318,69 @@ impl ConfirmJob {
                     .abi_encode()
                     .into();
                     match withdrawer
-                        .submit(rpc, submitter, sender.manager, calldata, Some(hash), pending_transaction)
+                        .submit(rpc, submitter, sender.manager, calldata, Some(hash), deadline)
                         .await
                     {
                         Ok(transaction_hash) => {
                             if self.args.dry_run {
                                 info!(withdrawal_hash = %hash, "dry run finalization prepared");
                             } else {
-                                info!(withdrawal_hash = %hash, ?transaction_hash, "withdrawal finalized");
+                                info!(
+                                    withdrawal_hash = %hash,
+                                    ?transaction_hash,
+                                    "withdrawal finalized"
+                                );
                             }
                             Ok(ConfirmOutcome::Finalized(transaction_hash))
                         }
-                        Err(
-                            error @ (WithdrawerError::TargetCallFailed { .. }
-                            | WithdrawerError::MissingFinalizationEvent { .. }
-                            | WithdrawerError::Unconfirmed { .. }),
-                        ) => Err(error.into()),
-                        Err(error) => match withdrawer.status(rpc, proofs, withdrawal, submitter).await {
-                            Ok(WithdrawalStatus::Finalized) => {
-                                info!(withdrawal_hash = %hash, "withdrawal already finalized");
-                                Ok(ConfirmOutcome::AlreadyFinalized)
+                        Err(error @ SubmitError::MaybeIncluded(_)) => {
+                            Err(WithdrawerError::from(error).into())
+                        }
+                        Err(SubmitError::NotSent(error)) => {
+                            if Instant::now() >= deadline {
+                                return Err(error.into());
                             }
-                            Ok(WithdrawalStatus::NotReady { ready_at, l1_timestamp, waiting_for_game }) => {
-                                let timing = ConfirmTiming { ready_at, l1_timestamp, waiting_for_game };
-                                info!(withdrawal_hash = %hash, error = %format_args!("{error:#}"), "withdrawal not ready");
-                                timing.log(hash);
-                                Ok(ConfirmOutcome::Pending { timing: Some(timing) })
+                            let recheck = timeout_at(
+                                deadline,
+                                withdrawer.status(rpc, proofs, withdrawal, submitter),
+                            )
+                            .await
+                            .map_err(WithdrawerError::Timeout)
+                            .wrap_err_with(|| format!("{error:#}"))?;
+                            match recheck {
+                                Ok(WithdrawalStatus::Finalized) => {
+                                    info!(withdrawal_hash = %hash, "withdrawal already finalized");
+                                    Ok(ConfirmOutcome::AlreadyFinalized)
+                                }
+                                Ok(WithdrawalStatus::NotReady {
+                                    ready_at,
+                                    l1_timestamp,
+                                    waiting_for_game,
+                                }) => {
+                                    let timing =
+                                        ConfirmTiming { ready_at, l1_timestamp, waiting_for_game };
+                                    info!(
+                                        withdrawal_hash = %hash,
+                                        error = %format_args!("{error:#}"),
+                                        "withdrawal not ready"
+                                    );
+                                    timing.log(hash);
+                                    Ok(ConfirmOutcome::Pending { timing: Some(timing) })
+                                }
+                                Ok(WithdrawalStatus::Prove) => {
+                                    info!(
+                                        withdrawal_hash = %hash,
+                                        error = %format_args!("{error:#}"),
+                                        "withdrawal pending; a new proof is needed"
+                                    );
+                                    Ok(ConfirmOutcome::Pending { timing: None })
+                                }
+                                Ok(_) => Err(error.into()),
+                                Err(recheck_error) => Err(error).wrap_err(format!(
+                                    "could not recheck withdrawal status: {recheck_error:#}"
+                                )),
                             }
-                            Ok(WithdrawalStatus::Prove) => {
-                                info!(withdrawal_hash = %hash, error = %format_args!("{error:#}"), "withdrawal pending; a new proof is needed");
-                                Ok(ConfirmOutcome::Pending { timing: None })
-                            }
-                            Ok(_) => Err(error.into()),
-                            Err(recheck_error) => Err(error).wrap_err(format!(
-                                "could not recheck withdrawal status: {recheck_error:#}"
-                            )),
-                        },
+                        }
                     }
                 }
             }
@@ -367,12 +400,8 @@ impl ConfirmJob {
             .map_err(WithdrawerError::from)?;
         let submitter = signer.address();
         let transactions = self.disbursals(&rpc).await?;
-        let pending_transaction = BroadcastJournal::default();
-        let manager = if self.args.dry_run {
-            None
-        } else {
-            Some(withdrawer.manager(signer, pending_transaction.clone()).await?)
-        };
+        let manager =
+            if self.args.dry_run { None } else { Some(withdrawer.manager(signer).await?) };
         let sender = ConfirmSender { address: submitter, manager: manager.as_ref() };
         let mut report = ConfirmReport::default();
         for transaction in transactions {
@@ -386,33 +415,8 @@ impl ConfirmJob {
             };
             for withdrawal in withdrawals {
                 let hash = withdrawal.hash();
-                pending_transaction.clear();
-                let result = timeout(
-                    self.args.withdrawal_timeout,
-                    self.confirm_withdrawal(
-                        &withdrawer,
-                        &rpc,
-                        proofs,
-                        &sender,
-                        &withdrawal,
-                        &pending_transaction,
-                    ),
-                )
-                .await
-                .unwrap_or_else(|source| {
-                    let transaction_hashes = pending_transaction.hashes();
-                    ConfirmOutcome::Failed(
-                        if transaction_hashes.is_empty() {
-                            WithdrawerError::Timeout(source)
-                        } else {
-                            WithdrawerError::Unconfirmed {
-                                transaction_hashes,
-                                source: Box::new(WithdrawerError::Timeout(source)),
-                            }
-                        }
-                        .into(),
-                    )
-                });
+                let result =
+                    self.confirm_withdrawal(&withdrawer, &rpc, proofs, &sender, &withdrawal).await;
                 if let ConfirmOutcome::Failed(error) = &result {
                     error!(withdrawal_hash = %hash, transaction_hash = %transaction, error = %format_args!("{error:#}"), "withdrawal failed");
                 }
@@ -420,7 +424,7 @@ impl ConfirmJob {
             }
         }
         if let Some(manager) = manager {
-            manager.close();
+            manager.manager.close();
         }
         let pending: Vec<_> = report
             .withdrawals
@@ -446,10 +450,11 @@ impl ConfirmJob {
 #[cfg(test)]
 mod tests {
     use std::{
+        future::{Future, pending, ready},
         io::{self, Write},
         sync::{
             Arc, Mutex,
-            atomic::{AtomicBool, Ordering},
+            atomic::{AtomicBool, AtomicUsize, Ordering},
         },
     };
 
@@ -458,11 +463,12 @@ mod tests {
     use axum::{Json, Router, routing::post};
     use base_proof_contracts::IAnchorStateRegistry;
     use base_withdrawer::{
-        FaultProofPortal, MessagePassed, WithdrawalDisputeGame, WithdrawalTransaction,
+        FaultProofContracts, FaultProofPortal, MessagePassed, WithdrawalDisputeGame,
+        WithdrawalTransaction,
     };
     use rstest::rstest;
     use serde_json::{Value, json};
-    use tokio::{net::TcpListener, task::JoinHandle};
+    use tokio::{net::TcpListener, sync::Notify, task::JoinHandle};
     use tracing::instrument::WithSubscriber;
     use url::Url;
 
@@ -489,12 +495,21 @@ mod tests {
 
     impl Server {
         async fn new(handler: impl Fn(Value) -> Value + Send + Sync + 'static) -> Self {
+            Self::new_async(move |request| ready(handler(request))).await
+        }
+
+        async fn new_async<F: Future<Output = Value> + Send + 'static>(
+            handler: impl Fn(Value) -> F + Send + Sync + 'static,
+        ) -> Self {
             let handler = Arc::new(handler);
             let router = Router::new().fallback(post(move |Json(request): Json<Value>| {
-                let mut response = handler(request.clone());
-                response["jsonrpc"] = json!("2.0");
-                response["id"] = request["id"].clone();
-                async move { Json(response) }
+                let response = handler(request.clone());
+                async move {
+                    let mut response = response.await;
+                    response["jsonrpc"] = json!("2.0");
+                    response["id"] = request["id"].clone();
+                    Json(response)
+                }
             }));
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let url = format!("http://{}", listener.local_addr().unwrap()).parse().unwrap();
@@ -525,6 +540,159 @@ mod tests {
                 withdrawal_timeout: Duration::from_secs(10),
             },
         }
+    }
+
+    #[tokio::test]
+    async fn initial_status_read_respects_withdrawal_deadline() {
+        let started = Arc::new(Notify::new());
+        let captured = Arc::clone(&started);
+        let server = Server::new_async(move |request| {
+            let started = Arc::clone(&captured);
+            async move {
+                assert_eq!(request["method"], "eth_call");
+                let data: Bytes =
+                    serde_json::from_value(request["params"][0]["input"].clone()).unwrap();
+                assert_eq!(data[..4], WithdrawalPortal::finalizedWithdrawalsCall::SELECTOR);
+                started.notify_one();
+                pending().await
+            }
+        })
+        .await;
+        let job = job(&server.url);
+        let mut config = job.config().unwrap();
+        // The HTTP attempt must outlive the withdrawal deadline, without relying on retries.
+        config.timeout = Duration::from_secs(60);
+        let rpc = WithdrawalRpc::new(&config).unwrap();
+        let withdrawer = Withdrawer::new(config);
+        let receipt = serde_json::from_value(disbursal_receipt(
+            Predeploys::L2_CROSS_DOMAIN_MESSENGER,
+            Predeploys::L2_STANDARD_BRIDGE,
+            job.args.l2_fee_disburser_address,
+        ))
+        .unwrap();
+        let withdrawal = Withdrawal::from_receipt(&receipt).unwrap().remove(0);
+        let proofs = ResolvedProofSystem::FaultProofs(FaultProofContracts {
+            dispute_game_factory: Address::repeat_byte(2),
+            anchor_state_registry: Address::repeat_byte(3),
+        });
+        let sender = ConfirmSender { address: Address::repeat_byte(9), manager: None };
+        let confirmation = job.confirm_withdrawal(&withdrawer, &rpc, proofs, &sender, &withdrawal);
+        tokio::pin!(confirmation);
+        tokio::select! {
+            () = started.notified() => {},
+            outcome = &mut confirmation => panic!("status read did not hang: {outcome:?}"),
+        }
+        tokio::time::pause();
+        tokio::time::advance(job.args.withdrawal_timeout).await;
+        let outcome = tokio::time::timeout(Duration::from_secs(1), confirmation)
+            .await
+            .expect("confirm must return at the withdrawal deadline, before the HTTP timeout");
+        let ConfirmOutcome::Failed(error) = outcome else { panic!("{outcome:?}") };
+        assert!(
+            matches!(error.downcast_ref::<WithdrawerError>(), Some(WithdrawerError::Timeout(_))),
+            "{error:#}"
+        );
+    }
+
+    #[tokio::test]
+    async fn recheck_deadline_preserves_typed_timeout() {
+        let started = Arc::new(Notify::new());
+        let captured_started = Arc::clone(&started);
+        let status_reads = Arc::new(AtomicUsize::new(0));
+        let captured = Arc::clone(&status_reads);
+        let server = Server::new_async(move |request| {
+            let status_reads = Arc::clone(&captured);
+            let started = Arc::clone(&captured_started);
+            async move {
+                match request["method"].as_str().unwrap() {
+                    "eth_getBlockByNumber" => {
+                        let mut block = Block::<Transaction>::default();
+                        block.header.inner.timestamp = 1000;
+                        json!({"result": block})
+                    }
+                    "eth_call" => {
+                        let data: Bytes =
+                            serde_json::from_value(request["params"][0]["input"].clone()).unwrap();
+                        if data[..4] == WithdrawalPortal::finalizedWithdrawalsCall::SELECTOR
+                            && status_reads.fetch_add(1, Ordering::Relaxed) > 0
+                        {
+                            started.notify_one();
+                            return pending().await;
+                        }
+                        macro_rules! reply {
+                            ($call:ty, $($value:expr),* $(,)?) => {
+                                if data[..4] == <$call>::SELECTOR {
+                                    return json!({"result": Bytes::from(
+                                        <$call>::abi_encode_returns_tuple(&($($value,)*))
+                                    )});
+                                }
+                            };
+                        }
+                        reply!(WithdrawalPortal::finalizedWithdrawalsCall, false);
+                        reply!(IAnchorStateRegistry::pausedCall, false);
+                        reply!(
+                            FaultProofPortal::provenWithdrawalsCall,
+                            Address::repeat_byte(8),
+                            800u64
+                        );
+                        reply!(IAnchorStateRegistry::isGameBlacklistedCall, false);
+                        reply!(IAnchorStateRegistry::isGameRetiredCall, false);
+                        reply!(IAnchorStateRegistry::isGameProperCall, true);
+                        reply!(IAnchorStateRegistry::isGameRespectedCall, true);
+                        reply!(WithdrawalDisputeGame::statusCall, 2u8);
+                        reply!(FaultProofPortal::proofMaturityDelaySecondsCall, U256::from(100));
+                        reply!(WithdrawalDisputeGame::resolvedAtCall, 700u64);
+                        reply!(
+                            IAnchorStateRegistry::disputeGameFinalityDelaySecondsCall,
+                            U256::from(200)
+                        );
+                        reply!(IAnchorStateRegistry::isGameFinalizedCall, true);
+                        reply!(FaultProofPortal::checkWithdrawalCall,);
+                        panic!("unexpected contract selector {data}");
+                    }
+                    method => panic!("unexpected RPC method {method}"),
+                }
+            }
+        })
+        .await;
+        let mut job = job(&server.url);
+        job.args.dry_run = false;
+        let mut config = job.config().unwrap();
+        // Keep the HTTP attempt alive beyond the job deadline without relying on retries.
+        config.timeout = Duration::from_secs(60);
+        let rpc = WithdrawalRpc::new(&config).unwrap();
+        let withdrawer = Withdrawer::new(config);
+        let receipt = serde_json::from_value(disbursal_receipt(
+            Predeploys::L2_CROSS_DOMAIN_MESSENGER,
+            Predeploys::L2_STANDARD_BRIDGE,
+            job.args.l2_fee_disburser_address,
+        ))
+        .unwrap();
+        let withdrawal = Withdrawal::from_receipt(&receipt).unwrap().remove(0);
+        let proofs = ResolvedProofSystem::FaultProofs(FaultProofContracts {
+            dispute_game_factory: Address::repeat_byte(2),
+            anchor_state_registry: Address::repeat_byte(3),
+        });
+        // A missing manager fails before broadcast, leaving time for the status recheck.
+        let sender = ConfirmSender { address: Address::repeat_byte(9), manager: None };
+        let confirmation = job.confirm_withdrawal(&withdrawer, &rpc, proofs, &sender, &withdrawal);
+        tokio::pin!(confirmation);
+        tokio::select! {
+            () = started.notified() => {},
+            outcome = &mut confirmation => panic!("recheck did not hang: {outcome:?}"),
+        }
+        tokio::time::pause();
+        tokio::time::advance(job.args.withdrawal_timeout).await;
+        let outcome = tokio::time::timeout(Duration::from_secs(1), confirmation)
+            .await
+            .expect("recheck must return at the withdrawal deadline, before the HTTP timeout");
+        let ConfirmOutcome::Failed(error) = outcome else { panic!("{outcome:?}") };
+        assert_eq!(status_reads.load(Ordering::Relaxed), 2);
+        assert!(
+            matches!(error.downcast_ref::<WithdrawerError>(), Some(WithdrawerError::Timeout(_))),
+            "{error:#}"
+        );
+        assert!(format!("{error:#}").contains("missing withdrawal transaction manager"));
     }
 
     #[test]
@@ -770,6 +938,13 @@ mod tests {
         None,
         Some("no portal finalization event")
     )]
+    #[case::deadline_before_broadcast(
+        1000,
+        false,
+        Some(WithdrawalStatus::Finalized),
+        None,
+        Some("deadline before broadcast")
+    )]
     #[case::unconfirmed(1000, false, Some(WithdrawalStatus::Finalized), None, Some("was signed"))]
     #[tokio::test]
     async fn run_handles_pending_paused_races_and_unrelated_withdrawals(
@@ -811,10 +986,16 @@ mod tests {
         let status_reads = Arc::new(Mutex::new(0));
         let captured_status_reads = Arc::clone(&status_reads);
         let captured_proof_reads = Arc::clone(&proof_reads);
-        let server = Server::new(move |request| match request["method"].as_str().unwrap() {
-            "eth_blockNumber" | "eth_gasPrice" | "eth_maxPriorityFeePerGas" => json!({"result":"0x64"}),
+        let estimation_started = Arc::new(Notify::new());
+        let captured_estimation_started = Arc::clone(&estimation_started);
+        let handler = move |request: Value| match request["method"].as_str().unwrap() {
+            "eth_blockNumber" | "eth_gasPrice" | "eth_maxPriorityFeePerGas" => {
+                json!({"result":"0x64"})
+            }
             "eth_getLogs" => json!({"result":[fee_log(100, 0, B256::repeat_byte(1))]}),
-            "eth_getTransactionReceipt" if request["params"][0] == json!(B256::repeat_byte(1)) => json!({"result":receipt}),
+            "eth_getTransactionReceipt" if request["params"][0] == json!(B256::repeat_byte(1)) => {
+                json!({"result":receipt})
+            }
             "eth_getTransactionReceipt" => {
                 if finalization_error == Some("was signed") {
                     return json!({"error":{"code":3,"message":"receipt unavailable"}});
@@ -828,7 +1009,8 @@ mod tests {
                     let event = WithdrawalPortal::WithdrawalFinalized {
                         withdrawalHash: hash,
                         success: finalization_error == Some("success"),
-                    }.encode_log_data();
+                    }
+                    .encode_log_data();
                     let mut log = receipt["logs"][0].clone();
                     log["address"] = json!(Address::repeat_byte(1));
                     log["transactionHash"] = request["params"][0].clone();
@@ -853,17 +1035,26 @@ mod tests {
             "eth_chainId" => json!({"result":"0x1"}),
             "eth_getTransactionCount" => json!({"result":"0x0"}),
             "eth_estimateGas" => {
-                let data: Bytes = serde_json::from_value(request["params"][0]["input"].clone()).unwrap();
-                let call = WithdrawalPortal::finalizeWithdrawalTransactionCall::abi_decode_validate(&data).unwrap();
-                assert_eq!(call.withdrawal.data, MessagePassed::decode_log(&log.inner).unwrap().data.data);
+                let data: Bytes =
+                    serde_json::from_value(request["params"][0]["input"].clone()).unwrap();
+                let call =
+                    WithdrawalPortal::finalizeWithdrawalTransactionCall::abi_decode_validate(&data)
+                        .unwrap();
+                assert_eq!(
+                    call.withdrawal.data,
+                    MessagePassed::decode_log(&log.inner).unwrap().data.data
+                );
                 captured.store(true, Ordering::Relaxed);
-                if finalization_error.is_some() || pending == Some(0) && recheck == Some(WithdrawalStatus::Finalize) {
+                if finalization_error.is_some()
+                    || pending == Some(0) && recheck == Some(WithdrawalStatus::Finalize)
+                {
                     return json!({"result":"0x10000"});
                 }
                 json!({"error":{"code":3,"message":"execution reverted: https://user:password@secret.endpoint","data":"0xdeadbeef"}})
             }
             "eth_call" => {
-                let data: Bytes = serde_json::from_value(request["params"][0]["input"].clone()).unwrap();
+                let data: Bytes =
+                    serde_json::from_value(request["params"][0]["input"].clone()).unwrap();
                 macro_rules! reply {
                     ($call:ty, $($value:expr),* $(,)?) => {
                         if data[..4] == <$call>::SELECTOR {
@@ -875,7 +1066,8 @@ mod tests {
                 reply!(FaultProofPortal::anchorStateRegistryCall, Address::repeat_byte(3));
                 let estimated = captured.load(Ordering::Relaxed);
                 if data[..4] == WithdrawalPortal::finalizedWithdrawalsCall::SELECTOR {
-                    let call = WithdrawalPortal::finalizedWithdrawalsCall::abi_decode(&data).unwrap();
+                    let call =
+                        WithdrawalPortal::finalizedWithdrawalsCall::abi_decode(&data).unwrap();
                     assert_eq!(call.withdrawalHash, hash, "unrelated withdrawal was processed");
                     *captured_status_reads.lock().unwrap() += 1;
                     if estimated && recheck.is_none() {
@@ -886,9 +1078,23 @@ mod tests {
                     let mut reads = proof_reads.lock().unwrap();
                     *reads += 1;
                 }
-                reply!(WithdrawalPortal::finalizedWithdrawalsCall, estimated && recheck == Some(WithdrawalStatus::Finalized));
-                reply!(IAnchorStateRegistry::pausedCall, paused || estimated && recheck == Some(WithdrawalStatus::Paused));
-                reply!(FaultProofPortal::provenWithdrawalsCall, Address::repeat_byte(8), if estimated && recheck == Some(WithdrawalStatus::Prove) { 0u64 } else { 800u64 });
+                reply!(
+                    WithdrawalPortal::finalizedWithdrawalsCall,
+                    estimated && recheck == Some(WithdrawalStatus::Finalized)
+                );
+                reply!(
+                    IAnchorStateRegistry::pausedCall,
+                    paused || estimated && recheck == Some(WithdrawalStatus::Paused)
+                );
+                reply!(
+                    FaultProofPortal::provenWithdrawalsCall,
+                    Address::repeat_byte(8),
+                    if estimated && recheck == Some(WithdrawalStatus::Prove) {
+                        0u64
+                    } else {
+                        800u64
+                    }
+                );
                 reply!(IAnchorStateRegistry::isGameBlacklistedCall, false);
                 reply!(IAnchorStateRegistry::isGameRetiredCall, false);
                 reply!(IAnchorStateRegistry::isGameProperCall, true);
@@ -897,15 +1103,38 @@ mod tests {
                 reply!(FaultProofPortal::proofMaturityDelaySecondsCall, U256::from(100));
                 reply!(WithdrawalDisputeGame::resolvedAtCall, 700u64);
                 reply!(IAnchorStateRegistry::disputeGameFinalityDelaySecondsCall, U256::from(200));
-                reply!(IAnchorStateRegistry::isGameFinalizedCall, now > 900 && !(estimated && matches!(recheck, Some(WithdrawalStatus::NotReady { .. }))));
+                reply!(
+                    IAnchorStateRegistry::isGameFinalizedCall,
+                    now > 900
+                        && !(estimated
+                            && matches!(recheck, Some(WithdrawalStatus::NotReady { .. })))
+                );
                 reply!(FaultProofPortal::checkWithdrawalCall,);
                 panic!("unexpected contract selector {data}");
             }
             method => panic!("unexpected RPC method {method}"),
-        }).await;
+        };
+        let server = Server::new_async(move |request| {
+            let hang = finalization_error == Some("deadline before broadcast")
+                && request["method"] == "eth_estimateGas";
+            let response = handler(request);
+            let started = Arc::clone(&captured_estimation_started);
+            async move {
+                if hang {
+                    started.notify_one();
+                    return std::future::pending().await;
+                }
+                response
+            }
+        })
+        .await;
         let mut job = job(&server.url);
         job.args.lookback = Duration::from_nanos(1);
         job.args.dry_run = finalization_error.is_none();
+        if finalization_error == Some("deadline before broadcast") {
+            // Live estimation avoids a competing dry-run preparation timeout.
+            job.args.withdrawal_timeout = Duration::from_secs(1);
+        }
         if finalization_error == Some("was signed") {
             job.args.withdrawal_timeout = Duration::from_secs(1);
             job.args.tx_manager.resubmission_timeout = Duration::from_millis(100);
@@ -915,11 +1144,27 @@ mod tests {
         let writer = capture.clone();
         let subscriber =
             tracing_subscriber::fmt().with_ansi(false).with_writer(move || writer.clone()).finish();
-        let report = job.run().with_subscriber(subscriber).await.unwrap();
+        let withdrawal_timeout = job.args.withdrawal_timeout;
+        let run = job.run().with_subscriber(subscriber);
+        tokio::pin!(run);
+        let report = if finalization_error == Some("deadline before broadcast") {
+            tokio::select! {
+                () = estimation_started.notified() => {},
+                report = &mut run => panic!("estimation did not hang: {report:?}"),
+            }
+            tokio::time::pause();
+            tokio::time::advance(withdrawal_timeout).await;
+            tokio::time::timeout(Duration::from_secs(1), &mut run)
+                .await
+                .expect("run must return at the withdrawal deadline")
+        } else {
+            run.await
+        }
+        .unwrap();
         let published = published.lock().unwrap().clone();
         assert_eq!(
             !published.is_empty(),
-            finalization_error.is_some(),
+            finalization_error.is_some() && finalization_error != Some("deadline before broadcast"),
             "dry runs must not publish"
         );
         assert!(report.receipt_failures.is_empty());
@@ -973,12 +1218,30 @@ mod tests {
         } else {
             let ConfirmOutcome::Failed(error) = outcome else { panic!("{outcome:?}") };
             if let Some(message) = finalization_error {
+                if message == "deadline before broadcast" {
+                    assert!(
+                        matches!(
+                            error.downcast_ref::<WithdrawerError>(),
+                            Some(WithdrawerError::Timeout(_))
+                        ),
+                        "{error:#}"
+                    );
+                    assert_eq!(*status_reads.lock().unwrap(), 1);
+                    assert!(!format!("{error:#}").contains("could not recheck"));
+                    let error = report.into_result().unwrap_err();
+                    assert!(matches!(
+                        error.downcast_ref::<WithdrawerError>(),
+                        Some(WithdrawerError::Timeout(_))
+                    ));
+                    return;
+                }
                 if message == "was signed" {
-                    let Some(WithdrawerError::Unconfirmed { transaction_hashes, .. }) =
+                    let Some(WithdrawerError::MaybeIncluded(submit)) =
                         error.downcast_ref::<WithdrawerError>()
                     else {
                         panic!("missing signed hashes: {error:#}");
                     };
+                    let transaction_hashes = &submit.transaction_hashes;
                     assert!(published.len() >= 2, "withdrawal must fee-bump before its deadline");
                     assert!(published.iter().all(|hash| transaction_hashes.contains(hash)));
                     assert!(transaction_hashes.len() >= published.len());
@@ -987,14 +1250,13 @@ mod tests {
                 let message =
                     if message == "was signed" { "may have been broadcast" } else { message };
                 assert!(format!("{error:#}").contains(message), "{error:#}");
-                assert!(matches!(
-                    error.downcast_ref::<WithdrawerError>(),
-                    Some(
-                        WithdrawerError::TargetCallFailed { .. }
-                            | WithdrawerError::MissingFinalizationEvent { .. }
-                            | WithdrawerError::Unconfirmed { .. }
-                    )
-                ));
+                let Some(WithdrawerError::MaybeIncluded(submit)) =
+                    error.downcast_ref::<WithdrawerError>()
+                else {
+                    panic!("missing submission error");
+                };
+                let transaction_hashes = &submit.transaction_hashes;
+                assert!(published.iter().all(|hash| transaction_hashes.contains(hash)));
                 assert_eq!(
                     *status_reads.lock().unwrap(),
                     1,
@@ -1019,15 +1281,15 @@ mod tests {
                 recheck.is_none()
             );
             assert!(!format!("{error:#} {error:?}").contains("secret.endpoint"));
-            if let Some(WithdrawerError::Unconfirmed { transaction_hashes, .. }) =
+            if let Some(WithdrawerError::MaybeIncluded(submit)) =
                 error.downcast_ref::<WithdrawerError>()
             {
-                let expected = transaction_hashes.clone();
+                let expected = submit.transaction_hashes.clone();
                 let error = report.into_result().unwrap_err();
                 assert!(matches!(
                     error.downcast_ref::<WithdrawerError>(),
-                    Some(WithdrawerError::Unconfirmed { transaction_hashes, .. })
-                        if *transaction_hashes == expected
+                    Some(WithdrawerError::MaybeIncluded(submit))
+                        if submit.transaction_hashes == expected
                 ));
             }
         }
