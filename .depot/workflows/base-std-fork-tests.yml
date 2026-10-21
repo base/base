@@ -56,6 +56,7 @@ jobs:
               - 'crates/common/precompiles/**'
               - '.depot/actions/setup/**'
               - '.depot/workflows/base-std-fork-tests.yml'
+              - 'etc/scripts/ci/base_std_mock_only_skips.py'
   fork-tests:
     name: Base Std Interface Tests (${{ matrix.fork }})
     needs: changes
@@ -194,18 +195,23 @@ jobs:
 
           passed=$(grep -c '\[PASS\]' "$output" 2>/dev/null || true)
           failed=$(grep -c '\[FAIL' "$output" 2>/dev/null || true)
-          skipped=$(grep -c '\[SKIP\]' "$output" 2>/dev/null || true)
+          # Matches `[SKIP]` and `[SKIP: reason]`.
+          skipped=$(grep -c '\[SKIP' "$output" 2>/dev/null || true)
+          mock_only=$(python3 "$GITHUB_WORKSPACE/etc/scripts/ci/base_std_mock_only_skips.py" \
+            "$output" "${BASE_STD_DIR:-}" 2>/dev/null || true)
           passed=${passed:-0}
           failed=${failed:-0}
           skipped=${skipped:-0}
+          mock_only=${mock_only:-0}
           total=$((passed + failed + skipped))
+          skipped=$((skipped - mock_only))
           status=failure
           if [ "$FORK_TEST_OUTCOME" = "success" ] && [ "$total" -gt 0 ] && [ "$failed" -eq 0 ]; then
             status=success
           fi
 
-          printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-            "$FORK_NAME" "$status" "$passed" "$failed" "$skipped" \
+          printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+            "$FORK_NAME" "$status" "$passed" "$failed" "$skipped" "$mock_only" \
             "${BASE_SHA:-unknown}" "${BASE_ANVIL_SHA:-$BASE_ANVIL_REF}" \
             "${BASE_STD_SHA:-$BASE_STD_REF}" \
             > "$result_dir/results/$FORK_KEY.tsv"
@@ -275,15 +281,15 @@ jobs:
             echo
             echo '### Base Std historical fork tests'
             echo
-            echo '| Fork | Result | Passed | Failed | Skipped | base/base | base-anvil | base-std |'
-            echo '|---|---|---:|---:|---:|---|---|---|'
+            echo '| Fork | Result | Passed | Failed | Skipped | Mock-only | base/base | base-anvil | base-std |'
+            echo '|---|---|---:|---:|---:|---:|---|---|---|'
 
             if [ ${#result_files[@]} -eq 0 ]; then
               overall=failure
-              echo '| unknown | failure: no results | 0 | 0 | 0 | unknown | unknown | unknown |'
+              echo '| unknown | failure: no results | 0 | 0 | 0 | 0 | unknown | unknown | unknown |'
             else
               for result_file in "${result_files[@]}"; do
-                IFS=$'\t' read -r fork status passed failed skipped base_sha base_anvil_sha base_std_sha < "$result_file"
+                IFS=$'\t' read -r fork status passed failed skipped mock_only base_sha base_anvil_sha base_std_sha < "$result_file"
                 if [ "$status" = "success" ]; then
                   display_status='pass'
                 else
@@ -293,10 +299,12 @@ jobs:
                 base_link="[\`${base_sha:0:8}\`](https://github.com/base/base/commit/${base_sha})"
                 base_anvil_link="[\`${base_anvil_sha:0:8}\`](https://github.com/base/base-anvil/commit/${base_anvil_sha})"
                 base_std_link="[\`${base_std_sha:0:8}\`](https://github.com/base/base-std/commit/${base_std_sha})"
-                echo "| $fork | $display_status | $passed | $failed | $skipped | $base_link | $base_anvil_link | $base_std_link |"
+                echo "| $fork | $display_status | $passed | $failed | $skipped | $mock_only | $base_link | $base_anvil_link | $base_std_link |"
               done
             fi
 
+            echo
+            echo "Mock-only tests open with \`vm.skip(livePrecompiles)\` because they only run against base-std's Solidity mocks."
             echo
             echo "[View run]($WORKFLOW_RUN_URL)"
           } > "$body"
