@@ -1,12 +1,7 @@
-use std::{
-    pin::Pin,
-    task::{Context, Poll},
-};
-
 use alloy_provider::{Provider, ProviderBuilder, RootProvider, WsConnect};
 use alloy_rpc_types_eth::BlockId;
 use async_trait::async_trait;
-use futures::{Stream, StreamExt};
+use futures::{StreamExt, stream};
 
 use super::{EthClient, HeadStream, HeadSubscriber, HeaderSummary};
 
@@ -73,29 +68,20 @@ impl HeadSubscriber for AlloyWsHeadSubscriber {
             .connect_ws(WsConnect::new(self.url.as_str()))
             .await?;
         let subscription = provider.subscribe_blocks().await?;
-        let heads = subscription
-            .into_stream()
-            .map(|header| HeaderSummary {
-                number: header.number,
-                timestamp_unix_seconds: header.timestamp,
-                transaction_count: 0,
-            })
-            .boxed();
-        Ok(Box::pin(ProviderBoundStream { _provider: provider, inner: heads }))
-    }
-}
-
-/// Keeps the WebSocket provider (and its pubsub backend) alive for as long as the stream is
-/// polled, and closes the connection when the stream is dropped.
-struct ProviderBoundStream {
-    _provider: RootProvider,
-    inner: HeadStream,
-}
-
-impl Stream for ProviderBoundStream {
-    type Item = HeaderSummary;
-
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        self.get_mut().inner.as_mut().poll_next(cx)
+        // The subscription only delivers heads while the provider's pubsub backend is alive,
+        // so the stream owns the provider; dropping the stream closes the connection.
+        let heads = stream::unfold(
+            (provider, subscription.into_stream()),
+            |(provider, mut headers)| async move {
+                let header = headers.next().await?;
+                let summary = HeaderSummary {
+                    number: header.number,
+                    timestamp_unix_seconds: header.timestamp,
+                    transaction_count: 0,
+                };
+                Some((summary, (provider, headers)))
+            },
+        );
+        Ok(Box::pin(heads))
     }
 }

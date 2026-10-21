@@ -19,7 +19,7 @@ use futures::{Stream, StreamExt};
 use tokio::time::{Instant, MissedTickBehavior, interval, sleep, timeout};
 use tracing::{debug, error, info, warn};
 
-use super::{HeaderSummary, HealthState, HealthcheckConfig, Node, spawn_status_emitter};
+use super::{HeaderSummary, HealthState, HealthcheckConfig, Node};
 use crate::metrics::HealthcheckMetrics;
 
 /// Stream of new block headers produced by a [`HeadSubscriber`].
@@ -42,13 +42,15 @@ const MAX_BACKOFF: Duration = Duration::from_secs(5);
 /// A real stall is still reported, because resubscribing does not refresh the last head time.
 const IDLE_RESUBSCRIBE: Duration = Duration::from_secs(10);
 
-/// Mutable state shared by the subscription and evaluation loops.
+/// New-head tracking state behind [`HeadSubscriptionHealthChecker`]: when heads arrived,
+/// whether a subscription is open, and the resulting [`HealthState`].
 #[derive(Debug)]
-struct HeadState {
+pub struct HeadState {
     /// Whether a subscription is currently open.
     connected: bool,
-    /// When the current subscription was opened. Baseline for age before any head arrives.
-    connected_at: Option<Instant>,
+    /// When the first subscription was opened. Baseline for age until any head arrives; it is
+    /// never moved by later resubscribes, so a node that never produces a head stays stalled.
+    first_connected_at: Option<Instant>,
     /// Highest block number seen on the current subscription.
     last_number: Option<u64>,
     /// When the last advancing head arrived.
@@ -58,25 +60,30 @@ struct HeadState {
 }
 
 impl HeadState {
-    const fn new(is_new_instance: bool) -> Self {
+    /// Create a disconnected state with no heads seen.
+    pub const fn new(is_new_instance: bool) -> Self {
         Self {
             connected: false,
-            connected_at: None,
+            first_connected_at: None,
             last_number: None,
             last_seen: None,
             is_new_instance,
         }
     }
 
-    const fn on_subscribed(&mut self, now: Instant) {
+    /// Record that a subscription was opened at `now`.
+    pub const fn on_subscribed(&mut self, now: Instant) {
         self.connected = true;
-        self.connected_at = Some(now);
+        if self.first_connected_at.is_none() {
+            self.first_connected_at = Some(now);
+        }
         // `newHeads` never replays old heads, so the first head on a new subscription is
         // genuinely new even if its number is not above the pre-reconnect head (e.g. a reorg).
         self.last_number = None;
     }
 
-    const fn on_disconnected(&mut self) {
+    /// Record that the subscription was lost or could not be opened.
+    pub const fn on_disconnected(&mut self) {
         self.connected = false;
     }
 
@@ -85,7 +92,13 @@ impl HeadState {
     /// Heads that do not advance the block number (duplicates, reorg replays) do not refresh
     /// the last-seen time. `header_lag_ms` is the head's timestamp lag behind wall-clock time
     /// and is only used to decide when a new instance has caught up to the tip.
-    fn on_head(&mut self, number: u64, header_lag_ms: u64, grace_ms: u64, now: Instant) -> bool {
+    pub fn on_head(
+        &mut self,
+        number: u64,
+        header_lag_ms: u64,
+        grace_ms: u64,
+        now: Instant,
+    ) -> bool {
         if self.last_number.is_some_and(|last| number <= last) {
             return false;
         }
@@ -99,11 +112,23 @@ impl HeadState {
         false
     }
 
-    fn head_age(&self, now: Instant) -> Option<Duration> {
-        self.last_seen.or(self.connected_at).map(|t| now.saturating_duration_since(t))
+    /// Time since the last advancing head, or since the first subscription if none arrived.
+    pub fn head_age(&self, now: Instant) -> Option<Duration> {
+        self.last_seen.or(self.first_connected_at).map(|t| now.saturating_duration_since(t))
     }
 
-    fn classify(&self, now: Instant, config: &HealthcheckConfig) -> HealthState {
+    /// Highest block number seen on the current subscription.
+    pub const fn last_number(&self) -> Option<u64> {
+        self.last_number
+    }
+
+    /// Whether the node is still treated as a new instance that has not reached the tip.
+    pub const fn is_new_instance(&self) -> bool {
+        self.is_new_instance
+    }
+
+    /// Classify health at `now` against the thresholds in `config`.
+    pub fn classify(&self, now: Instant, config: &HealthcheckConfig) -> HealthState {
         if !self.connected {
             return HealthState::Error;
         }
@@ -161,7 +186,7 @@ impl<S: HeadSubscriber> HeadSubscriptionHealthChecker<S> {
     /// Spawn a background task that publishes the current [`HealthState`] to `StatsD` every
     /// `period_ms` milliseconds.
     pub fn spawn_status_emitter(&self, period_ms: u64) -> tokio::task::JoinHandle<()> {
-        spawn_status_emitter(Arc::clone(&self.status_code), self.metrics.clone(), period_ms)
+        self.metrics.spawn_status_emitter(Arc::clone(&self.status_code), period_ms)
     }
 
     /// Current health state.
@@ -180,7 +205,7 @@ impl<S: HeadSubscriber> HeadSubscriptionHealthChecker<S> {
     }
 
     fn is_new_instance(&self) -> bool {
-        self.lock_state().is_new_instance
+        self.lock_state().is_new_instance()
     }
 
     /// Keep a subscription open, recording every head, and reconnect with backoff on loss.
@@ -260,7 +285,7 @@ impl<S: HeadSubscriber> HeadSubscriptionHealthChecker<S> {
             let now = Instant::now();
             let (state, age, last_number) = {
                 let guard = self.lock_state();
-                (guard.classify(now, &self.config), guard.head_age(now), guard.last_number)
+                (guard.classify(now, &self.config), guard.head_age(now), guard.last_number())
             };
             let previous = self.status_code.swap(state.code(), Ordering::Relaxed);
             if previous == state.code() {
@@ -378,6 +403,35 @@ mod tests {
             state.classify(t0 + Duration::from_millis(1_000), &sub_second_config()),
             HealthState::Unhealthy
         );
+    }
+
+    #[test]
+    fn resubscribing_does_not_reset_age_without_heads() {
+        let t0 = Instant::now();
+        let mut state = HeadState::new(false);
+        state.on_subscribed(t0);
+        state.on_disconnected();
+        state.on_subscribed(t0 + Duration::from_secs(10));
+        assert_eq!(state.head_age(t0 + Duration::from_secs(11)), Some(Duration::from_secs(11)));
+        assert_eq!(
+            state.classify(t0 + Duration::from_secs(11), &sub_second_config()),
+            HealthState::Unhealthy
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn stall_without_heads_stays_unhealthy_across_idle_resubscribe() {
+        // Three subscriptions so the 10 s idle resubscribes have one to open. The senders are
+        // kept alive so the streams stay open without delivering heads.
+        let (subscriber, _senders) = MockSubscriber::new(3);
+        let checker = start(subscriber, false);
+
+        sleep(Duration::from_millis(1_100)).await;
+        assert_eq!(checker.status(), HealthState::Unhealthy);
+        for second in 2..=25 {
+            sleep(Duration::from_secs(1)).await;
+            assert_eq!(checker.status(), HealthState::Unhealthy, "at {second} s");
+        }
     }
 
     #[tokio::test(start_paused = true)]

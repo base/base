@@ -3,7 +3,7 @@
 //! [`BlockProductionHealthChecker`] fetches the latest block header from an
 //! Ethereum HTTP RPC endpoint on a fixed interval, classifies it into a
 //! [`HealthState`], and stores the current state in an atomic that a decoupled
-//! heartbeat task (`spawn_status_emitter`) publishes to `StatsD`.
+//! heartbeat task ([`HealthcheckMetrics::spawn_status_emitter`]) publishes to `StatsD`.
 //!
 //! [`HeadSubscriptionHealthChecker`] is the push-based alternative: it subscribes to
 //! `newHeads` over WebSocket and measures block age as the local time since the last
@@ -27,25 +27,7 @@ mod alloy_client;
 pub use alloy_client::{AlloyEthClient, AlloyWsHeadSubscriber};
 
 mod subscription;
-pub use subscription::{HeadStream, HeadSubscriber, HeadSubscriptionHealthChecker};
-
-/// Spawn a background task that publishes the [`HealthState`] stored in `status` to `StatsD`
-/// every `period_ms` milliseconds, independent of how often the state itself is refreshed.
-pub(crate) fn spawn_status_emitter(
-    status: Arc<AtomicU8>,
-    metrics: HealthcheckMetrics,
-    period_ms: u64,
-) -> tokio::task::JoinHandle<()> {
-    tokio::spawn(async move {
-        let mut ticker = interval(Duration::from_millis(period_ms));
-        loop {
-            ticker.tick().await;
-            let code = status.load(Ordering::Relaxed);
-            let state = HealthState::try_from(code).unwrap_or(HealthState::Error);
-            metrics.increment_status(state);
-        }
-    })
-}
+pub use subscription::{HeadState, HeadStream, HeadSubscriber, HeadSubscriptionHealthChecker};
 
 /// The four terminal health states classified by [`BlockProductionHealthChecker`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -175,7 +157,7 @@ impl<C: EthClient> BlockProductionHealthChecker<C> {
     /// Spawn a background task that publishes the current [`HealthState`] to `StatsD` every
     /// `period_ms` milliseconds, independent of poll cadence.
     pub fn spawn_status_emitter(&self, period_ms: u64) -> tokio::task::JoinHandle<()> {
-        spawn_status_emitter(Arc::clone(&self.status_code), self.metrics.clone(), period_ms)
+        self.metrics.spawn_status_emitter(Arc::clone(&self.status_code), period_ms)
     }
 
     /// Run a single health-check iteration: fetch latest header (2 s timeout), classify, store.
