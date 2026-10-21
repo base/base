@@ -21,9 +21,6 @@ pub type BaseNode =
     NodeHelperType<OtherOpNode, BlockchainProvider<NodeTypesWithDBAdapter<OtherOpNode, TmpDB>>>;
 
 /// Creates the initial setup with `num_nodes` of the node config, started and connected.
-///
-/// Nodes persist every canonical block immediately, so stage checkpoints such as `Finish` and
-/// `Headers` follow the canonical chain for sync tests that wait on them.
 pub async fn setup(num_nodes: usize) -> eyre::Result<(Vec<BaseNode>, Wallet)> {
     let genesis: Genesis =
         serde_json::from_str(include_str!("../tests/assets/genesis.json")).unwrap();
@@ -32,9 +29,6 @@ pub async fn setup(num_nodes: usize) -> eyre::Result<(Vec<BaseNode>, Wallet)> {
         Arc::new(BaseChainSpecBuilder::base_mainnet().genesis(genesis).ecotone_activated().build()),
     )
     .with_attributes_generator(payload_attributes)
-    .with_tree_config_modifier(|config| {
-        config.with_memory_block_buffer_target(0).with_persistence_threshold(0)
-    })
     .build()
     .await
 }
