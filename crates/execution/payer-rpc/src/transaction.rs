@@ -85,6 +85,13 @@ impl PayerTransaction {
         Ok(())
     }
 
+    /// Returns whether this transaction waits behind an earlier nonce in its channel, given
+    /// `next`, the next unused nonce. Its phase 0 may then depend on a transaction not yet
+    /// mined, so a simulation at the latest block says nothing about it.
+    pub fn is_queued(&self, next: U256) -> bool {
+        U256::from(self.signed.tx().nonce_sequence) > next
+    }
+
     /// This transaction cut to its first call phase, as an EIP-8130 `eth_call` request.
     ///
     /// It keeps the transaction's gas, fees, account changes, expiry, and payer, so the phase
@@ -270,6 +277,8 @@ mod tests {
         assert_eq!(transaction.check_nonce(U256::from(4)), Err(PayerTransactionError::NonceUsed));
         assert_eq!(transaction.check_nonce(U256::from(3)), Ok(()));
         assert_eq!(transaction.check_nonce(U256::from(2)), Ok(()));
+        assert!(!transaction.is_queued(U256::from(3)));
+        assert!(transaction.is_queued(U256::from(2)));
     }
 
     #[test]
