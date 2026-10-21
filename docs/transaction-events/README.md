@@ -346,7 +346,10 @@ it was cancelled, ran out of time, saw finalization, or failed, with
 `out_of_time`, `finalized`, or `error`), `data.sibling_outcomes` (each
 sibling's outcome label in envelope order: `eligible`, an ineligible reason, or
 `not_run`), `data.outcomes` (the same labels counted), and `data.winner_index`
-for a completed round with a winner. Scores stay out of the round. Per-sibling `BUILDER_CANDIDATE_TRIAL` events
+for a completed round with a winner. When the token balance read before the
+trials fails, no sibling runs: each gets that read's reason (`score_reverted`,
+`score_halted` or `score_malformed`) and the round settles only the read's gas.
+Scores stay out of the round. Per-sibling `BUILDER_CANDIDATE_TRIAL` events
 are off by default; `--builder.candidates.trial-events` enables them. A trial
 event carries the sibling's `tx_hash`, `data.stage` (`precheck` for admission
 failures, journaled even when the round is then denied a reservation, or
