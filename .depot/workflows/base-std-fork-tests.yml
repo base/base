@@ -197,12 +197,15 @@ jobs:
           failed=$(grep -c '\[FAIL' "$output" 2>/dev/null || true)
           # Matches `[SKIP]` and `[SKIP: reason]`.
           skipped=$(grep -c '\[SKIP' "$output" 2>/dev/null || true)
-          mock_only=$(python3 "$GITHUB_WORKSPACE/etc/scripts/ci/base_std_mock_only_skips.py" \
-            "$output" "${BASE_STD_DIR:-}" 2>/dev/null || true)
+          mock_only=0
+          if [ -f "$output" ] && ! mock_only=$(python3 \
+            "$GITHUB_WORKSPACE/etc/scripts/ci/base_std_mock_only_skips.py" "$output" "${BASE_STD_DIR:-}"); then
+            echo "::warning::Could not classify mock-only skips; reporting every skip as Skipped"
+            mock_only=0
+          fi
           passed=${passed:-0}
           failed=${failed:-0}
           skipped=${skipped:-0}
-          mock_only=${mock_only:-0}
           total=$((passed + failed + skipped))
           skipped=$((skipped - mock_only))
           status=failure
