@@ -1,4 +1,7 @@
-use std::{collections::VecDeque, sync::Arc, time::Instant};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use alloy_primitives::TxHash;
 use base_execution_txpool::MAX_VALIDATED_INSERT_BATCH;
@@ -23,51 +26,42 @@ use super::{config::ForwarderConfig, metrics::ForwarderMetrics, request::Forward
 /// Builder method that inserts a whole batch of validated transactions in one call.
 const INSERT_BATCH_METHOD: &str = "base_insertValidatedTransactions";
 
-/// Sliding window rate limiter that tracks request timestamps.
+/// Token-bucket rate limiter: up to `max_rps` sends at once, refilled at `max_rps` per second.
 ///
-/// Maintains a bounded deque of send timestamps within a 1-second window.
-/// When the window is full (at `max_rps`), reports how long until the
-/// oldest entry expires so the caller can sleep precisely.
+/// Once the bucket is empty, sends are paced `1 / max_rps` apart, so no send waits longer than
+/// one interval. A sliding window of `max_rps` sends per second instead let a run of small sends
+/// spend the whole second's budget at once and then stall the destination queue for the rest of
+/// the second, repeating every second after it.
 struct RateLimiter {
-    timestamps: VecDeque<Instant>,
-    max_rps: u32,
+    /// Spacing between sends at the limit; `None` when rate limiting is disabled.
+    interval: Option<Duration>,
+    /// When the next send would be due if every send had been paced exactly.
+    next_due: Option<Instant>,
 }
 
 impl RateLimiter {
     fn new(max_rps: u32) -> Self {
-        Self { timestamps: VecDeque::with_capacity(max_rps as usize), max_rps }
+        // Above 1e9 sends per second the interval would truncate to zero and remove the cap.
+        let interval =
+            (max_rps > 0).then(|| (Duration::from_secs(1) / max_rps).max(Duration::from_nanos(1)));
+        Self { interval, next_due: None }
     }
 
-    fn prune(&mut self, now: Instant) {
-        let window = std::time::Duration::from_secs(1);
-        while self.timestamps.front().is_some_and(|front| now.duration_since(*front) >= window) {
-            self.timestamps.pop_front();
-        }
+    /// Returns `None` if a send is allowed at `now`, or `Some(wait)` with the precise duration
+    /// until the next one is. A `max_rps` of 0 disables rate limiting entirely.
+    fn check_rate_limit(&self, now: Instant) -> Option<Duration> {
+        // A full bucket lets `max_rps - 1` sends go ahead of the paced schedule.
+        let (interval, next_due) = (self.interval?, self.next_due?);
+        let ahead = Duration::from_secs(1).saturating_sub(interval);
+        let allowed_at = next_due.checked_sub(ahead).unwrap_or(next_due);
+        let wait = allowed_at.saturating_duration_since(now);
+        (!wait.is_zero()).then_some(wait)
     }
 
-    /// Returns `None` if a send is allowed now, or `Some(wait)` with the
-    /// precise duration until the next slot opens. A `max_rps` of 0 disables
-    /// rate limiting entirely.
-    fn check_rate_limit(&mut self) -> Option<std::time::Duration> {
-        if self.max_rps == 0 {
-            return None;
-        }
-
-        let now = Instant::now();
-        self.prune(now);
-
-        if (self.timestamps.len() as u32) < self.max_rps {
-            return None;
-        }
-
-        Some(std::time::Duration::from_secs(1).saturating_sub(
-            now.duration_since(*self.timestamps.front().expect("non-empty after prune")),
-        ))
-    }
-
-    fn record_send(&mut self) {
-        if self.max_rps > 0 {
-            self.timestamps.push_back(Instant::now());
+    /// Records a send starting at `now`.
+    fn record_send(&mut self, now: Instant) {
+        if let Some(interval) = self.interval {
+            self.next_due = Some(self.next_due.map_or(now, |due| due.max(now)) + interval);
         }
     }
 }
@@ -77,9 +71,8 @@ impl RateLimiter {
 ///
 /// Once one request is available, the forwarder drains all other immediately
 /// available requests into the same batch, capped at `max_batch_size`. This
-/// batches bursts without delaying an isolated request. If the sliding window
-/// rate limit (`max_rps`) is hit, requests continue buffering until the window
-/// opens.
+/// batches bursts without delaying an isolated request. While the rate limit
+/// (`max_rps`) holds the next send back, requests continue buffering for it.
 ///
 /// Requests are relayed in the order the queue yields them, and a batch
 /// preserves that order, so a producer may rely on submission order between
@@ -132,7 +125,7 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
                 break;
             }
 
-            match self.limiter.check_rate_limit() {
+            match self.limiter.check_rate_limit(Instant::now()) {
                 None => {
                     self.flush_buffer().await;
                     continue;
@@ -231,8 +224,10 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
             "flushing batch",
         );
 
+        // Spacing counts from the start of a send, so a slow builder does not add the full
+        // interval on top of its own latency.
+        self.limiter.record_send(Instant::now());
         self.send_with_retries(batch).await;
-        self.limiter.record_send();
     }
 
     async fn send_with_retries(&self, batch: Vec<R>) {
@@ -657,23 +652,48 @@ mod tests {
         let mut limiter = RateLimiter::new(0);
 
         for _ in 0..10_000 {
-            assert!(limiter.check_rate_limit().is_none());
-            limiter.record_send();
+            assert!(limiter.check_rate_limit(Instant::now()).is_none());
+            limiter.record_send(Instant::now());
         }
 
-        assert!(limiter.timestamps.is_empty());
+        assert!(limiter.next_due.is_none());
+    }
+
+    /// A run of small sends must not spend the whole second's budget and then hold every later
+    /// send back for the rest of the second: after a full bucket, sends continue one interval
+    /// apart. A sliding one-second window would hold the 201st send back for about a second.
+    #[test]
+    fn rate_limiter_never_holds_a_send_back_longer_than_one_interval() {
+        let mut limiter = RateLimiter::new(200);
+        let start = Instant::now();
+
+        let mut sent = 0;
+        while limiter.check_rate_limit(start).is_none() {
+            limiter.record_send(start);
+            sent += 1;
+        }
+
+        assert_eq!(sent, 200, "a full bucket of max_rps sends goes out at once");
+        assert_eq!(limiter.check_rate_limit(start), Some(Duration::from_millis(5)));
+        for step in 1..=400 {
+            let now = start + Duration::from_millis(5) * step;
+            assert_eq!(limiter.check_rate_limit(now), None, "send {step} after the burst");
+            limiter.record_send(now);
+        }
     }
 
     #[test]
     fn rate_limiter_enforces_limit() {
-        let mut limiter = RateLimiter::new(3);
-
-        for _ in 0..3 {
-            assert!(limiter.check_rate_limit().is_none());
-            limiter.record_send();
+        let mut limiter = RateLimiter::new(2);
+        let start = Instant::now();
+        for _ in 0..2 {
+            assert!(limiter.check_rate_limit(start).is_none(), "a full bucket sends at once");
+            limiter.record_send(start);
         }
 
-        assert!(limiter.check_rate_limit().is_some());
+        assert_eq!(limiter.check_rate_limit(start), Some(Duration::from_millis(500)));
+        let half_way = start + Duration::from_millis(250);
+        assert_eq!(limiter.check_rate_limit(half_way), Some(Duration::from_millis(250)));
     }
 
     #[tokio::test]
@@ -685,7 +705,7 @@ mod tests {
         for nonce in 0..3 {
             assert!(!forwarder.handle_recv(Some(tagged(nonce))));
         }
-        forwarder.limiter.record_send();
+        forwarder.limiter.record_send(Instant::now());
 
         forwarder.run().await;
 
@@ -707,7 +727,7 @@ mod tests {
 
         forwarder.flush_buffer().await;
         assert_eq!(forwarder.buffer.len(), 3);
-        assert!(forwarder.limiter.check_rate_limit().is_some());
+        assert!(forwarder.limiter.check_rate_limit(Instant::now()).is_some());
         assert_eq!(received.lock().unwrap().len(), 2);
 
         forwarder.flush_buffer().await;
@@ -814,7 +834,7 @@ mod tests {
 
         let mut forwarder =
             forwarder::<InsertValidatedTransaction<NoExtensions>>(url, receiver, config(1, 2));
-        forwarder.limiter.record_send();
+        forwarder.limiter.record_send(Instant::now());
         let task = tokio::spawn(forwarder.run());
 
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -846,7 +866,7 @@ mod tests {
 
         let mut forwarder = forwarder(url, receiver, config(1, 0));
         // Consume the one available slot so everything buffers into a single batch.
-        forwarder.limiter.record_send();
+        forwarder.limiter.record_send(Instant::now());
         forwarder.run().await;
 
         let calls = received.lock().unwrap();
