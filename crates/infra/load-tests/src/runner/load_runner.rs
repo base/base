@@ -15,6 +15,7 @@ use alloy_network::{Ethereum, EthereumWallet, ReceiptResponse, TransactionBuilde
 use alloy_primitives::{Address, B256, TxHash, U256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_signer_local::PrivateKeySigner;
+use base_common_consensus::Eip8130Constants;
 use base_tx_manager::NonceManager;
 use rand::Rng;
 use tokio_util::sync::CancellationToken;
@@ -25,7 +26,7 @@ use super::{
     submission::{Fees, PreparedTransaction, SubmitCohort},
 };
 use crate::{
-    BaselineError, Result,
+    BaselineError, EIP8430_TRANSFER_GAS_LIMIT, Result,
     config::WorkloadConfig,
     metrics::{ConfigSummary, MetricsCollector, MetricsSummary},
     rpc::{
@@ -297,53 +298,54 @@ impl LoadRunner {
                 .with_chain_id(self.config.chain_id)
                 .with_max_fee_per_gas(max_fee)
                 .with_max_priority_fee_per_gas(priority_fee);
-            let provider = create_wallet_provider(
-                self.config.primary_submission_rpc().clone(),
-                EthereumWallet::from(account.signer.clone()),
-            );
-            let (success, average) = if request.transaction_type == Some(0x79) {
-                let prepared = PreparedTransaction {
-                    native: true,
-                    from,
-                    to: request.to.and_then(|kind| kind.to().copied()),
-                    value: request.value.unwrap_or(U256::ZERO),
-                    data: request.input.input().cloned().unwrap_or_default(),
-                    gas_limit: request.gas.unwrap_or(200_000),
-                    estimated_gas: 0,
-                    validity: Vec::new(),
-                    cohort: SubmitCohort::Plain,
+            let (success, average) =
+                if request.transaction_type == Some(Eip8130Constants::EIP8130_TX_TYPE) {
+                    let prepared = PreparedTransaction {
+                        native: true,
+                        from,
+                        to: request.to.and_then(|kind| kind.to().copied()),
+                        value: request.value.unwrap_or(U256::ZERO),
+                        data: request.input.input().cloned().unwrap_or_default(),
+                        gas_limit: request.gas.unwrap_or(EIP8430_TRANSFER_GAS_LIMIT),
+                        estimated_gas: 0,
+                        validity: Vec::new(),
+                        cohort: SubmitCohort::Plain,
+                    };
+                    let signed = SubmissionPipeline::sign_at_nonce(
+                        &account.signer,
+                        &prepared,
+                        self.config.chain_id,
+                        nonce,
+                        Fees { max_fee, priority_fee },
+                    )?;
+                    let native_provider =
+                        RpcProviders::query(self.config.primary_submission_rpc().clone())?;
+                    let receipt = native_provider
+                        .send_raw_transaction(&signed.raw)
+                        .await
+                        .rpc("submit native calibration transaction")?
+                        .with_timeout(Some(Duration::from_secs(60)))
+                        .get_receipt()
+                        .await
+                        .rpc("confirm native calibration transaction (requires Everest)")?;
+                    (
+                        receipt.status() && receipt.phase_statuses.as_deref() == Some(&[1]),
+                        receipt.gas_used(),
+                    )
+                } else {
+                    let provider = create_wallet_provider(
+                        self.config.primary_submission_rpc().clone(),
+                        EthereumWallet::from(account.signer.clone()),
+                    );
+                    let receipt = provider
+                        .send_transaction(request)
+                        .await
+                        .rpc("submit calibration transaction")?
+                        .get_receipt()
+                        .await
+                        .rpc("confirm calibration transaction")?;
+                    (receipt.status(), receipt.gas_used)
                 };
-                let signed = SubmissionPipeline::sign_at_nonce(
-                    &account.signer,
-                    &prepared,
-                    self.config.chain_id,
-                    nonce,
-                    Fees { max_fee, priority_fee },
-                )?;
-                let native_provider =
-                    RpcProviders::query(self.config.primary_submission_rpc().clone())?;
-                let receipt = native_provider
-                    .send_raw_transaction(&signed.raw)
-                    .await
-                    .rpc("submit native calibration transaction")?
-                    .with_timeout(Some(Duration::from_secs(60)))
-                    .get_receipt()
-                    .await
-                    .rpc("confirm native calibration transaction (requires Everest)")?;
-                (
-                    receipt.status() && receipt.phase_statuses.as_deref() == Some(&[1]),
-                    receipt.gas_used(),
-                )
-            } else {
-                let receipt = provider
-                    .send_transaction(request)
-                    .await
-                    .rpc("submit calibration transaction")?
-                    .get_receipt()
-                    .await
-                    .rpc("confirm calibration transaction")?;
-                (receipt.status(), receipt.gas_used)
-            };
             if !success {
                 return Err(BaselineError::Transaction(format!(
                     "calibration transaction type {type_index} ({:?}) reverted",

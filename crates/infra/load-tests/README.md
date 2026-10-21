@@ -191,7 +191,8 @@ delay is measured for logging but is no longer included in the JSON output.
 | `sepolia.yaml` | Base Sepolia | Requires `FUNDER_KEY` |
 | `real-token-sepolia.yaml` | Base Sepolia | Uses predeployed WETH/USDC and the Uniswap V3 swap router; run with `just load-test real-token sepolia`; recover with `just load-test real-token-recover sepolia` |
 | `real-token-mainnet-snapshot.yaml` | Local/shadow Base mainnet snapshot | Wraps funded ETH into WETH, acquires USDC, then runs random-direction Uniswap V3 and Aerodrome CL swaps; run with `just load-test real-token mainnet-snapshot` |
-| `mainnet-mix-mainnet-snapshot.yaml` | Everest-active `base-bench snapshot` | Sampled mainnet mix and gas/s target with the 41/1000 ETH-transfer weight split into 21 regular and 20 native EIP-8430 transfers; not a measured native tx share. `etc/scripts/local/mainnet-mix.py` generates the original ordinary-transfer mix and documents its limits |
+| `mainnet-mix-mainnet-snapshot.yaml` | `base-bench snapshot` on Base mainnet | Transaction mix and gas/s of a sampled mainnet week; regenerate with `etc/scripts/local/mainnet-mix.py`, whose docstring lists the mapping and its limits |
+| `mainnet-mix-eip8430-mainnet-snapshot.yaml` | Everest-active target | Opt-in synthetic variant with the 41/1000 ETH-transfer weight split into 21 regular and 20 native EIP-8430 transfers; not a measured native tx share. The sampling generator emits only the ordinary baseline |
 | `eip8430-transfer.yaml` | Everest-active target | Native EOA self-pay ETH transfers; protocol nonce lane, one call per transaction |
 | `zeronet.yaml` | Base Zeronet | Requires `FUNDER_KEY` |
 

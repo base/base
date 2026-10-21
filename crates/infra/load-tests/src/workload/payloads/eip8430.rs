@@ -46,7 +46,7 @@ mod tests {
         for (yaml, weights, native_index) in [
             (include_str!("../../../examples/eip8430-transfer.yaml"), vec![100], 0),
             (
-                include_str!("../../../examples/mainnet-mix-mainnet-snapshot.yaml"),
+                include_str!("../../../examples/mainnet-mix-eip8430-mainnet-snapshot.yaml"),
                 vec![21, 20, 75, 585, 150, 149],
                 1,
             ),
@@ -91,6 +91,24 @@ mod tests {
                 "native config must map to native payload"
             );
         }
+        let baseline: TestConfig = serde_yaml::from_str(include_str!(
+            "../../../examples/mainnet-mix-mainnet-snapshot.yaml"
+        ))
+        .expect("ordinary baseline must parse");
+        let baseline = baseline.to_load_config(None).expect("ordinary baseline must convert");
+        assert_eq!(
+            baseline.transactions.iter().map(|tx| tx.weight).collect::<Vec<_>>(),
+            vec![41, 75, 585, 150, 149],
+            "baseline weights must remain unchanged"
+        );
+        assert!(
+            matches!(baseline.transactions[0].tx_type, TxType::Transfer),
+            "baseline must retain ordinary transfers"
+        );
+        assert!(
+            !baseline.transactions.iter().any(|tx| matches!(tx.tx_type, TxType::Eip8430Transfer)),
+            "baseline must not require native support"
+        );
         let to = Address::repeat_byte(0xab);
         let request = Eip8430TransferPayload.generate(&mut SeededRng::new(42), Address::ZERO, to);
         assert_eq!(request.transaction_type, Some(0x79), "native signing marker must be set");

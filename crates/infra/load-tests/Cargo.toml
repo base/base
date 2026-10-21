@@ -26,10 +26,10 @@ alloy-signer-local = { workspace = true, features = ["mnemonic"] }
 # base
 base-cli-utils.workspace = true
 base-tx-manager.workspace = true
-base-common-consensus = { workspace = true, features = ["k256"] }
 base-common-network.workspace = true
 base-common-flashblocks.workspace = true
 base-execution-txpool.workspace = true
+base-common-consensus = { workspace = true, features = ["k256"] }
 base-common-precompiles = { workspace = true, default-features = false }
 
 # display
