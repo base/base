@@ -218,6 +218,13 @@ pub enum TransactionEventType {
     /// The builder stopped flashblock construction before publishing.
     #[serde(rename = "BUILDER_FLASHBLOCK_BUILD_STOPPED")]
     BuilderFlashblockBuildStopped,
+    /// The builder reserved work and started an evaluation round for a candidate group.
+    #[serde(rename = "BUILDER_CANDIDATE_ROUND")]
+    BuilderCandidateRound,
+    /// The builder's outcome for one candidate sibling: an uncommitted trial or an admission
+    /// precheck.
+    #[serde(rename = "BUILDER_CANDIDATE_TRIAL")]
+    BuilderCandidateTrial,
 }
 
 impl TransactionEventType {
@@ -278,6 +285,8 @@ impl fmt::Display for TransactionEventType {
             Self::BuilderFlashblockStarted => "BUILDER_FLASHBLOCK_STARTED",
             Self::BuilderFlashblockPublished => "BUILDER_FLASHBLOCK_PUBLISHED",
             Self::BuilderFlashblockBuildStopped => "BUILDER_FLASHBLOCK_BUILD_STOPPED",
+            Self::BuilderCandidateRound => "BUILDER_CANDIDATE_ROUND",
+            Self::BuilderCandidateTrial => "BUILDER_CANDIDATE_TRIAL",
         };
         f.write_str(value)
     }

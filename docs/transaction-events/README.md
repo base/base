@@ -22,7 +22,8 @@ future. A retried `event_id` dedupes only within the same UTC hour of its
 `event_time`. `TXPOOL_SEND_RAW_TRANSACTION_VALIDITY` uses the same warm window as
 `TXPOOL_SEND_RAW_TRANSACTION`. `BUILDER_DEFERRED` and `BUILDER_EXPIRED` use the
 same hot window as the other per-attempt builder decisions. Swap Lane events
-follow the same split: `TXPOOL_SEND_SWAP_TRANSACTION` is warm, and
+follow the same split: `BUILDER_CANDIDATE_ROUND` and `BUILDER_CANDIDATE_TRIAL`
+are hot, `TXPOOL_SEND_SWAP_TRANSACTION` is warm, and
 `TXPOOL_SEND_SWAP_TRANSACTION_REJECTED`, `TXPOOL_CANDIDATE_LANDED`, and
 `TXPOOL_CANDIDATE_EVICTED` are cold.
 
@@ -259,6 +260,8 @@ Builder:
 - `BUILDER_FLASHBLOCK_STARTED`
 - `BUILDER_FLASHBLOCK_PUBLISHED`
 - `BUILDER_FLASHBLOCK_BUILD_STOPPED`
+- `BUILDER_CANDIDATE_ROUND`
+- `BUILDER_CANDIDATE_TRIAL`
 
 Builder caveat: `BUILDER_ACCEPTED`, `BUILDER_REJECTED`, `BUILDER_DEFERRED`,
 and `BUILDER_EXPIRED` are emitted per payload-building attempt and include
@@ -332,9 +335,49 @@ allowlist, journal nothing and increment the
 outside the allowlist cannot grow the journal. Proxies forward without
 journaling.
 
-Measured sizes, as serialized JSON: group admission with one alternative 691
-bytes, admission without alternatives about 530, rejection 566 to 688, landed 712,
-evicted 652 to 661.
+Builder turns: each turn that considers a group gets a never-reused
+`data.turn`; builder candidate event IDs include the instance and turn, so two
+rounds of one group under one `payload_id` are both kept, while a redelivered
+event deduplicates. A round that reserved work emits one
+`BUILDER_CANDIDATE_ROUND` against the representative when it settles, also when
+it was cancelled, ran out of time, saw finalization, or failed, with
+`data.attempt`, `data.round_siblings`, `data.reserved_work_gas`,
+`data.settled_work_gas`, `data.round_end` (`completed`, `cancelled`,
+`out_of_time`, `finalized`, or `error`), `data.sibling_outcomes` (each
+sibling's outcome label in envelope order: `eligible`, an ineligible reason, or
+`not_run`), `data.outcomes` (the same labels counted), and `data.winner_index`
+for a completed round with a winner. When the token balance read before the
+trials fails, no sibling runs: each gets that read's reason (`score_reverted`,
+`score_halted` or `score_malformed`) and the round settles only the read's gas.
+Scores stay out of the round. Per-sibling `BUILDER_CANDIDATE_TRIAL` events
+are off by default; `--builder.candidates.trial-events` enables them. A trial
+event carries the sibling's `tx_hash`, `data.stage` (`precheck` for admission
+failures, journaled even when the round is then denied a reservation, or
+`trial`), `data.outcome`, and `data.delta` and `data.gas_used` or
+`data.ineligible_reason`; a sibling that executed but was not scored before the
+round stopped is `interrupted`. The turn ends in at most one decision:
+`BUILDER_ACCEPTED` for the committed sibling with `data.candidate_selection`
+(`winner`, or `fallback` with `data.fallback_reason`), or, against the
+representative, `BUILDER_DEFERRED` for park and defer, `BUILDER_REJECTED` for
+eviction, or `BUILDER_EXPIRED` past the group's
+node-assigned expiry block. The reason field holds the
+lifecycle label, such as `all_failed`, `ledger_unavailable`, `deferred_quota`,
+`deferred_build_budget`, `deferred_deadline`, `deferred_finalization`,
+`deferred_unmetered`, `deferred_block_limits`, `deferred_verify_mismatch`,
+`revoked`, `permanent_exclusion`, or `budget_exhausted`. `BUILDER_REJECTED`
+with `nonce_used` and `permanent: false` means the group's nonce was already
+used at this payload's prefix, for example by a sponsor's EIP-7702
+authorization: the builder releases the sender's lane for this payload only and
+leaves the ledger unchanged, since the payload may not land. A group is
+considered at most once per build, so decisions are not deduplicated. These
+are per-payload observations: `BUILDER_ACCEPTED` is provisional.
+
+Measured sizes as serialized JSON, for a default transaction with one
+alternative: admission 691 bytes (about 530 without alternatives), rejection 566 to
+688, round 976 to 987 (each further sibling adds its label, about 10 to 25
+bytes), trial 869 to 878, accepted 848, deferred 804, rejected 831, landed 712,
+evicted 652 to 661. A turn emits one round and one decision, plus one trial per
+sibling when trial events are on.
 
 Terminal events: the node's candidate ledger emits exactly one terminal event
 per admitted group. Its `event_id` covers `data.group_hash`, `tx_hash`,
@@ -379,8 +422,15 @@ still correct it.
 Disabled selection: a node started without candidates registers no
 `base_sendSwapTransaction` and emits none of these events. While selection is
 disabled at runtime with `admin_setCandidateSelectionEnabled`, ingress journals
-admissions with `data.selection: ignored` and starts no group; the ledger still
-journals terminal events for groups admitted earlier.
+admissions with `data.selection: ignored` and starts no group, and the builder
+emits no candidate events; the ledger still journals terminal events for groups
+admitted earlier.
+
+The native builder evaluates candidate groups only on Denim-active builds,
+which build each payload once. On a pre-Denim build, which the payload job
+rebuilds repeatedly, it takes the runtime-disabled path instead: a group whose
+signed fallback is the default sibling commits that sibling, a drop group stays
+parked until Denim, and no build charges an evaluation attempt.
 
 Canonicality caveat: builder events are local payload construction signals, not
 canonical-chain or consensus-finality observations. A builder event with

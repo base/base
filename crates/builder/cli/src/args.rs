@@ -398,6 +398,7 @@ impl Args {
                 Duration::from_secs(self.rejection_cache_ttl_secs),
             ),
             manifest_precheck_enabled: self.manifest_precheck_enabled,
+            candidates: None,
         })
     }
 }

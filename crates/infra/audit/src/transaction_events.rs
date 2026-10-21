@@ -239,7 +239,9 @@ impl TransactionEventRetentionClass {
             | TransactionEventType::BuilderAccepted
             | TransactionEventType::BuilderRejected
             | TransactionEventType::BuilderDeferred
-            | TransactionEventType::BuilderExpired => Self::Hot,
+            | TransactionEventType::BuilderExpired
+            | TransactionEventType::BuilderCandidateRound
+            | TransactionEventType::BuilderCandidateTrial => Self::Hot,
             TransactionEventType::IngressReceived
             | TransactionEventType::SimulationStarted
             | TransactionEventType::SimulationSucceeded
@@ -2147,6 +2149,12 @@ mod tests {
                 TransactionEventType::TxpoolCandidateEvicted
             ),
             TransactionEventRetentionClass::Cold
+        );
+        assert_eq!(
+            TransactionEventRetentionClass::for_event_type(
+                TransactionEventType::BuilderCandidateTrial
+            ),
+            TransactionEventRetentionClass::Hot
         );
         assert_eq!(
             TransactionEventRetentionClass::for_event_type(TransactionEventType::BuilderRejected),
