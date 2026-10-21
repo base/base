@@ -46,7 +46,7 @@ pub(crate) use b20::{b20_salt_for, b20_token_for};
 mod b20_lifecycle;
 
 mod real_token_lifecycle;
-pub use real_token_lifecycle::recover_real_tokens;
+pub use real_token_lifecycle::{encode_erc20_approve, recover_real_tokens};
 
 mod osaka;
 pub use osaka::OsakaPayload;

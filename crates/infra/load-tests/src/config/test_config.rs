@@ -303,6 +303,9 @@ pub enum TxTypeConfig {
     },
     /// Uniswap V3 style swap.
     UniswapV3 {
+        /// Batch an exact approval and swap in a native EIP-8430 envelope.
+        #[serde(default)]
+        native: bool,
         /// Router contract address.
         ///
         /// Required unless a harness flow auto-wires swap addresses.
@@ -752,6 +755,7 @@ impl TestConfig {
             TxTypeConfig::B20 => TxType::B20,
             TxTypeConfig::Osaka { target } => TxType::Osaka { target: target.clone() },
             TxTypeConfig::UniswapV3 {
+                native,
                 router,
                 token_in,
                 token_out,
@@ -779,6 +783,7 @@ impl TestConfig {
                 let token_in = require_address(*token_in, "uniswap_v3 token_in")?;
                 let token_out = require_address(*token_out, "uniswap_v3 token_out")?;
                 TxType::UniswapV3 {
+                    native: *native,
                     router,
                     token_in,
                     token_out,

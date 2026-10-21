@@ -116,6 +116,7 @@ impl WorkloadGenerator {
                         generator.with_payload(OsakaPayload::new(target.clone()), weight_pct);
                 }
                 TxType::UniswapV3 {
+                    native,
                     router,
                     token_in,
                     token_out,
@@ -134,7 +135,8 @@ impl WorkloadGenerator {
                             *min_amount,
                             *max_amount,
                             Some((*reverse_min_amount, *reverse_max_amount)),
-                        ),
+                        )
+                        .with_native(*native),
                         weight_pct,
                     );
                 }
@@ -263,6 +265,7 @@ mod tests {
             TxConfig {
                 weight: 1,
                 tx_type: TxType::UniswapV3 {
+                    native: false,
                     router: Address::repeat_byte(0x20),
                     token_in: Address::repeat_byte(0x21),
                     token_out: Address::repeat_byte(0x22),

@@ -814,7 +814,7 @@ impl SubmissionPipeline {
             })?;
             if !prepared.validity.is_empty() || prepared.cohort.is_validity() {
                 return Err(BaselineError::Config(
-                    "native transfers do not support validity submission".into(),
+                    "native EIP-8430 workloads do not support validity submission".into(),
                 ));
             }
             let tx = TxEip8130 {
@@ -823,7 +823,16 @@ impl SubmissionPipeline {
                 max_fee_per_gas: fees.max_fee,
                 max_priority_fee_per_gas: fees.priority_fee,
                 gas_limit: prepared.gas_limit,
-                calls: vec![vec![Call { to, value: prepared.value, data: prepared.data.clone() }]],
+                calls: vec![if prepared.data.is_empty() {
+                    vec![Call { to, value: prepared.value, data: prepared.data.clone() }]
+                } else {
+                    if prepared.value != U256::ZERO {
+                        return Err(BaselineError::Config(
+                            "native token swaps require zero ETH value".into(),
+                        ));
+                    }
+                    crate::workload::UniswapV3Payload::native_calls(to, &prepared.data)?
+                }],
                 ..Default::default()
             };
             let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).map_err(|e| {
