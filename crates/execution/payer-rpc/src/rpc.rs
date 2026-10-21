@@ -790,7 +790,7 @@ mod tests {
         let mut state = MockPayerChainState::new();
         state.expect_nonce().returning(|_, _| Ok(U256::ZERO));
         state.expect_simulate().never();
-        let api = PayerApiImpl::new(everest_provider(), client(&sequencer), state);
+        let api = PayerApiImpl::new(everest_provider(), client(&sequencer), state, false);
 
         let queued = send_request_paid_by(Some(Address::repeat_byte(0xaa)), 1);
         api.send_transaction(queued).await.unwrap();
