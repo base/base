@@ -2,8 +2,9 @@
 
 mod healthcheck;
 pub use healthcheck::{
-    AlloyEthClient, BlockProductionHealthChecker, EthClient, HeaderSummary, HealthState,
-    HealthcheckConfig, Node,
+    AlloyEthClient, AlloyWsHeadSubscriber, BlockProductionHealthChecker, EthClient, HeadStream,
+    HeadSubscriber, HeadSubscriptionHealthChecker, HeaderSummary, HealthState, HealthcheckConfig,
+    Node,
 };
 
 mod metrics;

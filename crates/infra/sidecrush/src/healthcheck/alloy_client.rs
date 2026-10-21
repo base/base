@@ -1,8 +1,14 @@
-use alloy_provider::{Provider, ProviderBuilder, RootProvider};
+use std::{
+    pin::Pin,
+    task::{Context, Poll},
+};
+
+use alloy_provider::{Provider, ProviderBuilder, RootProvider, WsConnect};
 use alloy_rpc_types_eth::BlockId;
 use async_trait::async_trait;
+use futures::{Stream, StreamExt};
 
-use super::{EthClient, HeaderSummary};
+use super::{EthClient, HeadStream, HeadSubscriber, HeaderSummary};
 
 /// An [`EthClient`] backed by an [`alloy_provider::Provider`] HTTP transport.
 #[derive(Debug, Clone)]
@@ -39,5 +45,57 @@ impl EthClient for AlloyEthClient {
         let transaction_count: usize = block.transactions.len();
 
         Ok(HeaderSummary { number, timestamp_unix_seconds, transaction_count })
+    }
+}
+
+/// [`HeadSubscriber`] backed by an `alloy` WebSocket provider and `eth_subscribe("newHeads")`.
+///
+/// Headers from `newHeads` carry no transactions, so [`HeaderSummary::transaction_count`] is
+/// always 0 for heads from this subscriber.
+#[derive(Debug, Clone)]
+pub struct AlloyWsHeadSubscriber {
+    url: String,
+}
+
+impl AlloyWsHeadSubscriber {
+    /// Create a subscriber for a `ws://` or `wss://` endpoint. Nothing connects until
+    /// [`HeadSubscriber::subscribe`] is called.
+    pub fn new(url: impl Into<String>) -> Self {
+        Self { url: url.into() }
+    }
+}
+
+#[async_trait]
+impl HeadSubscriber for AlloyWsHeadSubscriber {
+    async fn subscribe(&self) -> Result<HeadStream, Box<dyn std::error::Error + Send + Sync>> {
+        let provider = ProviderBuilder::new()
+            .disable_recommended_fillers()
+            .connect_ws(WsConnect::new(self.url.as_str()))
+            .await?;
+        let subscription = provider.subscribe_blocks().await?;
+        let heads = subscription
+            .into_stream()
+            .map(|header| HeaderSummary {
+                number: header.number,
+                timestamp_unix_seconds: header.timestamp,
+                transaction_count: 0,
+            })
+            .boxed();
+        Ok(Box::pin(ProviderBoundStream { _provider: provider, inner: heads }))
+    }
+}
+
+/// Keeps the WebSocket provider (and its pubsub backend) alive for as long as the stream is
+/// polled, and closes the connection when the stream is dropped.
+struct ProviderBoundStream {
+    _provider: RootProvider,
+    inner: HeadStream,
+}
+
+impl Stream for ProviderBoundStream {
+    type Item = HeaderSummary;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.get_mut().inner.as_mut().poll_next(cx)
     }
 }

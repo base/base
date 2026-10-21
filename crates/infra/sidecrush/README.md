@@ -13,14 +13,27 @@ classifies the node into one of four health states:
   production is considered stalled.
 - **Error** — the RPC call failed or timed out (2 s per fetch).
 
-A separate 2 s heartbeat emits one `StatsD` counter increment per tick to
+With sub-second block times, header timestamps (whole seconds) are too coarse to
+measure block age. [`HeadSubscriptionHealthChecker`] instead subscribes to
+`newHeads` over WebSocket and measures block age as the local time since the last
+advancing head arrived. In this mode the grace period and unhealthy threshold must
+be larger than the block time, and **Error** means the subscription is down. Lost
+subscriptions are reopened with backoff, and the checker resubscribes after 10 s
+without a head in case the subscription died silently. A new instance reports
+healthy until a head arrives whose timestamp is within the grace period (plus one
+second for rounding) of wall-clock time.
+
+A separate heartbeat (2 s by default) emits one `StatsD` counter increment per tick to
 Datadog under the `base.blocks` metric namespace, so alerting systems observe a
 continuous signal independent of poll cadence.
 
 ## Types
 
 - [`BlockProductionHealthChecker`] — the async polling driver.
+- [`HeadSubscriptionHealthChecker`] — the `newHeads` subscription driver.
 - [`AlloyEthClient`] — an `EthClient` impl backed by the `alloy` HTTP provider.
+- [`AlloyWsHeadSubscriber`] — a `HeadSubscriber` impl backed by the `alloy`
+  WebSocket provider.
 - [`HealthcheckMetrics`] — the `StatsD` counter wrapper.
 - [`Node`], [`HealthcheckConfig`], [`HeaderSummary`], [`HealthState`] — value
   types describing the polling target, thresholds, block summaries, and current

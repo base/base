@@ -16,9 +16,10 @@ anyhow = { workspace = true }
 cadence = { workspace = true }
 tracing = { workspace = true }
 async-trait = { workspace = true }
-alloy-provider = { workspace = true }
+futures = { workspace = true }
+alloy-provider = { workspace = true, features = ["pubsub", "ws"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["rt", "time", "macros"] }
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "test-util"] }
