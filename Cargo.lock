@@ -6675,6 +6675,7 @@ dependencies = [
  "base-execution-chainspec",
  "base-execution-rpc",
  "base-execution-txpool",
+ "base-metrics",
  "base-node-runner",
  "base-observability-events",
  "base-test-utils",
