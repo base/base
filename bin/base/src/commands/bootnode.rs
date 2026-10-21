@@ -6,7 +6,7 @@ use clap::Args;
 use eyre::WrapErr;
 use reth_cli_runner::CliRunner;
 use tokio::task::JoinHandle;
-use tracing::{debug, info, warn};
+use tracing::warn;
 
 use crate::config::ResolvedChainConfig;
 
@@ -47,8 +47,7 @@ impl BootnodeCommand {
             let chain_id = rollup_config.l2_chain_id.id();
             self.consensus.check_ports()?;
 
-            let mut consensus_bootnode =
-                tokio::spawn(Self::run_consensus(self.consensus, chain_id));
+            let mut consensus_bootnode = tokio::spawn(self.consensus.run(chain_id));
             let mut execution_bootnode = tokio::spawn(self.execution.execute());
 
             tokio::select! {
@@ -68,33 +67,6 @@ impl BootnodeCommand {
                 }
             }
         })
-    }
-
-    async fn run_consensus(consensus: BootnodeP2PArgs, chain_id: u64) -> eyre::Result<()> {
-        let driver = consensus.discovery_driver(chain_id)?;
-        let (handler, mut discovered_enrs) = driver.start();
-        let local_enr = handler.local_enr().await.wrap_err("discovery service stopped")?;
-        consensus.write_enr_output(&local_enr)?;
-
-        info!(
-            target: "rollup_node::bootnode",
-            chain_id = chain_id,
-            enr = %local_enr,
-            "Consensus bootnode started"
-        );
-        CliMetrics::record_bootnode_up();
-
-        while let Some(enr) = discovered_enrs.recv().await {
-            debug!(
-                target: "rollup_node::bootnode",
-                peer_id = %enr.node_id(),
-                enr = %enr,
-                "Discovered consensus peer"
-            );
-        }
-
-        warn!(target: "rollup_node::bootnode", "Discovery ENR stream closed");
-        Ok(())
     }
 
     async fn stop_task(

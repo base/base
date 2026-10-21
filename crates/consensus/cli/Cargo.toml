@@ -30,6 +30,9 @@ base-common-genesis.workspace = true
 base-consensus-disc = { workspace = true, features = ["metrics"] }
 base-consensus-node = { workspace = true, features = ["metrics"] }
 base-consensus-providers = { workspace = true, features = ["metrics"] }
+
+# reth
+reth-tasks.workspace = true
 reth-node-core.workspace = true
 
 # retry

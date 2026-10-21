@@ -78,30 +78,7 @@ impl Bootnode {
         let chain_id = cfg.l2_chain_id.id();
         self.p2p.check_ports()?;
 
-        let driver = self.p2p.discovery_driver(chain_id)?;
-        let (handler, mut discovered_enrs) = driver.start();
-        let local_enr = handler.local_enr().await.wrap_err("discovery service stopped")?;
-        self.p2p.write_enr_output(&local_enr)?;
-
-        info!(
-            target: "rollup_node::bootnode",
-            chain_id = chain_id,
-            enr = %local_enr,
-            "Consensus bootnode started"
-        );
-        CliMetrics::record_bootnode_up();
-
-        while let Some(enr) = discovered_enrs.recv().await {
-            debug!(
-                target: "rollup_node::bootnode",
-                peer_id = %enr.node_id(),
-                enr = %enr,
-                "Discovered consensus peer"
-            );
-        }
-
-        warn!(target: "rollup_node::bootnode", "Discovery ENR stream closed");
-        Ok(())
+        self.p2p.run(chain_id).await
     }
 }
 
@@ -209,6 +186,36 @@ impl Default for BootnodeP2PArgs {
 }
 
 impl BootnodeP2PArgs {
+    /// Runs discovery, publishes the local ENR, and consumes peers until discovery stops.
+    ///
+    /// Call [`Self::check_ports`] before starting the bootnode.
+    pub async fn run(self, chain_id: u64) -> eyre::Result<()> {
+        let driver = self.discovery_driver(chain_id)?;
+        let (handler, mut discovered_enrs) = driver.start();
+        let local_enr = handler.local_enr().await.wrap_err("discovery service stopped")?;
+        self.write_enr_output(&local_enr)?;
+
+        info!(
+            target: "rollup_node::bootnode",
+            chain_id = chain_id,
+            enr = %local_enr,
+            "Consensus bootnode started"
+        );
+        CliMetrics::record_bootnode_up();
+
+        while let Some(enr) = discovered_enrs.recv().await {
+            debug!(
+                target: "rollup_node::bootnode",
+                peer_id = %enr.node_id(),
+                enr = %enr,
+                "Discovered consensus peer"
+            );
+        }
+
+        warn!(target: "rollup_node::bootnode", "Discovery ENR stream closed");
+        Ok(())
+    }
+
     /// Checks if the configured listen port is available on the system.
     pub fn check_ports(&self) -> eyre::Result<()> {
         if self.listen_udp_port == 0 {
