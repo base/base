@@ -1665,8 +1665,8 @@ mod tests {
     use base_common_evm::BaseTime;
     use base_execution_candidates::{
         CandidateEnvelope, CandidateGroup, CandidateLimits, CandidateRuntime, CandidateSwitch,
-        Capability, GroupLedger, GroupState, PrincipalEntry, PrincipalId, PrincipalsFile,
-        StaticAccessPolicy,
+        Capability, DEFAULT_PROBE_GAS, GroupLedger, GroupState, PrincipalEntry, PrincipalId,
+        PrincipalsFile, StaticAccessPolicy,
         test_utils::{CandidateFixture, FIXTURE_EXPIRY_BLOCK},
     };
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
@@ -4085,6 +4085,25 @@ mod tests {
         assert_eq!(round["settled_work_gas"], 42_000);
         let ids: HashSet<_> = events.iter().map(|event| event.event_id.clone()).collect();
         assert_eq!(ids.len(), events.len(), "the round, its trials and acceptance never collide");
+    }
+
+    #[test]
+    fn a_failed_before_probe_runs_no_trials() {
+        let capture = TransactionEventCapture::install();
+        let fixture = CandidateFixture::new(8_453);
+        let runtime = candidate_runtime(&fixture, true);
+        // A mutating `balanceOf` halts the static probe before any sibling runs.
+        let group = candidate_group(&fixture, &runtime, CANDIDATE_RECIPIENT, &[107, 109], |e| {
+            e.rule.token = MUTATING_TOKEN;
+            e.fallback_mode = 0;
+        });
+
+        assert!(build_candidate_turn(&fixture, &runtime, &group, |_| {}).is_empty());
+
+        let events = raw_candidate_events(&capture, &runtime, &group);
+        let round = &events[0].data;
+        assert_eq!(round["sibling_outcomes"], serde_json::json!(["score_halted", "score_halted"]));
+        assert_eq!(round["settled_work_gas"], DEFAULT_PROBE_GAS, "only the halted probe's gas");
     }
 
     #[test]

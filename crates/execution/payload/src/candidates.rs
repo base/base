@@ -1216,6 +1216,17 @@ where
                 result
             }
         };
+        let before = match before {
+            Ok(before) => before,
+            Err(reason) => {
+                // The before-probe reads the pre-trial state, so no sibling's trial could be
+                // scored: mark them all with its reason and charge only the probe.
+                for &index in &round.siblings {
+                    round.outcomes[index] = TrialOutcome::Ineligible(reason);
+                }
+                return Ok(RoundEnd::Completed);
+            }
+        };
         for position in 0..round.siblings.len() {
             let index = round.siblings[position];
             if let Some(end) = self.round_stop(scan, config) {
@@ -1239,14 +1250,6 @@ where
             round.work = round.work.saturating_add(gas_used);
             // Executed and charged; a stop or error before scoring leaves it interrupted.
             round.outcomes[index] = TrialOutcome::Ineligible(Ineligibility::Interrupted);
-            let before = match before {
-                Ok(before) => before,
-                Err(reason) => {
-                    // A failed before-probe makes every trial in the round ineligible.
-                    round.outcomes[index] = TrialOutcome::Ineligible(reason);
-                    continue;
-                }
-            };
             let after = match &evm_env {
                 None => Ok(trial.recipient_balance.unwrap_or(before)),
                 Some(env) => {
