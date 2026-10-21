@@ -32,8 +32,9 @@ use base_precompile_storage::{BasePrecompileError, HashMapStorageProvider, Stora
 
 mod common;
 use common::{
-    ADMIN, ALICE, BOB, CAROL, CHAIN_ID, MEMO, POLICY_ID, TOKEN, anvil_owner, bless_or_assert_gas,
-    bless_or_assert_root, hash_token_state, ok_true, signed_permit, u,
+    ADMIN, ALICE, BOB, CAROL, CHAIN_ID, MEMO, POLICY_ID, TOKEN, allow0, anvil_owner,
+    assert_token_root as assert_root, bless_or_assert_gas, fund, give_role, last_topic0, ok_true,
+    signed_permit, u,
 };
 
 // --- fixtures ---------------------------------------------------------------
@@ -121,84 +122,28 @@ fn fresh() -> HashMapStorageProvider {
     storage
 }
 
-/// Mutates raw token storage through the accounting port (test setup only).
-fn seed(storage: &mut HashMapStorageProvider, f: impl FnOnce(&mut B20StablecoinStorage<'_>)) {
-    StorageCtx::enter(storage, |ctx| {
-        let mut token = B20StablecoinStorage::from_address(TOKEN, ctx);
-        f(&mut token);
-    });
+crate::token_golden_harness! {
+    storage: B20StablecoinStorage,
+    token: B20StablecoinToken,
+    versions: StablecoinVersions,
+    version: StablecoinVersion::V1,
+    upgrade: BaseUpgrade::Beryl,
+    policy: PolicyVersion::V1,
 }
 
-/// Reads token state through the accounting port.
-fn read<R>(
-    storage: &mut HashMapStorageProvider,
-    f: impl FnOnce(&B20StablecoinStorage<'_>) -> R,
-) -> R {
-    StorageCtx::enter(storage, |ctx| f(&B20StablecoinStorage::from_address(TOKEN, ctx)))
-}
-
-/// Drives one op through the resolver-gated (`Beryl` -> V1) unprivileged path.
-fn op(
-    storage: &mut HashMapStorageProvider,
+/// Like [`gas`], but for calls expected to revert — still counts the storage footprint
+/// incurred before the revert.
+fn gas_reverting(
+    setup: impl FnOnce(&mut B20StablecoinStorage<'_>),
     caller: Address,
     policy: FakePolicyAccounting,
     calldata: Vec<u8>,
-) -> Result<Bytes, BasePrecompileError> {
-    storage.set_caller(caller);
-    StorageCtx::enter(storage, |ctx| {
-        let version =
-            StablecoinVersions::from_base_upgrade(BaseUpgrade::Beryl).expect("Beryl activates V1");
-        B20StablecoinToken::with_storage_and_policy(
-            B20StablecoinStorage::from_address(TOKEN, ctx),
-            policy,
-            PolicyVersion::V1,
-        )
-        .route(ctx, &calldata, version, false, NoopPrecompileCallObserver)
-    })
-}
-
-/// Drives one op through V1 with factory-init privilege (guards skipped).
-fn op_privileged(
-    storage: &mut HashMapStorageProvider,
-    caller: Address,
-    policy: FakePolicyAccounting,
-    calldata: Vec<u8>,
-) -> Result<Bytes, BasePrecompileError> {
-    storage.set_caller(caller);
-    StorageCtx::enter(storage, |ctx| {
-        B20StablecoinToken::with_storage_and_policy(
-            B20StablecoinStorage::from_address(TOKEN, ctx),
-            policy,
-            PolicyVersion::V1,
-        )
-        .route(ctx, &calldata, StablecoinVersion::V1, true, NoopPrecompileCallObserver)
-    })
-}
-
-/// Topic-0 (signature hash) of the last event emitted by the token.
-fn last_topic0(storage: &HashMapStorageProvider) -> B256 {
-    storage.get_events(TOKEN).last().expect("an emitted event").topics()[0]
-}
-
-/// Asserts the token's storage hash, or prints it under `BLESS_GOLDEN` for (re)pinning.
-#[track_caller]
-fn assert_root(label: &str, storage: HashMapStorageProvider, expected: B256) {
-    bless_or_assert_root(label, hash_token_state(storage, TOKEN), expected);
-}
-
-/// Grants `role` to `who` and bumps the role member count (setup only).
-fn give_role(token: &mut B20StablecoinStorage<'_>, role: B256, who: Address) {
-    token.set_role(role, who, true).unwrap();
-    let next = token.role_member_count(role).unwrap() + U256::ONE;
-    token.set_role_member_count(role, next).unwrap();
-}
-
-/// Credits `who` with `amount` and grows total supply to match (setup only).
-fn fund(token: &mut B20StablecoinStorage<'_>, who: Address, amount: U256) {
-    let balance = token.balance_of(who).unwrap();
-    token.set_balance(who, balance + amount).unwrap();
-    let supply = token.total_supply().unwrap();
-    token.set_total_supply(supply + amount).unwrap();
+) -> (u64, u64, u64) {
+    let mut s = fresh();
+    seed(&mut s, setup);
+    s.reset_counters();
+    op_privileged(&mut s, caller, policy, calldata).expect_err("gas-footprint op must revert");
+    (s.counter_sload(), s.counter_sstore(), s.counter_keccak256())
 }
 
 /// The V1 EIP-712 domain separator for the token at [`TOKEN`] on [`CHAIN_ID`].
@@ -1894,60 +1839,6 @@ fn golden_grant_role_unchecked_bootstraps_first_admin() {
 // schedule-independent signal instead: the SLOAD / SSTORE / KECCAK256 op counts a
 // call performs. These are the storage-access footprint that drives real gas, so a
 // change here (e.g. an extra SLOAD in V1) is caught even when bytes/state/events match.
-
-/// Runs `calldata` privileged after `setup`, returning `(sload, sstore, keccak256)` counts.
-fn gas(
-    setup: impl FnOnce(&mut B20StablecoinStorage<'_>),
-    caller: Address,
-    policy: FakePolicyAccounting,
-    calldata: Vec<u8>,
-) -> (u64, u64, u64) {
-    let mut s = fresh();
-    seed(&mut s, setup);
-    s.set_caller(caller);
-    s.reset_counters();
-    StorageCtx::enter(&mut s, |ctx| {
-        B20StablecoinToken::with_storage_and_policy(
-            B20StablecoinStorage::from_address(TOKEN, ctx),
-            policy,
-            PolicyVersion::V1,
-        )
-        .route(ctx, &calldata, StablecoinVersion::V1, true, NoopPrecompileCallObserver)
-    })
-    .expect("gas-footprint op must succeed");
-    (s.counter_sload(), s.counter_sstore(), s.counter_keccak256())
-}
-
-/// Like [`gas`], but for calls expected to revert — still counts the storage footprint
-/// incurred before the revert.
-fn gas_reverting(
-    setup: impl FnOnce(&mut B20StablecoinStorage<'_>),
-    caller: Address,
-    policy: FakePolicyAccounting,
-    calldata: Vec<u8>,
-) -> (u64, u64, u64) {
-    let mut s = fresh();
-    seed(&mut s, setup);
-    s.set_caller(caller);
-    s.reset_counters();
-    StorageCtx::enter(&mut s, |ctx| {
-        B20StablecoinToken::with_storage_and_policy(
-            B20StablecoinStorage::from_address(TOKEN, ctx),
-            policy,
-            PolicyVersion::V1,
-        )
-        .route(ctx, &calldata, StablecoinVersion::V1, true, NoopPrecompileCallObserver)
-    })
-    .expect_err("gas-footprint op must revert");
-    (s.counter_sload(), s.counter_sstore(), s.counter_keccak256())
-}
-
-/// An `FakePolicyAccounting` authorizing `who` under the default (0) scope.
-fn allow0(who: Address) -> FakePolicyAccounting {
-    let mut p = FakePolicyAccounting::new();
-    p.allow(0, who);
-    p
-}
 
 #[test]
 fn golden_gas_footprints() {

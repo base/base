@@ -2,7 +2,6 @@
 
 use alloy_consensus::{Header, Transaction};
 use base_common_consensus::BaseTxEnvelope;
-use base_shadow_indexer_db::ShadowBlockRow;
 
 /// Statistics for one shadow candidate block.
 #[derive(Clone, Debug)]
@@ -22,22 +21,6 @@ pub struct ShadowBlockStats {
 }
 
 impl ShadowBlockStats {
-    /// Derives metrics from a persisted row.
-    ///
-    /// Deposits stay in totals but leave the fee vector because they are not fee-ordered.
-    /// Missing tips are skipped, not zeroed; zero would invent an inversion.
-    /// Strict `next > previous` matches the builder assertion and excludes equal tips.
-    #[must_use]
-    pub fn from_row(row: &ShadowBlockRow) -> Self {
-        let block = &row.payload.block;
-        Self::from_parts(
-            row.number,
-            row.payload.builder_version.clone(),
-            block.header(),
-            &block.body().transactions,
-        )
-    }
-
     /// Derives metrics from a header and transaction list, without a full row.
     ///
     /// Deposits stay in totals but leave the fee vector because they are not fee-ordered.

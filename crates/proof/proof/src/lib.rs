@@ -31,6 +31,9 @@ pub use hint::{Hint, HintType};
 mod boot;
 pub use boot::*;
 
+mod intermediate_roots;
+pub use intermediate_roots::{IntermediateRootSampler, IntermediateRootSamplerError};
+
 mod caching_oracle;
 pub use caching_oracle::CachingOracle;
 

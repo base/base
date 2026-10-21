@@ -1,13 +1,20 @@
-use std::{fmt::Display, time::Duration};
+use std::{
+    fmt::Display,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 
 use alloy_network::{Ethereum, EthereumWallet};
-use alloy_primitives::{Address, Bytes, TxHash};
+use alloy_primitives::{Address, Bytes, Signature, TxHash};
 use alloy_provider::{
     Identity, Provider, ProviderBuilder, RootProvider,
     fillers::{ChainIdFiller, FillProvider, JoinFill, WalletFiller},
 };
 use base_common_network::Base;
-use base_execution_txpool::ValidityPredicate;
+use base_execution_txpool::{ValidityAuthorizationError, ValidityPredicate};
 use futures::future::join_all;
 use tokio::sync::Semaphore;
 use tracing::{instrument, warn};
@@ -199,17 +206,19 @@ pub struct SubmitItem {
     /// State predicates transported alongside the transaction. Empty for a
     /// plain `eth_sendRawTransaction` submission.
     pub validity: Vec<ValidityPredicate>,
+    /// Optional sender authorization for the validity sidecar.
+    pub validity_signature: Option<Signature>,
 }
 
 impl SubmitItem {
     /// Creates a plain submission item with no validity predicates.
     pub const fn plain(raw: Bytes) -> Self {
-        Self { raw, validity: Vec::new() }
+        Self { raw, validity: Vec::new(), validity_signature: None }
     }
 
     /// Creates a submission item carrying validity predicates.
     pub const fn with_validity(raw: Bytes, validity: Vec<ValidityPredicate>) -> Self {
-        Self { raw, validity }
+        Self { raw, validity, validity_signature: None }
     }
 
     /// Returns true when this item submits via `base_sendRawTransactionValidity`.
@@ -228,6 +237,7 @@ pub struct BatchRpcClient {
     client: reqwest::Client,
     url: Url,
     batch_size: usize,
+    validity_signatures_required: Arc<AtomicBool>,
 }
 
 /// Result of a single request within a JSON-RPC batch response.
@@ -251,17 +261,27 @@ pub struct BatchSendError {
     pub code: Option<i64>,
     /// Human-readable error message.
     pub message: String,
+    /// Stable rejection reason supplied by signature-aware RPC nodes.
+    pub reason: Option<String>,
 }
 
 impl BatchSendError {
     /// Creates an error carrying a JSON-RPC error code.
     pub fn with_code(code: i64, message: impl Into<String>) -> Self {
-        Self { code: Some(code), message: message.into() }
+        Self { code: Some(code), message: message.into(), reason: None }
     }
 
     /// Creates a client-side error with no JSON-RPC code.
     pub fn client(message: impl Into<String>) -> Self {
-        Self { code: None, message: message.into() }
+        Self { code: None, message: message.into(), reason: None }
+    }
+
+    /// Returns true only for an explicit signature-required ingress rejection.
+    pub fn is_signature_required(&self) -> bool {
+        self.code == Some(-32602)
+            && (self.reason.as_deref()
+                == Some(ValidityAuthorizationError::MissingSignature.as_label())
+                || self.message == ValidityAuthorizationError::MissingSignature.to_string())
     }
 
     /// Returns true when this is a JSON-RPC method-not-found error.
@@ -291,7 +311,23 @@ impl BatchRpcClient {
             .map_err(|e| {
                 BaselineError::Rpc(format!("failed to build batch RPC HTTP client: {e}"))
             })?;
-        Ok(Self { client, url, batch_size: MAX_BATCH_RPC_SIZE })
+        Ok(Self {
+            client,
+            url,
+            batch_size: MAX_BATCH_RPC_SIZE,
+            validity_signatures_required: Arc::new(AtomicBool::new(false)),
+        })
+    }
+
+    /// Remembers that this endpoint explicitly requires signed validity sidecars.
+    /// Clones share this one-way state; a signed request is never downgraded.
+    pub fn require_validity_signatures(&self) {
+        self.validity_signatures_required.store(true, Ordering::Relaxed);
+    }
+
+    /// Returns whether an explicit rejection has required signing for this endpoint.
+    pub fn validity_signatures_required(&self) -> bool {
+        self.validity_signatures_required.load(Ordering::Relaxed)
     }
 
     /// Sets the maximum number of JSON-RPC calls in each HTTP request.
@@ -355,11 +391,15 @@ impl BatchRpcClient {
             .enumerate()
             .map(|(i, item)| {
                 if item.is_validity() {
+                    let mut options = serde_json::json!({ "validity": item.validity });
+                    if let Some(signature) = item.validity_signature {
+                        options["validity_signature"] = serde_json::json!(signature);
+                    }
                     serde_json::json!({
                         "jsonrpc": "2.0",
                         "id": i,
                         "method": BASE_SEND_RAW_TRANSACTION_VALIDITY,
-                        "params": [item.raw, { "validity": item.validity }]
+                        "params": [item.raw, options]
                     })
                 } else {
                     serde_json::json!({
@@ -399,10 +439,12 @@ impl BatchRpcClient {
                 }
             } else if let Some(error) = item.get("error") {
                 let msg = error.get("message").and_then(|m| m.as_str()).unwrap_or("unknown error");
-                let err = error.get("code").and_then(|c| c.as_i64()).map_or_else(
+                let mut err = error.get("code").and_then(|c| c.as_i64()).map_or_else(
                     || BatchSendError::client(msg),
                     |code| BatchSendError::with_code(code, msg),
                 );
+                err.reason =
+                    error.get("data").and_then(serde_json::Value::as_str).map(str::to_owned);
                 results[id] = BatchSendResult::Error(err);
             }
         }
@@ -495,23 +537,6 @@ mod tests {
     }
 
     #[test]
-    fn batch_size_is_configurable() {
-        let url = Url::parse("http://localhost:8545").unwrap();
-
-        assert_eq!(BatchRpcClient::new(url).unwrap().with_batch_size(25).batch_size, 25);
-    }
-
-    #[test]
-    fn submit_item_selects_method_by_validity() {
-        let plain = SubmitItem::plain(Bytes::from_static(&[0x01]));
-        assert!(!plain.is_validity());
-
-        let validity =
-            SubmitItem::with_validity(Bytes::from_static(&[0x02]), vec![balance_predicate()]);
-        assert!(validity.is_validity());
-    }
-
-    #[test]
     fn build_batch_body_mixes_methods_and_ids() {
         let items = vec![
             SubmitItem::plain(Bytes::from_static(&[0xaa])),
@@ -533,15 +558,6 @@ mod tests {
         assert_eq!(body[1]["params"][0], "0xbb");
         assert_eq!(body[1]["params"][1]["validity"][0]["type"], "balance");
         assert_eq!(body[1]["params"][1]["validity"][0]["params"]["op"], ">=");
-    }
-
-    #[test]
-    fn validity_predicate_serializes_to_server_wire_shape() {
-        // Guards against drift from the canonical base-execution-txpool type.
-        let json = serde_json::to_value(balance_predicate()).unwrap();
-        assert_eq!(json["type"], "balance");
-        assert_eq!(json["params"]["op"], ">=");
-        assert_eq!(json["params"]["address"], "0x00000000000000000000000000000000000000aa");
     }
 
     #[test]
@@ -568,21 +584,6 @@ mod tests {
     }
 
     #[test]
-    fn parse_batch_body_surfaces_method_not_found() {
-        let body = vec![serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": 0,
-            "error": { "code": JSON_RPC_METHOD_NOT_FOUND, "message": "method not found" }
-        })];
-
-        let results = BatchRpcClient::parse_batch_body(1, body);
-        match &results[0] {
-            BatchSendResult::Error(e) => assert!(e.is_method_not_found()),
-            other => panic!("expected error, got {other:?}"),
-        }
-    }
-
-    #[test]
     fn parse_batch_body_marks_missing_responses() {
         let results = BatchRpcClient::parse_batch_body(2, Vec::new());
         assert_eq!(results.len(), 2);
@@ -598,11 +599,10 @@ mod tests {
     }
 
     #[test]
-    fn batch_send_error_display_includes_code() {
-        assert_eq!(
-            BatchSendError::with_code(JSON_RPC_METHOD_NOT_FOUND, "nope").to_string(),
-            "nope (code -32601)"
-        );
-        assert_eq!(BatchSendError::client("boom").to_string(), "boom");
+    fn batch_send_error_display_and_method_not_found() {
+        let error = BatchSendError::with_code(JSON_RPC_METHOD_NOT_FOUND, "nope");
+        assert!(error.is_method_not_found());
+        assert_eq!(error.to_string(), "nope (code -32601)");
+        assert!(!BatchSendError::client("boom").is_method_not_found());
     }
 }

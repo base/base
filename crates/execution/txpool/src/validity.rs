@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, Signature, U256};
 use reth_transaction_pool::ValidPoolTransaction;
 use revm::Database;
 use serde::{Deserializer, de};
@@ -110,27 +110,44 @@ pub enum ValidityPredicateError {
     },
 }
 
+/// Stable predicate-kind identifiers in the EIP-712 signing contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum ValidityPredicateKind {
+    /// Account balance comparison.
+    Balance = 0,
+    /// Masked storage comparison.
+    Storage = 1,
+    /// Block-number comparison.
+    BlockNumber = 2,
+    /// Flashblock-index comparison.
+    FlashblockIndex = 3,
+    /// Account protocol-nonce comparison.
+    Nonce = 4,
+}
+
 /// A comparison used by a [`ValidityPredicate`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[repr(u8)]
 pub enum ValidityOperator {
     /// Less than.
     #[serde(rename = "<")]
-    LessThan,
+    LessThan = 0,
     /// Less than or equal to.
     #[serde(rename = "<=")]
-    LessThanOrEqual,
+    LessThanOrEqual = 1,
     /// Equal to.
     #[serde(rename = "=")]
-    Equal,
+    Equal = 2,
     /// Not equal to.
     #[serde(rename = "!=")]
-    NotEqual,
+    NotEqual = 3,
     /// Greater than.
     #[serde(rename = ">")]
-    GreaterThan,
+    GreaterThan = 4,
     /// Greater than or equal to.
     #[serde(rename = ">=")]
-    GreaterThanOrEqual,
+    GreaterThanOrEqual = 5,
 }
 
 impl ValidityOperator {
@@ -223,6 +240,17 @@ pub enum ValidityPredicate {
 }
 
 impl ValidityPredicate {
+    /// Returns the stable identifier used by the wallet signing contract.
+    pub const fn kind(&self) -> ValidityPredicateKind {
+        match self {
+            Self::Balance { .. } => ValidityPredicateKind::Balance,
+            Self::Storage { .. } => ValidityPredicateKind::Storage,
+            Self::BlockNumber { .. } => ValidityPredicateKind::BlockNumber,
+            Self::FlashblockIndex { .. } => ValidityPredicateKind::FlashblockIndex,
+            Self::Nonce { .. } => ValidityPredicateKind::Nonce,
+        }
+    }
+
     /// Returns the default mask for storage predicates.
     #[must_use]
     pub const fn default_mask() -> U256 {
@@ -520,26 +548,6 @@ impl ValidityPredicate {
             .min()
             .and_then(|bound| u64::try_from(bound).ok())
     }
-
-    /// Stable-sorts a predicate batch into canonical evaluation order: timing
-    /// predicates ([`Self::BlockNumber`], [`Self::FlashblockIndex`]) before state
-    /// predicates ([`Self::Balance`], [`Self::Nonce`], [`Self::Storage`]). The batch is a pure
-    /// conjunction, so reordering only affects cost: a timing mismatch
-    /// short-circuits before any state read and parks under a context key that
-    /// per-transaction state changes never wake.
-    pub fn sort_batch(predicates: &mut [Self]) {
-        predicates.sort_by_key(Self::evaluation_rank);
-    }
-
-    /// Returns the canonical evaluation rank: block number, then flashblock
-    /// index, then state predicates.
-    const fn evaluation_rank(&self) -> u8 {
-        match self {
-            Self::BlockNumber { .. } => 0,
-            Self::FlashblockIndex { .. } => 1,
-            Self::Balance { .. } | Self::Nonce { .. } | Self::Storage { .. } => 2,
-        }
-    }
 }
 
 /// Deserializes a sequence of [`ValidityPredicate`] while rejecting the batch as
@@ -611,11 +619,14 @@ pub struct TransactionValidity {
         deserialize_with = "deserialize_bounded_predicates"
     )]
     pub validity: Vec<ValidityPredicate>,
+    /// EIP-712 authorization by the transaction sender, required when enforcement is enabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub validity_signature: Option<Signature>,
 }
 
 impl ValidatedTransactionExtensions<BasePooledTransaction> for TransactionValidity {
     fn is_empty(&self) -> bool {
-        self.validity.is_empty()
+        self.validity.is_empty() && self.validity_signature.is_none()
     }
 
     fn validate(&self, max_items: usize) -> Result<(), ExtensionError> {
@@ -629,7 +640,10 @@ impl ValidatedTransactionExtensions<BasePooledTransaction> for TransactionValidi
     }
 
     fn extract(tx: &ValidPoolTransaction<BasePooledTransaction>) -> Self {
-        Self { validity: tx.transaction.validity_predicates().to_vec() }
+        Self {
+            validity: tx.transaction.validity_predicates().to_vec(),
+            validity_signature: tx.transaction.validity_signature(),
+        }
     }
 
     /// Applies the predicates to the builder-inbound transaction.
@@ -644,7 +658,7 @@ impl ValidatedTransactionExtensions<BasePooledTransaction> for TransactionValidi
         for (index, predicate) in self.validity.iter().enumerate() {
             predicate.validate_params(index).map_err(|e| ExtensionError(e.to_string()))?;
         }
-        Ok(tx.with_validity_predicates(self.validity))
+        Ok(tx.with_validity(self))
     }
 }
 
@@ -993,7 +1007,8 @@ mod tests {
             op: ValidityOperator::Equal,
             value: U256::from(2),
         }];
-        let extension = TransactionValidity { validity: expected.clone() };
+        let extension =
+            TransactionValidity { validity: expected.clone(), validity_signature: None };
 
         let transaction = extension.apply(transaction).unwrap();
 
@@ -1001,45 +1016,7 @@ mod tests {
     }
 
     #[test]
-    fn sort_batch_orders_timing_predicates_before_state_predicates() {
-        let balance = |value: u64| ValidityPredicate::Balance {
-            address: Address::ZERO,
-            op: ValidityOperator::Equal,
-            value: U256::from(value),
-        };
-        let flashblock_index = ValidityPredicate::FlashblockIndex {
-            op: ValidityOperator::LessThan,
-            value: U256::from(5),
-        };
-        let block_number = ValidityPredicate::BlockNumber {
-            op: ValidityOperator::GreaterThanOrEqual,
-            value: U256::from(100),
-        };
-        let storage = ValidityPredicate::Storage {
-            address: Address::ZERO,
-            slot: U256::ZERO,
-            mask: U256::MAX,
-            op: ValidityOperator::Equal,
-            value: U256::ZERO,
-        };
-        // Scrambled submission order.
-        let mut predicates = vec![
-            balance(1),
-            storage.clone(),
-            flashblock_index.clone(),
-            balance(2),
-            block_number.clone(),
-        ];
-
-        ValidityPredicate::sort_batch(&mut predicates);
-
-        // Timing predicates (block number, then flashblock index) lead; state
-        // predicates follow in stable submission order.
-        assert_eq!(predicates, [block_number, flashblock_index, balance(1), storage, balance(2)]);
-    }
-
-    #[test]
-    fn apply_stores_predicates_in_canonical_evaluation_order() {
+    fn apply_compiles_timing_before_state_and_preserves_wire_order() {
         let signed: BaseTransactionSigned = TxDeposit {
             source_hash: Default::default(),
             from: Address::ZERO,
@@ -1068,11 +1045,23 @@ mod tests {
         // Submitted state-first; stored timing-first.
         let extension = TransactionValidity {
             validity: vec![state_predicate.clone(), timing_predicate.clone()],
+            validity_signature: None,
         };
 
         let transaction = extension.apply(transaction).unwrap();
 
-        assert_eq!(transaction.validity_predicates(), [timing_predicate, state_predicate]);
+        assert_eq!(
+            transaction.validity_predicates(),
+            [state_predicate.clone(), timing_predicate.clone()]
+        );
+        assert_eq!(
+            transaction
+                .validity_conditions()
+                .iter()
+                .map(|predicate| predicate.into_owned())
+                .collect::<Vec<_>>(),
+            [timing_predicate, state_predicate]
+        );
     }
 
     #[test]
@@ -1082,7 +1071,8 @@ mod tests {
             op: ValidityOperator::Equal,
             value: U256::ZERO,
         };
-        let extension = TransactionValidity { validity: vec![predicate; 3] };
+        let extension =
+            TransactionValidity { validity: vec![predicate; 3], validity_signature: None };
 
         let error = extension.validate(2).unwrap_err();
 
@@ -1228,6 +1218,7 @@ mod tests {
                 op: ValidityOperator::Equal,
                 value: U256::from(0x100),
             }],
+            validity_signature: None,
         };
 
         let error = extension.apply(transaction).unwrap_err();
@@ -1258,6 +1249,7 @@ mod tests {
                 op: ValidityOperator::Equal,
                 value: U256::ZERO,
             }],
+            validity_signature: None,
         };
 
         let error = extension.apply(transaction).unwrap_err();

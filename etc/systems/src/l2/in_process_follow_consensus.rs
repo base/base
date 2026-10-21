@@ -9,7 +9,6 @@ use std::{
 
 use alloy_provider::RootProvider;
 use alloy_rpc_types_engine::JwtSecret;
-use base_builder_core::test_utils::get_available_port;
 use base_common_genesis::RollupConfig;
 use base_common_network::Base;
 use base_consensus_node::{
@@ -30,6 +29,7 @@ use tracing::{error, info};
 use url::Url;
 
 use super::in_process_consensus::wait_for_rpc;
+use crate::PortPool;
 
 /// Configuration for starting an in-process follow-mode consensus node.
 #[derive(Debug)]
@@ -104,7 +104,7 @@ impl InProcessFollowConsensus {
         }
 
         let rollup_config = Arc::new(rollup_config);
-        let rpc_port = config.rpc_port.unwrap_or_else(get_available_port);
+        let rpc_port = config.rpc_port.unwrap_or_else(PortPool::claim);
         let rpc_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), rpc_port);
 
         let engine_config = EngineConfig {

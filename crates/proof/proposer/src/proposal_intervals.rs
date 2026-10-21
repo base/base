@@ -6,7 +6,7 @@
 //! Every consumer resolves them from the starting block of the game it is
 //! about to create, reconstruct, or look up.
 
-use std::sync::Arc;
+use std::{num::NonZeroU64, sync::Arc};
 
 use base_proof_contracts::{
     AggregateVerifierClient, DisputeGameFactoryClient, game_lookup_blocks, resolve_intervals,
@@ -20,7 +20,7 @@ pub struct Intervals {
     /// Number of L2 blocks covered by one proposal.
     pub block_interval: u64,
     /// Number of L2 blocks between intermediate output root checkpoints.
-    pub intermediate_block_interval: u64,
+    pub intermediate_block_interval: NonZeroU64,
 }
 
 impl Intervals {
@@ -33,7 +33,7 @@ impl Intervals {
         game_lookup_blocks(
             starting_block_number,
             self.block_interval,
-            self.intermediate_block_interval,
+            self.intermediate_block_interval.get(),
         )
         .map_err(|e| ProposerError::Config(e.to_string()))
     }
@@ -94,6 +94,12 @@ impl IntervalResolver {
                 "interval lookup for block {starting_block} failed: {e}"
             ))
         })?;
+        let intermediate_block_interval =
+            NonZeroU64::new(intermediate_block_interval).ok_or_else(|| {
+                ProposerError::Contract(format!(
+                    "intermediate block interval for block {starting_block} is zero"
+                ))
+            })?;
 
         Ok(Intervals { block_interval, intermediate_block_interval })
     }

@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 /// Prefix for chain configuration environment variables.
 pub(crate) const BASE_CHAIN_ENV_PREFIX: &str = "BASE_CHAIN_";
 
-/// CLI input for the root `--chain` flag.
+/// Chain selection for `--chain`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ChainArg {
     /// Use one of the built-in static chains, identified by its Base network
@@ -56,16 +56,6 @@ impl FromStr for ChainArg {
     }
 }
 
-/// The concrete source of a resolved chain config.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) enum ResolvedChainSource {
-    /// The config came from a built-in static chain, identified by its Base
-    /// network selector.
-    BuiltIn(String),
-    /// The config came from a TOML file.
-    File(PathBuf),
-}
-
 /// The resolved chain config used by the `base` binary.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct ResolvedChainConfig {
@@ -75,46 +65,9 @@ pub(crate) struct ResolvedChainConfig {
     pub(crate) l2_chain_id: u64,
     /// L1 chain ID.
     pub(crate) l1_chain_id: u64,
-    /// Where this config came from.
-    pub(crate) source: ResolvedChainSource,
-}
-
-/// The subset of chain settings merged from built-ins, TOML, and env.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct ResolvedChainValues {
-    /// Human-readable chain name.
-    pub(crate) name: String,
-    /// L2 chain ID.
-    pub(crate) l2_chain_id: u64,
-    /// L1 chain ID.
-    pub(crate) l1_chain_id: u64,
-}
-
-impl ResolvedChainValues {
-    /// Creates resolved values from a built-in Base network selector.
-    ///
-    /// Returns `None` if the selector is not a known built-in chain.
-    pub(crate) fn from_builtin(selector: &str) -> Option<Self> {
-        let config = ChainConfig::from_base_chain(selector)?;
-        Some(Self {
-            name: selector.to_owned(),
-            l2_chain_id: config.chain_id,
-            l1_chain_id: config.l1_chain_id,
-        })
-    }
 }
 
 impl ResolvedChainConfig {
-    /// Creates a resolved config from merged values and an explicit source.
-    pub(crate) fn new(values: ResolvedChainValues, source: ResolvedChainSource) -> Self {
-        Self {
-            name: values.name,
-            l2_chain_id: values.l2_chain_id,
-            l1_chain_id: values.l1_chain_id,
-            source,
-        }
-    }
-
     /// Returns the execution chainspec for this chain.
     pub(crate) fn execution_chain_spec(&self) -> eyre::Result<Arc<BaseChainSpec>> {
         let config = ChainConfig::by_chain_id(self.l2_chain_id).ok_or_else(|| {
@@ -160,11 +113,16 @@ impl ChainResolver {
     pub(crate) fn resolve(&self) -> eyre::Result<ResolvedChainConfig> {
         match &self.chain {
             ChainArg::BuiltIn(chain) => {
-                let defaults = ResolvedChainValues::from_builtin(chain)
+                let config = ChainConfig::from_base_chain(chain)
                     .ok_or_else(|| eyre::eyre!("unknown built-in chain `{chain}`"))?;
+                let defaults = ResolvedChainConfig {
+                    name: chain.clone(),
+                    l2_chain_id: config.chain_id,
+                    l1_chain_id: config.l1_chain_id,
+                };
                 let figment = Figment::from(Serialized::defaults(defaults))
                     .merge(Env::prefixed(BASE_CHAIN_ENV_PREFIX));
-                Self::extract(figment, ResolvedChainSource::BuiltIn(chain.clone()))
+                Self::extract(figment, ChainArg::BuiltIn(chain.clone()))
             }
             ChainArg::File(path) => Self::resolve_file(path),
         }
@@ -174,24 +132,19 @@ impl ChainResolver {
     pub(crate) fn resolve_file(path: &Path) -> eyre::Result<ResolvedChainConfig> {
         let figment =
             Figment::new().merge(Toml::file(path)).merge(Env::prefixed(BASE_CHAIN_ENV_PREFIX));
-        Self::extract(figment, ResolvedChainSource::File(path.to_path_buf()))
+        Self::extract(figment, ChainArg::File(path.to_path_buf()))
     }
 
-    /// Extracts the merged chain values into the public resolved config.
-    pub(crate) fn extract(
-        figment: Figment,
-        source: ResolvedChainSource,
-    ) -> eyre::Result<ResolvedChainConfig> {
-        let values = figment.extract::<ResolvedChainValues>().wrap_err_with(|| match &source {
-            ResolvedChainSource::BuiltIn(chain) => {
+    /// Extracts the merged chain config.
+    pub(crate) fn extract(figment: Figment, source: ChainArg) -> eyre::Result<ResolvedChainConfig> {
+        figment.extract::<ResolvedChainConfig>().wrap_err_with(|| match &source {
+            ChainArg::BuiltIn(chain) => {
                 format!("failed to resolve chain config for built-in chain `{chain}`")
             }
-            ResolvedChainSource::File(path) => {
+            ChainArg::File(path) => {
                 format!("failed to resolve chain config from {}", path.display())
             }
-        })?;
-
-        Ok(ResolvedChainConfig::new(values, source))
+        })
     }
 }
 
@@ -220,7 +173,6 @@ mod tests {
             assert_eq!(resolved.name, "mainnet");
             assert_eq!(resolved.l2_chain_id, 8453);
             assert_eq!(resolved.l1_chain_id, 1);
-            assert_eq!(resolved.source, ResolvedChainSource::BuiltIn("mainnet".to_owned()));
 
             Ok(())
         });
@@ -252,7 +204,6 @@ mod tests {
 
             assert_eq!(resolved.name, "zeronet");
             assert_eq!(resolved.l2_chain_id, 763360);
-            assert_eq!(resolved.source, ResolvedChainSource::BuiltIn("zeronet".to_owned()));
 
             Ok(())
         });
@@ -268,7 +219,6 @@ mod tests {
             assert_eq!(resolved.name, "dev");
             assert_eq!(resolved.l2_chain_id, 84538453);
             assert_eq!(resolved.l1_chain_id, 1337);
-            assert_eq!(resolved.source, ResolvedChainSource::BuiltIn("dev".to_owned()));
 
             Ok(())
         });
@@ -311,7 +261,6 @@ mod tests {
             assert_eq!(resolved.name, "mainnet");
             assert_eq!(resolved.l2_chain_id, 8453);
             assert_eq!(resolved.l1_chain_id, 1);
-            assert_eq!(resolved.source, ResolvedChainSource::BuiltIn("mainnet".to_owned()));
 
             Ok(())
         });
@@ -332,7 +281,6 @@ mod tests {
             assert_eq!(resolved.name, "custom-chain");
             assert_eq!(resolved.l2_chain_id, 999);
             assert_eq!(resolved.l1_chain_id, 11155111);
-            assert_eq!(resolved.source, ResolvedChainSource::File(path));
 
             Ok(())
         });

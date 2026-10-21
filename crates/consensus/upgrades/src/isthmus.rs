@@ -114,7 +114,7 @@ impl Isthmus {
         bytecode_from_hex!("./bytecode/gpo_isthmus.hex")
     }
 
-    /// Returns the gas price oracle deployment bytecode.
+    /// Returns the operator fee vault deployment bytecode.
     pub fn operator_fee_vault_deployment_bytecode() -> Bytes {
         bytecode_from_hex!("./bytecode/ofv_isthmus.hex")
     }

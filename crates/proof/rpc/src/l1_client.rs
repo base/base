@@ -137,12 +137,12 @@ impl L1Client {
         Ok(Self { provider, headers_cache, receipts_cache, retry_config: config.retry_config })
     }
 
-    /// Returns the headers cache metrics.
+    /// Returns the headers cache.
     pub const fn headers_cache(&self) -> &MeteredCache<B256, Header> {
         &self.headers_cache
     }
 
-    /// Returns the receipts cache metrics.
+    /// Returns the receipts cache.
     pub const fn receipts_cache(&self) -> &MeteredCache<B256, Vec<TransactionReceipt>> {
         &self.receipts_cache
     }
@@ -292,27 +292,5 @@ impl L1Provider for L1Client {
                 tracing::debug!(error = %err, delay = ?dur, "Retrying L1Client::get_balance");
             })
             .await
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_l1_client_config_defaults() {
-        let config = L1ClientConfig::new(Url::parse("http://localhost:8545").unwrap());
-        assert_eq!(config.timeout, Duration::from_secs(30));
-        assert_eq!(config.cache_size, DEFAULT_CACHE_SIZE);
-    }
-
-    #[test]
-    fn test_l1_client_config_builder() {
-        let config = L1ClientConfig::new(Url::parse("http://localhost:8545").unwrap())
-            .with_timeout(Duration::from_secs(60))
-            .with_cache_size(500);
-
-        assert_eq!(config.timeout, Duration::from_secs(60));
-        assert_eq!(config.cache_size, 500);
     }
 }

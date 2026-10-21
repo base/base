@@ -1,0 +1,27 @@
+[package]
+name = "base-withdrawer-bin"
+description = "Prove or finalize OP Stack withdrawals"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "withdrawer"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+eyre.workspace = true
+clap.workspace = true
+base-withdrawer.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tracing-subscriber = { workspace = true, features = ["fmt", "env-filter"] }
+
+[features]
+default = []
+ledger = [ "base-withdrawer/ledger" ]

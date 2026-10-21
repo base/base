@@ -22,15 +22,16 @@ use crate::{
 ///
 /// 1. **Basic HTTPS**: Only `endpoint` and `address` are required.
 /// 2. **Custom CA**: Provide `ca_cert` to verify servers with custom/self-signed certificates.
-/// 3. **Mutual TLS (mTLS)**: Provide both `client_cert` and `client_key` for client authentication.
-/// 4. **Full mTLS with custom CA**: Combine all certificate options for maximum security.
+/// 3. **Mutual TLS (mTLS)**: Provide `client_cert` with certificate and key paths for client authentication.
+/// 4. **Full mTLS with custom CA**: Combine `client_cert` and `ca_cert` for client authentication
+///    and custom server verification.
 ///
 /// Certificate formats supported:
 /// - PEM format for all certificates and keys
 /// - Certificates should be provided as file paths.
 ///
-/// By default, the process will watch for changes in the client certificate files and reload the
-/// client automatically.
+/// When `client_cert` is set, `start` watches the client certificate and key files and reloads
+/// the client when they are modified.
 #[derive(Debug, Clone)]
 pub struct RemoteSigner {
     /// The URL of the remote signer endpoint
@@ -63,33 +64,18 @@ pub enum RemoteSignerStartError {
 }
 
 impl RemoteSigner {
-    /// Creates a new remote signer with the given configuration
+    /// Consumes this configuration to build the HTTP client, check `health_status`, and return a handler.
     ///
-    /// If client certificates are configured, this will automatically start a certificate watcher
-    /// that monitors the certificate files for changes. When certificates are updated (e.g., by
-    /// cert-manager in Kubernetes), the TLS client will be automatically reloaded with the new
-    /// certificates without requiring a restart.
-    ///
-    /// # Certificate Watching
-    ///
-    /// The certificate watcher monitors:
-    /// - Client certificate file (if mTLS is configured)
-    /// - Client private key file (if mTLS is configured)
-    /// - CA certificate file (if custom CA is configured)
-    ///
-    /// When any of these files are modified, the watcher will:
-    /// 1. Log the certificate change event
-    /// 2. Reload the certificate files from disk
-    /// 3. Rebuild the HTTP client with the new TLS configuration
-    /// 4. Replace the existing client atomically
-    ///
-    /// This enables zero-downtime certificate rotation in production environments.
+    /// A failed `health_status` request returns [`RemoteSignerStartError::Ping`].
+    /// When `client_cert` is set, starts a watcher for its certificate and key files. Modify events
+    /// rebuild and replace the HTTP client; reload errors are logged and keep the old client.
+    /// The CA file is not watched. CA changes are read on the next reload triggered by a client
+    /// certificate or key modification.
     pub async fn start(self) -> Result<RemoteSignerHandler, RemoteSignerStartError> {
         let http_client = self.build_http_client()?;
         let transport = Http::with_client(http_client, self.endpoint.clone());
         let client = ClientBuilder::default().transport(transport, true);
 
-        // Try to ping the signer to check if it's reachable
         let version: String =
             client.request("health_status", ()).await.map_err(RemoteSignerStartError::Ping)?;
 
@@ -97,25 +83,22 @@ impl RemoteSigner {
 
         let client = Arc::new(RwLock::new(client));
 
-        // Start certificate watcher if client certificates are configured
         let watcher_handle = self.start_certificate_watcher(Arc::clone(&client)).await?;
 
-        Ok(RemoteSignerHandler { client, watcher_handle, address: self.address })
+        Ok(RemoteSignerHandler { client, _watcher_handle: watcher_handle, address: self.address })
     }
 
     /// Builds an HTTP client with certificate handling for the remote signer
     pub(super) fn build_http_client(&self) -> Result<reqwest::Client, RemoteSignerStartError> {
         let mut client_builder = reqwest::Client::builder();
 
-        // Configure TLS if certificates are provided
         if self.client_cert.is_some() || self.ca_cert.is_some() {
             let tls_config = self.build_tls_config()?;
             client_builder = client_builder.use_preconfigured_tls(tls_config);
         }
 
-        // Set headers
         client_builder = client_builder.default_headers(self.headers.clone());
 
-        client_builder.build().map_err(RemoteSignerStartError::HTTPClientBuild)
+        Ok(client_builder.build()?)
     }
 }

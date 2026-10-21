@@ -48,8 +48,8 @@ impl NonceValidator {
     /// `protocol_nonce` is the account's current basic nonce, read by the caller
     /// from account state; it is consulted only for the protocol channel
     /// (`nonce_key == 0`). `storage` serves the 2D channels and the nonce-free
-    /// replay set. `now` (Unix **milliseconds**; `block.timestamp * 1000` at
-    /// inclusion, wall-clock in the pool) bounds the nonce-free replay-set lookup
+    /// replay set. `now` (Unix **milliseconds**; the block's millisecond timestamp
+    /// at inclusion, the head block's in the pool) bounds the nonce-free replay-set lookup
     /// and is unused for sequence channels.
     ///
     /// Returns [`NonceStatus::Ready`] when the transaction may execute now,
@@ -98,6 +98,9 @@ impl NonceValidator {
         channel: u64,
         mode: NonceMode,
     ) -> Result<NonceStatus, NonceError> {
+        if tx.nonce_sequence == u64::MAX {
+            return Err(NonceError::SequenceSaturated);
+        }
         match tx.nonce_sequence.cmp(&channel) {
             Ordering::Less => Err(NonceError::TooLow { channel, got: tx.nonce_sequence }),
             Ordering::Equal => Ok(NonceStatus::Ready),
@@ -137,9 +140,8 @@ mod tests {
     /// Runs `validate` against a freshly-seeded nonce manager. `seed` may mutate
     /// the manager (e.g. advance a channel) before the (immutable) check.
     ///
-    /// `now_secs` is the block timestamp in seconds (what the storage exposes);
-    /// the validity-window checks operate in milliseconds, so `validate` receives
-    /// `now_secs * 1000` to match the ring buffer's `block.timestamp * 1000`.
+    /// `now_secs` is the block timestamp in seconds; `validate` receives it as
+    /// whole milliseconds.
     fn check(
         tx: &TxEip8130,
         protocol_nonce: u64,
@@ -160,6 +162,25 @@ mod tests {
     fn protocol_nonce_ready_when_sequence_matches() {
         let tx = tx_with(U256::ZERO, 5);
         assert_eq!(check(&tx, 5, NonceMode::Inclusion, 0, |_| {}), Ok(NonceStatus::Ready));
+    }
+
+    /// A sequence of `u64::MAX` can never be consumed: the protocol nonce would
+    /// saturate (leaving the transaction replayable) and a 2D channel would
+    /// overflow. Rejected in both modes, even when it equals the channel.
+    #[test]
+    fn saturated_sequence_is_rejected() {
+        for mode in [NonceMode::Pool, NonceMode::Inclusion] {
+            let protocol = tx_with(U256::ZERO, u64::MAX);
+            assert_eq!(
+                check(&protocol, u64::MAX, mode, 0, |_| {}),
+                Err(NonceError::SequenceSaturated)
+            );
+            let channel = tx_with(U256::from(9), u64::MAX);
+            assert_eq!(
+                NonceValidator::validate_sequence(&channel, u64::MAX, mode),
+                Err(NonceError::SequenceSaturated)
+            );
+        }
     }
 
     #[test]
@@ -246,7 +267,7 @@ mod tests {
         // `(now_secs * 1000, now_secs * 1000 + NONCE_FREE_EXPIRY_WINDOW]`.
         let valid_before = now_secs * 1_000 + 20_000;
         let seed = |mgr: &mut NonceManagerStorage<'_>| {
-            mgr.check_and_mark_expiring_nonce(replay, valid_before).unwrap();
+            mgr.check_and_mark_expiring_nonce(replay, valid_before, now_secs * 1_000).unwrap();
         };
         assert_eq!(check(&tx, 0, NonceMode::Inclusion, now_secs, seed), Err(NonceError::Replay));
     }

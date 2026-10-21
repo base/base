@@ -72,11 +72,6 @@ impl UpgradeSignalError {
         Self::Decode { context, error: error.to_string() }
     }
 
-    /// Creates a missing protocol version error.
-    pub const fn missing_protocol_version(upgrade_id: String) -> Self {
-        Self::MissingProtocolVersion(upgrade_id)
-    }
-
     /// Creates an unsupported protocol version error.
     pub fn unsupported_protocol_version(
         upgrade_id: String,

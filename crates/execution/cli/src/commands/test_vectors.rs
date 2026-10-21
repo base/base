@@ -1,11 +1,8 @@
 //! Command for generating test vectors.
 
-use std::sync::Arc;
-
 use base_common_consensus::TxDeposit;
 use clap::{Parser, Subcommand};
 use proptest::test_runner::TestRunner;
-use reth_chainspec::ChainSpec;
 use reth_cli_commands::{
     compact_types,
     test_vectors::{
@@ -71,9 +68,5 @@ impl Command {
             }
         }
         Ok(())
-    }
-    /// Returns the underlying chain being used to run this command
-    pub const fn chain_spec(&self) -> Option<&Arc<ChainSpec>> {
-        None
     }
 }

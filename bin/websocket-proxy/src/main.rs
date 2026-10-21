@@ -348,30 +348,17 @@ async fn main() {
 
 fn parse_global_metrics(metrics: String) -> Vec<(String, String)> {
     let mut result = Vec::new();
-
-    for metric in metrics.split(',') {
-        if metric.is_empty() {
-            continue;
-        }
-
-        let parts = metric.splitn(2, '=').map(|s| s.to_string()).collect::<Vec<String>>();
-
-        if parts.len() != 2 {
+    for metric in metrics.split(',').filter(|metric| !metric.is_empty()) {
+        let Some((label, value)) = metric.split_once('=') else {
             warn!(message = "malformed global metric: invalid count", metric = metric);
             continue;
-        }
-
-        let label = parts[0].clone();
-        let value = parts[1].clone();
-
+        };
         if label.is_empty() || value.is_empty() {
             warn!(message = "malformed global metric: empty value", metric = metric);
             continue;
         }
-
-        result.push((label, value));
+        result.push((label.to_string(), value.to_string()));
     }
-
     result
 }
 

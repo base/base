@@ -43,7 +43,7 @@ pub use metrics::{
 };
 
 mod deferrals;
-pub use deferrals::BlockDeferrals;
+pub use deferrals::{BlockDeferrals, DeferralJournal};
 
 mod inclusion;
 pub use inclusion::{FLOW_STANDARD, FLOW_VALIDITY, InclusionFlow, InclusionTracker};
@@ -57,6 +57,8 @@ mod types;
 pub use types::BasePayloadTypes;
 
 mod validity;
+#[cfg(test)]
+pub use validity::test_utils;
 pub use validity::{
     DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, ParkedPredicateIndex, StateChangeEffects,
     ValidityPredicateEvaluation, ValidityPredicateKey,

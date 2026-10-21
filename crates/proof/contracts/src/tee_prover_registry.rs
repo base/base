@@ -3,7 +3,7 @@
 //! Used by the registrar to manage signer registration and deregistration,
 //! and by the proposer to validate signers before on-chain submission.
 
-use alloy_primitives::{Address, Bytes};
+use alloy_primitives::{Address, B256, Bytes};
 use alloy_provider::RootProvider;
 use alloy_sol_types::{SolCall, sol};
 use async_trait::async_trait;
@@ -59,6 +59,9 @@ sol! {
         /// whether its image hash matches the current expected value.
         function isRegisteredSigner(address signer) external view returns (bool);
 
+        /// Returns the registered image hash, or zero for an unregistered signer.
+        function signerImageHash(address signer) external view returns (bytes32);
+
         /// Returns all currently registered signer addresses.
         function getRegisteredSigners() external view returns (address[]);
     }
@@ -80,6 +83,9 @@ pub trait TEEProverRegistryClient: Send + Sync {
     /// Returns `true` if `signer` has been registered, regardless of whether
     /// its image hash matches the current expected value.
     async fn is_registered_signer(&self, signer: Address) -> Result<bool, ContractError>;
+
+    /// Returns the registered image hash, or zero for an unregistered signer.
+    async fn signer_image_hash(&self, signer: Address) -> Result<B256, ContractError>;
 
     /// Fetches the complete set of registered signer addresses.
     async fn get_registered_signers(&self) -> Result<Vec<Address>, ContractError>;
@@ -124,6 +130,13 @@ impl TEEProverRegistryClient for TEEProverRegistryContractClient {
         )
     }
 
+    async fn signer_image_hash(&self, signer: Address) -> Result<B256, ContractError> {
+        contract_call!(
+            self.contract.signerImageHash(signer).call(),
+            format!("signerImageHash({signer})")
+        )
+    }
+
     async fn get_registered_signers(&self) -> Result<Vec<Address>, ContractError> {
         contract_call!(self.contract.getRegisteredSigners().call(), "getRegisteredSigners()")
     }
@@ -147,7 +160,6 @@ pub fn encode_register_signer_calldata(
 
 #[cfg(test)]
 mod tests {
-    use alloy_sol_types::SolCall as _;
 
     use super::*;
 
@@ -155,6 +167,7 @@ mod tests {
     fn registry_selectors_match_final_contract_abi() {
         assert_eq!(ITEEProverRegistry::NITRO_VALIDATORCall::SELECTOR, [0x96, 0xce, 0x7e, 0x96]);
         assert_eq!(ITEEProverRegistry::registerSignerCall::SELECTOR, [0xb3, 0x9d, 0xc0, 0x9d]);
+        assert_eq!(ITEEProverRegistry::signerImageHashCall::SELECTOR, [0x86, 0xb4, 0xeb, 0xd3]);
     }
 
     #[test]
@@ -192,6 +205,7 @@ mod tests {
         assert_ne!(ITEEProverRegistry::deregisterSignerCall::SELECTOR, [0u8; 4]);
         assert_ne!(ITEEProverRegistry::isValidSignerCall::SELECTOR, [0u8; 4]);
         assert_ne!(ITEEProverRegistry::isRegisteredSignerCall::SELECTOR, [0u8; 4]);
+        assert_ne!(ITEEProverRegistry::signerImageHashCall::SELECTOR, [0u8; 4]);
         assert_ne!(ITEEProverRegistry::getRegisteredSignersCall::SELECTOR, [0u8; 4]);
     }
 }

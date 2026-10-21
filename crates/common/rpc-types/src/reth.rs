@@ -225,7 +225,7 @@ mod tests {
     }
 
     #[test]
-    fn prefixed_k1_auth_is_priced_verbatim() {
+    fn prefixed_k1_auth_is_priced_at_its_length() {
         let tx = sim_tx(json!({
             "sender": SENDER,
             "calls": [],
@@ -270,7 +270,7 @@ mod tests {
     #[test]
     fn bare_sender_auth_is_the_eoa_path() {
         // A supplied unprefixed (bare) blob is the default-EOA path, priced
-        // verbatim — the blob's form wins even when `sender` named the account.
+        // at its length — the blob's form wins even when `sender` named the account.
         let tx = sim_tx(json!({
             "sender": SENDER,
             "calls": [],
@@ -278,7 +278,7 @@ mod tests {
         }));
         let s = signed(&tx);
         assert!(s.tx().sender.is_none(), "an unprefixed blob stays on the EOA path");
-        assert_eq!(s.sender_auth().len(), 65, "the bare blob is priced verbatim");
+        assert_eq!(s.sender_auth().len(), 65, "the bare blob is priced at its length");
     }
 
     #[test]
@@ -484,7 +484,7 @@ mod tests {
     }
 
     #[test]
-    fn declared_payer_auth_is_priced_verbatim() {
+    fn declared_payer_auth_is_priced_at_its_length() {
         let payer = address!("0x00000000000000000000000000000000000000b2");
         let tx = sim_tx(json!({
             "sender": SENDER,

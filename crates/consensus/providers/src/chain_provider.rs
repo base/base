@@ -63,7 +63,7 @@ impl AlloyChainProvider {
         Self::new(inner, cache_size)
     }
 
-    /// Returns the latest L2 block number.
+    /// Returns the latest L1 block number.
     pub async fn latest_block_number(&mut self) -> Result<u64, RpcError<TransportErrorKind>> {
         Metrics::chain_rpc_calls("block_number").increment(1);
 

@@ -8,10 +8,10 @@ use std::{
 use alloy_primitives::Address;
 use base_batcher_core::{ThrottleConfig, ThrottleStrategy};
 use base_batcher_service::{BatcherConfig, BatcherService, ShadowConfig};
-use base_cli_utils::RuntimeManager;
 use base_runtime::TokioRuntime;
 use base_tx_manager::SignerConfig;
 use clap::Parser;
+use tokio_util::sync::CancellationToken;
 use url::Url;
 
 base_tx_manager::define_signer_cli!("BASE_BATCHER");
@@ -132,7 +132,8 @@ pub struct BatcherArgs {
     #[arg(
         long = "max-pending-transactions",
         default_value = "1",
-        env = "BASE_BATCHER_MAX_PENDING_TRANSACTIONS"
+        env = "BASE_BATCHER_MAX_PENDING_TRANSACTIONS",
+        value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..)
     )]
     pub max_pending_transactions: usize,
 
@@ -165,23 +166,59 @@ pub struct BatcherArgs {
     )]
     pub publish_retry_delay: Duration,
 
-    /// DA backlog in bytes from which the batcher throttles, lowering the DA limits it pushes
-    /// to the `--sequencer-urls` endpoints.
+    /// DA backlog in estimated compressed bytes from which the batcher throttles, lowering the
+    /// DA limits it pushes to the `--sequencer-urls` endpoints.
     #[arg(
         long = "throttle-start-threshold",
-        default_value = "1000000",
+        default_value_t = ThrottleConfig::DEFAULT_START_THRESHOLD_BYTES,
         env = "BASE_BATCHER_THROTTLE_START_THRESHOLD"
     )]
     pub throttle_start_threshold: u64,
 
-    /// DA backlog in bytes from which the batcher throttles the most, with the lowest DA
-    /// limits. Must be above `--throttle-start-threshold`.
+    /// DA backlog in estimated compressed bytes from which the batcher throttles the most,
+    /// with the lowest DA limits. Must be above `--throttle-start-threshold`.
     #[arg(
         long = "throttle-full-threshold",
-        default_value = "2000000",
+        default_value_t = ThrottleConfig::DEFAULT_FULL_THRESHOLD_BYTES,
         env = "BASE_BATCHER_THROTTLE_FULL_THRESHOLD"
     )]
     pub throttle_full_threshold: u64,
+
+    /// Estimated compressed DA bytes allowed per block while not throttling. Throttling lowers
+    /// it towards `--throttle-block-size-lower-limit`.
+    #[arg(
+        long = "throttle-block-size-upper-limit",
+        default_value_t = ThrottleConfig::DEFAULT_BLOCK_SIZE_UPPER_LIMIT,
+        env = "BASE_BATCHER_THROTTLE_BLOCK_SIZE_UPPER_LIMIT"
+    )]
+    pub throttle_block_size_upper_limit: u64,
+
+    /// Estimated compressed DA bytes allowed per block at full throttle intensity. Must be
+    /// above 0 and at most `--throttle-block-size-upper-limit`.
+    #[arg(
+        long = "throttle-block-size-lower-limit",
+        default_value_t = ThrottleConfig::DEFAULT_BLOCK_SIZE_LOWER_LIMIT,
+        env = "BASE_BATCHER_THROTTLE_BLOCK_SIZE_LOWER_LIMIT"
+    )]
+    pub throttle_block_size_lower_limit: u64,
+
+    /// Estimated compressed DA bytes allowed per transaction while not throttling. Throttling
+    /// lowers it towards `--throttle-tx-size-lower-limit`.
+    #[arg(
+        long = "throttle-tx-size-upper-limit",
+        default_value_t = ThrottleConfig::DEFAULT_TX_SIZE_UPPER_LIMIT,
+        env = "BASE_BATCHER_THROTTLE_TX_SIZE_UPPER_LIMIT"
+    )]
+    pub throttle_tx_size_upper_limit: u64,
+
+    /// Estimated compressed DA bytes allowed per transaction at full throttle intensity. Must
+    /// be above 0 and at most `--throttle-tx-size-upper-limit`.
+    #[arg(
+        long = "throttle-tx-size-lower-limit",
+        default_value_t = ThrottleConfig::DEFAULT_TX_SIZE_LOWER_LIMIT,
+        env = "BASE_BATCHER_THROTTLE_TX_SIZE_LOWER_LIMIT"
+    )]
+    pub throttle_tx_size_lower_limit: u64,
 
     /// How the throttle intensity, from 0 (highest DA limits) to 1 (lowest), grows with
     /// the DA backlog between `--throttle-start-threshold` and `--throttle-full-threshold`.
@@ -349,7 +386,10 @@ impl BatcherArgs {
                     start_threshold_bytes: self.throttle_start_threshold,
                     full_threshold_bytes: self.throttle_full_threshold,
                     max_intensity: 1.0,
-                    ..Default::default()
+                    block_size_lower_limit: self.throttle_block_size_lower_limit,
+                    block_size_upper_limit: self.throttle_block_size_upper_limit,
+                    tx_size_lower_limit: self.throttle_tx_size_lower_limit,
+                    tx_size_upper_limit: self.throttle_tx_size_upper_limit,
                 })
             },
             throttle_strategy: self.throttle_strategy,
@@ -362,14 +402,21 @@ impl BatcherArgs {
         })
     }
 
-    /// Execute the batcher.
-    pub async fn exec(self, metrics_enabled: bool) -> eyre::Result<()> {
+    /// Execute the batcher until `cancellation` is cancelled.
+    pub async fn exec(
+        self,
+        metrics_enabled: bool,
+        cancellation: CancellationToken,
+    ) -> eyre::Result<()> {
         let config = self.into_config(metrics_enabled)?;
-        let rt = TokioRuntime::new();
-        let _signal_handle = RuntimeManager::install_signal_handler(rt.token().clone());
+        let rt = TokioRuntime::with_token(cancellation.clone());
 
-        let service = BatcherService::new(config);
-        service.setup(rt).await?.run().await
+        let setup = BatcherService::new(config).setup(rt);
+        let ready = tokio::select! {
+            ready = setup => ready?,
+            () = cancellation.cancelled() => return Ok(()),
+        };
+        ready.run().await
     }
 }
 
@@ -520,6 +567,16 @@ mod tests {
         assert!(BatcherArgs::try_parse_from(args).is_err());
     }
 
+    /// Zero in-flight transactions would mean the batcher never submits, so reject it at parse time.
+    #[test]
+    fn cli_rejects_zero_max_pending_transactions() {
+        let mut args = base_args();
+        args.extend_from_slice(["--max-pending-transactions", "0"].as_slice());
+
+        let error = BatcherArgs::try_parse_from(args).unwrap_err();
+        assert_eq!(error.kind(), clap::error::ErrorKind::ValueValidation);
+    }
+
     /// A calldata batcher's frame size is its calldata cap minus the derivation version byte.
     #[test]
     fn into_config_reserves_derivation_prefix_from_calldata_size_cap() {
@@ -571,6 +628,14 @@ mod tests {
             "800000",
             "--throttle-strategy",
             "linear",
+            "--throttle-block-size-upper-limit",
+            "900000",
+            "--throttle-block-size-lower-limit",
+            "40000",
+            "--throttle-tx-size-upper-limit",
+            "300000",
+            "--throttle-tx-size-lower-limit",
+            "3000",
             "--check-recent-txs-depth",
             "16",
             "--wait-node-sync-timeout",
@@ -602,6 +667,10 @@ mod tests {
         let throttle = config.throttle.expect("the throttle is on");
         assert_eq!(throttle.start_threshold_bytes, 500_000);
         assert_eq!(throttle.full_threshold_bytes, 800_000);
+        assert_eq!(throttle.block_size_upper_limit, 900_000);
+        assert_eq!(throttle.block_size_lower_limit, 40_000);
+        assert_eq!(throttle.tx_size_upper_limit, 300_000);
+        assert_eq!(throttle.tx_size_lower_limit, 3_000);
         assert_eq!(config.throttle_strategy, ThrottleStrategy::Linear);
         assert_eq!(config.check_recent_txs_depth, 16);
         assert_eq!(config.wait_node_sync_timeout, Duration::from_secs(60));

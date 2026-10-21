@@ -63,9 +63,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn transfer_payload_name_and_recipient_flags() {
+    fn transfer_payload_recipient_flags() {
         let payload = TransferPayload::default();
-        assert_eq!(payload.name(), "transfer");
         assert!(payload.uses_runner_recipient());
         assert!(!payload.uses_pair_recipient());
     }

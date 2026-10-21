@@ -1,10 +1,10 @@
 //! Flashblocks adapters for parkable best-transaction iterators.
 
-use std::{collections::HashSet, marker::PhantomData, time::Instant};
+use std::{marker::PhantomData, time::Instant};
 
 use alloy_primitives::{Address, TxHash, map::B256Set};
 use base_execution_payload_builder::{ParkablePayloadTransactions, ParkedPredicateIndex};
-use base_execution_txpool::{BasePooledTx, ValidityPredicate};
+use base_execution_txpool::{BasePooledTx, ValidityConditions, ValidityPredicate};
 use reth_payload_util::PayloadTransactions;
 use revm::state::EvmState;
 
@@ -21,12 +21,12 @@ use crate::{
 pub struct BestFlashblocksTxs<T, I>
 where
     T: BasePooledTx,
-    I: ParkablePayloadTransactions<Transaction = T>,
+    I: ParkablePayloadTransactions<Pooled = T>,
 {
     inner: I,
     // Transactions that were already committed to the state. Using them again would cause NonceTooLow
     // so we skip them
-    committed_transactions: HashSet<TxHash>,
+    committed_transactions: B256Set,
     // Shared cross-block rejection cache (survives across blocks, TTL-bounded)
     rejection_cache: RejectionCache,
     // Identity of the transaction most recently returned to the build loop.
@@ -44,7 +44,7 @@ where
 impl<T, I> std::fmt::Debug for BestFlashblocksTxs<T, I>
 where
     T: BasePooledTx,
-    I: ParkablePayloadTransactions<Transaction = T>,
+    I: ParkablePayloadTransactions<Pooled = T>,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BestFlashblocksTxs")
@@ -59,7 +59,7 @@ where
 impl<T, I> BestFlashblocksTxs<T, I>
 where
     T: BasePooledTx,
-    I: ParkablePayloadTransactions<Transaction = T>,
+    I: ParkablePayloadTransactions<Pooled = T>,
 {
     /// Creates a new [`BestFlashblocksTxs`] wrapping the given payload transaction iterator.
     pub fn new(inner: I, rejection_cache: RejectionCache) -> Self {
@@ -109,13 +109,17 @@ where
 impl<T, I> PayloadTransactions for BestFlashblocksTxs<T, I>
 where
     T: BasePooledTx,
-    I: ParkablePayloadTransactions<Transaction = T>,
+    I: ParkablePayloadTransactions<Pooled = T>,
 {
-    type Transaction = T;
+    type Transaction = I::Transaction;
 
+    /// Resting time is measured once per call, from the first resting check to the return, so it
+    /// also covers advancing the inner iterator between resting transactions.
     fn next(&mut self, ctx: ()) -> Option<Self::Transaction> {
-        loop {
-            let tx = self.inner.next(ctx)?;
+        let mut resting_filter_start = None;
+        let next = loop {
+            let Some(pooled) = self.inner.next(ctx) else { break None };
+            let tx = &pooled.transaction;
             let hash = *tx.hash();
             self.current_transaction = Some((hash, tx.sender(), tx.nonce()));
 
@@ -137,24 +141,24 @@ where
 
             if self.resting_predicate_mode.is_enforced()
                 && !self.resting.is_empty()
-                && !tx.validity_predicates().is_empty()
+                && !tx.validity_conditions().is_empty()
             {
-                let started = Instant::now();
-                let resting = self.is_resting(hash, tx.validity_predicates());
-                if resting {
+                resting_filter_start.get_or_insert_with(Instant::now);
+                if self.is_resting(hash, tx.validity_conditions()) {
                     self.inner.park_current();
                     self.parked_resting.insert(hash);
                     self.current_transaction = None;
                     self.resting_stats.parked += 1;
-                }
-                self.resting_stats.duration += started.elapsed();
-                if resting {
                     continue;
                 }
             }
 
-            return Some(tx);
+            break Some(pooled);
+        };
+        if let Some(start) = resting_filter_start {
+            self.resting_stats.duration += start.elapsed();
         }
+        next
     }
 
     /// Proxy to inner iterator
@@ -175,8 +179,10 @@ where
 impl<T, I> ParkablePayloadTransactions for BestFlashblocksTxs<T, I>
 where
     T: BasePooledTx,
-    I: ParkablePayloadTransactions<Transaction = T>,
+    I: ParkablePayloadTransactions<Pooled = T>,
 {
+    type Pooled = T;
+
     fn park_current(&mut self) {
         self.inner.park_current();
         self.current_transaction = None;
@@ -201,7 +207,7 @@ where
 impl<T, I> RestingPayloadTransactions for BestFlashblocksTxs<T, I>
 where
     T: BasePooledTx,
-    I: ParkablePayloadTransactions<Transaction = T>,
+    I: ParkablePayloadTransactions<Pooled = T>,
 {
     /// Flashblock-index predicates are not recorded because the index changes between
     /// flashblocks without any commit.
@@ -228,7 +234,7 @@ where
 
     /// A hash re-added to the pool with a batch that no longer contains the recorded predicate
     /// does not rest.
-    fn is_resting(&self, transaction_hash: TxHash, predicates: &[ValidityPredicate]) -> bool {
+    fn is_resting(&self, transaction_hash: TxHash, predicates: &ValidityConditions) -> bool {
         self.resting.predicate(transaction_hash).is_some_and(|blocker| predicates.contains(blocker))
     }
 
@@ -241,7 +247,7 @@ where
 mod tests {
     use std::{sync::Arc, time::Duration};
 
-    use alloy_consensus::{SignableTransaction, Transaction, TxEip1559};
+    use alloy_consensus::{SignableTransaction, TxEip1559};
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{Address, Signature, TxHash, TxKind, U256};
     use base_common_consensus::{BaseTransactionSigned, BaseTxEnvelope};
@@ -252,14 +258,13 @@ mod tests {
     use reth_payload_util::PayloadTransactions;
     use reth_primitives_traits::Recovered;
     use reth_transaction_pool::{
-        PoolTransaction, TransactionOrigin, ValidPoolTransaction, identifier::TransactionId,
-        pool::PendingPool,
+        TransactionOrigin, ValidPoolTransaction, identifier::TransactionId, pool::PendingPool,
     };
     use revm::state::{Account, EvmState};
 
     use crate::{
         BestFlashblocksTxs, ParkableBestPayloadTransactions, ParkablePayloadTransactions,
-        RejectionCache, RestingPayloadTransactions, RestingPredicateMode,
+        RejectionCache, RestingPayloadTransactions, RestingPredicateMode, RestingStats,
     };
 
     type Ordering = BaseOrdering<BasePooledTransaction>;
@@ -344,7 +349,7 @@ mod tests {
     /// returns the yielded hashes.
     fn drain_without_including<I>(iterator: &mut I) -> Vec<TxHash>
     where
-        I: PayloadTransactions<Transaction = BasePooledTransaction>,
+        I: PayloadTransactions<Transaction = Arc<ValidPoolTransaction<BasePooledTransaction>>>,
     {
         std::iter::from_fn(|| {
             let transaction = iterator.next(())?;
@@ -352,6 +357,17 @@ mod tests {
             Some(*transaction.hash())
         })
         .collect()
+    }
+
+    #[test]
+    fn yields_the_pool_transaction_handle() {
+        let pooled = transaction(0, 0, 1);
+        let pool = pending_pool(&[Arc::clone(&pooled)]);
+        let mut iterator = BestFlashblocksTxs::new(parkable(&pool), test_rejection_cache());
+
+        let yielded = iterator.next(()).unwrap();
+
+        assert!(Arc::ptr_eq(&yielded, &pooled));
     }
 
     #[test]
@@ -654,10 +670,10 @@ mod tests {
     /// Plays the build loop's part for a candidate whose predicate is unsatisfied.
     fn park_unsatisfied(
         iterator: &mut BestFlashblocksTxs<BasePooledTransaction, Parkable>,
-        transaction: &BasePooledTransaction,
+        transaction: &ValidPoolTransaction<BasePooledTransaction>,
     ) {
         iterator.park_current();
-        iterator.rest(*transaction.hash(), &transaction.validity_predicates()[0]);
+        iterator.rest(*transaction.hash(), &transaction.transaction.validity_predicates()[0]);
     }
 
     #[test]
@@ -737,6 +753,23 @@ mod tests {
     }
 
     #[test]
+    fn resting_work_is_reported_when_the_iterator_is_exhausted() {
+        let resting = validity_transaction(0, 0, 10, vec![balance_at_least(WATCHED, 1)]);
+        let pool = pending_pool(&[Arc::clone(&resting)]);
+        let mut iterator = resting_iterator(&pool);
+
+        let first = iterator.next(()).unwrap();
+        park_unsatisfied(&mut iterator, &first);
+        assert_eq!(iterator.take_resting_stats(), RestingStats::default());
+
+        iterator.refresh_iterator(parkable(&pool));
+        assert!(iterator.next(()).is_none());
+        let stats = iterator.take_resting_stats();
+        assert_eq!(stats.parked, 1);
+        assert!(!stats.duration.is_zero());
+    }
+
+    #[test]
     fn latest_rested_predicate_replaces_the_previous_one() {
         let resting = validity_transaction(
             0,
@@ -749,7 +782,7 @@ mod tests {
 
         let first = iterator.next(()).unwrap();
         park_unsatisfied(&mut iterator, &first);
-        iterator.rest(*resting.hash(), &first.validity_predicates()[1]);
+        iterator.rest(*resting.hash(), &first.transaction.validity_predicates()[1]);
 
         iterator.refresh_iterator(parkable(&pool));
         assert!(iterator.next(()).is_none());
@@ -807,7 +840,7 @@ mod tests {
         iterator.refresh_iterator(parkable(&pool));
         let yielded = iterator.next(()).unwrap();
         assert_eq!(*yielded.hash(), *resting.hash());
-        assert!(iterator.is_resting(*resting.hash(), yielded.validity_predicates()));
+        assert!(iterator.is_resting(*resting.hash(), yielded.transaction.validity_conditions()));
     }
 
     #[test]
@@ -821,6 +854,6 @@ mod tests {
 
         iterator.rest(*resting.hash(), &predicates[0]);
 
-        assert!(!iterator.is_resting(*resting.hash(), predicates));
+        assert!(!iterator.is_resting(*resting.hash(), resting.transaction.validity_conditions()));
     }
 }

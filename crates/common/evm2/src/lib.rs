@@ -23,7 +23,8 @@ mod precompiles;
 mod executor;
 pub use executor::{
     BaseBlockExecutionCtx, BaseBlockExecutor, BlockExecutionResult, BlockGasLimitExceeded,
-    CumulativeGasOverflow, DaFootprintAboveGasLimit, PreExecutionError,
+    CumulativeGasOverflow, DaFootprintAboveGasLimit, Eip8130ExecutionUnsupported,
+    PreExecutionError,
 };
 
 mod registry;

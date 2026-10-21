@@ -73,18 +73,6 @@ pub enum ExecutorError {
     /// - Protocol version mismatches
     #[error("Gas limit not provided in payload attributes")]
     MissingGasLimit,
-    /// Transactions list not provided in the payload attributes.
-    ///
-    /// This error occurs when the payload attributes don't include the
-    /// required transactions list. Even empty blocks require an empty
-    /// transactions array to be explicitly provided.
-    ///
-    /// # Common Causes
-    /// - Incomplete payload attribute construction
-    /// - Serialization/deserialization errors
-    /// - Protocol specification violations
-    #[error("Transactions not provided in payload attributes")]
-    MissingTransactions,
     /// EIP-1559 fee parameters missing in execution payload after Holocene activation.
     ///
     /// Post-Holocene blocks require EIP-1559 base fee and blob base fee parameters
@@ -97,18 +85,6 @@ pub enum ExecutorError {
     /// - Incorrect upgrade activation detection
     #[error("Missing EIP-1559 parameters in execution payload post-Holocene")]
     MissingEIP1559Params,
-    /// Parent beacon block root not provided in the payload attributes.
-    ///
-    /// This error occurs when the payload attributes are missing the parent
-    /// beacon block root, which is required for post-Dencun blocks to enable
-    /// proper beacon chain integration and blob transaction validation.
-    ///
-    /// # Common Causes
-    /// - Missing beacon chain data in payload construction
-    /// - Incorrect Dencun upgrade implementation
-    /// - Beacon client communication failures
-    #[error("Parent beacon block root not provided in payload attributes")]
-    MissingParentBeaconBlockRoot,
     /// Invalid `extraData` field in the block header.
     ///
     /// This error occurs when the block header's `extraData` field contains
@@ -177,18 +153,6 @@ pub enum ExecutorError {
     /// - Chain ID mismatches
     #[error("sender recovery error: {0}")]
     Recovery(#[from] alloy_consensus::crypto::RecoveryError),
-    /// RLP encoding or decoding error.
-    ///
-    /// This error occurs when RLP (Recursive Length Prefix) serialization
-    /// or deserialization fails due to malformed data, invalid length
-    /// prefixes, or unsupported data structures.
-    ///
-    /// # Common Causes
-    /// - Corrupted transaction or block data
-    /// - Invalid RLP formatting
-    /// - Unsupported data types in RLP stream
-    #[error("RLP error: {0}")]
-    RLPError(alloy_eips::eip2718::Eip2718Error),
     /// Executor instance not available when required.
     ///
     /// This error occurs when attempting to perform an operation that requires
@@ -238,13 +202,6 @@ pub type TrieDBResult<T> = Result<T, TrieDBError>;
 /// [`TrieDB`]: crate::TrieDB
 #[derive(Error, Debug, PartialEq, Eq)]
 pub enum TrieDBError {
-    /// Trie root node has not been properly blinded for stateless execution.
-    ///
-    /// This error occurs when attempting to perform stateless execution on a trie
-    /// where the root node hasn't been blinded (converted to a form suitable for
-    /// stateless proofs). Blinding is required to enable stateless verification.
-    #[error("Trie root node has not been blinded")]
-    RootNotBlinded,
     /// Account information missing for a bundle account during state access.
     ///
     /// This error occurs when the trie database cannot find required account
@@ -305,17 +262,14 @@ mod tests {
         let errors = [
             // Block/attribute-level fields — stripping non-deposit txs cannot rescue them.
             ExecutorError::MissingGasLimit,
-            ExecutorError::MissingTransactions,
             ExecutorError::MissingEIP1559Params,
-            ExecutorError::MissingParentBeaconBlockRoot,
             ExecutorError::InvalidExtraData(Eip1559ValidationError::ZeroDenominator),
             // Witness-level / prover-influenced — must not trigger silent recovery.
             ExecutorError::TrieDBError(TrieDBError::Provider("missing preimage".to_string())),
             ExecutorError::ExecutionError(BlockExecutionError::Internal(
                 InternalBlockExecutionError::msg("internal executor error"),
             )),
-            // Transaction decoding and executor lifecycle — not per-tx-validity issues.
-            ExecutorError::RLPError(alloy_eips::eip2718::Eip2718Error::UnexpectedType(0xff)),
+            // Executor lifecycle issues are not per-tx-validity issues.
             ExecutorError::MissingExecutor,
         ];
 

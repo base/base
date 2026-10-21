@@ -16,7 +16,7 @@ use url::Url;
 
 use crate::{
     EngineConfig, NetworkConfig, RollupNode, SequencerConfig, UpgradeSignalNodeConfig,
-    actors::DerivationDelegateClient, service::node::L1Config,
+    service::node::L1Config,
 };
 
 /// Upgrade signal configuration for the [`RollupNodeBuilder`].
@@ -26,20 +26,6 @@ pub struct UpgradeSignalBuilderConfig {
     pub metrics_config: Option<UpgradeSignalConfig>,
     /// Optional L1 RPC endpoint override for upgrade signal reads.
     pub l1_rpc: Option<Url>,
-}
-
-/// Configuration for Derivation Delegate mode.
-#[derive(Debug, Clone)]
-pub struct DerivationDelegateConfig {
-    /// The L2 consensus layer RPC URL to delegate derivation to.
-    /// This CL must expose the `optimism_syncStatus` RPC endpoint.
-    pub l2_cl_url: Url,
-}
-
-impl Default for DerivationDelegateConfig {
-    fn default() -> Self {
-        Self { l2_cl_url: Url::parse("http://localhost:9545").unwrap() }
-    }
 }
 
 /// The [`L1ConfigBuilder`] is used to construct a [`L1Config`].
@@ -81,9 +67,6 @@ pub struct RollupNodeBuilder {
     pub rpc_config: Option<RpcBuilder>,
     /// The [`SequencerConfig`].
     pub sequencer_config: Option<SequencerConfig>,
-    /// Optional configuration for Derivation Delegate mode.
-    /// When present, the node does not run derivation, instead trusting the configured delegate.
-    pub derivation_delegate_config: Option<DerivationDelegateConfig>,
     /// Override for the finalized-block poll interval.
     ///
     /// When `None`, [`L1Config::default_finalized_poll_interval`] is used to select a
@@ -134,7 +117,6 @@ impl RollupNodeBuilder {
             p2p_config,
             rpc_config,
             sequencer_config: None,
-            derivation_delegate_config: None,
             finalized_poll_interval: None,
             checkpoint_path: None,
             safedb_path: None,
@@ -167,15 +149,6 @@ impl RollupNodeBuilder {
     /// specific interval regardless of chain (e.g. in integration tests).
     pub fn with_finalized_poll_interval(self, interval: Duration) -> Self {
         Self { finalized_poll_interval: Some(interval), ..self }
-    }
-
-    /// Sets the Derivation Delegate configuration, trusting the configured delegate for safe head
-    /// updates.
-    pub fn with_derivation_delegate_config(
-        self,
-        derivation_delegate_config: Option<DerivationDelegateConfig>,
-    ) -> Self {
-        Self { derivation_delegate_config, ..self }
     }
 
     /// Enables persistent safe head tracking by setting the path to the redb database file.
@@ -245,12 +218,6 @@ impl RollupNodeBuilder {
 
         let p2p_config = self.p2p_config;
 
-        let derivation_delegate_provider = self.derivation_delegate_config.as_ref().map(|config| {
-            DerivationDelegateClient::new(config.l2_cl_url.clone()).expect(
-                "Failed to create Derivation Delegate provider despite config being present",
-            )
-        });
-
         let upgrade_signal_config = self
             .upgrade_signal_config
             .metrics_config
@@ -276,7 +243,6 @@ impl RollupNodeBuilder {
             rpc_builder: self.rpc_config,
             p2p_config,
             sequencer_config,
-            derivation_delegate_provider,
             checkpoint_path,
             safedb_path: self.safedb_path,
             upgrade_signal_config,

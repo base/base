@@ -78,6 +78,9 @@ pub use l2::{
 mod network;
 pub use network::{ensure_network_exists, ensure_network_exists_with_name, network_name};
 
+mod ports;
+pub use ports::PortPool;
+
 mod prover_service;
 pub use prover_service::InProcessProverService;
 
