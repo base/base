@@ -3246,6 +3246,7 @@ dependencies = [
  "base-execution-payload-builder",
  "base-node-core",
  "base-observability-events",
+ "base-txpool-rpc",
  "clap",
  "eyre",
  "rstest",

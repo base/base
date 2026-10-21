@@ -17,7 +17,7 @@ use base_observability_events::{
 };
 use tracing::warn;
 
-use crate::{BuilderPath, CandidateArgs, CandidateCapabilities};
+use crate::{BuilderPath, CandidateArgs, CandidateCapabilities, CandidateWiring};
 
 /// Parameters for Flashblocks configuration.
 ///
@@ -304,6 +304,15 @@ impl HasRollupArgs for Args {
     }
 }
 
+/// A [`BuilderConfig`] together with the candidate wiring the rest of the node takes.
+#[derive(Debug)]
+pub struct BuilderSetup {
+    /// Payload builder configuration, with candidate selection set from `candidates`.
+    pub config: BuilderConfig,
+    /// Candidate settings for the pool and `base_sendSwapTransaction` ingress.
+    pub candidates: CandidateWiring,
+}
+
 impl Args {
     /// Creates a [`MeteringStore`] from the CLI arguments.
     pub fn build_metering_store(&self) -> MeteringStore {
@@ -375,6 +384,21 @@ impl Args {
     pub const fn builder_api_config(&self) -> BuilderApiExtensionConfig {
         BuilderApiExtensionConfig::new(self.validity_max_predicates)
             .with_validity_signature_mode(self.validity_signature_mode)
+    }
+
+    /// Validates the candidate flags fail-closed, then converts these arguments into a
+    /// [`BuilderConfig`] whose candidate selection matches the returned [`CandidateWiring`].
+    ///
+    /// Every builder entrypoint starts here, so candidate flags are never parsed and then
+    /// dropped. The metering provider is shared as in [`Self::into_builder_config`].
+    pub fn into_builder_setup(
+        self,
+        metering_provider: SharedMeteringProvider,
+    ) -> eyre::Result<BuilderSetup> {
+        let candidates = CandidateWiring::new(self.candidate_capabilities()?);
+        let mut config = self.into_builder_config(metering_provider)?;
+        config.candidates = candidates.builder.clone();
+        Ok(BuilderSetup { config, candidates })
     }
 
     /// Converts these CLI arguments into a [`BuilderConfig`] using the given shared metering

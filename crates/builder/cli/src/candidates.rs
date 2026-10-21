@@ -12,6 +12,9 @@ use base_execution_payload_builder::{
     CandidateBuilderConfig, DEFAULT_CANDIDATE_BUILD_DEADLINE, DEFAULT_CANDIDATE_BUILD_WORK_GAS,
     DEFAULT_CANDIDATE_EVAL_WALL_CUTOFF, DEFAULT_INVALID_ATTEMPT_GAS,
 };
+use base_txpool_rpc::{
+    CandidateCapabilityConfig, CandidateEvaluation, SendSwapTransactionConfig, SwapEndpointConfig,
+};
 use eyre::WrapErr;
 
 /// Provisional candidate group lifetime past the next block, in seconds.
@@ -37,6 +40,43 @@ pub struct CandidateCapabilities {
     pub group_lifetime_secs: u64,
     /// Native builder selection settings, or `None` when builder selection is off.
     pub builder: Option<CandidateBuilderConfig>,
+}
+
+/// What each node component takes from the [`CandidateCapabilities`]; all `None` when candidates
+/// are off.
+#[derive(Debug, Clone, Default)]
+pub struct CandidateWiring {
+    /// Runtime the pool shares with ingress and the builder.
+    pub runtime: Option<Arc<CandidateRuntime>>,
+    /// Native builder selection, for both the builder config and the pool.
+    pub builder: Option<CandidateBuilderConfig>,
+    /// `base_sendSwapTransaction` ingress. Its selection toggle is registered only when the
+    /// builder here evaluates groups.
+    pub swap_transaction: Option<SendSwapTransactionConfig>,
+}
+
+impl CandidateWiring {
+    /// Splits validated capabilities into the settings each component takes.
+    pub fn new(capabilities: Option<CandidateCapabilities>) -> Self {
+        let Some(capabilities) = capabilities else { return Self::default() };
+        let evaluation = if capabilities.builder.is_some() {
+            CandidateEvaluation::Builder
+        } else {
+            CandidateEvaluation::IngressOnly
+        };
+        Self {
+            runtime: Some(Arc::clone(&capabilities.runtime)),
+            builder: capabilities.builder,
+            swap_transaction: Some(SendSwapTransactionConfig {
+                capabilities: CandidateCapabilityConfig::new(
+                    capabilities.runtime,
+                    capabilities.group_lifetime_secs,
+                ),
+                endpoint: SwapEndpointConfig::default(),
+                evaluation,
+            }),
+        }
+    }
 }
 
 /// Swap Lane ingress and builder candidate selection settings. Everything is off by default.

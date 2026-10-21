@@ -4,9 +4,10 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 mod args;
-pub use args::{Args, FlashblocksArgs, TransactionEventsArgs};
+pub use args::{Args, BuilderSetup, FlashblocksArgs, TransactionEventsArgs};
 
 mod candidates;
 pub use candidates::{
-    BuilderPath, CandidateArgs, CandidateCapabilities, DEFAULT_CANDIDATE_MAX_EXPIRY_SECS,
+    BuilderPath, CandidateArgs, CandidateCapabilities, CandidateWiring,
+    DEFAULT_CANDIDATE_MAX_EXPIRY_SECS,
 };
