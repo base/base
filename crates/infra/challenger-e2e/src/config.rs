@@ -39,6 +39,18 @@ pub enum ProverMode {
     Real,
 }
 
+/// A failure the mock prover injects into the challenger's proof sessions.
+#[derive(Debug, Clone, Copy, Default, Eq, PartialEq, ValueEnum)]
+pub enum MockFault {
+    /// Every session succeeds after the proving time.
+    None,
+    /// The first attempt of each of the challenger's sessions reports
+    /// `Failed`, so every dispute also proves the challenger re-requests a
+    /// failed proof. The driver's own staging requests are never failed.
+    #[default]
+    FailFirst,
+}
+
 /// Runtime configuration for [`crate::ChallengerE2e`].
 #[derive(Debug, Parser)]
 #[command(name = "challenger-e2e", version, about, long_about = None)]
@@ -68,6 +80,11 @@ pub struct Config {
         value_parser = humantime::parse_duration
     )]
     pub mock_proving_time: Duration,
+
+    /// Failure the mock prover injects into the challenger's proof sessions.
+    /// `mock` mode only.
+    #[arg(long = "mock-fault", env = "CHALLENGER_E2E_MOCK_FAULT", default_value = "fail-first")]
+    pub mock_fault: MockFault,
 
     /// Prover-service JSON-RPC. In `real` mode, the live service the driver and
     /// the challenger both use; in `mock` mode it is replaced at startup by the
@@ -152,6 +169,21 @@ pub struct Config {
     )]
     pub dispute_timeout: Duration,
 
+    /// How long the driver keeps retrying an L2 RPC read that fails the way an
+    /// unavailable node does (`no state found`, a refused connection, an HTTP
+    /// 502/503/504/429 from a load balancer), before it gives up and fails the
+    /// run as an infrastructure failure.
+    ///
+    /// Covers a node restart. The challenger reads the same node, so while it
+    /// is down no dispute can be expected of the challenger either.
+    #[arg(
+        long = "l2-retry-budget",
+        env = "CHALLENGER_E2E_L2_RETRY_BUDGET",
+        default_value = "10m",
+        value_parser = humantime::parse_duration
+    )]
+    pub l2_retry_budget: Duration,
+
     /// Interval between driver polls of the fork and the metrics endpoint.
     #[arg(
         long = "poll-interval",
@@ -160,6 +192,12 @@ pub struct Config {
         value_parser = humantime::parse_duration
     )]
     pub poll_interval: Duration,
+
+    /// `base/base` commit the driver was built from, logged at startup so a run
+    /// names the code it ran. The binary cannot discover it itself, so the image
+    /// has to set it from the commit it builds; unset, it is logged as unknown.
+    #[arg(long = "driver-commit", env = "CHALLENGER_E2E_DRIVER_COMMIT")]
+    pub driver_commit: Option<String>,
 
     /// Fork block, recorded at startup. Every block after it was mined on the
     /// fork, so it bounds the scan for the challenger's own transactions.
@@ -195,6 +233,8 @@ mod tests {
         ])
         .expect("parses");
         assert_eq!(config.prover, ProverMode::Mock);
+        assert_eq!(config.mock_fault, MockFault::FailFirst);
+        assert_eq!(MockFault::from_str("none", false), Ok(MockFault::None));
         assert_eq!(ProverMode::from_str("real", false), Ok(ProverMode::Real));
     }
 }

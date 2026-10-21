@@ -69,7 +69,7 @@ impl SequencerCommand {
         let sequencer_rpc = rollup_args.sequencer.clone();
         let metering_provider: base_builder_core::SharedMeteringProvider =
             Arc::new(builder.build_metering_store());
-        let builder_api_config = builder.builder_api_config()?;
+        let builder_api_config = builder.builder_api_config();
         // Build the shadow-indexer config before `into_builder_config` consumes `builder`. The
         // config carries an `enabled` flag (false unless ENABLE_SHADOW_INDEXER is set), so the
         // ExEx is installed unconditionally and no-ops for non-shadow sequencers.
@@ -118,6 +118,7 @@ impl SequencerCommand {
             runner.install_ext::<SendRawTransactionValidityExtension>(
                 SendRawTransactionValidityConfig {
                     max_validity_predicates: builder_api_config.max_validity_predicates,
+                    validity_signature_mode: builder_api_config.validity_signature_mode,
                     ..Default::default()
                 },
             );

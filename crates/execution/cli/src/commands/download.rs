@@ -4,7 +4,7 @@
 //! Base-specific proofs database is downloaded separately by [`ProofsDownloader`]
 //! from the same snapshot source and manifest.
 
-use std::{ffi::OsString, path::PathBuf, sync::Arc};
+use std::{ffi::OsString, sync::Arc};
 
 use base_execution_chainspec::BaseChainSpec;
 use clap::Parser;
@@ -12,7 +12,6 @@ use eyre::Result;
 use reth_chainspec::EthChainSpec;
 use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_commands::download::DownloadCommand;
-use reth_node_core::args::DatadirArgs;
 use tracing::info;
 
 mod proofs;
@@ -30,6 +29,7 @@ pub use proofs::{
 /// When `--proofs` is passed, the command runs reth's standard download
 /// then fetches and extracts the proofs archive from the same snapshot source.
 #[derive(Debug, Parser)]
+#[command(mut_arg("datadir", |arg| arg.visible_alias("dir")))]
 pub struct BaseDownloadCommand<C: ChainSpecParser> {
     #[command(flatten)]
     inner: DownloadCommand<C>,
@@ -54,7 +54,7 @@ impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> BaseDownloadCommand<C> {
                 .ok_or_else(|| eyre::eyre!("--proofs flag is only on Base"))?
                 .chain();
             let chain_id = chain.id();
-            let dir = resolve_datadir_args(std::env::args_os()).resolve_datadir(chain);
+            let dir = inner.env().datadir.clone().resolve_datadir(chain);
             info!(target: "reth::cli", datadir = %dir.data_dir().display(), "Resolved datadir for proofs download");
             (Some(dir), Some(chain_id))
         } else {
@@ -72,30 +72,6 @@ impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> BaseDownloadCommand<C> {
 
         Ok(())
     }
-}
-
-/// Extracts `--datadir` from the current process args without doing a second
-/// permissive clap parse of the whole command.
-fn resolve_datadir_args(args: impl IntoIterator<Item = OsString>) -> DatadirArgs {
-    let mut datadir_args = DatadirArgs::default();
-    let mut args = args.into_iter();
-
-    while let Some(arg) = args.next() {
-        let Some(arg) = arg.to_str() else { continue };
-
-        if arg == "--datadir" {
-            if let Some(value) = args.next() {
-                datadir_args.datadir = PathBuf::from(value).into();
-            }
-            continue;
-        }
-
-        if let Some(value) = arg.strip_prefix("--datadir=") {
-            datadir_args.datadir = PathBuf::from(value).into();
-        }
-    }
-
-    datadir_args
 }
 
 /// Matches reth's `--download-concurrency` default.
@@ -181,34 +157,23 @@ mod tests {
     }
 
     #[test]
-    fn resolve_datadir_args_uses_explicit_datadir() {
-        let datadir = resolve_datadir_args([
-            OsString::from("test"),
-            OsString::from("--datadir"),
-            OsString::from("/tmp/base-download-test"),
-        ])
-        .resolve_datadir(BaseChainSpec::mainnet().chain());
-
-        assert_eq!(
-            datadir.data_dir(),
-            Path::new("/tmp/base-download-test"),
-            "proofs download should use --datadir without adding the chain directory"
-        );
-    }
-
-    #[test]
-    fn resolve_datadir_args_uses_equals_syntax() {
-        let datadir = resolve_datadir_args([
-            OsString::from("test"),
-            OsString::from("--datadir=/tmp/base-download-test"),
-        ])
-        .resolve_datadir(BaseChainSpec::mainnet().chain());
-
-        assert_eq!(
-            datadir.data_dir(),
-            Path::new("/tmp/base-download-test"),
-            "proofs download should use --datadir=VALUE without adding the chain directory"
-        );
+    fn download_and_proofs_share_the_parsed_datadir() {
+        for args in [
+            vec!["test", "--proofs", "--datadir", "/tmp/base download"],
+            vec!["test", "--proofs", "--dir", "/tmp/base download"],
+            vec!["test", "--proofs", "--datadir=/tmp/base download"],
+            vec!["test", "--proofs", "--dir=/tmp/base download"],
+        ] {
+            let cli = TestCli::parse_from(args);
+            let datadir = cli
+                .args
+                .inner
+                .env()
+                .datadir
+                .clone()
+                .resolve_datadir(BaseChainSpec::mainnet().chain());
+            assert_eq!(datadir.data_dir(), Path::new("/tmp/base download"));
+        }
     }
 
     #[test]

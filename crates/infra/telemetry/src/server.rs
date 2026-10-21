@@ -166,10 +166,13 @@ mod tests {
         (addr, handle)
     }
 
-    async fn start_test_server() -> (SocketAddr, JoinHandle<()>) {
+    async fn start_server(
+        per_minute: u32,
+        trusted_proxy_cidrs: Vec<&str>,
+    ) -> (SocketAddr, JoinHandle<()>) {
         start_router(BaseTelemetryServer::router_with_probers(
             Arc::new(AtomicBool::new(true)),
-            per_ip(1000, vec![]),
+            per_ip(per_minute, trusted_proxy_cidrs),
             DEFAULT_P2P_REACHABILITY_MAX_CONCURRENT_PROBES,
             reachable_prober(),
             Arc::new(MockClReachabilityProber::new()),
@@ -183,7 +186,7 @@ mod tests {
 
     #[tokio::test]
     async fn healthz_returns_ok() {
-        let (addr, handle) = start_test_server().await;
+        let (addr, handle) = start_server(1000, vec![]).await;
 
         let response = reqwest::get(format!("http://{addr}/healthz")).await.unwrap();
 
@@ -194,7 +197,7 @@ mod tests {
 
     #[tokio::test]
     async fn readyz_returns_ok() {
-        let (addr, handle) = start_test_server().await;
+        let (addr, handle) = start_server(1000, vec![]).await;
 
         let response = reqwest::get(format!("http://{addr}/readyz")).await.unwrap();
 
@@ -249,14 +252,7 @@ mod tests {
 
     #[tokio::test]
     async fn rate_limits_requests_per_client_ip() {
-        let router = BaseTelemetryServer::router_with_probers(
-            Arc::new(AtomicBool::new(true)),
-            per_ip(1, vec![]),
-            DEFAULT_P2P_REACHABILITY_MAX_CONCURRENT_PROBES,
-            reachable_prober(),
-            Arc::new(MockClReachabilityProber::new()),
-        );
-        let (addr, handle) = start_router(router).await;
+        let (addr, handle) = start_server(1, vec![]).await;
         let client = reqwest::Client::new();
         let url = format!("http://{addr}{P2P_REACHABILITY_EL_PATH}");
 
@@ -277,14 +273,7 @@ mod tests {
 
     #[tokio::test]
     async fn ignores_forwarded_header_from_untrusted_peer() {
-        let router = BaseTelemetryServer::router_with_probers(
-            Arc::new(AtomicBool::new(true)),
-            per_ip(1, vec![]),
-            DEFAULT_P2P_REACHABILITY_MAX_CONCURRENT_PROBES,
-            reachable_prober(),
-            Arc::new(MockClReachabilityProber::new()),
-        );
-        let (addr, handle) = start_router(router).await;
+        let (addr, handle) = start_server(1, vec![]).await;
         let client = reqwest::Client::new();
         let url = format!("http://{addr}{P2P_REACHABILITY_EL_PATH}");
 
@@ -312,14 +301,7 @@ mod tests {
 
     #[tokio::test]
     async fn honors_forwarded_header_from_trusted_proxy() {
-        let router = BaseTelemetryServer::router_with_probers(
-            Arc::new(AtomicBool::new(true)),
-            per_ip(1, vec!["127.0.0.0/8"]),
-            DEFAULT_P2P_REACHABILITY_MAX_CONCURRENT_PROBES,
-            reachable_prober(),
-            Arc::new(MockClReachabilityProber::new()),
-        );
-        let (addr, handle) = start_router(router).await;
+        let (addr, handle) = start_server(1, vec!["127.0.0.0/8"]).await;
         let client = reqwest::Client::new();
         let url = format!("http://{addr}{P2P_REACHABILITY_EL_PATH}");
 
@@ -357,14 +339,7 @@ mod tests {
 
     #[tokio::test]
     async fn last_forwarded_header_line_wins_over_spoofed_first() {
-        let router = BaseTelemetryServer::router_with_probers(
-            Arc::new(AtomicBool::new(true)),
-            per_ip(1, vec!["127.0.0.0/8"]),
-            DEFAULT_P2P_REACHABILITY_MAX_CONCURRENT_PROBES,
-            reachable_prober(),
-            Arc::new(MockClReachabilityProber::new()),
-        );
-        let (addr, handle) = start_router(router).await;
+        let (addr, handle) = start_server(1, vec!["127.0.0.0/8"]).await;
         let client = reqwest::Client::new();
         let url = format!("http://{addr}{P2P_REACHABILITY_EL_PATH}");
 
@@ -397,14 +372,7 @@ mod tests {
 
     #[tokio::test]
     async fn missing_forwarded_header_from_trusted_proxy_falls_back_to_peer() {
-        let router = BaseTelemetryServer::router_with_probers(
-            Arc::new(AtomicBool::new(true)),
-            per_ip(1, vec!["127.0.0.0/8"]),
-            DEFAULT_P2P_REACHABILITY_MAX_CONCURRENT_PROBES,
-            reachable_prober(),
-            Arc::new(MockClReachabilityProber::new()),
-        );
-        let (addr, handle) = start_router(router).await;
+        let (addr, handle) = start_server(1, vec!["127.0.0.0/8"]).await;
         let client = reqwest::Client::new();
         let url = format!("http://{addr}{P2P_REACHABILITY_EL_PATH}");
 

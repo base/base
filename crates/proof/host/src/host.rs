@@ -291,7 +291,7 @@ mod tests {
 
     fn host_for_chain(l2_chain_id: u64) -> Host {
         Host::new(HostConfig {
-            request: ProofRequest::default(),
+            request: ProofRequest::for_tests(600, 30),
             prover: ProverConfig {
                 l1_eth_url: "http://127.0.0.1:1".to_string(),
                 l2_eth_url: "http://127.0.0.1:1".to_string(),

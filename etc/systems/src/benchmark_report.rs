@@ -22,15 +22,15 @@ pub struct SnapshotBenchmarkResult {
     pub boundary_hash: B256,
     /// Builder RPC used by the load test.
     pub builder_rpc_url: String,
-    /// Follow-client RPC used for propagation validation.
-    pub client_rpc_url: String,
+    /// Follow-client RPC used for propagation validation, if a follow client ran.
+    pub client_rpc_url: Option<String>,
     /// Ephemeral or explicitly configured load-test funder address.
     pub funder_address: Address,
     /// Native load-tester metrics.
     pub load_test: MetricsSummary,
     /// Canonical block metrics for the complete measured window, including warmup transactions.
     pub blocks: Vec<SnapshotBlockMetrics>,
-    /// Follow-client copy of the canonical measured window.
+    /// Follow-client copy of the canonical measured window; empty without a follow client.
     pub validator_blocks: Vec<SnapshotBlockMetrics>,
 }
 
@@ -108,8 +108,9 @@ pub struct VisualizerRunResult {
     pub client_version: String,
     /// Sequencer headline metrics.
     pub sequencer_metrics: VisualizerSequencerMetrics,
-    /// Validator headline metrics.
-    pub validator_metrics: VisualizerValidatorMetrics,
+    /// Validator headline metrics, if a follow client ran.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub validator_metrics: Option<VisualizerValidatorMetrics>,
     /// Additional result artifacts.
     pub artifacts: BTreeMap<String, String>,
 }
@@ -156,7 +157,7 @@ impl SnapshotBenchmarkReportConfig {
 
     /// Writes files directly consumable by the base/benchmark report visualizer.
     pub fn write_visualizer_bundle(&self, result: &SnapshotBenchmarkResult) -> Result<()> {
-        if result.blocks.is_empty() || result.validator_blocks.is_empty() {
+        if result.blocks.is_empty() {
             warn!(
                 output_dir = %self.output_dir.display(),
                 sequencer_blocks = result.blocks.len(),
@@ -194,10 +195,12 @@ impl SnapshotBenchmarkReportConfig {
             self.output_dir.join("metrics-sequencer.json"),
             serde_json::to_vec_pretty(&block_metrics)?,
         )?;
-        std::fs::write(
-            self.output_dir.join("metrics-validator.json"),
-            serde_json::to_vec_pretty(&validator_metrics)?,
-        )?;
+        if !validator_metrics.is_empty() {
+            std::fs::write(
+                self.output_dir.join("metrics-validator.json"),
+                serde_json::to_vec_pretty(&validator_metrics)?,
+            )?;
+        }
         std::fs::write(
             self.output_dir.join("load-test-result.json"),
             serde_json::to_vec_pretty(&result.load_test)?,
@@ -237,9 +240,9 @@ impl SnapshotBenchmarkReportConfig {
                     sequencer_metrics: VisualizerSequencerMetrics {
                         gas_per_second: sequencer_gas_per_second,
                     },
-                    validator_metrics: VisualizerValidatorMetrics {
-                        gas_per_second: validator_gas_per_second,
-                    },
+                    validator_metrics: (!validator_metrics.is_empty()).then_some(
+                        VisualizerValidatorMetrics { gas_per_second: validator_gas_per_second },
+                    ),
                     artifacts: BTreeMap::from([(
                         "loadTestResult".to_string(),
                         "load-test-result.json".to_string(),
@@ -335,7 +338,7 @@ mod tests {
             boundary_number: 9,
             boundary_hash: B256::ZERO,
             builder_rpc_url: "http://127.0.0.1:1".to_string(),
-            client_rpc_url: "http://127.0.0.1:2".to_string(),
+            client_rpc_url: Some("http://127.0.0.1:2".to_string()),
             funder_address: Address::ZERO,
             load_test: MetricsSummary {
                 throughput: ThroughputMetrics { gps: 2_000_000_000.0, ..Default::default() },
@@ -412,6 +415,50 @@ transactions:
         );
         assert!(output.path().join("metrics-validator.json").is_file());
         assert!(output.path().join("load-test-result.json").is_file());
+    }
+
+    #[test]
+    fn builder_only_bundle_omits_validator_output() {
+        let output = tempfile::tempdir().unwrap();
+        let report = SnapshotBenchmarkReportConfig::new(
+            output.path().to_path_buf(),
+            "builder-only".to_string(),
+            "run-123".to_string(),
+            "snapshot-throughput".to_string(),
+            "transfer-2s".to_string(),
+            "base/v0.0.0-test123".to_string(),
+        );
+        let result = SnapshotBenchmarkResult {
+            chain_id: 8453,
+            block_interval_ms: 2_000,
+            boundary_number: 9,
+            boundary_hash: B256::ZERO,
+            builder_rpc_url: "http://127.0.0.1:1".to_string(),
+            client_rpc_url: None,
+            funder_address: Address::ZERO,
+            load_test: MetricsSummary::default(),
+            blocks: vec![SnapshotBlockMetrics {
+                number: 10,
+                hash: B256::ZERO,
+                timestamp: 1,
+                timestamp_ms: 1_000,
+                gas_used: 21_000,
+                gas_limit: 400_000_000,
+                transaction_count: 1,
+                prometheus_metrics: BTreeMap::new(),
+            }],
+            validator_blocks: Vec::new(),
+        };
+
+        report.write_visualizer_bundle(&result).unwrap();
+
+        let metadata: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(output.path().join("metadata.json")).unwrap())
+                .unwrap();
+        assert_eq!(metadata["runs"][0]["result"]["sequencerMetrics"]["gasPerSecond"], 10_500.0);
+        assert!(metadata["runs"][0]["result"].get("validatorMetrics").is_none());
+        assert!(output.path().join("metrics-sequencer.json").is_file());
+        assert!(!output.path().join("metrics-validator.json").exists());
     }
 
     #[test]

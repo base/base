@@ -130,27 +130,20 @@ pub enum BacklogFetchResult {
     Error,
 }
 
-/// Raw DA bytes and timestamp for a single L2 block, decoupled from the higher-level
-/// shapes (`BlockDaInfo`, `BacklogBlock`) that wrap it for different consumers.
-struct RawBlockInfo {
-    da_bytes: u64,
-    timestamp: u64,
-}
-
-/// Fetches a single L2 block and computes its DA bytes.
+/// Fetches a single L2 block and returns its number, DA bytes, and timestamp.
 ///
 /// Returns `None` if the RPC call fails or the block does not exist.
 async fn fetch_raw_block_info<P: Provider<Base>>(
     provider: &P,
     block_num: u64,
-) -> Option<RawBlockInfo> {
+) -> Option<BlockDaInfo> {
     let block =
         provider.get_block_by_number(BlockNumberOrTag::Number(block_num)).full().await.ok()??;
 
     let da_bytes: u64 =
         block.transactions.txns().map(|tx| tx.inner.inner.encode_2718_len() as u64).sum();
 
-    Some(RawBlockInfo { da_bytes, timestamp: block.header.timestamp })
+    Some(BlockDaInfo { block_number: block_num, da_bytes, timestamp: block.header.timestamp })
 }
 
 /// Fetches DA info for requested block numbers and sends results back.
@@ -175,16 +168,10 @@ pub async fn run_block_fetcher(
     };
 
     while let Some(block_num) = request_rx.recv().await {
-        if let Some(info) = fetch_raw_block_info(&provider, block_num).await {
-            let block_info = BlockDaInfo {
-                block_number: block_num,
-                da_bytes: info.da_bytes,
-                timestamp: info.timestamp,
-            };
-
-            if result_tx.send(block_info).await.is_err() {
-                break;
-            }
+        if let Some(info) = fetch_raw_block_info(&provider, block_num).await
+            && result_tx.send(info).await.is_err()
+        {
+            break;
         }
     }
 }
@@ -223,7 +210,7 @@ pub async fn fetch_initial_backlog_with_progress(
                     fetch_raw_block_info(&*provider, block_num).await.map_or(
                         BacklogBlock { block_number: block_num, da_bytes: 0, timestamp: 0 },
                         |info| BacklogBlock {
-                            block_number: block_num,
+                            block_number: info.block_number,
                             da_bytes: info.da_bytes,
                             timestamp: info.timestamp,
                         },

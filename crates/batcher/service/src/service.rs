@@ -1,11 +1,6 @@
 //! Batcher service startup and wiring.
 
-use std::{
-    future::{Future, pending},
-    sync::Arc,
-    task::Poll,
-    time::Duration,
-};
+use std::{future::Future, sync::Arc, task::Poll, time::Duration};
 
 use alloy_provider::{Provider, ProviderBuilder, ProviderLayer, RootProvider};
 use backon::Retryable;
@@ -16,7 +11,6 @@ use base_batcher_encoder::{BatchEncoder, BatcherMetrics};
 use base_batcher_source::{HybridL1HeadSource, PollingBlockSource};
 use base_common_network::Base;
 use base_consensus_rpc::RollupNodeApiClient;
-use base_protocol::BlockInfo;
 use base_retry::{DEFAULT_UNBOUNDED_MAX_DELAY, RetryConfig};
 use base_runtime::TokioRuntime;
 use base_tx_manager::{BaseTxMetrics, SimpleTxManager};
@@ -71,25 +65,34 @@ pub struct ReadyBatcher {
 
 impl ReadyBatcher {
     /// Run the batch submission loop until the runtime is cancelled.
+    ///
+    /// The driver and the background tasks run until either exits, which cancels the others.
+    /// All are then awaited, so the driver always completes its shutdown drain. A background
+    /// task exiting is an error; the driver error takes precedence.
     pub async fn run(self) -> eyre::Result<()> {
         info!("batcher driver running");
         let Self { driver, admin_server, background_tasks, cancellation } = self;
-        let background_cancellation = cancellation.clone();
-        let background_task_exit = async move {
+        let run_driver = async {
+            let result = driver.run().await;
+            cancellation.cancel();
+            result
+        };
+        let watch_background_tasks = async {
             let mut background_tasks = background_tasks
                 .into_iter()
                 .map(|(task_name, task)| async move { (task_name, task.await) })
                 .collect::<FuturesUnordered<_>>();
-            tokio::select! {
+            let result = tokio::select! {
                 biased;
-                () = background_cancellation.cancelled() => {}
+                () = cancellation.cancelled() => Ok(()),
                 Some((task_name, result)) = background_tasks.next(), if !background_tasks.is_empty() => {
                     match result {
-                        Ok(()) => eyre::bail!("{task_name} exited unexpectedly"),
-                        Err(error) => eyre::bail!("{task_name} failed: {error}"),
+                        Ok(()) => Err(eyre::eyre!("{task_name} exited unexpectedly")),
+                        Err(error) => Err(eyre::eyre!("{task_name} failed: {error}")),
                     }
                 }
-            }
+            };
+            cancellation.cancel();
 
             while let Some((task_name, result)) = background_tasks.next().await {
                 if let Err(error) = result {
@@ -100,43 +103,22 @@ impl ReadyBatcher {
                     );
                 }
             }
-
-            Ok::<_, eyre::Report>(())
+            result
         };
-        tokio::pin!(background_task_exit);
-        let driver_run = driver.run();
-        tokio::pin!(driver_run);
-        let admin_stopped = async {
-            match admin_server.as_ref() {
-                Some(admin) => admin.stopped().await,
-                None => pending().await,
-            }
-        };
-        tokio::pin!(admin_stopped);
-        let mut admin_active = admin_server.is_some();
-
-        loop {
+        let watch_admin = async {
+            let Some(admin) = admin_server.as_ref() else { return };
             tokio::select! {
-                r = &mut driver_run => {
-                    cancellation.cancel();
-                    let driver_result = r;
-                    let background_result = background_task_exit.as_mut().await;
-                    driver_result?;
-                    background_result?;
-                    break;
-                }
-                r = &mut background_task_exit => {
-                    cancellation.cancel();
-                    r?;
-                    driver_run.await?;
-                    break;
-                }
-                () = &mut admin_stopped, if admin_active => {
-                    admin_active = false;
+                () = admin.stopped() => {
                     warn!("admin server stopped unexpectedly; batcher continues without admin API");
                 }
+                () = cancellation.cancelled() => {}
             }
-        }
+        };
+
+        let (driver_result, background_result, ()) =
+            tokio::join!(run_driver, watch_background_tasks, watch_admin);
+        driver_result?;
+        background_result?;
         info!("batcher service shutting down");
         Ok(())
     }
@@ -449,13 +431,13 @@ impl BatcherService {
         // fees. The shadow batcher posts with its own key on purpose.
         if self.config.shadow.is_none() {
             let system_config = rollup_config.l1_system_config_address;
-            let authorized = Self::rpc_retry("system-config-batcher", retry, rpc_timeout, || {
+            let batcher_hash = Self::rpc_retry("system-config-batcher", retry, rpc_timeout, || {
                 SystemConfigBatcher::fetch(&l1_provider, system_config)
             })
             .await?;
-            if authorized != signer_address {
+            if batcher_hash != signer_address.into_word() {
                 eyre::bail!(
-                    "signer {signer_address} is not the batcher {authorized} authorized by the L1 \
+                    "signer {signer_address} is not the batcher {batcher_hash} authorized by the L1 \
                      SystemConfig at {system_config}"
                 );
             }
@@ -494,14 +476,16 @@ impl BatcherService {
                 .await?;
 
         let initial_derivation_status =
-            Self::rpc_retry("optimism_syncStatus", retry, rpc_timeout, || {
-                rollup_node.derivation_status()
+            Self::rpc_retry("optimism_syncStatus", retry, rpc_timeout, || async {
+                match rollup_node.derivation_status().await {
+                    Ok(status) if status.lacks_safe_head_or_l1_block() => {
+                        Err("sync status without a safe L2 head or an L1 block".into())
+                    }
+                    result => result,
+                }
             })
             .await?;
         let safe_l2 = initial_derivation_status.safe_l2;
-        if safe_l2 == BlockInfo::default() {
-            eyre::bail!("safe L2 head is empty");
-        }
         let next_l2_timestamp = safe_l2.timestamp.saturating_add(rollup_config.block_time);
         self.config.encoder_config.validate_for_rollup_config(&rollup_config, next_l2_timestamp)?;
         info!(safe_l2 = %safe_l2.number, "fetched safe L2 head");
@@ -634,7 +618,7 @@ impl BatcherService {
                 source,
                 l1_head_source,
                 initial_l1_head,
-                initial_safe_head: safe_l2,
+                initial_derivation_status,
                 derivation_status_rx,
                 admin_rx,
             },
@@ -666,7 +650,7 @@ mod tests {
     use alloy_primitives::Address;
     use base_batcher_core::{ThrottleConfig, ThrottleController};
     use base_common_genesis::RollupConfig;
-    use base_protocol::SyncStatus;
+    use base_protocol::{BlockInfo, L2BlockInfo, SyncStatus};
     use base_runtime::Cancellation;
     use base_tx_manager::SignerConfig;
     use httpmock::{Mock, prelude::*};
@@ -881,26 +865,56 @@ mod tests {
         assert_eq!(
             error.to_string(),
             format!(
-                "signer {signer} is not the batcher {authorized} authorized by the L1 \
-                 SystemConfig at {SYSTEM_CONFIG}"
+                "signer {signer} is not the batcher {batcher_hash} authorized by the L1 \
+                 SystemConfig at {SYSTEM_CONFIG}",
+                batcher_hash = authorized.into_word(),
             )
         );
     }
 
-    /// Setup goes past the batcher check when the signer is the one the `SystemConfig` authorizes.
+    /// Setup reads the sync status again until it carries a safe head and an L1 block, instead of
+    /// failing on the first answer without them.
     #[tokio::test]
-    async fn setup_accepts_the_signer_the_system_config_authorizes() {
+    async fn setup_waits_for_a_sync_status_with_a_safe_head_and_an_l1_block() {
         let server = MockServer::start_async().await;
         let signer = Address::repeat_byte(0x51);
         mock_system_config(&server, signer).await;
-        // Setup reads the L1 head right after the check, so a served read means the check passed.
-        let l1_head = mock_rpc(&server, r#"{"method":"eth_blockNumber"}"#, r#""0x1""#.into()).await;
+        mock_rpc(&server, r#"{"method":"eth_blockNumber"}"#, r#""0x1""#.into()).await;
+        let status = |current_l1| SyncStatus {
+            current_l1: BlockInfo { number: current_l1, ..Default::default() },
+            local_safe_l2: L2BlockInfo {
+                block_info: BlockInfo { number: 5, ..Default::default() },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        // The rollup node client numbers its requests, `optimism_rollupConfig` being 0, and
+        // rejects an answer under another id, so its first two sync status reads are mocked as 1
+        // and 2.
+        let mut reads = Vec::new();
+        for (id, status) in [(1, status(0)), (2, status(7))] {
+            let response = format!(
+                r#"{{"jsonrpc":"2.0","id":{id},"result":{}}}"#,
+                serde_json::to_string(&status).unwrap()
+            );
+            let request = format!(r#"{{"method":"optimism_syncStatus","id":{id}}}"#);
+            reads.push(
+                server
+                    .mock_async(|when, then| {
+                        when.method(POST).path("/").json_body_includes(request);
+                        then.status(200).header("content-type", "application/json").body(response);
+                    })
+                    .await,
+            );
+        }
 
-        // Setup fails later, on the reads this test does not mock.
+        // Setup fails later, on the encoder check against the mocked rollup config.
         let _ =
             BatcherService::new(mocked_config(&server, signer)).setup(TokioRuntime::new()).await;
 
-        assert!(l1_head.calls_async().await > 0, "setup must go past the check");
+        for read in &reads {
+            read.assert_calls_async(1).await;
+        }
     }
 
     /// A shadow batcher posts to its own inbox, so setup does not check its signer against the

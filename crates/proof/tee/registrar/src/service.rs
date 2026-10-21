@@ -59,7 +59,7 @@ pub struct RegistrarConfig {
     pub max_tx_retries: u32,
     /// Initial delay between transaction submission retries.
     pub tx_retry_delay: Duration,
-    /// Optional Nitro verifier address for CRL checks. Providing this enables CRL checks.
+    /// Optional Nitro verifier address enabling fail-closed CRL checks; absent disables AWS checks.
     pub crl_nitro_verifier_address: Option<Address>,
     /// Health server bind address.
     pub health_addr: SocketAddr,

@@ -427,34 +427,18 @@ where
     N: NodePrimitives<Block = Block<T>>,
 {
     fn from(value: BaseBuiltPayload<N>) -> Self {
-        let BaseBuiltPayload { block, fees, .. } = value;
-
-        let parent_beacon_block_root = block.parent_beacon_block_root.unwrap_or_default();
-
-        let l2_withdrawals_root = block.withdrawals_root.unwrap_or_default();
-        let payload_v3 = ExecutionPayloadV3::from_block_unchecked(
-            block.hash(),
-            &Arc::unwrap_or_clone(block).into_block(),
-        );
+        let l2_withdrawals_root = value.block.withdrawals_root.unwrap_or_default();
+        let v3 = BaseExecutionPayloadEnvelopeV3::from(value);
 
         Self {
             execution_payload: BaseExecutionPayloadV4::from_v3_with_withdrawals_root(
-                payload_v3,
+                v3.execution_payload,
                 l2_withdrawals_root,
             ),
-            block_value: fees,
-            // From the engine API spec:
-            //
-            // > Client software **MAY** use any heuristics to decide whether to set
-            // `shouldOverrideBuilder` flag or not. If client software does not implement any
-            // heuristic this flag **SHOULD** be set to `false`.
-            //
-            // Spec:
-            // <https://github.com/ethereum/execution-apis/blob/fe8e13c288c592ec154ce25c534e26cb7ce0530d/src/engine/cancun.md#specification-2>
-            should_override_builder: false,
-            // No blobs for Base execution payloads.
-            blobs_bundle: BlobsBundleV1 { blobs: vec![], commitments: vec![], proofs: vec![] },
-            parent_beacon_block_root,
+            block_value: v3.block_value,
+            should_override_builder: v3.should_override_builder,
+            blobs_bundle: v3.blobs_bundle,
+            parent_beacon_block_root: v3.parent_beacon_block_root,
             execution_requests: vec![],
         }
     }
@@ -466,32 +450,15 @@ where
     N: NodePrimitives<Block = Block<T>>,
 {
     fn from(value: BaseBuiltPayload<N>) -> Self {
-        let BaseBuiltPayload { block, fees, .. } = value;
-
-        let l2_withdrawals_root = block.withdrawals_root.unwrap_or_default();
-        let payload_v3 = ExecutionPayloadV3::from_block_unchecked(
-            block.hash(),
-            &Arc::unwrap_or_clone(block).into_block(),
-        );
+        let v4 = BaseExecutionPayloadEnvelopeV4::from(value);
 
         Self {
-            execution_payload: BaseExecutionPayloadV4::from_v3_with_withdrawals_root(
-                payload_v3,
-                l2_withdrawals_root,
-            ),
-            block_value: fees,
+            execution_payload: v4.execution_payload,
+            block_value: v4.block_value,
             // No blobs for Base.
             blobs_bundle: BlobsBundleV2::default(),
-            // From the engine API spec:
-            //
-            // > Client software **MAY** use any heuristics to decide whether to set
-            // `shouldOverrideBuilder` flag or not. If client software does not implement any
-            // heuristic this flag **SHOULD** be set to `false`.
-            //
-            // Spec:
-            // <https://github.com/ethereum/execution-apis/blob/fe8e13c288c592ec154ce25c534e26cb7ce0530d/src/engine/cancun.md#specification-2>
-            should_override_builder: false,
-            execution_requests: vec![],
+            should_override_builder: v4.should_override_builder,
+            execution_requests: v4.execution_requests,
         }
     }
 }
@@ -508,29 +475,21 @@ where
         parent: &SealedHeader<H>,
         chain_spec: &ChainSpec,
     ) -> Result<Self, PayloadBuilderError> {
-        let extra_data =
-            if chain_spec.is_jovian_active_at_timestamp(attributes.payload_attributes.timestamp) {
-                attributes
-                    .get_jovian_extra_data(
-                        chain_spec
-                            .base_fee_params_at_timestamp(attributes.payload_attributes.timestamp),
-                    )
-                    .map_err(PayloadBuilderError::other)?
-            } else if chain_spec
-                .is_holocene_active_at_timestamp(attributes.payload_attributes.timestamp)
-            {
-                attributes
-                    .get_holocene_extra_data(
-                        chain_spec
-                            .base_fee_params_at_timestamp(attributes.payload_attributes.timestamp),
-                    )
-                    .map_err(PayloadBuilderError::other)?
-            } else {
-                Default::default()
-            };
+        let timestamp = attributes.payload_attributes.timestamp;
+        let extra_data = if chain_spec.is_jovian_active_at_timestamp(timestamp) {
+            attributes
+                .get_jovian_extra_data(chain_spec.base_fee_params_at_timestamp(timestamp))
+                .map_err(PayloadBuilderError::other)?
+        } else if chain_spec.is_holocene_active_at_timestamp(timestamp) {
+            attributes
+                .get_holocene_extra_data(chain_spec.base_fee_params_at_timestamp(timestamp))
+                .map_err(PayloadBuilderError::other)?
+        } else {
+            Default::default()
+        };
 
         Ok(Self {
-            timestamp: attributes.payload_attributes.timestamp,
+            timestamp,
             suggested_fee_recipient: attributes.payload_attributes.suggested_fee_recipient,
             prev_randao: attributes.payload_attributes.prev_randao,
             gas_limit: attributes.gas_limit.unwrap_or_else(|| parent.gas_limit()),
@@ -544,12 +503,108 @@ where
 mod tests {
     use std::str::FromStr;
 
-    use alloy_primitives::{FixedBytes, address, b256, bytes};
-    use alloy_rpc_types_engine::PayloadAttributes;
+    use alloy_consensus::{BlockBody, Header};
+    use alloy_primitives::{Bloom, FixedBytes, address, b256, bytes};
+    use alloy_rpc_types_engine::{ExecutionPayloadV2, PayloadAttributes};
     use base_common_consensus::BaseTransactionSigned;
     use reth_payload_primitives::EngineApiMessageVersion;
 
     use super::*;
+
+    #[test]
+    fn test_built_payload_v4_v5_envelopes() {
+        let transaction = bytes!(
+            "7ef8f8a0417d134467f4737fcdf2475f0ecdd2a0ed6d87ecffc888ba9f60ee7e3b8ac26a94deaddeaddeaddeaddeaddeaddeaddeaddead00019442000000000000000000000000000000000000158080830f424080b8a4440a5e20000008dd00101c1200000000000000040000000066c352bb000000000139c4f500000000000000000000000000000000000000000000000000000000c0cff1460000000000000000000000000000000000000000000000000000000000000001d4c88f4065ac9671e8b1329b90773e89b5ddff9cf8675b2b5e9c1b28320609930000000000000000000000005050f69a9786f081509234f1a7f4684b5e5b76c9"
+        );
+        let fees = U256::from(123_456_789);
+
+        for withdrawals_root in [Some(B256::repeat_byte(0x11)), None] {
+            for parent_beacon_block_root in [Some(B256::repeat_byte(0x22)), None] {
+                let block = SealedBlock::seal_slow(Block {
+                    header: Header {
+                        parent_hash: B256::repeat_byte(0x33),
+                        beneficiary: Address::repeat_byte(0x44),
+                        state_root: B256::repeat_byte(0x55),
+                        receipts_root: B256::repeat_byte(0x66),
+                        logs_bloom: Bloom::repeat_byte(0x77),
+                        mix_hash: B256::repeat_byte(0x88),
+                        number: 42,
+                        gas_limit: 30_000_000,
+                        gas_used: 1_000_000,
+                        timestamp: 1_748_000_000,
+                        extra_data: bytes!("010203"),
+                        base_fee_per_gas: Some(1_000_000_000),
+                        blob_gas_used: Some(131_072),
+                        excess_blob_gas: Some(262_144),
+                        withdrawals_root,
+                        parent_beacon_block_root,
+                        ..Default::default()
+                    },
+                    body: BlockBody {
+                        transactions: vec![decode_2718_canonical(&transaction).unwrap()],
+                        withdrawals: Some(Withdrawals::default()),
+                        ..Default::default()
+                    },
+                });
+                let expected_payload = BaseExecutionPayloadV4 {
+                    payload_inner: ExecutionPayloadV3 {
+                        payload_inner: ExecutionPayloadV2 {
+                            payload_inner: ExecutionPayloadV1 {
+                                parent_hash: B256::repeat_byte(0x33),
+                                fee_recipient: Address::repeat_byte(0x44),
+                                state_root: B256::repeat_byte(0x55),
+                                receipts_root: B256::repeat_byte(0x66),
+                                logs_bloom: Bloom::repeat_byte(0x77),
+                                prev_randao: B256::repeat_byte(0x88),
+                                block_number: 42,
+                                gas_limit: 30_000_000,
+                                gas_used: 1_000_000,
+                                timestamp: 1_748_000_000,
+                                extra_data: bytes!("010203"),
+                                base_fee_per_gas: U256::from(1_000_000_000),
+                                block_hash: block.hash(),
+                                transactions: vec![transaction.clone()],
+                            },
+                            withdrawals: vec![],
+                        },
+                        blob_gas_used: 131_072,
+                        excess_blob_gas: 262_144,
+                    },
+                    withdrawals_root: withdrawals_root.unwrap_or(B256::ZERO),
+                };
+                let built_payload = BaseBuiltPayload::<BasePrimitives>::new(
+                    PayloadId::new([1; 8]),
+                    Arc::new(block),
+                    fees,
+                    None,
+                    None,
+                );
+
+                assert_eq!(
+                    BaseExecutionPayloadEnvelopeV4::from(built_payload.clone()),
+                    BaseExecutionPayloadEnvelopeV4 {
+                        execution_payload: expected_payload.clone(),
+                        block_value: fees,
+                        should_override_builder: false,
+                        blobs_bundle: BlobsBundleV1::default(),
+                        parent_beacon_block_root: parent_beacon_block_root.unwrap_or(B256::ZERO),
+                        execution_requests: vec![],
+                    }
+                );
+                assert_eq!(
+                    BaseExecutionPayloadEnvelopeV5::from(built_payload),
+                    BaseExecutionPayloadEnvelopeV5 {
+                        execution_payload: expected_payload,
+                        block_value: fees,
+                        should_override_builder: false,
+                        blobs_bundle: BlobsBundleV2::default(),
+                        execution_requests: vec![],
+                    }
+                );
+            }
+        }
+    }
+
     #[test]
     fn test_payload_id_parity_op_geth() {
         // INFO rollup_boost::server:received fork_choice_updated_v3 from builder and l2_client

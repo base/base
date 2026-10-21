@@ -24,15 +24,15 @@ pub use delayed_weth::{DelayedWETHClient, DelayedWETHContractClient};
 mod anchor_state_registry;
 pub use anchor_state_registry::{
     AnchorPreflight, AnchorRoot, AnchorSnapshot, AnchorStateRegistryClient,
-    AnchorStateRegistryContractClient, encode_set_anchor_state_calldata,
+    AnchorStateRegistryContractClient, IAnchorStateRegistry, encode_set_anchor_state_calldata,
 };
 
 mod dispute_game_factory;
 pub use dispute_game_factory::{
     CreateCalldata, DisputeGameFactoryClient, DisputeGameFactoryContractClient, GameAtIndex,
-    GameLookupError, GameLookupKey, decode_create_calldata, encode_create_calldata,
-    encode_extra_data, game_already_exists_selector, game_lookup_blocks, game_lookup_count,
-    game_lookup_key,
+    GameLookupError, GameLookupKey, IDisputeGameFactory, decode_create_calldata,
+    encode_create_calldata, encode_extra_data, game_already_exists_selector, game_lookup_blocks,
+    game_lookup_count, game_lookup_key,
 };
 
 mod tee_prover_registry;
@@ -50,12 +50,6 @@ pub use cert_manager::{
     VerifiedCert, cert_manager_not_owner_selector, cert_manager_not_revoker_selector,
     decode_cert_manager_authorization_error, encode_revoke_cert_calldata,
     encode_verify_ca_cert_with_hints_calldata, encode_verify_client_cert_with_hints_calldata,
-};
-
-mod nitro_enclave_verifier;
-pub use nitro_enclave_verifier::{
-    INitroEnclaveVerifier, NitroEnclaveVerifierClient, NitroEnclaveVerifierContractClient,
-    caller_not_owner_or_revoker_selector,
 };
 
 mod error;

@@ -202,8 +202,9 @@ mod tests {
     use alloc::vec;
 
     use alloy_eips::eip1898::BlockNumHash;
-    use alloy_primitives::{U256, address, bytes, uint};
+    use alloy_primitives::{Address, U256, address, bytes, uint};
     use base_common_genesis::{ChainGenesis, UpgradeConfig};
+    use rstest::rstest;
 
     use super::*;
     use crate::{
@@ -252,13 +253,38 @@ mod tests {
         );
     }
 
+    /// Builds a block whose only transaction is a deposit carrying `input`.
+    fn l1_info_block(extra_data: Bytes, input: Bytes) -> BaseBlock {
+        BaseBlock {
+            header: alloy_consensus::Header { number: 1, extra_data, ..Default::default() },
+            body: alloy_consensus::BlockBody {
+                transactions: vec![BaseTxEnvelope::Deposit(alloy_primitives::Sealed::new(
+                    base_common_consensus::TxDeposit { input, ..Default::default() },
+                ))],
+                ..Default::default()
+            },
+        }
+    }
+
+    /// Asserts that the block and its payload convert to the same `expected` system config.
+    fn assert_system_config(
+        block: &BaseBlock,
+        rollup_config: &RollupConfig,
+        expected: SystemConfig,
+    ) {
+        assert_eq!(to_system_config(block, rollup_config).unwrap(), expected);
+        let (mut payload, _) = BaseExecutionPayload::from_block_slow(block);
+        // Only the first transaction is decoded, so trailing garbage must be ignored.
+        payload.transactions_mut().push(bytes!("ff"));
+        assert_eq!(to_system_config_from_payload(&payload, rollup_config).unwrap(), expected);
+    }
+
     #[test]
     fn test_to_system_config_missing_system_config_genesis() {
         let block = BaseBlock::default();
-        let block_hash = block.header.hash_slow();
         let rollup_config = RollupConfig {
             genesis: ChainGenesis {
-                l2: BlockNumHash { hash: block_hash, ..Default::default() },
+                l2: BlockNumHash { hash: block.header.hash_slow(), ..Default::default() },
                 ..Default::default()
             },
             ..Default::default()
@@ -270,10 +296,9 @@ mod tests {
     #[test]
     fn test_to_system_config_from_genesis() {
         let block = BaseBlock::default();
-        let block_hash = block.header.hash_slow();
         let rollup_config = RollupConfig {
             genesis: ChainGenesis {
-                l2: BlockNumHash { hash: block_hash, ..Default::default() },
+                l2: BlockNumHash { hash: block.header.hash_slow(), ..Default::default() },
                 system_config: Some(SystemConfig::default()),
                 ..Default::default()
             },
@@ -289,20 +314,13 @@ mod tests {
             header: alloy_consensus::Header { number: 1, ..Default::default() },
             ..Default::default()
         };
-        let block_hash = block.header.hash_slow();
-        let rollup_config = RollupConfig {
-            genesis: ChainGenesis {
-                l2: BlockNumHash { hash: block_hash, ..Default::default() },
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let err = to_system_config(&block, &rollup_config).unwrap_err();
-        assert_eq!(err, BaseBlockConversionError::EmptyTransactions(block_hash));
+        let expected = BaseBlockConversionError::EmptyTransactions(block.header.hash_slow());
+        let rollup_config = RollupConfig::default();
+        assert_eq!(to_system_config(&block, &rollup_config).unwrap_err(), expected);
 
         let (payload, _) = BaseExecutionPayload::from_block_slow(&block);
         let err = to_system_config_from_payload(&payload, &rollup_config).unwrap_err();
-        assert_eq!(err, BaseBlockConversionError::EmptyTransactions(block_hash));
+        assert_eq!(err, expected);
     }
 
     #[test]
@@ -310,32 +328,23 @@ mod tests {
         let block = BaseBlock {
             header: alloy_consensus::Header { number: 1, ..Default::default() },
             body: alloy_consensus::BlockBody {
-                transactions: vec![base_common_consensus::BaseTxEnvelope::Legacy(
-                    alloy_consensus::Signed::new_unchecked(
-                        alloy_consensus::TxLegacy {
-                            chain_id: Some(1),
-                            nonce: 1,
-                            gas_price: 1,
-                            gas_limit: 1,
-                            to: alloy_primitives::TxKind::Create,
-                            value: U256::ZERO,
-                            input: alloy_primitives::Bytes::new(),
-                        },
-                        alloy_primitives::Signature::new(U256::ZERO, U256::ZERO, false),
-                        Default::default(),
-                    ),
-                )],
+                transactions: vec![BaseTxEnvelope::Legacy(alloy_consensus::Signed::new_unchecked(
+                    alloy_consensus::TxLegacy {
+                        chain_id: Some(1),
+                        nonce: 1,
+                        gas_price: 1,
+                        gas_limit: 1,
+                        to: alloy_primitives::TxKind::Create,
+                        value: U256::ZERO,
+                        input: Bytes::new(),
+                    },
+                    alloy_primitives::Signature::new(U256::ZERO, U256::ZERO, false),
+                    Default::default(),
+                ))],
                 ..Default::default()
             },
         };
-        let block_hash = block.header.hash_slow();
-        let rollup_config = RollupConfig {
-            genesis: ChainGenesis {
-                l2: BlockNumHash { hash: block_hash, ..Default::default() },
-                ..Default::default()
-            },
-            ..Default::default()
-        };
+        let rollup_config = RollupConfig::default();
         let err = to_system_config(&block, &rollup_config).unwrap_err();
         assert_eq!(err, BaseBlockConversionError::InvalidTxType(0));
 
@@ -360,204 +369,76 @@ mod tests {
         assert!(!error.is_empty());
     }
 
-    #[test]
-    fn test_constructs_bedrock_system_config() {
-        let block = BaseBlock {
-            header: alloy_consensus::Header { number: 1, ..Default::default() },
-            body: alloy_consensus::BlockBody {
-                transactions: vec![base_common_consensus::BaseTxEnvelope::Deposit(
-                    alloy_primitives::Sealed::new(base_common_consensus::TxDeposit {
-                        input: alloy_primitives::Bytes::from(&RAW_BEDROCK_INFO_TX),
-                        ..Default::default()
-                    }),
-                )],
-                ..Default::default()
-            },
-        };
-        let block_hash = block.header.hash_slow();
-        let rollup_config = RollupConfig {
-            genesis: ChainGenesis {
-                l2: BlockNumHash { hash: block_hash, ..Default::default() },
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let config = to_system_config(&block, &rollup_config).unwrap();
-        let expected = SystemConfig {
-            batcher_address: address!("6887246668a3b87f54deb3b94ba47a6f63f32985"),
+    const HOLOCENE_EXTRA_DATA: Bytes = bytes!("000000beef0000babe");
+    const BATCHER: Address = address!("6887246668a3b87f54deb3b94ba47a6f63f32985");
+    const ECOTONE_SCALAR: U256 =
+        uint!(452312848583266388373324160190187140051835877600158453279134670530344387928_U256);
+
+    #[rstest]
+    #[case::bedrock(
+        Bytes::new(),
+        Bytes::from_static(&RAW_BEDROCK_INFO_TX),
+        UpgradeConfig::default(),
+        SystemConfig {
+            batcher_address: BATCHER,
             overhead: uint!(188_U256),
             scalar: uint!(684000_U256),
-            gas_limit: 0,
-            base_fee_scalar: None,
-            blob_base_fee_scalar: None,
-            eip1559_denominator: None,
-            eip1559_elasticity: None,
-            operator_fee_scalar: None,
-            operator_fee_constant: None,
-            min_base_fee: None,
-            da_footprint_gas_scalar: None,
-        };
-        assert_eq!(config, expected);
-
-        let (mut payload, _) = BaseExecutionPayload::from_block_slow(&block);
-        payload.transactions_mut().push(bytes!("ff"));
-        assert_eq!(to_system_config_from_payload(&payload, &rollup_config).unwrap(), config);
-    }
-
-    #[test]
-    fn test_constructs_ecotone_system_config() {
-        let block = BaseBlock {
-            header: alloy_consensus::Header {
-                number: 1,
-                // Holocene EIP1559 parameters stored in the extra data.
-                extra_data: bytes!("000000beef0000babe"),
-                ..Default::default()
-            },
-            body: alloy_consensus::BlockBody {
-                transactions: vec![base_common_consensus::BaseTxEnvelope::Deposit(
-                    alloy_primitives::Sealed::new(base_common_consensus::TxDeposit {
-                        input: alloy_primitives::Bytes::from(&RAW_ECOTONE_INFO_TX),
-                        ..Default::default()
-                    }),
-                )],
-                ..Default::default()
-            },
-        };
-        let block_hash = block.header.hash_slow();
-        let rollup_config = RollupConfig {
-            genesis: ChainGenesis {
-                l2: BlockNumHash { hash: block_hash, ..Default::default() },
-                ..Default::default()
-            },
-            upgrades: UpgradeConfig { holocene_time: Some(0), ..Default::default() },
             ..Default::default()
-        };
-        assert!(rollup_config.is_holocene_active(block.header.timestamp));
-        let config = to_system_config(&block, &rollup_config).unwrap();
-        let expected = SystemConfig {
-            batcher_address: address!("6887246668a3b87f54deb3b94ba47a6f63f32985"),
-            overhead: U256::ZERO,
-            scalar: uint!(
-                452312848583266388373324160190187140051835877600158453279134670530344387928_U256
-            ),
-            gas_limit: 0,
-            base_fee_scalar: None,
-            blob_base_fee_scalar: None,
+        }
+    )]
+    #[case::ecotone_holocene(
+        HOLOCENE_EXTRA_DATA,
+        Bytes::from_static(&RAW_ECOTONE_INFO_TX),
+        UpgradeConfig { holocene_time: Some(0), ..Default::default() },
+        SystemConfig {
+            batcher_address: BATCHER,
+            scalar: ECOTONE_SCALAR,
             eip1559_denominator: Some(0xbeef),
             eip1559_elasticity: Some(0xbabe),
-            operator_fee_scalar: None,
-            operator_fee_constant: None,
-            min_base_fee: None,
-            da_footprint_gas_scalar: None,
-        };
-        assert_eq!(config, expected);
-
-        let (payload, _) = BaseExecutionPayload::from_block_slow(&block);
-        assert_eq!(to_system_config_from_payload(&payload, &rollup_config).unwrap(), config);
-    }
-
-    #[test]
-    fn test_constructs_isthmus_system_config() {
-        let block = BaseBlock {
-            header: alloy_consensus::Header {
-                number: 1,
-                // Holocene EIP1559 parameters stored in the extra data.
-                extra_data: bytes!("000000beef0000babe"),
-                ..Default::default()
-            },
-            body: alloy_consensus::BlockBody {
-                transactions: vec![base_common_consensus::BaseTxEnvelope::Deposit(
-                    alloy_primitives::Sealed::new(base_common_consensus::TxDeposit {
-                        input: alloy_primitives::Bytes::from(&RAW_ISTHMUS_INFO_TX),
-                        ..Default::default()
-                    }),
-                )],
-                ..Default::default()
-            },
-        };
-        let block_hash = block.header.hash_slow();
-        let rollup_config = RollupConfig {
-            genesis: ChainGenesis {
-                l2: BlockNumHash { hash: block_hash, ..Default::default() },
-                ..Default::default()
-            },
-            upgrades: UpgradeConfig {
-                holocene_time: Some(0),
-                isthmus_time: Some(0),
-                ..Default::default()
-            },
             ..Default::default()
-        };
-        assert!(rollup_config.is_holocene_active(block.header.timestamp));
-        let config = to_system_config(&block, &rollup_config).unwrap();
-        let expected = SystemConfig {
-            batcher_address: address!("6887246668a3b87f54deb3b94ba47a6f63f32985"),
-            overhead: U256::ZERO,
-            scalar: uint!(
-                452312848583266388373324160190187140051835877600158453279134670530344387928_U256
-            ),
-            gas_limit: 0,
-            base_fee_scalar: None,
-            blob_base_fee_scalar: None,
+        }
+    )]
+    #[case::isthmus(
+        HOLOCENE_EXTRA_DATA,
+        Bytes::from_static(&RAW_ISTHMUS_INFO_TX),
+        UpgradeConfig { holocene_time: Some(0), isthmus_time: Some(0), ..Default::default() },
+        SystemConfig {
+            batcher_address: BATCHER,
+            scalar: ECOTONE_SCALAR,
             eip1559_denominator: Some(0xbeef),
             eip1559_elasticity: Some(0xbabe),
             operator_fee_scalar: Some(0xabcd),
             operator_fee_constant: Some(0xdcba),
-            min_base_fee: None,
-            da_footprint_gas_scalar: None,
-        };
-        assert_eq!(config, expected);
-
-        let (payload, _) = BaseExecutionPayload::from_block_slow(&block);
-        assert_eq!(to_system_config_from_payload(&payload, &rollup_config).unwrap(), config);
-    }
-
-    #[test]
-    fn test_constructs_jovian_system_config_from_payload() {
-        let block = BaseBlock {
-            header: alloy_consensus::Header {
-                number: 1,
-                extra_data: bytes!("010000beef0000babe0000000000000123"),
-                ..Default::default()
-            },
-            body: alloy_consensus::BlockBody {
-                transactions: vec![BaseTxEnvelope::Deposit(alloy_primitives::Sealed::new(
-                    base_common_consensus::TxDeposit {
-                        input: L1BlockInfoJovian::new(
-                            1,
-                            2,
-                            3,
-                            B256::ZERO,
-                            4,
-                            address!("6887246668a3b87f54deb3b94ba47a6f63f32985"),
-                            5,
-                            6,
-                            7,
-                            8,
-                            9,
-                            10,
-                        )
-                        .encode_calldata(),
-                        ..Default::default()
-                    },
-                ))],
-                ..Default::default()
-            },
-        };
-        let rollup_config = RollupConfig {
-            upgrades: UpgradeConfig {
-                isthmus_time: Some(0),
-                jovian_time: Some(0),
-                ..Default::default()
-            },
             ..Default::default()
-        };
-
-        let config = to_system_config(&block, &rollup_config).unwrap();
-        assert_eq!(config.min_base_fee, Some(0x123));
-        assert_eq!(config.da_footprint_gas_scalar, Some(10));
-
-        let (payload, _) = BaseExecutionPayload::from_block_slow(&block);
-        assert_eq!(to_system_config_from_payload(&payload, &rollup_config).unwrap(), config);
+        }
+    )]
+    #[case::jovian(
+        bytes!("010000beef0000babe0000000000000123"),
+        L1BlockInfoJovian::new(1, 2, 3, B256::ZERO, 4, BATCHER, 5, 6, 7, 8, 9, 10)
+            .encode_calldata(),
+        UpgradeConfig { isthmus_time: Some(0), jovian_time: Some(0), ..Default::default() },
+        SystemConfig {
+            batcher_address: BATCHER,
+            scalar: uint!(
+                452312848583266388373324160190187140051835877600158453279131187556680466439_U256
+            ),
+            eip1559_denominator: Some(0xbeef),
+            eip1559_elasticity: Some(0xbabe),
+            operator_fee_scalar: Some(8),
+            operator_fee_constant: Some(9),
+            min_base_fee: Some(0x123),
+            da_footprint_gas_scalar: Some(10),
+            ..Default::default()
+        }
+    )]
+    fn test_constructs_system_config(
+        #[case] extra_data: Bytes,
+        #[case] input: Bytes,
+        #[case] upgrades: UpgradeConfig,
+        #[case] expected: SystemConfig,
+    ) {
+        let block = l1_info_block(extra_data, input);
+        let rollup_config = RollupConfig { upgrades, ..Default::default() };
+        assert_system_config(&block, &rollup_config, expected);
     }
 }

@@ -20,7 +20,6 @@ pub use genesis::{
 mod contracts;
 #[cfg(feature = "contracts")]
 pub use contracts::{
-    AccessListContract, ContractFactory, DoubleCounter, Logic, Logic2, Minimal7702Account,
-    MockERC20, MockProtocolVersions, ParentBlockhashGuard, Proxy, SimpleStorage,
-    TransparentUpgradeableProxy,
+    ContractFactory, DoubleCounter, Minimal7702Account, MockERC20, MockProtocolVersions,
+    ParentBlockhashGuard, SimpleStorage, TransparentUpgradeableProxy,
 };

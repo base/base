@@ -17,9 +17,6 @@ mod snark_receipt;
 #[cfg(feature = "snark-receipt")]
 pub use snark_receipt::{SnarkReceiptDecodeError, SnarkReceiptEncoder};
 
-mod submission;
-pub use submission::{ChallengeProofSubmission, NullifyProofSubmission};
-
 mod submitter;
 pub use submitter::AggregateProofSubmitter;
 

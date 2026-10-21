@@ -41,11 +41,10 @@ base-execution-chainspec.workspace = true
 [dev-dependencies]
 rstest.workspace = true
 reth-trie.workspace = true
-reth-revm.workspace = true
 reth-chainspec.workspace = true
-base-common-genesis.workspace = true
 base-node-core.workspace = true
 reth-db-common.workspace = true
+base-common-genesis.workspace = true
 reth-provider = { workspace = true, features = ["test-utils"] }
 
 alloy-chains.workspace = true
@@ -66,7 +65,6 @@ std = [
 	"reth-consensus/std",
 	"reth-execution-types/std",
 	"reth-primitives-traits/std",
-	"reth-revm/std",
 	"reth-storage-api/std",
 	"reth-storage-errors/std",
 	"reth-trie-common/std",

@@ -216,22 +216,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn noop_tx_metrics_can_be_constructed_and_called() {
-        let m = NoopTxMetrics;
-        m.record_tx_max_fee(1.5);
-        m.record_gas_bump();
-        m.record_send_latency(120, SendOutcome::Confirmed);
-        m.record_current_nonce(42);
-        m.record_publish_error();
-        m.record_basefee(30.123);
-        m.record_tipcap(2.456);
-        m.record_blob_fee_cap(1.0);
-        m.record_rpc_error();
-        m.record_tx_confirmed();
-        m.record_tx_failed();
-    }
-
-    #[test]
     fn base_tx_metrics_can_be_constructed_and_called() {
         let m = BaseTxMetrics::new("test");
         m.record_tx_max_fee(1.5);

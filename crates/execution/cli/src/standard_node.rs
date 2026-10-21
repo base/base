@@ -34,7 +34,7 @@ use base_tx_forwarding::{
 use base_txpool_rpc::{
     DEFAULT_MAX_VALIDITY_EXPIRY_SECS, DEFAULT_MAX_VALIDITY_PREDICATES,
     SendRawTransactionValidityConfig, SendRawTransactionValidityExtension, TxPoolRpcConfig,
-    TxPoolRpcExtension,
+    TxPoolRpcExtension, ValiditySignatureMode,
 };
 use base_txpool_tracing::{TxPoolExtension, TxpoolConfig};
 use base_upgrade_signal::{
@@ -361,6 +361,11 @@ pub struct RpcStandardNodeArgs {
     )]
     pub validity_max_predicates: usize,
 
+    /// Staged validity signature rollout policy at local forwarding ingress.
+    /// Query nodes proxy the signature unchanged; the sequencer enforces its own policy.
+    #[arg(long = "validity-signature-mode", default_value_t = ValiditySignatureMode::Off)]
+    pub validity_signature_mode: ValiditySignatureMode,
+
     /// Maximum lifetime, in seconds, for a validity transaction.
     #[arg(
         long = "validity-max-expiry-secs",
@@ -428,6 +433,13 @@ pub struct RpcStandardNodeArgs {
         requires = "enable_tx_forwarding"
     )]
     pub tx_forwarding_queue_capacity: Option<usize>,
+
+    /// Send each forwarding batch as one `base_insertValidatedTransactions` call.
+    ///
+    /// The builder admits the batch as one pool batch instead of one call per transaction. Every
+    /// builder in `--builder-rpc-urls` must serve that method before this is enabled.
+    #[arg(long = "tx-forwarding-batched-insert", requires = "enable_tx_forwarding")]
+    pub tx_forwarding_batched_insert: bool,
 
     /// Run `meter_bundle` on the mempool node before inserting into the forwarding pool.
     ///
@@ -581,6 +593,7 @@ impl From<&StandardNodeArgs> for TxForwardingConfig {
             .with_max_rps(args.rpc.tx_forwarding_max_rps)
             .with_fifo_percent(args.rpc.tx_forwarding_fifo_percent)
             .with_queue_capacity(args.rpc.tx_forwarding_queue_capacity)
+            .with_batched_insert(args.rpc.tx_forwarding_batched_insert)
             .with_inline_simulation(args.rpc.enable_inline_simulation)
             .with_inline_simulation_workers(args.rpc.inline_simulation_workers)
             .with_inline_simulation_queue_capacity(args.rpc.inline_simulation_queue_capacity)
@@ -740,10 +753,10 @@ impl StandardBaseRethNode {
         // Feature extensions. Several use `replace_configured` (which is overwrite,
         // not compose) on overlapping RPC methods, so install order would otherwise
         // silently decide which one wins. Coordination is enforced by self-gating:
-        //   - FlashblocksExtension: registers eth_getTransactionCount (and others)
-        //     iff flashblocks is enabled.
-        //   - Eip8130RpcExtension: registers eth_getTransactionCount iff flashblocks
-        //     is NOT (see `Eip8130RpcMode` below).
+        //   - FlashblocksExtension: registers eth_getTransactionCount, eth_estimateGas
+        //     and eth_call (among others) iff flashblocks is enabled.
+        //   - Eip8130RpcExtension: registers eth_getTransactionCount, eth_estimateGas
+        //     and eth_call iff flashblocks is disabled (see `Eip8130RpcMode` below).
         //   - ProofsHistoryExtension: registers eth_getProof variants (disjoint from
         //     the above, so it can sit anywhere in the chain).
         // New extensions touching the same RPC methods MUST be added to this
@@ -797,6 +810,7 @@ impl StandardBaseRethNode {
                 SendRawTransactionValidityConfig {
                     max_validity_predicates: args.rpc.validity_max_predicates,
                     max_validity_expiry_secs: args.rpc.validity_max_expiry_secs,
+                    validity_signature_mode: args.rpc.validity_signature_mode,
                     sequencer_url: args
                         .rpc
                         .rollup_args
@@ -1003,6 +1017,7 @@ mod tests {
             transaction_event_journal_path: None,
             enable_tx_forwarding: false,
             validity_max_predicates: DEFAULT_MAX_VALIDITY_PREDICATES,
+            validity_signature_mode: ValiditySignatureMode::Off,
             validity_max_expiry_secs: DEFAULT_MAX_VALIDITY_EXPIRY_SECS,
             builder_rpc_urls: Vec::new(),
             tx_forwarding_resend_after_ms: DEFAULT_RESEND_AFTER_MS,
@@ -1010,6 +1025,7 @@ mod tests {
             tx_forwarding_max_rps: DEFAULT_MAX_RPS,
             tx_forwarding_fifo_percent: DEFAULT_FIFO_PERCENT,
             tx_forwarding_queue_capacity: None,
+            tx_forwarding_batched_insert: false,
             enable_inline_simulation: false,
             inline_simulation_workers: DEFAULT_INLINE_SIMULATION_WORKERS,
             inline_simulation_queue_capacity: DEFAULT_INLINE_SIMULATION_QUEUE_CAPACITY,
@@ -1149,12 +1165,15 @@ mod tests {
             "8",
             "--validity-max-expiry-secs",
             "45",
+            "--validity-signature-mode",
+            "verify-if-present",
         ])
         .args;
 
         assert!(args.rpc.enable_tx_forwarding);
         assert_eq!(args.rpc.validity_max_predicates, 8);
         assert_eq!(args.rpc.validity_max_expiry_secs, 45);
+        assert_eq!(args.rpc.validity_signature_mode, ValiditySignatureMode::VerifyIfPresent);
         assert_eq!(args.rpc.builder_rpc_urls.len(), 1);
     }
 
@@ -1281,14 +1300,17 @@ mod tests {
                 "35",
                 "--tx-forwarding-queue-capacity",
                 "64",
+                "--tx-forwarding-batched-insert",
             ])
             .args,
         );
 
         assert_eq!(defaults.fifo_percent, DEFAULT_FIFO_PERCENT);
         assert_eq!(defaults.queue_capacity, None);
+        assert!(!defaults.batched_insert);
         assert_eq!(configured.fifo_percent, 35);
         assert_eq!(configured.queue_capacity, Some(64));
+        assert!(configured.batched_insert);
     }
 
     #[test]

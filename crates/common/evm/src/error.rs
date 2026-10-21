@@ -1,16 +1,6 @@
-use alloc::boxed::Box;
-
 /// Custom errors that can occur during Base block execution.
 #[derive(Debug, thiserror::Error)]
 pub enum BaseBlockExecutionError {
-    /// Failed to load cache account.
-    #[error("failed to load cache account")]
-    LoadCacheAccount,
-
-    /// Failed to get Jovian da footprint gas scalar from database.
-    #[error("failed to get da footprint gas scalar from database: {_0}")]
-    GetJovianDaFootprintScalar(Box<dyn core::error::Error + Send + Sync + 'static>),
-
     /// Transaction DA footprint exceeds available block DA footprint.
     #[error(
         "transaction DA footprint exceeds available block DA footprint. transaction_da_footprint: {transaction_da_footprint}, available_block_da_footprint: {available_block_da_footprint}"

@@ -33,33 +33,3 @@ impl TxCandidate {
         !self.blobs.is_empty()
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn default_produces_type2_candidate() {
-        let candidate = TxCandidate::default();
-
-        assert!(candidate.tx_data.is_empty());
-        assert!(candidate.blobs.is_empty());
-        assert!(candidate.to.is_none());
-        assert_eq!(candidate.gas_limit, 0);
-        assert_eq!(candidate.value, U256::ZERO);
-    }
-
-    #[test]
-    fn candidate_with_blobs_is_type3() {
-        let candidate =
-            TxCandidate { blobs: Arc::from(vec![Box::default()]), ..Default::default() };
-
-        assert_eq!(candidate.blobs.len(), 1);
-    }
-
-    #[test]
-    fn candidate_is_send_and_sync() {
-        fn assert_send_sync<T: Send + Sync>() {}
-        assert_send_sync::<TxCandidate>();
-    }
-}

@@ -85,14 +85,14 @@ impl<T> ClientBounds for T where
 /// Composite trait bound for payload transaction iterators used by the Base builder.
 pub trait PayloadTxsBounds:
     ParkablePayloadTransactions<
-        Transaction: BasePooledTx<Consensus = BaseTransactionSigned> + TimestampedTransaction,
+        Pooled: BasePooledTx<Consensus = BaseTransactionSigned> + TimestampedTransaction,
     > + RestingPayloadTransactions
 {
 }
 
 impl<T> PayloadTxsBounds for T where
     T: ParkablePayloadTransactions<
-            Transaction: BasePooledTx<Consensus = BaseTransactionSigned> + TimestampedTransaction,
+            Pooled: BasePooledTx<Consensus = BaseTransactionSigned> + TimestampedTransaction,
         > + RestingPayloadTransactions
 {
 }
