@@ -316,8 +316,9 @@ per admitted group, keyed by the group alone so replays deduplicate.
 block's mined transactions, under the winner's `tx_hash` with `block_hash` and
 `block_number`. Otherwise `TXPOOL_CANDIDATE_EVICTED`, under the
 representative, has `data.terminal_reason`: `replaced` (a same-nonce group
-replaced it), `expired` (pool maintenance passed the group's node-assigned
-expiry block), `budget_exhausted`, `revoked`, `permanent_exclusion`, `nonce_consumed`, or
+replaced it), `expired` (the committed head reached the group's node-assigned
+expiry block after its representative left the pool; pool maintenance or a
+later ingress call settles it, by the same rule), `budget_exhausted`, `revoked`, `permanent_exclusion`, `nonce_consumed`, or
 `dropped`. `nonce_consumed` is journaled when a canonical block advances the
 sender's nonce past the group's without a sibling landing, for example through
 a sponsor's EIP-7702 authorization or a plain same-nonce transaction, or when
