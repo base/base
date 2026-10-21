@@ -1,6 +1,7 @@
 //! Verification of blocks w.r.t. Base upgrades.
 
 pub mod canyon;
+pub mod holocene;
 pub mod isthmus;
 
 use alloc::vec::Vec;

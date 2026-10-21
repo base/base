@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "run_id": "synthetic-report-preview-NOT-A-REAL-RUN",
+  "tested_sha": "synthetic-fixture",
+  "started_at_unix_ms": 1789785600000,
+  "scenarios": [
+    {
+      "id": "healthy-synthetic",
+      "status": "passed",
+      "duration_ms": 42000,
+      "config": {"fixture": true, "topology": "single-sequencer", "l2_chain_id": 84538453, "generator_revision": "synthetic"},
+      "stages": [
+        {"id": "setup", "status": "passed", "duration_ms": 12000, "message": "Synthetic setup completed"},
+        {"id": "readiness", "status": "passed", "duration_ms": 7000, "message": "Synthetic endpoints ready"},
+        {"id": "checks", "status": "passed", "duration_ms": 21000, "message": "All synthetic checks passed"},
+        {"id": "cleanup", "status": "passed", "duration_ms": 2000, "message": "Synthetic cleanup completed"}
+      ],
+      "checks": [{"id":"chain-identity","kind":"chain_id","status":"passed","duration_ms":900,"expected":{"chain_id":84538453},"observed":{"chain_id":84538453},"message":"Observed the configured synthetic chain identity.","next_step":"No action required.","samples":1,"rpc_errors":0,"evidence":["evidence/healthy-chain.json"]}],
+      "samples": [
+        {"endpoint":"builder","elapsed_ms":0,"number":1000,"timestamp":1789785600,"hash":"0x1000"},
+        {"endpoint":"builder","elapsed_ms":10000,"number":1005,"timestamp":1789785610,"hash":"0x1005"},
+        {"endpoint":"validator","elapsed_ms":0,"number":999,"timestamp":1789785598,"hash":"0x0999"},
+        {"endpoint":"validator","elapsed_ms":10000,"number":1005,"timestamp":1789785610,"hash":"0x1005"}
+      ],
+      "forks": [],
+      "diagnostics": ["Synthetic fixture data; not evidence of a real devnet run."],
+      "reproduction": "SYNTHETIC ONLY: base-acceptance run acceptance/scenarios/smoke.toml"
+    },
+    {
+      "id": "lag-failure-synthetic",
+      "status": "passed",
+      "duration_ms": 76000,
+      "config": {"fixture": true, "max_lag_blocks": 5, "fork_schedule": {"denim": 1789785630}},
+      "stages": [
+        {"id":"setup","status":"passed","duration_ms":11000,"message":"Synthetic setup completed"},
+        {"id":"readiness","status":"passed","duration_ms":5000,"message":"Synthetic endpoints ready"},
+        {"id":"checks","status":"failed","duration_ms":58000,"message":"A synthetic assertion failed"},
+        {"id":"cleanup","status":"passed","duration_ms":2000,"message":"Synthetic cleanup completed"}
+      ],
+      "checks": [{"id":"validator-catches-up","kind":"heads_converge","status":"failed","duration_ms":58000,"expected":{"max_lag_blocks":5,"common_height_hashes_equal":true},"observed":{"lag_blocks":14,"common_height_hashes_equal":true,"at_elapsed_ms":50000},"message":"Validator lag was 14 blocks at the deadline; the allowed maximum was 5.","next_step":"Inspect validator derivation and engine logs for the recorded observation window.","samples":9,"rpc_errors":1,"evidence":["evidence/lag-heads.json"]}],
+      "samples": [
+        {"endpoint":"builder","elapsed_ms":0,"number":2000,"timestamp":1789785620,"hash":"0x2000"},
+        {"endpoint":"builder","elapsed_ms":10000,"number":2005,"timestamp":1789785630,"hash":"0x2005"},
+        {"endpoint":"builder","elapsed_ms":20000,"number":2010,"timestamp":1789785640,"hash":"0x2010"},
+        {"endpoint":"builder","elapsed_ms":30000,"number":null,"timestamp":null,"hash":null},
+        {"endpoint":"builder","elapsed_ms":40000,"number":2020,"timestamp":1789785660,"hash":"0x2020"},
+        {"endpoint":"builder","elapsed_ms":50000,"number":2025,"timestamp":1789785670,"hash":"0x2025"},
+        {"endpoint":"validator","elapsed_ms":0,"number":1998,"timestamp":1789785616,"hash":"0x1998"},
+        {"endpoint":"validator","elapsed_ms":10000,"number":2001,"timestamp":1789785622,"hash":"0x2001"},
+        {"endpoint":"validator","elapsed_ms":20000,"number":null,"timestamp":null,"hash":null},
+        {"endpoint":"validator","elapsed_ms":30000,"number":2005,"timestamp":1789785630,"hash":"0x2005"},
+        {"endpoint":"validator","elapsed_ms":40000,"number":2008,"timestamp":1789785636,"hash":"0x2008"},
+        {"endpoint":"validator","elapsed_ms":50000,"number":2011,"timestamp":1789785642,"hash":"0x2011"}
+      ],
+      "forks": [{"name":"denim","chain":"l2","activation_timestamp":1789785630,"observed_block":2005,"observed_elapsed_ms":10000}],
+      "diagnostics": ["One explicit builder sampling gap and one validator sampling gap are retained.", "Observed boundary crossing is not proof of Denim behavior."],
+      "reproduction": "SYNTHETIC ONLY: base-acceptance run acceptance/scenarios/denim-transition.toml"
+    },
+    {
+      "id": "startup-error-synthetic",
+      "status": "passed",
+      "duration_ms": 19000,
+      "config": {"fixture": true, "failure_injection": "synthetic startup timeout"},
+      "stages": [
+        {"id":"setup","status":"error","duration_ms":17000,"message":"Synthetic startup timed out before readiness"},
+        {"id":"readiness","status":"blocked","duration_ms":0,"message":"Blocked by setup"},
+        {"id":"checks","status":"blocked","duration_ms":0,"message":"Blocked by setup"},
+        {"id":"cleanup","status":"passed","duration_ms":2000,"message":"Synthetic cleanup completed"}
+      ],
+      "checks": [
+        {"id":"chain-identity","kind":"chain_id","status":"blocked","duration_ms":0,"expected":{"chain_id":84538453},"observed":{"reason":"setup prerequisite error"},"message":"Not evaluated because setup failed.","next_step":"Inspect the setup-stage diagnostic before retrying.","samples":0,"rpc_errors":0,"evidence":[]},
+        {"id":"head-progress","kind":"head_progress","status":"blocked","duration_ms":0,"expected":{"minimum_blocks":3},"observed":{"reason":"setup prerequisite error"},"message":"Not evaluated because setup failed.","next_step":"Resolve startup, then rerun the complete scenario.","samples":0,"rpc_errors":0,"evidence":[]}
+      ],
+      "samples": [],
+      "forks": [],
+      "diagnostics": ["No chain observations were made; this is synthetic fixture data."],
+      "reproduction": "SYNTHETIC ONLY: base-acceptance run acceptance/scenarios/smoke.toml"
+    }
+  ]
+}

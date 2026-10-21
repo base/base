@@ -1,10 +1,5 @@
 //! Action tests for the batcher and L1 data-availability submission flows.
 
-mod blobs;
 mod channels;
-mod gap_filling;
-mod production_da;
-mod sequencer_drift;
-mod submission;
+mod recovery;
 mod submission_failure;
-mod upgrade_transitions;

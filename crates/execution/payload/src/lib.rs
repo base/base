@@ -33,12 +33,15 @@ pub use payload::{BaseBuiltPayload, BasePayloadBuilderAttributes};
 
 mod parkable;
 pub use parkable::{
-    NonParkablePayloadTransactions, NoopPayloadTransactions, ParkableBestPayloadTransactions,
-    ParkablePayloadTransactions, PayloadTransactionInvalidated,
+    NoopPayloadTransactions, ParkableBestPayloadTransactions, ParkablePayloadTransactions,
+    PayloadTransactionInvalidated,
 };
 
 mod metrics;
 pub use metrics::{BuilderMetrics, ValidityMetrics};
+
+mod deferrals;
+pub use deferrals::{BlockDeferrals, DeferralJournal};
 
 mod inclusion;
 pub use inclusion::{FLOW_STANDARD, FLOW_VALIDITY, InclusionFlow, InclusionTracker};
@@ -52,6 +55,8 @@ mod types;
 pub use types::BasePayloadTypes;
 
 mod validity;
+#[cfg(test)]
+pub use validity::test_utils;
 pub use validity::{
     DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, ParkedPredicateIndex, StateChangeEffects,
     ValidityPredicateEvaluation, ValidityPredicateKey,

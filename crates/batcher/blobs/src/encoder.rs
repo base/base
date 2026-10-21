@@ -70,15 +70,13 @@ impl BlobEncoder {
             return Err(BlobEncodeError::DataTooLarge { size: data.len() });
         }
 
-        // Pad the input so the encoder always has enough data to read from.
-        let mut input = vec![0u8; Self::BLOB_MAX_DATA_SIZE];
-        input[..data.len()].copy_from_slice(data);
+        // The 4 header bytes occupy the first payload slots of field element 0.
+        let mut input = vec![0u8; 4 + Self::BLOB_MAX_DATA_SIZE];
+        input[4..4 + data.len()].copy_from_slice(data);
 
         let mut blob = Box::new(Blob::ZERO);
         let out: &mut [u8; BYTES_PER_BLOB] = blob.as_mut();
 
-        // --- Round 0 (field elements 0..3) ---
-        //
         // FE0 layout: [high_byte | version | len[1] | len[2] | len[3] | 27 payload bytes]
         //
         // The Base blob encoding stores payload data across field elements.
@@ -90,77 +88,26 @@ impl BlobEncoder {
         //   [FE0 payload] [reassembled x] [FE1 payload] [reassembled y]
         //   [FE2 payload] [reassembled z] [FE3 payload]
 
-        // Write version and 3-byte big-endian length into FE0.
-        let len_be = (data.len() as u32).to_be_bytes();
-        out[VERSIONED_HASH_VERSION_KZG as usize] = Self::BLOB_ENCODING_VERSION;
-        out[2] = len_be[1];
-        out[3] = len_be[2];
-        out[4] = len_be[3];
-
-        // FE0 payload: 27 bytes (bytes 5..32).
-        out[5..32].copy_from_slice(&input[0..27]);
-        let mut ipos = 27usize;
-
-        // Read the 3 reassembly bytes that get distributed across high bytes.
-        let x = input[ipos];
-        ipos += 1;
-        // FE1 payload: 31 bytes.
-        out[33..64].copy_from_slice(&input[ipos..ipos + 31]);
-        ipos += 31;
-        let y = input[ipos];
-        ipos += 1;
-        // FE2 payload: 31 bytes.
-        out[65..96].copy_from_slice(&input[ipos..ipos + 31]);
-        ipos += 31;
-        let z = input[ipos];
-        ipos += 1;
-        // FE3 payload: 31 bytes.
-        out[97..128].copy_from_slice(&input[ipos..ipos + 31]);
-        ipos += 31;
-
-        // Compute encoded high bytes from x, y, z (inverse of reassemble_bytes).
-        out[0] = x & 0x3F;
-        out[32] = ((x >> 6) & 0x03) << 4 | (y & 0x0F);
-        out[64] = z & 0x3F;
-        out[96] = ((y >> 4) & 0x0F) | (((z >> 6) & 0x03) << 4);
-
-        // --- Rounds 1..1024 ---
-        let mut blob_pos = 128usize;
-        for _ in 1..Self::BLOB_ENCODING_ROUNDS {
-            if ipos >= data.len() {
+        for round in 0..Self::BLOB_ENCODING_ROUNDS {
+            let ipos = round * 127;
+            if ipos >= data.len() + 4 {
                 break;
             }
-
-            // FE0 payload (31 bytes).
-            out[blob_pos + 1..blob_pos + 32].copy_from_slice(&input[ipos..ipos + 31]);
-            ipos += 31;
-            let x = input[ipos];
-            ipos += 1;
-
-            // FE1 payload (31 bytes).
-            out[blob_pos + 33..blob_pos + 64].copy_from_slice(&input[ipos..ipos + 31]);
-            ipos += 31;
-            let y = input[ipos];
-            ipos += 1;
-
-            // FE2 payload (31 bytes).
-            out[blob_pos + 65..blob_pos + 96].copy_from_slice(&input[ipos..ipos + 31]);
-            ipos += 31;
-            let z = input[ipos];
-            ipos += 1;
-
-            // FE3 payload (31 bytes).
-            out[blob_pos + 97..blob_pos + 128].copy_from_slice(&input[ipos..ipos + 31]);
-            ipos += 31;
-
-            // Compute and write high bytes.
-            out[blob_pos] = x & 0x3F;
-            out[blob_pos + 32] = ((x >> 6) & 0x03) << 4 | (y & 0x0F);
-            out[blob_pos + 64] = z & 0x3F;
-            out[blob_pos + 96] = ((y >> 4) & 0x0F) | (((z >> 6) & 0x03) << 4);
-
-            blob_pos += 128;
+            let pos = round * 128;
+            for fe in 0..4 {
+                out[pos + fe * 32 + 1..pos + fe * 32 + 32]
+                    .copy_from_slice(&input[ipos + fe * 32..ipos + fe * 32 + 31]);
+            }
+            let (x, y, z) = (input[ipos + 31], input[ipos + 63], input[ipos + 95]);
+            out[pos] = x & 0x3F;
+            out[pos + 32] = ((x >> 6) & 0x03) << 4 | (y & 0x0F);
+            out[pos + 64] = z & 0x3F;
+            out[pos + 96] = ((y >> 4) & 0x0F) | (((z >> 6) & 0x03) << 4);
         }
+
+        let len_be = (data.len() as u32).to_be_bytes();
+        out[VERSIONED_HASH_VERSION_KZG as usize] = Self::BLOB_ENCODING_VERSION;
+        out[2..5].copy_from_slice(&len_be[1..]);
 
         Ok(blob)
     }

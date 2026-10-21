@@ -138,11 +138,6 @@ where
         }
     }
 
-    fn call(&mut self, context: &mut CTX, inputs: &mut CallInputs) -> Option<CallOutcome> {
-        let _ = (context, inputs);
-        None
-    }
-
     fn call_end(&mut self, context: &mut CTX, inputs: &CallInputs, outcome: &mut CallOutcome) {
         let _ = context;
 
@@ -169,11 +164,6 @@ where
             entry.count = entry.count.saturating_add(1);
             entry.gas_used = entry.gas_used.saturating_add(gas_used);
         }
-    }
-
-    fn create(&mut self, context: &mut CTX, inputs: &mut CreateInputs) -> Option<CreateOutcome> {
-        let _ = (context, inputs);
-        None
     }
 
     fn create_end(

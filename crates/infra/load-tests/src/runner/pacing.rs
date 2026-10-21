@@ -131,7 +131,6 @@ struct EnqueueProgress {
 /// Live TUI / snapshot updates while the enqueue loop owns the collector.
 struct EnqueueProgressDisplay<'a> {
     display: Option<&'a LoadTestDisplay>,
-    snapshot_tx: Option<&'a watch::Sender<DisplaySnapshot>>,
     last_update: Instant,
     last_log: Instant,
     start: Instant,
@@ -149,8 +148,8 @@ impl EnqueueProgressDisplay<'_> {
         collector: &mut MetricsCollector,
         results_tracker: &ResultsTracker,
     ) {
-        let should_render = (self.display.is_some() || self.snapshot_tx.is_some())
-            && self.last_update.elapsed() >= DISPLAY_RENDER_INTERVAL;
+        let should_render =
+            self.display.is_some() && self.last_update.elapsed() >= DISPLAY_RENDER_INTERVAL;
         let should_log = self.last_log.elapsed() >= PROGRESS_REPORT_INTERVAL;
         if !should_render && !should_log {
             return;
@@ -200,9 +199,6 @@ impl EnqueueProgressDisplay<'_> {
         };
         if let Some(display) = self.display {
             display.update(&snap);
-        }
-        if let Some(tx) = self.snapshot_tx {
-            let _ = tx.send(snap);
         }
     }
 }
@@ -528,6 +524,7 @@ impl LoadRunner {
                 validity_priority_lead_multiplier: self.config.validity_priority_lead_multiplier,
                 validity_priority_fee_divisor: self.config.validity_priority_fee_divisor,
                 max_concurrent_submit_requests: self.config.max_concurrent_submit_requests,
+                validity_signing: self.config.validity_signing,
             },
         );
         let next_submit_batch_id = AtomicU64::new(0);
@@ -542,12 +539,11 @@ impl LoadRunner {
         const BASE_FEE_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 
         let use_live_display = self.display.as_ref().is_some_and(|d| d.is_active());
-        let use_snapshot_tx = self.snapshot_tx.is_some();
 
         // Emit an initial snapshot immediately so the TUI renders live
         // metrics (submitted/in-flight/failed counters) without waiting
         // for the first confirmation to arrive.
-        if use_live_display || use_snapshot_tx {
+        if use_live_display {
             let snap = self.build_snapshot(
                 start,
                 &results_tracker,
@@ -557,9 +553,6 @@ impl LoadRunner {
             );
             if let Some(ref d) = self.display {
                 d.update(&snap);
-            }
-            if let Some(ref tx) = self.snapshot_tx {
-                let _ = tx.send(snap);
             }
         }
 
@@ -712,7 +705,6 @@ impl LoadRunner {
                 results_tracker: &results_tracker,
                 progress_display: Some(EnqueueProgressDisplay {
                     display: self.display.as_ref(),
-                    snapshot_tx: self.snapshot_tx.as_ref(),
                     last_update: Instant::now()
                         .checked_sub(DISPLAY_RENDER_INTERVAL)
                         .unwrap_or_else(Instant::now),
@@ -840,7 +832,6 @@ impl LoadRunner {
                     results_tracker: &results_tracker,
                     progress_display: Some(EnqueueProgressDisplay {
                         display: self.display.as_ref(),
-                        snapshot_tx: self.snapshot_tx.as_ref(),
                         last_update: Instant::now()
                             .checked_sub(DISPLAY_RENDER_INTERVAL)
                             .unwrap_or_else(Instant::now),
@@ -1046,9 +1037,7 @@ impl LoadRunner {
                     self.collector.record_confirmed(metrics);
                 }
             }
-            if self.display.as_ref().is_some_and(LoadTestDisplay::is_active)
-                || self.snapshot_tx.is_some()
-            {
+            if self.display.as_ref().is_some_and(LoadTestDisplay::is_active) {
                 let snap = self.build_snapshot(
                     start,
                     &results_tracker,
@@ -1058,9 +1047,6 @@ impl LoadRunner {
                 );
                 if let Some(display) = &self.display {
                     display.update(&snap);
-                }
-                if let Some(snapshot_tx) = &self.snapshot_tx {
-                    let _ = snapshot_tx.send(snap);
                 }
             }
 
@@ -2214,11 +2200,33 @@ mod tests {
             SubmitCohort, SubmitEvent,
         },
     };
+
     #[test]
     fn mempool_target_rounds_up_and_clamps_to_capacity() {
         assert_eq!(LoadRunner::mempool_target_transactions(300, 70, 10).unwrap(), 5);
         assert_eq!(LoadRunner::mempool_target_transactions(300, 70, 4).unwrap(), 4);
         assert!(LoadRunner::mempool_target_transactions(300, 0, 10).is_err());
+    }
+
+    fn test_pipeline(
+        results_tracker: &ResultsTracker,
+        submit_event_tx: mpsc::Sender<SubmitEvent>,
+    ) -> SubmissionPipeline {
+        SubmissionPipeline::start(
+            Arc::new(HashMap::new()),
+            Arc::new(HashMap::new()),
+            Arc::new(Vec::new()),
+            results_tracker.clone(),
+            submit_event_tx,
+            PipelineStartConfig {
+                chain_id: 1,
+                max_gas_price: u128::MAX,
+                validity_priority_lead_multiplier: 1,
+                validity_priority_fee_divisor: 1,
+                max_concurrent_submit_requests: None,
+                validity_signing: crate::config::ValiditySigningMode::Adaptive,
+            },
+        )
     }
 
     fn test_signed_batch(id: u64, from: Address) -> SignedBatch {
@@ -2235,6 +2243,7 @@ mod tests {
                 estimated_gas: 21_000,
                 validity: Vec::new(),
                 cohort: SubmitCohort::Plain,
+                validity_signature: None,
             }],
         }
     }
@@ -2250,20 +2259,7 @@ mod tests {
         let mut queued_gas = 21_000u128;
 
         let (submit_event_tx, mut submit_event_rx) = mpsc::channel(1);
-        let mut submission_pipeline = SubmissionPipeline::start(
-            Arc::new(HashMap::new()),
-            Arc::new(HashMap::new()),
-            Arc::new(Vec::new()),
-            results_tracker.clone(),
-            submit_event_tx.clone(),
-            PipelineStartConfig {
-                chain_id: 1,
-                max_gas_price: u128::MAX,
-                validity_priority_lead_multiplier: 1,
-                validity_priority_fee_divisor: 1,
-                max_concurrent_submit_requests: None,
-            },
-        );
+        let mut submission_pipeline = test_pipeline(&results_tracker, submit_event_tx.clone());
 
         submission_pipeline.shutdown_and_join(Duration::from_secs(1)).await;
 
@@ -2429,20 +2425,7 @@ mod tests {
         let (base_fee_tx, _base_fee_rx) = tokio::sync::watch::channel(1_u128);
         let mut progress = EnqueueProgress { presigned_generated: 0, offered_gas: 0 };
         let mut presign_buffer = PresignBuffer::new(1);
-        let pipeline = SubmissionPipeline::start(
-            Arc::new(HashMap::new()),
-            Arc::new(HashMap::new()),
-            Arc::new(Vec::new()),
-            results_tracker.clone(),
-            mpsc::channel(1).0,
-            PipelineStartConfig {
-                chain_id: 1,
-                max_gas_price: u128::MAX,
-                validity_priority_lead_multiplier: 1,
-                validity_priority_fee_divisor: 1,
-                max_concurrent_submit_requests: None,
-            },
-        );
+        let pipeline = test_pipeline(&results_tracker, mpsc::channel(1).0);
         let next_submit_batch_id = AtomicU64::new(0);
         let stop_flag = AtomicBool::new(false);
         let (pulse_tx, mut pulse_rx) = mpsc::channel(8);
@@ -2562,20 +2545,7 @@ mod tests {
         let (base_fee_tx, _base_fee_rx) = tokio::sync::watch::channel(1_u128);
         let mut progress = EnqueueProgress { presigned_generated: 0, offered_gas: 0 };
         let mut presign_buffer = PresignBuffer::new(1);
-        let pipeline = SubmissionPipeline::start(
-            Arc::new(HashMap::new()),
-            Arc::new(HashMap::new()),
-            Arc::new(Vec::new()),
-            results_tracker.clone(),
-            mpsc::channel(1).0,
-            PipelineStartConfig {
-                chain_id: 1,
-                max_gas_price: u128::MAX,
-                validity_priority_lead_multiplier: 1,
-                validity_priority_fee_divisor: 1,
-                max_concurrent_submit_requests: None,
-            },
-        );
+        let pipeline = test_pipeline(&results_tracker, mpsc::channel(1).0);
         let next_submit_batch_id = AtomicU64::new(0);
         let stop_flag = AtomicBool::new(false);
         let (_pulse_tx, mut pulse_rx) = mpsc::channel(1);

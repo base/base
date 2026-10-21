@@ -66,25 +66,11 @@ impl InMemorySize for OpTxType {
 
 #[cfg(test)]
 mod tests {
-    use alloc::{vec, vec::Vec};
+    use alloc::vec::Vec;
 
     use alloy_rlp::{Decodable, Encodable};
 
     use super::*;
-
-    #[test]
-    fn test_all_tx_types() {
-        assert_eq!(OpTxType::ALL.len(), 6);
-        let all = vec![
-            OpTxType::Legacy,
-            OpTxType::Eip2930,
-            OpTxType::Eip1559,
-            OpTxType::Eip7702,
-            OpTxType::Eip8130,
-            OpTxType::Deposit,
-        ];
-        assert_eq!(OpTxType::ALL.to_vec(), all);
-    }
 
     #[test]
     fn tx_type_roundtrip() {

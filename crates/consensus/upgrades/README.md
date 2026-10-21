@@ -21,14 +21,14 @@ Add the dependency to your `Cargo.toml`:
 base-consensus-upgrades = { workspace = true }
 ```
 
-```rust,ignore
+```rust
 use base_consensus_upgrades::{Upgrade, Upgrades};
 
-let upgrades = Upgrades::default();
-if upgrades.is_active::<Jovian>(timestamp) {
-    // apply Jovian upgrade transactions
-}
+let txs: Vec<_> = Upgrades::JOVIAN.txs().collect();
 ```
+
+The caller decides when to inject these transactions by checking that the rollup config marks
+the upgrade active at the target L2 timestamp but not at the parent L2 timestamp.
 
 ## Provenance
 

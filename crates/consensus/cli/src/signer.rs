@@ -119,18 +119,14 @@ impl SignerArgs {
         let sequencer_key = self.resolve_sequencer_key()?;
 
         // The sequencer signer obtained from the CLI arguments.
-        let gossip_signer: Option<BlockSigner> = match (sequencer_key, self.config_remote()?) {
-            (Some(_), Some(_)) => return Err(SignerArgsParseError::LocalAndRemoteSigner),
-            (Some(key), None) => {
-                let signer: BlockSigner =
-                    PrivateKeySigner::from_bytes(&key)?.with_chain_id(Some(l2_chain_id)).into();
-                Some(signer)
-            }
-            (None, Some(signer)) => Some(signer.into()),
-            (None, None) => None,
-        };
-
-        Ok(gossip_signer)
+        match (sequencer_key, self.config_remote()?) {
+            (Some(_), Some(_)) => Err(SignerArgsParseError::LocalAndRemoteSigner),
+            (Some(key), None) => Ok(Some(
+                PrivateKeySigner::from_bytes(&key)?.with_chain_id(Some(l2_chain_id)).into(),
+            )),
+            (None, Some(signer)) => Ok(Some(signer.into())),
+            (None, None) => Ok(None),
+        }
     }
 
     /// Resolves the sequencer key from either the raw key or the key file.
@@ -140,14 +136,10 @@ impl SignerArgs {
             (None, Some(path)) => {
                 let keypair = SecretKeyLoader::load(path)?;
                 // Extract the private key bytes from the secp256k1 keypair
-                keypair.try_into_secp256k1().map_or_else(
-                    |_| Err(SignerArgsParseError::SequencerKeyInvalid(ecdsa::Error::new())),
-                    |secp256k1_keypair| {
-                        let private_key_bytes = secp256k1_keypair.secret().to_bytes();
-                        let key = B256::from_slice(&private_key_bytes);
-                        Ok(Some(key))
-                    },
-                )
+                let secp256k1_keypair = keypair
+                    .try_into_secp256k1()
+                    .map_err(|_| SignerArgsParseError::SequencerKeyInvalid(ecdsa::Error::new()))?;
+                Ok(Some(B256::from_slice(&secp256k1_keypair.secret().to_bytes())))
             }
             (Some(_), Some(_)) => Err(SignerArgsParseError::ConflictingSequencerKeyInputs),
             (None, None) => Ok(None),

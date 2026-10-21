@@ -56,16 +56,15 @@ Add the dependency to your `Cargo.toml`:
 base-consensus-disc = { workspace = true }
 ```
 
-Construct and run the discovery service via `Discv5Builder`:
+Construct and run the discovery service via `Discv5Builder`. Call `start` inside a Tokio
+runtime because it spawns a task:
 
 ```rust,ignore
-use base_consensus_disc::{Discv5Builder, LocalNode};
+use base_consensus_disc::Discv5Builder;
 
-let driver = Discv5Builder::new()
-    .with_local_node(local_node)
-    .build();
+let driver = Discv5Builder::new(local_node, chain_id, discovery_config).build()?;
 
-driver.start().await?;
+let (handler, enr_rx) = driver.start();
 ```
 
 ## License

@@ -9,7 +9,9 @@ use std::{
 
 use alloy_primitives::Address;
 use base_execution_trie::{MdbxProofsStorageOptions, RocksdbProofsStorageOptions};
-use base_execution_txpool::{DEFAULT_PAYMENT_LIMIT, DEFAULT_SIGNATURE_LIMIT};
+use base_execution_txpool::{
+    DEFAULT_ALLOWLISTED_PAYMENT_LIMIT, DEFAULT_PAYMENT_LIMIT, DEFAULT_SIGNATURE_LIMIT,
+};
 use base_upgrade_signal::{UpgradeSignalArgs, UpgradeSignalL1RpcArgs};
 use clap::{ArgAction, ValueEnum, builder::ArgPredicate};
 
@@ -391,6 +393,21 @@ pub struct RollupArgs {
     #[arg(long = "rollup.mempool-trusted-delegation-targets", value_delimiter = ',')]
     pub mempool_trusted_delegation_targets: Vec<Address>,
 
+    /// Payers allowed more inflight EIP-8130 sponsored transactions than the default payer
+    /// limit, up to `--rollup.mempool-allowlisted-payer-limit`.
+    ///
+    /// This is local, non-consensus mempool policy. An allowlisted payer is also balance-bounded:
+    /// the sum of its pending transactions' max cost must stay within its balance.
+    #[arg(long = "rollup.mempool-allowlisted-payers", value_delimiter = ',')]
+    pub mempool_allowlisted_payers: Vec<Address>,
+
+    /// Maximum inflight EIP-8130 transactions per allowlisted payer account.
+    #[arg(
+        long = "rollup.mempool-allowlisted-payer-limit",
+        default_value_t = DEFAULT_ALLOWLISTED_PAYMENT_LIMIT
+    )]
+    pub mempool_allowlisted_payer_limit: u32,
+
     /// If true, initialize external-proofs exex to save and serve trie nodes to provide proofs
     /// faster.
     #[arg(
@@ -507,6 +524,8 @@ impl Default for RollupArgs {
             mempool_sender_limit: DEFAULT_SIGNATURE_LIMIT,
             mempool_payer_limit: DEFAULT_PAYMENT_LIMIT,
             mempool_trusted_delegation_targets: Vec::new(),
+            mempool_allowlisted_payers: Vec::new(),
+            mempool_allowlisted_payer_limit: DEFAULT_ALLOWLISTED_PAYMENT_LIMIT,
             proofs_history: false,
             proofs_history_storage_path: None,
             proofs_history_db: ProofsHistoryDbBackend::default(),
@@ -609,6 +628,8 @@ mod tests {
         assert_eq!(args.mempool_sender_limit, DEFAULT_SIGNATURE_LIMIT);
         assert_eq!(args.mempool_payer_limit, DEFAULT_PAYMENT_LIMIT);
         assert!(args.mempool_trusted_delegation_targets.is_empty());
+        assert!(args.mempool_allowlisted_payers.is_empty());
+        assert_eq!(args.mempool_allowlisted_payer_limit, DEFAULT_ALLOWLISTED_PAYMENT_LIMIT);
     }
 
     #[test]
@@ -621,6 +642,10 @@ mod tests {
             "16",
             "--rollup.mempool-trusted-delegation-targets",
             "0x0000000000000000000000000000000000000001,0x0000000000000000000000000000000000000002",
+            "--rollup.mempool-allowlisted-payers",
+            "0x0000000000000000000000000000000000000003",
+            "--rollup.mempool-allowlisted-payer-limit",
+            "128",
         ])
         .args;
         assert_eq!(args.mempool_sender_limit, 8);
@@ -632,6 +657,11 @@ mod tests {
                 "0x0000000000000000000000000000000000000002".parse::<Address>().unwrap(),
             ]
         );
+        assert_eq!(
+            args.mempool_allowlisted_payers,
+            vec!["0x0000000000000000000000000000000000000003".parse::<Address>().unwrap()]
+        );
+        assert_eq!(args.mempool_allowlisted_payer_limit, 128);
     }
 
     #[test]

@@ -29,6 +29,13 @@ pub enum TxAuthError {
     #[error("open payer signature could not be recovered")]
     PayerRecovery,
 
+    /// A self-paid transaction (`payer == None`) carries a non-empty
+    /// `payer_auth`. The sender's signature does not cover `payer_auth`, so
+    /// accepting one would let a relayer change the transaction hash and raise
+    /// the sender's L1 data fee.
+    #[error("self-paid transaction carries a payer_auth")]
+    UnexpectedPayerAuth,
+
     /// The resolved actor is valid but its scope does not grant the operation it
     /// was authorized for. Mirrors the contract's scope requirement.
     #[error("{operation:?} actor scope {scope:#04x} does not grant the required context")]

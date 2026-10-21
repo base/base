@@ -13,10 +13,11 @@ pub use session::ProofSessionId;
 mod types;
 pub use types::{
     AbandonProofRequest, AbandonProofResponse, BackendSession, BackendSessionState,
-    DeleteProofRequest, DeleteProofsByTeeSignerRequest, ExecutionStats, GetNextProofRequest,
-    GetNextProofResponse, GetProofRequest, GetProofResponse, GetProofSessionRequest,
-    GetProofSessionResponse, HeartbeatRequest, HeartbeatResponse, ListProofsRequest,
-    ListProofsResponse, PROOF_REQUEST_NOT_FOUND_MESSAGE, ProofJob, ProofJobStatus, ProofRequest,
+    CancelProofRequest, DeleteProofRequest, DeleteProofsByTeeSignerRequest, ExecutionStats,
+    GetNextProofRequest, GetNextProofResponse, GetProofRequest, GetProofResponse,
+    GetProofSessionRequest, GetProofSessionResponse, HeartbeatRequest, HeartbeatResponse,
+    ListProofsRequest, ListProofsResponse, PROOF_REQUEST_CANCELLED_MESSAGE,
+    PROOF_REQUEST_NOT_FOUND_MESSAGE, ProofJob, ProofJobStatus, ProofRequest,
     ProofRequestIdCollisionMessage, ProofRequestKind, ProofResult, ProofStatus, ProofSummary,
     ProofType, ProveBlockRangeRequest, ProveBlockRangeResponse, RecordProofSessionRequest,
     RecordProofSessionResponse, SessionType, SnarkPlonkProofRequest, SnarkPlonkProofResult,

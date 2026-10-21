@@ -7,18 +7,30 @@
 //! `eth_estimateGas` path, by exercising the full RPC stack against a test
 //! harness. Both the channel read and the estimate are gated on the Everest fork.
 
-use std::{collections::BTreeMap, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    sync::{Arc, OnceLock},
+    time::Duration,
+};
 
+use alloy_eips::Encodable2718;
 use alloy_genesis::{Genesis, GenesisAccount};
-use alloy_primitives::{Address, B256, U256, address, bytes};
+use alloy_primitives::{Address, B256, U256, address, bytes, hex};
 use alloy_rpc_client::RpcClient;
-use base_common_consensus::{Eip8130Constants, Eip8130Contracts};
+use base_common_consensus::{Eip8130Constants, Eip8130Contracts, Predeploys};
+use base_common_evm::BaseTime;
 use base_common_precompiles::NonceManagerStorage;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_eip8130_rpc_node::{Eip8130RpcExtension, Eip8130RpcMode};
-use base_node_runner::test_utils::TestHarness;
+use base_node_runner::{
+    BaseNodeExtension, NodeHooks,
+    test_utils::{L1_BLOCK_INFO_DEPOSIT_TX, TestHarness},
+};
+use base_protocol::BaseTimeUpdateTx;
 use base_test_utils::{Account, build_test_genesis_cobalt, build_test_genesis_everest};
+use reth_rpc_eth_api::helpers::SpawnBlocking;
 use serde_json::json;
+use tokio::sync::Semaphore;
 
 /// Launches a harness with the standalone EIP-8130 override registered over the
 /// supplied genesis.
@@ -178,9 +190,10 @@ async fn estimate_gas_rejects_mismatched_from_and_sender() -> eyre::Result<()> {
     Ok(())
 }
 
-/// A supplied secp256k1 authentication blob is priced by its own bytes: a
-/// longer k1 blob costs more than a shorter one. P-256 and `WebAuthn` blobs are
-/// rejected, matching txpool admission, rather than priced.
+/// A supplied secp256k1 authentication blob is priced only if it is well
+/// formed: k1 carries exactly 65 signature bytes, so a longer blob is rejected
+/// as pool admission rejects it, rather than priced. P-256 and `WebAuthn` blobs
+/// are rejected before Zenith, matching txpool admission.
 #[tokio::test]
 async fn estimate_gas_prices_the_supplied_authentication_blob() -> eyre::Result<()> {
     let (_harness, client) = setup().await?;
@@ -197,9 +210,12 @@ async fn estimate_gas_prices_the_supplied_authentication_blob() -> eyre::Result<
         }
     };
 
-    let short = estimate(auth_blob(Eip8130Constants::K1_AUTHENTICATOR, 65)).await?;
-    let long = estimate(auth_blob(Eip8130Constants::K1_AUTHENTICATOR, 200)).await?;
-    assert!(long > short, "a longer k1 blob ({long}) must cost more than a shorter one ({short})");
+    let gas = estimate(auth_blob(Eip8130Constants::K1_AUTHENTICATOR, 65)).await?;
+    assert!(gas > U256::ZERO);
+    let err = estimate(auth_blob(Eip8130Constants::K1_AUTHENTICATOR, 200))
+        .await
+        .expect_err("a malformed k1 blob must be rejected");
+    assert!(err.to_string().contains("-32602"), "expected INVALID_PARAMS, got: {err}");
 
     for authenticator in
         [Eip8130Contracts::P256_AUTHENTICATOR, Eip8130Contracts::WEBAUTHN_AUTHENTICATOR]
@@ -304,5 +320,292 @@ async fn estimate_gas_for_eip8130_request_pre_everest_is_rejected() -> eyre::Res
     let err = result.expect_err("pre-Everest EIP-8130 estimate must error");
     let err_str = err.to_string();
     assert!(err_str.contains("-32602"), "expected INVALID_PARAMS (-32602), got: {err_str}");
+    Ok(())
+}
+
+/// Pending EIP-8130 estimates must observe the scheduled Denim successor's `BaseTime`
+/// milliseconds, and an executed pending block's own time once one exists.
+#[tokio::test]
+async fn estimate_gas_for_eip8130_request_observes_pending_denim_time() -> eyre::Result<()> {
+    // Genesis is block 0 at 1s with Denim active, so block n is scheduled at 1s + 200ms * n.
+    let (harness, client) = setup().await?;
+    let alice: Address = Account::Alice.address();
+    let guard = address!("0x00000000000000000000000000000000000000ad");
+    // Reverts unless `BaseTime.timestampMs()` equals the first calldata word.
+    let guard_code = format!(
+        "0x63{}60e01b600052602060006004600073{}5afa5060005160003514603a5760006000fd5b00",
+        hex::encode(BaseTime::TIMESTAMP_MS_SELECTOR),
+        hex::encode(Predeploys::BASE_TIME),
+    );
+    let estimate = async |timestamp_ms: u64, base_time_diff: Option<u64>| {
+        let mut overrides = json!({ (guard.to_string()): { "code": guard_code } });
+        if let Some(millis) = base_time_diff {
+            overrides[Predeploys::BASE_TIME.to_string()] = json!({
+                "stateDiff": { (B256::ZERO.to_string()): B256::from(U256::from(millis)) }
+            });
+        }
+        let request = json!({
+            "from": alice,
+            "calls": [[{ "to": guard, "data": format!("0x{timestamp_ms:064x}") }]]
+        });
+        client.request::<_, U256>("eth_estimateGas", (request, "pending", overrides)).await
+    };
+    let build_block = async |number: u64, millis_part: u16| {
+        let base_time = BaseTimeUpdateTx::new(millis_part)?.into_deposit_tx(number);
+        harness
+            .prepare_unsafe_block(vec![L1_BLOCK_INFO_DEPOSIT_TX, base_time.encoded_2718().into()])
+            .await
+    };
+
+    // Same-second successor of genesis, then second rollover after block 4.
+    for (latest, timestamp_ms) in [(0, 1_200), (4, 2_000)] {
+        while harness.latest_block().number < latest {
+            let number = harness.latest_block().number + 1;
+            let prepared = build_block(number, u16::try_from(number * 200)?).await?;
+            harness
+                .engine()
+                .update_forkchoice(prepared.parent_hash, prepared.new_block_hash, None)
+                .await?;
+            harness.wait_for_header(prepared.new_block_hash, prepared.new_block_number).await?;
+        }
+        assert!(estimate(timestamp_ms, None).await? > U256::ZERO);
+        let stale = estimate(timestamp_ms - 200, None).await;
+        assert!(stale.unwrap_err().to_string().contains("revert"), "must observe {timestamp_ms}");
+    }
+
+    // User state overrides take precedence over the forecast.
+    assert!(estimate(2_300, Some(300)).await? > U256::ZERO);
+
+    // An executed pending block is used as-is rather than advanced again.
+    build_block(5, 0).await?;
+    assert!(estimate(2_000, None).await? > U256::ZERO);
+    assert!(estimate(2_200, None).await.is_err());
+    Ok(())
+}
+
+/// Genesis with a contract at `addr` running `code`.
+fn genesis_with_code(addr: Address, code: alloy_primitives::Bytes) -> Genesis {
+    let mut genesis = build_test_genesis_everest();
+    genesis.alloc.insert(addr, GenesisAccount { code: Some(code), ..Default::default() });
+    genesis
+}
+
+/// An EIP-8130 `eth_call` runs the EIP-8130 simulation and returns the final
+/// call's output, rather than dropping the EIP-8130 fields and simulating an
+/// empty transaction.
+#[tokio::test]
+async fn eth_call_for_eip8130_request_returns_the_call_output() -> eyre::Result<()> {
+    let alice: Address = Account::Alice.address();
+    // `PUSH1 0x2a PUSH1 0 MSTORE PUSH1 32 PUSH1 0 RETURN`: returns the word 42.
+    let returner = address!("0x00000000000000000000000000000000000000fe");
+    let (_harness, client) =
+        setup_with(genesis_with_code(returner, bytes!("602a60005260206000f3"))).await?;
+
+    let request = json!({ "from": alice, "calls": [[{ "to": returner, "data": "0x" }]] });
+    let output: alloy_primitives::Bytes = client.request("eth_call", (request, "latest")).await?;
+    assert_eq!(
+        output,
+        alloy_primitives::Bytes::from(U256::from(42u64).to_be_bytes::<32>().to_vec())
+    );
+    Ok(())
+}
+
+/// An EIP-8130 `eth_call` whose call reverts surfaces the revert, like
+/// `eth_estimateGas`, instead of reporting success.
+#[tokio::test]
+async fn eth_call_for_eip8130_request_with_reverting_call_fails() -> eyre::Result<()> {
+    let alice: Address = Account::Alice.address();
+    let revert_addr = address!("0x00000000000000000000000000000000000000fd");
+    let (_harness, client) =
+        setup_with(genesis_with_code(revert_addr, bytes!("60006000fd"))).await?;
+
+    let request = json!({ "from": alice, "calls": [[{ "to": revert_addr, "data": "0x" }]] });
+    let result: Result<alloy_primitives::Bytes, _> =
+        client.request("eth_call", (request, "latest")).await;
+    let err_str = result.expect_err("a reverting call must error").to_string();
+    assert!(err_str.contains("revert"), "expected an execution-revert error, got: {err_str}");
+    Ok(())
+}
+
+/// The standard call paths cannot represent an EIP-8130 transaction, so they
+/// reject one rather than silently simulating an empty transaction.
+#[tokio::test]
+async fn create_access_list_rejects_eip8130_request() -> eyre::Result<()> {
+    let (_harness, client) = setup().await?;
+    let alice: Address = Account::Alice.address();
+
+    let request = json!({ "from": alice, "calls": [] });
+    let result: Result<serde_json::Value, _> =
+        client.request("eth_createAccessList", (request, "latest")).await;
+    let err_str = result.expect_err("an EIP-8130 access-list request must error").to_string();
+    assert!(err_str.contains("-32602"), "expected INVALID_PARAMS (-32602), got: {err_str}");
+    Ok(())
+}
+
+/// `eth_simulateV1` cannot represent EIP-8130 fields, so it rejects an
+/// EIP-8130 call instead of silently simulating a plain transfer.
+#[tokio::test]
+async fn simulate_v1_rejects_eip8130_request() -> eyre::Result<()> {
+    let (_harness, client) = setup().await?;
+    let alice: Address = Account::Alice.address();
+
+    let payload = json!({ "blockStateCalls": [{ "calls": [{ "from": alice, "type": "0x79" }] }] });
+    let result: Result<serde_json::Value, _> =
+        client.request("eth_simulateV1", (payload, "latest")).await;
+    let err_str = result.expect_err("an EIP-8130 simulateV1 call must error").to_string();
+    assert!(err_str.contains("EIP-8130"), "expected the EIP-8130 rejection, got: {err_str}");
+    Ok(())
+}
+
+/// A plain `eth_call` still goes through the standard path.
+#[tokio::test]
+async fn eth_call_for_plain_request_delegates() -> eyre::Result<()> {
+    let alice: Address = Account::Alice.address();
+    let returner = address!("0x00000000000000000000000000000000000000fe");
+    let (_harness, client) =
+        setup_with(genesis_with_code(returner, bytes!("602a60005260206000f3"))).await?;
+
+    let output: alloy_primitives::Bytes =
+        client.request("eth_call", (json!({ "from": alice, "to": returner }), "latest")).await?;
+    assert_eq!(
+        output,
+        alloy_primitives::Bytes::from(U256::from(42u64).to_be_bytes::<32>().to_vec())
+    );
+    Ok(())
+}
+
+/// Estimation applies the validity-window and nonce-free rules pool admission
+/// does: a nonce-free request without `validBefore` is rejected.
+#[tokio::test]
+async fn estimate_gas_rejects_a_nonce_free_request_without_valid_before() -> eyre::Result<()> {
+    let (_harness, client) = setup().await?;
+    let alice: Address = Account::Alice.address();
+
+    let request = json!({
+        "from": alice,
+        "calls": [],
+        "nonceKey": format!("{:#x}", Eip8130Constants::NONCE_KEY_MAX),
+    });
+    let result: Result<U256, _> = client.request("eth_estimateGas", (request, "latest")).await;
+    let err_str = result.expect_err("a malformed nonce-free request must error").to_string();
+    assert!(err_str.contains("-32602"), "expected INVALID_PARAMS (-32602), got: {err_str}");
+    Ok(())
+}
+
+/// The validity window is checked at the simulated block's time: a request not
+/// yet valid at the head is rejected, but accepted under a `time` block override
+/// that opens its window.
+#[tokio::test]
+async fn eth_call_checks_the_validity_window_at_the_overridden_time() -> eyre::Result<()> {
+    let alice: Address = Account::Alice.address();
+    let returner = address!("0x00000000000000000000000000000000000000fe");
+    let (_harness, client) =
+        setup_with(genesis_with_code(returner, bytes!("602a60005260206000f3"))).await?;
+    let valid_after_secs = 1_000_u64;
+    let request = json!({
+        "from": alice,
+        "calls": [[{ "to": returner, "data": "0x" }]],
+        "validAfter": format!("{valid_after_secs:#x}"),
+    });
+
+    let at_head: Result<alloy_primitives::Bytes, _> =
+        client.request("eth_call", (&request, "latest")).await;
+    let err_str = at_head.expect_err("not yet valid at the head").to_string();
+    assert!(err_str.contains("not yet valid"), "expected a validity-window error, got: {err_str}");
+
+    let block_overrides = json!({ "time": format!("{valid_after_secs:#x}") });
+    let output: alloy_primitives::Bytes =
+        client.request("eth_call", (&request, "latest", json!({}), block_overrides)).await?;
+    assert_eq!(
+        output,
+        alloy_primitives::Bytes::from(U256::from(42u64).to_be_bytes::<32>().to_vec())
+    );
+    Ok(())
+}
+
+/// `eth_estimateGas` honors block overrides: a request not yet valid at the head
+/// is rejected, but estimated under a `time` block override that opens its window.
+#[tokio::test]
+async fn estimate_gas_checks_the_validity_window_at_the_overridden_time() -> eyre::Result<()> {
+    let (_harness, client) = setup().await?;
+    let alice: Address = Account::Alice.address();
+    let valid_after_secs = 1_000_u64;
+    let request = json!({
+        "from": alice,
+        "calls": [],
+        "validAfter": format!("{valid_after_secs:#x}"),
+    });
+
+    let at_head: Result<U256, _> = client.request("eth_estimateGas", (&request, "latest")).await;
+    let err_str = at_head.expect_err("not yet valid at the head").to_string();
+    assert!(err_str.contains("not yet valid"), "expected a validity-window error, got: {err_str}");
+
+    let block_overrides = json!({ "time": format!("{valid_after_secs:#x}") });
+    let gas: U256 =
+        client.request("eth_estimateGas", (&request, "latest", json!({}), block_overrides)).await?;
+    assert!(gas > U256::ZERO);
+    Ok(())
+}
+
+/// `type: 0x79` alone marks an EIP-8130 request, so a top-level call is
+/// estimated through the EIP-8130 path rather than as a plain transfer.
+#[tokio::test]
+async fn estimate_gas_treats_type_0x79_as_eip8130() -> eyre::Result<()> {
+    let (_harness, client) = setup().await?;
+    let alice: Address = Account::Alice.address();
+    let bob: Address = Account::Bob.address();
+
+    let request = json!({ "type": "0x79", "from": alice, "to": bob, "value": "0x1" });
+    let gas: U256 = client.request("eth_estimateGas", (request, "latest")).await?;
+    assert_ne!(gas, U256::from(21_000u64), "priced under the EIP-8130 schedule, not as a transfer");
+    Ok(())
+}
+
+/// Captures the node's blocking-IO semaphore, the bound reth's `eth_call` uses
+/// for concurrent EVM execution, so a test can hold every permit.
+#[derive(Debug, Clone, Default)]
+struct BlockingIoProbe(Arc<OnceLock<Arc<Semaphore>>>);
+
+impl BaseNodeExtension for BlockingIoProbe {
+    fn apply(self: Box<Self>, hooks: NodeHooks) -> NodeHooks {
+        hooks.add_rpc_module(move |ctx| {
+            let _ = self.0.set(Arc::clone(ctx.registry.eth_api().blocking_io_task_guard()));
+            Ok(())
+        })
+    }
+}
+
+/// How long a request must stay pending while every blocking-IO permit is held.
+const PERMIT_WAIT: Duration = Duration::from_millis(500);
+
+/// EIP-8130 `eth_call` and `eth_estimateGas` wait for a blocking-IO permit like
+/// the standard `eth_call`, so they cannot run beyond the node's concurrency
+/// bound, and they complete once a permit is released.
+#[tokio::test]
+async fn eip8130_call_and_estimate_wait_for_a_blocking_io_permit() -> eyre::Result<()> {
+    let probe = BlockingIoProbe::default();
+    let harness = TestHarness::builder()
+        .with_chain_spec(Arc::new(BaseChainSpec::from_genesis(build_test_genesis_everest())))
+        .with_ext::<Eip8130RpcExtension>(Eip8130RpcMode::Register)
+        .with_extension(probe.clone())
+        .build()
+        .await?;
+    let client = harness.rpc_client()?;
+    let semaphore = Arc::clone(probe.0.get().expect("the RPC hook captured the semaphore"));
+    let all_permits = u32::try_from(semaphore.available_permits())?;
+    let held = Arc::clone(&semaphore).acquire_many_owned(all_permits).await?;
+
+    let request = json!({ "from": Account::Alice.address(), "calls": [] });
+    let call = tokio::spawn(
+        client.request::<_, alloy_primitives::Bytes>("eth_call", (request.clone(), "latest")),
+    );
+    let estimate = tokio::spawn(client.request::<_, U256>("eth_estimateGas", (request, "latest")));
+    tokio::time::sleep(PERMIT_WAIT).await;
+    assert!(!call.is_finished(), "EIP-8130 eth_call must wait for a blocking-IO permit");
+    assert!(!estimate.is_finished(), "EIP-8130 eth_estimateGas must wait for a blocking-IO permit");
+
+    drop(held);
+    call.await??;
+    assert!(estimate.await?? > U256::ZERO);
     Ok(())
 }

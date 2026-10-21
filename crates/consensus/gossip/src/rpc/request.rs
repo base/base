@@ -114,35 +114,19 @@ impl P2pRpcRequest {
             Self::Peers { out, connected } => Self::handle_peers(out, connected, gossip, disc),
             Self::DisconnectPeer { peer_id } => Self::disconnect_peer(peer_id, gossip),
             Self::PeerStats(s) => Self::handle_peer_stats(s, gossip, disc),
-            Self::ConnectPeer { address } => Self::connect_peer(address, gossip),
+            Self::ConnectPeer { address } => gossip.dial_multiaddr(address),
             Self::BlockPeer { id } => Self::block_peer(id, gossip),
             Self::UnblockPeer { id } => Self::unblock_peer(id, gossip),
             Self::ListBlockedPeers(s) => Self::list_blocked_peers(s, gossip),
-            Self::BlockAddr { address } => Self::block_addr(address, gossip),
-            Self::UnblockAddr { address } => Self::unblock_addr(address, gossip),
+            Self::BlockAddr { address } => gossip.connection_gate.block_addr(address),
+            Self::UnblockAddr { address } => gossip.connection_gate.unblock_addr(address),
             Self::ListBlockedAddrs(s) => Self::list_blocked_addrs(s, gossip),
-            Self::ProtectPeer { peer_id } => Self::protect_peer(peer_id, gossip),
-            Self::UnprotectPeer { peer_id } => Self::unprotect_peer(peer_id, gossip),
-            Self::BlockSubnet { address } => Self::block_subnet(address, gossip),
-            Self::UnblockSubnet { address } => Self::unblock_subnet(address, gossip),
+            Self::ProtectPeer { peer_id } => gossip.connection_gate.protect_peer(peer_id),
+            Self::UnprotectPeer { peer_id } => gossip.connection_gate.unprotect_peer(peer_id),
+            Self::BlockSubnet { address } => gossip.connection_gate.block_subnet(address),
+            Self::UnblockSubnet { address } => gossip.connection_gate.unblock_subnet(address),
             Self::ListBlockedSubnets(s) => Self::list_blocked_subnets(s, gossip),
         }
-    }
-
-    fn protect_peer<G: ConnectionGate>(id: PeerId, gossip: &mut GossipDriver<G>) {
-        gossip.connection_gate.protect_peer(id);
-    }
-
-    fn unprotect_peer<G: ConnectionGate>(id: PeerId, gossip: &mut GossipDriver<G>) {
-        gossip.connection_gate.unprotect_peer(id);
-    }
-
-    fn block_addr<G: ConnectionGate>(address: IpAddr, gossip: &mut GossipDriver<G>) {
-        gossip.connection_gate.block_addr(address);
-    }
-
-    fn unblock_addr<G: ConnectionGate>(address: IpAddr, gossip: &mut GossipDriver<G>) {
-        gossip.connection_gate.unblock_addr(address);
     }
 
     fn list_blocked_addrs<G: ConnectionGate>(s: Sender<Vec<IpAddr>>, gossip: &GossipDriver<G>) {
@@ -167,18 +151,6 @@ impl P2pRpcRequest {
         if let Err(e) = s.send(blocked_peers) {
             warn!(target: "p2p::rpc", error = ?e, "Failed to send blocked peers through response channel");
         }
-    }
-
-    fn block_subnet<G: ConnectionGate>(address: IpNet, gossip: &mut GossipDriver<G>) {
-        gossip.connection_gate.block_subnet(address);
-    }
-
-    fn unblock_subnet<G: ConnectionGate>(address: IpNet, gossip: &mut GossipDriver<G>) {
-        gossip.connection_gate.unblock_subnet(address);
-    }
-
-    fn connect_peer<G: ConnectionGate>(address: Multiaddr, gossip: &mut GossipDriver<G>) {
-        gossip.dial_multiaddr(address)
     }
 
     fn disconnect_peer<G: ConnectionGate>(peer_id: PeerId, gossip: &mut GossipDriver<G>) {

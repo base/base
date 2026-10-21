@@ -3,12 +3,12 @@
 use jsonrpsee::proc_macros::rpc;
 
 use crate::{
-    AbandonProofRequest, AbandonProofResponse, DeleteProofRequest, DeleteProofsByTeeSignerRequest,
-    GetNextProofRequest, GetNextProofResponse, GetProofRequest, GetProofResponse,
-    GetProofSessionRequest, GetProofSessionResponse, HeartbeatRequest, HeartbeatResponse,
-    ListProofsRequest, ListProofsResponse, ProveBlockRangeRequest, ProveBlockRangeResponse,
-    RecordProofSessionRequest, RecordProofSessionResponse, WorkerSubmitProofRequest,
-    WorkerSubmitProofResponse,
+    AbandonProofRequest, AbandonProofResponse, CancelProofRequest, DeleteProofRequest,
+    DeleteProofsByTeeSignerRequest, GetNextProofRequest, GetNextProofResponse, GetProofRequest,
+    GetProofResponse, GetProofSessionRequest, GetProofSessionResponse, HeartbeatRequest,
+    HeartbeatResponse, ListProofsRequest, ListProofsResponse, ProveBlockRangeRequest,
+    ProveBlockRangeResponse, RecordProofSessionRequest, RecordProofSessionResponse,
+    WorkerSubmitProofRequest, WorkerSubmitProofResponse,
 };
 
 #[cfg_attr(
@@ -38,6 +38,16 @@ pub trait ProverRequesterApi {
         &self,
         request: GetProofRequest,
     ) -> jsonrpsee::core::RpcResult<GetProofResponse>;
+
+    /// Cancel a queued or running Cluster or Network proof request.
+    ///
+    /// The request is failed with `PROOF_REQUEST_CANCELLED_MESSAGE`, and the owning
+    /// worker is told on its next heartbeat so it can stop the backend proof.
+    #[method(name = "cancelProofRequest")]
+    async fn cancel_proof_request(
+        &self,
+        request: CancelProofRequest,
+    ) -> jsonrpsee::core::RpcResult<()>;
 
     /// Delete a completed proof request so it can be retried with the same session id.
     #[method(name = "deleteProofRequest")]

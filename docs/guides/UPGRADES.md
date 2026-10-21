@@ -250,15 +250,14 @@ upgrades: UpgradeConfig {
 
 **File:** [`crates/common/chains/tests/upgrade_consistency.rs`](https://github.com/base/base/blob/main/crates/common/chains/tests/upgrade_consistency.rs)
 
-These tests assert that `BaseChainConfig::mainnet().upgrade_activation(fork)` matches `BaseChainUpgrades::mainnet().upgrade_activation(fork)` for every `BaseUpgrade` variant. They should pass without changes as long as both sides consistently return `ForkCondition::Never` for an unscheduled upgrade or the same timestamp once scheduled.
+For every entry in `BaseUpgrade::VARIANTS`, these tests assert that the derived rollup config's
+`fork_condition(fork)` matches `ChainUpgrades::mainnet().fork_condition(fork)` for mainnet and
+`ChainUpgrades::sepolia().fork_condition(fork)` for Sepolia. The rollup configs are
+`BASE_MAINNET_ROLLUP_CONFIG` and `BASE_SEPOLIA_ROLLUP_CONFIG` from
+`base_common_chains::test_utils`.
 
-If there is a known discrepancy (e.g. the cascade causes a mismatch for an unset upgrade), add a skip with an explanatory comment as done for `Regolith`:
-
-```rust
-if *fork == BaseUpgrade::Azul {
-    continue; // explanation of why the two sides differ
-}
-```
+The tests check every variant without skips. Both sides must agree on the activation condition,
+including `ForkCondition::Never` for an unscheduled upgrade.
 
 ---
 

@@ -1,6 +1,9 @@
 //! ZK proof benchmark runner for completed load-test runs.
 
-use std::time::{Duration, Instant};
+use std::{
+    num::NonZeroU64,
+    time::{Duration, Instant},
+};
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::B256;
@@ -12,13 +15,15 @@ use base_prover_service_protocol::{
     ProveBlockRangeRequest, ZkBackend, ZkProofRequest, ZkVm,
 };
 use eyre::{Result, WrapErr, ensure};
-use nanoid::nanoid;
 use tokio::time::{sleep, timeout};
+use uuid::Uuid;
 
 use crate::types::{ZkBenchConfig, ZkBenchProofOutcome, ZkBenchSummary, ZkBenchTarget};
 
 const SAFE_L2_TIMEOUT: Duration = Duration::from_secs(300);
 const SAFE_L2_POLL_INTERVAL: Duration = Duration::from_millis(500);
+const PROOF_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+const PROOF_POLL_INTERVAL: Duration = Duration::from_secs(5);
 
 /// Runs ZK proof benchmarks for completed load-test summaries.
 #[derive(Debug)]
@@ -37,8 +42,8 @@ impl ZkBenchRunner {
         let rollup_provider = RpcProviders::query(config.rollup_rpc_url.clone())
             .map_err(eyre::Report::from)
             .wrap_err_with(|| format!("failed to connect rollup RPC {}", config.rollup_rpc_url))?;
-        let (proof, execution_stats) =
-            Self::prove_safe_block(&rollup_provider, target.block, config).await?;
+        let l1_head = Self::wait_for_safe_l2(&rollup_provider, target.block).await?;
+        let (proof, execution_stats) = Self::prove_block(target.block, l1_head, config).await?;
 
         Ok(ZkBenchSummary { target, proof, execution_stats })
     }
@@ -61,29 +66,8 @@ impl ZkBenchRunner {
         })
     }
 
-    async fn prove_safe_block(
-        rollup_provider: &QueryProvider,
-        block_number: u64,
-        config: ZkBenchConfig,
-    ) -> Result<(ZkBenchProofOutcome, Option<ExecutionStats>)> {
-        let l1_head = Self::wait_for_safe_l2(
-            rollup_provider,
-            block_number,
-            SAFE_L2_TIMEOUT,
-            SAFE_L2_POLL_INTERVAL,
-        )
-        .await?;
-
-        Self::prove_block(block_number, l1_head, config).await
-    }
-
-    async fn wait_for_safe_l2(
-        provider: &QueryProvider,
-        block_number: u64,
-        wait_timeout: Duration,
-        poll_interval: Duration,
-    ) -> Result<B256> {
-        timeout(wait_timeout, async {
+    async fn wait_for_safe_l2(provider: &QueryProvider, block_number: u64) -> Result<B256> {
+        timeout(SAFE_L2_TIMEOUT, async {
             loop {
                 let status = provider.optimism_sync_status().await?;
                 if status.safe_l2.number >= block_number {
@@ -93,7 +77,7 @@ impl ZkBenchRunner {
                         .await?;
                     return Ok::<_, eyre::Error>(status.head_l1.hash);
                 }
-                sleep(poll_interval).await;
+                sleep(SAFE_L2_POLL_INTERVAL).await;
             }
         })
         .await
@@ -109,24 +93,15 @@ impl ZkBenchRunner {
             block_number.checked_sub(1).ok_or_else(|| eyre::eyre!("cannot prove genesis block"))?;
         let zk_backend = config.zk_backend;
         let client_config = ProverServiceClientConfig::new(config.prover_url.as_str());
-        let proof_timeout = client_config.max_wait();
-        let poll_interval = client_config.poll_interval();
         let client = ProofRequesterClient::connect(&client_config)
             .wrap_err_with(|| format!("failed to connect prover service {}", config.prover_url))?;
-        let session_id = format!("zk-benchmarks-{}-{}", zk_backend.as_str(), nanoid!());
+        let session_id = format!("zk-benchmarks-{}-{}", zk_backend.as_str(), Uuid::new_v4());
         let request = Self::proof_request(session_id, start_block_number, l1_head, zk_backend);
         let proof_started = Instant::now();
         let response =
             client.prove_block_range(request).await.wrap_err("prove-block-range request failed")?;
 
-        let execution_stats = Self::poll_proof(
-            &client,
-            &response.session_id,
-            zk_backend,
-            proof_timeout,
-            poll_interval,
-        )
-        .await?;
+        let execution_stats = Self::poll_proof(&client, &response.session_id, zk_backend).await?;
         let outcome = ZkBenchProofOutcome {
             zk_backend,
             session_id: response.session_id,
@@ -153,8 +128,9 @@ impl ZkBenchRunner {
                     number_of_blocks_to_prove: 1,
                     sequence_window: None,
                     l1_head: Some(l1_head),
-                    intermediate_root_interval: None,
                     schedule_l2_block_number: None,
+                    // A single-block range commits its one output root.
+                    intermediate_block_interval: NonZeroU64::MIN,
                     zk_vm: ZkVm::Sp1,
                     zk_backend,
                 }),
@@ -167,11 +143,9 @@ impl ZkBenchRunner {
         client: &ProofRequesterClient,
         session_id: &str,
         zk_backend: ZkBackend,
-        proof_timeout: Duration,
-        poll_interval: Duration,
     ) -> Result<Option<ExecutionStats>> {
         let get_proof_request = GetProofRequest { session_id: session_id.to_owned() };
-        timeout(proof_timeout, async {
+        timeout(PROOF_TIMEOUT, async {
             let start = Instant::now();
             loop {
                 let response = client
@@ -192,7 +166,7 @@ impl ZkBenchRunner {
                                 .unwrap_or_else(|| "missing error message".to_string())
                         ));
                     }
-                    ProofStatus::Queued | ProofStatus::Running => sleep(poll_interval).await,
+                    ProofStatus::Queued | ProofStatus::Running => sleep(PROOF_POLL_INTERVAL).await,
                 }
             }
         })

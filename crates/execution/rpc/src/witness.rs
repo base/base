@@ -13,13 +13,12 @@ use reth_chainspec::ChainSpecProvider;
 use reth_evm::ConfigureEvm;
 use reth_node_api::{BuildNextEnv, NodePrimitives};
 use reth_primitives_traits::{SealedHeader, TxTy};
-use reth_revm::cancelled::CancelOnDrop;
 use reth_rpc_server_types::{ToRpcResult, result::internal_rpc_err};
 use reth_storage_api::{
     BlockReaderIdExt, NodePrimitivesProvider, StateProviderFactory,
     errors::{ProviderError, ProviderResult},
 };
-use reth_tasks::Runtime;
+use reth_tasks::{CancelOnDrop, Runtime};
 use reth_transaction_pool::TransactionPool;
 use tokio::sync::{Semaphore, oneshot};
 
@@ -36,6 +35,9 @@ pub trait DebugExecutionWitnessApi<Attributes> {
     ) -> RpcResult<ExecutionWitness>;
 }
 
+/// Maximum number of payload executions a debug RPC runs concurrently.
+pub const MAX_CONCURRENT_PAYLOAD_EXECUTIONS: usize = 3;
+
 /// An extension to the `debug_` namespace of the RPC API.
 pub struct BaseDebugWitnessApi<Pool, Provider, EvmConfig, Attrs> {
     inner: Arc<BaseDebugWitnessApiInner<Pool, Provider, EvmConfig, Attrs>>,
@@ -46,9 +48,9 @@ impl<Pool, Provider, EvmConfig, Attrs> BaseDebugWitnessApi<Pool, Provider, EvmCo
     pub fn new(
         provider: Provider,
         task_spawner: Runtime,
-        builder: BasePayloadBuilder<Pool, Provider, EvmConfig, (), Attrs>,
+        builder: BasePayloadBuilder<Pool, Provider, EvmConfig, Attrs>,
     ) -> Self {
-        let semaphore = Arc::new(Semaphore::new(3));
+        let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_PAYLOAD_EXECUTIONS));
         let inner = BaseDebugWitnessApiInner { provider, builder, task_spawner, semaphore };
         Self { inner: Arc::new(inner) }
     }
@@ -78,17 +80,17 @@ impl<Pool, Provider, EvmConfig, Attrs> DebugExecutionWitnessApiServer<Attrs::Rpc
 where
     Pool: TransactionPool<
             Transaction: BasePooledTx<
-                Consensus = <Provider::Primitives as NodePrimitives>::SignedTx,
+                Consensus = <<Provider as NodePrimitivesProvider>::Primitives as NodePrimitives>::SignedTx,
             >,
         > + 'static,
-    Provider: BlockReaderIdExt<Header = <Provider::Primitives as NodePrimitives>::BlockHeader>
+    Provider: BlockReaderIdExt<Header = <<Provider as NodePrimitivesProvider>::Primitives as NodePrimitives>::BlockHeader>
         + NodePrimitivesProvider<Primitives: PayloadPrimitives>
-        + StateProviderFactory
+        + StateProviderFactory<Primitives = <Provider as NodePrimitivesProvider>::Primitives>
         + ChainSpecProvider<ChainSpec: Upgrades>
         + Clone
         + 'static,
     EvmConfig: ConfigureEvm<
-            Primitives = Provider::Primitives,
+            Primitives = <Provider as NodePrimitivesProvider>::Primitives,
             NextBlockEnvCtx: BuildNextEnv<Attrs, Provider::Header, Provider::ChainSpec>,
         > + 'static,
     Attrs: Attributes<Transaction = TxTy<EvmConfig::Primitives>>,
@@ -136,7 +138,7 @@ impl<Pool, Provider, EvmConfig, Attrs> Debug
 
 struct BaseDebugWitnessApiInner<Pool, Provider, EvmConfig, Attrs> {
     provider: Provider,
-    builder: BasePayloadBuilder<Pool, Provider, EvmConfig, (), Attrs>,
+    builder: BasePayloadBuilder<Pool, Provider, EvmConfig, Attrs>,
     task_spawner: Runtime,
     semaphore: Arc<Semaphore>,
 }

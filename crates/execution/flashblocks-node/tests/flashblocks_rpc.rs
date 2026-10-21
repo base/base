@@ -430,15 +430,14 @@ async fn test_pending_without_flashblocks_snapshot() -> Result<()> {
     let simulated: serde_json::Value = client
         .request("eth_simulateV1", json!([{ "blockStateCalls": [{ "calls": [call] }] }, "pending"]))
         .await?;
-    // Base's local_pending_block returns latest, so regular log filtering falls through
-    // to range validation and rejects an end above the canonical head, even for pending-only.
-    let mut log_errors = Vec::new();
+    // Without a local pending block, pending log bounds resolve to the canonical head.
+    // The executed engine payload's creation log must not leak into either range.
+    let mut pending_logs = Vec::new();
     for from in ["pending", "earliest"] {
-        let result: Result<serde_json::Value, _> = client
+        let logs: serde_json::Value = client
             .request("eth_getLogs", json!([{ "fromBlock": from, "toBlock": "pending" }]))
-            .await;
-        log_errors
-            .push(result.err().and_then(|error| error.as_error_resp().map(|error| error.code)));
+            .await?;
+        pending_logs.push(logs);
     }
     let expected_output = format!("0x{:064x}", 42);
     assert_eq!(
@@ -449,7 +448,7 @@ async fn test_pending_without_flashblocks_snapshot() -> Result<()> {
             "call": output,
             "executesContractForGas": gas > latest_gas,
             "simulatedCall": simulated[0]["calls"][0]["returnData"],
-            "logErrors": log_errors,
+            "logs": pending_logs,
         }),
         json!({
             "blockHash": prepared.new_block_hash,
@@ -458,7 +457,7 @@ async fn test_pending_without_flashblocks_snapshot() -> Result<()> {
             "call": expected_output,
             "executesContractForGas": true,
             "simulatedCall": expected_output,
-            "logErrors": [-32602, -32602],
+            "logs": [[], []],
         }),
     );
 
@@ -778,6 +777,30 @@ async fn test_eth_estimate_gas() -> Result<()> {
         "unexpected estimate_gas error: {message}"
     );
 
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_eth_estimate_gas_applies_block_overrides() -> Result<()> {
+    let harness = FlashblocksHarness::new().await?;
+    let client = harness.rpc_client()?;
+    // Reverts unless `TIMESTAMP == 1000`:
+    // TIMESTAMP PUSH2 1000 EQ PUSH1 0x0d JUMPI PUSH1 0 PUSH1 0 REVERT JUMPDEST STOP
+    let guard = address!("0x00000000000000000000000000000000000000ad");
+    let state_overrides =
+        json!({ (guard.to_string()): { "code": "0x426103e814600d5760006000fd5b00" } });
+    let call = json!({ "from": Account::Alice.address(), "to": guard });
+
+    for block in ["latest", "pending"] {
+        let at_head: Result<U256, _> =
+            client.request("eth_estimateGas", json!([call, block, state_overrides])).await;
+        assert!(at_head.is_err(), "{block}: the guard reverts at the head's timestamp");
+
+        let gas: U256 = client
+            .request("eth_estimateGas", json!([call, block, state_overrides, { "time": "0x3e8" }]))
+            .await?;
+        assert!(gas > U256::from(21_000u64), "{block}: the guard passes at the overridden time");
+    }
     Ok(())
 }
 

@@ -4,13 +4,20 @@ Async orchestration core for the Base batcher.
 
 `BatchDriver` is the central type exported by this crate. It is generic over a `Runtime`, a
 `BatchPipeline` (frame encoding), an `UnsafeBlockSource` (L2 block delivery), an `L1HeadSource`
-(L1 chain head tracking), a `TxManager` (L1 submission), and a `ThrottleClient` (DA limit
-application). Construction takes `BatchDriverInputs`: the sources the driver listens to and
-the L1 head and safe L2 head it starts from. The initial L1 head seeds the pipeline, so
+(L1 chain head tracking) and a `TxManager` (L1 submission). Construction takes
+`BatchDriverInputs`: the sources the driver listens to and the L1 head and derivation status it
+starts from. The initial L1 head seeds the pipeline, so
 channel duration is measured from the live L1 tip rather than from block 0. The driver runs a
 single `tokio::select!` task that reacts to unsafe L2 blocks, derivation-status updates, L1
 heads, completed transaction receipts, admin commands, and cancellation.
 Each arm advances the pipeline or adjusts submission pressure without blocking the others.
+
+A derivation status whose safe head is lower than the last one acted on is ignored while the
+rollup node has not read L1 past the block the last safe head was reported at: such a node is
+behind on L1, as a new leader or a restarted node is, and derives the same blocks again. Once
+the node has read past that block with its safe head still lower, it did not derive the blocks
+the last safe head covered, after an L1 reorg or a divergence between nodes, so the driver
+resets the pipeline and posts the blocks above the lower safe head again.
 
 `BatchDriverConfig` carries the L1 inbox address, in-flight transaction limit, shutdown drain
 timeout, DA-throttle submission policy, and whether block ingestion starts stopped.
@@ -29,23 +36,23 @@ stale ids they report.
 `TxOutcome` represents the two terminal states of an L1 submission: `Confirmed { l1_block }`
 and `Failed`.
 
-The throttle subsystem controls how much DA data the sequencer may include per block and per
+The throttle subsystem controls how much DA data the block builders may include per block and per
 transaction based on the L1 DA backlog. `ThrottleController` takes a `ThrottleConfig` and a
-`ThrottleStrategy` and produces `ThrottleParams` from a raw backlog byte count.
-`ThrottleStrategy::Off` disables throttling entirely. `ThrottleStrategy::Step` applies full
-intensity when the backlog exceeds the configured threshold. `ThrottleStrategy::Linear` grows
-intensity linearly from zero at the threshold to `max_intensity` at twice the threshold.
+`ThrottleStrategy` and produces `ThrottleParams` from the backlog in estimated compressed DA bytes.
+`ThrottleStrategy::Off` never throttles, so `DaThrottle` publishes the upper limits.
+`ThrottleStrategy::Step` sets the intensity to `max_intensity` once the backlog reaches the start
+threshold. `ThrottleStrategy::Linear` grows intensity linearly from zero at the start threshold to
+`max_intensity` at the full threshold and beyond. `ThrottleStrategy::Quadratic` grows it between the
+same two thresholds with the square of the backlog above the start threshold, so it throttles less than
+`ThrottleStrategy::Linear` in between.
 `ThrottleParams` carries a fractional `intensity` value and the corresponding
 `max_block_size` and `max_tx_size` byte limits computed by
-interpolating between the upper and lower limits in `ThrottleConfig`. `DaThrottle` wraps a
-`ThrottleController` and a `ThrottleClient` with a last-applied dedup cache so that the
-`miner_setMaxDASize` RPC call is only issued when the computed limits actually change between ticks.
+interpolating between the upper and lower limits in `ThrottleConfig`.
 
-`ThrottleClient` is the async trait that connects the throttle controller to the block builder.
-Its single method, `set_max_da_size`, forwards the per-transaction and per-block byte limits to
-the execution client. The canonical implementation calls the `miner_setMaxDASize` RPC method;
-`NoopThrottleClient` silently discards all calls and is used when throttling is disabled, allowing
-the driver to invoke the same code path in both cases without special casing.
+`DaThrottle` turns the backlog into the `DaLimits` the block builders should apply and publishes
+them on a `tokio::sync::watch` channel whenever they change. The driver calls `publish_limits`
+with the DA backlog on every iteration and never waits on the block builders. Pushing the limits
+over `miner_setMaxDASize` is up to the subscribers, which `base-batcher-service` provides.
 
 This crate does not perform frame or blob encoding — those are handled by `base-batcher-encoder`
 and `base-blobs`. It does not implement L2 block sourcing or L1 head tracking — those come from

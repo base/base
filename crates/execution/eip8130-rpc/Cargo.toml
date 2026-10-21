@@ -19,10 +19,13 @@ base-common-consensus.workspace = true
 base-common-precompiles.workspace = true
 base-common-chains.workspace = true
 base-common-evm.workspace = true
+base-execution-chainspec.workspace = true
+base-execution-evm = { workspace = true, features = ["rpc"] }
 base-common-rpc-types = { workspace = true, features = ["reth"] }
 
 # reth
 reth-evm.workspace = true
+reth-errors.workspace = true
 reth-provider.workspace = true
 reth-chainspec.workspace = true
 reth-storage-api.workspace = true

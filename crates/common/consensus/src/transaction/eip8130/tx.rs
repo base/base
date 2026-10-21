@@ -223,7 +223,11 @@ impl TxEip8130 {
         length_of_length(payload_len) + payload_len
     }
 
-    fn decode_calls(buf: &mut &[u8]) -> alloy_rlp::Result<Vec<Vec<Call>>> {
+    /// Decodes the `calls` phase list, rejecting more than
+    /// [`Eip8130Constants::MAX_CALL_PHASES_PER_TX`] phases before allocating
+    /// the excess. Every decoder of an EIP-8130 `calls` field must use this so
+    /// all wire formats accept the same transactions.
+    pub fn decode_calls(buf: &mut &[u8]) -> alloy_rlp::Result<Vec<Vec<Call>>> {
         let header = Header::decode(buf)?;
         if !header.list {
             return Err(alloy_rlp::Error::UnexpectedString);
@@ -464,29 +468,6 @@ impl TxEip8130 {
                 .sum::<usize>()
             + self.metadata.len()
     }
-
-    /// The most wei `sender` must hold at any point while its calls run, in
-    /// call order across every phase.
-    ///
-    /// A call to another account moves `call.value` out of the sender, so those
-    /// values accumulate. A call to `sender` itself is only checked against the
-    /// current balance and moves nothing, so it needs its value on hand at that
-    /// point but does not add to later calls. Two 1 ETH self-calls therefore
-    /// need 1 ETH, not 2. ETH a callee sends back is not known statically and
-    /// is not credited. Saturates at [`U256::MAX`] rather than wrapping.
-    pub fn sender_call_value(&self, sender: Address) -> U256 {
-        let mut spent = U256::ZERO;
-        let mut peak = U256::ZERO;
-        for call in self.calls.iter().flatten() {
-            if call.to == sender {
-                peak = peak.max(spent.saturating_add(call.value));
-            } else {
-                spent = spent.saturating_add(call.value);
-                peak = peak.max(spent);
-            }
-        }
-        peak
-    }
 }
 
 impl Encodable for TxEip8130 {
@@ -717,6 +698,8 @@ mod tests {
     use alloy_primitives::{address, bytes};
     #[cfg(feature = "reth")]
     use reth_codecs::Compact;
+    #[cfg(feature = "reth")]
+    use rstest::rstest;
 
     use super::*;
     use crate::transaction::eip8130::account_changes::Delegation;
@@ -819,41 +802,21 @@ mod tests {
     }
 
     #[cfg(feature = "reth")]
-    #[test]
-    fn compact_roundtrip() {
-        let tx = sample_tx();
-        let mut buf = Vec::new();
-        let len = tx.to_compact(&mut buf);
-        let (decoded, remaining) = TxEip8130::from_compact(&buf, len);
-
-        assert_eq!(decoded, tx);
-        assert!(remaining.is_empty());
-    }
-
-    #[cfg(feature = "reth")]
-    #[test]
-    fn compact_roundtrip_eoa_sender_with_explicit_payer() {
-        let tx = TxEip8130 {
+    #[rstest]
+    #[case::self_pay(sample_tx(), &[])]
+    #[case::eoa_sender_with_explicit_payer(
+        TxEip8130 {
             sender: None,
             payer: Some(address!("0x00000000000000000000000000000000000000dd")),
             ..sample_tx()
-        };
-        let mut buf = Vec::new();
-        let len = tx.to_compact(&mut buf);
-        let (decoded, remaining) = TxEip8130::from_compact(&buf, len);
-
-        assert_eq!(decoded, tx);
-        assert!(remaining.is_empty());
-    }
-
-    #[cfg(feature = "reth")]
-    #[test]
-    fn compact_decode_preserves_trailing_bytes() {
-        let tx = sample_tx();
-        let trailing = [0xDE, 0xAD, 0xBE, 0xEF];
+        },
+        &[],
+    )]
+    #[case::trailing_bytes(sample_tx(), &[0xDE, 0xAD, 0xBE, 0xEF])]
+    fn compact_roundtrip(#[case] tx: TxEip8130, #[case] trailing: &[u8]) {
         let mut buf = Vec::new();
         let _ = tx.to_compact(&mut buf);
-        buf.extend_from_slice(&trailing);
+        buf.extend_from_slice(trailing);
 
         let (decoded, remaining) = TxEip8130::from_compact(&buf, buf.len());
 
@@ -928,13 +891,6 @@ mod tests {
         let payer_hash =
             tx.payer_signature_hash(address!("0x00000000000000000000000000000000000000dd"));
         assert_ne!(sender_hash, payer_hash);
-    }
-
-    #[test]
-    fn signing_hashes_use_prefix_bytes() {
-        let tx = sample_tx();
-        let h = tx.sender_signature_hash();
-        assert_ne!(h, B256::ZERO);
     }
 
     #[test]
@@ -1023,51 +979,6 @@ mod tests {
             zero_value_hash, nonzero_value_hash,
             "call value must be part of the signed preimage",
         );
-    }
-
-    #[test]
-    fn sender_call_value_sums_transfers_to_other_accounts() {
-        let sender = Address::repeat_byte(0x11);
-        let other = Address::repeat_byte(0x22);
-        let call = |to, value: u64| Call { to, value: U256::from(value), data: Bytes::new() };
-        let tx = TxEip8130 {
-            calls: vec![vec![call(other, 3), call(other, 4)], vec![call(other, 5)]],
-            ..Default::default()
-        };
-        assert_eq!(tx.sender_call_value(sender), U256::from(12u64));
-        assert_eq!(
-            TxEip8130 { calls: vec![], ..Default::default() }.sender_call_value(sender),
-            U256::ZERO
-        );
-    }
-
-    #[test]
-    fn sender_call_value_does_not_sum_self_calls() {
-        let sender = Address::repeat_byte(0x11);
-        let other = Address::repeat_byte(0x22);
-        let call = |to, value: u64| Call { to, value: U256::from(value), data: Bytes::new() };
-
-        // Two self-calls of 10 need 10 on hand, not 20.
-        let self_only = TxEip8130 {
-            calls: vec![vec![call(sender, 10), call(sender, 10)]],
-            ..Default::default()
-        };
-        assert_eq!(self_only.sender_call_value(sender), U256::from(10u64));
-
-        // A self-call after 4 has left needs 4 + 10 on hand at that point.
-        let after_spend = TxEip8130 {
-            calls: vec![vec![call(other, 4)], vec![call(sender, 10)]],
-            ..Default::default()
-        };
-        assert_eq!(after_spend.sender_call_value(sender), U256::from(14u64));
-
-        // A self-call before the spend only needs its own value then; the later
-        // transfers accumulate to 12, which is the peak.
-        let before_spend = TxEip8130 {
-            calls: vec![vec![call(sender, 10), call(other, 5), call(other, 7)]],
-            ..Default::default()
-        };
-        assert_eq!(before_spend.sender_call_value(sender), U256::from(12u64));
     }
 
     #[test]

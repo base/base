@@ -35,3 +35,6 @@ pub use coinbase_tip::CoinbaseTip;
 
 mod signed;
 pub use signed::{Eip8130Signed, Eip8130StaticError, Eip8130TimestampError};
+
+mod structure;
+pub use structure::{Eip8130StructuralError, Eip8130Structure};

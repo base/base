@@ -226,7 +226,8 @@ where
 mod tests {
     use alloc::vec;
 
-    use alloy_primitives::{B256, LogData, address, b256, hex};
+    use alloy_primitives::{B256, Bytes, LogData, address, b256, hex};
+    use rstest::rstest;
 
     use super::*;
     use crate::{SystemConfigUpdate, UpgradeConfig};
@@ -447,141 +448,76 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_system_config_update_batcher_log() {
-        let mut system_config = SystemConfig::default();
-
-        let update_log = Log {
-            address: Address::ZERO,
-            data: LogData::new_unchecked(
-                vec![
-                    SystemConfigUpdate::TOPIC,
-                    SystemConfigUpdate::EVENT_VERSION_0,
-                    BATCHER_UPDATE_TYPE,
-                ],
-                hex!("00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000beef").into()
-            )
-        };
-
-        // Update the batcher address.
-        system_config.process_config_update_log(&update_log, false).unwrap();
-
-        assert_eq!(
-            system_config.batcher_address,
-            address!("000000000000000000000000000000000000bEEF")
-        );
-    }
-
-    #[test]
-    fn test_system_config_update_gas_config_log() {
-        let mut system_config = SystemConfig::default();
-
-        let update_log = Log {
-            address: Address::ZERO,
-            data: LogData::new_unchecked(
-                vec![
-                    SystemConfigUpdate::TOPIC,
-                    SystemConfigUpdate::EVENT_VERSION_0,
-                    GAS_CONFIG_UPDATE_TYPE,
-                ],
-                hex!("00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000000000000000000000000000000000babe000000000000000000000000000000000000000000000000000000000000beef").into()
-            )
-        };
-
-        // Update the gas config.
-        system_config.process_config_update_log(&update_log, false).unwrap();
-
-        assert_eq!(system_config.overhead, U256::from(0xbabe));
-        assert_eq!(system_config.scalar, U256::from(0xbeef));
-    }
-
-    #[test]
-    fn test_system_config_update_gas_config_log_ecotone() {
-        let mut system_config = SystemConfig::default();
-
-        let update_log = Log {
-            address: Address::ZERO,
-            data: LogData::new_unchecked(
-                vec![
-                    SystemConfigUpdate::TOPIC,
-                    SystemConfigUpdate::EVENT_VERSION_0,
-                    GAS_CONFIG_UPDATE_TYPE,
-                ],
-                hex!("00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000000000000000000000000000000000babe000000000000000000000000000000000000000000000000000000000000beef").into()
-            )
-        };
-
-        // Update the gas config (ecotone).
-        system_config.process_config_update_log(&update_log, true).unwrap();
-
-        assert_eq!(system_config.overhead, U256::from(0));
-        assert_eq!(system_config.scalar, U256::from(0xbeef));
-    }
-
-    #[test]
-    fn test_system_config_update_gas_limit_log() {
-        let mut system_config = SystemConfig::default();
-
-        let update_log = Log {
-            address: Address::ZERO,
-            data: LogData::new_unchecked(
-                vec![
-                    SystemConfigUpdate::TOPIC,
-                    SystemConfigUpdate::EVENT_VERSION_0,
-                    GAS_LIMIT_UPDATE_TYPE,
-                ],
-                hex!("00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000beef").into()
-            )
-        };
-
-        // Update the gas limit.
-        system_config.process_config_update_log(&update_log, false).unwrap();
-
-        assert_eq!(system_config.gas_limit, 0xbeef_u64);
-    }
-
-    #[test]
-    fn test_system_config_update_eip1559_params_log() {
+    #[rstest]
+    #[case::batcher(
+        BATCHER_UPDATE_TYPE,
+        hex!("00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000beef").into(),
+        false,
+        SystemConfig {
+            batcher_address: address!("000000000000000000000000000000000000bEEF"),
+            ..Default::default()
+        },
+    )]
+    #[case::gas_config(
+        GAS_CONFIG_UPDATE_TYPE,
+        hex!("00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000000000000000000000000000000000babe000000000000000000000000000000000000000000000000000000000000beef").into(),
+        false,
+        SystemConfig {
+            overhead: U256::from(0xbabe),
+            scalar: U256::from(0xbeef),
+            ..Default::default()
+        },
+    )]
+    #[case::gas_config_ecotone(
+        GAS_CONFIG_UPDATE_TYPE,
+        hex!("00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000000000000000000000000000000000babe000000000000000000000000000000000000000000000000000000000000beef").into(),
+        true,
+        SystemConfig { scalar: U256::from(0xbeef), ..Default::default() },
+    )]
+    #[case::gas_limit(
+        GAS_LIMIT_UPDATE_TYPE,
+        hex!("00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000beef").into(),
+        false,
+        SystemConfig { gas_limit: 0xbeef, ..Default::default() },
+    )]
+    #[case::eip1559_params(
+        EIP1559_UPDATE_TYPE,
+        hex!("000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000babe0000beef").into(),
+        false,
+        SystemConfig {
+            eip1559_denominator: Some(0xbabe),
+            eip1559_elasticity: Some(0xbeef),
+            ..Default::default()
+        },
+    )]
+    #[case::operator_fee(
+        OPERATOR_FEE_UPDATE_TYPE,
+        hex!("0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000babe000000000000beef").into(),
+        false,
+        SystemConfig {
+            operator_fee_scalar: Some(0xbabe),
+            operator_fee_constant: Some(0xbeef),
+            ..Default::default()
+        },
+    )]
+    fn test_system_config_update_log(
+        #[case] update_type: B256,
+        #[case] data: Bytes,
+        #[case] ecotone_active: bool,
+        #[case] expected: SystemConfig,
+    ) {
         let mut system_config = SystemConfig::default();
         let update_log = Log {
             address: Address::ZERO,
             data: LogData::new_unchecked(
-                vec![
-                    SystemConfigUpdate::TOPIC,
-                    SystemConfigUpdate::EVENT_VERSION_0,
-                    EIP1559_UPDATE_TYPE,
-                ],
-                hex!("000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000babe0000beef").into()
-            )
+                vec![SystemConfigUpdate::TOPIC, SystemConfigUpdate::EVENT_VERSION_0, update_type],
+                data,
+            ),
         };
 
-        // Update the EIP-1559 parameters.
-        system_config.process_config_update_log(&update_log, false).unwrap();
+        system_config.process_config_update_log(&update_log, ecotone_active).unwrap();
 
-        assert_eq!(system_config.eip1559_denominator, Some(0xbabe_u32));
-        assert_eq!(system_config.eip1559_elasticity, Some(0xbeef_u32));
-    }
-
-    #[test]
-    fn test_system_config_update_operator_fee_log() {
-        let mut system_config = SystemConfig::default();
-        let update_log = Log {
-            address: Address::ZERO,
-            data: LogData::new_unchecked(
-                vec![
-                    SystemConfigUpdate::TOPIC,
-                    SystemConfigUpdate::EVENT_VERSION_0,
-                    OPERATOR_FEE_UPDATE_TYPE,
-                ],
-                hex!("0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000babe000000000000beef").into()
-            )
-        };
-
-        // Update the operator fee.
-        system_config.process_config_update_log(&update_log, false).unwrap();
-
-        assert_eq!(system_config.operator_fee_scalar, Some(0xbabe_u32));
-        assert_eq!(system_config.operator_fee_constant, Some(0xbeef_u64));
+        assert_eq!(system_config, expected);
     }
 
     #[test]

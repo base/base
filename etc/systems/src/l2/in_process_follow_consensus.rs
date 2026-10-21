@@ -9,10 +9,11 @@ use std::{
 
 use alloy_provider::RootProvider;
 use alloy_rpc_types_engine::JwtSecret;
-use base_builder_core::test_utils::get_available_port;
 use base_common_genesis::RollupConfig;
 use base_common_network::Base;
-use base_consensus_node::{EngineConfig, FollowNode, FollowNodeConfig, NodeMode, RemoteL2Client};
+use base_consensus_node::{
+    EngineConfig, FollowNode, FollowNodeConfig, NodeOperatingMode, RemoteL2Client,
+};
 use base_consensus_providers::L1RpcProvider;
 use base_consensus_rpc::RpcBuilder;
 use base_upgrade_signal::{
@@ -28,6 +29,7 @@ use tracing::{error, info};
 use url::Url;
 
 use super::in_process_consensus::wait_for_rpc;
+use crate::PortPool;
 
 /// Configuration for starting an in-process follow-mode consensus node.
 #[derive(Debug)]
@@ -102,7 +104,7 @@ impl InProcessFollowConsensus {
         }
 
         let rollup_config = Arc::new(rollup_config);
-        let rpc_port = config.rpc_port.unwrap_or_else(get_available_port);
+        let rpc_port = config.rpc_port.unwrap_or_else(PortPool::claim);
         let rpc_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), rpc_port);
 
         let engine_config = EngineConfig {
@@ -111,7 +113,7 @@ impl InProcessFollowConsensus {
             l2_jwt_secret: config.jwt_secret,
             l1_url: l1_rpc_url.clone(),
             l1_rpc_timeout: base_consensus_providers::L1_RPC_TIMEOUT,
-            mode: NodeMode::Validator,
+            mode: NodeOperatingMode::Validator,
         };
         let engine_client = Arc::new(
             engine_config
@@ -132,6 +134,7 @@ impl InProcessFollowConsensus {
             dev_enabled: false,
             http_timeout: Duration::from_secs(60),
             max_concurrent_requests: NonZeroUsize::new(1024).expect("nonzero"),
+            execution_forwarding_endpoint: None,
         };
 
         let node = FollowNode::new(FollowNodeConfig {

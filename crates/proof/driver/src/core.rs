@@ -4,12 +4,11 @@ use alloc::{sync::Arc, vec::Vec};
 use core::fmt::Debug;
 
 use alloy_consensus::BlockBody;
-use alloy_primitives::{B256, Bytes};
+use alloy_primitives::B256;
 use alloy_rlp::Decodable;
 use base_common_consensus::{BaseBlock, BaseTxEnvelope, OpTxType};
 use base_common_genesis::RollupConfig;
 use base_consensus_derive::{Pipeline, PipelineError, PipelineErrorKind, Signal, SignalReceiver};
-use base_proof_executor::BlockBuildingOutcome;
 use base_protocol::L2BlockInfo;
 use spin::RwLock;
 
@@ -31,8 +30,6 @@ where
     pub executor: E,
     /// The derivation pipeline that produces block attributes from L1 data.
     pub pipeline: DP,
-    /// Cached execution artifacts and transactions from the most recent safe head.
-    pub safe_head_artifacts: Option<(BlockBuildingOutcome, Vec<Bytes>)>,
 }
 
 impl<E, DP, P> Driver<E, DP, P>
@@ -43,18 +40,7 @@ where
 {
     /// Creates a new [`Driver`] instance.
     pub const fn new(cursor: Arc<RwLock<PipelineCursor>>, executor: E, pipeline: DP) -> Self {
-        Self {
-            _marker: core::marker::PhantomData,
-            cursor,
-            executor,
-            pipeline,
-            safe_head_artifacts: None,
-        }
-    }
-
-    /// Waits until the executor is ready for block processing.
-    pub async fn wait_for_executor(&mut self) {
-        self.executor.wait_until_ready().await;
+        Self { _marker: core::marker::PhantomData, cursor, executor, pipeline }
     }
 
     /// Advances the derivation pipeline to the target block number.
@@ -178,9 +164,6 @@ where
             // Advance the derivation pipeline cursor
             drop(pipeline_cursor);
             self.cursor.write().advance(origin, tip_cursor);
-
-            // Update the latest safe head artifacts.
-            self.safe_head_artifacts = Some((outcome, attributes.transactions.unwrap_or_default()));
         }
     }
 }

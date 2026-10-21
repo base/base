@@ -1,6 +1,6 @@
 [package]
 name = "base-execution-eip8130-rpc-node"
-description = "BaseNodeExtension wiring for the standalone EIP-8130 eth_getTransactionCount and eth_estimateGas overrides"
+description = "BaseNodeExtension wiring for the standalone EIP-8130 eth_getTransactionCount, eth_estimateGas and eth_call overrides"
 
 version.workspace = true
 edition.workspace = true
@@ -25,10 +25,14 @@ tracing = { workspace = true, features = ["std"] }
 # base
 base-protocol.workspace = true
 base-test-utils.workspace = true
+base-common-evm.workspace = true
 base-common-precompiles.workspace = true
 base-common-consensus.workspace = true
 base-execution-chainspec.workspace = true
 base-node-runner = { workspace = true, features = ["test-utils"] }
+
+# reth
+reth-rpc-eth-api.workspace = true
 
 # alloy
 alloy-eips.workspace = true
@@ -42,4 +46,4 @@ alloy-rpc-client.workspace = true
 # misc
 eyre.workspace = true
 serde_json.workspace = true
-tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time"] }

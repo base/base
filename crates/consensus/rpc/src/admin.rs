@@ -86,11 +86,6 @@ where
         Self { sequencer_admin_client, network_access, upgrade_signal_refresher: None }
     }
 
-    /// Constructs an admin RPC for an isolated sequencer without a network actor.
-    pub const fn new_isolated(sequencer_admin_client: Option<SequencerAdminAPIClient_>) -> Self {
-        Self::new(sequencer_admin_client, AdminNetworkAccess::Disabled)
-    }
-
     /// Sets the runtime upgrade signal refresher.
     pub fn with_upgrade_signal_refresher(
         self,
@@ -276,7 +271,8 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        AdminRpc, sequencer_admin_error, upgrade_signal_refresh_failed, upgrade_signal_unavailable,
+        AdminNetworkAccess, AdminRpc, sequencer_admin_error, upgrade_signal_refresh_failed,
+        upgrade_signal_unavailable,
     };
     use crate::{AdminApiServer, SequencerAdminAPIError, client::MockSequencerAdminAPIClient};
 
@@ -306,7 +302,8 @@ mod tests {
 
     #[tokio::test]
     async fn isolated_rejects_admin_post_unsafe_payload() {
-        let rpc = AdminRpc::new_isolated(Some(MockSequencerAdminAPIClient::new()));
+        let rpc =
+            AdminRpc::new(Some(MockSequencerAdminAPIClient::new()), AdminNetworkAccess::Disabled);
 
         let error = rpc.admin_post_unsafe_payload(payload()).await.unwrap_err();
 
@@ -315,7 +312,8 @@ mod tests {
 
     #[tokio::test]
     async fn isolated_rejects_admin_clear_pending_p2p_connections() {
-        let rpc = AdminRpc::new_isolated(Some(MockSequencerAdminAPIClient::new()));
+        let rpc =
+            AdminRpc::new(Some(MockSequencerAdminAPIClient::new()), AdminNetworkAccess::Disabled);
 
         let error = rpc.admin_clear_pending_p2p_connections().await.unwrap_err();
 
@@ -331,7 +329,7 @@ mod tests {
             .with(mockall::predicate::eq(unsafe_head))
             .times(1)
             .returning(|_| Ok(()));
-        let rpc = AdminRpc::new_isolated(Some(client));
+        let rpc = AdminRpc::new(Some(client), AdminNetworkAccess::Disabled);
 
         let result = rpc.admin_start_sequencer(unsafe_head).await;
 
@@ -343,7 +341,7 @@ mod tests {
         let unsafe_head = B256::repeat_byte(0x22);
         let mut client = MockSequencerAdminAPIClient::new();
         client.expect_stop_sequencer().times(1).returning(move || Ok(unsafe_head));
-        let rpc = AdminRpc::new_isolated(Some(client));
+        let rpc = AdminRpc::new(Some(client), AdminNetworkAccess::Disabled);
 
         let result = rpc.admin_stop_sequencer().await;
 
@@ -371,7 +369,7 @@ mod tests {
 
     #[tokio::test]
     async fn sequencer_methods_reject_nodes_without_sequencer() {
-        let rpc = AdminRpc::<MockSequencerAdminAPIClient>::new_isolated(None);
+        let rpc = AdminRpc::<MockSequencerAdminAPIClient>::new(None, AdminNetworkAccess::Disabled);
 
         let error = rpc.admin_sequencer_active().await.unwrap_err();
 

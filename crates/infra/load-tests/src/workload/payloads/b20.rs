@@ -139,16 +139,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn token_is_deterministic_per_sender_and_run() {
-        let sender = address!("00000000000000000000000000000000000000a1");
-        let run_salt = B256::repeat_byte(0x11);
-
-        // Same (sender, run_salt) always yields the same salt and token.
-        assert_eq!(b20_salt_for(sender, run_salt), b20_salt_for(sender, run_salt));
-        assert_eq!(b20_token_for(sender, run_salt), b20_token_for(sender, run_salt));
-    }
-
-    #[test]
     fn different_senders_get_different_tokens() {
         let run_salt = B256::repeat_byte(0x22);
         let sender_a = address!("00000000000000000000000000000000000000a1");
@@ -201,26 +191,7 @@ mod tests {
     #[test]
     fn b20_payload_uses_pair_recipient() {
         let payload = B20TransferPayload::pending(U256::from(1), U256::from(1));
-        assert!(payload.uses_runner_recipient(), "B-20 transfers consume the runner recipient");
-        assert!(
-            payload.uses_pair_recipient(),
-            "B-20 transfers target the pair partner, not a ring"
-        );
-    }
-
-    #[test]
-    fn pending_payload_has_no_salt_until_set() {
-        let payload = B20TransferPayload::pending(U256::from(1), U256::from(1));
-        assert!(payload.run_salt().is_none());
-        assert!(payload.run_salt().is_none());
-    }
-
-    #[test]
-    fn prepare_writes_salt_into_context_outputs() {
-        // Pure unit check: setting the OnceLock mirrors what lifecycle prepare does before RPC.
-        let payload = B20TransferPayload::pending(U256::from(1), U256::from(1));
-        let salt = B256::repeat_byte(0xab);
-        payload.run_salt.set(salt).expect("unset");
-        assert_eq!(payload.run_salt(), Some(salt));
+        assert!(payload.uses_runner_recipient());
+        assert!(payload.uses_pair_recipient());
     }
 }

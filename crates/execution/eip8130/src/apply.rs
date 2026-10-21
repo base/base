@@ -211,6 +211,26 @@ pub enum ApplyError {
     /// Mirrors `Keystore.SequenceSaturated`.
     #[error("account-change channel sequence is saturated")]
     SequenceSaturated,
+
+    /// A signed batch's sequence does not match the account's current sequence
+    /// for its channel. Mirrors `Keystore.BadSequence`.
+    #[error("config change sequence {got} does not match the expected {expected}")]
+    BadSequence {
+        /// The account's current sequence for the batch's channel.
+        expected: u64,
+        /// The sequence carried by the signed batch.
+        got: u64,
+    },
+
+    /// A Local-channel batch commits a local epoch other than the account's
+    /// current one. Mirrors `Keystore.StaleEpoch`.
+    #[error("config change local epoch {got} does not match the expected {expected}")]
+    StaleEpoch {
+        /// The account's current local epoch.
+        expected: u64,
+        /// The local epoch committed by the signed batch.
+        got: u64,
+    },
 }
 
 /// A created account's deferred code write: its counterfactual address and the
@@ -272,20 +292,6 @@ impl DelegationEffect {
         };
         sctx.set_code(self.account, code)?;
         Ok(())
-    }
-
-    /// The delegation-indicator code to install
-    /// (`DELEGATION_INDICATOR_PREFIX || target`), or `None` to clear the
-    /// account's delegation (a zero target).
-    #[must_use]
-    pub fn indicator(&self) -> Option<Bytes> {
-        if self.target.is_zero() {
-            return None;
-        }
-        let mut code = Vec::with_capacity(Eip8130Constants::DELEGATION_INDICATOR_SIZE);
-        code.extend_from_slice(&Eip8130Constants::DELEGATION_INDICATOR_PREFIX);
-        code.extend_from_slice(self.target.as_slice());
-        Some(Bytes::from(code))
     }
 }
 
@@ -473,19 +479,22 @@ impl AccountChangeApplier {
     ) -> Result<(), ApplyError> {
         match channel {
             AccountChangeChannel::Local => {
-                // Defense-in-depth: a Local sequence word is `epoch(hi 32) ||
-                // localSeq(lo 32)`, and the authorizer has already validated the
-                // epoch high-half against `state.local_epoch` before apply. Assert
-                // it here so a future direct caller of the `pub` apply entrypoints
-                // cannot advance the sequence against a stale epoch — the low-half
-                // advance below intentionally ignores the epoch bits.
-                debug_assert_eq!(
-                    (sequence >> 32) as u32,
-                    state.local_epoch as u32,
-                    "local sequence word epoch must match the account's local epoch",
-                );
+                // A Local sequence word is `epoch(hi 32) || localSeq(lo 32)`. The
+                // authorizer checks both before apply on the authorized path, but
+                // estimation applies changes without authorizing them, so they
+                // are enforced here in every build.
+                let epoch = u64::from((sequence >> 32) as u32);
+                if epoch != state.local_epoch {
+                    return Err(ApplyError::StaleEpoch { expected: state.local_epoch, got: epoch });
+                }
                 let seq = sequence as u32;
                 if seq != Eip8130Constants::UNSEQUENCED {
+                    if u64::from(seq) != state.local_sequence {
+                        return Err(ApplyError::BadSequence {
+                            expected: state.local_sequence,
+                            got: u64::from(seq),
+                        });
+                    }
                     state.local_sequence =
                         u64::from(seq).checked_add(1).ok_or(ApplyError::SequenceSaturated)?;
                 } else if !state.is_initialized() {
@@ -493,15 +502,13 @@ impl AccountChangeApplier {
                 }
             }
             AccountChangeChannel::Multichain => {
-                // Symmetric to the Local branch: the authorizer already validated
-                // `sequence` against the account's current multichain sequence
-                // before apply. Assert it here so a future direct caller of the
-                // `pub` apply entrypoints cannot advance against a mismatched
-                // sequence.
-                debug_assert_eq!(
-                    sequence, state.multichain_sequence,
-                    "multichain sequence must match the account's current multichain sequence",
-                );
+                // Enforced in every build, as for the Local channel.
+                if sequence != state.multichain_sequence {
+                    return Err(ApplyError::BadSequence {
+                        expected: state.multichain_sequence,
+                        got: sequence,
+                    });
+                }
                 state.multichain_sequence = state
                     .multichain_sequence
                     .checked_add(1)
@@ -1082,21 +1089,18 @@ mod tests {
     use revm::state::Bytecode;
 
     use super::*;
-    use crate::{AccountCreated, ActorAuthorized, ActorRevoked};
+    use crate::{
+        AccountCreated, ActorAuthorized, ActorRevoked,
+        test_utils::{K1, with_storage},
+    };
 
     const ACCOUNT: Address = address!("0x00000000000000000000000000000000000000a1");
-    const K1: Address = Eip8130Constants::K1_AUTHENTICATOR;
     const AUTHENTICATOR: Address = address!("0x00000000000000000000000000000000000000bb");
     const MANAGER: Address = address!("0x00000000000000000000000000000000000000cc");
     const COMMITMENT: B256 =
         b256!("0x1111111111111111111111111111111111111111111111111111111111111111");
     const NON_SELF: B256 =
         b256!("0x00000000000000000000000000000000000000dd000000000000000000000000");
-
-    fn with_storage<R>(body: impl FnOnce(&mut AccountConfigurationStorage<'_>) -> R) -> R {
-        let mut storage = HashMapStorageProvider::new(1);
-        StorageCtx::enter(&mut storage, |ctx| body(&mut AccountConfigurationStorage::new(ctx)))
-    }
 
     /// Runs `body` against a fresh provider and returns the Account Configuration logs.
     fn with_storage_events(
@@ -1533,7 +1537,7 @@ mod tests {
                 ACCOUNT,
                 &expired,
                 AccountChangeChannel::Local,
-                5,
+                0,
                 now,
             )
             .unwrap();
@@ -2307,19 +2311,6 @@ mod tests {
     }
 
     #[test]
-    fn delegation_effect_indicator_set_and_clear() {
-        let target = address!("0x00000000000000000000000000000000000000ee");
-        let set = DelegationEffect::new(ACCOUNT, target);
-        let code = set.indicator().unwrap();
-        assert_eq!(code.len(), Eip8130Constants::DELEGATION_INDICATOR_SIZE);
-        assert_eq!(&code[..3], &Eip8130Constants::DELEGATION_INDICATOR_PREFIX);
-        assert_eq!(&code[3..], target.as_slice());
-
-        let clear = DelegationEffect::new(ACCOUNT, Address::ZERO);
-        assert!(clear.indicator().is_none());
-    }
-
-    #[test]
     fn delegation_effect_replaceable_code_predicate() {
         assert!(DelegationEffect::can_replace_code(&[]));
         assert!(DelegationEffect::can_replace_code(&Eip8130Constants::DELEGATION_INDICATOR_PREFIX));
@@ -2349,42 +2340,29 @@ mod tests {
     }
 
     #[test]
-    fn delegation_effect_install_accepts_empty_code() {
-        let target = Address::repeat_byte(0x33);
-        let mut storage = HashMapStorageProvider::new(1);
-
-        StorageCtx::enter(&mut storage, |sctx| {
-            DelegationEffect::new(ACCOUNT, target).install(sctx)
-        })
-        .unwrap();
-
-        assert_eq!(
-            storage
-                .get_account_info(ACCOUNT)
-                .and_then(|info| info.code.as_ref())
-                .and_then(Bytecode::eip7702_address),
-            Some(target)
-        );
-    }
-
-    #[test]
-    fn delegation_effect_install_updates_existing_delegation() {
+    fn delegation_effect_install_sets_indicator_on_replaceable_code() {
+        // Empty-code accounts and accounts already carrying a delegation may be
+        // (re-)delegated: the only code-shape guard rejects ordinary bytecode.
         let target = Address::repeat_byte(0x44);
-        let mut storage = HashMapStorageProvider::new(1);
-        storage.set_code(ACCOUNT, Bytecode::new_eip7702(Address::repeat_byte(0x11))).unwrap();
+        for existing in [None, Some(Bytecode::new_eip7702(Address::repeat_byte(0x11)))] {
+            let mut storage = HashMapStorageProvider::new(1);
+            if let Some(code) = existing {
+                storage.set_code(ACCOUNT, code).unwrap();
+            }
 
-        StorageCtx::enter(&mut storage, |sctx| {
-            DelegationEffect::new(ACCOUNT, target).install(sctx)
-        })
-        .unwrap();
+            StorageCtx::enter(&mut storage, |sctx| {
+                DelegationEffect::new(ACCOUNT, target).install(sctx)
+            })
+            .unwrap();
 
-        assert_eq!(
-            storage
-                .get_account_info(ACCOUNT)
-                .and_then(|info| info.code.as_ref())
-                .and_then(Bytecode::eip7702_address),
-            Some(target)
-        );
+            assert_eq!(
+                storage
+                    .get_account_info(ACCOUNT)
+                    .and_then(|info| info.code.as_ref())
+                    .and_then(Bytecode::eip7702_address),
+                Some(target)
+            );
+        }
     }
 
     #[test]
@@ -2421,49 +2399,6 @@ mod tests {
             let state = acc.get_account_state(created.address).unwrap();
             assert!(state.default_eoa_revoked(), "create must revoke the default EOA");
         });
-    }
-
-    #[test]
-    fn delegation_effect_install_allows_empty_code_account() {
-        // An empty-code account may be delegated: the only code-shape guard is
-        // that ordinary contract bytecode is rejected.
-        let target = Address::repeat_byte(0x56);
-        let mut storage = HashMapStorageProvider::new(1);
-
-        StorageCtx::enter(&mut storage, |sctx| {
-            DelegationEffect::new(ACCOUNT, target).install(sctx)
-        })
-        .unwrap();
-
-        assert_eq!(
-            storage
-                .get_account_info(ACCOUNT)
-                .and_then(|info| info.code.as_ref())
-                .and_then(Bytecode::eip7702_address),
-            Some(target)
-        );
-    }
-
-    #[test]
-    fn delegation_effect_install_allows_redelegation_of_existing_delegate() {
-        // An account that already carries a delegation indicator may be
-        // re-delegated: existing delegation code is replaceable.
-        let target = Address::repeat_byte(0x57);
-        let mut storage = HashMapStorageProvider::new(1);
-        storage.set_code(ACCOUNT, Bytecode::new_eip7702(Address::repeat_byte(0x11))).unwrap();
-
-        StorageCtx::enter(&mut storage, |sctx| {
-            DelegationEffect::new(ACCOUNT, target).install(sctx)
-        })
-        .unwrap();
-
-        assert_eq!(
-            storage
-                .get_account_info(ACCOUNT)
-                .and_then(|info| info.code.as_ref())
-                .and_then(Bytecode::eip7702_address),
-            Some(target)
-        );
     }
 
     #[test]
@@ -2557,5 +2492,33 @@ mod tests {
         let code = storage.get_account_info(ACCOUNT).and_then(|info| info.code.as_ref());
         assert_eq!(code.and_then(Bytecode::eip7702_address), Some(target));
         assert!(storage.get_events(AccountConfigurationStorage::ADDRESS).is_empty());
+    }
+
+    /// Apply enforces the channel sequence and local epoch itself, in every
+    /// build: estimation applies changes without authorizing them first.
+    #[test]
+    fn apply_rejects_mismatched_sequence_and_epoch() {
+        let config = expiring(2_000);
+        let ops = [authorize_op(NON_SELF, &config, &[])];
+        let apply = |channel, sequence| {
+            with_storage(|acc| {
+                AccountChangeApplier::apply_config_change(
+                    acc, ACCOUNT, &ops, channel, sequence, 1_000,
+                )
+            })
+        };
+        assert_eq!(
+            apply(AccountChangeChannel::Multichain, 3).unwrap_err(),
+            ApplyError::BadSequence { expected: 0, got: 3 }
+        );
+        assert_eq!(
+            apply(AccountChangeChannel::Local, 3).unwrap_err(),
+            ApplyError::BadSequence { expected: 0, got: 3 }
+        );
+        assert_eq!(
+            apply(AccountChangeChannel::Local, 1 << 32).unwrap_err(),
+            ApplyError::StaleEpoch { expected: 0, got: 1 }
+        );
+        apply(AccountChangeChannel::Multichain, 0).unwrap();
     }
 }

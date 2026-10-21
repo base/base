@@ -161,15 +161,16 @@ pub struct SnapshotBenchmarkArgs {
     /// Writable builder snapshot datadir.
     #[arg(long, env = "BASE_SNAPSHOT_BUILDER_DATADIR")]
     pub builder_datadir: PathBuf,
-    /// Writable client snapshot datadir for the same chain.
+    /// Writable client snapshot datadir for the same chain. Without it, only the builder runs and
+    /// no follow-client validation or validator metrics are produced.
     #[arg(long, env = "BASE_SNAPSHOT_CLIENT_DATADIR")]
-    pub client_datadir: PathBuf,
+    pub client_datadir: Option<PathBuf>,
     /// Load-test YAML. RPC and Flashblocks URLs are replaced with launched endpoints.
     #[arg(long)]
     pub load_test_config: PathBuf,
     /// Required benchmark artifact directory.
     ///
-    /// Writes `<output-dir>/{benchmark-result.json,metadata.json,metrics-sequencer.json,metrics-validator.json,load-test-result.json}`.
+    /// Writes `<output-dir>/{benchmark-result.json,metadata.json,metrics-sequencer.json,load-test-result.json}`, plus `metrics-validator.json` with `--client-datadir`.
     #[arg(long)]
     pub output_dir: PathBuf,
     /// User-visible scenario identifier for the report series.
@@ -428,7 +429,7 @@ impl LocalBenchmarkArgs {
                     // It fills the visualizer's headline field while the detailed load-test page
                     // renders the native MetricsSummary sidecar.
                     sequencer_metrics: VisualizerSequencerMetrics { gas_per_second },
-                    validator_metrics: VisualizerValidatorMetrics { gas_per_second },
+                    validator_metrics: Some(VisualizerValidatorMetrics { gas_per_second }),
                     artifacts: if complete {
                         BTreeMap::from([(
                             "loadTestResult".to_string(),
@@ -725,6 +726,10 @@ impl AggregateBenchmarkArgs {
                 metadata.runs.len(),
             );
             let run = metadata.runs.into_iter().next().expect("validated metadata run count");
+            if run.result.validator_metrics.is_some() {
+                let path = run_output_dir.join("metrics-validator.json");
+                eyre::ensure!(path.is_file(), "run artifact is missing: {}", path.display());
+            }
             let output_name =
                 run_output_dir.file_name().and_then(|name| name.to_str()).ok_or_else(|| {
                     eyre::eyre!(
@@ -897,7 +902,6 @@ impl AggregateBenchmarkArgs {
             "benchmark-result.json",
             "load-test-result.json",
             "metrics-sequencer.json",
-            "metrics-validator.json",
         ] {
             let path = run_output_dir.join(file);
             eyre::ensure!(path.is_file(), "run artifact is missing: {}", path.display());
@@ -1011,7 +1015,8 @@ impl SnapshotBenchmarkArgs {
                 );
                 eyre::ensure!(
                     result.blocks.len() as u64 == expected_blocks
-                        && result.validator_blocks.len() as u64 == expected_blocks,
+                        && (self.client_datadir.is_none()
+                            || result.validator_blocks.len() as u64 == expected_blocks),
                     "benchmark block metrics do not contain exactly {expected_blocks} blocks"
                 );
             }
@@ -1111,23 +1116,33 @@ impl SnapshotBenchmarkArgs {
             .ok_or_else(|| eyre::eyre!("load test did not report a measurement end block"))?;
         let sequencer_metrics = sequencer_metrics.finish(measurement_end).await?;
         stack.stop_sequencer().await?;
-        let client_rpc = stack.client_rpc_url()?;
-        let validator_metrics =
-            PrometheusBlockCollector::start(client_rpc.clone(), stack.client_metrics_url()?)
-                .await?;
-        stack.start_validator().await?;
-        let validator_metrics = validator_metrics.finish(measurement_end).await?;
+        let validator = if self.client_datadir.is_some() {
+            let client_rpc = stack.client_rpc_url()?;
+            let validator_metrics =
+                PrometheusBlockCollector::start(client_rpc.clone(), stack.client_metrics_url()?)
+                    .await?;
+            stack.start_validator().await?;
+            Some((client_rpc, validator_metrics.finish(measurement_end).await?))
+        } else {
+            None
+        };
         let (blocks, validator_blocks) = tokio::try_join!(
             Self::collect_block_metrics(&builder_rpc, &summary, &sequencer_metrics),
-            Self::collect_block_metrics(&client_rpc, &summary, &validator_metrics),
+            async {
+                match &validator {
+                    Some((client_rpc, metrics)) => {
+                        Self::collect_block_metrics(client_rpc, &summary, metrics).await
+                    }
+                    None => Ok(Vec::new()),
+                }
+            },
         )?;
         eyre::ensure!(
-            blocks.len() == validator_blocks.len()
-                && blocks
-                    .iter()
-                    .zip(&validator_blocks)
-                    .all(|(builder, validator)| builder.number == validator.number
-                        && builder.hash == validator.hash),
+            validator.is_none()
+                || (blocks.len() == validator_blocks.len()
+                    && blocks.iter().zip(&validator_blocks).all(|(builder, validator)| {
+                        builder.number == validator.number && builder.hash == validator.hash
+                    })),
             "follow client does not match the builder over the measured block window"
         );
 
@@ -1137,7 +1152,7 @@ impl SnapshotBenchmarkArgs {
             boundary_number: stack.boundary().head.number,
             boundary_hash: stack.boundary().head.hash,
             builder_rpc_url: builder_rpc.to_string(),
-            client_rpc_url: client_rpc.to_string(),
+            client_rpc_url: validator.map(|(client_rpc, _)| client_rpc.to_string()),
             funder_address,
             load_test: summary,
             blocks,
@@ -1329,6 +1344,27 @@ mod tests {
         assert_eq!(args.run_id.as_deref(), Some("manual-run-id"));
         assert_eq!(args.block_gas_limit.map(NonZeroU64::get), Some(12_000_000_000));
         assert_eq!(args.shutdown_timeout_seconds, 30);
+    }
+
+    #[test]
+    fn parses_builder_only_snapshot_benchmark() {
+        let cli = BenchmarkCli::parse_from([
+            "base-bench",
+            "snapshot",
+            "--builder-datadir",
+            "/snapshot/builder",
+            "--load-test-config",
+            "load.yaml",
+            "--output-dir",
+            "results/case-a",
+            "--scenario",
+            "example-scenario",
+        ]);
+
+        let Some(BenchmarkCommand::Snapshot(args)) = cli.command else {
+            panic!("expected snapshot benchmark command");
+        };
+        assert!(args.client_datadir.is_none());
     }
 
     #[test]
@@ -1705,6 +1741,36 @@ real_token_setup:
             "swap-100mgas-200ms @ 2026-09-02T23:00:00.000Z"
         );
         assert!(root.path().join("transfer-early").is_dir());
+    }
+
+    #[test]
+    fn aggregate_requires_validator_metrics_only_for_validator_runs() {
+        let root = tempfile::tempdir().unwrap();
+        let run = write_aggregate_run(
+            root.path(),
+            "builder-only",
+            "transfer-100mgas-200ms",
+            "base/a",
+            "2026-09-03T00:00:00.000Z",
+        );
+        fs::remove_file(run.join("metrics-validator.json")).unwrap();
+        let aggregate = || {
+            AggregateBenchmarkArgs {
+                output_dir: root.path().to_path_buf(),
+                run_output_dirs: vec![run.clone()],
+                versioned_pages: false,
+            }
+            .run()
+        };
+        let error = aggregate().unwrap_err();
+        assert!(error.to_string().contains("run artifact is missing"));
+
+        let mut metadata: serde_json::Value =
+            serde_json::from_slice(&fs::read(run.join("metadata.json")).unwrap()).unwrap();
+        metadata["runs"][0]["result"].as_object_mut().unwrap().remove("validatorMetrics");
+        fs::write(run.join("metadata.json"), serde_json::to_vec(&metadata).unwrap()).unwrap();
+
+        aggregate().unwrap();
     }
 
     #[test]

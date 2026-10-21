@@ -12,7 +12,7 @@ use crate::{
         COLOR_ACTIVE_BORDER, COLOR_ROW_HIGHLIGHTED, COLOR_ROW_SELECTED, Format, build_gas_bar,
         render_gas_usage_bar,
     },
-    tui::{Keybinding, Toast},
+    tui::{Browser, Keybinding, Toast},
 };
 
 const GAS_BAR_CHARS: usize = 40;
@@ -62,18 +62,7 @@ impl FlashblocksView {
             && let Some(entry) = resources.flash.entries.get(idx)
         {
             let url = format!("{base_url}/block/{}", entry.block_number);
-            let cmd = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
-            match std::process::Command::new(cmd).arg(&url).spawn() {
-                Ok(mut child) => {
-                    std::thread::spawn(move || {
-                        let _ = child.wait();
-                    });
-                    resources.toasts.push(Toast::info(format!("Opening {url}")));
-                }
-                Err(e) => {
-                    resources.toasts.push(Toast::warning(format!("Failed to open browser: {e}")));
-                }
-            }
+            resources.toasts.push(Browser::open(&url));
         }
     }
 }

@@ -34,9 +34,6 @@ sol! {
         /// The expiring-nonce ring buffer is full of unexpired entries and cannot accept more.
         error ExpiringNonceSetFull();
 
-        /// Emitted when the 2D nonce for `(account, nonceKey)` is incremented to `newNonce`.
-        event NonceIncremented(address indexed account, uint256 indexed nonceKey, uint64 newNonce);
-
         /// Returns the current 2D nonce for `account` at `nonceKey`.
         ///
         /// Reverts with `ProtocolNonceNotSupported` for nonce key `0`.

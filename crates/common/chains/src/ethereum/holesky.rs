@@ -32,7 +32,8 @@ impl Holesky {
             london_block: Some(0),
             arrow_glacier_block: Some(0),
             gray_glacier_block: Some(0),
-            shanghai_time: Some(0),
+            shanghai_time: alloy_hardforks::EthereumHardfork::Shanghai
+                .holesky_activation_timestamp(),
             cancun_time: alloy_hardforks::EthereumHardfork::Cancun.holesky_activation_timestamp(),
             prague_time: alloy_hardforks::EthereumHardfork::Prague.holesky_activation_timestamp(),
             osaka_time: alloy_hardforks::EthereumHardfork::Osaka.holesky_activation_timestamp(),
@@ -66,6 +67,11 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn test_shanghai_time_matches_network_activation() {
+        assert_eq!(Holesky::l1_config().shanghai_time, Some(1_696_000_704));
+    }
 
     #[test]
     fn test_bpo_timestamps() {

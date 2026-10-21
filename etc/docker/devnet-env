@@ -120,7 +120,7 @@ BATCHER_METRICS_PORT=6060
 SHADOW_BATCHER_METRICS_PORT=6061
 
 # Shadow batcher / validator configuration.
-# The Rust base-batcher runs alongside the canonical op-batcher in --shadow-mode,
+# The Rust base-batcher runs alongside the canonical op-batcher in shadow mode,
 # posting to SHADOW_BATCH_INBOX_ADDRESS from a distinct L1 sender
 # (SHADOW_BATCHER_ADDR, an otherwise-unused funded dev account) so it never
 # collides with the op-batcher's L1 nonces. base-shadow-validator derives L2 from
@@ -240,5 +240,3 @@ L2_BASE_DENIM_BLOCK=25
 # used for future hardfork feature testing. `just devnet up zenith` defaults this to 100.
 # Leave unset to avoid setting base.zenith during genesis generation.
 # L2_BASE_ZENITH_BLOCK=100
-
-BUILDER_MAX_REJECTED_TXS_PER_BLOCK=20000

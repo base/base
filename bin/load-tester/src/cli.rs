@@ -9,7 +9,7 @@ use alloy_rpc_types::{BlockNumberOrTag, TransactionRequest};
 use alloy_signer_local::PrivateKeySigner;
 use base_cli_utils::RuntimeManager;
 use base_load_tests::{
-    AccountPool, BaselineError, DEFAULT_MAX_GAS_PRICE, FundedAccount, LoadRunner, LoadTestDisplay,
+    AccountPool, DEFAULT_MAX_GAS_PRICE, FundedAccount, LoadRunner, LoadTestDisplay,
     LoadTestDisplayConfig, LoadTestRunHooks, LoadTestRunOptions, MetricsSummary, QueryProvider,
     ReceiptCoverage, Result as LoadResult, RpcProviders, RpcResultExt, TestConfig,
     create_wallet_provider,
@@ -97,25 +97,6 @@ struct LoadArgs {
     config: PathBuf,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum LoadMode {
-    Run,
-    DrainOnly,
-    RecoverRealTokens,
-}
-
-impl LoadMode {
-    const fn from_args(args: &LoadArgs) -> Self {
-        if args.drain_only {
-            Self::DrainOnly
-        } else if args.recover_real_tokens {
-            Self::RecoverRealTokens
-        } else {
-            Self::Run
-        }
-    }
-}
-
 /// Load tester subcommands.
 #[derive(Subcommand, Clone, Debug)]
 enum Command {
@@ -125,7 +106,6 @@ enum Command {
 
 async fn run_load_test(args: LoadArgs) -> Result<()> {
     let multi_progress = LoadTestDisplay::init_tracing()?;
-    let mode = LoadMode::from_args(&args);
     let config_path = args.config;
 
     if !config_path.exists() {
@@ -153,62 +133,56 @@ async fn run_load_test(args: LoadArgs) -> Result<()> {
 
     let funding_key = TestConfig::funder_key()?;
 
-    match mode {
-        LoadMode::DrainOnly => {
-            println!("=== Drain-Only Mode ===");
-            println!(
-                "Re-deriving {} accounts from config and draining to funder...",
-                load_config.account_count
-            );
-            if skip_drain {
-                println!("Skipping drain due to --skip-drain.");
-                return Ok(());
+    if args.drain_only {
+        println!("=== Drain-Only Mode ===");
+        println!(
+            "Re-deriving {} accounts from config and draining to funder...",
+            load_config.account_count
+        );
+        if skip_drain {
+            println!("Skipping drain due to --skip-drain.");
+            return Ok(());
+        }
+        let runner = LoadRunner::new(load_config)?;
+        match runner.drain_accounts(funding_key).await {
+            Ok(drained) => println!("Drained {} ETH back to funder.", format_ether(drained)),
+            Err(e) => bail!("drain failed: {e}"),
+        }
+        return Ok(());
+    }
+    if args.recover_real_tokens {
+        let real_token_setup = test_config.parse_real_token_setup(load_config.chain_id)?;
+        let Some(real_token_setup) = real_token_setup.as_ref() else {
+            bail!("--recover-real-tokens requires real_token_setup in {}", config_path.display());
+        };
+
+        println!("=== Real-Token Recovery Mode ===");
+        println!(
+            "Re-deriving {} accounts from config and recovering real-token balances to funder...",
+            load_config.account_count
+        );
+        let runner = LoadRunner::new(load_config)?;
+        match runner.recover_real_tokens(real_token_setup).await {
+            Ok(summary) => {
+                println!(
+                    "Recovered {} pair-token raw units and unwrapped {} WETH.",
+                    summary.pair_token_swapped,
+                    format_ether(summary.weth_unwrapped)
+                );
             }
-            let runner = LoadRunner::new(load_config)?;
+            Err(e) => bail!("real-token recovery failed: {e}"),
+        }
+        if skip_drain {
+            println!("Skipping drain due to --skip-drain.");
+        } else {
             match runner.drain_accounts(funding_key).await {
-                Ok(drained) => println!("Drained {} ETH back to funder.", format_ether(drained)),
+                Ok(drained) => {
+                    println!("Drained {} ETH back to funder.", format_ether(drained))
+                }
                 Err(e) => bail!("drain failed: {e}"),
             }
-            return Ok(());
         }
-        LoadMode::RecoverRealTokens => {
-            let real_token_setup = test_config.parse_real_token_setup(load_config.chain_id)?;
-            let Some(real_token_setup) = real_token_setup.as_ref() else {
-                bail!(
-                    "--recover-real-tokens requires real_token_setup in {}",
-                    config_path.display()
-                );
-            };
-
-            println!("=== Real-Token Recovery Mode ===");
-            println!(
-                "Re-deriving {} accounts from config and recovering real-token balances to funder...",
-                load_config.account_count
-            );
-            let runner = LoadRunner::new(load_config)?;
-            match runner.recover_real_tokens(real_token_setup).await {
-                Ok(summary) => {
-                    println!(
-                        "Recovered {} pair-token raw units and unwrapped {} WETH.",
-                        summary.pair_token_swapped,
-                        format_ether(summary.weth_unwrapped)
-                    );
-                }
-                Err(e) => bail!("real-token recovery failed: {e}"),
-            }
-            if skip_drain {
-                println!("Skipping drain due to --skip-drain.");
-            } else {
-                match runner.drain_accounts(funding_key).await {
-                    Ok(drained) => {
-                        println!("Drained {} ETH back to funder.", format_ether(drained))
-                    }
-                    Err(e) => bail!("drain failed: {e}"),
-                }
-            }
-            return Ok(());
-        }
-        LoadMode::Run => {}
+        return Ok(());
     }
 
     println!("=== Base Load Test Runner ===");
@@ -226,11 +200,9 @@ async fn run_load_test(args: LoadArgs) -> Result<()> {
         query_rpc,
         load_config.chain_id
     );
-    let duration_display = if args.continuous {
-        "continuous".to_string()
-    } else {
-        load_config.duration.map_or_else(|| "continuous".to_string(), |d| format!("{d:?}"))
-    };
+    let display_duration = if args.continuous { None } else { load_config.duration };
+    let duration_display =
+        display_duration.map_or_else(|| "continuous".to_string(), |d| format!("{d:?}"));
     let target_gps_display = load_config
         .target_gps
         .map_or_else(|| "unbounded".to_string(), |gps| format!("{gps} gas/s"));
@@ -240,7 +212,6 @@ async fn run_load_test(args: LoadArgs) -> Result<()> {
     );
     println!();
 
-    let display_duration = if args.continuous { None } else { load_config.duration };
     let output = base_load_tests::LoadTestExecutor::run_prepared(
         test_config,
         load_config,
@@ -511,14 +482,12 @@ async fn rescue_batch(
         .iter()
         .map(|a| {
             let client = client.clone();
-            let address = a.address;
             async move {
-                let balance = client
-                    .get_balance(address)
+                client
+                    .get_balance(a.address)
                     .block_id(BlockNumberOrTag::Pending.into())
                     .await
-                    .rpc("get pending balance")?;
-                Ok::<_, BaselineError>((address, balance))
+                    .rpc("get pending balance")
             }
         })
         .collect();
@@ -529,7 +498,7 @@ async fn rescue_batch(
     let mut to_drain: Vec<(&FundedAccount, U256)> = Vec::new();
     for (result, account) in balance_results.into_iter().zip(accounts.accounts().iter()) {
         pb.inc(1);
-        let (_, balance) = result?;
+        let balance = result?;
         if balance > params.drain_gas_cost {
             to_drain.push((account, balance));
         }
@@ -552,19 +521,12 @@ async fn rescue_batch(
     let drain_futs: Vec<_> = to_drain
         .iter()
         .map(|&(account, balance)| {
-            let rpc_url = params.rpc_url.clone();
-            let funder_address = params.funder_address;
-            let chain_id = params.chain_id;
-            let max_fee = params.max_fee;
-            let max_priority_fee = params.max_priority_fee;
-            let drain_gas_cost = params.drain_gas_cost;
-            let drain_gas_limit = params.drain_gas_limit;
             let signer = account.signer.clone();
             let address = account.address;
             async move {
-                let send_amount = balance.saturating_sub(drain_gas_cost);
+                let send_amount = balance.saturating_sub(params.drain_gas_cost);
                 let wallet = EthereumWallet::from(signer);
-                let provider = create_wallet_provider(rpc_url, wallet);
+                let provider = create_wallet_provider(params.rpc_url.clone(), wallet);
                 let nonce = provider
                     .get_transaction_count(address)
                     .pending()
@@ -572,13 +534,13 @@ async fn rescue_batch(
                     .rpc("get pending transaction count")?;
 
                 let tx = TransactionRequest::default()
-                    .with_to(funder_address)
+                    .with_to(params.funder_address)
                     .with_value(send_amount)
                     .with_nonce(nonce)
-                    .with_chain_id(chain_id)
-                    .with_gas_limit(drain_gas_limit as u64)
-                    .with_max_fee_per_gas(max_fee)
-                    .with_max_priority_fee_per_gas(max_priority_fee);
+                    .with_chain_id(params.chain_id)
+                    .with_gas_limit(params.drain_gas_limit as u64)
+                    .with_max_fee_per_gas(params.max_fee)
+                    .with_max_priority_fee_per_gas(params.max_priority_fee);
 
                 match provider.send_transaction(tx).await {
                     Ok(pending) => {

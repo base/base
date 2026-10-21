@@ -69,7 +69,7 @@ impl EverestTestEnv {
         blocks: [(BaseBlock, u64); N],
         expected_safe_head: u64,
     ) {
-        let mut batcher = Batcher::new(
+        let batcher = Batcher::new(
             ActionL2Source::new(),
             &self.harness.rollup_config,
             self.batcher_cfg.clone(),

@@ -42,16 +42,6 @@ impl BootNodes {
     pub fn testnet() -> Self {
         Self::try_from(ChainConfig::sepolia()).expect("hardcoded bootnode should parse")
     }
-
-    /// Returns the length of the bootnodes.
-    pub const fn len(&self) -> usize {
-        self.0.len()
-    }
-
-    /// Returns if the bootnodes are empty.
-    pub const fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
 }
 
 #[cfg(test)]
@@ -66,8 +56,8 @@ mod tests {
         assert_eq!(ChainConfig::mainnet().bootnodes.consensus.len(), 5);
         assert_eq!(ChainConfig::sepolia().bootnodes.execution.len(), 4);
         assert_eq!(ChainConfig::sepolia().bootnodes.consensus.len(), 2);
-        assert_eq!(ChainConfig::zeronet().bootnodes.execution.len(), 4);
-        assert_eq!(ChainConfig::zeronet().bootnodes.consensus.len(), 2);
+        assert_eq!(ChainConfig::zeronet().bootnodes.execution.len(), 2);
+        assert_eq!(ChainConfig::zeronet().bootnodes.consensus.len(), 1);
     }
 
     #[test]
@@ -89,7 +79,7 @@ mod tests {
         assert_eq!(testnet.len(), 2);
 
         let zeronet = BootNodes::from_chain_id(ChainConfig::zeronet().chain_id);
-        assert_eq!(zeronet.len(), 2);
+        assert_eq!(zeronet.len(), 1);
 
         let unknown = BootNodes::from_chain_id(0);
         assert!(unknown.is_empty());

@@ -1,7 +1,6 @@
 //! The [`SequencerActor`].
 
 use std::{
-    num::NonZeroU64,
     sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -21,7 +20,7 @@ use tokio::{
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
 
 use crate::{
-    CancellableContext, Metrics, NodeActor, ResetReason, SequencerAdminQuery,
+    CancellableContext, Metrics, NodeActor, NodeOperatingMode, ResetReason, SequencerAdminQuery,
     UnsafePayloadGossipClient,
     actors::{
         SequencerEngineClient,
@@ -71,8 +70,8 @@ pub struct SequencerActor<
     pub engine_client: Arc<SequencerEngineClient_>,
     /// Whether the sequencer is active.
     pub is_active: bool,
-    /// Number of private blocks to build per shadow sequencing cycle.
-    pub shadow_blocks_per_cycle: Option<NonZeroU64>,
+    /// The node's operating mode.
+    pub mode: NodeOperatingMode,
     /// Optional account funding injected into the first private block of every shadow cycle.
     pub shadow_funding: Option<ShadowFunding>,
     /// Shared recovery mode flag.
@@ -84,6 +83,11 @@ pub struct SequencerActor<
     ///
     /// [`SequencerConfig::seal_offset`]: crate::SequencerConfig::seal_offset
     pub seal_offset: Duration,
+    /// Delay added to scheduled block timestamps only in isolated sequencer mode.
+    ///
+    /// Other modes ignore this value and follow absolute chain time. An isolated sequencer
+    /// extending historical state sets the head's age to pace blocks without changing timestamps.
+    pub schedule_delay: Duration,
     /// A client to asynchronously sign and gossip built payloads to the network actor.
     pub unsafe_payload_gossip_client: UnsafePayloadGossipClient_,
     /// In-flight seal pipeline. [`Some`] while a sealed payload is being committed,
@@ -117,7 +121,7 @@ where
 {
     /// Returns whether this actor is running as a shadow sequencer.
     pub const fn is_shadow_sequencer(&self) -> bool {
-        self.shadow_blocks_per_cycle.is_some()
+        self.mode.is_shadow_sequencer()
     }
 
     /// Fetches the sealed payload envelope from the engine for the given unsealed handle.
@@ -136,13 +140,17 @@ where
         Metrics::sequencer_total_transactions_sequenced()
             .increment(handle.attributes_with_parent.count_transactions());
 
-        if self.is_shadow_sequencer() {
-            Ok(PayloadSealer::new_private(envelope, "shadow"))
-        } else if self.unsafe_payload_gossip_client.seals_privately() {
-            Ok(PayloadSealer::new_private(envelope, "isolated"))
-        } else {
-            Ok(PayloadSealer::new(envelope))
-        }
+        Ok(match self.mode {
+            NodeOperatingMode::ShadowSequencer { .. } => {
+                PayloadSealer::new_private(envelope, "shadow")
+            }
+            NodeOperatingMode::IsolatedSequencer => {
+                PayloadSealer::new_private(envelope, "isolated")
+            }
+            NodeOperatingMode::Validator | NodeOperatingMode::Sequencer => {
+                PayloadSealer::new(envelope)
+            }
+        })
     }
 
     /// Attempts to seal a pre-built payload, first checking whether it is still fresh.
@@ -332,7 +340,7 @@ where
             .cycle
             .record_insertion(
                 inserted_head,
-                self.shadow_blocks_per_cycle.expect("shadow mode checked").get(),
+                self.mode.shadow_blocks_per_cycle().expect("shadow mode checked").get(),
             )
             .inspect_err(|_| self.cancellation_token.cancel())
     }
@@ -352,8 +360,7 @@ where
         block_number: u64,
         last_seal_duration: Duration,
     ) -> SystemTime {
-        let target = UNIX_EPOCH
-            + Duration::from_millis(self.rollup_config.l2_block_timestamp_millis(block_number));
+        let target = self.block_deadline(block_number);
         if self.rollup_config.is_denim_active(self.rollup_config.l2_block_timestamp(block_number)) {
             let interval =
                 Duration::from_millis(RollupConfig::NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS);
@@ -363,12 +370,17 @@ where
         target - last_seal_duration.min(block_interval / 2)
     }
 
-    fn next_block_seal_target(
-        &self,
-        block_number: u64,
-        last_seal_duration: Duration,
-    ) -> SystemTime {
-        self.block_seal_target(block_number.saturating_add(1), last_seal_duration)
+    /// Local wall-clock time of `block_number`'s scheduled timestamp.
+    fn block_deadline(&self, block_number: u64) -> SystemTime {
+        let delay = match self.mode {
+            NodeOperatingMode::IsolatedSequencer => self.schedule_delay,
+            NodeOperatingMode::Validator
+            | NodeOperatingMode::Sequencer
+            | NodeOperatingMode::ShadowSequencer { .. } => Duration::ZERO,
+        };
+        UNIX_EPOCH
+            + delay
+            + Duration::from_millis(self.rollup_config.l2_block_timestamp_millis(block_number))
     }
 
     /// Handles one admin API query received while the main loop is running, applying any
@@ -482,6 +494,9 @@ where
                             "Failed to cache acknowledged parent system config"
                         ),
                     }
+                    self.builder.attributes_builder.acknowledge_inserted_transactions(
+                        sealer.envelope.execution_payload.transactions(),
+                    );
                 }
 
                 if let Some(sealer) = self.sealer.take() {
@@ -512,11 +527,8 @@ where
                     // Queue the acknowledged parent instead of starting its child build here. Its
                     // timestamp is a hard lower bound for the steady-state child build because
                     // variable getPayload durations can make insertion complete early.
-                    let parent_millis = self
-                        .rollup_config
-                        .l2_block_timestamp_millis(inserted_head.block_info.number);
                     pipeline.pending_build_parent = Some(inserted_head);
-                    build_ticker.reset_at(UNIX_EPOCH + Duration::from_millis(parent_millis));
+                    build_ticker.reset_at(self.block_deadline(inserted_head.block_info.number));
                 }
             }
             Ok(SealStepOutcome::Pending) => {}
@@ -598,8 +610,10 @@ where
             Some((new_sealer, dur)) => {
                 pipeline.last_seal_duration = dur;
                 self.sealer = Some(new_sealer);
-                let target =
-                    self.next_block_seal_target(handle_block_number, pipeline.last_seal_duration);
+                let target = self.block_seal_target(
+                    handle_block_number.saturating_add(1),
+                    pipeline.last_seal_duration,
+                );
                 // Do not call build() here. The next payload is built after the engine
                 // acknowledges insertion of the sealed payload.
                 build_ticker.reset_at(target);
@@ -875,9 +889,18 @@ mod tests {
         );
         let (request_tx, request_rx) = mpsc::channel(8);
         let (head_tx, mut head_rx) = watch::channel(L2BlockInfo::default());
-        let coordinator =
-            SequencerEngineRequestCoordinator::new(processor, shadow, None, true, head_tx)
-                .start(request_rx);
+        let coordinator = SequencerEngineRequestCoordinator::new(
+            processor,
+            if shadow {
+                NodeOperatingMode::ShadowSequencer { blocks_per_cycle: std::num::NonZeroU64::MIN }
+            } else {
+                NodeOperatingMode::Sequencer
+            },
+            None,
+            true,
+            head_tx,
+        )
+        .start(request_rx);
         tokio::time::timeout(Duration::from_secs(1), head_rx.wait_for(|value| *value == head))
             .await
             .unwrap()
@@ -893,8 +916,7 @@ mod tests {
         conductor.expect_leader().once().returning(|| Ok(true));
         let mut origin_selector = MockOriginSelector::new();
         origin_selector.expect_next_l1_origin().returning(|_| Ok(BlockInfo::default()));
-        let mut gossip = MockUnsafePayloadGossipClient::new();
-        gossip.expect_seals_privately().return_const(false);
+        let gossip = MockUnsafePayloadGossipClient::new();
         let mut attributes = BasePayloadAttributes::default();
         attributes.payload_attributes.timestamp = now + 2;
         let recovery_mode = RecoveryModeGuard::new(false);
@@ -916,11 +938,18 @@ mod tests {
             conductor: Some(conductor),
             engine_client: Arc::clone(&engine_client),
             is_active: false,
-            shadow_blocks_per_cycle: shadow.then(|| NonZeroU64::new(1).unwrap()),
+            mode: if shadow {
+                NodeOperatingMode::ShadowSequencer {
+                    blocks_per_cycle: std::num::NonZeroU64::new(1).unwrap(),
+                }
+            } else {
+                NodeOperatingMode::Sequencer
+            },
             shadow_funding: None,
             recovery_mode,
             rollup_config: config,
             seal_offset: base_protocol::DEFAULT_SEAL_OFFSET,
+            schedule_delay: Duration::ZERO,
             unsafe_payload_gossip_client: gossip,
             sealer: None,
             pending_stop: None,
@@ -1015,6 +1044,9 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(actor.builder.attributes_builder.parent_system_configs, vec![(head, config)]);
+        let inserted = actor.builder.attributes_builder.inserted_transactions.clone();
+        assert_eq!(inserted.len(), 1);
+        assert_eq!(inserted[0].len(), 1);
 
         let (sealer, mut mismatched_head, _) = valid_sealer();
         mismatched_head.block_info.hash = B256::left_padding_from(&[1]);
@@ -1030,6 +1062,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(actor.builder.attributes_builder.parent_system_configs.len(), 1);
+        assert_eq!(actor.builder.attributes_builder.inserted_transactions, inserted);
 
         let (mut sealer, head, _) = valid_sealer();
         sealer.envelope.execution_payload.transactions_mut().clear();

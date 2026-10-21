@@ -17,6 +17,7 @@ base-common-flashblocks.workspace = true
 alloy-evm = { workspace = true, features = ["std"] }
 base-common-evm = { workspace = true, features = ["std"] }
 base-execution-eip8130-rpc.workspace = true
+base-execution-chainspec.workspace = true
 
 # reth
 reth-rpc.workspace = true
@@ -87,7 +88,6 @@ derive_more = { workspace = true, features = ["from"] }
 rstest.workspace = true
 alloy-eips.workspace = true
 serde_json.workspace = true
-base-execution-chainspec.workspace = true
 reth-provider = { workspace = true, features = ["test-utils"] }
 
 [features]

@@ -16,7 +16,7 @@ use crate::{
         COLOR_BASE_BLUE, COLOR_BURN, COLOR_GROWTH, COLOR_ROW_SELECTED, Format, L1BlocksTableParams,
         render_da_backlog_bar, render_l1_blocks_table,
     },
-    tui::{Keybinding, Toast},
+    tui::{Browser, Keybinding},
 };
 
 const KEYBINDINGS: &[Keybinding] = &[
@@ -116,23 +116,19 @@ impl DaMonitorView {
 
     fn open_selected_in_explorer(&self, resources: &mut Resources) {
         let url = match self.selected_panel {
-            Panel::L2Blocks | Panel::Txns => {
-                resources.config.explorer_base_url().and_then(|base| {
-                    let block_number = match self.selected_panel {
-                        Panel::L2Blocks => self.l2_table_state.selected().and_then(|row| {
-                            resources
-                                .da
-                                .tracker
-                                .block_contributions
-                                .get(row)
-                                .map(|c| c.block_number)
-                        }),
-                        Panel::Txns => self.tx_pane.as_ref().map(|p| p.block_number),
-                        _ => None,
-                    }?;
-                    Some(format!("{base}/block/{block_number}"))
+            Panel::L2Blocks => resources.config.explorer_base_url().and_then(|base| {
+                self.l2_table_state.selected().and_then(|row| {
+                    resources
+                        .da
+                        .tracker
+                        .block_contributions
+                        .get(row)
+                        .map(|c| format!("{base}/block/{}", c.block_number))
                 })
-            }
+            }),
+            Panel::Txns => resources.config.explorer_base_url().and_then(|base| {
+                self.tx_pane.as_ref().map(|p| format!("{base}/block/{}", p.block_number))
+            }),
             Panel::L1Blocks => resources.config.l1_explorer_base_url().and_then(|base| {
                 self.l1_table_state.selected().and_then(|row| {
                     resources
@@ -146,18 +142,7 @@ impl DaMonitorView {
         };
 
         if let Some(url) = url {
-            let cmd = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
-            match std::process::Command::new(cmd).arg(&url).spawn() {
-                Ok(mut child) => {
-                    std::thread::spawn(move || {
-                        let _ = child.wait();
-                    });
-                    resources.toasts.push(Toast::info(format!("Opening {url}")));
-                }
-                Err(e) => {
-                    resources.toasts.push(Toast::warning(format!("Failed to open browser: {e}")));
-                }
-            }
+            resources.toasts.push(Browser::open(&url));
         }
     }
 }

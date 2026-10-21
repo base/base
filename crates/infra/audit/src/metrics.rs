@@ -38,4 +38,12 @@ base_metrics::define_metrics! {
     transaction_event_partition_horizon_seconds: gauge,
     #[describe("Transaction observability partition maintenance failures")]
     transaction_event_retention_failures: counter,
+    #[describe("Transaction observability BRIN block ranges summarized")]
+    #[label(name = "retention_class", default = ["hot", "warm", "cold"])]
+    transaction_event_brin_ranges_summarized: counter,
+    #[describe("Transaction observability day partitions whose BRIN summary was skipped after lock_timeout")]
+    #[label(name = "retention_class", default = ["hot", "warm", "cold"])]
+    transaction_event_brin_summary_lock_timeouts: counter,
+    #[describe("Transaction observability BRIN summary pass failures")]
+    transaction_event_brin_summary_failures: counter,
 }

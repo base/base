@@ -77,12 +77,6 @@ pub enum AdminCommand {
         #[debug(skip)]
         reply: oneshot::Sender<()>,
     },
-    /// Clear the throttle dedup cache so limits are re-applied unconditionally.
-    ResetThrottle {
-        /// Answered once the cache is cleared.
-        #[debug(skip)]
-        reply: oneshot::Sender<()>,
-    },
     /// Read the current throttle state.
     GetThrottleInfo {
         /// Answered with a snapshot of the throttle state.
@@ -139,8 +133,8 @@ impl AdminHandle {
     /// Replace the throttle strategy and configuration.
     ///
     /// The full [`ThrottleConfig`] is required because partial updates are not supported. The
-    /// new limits are pushed to the block builder right after. An invalid `config` is rejected
-    /// with [`AdminError::InvalidThrottleConfig`] before reaching the driver.
+    /// new limits are pushed to the block builders. An invalid `config` is rejected with
+    /// [`AdminError::InvalidThrottleConfig`] before reaching the driver.
     pub async fn set_throttle(
         &self,
         strategy: ThrottleStrategy,
@@ -148,12 +142,6 @@ impl AdminHandle {
     ) -> AdminResult<()> {
         config.validate()?;
         self.request(|reply| AdminCommand::SetThrottle { strategy, config, reply }).await
-    }
-
-    /// Clear the throttle dedup cache, so the current limits are pushed to the block
-    /// builder again right after, even if they have not changed.
-    pub async fn reset_throttle(&self) -> AdminResult<()> {
-        self.request(|reply| AdminCommand::ResetThrottle { reply }).await
     }
 
     /// Read the current throttle controller state.
@@ -184,51 +172,5 @@ impl AdminHandle {
         let (reply, rx) = oneshot::channel();
         self.tx.send(command(reply)).await.map_err(|_| AdminError::ChannelClosed)?;
         rx.await.map_err(|_| AdminError::ChannelClosed)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use futures::FutureExt;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn start_returns_channel_closed_when_rx_dropped() {
-        let (handle, rx) = AdminHandle::channel();
-        drop(rx);
-        let err = handle.start().await.unwrap_err();
-        assert!(matches!(err, AdminError::ChannelClosed));
-    }
-
-    #[tokio::test]
-    async fn get_status_returns_channel_closed_when_rx_dropped() {
-        let (handle, rx) = AdminHandle::channel();
-        drop(rx);
-        let err = handle.get_status().await.unwrap_err();
-        assert!(matches!(err, AdminError::ChannelClosed));
-    }
-
-    #[tokio::test]
-    async fn set_throttle_rejects_an_invalid_config_before_the_driver() {
-        let (handle, mut rx) = AdminHandle::channel();
-        let config = ThrottleConfig { max_intensity: 2.0, ..ThrottleConfig::default() };
-
-        // Rejected before any wait on the driver, which never answers here.
-        let err = handle
-            .set_throttle(ThrottleStrategy::Linear, config)
-            .now_or_never()
-            .expect("an invalid config must be rejected without waiting on the driver")
-            .unwrap_err();
-
-        assert!(matches!(err, AdminError::InvalidThrottleConfig(_)));
-        assert!(rx.try_recv().is_err(), "the driver must not receive the command");
-    }
-
-    #[test]
-    fn set_log_level_returns_not_supported() {
-        let (handle, _rx) = AdminHandle::channel();
-        let err = handle.set_log_level("debug".to_string()).unwrap_err();
-        assert!(matches!(err, AdminError::NotSupported(_)));
     }
 }

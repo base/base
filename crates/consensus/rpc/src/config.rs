@@ -2,6 +2,8 @@
 
 use std::{net::SocketAddr, num::NonZeroUsize, path::PathBuf, time::Duration};
 
+use url::Url;
+
 /// The RPC configuration.
 #[derive(Debug, Clone)]
 pub struct RpcBuilder {
@@ -22,6 +24,9 @@ pub struct RpcBuilder {
     pub http_timeout: Duration,
     /// Maximum number of concurrent in-flight RPC requests.
     pub max_concurrent_requests: NonZeroUsize,
+    /// HTTP RPC endpoint of the execution client to which the server forwards the methods it
+    /// does not serve. Forwarding is disabled if not set.
+    pub execution_forwarding_endpoint: Option<Url>,
 }
 
 impl RpcBuilder {
@@ -43,18 +48,8 @@ impl RpcBuilder {
         self.enable_admin
     }
 
-    /// Returns the socket address of the [`RpcBuilder`].
-    pub const fn socket(&self) -> SocketAddr {
-        self.socket
-    }
-
     /// Returns the number of times the RPC server will attempt to restart if it stops.
     pub const fn restart_count(&self) -> u32 {
         if self.no_restart { 0 } else { Self::RESTART_ATTEMPTS }
-    }
-
-    /// Sets the given [`SocketAddr`] on the [`RpcBuilder`].
-    pub fn set_addr(self, addr: SocketAddr) -> Self {
-        Self { socket: addr, ..self }
     }
 }

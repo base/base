@@ -27,10 +27,6 @@ pub struct NoopTrieHinter;
 impl TrieHinter for NoopTrieHinter {
     type Error = String;
 
-    fn hint_trie_node(&self, _hash: B256) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
     fn hint_account_proof(&self, _address: Address, _block_number: u64) -> Result<(), Self::Error> {
         Ok(())
     }

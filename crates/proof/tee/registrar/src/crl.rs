@@ -1,11 +1,10 @@
 //! CRL (Certificate Revocation List) checking for AWS Nitro intermediate
 //! certificates.
 //!
-//! Fetch and parse failures are fail-open; onchain expiry tracking and
-//! periodic re-checks bound the remaining exposure window.
+//! Enabled checks block registration on fetch or parse failures while retaining
+//! confirmed revocations from other certificates in the chain.
 
 use alloy_primitives::B256;
-use base_proof_tee_nitro_verifier::compute_path_digests;
 use tracing::{debug, warn};
 use x509_parser::{
     certificate::X509Certificate,
@@ -14,7 +13,7 @@ use x509_parser::{
     revocation_list::CertificateRevocationList,
 };
 
-use crate::{CertKind, CertManagerKeys, CertPlan};
+use crate::{CertKind, CertPlan};
 
 const MAX_CRL_RESPONSE_BYTES: usize = 10 * 1024 * 1024;
 const ALLOWED_CRL_HOST_SUFFIX: &str = ".amazonaws.com";
@@ -29,55 +28,11 @@ pub struct CertCrlInfo {
     pub serial_number: Vec<u8>,
     /// CRL distribution point URL, if present in the certificate.
     pub crl_url: Option<String>,
-    /// Accumulated path digest for this certificate position (for onchain
-    /// `revokeCert` calls).
-    pub path_digest: B256,
     /// Issuer/serial identity used by the hinted `CertManager`.
     pub revocation_id: B256,
 }
 
 impl CertCrlInfo {
-    /// Extracts CRL-relevant information from a DER-encoded chain's intermediate certificates.
-    ///
-    /// The certificates must be in chain order: root → intermediates → leaf.
-    /// Path digests are computed identically to the onchain
-    /// `NitroEnclaveVerifier` accumulation.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if any intermediate certificate cannot be parsed from DER.
-    pub fn from_chain(certs_der: &[&[u8]]) -> Result<Vec<Self>, CrlError> {
-        let mut infos = Vec::with_capacity(certs_der.len().saturating_sub(2));
-        let path_digests = compute_path_digests(certs_der);
-
-        for (index, (der, path_digest)) in certs_der
-            .iter()
-            .zip(path_digests)
-            .enumerate()
-            .skip(1)
-            .take(certs_der.len().saturating_sub(2))
-        {
-            let (remaining, cert) = X509Certificate::from_der(der).map_err(|e| {
-                CrlError(format!("certificate parse error: certificate {index}: {e}"))
-            })?;
-            if !remaining.is_empty() {
-                return Err(CrlError(format!(
-                    "certificate parse error: certificate {index}: trailing DER data ({} bytes)",
-                    remaining.len()
-                )));
-            }
-
-            let serial_number = cert.tbs_certificate.serial.to_bytes_be();
-            let crl_url = extract_crl_distribution_point(&cert);
-
-            let revocation_id = CertManagerKeys::revocation_id(der)
-                .map_err(|e| CrlError(format!("certificate identity error: {e}")))?;
-            infos.push(Self { index, serial_number, crl_url, path_digest, revocation_id });
-        }
-
-        Ok(infos)
-    }
-
     /// Extracts CRL information from the non-root CA steps in a hinted registration plan.
     pub fn from_cert_plans(certs: &[CertPlan]) -> Result<Vec<Self>, CrlError> {
         certs
@@ -100,7 +55,6 @@ impl CertCrlInfo {
                     index: index + 1,
                     serial_number: cert.tbs_certificate.serial.to_bytes_be(),
                     crl_url: extract_crl_distribution_point(&cert),
-                    path_digest: B256::ZERO,
                     revocation_id: cert_plan.revocation_id,
                 })
             })
@@ -137,22 +91,28 @@ fn is_allowed_crl_host(url: &str) -> bool {
     })
 }
 
-/// Checks intermediate certificates against their CRL distribution points.
-///
-/// **Fail-open policy**: CRL fetch or parse failures are logged as warnings
-/// but do not abort the check. Only confirmed revocations are reported.
-///
-/// # Arguments
-///
-/// * `cert_infos` - Pre-parsed cert chain info, typically produced once per
-///   cycle by [`CertCrlInfo::from_chain`] and shared with the onchain
-///   revocation pre-check so the DER parse only happens once.
-/// * `http_client` - HTTP client for fetching CRLs.
+/// CRL evidence from a chain, including failures alongside confirmed revocations.
+#[derive(Debug, Default)]
+pub struct CrlCheckResult<'a> {
+    /// Certificates confirmed revoked by a successfully parsed CRL.
+    pub revoked: Vec<&'a CertCrlInfo>,
+    /// Checks that could not determine certificate revocation status.
+    pub errors: Vec<CrlError>,
+}
+
+impl CrlCheckResult<'_> {
+    /// Whether every applicable CRL check succeeded without detecting revocation.
+    pub const fn is_clean(&self) -> bool {
+        self.revoked.is_empty() && self.errors.is_empty()
+    }
+}
+
+/// Checks all intermediate CRL distribution points without discarding partial evidence.
 pub async fn check_chain_against_crls<'a>(
     cert_infos: &'a [CertCrlInfo],
     http_client: &reqwest::Client,
-) -> Vec<&'a CertCrlInfo> {
-    let mut revoked = Vec::new();
+) -> CrlCheckResult<'a> {
+    let mut result = CrlCheckResult::default();
 
     for info in cert_infos {
         let Some(ref crl_url) = info.crl_url else {
@@ -169,9 +129,9 @@ pub async fn check_chain_against_crls<'a>(
                     url = %crl_url,
                     serial = %hex::encode(&info.serial_number),
                     revocation_id = %info.revocation_id,
-                    "certificate found on CRL — REVOKED"
+                    "certificate found on CRL"
                 );
-                revoked.push(info);
+                result.revoked.push(info);
             }
             Ok(false) => {
                 debug!(cert_index = info.index, "certificate not on CRL");
@@ -181,13 +141,14 @@ pub async fn check_chain_against_crls<'a>(
                     cert_index = info.index,
                     url = %crl_url,
                     error = %e,
-                    "CRL check failed (fail-open, proceeding)"
+                    "CRL check indeterminate, blocking registration"
                 );
+                result.errors.push(e);
             }
         }
     }
 
-    revoked
+    result
 }
 
 async fn fetch_and_check_crl(
@@ -268,6 +229,45 @@ mod tests {
     use hex_literal::hex;
 
     use super::*;
+    use crate::test_utils::CrlTestServer;
+
+    #[tokio::test]
+    async fn partial_failure_cannot_report_a_clean_chain() {
+        let server = CrlTestServer::new(vec![
+            CrlTestServer::ok(&CrlTestServer::der(None)),
+            CrlTestServer::ok(b"invalid DER"),
+        ]);
+        let infos = [0, 1].map(|index| CertCrlInfo {
+            index,
+            serial_number: vec![1],
+            crl_url: Some(server.url(index)),
+            revocation_id: B256::repeat_byte(index as u8),
+        });
+        let result = check_chain_against_crls(&infos, &server.client).await;
+        assert!(!result.is_clean(), "partial CRL failure must not become a clean result");
+        assert!(result.revoked.is_empty());
+        assert_eq!(result.errors.len(), 1, "{result:?}");
+    }
+
+    #[tokio::test]
+    async fn chain_check_retains_revocation_evidence_in_either_failure_order() {
+        for revoked_index in 0..2 {
+            let mut responses = vec![CrlTestServer::ok(b"invalid DER"); 2];
+            responses[revoked_index] = CrlTestServer::ok(&CrlTestServer::der(Some(&[0x80])));
+            let server = CrlTestServer::new(responses);
+            let infos = [0, 1].map(|index| CertCrlInfo {
+                index,
+                serial_number: vec![0x80],
+                crl_url: Some(server.url(index)),
+                revocation_id: B256::repeat_byte(index as u8),
+            });
+            let result = check_chain_against_crls(&infos, &server.client).await;
+            assert!(!result.is_clean());
+            assert_eq!(result.errors.len(), 1, "{result:?}");
+            assert_eq!(result.revoked.len(), 1);
+            assert_eq!(result.revoked[0].revocation_id, infos[revoked_index].revocation_id);
+        }
+    }
 
     const INTER1_EXPECTED_CRL_URL: &str = "http://aws-nitro-enclaves-crl.s3.amazonaws.com/crl/ab4960cc-7d63-42bd-9e9f-59338cb67f84.crl";
 
@@ -318,40 +318,18 @@ mod tests {
     }
 
     #[test]
-    fn extracts_intermediate_cert_info_from_chain() {
-        let full_chain = full_chain();
-        let refs: Vec<&[u8]> = full_chain.iter().map(Vec::as_slice).collect();
-        let infos = CertCrlInfo::from_chain(&refs).unwrap();
-
-        assert_eq!(infos.iter().map(|info| info.index).collect::<Vec<_>>(), vec![1, 2, 3]);
-        assert_eq!(
-            infos.iter().map(|info| hex::encode(&info.serial_number)).collect::<Vec<_>>(),
-            vec![
-                "56bfc987fd05ac99c475061b1a65eedc",
-                "cb286a4a4a09207f8b0c14950dcd6861",
-                "c8925d382506d820d93d2c704a7523c4ba2ddfaa",
-            ]
-        );
-    }
-
-    #[test]
-    fn invalid_intermediate_der_returns_cert_parse_error() {
-        let root = hex::decode(ROOT_HEX).expect("static hex fixture decodes");
-        let leaf = hex::decode(LEAF_HEX).expect("static hex fixture decodes");
-        let result = CertCrlInfo::from_chain(&[&root, &[0xDE, 0xAD, 0xBE, 0xEF][..], &leaf]);
-        let err = result.unwrap_err();
-        assert!(
-            err.to_string().contains("certificate parse error"),
-            "expected certificate parse error, got: {err}"
-        );
-    }
-
-    #[test]
     fn trailing_der_certificate_alias_returns_cert_parse_error() {
-        let mut aliased = full_chain();
-        aliased[1].extend_from_slice(b"chain-4256-trailing-der");
-        let refs: Vec<&[u8]> = aliased.iter().map(Vec::as_slice).collect();
-        let err = CertCrlInfo::from_chain(&refs).unwrap_err();
+        let mut cert = full_chain().swap_remove(1);
+        cert.extend_from_slice(b"chain-4256-trailing-der");
+        let plan = CertPlan {
+            kind: CertKind::Ca,
+            label: "regional CA".into(),
+            cert,
+            cert_hash: B256::ZERO,
+            parent_cert_hash: B256::ZERO,
+            revocation_id: B256::ZERO,
+        };
+        let err = CertCrlInfo::from_cert_plans(&[plan]).unwrap_err();
         let msg = err.to_string();
 
         assert!(msg.contains("trailing DER data"), "expected trailing DER error, got: {msg}");

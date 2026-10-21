@@ -46,7 +46,7 @@ fn main() {
             transaction_events_enabled.then(|| builder_args.transaction_events.writer_config()),
         )?;
 
-        let builder_api_config = builder_args.builder_api_config()?;
+        let builder_api_config = builder_args.builder_api_config();
         let shadow_indexer_config = ShadowIndexerConfig::try_from(&builder_args.shadow_indexer)?;
         let payload_builder_cutover = builder_args.payload_builder_cutover;
         let basic_payload_builder = builder_args.basic_payload_builder;
@@ -74,7 +74,7 @@ fn main() {
         runner.install_ext::<SendRawTransactionValidityExtension>(
             SendRawTransactionValidityConfig {
                 max_validity_predicates: builder_api_config.max_validity_predicates,
-                experimental_override: builder_api_config.accept_experimental_validity_transactions,
+                validity_signature_mode: builder_api_config.validity_signature_mode,
                 ..Default::default()
             },
         );

@@ -13,7 +13,6 @@ use base_tx_manager::{
     BlobTxBuilder, SendHandle, SendResponse, TxCandidate, TxManager, TxManagerError,
 };
 use tokio::sync::oneshot;
-use tracing::info;
 
 use crate::{L1Block, L1Miner};
 
@@ -53,7 +52,7 @@ pub struct Inner {
     pending: Vec<Pending>,
     /// Submissions in the miner's queue, waiting for a receipt.
     staged: Vec<Pending>,
-    /// Next nonce to use for signed production-mode transactions.
+    /// Nonce of the next signed transaction.
     next_nonce: u64,
     /// Number of upcoming `send_async` calls to immediately fail with
     /// [`TxManagerError::Rpc`] before falling through to normal queuing.
@@ -78,8 +77,6 @@ pub struct Inner {
 pub struct L1MinerTxManager {
     /// Pending and staged submissions, shared with the driver's clone.
     inner: Arc<Mutex<Inner>>,
-    /// Default `to` for candidates that do not name one.
-    inbox_address: Address,
     /// Signs every submission. Its address is the batcher's sender.
     signer: PrivateKeySigner,
     /// L1 chain id stamped on every signed transaction.
@@ -88,8 +85,8 @@ pub struct L1MinerTxManager {
 
 impl L1MinerTxManager {
     /// Create a new manager.
-    pub fn new(signer: PrivateKeySigner, inbox_address: Address, chain_id: u64) -> Self {
-        Self { inner: Arc::new(Mutex::new(Inner::default())), inbox_address, signer, chain_id }
+    pub fn new(signer: PrivateKeySigner, chain_id: u64) -> Self {
+        Self { inner: Arc::new(Mutex::new(Inner::default())), signer, chain_id }
     }
 
     /// Returns the number of pending (not yet staged) submissions.
@@ -118,8 +115,7 @@ impl L1MinerTxManager {
 
     /// Drop the first `n` pending submissions without staging them to L1.
     ///
-    /// Returns the actual number dropped (≤ `n`). Use this to skip specific
-    /// frame positions when testing non-sequential frame submission.
+    /// Returns the actual number dropped (≤ `n`).
     pub fn drop_n(&self, n: usize) -> usize {
         let mut inner = self.inner.lock().unwrap();
         let count = n.min(inner.pending.len());
@@ -177,44 +173,15 @@ impl L1MinerTxManager {
         }
     }
 
-    /// Simulate an L1 reorg back to `block_number`.
-    ///
-    /// Calls [`L1Miner::reorg_to`] to truncate the canonical chain and fires a
-    /// failure receipt for every pending and staged submission, since their
-    /// inclusion block has been discarded or they are no longer valid.
-    ///
-    /// Both `pending` (not yet staged) and `staged` (submitted to L1 but not
-    /// yet confirmed) items are drained, so every [`SendHandle`] resolves and no
-    /// submission holds an in-flight slot forever.
-    ///
-    /// Submissions already confirmed through [`confirm_block`] are not revisited.
-    ///
-    /// [`SendHandle`]: base_tx_manager::SendHandle
-    /// [`confirm_block`]: L1MinerTxManager::confirm_block
-    pub fn reorg_to(&self, block_number: u64, l1: &mut L1Miner) {
-        l1.reorg_to(block_number).expect("reorg_to should not fail");
-        let (pending, staged) = {
-            let mut inner = self.inner.lock().unwrap();
-            let pending: Vec<Pending> = inner.pending.drain(..).collect();
-            let staged: Vec<Pending> = inner.staged.drain(..).collect();
-            (pending, staged)
-        };
-        let drained = pending.len() + staged.len();
-        for p in pending.into_iter().chain(staged) {
-            let _ = p.responder.send(Err(TxManagerError::Rpc("reorg".to_string())));
-        }
-        info!(block_number = %block_number, drained = %drained, "simulated L1 reorg");
-    }
-
-    /// Build a signed transaction envelope and matching blob sidecar index for
-    /// production-mode DA.
+    /// Build the signed transaction envelope of `candidate` and the blob sidecars it
+    /// references.
     pub fn sign_candidate(
         &self,
         candidate: &TxCandidate,
         nonce: u64,
     ) -> Result<L1SignedSubmission, TxManagerError> {
         let gas_limit = candidate.gas_limit.max(21_000);
-        let to = candidate.to.unwrap_or(self.inbox_address);
+        let to = candidate.to.expect("the driver addresses every candidate to the inbox");
 
         if candidate.blobs.is_empty() {
             let tx = TxEip1559 {
@@ -310,59 +277,5 @@ impl TxManager for L1MinerTxManager {
 
     fn sender_address(&self) -> Address {
         self.signer.address()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use alloy_primitives::{Address, B256, Bytes, U256};
-    use alloy_signer_local::PrivateKeySigner;
-    use base_tx_manager::{TxCandidate, TxManager};
-
-    use super::L1MinerTxManager;
-    use crate::L1Miner;
-
-    struct TxManagerFixture;
-
-    impl TxManagerFixture {
-        fn signer() -> PrivateKeySigner {
-            PrivateKeySigner::from_bytes(&B256::repeat_byte(0x11)).expect("valid test signer")
-        }
-
-        fn candidate(to: Address) -> TxCandidate {
-            TxCandidate {
-                tx_data: Bytes::from_static(b"\x00frame"),
-                to: Some(to),
-                gas_limit: 21_000,
-                value: U256::ZERO,
-                ..Default::default()
-            }
-        }
-    }
-
-    #[tokio::test]
-    async fn confirm_block_keeps_unincluded_staged_submission_polling() {
-        let inbox = Address::repeat_byte(0x42);
-        let manager = L1MinerTxManager::new(TxManagerFixture::signer(), inbox, 1);
-        let mut l1 = L1Miner::default();
-
-        let handle = manager.send_async(TxManagerFixture::candidate(inbox)).await;
-        assert_eq!(manager.pending_count(), 1);
-        assert_eq!(manager.stage_n_to_l1(&mut l1, 1), 1);
-        assert_eq!(manager.pending_count(), 0);
-        assert_eq!(manager.staged_count(), 1);
-
-        let genesis = l1.tip().clone();
-        manager.confirm_block(&genesis);
-        assert_eq!(manager.staged_count(), 1);
-
-        let block = l1.mine_block().clone();
-        manager.confirm_block(&block);
-        assert_eq!(manager.staged_count(), 0);
-
-        let receipt = handle.await.expect("staged transaction should confirm");
-        assert_eq!(receipt.block_number, Some(block.number()));
-        assert_eq!(receipt.transaction_index, Some(0));
-        assert_eq!(receipt.to, Some(inbox));
     }
 }

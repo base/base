@@ -280,6 +280,28 @@ impl CborItem {
 }
 
 impl NitroCose {
+    /// Reconstructs a `COSE_Sign1` envelope without changing the signed TBS byte strings.
+    pub fn sign1_from_tbs(tbs: &[u8], signature: &[u8]) -> PlannerResult<Vec<u8>> {
+        let mut prefix = COSE_SIG_STRUCTURE_PREFIX.to_vec();
+        prefix.extend_from_slice(NITRO_PROTECTED_HEADER_TLV);
+        prefix.push(CBOR_EMPTY_BYTE_STRING);
+        if !tbs.starts_with(&prefix) || signature.len() != P384_SIGNATURE_BYTES {
+            return Err(PlannerError::Cose("invalid attestation TBS or signature length".into()));
+        }
+        let payload = CborItem::read(tbs, prefix.len())?
+            .require_major(CBOR_MAJOR_BYTE_STRING, "TBS payload")?;
+        if payload.end != tbs.len() {
+            return Err(PlannerError::Cose("trailing data after attestation TBS".into()));
+        }
+        let mut envelope = vec![COSE_SIGN1_ARRAY_BYTE];
+        envelope.extend_from_slice(NITRO_PROTECTED_HEADER_TLV);
+        envelope.push(0xa0);
+        envelope.extend_from_slice(&tbs[prefix.len()..]);
+        envelope.extend_from_slice(&[0x58, P384_SIGNATURE_BYTES as u8]);
+        envelope.extend_from_slice(signature);
+        Ok(envelope)
+    }
+
     /// Parses a `COSE_Sign1` attestation with `NitroValidator.decodeAttestationTbs` envelope checks.
     ///
     /// Solidity only accepts compact tag `0xD2` and compact array `0x84`, then skips any valid

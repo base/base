@@ -16,12 +16,6 @@ pub(crate) struct SnapshotCommand {
     pub(crate) command: SnapshotSubcommand,
 }
 
-impl SnapshotCommand {
-    pub(crate) fn run(self) -> eyre::Result<()> {
-        self.command.run()
-    }
-}
-
 /// Subcommands for `base snapshot`.
 #[derive(Subcommand, Debug)]
 #[non_exhaustive]
@@ -37,10 +31,7 @@ pub(crate) enum SnapshotSubcommand {
 impl SnapshotSubcommand {
     pub(crate) fn run(self) -> eyre::Result<()> {
         match self {
-            Self::Manifest(command) => {
-                command.execute()?;
-                Ok(())
-            }
+            Self::Manifest(command) => command.execute(),
             Self::Download(command) => {
                 let runner = CliRunner::try_default_runtime()?;
                 runner.run_blocking_until_ctrl_c((*command).execute::<BaseNode>())

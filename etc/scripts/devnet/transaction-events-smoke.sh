@@ -46,12 +46,9 @@ for attempt in $(seq 1 60); do
       has_event("base-routing/proxyd"; ["PROXY_RECEIVED"])
       and has_event("base-reth-node"; [
         "TXPOOL_PENDING",
-        "TXPOOL_QUEUED",
-        "TXPOOL_BUILDER_FORWARD_ATTEMPT",
-        "TXPOOL_BUILDER_FORWARD_SUCCESS"
+        "TXPOOL_QUEUED"
       ])
       and has_event("base-builder"; [
-        "BUILDER_CONSIDERED",
         "BUILDER_ACCEPTED",
         "BUILDER_INCLUDED"
       ])

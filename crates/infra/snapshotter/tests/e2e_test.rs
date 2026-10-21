@@ -315,6 +315,7 @@ const fn empty_manifest(block: u64) -> SnapshotManifest {
         base_url: None,
         reth_version: None,
         components: BTreeMap::new(),
+        extensions: BTreeMap::new(),
     }
 }
 
@@ -369,6 +370,7 @@ fn manifest_with_seeded_hashes(
         base_url: None,
         reth_version: None,
         components: comps,
+        extensions: BTreeMap::new(),
     }
 }
 

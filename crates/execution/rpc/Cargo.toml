@@ -39,7 +39,8 @@ reth-tasks = { workspace = true, features = ["rayon"] }
 # op-reth
 base-protocol.workspace = true
 base-common-evm.workspace = true
-base-execution-evm.workspace = true
+base-execution-chainspec.workspace = true
+base-execution-evm = { workspace = true, features = ["rpc"] }
 base-execution-trie.workspace = true
 base-execution-txpool.workspace = true
 base-observability-events.workspace = true
@@ -97,8 +98,6 @@ criterion.workspace = true
 alloy-signer.workspace = true
 reth-network-api.workspace = true
 alloy-signer-local.workspace = true
-base-execution-chainspec.workspace = true
-base-execution-evm = { workspace = true, features = ["rpc"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
 
 [[bench]]

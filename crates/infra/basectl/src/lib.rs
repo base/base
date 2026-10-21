@@ -104,6 +104,6 @@ pub use rpc::{
 
 mod tui;
 pub use tui::{
-    AppFrame, AppLayout, Keybinding, Toast, ToastLevel, ToastState, restore_terminal,
+    AppFrame, AppLayout, Browser, Keybinding, Toast, ToastLevel, ToastState, restore_terminal,
     setup_terminal,
 };

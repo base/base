@@ -12,12 +12,12 @@ pub use rpc::{
     AdminTxPoolApiImpl, AdminTxPoolApiServer, SendRawTransactionValidityApiImpl,
     SendRawTransactionValidityApiServer, SendRawTransactionValidityOptions, Status,
     TransactionStatusApiImpl, TransactionStatusApiServer, TransactionStatusResponse,
-    VALIDITY_TX_PRE_COBALT_RPC_ERROR, VALIDITY_TX_PRE_EVEREST_RPC_ERROR,
+    VALIDITY_TX_PRE_EVEREST_RPC_ERROR,
 };
 
 mod extension;
 pub use extension::{
     DEFAULT_MAX_VALIDITY_EXPIRY_SECS, DEFAULT_MAX_VALIDITY_PREDICATES,
     SendRawTransactionValidityConfig, SendRawTransactionValidityExtension, TxPoolRpcConfig,
-    TxPoolRpcExtension,
+    TxPoolRpcExtension, ValiditySignatureMode,
 };

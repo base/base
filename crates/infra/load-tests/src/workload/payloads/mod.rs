@@ -25,7 +25,7 @@ mod double_counter;
 pub use double_counter::{DOUBLE_COUNTER_GAS_LIMIT, DoubleCounterPayload};
 
 mod precompile;
-pub use precompile::{PrecompilePayload, parse_precompile_id};
+pub use precompile::PrecompilePayload;
 
 mod looper;
 pub use looper::PrecompileLooper;

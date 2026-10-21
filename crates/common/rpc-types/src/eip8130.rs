@@ -6,7 +6,8 @@ use alloy_evm::FromRecoveredTx;
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
 use alloy_rpc_types_eth::state::StateOverride;
 use base_common_consensus::{
-    BaseTxEnvelope, Call, Eip8130Constants, Eip8130Contracts, Eip8130Signed, TxEip8130,
+    BaseTxEnvelope, Call, Eip8130Constants, Eip8130Contracts, Eip8130Signed,
+    Eip8130StructuralError, Eip8130Structure, TxEip8130,
 };
 use base_common_evm::{BaseTransaction as BaseRevm, Eip8130ExecutionMode};
 use revm::context::TxEnv;
@@ -18,6 +19,10 @@ pub(crate) const STUB_AUTH_FILL: u8 = 0xff;
 
 /// Length of the authenticator selector on a prefixed authentication blob.
 const AUTHENTICATOR_SELECTOR_LEN: usize = 20;
+
+/// Leading bytes of a delegate authentication blob that select what is priced:
+/// the delegate selector, the delegate account, and the nested selector.
+const DELEGATE_AUTH_PREFIX_LEN: usize = 3 * AUTHENTICATOR_SELECTOR_LEN;
 
 /// Why an EIP-8130 `eth_estimateGas` / `eth_call` request cannot be simulated.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -50,6 +55,12 @@ pub enum Eip8130SimulationRequestError {
     /// The top-level `to` is a contract creation, which EIP-8130 calls cannot do.
     #[error("an EIP-8130 call cannot create a contract")]
     ContractCreation,
+    /// `senderActorId` is `bytes32(0)`, the reserved "no actor" id.
+    #[error("`senderActorId` must not be zero")]
+    ZeroSenderActorId,
+    /// The transaction fails the structural rules pool admission enforces.
+    #[error(transparent)]
+    Structural(#[from] Eip8130StructuralError),
 }
 
 /// Maximum caller-supplied authentication payload length.
@@ -73,21 +84,11 @@ impl Eip8130Nonce {
         slot: B256,
     ) -> Option<U256> {
         let account_override = state_overrides?.get(&address)?;
-        if let Some(state) = account_override.state.as_ref() {
-            return Some(
-                state
-                    .get(&slot)
-                    .copied()
-                    .map(|value| U256::from_be_bytes(value.0))
-                    .unwrap_or_default(),
-            );
-        }
-        account_override
-            .state_diff
-            .as_ref()?
-            .get(&slot)
-            .copied()
-            .map(|value| U256::from_be_bytes(value.0))
+        let value = match &account_override.state {
+            Some(state) => state.get(&slot).copied().unwrap_or_default(),
+            None => *account_override.state_diff.as_ref()?.get(&slot)?,
+        };
+        Some(U256::from_be_bytes(value.0))
     }
 
     /// Decodes the Solidity-packed `u64` channel nonce from an EVM storage word.
@@ -99,6 +100,9 @@ impl Eip8130Nonce {
 impl BaseTransactionRequest {
     /// Builds an unsigned EIP-8130 simulation transaction.
     ///
+    /// The simulation runs with the request's `gas`, clamped to `gas_limit_cap`, or with
+    /// `gas_limit_cap` when `gas` is omitted.
+    ///
     /// Returns an [`Eip8130SimulationRequestError`] naming why the request cannot be simulated.
     /// The returned transaction uses [`Eip8130ExecutionMode::Simulate`] so callers can run
     /// `eth_call` and `eth_estimateGas` without signature verification or committed state.
@@ -109,6 +113,9 @@ impl BaseTransactionRequest {
     ) -> Result<BaseRevm<TxEnv>, Eip8130SimulationRequestError> {
         let aa = self.as_eip8130().ok_or(Eip8130SimulationRequestError::NotEip8130)?;
         let req = self.as_ref();
+        if aa.sender_actor_id.is_some_and(|actor_id| actor_id.is_zero()) {
+            return Err(Eip8130SimulationRequestError::ZeroSenderActorId);
+        }
 
         let account = match (aa.sender, req.from) {
             (Some(sender), Some(from)) if sender != from => {
@@ -125,51 +132,36 @@ impl BaseTransactionRequest {
                 let prefixed = Self::is_prefixed_auth(blob);
                 Self::check_auth_len(blob, prefixed)
                     .ok_or(Eip8130SimulationRequestError::SenderAuthTooLarge)?;
-                (prefixed.then_some(account), blob.clone())
+                (prefixed.then_some(account), Self::stub_supplied_auth(blob, prefixed))
             }
-            None if sender_declared => (
-                Some(account),
-                Self::stub_prefixed_auth(
-                    Eip8130AuthScheme::Secp256k1,
-                    Eip8130AuthScheme::Secp256k1.default_data_len(),
-                ),
-            ),
+            None if sender_declared => (Some(account), Self::default_prefixed_auth()),
             None => (None, Self::default_bare_auth()),
         };
 
         let (payer, payer_auth) = match aa.payer {
             None => (None, Bytes::new()),
-            Some(Eip8130Constants::OPEN_PAYER) => {
-                // The sender estimates before any payer has signed, so an absent
-                // `payer_auth` is priced as a 65-byte signature. The stub never
-                // recovers, leaving the payer unknown rather than a random
-                // address or the sender.
-                let blob = match &aa.payer_auth {
-                    Some(blob) => {
-                        Self::check_auth_len(blob, false)
-                            .ok_or(Eip8130SimulationRequestError::PayerAuthTooLarge)?;
-                        blob.clone()
-                    }
-                    None => Self::default_bare_auth(),
-                };
-                (Some(Eip8130Constants::OPEN_PAYER), blob)
-            }
             Some(payer) => {
+                let named = payer != Eip8130Constants::OPEN_PAYER;
                 let blob = match &aa.payer_auth {
                     Some(blob) => {
-                        if !Self::is_prefixed_auth(blob) {
+                        if named && !Self::is_prefixed_auth(blob) {
                             return Err(
                                 Eip8130SimulationRequestError::UnrecognizedPayerAuthenticator,
                             );
                         }
-                        Self::check_auth_len(blob, true)
+                        Self::check_auth_len(blob, named)
                             .ok_or(Eip8130SimulationRequestError::PayerAuthTooLarge)?;
-                        blob.clone()
+                        // An open payer is whoever its signature recovers to, so
+                        // its bytes are kept to publish that payer.
+                        if named { Self::stub_supplied_auth(blob, true) } else { blob.clone() }
                     }
-                    None => Self::stub_prefixed_auth(
-                        Eip8130AuthScheme::Secp256k1,
-                        Eip8130AuthScheme::Secp256k1.default_data_len(),
-                    ),
+                    None if named => Self::default_prefixed_auth(),
+                    // The sender estimates before any payer has signed, so an
+                    // absent `payer_auth` for the open payer is priced as a
+                    // 65-byte signature. This bare stub never recovers, leaving
+                    // the payer unknown rather than a random address or the
+                    // sender.
+                    None => Self::default_bare_auth(),
                 };
                 (Some(payer), blob)
             }
@@ -184,14 +176,18 @@ impl BaseTransactionRequest {
             valid_before: aa.valid_before.unwrap_or_default(),
             max_priority_fee_per_gas: req.max_priority_fee_per_gas.unwrap_or_default(),
             max_fee_per_gas: req.max_fee_per_gas.unwrap_or_default(),
-            gas_limit: req.gas.unwrap_or(gas_limit_cap),
+            gas_limit: req.gas.map_or(gas_limit_cap, |gas| gas.min(gas_limit_cap)),
             account_changes: aa.account_changes.clone().unwrap_or_default(),
             calls: self.eip8130_calls(aa.calls.as_ref())?,
             metadata: aa.metadata.clone().unwrap_or_default(),
             payer,
         };
 
-        let envelope = BaseTxEnvelope::Eip8130(Eip8130Signed::new(tx, sender_auth, payer_auth));
+        let signed = Eip8130Signed::new(tx, sender_auth, payer_auth);
+        // Reject what pool admission rejects as malformed, so an estimate is
+        // never returned for a transaction that could not be submitted.
+        Eip8130Structure::validate(&signed)?;
+        let envelope = BaseTxEnvelope::Eip8130(signed);
         let mut simulation = BaseRevm::from_recovered_tx(&envelope, account);
         if let Some(parts) = simulation.eip8130.as_mut() {
             parts.mode = Eip8130ExecutionMode::Simulate;
@@ -261,18 +257,50 @@ impl BaseTransactionRequest {
         })
     }
 
-    fn stub_prefixed_auth(scheme: Eip8130AuthScheme, data_len: usize) -> Bytes {
-        let mut blob = scheme.authenticator().to_vec();
-        blob.resize(blob.len() + data_len, STUB_AUTH_FILL);
+    /// A supplied blob is used for its shape and length only: the bytes that
+    /// select the priced authenticator are kept and every other byte becomes
+    /// [`STUB_AUTH_FILL`]. Calldata prices a zero byte below a non-zero one, so
+    /// this keeps a zero-filled placeholder from estimating less gas than the
+    /// real authentication of the same length.
+    fn stub_supplied_auth(blob: &Bytes, prefixed: bool) -> Bytes {
+        let kept = if !prefixed {
+            0
+        } else if Self::authenticator_selector(blob)
+            == Some(Eip8130Contracts::DELEGATE_AUTHENTICATOR)
+        {
+            DELEGATE_AUTH_PREFIX_LEN
+        } else {
+            AUTHENTICATOR_SELECTOR_LEN
+        };
+        let mut stub = blob.to_vec();
+        if let Some(data) = stub.get_mut(kept..) {
+            data.fill(STUB_AUTH_FILL);
+        }
+        Bytes::from(stub)
+    }
+
+    /// A canonical k1 authenticator selector followed by k1-signature-sized
+    /// filler, standing in for auth the request does not carry.
+    fn default_prefixed_auth() -> Bytes {
+        let mut blob = Eip8130AuthScheme::Secp256k1.authenticator().to_vec();
+        blob.resize(blob.len() + Eip8130AuthScheme::Secp256k1.default_data_len(), STUB_AUTH_FILL);
         Bytes::from(blob)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{address, b256};
+    use alloy_evm::Evm;
+    use alloy_primitives::{address, b256, hex};
     use alloy_rpc_types_eth::state::AccountOverride;
     use base_common_consensus::{Eip8130Constants, Eip8130Signed};
+    use base_common_evm::{BaseSpecId, BaseUpgrade, Builder, DefaultBase};
+    use k256::ecdsa::SigningKey;
+    use revm::{
+        context::{BlockEnv, CfgEnv, Context},
+        database::InMemoryDB,
+        inspector::NoOpInspector,
+    };
     use serde_json::json;
 
     use super::*;
@@ -289,6 +317,76 @@ mod tests {
 
     fn signed(tx: &BaseRevm<TxEnv>) -> &Eip8130Signed {
         &tx.eip8130.as_ref().unwrap().signed
+    }
+
+    /// Gas the simulation of `request` uses, which `eth_estimateGas` searches for.
+    fn estimated_gas(request: serde_json::Value) -> u64 {
+        let mut evm = Context::base()
+            .with_db(InMemoryDB::default())
+            .with_cfg(
+                CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Everest))
+                    .with_chain_id(CHAIN_ID),
+            )
+            .with_block(BlockEnv::default())
+            .build_with_inspector(NoOpInspector);
+        let outcome = evm.transact_raw(simulation(request)).expect("simulation runs");
+        assert!(outcome.result.is_success(), "expected success, got {:?}", outcome.result);
+        outcome.result.tx_gas_used()
+    }
+
+    /// A real 65-byte `r || s || v` secp256k1 signature.
+    fn real_k1_signature() -> Vec<u8> {
+        let key = SigningKey::from_slice(&[0x5a; 32]).unwrap();
+        let (signature, recid) = key.sign_prehash_recoverable(&[0x42; 32]).unwrap();
+        let mut out = signature.to_bytes().to_vec();
+        out.push(recid.to_byte() + 27);
+        out
+    }
+
+    /// A zero-filled placeholder for `senderAuth` or a named `payerAuth` must
+    /// never estimate less gas than the real signature it stands in for, even
+    /// though zero calldata bytes are cheaper than non-zero ones.
+    #[test]
+    fn zero_filled_auth_placeholder_does_not_underestimate() {
+        let payer = address!("00000000000000000000000000000000000000b2");
+        let prefixed = |data: &[u8]| {
+            let mut blob = Eip8130Constants::K1_AUTHENTICATOR.to_vec();
+            blob.extend_from_slice(data);
+            hex::encode_prefixed(blob)
+        };
+        let real = real_k1_signature();
+        let zero = [0u8; 65];
+        assert!(real.iter().filter(|&&byte| byte == 0).count() < real.len());
+
+        let bare_sender = |auth: &[u8]| json!({ "from": FROM, "calls": [], "senderAuth": hex::encode_prefixed(auth) });
+        assert!(estimated_gas(bare_sender(&zero)) >= estimated_gas(bare_sender(&real)));
+
+        let configured_sender =
+            |auth: &[u8]| json!({ "sender": SENDER, "calls": [], "senderAuth": prefixed(auth) });
+        assert!(estimated_gas(configured_sender(&zero)) >= estimated_gas(configured_sender(&real)));
+
+        let named_payer = |auth: &[u8]| json!({ "from": FROM, "calls": [], "payer": payer, "payerAuth": prefixed(auth) });
+        assert!(estimated_gas(named_payer(&zero)) >= estimated_gas(named_payer(&real)));
+    }
+
+    /// A supplied delegate blob keeps the bytes that choose the priced nested
+    /// authenticator and the delegate account; only the signature is replaced.
+    #[test]
+    fn supplied_delegate_auth_keeps_its_structure() {
+        let delegate_account = address!("00000000000000000000000000000000000000d4");
+        let mut blob = Eip8130Contracts::DELEGATE_AUTHENTICATOR.to_vec();
+        blob.extend_from_slice(delegate_account.as_slice());
+        blob.extend_from_slice(Eip8130Constants::K1_AUTHENTICATOR.as_slice());
+        blob.extend_from_slice(&[0u8; 65]);
+        let tx = simulation(json!({
+            "sender": SENDER,
+            "calls": [],
+            "senderAuth": hex::encode_prefixed(&blob),
+        }));
+        let auth = signed(&tx).sender_auth();
+        assert_eq!(auth.len(), blob.len());
+        assert_eq!(auth[..DELEGATE_AUTH_PREFIX_LEN], blob[..DELEGATE_AUTH_PREFIX_LEN]);
+        assert!(auth[DELEGATE_AUTH_PREFIX_LEN..].iter().all(|&byte| byte == STUB_AUTH_FILL));
     }
 
     #[test]
@@ -382,6 +480,43 @@ mod tests {
             create.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).err(),
             Some(Eip8130SimulationRequestError::ContractCreation)
         );
+    }
+
+    /// A request's `gas` above the cap is clamped to it, so a caller cannot
+    /// pick an unbounded simulation budget.
+    #[test]
+    fn request_gas_is_clamped_to_the_cap() {
+        let tx = simulation(json!({ "sender": SENDER, "calls": [], "gas": "0xffffffffffffffff" }));
+        assert_eq!(signed(&tx).tx().gas_limit, GAS_CAP);
+        let tx = simulation(json!({ "sender": SENDER, "calls": [], "gas": "0x5208" }));
+        assert_eq!(signed(&tx).tx().gas_limit, 21_000);
+    }
+
+    #[test]
+    fn zero_sender_actor_id_is_rejected() {
+        let request = serde_json::from_value::<BaseTransactionRequest>(json!({
+            "sender": SENDER,
+            "calls": [],
+            "senderActorId": B256::ZERO,
+        }))
+        .unwrap();
+        assert_eq!(
+            request.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).err(),
+            Some(Eip8130SimulationRequestError::ZeroSenderActorId)
+        );
+    }
+
+    /// The structural limits enforced at pool admission also bound simulation;
+    /// over JSON the phase cap already applies while decoding.
+    #[test]
+    fn too_many_call_phases_are_rejected() {
+        let calls: Vec<Vec<Call>> = vec![vec![]; Eip8130Constants::MAX_CALL_PHASES_PER_TX + 1];
+        let decoded = serde_json::from_value::<BaseTransactionRequest>(json!({
+            "sender": SENDER,
+            "calls": calls,
+        }));
+        let error = decoded.unwrap_err().to_string();
+        assert!(error.contains("`calls` with at most 1024 entries"), "{error}");
     }
 
     #[test]

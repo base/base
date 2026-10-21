@@ -13,11 +13,6 @@ use url::Url;
 
 use crate::{FlashblocksReceiver, metrics::Metrics};
 
-#[derive(Debug)]
-enum ActorMessage {
-    BestPayload { payload: Flashblock },
-}
-
 /// Subscribes to flashblocks via WebSocket and forwards them to the receiver.
 #[derive(Debug)]
 pub struct FlashblocksSubscriber<Receiver> {
@@ -79,7 +74,7 @@ where
                                             let bytes = msg.into_data();
                                             match Flashblock::try_decode_message(bytes) {
                                                 Ok(payload) => {
-                                                    let _ = sender.send(ActorMessage::BestPayload { payload }).await.map_err(|e| {
+                                                    let _ = sender.send(payload).await.map_err(|e| {
                                                         error!(message = "Failed to publish message to channel", error = %e);
                                                     });
                                                 }
@@ -162,12 +157,8 @@ where
 
         let flashblocks_state = Arc::clone(&self.flashblocks_state);
         tokio::spawn(async move {
-            while let Some(message) = mailbox.recv().await {
-                match message {
-                    ActorMessage::BestPayload { payload } => {
-                        flashblocks_state.on_flashblock_received(payload);
-                    }
-                }
+            while let Some(payload) = mailbox.recv().await {
+                flashblocks_state.on_flashblock_received(payload);
             }
         });
     }

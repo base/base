@@ -11,9 +11,10 @@ use alloy_sol_types::{SolEvent, SolValue};
 use base_precompile_storage::{BasePrecompileError, Result};
 
 use crate::{
-    B20_MAX_SUPPLY_CAP, B20CreditRecipient, B20Guards, B20PausableFeature, B20PolicyType,
-    B20StablecoinToken, B20TokenRole, Eip712Domain, IB20, NonZeroAddress, PermitArgs,
-    PolicyAccounting, Stablecoin, StablecoinAccounting, Token, TransferPolicyIds,
+    B20_MAX_SUPPLY_CAP, B20CreditRecipient, B20CreditRecipientStrategy, B20Guards,
+    B20PausableFeature, B20PolicyType, B20StablecoinToken, B20TokenRole, Eip712Domain, IB20,
+    NonZeroAddress, PermitArgs, PolicyAccounting, Stablecoin, StablecoinAccounting, Token,
+    TransferPolicyIds,
 };
 
 /// `keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)")`
@@ -214,7 +215,8 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> Stablecoin<S, A> for Stableco
         privileged: bool,
     ) -> Result<()> {
         B20Guards::ensure_not_paused(token, IB20::PausableFeature::TRANSFER)?;
-        let to = B20CreditRecipient::new(to, token.token_address())
+        let to = B20CreditRecipientStrategy::ExcludingZeroAndSelf
+            .recipient(to, token.token_address())
             .map_err(|_| BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }))?;
         let from = NonZeroAddress::new(caller)
             .map_err(|_| BasePrecompileError::revert(IB20::InvalidSender { sender: caller }))?;
@@ -240,7 +242,8 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> Stablecoin<S, A> for Stableco
     ) -> Result<()> {
         B20Guards::ensure_not_paused(token, IB20::PausableFeature::TRANSFER)?;
         // Validate before allowance / transfer-policy-id SLOADs.
-        let to = B20CreditRecipient::new(to, token.token_address())
+        let to = B20CreditRecipientStrategy::ExcludingZeroAndSelf
+            .recipient(to, token.token_address())
             .map_err(|_| BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }))?;
         let from = NonZeroAddress::new(from)
             .map_err(|_| BasePrecompileError::revert(IB20::InvalidSender { sender: from }))?;
@@ -309,7 +312,8 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> Stablecoin<S, A> for Stableco
         if !privileged {
             B20Guards::ensure_token_role(token, caller, B20TokenRole::Mint)?;
         }
-        B20CreditRecipient::new(to, token.token_address())
+        B20CreditRecipientStrategy::ExcludingZeroAndSelf
+            .recipient(to, token.token_address())
             .map_err(|_| BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }))?;
         B20Guards::ensure_policy_type(token, B20PolicyType::MintReceiver, to)?;
         let supply = token.accounting().total_supply()?;
@@ -376,7 +380,8 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> Stablecoin<S, A> for Stableco
         B20Guards::ensure_token_role(token, caller, B20TokenRole::Seize)?;
         // A valid recipient guards against a disguised burn or a balance stranded on this token;
         // `from != 0` guards against a disguised mint, matching `transfer_inner`.
-        B20CreditRecipient::new(to, token.token_address())
+        B20CreditRecipientStrategy::ExcludingZeroAndSelf
+            .recipient(to, token.token_address())
             .map_err(|_| BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }))?;
         if from == Address::ZERO {
             return Err(BasePrecompileError::revert(IB20::InvalidSender { sender: from }));
@@ -759,26 +764,18 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> Stablecoin<S, A> for Stableco
 
 #[cfg(test)]
 mod tests {
-    use alloc::{
-        collections::BTreeMap,
-        string::{String, ToString},
-        vec,
-        vec::Vec,
-    };
+    use alloc::{string::ToString, vec, vec::Vec};
 
-    use alloy_primitives::{Address, B256, LogData, U256, keccak256};
+    use alloy_primitives::{Address, B256, U256, keccak256};
     use alloy_sol_types::SolEvent;
-    use base_precompile_storage::{BasePrecompileError, Result};
+    use base_precompile_storage::BasePrecompileError;
     use k256::ecdsa::SigningKey;
 
     use crate::{
-        B20_MAX_SUPPLY_CAP, B20PolicyType, B20StablecoinToken, B20TokenRole, B20Variant, IB20,
-        PackedPolicy, PermitArgs, PolicyAccounting, PolicyRegistryStorage, PolicyVersion,
-        Stablecoin, StablecoinAccounting, StablecoinV3, Token, TokenAccounting, TransferPolicyIds,
+        B20PolicyType, B20StablecoinToken, B20TokenRole, B20Variant, FakePolicyAccounting, IB20,
+        InMemoryTokenAccounting, PermitArgs, PolicyRegistryStorage, PolicyVersion, Stablecoin,
+        StablecoinV3, Token, TokenAccounting,
     };
-
-    // --- Self-contained in-memory fakes (no dependency on `common::test_utils`, so shared test
-    //     scaffolding can never drift this frozen version's coverage) ---
 
     const TOKEN: Address = Address::repeat_byte(0x22);
     const ADMIN: Address = Address::repeat_byte(0xAD);
@@ -792,289 +789,21 @@ mod tests {
     const PRIVATE_KEY: [u8; 32] =
         alloy_primitives::hex!("ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
 
-    /// Minimal `StablecoinAccounting` backed by in-memory maps.
-    #[derive(Debug)]
-    struct FakeAccounting {
-        initialized: bool,
-        balances: BTreeMap<Address, U256>,
-        allowances: BTreeMap<(Address, Address), U256>,
-        total_supply: U256,
-        supply_cap: U256,
-        name: String,
-        symbol: String,
-        currency: String,
-        paused: U256,
-        nonces: BTreeMap<Address, U256>,
-        contract_uri: String,
-        roles: BTreeMap<(B256, Address), bool>,
-        role_member_counts: BTreeMap<B256, U256>,
-        role_admins: BTreeMap<B256, B256>,
-        policy_ids: BTreeMap<B256, u64>,
-        events: Vec<LogData>,
-        /// Number of `metered_keccak256` calls (interior-mutable so `&self` metering can record).
-        keccak_charges: core::cell::Cell<u64>,
-        /// Cumulative gas passed to `deduct_gas`.
-        gas_deducted: core::cell::Cell<u64>,
+    /// Accounting seeded with the stablecoin metadata these tests assume.
+    fn accounting() -> InMemoryTokenAccounting {
+        let mut accounting = InMemoryTokenAccounting::new(TOKEN);
+        accounting.name = "USD Coin".to_string();
+        accounting.symbol = "USDC".to_string();
+        accounting.currency = "USD".to_string();
+        accounting
     }
 
-    impl FakeAccounting {
-        fn new() -> Self {
-            Self {
-                initialized: true,
-                balances: BTreeMap::new(),
-                allowances: BTreeMap::new(),
-                total_supply: U256::ZERO,
-                supply_cap: B20_MAX_SUPPLY_CAP,
-                name: "USD Coin".to_string(),
-                symbol: "USDC".to_string(),
-                currency: "USD".to_string(),
-                paused: U256::ZERO,
-                nonces: BTreeMap::new(),
-                contract_uri: String::new(),
-                roles: BTreeMap::new(),
-                role_member_counts: BTreeMap::new(),
-                role_admins: BTreeMap::new(),
-                policy_ids: BTreeMap::new(),
-                events: Vec::new(),
-                keccak_charges: core::cell::Cell::new(0),
-                gas_deducted: core::cell::Cell::new(0),
-            }
-        }
-    }
-
-    impl TokenAccounting for FakeAccounting {
-        fn token_address(&self) -> Address {
-            TOKEN
-        }
-        fn is_initialized(&self) -> Result<bool> {
-            Ok(self.initialized)
-        }
-        fn balance_of(&self, account: Address) -> Result<U256> {
-            Ok(self.balances.get(&account).copied().unwrap_or(U256::ZERO))
-        }
-        fn set_balance(&mut self, account: Address, balance: U256) -> Result<()> {
-            self.balances.insert(account, balance);
-            Ok(())
-        }
-        fn allowance(&self, owner: Address, spender: Address) -> Result<U256> {
-            Ok(self.allowances.get(&(owner, spender)).copied().unwrap_or(U256::ZERO))
-        }
-        fn set_allowance(&mut self, owner: Address, spender: Address, amount: U256) -> Result<()> {
-            self.allowances.insert((owner, spender), amount);
-            Ok(())
-        }
-        fn total_supply(&self) -> Result<U256> {
-            Ok(self.total_supply)
-        }
-        fn set_total_supply(&mut self, supply: U256) -> Result<()> {
-            self.total_supply = supply;
-            Ok(())
-        }
-        fn supply_cap(&self) -> Result<U256> {
-            Ok(self.supply_cap)
-        }
-        fn set_supply_cap(&mut self, cap: U256) -> Result<()> {
-            self.supply_cap = cap;
-            Ok(())
-        }
-        fn name(&self) -> Result<String> {
-            Ok(self.name.clone())
-        }
-        fn set_name(&mut self, name: String) -> Result<()> {
-            self.name = name;
-            Ok(())
-        }
-        fn symbol(&self) -> Result<String> {
-            Ok(self.symbol.clone())
-        }
-        fn set_symbol(&mut self, symbol: String) -> Result<()> {
-            self.symbol = symbol;
-            Ok(())
-        }
-        fn decimals(&self) -> Result<u8> {
-            Ok(6)
-        }
-        fn paused(&self) -> Result<U256> {
-            Ok(self.paused)
-        }
-        fn set_paused(&mut self, vectors: U256) -> Result<()> {
-            self.paused = vectors;
-            Ok(())
-        }
-        fn nonce(&self, owner: Address) -> Result<U256> {
-            Ok(self.nonces.get(&owner).copied().unwrap_or(U256::ZERO))
-        }
-        fn increment_nonce(&mut self, owner: Address) -> Result<()> {
-            let n = self.nonces.entry(owner).or_insert(U256::ZERO);
-            *n += U256::ONE;
-            Ok(())
-        }
-        fn contract_uri(&self) -> Result<String> {
-            Ok(self.contract_uri.clone())
-        }
-        fn set_contract_uri(&mut self, uri: String) -> Result<()> {
-            self.contract_uri = uri;
-            Ok(())
-        }
-        fn has_role(&self, role: B256, account: Address) -> Result<bool> {
-            Ok(self.roles.get(&(role, account)).copied().unwrap_or(false))
-        }
-        fn set_role(&mut self, role: B256, account: Address, enabled: bool) -> Result<()> {
-            self.roles.insert((role, account), enabled);
-            Ok(())
-        }
-        fn role_member_count(&self, role: B256) -> Result<U256> {
-            Ok(self.role_member_counts.get(&role).copied().unwrap_or(U256::ZERO))
-        }
-        fn set_role_member_count(&mut self, role: B256, count: U256) -> Result<()> {
-            self.role_member_counts.insert(role, count);
-            Ok(())
-        }
-        fn role_admin(&self, role: B256) -> Result<B256> {
-            Ok(self.role_admins.get(&role).copied().unwrap_or(B256::ZERO))
-        }
-        fn set_role_admin(&mut self, role: B256, admin_role: B256) -> Result<()> {
-            self.role_admins.insert(role, admin_role);
-            Ok(())
-        }
-        fn policy_id(&self, policy_scope: B256) -> Result<u64> {
-            Ok(self.policy_ids.get(&policy_scope).copied().unwrap_or(0))
-        }
-        fn set_policy_id(&mut self, policy_scope: B256, policy_id: u64) -> Result<()> {
-            self.policy_ids.insert(policy_scope, policy_id);
-            Ok(())
-        }
-
-        fn transfer_policy_ids(&self) -> Result<TransferPolicyIds> {
-            TransferPolicyIds::read_individually(self)
-        }
-        fn emit_event(&mut self, log: LogData) -> Result<()> {
-            self.events.push(log);
-            Ok(())
-        }
-        fn metered_keccak256(&self, data: &[u8]) -> Result<B256> {
-            self.keccak_charges.set(self.keccak_charges.get() + 1);
-            Ok(keccak256(data))
-        }
-        fn deduct_gas(&self, gas: u64) -> Result<()> {
-            self.gas_deducted.set(self.gas_deducted.get() + gas);
-            Ok(())
-        }
-    }
-
-    impl StablecoinAccounting for FakeAccounting {
-        fn currency(&self) -> Result<String> {
-            Ok(self.currency.clone())
-        }
-        fn set_currency(&mut self, currency: String) -> Result<()> {
-            self.currency = currency;
-            Ok(())
-        }
-    }
-
-    /// Minimal [`PolicyAccounting`] backed by in-memory maps.
-    #[derive(Debug)]
-    struct FakePolicyAccounting {
-        caller: Address,
-        initialized: bool,
-        policies: BTreeMap<u64, U256>,
-        members: BTreeMap<(u64, Address), bool>,
-        pending_admins: BTreeMap<u64, Address>,
-        next_counter: u64,
-        events: Vec<LogData>,
-    }
-
-    impl FakePolicyAccounting {
-        fn new() -> Self {
-            Self {
-                caller: ADMIN,
-                initialized: false,
-                policies: BTreeMap::new(),
-                members: BTreeMap::new(),
-                pending_admins: BTreeMap::new(),
-                next_counter: 0,
-                events: Vec::new(),
-            }
-        }
-
-        fn allow(&mut self, policy_id: u64, account: Address) {
-            self.create_existing_policy(policy_id);
-            self.members.insert((policy_id, account), true);
-        }
-
-        fn create_existing_policy(&mut self, policy_id: u64) {
-            self.policies.insert(policy_id, PackedPolicy::new(Address::ZERO).into_u256());
-        }
-    }
-
-    impl PolicyAccounting for FakePolicyAccounting {
-        fn registry_address(&self) -> Address {
-            Address::repeat_byte(0x02)
-        }
-        fn caller(&self) -> Address {
-            self.caller
-        }
-        fn read_policy_word(&self, policy_id: u64) -> Result<U256> {
-            Ok(self.policies.get(&policy_id).copied().unwrap_or(U256::ZERO))
-        }
-        fn write_policy_word(&mut self, policy_id: u64, word: U256) -> Result<()> {
-            self.policies.insert(policy_id, word);
-            Ok(())
-        }
-        fn read_member(&self, policy_id: u64, account: Address) -> Result<bool> {
-            Ok(self.members.get(&(policy_id, account)).copied().unwrap_or(false))
-        }
-        fn set_member(&mut self, policy_id: u64, account: Address) -> Result<()> {
-            self.members.insert((policy_id, account), true);
-            Ok(())
-        }
-        fn delete_member(&mut self, policy_id: u64, account: Address) -> Result<()> {
-            self.members.remove(&(policy_id, account));
-            Ok(())
-        }
-        fn read_pending_admin(&self, policy_id: u64) -> Result<Address> {
-            Ok(self.pending_admins.get(&policy_id).copied().unwrap_or(Address::ZERO))
-        }
-        fn write_pending_admin(&mut self, policy_id: u64, admin: Address) -> Result<()> {
-            self.pending_admins.insert(policy_id, admin);
-            Ok(())
-        }
-        fn delete_pending_admin(&mut self, policy_id: u64) -> Result<()> {
-            self.pending_admins.remove(&policy_id);
-            Ok(())
-        }
-        fn read_next_counter(&self) -> Result<u64> {
-            Ok(self.next_counter)
-        }
-        fn write_next_counter(&mut self, counter: u64) -> Result<()> {
-            self.next_counter = counter;
-            Ok(())
-        }
-        fn emit_event(&mut self, log: LogData) -> Result<()> {
-            self.events.push(log);
-            Ok(())
-        }
-        fn mark_initialized(&mut self) -> Result<()> {
-            self.initialized = true;
-            Ok(())
-        }
-
-        // This fake does not exercise composite policies.
-        fn read_children(&self, _policy_id: u64) -> Result<Vec<u64>> {
-            Ok(Vec::new())
-        }
-
-        fn write_children(&mut self, _policy_id: u64, _child_policy_ids: &[u64]) -> Result<()> {
-            Ok(())
-        }
-    }
-
-    type Tok = B20StablecoinToken<FakeAccounting, FakePolicyAccounting>;
+    type Tok = B20StablecoinToken<InMemoryTokenAccounting, FakePolicyAccounting>;
 
     fn token() -> Tok {
         B20StablecoinToken::with_storage_and_policy(
-            FakeAccounting::new(),
-            FakePolicyAccounting::new(),
+            accounting(),
+            FakePolicyAccounting::with_caller(ADMIN),
             PolicyVersion::V1,
         )
     }
@@ -1221,6 +950,58 @@ mod tests {
         tok.policy_storage_mut().allow(POLICY, BOB);
         LOGIC.transfer(&mut tok, ALICE, BOB, U256::from(10u64), false).unwrap();
         assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(10u64));
+    }
+
+    // Executor, then sender, then receiver. Each call allows the account the previous gate
+    // checks, so the next PolicyForbids names the next gate.
+    #[test]
+    fn transfer_policy_order_executor_then_sender_then_receiver() {
+        let mut tok = token();
+        fund(&mut tok, ALICE, U256::from(100));
+
+        // Counters 0 and 1 are reserved for ALWAYS_ALLOW / ALWAYS_BLOCK sentinels.
+        const EXECUTOR_POLICY: u64 = (1u64 << 56) | 3;
+        const SENDER_POLICY: u64 = (1u64 << 56) | 4;
+        const RECEIVER_POLICY: u64 = (1u64 << 56) | 5;
+
+        tok.accounting_mut()
+            .set_policy_id(B20PolicyType::TransferExecutor.id(), EXECUTOR_POLICY)
+            .unwrap();
+        tok.accounting_mut()
+            .set_policy_id(B20PolicyType::TransferSender.id(), SENDER_POLICY)
+            .unwrap();
+        tok.accounting_mut()
+            .set_policy_id(B20PolicyType::TransferReceiver.id(), RECEIVER_POLICY)
+            .unwrap();
+
+        let err = LOGIC.transfer(&mut tok, ALICE, BOB, U256::from(10), false).unwrap_err();
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IB20::PolicyForbids {
+                policyScope: B20PolicyType::TransferExecutor.id(),
+                policyId: EXECUTOR_POLICY,
+            })
+        );
+
+        tok.policy_storage_mut().allow(EXECUTOR_POLICY, ALICE);
+        let err = LOGIC.transfer(&mut tok, ALICE, BOB, U256::from(10), false).unwrap_err();
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IB20::PolicyForbids {
+                policyScope: B20PolicyType::TransferSender.id(),
+                policyId: SENDER_POLICY,
+            })
+        );
+
+        tok.policy_storage_mut().allow(SENDER_POLICY, ALICE);
+        let err = LOGIC.transfer(&mut tok, ALICE, BOB, U256::from(10), false).unwrap_err();
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IB20::PolicyForbids {
+                policyScope: B20PolicyType::TransferReceiver.id(),
+                policyId: RECEIVER_POLICY,
+            })
+        );
     }
 
     // --- transfer_from ---

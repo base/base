@@ -1,9 +1,7 @@
 use std::{collections::HashSet, time::Duration};
 
 use async_trait::async_trait;
-use base_shadow_indexer_db::{
-    ShadowBlockRepo, ShadowBlockRow, ShadowDbConfig, ShadowFlushOutcome, ShadowWrite,
-};
+use base_shadow_indexer_db::{ShadowBlockRepo, ShadowDbConfig, ShadowFlushOutcome, ShadowWrite};
 use reth_tasks::TaskExecutor;
 use tokio::{
     sync::mpsc,
@@ -74,35 +72,30 @@ impl ShadowWriter {
                     match maybe_write {
                         Some(mut write) => {
                             if let ShadowWrite::Reorged(row) = &mut write {
-                                self.stamp_row(row);
+                                row.payload.builder_version = self.builder_version.clone();
                             }
                             batch.push(write);
                             ShadowWriterMetrics::channel_depth().set(self.rx.len() as f64);
                             ShadowWriterMetrics::buffer_size().set(batch.len() as f64);
                             if batch.len() >= BATCH_SIZE {
-                                self.flush(&repo, &mut batch, "batch_full").await;
+                                Self::flush(&repo, &mut batch, "batch_full").await;
                             }
                         }
                         None => {
-                            self.flush(&repo, &mut batch, "channel_closed").await;
+                            Self::flush(&repo, &mut batch, "channel_closed").await;
                             break;
                         }
                     }
                 }
                 _ = interval.tick() => {
                     ShadowWriterMetrics::channel_depth().set(self.rx.len() as f64);
-                    self.flush(&repo, &mut batch, "interval").await;
+                    Self::flush(&repo, &mut batch, "interval").await;
                 }
             }
         }
     }
 
-    async fn flush(
-        &self,
-        repo: &dyn BlockInserter,
-        batch: &mut Vec<ShadowWrite>,
-        trigger: &'static str,
-    ) {
+    async fn flush(repo: &dyn BlockInserter, batch: &mut Vec<ShadowWrite>, trigger: &'static str) {
         if batch.is_empty() {
             return;
         }
@@ -183,39 +176,18 @@ impl ShadowWriter {
 
         dropped
     }
-
-    fn stamp_row(&self, row: &mut ShadowBlockRow) {
-        row.payload.builder_version = self.builder_version.clone();
-    }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
-
     use anyhow::anyhow;
     use base_shadow_indexer_db::{
-        PgConnectionParams, ShadowBlockPayload, ShadowBlockRow, ShadowCanonicalRef, ShadowDbConfig,
-        ShadowFlushOutcome,
+        ShadowBlockPayload, ShadowBlockRow, ShadowCanonicalRef, ShadowFlushOutcome,
     };
     use chrono::{DateTime, Utc};
     use reth_primitives_traits::RecoveredBlock;
-    use tokio::sync::mpsc;
 
     use super::{MAX_FLUSH_ATTEMPTS, MockBlockInserter, ShadowWrite, ShadowWriter};
-
-    fn test_writer() -> ShadowWriter {
-        let (_tx, rx) = mpsc::channel(1);
-        ShadowWriter {
-            rx,
-            db_config: ShadowDbConfig {
-                connection: PgConnectionParams::default(),
-                max_connections: 1,
-                connection_timeout: Duration::from_secs(1),
-            },
-            builder_version: "test-builder".to_string(),
-        }
-    }
 
     fn sample_row(number: i64, created_at: DateTime<Utc>) -> ShadowBlockRow {
         ShadowBlockRow {
@@ -242,25 +214,23 @@ mod tests {
 
     #[tokio::test]
     async fn flush_retries_then_drops_rows() {
-        let writer = test_writer();
         let mut batch = vec![reorged(1, Utc::now())];
 
         let mut repo = MockBlockInserter::new();
         repo.expect_flush().times(MAX_FLUSH_ATTEMPTS).returning(|_| Err(anyhow!("insert failed")));
 
-        writer.flush(&repo, &mut batch, "batch_full").await;
+        ShadowWriter::flush(&repo, &mut batch, "batch_full").await;
         assert!(batch.is_empty());
     }
 
     #[tokio::test]
     async fn flush_keeps_canonical_refs_when_rows_are_dropped() {
-        let writer = test_writer();
         let mut batch = vec![reorged(1, Utc::now()), canonical(9), canonical(9), canonical(10)];
 
         let mut repo = MockBlockInserter::new();
         repo.expect_flush().times(MAX_FLUSH_ATTEMPTS).returning(|_| Err(anyhow!("insert failed")));
 
-        writer.flush(&repo, &mut batch, "batch_full").await;
+        ShadowWriter::flush(&repo, &mut batch, "batch_full").await;
 
         let retained: Vec<i64> = batch
             .iter()
@@ -273,41 +243,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn flush_stamps_builder_version_without_mutating_created_at() {
-        let writer = test_writer();
-        let created_at = Utc::now();
-        let mut batch = vec![reorged(7, created_at)];
-        if let ShadowWrite::Reorged(row) = &mut batch[0] {
-            writer.stamp_row(row);
-        }
-
-        let mut repo = MockBlockInserter::new();
-        repo.expect_flush().times(MAX_FLUSH_ATTEMPTS).returning(move |writes| {
-            for write in writes {
-                let ShadowWrite::Reorged(row) = write else { continue };
-                assert_eq!(row.created_at, created_at);
-                assert_eq!(row.payload.builder_version, "test-builder");
-            }
-            Err(anyhow!("insert failed"))
-        });
-
-        writer.flush(&repo, &mut batch, "batch_full").await;
-    }
-
-    #[tokio::test]
     async fn flush_skips_database_round_trip_when_batch_is_empty() {
-        let writer = test_writer();
         let mut batch = Vec::new();
 
         let mut repo = MockBlockInserter::new();
         repo.expect_flush().never();
 
-        writer.flush(&repo, &mut batch, "interval").await;
+        ShadowWriter::flush(&repo, &mut batch, "interval").await;
     }
 
     #[tokio::test]
     async fn flush_preserves_the_order_writes_arrived_in() {
-        let writer = test_writer();
         let created_at = Utc::now();
         let mut batch = vec![reorged(9, created_at), canonical(9), reorged(9, created_at)];
 
@@ -319,7 +265,7 @@ mod tests {
             Ok(ShadowFlushOutcome { rows_written: 2, rows_reconciled: 1 })
         });
 
-        writer.flush(&repo, &mut batch, "batch_full").await;
+        ShadowWriter::flush(&repo, &mut batch, "batch_full").await;
         assert!(batch.is_empty());
     }
 }

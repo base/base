@@ -65,16 +65,6 @@ where
         }
     }
 
-    /// Consumes `Self` and takes the current state root of the trie DB.
-    pub fn take_root_node(self) -> TrieNode {
-        self.root_node
-    }
-
-    /// Returns a shared reference to the root [`TrieNode`] of the trie DB.
-    pub const fn root(&self) -> &TrieNode {
-        &self.root_node
-    }
-
     /// Returns the mapping of [Address]es to storage roots.
     pub const fn storage_roots(&self) -> &HashMap<Address, TrieNode> {
         &self.storage_roots
@@ -368,20 +358,6 @@ mod tests {
 
     fn new_test_db() -> TrieDB<NoopTrieDBProvider, NoopTrieHinter> {
         TrieDB::new(Header::default().seal_slow(), NoopTrieDBProvider, NoopTrieHinter)
-    }
-
-    #[test]
-    fn test_trie_db_take_root_node() {
-        let db = new_test_db();
-        let root_node = db.take_root_node();
-        assert_eq!(root_node.blind(), EMPTY_ROOT_HASH);
-    }
-
-    #[test]
-    fn test_trie_db_root_node_ref() {
-        let db = new_test_db();
-        let root_node = db.root();
-        assert_eq!(root_node.blind(), EMPTY_ROOT_HASH);
     }
 
     #[test]

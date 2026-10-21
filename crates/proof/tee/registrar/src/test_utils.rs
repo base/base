@@ -9,6 +9,9 @@ use k256::ecdsa::SigningKey;
 
 use crate::{InstanceHealthStatus, ProverClient, ProverInstance};
 
+mod crl_server;
+pub use crl_server::CrlTestServer;
+
 /// Well-known Hardhat / Anvil account #0 private key.
 pub const HARDHAT_KEY_0: [u8; 32] =
     hex!("ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");

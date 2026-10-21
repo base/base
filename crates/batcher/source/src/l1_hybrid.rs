@@ -80,63 +80,46 @@ impl<P: L1HeadPolling> L1HeadSource for HybridL1HeadSource<P> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicU64, Ordering};
-
     use base_runtime::{Config, Runner};
 
     use super::*;
-    use crate::SourceError;
+    use crate::{SourceError, l1_polling::MockL1HeadPolling};
 
-    struct IncrementingPoller(AtomicU64);
-
-    #[async_trait]
-    impl L1HeadPolling for IncrementingPoller {
-        async fn latest_head(&self) -> Result<u64, SourceError> {
-            Ok(self.0.fetch_add(1, Ordering::Relaxed))
-        }
-    }
-
-    struct ProviderErrorPoller;
-
-    #[async_trait]
-    impl L1HeadPolling for ProviderErrorPoller {
-        async fn latest_head(&self) -> Result<u64, SourceError> {
-            Err(SourceError::Provider("poll down".to_string()))
-        }
-    }
-
+    /// Only heads above the last one reported come out, so a stale or repeated head is skipped.
     #[test]
-    fn test_hybrid_l1_stale_and_duplicate_heads_skipped() {
+    fn hybrid_l1_skips_stale_and_duplicate_heads() {
         Runner::start(Config::seeded(0), |ctx| async move {
-            // Only the stream can produce heads: the poller always fails.
+            // The poller always fails, so only the stream produces heads.
+            let mut poller = MockL1HeadPolling::new();
+            poller
+                .expect_latest_head()
+                .returning(|| Err(SourceError::Provider("poll down".to_string())));
             let stream = futures::stream::iter(vec![10u64, 9, 10, 11]);
-            let mut source = HybridL1HeadSource::new(
-                ctx,
-                stream.boxed(),
-                ProviderErrorPoller,
-                Duration::from_secs(100),
-            );
+            let mut source =
+                HybridL1HeadSource::new(ctx, stream.boxed(), poller, Duration::from_secs(100));
 
             assert_eq!(source.next().await, 10);
-            // 9 is stale and the second 10 a duplicate: the next head is 11.
+            // 9 is stale and the second 10 a duplicate, so the next head is 11.
             assert_eq!(source.next().await, 11);
         });
     }
 
+    /// Once the subscription ends, the source keeps delivering heads from the poller.
     #[test]
-    fn test_hybrid_l1_polls_after_subscription_ends() {
+    fn hybrid_l1_polls_after_subscription_ends() {
         Runner::start(Config::seeded(0), |ctx| async move {
-            // The stream and the poller both start at head 5; the stream then ends and the
-            // poller keeps returning a new head on every call. Whichever arm `select!` polls
-            // first, the other one's 5 is a duplicate and the heads that follow come from the
-            // poller.
+            // The stream and the poller both start at head 5. The stream then ends and the
+            // poller returns a new head on every call. Whichever arm `select!` polls first,
+            // the other one's 5 is a duplicate and the heads that follow come from the poller.
+            let mut poller = MockL1HeadPolling::new();
+            let mut head = 5;
+            poller.expect_latest_head().returning(move || {
+                head += 1;
+                Ok(head - 1)
+            });
             let stream = futures::stream::once(async { 5u64 });
-            let mut source = HybridL1HeadSource::new(
-                ctx,
-                stream.boxed(),
-                IncrementingPoller(AtomicU64::new(5)),
-                Duration::from_secs(100),
-            );
+            let mut source =
+                HybridL1HeadSource::new(ctx, stream.boxed(), poller, Duration::from_secs(100));
 
             let mut heads = Vec::new();
             for _ in 0..3 {

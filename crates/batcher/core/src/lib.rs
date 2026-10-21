@@ -15,12 +15,9 @@ pub use outcome::TxOutcome;
 
 mod throttle;
 pub use throttle::{
-    DaThrottle, ThrottleConfig, ThrottleConfigError, ThrottleController, ThrottleInfo,
+    DaLimits, DaThrottle, ThrottleConfig, ThrottleConfigError, ThrottleController, ThrottleInfo,
     ThrottleParams, ThrottleStrategy,
 };
-
-mod throttle_client;
-pub use throttle_client::{NoopThrottleClient, ThrottleClient};
 
 mod submissions;
 pub use submissions::{BatchTxCandidateBuilder, BatchTxCandidateError, SubmissionQueue};
