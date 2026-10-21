@@ -44,8 +44,8 @@ pub struct CandidateCapabilities {
 pub struct CandidateArgs {
     /// Runs the candidate capabilities (ledger, policy and pool support) and registers
     /// `base_sendSwapTransaction` at startup, plus `admin_setCandidateSelectionEnabled` when the
-    /// admin RPC module is enabled. When off, these methods are unregistered and return
-    /// `-32601`.
+    /// admin RPC module and `--builder.candidates.enabled` are both on. When off, these methods
+    /// are unregistered and return `-32601`.
     #[arg(long = "txpool.candidates.enabled", default_value = "false")]
     pub candidates_enabled: bool,
 

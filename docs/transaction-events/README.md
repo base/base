@@ -415,7 +415,8 @@ still correct it.
 Disabled selection: a node started without candidates registers no
 `base_sendSwapTransaction` and emits none of these events. A node started with
 ingress but without `--builder.candidates.enabled` starts with selection
-disabled. Builder selection requires `--builder.basic-payload-builder`. While
+disabled and does not register `admin_setCandidateSelectionEnabled`, so
+selection stays off. Builder selection requires `--builder.basic-payload-builder`. While
 selection is disabled, at startup or at runtime with
 `admin_setCandidateSelectionEnabled`, ingress journals
 admissions with `data.selection: ignored` and starts no group, and the builder
