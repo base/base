@@ -55,6 +55,7 @@ base-proofs-extension.workspace = true
 base-shadow-indexer-db.workspace = true
 base-execution-chainspec.workspace = true
 base-execution-consensus.workspace = true
+base-execution-payer-rpc.workspace = true
 base-observability-events.workspace = true
 base-execution-payload-builder.workspace = true
 base-execution-eip8130-rpc-node.workspace = true
