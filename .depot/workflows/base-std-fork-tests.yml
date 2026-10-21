@@ -94,6 +94,9 @@ jobs:
       # Runs fork tests with forge's `base` upgrade set to the selected fork.
       # Figment maps FOUNDRY_BASE onto the `base` key.
       FOUNDRY_BASE: ${{ matrix.upgrade }}
+      # Opts into base-std's unknown-selector dispatch test, which it skips by default. The
+      # policy registry has classified calldata before its activation gate since base/base#3421.
+      POLICY_DISPATCH_FIX: "true"
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
