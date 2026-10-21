@@ -26,6 +26,9 @@ pub use rpc::{
     TxpoolAdminClient, WalletProvider, create_wallet_provider,
 };
 
+/// Shared fork-aware transaction gas estimator for benchmark setup callers.
+pub use rpc::GasEstimator;
+
 mod metrics;
 pub use metrics::{
     BlockLoadMetrics, BlockRange, CohortMetrics, ConfigSummary, FlashblocksLatencyMetrics,

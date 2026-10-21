@@ -64,6 +64,9 @@ pub trait Payload: Send + Sync + std::fmt::Debug {
     }
 
     /// Generates a transaction request.
+    ///
+    /// The gas field is a legacy budget hint. Network-backed callers must apply
+    /// [`crate::GasEstimator`] before signing to account for the active fork.
     fn generate(&self, rng: &mut SeededRng, from: Address, to: Address) -> TransactionRequest;
 
     /// Optional chain preparation before the measured load phase. Default: no-op.

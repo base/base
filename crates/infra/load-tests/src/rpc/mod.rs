@@ -1,5 +1,8 @@
 //! RPC client abstractions and transaction submission.
 
+mod gas;
+pub use gas::GasEstimator;
+
 mod client;
 pub use client::{
     BaseFeeExt, BatchRpcClient, BatchSendError, BatchSendResult, JSON_RPC_METHOD_NOT_FOUND,

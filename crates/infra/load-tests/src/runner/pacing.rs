@@ -106,6 +106,7 @@ struct PresignConfig {
     /// Query provider used to read the current block height per prepare round
     /// when resolving offset-based `block_number` validity predicates.
     query_client: QueryProvider,
+    gas_estimator: Option<crate::rpc::GasEstimator>,
 }
 
 #[derive(Debug)]
@@ -410,6 +411,12 @@ impl LoadRunner {
 
     /// Runs the load test and returns metrics summary.
     pub async fn run(&mut self) -> Result<MetricsSummary> {
+        if self.gas_estimator.is_none() {
+            let sender = self.accounts.accounts().first()
+                .ok_or_else(|| BaselineError::Config("load requires a funded sender".into()))?.address;
+            self.gas_estimator = Some(crate::rpc::GasEstimator::detect(self.client.clone(), sender).await?);
+        }
+
         if self.b20_run_salt.is_none()
             && self.config.transactions.iter().any(|t| matches!(t.tx_type, TxType::B20))
         {
@@ -670,6 +677,7 @@ impl LoadRunner {
                 nonce_reset_rx,
                 validity_router: self.validity_router.clone(),
                 query_client: self.client.clone(),
+                gas_estimator: self.gas_estimator.clone(),
             },
         ));
 
@@ -1433,7 +1441,7 @@ impl LoadRunner {
             } else {
                 0
             };
-            let sender_jobs = Self::build_sender_jobs(
+            let mut sender_jobs = Self::build_sender_jobs(
                 &mut producer_state.generator,
                 &mut producer_state.recipient_keys,
                 &mut producer_state.recipient_rng,
@@ -1441,6 +1449,29 @@ impl LoadRunner {
                 chunk_per_sender,
                 current_block,
             )?;
+
+            if let Some(estimator) = &config.gas_estimator {
+                // Bounded parallelism across senders; preserve nonce/payload order within each.
+                // Validity cohorts use these same prepared budgets before signing.
+                use futures::{StreamExt, TryStreamExt};
+                sender_jobs = futures::stream::iter(sender_jobs.into_iter().map(|mut job| {
+                    let estimator = estimator.clone();
+                    async move {
+                        for prepared in &mut job.prepared_txs {
+                            let request = alloy_rpc_types::TransactionRequest {
+                                to: prepared.to.map(Into::into),
+                                value: Some(prepared.value),
+                                input: prepared.data.clone().into(),
+                                gas: Some(prepared.gas_limit),
+                                ..Default::default()
+                            };
+                            prepared.gas_limit = estimator.apply(request, prepared.from).await?.gas
+                                .expect("estimated request has gas");
+                        }
+                        Ok::<_, BaselineError>(job)
+                    }
+                })).buffered(32).try_collect().await?;
+            }
 
             let base_fee = *config.base_fee_rx.borrow_and_update();
             let signed_by_sender = Self::sign_sender_jobs(
