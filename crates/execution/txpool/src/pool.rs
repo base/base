@@ -829,7 +829,9 @@ where
                 ..
             } => {
                 // The protocol pool rechecks the block gas limit at insert, which
-                // can have moved since validation.
+                // can have moved since validation. Like reth's protocol-pool check
+                // (`TxGasLimitMoreThanAvailableBlockGas`), this deliberately compares the
+                // declared `gas_limit` only; admission validation bounds `gas_limit + payer_auth`.
                 let block_gas_limit = self.protocol_pool.block_info().block_gas_limit;
                 let gas_limit = transaction.transaction().gas_limit();
                 if gas_limit > block_gas_limit {
@@ -2291,6 +2293,14 @@ mod tests {
             metadata: Bytes::new(),
             payer: Some(payer.address()),
         };
+        sign_sponsored_8130(signer, payer, tx)
+    }
+
+    fn sign_sponsored_8130(
+        signer: &PrivateKeySigner,
+        payer: &PrivateKeySigner,
+        tx: TxEip8130,
+    ) -> BasePooledTransaction {
         let sender_auth = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
         let payer_sig = payer.sign_hash_sync(&tx.payer_signature_hash(signer.address())).unwrap();
         let mut payer_auth = Eip8130Constants::K1_AUTHENTICATOR.to_vec();
@@ -3188,6 +3198,37 @@ mod tests {
         }
     }
 
+    /// A [`policy_tx`] sponsored by `payer` whose `gas_limit + payer_auth` is
+    /// exactly `reserved_gas`. `payer_auth` prices the payer signature's zero
+    /// bytes, which change with every re-signing, so this re-signs with the
+    /// previous `payer_auth` until the sum lands; varying the tip keeps
+    /// deterministic signing from cycling between two prices.
+    fn sponsored_policy_tx(
+        signer: &PrivateKeySigner,
+        payer: &PrivateKeySigner,
+        nonce_key: U256,
+        reserved_gas: u64,
+    ) -> BasePooledTransaction {
+        let mut gas_limit = POLICY_GAS_LIMIT;
+        for max_priority_fee_per_gas in 0..32 {
+            let tx = TxEip8130 {
+                gas_limit,
+                max_priority_fee_per_gas,
+                payer: Some(payer.address()),
+                ..policy_tx(nonce_key)
+            };
+            let transaction = sign_sponsored_8130(signer, payer, tx);
+            let signed = transaction.as_eip8130().expect("EIP-8130 transaction");
+            let payer_auth = IntrinsicGas::max_payer_auth_cost(signed).unwrap();
+            assert!(payer_auth > 0);
+            if gas_limit + payer_auth == reserved_gas {
+                return transaction;
+            }
+            gas_limit = reserved_gas - payer_auth;
+        }
+        panic!("payer_auth did not settle for reserved gas {reserved_gas}");
+    }
+
     fn invalid_kind(
         error: &reth_transaction_pool::error::PoolError,
     ) -> &InvalidPoolTransactionError {
@@ -3323,6 +3364,71 @@ mod tests {
                 ),
                 "nonce key {nonce_key}: {error:?}"
             );
+        }
+    }
+
+    /// The operator cap bounds `gas_limit + payer_auth`, so a sponsored
+    /// transaction whose `gas_limit` alone fits is still rejected.
+    #[tokio::test]
+    async fn eip8130_max_tx_gas_limit_includes_payer_authentication() {
+        const CAP: u64 = POLICY_GAS_LIMIT;
+        let (pool, client) = build_integration_pool_with_policies(PoolPolicies {
+            max_tx_gas_limit: Some(CAP),
+            ..Default::default()
+        });
+        let (signer, payer) = (signer(), signer());
+        fund(&client, payer.address());
+
+        for nonce_key in EIP8130_ROUTES {
+            let transaction = sponsored_policy_tx(&signer, &payer, nonce_key, CAP + 1);
+            let error = pool
+                .add_transaction(TransactionOrigin::External, transaction)
+                .await
+                .expect_err("gas_limit plus payer authentication exceeds the operator cap");
+            assert!(
+                matches!(
+                    invalid_kind(&error),
+                    InvalidPoolTransactionError::MaxTxGasLimitExceeded(gas, cap)
+                        if *gas == CAP + 1 && *cap == CAP
+                ),
+                "nonce key {nonce_key}: {error:?}"
+            );
+            let transaction = sponsored_policy_tx(&signer, &payer, nonce_key, CAP);
+            pool.add_transaction(TransactionOrigin::External, transaction)
+                .await
+                .expect("gas_limit plus payer authentication at the operator cap is admitted");
+        }
+    }
+
+    /// The fee cap bounds `(gas_limit + payer_auth) * max_fee_per_gas`, so a
+    /// sponsored transaction whose `gas_limit` alone fits is still rejected.
+    #[tokio::test]
+    async fn eip8130_fee_cap_includes_payer_authentication() {
+        let tx_fee_cap = u128::from(POLICY_GAS_LIMIT) * POLICY_MAX_FEE;
+        let (pool, client) =
+            build_integration_pool_with_policies(PoolPolicies { tx_fee_cap, ..Default::default() });
+        let (signer, payer) = (signer(), signer());
+        fund(&client, payer.address());
+
+        for nonce_key in EIP8130_ROUTES {
+            let transaction = sponsored_policy_tx(&signer, &payer, nonce_key, POLICY_GAS_LIMIT + 1);
+            let error = pool
+                .add_transaction(TransactionOrigin::Local, transaction)
+                .await
+                .expect_err("the payer's maximum gas charge exceeds the fee cap");
+            assert!(
+                matches!(
+                    invalid_kind(&error),
+                    InvalidPoolTransactionError::ExceedsFeeCap { max_tx_fee_wei, tx_fee_cap_wei }
+                        if *max_tx_fee_wei == tx_fee_cap + POLICY_MAX_FEE
+                            && *tx_fee_cap_wei == tx_fee_cap
+                ),
+                "nonce key {nonce_key}: {error:?}"
+            );
+            let transaction = sponsored_policy_tx(&signer, &payer, nonce_key, POLICY_GAS_LIMIT);
+            pool.add_transaction(TransactionOrigin::Local, transaction)
+                .await
+                .expect("the payer's maximum gas charge at the fee cap is admitted");
         }
     }
 
