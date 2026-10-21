@@ -7,9 +7,19 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
+mod candidates;
+pub use candidates::{
+    AdminCandidateSelectionApiImpl, AdminCandidateSelectionApiServer, SEND_SWAP_TRANSACTION_METHOD,
+    SendSwapTransactionApiImpl, SendSwapTransactionApiServer, SwapAdmissionTrace, SwapAlternatives,
+    SwapSelection, SwapTerms, SwapTransactionOptions, SwapTransactionResponse,
+};
+
+mod metrics;
+pub use metrics::SwapTransactionMetrics;
+
 mod rpc;
 pub use rpc::{
-    AdminTxPoolApiImpl, AdminTxPoolApiServer, SendRawTransactionValidityApiImpl,
+    AdminTxPoolApiImpl, AdminTxPoolApiServer, BlockCadence, SendRawTransactionValidityApiImpl,
     SendRawTransactionValidityApiServer, SendRawTransactionValidityOptions, Status,
     TransactionStatusApiImpl, TransactionStatusApiServer, TransactionStatusResponse,
     VALIDITY_TX_PRE_EVEREST_RPC_ERROR,
@@ -17,7 +27,8 @@ pub use rpc::{
 
 mod extension;
 pub use extension::{
-    DEFAULT_MAX_VALIDITY_EXPIRY_SECS, DEFAULT_MAX_VALIDITY_PREDICATES,
-    SendRawTransactionValidityConfig, SendRawTransactionValidityExtension, TxPoolRpcConfig,
-    TxPoolRpcExtension, ValiditySignatureMode,
+    CandidateEvaluation, DEFAULT_MAX_VALIDITY_EXPIRY_SECS, DEFAULT_MAX_VALIDITY_PREDICATES,
+    SendRawTransactionValidityConfig, SendRawTransactionValidityExtension,
+    SendSwapTransactionConfig, SendSwapTransactionExtension, TxPoolRpcConfig, TxPoolRpcExtension,
+    ValiditySignatureMode,
 };

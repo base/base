@@ -21,9 +21,10 @@ whose `event_time` is already outside its window or more than an hour in the
 future. A retried `event_id` dedupes only within the same UTC hour of its
 `event_time`. `TXPOOL_SEND_RAW_TRANSACTION_VALIDITY` uses the same warm window as
 `TXPOOL_SEND_RAW_TRANSACTION`. `BUILDER_DEFERRED` and `BUILDER_EXPIRED` use the
-same hot window as the other per-attempt builder decisions. The candidate-group
-terminal events `TXPOOL_CANDIDATE_LANDED` and `TXPOOL_CANDIDATE_EVICTED` are
-cold.
+same hot window as the other per-attempt builder decisions. Swap Lane events
+follow the same split: `TXPOOL_SEND_SWAP_TRANSACTION` is warm, and
+`TXPOOL_SEND_SWAP_TRANSACTION_REJECTED`, `TXPOOL_CANDIDATE_LANDED`, and
+`TXPOOL_CANDIDATE_EVICTED` are cold.
 
 ## Configuration Fields
 
@@ -197,6 +198,8 @@ Mempool/node:
 - `TXPOOL_TRACKING_OVERFLOWED`
 - `TXPOOL_SEND_RAW_TRANSACTION`
 - `TXPOOL_SEND_RAW_TRANSACTION_VALIDITY`
+- `TXPOOL_SEND_SWAP_TRANSACTION`
+- `TXPOOL_SEND_SWAP_TRANSACTION_REJECTED`
 - `TXPOOL_CANDIDATE_LANDED`
 - `TXPOOL_CANDIDATE_EVICTED`
 
@@ -307,8 +310,31 @@ deserializes `event_type`) must run a release that knows the candidate kinds
 before any builder or node emits them. Older binaries reject unknown
 `event_type` values.
 
-Measured sizes for a two-sibling group, as serialized JSON: landed 712
-bytes, evicted 652 to 661.
+Ingress: `TXPOOL_SEND_SWAP_TRANSACTION` fires once per admitted
+`base_sendSwapTransaction` request, when the default transaction is pooled,
+keyed by its `tx_hash`. `data.selection` is `applied` for a candidate group,
+which also carries `data.group_hash` and `data.alternative_hashes` and has an
+`event_id` that depends only on the group. It is `none` for a default
+transaction without alternatives and `ignored` when the request carried
+alternatives while selection was disabled; both carry `data.alternatives` and
+start no group lifecycle. Duplicate submissions emit
+nothing. A refused request from a validated sender that the access policy
+authorizes for the requested capability gets
+`TXPOOL_SEND_SWAP_TRANSACTION_REJECTED` with `data.selection`,
+`data.alternatives`, and the RPC error label in `data.rejection_reason`:
+`pool_rejected` when the pool refused the default transaction and
+`internal_error` for an unlabeled failure such as a state read. `tx_hash` is
+the default transaction's hash, `data.group_hash` is present once a selection
+validated, and every rejection has its own `event_id`, so repeated rejections
+are all kept. Other refusals, such as malformed requests and senders outside the
+allowlist, journal nothing and increment the
+`txpool.swap_transaction.unjournaled_rejections` counter by `reason`, so callers
+outside the allowlist cannot grow the journal. Proxies forward without
+journaling.
+
+Measured sizes, as serialized JSON: group admission with one alternative 691
+bytes, admission without alternatives about 530, rejection 566 to 688, landed 712,
+evicted 652 to 661.
 
 Terminal events: the node's candidate ledger emits exactly one terminal event
 per admitted group. Its `event_id` covers `data.group_hash`, `tx_hash`,
@@ -323,7 +349,9 @@ later ingress call settles it, by the same rule), `budget_exhausted`, `revoked`,
 `dropped`. `nonce_consumed` is journaled when a canonical block advances the
 sender's nonce past the group's without a sibling landing, for example through
 a sponsor's EIP-7702 authorization or a plain same-nonce transaction, or when
-an admission that was still settling at that block settles. The group's sibling
+an admission that was still settling at that block settles. If the pool
+inserted that admission's representative from a validation before the block,
+ingress removes it and the request fails with `group_terminal`. The group's sibling
 hashes stay suppressed until the recovery window closes, so a reorg cannot
 reinsert a sibling without its group.
 
@@ -347,6 +375,12 @@ A group
 that left the pool another way, such as admin removal or pool-full eviction, is
 `dropped` only once the recovery window closes, because a canonical landing can
 still correct it.
+
+Disabled selection: a node started without candidates registers no
+`base_sendSwapTransaction` and emits none of these events. While selection is
+disabled at runtime with `admin_setCandidateSelectionEnabled`, ingress journals
+admissions with `data.selection: ignored` and starts no group; the ledger still
+journals terminal events for groups admitted earlier.
 
 Canonicality caveat: builder events are local payload construction signals, not
 canonical-chain or consensus-finality observations. A builder event with

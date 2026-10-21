@@ -7,6 +7,12 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
+mod admission;
+pub use admission::{
+    AdmissionError, AdmissionReceipt, AdmissionService, Authorization, AuthorizationBasis,
+    DEFAULT_ADMISSION_TIMEOUT, InflightAdmissions, PendingAdmission,
+};
+
 mod guard;
 pub use guard::{
     Admission, AdmissionRecord, DEFAULT_ALLOWLISTED_PAYMENT_LIMIT, DEFAULT_PAYMENT_LIMIT,

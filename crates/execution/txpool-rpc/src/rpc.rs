@@ -213,13 +213,25 @@ where
 
     /// Returns the full-block interval, in milliseconds, of the block being built.
     fn block_interval_millis(&self, latest_timestamp: u64) -> u64 {
+        BlockCadence::full_block_interval_millis(&*self.provider.chain_spec(), latest_timestamp)
+    }
+}
+
+/// Full-block cadence used to convert wall-clock expiry limits into block counts.
+#[derive(Debug, Clone, Copy)]
+pub struct BlockCadence;
+
+impl BlockCadence {
+    /// Returns the full-block interval, in milliseconds, of the block built on a head with
+    /// `latest_timestamp`.
+    pub fn full_block_interval_millis<C: Upgrades>(chain_spec: &C, latest_timestamp: u64) -> u64 {
         // The target build can be the first Denim block even though the latest committed header
         // is pre-Denim. Check both its parent timestamp and the next legacy block timestamp so
         // the window uses Denim's 200ms full-block cadence at that transition.
         let next_legacy_timestamp =
             latest_timestamp.saturating_add(LEGACY_BLOCK_INTERVAL_MILLIS.saturating_div(1_000));
-        if self.provider.chain_spec().is_denim_active_at_timestamp(latest_timestamp)
-            || self.provider.chain_spec().is_denim_active_at_timestamp(next_legacy_timestamp)
+        if chain_spec.is_denim_active_at_timestamp(latest_timestamp)
+            || chain_spec.is_denim_active_at_timestamp(next_legacy_timestamp)
         {
             RollupConfig::NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS
         } else {

@@ -415,8 +415,8 @@ summary = "base-tx-forwarding: forwards mempool txs to builder RPCs via per-dest
 digest = "b72a1536e1"
 
 ["crates/execution/txpool-rpc/README.md"]
-summary = "Txpool RPC admin/status APIs and validity submissions; shared staged signature modes, signature rejection metrics, predicate forwarding and sequencer proxy behavior."
-digest = "adef27d8c3"
+summary = "Txpool RPC admin/status APIs, validity submissions with staged signature modes, and base_sendSwapTransaction over the shared AdmissionService; lifetimes, delivery and proxying."
+digest = "523fdf909f"
 
 ["crates/execution/txpool-tracing/README.md"]
 summary = "Txpool tracing extension: tracks mempool lifecycle events, txpool_transactionStatus RPC, enabling CLI flags, and reth_transaction_tracing_tx_event histogram. Use to debug tx latency or drops."
@@ -700,7 +700,7 @@ digest = "8df3320197"
 
 ["docs/transaction-events/README.md"]
 summary = "Spec for transaction-event/v1, the JSONL business event journal for transaction observability: config fields, envelope, event vocabulary, Vector to audit-archiver ingest, Postgres retention, examples."
-digest = "788c13d7da"
+digest = "ea5e634a5f"
 
 ["docs/transaction-events/tips-parity-checklist.md"]
 summary = "Checklist for verifying TIPS UI audit-archiver/Postgres responses match the S3-backed routes (block, txn, bundle, rejected) before switching TIPS_UI_QUERY_BACKEND=audit."

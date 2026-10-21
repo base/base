@@ -31,6 +31,35 @@ the complete sidecar and upstream error response instead of admitting it locally
 See the [wallet signing contract](../txpool/README.md#signed-validity-predicates) for
 EIP-712 types, signature encoding, rollout requirements, and security limitations.
 
+## Swap Lane ingress
+
+`SendSwapTransactionExtension` registers `base_sendSwapTransaction` when candidates are
+enabled, and `admin_setCandidateSelectionEnabled` only when a builder on the node also
+evaluates groups (`CandidateEvaluation::Builder`). The endpoint parses the
+request, resolves `maxAccessCharge`, routes on the selection kill switch, builds the response
+and journals ingress events. Admission itself runs in the process-shared
+`base_execution_txpool::AdmissionService`. That service owns in-flight duplicate waits,
+cancellation settlement, policy checks and pool insertion, so every adapter that admits
+candidate groups sees the same in-flight state.
+
+The sender signs no expiry. A candidate group expires at a node-assigned block: the
+configured group lifetime past the next block, rounded up to whole blocks at the active
+full-block cadence. A default transaction submitted alone carries no validity predicate. It
+stays in the pool like any other Private transaction until it lands, is replaced, has its
+nonce consumed, or is evicted by pool limits.
+
+Delivery: admitted transactions use Private origin, so devp2p never gossips them, and today
+only builders install the endpoint. Builders run no transaction forwarding, so a submission
+reaches only the builder that received it. In a high-availability set only the leader
+builds, so a submission sent to a follower waits there until that node leads. Transaction
+forwarding skips candidate groups, so even on a forwarding node a group would stay local.
+Proxy mode (`sequencer_url`) forwards every request unchanged to one upstream node.
+The planned direction is mempool fan-out: install the endpoint on mempool nodes, have
+transaction forwarding carry admitted singles, and add a group-aware extension to
+`base_insertValidatedTransaction` so every builder receives candidate groups.
+`AdmissionService` and `GroupDescriptor` do not depend on the swap RPC, so a mempool node's
+endpoint and a builder's trusted insert path can admit through them.
+
 ## Usage
 
 Add the dependency to your `Cargo.toml`:
