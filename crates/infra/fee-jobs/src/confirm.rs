@@ -596,10 +596,13 @@ mod tests {
 
     #[tokio::test]
     async fn recheck_deadline_preserves_typed_timeout() {
+        let started = Arc::new(Notify::new());
+        let captured_started = Arc::clone(&started);
         let status_reads = Arc::new(AtomicUsize::new(0));
         let captured = Arc::clone(&status_reads);
         let server = Server::new_async(move |request| {
             let status_reads = Arc::clone(&captured);
+            let started = Arc::clone(&captured_started);
             async move {
                 match request["method"].as_str().unwrap() {
                     "eth_getBlockByNumber" => {
@@ -613,7 +616,7 @@ mod tests {
                         if data[..4] == WithdrawalPortal::finalizedWithdrawalsCall::SELECTOR
                             && status_reads.fetch_add(1, Ordering::Relaxed) > 0
                         {
-                            tokio::time::pause();
+                            started.notify_one();
                             return pending().await;
                         }
                         macro_rules! reply {
@@ -672,7 +675,17 @@ mod tests {
         });
         // A missing manager fails before broadcast, leaving time for the status recheck.
         let sender = ConfirmSender { address: Address::repeat_byte(9), manager: None };
-        let outcome = job.confirm_withdrawal(&withdrawer, &rpc, proofs, &sender, &withdrawal).await;
+        let confirmation = job.confirm_withdrawal(&withdrawer, &rpc, proofs, &sender, &withdrawal);
+        tokio::pin!(confirmation);
+        tokio::select! {
+            () = started.notified() => {},
+            outcome = &mut confirmation => panic!("recheck did not hang: {outcome:?}"),
+        }
+        tokio::time::pause();
+        tokio::time::advance(job.args.withdrawal_timeout).await;
+        let outcome = tokio::time::timeout(Duration::from_secs(1), confirmation)
+            .await
+            .expect("recheck must return at the withdrawal deadline, before the HTTP timeout");
         let ConfirmOutcome::Failed(error) = outcome else { panic!("{outcome:?}") };
         assert_eq!(status_reads.load(Ordering::Relaxed), 2);
         assert!(
@@ -973,10 +986,16 @@ mod tests {
         let status_reads = Arc::new(Mutex::new(0));
         let captured_status_reads = Arc::clone(&status_reads);
         let captured_proof_reads = Arc::clone(&proof_reads);
-        let server = Server::new(move |request| match request["method"].as_str().unwrap() {
-            "eth_blockNumber" | "eth_gasPrice" | "eth_maxPriorityFeePerGas" => json!({"result":"0x64"}),
+        let estimation_started = Arc::new(Notify::new());
+        let captured_estimation_started = Arc::clone(&estimation_started);
+        let handler = move |request: Value| match request["method"].as_str().unwrap() {
+            "eth_blockNumber" | "eth_gasPrice" | "eth_maxPriorityFeePerGas" => {
+                json!({"result":"0x64"})
+            }
             "eth_getLogs" => json!({"result":[fee_log(100, 0, B256::repeat_byte(1))]}),
-            "eth_getTransactionReceipt" if request["params"][0] == json!(B256::repeat_byte(1)) => json!({"result":receipt}),
+            "eth_getTransactionReceipt" if request["params"][0] == json!(B256::repeat_byte(1)) => {
+                json!({"result":receipt})
+            }
             "eth_getTransactionReceipt" => {
                 if finalization_error == Some("was signed") {
                     return json!({"error":{"code":3,"message":"receipt unavailable"}});
@@ -990,7 +1009,8 @@ mod tests {
                     let event = WithdrawalPortal::WithdrawalFinalized {
                         withdrawalHash: hash,
                         success: finalization_error == Some("success"),
-                    }.encode_log_data();
+                    }
+                    .encode_log_data();
                     let mut log = receipt["logs"][0].clone();
                     log["address"] = json!(Address::repeat_byte(1));
                     log["transactionHash"] = request["params"][0].clone();
@@ -1015,21 +1035,26 @@ mod tests {
             "eth_chainId" => json!({"result":"0x1"}),
             "eth_getTransactionCount" => json!({"result":"0x0"}),
             "eth_estimateGas" => {
-                let data: Bytes = serde_json::from_value(request["params"][0]["input"].clone()).unwrap();
-                let call = WithdrawalPortal::finalizeWithdrawalTransactionCall::abi_decode_validate(&data).unwrap();
-                assert_eq!(call.withdrawal.data, MessagePassed::decode_log(&log.inner).unwrap().data.data);
+                let data: Bytes =
+                    serde_json::from_value(request["params"][0]["input"].clone()).unwrap();
+                let call =
+                    WithdrawalPortal::finalizeWithdrawalTransactionCall::abi_decode_validate(&data)
+                        .unwrap();
+                assert_eq!(
+                    call.withdrawal.data,
+                    MessagePassed::decode_log(&log.inner).unwrap().data.data
+                );
                 captured.store(true, Ordering::Relaxed);
-                if finalization_error == Some("deadline before broadcast") {
-                    tokio::time::pause();
-                    return json!({"error":{"code":-32005,"message":"rate limited"}});
-                }
-                if finalization_error.is_some() || pending == Some(0) && recheck == Some(WithdrawalStatus::Finalize) {
+                if finalization_error.is_some()
+                    || pending == Some(0) && recheck == Some(WithdrawalStatus::Finalize)
+                {
                     return json!({"result":"0x10000"});
                 }
                 json!({"error":{"code":3,"message":"execution reverted: https://user:password@secret.endpoint","data":"0xdeadbeef"}})
             }
             "eth_call" => {
-                let data: Bytes = serde_json::from_value(request["params"][0]["input"].clone()).unwrap();
+                let data: Bytes =
+                    serde_json::from_value(request["params"][0]["input"].clone()).unwrap();
                 macro_rules! reply {
                     ($call:ty, $($value:expr),* $(,)?) => {
                         if data[..4] == <$call>::SELECTOR {
@@ -1041,7 +1066,8 @@ mod tests {
                 reply!(FaultProofPortal::anchorStateRegistryCall, Address::repeat_byte(3));
                 let estimated = captured.load(Ordering::Relaxed);
                 if data[..4] == WithdrawalPortal::finalizedWithdrawalsCall::SELECTOR {
-                    let call = WithdrawalPortal::finalizedWithdrawalsCall::abi_decode(&data).unwrap();
+                    let call =
+                        WithdrawalPortal::finalizedWithdrawalsCall::abi_decode(&data).unwrap();
                     assert_eq!(call.withdrawalHash, hash, "unrelated withdrawal was processed");
                     *captured_status_reads.lock().unwrap() += 1;
                     if estimated && recheck.is_none() {
@@ -1052,9 +1078,23 @@ mod tests {
                     let mut reads = proof_reads.lock().unwrap();
                     *reads += 1;
                 }
-                reply!(WithdrawalPortal::finalizedWithdrawalsCall, estimated && recheck == Some(WithdrawalStatus::Finalized));
-                reply!(IAnchorStateRegistry::pausedCall, paused || estimated && recheck == Some(WithdrawalStatus::Paused));
-                reply!(FaultProofPortal::provenWithdrawalsCall, Address::repeat_byte(8), if estimated && recheck == Some(WithdrawalStatus::Prove) { 0u64 } else { 800u64 });
+                reply!(
+                    WithdrawalPortal::finalizedWithdrawalsCall,
+                    estimated && recheck == Some(WithdrawalStatus::Finalized)
+                );
+                reply!(
+                    IAnchorStateRegistry::pausedCall,
+                    paused || estimated && recheck == Some(WithdrawalStatus::Paused)
+                );
+                reply!(
+                    FaultProofPortal::provenWithdrawalsCall,
+                    Address::repeat_byte(8),
+                    if estimated && recheck == Some(WithdrawalStatus::Prove) {
+                        0u64
+                    } else {
+                        800u64
+                    }
+                );
                 reply!(IAnchorStateRegistry::isGameBlacklistedCall, false);
                 reply!(IAnchorStateRegistry::isGameRetiredCall, false);
                 reply!(IAnchorStateRegistry::isGameProperCall, true);
@@ -1063,17 +1103,36 @@ mod tests {
                 reply!(FaultProofPortal::proofMaturityDelaySecondsCall, U256::from(100));
                 reply!(WithdrawalDisputeGame::resolvedAtCall, 700u64);
                 reply!(IAnchorStateRegistry::disputeGameFinalityDelaySecondsCall, U256::from(200));
-                reply!(IAnchorStateRegistry::isGameFinalizedCall, now > 900 && !(estimated && matches!(recheck, Some(WithdrawalStatus::NotReady { .. }))));
+                reply!(
+                    IAnchorStateRegistry::isGameFinalizedCall,
+                    now > 900
+                        && !(estimated
+                            && matches!(recheck, Some(WithdrawalStatus::NotReady { .. })))
+                );
                 reply!(FaultProofPortal::checkWithdrawalCall,);
                 panic!("unexpected contract selector {data}");
             }
             method => panic!("unexpected RPC method {method}"),
-        }).await;
+        };
+        let server = Server::new_async(move |request| {
+            let hang = finalization_error == Some("deadline before broadcast")
+                && request["method"] == "eth_estimateGas";
+            let response = handler(request);
+            let started = Arc::clone(&captured_estimation_started);
+            async move {
+                if hang {
+                    started.notify_one();
+                    return std::future::pending().await;
+                }
+                response
+            }
+        })
+        .await;
         let mut job = job(&server.url);
         job.args.lookback = Duration::from_nanos(1);
-        job.args.dry_run =
-            finalization_error.is_none() || finalization_error == Some("deadline before broadcast");
+        job.args.dry_run = finalization_error.is_none();
         if finalization_error == Some("deadline before broadcast") {
+            // Live estimation avoids a competing dry-run preparation timeout.
             job.args.withdrawal_timeout = Duration::from_secs(1);
         }
         if finalization_error == Some("was signed") {
@@ -1085,7 +1144,23 @@ mod tests {
         let writer = capture.clone();
         let subscriber =
             tracing_subscriber::fmt().with_ansi(false).with_writer(move || writer.clone()).finish();
-        let report = job.run().with_subscriber(subscriber).await.unwrap();
+        let withdrawal_timeout = job.args.withdrawal_timeout;
+        let run = job.run().with_subscriber(subscriber);
+        tokio::pin!(run);
+        let report = if finalization_error == Some("deadline before broadcast") {
+            tokio::select! {
+                () = estimation_started.notified() => {},
+                report = &mut run => panic!("estimation did not hang: {report:?}"),
+            }
+            tokio::time::pause();
+            tokio::time::advance(withdrawal_timeout).await;
+            tokio::time::timeout(Duration::from_secs(1), &mut run)
+                .await
+                .expect("run must return at the withdrawal deadline")
+        } else {
+            run.await
+        }
+        .unwrap();
         let published = published.lock().unwrap().clone();
         assert_eq!(
             !published.is_empty(),
