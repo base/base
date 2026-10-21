@@ -3,6 +3,7 @@
 use std::{
     net::{IpAddr, SocketAddr},
     path::PathBuf,
+    sync::Arc,
 };
 
 use base_node_core::BASE_V0_PROTOCOL_VERSION;
@@ -10,26 +11,25 @@ use clap::Parser;
 use reth_cli_util::{get_secret_key, load_secret_key::rng_secret_key};
 use reth_discv4::{DiscoveryUpdate, Discv4, Discv4Config};
 use reth_discv5::{
-    Config, DEFAULT_DISCOVERY_V5_LISTEN_CONFIG, Discv5,
-    discv5::{ConfigBuilder as Discv5ConfigBuilder, Event, ProtocolIdentity},
+    Config, Discv5,
+    discv5::{ConfigBuilder as Discv5ConfigBuilder, Event, ListenConfig, ProtocolIdentity},
 };
 use reth_net_nat::{NatResolver, external_addr_with};
 use reth_network_peers::NodeRecord;
 use secp256k1::SecretKey;
-use tokio::select;
+use tokio::{net::UdpSocket, select};
 use tokio_stream::StreamExt;
 use tracing::{info, warn};
 
 /// Start a discovery-only bootnode.
 #[derive(Parser, Clone, Debug)]
 pub struct Command {
-    /// Listen address for the bootnode for discv4
-    #[arg(long, default_value = "0.0.0.0:30301")]
-    pub v4_addr: SocketAddr,
-
-    /// Listen address for the bootnode for discv5
-    #[arg(long, default_value = "0.0.0.0:9200")]
-    pub v5_addr: SocketAddr,
+    /// UDP listen address for discv4, shared with discv5 when `--v5` is set.
+    ///
+    /// Uses a distinct clap `id` so it doesn't collide with `base`'s global `--metrics.addr`,
+    /// whose id is `addr`.
+    #[arg(id = "bootnode_addr", long = "addr", alias = "v4-addr", default_value = "0.0.0.0:30301")]
+    pub addr: SocketAddr,
 
     /// Secret key for the bootnode. Deterministically sets the peer ID.
     /// If the path exists, the key is loaded; otherwise a new key is generated and saved there.
@@ -41,7 +41,7 @@ pub struct Command {
     #[arg(long, default_value = "any")]
     pub nat: NatResolver,
 
-    /// Run a discv5 topic discovery bootnode in addition to discv4.
+    /// Also run discv5, sharing the discv4 UDP port (`--addr`).
     #[arg(long)]
     pub v5: bool,
 }
@@ -49,42 +49,41 @@ pub struct Command {
 impl Command {
     /// Execute the bootnode command.
     pub async fn execute(self) -> eyre::Result<()> {
-        info!(v4_addr = %self.v4_addr, v5_addr = %self.v5_addr, nat = %self.nat, v5 = self.v5, "Bootnode starting");
+        info!(addr = %self.addr, nat = %self.nat, v5 = self.v5, "Bootnode starting");
 
-        // discv4
         let sk = self.network_secret()?;
-        let v4_node_record = NodeRecord::from_secret_key(self.v4_addr, &sk);
-        let config = self.discv4_config();
-        let nat = self.nat.clone();
-        let (_discv4, mut discv4_service) =
-            Discv4::bind(self.v4_addr, v4_node_record, sk, config).await?;
-        info!(v4_node_record = ?v4_node_record, enode = %v4_node_record, "Started discv4");
-        let mut discv4_updates = discv4_service.update_stream();
-        discv4_service.spawn();
+        let node_record = NodeRecord::from_secret_key(self.addr, &sk);
+        let discv4_config = self.discv4_config();
 
-        // discv5
-        let mut discv5_updates = None;
-        let mut _discv5 = None;
+        // With `--v5`, discv5 owns the shared socket's read loop and hands discv4 packets back as
+        // unrecognized frames, which are forwarded to the discv4 ingress below.
+        let (_discv4, mut discv4_service, _discv5, mut discv5_events) = if self.v5 {
+            let socket = Arc::new(UdpSocket::bind(self.addr).await?);
+            let (discv4, discv4_service, discv4_ingress) =
+                Discv4::bind_shared(Arc::clone(&socket), None, node_record, sk, discv4_config)?;
 
-        if self.v5 {
-            info!("Initializing discv5");
             // Resolve dynamic NAT methods (`any`, `upnp`, `publicip`) too: discv5 only learns
             // its IP from peers after they can reach it, so a bootnode ENR must carry one up front.
-            let external_ip = external_addr_with(nat).await;
+            let external_ip = external_addr_with(self.nat.clone()).await;
             if external_ip.is_none() {
                 warn!(
-                    addr = %self.v5_addr,
+                    addr = %self.addr,
                     "Could not resolve external IP via NAT; discv5 ENR has no IP and may not be reachable"
                 );
             }
-            let config = self.discv5_config(external_ip);
-            let (discv5, updates) = Discv5::start(&sk, config).await?;
-
+            let (discv5, updates) =
+                Discv5::start(&sk, self.discv5_config(socket, external_ip)).await?;
             info!(enr = %discv5.local_enr(), "Started discv5");
 
-            discv5_updates = Some(updates);
-            _discv5 = Some(discv5);
-        }
+            (discv4, discv4_service, Some(discv5), Some((updates, discv4_ingress)))
+        } else {
+            let (discv4, discv4_service) =
+                Discv4::bind(self.addr, node_record, sk, discv4_config).await?;
+            (discv4, discv4_service, None, None)
+        };
+        info!(node_record = ?node_record, enode = %node_record, "Started discv4");
+        let mut discv4_updates = discv4_service.update_stream();
+        discv4_service.spawn();
 
         loop {
             select! {
@@ -104,13 +103,18 @@ impl Command {
                     }
                 }
                 update = async {
-                    if let Some(updates) = &mut discv5_updates {
+                    if let Some((updates, _)) = &mut discv5_events {
                         updates.recv().await
                     } else {
                         futures::future::pending().await
                     }
                 } => {
                     match update {
+                        Some(Event::UnrecognizedFrame(frame)) => {
+                            if let Some((_, discv4_ingress)) = &mut discv5_events {
+                                discv4_ingress.handle_packet(&frame.packet, frame.src_address).await;
+                            }
+                        }
                         Some(Event::SessionEstablished(enr, _)) => {
                             info!(peer_id = ?enr.id(), "discv5 session established");
                         }
@@ -132,20 +136,30 @@ impl Command {
         Discv4Config::builder().external_ip_resolver(Some(self.nat.clone())).build()
     }
 
-    /// Build the discv5 configuration, advertising `external_ip` in the local ENR when known.
-    pub fn discv5_config(&self, external_ip: Option<IpAddr>) -> Config {
-        let mut inner_builder = Discv5ConfigBuilder::new(DEFAULT_DISCOVERY_V5_LISTEN_CONFIG);
+    /// Build the discv5 configuration serving discv5 on the shared discv4 `socket`, advertising
+    /// `external_ip` in the local ENR when known.
+    pub fn discv5_config(&self, socket: Arc<UdpSocket>, external_ip: Option<IpAddr>) -> Config {
+        let listen_config = if self.addr.is_ipv4() {
+            ListenConfig::FromSockets { ipv4: Some(socket), ipv6: None }
+        } else {
+            ListenConfig::FromSockets { ipv4: None, ipv6: Some(socket) }
+        };
+        let mut inner_builder = Discv5ConfigBuilder::new(listen_config.clone());
 
         inner_builder.protocol_identity(ProtocolIdentity {
             protocol_id: BASE_V0_PROTOCOL_VERSION,
             ..Default::default()
         });
 
-        let builder = Config::builder(self.v5_addr).discv5_config(inner_builder.build());
-        match external_ip {
+        let builder = Config::builder(self.addr).discv5_config(inner_builder.build());
+        let mut config = match external_ip {
             Some(ip) => builder.advertised_ip(ip).build(),
             None => builder.build(),
-        }
+        };
+        // `build` rewrites the listen config from socket addresses, which would drop the shared
+        // socket, so restore it afterwards.
+        config.discv5_config_mut().listen_config = listen_config;
+        config
     }
 
     fn network_secret(&self) -> eyre::Result<SecretKey> {
@@ -158,15 +172,13 @@ impl Command {
 
 #[cfg(test)]
 mod tests {
-    use reth_discv5::{DEFAULT_DISCOVERY_V5_PORT, build_local_enr};
     use rstest::rstest;
 
     use super::*;
 
-    fn cmd(v4_addr: &str, v5_addr: &str) -> Command {
+    fn cmd(addr: &str) -> Command {
         Command {
-            v4_addr: v4_addr.parse().unwrap(),
-            v5_addr: v5_addr.parse().unwrap(),
+            addr: addr.parse().unwrap(),
             p2p_secret_key: None,
             nat: NatResolver::None,
             v5: false,
@@ -177,7 +189,7 @@ mod tests {
     #[case(NatResolver::None)]
     #[case(NatResolver::ExternalIp("192.0.2.1".parse().unwrap()))]
     fn discv4_config_matches_refactored_builder(#[case] nat: NatResolver) {
-        let mut command = cmd("0.0.0.0:30301", "0.0.0.0:9200");
+        let mut command = cmd("0.0.0.0:30301");
         command.nat = nat;
 
         let actual = command.discv4_config();
@@ -206,32 +218,78 @@ mod tests {
         assert_eq!(actual.external_ip_resolver, Some(command.nat));
     }
 
-    #[rstest]
-    #[case("0.0.0.0:30301", "0.0.0.0:9200")]
-    #[case("0.0.0.0:30303", "0.0.0.0:9000")]
-    #[case("127.0.0.1:10001", "127.0.0.1:10002")]
-    fn discv5_config_preserves_default_discovery_socket_and_sets_rlpx_socket(
-        #[case] v4_addr: &str,
-        #[case] v5_addr: &str,
-    ) {
-        let command = cmd(v4_addr, v5_addr);
-        let config = command.discv5_config(None);
+    #[test]
+    fn v4_addr_alias_sets_shared_addr() {
+        let command = Command::parse_from(["bootnode", "--v4-addr", "127.0.0.1:30305"]);
 
-        assert_eq!(config.rlpx_socket(), &command.v5_addr);
-        assert_eq!(config.discovery_socket().ip(), command.v5_addr.ip());
-        assert_eq!(config.discovery_socket().port(), DEFAULT_DISCOVERY_V5_PORT);
+        assert_eq!(command.addr, "127.0.0.1:30305".parse().unwrap());
     }
 
-    #[test]
-    fn discv5_enr_advertises_resolved_external_ip() {
-        let command = cmd("0.0.0.0:30301", "0.0.0.0:9200");
-        let external_ip = "192.0.2.1".parse().unwrap();
-        let config = command.discv5_config(Some(external_ip));
-        let sk = SecretKey::from_byte_array(&[1u8; 32]).unwrap();
+    #[tokio::test]
+    async fn discv5_shares_discv4_socket_and_advertises_external_ip() {
+        let command = cmd("127.0.0.1:0");
+        let socket = Arc::new(UdpSocket::bind(command.addr).await.unwrap());
+        let shared_port = socket.local_addr().unwrap().port();
+        let mut config =
+            command.discv5_config(Arc::clone(&socket), Some("192.0.2.1".parse().unwrap()));
+        assert_eq!(
+            config.discv5_config_mut().protocol_identity.protocol_id,
+            BASE_V0_PROTOCOL_VERSION
+        );
 
-        let (enr, _, _, _) = build_local_enr(&sk, &config);
+        // discv5 must start on the port the shared socket already holds instead of rebinding it.
+        let (discv5, _updates) =
+            Discv5::start(&SecretKey::from_byte_array(&[1u8; 32]).unwrap(), config).await.unwrap();
 
+        let enr = discv5.local_enr();
         assert_eq!(enr.ip4(), Some("192.0.2.1".parse().unwrap()));
-        assert_eq!(enr.udp4(), Some(DEFAULT_DISCOVERY_V5_PORT));
+        assert_eq!(enr.udp4(), Some(shared_port));
+    }
+
+    #[tokio::test]
+    async fn v5_bootnode_answers_discv4_on_shared_port() {
+        let key_dir = tempfile::tempdir().unwrap();
+        let key_path = key_dir.path().join("bootnode.key");
+        let bootnode_id = NodeRecord::from_secret_key(
+            "127.0.0.1:0".parse().unwrap(),
+            &get_secret_key(&key_path).unwrap(),
+        )
+        .id;
+        let port = std::net::UdpSocket::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        let bootnode_addr = SocketAddr::from(([127, 0, 0, 1], port));
+        let bootnode = tokio::spawn(
+            Command {
+                addr: bootnode_addr,
+                p2p_secret_key: Some(key_path),
+                v5: true,
+                ..cmd("127.0.0.1:0")
+            }
+            .execute(),
+        );
+
+        let client_sk = rng_secret_key();
+        let client_record = NodeRecord::from_secret_key("127.0.0.1:0".parse().unwrap(), &client_sk);
+        let client_config = Discv4Config::builder()
+            .add_boot_node(NodeRecord::new(bootnode_addr, bootnode_id))
+            .build();
+        let (_client, mut client_service) =
+            Discv4::bind("127.0.0.1:0".parse().unwrap(), client_record, client_sk, client_config)
+                .await
+                .unwrap();
+        let mut client_updates = client_service.update_stream();
+        let _client_service = client_service.spawn();
+
+        let bonded = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            while let Some(update) = client_updates.next().await {
+                if matches!(update, DiscoveryUpdate::Added(record) if record.id == bootnode_id) {
+                    return true;
+                }
+            }
+            false
+        })
+        .await;
+
+        bootnode.abort();
+        assert_eq!(bonded, Ok(true));
     }
 }
