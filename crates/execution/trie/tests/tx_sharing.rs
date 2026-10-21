@@ -188,7 +188,7 @@ fn multiproof_v2_uses_one_snapshot_and_matches_account_proofs() {
     }
     let mut proof = None;
     assert_tx_acquisitions(&storage, 1, "multiproof_v2", || {
-        proof = Some(provider.multiproof_v2(TrieInput::default(), targets).expect("multiproof_v2"));
+        proof = Some(provider.multiproof_v2(targets, false).expect("multiproof_v2"));
     });
     let proof = proof.unwrap();
     for (address, slots) in seed_layout() {
