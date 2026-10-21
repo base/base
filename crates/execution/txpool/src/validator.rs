@@ -1860,6 +1860,13 @@ where
         InvalidPoolTransactionError::other(BaseTxPoolError::Eip8130Authentication { reason })
     }
 
+    /// Returns a copy of `signed` with empty `sender_auth` and `payer_auth`:
+    /// the smallest encoding any transaction sharing its hash can have. Size
+    /// limits that this copy already exceeds are failures of the body itself.
+    fn eip8130_without_auth(signed: &Eip8130Signed) -> Eip8130Signed {
+        Eip8130Signed::new(signed.tx().clone(), Default::default(), Default::default())
+    }
+
     fn provider_unavailable(error: impl core::fmt::Display) -> InvalidPoolTransactionError {
         tracing::debug!(error = %error, "EIP-8130 state provider unavailable");
         Self::eip8130_error("state provider unavailable")
@@ -1891,10 +1898,17 @@ where
     ) -> Result<(), InvalidPoolTransactionError> {
         // The encoded size counts `sender_auth` and `payer_auth`, which the
         // hash does not cover, so an oversized copy of a valid body must not
-        // mark that body's hash as bad.
+        // mark that body's hash as bad. A body that is oversized even with
+        // empty authentication can never be valid under its hash, so it stays
+        // a bad transaction.
         let size = signed.encode_2718_len();
         let limit = self.inner.max_tx_input_bytes();
         if size > limit {
+            let unauthenticated = Self::eip8130_without_auth(signed);
+            let body_size = unauthenticated.encode_2718_len();
+            if body_size > limit {
+                return Err(InvalidPoolTransactionError::OversizedData { size, limit });
+            }
             tracing::debug!(size, limit, "EIP-8130 transaction exceeds max_tx_input_bytes");
             return Err(Self::eip8130_auth_error("encoded size exceeds max_tx_input_bytes"));
         }
@@ -1996,17 +2010,29 @@ where
 
             // Check to ensure tx doesn't exceed the DA footprint limit
             if self.chain_spec().is_jovian_active_at_timestamp(self.block_timestamp()) {
-                let da_footprint = valid_tx.transaction().estimated_da_size().saturating_mul(
-                    l1_block_info
-                        .da_footprint_gas_scalar
-                        .unwrap_or(DaFootprintGasScalarUpdate::DEFAULT_DA_FOOTPRINT_GAS_SCALAR)
-                        as u64,
-                );
+                let da_footprint_gas_scalar = l1_block_info
+                    .da_footprint_gas_scalar
+                    .unwrap_or(DaFootprintGasScalarUpdate::DEFAULT_DA_FOOTPRINT_GAS_SCALAR)
+                    as u64;
+                let da_footprint = valid_tx
+                    .transaction()
+                    .estimated_da_size()
+                    .saturating_mul(da_footprint_gas_scalar);
                 let block_gas_limit = self.inner.block_gas_limit();
                 if da_footprint > block_gas_limit {
                     // An EIP-8130 DA size counts its authentication, which the
-                    // hash does not cover, so it must not mark the hash as bad.
-                    let error = if valid_tx.transaction().as_eip8130().is_some() {
+                    // hash does not cover, so it must not mark the hash as bad
+                    // unless the body exceeds the limit with empty authentication.
+                    let auth_dependent =
+                        valid_tx.transaction().as_eip8130().is_some_and(|signed| {
+                            let unauthenticated = Self::eip8130_without_auth(signed);
+                            base_common_flz::tx_estimated_size_fjord_bytes(
+                                &unauthenticated.encoded_2718(),
+                            )
+                            .saturating_mul(da_footprint_gas_scalar)
+                                <= block_gas_limit
+                        });
+                    let error = if auth_dependent {
                         Self::eip8130_auth_error("DA footprint exceeds block gas limit")
                     } else {
                         InvalidPoolTransactionError::other(
@@ -2651,6 +2677,25 @@ mod tests {
             validator.validate_eip8130_structural(&padded),
             "encoded size exceeds max_tx_input_bytes",
         );
+    }
+
+    /// A body that exceeds the size limit even with empty authentication can
+    /// never be valid under its hash, so it is still rejected as a bad
+    /// transaction.
+    #[test]
+    fn oversized_body_is_bad_transaction() {
+        let signed = sign_eoa_eip8130(minimal_valid_eoa_tx());
+        let size = signed.encode_2718_len();
+        let body_size =
+            Eip8130Signed::new(signed.tx().clone(), Bytes::new(), Bytes::new()).encode_2718_len();
+        let limit = body_size - 1;
+        let validator = build_test_validator_with_max_tx_input_bytes(limit);
+
+        assert!(matches!(
+            validator.validate_eip8130_structural(&signed),
+            Err(InvalidPoolTransactionError::OversizedData { size: rejected_size, limit: rejected_limit }
+                ) if rejected_size == size && rejected_limit == limit
+        ));
     }
 
     #[test]
