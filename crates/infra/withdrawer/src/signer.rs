@@ -1,12 +1,10 @@
 use std::fmt;
 
 use alloy_consensus::SignableTransaction;
-#[cfg(feature = "ledger")]
-use alloy_consensus::TxType;
 use alloy_network::TxSigner;
-use alloy_primitives::{Address, Signature};
 #[cfg(feature = "ledger")]
-use alloy_primitives::{B256, normalize_v};
+use alloy_primitives::B256;
+use alloy_primitives::{Address, Signature};
 #[cfg(feature = "ledger")]
 use alloy_signer_ledger::{HDPath, LedgerError, LedgerSigner};
 use alloy_signer_local::PrivateKeySigner;
@@ -33,7 +31,7 @@ impl fmt::Debug for WithdrawalSigner {
     }
 }
 
-/// Redacted signer construction and validation errors.
+/// Signer errors that omit key material and include Ledger device diagnostics.
 #[derive(Debug, Error)]
 pub enum WithdrawalSignerError {
     /// The private key is not a nonzero secp256k1 scalar.
@@ -52,23 +50,14 @@ pub enum WithdrawalSignerError {
     #[cfg(feature = "ledger")]
     #[error("could not connect to Ledger; connect and unlock it, then open the Ethereum app")]
     LedgerConnection(#[source] LedgerError),
-    /// The Ledger could not sign the transaction.
+    /// The Ledger could not sign the transaction; the diagnostic includes its cause.
     #[cfg(feature = "ledger")]
-    #[error("Ledger transaction signing failed")]
+    #[error("Ledger transaction signing failed: {0}")]
     LedgerSigning(#[source] alloy_signer::Error),
     /// Signature recovery did not yield the expected signing address.
     #[cfg(feature = "ledger")]
     #[error("Ledger signature does not recover to the signing address")]
     SignatureMismatch,
-    /// Legacy signing cannot represent both parity values on this chain.
-    #[cfg(feature = "ledger")]
-    #[error(
-        "Ledger legacy signing is unsupported for chain ID {chain_id}; use EIP-1559 fees instead"
-    )]
-    UnsupportedLedgerLegacyChain {
-        /// Transaction chain ID.
-        chain_id: u64,
-    },
 }
 
 impl WithdrawalSigner {
@@ -116,19 +105,6 @@ impl WithdrawalSigner {
         }
     }
 
-    /// Rejects legacy chain IDs whose truncated EIP-155 parity cannot be decoded reliably.
-    #[cfg(feature = "ledger")]
-    pub fn check_ledger_legacy_chain(chain_id: u64) -> Result<(), WithdrawalSignerError> {
-        for parity in [false, true] {
-            // The device returns only the low byte of EIP-155 v, without the chain ID.
-            let v = chain_id.wrapping_mul(2).wrapping_add(35 + u64::from(parity)) & 0xff;
-            if normalize_v(v) != Some(parity) {
-                return Err(WithdrawalSignerError::UnsupportedLedgerLegacyChain { chain_id });
-            }
-        }
-        Ok(())
-    }
-
     /// Checks that a device signature recovers to its expected address for the prehash.
     #[cfg(feature = "ledger")]
     pub fn verify_signature(
@@ -161,12 +137,6 @@ impl TxSigner<Signature> for WithdrawalSigner {
             Self::Local(signer) => signer.sign_transaction(transaction).await,
             #[cfg(feature = "ledger")]
             Self::Ledger(signer) => {
-                if transaction.ty() == TxType::Legacy as u8
-                    && let Some(chain_id) = transaction.chain_id()
-                {
-                    Self::check_ledger_legacy_chain(chain_id)
-                        .map_err(alloy_signer::Error::other)?;
-                }
                 let signature = signer.sign_transaction(transaction).await.map_err(|error| {
                     alloy_signer::Error::other(WithdrawalSignerError::LedgerSigning(error))
                 })?;
@@ -323,14 +293,19 @@ mod tests {
 
     #[cfg(feature = "ledger")]
     #[test]
-    fn ledger_legacy_chain_check_rejects_truncated_parity() {
-        for chain_id in [1, 11155111, 8453] {
-            WithdrawalSigner::check_ledger_legacy_chain(chain_id).unwrap();
-        }
-        for chain_id in [111, u64::MAX] {
-            let error = WithdrawalSigner::check_ledger_legacy_chain(chain_id)
-                .expect_err("chain has an ambiguous device parity byte");
-            assert!(error.to_string().contains("EIP-1559"));
+    fn ledger_signing_display_includes_cause() {
+        for (cause, diagnostic) in [
+            (
+                alloy_signer_ledger::LedgerError::UnexpectedNullResponse,
+                "received an unexpected empty response",
+            ),
+            (
+                alloy_signer_ledger::LedgerError::ShortResponse { got: 0, expected: 65 },
+                "bad response; got 0 bytes, expected 65",
+            ),
+        ] {
+            let error = WithdrawalSignerError::LedgerSigning(alloy_signer::Error::other(cause));
+            assert!(error.to_string().contains(diagnostic));
         }
     }
 

@@ -113,6 +113,10 @@ where
     l1_provider: L1Provider,
     /// The latest L1 head block.
     latest_head: watch::Sender<Option<BlockInfo>>,
+    /// The latest L1 safe block.
+    safe_head: watch::Sender<Option<BlockInfo>>,
+    /// The latest L1 finalized block.
+    finalized_head: watch::Sender<Option<BlockInfo>>,
     /// Client used to interact with the [`crate::DerivationActor`].
     derivation_client: L1WatcherDerivationClient_,
     /// The block signer sender.
@@ -121,6 +125,8 @@ where
     cancellation: CancellationToken,
     /// A stream over the latest head.
     head_stream: BlockStream,
+    /// A stream over the latest safe block.
+    safe_stream: BlockStream,
     /// A stream over the finalized block accepted as canonical.
     finalized_stream: BlockStream,
     /// Number of L1 blocks to keep distance from the L1 head for the derivation pipeline.
@@ -148,10 +154,13 @@ where
         rollup_config: Arc<RollupConfig>,
         l1_provider: L1Provider,
         l1_head_updates_tx: watch::Sender<Option<BlockInfo>>,
+        safe_head_tx: watch::Sender<Option<BlockInfo>>,
+        finalized_head_tx: watch::Sender<Option<BlockInfo>>,
         derivation_client: L1WatcherDerivationClient_,
         signer: Option<mpsc::Sender<Address>>,
         cancellation: CancellationToken,
         head_stream: BlockStream,
+        safe_stream: BlockStream,
         finalized_stream: BlockStream,
         verifier_l1_confs: u64,
         l1_head_number: Arc<AtomicU64>,
@@ -160,10 +169,13 @@ where
             rollup_config,
             l1_provider,
             latest_head: l1_head_updates_tx,
+            safe_head: safe_head_tx,
+            finalized_head: finalized_head_tx,
             derivation_client,
             block_signer_sender: signer,
             cancellation,
             head_stream,
+            safe_stream,
             finalized_stream,
             verifier_l1_confs,
             l1_head_number,
@@ -307,11 +319,20 @@ where
                         }
                     },
                 },
+                new_safe = self.safe_stream.next() => match new_safe {
+                    None => {
+                        return Err(L1WatcherActorError::StreamEnded);
+                    }
+                    Some(safe_block_info) => {
+                        self.safe_head.send_replace(Some(safe_block_info));
+                    }
+                },
                 new_finalized = self.finalized_stream.next() => match new_finalized {
                     None => {
                         return Err(L1WatcherActorError::StreamEnded);
                     }
                     Some(finalized_block_info) => {
+                        self.finalized_head.send_replace(Some(finalized_block_info));
                         self.derivation_client.send_finalized_l1_block(finalized_block_info).await.map_err(|e| {
                             warn!(target: "l1_watcher", error = %e, "Error sending finalized l1 block update to derivation actor");
                             L1WatcherActorError::DerivationClientError(e)
@@ -535,17 +556,21 @@ mod tests {
         let l1_head_number = Arc::new(AtomicU64::new(0));
 
         let head_stream: BoxedBlockStream = Box::pin(futures::stream::iter(head_blocks));
-        // Finalized stream that never yields — actor will exit via head stream ending.
+        // Safe and finalized streams never yield — actor will exit via head stream ending.
+        let safe_stream: BoxedBlockStream = Box::pin(futures::stream::pending());
         let finalized_stream: BoxedBlockStream = Box::pin(futures::stream::pending());
 
         let actor = L1WatcherActor::new(
             Arc::new(RollupConfig::default()),
             fetcher,
             l1_head_tx,
+            watch::channel(None).0,
+            watch::channel(None).0,
             derivation_client.clone(),
             None,
             cancel,
             head_stream,
+            safe_stream,
             finalized_stream,
             verifier_l1_confs,
             Arc::clone(&l1_head_number),
