@@ -138,6 +138,10 @@ impl Command {
 
     /// Build the discv5 configuration serving discv5 on the shared discv4 `socket`, advertising
     /// `external_ip` in the local ENR when known.
+    ///
+    /// discv5 listens only on the `--addr` family, so an `external_ip` of the other family would be
+    /// dropped from the ENR while still disabling peer-driven ENR updates. It is ignored with a
+    /// warning instead.
     pub fn discv5_config(&self, socket: Arc<UdpSocket>, external_ip: Option<IpAddr>) -> Config {
         let listen_config = if self.addr.is_ipv4() {
             ListenConfig::FromSockets { ipv4: Some(socket), ipv6: None }
@@ -153,7 +157,11 @@ impl Command {
 
         let builder = Config::builder(self.addr).discv5_config(inner_builder.build());
         let mut config = match external_ip {
-            Some(ip) => builder.advertised_ip(ip).build(),
+            Some(ip) if ip.is_ipv4() == self.addr.is_ipv4() => builder.advertised_ip(ip).build(),
+            Some(ip) => {
+                warn!(ip = %ip, addr = %self.addr, "Ignoring external IP of a different family than --addr");
+                builder.build()
+            }
             None => builder.build(),
         };
         // `build` rewrites the listen config from socket addresses, which would drop the shared
@@ -172,6 +180,7 @@ impl Command {
 
 #[cfg(test)]
 mod tests {
+    use reth_discv5::build_local_enr;
     use rstest::rstest;
 
     use super::*;
@@ -291,5 +300,18 @@ mod tests {
 
         bootnode.abort();
         assert_eq!(bonded, Ok(true));
+    }
+
+    #[tokio::test]
+    async fn discv5_ignores_external_ip_of_other_family() {
+        let command = cmd("127.0.0.1:0");
+        let socket = Arc::new(UdpSocket::bind(command.addr).await.unwrap());
+        let mut config = command.discv5_config(socket, Some("2001:db8::1".parse().unwrap()));
+
+        let (enr, _, _, _) =
+            build_local_enr(&SecretKey::from_byte_array(&[1u8; 32]).unwrap(), &config);
+
+        assert_eq!(enr.ip6(), None);
+        assert!(config.discv5_config_mut().enr_update);
     }
 }
