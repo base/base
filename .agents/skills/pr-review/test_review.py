@@ -1026,7 +1026,7 @@ class SetupFailureTests(unittest.TestCase):
             "401": "rejected your credentials",
             "Failed to authenticate. API Error: 403 Your API key does not have permission to use the specified resource.":
                 "will not let your key use",
-            "403": "will not let your key use",
+            "403": "was denied (HTTP 403)",
             "There's an issue with the selected model (m404). It may not exist or you may not have access to it.":
                 "does not exist on",
             "404": "does not exist on",
@@ -1694,6 +1694,7 @@ class AgentRunTests(unittest.TestCase):
         headers = request["headers"]
         self.assertTrue(headers.get("x-api-key") == "sk-test-secret"
                         or headers.get("authorization") == "Bearer sk-test-secret")
+        self.assertTrue(headers.get("user-agent", "").startswith("base-pr-review/"))
         self.assertNotIn(b"gh-secret", request["raw"] + json.dumps(headers).encode())
         body = server.body()
         self.assertEqual((body["model"], body["max_tokens"]), ("claude-opus-5-5", 16000))
@@ -1731,6 +1732,7 @@ class AgentRunTests(unittest.TestCase):
             "server error": (500, {"type": "error", "error": {"type": "api_error", "message": "boom"}}),
             "rate limited": (429, {"type": "error", "error": {"type": "rate_limit_error", "message": "slow"}}),
             "bad key": (401, {"type": "error", "error": {"type": "authentication_error", "message": "no"}}),
+            "forbidden": (403, b"error code: 1010\nsk-test-secret"),
             "cut off": (200, message({"findings": []}, stop_reason="max_tokens")),
             "asks for a tool": (200, message({"findings": []}, stop_reason="tool_use",
                                              blocks=[{"type": "text", "text": "{}"}, tool_use])),
@@ -1752,6 +1754,9 @@ class AgentRunTests(unittest.TestCase):
                 self.assertIsInstance(result, review.ReviewError)
                 self.assertEqual(len(server.requests), 1)  # the good answer queued second was never asked for
                 self.assertNotIn("sk-test-secret", str(result))
+                if label == "forbidden":
+                    self.assertIn("HTTP 403", str(result))
+                    self.assertNotIn("will not let your key use", str(result))
 
     def test_a_redirect_is_not_followed_and_the_key_goes_nowhere_else(self) -> None:
         for status in (301, 302, 303, 307, 308):
