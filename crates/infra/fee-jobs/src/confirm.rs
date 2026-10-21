@@ -468,7 +468,7 @@ mod tests {
     };
     use rstest::rstest;
     use serde_json::{Value, json};
-    use tokio::{net::TcpListener, task::JoinHandle};
+    use tokio::{net::TcpListener, sync::Notify, task::JoinHandle};
     use tracing::instrument::WithSubscriber;
     use url::Url;
 
@@ -540,6 +540,58 @@ mod tests {
                 withdrawal_timeout: Duration::from_secs(10),
             },
         }
+    }
+
+    #[tokio::test]
+    async fn initial_status_read_respects_withdrawal_deadline() {
+        let started = Arc::new(Notify::new());
+        let captured = Arc::clone(&started);
+        let server = Server::new_async(move |request| {
+            let started = Arc::clone(&captured);
+            async move {
+                assert_eq!(request["method"], "eth_call");
+                let data: Bytes =
+                    serde_json::from_value(request["params"][0]["input"].clone()).unwrap();
+                assert_eq!(data[..4], WithdrawalPortal::finalizedWithdrawalsCall::SELECTOR);
+                started.notify_one();
+                pending().await
+            }
+        })
+        .await;
+        let job = job(&server.url);
+        let mut config = job.config().unwrap();
+        // The HTTP attempt must outlive the withdrawal deadline, without relying on retries.
+        config.timeout = Duration::from_secs(60);
+        let rpc = WithdrawalRpc::new(&config).unwrap();
+        let withdrawer = Withdrawer::new(config);
+        let receipt = serde_json::from_value(disbursal_receipt(
+            Predeploys::L2_CROSS_DOMAIN_MESSENGER,
+            Predeploys::L2_STANDARD_BRIDGE,
+            job.args.l2_fee_disburser_address,
+        ))
+        .unwrap();
+        let withdrawal = Withdrawal::from_receipt(&receipt).unwrap().remove(0);
+        let proofs = ResolvedProofSystem::FaultProofs(FaultProofContracts {
+            dispute_game_factory: Address::repeat_byte(2),
+            anchor_state_registry: Address::repeat_byte(3),
+        });
+        let sender = ConfirmSender { address: Address::repeat_byte(9), manager: None };
+        let confirmation = job.confirm_withdrawal(&withdrawer, &rpc, proofs, &sender, &withdrawal);
+        tokio::pin!(confirmation);
+        tokio::select! {
+            () = started.notified() => {},
+            outcome = &mut confirmation => panic!("status read did not hang: {outcome:?}"),
+        }
+        tokio::time::pause();
+        tokio::time::advance(job.args.withdrawal_timeout).await;
+        let outcome = tokio::time::timeout(Duration::from_secs(1), confirmation)
+            .await
+            .expect("confirm must return at the withdrawal deadline, before the HTTP timeout");
+        let ConfirmOutcome::Failed(error) = outcome else { panic!("{outcome:?}") };
+        assert!(
+            matches!(error.downcast_ref::<WithdrawerError>(), Some(WithdrawerError::Timeout(_))),
+            "{error:#}"
+        );
     }
 
     #[tokio::test]

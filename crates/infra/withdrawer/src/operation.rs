@@ -2146,6 +2146,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn pre_broadcast_failure_does_not_reuse_previous_submission_hashes() {
+        let server = Scenario::default().start().await;
+        let flow = Withdrawer::new(server.config.clone());
+        let rpc = WithdrawalRpc::new(&server.config).unwrap();
+        let signer = WithdrawalSigner::new(&server.config.signer).await.unwrap();
+        let sender = signer.address();
+        let manager = flow.manager(signer).await.unwrap();
+        let hash = flow
+            .submit(
+                &rpc,
+                sender,
+                Some(&manager),
+                Bytes::new(),
+                None,
+                Instant::now() + server.config.timeout,
+            )
+            .await
+            .unwrap();
+        assert!(hash.is_some());
+        let error = flow
+            .submit(&rpc, sender, Some(&manager), Bytes::new(), None, Instant::now())
+            .await
+            .unwrap_err();
+        assert!(matches!(error, SubmitError::NotSent(WithdrawerError::Timeout(_))), "{error:?}");
+    }
+
+    #[tokio::test]
     async fn serialized_withdrawals_refresh_pending_nonce_advanced_by_another_sender() {
         let server =
             Scenario { proven: 100, nonce_step: 3, second_withdrawal: true, ..Default::default() }
