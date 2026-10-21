@@ -13,7 +13,8 @@ use futures::StreamExt;
 use parking_lot::{Mutex, RwLock};
 use reth_eth_wire_types::HandleMempoolData;
 use reth_execution_types::ChangedAccount;
-use reth_primitives_traits::{Recovered, transaction::error::InvalidTransactionError};
+use reth_primitives_traits::Recovered;
+use reth_storage_api::StateProviderFactory;
 use reth_transaction_pool::{
     AddedTransactionOutcome, AllPoolTransactions, AllTransactionsEvents, BestTransactions,
     BestTransactionsAttributes, BlobStore, BlobStoreError, BlockInfo, FullTransactionEvent,
@@ -22,7 +23,6 @@ use reth_transaction_pool::{
     TransactionListenerKind, TransactionOrigin, TransactionPool, TransactionPoolExt,
     TransactionValidationOutcome, TransactionValidationTaskExecutor, TransactionValidator,
     ValidPoolTransaction,
-    error::InvalidPoolTransactionError,
     pool::{AddedTransactionState, QueuedReason, TransactionEvent},
 };
 use tokio::{spawn, sync::mpsc};
@@ -468,65 +468,6 @@ where
         let predicates =
             crate::ValidityPredicate::block_expiry_bound(transaction.validity_predicates());
         group.into_iter().chain(predicates).min()
-    }
-
-    /// Rejects automatic plain insertion of a known candidate sibling (design §4.6).
-    ///
-    /// Reth reinjects reorged-out transactions without sidecars, which would turn a candidate
-    /// sibling into an ordinary transaction. While candidates are enabled this suppresses any
-    /// sidecar-free transaction whose hash the ledger retains as a sibling, whatever its origin;
-    /// the group must be resubmitted. When a suppressed hash is a `Landed` group's winner and
-    /// the canonical state has not consumed its nonce, the winner was reorged out, so the group
-    /// is reopened
-    /// ([`GroupLedger::reopen_reorged`](base_execution_candidates::GroupLedger::reopen_reorged))
-    /// and the identical group, or the winner alone, is admitted again. A re-sent winner that
-    /// is still canonical fails that check and keeps its landed record. The pool backup saves
-    /// only `Local` transactions, so it never carries Private candidate representatives. The
-    /// ledger is not restart-durable, which is why enabling candidates requires acknowledging an
-    /// ephemeral ledger.
-    async fn reject_plain_candidate_reinsertion(
-        &self,
-        origin: TransactionOrigin,
-        transaction: &T,
-    ) -> PoolResult<()> {
-        let Some(candidates) = &self.candidates else { return Ok(()) };
-        if transaction.candidate_group().is_some() || !transaction.validity_predicates().is_empty()
-        {
-            return Ok(());
-        }
-        let hash = *transaction.hash();
-        if candidates.ledger.suppresses_plain_reinsertion(&hash) {
-            // Suppression is rare (reth reinjection or a re-send), so validating here is cheap.
-            let validated =
-                self.validator().validate_transaction(origin, transaction.clone()).await;
-            let reopened = Self::nonce_open(&validated) && candidates.ledger.reopen_reorged(&hash);
-            debug!(
-                tx_hash = %hash,
-                origin = ?origin,
-                reopened,
-                "suppressed plain reinsertion of a candidate sibling"
-            );
-            return Err(reth_transaction_pool::error::PoolError::other(
-                hash,
-                "candidate siblings cannot be inserted as plain transactions",
-            ));
-        }
-        Ok(())
-    }
-
-    /// Returns `true` when validation against the canonical state left the transaction's nonce
-    /// unconsumed. A provider error fails closed.
-    const fn nonce_open(validated: &TransactionValidationOutcome<T>) -> bool {
-        match validated {
-            TransactionValidationOutcome::Valid { .. } => true,
-            TransactionValidationOutcome::Invalid(_, error) => !matches!(
-                error,
-                InvalidPoolTransactionError::Consensus(
-                    InvalidTransactionError::NonceNotConsistent { .. }
-                )
-            ),
-            TransactionValidationOutcome::Error(..) => false,
-        }
     }
 
     /// Optional flashblock upper bound, paired with the block bound for pool eviction.
@@ -1107,6 +1048,80 @@ where
     }
 }
 
+impl<Client, S, Evm, T, O> BaseTransactionPool<Client, S, Evm, T, O>
+where
+    Client: StateProviderFactory + 'static,
+    Evm: 'static,
+    BaseTransactionValidator<Client, T, Evm>: TransactionValidator<Transaction = T>,
+    T: BasePooledTx + reth_transaction_pool::EthPoolTransaction + 'static,
+    O: reth_transaction_pool::TransactionOrdering<Transaction = T> + Clone,
+    S: BlobStore + Clone,
+{
+    /// Rejects automatic plain insertion of a known candidate sibling (design §4.6).
+    ///
+    /// Reth reinjects reorged-out transactions without sidecars, which would turn a candidate
+    /// sibling into an ordinary transaction. While candidates are enabled this suppresses any
+    /// sidecar-free transaction whose hash the ledger retains as a sibling, whatever its origin;
+    /// the group must be resubmitted. When a suppressed hash is a `Landed` group's winner and
+    /// the sender's canonical account nonce is still at or below the winner's nonce, the winner
+    /// was reorged out, so the group is reopened
+    /// ([`GroupLedger::reopen_reorged`](base_execution_candidates::GroupLedger::reopen_reorged))
+    /// and the identical group, or the winner alone, is admitted again. A re-sent winner that
+    /// is still canonical has its nonce consumed and keeps its landed record, as does any winner
+    /// whose canonical nonce cannot be read. The pool backup saves only `Local` transactions, so
+    /// it never carries Private candidate representatives. The ledger is not restart-durable,
+    /// which is why enabling candidates requires acknowledging an ephemeral ledger.
+    fn reject_plain_candidate_reinsertion(
+        &self,
+        origin: TransactionOrigin,
+        transaction: &T,
+    ) -> PoolResult<()> {
+        let Some(candidates) = &self.candidates else { return Ok(()) };
+        if transaction.candidate_group().is_some() || !transaction.validity_predicates().is_empty()
+        {
+            return Ok(());
+        }
+        let hash = *transaction.hash();
+        if candidates.ledger.suppresses_plain_reinsertion(&hash) {
+            let reopened =
+                self.nonce_unconsumed(transaction) && candidates.ledger.reopen_reorged(&hash);
+            debug!(
+                tx_hash = %hash,
+                origin = ?origin,
+                reopened,
+                "suppressed plain reinsertion of a candidate sibling"
+            );
+            return Err(reth_transaction_pool::error::PoolError::other(
+                hash,
+                "candidate siblings cannot be inserted as plain transactions",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Returns `true` when the sender's canonical account nonce has not passed the
+    /// transaction's nonce. A provider error fails closed.
+    fn nonce_unconsumed(&self, transaction: &T) -> bool {
+        let canonical = self
+            .validator()
+            .validator()
+            .client()
+            .latest()
+            .and_then(|state| state.account_nonce(&transaction.sender()));
+        match canonical {
+            Ok(nonce) => nonce.unwrap_or_default() <= transaction.nonce(),
+            Err(error) => {
+                debug!(
+                    tx_hash = %transaction.hash(),
+                    error = %error,
+                    "canonical nonce unavailable; keeping the landed group"
+                );
+                false
+            }
+        }
+    }
+}
+
 impl<Client, S, Evm, T, O> StateDiffInvalidation for BaseTransactionPool<Client, S, Evm, T, O>
 where
     Client: 'static,
@@ -1149,7 +1164,7 @@ where
 
 impl<Client, S, Evm, T, O> TransactionPool for BaseTransactionPool<Client, S, Evm, T, O>
 where
-    Client: 'static,
+    Client: StateProviderFactory + 'static,
     Evm: 'static,
     BaseTransactionValidator<Client, T, Evm>: TransactionValidator<Transaction = T>,
     T: BasePooledTx + reth_transaction_pool::EthPoolTransaction + 'static,
@@ -1183,7 +1198,7 @@ where
         origin: TransactionOrigin,
         transaction: Self::Transaction,
     ) -> PoolResult<TransactionEvents> {
-        self.reject_plain_candidate_reinsertion(origin, &transaction).await?;
+        self.reject_plain_candidate_reinsertion(origin, &transaction)?;
         if !self.is_sidecar_transaction(&transaction) {
             let hash = *transaction.hash();
             let sender = transaction.sender();
@@ -1231,7 +1246,7 @@ where
         origin: TransactionOrigin,
         transaction: Self::Transaction,
     ) -> PoolResult<AddedTransactionOutcome> {
-        self.reject_plain_candidate_reinsertion(origin, &transaction).await?;
+        self.reject_plain_candidate_reinsertion(origin, &transaction)?;
         if self.is_sidecar_transaction(&transaction) {
             self.add_sidecar_transaction(origin, transaction).await
         } else {
@@ -1773,7 +1788,7 @@ where
 
 impl<Client, S, Evm, T, O> ParkableTransactionPool for BaseTransactionPool<Client, S, Evm, T, O>
 where
-    Client: 'static,
+    Client: StateProviderFactory + 'static,
     Evm: 'static,
     BaseTransactionValidator<Client, T, Evm>: TransactionValidator<Transaction = T>,
     T: BasePooledTx + reth_transaction_pool::EthPoolTransaction + 'static,
@@ -1797,7 +1812,7 @@ where
 
 impl<Client, S, Evm, T, O> TransactionPoolExt for BaseTransactionPool<Client, S, Evm, T, O>
 where
-    Client: 'static,
+    Client: StateProviderFactory + 'static,
     Evm: 'static,
     BaseTransactionValidator<Client, T, Evm>: TransactionValidator<Transaction = T>,
     T: BasePooledTx + reth_transaction_pool::EthPoolTransaction + 'static,
@@ -4592,6 +4607,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn unreadable_canonical_nonce_keeps_a_reorged_winner_landed() {
+        let (pool, client) = build_integration_pool();
+        let runtime = candidate_runtime();
+        let pool = pool.with_candidate_runtime(Arc::clone(&runtime));
+        let (group, representative) = candidate_submission(&client, &runtime);
+        pool.add_transaction(TransactionOrigin::Private, representative)
+            .await
+            .expect("the representative carrying its group is admitted");
+        runtime.ledger.confirm_pooled(group.group_hash(), |hash| pool.get(hash).is_some());
+        let winner = group.siblings()[1].hash();
+        canonical_nonce_update(&pool, 1, group.sender(), 1, vec![winner], PoolUpdateKind::Commit);
+        canonical_nonce_update(&pool, 1, group.sender(), 0, Vec::new(), PoolUpdateKind::Reorg);
+        fund(&client, group.sender());
+
+        // The reinjected winner would reopen its group, but the canonical state cannot be read.
+        client.set_snap_state_reads_fail(true);
+        let error = pool
+            .add_transaction(TransactionOrigin::External, plain_sibling(&group, 1))
+            .await
+            .expect_err("a reinjected winner is not pooled as a plain transaction");
+        assert!(error.to_string().contains("cannot be inserted as plain transactions"));
+        assert!(runtime.ledger.lookup(&group.group_hash()).is_some(), "the landed entry stays");
+        assert!(runtime.ledger.suppresses_plain_reinsertion(&winner), "tombstones are kept");
+    }
+
+    #[tokio::test]
     async fn resending_a_canonical_winner_keeps_its_group_landed() {
         let (pool, client) = build_integration_pool();
         let runtime = candidate_runtime();
@@ -4612,6 +4653,58 @@ mod tests {
 
         // Someone re-sends the canonical winner as a plain transaction.
         pool.add_transaction(TransactionOrigin::Local, plain_sibling(&group, 1))
+            .await
+            .expect_err("a known sibling is not pooled as a plain transaction");
+        let entry = runtime.ledger.lookup(&group.group_hash()).expect("the landed entry stays");
+        let base_execution_candidates::GroupState::Landed { winner: landed, .. } = entry.state
+        else {
+            panic!("expected a landed group, got {:?}", entry.state);
+        };
+        assert_eq!(landed, winner);
+        assert!(runtime.ledger.suppresses_plain_reinsertion(&winner), "tombstones are kept");
+    }
+
+    #[tokio::test]
+    async fn stateless_invalid_canonical_winner_keeps_its_group_landed() {
+        let (pool, client) = build_integration_pool();
+        let runtime = candidate_runtime();
+        let pool = pool.with_candidate_runtime(Arc::clone(&runtime));
+        let (group, representative) = candidate_submission(&client, &runtime);
+        pool.add_transaction(TransactionOrigin::Private, representative)
+            .await
+            .expect("the representative carrying its group is admitted");
+        runtime.ledger.confirm_pooled(group.group_hash(), |hash| pool.get(hash).is_some());
+        let winner = group.siblings()[1].hash();
+
+        // Block 1 mines sibling 1 and stays canonical, and its gas limit is below the winner's,
+        // so validating the winner again fails a stateless check before reaching its nonce.
+        let block = SealedBlock::seal_slow(BaseBlock {
+            header: alloy_consensus::Header {
+                number: 1,
+                gas_limit: 1,
+                timestamp: INTEGRATION_POOL_NOW_SECS,
+                ..Default::default()
+            },
+            body: Default::default(),
+        });
+        pool.on_canonical_state_change(CanonicalStateUpdate {
+            new_tip: &block,
+            pending_block_base_fee: 0,
+            pending_block_blob_fee: None,
+            changed_accounts: vec![ChangedAccount {
+                address: group.sender(),
+                nonce: 1,
+                balance: U256::MAX,
+            }],
+            mined_transactions: vec![winner],
+            update_kind: PoolUpdateKind::Commit,
+        });
+        client.add_account(
+            group.sender(),
+            ExtendedAccount::new(1, U256::from(1_000_000_000_000_000_000u64)),
+        );
+
+        pool.add_transaction(TransactionOrigin::External, plain_sibling(&group, 1))
             .await
             .expect_err("a known sibling is not pooled as a plain transaction");
         let entry = runtime.ledger.lookup(&group.group_hash()).expect("the landed entry stays");

@@ -356,11 +356,12 @@ reinsert a sibling without its group.
 
 Reorg reopen: when a reorg removes a landed winner, reth reinjects it without
 its group. The pool still refuses it as a plain transaction, and when the
-canonical state has not consumed the winner's nonce the ledger reopens the
-group: the landed record is removed and the sibling hashes are no longer
+sender's canonical account nonce is still at or below the winner's nonce the
+ledger reopens the group: the landed record is removed and the sibling hashes are no longer
 suppressed, so the same `group_hash` can be admitted a second time, or the
 winner can be submitted alone. A winner re-sent while it is still canonical
-keeps its landed record. The first `TXPOOL_CANDIDATE_LANDED` is not retracted,
+keeps its landed record, and so does any winner whose canonical nonce cannot be
+read. The first `TXPOOL_CANDIDATE_LANDED` is not retracted,
 so a reopened group can journal a second terminal event. A second landed event
 for the same group has the same `event_id` as the first, so a consumer that
 deduplicates by `event_id` keeps the first one; use `block_hash` and the
