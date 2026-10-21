@@ -1,4 +1,4 @@
-//! L1 chain, data-availability, and block-fetcher utilities for action tests.
+//! L1 chain and data-availability utilities for action tests.
 
 mod miner;
 pub use miner::{
@@ -8,9 +8,6 @@ pub use miner::{
 
 mod provider;
 pub use provider::{ActionL1ChainProvider, L1ProviderError, SharedL1Chain};
-
-mod block_fetcher;
-pub use block_fetcher::{ActionL1BlockFetcher, ActionL1FetcherError, l1_block_to_rpc};
 
 mod blob;
 pub use blob::ActionBlobProvider;

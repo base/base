@@ -74,6 +74,9 @@ impl WorkloadGenerator {
                 TxType::Transfer => {
                     generator = generator.with_payload(TransferPayload::default(), weight_pct);
                 }
+                TxType::Eip8430Transfer => {
+                    generator = generator.with_payload(super::Eip8430TransferPayload, weight_pct);
+                }
                 TxType::Calldata { max_size, repeat_count } => {
                     let payload = CalldataPayload::new(*max_size).with_repeat_count(*repeat_count);
                     generator = generator.with_payload(payload, weight_pct);
