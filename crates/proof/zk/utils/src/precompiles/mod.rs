@@ -22,14 +22,9 @@ pub use custom::CustomCrypto;
 mod factory;
 pub use factory::ZkvmBaseEvmFactory;
 
-/// Tracker names for accelerated precompiles.
-/// These names are used in cycle-tracker-report events and must match
-/// the keys expected by stats.rs and validity/src/types.rs.
+/// Names emitted with a `precompile-` prefix in `zkVM` `cycle-tracker-report` events.
 pub mod cycle_tracker {
-    /// Prefix for all precompile cycle tracker keys.
-    pub const PREFIX: &str = "precompile-";
-
-    /// Individual tracker names (without prefix).
+    /// Individual tracker names without the `precompile-` prefix.
     pub mod names {
         /// BN254 addition.
         pub const BN_ADD: &str = "bn-add";
@@ -43,23 +38,6 @@ pub mod cycle_tracker {
         pub const P256_VERIFY: &str = "p256-verify";
         /// KZG point evaluation.
         pub const KZG_EVAL: &str = "kzg-eval";
-    }
-
-    /// Full cycle tracker keys (with "precompile-" prefix).
-    /// These match the keys in `ExecutionReport.cycle_tracker`.
-    pub mod keys {
-        /// BN254 addition (prefixed).
-        pub const BN_ADD: &str = "precompile-bn-add";
-        /// BN254 scalar multiplication (prefixed).
-        pub const BN_MUL: &str = "precompile-bn-mul";
-        /// BN254 pairing check (prefixed).
-        pub const BN_PAIR: &str = "precompile-bn-pair";
-        /// ECDSA recovery (prefixed).
-        pub const EC_RECOVER: &str = "precompile-ec-recover";
-        /// P-256 signature verification (prefixed).
-        pub const P256_VERIFY: &str = "precompile-p256-verify";
-        /// KZG point evaluation (prefixed).
-        pub const KZG_EVAL: &str = "precompile-kzg-eval";
     }
 }
 
@@ -130,11 +108,6 @@ impl BaseZkvmPrecompiles {
     #[inline]
     pub fn with_activation_admin_address(self, activation_admin_address: Option<Address>) -> Self {
         Self::new_with_spec_and_activation_admin_address(self.spec, activation_admin_address)
-    }
-
-    /// Returns the activation registry admin address.
-    pub const fn activation_admin_address(&self) -> Option<Address> {
-        self.activation_admin_address
     }
 
     fn installed_precompiles(
@@ -462,6 +435,7 @@ mod tests {
             (BaseUpgrade::Beryl, true),
             (BaseUpgrade::Cobalt, true),
             (BaseUpgrade::Denim, true),
+            (BaseUpgrade::Everest, true),
             (BaseUpgrade::Zenith, true),
         ] {
             let spec = BaseSpecId::new(upgrade);
@@ -487,32 +461,6 @@ mod tests {
     }
 
     #[test]
-    fn test_tracker_keys_match_expected_format() {
-        let expected_keys = [
-            cycle_tracker::keys::BN_ADD,
-            cycle_tracker::keys::BN_MUL,
-            cycle_tracker::keys::BN_PAIR,
-            cycle_tracker::keys::EC_RECOVER,
-            cycle_tracker::keys::P256_VERIFY,
-            cycle_tracker::keys::KZG_EVAL,
-        ];
-
-        for key in &expected_keys {
-            assert!(
-                key.starts_with(cycle_tracker::PREFIX),
-                "Key '{}' should start with '{}'",
-                key,
-                cycle_tracker::PREFIX
-            );
-            assert!(!key.contains(' '), "Key '{key}' contains spaces");
-            assert!(
-                !key[cycle_tracker::PREFIX.len()..].contains('_'),
-                "Key '{key}' contains underscores (should use dashes)"
-            );
-        }
-    }
-
-    #[test]
     fn test_azul_uses_osaka_p256verify() {
         let p256_addr = *secp256r1::P256VERIFY.address();
 
@@ -534,34 +482,6 @@ mod tests {
         assert!(
             matches!(&azul_result, Ok(output) if output.halt_reason().is_some()),
             "AZUL P256VERIFY must fail with 5,000 gas (Osaka pricing, 6,900 base fee)",
-        );
-    }
-
-    #[test]
-    fn test_names_and_keys_are_consistent() {
-        assert_eq!(
-            cycle_tracker::keys::BN_ADD,
-            format!("{}{}", cycle_tracker::PREFIX, cycle_tracker::names::BN_ADD)
-        );
-        assert_eq!(
-            cycle_tracker::keys::BN_MUL,
-            format!("{}{}", cycle_tracker::PREFIX, cycle_tracker::names::BN_MUL)
-        );
-        assert_eq!(
-            cycle_tracker::keys::BN_PAIR,
-            format!("{}{}", cycle_tracker::PREFIX, cycle_tracker::names::BN_PAIR)
-        );
-        assert_eq!(
-            cycle_tracker::keys::EC_RECOVER,
-            format!("{}{}", cycle_tracker::PREFIX, cycle_tracker::names::EC_RECOVER)
-        );
-        assert_eq!(
-            cycle_tracker::keys::P256_VERIFY,
-            format!("{}{}", cycle_tracker::PREFIX, cycle_tracker::names::P256_VERIFY)
-        );
-        assert_eq!(
-            cycle_tracker::keys::KZG_EVAL,
-            format!("{}{}", cycle_tracker::PREFIX, cycle_tracker::names::KZG_EVAL)
         );
     }
 }

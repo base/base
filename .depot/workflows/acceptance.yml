@@ -1,0 +1,238 @@
+name: Acceptance (advisory)
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      scenario:
+        description: Acceptance scenario
+        type: choice
+        options:
+          - smoke
+          - denim-transition
+          - derivation
+        default: smoke
+
+concurrency:
+  group: acceptance-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  TESTED_SHA: ${{ github.sha }}
+  RUN_KEY: ${{ github.run_id }}-${{ github.run_attempt }}
+
+jobs:
+  select:
+    name: Select acceptance scenarios
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: depot-ubuntu-24.04-16
+    timeout-minutes: 20
+    outputs:
+      matrix: ${{ steps.select.outputs.matrix }}
+      started_at: ${{ steps.identity.outputs.started_at }}
+    steps:
+      - id: identity
+        name: Capture trusted workflow start time
+        shell: bash
+        run: echo "started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: ./.depot/actions/setup
+        with:
+          native-deps: "true"
+          just: "false"
+      - name: Test acceptance runner and publisher
+        run: |
+          cargo test --locked -p base-acceptance -p base-acceptance-cli
+      - id: select
+        shell: bash
+        env:
+          REQUESTED_SCENARIO: ${{ github.event_name == 'workflow_dispatch' && inputs.scenario || 'smoke' }}
+        run: |
+          set -euo pipefail
+          case "$REQUESTED_SCENARIO" in
+            smoke|denim-transition|derivation) ;;
+            *) echo 'unsupported scenario' >&2; exit 2 ;;
+          esac
+          scenarios=("acceptance/scenarios/${REQUESTED_SCENARIO}.toml")
+          cargo run --locked -p base-acceptance-cli -- validate "${scenarios[@]}"
+          mkdir -p expected
+          cargo run --locked -p base-acceptance-cli -- manifest "${scenarios[@]}" \
+            --run-id "$RUN_KEY" --tested-sha "$TESTED_SHA" --output expected/manifest.json
+          jq -e '.schema_version == 1 and .run_id == env.RUN_KEY and .tested_sha == env.TESTED_SHA and (.scenarios | length == 1)' expected/manifest.json
+          jq -cn --arg id "$REQUESTED_SCENARIO" --arg path "${scenarios[0]}" \
+            '{include:[{id:$id,path:$path}]}' | sed 's/^/matrix=/' >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: acceptance-expected-${{ github.run_attempt }}
+          path: expected/manifest.json
+          if-no-files-found: error
+
+  scenario:
+    name: Acceptance / ${{ matrix.id }}
+    needs: select
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.select.outputs.matrix) }}
+    runs-on: depot-ubuntu-24.04-16
+    timeout-minutes: 60
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: ./.depot/actions/setup
+        with:
+          native-deps: "true"
+          just: "false"
+      - uses: depot/setup-action@91bc8495a33ebfc504ffc89e5674379ccf23c29c # v1
+      - name: Build and load tested images
+        env:
+          PROFILE: dev
+          BASE_SUCCINCT_ELF_REQUIRE: "0"
+        run: |
+          set -euo pipefail
+          depot bake --project "${{ vars.DEPOT_PROJECT_ID }}" -f etc/docker/docker-bake.hcl \
+            base op-batcher --set '*.platform=linux/amd64' --load
+          depot build --project "${{ vars.DEPOT_PROJECT_ID }}" --load \
+            --tag devnet-setup:local-v2 -f etc/docker/Dockerfile.devnet .
+      - name: Run scenario
+        shell: bash
+        env:
+          SCENARIO_ID: ${{ matrix.id }}
+          SCENARIO_PATH: ${{ matrix.path }}
+        run: |
+          set -o pipefail
+          cargo run --locked -p base-acceptance-cli -- run "$SCENARIO_PATH" \
+            --output "target/acceptance/$RUN_KEY/$SCENARIO_ID" --no-build \
+            --run-id "$RUN_KEY" --tested-sha "$TESTED_SHA"
+      - name: Preserve startup failure evidence
+        if: always()
+        env:
+          SCENARIO_ID: ${{ matrix.id }}
+        run: |
+          report="target/acceptance/$RUN_KEY/$SCENARIO_ID/report"
+          mkdir -p "$report"
+          if [ ! -f "$report/result.json" ]; then
+            echo 'No scenario result; inspect the job log for the infrastructure failure.' > "$report/runner-status.txt"
+          fi
+      - name: Upload sanitized scenario report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: acceptance-result-${{ matrix.id }}-${{ github.run_attempt }}
+          path: target/acceptance/${{ env.RUN_KEY }}/${{ matrix.id }}/report
+          if-no-files-found: warn
+
+  aggregate:
+    name: Acceptance / Aggregate (advisory)
+    if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    needs: [select, scenario]
+    runs-on: depot-ubuntu-24.04-16
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: ./.depot/actions/setup
+        with:
+          native-deps: "true"
+          just: "false"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        continue-on-error: true
+        with:
+          pattern: acceptance-*
+          path: downloaded
+      - name: Aggregate (missing and invalid results remain failures)
+        run: |
+          set -o pipefail
+          mkdir -p downloaded
+          cargo run --locked -p base-acceptance-cli -- aggregate \
+            --expected "downloaded/acceptance-expected-${GITHUB_RUN_ATTEMPT}/manifest.json" \
+            --results downloaded --output aggregate-report
+      - if: always()
+        run: test ! -f aggregate-report/summary.md || cat aggregate-report/summary.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve aggregation failure evidence
+        if: always()
+        run: |
+          mkdir -p aggregate-report
+          if [ ! -f aggregate-report/result.json ]; then
+            echo 'No aggregate result; inspect the job log for the infrastructure failure.' > aggregate-report/runner-status.txt
+          fi
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: acceptance-aggregate-${{ github.run_attempt }}
+          path: aggregate-report
+          if-no-files-found: warn
+
+  publish:
+    name: Publish trusted acceptance summary
+    if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    needs: [select, aggregate]
+    runs-on: depot-ubuntu-24.04
+    timeout-minutes: 20
+    concurrency:
+      group: acceptance-publisher-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout trusted base revision
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Set up trusted Rust toolchain
+        if: hashFiles('acceptance/src/publish.rs') != ''
+        uses: ./.depot/actions/setup
+        with:
+          native-deps: "true"
+          just: "false"
+      - name: Build trusted publisher
+        if: hashFiles('acceptance/src/publish.rs') != ''
+        run: cargo build --locked -p base-acceptance-cli
+      - name: Download acceptance data
+        if: hashFiles('acceptance/src/publish.rs') != ''
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        continue-on-error: true
+        with:
+          pattern: acceptance-*
+          path: downloaded
+      - name: Publish validated acceptance result
+        if: hashFiles('acceptance/src/publish.rs') != ''
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          TESTED_SHA: ${{ github.sha }}
+          BOT_LOGIN: ${{ vars.BOT_LOGIN }}
+          STARTED_AT: ${{ needs.select.outputs.started_at }}
+        run: |
+          target/debug/base-acceptance publish --event "$GITHUB_EVENT_PATH" \
+            --result "downloaded/acceptance-aggregate-${GITHUB_RUN_ATTEMPT}/result.json" \
+            --expected "downloaded/acceptance-expected-${GITHUB_RUN_ATTEMPT}/manifest.json" \
+            --run-id "$RUN_KEY" --attempt "$GITHUB_RUN_ATTEMPT" --started-at "$STARTED_AT"
+      - name: First-introduction notice
+        if: hashFiles('acceptance/src/publish.rs') == ''
+        run: echo 'Trusted publisher is not on the base revision yet; reports are artifact-only.' >> "$GITHUB_STEP_SUMMARY"

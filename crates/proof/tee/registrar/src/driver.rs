@@ -313,7 +313,7 @@ where
                     };
                 }
                 let span = tracing::info_span!(
-                    "resolve_instance",
+                    "registrar.resolve_instance",
                     instance_id = %instance.instance_id,
                     endpoint = %instance.endpoint,
                     health = ?instance.health_status,

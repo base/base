@@ -3,9 +3,12 @@
 //! Use these for the versioned `logic/vN` unit tests.
 //! For factory, dispatch, and storage-layout tests keep the EVM harness.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::{
+    cell::Cell,
+    collections::{BTreeMap, HashMap, HashSet},
+};
 
-use alloy_primitives::{Address, B256, LogData, U256};
+use alloy_primitives::{Address, B256, LogData, U256, keccak256};
 use base_precompile_storage::Result;
 
 use crate::{
@@ -73,6 +76,10 @@ pub struct InMemoryTokenAccounting {
     pub announcement_ids_used: HashSet<String>,
     /// Events collected by `emit_event`; does not produce real EVM logs.
     pub events: Vec<LogData>,
+    /// Number of `metered_keccak256` calls (interior-mutable so `&self` metering can record).
+    pub keccak_charges: Cell<u64>,
+    /// Cumulative gas passed to `deduct_gas`.
+    pub gas_deducted: Cell<u64>,
 }
 
 impl InMemoryTokenAccounting {
@@ -103,6 +110,8 @@ impl InMemoryTokenAccounting {
             extra_metadata: HashMap::new(),
             announcement_ids_used: HashSet::new(),
             events: Vec::new(),
+            keccak_charges: Cell::new(0),
+            gas_deducted: Cell::new(0),
         }
     }
 }
@@ -246,16 +255,26 @@ impl TokenAccounting for InMemoryTokenAccounting {
         self.events.push(log);
         Ok(())
     }
+
+    /// In-memory double has no gas meter: it counts hashes in `keccak_charges` without charging.
+    /// Real gas enforcement is exercised against the EVM harness in the dispatch tests.
+    fn metered_keccak256(&self, data: &[u8]) -> Result<B256> {
+        self.keccak_charges.set(self.keccak_charges.get() + 1);
+        Ok(keccak256(data))
+    }
+
+    /// In-memory double has no gas meter: it sums the requested gas in `gas_deducted` without
+    /// charging. Real `OutOfGas` enforcement is exercised against the EVM harness in the dispatch
+    /// tests.
+    fn deduct_gas(&self, gas: u64) -> Result<()> {
+        self.gas_deducted.set(self.gas_deducted.get() + gas);
+        Ok(())
+    }
 }
 
 impl StablecoinAccounting for InMemoryTokenAccounting {
     fn currency(&self) -> Result<String> {
         Ok(self.currency.clone())
-    }
-
-    fn set_currency(&mut self, currency: String) -> Result<()> {
-        self.currency = currency;
-        Ok(())
     }
 }
 
@@ -267,12 +286,17 @@ impl StablecoinAccounting for InMemoryTokenAccounting {
 #[derive(Debug)]
 pub struct FakePolicyAccounting {
     caller: Address,
-    initialized: bool,
+    /// Whether `mark_initialized` has been called.
+    pub initialized: bool,
     policies: BTreeMap<u64, U256>,
     members: BTreeMap<(u64, Address), bool>,
-    pending_admins: BTreeMap<u64, Address>,
-    next_counter: u64,
-    events: Vec<LogData>,
+    /// Staged pending admins keyed by policy ID.
+    pub pending_admins: BTreeMap<u64, Address>,
+    children: BTreeMap<u64, Vec<u64>>,
+    /// The global policy-ID counter.
+    pub next_counter: u64,
+    /// Events collected by `emit_event`; does not produce real EVM logs.
+    pub events: Vec<LogData>,
 }
 
 impl Default for FakePolicyAccounting {
@@ -290,9 +314,22 @@ impl FakePolicyAccounting {
             policies: BTreeMap::new(),
             members: BTreeMap::new(),
             pending_admins: BTreeMap::new(),
+            children: BTreeMap::new(),
             next_counter: 0,
             events: Vec::new(),
         }
+    }
+
+    /// Creates empty policy-registry storage whose call context reports `caller`.
+    pub const fn with_caller(caller: Address) -> Self {
+        let mut policy = Self::new();
+        policy.caller = caller;
+        policy
+    }
+
+    /// Sets the address reported by [`PolicyAccounting::caller`].
+    pub const fn set_caller(&mut self, caller: Address) {
+        self.caller = caller;
     }
 
     /// Marks `account` as a member of `policy_id` and records the policy as existing.
@@ -310,10 +347,6 @@ impl FakePolicyAccounting {
 }
 
 impl PolicyAccounting for FakePolicyAccounting {
-    fn registry_address(&self) -> Address {
-        Address::repeat_byte(0x02)
-    }
-
     fn caller(&self) -> Address {
         self.caller
     }
@@ -374,12 +407,12 @@ impl PolicyAccounting for FakePolicyAccounting {
         Ok(())
     }
 
-    // This fake does not exercise composite policies.
-    fn read_children(&self, _policy_id: u64) -> Result<Vec<u64>> {
-        Ok(Vec::new())
+    fn read_children(&self, policy_id: u64) -> Result<Vec<u64>> {
+        Ok(self.children.get(&policy_id).cloned().unwrap_or_default())
     }
 
-    fn write_children(&mut self, _policy_id: u64, _child_policy_ids: &[u64]) -> Result<()> {
+    fn write_children(&mut self, policy_id: u64, child_policy_ids: &[u64]) -> Result<()> {
+        self.children.insert(policy_id, child_policy_ids.to_vec());
         Ok(())
     }
 }

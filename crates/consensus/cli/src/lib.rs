@@ -22,6 +22,7 @@ pub use config::{ConfigError, L1ConfigFile, L2ConfigFile};
 mod follow;
 pub use follow::{
     ConsensusFollowNodeArgs, ConsensusFollowNodeCommand, ConsensusFollowNodeConfigArgs,
+    EmbeddedConsensusFollowNodeConfigArgs, FollowNodeOverrides,
 };
 
 mod l1;

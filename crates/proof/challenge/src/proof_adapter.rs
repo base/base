@@ -111,6 +111,8 @@ impl ChallengerProofAdapter {
 
 #[cfg(test)]
 mod tests {
+    use std::num::NonZeroU64;
+
     use alloy_primitives::{Address, B256, Bytes};
     use base_proof_primitives::{PROOF_TYPE_TEE, PROOF_TYPE_ZK, ProofRequest, Proposal};
     use base_proof_submission::test_utils::SnarkReceiptFixture;
@@ -178,8 +180,8 @@ mod tests {
             number_of_blocks_to_prove: 300,
             sequence_window: Some(10),
             l1_head: Some(l1_head),
-            intermediate_root_interval: Some(150),
             schedule_l2_block_number: None,
+            intermediate_block_interval: NonZeroU64::new(300).unwrap(),
             zk_vm: ZkVm::Sp1,
             zk_backend: ZkBackend::Cluster,
         };
@@ -207,9 +209,9 @@ mod tests {
             claimed_l2_output_root: root,
             claimed_l2_block_number: 600,
             proposer: Address::repeat_byte(0x04),
-            intermediate_block_interval: 300,
             l1_head_number: 1200,
             schedule_l2_block_number: None,
+            intermediate_block_interval: NonZeroU64::new(30).unwrap(),
         };
         let session_id = ChallengerProofAdapter::tee_session_id(game_address, invalid_index);
 
@@ -246,7 +248,7 @@ mod tests {
         let root = B256::repeat_byte(0xaa);
         let result = ProofResult::Tee(TeeProofResult {
             aggregate_proposal: test_proposal(root),
-            proposals: Vec::new(),
+            intermediate_roots: vec![root],
             tee_kind: TeeKind::AwsNitro,
             tee_signer: Address::repeat_byte(0x11),
         });
@@ -261,7 +263,7 @@ mod tests {
     fn tee_dispute_proof_bytes_rejects_unexpected_root() {
         let result = ProofResult::Tee(TeeProofResult {
             aggregate_proposal: test_proposal(B256::repeat_byte(0xaa)),
-            proposals: Vec::new(),
+            intermediate_roots: vec![B256::repeat_byte(0xaa)],
             tee_kind: TeeKind::AwsNitro,
             tee_signer: Address::repeat_byte(0x11),
         });

@@ -9,6 +9,7 @@ use base_proof_tee_registrar::{
 };
 use base_tx_manager::{SignerConfig, TxManagerConfig};
 use clap::Parser;
+use reth_node_core::args::TraceArgs;
 use url::Url;
 
 // Generate env-var helper and CLI structs with the `BASE_REGISTRAR_` prefix.
@@ -40,7 +41,12 @@ pub(crate) struct Cli {
     aws_region: String,
 
     /// JSON-RPC port to poll on each prover instance.
-    #[arg(long, env = cli_env!("PROVER_PORT"), default_value_t = 8000)]
+    #[arg(
+        long,
+        env = cli_env!("PROVER_PORT"),
+        default_value_t = 8000,
+        value_parser = clap::value_parser!(u16).range(1..)
+    )]
     prover_port: u16,
 
     /// Signer configuration (local private key or remote sidecar).
@@ -55,7 +61,8 @@ pub(crate) struct Cli {
     #[arg(
         long = "max-attestation-age-secs",
         env = cli_env!("MAX_ATTESTATION_AGE_SECS"),
-        default_value_t = 3300
+        default_value_t = 3300,
+        value_parser = clap::value_parser!(u64).range(1..)
     )]
     max_attestation_age: u64,
 
@@ -122,11 +129,18 @@ pub(crate) struct Cli {
 
     #[command(flatten)]
     metrics: MetricsArgs,
+
+    #[command(flatten)]
+    pub(crate) traces: TraceArgs,
 }
 
 impl Cli {
     pub(crate) fn config(self) -> Result<RegistrarConfig, Box<RegistrarError>> {
-        validate_health_port(self.health.port)?;
+        if self.health.port == 0 {
+            return Err(Box::new(RegistrarError::Config(
+                "health server port must be non-zero".into(),
+            )));
+        }
 
         Ok(RegistrarConfig {
             l1_rpc_url: self.l1_rpc_url,
@@ -153,14 +167,6 @@ impl Cli {
     }
 }
 
-fn validate_health_port(port: u16) -> Result<(), Box<RegistrarError>> {
-    if port == 0 {
-        return Err(Box::new(RegistrarError::Config("health server port must be non-zero".into())));
-    }
-
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -185,6 +191,22 @@ mod tests {
     fn max_concurrency_zero_rejected() {
         let mut args = required_args();
         args.extend(["--max-concurrency", "0"]);
+
+        assert!(Cli::try_parse_from(args).is_err());
+    }
+
+    #[test]
+    fn max_attestation_age_zero_rejected() {
+        let mut args = required_args();
+        args.extend(["--max-attestation-age-secs", "0"]);
+
+        assert!(Cli::try_parse_from(args).is_err());
+    }
+
+    #[test]
+    fn prover_port_zero_rejected() {
+        let mut args = required_args();
+        args.extend(["--prover-port", "0"]);
 
         assert!(Cli::try_parse_from(args).is_err());
     }
@@ -247,6 +269,9 @@ mod tests {
 
     #[test]
     fn health_port_zero_rejected() {
-        assert!(validate_health_port(0).is_err());
+        let mut args = required_args();
+        args.extend(["--health.port", "0"]);
+
+        assert!(Cli::parse_from(args).config().is_err());
     }
 }

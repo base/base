@@ -4,6 +4,7 @@ use alloy_primitives::TxHash;
 use base_execution_txpool::{NoExtensions, ValidatedTransaction};
 use jsonrpsee::core::params::ArrayParams;
 use serde::Serialize;
+use serde_json::value::RawValue;
 
 /// One JSON-RPC call relayed to one forwarding destination.
 ///
@@ -34,6 +35,15 @@ pub trait ForwardRequest: Send + Sync + 'static {
     ///
     /// [`None`] for a call not attributable to a single transaction.
     fn tx_hash(&self) -> Option<TxHash>;
+
+    /// The serialized transaction, when this call is a `base_insertValidatedTransaction` that may
+    /// instead travel in one `base_insertValidatedTransactions` call with the rest of its batch.
+    ///
+    /// A batch uses that method only when every call in it returns [`Some`]; the default [`None`]
+    /// keeps the call in a JSON-RPC batch of individual calls.
+    fn batched_insert(&self) -> Option<Result<Box<RawValue>, serde_json::Error>> {
+        None
+    }
 }
 
 /// A `base_insertValidatedTransaction` call.
@@ -66,6 +76,10 @@ where
     fn tx_hash(&self) -> Option<TxHash> {
         Some(self.tx_hash)
     }
+
+    fn batched_insert(&self) -> Option<Result<Box<RawValue>, serde_json::Error>> {
+        Some(serde_json::value::to_raw_value(&self.transaction))
+    }
 }
 
 #[cfg(test)]
@@ -81,6 +95,7 @@ mod tests {
             transaction: ValidatedTransaction {
                 sender: Address::repeat_byte(0x11),
                 raw: Bytes::from_static(&[0x02, 0x03]),
+                metering: None,
                 extensions: NoExtensions {},
             },
             tx_hash,

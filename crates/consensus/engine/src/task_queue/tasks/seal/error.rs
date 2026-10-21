@@ -75,7 +75,8 @@ impl SealTaskError {
                 }
                 InsertTaskError::EmptyAuthoritativePayloads
                 | InsertTaskError::FromBlockError(_)
-                | InsertTaskError::L2BlockInfoConstruction(_) => true,
+                | InsertTaskError::L2BlockInfoConstruction(_)
+                | InsertTaskError::InvalidBaseTimeSchedule(_) => true,
                 InsertTaskError::InsertFailed(_)
                 | InsertTaskError::UnexpectedPayloadStatus(_)
                 | InsertTaskError::ForkchoiceUpdateDidNotApply => false,
@@ -115,7 +116,7 @@ impl EngineTaskError for SealTaskError {
 mod tests {
     use alloy_rpc_types_engine::PayloadStatusEnum;
     use alloy_transport::RpcError;
-    use base_protocol::FromBlockError;
+    use base_protocol::{BaseTimeScheduleError, FromBlockError};
     use rstest::rstest;
 
     use super::*;
@@ -173,6 +174,13 @@ mod tests {
     )]
     #[case::l2_block_info_construction(
         InsertTaskError::L2BlockInfoConstruction(FromBlockError::InvalidGenesisHash),
+        true
+    )]
+    #[case::invalid_base_time_schedule(
+        InsertTaskError::InvalidBaseTimeSchedule(BaseTimeScheduleError::InvalidTimestamp {
+            expected: 1,
+            actual: 2,
+        }),
         true
     )]
     fn test_insertion_non_forkchoice_error_is_fatal(

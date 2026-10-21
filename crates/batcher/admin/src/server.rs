@@ -17,6 +17,7 @@ use crate::{BatcherAdminApiServer, BatcherAdminApiServerImpl};
 pub struct AdminServer {
     #[debug(skip)]
     handle: ServerHandle,
+    addr: SocketAddr,
 }
 
 impl AdminServer {
@@ -28,7 +29,12 @@ impl AdminServer {
         let module = BatcherAdminApiServerImpl::new(admin_handle).into_rpc();
         let handle = server.start(module);
         info!(addr = %addr, "admin RPC server listening");
-        Ok(Self { handle })
+        Ok(Self { handle, addr })
+    }
+
+    /// The bound address, with the port the OS picked when spawned on port 0.
+    pub const fn local_addr(&self) -> SocketAddr {
+        self.addr
     }
 
     /// Future that resolves when the server stops.

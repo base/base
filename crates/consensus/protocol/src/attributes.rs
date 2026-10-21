@@ -89,7 +89,12 @@ impl AttributesWithParent {
 
     /// Returns the number of transactions in the attributes.
     pub fn count_transactions(&self) -> u64 {
-        self.attributes().decoded_transactions().count().try_into().unwrap()
+        self.attributes
+            .transactions
+            .as_ref()
+            .map_or(0, |transactions| transactions.len())
+            .try_into()
+            .unwrap()
     }
 }
 
@@ -97,141 +102,82 @@ impl AttributesWithParent {
 mod tests {
     use alloc::vec;
 
+    use rstest::rstest;
+
     use super::*;
 
     #[test]
-    fn test_attributes_with_parent() {
-        let attributes = BasePayloadAttributes::default();
-        let parent = L2BlockInfo::default();
-        let is_last_in_span = true;
-        let attributes_with_parent =
-            AttributesWithParent::new(attributes.clone(), parent, None, is_last_in_span);
-
-        assert_eq!(attributes_with_parent.attributes(), &attributes);
-        assert_eq!(attributes_with_parent.parent(), &parent);
-        assert_eq!(attributes_with_parent.is_last_in_span(), is_last_in_span);
-        assert_eq!(attributes_with_parent.derived_from(), None);
-    }
-
-    /// Test that the [`AttributesWithParent::as_deposits_only`] method strips out all
-    /// transactions that are not deposits.
-    #[test]
-    fn test_attributes_with_parent_as_deposits_only() {
-        let attributes = BasePayloadAttributes {
-            transactions: Some(vec![
-                vec![OpTxType::Deposit as u8, 0x0, 0x10, 0x20].into(),
-                vec![OpTxType::Legacy as u8, 0x0, 0x11, 0x21].into(),
-                vec![OpTxType::Eip2930 as u8, 0x0, 0x12, 0x22].into(),
-                vec![OpTxType::Eip1559 as u8, 0x0, 0x13, 0x23].into(),
-                vec![OpTxType::Eip7702 as u8, 0x0, 0x14, 0x24].into(),
-                vec![].into(),
-            ]),
-            ..BasePayloadAttributes::default()
-        };
-        let parent = L2BlockInfo::default();
-        let is_last_in_span = true;
-        let attributes_with_parent =
-            AttributesWithParent::new(attributes, parent, None, is_last_in_span);
-        let deposits_only_attributes = attributes_with_parent.as_deposits_only();
-
-        assert_eq!(
-            deposits_only_attributes.attributes().transactions,
-            Some(vec![vec![OpTxType::Deposit as u8, 0x0, 0x10, 0x20].into()])
-        );
-    }
-
-    #[test]
-    fn test_attributes_with_parent_as_deposits_multi_deposits() {
-        let attributes = BasePayloadAttributes {
-            transactions: Some(vec![
-                vec![OpTxType::Deposit as u8, 0x0, 0x10, 0x20].into(),
-                vec![OpTxType::Legacy as u8, 0x0, 0x11, 0x21].into(),
-                vec![OpTxType::Eip2930 as u8, 0x0, 0x12, 0x22].into(),
-                vec![OpTxType::Deposit as u8, 0x98, 0x21, 0x31].into(),
-                vec![OpTxType::Eip1559 as u8, 0x0, 0x13, 0x23].into(),
-                vec![OpTxType::Eip7702 as u8, 0x0, 0x14, 0x24].into(),
-                vec![OpTxType::Deposit as u8, 0x56, 0x31, 0x41].into(),
-                vec![].into(),
-            ]),
-            ..BasePayloadAttributes::default()
-        };
-        let parent = L2BlockInfo::default();
-        let is_last_in_span = true;
-        let attributes_with_parent =
-            AttributesWithParent::new(attributes, parent, None, is_last_in_span);
-        let deposits_only_attributes = attributes_with_parent.as_deposits_only();
-
-        assert_eq!(
-            deposits_only_attributes.attributes().transactions,
-            Some(vec![
-                vec![OpTxType::Deposit as u8, 0x0, 0x10, 0x20].into(),
-                vec![OpTxType::Deposit as u8, 0x98, 0x21, 0x31].into(),
-                vec![OpTxType::Deposit as u8, 0x56, 0x31, 0x41].into(),
-            ])
-        );
-    }
-
-    /// Test that the [`AttributesWithParent::as_deposits_only`] method strips out all
-    /// transactions that are not deposits.
-    #[test]
-    fn test_attributes_with_parent_as_deposits_no_deposits() {
-        let attributes = BasePayloadAttributes {
-            transactions: Some(vec![
-                vec![OpTxType::Legacy as u8, 0x0, 0x11, 0x21].into(),
-                vec![OpTxType::Eip2930 as u8, 0x0, 0x12, 0x22].into(),
-                vec![OpTxType::Eip1559 as u8, 0x0, 0x13, 0x23].into(),
-                vec![OpTxType::Eip7702 as u8, 0x0, 0x14, 0x24].into(),
-                vec![].into(),
-            ]),
-            ..BasePayloadAttributes::default()
-        };
-        let parent = L2BlockInfo::default();
-        let is_last_in_span = true;
-        let attributes_with_parent =
-            AttributesWithParent::new(attributes, parent, None, is_last_in_span);
-        let deposits_only_attributes = attributes_with_parent.as_deposits_only();
-
-        assert_eq!(deposits_only_attributes.attributes().transactions, Some(vec![]));
-    }
-
-    #[test]
-    fn test_attributes_with_parent_as_deposits_only_deposits() {
-        let attributes = BasePayloadAttributes {
-            transactions: Some(vec![
-                vec![OpTxType::Deposit as u8, 0x0, 0x10, 0x20].into(),
-                vec![OpTxType::Deposit as u8, 0x98, 0x21, 0x31].into(),
-                vec![OpTxType::Deposit as u8, 0x56, 0x31, 0x41].into(),
-                vec![].into(),
-            ]),
-            ..BasePayloadAttributes::default()
-        };
-        let parent = L2BlockInfo::default();
-        let is_last_in_span = true;
-        let attributes_with_parent =
-            AttributesWithParent::new(attributes, parent, None, is_last_in_span);
-        let deposits_only_attributes = attributes_with_parent.as_deposits_only();
-
-        assert_eq!(
-            deposits_only_attributes.attributes().transactions,
-            Some(vec![
-                vec![OpTxType::Deposit as u8, 0x0, 0x10, 0x20].into(),
-                vec![OpTxType::Deposit as u8, 0x98, 0x21, 0x31].into(),
-                vec![OpTxType::Deposit as u8, 0x56, 0x31, 0x41].into(),
-            ])
-        );
-    }
-
-    #[test]
-    fn test_attributes_with_parent_as_deposits_no_txs() {
+    fn accessors_return_constructor_arguments() {
         let attributes =
-            BasePayloadAttributes { transactions: None, ..BasePayloadAttributes::default() };
-        let parent = L2BlockInfo::default();
-        let is_last_in_span = true;
-        let attributes_with_parent =
-            AttributesWithParent::new(attributes, parent, None, is_last_in_span);
-        let deposits_only_attributes = attributes_with_parent.as_deposits_only();
+            BasePayloadAttributes { gas_limit: Some(30_000_000), ..Default::default() };
+        let parent = L2BlockInfo {
+            block_info: BlockInfo { number: 7, ..Default::default() },
+            ..Default::default()
+        };
+        let origin = BlockInfo { number: 42, timestamp: 1_000, ..Default::default() };
+        let awp = AttributesWithParent::new(attributes.clone(), parent, Some(origin), true);
 
-        assert_eq!(deposits_only_attributes.attributes().transactions, None);
+        assert_eq!(awp.attributes(), &attributes);
+        assert_eq!(awp.parent(), &parent);
+        assert_eq!(awp.derived_from(), Some(&origin));
+        assert!(awp.is_last_in_span());
+    }
+
+    #[test]
+    fn count_transactions_counts_undecodable_entries() {
+        let attributes = BasePayloadAttributes {
+            transactions: Some(vec![vec![OpTxType::Deposit as u8, 0xaa].into(), vec![0xff].into()]),
+            ..Default::default()
+        };
+        let attributes = AttributesWithParent::new(attributes, L2BlockInfo::default(), None, true);
+
+        assert_eq!(attributes.count_transactions(), 2);
+    }
+
+    /// Test that the [`AttributesWithParent::as_deposits_only`] method strips out all
+    /// transactions that are not deposits.
+    #[rstest]
+    #[case::mixed(
+        Some(vec![
+            vec![OpTxType::Deposit as u8, 0x0, 0x10, 0x20].into(),
+            vec![OpTxType::Legacy as u8, 0x0, 0x11, 0x21].into(),
+            vec![OpTxType::Eip2930 as u8, 0x0, 0x12, 0x22].into(),
+            vec![OpTxType::Eip1559 as u8, 0x0, 0x13, 0x23].into(),
+            vec![OpTxType::Eip7702 as u8, 0x0, 0x14, 0x24].into(),
+            vec![].into(),
+        ]),
+        Some(vec![vec![OpTxType::Deposit as u8, 0x0, 0x10, 0x20].into()])
+    )]
+    #[case::multi_deposits(
+        Some(vec![
+            vec![OpTxType::Deposit as u8, 0x0, 0x10, 0x20].into(),
+            vec![OpTxType::Legacy as u8, 0x0, 0x11, 0x21].into(),
+            vec![OpTxType::Deposit as u8, 0x98, 0x21, 0x31].into(),
+            vec![OpTxType::Eip1559 as u8, 0x0, 0x13, 0x23].into(),
+            vec![OpTxType::Deposit as u8, 0x56, 0x31, 0x41].into(),
+            vec![].into(),
+        ]),
+        Some(vec![
+            vec![OpTxType::Deposit as u8, 0x0, 0x10, 0x20].into(),
+            vec![OpTxType::Deposit as u8, 0x98, 0x21, 0x31].into(),
+            vec![OpTxType::Deposit as u8, 0x56, 0x31, 0x41].into(),
+        ])
+    )]
+    #[case::no_deposits(
+        Some(vec![
+            vec![OpTxType::Legacy as u8, 0x0, 0x11, 0x21].into(),
+            vec![OpTxType::Eip1559 as u8, 0x0, 0x13, 0x23].into(),
+            vec![].into(),
+        ]),
+        Some(vec![])
+    )]
+    #[case::no_txs(None, None)]
+    fn test_attributes_with_parent_as_deposits_only(
+        #[case] transactions: Option<Vec<alloy_primitives::Bytes>>,
+        #[case] expected: Option<Vec<alloy_primitives::Bytes>>,
+    ) {
+        let deposits_only = awp_with_txs(transactions).as_deposits_only();
+        assert_eq!(deposits_only.attributes().transactions, expected);
     }
 
     fn awp_with_txs(txs: Option<Vec<alloy_primitives::Bytes>>) -> AttributesWithParent {

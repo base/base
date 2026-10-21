@@ -15,6 +15,10 @@ pub struct BaseTxResult<H, T> {
     pub sender: Address,
     /// The depositor account info, fetched during execution for post-Regolith deposit nonce.
     pub depositor: Option<AccountInfo>,
+    /// The EIP-8130 `committedPhases` of the transaction: how many leading call phases
+    /// committed. Zero for every other transaction type. Carried with the result so the receipt
+    /// can be built on a different thread from the one that executed the transaction.
+    pub eip8130_committed_phases: u64,
 }
 
 impl<H: Send + 'static, T: Send + 'static> TxResultTrait for BaseTxResult<H, T> {

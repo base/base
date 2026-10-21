@@ -141,6 +141,22 @@ pub trait TokenAccounting {
 
     /// Publishes a pre-encoded EVM event log from this token's address.
     fn emit_event(&mut self, log: LogData) -> Result<()>;
+
+    // --- Gas metering ---
+
+    /// Computes `keccak256(data)` and charges the EVM keccak schedule
+    /// (`KECCAK256 + KECCAK256WORD * ceil(len / 32)`) against remaining gas.
+    ///
+    /// Used where the logic hashes attacker-controlled input (e.g. EIP-712 permit digests) so the
+    /// native charge reflects the hashing work, matching what the equivalent Solidity `keccak256`
+    /// would pay. Returns `OutOfGas` before hashing when the charge exceeds remaining gas.
+    fn metered_keccak256(&self, data: &[u8]) -> Result<B256>;
+
+    /// Deducts `gas` from remaining gas, returning `OutOfGas` when insufficient.
+    ///
+    /// Used to charge fixed native costs that have no storage or event footprint, such as the
+    /// secp256k1 recovery in `permit` (priced to the EVM `ECRECOVER` precompile).
+    fn deduct_gas(&self, gas: u64) -> Result<()>;
 }
 
 #[cfg(test)]

@@ -26,7 +26,8 @@ use revm::{
 
 use crate::{
     BaseBlockExecutionCtx, BaseBlockExecutionError, BaseReceiptBuilder, BaseTime, BaseTxEnv,
-    BaseTxResult, DEPOSIT_TRANSACTION_TYPE, L1BlockInfo, canyon,
+    BaseTxResult, DEPOSIT_TRANSACTION_TYPE, EIP8130_TRANSACTION_TYPE, Eip8130CommittedPhases,
+    L1BlockInfo, canyon,
 };
 
 /// Block executor for Base.
@@ -98,18 +99,21 @@ where
     /// (`gas_limit + payer_auth`) pushes cumulative block gas over the limit.
     ///
     /// The payer authentication gas is a *conservative upper bound*
-    /// ([`IntrinsicGas::max_payer_auth_cost`]): it pins the payer's policy gate
-    /// worst-case, since the pre-execution check cannot resolve the payer's
-    /// on-chain scope. Reserving a ceiling can only over-reserve (never admit an
-    /// over-limit block), and the same bound is used by block building and
-    /// validation, keeping them consistent.
+    /// ([`IntrinsicGas::max_payer_auth_cost`]): it prices the `payer_auth` bytes
+    /// at the EIP-7623 floor rate, which settlement can only meet or undercharge.
+    /// Reserving a ceiling can only over-reserve (never admit an over-limit
+    /// block), and the same bound is used by block building and validation,
+    /// keeping them consistent.
+    ///
+    /// A transaction whose payer authentication cannot be priced is invalid, so
+    /// the failure is a validation error rather than an internal one.
     #[cfg(feature = "std")]
     fn reserved_block_gas(tx_env: &E::Tx, gas_limit: u64) -> Result<u64, BlockExecutionError> {
         let Some(signed) = tx_env.eip8130_signed() else {
             return Ok(gas_limit);
         };
-        let payer_auth =
-            IntrinsicGas::max_payer_auth_cost(signed).map_err(BlockExecutionError::other)?;
+        let payer_auth = IntrinsicGas::max_payer_auth_cost(signed)
+            .map_err(|error| BlockExecutionError::Validation(BlockValidationError::other(error)))?;
         Ok(gas_limit.saturating_add(payer_auth))
     }
 
@@ -192,11 +196,11 @@ where
         )
         .map_err(BlockExecutionError::other)?;
 
-        // At the Cobalt (EIP-8130) transition, plant a code stub on the code-less
+        // At the Everest (EIP-8130) transition, plant a code stub on the code-less
         // enshrined system accounts (the 2D nonce manager) so the persistent state
         // the enshrined path writes to them is not reaped by EIP-161 end-of-block
         // state clearing.
-        crate::cobalt::ensure_eip8130_system_accounts(
+        crate::everest::ensure_eip8130_system_accounts(
             &self.spec,
             self.evm.block().timestamp().saturating_to(),
             self.evm.db_mut(),
@@ -256,6 +260,11 @@ where
             let hash = tx.tx().trie_hash();
             BlockExecutionError::evm(err, hash)
         })?;
+        let eip8130_committed_phases = if tx.tx().ty() == EIP8130_TRANSACTION_TYPE {
+            Eip8130CommittedPhases::take()
+        } else {
+            0
+        };
 
         // Fetch the depositor account from the database for the deposit nonce.
         // This *only* needs to be done post-Regolith for deposit transactions.
@@ -273,6 +282,7 @@ where
             is_deposit,
             sender: *tx.signer(),
             depositor,
+            eip8130_committed_phases,
         })
     }
 
@@ -282,6 +292,7 @@ where
             is_deposit,
             sender: _,
             depositor,
+            eip8130_committed_phases,
         } = output;
 
         let tx_gas_used = result.tx_gas_used();
@@ -296,13 +307,16 @@ where
         }
 
         self.receipts.push(
-            match self.receipt_builder.build_receipt(ReceiptBuilderCtx {
-                tx_type,
-                result,
-                cumulative_gas_used: self.gas_used,
-                evm: &self.evm,
-                state: &state,
-            }) {
+            match self.receipt_builder.build_receipt(
+                ReceiptBuilderCtx {
+                    tx_type,
+                    result,
+                    cumulative_gas_used: self.gas_used,
+                    evm: &self.evm,
+                    state: &state,
+                },
+                eip8130_committed_phases,
+            ) {
                 Ok(receipt) => receipt,
                 Err(ctx) => {
                     let receipt = alloy_consensus::Receipt {
@@ -377,14 +391,16 @@ mod tests {
         EvmEnv, EvmFactory, ToTxEnv, block::BlockExecutorFactory, precompiles::PrecompilesMap,
     };
     use alloy_hardforks::ForkCondition;
-    use alloy_primitives::{Address, Bytes, Signature, U256, uint};
+    use alloy_primitives::{Address, Bytes, Signature, U256, address, bytes, keccak256, uint};
     use base_common_chains::{BaseUpgradeExt, ChainUpgrades};
     use base_common_consensus::{
-        BaseTxEnvelope, Eip8130Constants, Eip8130Signed, Predeploys, TxEip8130,
+        BaseTxEnvelope, Call, Eip8130Constants, Eip8130Signed, Predeploys, TxEip8130,
     };
     use base_common_genesis::BaseUpgrade;
+    use k256::ecdsa::SigningKey;
     use revm::{
         Context,
+        bytecode::Bytecode,
         context::BlockEnv,
         database::{CacheDB, EmptyDB, InMemoryDB},
         inspector::NoOpInspector,
@@ -726,6 +742,50 @@ mod tests {
         }
     }
 
+    /// A sponsored transaction whose payer authentication cannot be priced is
+    /// invalid: the block is rejected through a validation error, never an
+    /// internal (node-fatal) one.
+    #[test]
+    fn unpriceable_payer_auth_is_a_validation_error() {
+        const GAS_LIMIT: u64 = 100_000;
+        const JOVIAN_TIMESTAMP: u64 = 1746806402;
+
+        let tx = TxEip8130 {
+            gas_limit: GAS_LIMIT,
+            payer: Some(Address::with_last_byte(0x11)),
+            ..Default::default()
+        };
+        let mut unscheduled_payer_auth = Address::repeat_byte(0xee).to_vec();
+        unscheduled_payer_auth.extend_from_slice(&[0u8; 65]);
+        let signed = Eip8130Signed::new(tx, Bytes::new(), Bytes::from(unscheduled_payer_auth));
+        assert!(IntrinsicGas::max_payer_auth_cost(&signed).is_err());
+
+        let mut db = prepare_jovian_db(0);
+        let base_chain_upgrades = ChainUpgrades::new(
+            BaseUpgrade::mainnet()
+                .into_iter()
+                .chain(vec![(BaseUpgrade::Jovian, ForkCondition::Timestamp(JOVIAN_TIMESTAMP))]),
+        );
+        let receipt_builder = AlloyReceiptBuilder::default();
+        let mut executor = build_executor(
+            &mut db,
+            &receipt_builder,
+            &base_chain_upgrades,
+            GAS_LIMIT,
+            JOVIAN_TIMESTAMP,
+        );
+
+        let tx = Recovered::new_unchecked(
+            BaseTxEnvelope::Eip8130(signed),
+            Address::with_last_byte(0x22),
+        );
+        let err = executor.execute_transaction(&tx).expect_err("unpriceable payer auth");
+        assert!(
+            matches!(err, BlockExecutionError::Validation(BlockValidationError::Other(_))),
+            "expected a validation error, got {err:?}",
+        );
+    }
+
     /// A self-paying EIP-8130 transaction meters no `payer_auth`, so its
     /// reservation is exactly `gas_limit`: it must not be rejected by the block
     /// gas pre-check when the block admits its declared `gas_limit`.
@@ -768,5 +828,93 @@ mod tests {
         {
             panic!("self-pay transaction must not be rejected by the block gas pre-check");
         }
+    }
+
+    /// The committed phase count of an EIP-8130 transaction travels with its execution result, so
+    /// a receipt built on a different thread from the one that executed the transaction (as in a
+    /// split execute-on-worker, commit-on-coordinator pipeline) still sees it.
+    #[test]
+    fn eip8130_committed_phases_survive_execution_on_another_thread() {
+        const CHAIN_ID: u64 = 8453;
+        const TIMESTAMP: u64 = 1_000;
+        const BLOCK_GAS_LIMIT: u64 = 30_000_000;
+        const BASE_FEE: u64 = 1_000_000_000;
+        let ok_target = address!("0x00000000000000000000000000000000000000c1");
+        let reverter = address!("0x00000000000000000000000000000000000000c2");
+
+        let key = SigningKey::from_slice(&[0x33; 32]).expect("valid key");
+        let point = key.verifying_key().to_encoded_point(false);
+        let sender = Address::from_slice(&keccak256(&point.as_bytes()[1..])[12..]);
+
+        let tx = TxEip8130 {
+            chain_id: CHAIN_ID,
+            max_priority_fee_per_gas: 1_000_000_000,
+            max_fee_per_gas: 5_000_000_000,
+            gas_limit: 1_000_000,
+            calls: vec![
+                vec![Call { to: ok_target, value: U256::ZERO, data: Bytes::new() }],
+                vec![Call { to: reverter, value: U256::ZERO, data: Bytes::new() }],
+            ],
+            ..Default::default()
+        };
+        let (signature, recid) =
+            key.sign_prehash_recoverable(tx.sender_signature_hash().as_slice()).expect("sign");
+        let mut sender_auth = signature.to_bytes().to_vec();
+        sender_auth.push(recid.to_byte() + 27);
+        let signed = Eip8130Signed::new(tx, Bytes::from(sender_auth), Bytes::new());
+
+        // The executor is not `Send`, so the worker owns its own state and executor, as a
+        // parallel-execution worker would, and hands only the result back.
+        let tx = Recovered::new_unchecked(BaseTxEnvelope::Eip8130(signed), sender);
+        let result = std::thread::spawn(move || {
+            let mut db =
+                revm::database::State::builder().with_database(InMemoryDB::default()).build();
+            db.insert_account(
+                sender,
+                AccountInfo {
+                    balance: U256::from(10u64).pow(U256::from(18u64)),
+                    ..Default::default()
+                },
+            );
+            // PUSH1 0, PUSH1 0, REVERT
+            let revert_code = bytes!("60006000fd");
+            db.insert_account(
+                reverter,
+                AccountInfo {
+                    code_hash: keccak256(&revert_code),
+                    code: Some(Bytecode::new_raw(revert_code)),
+                    ..Default::default()
+                },
+            );
+
+            let evm = Context::base()
+                .with_db(&mut db)
+                .with_block(BlockEnv {
+                    number: U256::from(1u64),
+                    timestamp: U256::from(TIMESTAMP),
+                    gas_limit: BLOCK_GAS_LIMIT,
+                    basefee: BASE_FEE,
+                    ..Default::default()
+                })
+                .modify_cfg_chained(|cfg| {
+                    cfg.spec = BaseSpecId::new(BaseUpgrade::Everest);
+                    cfg.chain_id = CHAIN_ID;
+                })
+                .build_with_inspector(NoOpInspector {});
+            let receipt_builder = AlloyReceiptBuilder::default();
+            let chain_upgrades = ChainUpgrades::mainnet();
+            let mut executor = BaseBlockExecutor::new(
+                evm,
+                BaseBlockExecutionCtx::default(),
+                &chain_upgrades,
+                &receipt_builder,
+            );
+            executor.execute_transaction_without_commit(&tx)
+        })
+        .join()
+        .expect("execution thread panicked")
+        .expect("EIP-8130 transaction is included");
+
+        assert_eq!(result.eip8130_committed_phases, 1);
     }
 }

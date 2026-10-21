@@ -7,6 +7,12 @@ mainnet) using your own RPC endpoints and your own funded
 requester key.
 
 The stack is three containers managed by `just prover up|down|logs <network>`.
+It requires Docker Engine 28.3.3 or later: earlier releases can leak a port
+published on `127.0.0.1` to the local network, which is how this stack keeps
+its unauthenticated requester RPC host-local. `just prover up` checks the
+daemon version and rejects a reused Docker network whose options would permit
+direct routing.
+
 The network label isolates each local control plane and its persisted jobs:
 
 - `prover-service-postgres` — session storage (persisted under `.zk-prover/<network>/`)
@@ -161,7 +167,42 @@ Stop the stack with `just prover down sepolia`; Postgres data under
 restarts. Stream logs with `just prover logs sepolia`.
 
 The RPC port defaults to 9000 and can be overridden with
-`PROVER_SERVICE_RPC_PORT`.
+`PROVER_SERVICE_RPC_PORT`. Pass a bare port number: the value fills the
+host-port position of a `127.0.0.1:<port>:9000` mapping.
+
+## Requester RPC exposure
+
+The requester RPC is published on `127.0.0.1` only. That stops a remote host
+reaching it at one of your host's addresses; Docker separately drops packets
+addressed straight to the container. The Compose network pins the two options
+that would undo the second protection: `nat` gateway mode, so a daemon default
+of `routed` or `nat-unprotected` cannot apply, and an empty
+`trusted_host_interfaces`, so a daemon `default-network-opts` entry cannot name
+interfaces allowed to route directly to the container. `just prover up` rejects
+a reused network carrying either option. Run the stack through `just prover
+up`: invoking Compose directly skips the daemon version and network checks.
+
+One case the stack cannot defend against is a daemon running with
+`allow-direct-routing` (in `daemon.json`, or `--allow-direct-routing`). That
+switches off direct-access filtering for every bridge network on the host. The
+loopback publish still hides port 9000 from your host's addresses, but a remote
+host with a route to the bridge subnet can then reach the requester at the
+container's own address. Docker does not report this setting through
+`docker info`, so `just prover up` cannot check it for you. Do not run this
+stack on such a host without your own authenticated proxy and firewall rules in
+front of it.
+
+The API is unauthenticated. Any caller that reaches it can request proofs on
+the paid `network` backend against your deposited PROVE, and can also call
+`deleteProofRequest`, `deleteProofsByTeeSigner`, and `listProofs` to list or
+delete proofs you already paid for. There is no cumulative spending cap: a
+caller supplying fresh session IDs can queue paid requests without bound.
+
+If you need to drive the stack from another host, do not republish port 9000 on
+a public interface. Put your own authenticated, TLS-terminating reverse proxy
+in front of the loopback port, and restrict which callers and which
+`zk_backend` values you allow through it. The same applies to the worker RPC
+(9001) and Postgres, which are not published to the host at all.
 
 ## Splitting propose and submit
 

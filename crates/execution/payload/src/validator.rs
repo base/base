@@ -42,7 +42,6 @@ where
 /// Ensures that the given payload does not violate any consensus rules that concern the block's
 /// layout, like:
 ///    - missing or invalid base fee
-///    - invalid extra data
 ///    - invalid transactions
 ///    - incorrect hash
 ///    - block contains blob transactions or blob versioned hashes

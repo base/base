@@ -14,7 +14,7 @@ use reth_db_api as _;
 pub mod args;
 pub use args::{
     DEFAULT_PROOFS_HISTORY_WINDOW_BLOCKS, HasRollupArgs, ProofsHistoryDbBackend,
-    ProofsHistoryRocksdbArgs, RollupArgs, TWELVE_HOURS_IN_BLOCKS, TxpoolOrdering,
+    ProofsHistoryRocksdbArgs, RollupArgs, TxpoolOrdering,
 };
 
 /// Exports Base-specific implementations of the [`EngineTypes`](reth_node_api::EngineTypes)

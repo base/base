@@ -14,12 +14,12 @@ use base_prover_service_protocol::{
     WorkerSubmitProofRequest, WorkerSubmitProofResponse, ZkBackend,
 };
 use eyre::{Result, WrapErr, bail, ensure};
-use nanoid::nanoid;
 use tempfile::TempDir;
 use tokio::{sync::watch, task::JoinHandle, time::timeout};
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 use url::Url;
+use uuid::Uuid;
 
 use crate::SystemTestStack;
 
@@ -107,7 +107,7 @@ impl InProcessZkHost {
         let (first_poll, mut first_poll_rx) = watch::channel(false);
         let client = FirstPollWorker { inner, first_poll };
 
-        let worker_id = format!("system-test-zk-host-{}", nanoid!());
+        let worker_id = format!("system-test-zk-host-{}", Uuid::new_v4());
         let host_config = ZkHostConfig::sp1(worker_id.clone())
             .with_job_discovery_poll_interval(DISCOVERY_POLL_INTERVAL)
             .with_job_discovery_lock_duration_seconds(LOCK_DURATION_SECONDS)
@@ -175,6 +175,13 @@ impl ProverWorkerProvider for FirstPollWorker {
         request: HeartbeatRequest,
     ) -> Result<HeartbeatResponse, ProverServiceClientError> {
         self.inner.heartbeat(request).await
+    }
+
+    async fn abandon_proof(
+        &self,
+        request: base_prover_service_protocol::AbandonProofRequest,
+    ) -> Result<base_prover_service_protocol::AbandonProofResponse, ProverServiceClientError> {
+        self.inner.abandon_proof(request).await
     }
 
     async fn submit_proof(

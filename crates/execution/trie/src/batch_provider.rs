@@ -19,21 +19,22 @@ use reth_revm::{
 };
 use reth_trie::{
     StateRoot, StorageRoot, TrieType,
-    hashed_cursor::{HashedCursor, HashedPostStateCursorFactory},
+    hashed_cursor::{HashedCursor, HashedPostStateCursorFactory, zero_destroyed_account_storage},
     metrics::TrieRootMetrics,
     proof,
     trie_cursor::InMemoryTrieCursorFactory,
     witness::TrieWitness,
 };
 use reth_trie_common::{
-    AccountProof, ExecutionWitnessMode, HashedPostState, HashedPostStateSorted, HashedStorage,
-    KeccakKeyHasher, MultiProof, MultiProofTargets, StorageMultiProof, StorageProof, TrieInput,
-    updates::TrieUpdates,
+    AccountProof, DecodedMultiProofV2, ExecutionWitnessMode, HashedPostState,
+    HashedPostStateSorted, HashedStorage, KeccakKeyHasher, MultiProof, MultiProofTargets,
+    MultiProofTargetsV2, StorageMultiProof, StorageProof, TrieInput, updates::TrieUpdates,
 };
 
 use crate::{
     BaseProofsBatchHashedAccountCursorFactory, BaseProofsBatchTrieCursorFactory,
     api::BaseProofsBatchSession,
+    metrics::{StateMetrics, StateSeekKind},
 };
 
 /// State provider that reads through an active [`BaseProofsBatchSession`]'s transaction.
@@ -268,37 +269,69 @@ impl<S: BaseProofsBatchSession> StateProofProvider for BaseProofsBatchStateProvi
             .map_err(ProviderError::from)?;
         Ok(result.into_values().collect())
     }
+
+    fn multiproof_v2(
+        &self,
+        input: TrieInput,
+        targets: MultiProofTargetsV2,
+    ) -> ProviderResult<DecodedMultiProofV2> {
+        let nodes_sorted = input.nodes.into_sorted();
+        let state_sorted = input.state.into_sorted();
+        let (trie_factory, hashed_factory) = self.factories();
+        proof::Proof::new(trie_factory.clone(), hashed_factory.clone())
+            .with_trie_cursor_factory(InMemoryTrieCursorFactory::new(trie_factory, &nodes_sorted))
+            .with_hashed_cursor_factory(HashedPostStateCursorFactory::new(
+                hashed_factory,
+                &state_sorted,
+            ))
+            .with_prefix_sets_mut(input.prefix_sets)
+            .multiproof_v2(targets)
+            .map_err(ProviderError::from)
+    }
 }
 
 impl<S: BaseProofsBatchSession> HashedPostStateProvider for BaseProofsBatchStateProviderRef<'_, S> {
     fn hashed_post_state(&self, bundle_state: &BundleState) -> ProviderResult<HashedPostState> {
-        Ok(HashedPostState::from_bundle_state::<KeccakKeyHasher>(bundle_state.state()))
+        let mut hashed_state =
+            HashedPostState::from_bundle_state::<KeccakKeyHasher>(bundle_state.state());
+        zero_destroyed_account_storage(
+            &self.factories().1,
+            bundle_state.state(),
+            &mut hashed_state,
+        )?;
+        Ok(hashed_state)
     }
 }
 
 impl<S: BaseProofsBatchSession> AccountReader for BaseProofsBatchStateProviderRef<'_, S> {
     fn basic_account(&self, address: &Address) -> ProviderResult<Option<Account>> {
         let hashed_key = keccak256(address.0);
-        Ok(self
+        let mut cursor = self
             .session
             .account_hashed_cursor(self.block_number)
-            .map_err(Into::<ProviderError>::into)?
-            .seek(hashed_key)
-            .map_err(Into::<ProviderError>::into)?
-            .and_then(|(key, account)| (key == hashed_key).then_some(account)))
+            .map_err(Into::<ProviderError>::into)?;
+        let found = StateMetrics::record_seek(
+            StateSeekKind::Account,
+            || cursor.seek(hashed_key).map_err(Into::<ProviderError>::into),
+            |found| found.as_ref().is_some_and(|(key, _)| *key == hashed_key),
+        )?;
+        Ok(found.and_then(|(key, account)| (key == hashed_key).then_some(account)))
     }
 }
 
 impl<S: BaseProofsBatchSession> StateProvider for BaseProofsBatchStateProviderRef<'_, S> {
     fn storage(&self, address: Address, storage_key: B256) -> ProviderResult<Option<StorageValue>> {
         let hashed_key = keccak256(storage_key);
-        Ok(self
+        let mut cursor = self
             .session
             .storage_hashed_cursor(keccak256(address.0), self.block_number)
-            .map_err(Into::<ProviderError>::into)?
-            .seek(hashed_key)
-            .map_err(Into::<ProviderError>::into)?
-            .and_then(|(key, storage)| (key == hashed_key).then_some(storage)))
+            .map_err(Into::<ProviderError>::into)?;
+        let found = StateMetrics::record_seek(
+            StateSeekKind::Storage,
+            || cursor.seek(hashed_key).map_err(Into::<ProviderError>::into),
+            |found| found.as_ref().is_some_and(|(key, _)| *key == hashed_key),
+        )?;
+        Ok(found.and_then(|(key, storage)| (key == hashed_key).then_some(storage)))
     }
 }
 

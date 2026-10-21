@@ -9,19 +9,20 @@ use std::{any::Any, path::PathBuf, sync::Arc, time::Duration};
 
 use alloy_primitives::hex::ToHexExt;
 use alloy_rpc_types_engine::JwtSecret;
-use base_builder_core::{BuilderConfig, test_utils::get_available_port};
+use base_builder_core::BuilderConfig;
 use base_builder_multiplex::MultiplexingServiceBuilder;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_txpool::{
     BasePooledTransaction, BuilderApiImpl, BuilderApiServer, DEFAULT_MAX_VALIDITY_PREDICATES,
+    ValiditySignatureMode,
 };
 use base_node_core::{args::RollupArgs, node::BasePoolBuilder};
-use base_node_runner::{BaseNode, BaseNodeExtension, FromExtensionConfig, NodeHooks};
-use base_txpool_rpc::SendRawTransactionValidityExtension;
+use base_node_runner::{BaseNode, BaseNodeExtension, BaseProvider, FromExtensionConfig, NodeHooks};
+use base_txpool_rpc::{SendRawTransactionValidityConfig, SendRawTransactionValidityExtension};
 use eyre::{Result, WrapErr, eyre};
 use reth_db::{
     ClientVersion, DatabaseEnv, init_db,
-    mdbx::{DatabaseArguments, KILOBYTE, MEGABYTE, MaxReadTransactionDuration},
+    mdbx::{DatabaseArguments, GIGABYTE, KILOBYTE, MaxReadTransactionDuration},
 };
 use reth_node_builder::{NodeBuilder, NodeConfig, NodeHandle};
 use reth_node_core::{
@@ -29,16 +30,19 @@ use reth_node_core::{
     dirs::{DataDirPath, MaybePlatformPath},
     exit::NodeExitFuture,
 };
-use reth_tasks::{Runtime, RuntimeBuilder, RuntimeConfig, TokioConfig};
+use reth_tasks::{Runtime, RuntimeBuilder, TokioConfig};
 use tempfile::TempDir;
 use tracing::warn;
 use url::Url;
 
-use crate::{config::BUILDER, setup::BUILDER_ENODE_ID};
+use super::InProcessNodeRuntime;
+use crate::{PortPool, config::BUILDER, setup::BUILDER_ENODE_ID};
 
 /// Configuration for starting an in-process builder.
 #[derive(Debug)]
 pub struct InProcessBuilderConfig {
+    /// Runtime sizing policy for the execution node.
+    pub runtime: InProcessNodeRuntime,
     /// Pre-built chain specification.
     pub chain_spec: Arc<BaseChainSpec>,
     /// Existing caller-owned datadir. A temporary datadir is created when omitted.
@@ -57,11 +61,10 @@ pub struct InProcessBuilderConfig {
     pub flashblocks_port: Option<u16>,
     /// Optional fixed Prometheus metrics port (uses random if None).
     pub metrics_port: Option<u16>,
-    /// Whether to accept experimental validity-bearing transactions and expose
-    /// `base_sendRawTransactionValidity`.
-    pub enable_experimental_validity_transactions: bool,
     /// Whether to run both payload builders and cut over to basic at Denim.
     pub payload_builder_cutover: bool,
+    /// Staged signature policy used by both validity-bearing RPC endpoints.
+    pub validity_signature_mode: ValiditySignatureMode,
     /// Additional node extensions installed after the builder's built-in RPC wiring.
     ///
     /// Lets downstream consumers layer their own [`BaseNodeExtension`] onto the standard
@@ -71,6 +74,8 @@ pub struct InProcessBuilderConfig {
     pub block_time: Duration,
     /// Optional canonical block persistence threshold.
     pub persistence_threshold: Option<u64>,
+    /// Optional number of unpersisted blocks allowed before Engine API intake is stalled.
+    pub persistence_backpressure_threshold: Option<u64>,
     /// Optional pending/basefee/queued transaction count limit for benchmark workloads.
     pub txpool_max_transactions: Option<usize>,
     /// Optional pending/basefee/queued transaction size limit in megabytes.
@@ -95,6 +100,8 @@ impl InProcessBuilderConfig {
 /// This spawns a real builder node within the current process, binding to dynamic ports.
 /// Docker containers (like consensus nodes) can connect via `host.docker.internal`.
 pub struct InProcessBuilder {
+    /// Provider sharing the running execution node's database and canonical in-memory state.
+    pub provider: BaseProvider,
     http_api_addr: SocketAddr,
     ws_api_addr: SocketAddr,
     engine_addr: SocketAddr,
@@ -134,17 +141,19 @@ impl InProcessBuilder {
             .wrap_err("Failed to write JWT secret")?;
 
         let runtime = RuntimeBuilder::new(
-            RuntimeConfig::default()
+            config
+                .runtime
+                .config()
                 .with_tokio(TokioConfig::existing_handle(tokio::runtime::Handle::current())),
         )
         .build()?;
 
         let chain_spec = Arc::clone(&config.chain_spec);
 
-        let flashblocks_port = config.flashblocks_port.unwrap_or_else(get_available_port);
+        let flashblocks_port = config.flashblocks_port.unwrap_or_else(PortPool::claim);
         let metrics_addr = SocketAddr::new(
             Ipv4Addr::LOCALHOST.into(),
-            config.metrics_port.unwrap_or_else(get_available_port),
+            config.metrics_port.unwrap_or_else(PortPool::claim),
         );
         let builder_config = BuilderConfig {
             block_time: config.block_time,
@@ -162,7 +171,7 @@ impl InProcessBuilder {
         let rollup_args = RollupArgs::default();
         let base_node = BaseNode::new(rollup_args.clone());
 
-        let addons: base_node_runner::BaseAddOns<
+        let addons: base_node_core::BaseAddOns<
             _,
             base_execution_rpc::BaseEthApiBuilder,
             base_node_core::BasePayloadValidatorBuilder,
@@ -175,6 +184,11 @@ impl InProcessBuilder {
 
         let mut node_config = create_node_config(chain_spec, &data_path, &jwt_path, &config)?;
         node_config.metrics = MetricArgs { prometheus: Some(metrics_addr), ..Default::default() };
+        // In-process system-test datadirs are disposable and may be restored from snapshots.
+        // Never reinsert a transaction journal captured in the source snapshot or write a new
+        // journal that can contaminate a later benchmark clone.
+        node_config.txpool.disable_transactions_backup = true;
+        node_config.txpool.transactions_backup_path = None;
         let db_path = node_config.datadir().db();
         let db = if config.datadir.is_some() {
             init_db(db_path, node_config.db.database_args())
@@ -184,15 +198,29 @@ impl InProcessBuilder {
         };
         let p2p_port = node_config.network.port;
 
-        let accept_validity_transactions = config.enable_experimental_validity_transactions;
         let extra_extensions = config.extra_extensions;
-        let mut hooks = NodeHooks::new();
-        if accept_validity_transactions {
-            hooks = Box::new(SendRawTransactionValidityExtension::from_config(
-                DEFAULT_MAX_VALIDITY_PREDICATES,
-            ))
-            .apply(hooks);
-        }
+        let hooks = Box::new(SendRawTransactionValidityExtension::from_config(
+            SendRawTransactionValidityConfig {
+                validity_signature_mode: config.validity_signature_mode,
+                ..Default::default()
+            },
+        ))
+        .apply(NodeHooks::new());
+        // Reth's `extend_rpc_modules` is a single-slot hook that silently replaces whatever was
+        // registered before it, and `NodeHooks::apply_to` claims that slot for every extension
+        // RPC module. Registering the builder API here instead keeps both in one closure.
+        let hooks = hooks.add_rpc_module(move |ctx| {
+            let api =
+                BuilderApiImpl::<_, base_execution_txpool::TransactionValidity>::with_extensions(
+                    ctx.pool().clone(),
+                    true,
+                    DEFAULT_MAX_VALIDITY_PREDICATES,
+                )
+                .with_validity_signature_mode(config.validity_signature_mode);
+            ctx.modules.merge_configured(api.into_rpc())?;
+            Ok(())
+        });
+
         let node_builder = NodeBuilder::new(node_config.clone())
             .with_database(db)
             .with_launch_context(runtime.clone())
@@ -210,16 +238,7 @@ impl InProcessBuilder {
                         ),
                     )
                     .with_add_ons(addons)
-                    .on_component_initialized(move |_ctx| Ok(()))
-                    .extend_rpc_modules(move |ctx| {
-                        let api = BuilderApiImpl::<_, base_execution_txpool::TransactionValidity>::with_extensions(
-                            ctx.pool().clone(),
-                            accept_validity_transactions,
-                            DEFAULT_MAX_VALIDITY_PREDICATES,
-                        );
-                        ctx.modules.merge_configured(api.into_rpc())?;
-                        Ok(())
-                    }),
+                    .on_component_initialized(move |_ctx| Ok(())),
             )
             .launch()
             .await;
@@ -240,6 +259,7 @@ impl InProcessBuilder {
         let engine_addr = node_handle.auth_server_handle().local_addr();
 
         Ok(Self {
+            provider: node_handle.provider.clone(),
             http_api_addr,
             ws_api_addr,
             engine_addr,
@@ -434,9 +454,17 @@ fn create_node_config(
         .with_datadir_args(datadir)
         .with_rpc(rpc)
         .with_network(network);
+    if config.datadir.is_some() {
+        node_config.debug.startup_sync_state_idle = true;
+    }
 
+    config.runtime.bound_engine_memory(&mut node_config);
     if let Some(persistence_threshold) = config.persistence_threshold {
         node_config.engine.persistence_threshold = persistence_threshold;
+    }
+    if let Some(persistence_backpressure_threshold) = config.persistence_backpressure_threshold {
+        node_config.engine.persistence_backpressure_threshold =
+            Some(persistence_backpressure_threshold);
     }
     if let Some(max_transactions) = config.txpool_max_transactions {
         node_config.txpool.pending_max_count = max_transactions;
@@ -470,7 +498,10 @@ fn create_test_db(db_path: &std::path::Path) -> Result<DatabaseEnv> {
         db_path,
         DatabaseArguments::new(ClientVersion::default())
             .with_max_read_transaction_duration(Some(MaxReadTransactionDuration::Unbounded))
-            .with_geometry_max_size(Some(4 * MEGABYTE))
+            // This is a virtual MDBX map limit rather than an eagerly allocated file. A 4 MiB
+            // map can overflow during the high-concurrency fresh-devnet benchmarks before their
+            // duration elapses, killing the Engine API and leaving the consensus task retrying.
+            .with_geometry_max_size(Some(4 * GIGABYTE))
             .with_growth_step(Some(4 * KILOBYTE)),
     )
     .wrap_err("Failed to initialize database")?;

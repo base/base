@@ -1,6 +1,7 @@
 use std::{collections::VecDeque, sync::Arc, time::Instant};
 
 use alloy_primitives::TxHash;
+use base_execution_txpool::MAX_VALIDATED_INSERT_BATCH;
 use base_observability_events::{
     TransactionEventProducer, TransactionEventType, transaction_event,
 };
@@ -8,18 +9,19 @@ use jsonrpsee::{
     core::{
         ClientError,
         client::{BatchResponse, ClientT},
-        params::BatchRequestBuilder,
+        params::{ArrayParams, BatchRequestBuilder},
     },
     http_client::HttpClient,
+    types::{ErrorObject, ErrorObjectOwned},
 };
-use serde_json::{Map, json};
+use serde_json::{Map, json, value::RawValue};
 use tokio::{sync::mpsc, time};
 use tracing::{debug, error, info, trace};
 
 use super::{config::ForwarderConfig, metrics::ForwarderMetrics, request::ForwardRequest};
 
-/// Internal buffer cap used when RPC batch size is configured as unlimited.
-const UNLIMITED_BATCH_BUFFER_LIMIT: usize = 1024;
+/// Builder method that inserts a whole batch of validated transactions in one call.
+const INSERT_BATCH_METHOD: &str = "base_insertValidatedTransactions";
 
 /// Sliding window rate limiter that tracks request timestamps.
 ///
@@ -103,11 +105,7 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
         config: Arc<ForwarderConfig>,
     ) -> Self {
         let limiter = RateLimiter::new(config.max_rps);
-        let buffer_limit = if config.max_batch_size == 0 {
-            UNLIMITED_BATCH_BUFFER_LIMIT
-        } else {
-            config.max_batch_size
-        };
+        let buffer_limit = config.batch_limit();
         let buffer = Vec::with_capacity(buffer_limit);
         let url_label: Arc<str> = builder_url.to_string().into();
         Self { builder_url, url_label, client, receiver, config, limiter, buffer, buffer_limit }
@@ -248,19 +246,23 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
         let tx_count = batch.len() as u64;
         let overall_start = Instant::now();
         for attempt in 0..=self.config.max_retries {
-            for (tx_hash, method) in tx_hashes.iter().zip(&methods) {
-                self.emit_forward_event(
-                    TransactionEventType::TxpoolBuilderForwardAttempt,
-                    *tx_hash,
-                    method,
-                    Some(attempt),
-                    Map::from_iter([
-                        ("attempt".to_string(), json!(attempt)),
-                        ("batch_size".to_string(), json!(tx_count)),
-                    ]),
-                );
+            // The first attempt is not journaled: every send ends in a failure or drop event here
+            // or a builder-side insert event. Only retries add information.
+            if attempt > 0 {
+                for (tx_hash, method) in tx_hashes.iter().zip(&methods) {
+                    self.emit_forward_event(
+                        TransactionEventType::TxpoolBuilderForwardAttempt,
+                        *tx_hash,
+                        method,
+                        Some(attempt),
+                        Map::from_iter([
+                            ("attempt".to_string(), json!(attempt)),
+                            ("batch_size".to_string(), json!(tx_count)),
+                        ]),
+                    );
+                }
             }
-            let result = self.send_batch(&batch).await;
+            let result = self.send(&batch).await;
 
             match result {
                 Ok(response) => {
@@ -274,19 +276,10 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
                         let tx_hash = tx_hashes.get(idx).copied().flatten();
                         let method = methods.get(idx).copied().unwrap_or_default();
                         match res {
-                            Ok(()) => {
-                                ok_count += 1;
-                                self.emit_forward_event(
-                                    TransactionEventType::TxpoolBuilderForwardSuccess,
-                                    tx_hash,
-                                    method,
-                                    Some(attempt),
-                                    Map::from_iter([
-                                        ("attempt".to_string(), json!(attempt)),
-                                        ("batch_size".to_string(), json!(tx_count)),
-                                    ]),
-                                );
-                            }
+                            // Delivery is journaled by the destination as
+                            // `TXPOOL_VALIDATED_INSERT_ACCEPTED`; a node-side success event per
+                            // destination would duplicate it.
+                            Ok(()) => ok_count += 1,
                             Err(e) => {
                                 debug!(
                                     builder_url = %self.builder_url,
@@ -365,6 +358,56 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
         }
     }
 
+    /// Sends `batch` and returns one result per request, in order.
+    ///
+    /// With `batched_insert` on, a batch made only of inserts, and no larger than
+    /// [`MAX_VALIDATED_INSERT_BATCH`], goes out as one [`INSERT_BATCH_METHOD`] call, which the
+    /// builder admits as one pool batch. Everything else goes out as a JSON-RPC batch of single
+    /// calls.
+    async fn send(&self, batch: &[R]) -> Result<Vec<Result<(), ErrorObjectOwned>>, ClientError> {
+        if self.config.batched_insert
+            && batch.len() <= MAX_VALIDATED_INSERT_BATCH
+            && let Some(transactions) =
+                batch.iter().map(ForwardRequest::batched_insert).collect::<Option<Vec<_>>>()
+        {
+            return self.send_insert_batch(transactions, batch.len()).await;
+        }
+        let response = self.send_batch(batch).await?;
+        Ok(response.into_iter().map(|result| result.map_err(ErrorObject::into_owned)).collect())
+    }
+
+    async fn send_insert_batch(
+        &self,
+        transactions: Vec<Result<Box<RawValue>, serde_json::Error>>,
+        expected: usize,
+    ) -> Result<Vec<Result<(), ErrorObjectOwned>>, ClientError> {
+        let transactions = transactions
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(ClientError::ParseError)?;
+        let mut params = ArrayParams::new();
+        params.insert(transactions).map_err(ClientError::ParseError)?;
+        // Each entry is `null` or the error `base_insertValidatedTransaction` would have returned.
+        let entries: Vec<Option<Box<RawValue>>> =
+            self.client.request(INSERT_BATCH_METHOD, params).await?;
+        if entries.len() != expected {
+            return Err(ClientError::Custom(format!(
+                "{INSERT_BATCH_METHOD} returned {} results for {expected} transactions",
+                entries.len()
+            )));
+        }
+        entries
+            .into_iter()
+            .map(|entry| {
+                entry.map_or(Ok(Ok(())), |raw| {
+                    serde_json::from_str::<ErrorObject<'_>>(raw.get())
+                        .map(|error| Err(error.into_owned()))
+                        .map_err(ClientError::ParseError)
+                })
+            })
+            .collect()
+    }
+
     async fn send_batch(&self, batch: &[R]) -> Result<BatchResponse<'_, ()>, ClientError> {
         let mut request = BatchRequestBuilder::new();
         for item in batch {
@@ -425,13 +468,16 @@ mod tests {
 
     use alloy_primitives::{Address, B256, Bytes};
     use base_execution_txpool::{NoExtensions, ValidatedTransaction};
-    use jsonrpsee::{
-        RpcModule, core::params::ArrayParams, http_client::HttpClientBuilder, server::Server,
-    };
+    use jsonrpsee::{RpcModule, http_client::HttpClientBuilder, server::Server};
     use serde::{Deserialize, Serialize};
     use serde_json::Value;
 
-    use super::{super::request::InsertValidatedTransaction, *};
+    use super::{
+        super::{config::UNLIMITED_BATCH_BUFFER_LIMIT, request::InsertValidatedTransaction},
+        *,
+    };
+
+    const INSERT_METHOD: &str = "base_insertValidatedTransaction";
 
     #[derive(Debug, Clone, Default, Serialize, Deserialize)]
     struct TestExtensions {
@@ -444,6 +490,7 @@ mod tests {
             transaction: ValidatedTransaction {
                 sender: Address::repeat_byte((nonce + 1) as u8),
                 raw: Bytes::from(vec![nonce as u8]),
+                metering: None,
                 extensions: E::default(),
             },
             tx_hash: B256::with_last_byte(nonce as u8),
@@ -496,6 +543,15 @@ mod tests {
             max_retries: 0,
             retry_backoff: Duration::ZERO,
             request_timeout: Duration::from_secs(1),
+            batched_insert: false,
+        })
+    }
+
+    /// [`config`] with `batched_insert` on.
+    fn batched(max_rps: u32, max_batch_size: usize) -> Arc<ForwarderConfig> {
+        Arc::new(ForwarderConfig {
+            batched_insert: true,
+            ..(*config(max_rps, max_batch_size)).clone()
         })
     }
 
@@ -518,6 +574,45 @@ mod tests {
         let address = server.local_addr().unwrap();
         let handle = server.start(module);
         (url::Url::parse(&format!("http://{address}")).unwrap(), received, handle)
+    }
+
+    /// A destination serving both insert methods. The batched method records each transaction
+    /// under its own name and rejects the one with nonce 1.
+    async fn batch_rpc_server() -> (url::Url, Calls, jsonrpsee::server::ServerHandle) {
+        let received: Calls = Arc::default();
+        let mut module = RpcModule::new(Arc::clone(&received));
+        module
+            .register_method(INSERT_METHOD, |params, received, _| {
+                let (argument,): (Value,) = params.parse()?;
+                received.lock().unwrap().push((INSERT_METHOD.to_string(), argument));
+                Ok::<_, ErrorObjectOwned>(())
+            })
+            .unwrap();
+        module
+            .register_method(INSERT_BATCH_METHOD, |params, received, _| {
+                let (transactions,): (Vec<Value>,) = params.parse()?;
+                let mut received = received.lock().unwrap();
+                Ok::<_, ErrorObjectOwned>(
+                    transactions
+                        .into_iter()
+                        .map(|tx| {
+                            let rejected = tx["raw"] == "0x01";
+                            received.push((INSERT_BATCH_METHOD.to_string(), tx));
+                            rejected
+                                .then(|| ErrorObjectOwned::owned(-32000, "rejected", None::<()>))
+                        })
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .unwrap();
+        let server = Server::builder().build(SocketAddr::from(([127, 0, 0, 1], 0))).await.unwrap();
+        let address = server.local_addr().unwrap();
+        let handle = server.start(module);
+        (url::Url::parse(&format!("http://{address}")).unwrap(), received, handle)
+    }
+
+    fn methods(received: &Calls) -> Vec<String> {
+        received.lock().unwrap().iter().map(|(method, _)| method.clone()).collect()
     }
 
     /// Params of every recorded call, dropping the method name.
@@ -767,5 +862,54 @@ mod tests {
             "a batch must reach the destination in submission order",
         );
         assert_eq!(calls[1].1, json!(removed), "each entry keeps its own params");
+    }
+
+    #[tokio::test]
+    async fn insert_batches_travel_in_one_batched_call_with_per_transaction_results() {
+        let (url, received, _server) = batch_rpc_server().await;
+        let (_sender, receiver) = mpsc::channel(1);
+        let forwarder = forwarder(url, receiver, batched(0, 100));
+        let batch: Vec<_> = (0..3).map(transaction::<NoExtensions>).collect();
+
+        let results = forwarder.send(&batch).await.unwrap();
+
+        assert_eq!(methods(&received), [INSERT_BATCH_METHOD; 3]);
+        assert_eq!(nonces(&received), [0, 1, 2]);
+        assert!(results[0].is_ok() && results[2].is_ok());
+        assert_eq!(results[1].as_ref().unwrap_err().message(), "rejected");
+    }
+
+    /// With `batched_insert` off, inserts go out as a JSON-RPC batch of single calls even to a
+    /// destination that serves the batched method.
+    #[tokio::test]
+    async fn batched_insert_off_sends_single_calls() {
+        let (url, received, _server) = batch_rpc_server().await;
+        let (_sender, receiver) = mpsc::channel(1);
+        let forwarder = forwarder(url, receiver, config(0, 100));
+        let batch: Vec<_> = (0..3).map(transaction::<NoExtensions>).collect();
+
+        assert!(forwarder.send(&batch).await.unwrap().iter().all(Result::is_ok));
+        assert_eq!(methods(&received), [INSERT_METHOD; 3]);
+        assert_eq!(nonces(&received), [0, 1, 2]);
+    }
+
+    /// Batches the batched method cannot carry — over its limit, or holding requests without a
+    /// batched form — still go out as JSON-RPC batches of single calls.
+    #[tokio::test]
+    async fn batches_without_a_batched_form_use_single_calls() {
+        let (url, received, _server) = batch_rpc_server().await;
+        let (_sender, receiver) = mpsc::channel(1);
+        let oversized_forwarder = forwarder(url.clone(), receiver, batched(0, 0));
+        let oversized: Vec<_> =
+            (0..=MAX_VALIDATED_INSERT_BATCH as u64).map(transaction::<NoExtensions>).collect();
+        assert!(oversized_forwarder.send(&oversized).await.unwrap().iter().all(Result::is_ok));
+        assert!(methods(&received).iter().all(|method| method == INSERT_METHOD));
+
+        received.lock().unwrap().clear();
+        let (_sender, receiver) = mpsc::channel(1);
+        let mixed_forwarder = forwarder(url, receiver, batched(0, 0));
+        let mixed = [TestRequest::Insert(Box::new(transaction::<NoExtensions>(0).transaction))];
+        mixed_forwarder.send(&mixed).await.unwrap();
+        assert_eq!(methods(&received), [INSERT_METHOD]);
     }
 }

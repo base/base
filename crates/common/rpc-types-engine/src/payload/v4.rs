@@ -84,9 +84,9 @@ pub const MAX_TRANSACTIONS_PER_PAYLOAD: usize = 1 << 20;
 
 /// The maximum number of withdrawals in a Base execution payload.
 ///
-/// Base sets the withdrawals root directly and requires the SSZ `withdrawals`
-/// list to be present but empty (see [`BaseExecutionPayloadV4`]), so any
-/// non-empty list is invalid and is rejected during decode.
+/// Base requires the SSZ `withdrawals` list to be present but empty from V2
+/// onward, so any non-empty list is invalid and is rejected during decode.
+/// V4 additionally sets the withdrawals root directly (see [`BaseExecutionPayloadV4`]).
 pub const MAX_WITHDRAWALS_PER_PAYLOAD: usize = 0;
 
 /// SSZ `transactions` list bounded to [`MAX_TRANSACTIONS_PER_PAYLOAD`].
@@ -94,8 +94,8 @@ pub const MAX_WITHDRAWALS_PER_PAYLOAD: usize = 0;
 /// Transactions are variable-length SSZ items, so the decoder derives their
 /// count from the list's leading offset. Bounding the count rejects a frame that
 /// declares more transactions than the protocol allows *before* one entry per
-/// declared element is allocated, closing the pre-authentication
-/// allocation-amplification vector.
+/// declared element is allocated. Counts within the protocol limit may still
+/// require substantial allocation before authentication.
 #[cfg(feature = "std")]
 #[derive(Debug)]
 pub struct BoundedTransactions(pub Vec<Bytes>);

@@ -28,6 +28,7 @@ alloy-eips = { workspace = true, features = ["serde", "std"] }
 alloy-primitives = { workspace = true, features = ["map", "rlp", "serde", "std"] }
 
 # Misc
+url.workspace = true
 ipnet.workspace = true
 backon.workspace = true
 libp2p.workspace = true
@@ -43,6 +44,7 @@ jsonrpsee = { workspace = true, features = ["macros", "server"] }
 
 [dev-dependencies]
 rstest.workspace = true
+mockall.workspace = true
 serde_json = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["macros", "rt", "sync"] }
 

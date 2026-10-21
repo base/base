@@ -1,0 +1,34 @@
+//! Channel-backed [`L1HeadSource`] for tests.
+
+use async_trait::async_trait;
+use tokio::sync::mpsc;
+
+use crate::L1HeadSource;
+
+/// An [`L1HeadSource`] backed by a `tokio::sync::mpsc` unbounded channel.
+///
+/// Use [`ChannelL1HeadSource::new`] to obtain a `(source, sender)` pair.
+/// Head numbers sent on the [`mpsc::UnboundedSender`] side are consumed by
+/// [`L1HeadSource::next`]. Once all senders are dropped, `next` parks forever.
+#[derive(Debug)]
+pub struct ChannelL1HeadSource {
+    rx: mpsc::UnboundedReceiver<u64>,
+}
+
+impl ChannelL1HeadSource {
+    /// Create a new channel L1 head source and its corresponding sender handle.
+    pub fn new() -> (Self, mpsc::UnboundedSender<u64>) {
+        let (tx, rx) = mpsc::unbounded_channel();
+        (Self { rx }, tx)
+    }
+}
+
+#[async_trait]
+impl L1HeadSource for ChannelL1HeadSource {
+    async fn next(&mut self) -> u64 {
+        match self.rx.recv().await {
+            Some(head) => head,
+            None => std::future::pending().await,
+        }
+    }
+}

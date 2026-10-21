@@ -190,7 +190,6 @@ impl ZkForkDispute {
             receipt_query_interval: Duration::from_secs(1),
             tx_send_timeout: Duration::from_secs(180),
             tx_not_in_mempool_timeout: Duration::from_secs(30),
-            confirmation_timeout: Duration::from_secs(120),
             ..Default::default()
         }
     }

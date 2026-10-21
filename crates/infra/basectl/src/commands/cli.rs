@@ -5,8 +5,8 @@ use clap::{CommandFactory, Parser, Subcommand};
 use url::Url;
 
 use super::{
-    BlockCommand, CommandOutcome, ConductorCommand, DoctorCommand, P2pCommand, ProofsCommand,
-    SequencerCommand, SyncStatusCommand, TxpoolCommand, UpgradeReadinessCommand,
+    BatcherCommand, BlockCommand, CommandOutcome, ConductorCommand, DoctorCommand, P2pCommand,
+    ProofsCommand, SequencerCommand, SyncStatusCommand, TxpoolCommand, UpgradeReadinessCommand,
 };
 use crate::{MonitoringConfig, ViewId, run_app, run_flashblocks_json};
 
@@ -58,6 +58,8 @@ pub enum Commands {
     Conductor(ConductorCommand),
     /// Inspect and control sequencer activity on HA conductor nodes.
     Sequencer(SequencerCommand),
+    /// Inspect and control the batcher through its admin RPC.
+    Batcher(BatcherCommand),
     /// Run read-only diagnostics for a single node.
     Doctor(DoctorCommand),
     /// Request and inspect ZK proofs on the internal prover service.
@@ -130,6 +132,9 @@ impl Cli {
             Commands::Conductor(command) => command.run(config, conductor_rpc).await,
             Commands::Sequencer(command) => {
                 command.run(config, conductor_rpc).await.map(|()| CommandOutcome::Success)
+            }
+            Commands::Batcher(command) => {
+                command.run(config).await.map(|()| CommandOutcome::Success)
             }
             Commands::Proofs(command) => command.run(config).await,
             Commands::Doctor(command) => command.run(config).await,
@@ -335,6 +340,32 @@ mod tests {
             .is_err()
         );
         assert!(try_parse(["basectl", "txpool", "clear", "--yes", "--json"]).is_ok());
+    }
+
+    #[test]
+    fn batcher_commands_parse() {
+        for command in ["status", "stop", "start", "flush"] {
+            assert!(try_parse(["basectl", "batcher", command]).is_ok());
+        }
+        assert!(
+            try_parse([
+                "basectl",
+                "batcher",
+                "status",
+                "--batcher-rpc",
+                "http://127.0.0.1:6545",
+                "--json",
+            ])
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn destructive_batcher_json_requires_yes() {
+        for command in ["stop", "start", "flush"] {
+            assert!(try_parse(["basectl", "batcher", command, "--json"]).is_err());
+            assert!(try_parse(["basectl", "batcher", command, "--yes", "--json"]).is_ok());
+        }
     }
 
     #[test]

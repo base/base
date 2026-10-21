@@ -12,6 +12,23 @@ async fn test_p2p_network_conn() -> anyhow::Result<()> {
 
     network_1.is_connected_to_with_retries(&network_2).await?;
 
+    for network in [&network_1, &network_2] {
+        let local = network.peer_info().await?;
+        let peers = network.peers().await?;
+        // Check both the local RPC's advertised capabilities and the remote
+        // capabilities learned over Identify, not just the connection count.
+        for info in std::iter::once(&local).chain(peers.peers.values()) {
+            let protocols = info.protocols.as_ref().expect("peer protocols available");
+            assert!(protocols.iter().any(|protocol| protocol.starts_with("/meshsub/")));
+            assert!(
+                protocols
+                    .iter()
+                    .all(|protocol| !protocol.starts_with("/opstack/req/payload_by_number/")),
+                "legacy sync must not be advertised: {protocols:?}"
+            );
+        }
+    }
+
     Ok(())
 }
 

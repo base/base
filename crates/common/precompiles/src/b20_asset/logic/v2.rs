@@ -14,7 +14,7 @@ use alloc::{
     vec::Vec,
 };
 
-use alloy_primitives::{Address, B256, FixedBytes, U256, b256, keccak256};
+use alloy_primitives::{Address, B256, FixedBytes, U256, b256};
 use alloy_sol_types::{SolEvent, SolValue};
 use base_precompile_storage::{BasePrecompileError, Result};
 
@@ -709,8 +709,8 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV2 {
         }
         let domain_sep = self.domain_separator(token, chain_id)?;
         let nonce = token.accounting().nonce(args.owner)?;
-        let signing_hash = args.signing_hash(domain_sep, nonce);
-        let recovered = args.recover_signer(signing_hash)?;
+        let signing_hash = args.metered_signing_hash(token.accounting(), domain_sep, nonce)?;
+        let recovered = args.metered_recover_signer(token.accounting(), signing_hash)?;
         PermitArgs::validate_recovered_address(recovered, args.owner)?;
         token.accounting_mut().increment_nonce(args.owner)?;
         self.approve(token, args.owner, args.spender, args.value)
@@ -872,12 +872,12 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV2 {
 
     fn domain_separator(&self, token: &B20AssetToken<S, A>, chain_id: u64) -> Result<B256> {
         let name = token.accounting().name()?;
-        let name_hash = keccak256(name.as_bytes());
-        let version_hash = keccak256(VERSION);
+        let name_hash = token.accounting().metered_keccak256(name.as_bytes())?;
+        let version_hash = token.accounting().metered_keccak256(VERSION)?;
         let encoded =
             (DOMAIN_TYPEHASH, name_hash, version_hash, U256::from(chain_id), token.token_address())
                 .abi_encode();
-        Ok(keccak256(&encoded))
+        token.accounting().metered_keccak256(&encoded)
     }
 
     fn eip712_domain(&self, token: &B20AssetToken<S, A>, chain_id: u64) -> Result<Eip712Domain> {
@@ -1056,7 +1056,6 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV2 {
 #[cfg(test)]
 mod tests {
     use alloc::{
-        collections::{BTreeMap, BTreeSet},
         string::{String, ToString},
         vec,
         vec::Vec,
@@ -1066,15 +1065,13 @@ mod tests {
     use alloy_sol_types::SolEvent;
     use base_precompile_storage::{BasePrecompileError, Result};
     use k256::ecdsa::SigningKey;
+    use rstest::rstest;
 
     use crate::{
-        Asset, AssetAccounting, AssetV2, B20_MAX_SUPPLY_CAP, B20AssetStorage, B20AssetToken,
-        B20PolicyType, B20TokenRole, IB20, IB20Asset, PackedPolicy, PermitArgs, PolicyAccounting,
-        PolicyRegistryStorage, PolicyVersion, Token, TokenAccounting, TransferPolicyIds,
+        Asset, AssetAccounting, AssetV2, B20AssetStorage, B20AssetToken, B20PolicyType,
+        B20TokenRole, FakePolicyAccounting, IB20, IB20Asset, InMemoryTokenAccounting, PermitArgs,
+        PolicyRegistryStorage, PolicyVersion, Token, TokenAccounting,
     };
-
-    // --- Self-contained in-memory fakes (no dependency on `common::test_utils`, so shared test
-    //     scaffolding can never drift this frozen version's coverage) ---
 
     const TOKEN: Address = Address::repeat_byte(0x21);
     const ADMIN: Address = Address::repeat_byte(0xAD);
@@ -1088,326 +1085,22 @@ mod tests {
     const PRIVATE_KEY: [u8; 32] =
         alloy_primitives::hex!("ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
 
-    /// Minimal `AssetAccounting` backed by in-memory maps.
-    #[derive(Debug)]
-    struct FakeAccounting {
-        initialized: bool,
-        balances: BTreeMap<Address, U256>,
-        allowances: BTreeMap<(Address, Address), U256>,
-        total_supply: U256,
-        supply_cap: U256,
-        name: String,
-        symbol: String,
-        decimals: u8,
-        multiplier: U256,
-        pending_multiplier: u128,
-        pending_effective_at: u64,
-        timestamp: U256,
-        paused: U256,
-        nonces: BTreeMap<Address, U256>,
-        contract_uri: String,
-        roles: BTreeMap<(B256, Address), bool>,
-        role_member_counts: BTreeMap<B256, U256>,
-        role_admins: BTreeMap<B256, B256>,
-        policy_ids: BTreeMap<B256, u64>,
-        extra_metadata: BTreeMap<String, String>,
-        used_announcement_ids: BTreeSet<String>,
-        events: Vec<LogData>,
+    /// Accounting seeded with the asset metadata and WAD multiplier these tests assume.
+    fn accounting() -> InMemoryTokenAccounting {
+        let mut accounting = InMemoryTokenAccounting::new(TOKEN);
+        accounting.name = "Real World Asset".to_string();
+        accounting.symbol = "RWA".to_string();
+        accounting.decimals = 6;
+        accounting.multiplier = B20AssetStorage::WAD;
+        accounting
     }
 
-    impl FakeAccounting {
-        fn new() -> Self {
-            Self {
-                initialized: true,
-                balances: BTreeMap::new(),
-                allowances: BTreeMap::new(),
-                total_supply: U256::ZERO,
-                supply_cap: B20_MAX_SUPPLY_CAP,
-                name: "Real World Asset".to_string(),
-                symbol: "RWA".to_string(),
-                decimals: 6,
-                multiplier: B20AssetStorage::WAD,
-                pending_multiplier: 0,
-                pending_effective_at: 0,
-                timestamp: U256::ZERO,
-                paused: U256::ZERO,
-                nonces: BTreeMap::new(),
-                contract_uri: String::new(),
-                roles: BTreeMap::new(),
-                role_member_counts: BTreeMap::new(),
-                role_admins: BTreeMap::new(),
-                policy_ids: BTreeMap::new(),
-                extra_metadata: BTreeMap::new(),
-                used_announcement_ids: BTreeSet::new(),
-                events: Vec::new(),
-            }
-        }
-    }
-
-    impl TokenAccounting for FakeAccounting {
-        fn token_address(&self) -> Address {
-            TOKEN
-        }
-        fn is_initialized(&self) -> Result<bool> {
-            Ok(self.initialized)
-        }
-        fn balance_of(&self, account: Address) -> Result<U256> {
-            Ok(self.balances.get(&account).copied().unwrap_or(U256::ZERO))
-        }
-        fn set_balance(&mut self, account: Address, balance: U256) -> Result<()> {
-            self.balances.insert(account, balance);
-            Ok(())
-        }
-        fn allowance(&self, owner: Address, spender: Address) -> Result<U256> {
-            Ok(self.allowances.get(&(owner, spender)).copied().unwrap_or(U256::ZERO))
-        }
-        fn set_allowance(&mut self, owner: Address, spender: Address, amount: U256) -> Result<()> {
-            self.allowances.insert((owner, spender), amount);
-            Ok(())
-        }
-        fn total_supply(&self) -> Result<U256> {
-            Ok(self.total_supply)
-        }
-        fn set_total_supply(&mut self, supply: U256) -> Result<()> {
-            self.total_supply = supply;
-            Ok(())
-        }
-        fn supply_cap(&self) -> Result<U256> {
-            Ok(self.supply_cap)
-        }
-        fn set_supply_cap(&mut self, cap: U256) -> Result<()> {
-            self.supply_cap = cap;
-            Ok(())
-        }
-        fn name(&self) -> Result<String> {
-            Ok(self.name.clone())
-        }
-        fn set_name(&mut self, name: String) -> Result<()> {
-            self.name = name;
-            Ok(())
-        }
-        fn symbol(&self) -> Result<String> {
-            Ok(self.symbol.clone())
-        }
-        fn set_symbol(&mut self, symbol: String) -> Result<()> {
-            self.symbol = symbol;
-            Ok(())
-        }
-        fn decimals(&self) -> Result<u8> {
-            Ok(self.decimals)
-        }
-        fn paused(&self) -> Result<U256> {
-            Ok(self.paused)
-        }
-        fn set_paused(&mut self, vectors: U256) -> Result<()> {
-            self.paused = vectors;
-            Ok(())
-        }
-        fn nonce(&self, owner: Address) -> Result<U256> {
-            Ok(self.nonces.get(&owner).copied().unwrap_or(U256::ZERO))
-        }
-        fn increment_nonce(&mut self, owner: Address) -> Result<()> {
-            let n = self.nonces.entry(owner).or_insert(U256::ZERO);
-            *n += U256::ONE;
-            Ok(())
-        }
-        fn contract_uri(&self) -> Result<String> {
-            Ok(self.contract_uri.clone())
-        }
-        fn set_contract_uri(&mut self, uri: String) -> Result<()> {
-            self.contract_uri = uri;
-            Ok(())
-        }
-        fn has_role(&self, role: B256, account: Address) -> Result<bool> {
-            Ok(self.roles.get(&(role, account)).copied().unwrap_or(false))
-        }
-        fn set_role(&mut self, role: B256, account: Address, enabled: bool) -> Result<()> {
-            self.roles.insert((role, account), enabled);
-            Ok(())
-        }
-        fn role_member_count(&self, role: B256) -> Result<U256> {
-            Ok(self.role_member_counts.get(&role).copied().unwrap_or(U256::ZERO))
-        }
-        fn set_role_member_count(&mut self, role: B256, count: U256) -> Result<()> {
-            self.role_member_counts.insert(role, count);
-            Ok(())
-        }
-        fn role_admin(&self, role: B256) -> Result<B256> {
-            Ok(self.role_admins.get(&role).copied().unwrap_or(B256::ZERO))
-        }
-        fn set_role_admin(&mut self, role: B256, admin_role: B256) -> Result<()> {
-            self.role_admins.insert(role, admin_role);
-            Ok(())
-        }
-        fn policy_id(&self, policy_scope: B256) -> Result<u64> {
-            Ok(self.policy_ids.get(&policy_scope).copied().unwrap_or(0))
-        }
-        fn set_policy_id(&mut self, policy_scope: B256, policy_id: u64) -> Result<()> {
-            self.policy_ids.insert(policy_scope, policy_id);
-            Ok(())
-        }
-
-        fn transfer_policy_ids(&self) -> Result<TransferPolicyIds> {
-            TransferPolicyIds::read_individually(self)
-        }
-        fn emit_event(&mut self, log: LogData) -> Result<()> {
-            self.events.push(log);
-            Ok(())
-        }
-    }
-
-    impl AssetAccounting for FakeAccounting {
-        fn timestamp(&self) -> Result<U256> {
-            Ok(self.timestamp)
-        }
-        fn multiplier(&self) -> Result<U256> {
-            Ok(self.multiplier)
-        }
-        fn set_multiplier(&mut self, multiplier: U256) -> Result<()> {
-            self.multiplier = multiplier;
-            Ok(())
-        }
-        fn pending_multiplier(&self) -> Result<u128> {
-            Ok(self.pending_multiplier)
-        }
-        fn pending_effective_at(&self) -> Result<u64> {
-            Ok(self.pending_effective_at)
-        }
-        fn set_pending_and_effective_at(
-            &mut self,
-            multiplier: u128,
-            effective_at: u64,
-        ) -> Result<()> {
-            self.pending_multiplier = multiplier;
-            self.pending_effective_at = effective_at;
-            Ok(())
-        }
-        fn clear_pending_multiplier_and_effective_at(&mut self) -> Result<()> {
-            self.pending_multiplier = 0;
-            self.pending_effective_at = 0;
-            Ok(())
-        }
-        fn extra_metadata(&self, key: &str) -> Result<String> {
-            Ok(self.extra_metadata.get(key).cloned().unwrap_or_default())
-        }
-        fn set_extra_metadata_value(&mut self, key: &str, value: String) -> Result<()> {
-            if value.is_empty() {
-                self.extra_metadata.remove(key);
-            } else {
-                self.extra_metadata.insert(key.to_string(), value);
-            }
-            Ok(())
-        }
-        fn is_announcement_id_used(&self, id: &str) -> Result<bool> {
-            Ok(self.used_announcement_ids.contains(id))
-        }
-        fn mark_announcement_id_used(&mut self, id: &str) -> Result<()> {
-            self.used_announcement_ids.insert(id.to_string());
-            Ok(())
-        }
-        fn decimals(&self) -> Result<u8> {
-            Ok(self.decimals)
-        }
-    }
-
-    /// Minimal [`PolicyAccounting`] backed by in-memory maps.
-    #[derive(Debug)]
-    struct FakePolicyAccounting {
-        caller: Address,
-        initialized: bool,
-        policies: BTreeMap<u64, U256>,
-        members: BTreeMap<(u64, Address), bool>,
-        pending_admins: BTreeMap<u64, Address>,
-        next_counter: u64,
-        events: Vec<LogData>,
-    }
-
-    impl FakePolicyAccounting {
-        fn new() -> Self {
-            Self {
-                caller: ADMIN,
-                initialized: false,
-                policies: BTreeMap::new(),
-                members: BTreeMap::new(),
-                pending_admins: BTreeMap::new(),
-                next_counter: 0,
-                events: Vec::new(),
-            }
-        }
-
-        fn create_existing_policy(&mut self, policy_id: u64) {
-            self.policies.insert(policy_id, PackedPolicy::new(Address::ZERO).into_u256());
-        }
-    }
-
-    impl PolicyAccounting for FakePolicyAccounting {
-        fn registry_address(&self) -> Address {
-            Address::repeat_byte(0x02)
-        }
-        fn caller(&self) -> Address {
-            self.caller
-        }
-        fn read_policy_word(&self, policy_id: u64) -> Result<U256> {
-            Ok(self.policies.get(&policy_id).copied().unwrap_or(U256::ZERO))
-        }
-        fn write_policy_word(&mut self, policy_id: u64, word: U256) -> Result<()> {
-            self.policies.insert(policy_id, word);
-            Ok(())
-        }
-        fn read_member(&self, policy_id: u64, account: Address) -> Result<bool> {
-            Ok(self.members.get(&(policy_id, account)).copied().unwrap_or(false))
-        }
-        fn set_member(&mut self, policy_id: u64, account: Address) -> Result<()> {
-            self.members.insert((policy_id, account), true);
-            Ok(())
-        }
-        fn delete_member(&mut self, policy_id: u64, account: Address) -> Result<()> {
-            self.members.remove(&(policy_id, account));
-            Ok(())
-        }
-        fn read_pending_admin(&self, policy_id: u64) -> Result<Address> {
-            Ok(self.pending_admins.get(&policy_id).copied().unwrap_or(Address::ZERO))
-        }
-        fn write_pending_admin(&mut self, policy_id: u64, admin: Address) -> Result<()> {
-            self.pending_admins.insert(policy_id, admin);
-            Ok(())
-        }
-        fn delete_pending_admin(&mut self, policy_id: u64) -> Result<()> {
-            self.pending_admins.remove(&policy_id);
-            Ok(())
-        }
-        fn read_next_counter(&self) -> Result<u64> {
-            Ok(self.next_counter)
-        }
-        fn write_next_counter(&mut self, counter: u64) -> Result<()> {
-            self.next_counter = counter;
-            Ok(())
-        }
-        fn emit_event(&mut self, log: LogData) -> Result<()> {
-            self.events.push(log);
-            Ok(())
-        }
-        fn mark_initialized(&mut self) -> Result<()> {
-            self.initialized = true;
-            Ok(())
-        }
-
-        // This fake does not exercise composite policies.
-        fn read_children(&self, _policy_id: u64) -> Result<Vec<u64>> {
-            Ok(Vec::new())
-        }
-
-        fn write_children(&mut self, _policy_id: u64, _child_policy_ids: &[u64]) -> Result<()> {
-            Ok(())
-        }
-    }
-
-    type Tok = B20AssetToken<FakeAccounting, FakePolicyAccounting>;
+    type Tok = B20AssetToken<InMemoryTokenAccounting, FakePolicyAccounting>;
 
     fn token() -> Tok {
         B20AssetToken::with_storage_and_policy(
-            FakeAccounting::new(),
-            FakePolicyAccounting::new(),
+            accounting(),
+            FakePolicyAccounting::with_caller(ADMIN),
             PolicyVersion::V1,
         )
     }
@@ -1571,15 +1264,54 @@ mod tests {
         );
     }
 
-    #[test]
-    fn mint_unprivileged_requires_mint_role() {
+    // --- access control ---
+
+    fn unauthorized_mint(tok: &mut Tok) -> Result<()> {
+        LOGIC.mint(tok, ALICE, BOB, U256::from(1u64), false)
+    }
+
+    fn unauthorized_seize(tok: &mut Tok) -> Result<()> {
+        LOGIC.seize_with_memo(tok, ADMIN, ALICE, BOB, U256::from(1u64), MEMO)
+    }
+
+    fn unauthorized_update_multiplier(tok: &mut Tok) -> Result<()> {
+        LOGIC.update_multiplier(tok, ALICE, B20AssetStorage::WAD, false)
+    }
+
+    fn unauthorized_batch_mint(tok: &mut Tok) -> Result<()> {
+        LOGIC.batch_mint(tok, ALICE, vec![BOB], vec![U256::from(1u64)], false)
+    }
+
+    fn unauthorized_update_extra_metadata(tok: &mut Tok) -> Result<()> {
+        LOGIC.update_extra_metadata(tok, ALICE, "k".to_string(), "v".to_string(), false)
+    }
+
+    fn unauthorized_begin_announce(tok: &mut Tok) -> Result<()> {
+        LOGIC.begin_announce(tok, ALICE, "id".to_string(), String::new(), String::new(), false)
+    }
+
+    /// Every privileged entry point rejects a caller lacking the required role with the same
+    /// `AccessControlUnauthorizedAccount` revert.
+    #[rstest]
+    #[case(ALICE, B20TokenRole::Mint.id(), unauthorized_mint)]
+    #[case(ADMIN, B20TokenRole::Seize.id(), unauthorized_seize)]
+    #[case(ALICE, AssetV2::OPERATOR_ROLE, unauthorized_update_multiplier)]
+    #[case(ALICE, B20TokenRole::Mint.id(), unauthorized_batch_mint)]
+    #[case(ALICE, B20TokenRole::Metadata.id(), unauthorized_update_extra_metadata)]
+    #[case(ALICE, AssetV2::OPERATOR_ROLE, unauthorized_begin_announce)]
+    fn privileged_calls_require_role(
+        #[case] account: Address,
+        #[case] needed_role: B256,
+        #[case] call: fn(&mut Tok) -> Result<()>,
+    ) {
         let mut tok = token();
-        let err = LOGIC.mint(&mut tok, ALICE, BOB, U256::from(1u64), false).unwrap_err();
+        make_seizable(&mut tok);
+        let err = call(&mut tok).unwrap_err();
         assert_eq!(
             err,
             BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
-                account: ALICE,
-                neededRole: B20TokenRole::Mint.id(),
+                account,
+                neededRole: needed_role,
             })
         );
     }
@@ -1723,71 +1455,52 @@ mod tests {
         );
     }
 
-    #[test]
-    fn seize_ignores_receiver_policy_on_to() {
+    #[rstest]
+    #[case::transfer_receiver_policy_ignored_on_to(
+        Some((B20PolicyType::TransferReceiver, PolicyRegistryStorage::ALWAYS_BLOCK_ID)),
+        50,
+        None
+    )]
+    #[case::seize_receiver_policy_forbids(
+        Some((B20PolicyType::SeizeReceiver, PolicyRegistryStorage::ALWAYS_BLOCK_ID)),
+        1,
+        Some(PolicyRegistryStorage::ALWAYS_BLOCK_ID)
+    )]
+    #[case::unset_receiver_policy_allows_any_destination(None, 50, None)]
+    #[case::seize_receiver_policy_allows(
+        Some((B20PolicyType::SeizeReceiver, PolicyRegistryStorage::ALWAYS_ALLOW_ID)),
+        50,
+        None
+    )]
+    fn seize_receiver_policy(
+        #[case] policy: Option<(B20PolicyType, u64)>,
+        #[case] amount: u64,
+        #[case] forbidden_policy_id: Option<u64>,
+    ) {
         let mut tok = token();
         fund(&mut tok, ALICE, U256::from(50u64));
         make_seizable(&mut tok);
         grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
-        // A normal transfer to BOB would revert on this; seize does not consult it.
-        tok.accounting_mut()
-            .set_policy_id(
-                B20PolicyType::TransferReceiver.id(),
-                PolicyRegistryStorage::ALWAYS_BLOCK_ID,
-            )
-            .unwrap();
-        LOGIC.seize_with_memo(&mut tok, ADMIN, ALICE, BOB, U256::from(50u64), MEMO).unwrap();
-        assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(50u64));
-    }
+        if let Some((policy_type, policy_id)) = policy {
+            // A transfer-receiver policy must not affect seize; a seize-receiver policy must.
+            tok.accounting_mut().set_policy_id(policy_type.id(), policy_id).unwrap();
+        }
 
-    #[test]
-    fn seize_reverts_when_receiver_policy_forbids() {
-        let mut tok = token();
-        fund(&mut tok, ALICE, U256::from(50u64));
-        make_seizable(&mut tok);
-        grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
-        tok.accounting_mut()
-            .set_policy_id(
-                B20PolicyType::SeizeReceiver.id(),
-                PolicyRegistryStorage::ALWAYS_BLOCK_ID,
-            )
-            .unwrap();
-        let err =
-            LOGIC.seize_with_memo(&mut tok, ADMIN, ALICE, BOB, U256::from(1u64), MEMO).unwrap_err();
-        assert_eq!(
-            err,
-            BasePrecompileError::revert(IB20::PolicyForbids {
-                policyScope: B20PolicyType::SeizeReceiver.id(),
-                policyId: PolicyRegistryStorage::ALWAYS_BLOCK_ID,
-            })
-        );
-    }
+        let result = LOGIC.seize_with_memo(&mut tok, ADMIN, ALICE, BOB, U256::from(amount), MEMO);
 
-    #[test]
-    fn seize_unset_receiver_policy_allows_any_destination() {
-        let mut tok = token();
-        fund(&mut tok, ALICE, U256::from(50u64));
-        make_seizable(&mut tok);
-        grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
-        // SEIZE_RECEIVER_POLICY left unset => ALWAYS_ALLOW => any destination is allowed.
-        LOGIC.seize_with_memo(&mut tok, ADMIN, ALICE, BOB, U256::from(50u64), MEMO).unwrap();
-        assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(50u64));
-    }
-
-    #[test]
-    fn seize_succeeds_with_configured_receiver_policy_allow() {
-        let mut tok = token();
-        fund(&mut tok, ALICE, U256::from(50u64));
-        make_seizable(&mut tok);
-        grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
-        tok.accounting_mut()
-            .set_policy_id(
-                B20PolicyType::SeizeReceiver.id(),
-                PolicyRegistryStorage::ALWAYS_ALLOW_ID,
-            )
-            .unwrap();
-        LOGIC.seize_with_memo(&mut tok, ADMIN, ALICE, BOB, U256::from(50u64), MEMO).unwrap();
-        assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(50u64));
+        match forbidden_policy_id {
+            Some(policy_id) => assert_eq!(
+                result.unwrap_err(),
+                BasePrecompileError::revert(IB20::PolicyForbids {
+                    policyScope: B20PolicyType::SeizeReceiver.id(),
+                    policyId: policy_id,
+                })
+            ),
+            None => {
+                result.unwrap();
+                assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(amount));
+            }
+        }
     }
 
     #[test]
@@ -1825,21 +1538,6 @@ mod tests {
             BasePrecompileError::revert(IB20::PolicyForbids {
                 policyScope: B20PolicyType::SeizeReceiver.id(),
                 policyId: PolicyRegistryStorage::ALWAYS_BLOCK_ID,
-            })
-        );
-    }
-
-    #[test]
-    fn seize_requires_role() {
-        let mut tok = token();
-        make_seizable(&mut tok);
-        let err =
-            LOGIC.seize_with_memo(&mut tok, ADMIN, ALICE, BOB, U256::from(1u64), MEMO).unwrap_err();
-        assert_eq!(
-            err,
-            BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
-                account: ADMIN,
-                neededRole: B20TokenRole::Seize.id(),
             })
         );
     }
@@ -1956,6 +1654,50 @@ mod tests {
         );
     }
 
+    #[test]
+    fn permit_charges_metered_hashing_and_fixed_recovery() {
+        let mut tok = token();
+        let owner = anvil_owner();
+        let args = signed_permit(&tok, owner, BOB, U256::from(500u64), U256::MAX);
+
+        // `signed_permit` computes the domain separator during setup, so measure deltas.
+        let keccak_before = tok.accounting().keccak_charges.get();
+        let gas_before = tok.accounting().gas_deducted.get();
+
+        LOGIC.permit(&mut tok, CHAIN_ID, U256::ZERO, args).unwrap();
+
+        // domain separator (name, version, encoded) + signing digest (struct hash, digest) = 5.
+        assert_eq!(tok.accounting().keccak_charges.get() - keccak_before, 5);
+        // Fixed ECRECOVER-comparable recovery charge, applied exactly once.
+        assert_eq!(tok.accounting().gas_deducted.get() - gas_before, PermitArgs::RECOVER_GAS);
+    }
+
+    #[test]
+    fn caught_revert_permit_loop_charges_each_iteration() {
+        let mut tok = token();
+        let owner = anvil_owner();
+        // Realistic DoS shape: a valid, recoverable signature but an unrelated `owner`, so every
+        // call performs the full EIP-712 hashing and secp256k1 recovery and then reverts
+        // `InvalidSigner` (before the nonce is bumped, so the same args replays each iteration).
+        let mut args = signed_permit(&tok, owner, BOB, U256::from(1u64), U256::MAX);
+        args.owner = Address::repeat_byte(0xcc);
+
+        const ITERATIONS: u64 = 8;
+        let keccak_before = tok.accounting().keccak_charges.get();
+        let gas_before = tok.accounting().gas_deducted.get();
+        for _ in 0..ITERATIONS {
+            assert!(LOGIC.permit(&mut tok, CHAIN_ID, U256::ZERO, args.clone()).is_err());
+        }
+
+        // A caught-revert loop no longer runs for free: hashing and recovery metering scale
+        // linearly with the number of calls.
+        assert_eq!(tok.accounting().keccak_charges.get() - keccak_before, 5 * ITERATIONS);
+        assert_eq!(
+            tok.accounting().gas_deducted.get() - gas_before,
+            PermitArgs::RECOVER_GAS * ITERATIONS
+        );
+    }
+
     // --- asset: multiplier ---
 
     #[test]
@@ -1985,20 +1727,6 @@ mod tests {
         assert_eq!(
             LOGIC.to_scaled_balance(&tok, U256::from(2u64)).unwrap_err(),
             BasePrecompileError::under_overflow()
-        );
-    }
-
-    #[test]
-    fn update_multiplier_requires_operator_role() {
-        let mut tok = token();
-        let err =
-            LOGIC.update_multiplier(&mut tok, ALICE, B20AssetStorage::WAD, false).unwrap_err();
-        assert_eq!(
-            err,
-            BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
-                account: ALICE,
-                neededRole: AssetV2::OPERATOR_ROLE,
-            })
         );
     }
 
@@ -2044,21 +1772,6 @@ mod tests {
         assert_eq!(tok.accounting().balance_of(ALICE).unwrap(), U256::from(100u64));
         assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(200u64));
         assert_eq!(tok.accounting().total_supply().unwrap(), U256::from(300u64));
-    }
-
-    #[test]
-    fn batch_mint_requires_mint_role() {
-        let mut tok = token();
-        let err = LOGIC
-            .batch_mint(&mut tok, ALICE, vec![BOB], vec![U256::from(1u64)], false)
-            .unwrap_err();
-        assert_eq!(
-            err,
-            BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
-                account: ALICE,
-                neededRole: B20TokenRole::Mint.id(),
-            })
-        );
     }
 
     #[test]
@@ -2134,21 +1847,6 @@ mod tests {
         assert_eq!(err, BasePrecompileError::revert(IB20Asset::InvalidMetadataKey {}));
     }
 
-    #[test]
-    fn update_extra_metadata_requires_metadata_role() {
-        let mut tok = token();
-        let err = LOGIC
-            .update_extra_metadata(&mut tok, ALICE, "k".to_string(), "v".to_string(), false)
-            .unwrap_err();
-        assert_eq!(
-            err,
-            BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
-                account: ALICE,
-                neededRole: B20TokenRole::Metadata.id(),
-            })
-        );
-    }
-
     // --- asset: announcements ---
 
     #[test]
@@ -2172,21 +1870,6 @@ mod tests {
             .begin_announce(&mut tok, ADMIN, id.clone(), String::new(), String::new(), true)
             .unwrap_err();
         assert_eq!(err, BasePrecompileError::revert(IB20Asset::AnnouncementIdAlreadyUsed { id }));
-    }
-
-    #[test]
-    fn begin_announce_requires_operator_role() {
-        let mut tok = token();
-        let err = LOGIC
-            .begin_announce(&mut tok, ALICE, "id".to_string(), String::new(), String::new(), false)
-            .unwrap_err();
-        assert_eq!(
-            err,
-            BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
-                account: ALICE,
-                neededRole: AssetV2::OPERATOR_ROLE,
-            })
-        );
     }
 
     #[test]
@@ -2590,7 +2273,7 @@ mod tests {
             [0x57, 0x85, 0x4f, 0xc3],
         ] {
             assert!(
-                <AssetV2 as Asset<FakeAccounting, FakePolicyAccounting>>::supports_interface(
+                <AssetV2 as Asset<InMemoryTokenAccounting, FakePolicyAccounting>>::supports_interface(
                     &LOGIC,
                     FixedBytes::new(id)
                 )
@@ -2600,7 +2283,7 @@ mod tests {
         // An arbitrary id is not advertised.
         for id in [[0xde, 0xad, 0xbe, 0xef], [0xff, 0xff, 0xff, 0xff]] {
             assert!(
-                !<AssetV2 as Asset<FakeAccounting, FakePolicyAccounting>>::supports_interface(
+                !<AssetV2 as Asset<InMemoryTokenAccounting, FakePolicyAccounting>>::supports_interface(
                     &LOGIC,
                     FixedBytes::new(id)
                 )
@@ -2615,8 +2298,10 @@ mod tests {
         // setter guards enforce) and the getter that exposes it.
         assert_eq!(AssetV2::MAX_UI_MULTIPLIER, U256::from(u128::MAX));
         let value =
-            <AssetV2 as Asset<FakeAccounting, FakePolicyAccounting>>::max_ui_multiplier(&LOGIC)
-                .unwrap();
+            <AssetV2 as Asset<InMemoryTokenAccounting, FakePolicyAccounting>>::max_ui_multiplier(
+                &LOGIC,
+            )
+            .unwrap();
         assert_eq!(value, U256::from(u128::MAX));
     }
 

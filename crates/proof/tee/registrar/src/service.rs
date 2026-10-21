@@ -59,7 +59,7 @@ pub struct RegistrarConfig {
     pub max_tx_retries: u32,
     /// Initial delay between transaction submission retries.
     pub tx_retry_delay: Duration,
-    /// Optional Nitro verifier address for CRL checks. Providing this enables CRL checks.
+    /// Optional Nitro verifier address enabling fail-closed CRL checks; absent disables AWS checks.
     pub crl_nitro_verifier_address: Option<Address>,
     /// Health server bind address.
     pub health_addr: SocketAddr,
@@ -102,10 +102,6 @@ impl RegistrarConfig {
     /// Returns an error if service initialization fails or the registration
     /// driver exits with an error.
     pub async fn run(self) -> Result<()> {
-        self.log_config
-            .init_tracing_subscriber()
-            .map_err(|e| RegistrarError::Service(e.to_string()))?;
-
         let _ = rustls::crypto::ring::default_provider().install_default();
 
         info!(version = env!("CARGO_PKG_VERSION"), "Registrar starting");

@@ -14,8 +14,9 @@ workspace = true
 [dependencies]
 # ethereum
 alloy-eips.workspace = true
+alloy-sol-types.workspace = true
 alloy-consensus.workspace = true
-alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+alloy-primitives = { workspace = true, features = ["k256", "map-foldhash"] }
 
 # reth
 reth-evm.workspace = true
@@ -28,6 +29,7 @@ reth-storage-api.workspace = true
 reth-transaction-pool.workspace = true
 reth-primitives-traits.workspace = true
 
+base-bundles.workspace = true
 base-common-flz.workspace = true
 base-common-chains.workspace = true
 base-common-evm.workspace = true
@@ -51,6 +53,7 @@ c-kzg.workspace = true
 revm.workspace = true
 futures.workspace = true
 tracing.workspace = true
+hostname.workspace = true
 thiserror.workspace = true
 async-trait.workspace = true
 derive_more.workspace = true
@@ -60,8 +63,9 @@ tokio = { workspace = true, features = ["sync", "rt", "time"] }
 jsonrpsee = { workspace = true, features = ["http-client", "server", "macros"] }
 
 [dev-dependencies]
+rstest.workspace = true
+criterion.workspace = true
 alloy-signer.workspace = true
-alloy-sol-types.workspace = true
 alloy-signer-local.workspace = true
 reth-tasks.workspace = true
 base-test-utils.workspace = true
@@ -71,10 +75,15 @@ reth-provider = { workspace = true, features = ["test-utils"] }
 reth-transaction-pool = { workspace = true, features = ["test-utils"] }
 tokio = { workspace = true, features = ["time", "rt-multi-thread", "macros"] }
 
+[[bench]]
+name = "ingest_codec"
+harness = false
+
 [features]
 default = [ "metrics" ]
 metrics = [
 	"base-common-evm/metrics",
+	"base-common-precompiles/metrics",
 	"base-metrics/metrics",
 	"base-observability-events/metrics",
 	"dep:metrics",

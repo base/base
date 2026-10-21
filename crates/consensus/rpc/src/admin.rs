@@ -31,15 +31,35 @@ pub enum NetworkAdminQuery {
     },
 }
 
-type NetworkAdminQuerySender = mpsc::Sender<NetworkAdminQuery>;
+/// Sender for network-backed admin RPC requests.
+pub type NetworkAdminQuerySender = mpsc::Sender<NetworkAdminQuery>;
+
+/// Access to network-backed admin RPC methods.
+#[derive(Debug)]
+pub enum AdminNetworkAccess {
+    /// Network-backed methods send requests through the network actor.
+    Enabled(NetworkAdminQuerySender),
+    /// Network-backed methods are unavailable because no network actor exists.
+    Disabled,
+}
+
+impl AdminNetworkAccess {
+    /// Returns the network sender or an isolated-mode RPC error.
+    pub fn sender(&self) -> RpcResult<&NetworkAdminQuerySender> {
+        match self {
+            Self::Enabled(sender) => Ok(sender),
+            Self::Disabled => Err(isolated_network_access_rejected()),
+        }
+    }
+}
 
 /// The admin rpc server.
 #[derive(Debug)]
 pub struct AdminRpc<SequencerAdminAPIClient> {
     /// The sequencer admin API client.
     pub sequencer_admin_client: Option<SequencerAdminAPIClient>,
-    /// The sender to the network actor.
-    pub network_sender: NetworkAdminQuerySender,
+    /// Access to network-backed admin RPC methods.
+    pub network_access: AdminNetworkAccess,
     /// Runtime upgrade signal refresher.
     pub upgrade_signal_refresher: Option<UpgradeSignalRefresher>,
 }
@@ -48,22 +68,22 @@ impl<SequencerAdminAPIClient_> AdminRpc<SequencerAdminAPIClient_>
 where
     SequencerAdminAPIClient_: SequencerAdminAPIClient,
 {
-    /// Constructs a new [`AdminRpc`] given the sequencer sender and network sender.
+    /// Constructs a new [`AdminRpc`] with the supplied network capability.
     ///
     /// # Parameters
     ///
     /// - `sequencer_sender`: The [`SequencerAdminAPIClient`] used to fulfill sequencer admin
     ///   queries.
-    /// - `network_sender`: The sender to the network actor.
+    /// - `network_access`: Access to network-backed admin RPC methods.
     ///
     /// # Returns
     ///
     /// A new [`AdminRpc`] instance.
     pub const fn new(
         sequencer_admin_client: Option<SequencerAdminAPIClient_>,
-        network_sender: NetworkAdminQuerySender,
+        network_access: AdminNetworkAccess,
     ) -> Self {
-        Self { sequencer_admin_client, network_sender, upgrade_signal_refresher: None }
+        Self { sequencer_admin_client, network_access, upgrade_signal_refresher: None }
     }
 
     /// Sets the runtime upgrade signal refresher.
@@ -73,18 +93,39 @@ where
     ) -> Self {
         Self { upgrade_signal_refresher, ..self }
     }
+
+    /// Returns the sequencer admin client, or an error when this node runs without a sequencer
+    /// (validator mode).
+    fn sequencer_client(&self) -> RpcResult<&SequencerAdminAPIClient_> {
+        self.sequencer_admin_client.as_ref().ok_or_else(sequencer_unavailable)
+    }
 }
+
+/// JSON-RPC error code for sequencer admin methods called on a node without a sequencer.
+const SEQUENCER_UNAVAILABLE_CODE: i32 = -32001;
+/// JSON-RPC error code for starting the sequencer on a node that is not the conductor leader.
+const NOT_LEADER_CODE: i32 = -32002;
+/// JSON-RPC error code for a failed upgrade-signal refresh.
+const UPGRADE_SIGNAL_REFRESH_FAILED_CODE: i32 = -32003;
+/// JSON-RPC error code for upgrade-signal methods called on a node without a refresher.
+const UPGRADE_SIGNAL_UNAVAILABLE_CODE: i32 = -32004;
+/// JSON-RPC error code for network-backed admin methods called on an isolated sequencer.
+const ISOLATED_NETWORK_ACCESS_REJECTED_CODE: i32 = -32005;
 
 /// Returns an RPC error indicating the sequencer is not available on this node.
 fn sequencer_unavailable() -> ErrorObject<'static> {
-    ErrorObject::owned(-32001, "sequencer not available on this node", None::<()>)
+    ErrorObject::owned(
+        SEQUENCER_UNAVAILABLE_CODE,
+        "sequencer not available on this node",
+        None::<()>,
+    )
 }
 
 /// Maps public sequencer admin failures without exposing internal details.
 fn sequencer_admin_error(error: SequencerAdminAPIError) -> ErrorObject<'static> {
     match error {
         SequencerAdminAPIError::NotLeader => {
-            ErrorObject::owned(-32002, "Node is not the conductor leader.", None::<()>)
+            ErrorObject::owned(NOT_LEADER_CODE, "Node is not the conductor leader.", None::<()>)
         }
         SequencerAdminAPIError::RequestError(_)
         | SequencerAdminAPIError::ResponseError
@@ -97,37 +138,56 @@ fn sequencer_admin_error(error: SequencerAdminAPIError) -> ErrorObject<'static> 
 
 /// Returns an RPC error indicating the upgrade signal is not available on this node.
 fn upgrade_signal_unavailable() -> ErrorObject<'static> {
-    ErrorObject::owned(-32004, "upgrade signal not configured on this node", None::<()>)
+    ErrorObject::owned(
+        UPGRADE_SIGNAL_UNAVAILABLE_CODE,
+        "upgrade signal not configured on this node",
+        None::<()>,
+    )
 }
 
 /// Returns an RPC error for a failed upgrade-signal refresh without exposing internals.
 fn upgrade_signal_refresh_failed() -> ErrorObject<'static> {
-    ErrorObject::owned(-32003, "failed to refresh upgrade signal", None::<()>)
+    ErrorObject::owned(
+        UPGRADE_SIGNAL_REFRESH_FAILED_CODE,
+        "failed to refresh upgrade signal",
+        None::<()>,
+    )
+}
+
+/// Returns an RPC error indicating network-backed methods are disabled for an isolated sequencer.
+fn isolated_network_access_rejected() -> ErrorObject<'static> {
+    ErrorObject::owned(
+        ISOLATED_NETWORK_ACCESS_REJECTED_CODE,
+        "network-backed admin methods disabled on isolated sequencer",
+        None::<()>,
+    )
 }
 
 #[async_trait]
 impl<SequencerAdminAPIClient_> AdminApiServer for AdminRpc<SequencerAdminAPIClient_>
 where
-    SequencerAdminAPIClient_: SequencerAdminAPIClient + 'static + Send + Sync,
+    SequencerAdminAPIClient_: SequencerAdminAPIClient + 'static,
 {
     async fn admin_post_unsafe_payload(
         &self,
         payload: BaseExecutionPayloadEnvelope,
     ) -> RpcResult<()> {
+        let network_sender = self.network_access.sender()?;
         // Note: intentionally no sequencer guard here. Posting an unsafe payload is a P2P/gossip
         // operation that is valid on both sequencer and validator nodes.
         Metrics::rpc_calls("admin_postUnsafePayload").increment(1.0);
-        self.network_sender
+        network_sender
             .send(NetworkAdminQuery::PostUnsafePayload { payload: Box::new(payload) })
             .await
             .map_err(|_| ErrorObject::from(ErrorCode::InternalError))
     }
 
     async fn admin_clear_pending_p2p_connections(&self) -> RpcResult<usize> {
+        let network_sender = self.network_access.sender()?;
         Metrics::rpc_calls("admin_clearPendingP2pConnections").increment(1.0);
 
         let (tx, rx) = oneshot::channel();
-        self.network_sender
+        network_sender
             .send(NetworkAdminQuery::ClearPendingP2pConnections { out: tx })
             .await
             .map_err(|_| ErrorObject::from(ErrorCode::InternalError))?;
@@ -136,90 +196,50 @@ where
     }
 
     async fn admin_sequencer_active(&self) -> RpcResult<bool> {
-        // If the sequencer is not enabled (mode runs in validator mode), return an error.
-        let Some(ref sequencer_client) = self.sequencer_admin_client else {
-            return Err(sequencer_unavailable());
-        };
-
-        sequencer_client
+        self.sequencer_client()?
             .is_sequencer_active()
             .await
             .map_err(|_| ErrorObject::from(ErrorCode::InternalError))
     }
 
     async fn admin_start_sequencer(&self, unsafe_head: B256) -> RpcResult<()> {
-        // If the sequencer is not enabled (mode runs in validator mode), return an error.
-        let Some(ref sequencer_client) = self.sequencer_admin_client else {
-            return Err(sequencer_unavailable());
-        };
-
-        sequencer_client.start_sequencer(unsafe_head).await.map_err(sequencer_admin_error)
+        self.sequencer_client()?.start_sequencer(unsafe_head).await.map_err(sequencer_admin_error)
     }
 
     async fn admin_stop_sequencer(&self) -> RpcResult<B256> {
-        // If the sequencer is not enabled (mode runs in validator mode), return an error.
-        let Some(ref sequencer_client) = self.sequencer_admin_client else {
-            return Err(sequencer_unavailable());
-        };
-
-        sequencer_client.stop_sequencer().await.map_err(sequencer_admin_error)
+        self.sequencer_client()?.stop_sequencer().await.map_err(sequencer_admin_error)
     }
 
     async fn admin_conductor_enabled(&self) -> RpcResult<bool> {
-        // If the sequencer is not enabled (mode runs in validator mode), return an error.
-        let Some(ref sequencer_client) = self.sequencer_admin_client else {
-            return Err(sequencer_unavailable());
-        };
-
-        sequencer_client
+        self.sequencer_client()?
             .is_conductor_enabled()
             .await
             .map_err(|_| ErrorObject::from(ErrorCode::InternalError))
     }
 
     async fn admin_recover_mode(&self) -> RpcResult<bool> {
-        // If the sequencer is not enabled (mode runs in validator mode), return an error.
-        let Some(ref sequencer_client) = self.sequencer_admin_client else {
-            return Err(sequencer_unavailable());
-        };
-
-        sequencer_client
+        self.sequencer_client()?
             .is_recovery_mode()
             .await
             .map_err(|_| ErrorObject::from(ErrorCode::InternalError))
     }
 
     async fn admin_set_recover_mode(&self, mode: bool) -> RpcResult<()> {
-        // If the sequencer is not enabled (mode runs in validator mode), return an error.
-        let Some(ref sequencer_client) = self.sequencer_admin_client else {
-            return Err(sequencer_unavailable());
-        };
-
-        sequencer_client
+        self.sequencer_client()?
             .set_recovery_mode(mode)
             .await
             .map_err(|_| ErrorObject::from(ErrorCode::InternalError))
     }
 
     async fn admin_override_leader(&self) -> RpcResult<()> {
-        // If the sequencer is not enabled (mode runs in validator mode), return an error.
-        let Some(ref sequencer_client) = self.sequencer_admin_client else {
-            return Err(sequencer_unavailable());
-        };
-
-        sequencer_client
+        self.sequencer_client()?
             .override_leader()
             .await
             .map_err(|_| ErrorObject::from(ErrorCode::InternalError))
     }
 
     async fn admin_reset_derivation_pipeline(&self) -> RpcResult<()> {
-        // If the sequencer is not enabled (mode runs in validator mode), return an error.
-        let Some(ref sequencer_client) = self.sequencer_admin_client else {
-            return Err(sequencer_unavailable());
-        };
-
-        sequencer_client
+        self.sequencer_client()?
             .reset_derivation_pipeline()
             .await
             .map_err(|_| ErrorObject::from(ErrorCode::InternalError))
@@ -232,26 +252,101 @@ where
             return Err(upgrade_signal_unavailable());
         };
 
-        match refresher.refresh().await {
-            Ok(summary) => Ok(summary),
-            Err(error) => {
-                warn!(
-                    target: "upgrade_signal",
-                    error = %error,
-                    "failed to refresh consensus runtime upgrade signal"
-                );
-                Err(upgrade_signal_refresh_failed())
-            }
-        }
+        refresher.refresh().await.map_err(|error| {
+            warn!(
+                target: "upgrade_signal",
+                error = %error,
+                "failed to refresh consensus runtime upgrade signal"
+            );
+            upgrade_signal_refresh_failed()
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use alloy_primitives::{Address, B256, Bloom, Bytes};
+    use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
     use jsonrpsee::types::{ErrorCode, ErrorObject};
+    use serde_json::json;
 
-    use super::{sequencer_admin_error, upgrade_signal_refresh_failed, upgrade_signal_unavailable};
-    use crate::SequencerAdminAPIError;
+    use super::{
+        AdminNetworkAccess, AdminRpc, sequencer_admin_error, upgrade_signal_refresh_failed,
+        upgrade_signal_unavailable,
+    };
+    use crate::{AdminApiServer, SequencerAdminAPIError, client::MockSequencerAdminAPIClient};
+
+    fn payload() -> BaseExecutionPayloadEnvelope {
+        serde_json::from_value(json!({
+            "executionPayload": {
+                "parentHash": B256::ZERO,
+                "feeRecipient": Address::ZERO,
+                "stateRoot": B256::ZERO,
+                "receiptsRoot": B256::ZERO,
+                "logsBloom": Bloom::ZERO,
+                "prevRandao": B256::ZERO,
+                "blockNumber": "0x1",
+                "gasLimit": "0x0",
+                "gasUsed": "0x0",
+                "timestamp": "0x0",
+                "extraData": Bytes::new(),
+                "baseFeePerGas": "0x0",
+                "blockHash": B256::ZERO,
+                "transactions": [],
+                "withdrawals": []
+            },
+            "parentBeaconBlockRoot": null
+        }))
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn isolated_rejects_admin_post_unsafe_payload() {
+        let rpc =
+            AdminRpc::new(Some(MockSequencerAdminAPIClient::new()), AdminNetworkAccess::Disabled);
+
+        let error = rpc.admin_post_unsafe_payload(payload()).await.unwrap_err();
+
+        assert_eq!(error.code(), -32005);
+    }
+
+    #[tokio::test]
+    async fn isolated_rejects_admin_clear_pending_p2p_connections() {
+        let rpc =
+            AdminRpc::new(Some(MockSequencerAdminAPIClient::new()), AdminNetworkAccess::Disabled);
+
+        let error = rpc.admin_clear_pending_p2p_connections().await.unwrap_err();
+
+        assert_eq!(error.code(), -32005);
+    }
+
+    #[tokio::test]
+    async fn isolated_keeps_admin_start_sequencer_enabled() {
+        let unsafe_head = B256::repeat_byte(0x11);
+        let mut client = MockSequencerAdminAPIClient::new();
+        client
+            .expect_start_sequencer()
+            .with(mockall::predicate::eq(unsafe_head))
+            .times(1)
+            .returning(|_| Ok(()));
+        let rpc = AdminRpc::new(Some(client), AdminNetworkAccess::Disabled);
+
+        let result = rpc.admin_start_sequencer(unsafe_head).await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn isolated_keeps_admin_stop_sequencer_enabled() {
+        let unsafe_head = B256::repeat_byte(0x22);
+        let mut client = MockSequencerAdminAPIClient::new();
+        client.expect_stop_sequencer().times(1).returning(move || Ok(unsafe_head));
+        let rpc = AdminRpc::new(Some(client), AdminNetworkAccess::Disabled);
+
+        let result = rpc.admin_stop_sequencer().await;
+
+        assert_eq!(result.unwrap(), unsafe_head);
+    }
 
     #[test]
     fn sequencer_admin_error_redacts_internal_failure_details() {
@@ -270,6 +365,16 @@ mod tests {
 
         assert_eq!(error.code(), -32002);
         assert_eq!(error.message(), "Node is not the conductor leader.");
+    }
+
+    #[tokio::test]
+    async fn sequencer_methods_reject_nodes_without_sequencer() {
+        let rpc = AdminRpc::<MockSequencerAdminAPIClient>::new(None, AdminNetworkAccess::Disabled);
+
+        let error = rpc.admin_sequencer_active().await.unwrap_err();
+
+        assert_eq!(error.code(), -32001);
+        assert_eq!(error.message(), "sequencer not available on this node");
     }
 
     #[test]

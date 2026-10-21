@@ -38,16 +38,6 @@ pub struct L1ConfigFile {
 }
 
 impl L1ConfigFile {
-    /// Creates a new [`L1ConfigFile`] with the given path.
-    pub const fn new(path: Option<PathBuf>) -> Self {
-        Self { l1_config_file: path }
-    }
-
-    /// Returns the path to the configuration file, if set.
-    pub const fn path(&self) -> Option<&PathBuf> {
-        self.l1_config_file.as_ref()
-    }
-
     /// Loads the L1 chain configuration.
     ///
     /// If a file path is set, loads the configuration from the JSON file.
@@ -83,16 +73,6 @@ pub struct L2ConfigFile {
 }
 
 impl L2ConfigFile {
-    /// Creates a new [`L2ConfigFile`] with the given path.
-    pub const fn new(path: Option<PathBuf>) -> Self {
-        Self { l2_config_file: path }
-    }
-
-    /// Returns the path to the configuration file, if set.
-    pub const fn path(&self) -> Option<&PathBuf> {
-        self.l2_config_file.as_ref()
-    }
-
     /// Loads the L2 rollup configuration.
     ///
     /// If a file path is set, loads the configuration from the JSON file.
@@ -110,36 +90,5 @@ impl L2ConfigFile {
                     .ok_or_else(|| ConfigError::NotFound(l2_chain.id()))
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_l1_config_file_default() {
-        let config = L1ConfigFile::default();
-        assert!(config.path().is_none());
-    }
-
-    #[test]
-    fn test_l2_config_file_default() {
-        let config = L2ConfigFile::default();
-        assert!(config.path().is_none());
-    }
-
-    #[test]
-    fn test_l1_config_file_with_path() {
-        let path = PathBuf::from("/tmp/l1_config.json");
-        let config = L1ConfigFile::new(Some(path.clone()));
-        assert_eq!(config.path(), Some(&path));
-    }
-
-    #[test]
-    fn test_l2_config_file_with_path() {
-        let path = PathBuf::from("/tmp/l2_config.json");
-        let config = L2ConfigFile::new(Some(path.clone()));
-        assert_eq!(config.path(), Some(&path));
     }
 }

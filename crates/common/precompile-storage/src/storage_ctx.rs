@@ -10,11 +10,10 @@ use alloc::vec::Vec;
 use core::{cell::RefCell, fmt};
 
 use alloy_primitives::{Address, B256, Bytes, LogData, U256};
-use alloy_sol_types::SolInterface;
 use revm::{context::journaled_state::JournalCheckpoint, state::Bytecode};
 
 use crate::{
-    error::{BasePrecompileError, IntoPrecompileResult, Result},
+    error::{BasePrecompileError, Result},
     neutral::{AccountInfo, PrecompileOutput, PrecompileResult},
     provider::{PrecompileStorageProvider, StorageFeatures},
 };
@@ -245,24 +244,13 @@ impl<'a> StorageCtx<'a> {
         out
     }
 
-    /// Returns an ABI-encoded success output.
-    pub fn abi_success(&self, output: impl SolInterface) -> PrecompileOutput {
-        self.success_output(output.abi_encode().into())
-    }
-
-    /// Returns a revert [`PrecompileOutput`] with the current gas used.
-    pub fn revert_output(&self, output: Bytes) -> PrecompileOutput {
-        PrecompileOutput::revert(self.gas_used(), output, self.state_gas_used())
-    }
-
-    /// Reverts with an ABI-encoded error.
-    pub fn abi_revert(&self, error: impl SolInterface) -> PrecompileOutput {
-        self.revert_output(error.abi_encode().into())
-    }
-
     /// Returns a [`PrecompileResult`] constructed from the given error.
     pub fn error_result(&self, error: impl Into<BasePrecompileError>) -> PrecompileResult {
-        error.into().into_precompile_result(self.gas_used(), self.state_gas_used())
+        error.into().into_precompile_result_with_features(
+            self.gas_used(),
+            self.state_gas_used(),
+            self.storage_features(),
+        )
     }
 
     /// Converts a `Result<T>` into a [`PrecompileResult`], reading all gas accounting fields
@@ -271,7 +259,7 @@ impl<'a> StorageCtx<'a> {
     /// On success, `encode_ok` encodes the value and the output carries `gas_used`,
     /// `state_gas_used`, and `gas_refunded` from the context — the same fields that
     /// [`success_output`](Self::success_output) sets. On error, delegates to
-    /// [`BasePrecompileError::into_precompile_result`].
+    /// [`BasePrecompileError::into_precompile_result_with_features`].
     ///
     /// Use this instead of calling [`IntoPrecompileResult::into_precompile_result`] directly,
     /// so callers do not have to manually thread gas values through.
@@ -280,12 +268,10 @@ impl<'a> StorageCtx<'a> {
         result: Result<T>,
         encode_ok: impl FnOnce(T) -> Bytes,
     ) -> PrecompileResult {
-        result.into_precompile_result(
-            self.gas_used(),
-            self.state_gas_used(),
-            self.gas_refunded(),
-            encode_ok,
-        )
+        match result {
+            Ok(output) => Ok(self.success_output(encode_ok(output))),
+            Err(error) => self.error_result(error),
+        }
     }
 }
 
@@ -409,16 +395,6 @@ impl StorageCtx<'_> {
     /// Overrides the block timestamp (test-utils only).
     pub fn set_timestamp(&self, timestamp: U256) {
         self.with_hashmap(|storage| storage.set_timestamp(timestamp))
-    }
-
-    /// Overrides the block beneficiary (test-utils only).
-    pub fn set_beneficiary(&self, beneficiary: Address) {
-        self.with_hashmap(|storage| storage.set_beneficiary(beneficiary))
-    }
-
-    /// Overrides the block number (test-utils only).
-    pub fn set_block_number(&self, block_number: u64) {
-        self.with_hashmap(|storage| storage.set_block_number(block_number))
     }
 
     /// Clears all transient storage (test-utils only).
@@ -553,6 +529,33 @@ mod tests {
 
         assert!(output.is_revert());
         assert_eq!(output.gas_refunded, 0, "error path must not propagate gas_refunded");
+    }
+
+    #[test]
+    fn result_output_gates_abi_decode_error_encoding_at_cobalt() {
+        let selector = [0xde, 0xad, 0xbe, 0xef];
+        let error =
+            || BasePrecompileError::AbiDecodeFailed { selector, error: "decoder error".into() };
+
+        let mut legacy = crate::hashmap::HashMapStorageProvider::new(1);
+        let legacy_output = StorageCtx::enter(&mut legacy, |ctx| {
+            ctx.result_output::<Bytes>(Err(error()), |output| output)
+        })
+        .unwrap();
+        assert_eq!(
+            legacy_output.bytes,
+            Bytes::from([selector.as_slice(), b"decoder error"].concat())
+        );
+
+        let mut cobalt = crate::hashmap::HashMapStorageProvider::new_with_storage_features(
+            1,
+            StorageFeatures::Cobalt,
+        );
+        let cobalt_output = StorageCtx::enter(&mut cobalt, |ctx| {
+            ctx.result_output::<Bytes>(Err(error()), |output| output)
+        })
+        .unwrap();
+        assert_eq!(cobalt_output.bytes, Bytes::from(selector.to_vec()));
     }
 
     #[test]

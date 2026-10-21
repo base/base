@@ -5,9 +5,7 @@ use alloc::vec::Vec;
 use alloy_consensus::{Receipt, ReceiptWithBloom, TxReceipt};
 use alloy_primitives::{Address, Bytes};
 use alloy_serde::OtherFields;
-use base_common_consensus::{
-    BaseReceipt, BaseReceiptEnvelope, DepositReceipt, DepositReceiptWithBloom,
-};
+use base_common_consensus::{BaseReceipt, BaseReceiptEnvelope, DepositReceipt, Eip8130Receipt};
 use serde::{Deserialize, Serialize};
 
 use crate::BaseLogResponse;
@@ -54,8 +52,9 @@ pub struct Eip8130ReceiptFields {
     /// Resolved gas payer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payer: Option<Address>,
-    /// Per-phase execution statuses.
-    #[serde(default, skip_serializing_if = "Vec::is_empty", with = "alloy_serde::quantity::vec")]
+    /// Per-phase execution statuses. Always serialized, as `[]` when `calls`
+    /// was empty, matching [`BaseTransactionReceipt`].
+    #[serde(default, with = "alloy_serde::quantity::vec")]
     pub phase_statuses: Vec<u8>,
     /// Opaque transaction metadata.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -320,27 +319,18 @@ impl From<BaseTransactionReceipt> for BaseReceiptEnvelope {
             BaseReceipt::Eip7702(receipt) => {
                 Self::Eip7702(convert_standard_receipt(receipt, logs_bloom))
             }
-            BaseReceipt::Eip8130(receipt) => {
-                // The consensus envelope only carries the standard receipt; the
-                // EIP-8130 `phaseStatuses` live on the RPC receipt, not in RLP.
-                Self::Eip8130(convert_standard_receipt(receipt.inner, logs_bloom))
-            }
+            BaseReceipt::Eip8130(receipt) => Self::Eip8130(
+                convert_standard_receipt(receipt.inner, logs_bloom)
+                    .map_receipt(|inner| Eip8130Receipt::new(inner, receipt.committed_phases)),
+            ),
             BaseReceipt::Deposit(receipt) => {
-                let consensus_logs =
-                    receipt.inner.logs.into_iter().map(|log| log.inner.inner).collect();
-                let consensus_receipt = DepositReceiptWithBloom {
-                    receipt: DepositReceipt {
-                        inner: Receipt {
-                            status: receipt.inner.status,
-                            cumulative_gas_used: receipt.inner.cumulative_gas_used,
-                            logs: consensus_logs,
-                        },
+                Self::Deposit(convert_standard_receipt(receipt.inner, logs_bloom).map_receipt(
+                    |inner| DepositReceipt {
+                        inner,
                         deposit_nonce: receipt.deposit_nonce,
                         deposit_receipt_version: receipt.deposit_receipt_version,
                     },
-                    logs_bloom,
-                };
-                Self::Deposit(consensus_receipt)
+                ))
             }
         }
     }
@@ -425,7 +415,8 @@ mod tests {
             "to": "0x4200000000000000000000000000000000000015",
             "transactionHash": "0xb7c74afdeb7c89fb9de2c312f49b38cb7a850ba36e064734c5223a477e83fdc9",
             "transactionIndex": "0x0",
-            "type": "0x79"
+            "type": "0x79",
+            "committedPhases": "0x0"
         }"#;
 
         let mut receipt: BaseTransactionReceipt = serde_json::from_str(s).unwrap();
@@ -507,5 +498,8 @@ mod tests {
 
         let other = OtherFields::try_from(fields).unwrap();
         assert_eq!(other.get("phaseStatuses"), Some(&json!(["0x1", "0x0"])));
+
+        let empty_calls = Eip8130ReceiptFields { payer: Some(payer), ..Default::default() };
+        assert_eq!(serde_json::to_value(&empty_calls).unwrap()["phaseStatuses"], json!([]));
     }
 }

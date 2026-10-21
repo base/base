@@ -12,7 +12,7 @@ use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::{
     BaseExecutionPayload, BaseExecutionPayloadEnvelope, BaseExecutionPayloadSidecar,
 };
-use base_protocol::L2BlockInfo;
+use base_protocol::{BaseTimeUpdateTx, L2BlockInfo};
 use tokio::sync::mpsc;
 
 use crate::{
@@ -84,6 +84,11 @@ pub struct InsertTask<EngineClient_: EngineClient> {
     payload_safety: InsertPayloadSafety,
     /// Whether the payload must extend the current unsafe chain.
     payload_policy: InsertPayloadPolicy,
+    /// Whether an EL-invalid payload should be consumed instead of retried in place.
+    ///
+    /// This is enabled for externally received unsafe payloads. Locally built payloads use
+    /// [`Self::new`] and retain their error so sealing can perform its fallback handling.
+    drop_invalid_payload: bool,
     /// Optional response channel used by callers that need insertion acknowledgement.
     result_tx: Option<mpsc::Sender<InsertTaskResult>>,
 }
@@ -102,6 +107,7 @@ impl<EngineClient_: EngineClient> InsertTask<EngineClient_> {
             envelope,
             payload_safety,
             payload_policy: InsertPayloadPolicy::ExtendingOnly,
+            drop_invalid_payload: false,
             result_tx: None,
         }
     }
@@ -112,7 +118,15 @@ impl<EngineClient_: EngineClient> InsertTask<EngineClient_> {
         rollup_config: Arc<RollupConfig>,
         envelope: BaseExecutionPayloadEnvelope,
     ) -> Self {
-        Self::new(client, rollup_config, envelope, InsertPayloadSafety::Unsafe)
+        Self {
+            client,
+            rollup_config,
+            envelope,
+            payload_safety: InsertPayloadSafety::Unsafe,
+            payload_policy: InsertPayloadPolicy::ExtendingOnly,
+            drop_invalid_payload: true,
+            result_tx: None,
+        }
     }
 
     /// Creates a new task to insert an unsafe payload and send insertion acknowledgement.
@@ -128,6 +142,7 @@ impl<EngineClient_: EngineClient> InsertTask<EngineClient_> {
             envelope,
             payload_safety: InsertPayloadSafety::Unsafe,
             payload_policy: InsertPayloadPolicy::ExtendingOnly,
+            drop_invalid_payload: true,
             result_tx: Some(result_tx),
         }
     }
@@ -144,6 +159,7 @@ impl<EngineClient_: EngineClient> InsertTask<EngineClient_> {
             envelope,
             payload_safety: InsertPayloadSafety::Unsafe,
             payload_policy: InsertPayloadPolicy::Authoritative,
+            drop_invalid_payload: false,
             result_tx: None,
         }
     }
@@ -253,6 +269,13 @@ impl<EngineClient_: EngineClient> InsertTask<EngineClient_> {
         if !self.is_unsafe_payload_applicable(state, &new_block_ref) {
             return Ok(state.sync_state.unsafe_head());
         }
+
+        BaseTimeUpdateTx::validate_block_timestamp(
+            &self.rollup_config,
+            &block.body.transactions,
+            block.header.number,
+            block.header.timestamp,
+        )?;
 
         // Insert the new payload.
         let insert_time_start = Instant::now();
@@ -367,6 +390,22 @@ impl<EngineClient_: EngineClient> EngineTaskExt for InsertTask<EngineClient_> {
         if self.result_tx.is_some() {
             self.send_channel_result(result).await;
             Ok(())
+        } else if let Err(InsertTaskError::UnexpectedPayloadStatus(PayloadStatusEnum::Invalid {
+            ref validation_error,
+        })) = result
+            && self.drop_invalid_payload
+        {
+            // EL-invalid externally received payloads are permanent failures. They must be
+            // consumed so the queue (and follow loop) can progress to the next payload instead
+            // of retrying this same payload forever. Callers that requested an acknowledgement
+            // still receive the temporary insert error through `result_tx` above.
+            warn!(
+                target: "engine",
+                error = %validation_error,
+                payload_safety = self.payload_safety.as_label(),
+                "Dropping externally received payload rejected by execution layer"
+            );
+            Ok(())
         } else {
             result.map(|_| ())
         }
@@ -375,18 +414,23 @@ impl<EngineClient_: EngineClient> EngineTaskExt for InsertTask<EngineClient_> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::{sync::Arc, time::Duration};
 
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{Address, B256, Bloom, FixedBytes, U256};
     use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadStatus, PayloadStatusEnum};
     use base_common_consensus::{BaseTxEnvelope, TxDeposit};
+    use base_common_genesis::{BaseUpgradeConfig, RollupConfig, UpgradeConfig};
     use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
-    use base_protocol::{BlockInfo, L1BlockInfoBedrock, L2BlockInfo};
+    use base_protocol::{
+        BaseTimeScheduleError, BaseTimeUpdateTx, BlockInfo, L1BlockInfoBedrock, L2BlockInfo,
+    };
+    use tokio::{sync::watch, time::timeout};
 
     use super::{InsertPayloadPolicy, InsertPayloadSafety, InsertTask};
     use crate::{
-        Engine, EngineTaskExt, InsertTaskError,
+        Engine, EngineTask, EngineTaskError, EngineTaskErrorSeverity, EngineTaskExt,
+        InsertTaskError,
         test_utils::{TestEngineStateBuilder, test_engine_client_builder},
     };
 
@@ -443,6 +487,36 @@ mod tests {
 
     fn bedrock_payload(block_number: u64) -> BaseExecutionPayload {
         bedrock_payload_with_parent(block_number, B256::ZERO)
+    }
+
+    fn denim_config() -> Arc<RollupConfig> {
+        Arc::new(RollupConfig {
+            block_time: 2,
+            upgrades: UpgradeConfig {
+                base: BaseUpgradeConfig { denim: Some(2), ..Default::default() },
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+    }
+
+    fn denim_payload(
+        block_number: u64,
+        timestamp: u64,
+        timestamp_millis_part: u16,
+    ) -> BaseExecutionPayload {
+        let BaseExecutionPayload::V1(mut payload) = bedrock_payload(block_number) else {
+            unreachable!()
+        };
+        payload.timestamp = timestamp;
+        payload.transactions.push(
+            BaseTxEnvelope::from(
+                BaseTimeUpdateTx::new(timestamp_millis_part).unwrap().into_deposit_tx(block_number),
+            )
+            .encoded_2718()
+            .into(),
+        );
+        BaseExecutionPayload::V1(payload)
     }
 
     fn canyon_payload(block_number: u64) -> BaseExecutionPayload {
@@ -609,6 +683,128 @@ mod tests {
             "stale unsafe payload should not be sent to engine_newPayload"
         );
         assert_eq!(state.sync_state.unsafe_head(), current_unsafe);
+    }
+
+    #[tokio::test]
+    async fn invalid_new_payload_is_dropped_and_drain_continues() {
+        let invalid_client = Arc::new(
+            test_engine_client_builder()
+                .with_new_payload_v2_response(PayloadStatus {
+                    status: PayloadStatusEnum::Invalid {
+                        validation_error: "invalid transaction".into(),
+                    },
+                    latest_valid_hash: None,
+                })
+                .build(),
+        );
+        let valid_client = test_client();
+        let config = Arc::new(base_common_genesis::RollupConfig::default());
+        let initial_state = TestEngineStateBuilder::new().build();
+        let (state_tx, _) = watch::channel(initial_state);
+        let (queue_tx, queue_rx) = watch::channel(0usize);
+        let mut engine = Engine::new(initial_state, state_tx, queue_tx);
+
+        for client in [invalid_client, Arc::clone(&valid_client)] {
+            engine.enqueue(EngineTask::Insert(Box::new(InsertTask::unsafe_payload(
+                client,
+                Arc::clone(&config),
+                BaseExecutionPayloadEnvelope {
+                    parent_beacon_block_root: None,
+                    execution_payload: bedrock_payload(1),
+                },
+            ))));
+        }
+
+        timeout(Duration::from_millis(100), engine.drain())
+            .await
+            .expect("an invalid payload must not retry in place")
+            .expect("invalid payload must be dropped so the following payload can be inserted");
+
+        assert_eq!(*queue_rx.borrow(), 0, "all queued payloads should be consumed");
+        assert_eq!(engine.state().sync_state.unsafe_head().block_info.number, 1);
+        assert!(
+            valid_client.last_new_payload_v2().await.is_some(),
+            "the payload after the invalid one should be inserted"
+        );
+    }
+
+    #[tokio::test]
+    async fn denim_schedule_mismatch_is_rejected_before_new_payload() {
+        let client = test_client();
+        let mut state = TestEngineStateBuilder::new().build();
+
+        for (payload, expected_error) in [
+            (
+                denim_payload(2, 3, 200),
+                BaseTimeScheduleError::InvalidTimestamp { expected: 2, actual: 3 },
+            ),
+            (
+                denim_payload(2, 2, 400),
+                BaseTimeScheduleError::InvalidTimestampMillisPart { expected: 200, actual: 400 },
+            ),
+        ] {
+            let error = InsertTask::unsafe_payload(
+                Arc::clone(&client),
+                denim_config(),
+                BaseExecutionPayloadEnvelope {
+                    parent_beacon_block_root: None,
+                    execution_payload: payload,
+                },
+            )
+            .execute_with_result(&mut state)
+            .await
+            .unwrap_err();
+
+            assert_eq!(error.severity(), EngineTaskErrorSeverity::Critical);
+            assert!(matches!(
+                &error,
+                InsertTaskError::InvalidBaseTimeSchedule(actual) if *actual == expected_error
+            ));
+        }
+
+        assert!(client.last_new_payload_v2().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn local_denim_schedule_mismatch_is_returned_to_caller() {
+        let client = test_client();
+        let mut state = TestEngineStateBuilder::new().build();
+        let envelope = BaseExecutionPayloadEnvelope {
+            parent_beacon_block_root: None,
+            execution_payload: denim_payload(2, 3, 200),
+        };
+
+        let error = InsertTask::new(
+            Arc::clone(&client),
+            denim_config(),
+            envelope,
+            InsertPayloadSafety::Unsafe,
+        )
+        .execute(&mut state)
+        .await
+        .unwrap_err();
+
+        assert!(matches!(error, InsertTaskError::InvalidBaseTimeSchedule(_)));
+        assert!(client.last_new_payload_v2().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn stale_unsafe_payload_is_dropped_before_schedule_validation() {
+        let client = test_client();
+        let current_unsafe = l2_block_info(4, B256::with_last_byte(4), B256::with_last_byte(3));
+        let mut state = TestEngineStateBuilder::new().with_unsafe_head(current_unsafe).build();
+        let envelope = BaseExecutionPayloadEnvelope {
+            parent_beacon_block_root: None,
+            execution_payload: denim_payload(2, 3, 200),
+        };
+
+        let result = InsertTask::unsafe_payload(Arc::clone(&client), denim_config(), envelope)
+            .execute_with_result(&mut state)
+            .await
+            .expect("stale payload should be dropped before validation");
+
+        assert_eq!(result, current_unsafe);
+        assert!(client.last_new_payload_v2().await.is_none());
     }
 
     #[tokio::test]

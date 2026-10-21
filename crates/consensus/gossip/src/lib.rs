@@ -53,6 +53,8 @@ mod handler;
 pub use handler::{BlockHandler, Handler};
 
 mod driver;
+#[cfg(test)]
+pub use driver::GossipPair;
 pub use driver::{GossipDriver, GossipDriverConfig};
 
 mod block_validity;

@@ -22,12 +22,6 @@ pub(crate) struct RethCommand {
     pub(crate) command: RethSubcommand,
 }
 
-impl RethCommand {
-    pub(crate) fn run(self) -> eyre::Result<()> {
-        self.command.run()
-    }
-}
-
 /// Subcommands for `base reth`.
 #[derive(Subcommand, Debug)]
 #[non_exhaustive]

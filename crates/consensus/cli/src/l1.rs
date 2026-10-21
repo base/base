@@ -3,7 +3,9 @@
 use std::{num::ParseIntError, time::Duration};
 
 use alloy_primitives::Address;
+use base_common_genesis::RollupConfig;
 use base_consensus_providers::L1_RPC_TIMEOUT;
+use tracing::warn;
 use url::Url;
 
 const DEFAULT_L1_TRUST_RPC: bool = true;
@@ -54,14 +56,21 @@ pub struct L1ClientArgs {
         env = "BASE_NODE_L1_DANGEROUSLY_OVERRIDE_DA_BATCHER_SENDER"
     )]
     pub l1_da_batcher_sender_override: Option<Address>,
+    /// Dangerous validator-only override for the batch inbox accepted by the L1
+    /// data-availability pipeline.
+    #[arg(
+        long = "l1.dangerously-override-da-batch-inbox",
+        env = "BASE_NODE_L1_DANGEROUSLY_OVERRIDE_DA_BATCH_INBOX"
+    )]
+    pub l1_da_batch_inbox_override: Option<Address>,
     /// Number of L1 blocks to keep distance from the L1 head for the verifier (derivation
     /// pipeline). Controlled via `BASE_NODE_VERIFIER_L1_CONFS`. Defaults to 0, meaning
     /// the verifier derives from the latest L1 head with no confirmation delay.
     #[arg(long = "l1.verifier-confs", default_value = "0", env = "BASE_NODE_VERIFIER_L1_CONFS")]
     pub l1_verifier_confs: u64,
-    /// Interval, in milliseconds, between polls of the L1 `finalized` block tag. This governs how
-    /// quickly the node observes new L1 finality checkpoints and, in turn, advances its finalized
-    /// L2 head. Controlled via `BASE_NODE_FINALIZED_POLL_INTERVAL_MS`. When unset, a
+    /// Interval, in milliseconds, between polls of the L1 `finalized` and `safe` block tags. This
+    /// governs how quickly the node observes new L1 finality checkpoints and, in turn, advances its
+    /// finalized L2 head. Controlled via `BASE_NODE_FINALIZED_POLL_INTERVAL_MS`. When unset, a
     /// chain-specific default is used (one L1 epoch, ~384s, on Ethereum mainnet/Sepolia).
     #[arg(
         long = "l1.finalized-poll-interval-ms",
@@ -82,8 +91,26 @@ impl Default for L1ClientArgs {
             l1_beacon: Url::parse("http://localhost:5052").unwrap(),
             l1_slot_duration_override: None,
             l1_da_batcher_sender_override: None,
+            l1_da_batch_inbox_override: None,
             l1_verifier_confs: 0,
             l1_finalized_poll_interval: None,
+        }
+    }
+}
+
+impl L1ClientArgs {
+    /// Applies the configured L1 data-availability batch inbox override.
+    pub fn apply_da_batch_inbox_override(&self, config: &mut RollupConfig) {
+        let Some(inbox) = self.l1_da_batch_inbox_override else {
+            return;
+        };
+        if config.batch_inbox_address != inbox {
+            warn!(
+                configured_inbox = %config.batch_inbox_address,
+                override_inbox = %inbox,
+                "overriding the L1 data-availability batch inbox filter"
+            );
+            config.batch_inbox_address = inbox;
         }
     }
 }

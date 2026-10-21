@@ -50,7 +50,7 @@ use alloy_network::{
     Ethereum, EthereumWallet, Network, NetworkTransactionBuilder, NetworkWallet,
     TransactionBuilder, TransactionBuilderError,
 };
-use alloy_primitives::{Address, B256, Bytes};
+use alloy_primitives::{Address, B256, Bytes, keccak256};
 use alloy_provider::Provider;
 use alloy_rpc_types_eth::{TransactionReceipt, TransactionRequest};
 use alloy_transport::TransportError;
@@ -62,8 +62,8 @@ use tracing::{debug, error, info, warn};
 
 use crate::{
     BlobTxBuilder, BumpedFees, FeeCalculator, FeeOverride, GasPriceCaps, NonceManager,
-    RpcErrorClassifier, SendHandle, SendResponse, SendState, SignerConfig, TxCandidate, TxManager,
-    TxManagerConfig, TxManagerError, TxManagerResult, TxMetrics,
+    RpcErrorClassifier, SendHandle, SendOutcome, SendResponse, SendState, SignerConfig,
+    TxCandidate, TxManager, TxManagerConfig, TxManagerError, TxManagerResult, TxMetrics,
 };
 
 /// Number of wei in one gwei (10^9), as `f64` for fractional-precision
@@ -113,9 +113,8 @@ impl PreparedTx {
 
 /// Mutable fee-bump state tracked across iterations in the send loop.
 ///
-/// Groups the values that [`SimpleTxManager::try_fee_bump`] and
-/// [`SimpleTxManager::apply_bump_result`] update on each successful
-/// fee bump so they can be passed as a single argument.
+/// Groups the values that [`SimpleTxManager::try_fee_bump`] updates on each
+/// successful fee bump so they can be passed as a single argument.
 #[derive(Debug)]
 struct BumpState {
     /// Current maximum priority fee per gas (tip).
@@ -310,6 +309,12 @@ where
         })
     }
 
+    /// Uses the `pending` block tag for nonce initialization and after nonce resets.
+    pub fn with_pending_nonce(mut self) -> Self {
+        self.nonce_manager = self.nonce_manager.with_pending_tag();
+        self
+    }
+
     /// Returns a reference to the RPC provider.
     pub const fn provider(&self) -> &P {
         &self.provider
@@ -390,7 +395,7 @@ where
     ///
     /// Calls [`check_fee_limit`](Self::check_fee_limit) for the gas fee cap,
     /// and when `blob_fee_cap` is `Some`, also checks the blob fee cap
-    /// against [`raw_blob_baseline`](Self::raw_blob_baseline).
+    /// against `caps.raw_blob_fee_cap`.
     fn check_fee_limits(
         &self,
         fee_cap: u128,
@@ -399,21 +404,15 @@ where
     ) -> TxManagerResult<()> {
         self.check_fee_limit(fee_cap, caps.raw_gas_fee_cap)?;
         if let Some(blob_cap) = blob_fee_cap {
-            self.check_fee_limit(blob_cap, self.raw_blob_baseline(caps)?)?;
+            // A missing raw blob baseline is a caller bug on the blob transaction path.
+            let baseline = caps.raw_blob_fee_cap.ok_or_else(|| {
+                TxManagerError::Unsupported(
+                    "raw_blob_fee_cap missing on blob transaction path".into(),
+                )
+            })?;
+            self.check_fee_limit(blob_cap, baseline)?;
         }
         Ok(())
-    }
-
-    /// Returns the raw (pre-minimum) blob fee cap from `caps`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TxManagerError::Unsupported`] if `raw_blob_fee_cap` is `None`,
-    /// which indicates a caller bug (blob tx path must always populate this).
-    fn raw_blob_baseline(&self, caps: &GasPriceCaps) -> TxManagerResult<u128> {
-        caps.raw_blob_fee_cap.ok_or_else(|| {
-            TxManagerError::Unsupported("raw_blob_fee_cap missing on blob transaction path".into())
-        })
     }
 
     /// Constructs and signs a transaction, retrying on transient errors.
@@ -598,7 +597,7 @@ where
                 let raw_blob_cap = FeeCalculator::calc_blob_fee_cap(raw_blob_base_fee);
                 let blob_base_fee = raw_blob_base_fee.max(self.config.min_blob_fee);
                 let blob_cap = FeeCalculator::calc_blob_fee_cap(blob_base_fee);
-                self.metrics.record_blob_fee(blob_cap as f64 / WEI_PER_GWEI);
+                self.metrics.record_blob_fee_cap(blob_cap as f64 / WEI_PER_GWEI);
                 (Some(blob_cap), Some(raw_blob_cap))
             }
             None => (None, None),
@@ -1012,11 +1011,12 @@ where
 
         let latency_ms =
             u64::try_from(self.runtime.now().saturating_sub(start).as_millis()).unwrap_or(u64::MAX);
-        self.metrics.record_send_latency(latency_ms);
 
         if result.is_ok() {
+            self.metrics.record_send_latency(latency_ms, SendOutcome::Confirmed);
             self.metrics.record_tx_confirmed();
         } else {
+            self.metrics.record_send_latency(latency_ms, SendOutcome::Failed);
             self.metrics.record_tx_failed();
         }
 
@@ -1141,28 +1141,8 @@ where
                 return Ok(receipt);
             }
 
-            // Respond immediately to the bump-fees flag set by
-            // process_send_error on retryable errors, rather than waiting
-            // for the next resubmission timer tick. take_bump_fees clears
-            // the flag atomically so a failed bump does not re-trigger.
-            if send_state.take_bump_fees() {
-                if let Some(abort) =
-                    self.try_fee_bump(candidate, send_state, &receipt_tx, &mut bump).await
-                {
-                    return Err(abort);
-                }
-                // Reset the bump ticker so we get a full interval
-                // before the next timer-driven bump.
-                bump_ticker = self.runtime.interval(self.config.resubmission_timeout);
-                bump_ticker.next().await;
-                continue;
-            }
-
-            // Determine which event fired. handle_fee_bump (and
-            // transitively prepare()) is NOT cancellation-safe, so it
-            // must not run inside tokio::select!. The select block only
-            // captures which arm won; fee bump work runs to completion
-            // outside the select block.
+            // Preparation is not cancellation-safe, so fee bump work must run
+            // to completion outside the select block.
             tokio::select! {
                 biased;
                 result = receipt_rx.recv() => {
@@ -1185,12 +1165,8 @@ where
                 _ = bump_ticker.next() => {}
             };
 
-            // Bump tick fired — run fee bump logic.
-            if let Some(abort) =
-                self.try_fee_bump(candidate, send_state, &receipt_tx, &mut bump).await
-            {
-                return Err(abort);
-            }
+            self.try_fee_bump(candidate, send_state, &receipt_tx, &mut bump).await;
+            // Even a failed publication must wait a full interval before another bump.
             bump_ticker = self.runtime.interval(self.config.resubmission_timeout);
             bump_ticker.next().await;
         }
@@ -1198,65 +1174,29 @@ where
 
     /// Performs a fee bump attempt and applies the result to the tracked state.
     ///
-    /// Returns `Some(error)` if the send loop must abort, `None` to continue.
-    ///
-    /// When a bump attempt yields a non-retryable error but the
-    /// receipt-polling task has already recorded a mined tx on
-    /// `send_state`, the abort is suppressed so the send loop can
-    /// deliver the receipt on the next iteration. This avoids a
-    /// false-negative failure report when, for example, a fee bump
-    /// publish gets `NonceTooLow` because the original tx was already
-    /// confirmed.
+    /// A failed bump is logged and the send keeps waiting, because a version published
+    /// earlier may still be mined. Aborting is left to [`SendState::critical_error_at`].
     async fn try_fee_bump(
         &self,
         candidate: &TxCandidate,
         send_state: &Arc<SendState>,
         receipt_tx: &mpsc::Sender<TransactionReceipt>,
         state: &mut BumpState,
-    ) -> Option<TxManagerError> {
-        // If the receipt-polling task has already detected the original tx
+    ) {
+        // If a receipt-polling task has already detected a published version
         // on-chain, skip the fee bump entirely. This avoids a race where
         // `estimate_gas` on the replacement tx reverts because the
-        // original calldata has already executed (e.g. `GameAlreadyExists`),
+        // calldata has already executed (e.g. `GameAlreadyExists`),
         // producing noisy error logs even though the proposal will succeed.
         if send_state.is_waiting_for_confirmation() {
-            info!("skipping fee bump — original tx already mined, awaiting confirmation");
-            return None;
+            info!("skipping fee bump, a published tx is already mined and awaits confirmation");
+            return;
         }
 
-        let result = self.handle_fee_bump(candidate, send_state, receipt_tx, state).await;
-        Self::apply_bump_result_with_suppression(result, state, send_state)
-    }
-
-    /// Applies a fee bump result with mined-tx suppression.
-    ///
-    /// If the bump failed with a non-retryable error *but* the original
-    /// tx was already mined ([`SendState::is_waiting_for_confirmation`]),
-    /// the error is suppressed and logged at `info` level (not `error`).
-    /// This prevents false-positive alerts in the benign "tx confirmed
-    /// while we were bumping" case.
-    ///
-    /// On success or retryable error, delegates directly to
-    /// [`apply_bump_result`](Self::apply_bump_result).
-    fn apply_bump_result_with_suppression(
-        result: TxManagerResult<BumpState>,
-        state: &mut BumpState,
-        send_state: &SendState,
-    ) -> Option<TxManagerError> {
-        // Check for mined-tx suppression *before* apply_bump_result so
-        // the `error!` log inside that function is never emitted for the
-        // benign "tx already confirmed" case.
-        if let Err(ref e) = result
-            && !e.is_retryable()
-            && send_state.is_waiting_for_confirmation()
-        {
-            info!(
-                error = %e,
-                "fee bump failed but original tx already mined, suppressing abort"
-            );
-            return None;
+        match self.handle_fee_bump(candidate, send_state, receipt_tx, state).await {
+            Ok(new_state) => *state = new_state,
+            Err(error) => warn!(error = %error, "fee bump failed, will retry next tick"),
         }
-        Self::apply_bump_result(result, state)
     }
 
     /// Handles a single fee bump iteration.
@@ -1331,32 +1271,6 @@ where
         Ok(BumpState::from_prepared(prepared, new_hash))
     }
 
-    /// Applies the result of a fee bump attempt, updating the tracked fee
-    /// state on success or logging the error on failure.
-    ///
-    /// Returns `Some(error)` when the caller must abort the send loop
-    /// (non-retryable error), or `None` when the loop should continue
-    /// (success or retryable error).
-    fn apply_bump_result(
-        result: TxManagerResult<BumpState>,
-        state: &mut BumpState,
-    ) -> Option<TxManagerError> {
-        match result {
-            Ok(new_state) => {
-                *state = new_state;
-                None
-            }
-            Err(e) if !e.is_retryable() => {
-                error!(error = %e, "non-retryable error during fee bump");
-                Some(e)
-            }
-            Err(e) => {
-                warn!(error = %e, "fee bump failed, will retry next tick");
-                None
-            }
-        }
-    }
-
     /// Publishes the initial transaction, retrying a transient nonce gap.
     ///
     /// Concurrent sends reserve nonces in order but may reach different RPC
@@ -1401,7 +1315,7 @@ where
     /// Broadcasts a raw transaction to the network.
     ///
     /// On success, records a successful publish on the [`SendState`] and
-    /// returns the transaction hash. On [`TxManagerError::AlreadyKnown`]
+    /// returns the locally computed transaction hash. On [`TxManagerError::AlreadyKnown`]
     /// after a prior successful publish, treats it as success — records
     /// another successful publish and returns `Ok(last_tx_hash)` so
     /// callers do not need to special-case this variant. All other errors
@@ -1410,6 +1324,15 @@ where
     /// The `last_tx_hash` parameter is the hash from the most recent
     /// successful publish. When the network returns `AlreadyKnown` on
     /// resubmission, this hash is returned as the successful result.
+    ///
+    /// The returned hash never comes from the RPC. It is the decoded envelope's
+    /// [`TxEnvelope::tx_hash`], which excludes any EIP-4844 blob sidecar. If `raw_tx`
+    /// does not decode as a known envelope, it falls back to `keccak256(raw_tx)`, the
+    /// EIP-2718 hash of any typed transaction whose network encoding equals its
+    /// consensus encoding; a well-formed RPC hash is not preferred, because the RPC
+    /// reply is advisory. A different or undecodable hash in a valid JSON-RPC success
+    /// response only logs a warning; only a transport failure, an invalid response
+    /// envelope, or a JSON-RPC error response is a publication error.
     ///
     /// # Errors
     ///
@@ -1420,23 +1343,48 @@ where
         raw_tx: &Bytes,
         last_tx_hash: Option<B256>,
     ) -> TxManagerResult<B256> {
+        let local_tx_hash = match TxEnvelope::decode_2718_exact(raw_tx) {
+            Ok(envelope) => *envelope.tx_hash(),
+            Err(error) => {
+                // Unknown transaction types must not turn a successful broadcast into an error.
+                warn!(%error, "could not decode transaction, hashing raw bytes as a fallback");
+                keccak256(raw_tx)
+            }
+        };
+        // Decode the result separately so invalid response envelopes remain publication errors.
         let result = RuntimeTimeout::run(
             &self.runtime,
             self.config.network_timeout,
-            self.provider.send_raw_transaction(raw_tx),
+            self.provider
+                .client()
+                .request::<_, serde_json::Value>("eth_sendRawTransaction", (raw_tx,)),
         )
         .await;
 
         match result {
-            Ok(Ok(pending)) => {
-                let tx_hash = *pending.tx_hash();
+            Ok(Ok(response)) => {
+                match serde_json::from_value::<B256>(response) {
+                    Ok(rpc_tx_hash) if rpc_tx_hash != local_tx_hash => {
+                        warn!(
+                            local_tx_hash = %local_tx_hash,
+                            rpc_tx_hash = %rpc_tx_hash,
+                            "RPC returned a different transaction hash, using locally computed hash"
+                        );
+                    }
+                    Err(_) => {
+                        warn!(
+                            local_tx_hash = %local_tx_hash,
+                            "RPC returned an undecodable transaction hash, treating publication as successful"
+                        );
+                    }
+                    Ok(_) => {}
+                }
                 send_state.record_successful_publish();
-                info!(tx_hash = %tx_hash, "transaction published");
-                Ok(tx_hash)
+                info!(tx_hash = %local_tx_hash, "transaction published");
+                Ok(local_tx_hash)
             }
             Ok(Err(e)) => {
                 let classified = self.classify_and_record_rpc(&e);
-
                 // AlreadyKnown on resubmission is a success — the tx is in
                 // the mempool from a prior publish. Return the previous hash.
                 if classified.is_already_known() && send_state.has_published() {
@@ -1459,6 +1407,10 @@ where
                     warn!(error = %classified, "publish failed, will retry");
                 } else if matches!(classified, TxManagerError::ExecutionReverted { .. }) {
                     error!(error = %classified, "transaction execution reverted");
+                } else if matches!(classified, TxManagerError::NonceTooLow)
+                    && send_state.has_published()
+                {
+                    warn!(error = %classified, "nonce too low, a published version may be mined");
                 } else {
                     error!(error = %classified, "publish failed with non-retryable error");
                 }
@@ -1479,8 +1431,7 @@ where
     /// sends it through the provided channel once confirmed.
     ///
     /// The task delegates to [`wait_mined`](Self::wait_mined), which polls
-    /// internally until the transaction is confirmed or the manager shuts
-    /// down.
+    /// internally until the transaction is confirmed or the manager shuts down.
     ///
     /// Returns the [`JoinHandle`](tokio::task::JoinHandle) of the spawned
     /// task so callers can await its completion if needed.
@@ -1494,8 +1445,8 @@ where
     /// Accumulated tasks are bounded by three mechanisms:
     /// - The `closed` flag causes all pollers to exit on shutdown.
     /// - Each poller exits once it delivers a receipt through the mpsc
-    ///   channel (or finds the channel closed because a different poller
-    ///   already delivered).
+    ///   channel, or as soon as the receiver is dropped because the send
+    ///   loop returned or was cancelled.
     /// - Polling frequency is governed by `receipt_query_interval`, so
     ///   RPC load is proportional to `bump_count × 1/interval`.
     pub fn wait_for_tx(
@@ -1509,7 +1460,13 @@ where
         tokio::spawn(async move {
             debug!(tx_hash = %tx_hash, "starting receipt polling");
 
-            let receipt = Self::wait_mined(&send_state, &provider, tx_hash, &config, &closed).await;
+            // Stop polling once the receiver is dropped. Nobody can consume the receipt then.
+            let polling = Self::wait_mined(&send_state, &provider, tx_hash, &config, &closed);
+            let receipt = tokio::select! {
+                biased;
+                () = receipt_tx.closed() => None,
+                receipt = polling => receipt,
+            };
             if let Some(receipt) = receipt {
                 // Best-effort send — if the receiver is dropped, the
                 // send loop has already exited (e.g., another tx confirmed).
@@ -1520,7 +1477,11 @@ where
         })
     }
 
-    /// Spawns a receipt polling task on the configured runtime.
+    /// Spawns a task on the configured runtime that polls the receipt of one published
+    /// version of the transaction.
+    ///
+    /// The task runs until the version is confirmed, the send ends or the manager shuts
+    /// down.
     fn spawn_wait_for_tx(
         &self,
         send_state: Arc<SendState>,
@@ -1531,7 +1492,12 @@ where
         self.runtime.spawn(async move {
             debug!(tx_hash = %tx_hash, "starting receipt polling");
 
-            let receipt = manager.wait_mined_for_tx(&send_state, tx_hash).await;
+            // Stop polling once the receiver is dropped. Nobody can consume the receipt then.
+            let receipt = tokio::select! {
+                biased;
+                () = receipt_tx.closed() => None,
+                receipt = Self::wait_mined_using_runtime(&manager.runtime, &send_state, &manager.provider, tx_hash, &manager.config, &manager.closed) => receipt,
+            };
             if let Some(receipt) = receipt {
                 let _ = receipt_tx.send(receipt).await;
             }
@@ -1540,29 +1506,12 @@ where
         });
     }
 
-    /// Polls for a transaction receipt using this manager's configured runtime.
-    async fn wait_mined_for_tx(
-        &self,
-        send_state: &SendState,
-        tx_hash: B256,
-    ) -> Option<TransactionReceipt> {
-        Self::wait_mined_using_runtime(
-            &self.runtime,
-            send_state,
-            &self.provider,
-            tx_hash,
-            &self.config,
-            &self.closed,
-        )
-        .await
-    }
-
     /// Polls for a transaction receipt at `receipt_query_interval` until
     /// the transaction is mined and confirmed to the required depth.
     ///
     /// Returns `Some(receipt)` when the transaction reaches
-    /// `num_confirmations` depth, or `None` if the manager is closed or
-    /// the `confirmation_timeout` deadline is exceeded.
+    /// `num_confirmations` depth, or `None` if the manager is closed. Callers
+    /// that need a bound wrap it in a timeout.
     pub async fn wait_mined(
         send_state: &SendState,
         provider: &P,
@@ -1593,7 +1542,6 @@ where
     where
         Rt: Runtime,
     {
-        let deadline = runtime.now() + config.confirmation_timeout;
         let mut poll_immediately = true;
 
         loop {
@@ -1622,15 +1570,6 @@ where
                 Err(e) => {
                     warn!(tx_hash = %tx_hash, error = %e, "receipt query failed");
                 }
-            }
-
-            if runtime.now() >= deadline {
-                warn!(
-                    tx_hash = %tx_hash,
-                    timeout = ?config.confirmation_timeout,
-                    "confirmation timeout exceeded",
-                );
-                return None;
             }
 
             // Check shutdown state each iteration to support cancellation.
@@ -1826,16 +1765,25 @@ where
 
 #[cfg(test)]
 mod tests {
+    //! The receipt-checking provider wraps Alloy's concrete RPC builders, which automock
+    //! cannot construct, to reject confirmation under an RPC-supplied hash.
+
     use std::{
         sync::{Arc, atomic::AtomicBool},
         time::Duration,
     };
 
-    use alloy_consensus::TxEip1559;
+    use alloy_consensus::{
+        Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom, SignableTransaction, TxEip1559,
+        TxEip4844, TxEip4844WithSidecar,
+    };
+    use alloy_eips::{Encodable2718, eip4844::Blob};
     use alloy_network::EthereumWallet;
     use alloy_node_bindings::Anvil;
-    use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
-    use alloy_provider::{ProviderBuilder, RootProvider};
+    use alloy_primitives::{Address, B256, Bloom, Bytes, TxKind, U256, keccak256};
+    use alloy_provider::{Provider, ProviderBuilder, ProviderCall, RootProvider};
+    use alloy_rpc_types_eth::{Block, TransactionReceipt, TransactionRequest};
+    use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
     use alloy_transport::mock::Asserter;
     use base_runtime::{
@@ -1843,11 +1791,16 @@ mod tests {
         deterministic::{Config, Runner},
     };
     use rstest::rstest;
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::TcpListener,
+        sync::mpsc,
+    };
 
-    use super::{BumpState, PreparedTx, SimpleTxManager, TxEnvelope};
+    use super::{PreparedTx, SimpleTxManager, TxEnvelope};
     use crate::{
-        GasPriceCaps, NonceManager, NoopTxMetrics, SendState, TxCandidate, TxManagerConfig,
-        TxManagerError,
+        BlobTxBuilder, GasPriceCaps, NonceManager, NoopTxMetrics, SendState, TxCandidate,
+        TxManager, TxManagerConfig, TxManagerError,
     };
 
     async fn setup() -> (SimpleTxManager<RootProvider>, alloy_node_bindings::AnvilInstance) {
@@ -1869,10 +1822,280 @@ mod tests {
         (manager, anvil)
     }
 
+    #[rstest]
+    #[case::latest_by_default(false, 0)]
+    #[case::pending_opt_in(true, 1)]
+    #[tokio::test]
+    async fn nonce_initialization_block_tag(#[case] pending: bool, #[case] expected_nonce: u64) {
+        let anvil = Anvil::new().arg("--no-mining").spawn();
+        let provider = RootProvider::new_http(anvil.endpoint_url());
+        let signer: PrivateKeySigner = anvil.keys()[0].clone().into();
+        let _pending = provider
+            .send_transaction(
+                TransactionRequest::default()
+                    .from(signer.address())
+                    .to(Address::with_last_byte(0x42))
+                    .value(U256::from(1))
+                    .gas_limit(21_000),
+            )
+            .await
+            .expect("transaction should enter the mempool");
+        let manager = SimpleTxManager::from_wallet(
+            provider,
+            EthereumWallet::from(signer),
+            TxManagerConfig::default(),
+            anvil.chain_id(),
+            Arc::new(NoopTxMetrics),
+        )
+        .await
+        .unwrap();
+        let manager = if pending { manager.with_pending_nonce() } else { manager };
+
+        assert_eq!(manager.nonce_manager().next_nonce().await.unwrap().nonce(), expected_nonce);
+    }
+
+    #[derive(Debug, Clone)]
+    struct ReceiptHashProvider {
+        inner: RootProvider,
+        local_tx_hash: B256,
+    }
+
+    impl Provider for ReceiptHashProvider {
+        fn root(&self) -> &RootProvider {
+            &self.inner
+        }
+
+        fn get_transaction_receipt(
+            &self,
+            hash: B256,
+        ) -> ProviderCall<(B256,), Option<TransactionReceipt>> {
+            assert_eq!(hash, self.local_tx_hash, "receipt polling must use the local hash");
+            self.inner.get_transaction_receipt(hash)
+        }
+    }
+
+    fn signed_eip1559() -> TxEnvelope {
+        let tx = TxEip1559 {
+            chain_id: 1,
+            gas_limit: 21_000,
+            max_fee_per_gas: 2_000_000_000,
+            max_priority_fee_per_gas: 1_000_000_000,
+            to: TxKind::Call(Address::with_last_byte(0x42)),
+            ..Default::default()
+        };
+        let signature = PrivateKeySigner::random().sign_hash_sync(&tx.signature_hash()).unwrap();
+        tx.into_signed(signature).into()
+    }
+
+    #[tokio::test]
+    async fn publish_tx_confirms_local_hash_when_rpc_hash_differs() {
+        let envelope = signed_eip1559();
+        let raw_tx = envelope.encoded_2718().into();
+        let local_tx_hash = *envelope.tx_hash();
+        let rpc_tx_hash = B256::with_last_byte(0x42);
+        let (receipt, block) = mined_receipt(local_tx_hash, 10);
+        let asserter = Asserter::new();
+        asserter.push_success(&1u64);
+        asserter.push_success(&rpc_tx_hash);
+        asserter.push_success(&10u64);
+        asserter.push_success(&Some(&receipt));
+        asserter.push_success(&Some(&block));
+        let provider = ReceiptHashProvider {
+            inner: ProviderBuilder::default().connect_mocked_client(asserter),
+            local_tx_hash,
+        };
+        let manager = SimpleTxManager::from_wallet(
+            provider,
+            EthereumWallet::from(PrivateKeySigner::random()),
+            TxManagerConfig { num_confirmations: 1, ..TxManagerConfig::default() },
+            1,
+            Arc::new(NoopTxMetrics),
+        )
+        .await
+        .expect("should construct manager");
+        let send_state = SendState::new(3).expect("should construct send state");
+
+        let tx_hash = manager
+            .publish_tx(&send_state, &raw_tx, None)
+            .await
+            .expect("an unexpected RPC hash must not fail publication");
+        let confirmed = tokio::time::timeout(
+            Duration::from_secs(1),
+            SimpleTxManager::<ReceiptHashProvider>::wait_mined(
+                &send_state,
+                manager.provider(),
+                tx_hash,
+                manager.config(),
+                &AtomicBool::new(false),
+            ),
+        )
+        .await
+        .expect("local transaction should confirm")
+        .expect("should return a confirmed receipt");
+
+        assert_eq!(tx_hash, local_tx_hash);
+        assert_eq!(confirmed.transaction_hash, local_tx_hash);
+        assert_ne!(confirmed.transaction_hash, rpc_tx_hash);
+        assert!(send_state.has_published());
+    }
+
+    #[tokio::test]
+    async fn publish_tx_succeeds_when_rpc_hash_is_undecodable() {
+        let envelope = signed_eip1559();
+        let raw_tx = envelope.encoded_2718().into();
+        let asserter = Asserter::new();
+        asserter.push_success(&1u64);
+        asserter.push_success(&"0xnot-a-hash");
+        let provider = ProviderBuilder::new().connect_mocked_client(asserter);
+        let manager = SimpleTxManager::from_wallet(
+            provider,
+            EthereumWallet::from(PrivateKeySigner::random()),
+            TxManagerConfig::default(),
+            1,
+            Arc::new(NoopTxMetrics),
+        )
+        .await
+        .expect("should construct manager");
+        let send_state = SendState::new(3).expect("should construct send state");
+
+        let tx_hash = manager
+            .publish_tx(&send_state, &raw_tx, None)
+            .await
+            .expect("an undecodable RPC hash must not fail publication");
+
+        assert_eq!(tx_hash, *envelope.tx_hash());
+        assert!(send_state.has_published());
+    }
+
+    #[rstest]
+    #[case::canonical_rpc_hash(false)]
+    #[case::mismatched_rpc_hash(true)]
+    #[tokio::test]
+    async fn publish_tx_tracks_blob_hash_without_sidecar(#[case] mismatched_rpc_hash: bool) {
+        let sidecar = BlobTxBuilder::build_sidecar(&[Box::<Blob>::default()]).unwrap();
+        let tx = TxEip4844 {
+            chain_id: 1,
+            gas_limit: 21_000,
+            max_fee_per_gas: 2_000_000_000,
+            max_priority_fee_per_gas: 1_000_000_000,
+            max_fee_per_blob_gas: 1_000_000_000,
+            to: Address::with_last_byte(0x42),
+            blob_versioned_hashes: sidecar.versioned_hashes().collect(),
+            ..Default::default()
+        };
+        let signature = PrivateKeySigner::random().sign_hash_sync(&tx.signature_hash()).unwrap();
+        let tx: TxEip4844WithSidecar =
+            TxEip4844WithSidecar::from_tx_and_sidecar(tx, sidecar.into());
+        let envelope: TxEnvelope = tx.into_signed(signature).into();
+        let raw_tx = Bytes::from(envelope.encoded_2718());
+        let canonical_hash = *envelope.tx_hash();
+        assert_ne!(canonical_hash, keccak256(&raw_tx));
+        let rpc_hash =
+            if mismatched_rpc_hash { B256::with_last_byte(0x42) } else { canonical_hash };
+        let asserter = Asserter::new();
+        asserter.push_success(&1u64);
+        asserter.push_success(&rpc_hash);
+        let manager = SimpleTxManager::from_wallet(
+            ProviderBuilder::new().connect_mocked_client(asserter),
+            EthereumWallet::from(PrivateKeySigner::random()),
+            TxManagerConfig::default(),
+            1,
+            Arc::new(NoopTxMetrics),
+        )
+        .await
+        .unwrap();
+        let send_state = SendState::new(3).unwrap();
+
+        let tracked_hash = manager.publish_tx(&send_state, &raw_tx, None).await.unwrap();
+
+        assert_eq!(tracked_hash, canonical_hash);
+        assert!(send_state.has_published());
+    }
+
+    #[tokio::test]
+    async fn publish_tx_does_not_fail_for_an_unknown_transaction_type() {
+        let raw_tx = Bytes::from_static(&[0x7f]);
+        let expected_hash = keccak256(&raw_tx);
+        let asserter = Asserter::new();
+        asserter.push_success(&1u64);
+        asserter.push_success(&expected_hash);
+        let manager = SimpleTxManager::from_wallet(
+            ProviderBuilder::new().connect_mocked_client(asserter),
+            EthereumWallet::from(PrivateKeySigner::random()),
+            TxManagerConfig::default(),
+            1,
+            Arc::new(NoopTxMetrics),
+        )
+        .await
+        .unwrap();
+        let send_state = SendState::new(3).unwrap();
+
+        assert_eq!(manager.publish_tx(&send_state, &raw_tx, None).await.unwrap(), expected_hash);
+        assert!(send_state.has_published());
+    }
+
+    #[rstest]
+    #[case::html("<html>rate limited</html>")]
+    #[case::empty("")]
+    #[case::non_rpc_json(r#"{"message":"rate limited"}"#)]
+    #[tokio::test]
+    async fn publish_tx_rejects_invalid_response_envelopes(#[case] body: &'static str) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap()).parse().unwrap();
+        let server = tokio::spawn(async move {
+            tokio::time::timeout(Duration::from_secs(5), async move {
+                for body in [r#"{"jsonrpc":"2.0","id":0,"result":"0x1"}"#, body] {
+                    let (mut stream, _) = listener.accept().await.unwrap();
+                    let mut request = Vec::with_capacity(1024);
+                    loop {
+                        assert_ne!(stream.read_buf(&mut request).await.unwrap(), 0);
+                        if let Some(end) = request.windows(4).position(|w| w == b"\r\n\r\n")
+                            && serde_json::from_slice::<serde_json::Value>(&request[end + 4..])
+                                .is_ok()
+                        {
+                            break;
+                        }
+                    }
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    stream.write_all(response.as_bytes()).await.unwrap();
+                }
+            })
+            .await
+            .expect("HTTP server should finish");
+        });
+        let manager = SimpleTxManager::from_wallet(
+            RootProvider::new_http(url),
+            EthereumWallet::from(PrivateKeySigner::random()),
+            TxManagerConfig { network_timeout: Duration::from_secs(1), ..Default::default() },
+            1,
+            Arc::new(NoopTxMetrics),
+        )
+        .await
+        .unwrap();
+        let send_state = SendState::new(3).unwrap();
+        send_state.set_runtime_mempool_deadline(Duration::from_secs(1));
+
+        let result =
+            manager.publish_tx(&send_state, &signed_eip1559().encoded_2718().into(), None).await;
+
+        assert_eq!(result, Err(TxManagerError::Rpc("transport request failed".into())));
+        assert!(!send_state.has_published());
+        assert_eq!(
+            send_state.critical_error_at(Duration::from_secs(1)),
+            Some(TxManagerError::MempoolDeadlineExpired)
+        );
+        server.await.unwrap();
+    }
+
     #[tokio::test]
     async fn publish_tx_retries_nonce_too_high() {
         let asserter = Asserter::new();
-        let expected_hash = B256::with_last_byte(0x42);
+        let envelope = signed_eip1559();
+        let raw_tx = envelope.encoded_2718().into();
+        let expected_hash = *envelope.tx_hash();
         asserter.push_success(&1u64);
         asserter.push_failure_msg("nonce too high");
         asserter.push_success(&expected_hash);
@@ -1891,13 +2114,13 @@ mod tests {
         let send_state = SendState::new(3).expect("should construct send state");
 
         let hash = manager
-            .publish_tx_with_nonce_retry(&send_state, &Bytes::from_static(&[0x02]))
+            .publish_tx_with_nonce_retry(&send_state, &raw_tx)
             .await
             .expect("nonce-too-high publication should be retried");
 
         assert_eq!(hash, expected_hash);
         assert!(send_state.has_published());
-        assert!(send_state.critical_error().is_none());
+        assert!(send_state.critical_error_at(Duration::ZERO).is_none());
     }
 
     #[tokio::test]
@@ -1927,7 +2150,7 @@ mod tests {
         });
 
         let err = manager
-            .publish_tx_with_nonce_retry(&send_state, &Bytes::from_static(&[0x02]))
+            .publish_tx_with_nonce_retry(&send_state, &signed_eip1559().encoded_2718().into())
             .await
             .expect_err("closed manager must not retry publication");
         assert_eq!(err, TxManagerError::ChannelClosed);
@@ -1938,7 +2161,9 @@ mod tests {
     fn publish_retry_uses_injected_runtime_sleep() {
         Runner::start(Config::seeded(0), |ctx| async move {
             let asserter = Asserter::new();
-            let expected_hash = B256::with_last_byte(0x42);
+            let envelope = signed_eip1559();
+            let raw_tx = envelope.encoded_2718().into();
+            let expected_hash = *envelope.tx_hash();
             asserter.push_success(&1u64);
             asserter.push_failure_msg("nonce too high");
             asserter.push_success(&expected_hash);
@@ -1963,7 +2188,7 @@ mod tests {
             let send_state = SendState::new(3).expect("should construct send state");
 
             let hash = manager
-                .publish_tx_with_nonce_retry(&send_state, &Bytes::from_static(&[0x02]))
+                .publish_tx_with_nonce_retry(&send_state, &raw_tx)
                 .await
                 .expect("injected runtime should drive the nonce-too-high retry");
 
@@ -2002,7 +2227,7 @@ mod tests {
             send_state.set_runtime_mempool_deadline(ctx.now() + Duration::from_secs(1));
 
             let err = manager
-                .publish_tx_with_nonce_retry(&send_state, &Bytes::from_static(&[0x02]))
+                .publish_tx_with_nonce_retry(&send_state, &signed_eip1559().encoded_2718().into())
                 .await
                 .expect_err("retry must not publish after the mempool deadline");
 
@@ -2018,19 +2243,27 @@ mod tests {
         }
     }
 
+    /// A poller keeps polling an unmined transaction and delivers it once it is mined.
     #[test]
-    fn wait_mined_confirmation_timeout_uses_virtual_time() {
+    fn receipt_polling_waits_for_the_transaction_to_be_mined() {
         Runner::start(Config::seeded(0), |ctx| async move {
+            let tx_hash = B256::with_last_byte(1);
+            let (receipt, block) = mined_receipt(tx_hash, 10);
+
+            // Report the transaction unmined for 4 polls, then mined and confirmed at 4 s.
             let asserter = Asserter::new();
-            for _ in 0..5 {
+            for _ in 0..4 {
                 asserter.push_success(&1u64);
-                asserter.push_success(&Option::<alloy_rpc_types_eth::TransactionReceipt>::None);
+                asserter.push_success(&Option::<TransactionReceipt>::None);
             }
+            asserter.push_success(&14u64);
+            asserter.push_success(&Some(&receipt));
+            asserter.push_success(&Some(&block));
             let provider = ProviderBuilder::new().connect_mocked_client(asserter);
             let send_state = SendState::new(3).expect("send state should be valid");
             let config = TxManagerConfig {
+                num_confirmations: 5,
                 receipt_query_interval: Duration::from_secs(1),
-                confirmation_timeout: Duration::from_secs(3),
                 network_timeout: Duration::from_secs(30),
                 ..TxManagerConfig::default()
             };
@@ -2052,213 +2285,173 @@ mod tests {
                 metrics: Arc::new(NoopTxMetrics),
             };
 
-            let receipt = manager.wait_mined_for_tx(&send_state, B256::with_last_byte(1)).await;
+            let confirmed = SimpleTxManager::<_>::wait_mined_using_runtime(
+                &manager.runtime,
+                &send_state,
+                &manager.provider,
+                tx_hash,
+                &manager.config,
+                &manager.closed,
+            )
+            .await;
 
-            assert!(receipt.is_none(), "receipt polling should stop at confirmation timeout");
-            assert_eq!(ctx.now(), Duration::from_secs(3));
+            assert_eq!(confirmed.map(|receipt| receipt.transaction_hash), Some(tx_hash));
+            assert_eq!(ctx.now(), Duration::from_secs(4));
         });
     }
 
-    // ── apply_bump_result ─────────────────────────────────────────────
-
-    #[rstest]
-    #[case::success_updates_state(
-        Ok(BumpState { tip: 200, fee_cap: 2000, blob_fee_cap: None, gas_limit: 50_000, tx_hash: B256::with_last_byte(0x42), nonce: 0, sidecar: None }),
-        false, 200, 2000, None, 50_000, B256::with_last_byte(0x42),
-    )]
-    #[case::success_with_blob_fee_cap(
-        Ok(BumpState { tip: 300, fee_cap: 3000, blob_fee_cap: Some(10_000), gas_limit: 60_000, tx_hash: B256::with_last_byte(0x43), nonce: 1, sidecar: None }),
-        false, 300, 3000, Some(10_000), 60_000, B256::with_last_byte(0x43),
-    )]
-    #[case::non_retryable_returns_abort(
-        Err(TxManagerError::FeeLimitExceeded { fee: 500, ceiling: 100 }),
-        true, 100, 1000, Some(5_000), 21_000, B256::ZERO,
-    )]
-    #[case::retryable_continues(
-        Err(TxManagerError::Rpc("transient error".to_string())),
-        false, 100, 1000, Some(5_000), 21_000, B256::ZERO,
-    )]
-    fn apply_bump_result(
-        #[case] input: Result<BumpState, TxManagerError>,
-        #[case] abort_expected: bool,
-        #[case] expected_tip: u128,
-        #[case] expected_fee_cap: u128,
-        #[case] expected_blob_fee_cap: Option<u128>,
-        #[case] expected_gas_limit: u64,
-        #[case] expected_hash: B256,
-    ) {
-        let mut state = BumpState {
-            tip: 100,
-            fee_cap: 1000,
-            blob_fee_cap: Some(5_000),
-            gas_limit: 21_000,
-            tx_hash: B256::ZERO,
-            nonce: 0,
-            sidecar: None,
+    /// Build a successful receipt for `tx_hash` and the canonical block that contains it.
+    fn mined_receipt(tx_hash: B256, block_number: u64) -> (TransactionReceipt, Block) {
+        let block_hash = B256::with_last_byte(2);
+        let receipt = TransactionReceipt {
+            inner: ReceiptEnvelope::Legacy(ReceiptWithBloom {
+                receipt: Receipt {
+                    status: Eip658Value::Eip658(true),
+                    cumulative_gas_used: 21_000,
+                    logs: vec![],
+                },
+                logs_bloom: Bloom::ZERO,
+            }),
+            transaction_hash: tx_hash,
+            transaction_index: Some(0),
+            block_hash: Some(block_hash),
+            block_number: Some(block_number),
+            gas_used: 21_000,
+            effective_gas_price: 1,
+            blob_gas_used: None,
+            blob_gas_price: None,
+            from: Address::ZERO,
+            to: Some(Address::ZERO),
+            contract_address: None,
         };
+        let mut block: Block = Block::default();
+        block.header.hash = block_hash;
 
-        let abort = SimpleTxManager::<RootProvider>::apply_bump_result(input, &mut state);
-
-        assert_eq!(abort.is_some(), abort_expected);
-        assert_eq!(state.tip, expected_tip);
-        assert_eq!(state.fee_cap, expected_fee_cap);
-        assert_eq!(state.blob_fee_cap, expected_blob_fee_cap);
-        assert_eq!(state.gas_limit, expected_gas_limit);
-        assert_eq!(state.tx_hash, expected_hash);
+        (receipt, block)
     }
 
-    // ── apply_bump_result_with_suppression ───────────────────────────
-    //
-    // Tests for `apply_bump_result_with_suppression`, which is the
-    // extracted helper that `try_fee_bump` calls. When a non-retryable
-    // error occurs but the original tx is already mined, the abort is
-    // suppressed so the send loop can deliver the receipt.
+    /// A poller stops querying L1 once the receipt receiver is dropped, as happens when the
+    /// send is cancelled, even if its transaction is mined and not yet confirmed.
+    #[test]
+    fn receipt_polling_stops_once_the_receiver_is_dropped() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let tx_hash = B256::with_last_byte(1);
+            let (receipt, block) = mined_receipt(tx_hash, 10);
 
-    /// Threshold used for `SendState` construction in suppression tests.
-    const SUPPRESSION_NONCE_TOO_LOW_THRESHOLD: u64 = 3;
+            // Script a chain tip that never moves, so the mined transaction never reaches the
+            // 5 required confirmations.
+            let asserter = Asserter::new();
+            for _ in 0..8 {
+                asserter.push_success(&10u64);
+                asserter.push_success(&Some(&receipt));
+                asserter.push_success(&Some(&block));
+            }
+            let provider = ProviderBuilder::new().connect_mocked_client(asserter.clone());
 
-    /// Hash recorded as a mined tx when simulating a confirmed original.
-    const MINED_TX_HASH: B256 = B256::repeat_byte(0xAA);
+            let config = TxManagerConfig {
+                num_confirmations: 5,
+                receipt_query_interval: Duration::from_secs(1),
+                network_timeout: Duration::from_secs(30),
+                ..TxManagerConfig::default()
+            };
+            let nonce_manager = NonceManager::with_runtime(
+                ctx.clone(),
+                provider.clone(),
+                Address::ZERO,
+                config.network_timeout,
+            );
+            let manager = SimpleTxManager {
+                provider,
+                runtime: ctx.clone(),
+                wallet: EthereumWallet::from(PrivateKeySigner::random()),
+                config,
+                nonce_manager,
+                chain_id: 1,
+                closed: Arc::new(AtomicBool::new(false)),
+                metrics: Arc::new(NoopTxMetrics),
+            };
+            let send_state = Arc::new(SendState::new(3).expect("send state should be valid"));
+            let (receipt_tx, receipt_rx) = mpsc::channel(1);
 
-    /// Default initial `BumpState` for suppression tests.
-    fn default_bump_state() -> BumpState {
-        BumpState {
-            tip: 100,
-            fee_cap: 1000,
-            blob_fee_cap: None,
-            gas_limit: 21_000,
-            tx_hash: B256::ZERO,
-            nonce: 0,
-            sidecar: None,
-        }
+            manager.spawn_wait_for_tx(send_state, tx_hash, receipt_tx);
+
+            // Let the poller see the transaction mined, then drop the receiver.
+            ctx.sleep(Duration::from_millis(2500)).await;
+            drop(receipt_rx);
+            let unused_responses = asserter.read_q().len();
+
+            ctx.sleep(Duration::from_secs(10)).await;
+            assert_eq!(asserter.read_q().len(), unused_responses);
+        });
     }
 
-    /// Creates a `SendState` and optionally marks a tx as mined.
-    fn suppression_send_state(tx_mined: bool) -> SendState {
-        let state =
-            SendState::new(SUPPRESSION_NONCE_TOO_LOW_THRESHOLD).expect("should create send state");
-        if tx_mined {
-            state.tx_mined(MINED_TX_HASH);
-        }
-        state
-    }
-
-    /// Non-retryable errors are suppressed when the original tx is
-    /// mined, and propagated when it is not.
     #[rstest]
-    #[case::nonce_too_low_mined_suppressed(
-        TxManagerError::NonceTooLow,
-        true,  // tx is mined
-        false, // abort suppressed → no abort
-    )]
-    #[case::nonce_too_low_not_mined_propagates(
-        TxManagerError::NonceTooLow,
-        false, // tx is NOT mined
-        true,  // abort propagates
-    )]
-    #[case::fee_limit_exceeded_mined_suppressed(
-        TxManagerError::FeeLimitExceeded { fee: 500, ceiling: 100 },
-        true,
-        false,
-    )]
-    #[case::fee_limit_exceeded_not_mined_propagates(
-        TxManagerError::FeeLimitExceeded { fee: 500, ceiling: 100 },
-        false,
-        true,
-    )]
-    #[case::insufficient_funds_mined_suppressed(TxManagerError::InsufficientFunds, true, false)]
-    #[case::insufficient_funds_not_mined_propagates(TxManagerError::InsufficientFunds, false, true)]
-    #[case::execution_reverted_mined_suppressed(
-        TxManagerError::ExecutionReverted { reason: Some("revert".into()), data: None },
-        true,
-        false,
-    )]
-    #[case::execution_reverted_not_mined_propagates(
-        TxManagerError::ExecutionReverted { reason: Some("revert".into()), data: None },
-        false,
-        true,
-    )]
-    #[case::channel_closed_mined_suppressed(TxManagerError::ChannelClosed, true, false)]
-    #[case::channel_closed_not_mined_propagates(TxManagerError::ChannelClosed, false, true)]
-    fn bump_result_with_suppression_non_retryable(
-        #[case] error: TxManagerError,
-        #[case] tx_mined: bool,
-        #[case] abort_expected: bool,
-    ) {
-        let send_state = suppression_send_state(tx_mined);
-        assert_eq!(send_state.is_waiting_for_confirmation(), tx_mined);
+    #[case::replacement_underpriced("replacement transaction underpriced")]
+    #[case::rpc("service unavailable")]
+    fn failed_fee_bumps_wait_for_resubmission_timeout(#[case] publish_error: &'static str) {
+        Runner::start(Config::seeded(0), move |ctx| async move {
+            let resubmission_timeout = Duration::from_secs(10);
+            let bump_intervals = 3;
+            let rpc_calls_per_bump = 4;
+            let asserter = Asserter::new();
+            let mut block: Block = Block::default();
+            block.header.base_fee_per_gas = Some(1_000_000_000);
+            asserter.push_success(&1u64);
+            asserter.push_success(&1_000_000_000u128);
+            asserter.push_success(&Some(&block));
+            asserter.push_success(&21_000u64);
+            asserter.push_success(&0u64);
+            asserter.push_success(&B256::with_last_byte(1));
+            asserter.push_success(&1u64);
+            asserter.push_success(&Option::<TransactionReceipt>::None);
+            for _ in 0..=bump_intervals {
+                asserter.push_success(&1_000_000_000u128);
+                asserter.push_success(&Some(&block));
+                asserter.push_success(&21_000u64);
+                asserter.push_failure_msg(publish_error);
+            }
+            let provider = ProviderBuilder::new().connect_mocked_client(asserter.clone());
+            let config = TxManagerConfig {
+                resubmission_timeout,
+                receipt_query_interval: Duration::from_secs(60),
+                safe_abort_nonce_too_low_count: 10,
+                ..TxManagerConfig::default()
+            };
+            let manager = SimpleTxManager::from_wallet_with_runtime(
+                ctx.clone(),
+                provider,
+                EthereumWallet::from(PrivateKeySigner::random()),
+                config,
+                1,
+                Arc::new(NoopTxMetrics),
+            )
+            .await
+            .expect("should construct manager");
+            let candidate =
+                TxCandidate { to: Some(Address::with_last_byte(0x42)), ..Default::default() };
+            let mut send = Box::pin(manager.send(candidate));
+            assert!(futures::poll!(&mut send).is_pending());
+            ctx.sleep(Duration::from_nanos(1)).await;
+            assert_eq!(asserter.read_q().len(), (bump_intervals + 1) * rpc_calls_per_bump);
 
-        let mut state = default_bump_state();
-
-        let abort = SimpleTxManager::<RootProvider>::apply_bump_result_with_suppression(
-            Err(error),
-            &mut state,
-            &send_state,
-        );
-
-        assert_eq!(
-            abort.is_some(),
-            abort_expected,
-            "abort_expected={abort_expected}, tx_mined={tx_mined}",
-        );
-    }
-
-    /// Retryable errors are never aborted by `apply_bump_result`, so
-    /// suppression is irrelevant — the send loop continues regardless.
-    #[rstest]
-    #[case::rpc_error_mined(TxManagerError::Rpc("transient".into()), true)]
-    #[case::rpc_error_not_mined(TxManagerError::Rpc("transient".into()), false)]
-    #[case::underpriced_mined(TxManagerError::Underpriced, true)]
-    #[case::underpriced_not_mined(TxManagerError::Underpriced, false)]
-    #[case::replacement_underpriced_mined(TxManagerError::ReplacementUnderpriced, true)]
-    #[case::fee_too_low_not_mined(TxManagerError::FeeTooLow, false)]
-    fn bump_result_with_suppression_retryable_never_aborts(
-        #[case] error: TxManagerError,
-        #[case] tx_mined: bool,
-    ) {
-        let send_state = suppression_send_state(tx_mined);
-        let mut state = default_bump_state();
-
-        let abort = SimpleTxManager::<RootProvider>::apply_bump_result_with_suppression(
-            Err(error),
-            &mut state,
-            &send_state,
-        );
-
-        assert!(abort.is_none(), "retryable errors should never cause an abort");
-    }
-
-    /// Success results pass through to `apply_bump_result` and update
-    /// state, regardless of mined state.
-    #[rstest]
-    #[case::success_not_mined(false)]
-    #[case::success_mined(true)]
-    fn bump_result_with_suppression_success_never_aborts(#[case] tx_mined: bool) {
-        let send_state = suppression_send_state(tx_mined);
-
-        let new_state = BumpState {
-            tip: 200,
-            fee_cap: 2000,
-            blob_fee_cap: None,
-            gas_limit: 50_000,
-            tx_hash: B256::with_last_byte(0x42),
-            nonce: 0,
-            sidecar: None,
-        };
-
-        let mut state = default_bump_state();
-
-        let abort = SimpleTxManager::<RootProvider>::apply_bump_result_with_suppression(
-            Ok(new_state),
-            &mut state,
-            &send_state,
-        );
-
-        assert!(abort.is_none(), "success should never cause an abort");
-        // State should be updated to the new values.
-        assert_eq!(state.tip, 200);
-        assert_eq!(state.fee_cap, 2000);
-        assert_eq!(state.tx_hash, B256::with_last_byte(0x42));
+            for attempts in 1..=bump_intervals {
+                ctx.sleep(resubmission_timeout - Duration::from_nanos(2)).await;
+                assert!(futures::poll!(&mut send).is_pending());
+                assert_eq!(
+                    asserter.read_q().len(),
+                    (bump_intervals + 2 - attempts) * rpc_calls_per_bump,
+                    "fee-bump RPC calls must not run before a full resubmission timeout"
+                );
+                ctx.sleep(Duration::from_nanos(1)).await;
+                assert!(futures::poll!(&mut send).is_pending());
+                assert_eq!(
+                    asserter.read_q().len(),
+                    (bump_intervals + 1 - attempts) * rpc_calls_per_bump,
+                    "fee-bump RPC calls must run at most once per resubmission interval"
+                );
+                ctx.sleep(Duration::from_nanos(1)).await;
+            }
+        });
     }
 
     // ── should_reset_nonce_on_send_error ───────────────────────────────

@@ -15,6 +15,3 @@ pub use secret::JwtSecretReader;
 
 mod validator;
 pub use validator::JwtValidator;
-
-#[cfg(any(test, feature = "test-utils"))]
-pub mod test_utils;

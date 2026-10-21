@@ -1,9 +1,11 @@
 //! `base snapshot` subcommand group: snapshot manifest generation and download.
 
-use base_execution_cli::{chainspec::BaseChainSpecParser, commands::download};
+use base_execution_cli::{
+    chainspec::BaseChainSpecParser,
+    commands::{SnapshotManifestCommand, download},
+};
 use base_node_core::BaseNode;
 use clap::{Parser, Subcommand};
-use reth_cli_commands::download::manifest_cmd::SnapshotManifestCommand;
 use reth_cli_runner::CliRunner;
 
 /// Snapshot manifest generation and download utilities.
@@ -12,12 +14,6 @@ pub(crate) struct SnapshotCommand {
     /// The snapshot subcommand to execute.
     #[command(subcommand)]
     pub(crate) command: SnapshotSubcommand,
-}
-
-impl SnapshotCommand {
-    pub(crate) fn run(self) -> eyre::Result<()> {
-        self.command.run()
-    }
 }
 
 /// Subcommands for `base snapshot`.
@@ -35,10 +31,7 @@ pub(crate) enum SnapshotSubcommand {
 impl SnapshotSubcommand {
     pub(crate) fn run(self) -> eyre::Result<()> {
         match self {
-            Self::Manifest(command) => {
-                command.execute()?;
-                Ok(())
-            }
+            Self::Manifest(command) => command.execute(),
             Self::Download(command) => {
                 let runner = CliRunner::try_default_runtime()?;
                 runner.run_blocking_until_ctrl_c((*command).execute::<BaseNode>())

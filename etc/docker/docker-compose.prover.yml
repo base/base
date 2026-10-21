@@ -15,6 +15,13 @@
 #
 # See docs/guides/STANDALONE_PROVING.md for the full proving workflow.
 
+x-healthcheck-defaults: &healthcheck-defaults
+  interval: 250ms
+  timeout: 1s
+  retries: 240
+  start_period: 250ms
+  start_interval: 250ms
+
 services:
   prover-service-postgres:
     image: postgres:17-alpine
@@ -28,10 +35,7 @@ services:
       - ../../crates/proof/prover-service/db/migrations:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U prover -d prover"]
-      interval: 250ms
-      timeout: 1s
-      retries: 240
-      start_period: 250ms
+      <<: *healthcheck-defaults
     restart: unless-stopped
 
   base-prover-service:
@@ -39,9 +43,13 @@ services:
     depends_on:
       prover-service-postgres:
         condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
-      # Requester RPC. The worker RPC (9001) and Postgres stay internal.
-      - "${PROVER_SERVICE_RPC_PORT:-9000}:9000"
+      # Requester RPC. Loopback plus the NAT-mode network below keep this
+      # unauthenticated API host-local. The override is a bare port number.
+      # The worker RPC (9001) and Postgres stay internal.
+      - "127.0.0.1:${PROVER_SERVICE_RPC_PORT:-9000}:9000"
     environment:
       - RPC_LISTEN_ADDR=0.0.0.0:9000
       - WORKER_RPC_LISTEN_ADDR=0.0.0.0:9001
@@ -53,12 +61,11 @@ services:
       - POSTGRES_PASSWORD=prover
       - POSTGRES_SSLMODE=disable
       - OTEL_SERVICE_NAME=base-prover-service
+      - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+      - OTEL_EXPORTER_OTLP_PROTOCOL
     healthcheck:
       test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/9000"]
-      interval: 250ms
-      timeout: 1s
-      retries: 240
-      start_period: 250ms
+      <<: *healthcheck-defaults
     restart: unless-stopped
 
   base-prover-zk-host:
@@ -84,4 +91,19 @@ services:
       - DEFAULT_SEQUENCE_WINDOW=${DEFAULT_SEQUENCE_WINDOW:-3600}
       - RUST_LOG=${RUST_LOG:-}
       - OTEL_SERVICE_NAME=base-prover-zk-host
+      - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+      - OTEL_EXPORTER_OTLP_PROTOCOL
     restart: unless-stopped
+
+networks:
+  default:
+    driver: bridge
+    enable_ipv6: false
+    driver_opts:
+      # Do not inherit a daemon default of `routed` or `nat-unprotected`.
+      com.docker.network.bridge.gateway_mode_ipv4: nat
+      com.docker.network.bridge.gateway_mode_ipv6: nat
+      # Set explicitly so a daemon `default-network-opts` entry cannot add
+      # trusted interfaces here. Those would let a remote host reach the
+      # requester port at the container address, past the loopback publish.
+      com.docker.network.bridge.trusted_host_interfaces: ""

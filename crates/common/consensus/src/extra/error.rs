@@ -19,6 +19,9 @@ pub enum EIP1559ParamError {
     /// Invalid EIP-1559 parameter combination.
     #[error("EIP-1559 denominator and elasticity must both be zero or both be non-zero")]
     InvalidParams,
+    /// EIP-1559 denominator or elasticity is zero where both must be non-zero.
+    #[error("EIP-1559 denominator and elasticity must both be non-zero")]
+    ZeroParams,
     /// Minimum base fee must be None before Jovian.
     #[error("Minimum base fee must be None before Jovian")]
     MinBaseFeeMustBeNone,

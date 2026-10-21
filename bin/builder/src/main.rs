@@ -13,12 +13,19 @@ use base_execution_cli::{Cli, StandardBaseRethNode};
 use base_node_runner::BaseNodeRunner;
 use base_observability_events::GlobalTransactionEventWriter;
 use base_shadow_indexer::{ShadowIndexerConfig, ShadowIndexerExtension};
-use base_txpool_rpc::{SendRawTransactionValidityExtension, TxPoolRpcConfig, TxPoolRpcExtension};
+use base_txpool_rpc::{
+    SendRawTransactionValidityConfig, SendRawTransactionValidityExtension, TxPoolRpcConfig,
+    TxPoolRpcExtension,
+};
 
 type BuilderCli = Cli<Args>;
 
 #[global_allocator]
 static ALLOC: reth_cli_util::allocator::Allocator = reth_cli_util::allocator::new_allocator();
+
+#[cfg(all(feature = "jemalloc-prof", unix))]
+#[unsafe(export_name = "malloc_conf")]
+static MALLOC_CONF: &[u8] = b"prof:true,prof_active:true,lg_prof_sample:19\0";
 
 fn main() {
     base_cli_utils::init_common!();
@@ -39,7 +46,7 @@ fn main() {
             transaction_events_enabled.then(|| builder_args.transaction_events.writer_config()),
         )?;
 
-        let builder_api_config = builder_args.builder_api_config()?;
+        let builder_api_config = builder_args.builder_api_config();
         let shadow_indexer_config = ShadowIndexerConfig::try_from(&builder_args.shadow_indexer)?;
         let payload_builder_cutover = builder_args.payload_builder_cutover;
         let basic_payload_builder = builder_args.basic_payload_builder;
@@ -59,14 +66,18 @@ fn main() {
                     .with_cutover_enabled(payload_builder_cutover)
                     .with_basic_only(basic_payload_builder),
             );
-        runner.install_ext::<MeteringStoreExtension>(metering_provider);
+        runner.install_ext::<MeteringStoreExtension>(Arc::clone(&metering_provider));
         runner.install_ext::<TxPoolRpcExtension>(TxPoolRpcConfig::default());
-        runner.install_ext::<BuilderApiExtension>(builder_api_config);
-        if builder_api_config.accept_experimental_validity_transactions {
-            runner.install_ext::<SendRawTransactionValidityExtension>(
-                builder_api_config.max_validity_predicates,
-            );
-        }
+        runner.install_ext::<BuilderApiExtension>(
+            builder_api_config.with_metering_provider(metering_provider),
+        );
+        runner.install_ext::<SendRawTransactionValidityExtension>(
+            SendRawTransactionValidityConfig {
+                max_validity_predicates: builder_api_config.max_validity_predicates,
+                validity_signature_mode: builder_api_config.validity_signature_mode,
+                ..Default::default()
+            },
+        );
         runner.install_ext::<ShadowIndexerExtension>(shadow_indexer_config);
         StandardBaseRethNode::install_upgrade_signal_runtime_extension(&mut runner, &rollup_args)?;
         runner.add_started_callback(|| {

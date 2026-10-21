@@ -1,10 +1,14 @@
-use std::{fmt, time::Duration};
+use std::{
+    fmt,
+    time::{Duration, Instant},
+};
 
 use anyhow::{Context, Result};
 use sqlx::{
     PgPool,
     postgres::{PgConnectOptions, PgPoolOptions},
 };
+use tracing::{error, info};
 
 /// Default Postgres port.
 pub const DEFAULT_PORT: u16 = 5432;
@@ -82,24 +86,62 @@ pub struct ShadowDbConfig {
 }
 
 impl ShadowDbConfig {
+    /// Open a connection pool without running migrations.
+    ///
+    /// Exactly one task per schema may call [`Self::init_pool`]; every other pool on that
+    /// schema, such as the retention sweeper's, must use this instead. This crate's
+    /// `CREATE INDEX CONCURRENTLY` migrations run outside a transaction, so sqlx's advisory
+    /// lock does not serialize concurrent [`Self::init_pool`] callers on the same schema.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the connection fails.
+    pub async fn connect_pool(&self) -> Result<PgPool> {
+        PgPoolOptions::new()
+            .max_connections(self.max_connections)
+            .acquire_timeout(self.connection_timeout)
+            .connect_with(self.connection.connect_options())
+            .await
+            .context("failed to connect to shadow indexer database")
+    }
+
     /// Initialize the database connection pool and run migrations.
     ///
     /// # Errors
     ///
     /// Returns an error when the connection or migrations fail.
     pub async fn init_pool(&self) -> Result<PgPool> {
-        let pool = PgPoolOptions::new()
-            .max_connections(self.max_connections)
-            .acquire_timeout(self.connection_timeout)
-            .connect_with(self.connection.connect_options())
-            .await
-            .context("failed to connect to shadow indexer database")?;
+        let pool = self.connect_pool().await?;
 
-        sqlx::migrate!("./migrations")
-            .run(&pool)
-            .await
-            .context("failed to run shadow indexer database migrations")?;
+        // Migrations run at node startup, from a critical task: a failure here panics the
+        // builder, and this schema has taken the mainnet builder down that way before. Both
+        // outcomes are logged so an operator staring at a crashloop can tell a migration failure
+        // from a connection failure without attaching to the database, and can see how long the
+        // run took before it succeeded or gave up.
+        let started = Instant::now();
+        let migrator = sqlx::migrate!("./migrations");
+        let migrations = migrator.iter().count();
 
-        Ok(pool)
+        match migrator.run(&pool).await {
+            Ok(()) => {
+                info!(
+                    target: "base::shadow-indexer",
+                    migrations,
+                    elapsed = ?started.elapsed(),
+                    "Applied shadow indexer database migrations"
+                );
+                Ok(pool)
+            }
+            Err(error) => {
+                error!(
+                    target: "base::shadow-indexer",
+                    error = %error,
+                    migrations,
+                    elapsed = ?started.elapsed(),
+                    "Failed to run shadow indexer database migrations"
+                );
+                Err(error).context("failed to run shadow indexer database migrations")
+            }
+        }
     }
 }

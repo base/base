@@ -9,15 +9,14 @@ use std::{
 
 use alloy_primitives::Address;
 use base_execution_trie::{MdbxProofsStorageOptions, RocksdbProofsStorageOptions};
-use base_execution_txpool::{DEFAULT_PAYMENT_LIMIT, DEFAULT_SIGNATURE_LIMIT};
+use base_execution_txpool::{
+    DEFAULT_ALLOWLISTED_PAYMENT_LIMIT, DEFAULT_PAYMENT_LIMIT, DEFAULT_SIGNATURE_LIMIT,
+};
 use base_upgrade_signal::{UpgradeSignalArgs, UpgradeSignalL1RpcArgs};
 use clap::{ArgAction, ValueEnum, builder::ArgPredicate};
 
-/// Default proofs history window: 1 month of blocks at 2s block time.
-pub const DEFAULT_PROOFS_HISTORY_WINDOW_BLOCKS: u64 = 1_296_000;
-
-/// Twelve hours of blocks at 2s block time.
-pub const TWELVE_HOURS_IN_BLOCKS: u64 = 21_600;
+/// Default proofs history window: 15 days of blocks at 200ms block time.
+pub const DEFAULT_PROOFS_HISTORY_WINDOW_BLOCKS: u64 = 6_480_000;
 
 const MIB: u64 = 1024 * 1024;
 const DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_MIB: u64 = 1024;
@@ -394,6 +393,21 @@ pub struct RollupArgs {
     #[arg(long = "rollup.mempool-trusted-delegation-targets", value_delimiter = ',')]
     pub mempool_trusted_delegation_targets: Vec<Address>,
 
+    /// Payers allowed more inflight EIP-8130 sponsored transactions than the default payer
+    /// limit, up to `--rollup.mempool-allowlisted-payer-limit`.
+    ///
+    /// This is local, non-consensus mempool policy. An allowlisted payer is also balance-bounded:
+    /// the sum of its pending transactions' max cost must stay within its balance.
+    #[arg(long = "rollup.mempool-allowlisted-payers", value_delimiter = ',')]
+    pub mempool_allowlisted_payers: Vec<Address>,
+
+    /// Maximum inflight EIP-8130 transactions per allowlisted payer account.
+    #[arg(
+        long = "rollup.mempool-allowlisted-payer-limit",
+        default_value_t = DEFAULT_ALLOWLISTED_PAYMENT_LIMIT
+    )]
+    pub mempool_allowlisted_payer_limit: u32,
+
     /// If true, initialize external-proofs exex to save and serve trie nodes to provide proofs
     /// faster.
     #[arg(
@@ -432,16 +446,16 @@ pub struct RollupArgs {
     pub proofs_history_mdbx: ProofsHistoryMdbxArgs,
 
     /// The window to span blocks for proofs history. Value is the number of blocks.
-    /// Default is 1 month of blocks based on 2 seconds block time.
-    /// 30 * 24 * 60 * 60 / 2 = `1_296_000`
+    /// Default is 15 days of blocks based on 200ms block time.
+    /// 15 * 24 * 60 * 60 * 5 = `6_480_000`
     ///
-    /// Must be greater than 12 hours of blocks based on 2 seconds block time.
+    /// Must be at least 1 block.
     #[arg(
         long = "proofs-history.window",
         visible_alias = "proofs.window",
         default_value_t = DEFAULT_PROOFS_HISTORY_WINDOW_BLOCKS,
         value_name = "PROOFS_HISTORY_WINDOW",
-        value_parser = clap::value_parser!(u64).range((TWELVE_HOURS_IN_BLOCKS + 1)..)
+        value_parser = clap::value_parser!(u64).range(1..)
     )]
     pub proofs_history_window: u64,
 
@@ -510,6 +524,8 @@ impl Default for RollupArgs {
             mempool_sender_limit: DEFAULT_SIGNATURE_LIMIT,
             mempool_payer_limit: DEFAULT_PAYMENT_LIMIT,
             mempool_trusted_delegation_targets: Vec::new(),
+            mempool_allowlisted_payers: Vec::new(),
+            mempool_allowlisted_payer_limit: DEFAULT_ALLOWLISTED_PAYMENT_LIMIT,
             proofs_history: false,
             proofs_history_storage_path: None,
             proofs_history_db: ProofsHistoryDbBackend::default(),
@@ -612,6 +628,8 @@ mod tests {
         assert_eq!(args.mempool_sender_limit, DEFAULT_SIGNATURE_LIMIT);
         assert_eq!(args.mempool_payer_limit, DEFAULT_PAYMENT_LIMIT);
         assert!(args.mempool_trusted_delegation_targets.is_empty());
+        assert!(args.mempool_allowlisted_payers.is_empty());
+        assert_eq!(args.mempool_allowlisted_payer_limit, DEFAULT_ALLOWLISTED_PAYMENT_LIMIT);
     }
 
     #[test]
@@ -624,6 +642,10 @@ mod tests {
             "16",
             "--rollup.mempool-trusted-delegation-targets",
             "0x0000000000000000000000000000000000000001,0x0000000000000000000000000000000000000002",
+            "--rollup.mempool-allowlisted-payers",
+            "0x0000000000000000000000000000000000000003",
+            "--rollup.mempool-allowlisted-payer-limit",
+            "128",
         ])
         .args;
         assert_eq!(args.mempool_sender_limit, 8);
@@ -635,6 +657,11 @@ mod tests {
                 "0x0000000000000000000000000000000000000002".parse::<Address>().unwrap(),
             ]
         );
+        assert_eq!(
+            args.mempool_allowlisted_payers,
+            vec!["0x0000000000000000000000000000000000000003".parse::<Address>().unwrap()]
+        );
+        assert_eq!(args.mempool_allowlisted_payer_limit, 128);
     }
 
     #[test]
@@ -866,18 +893,14 @@ mod tests {
     #[test]
     fn test_parse_proofs_history_window() {
         let args =
-            CommandParser::<RollupArgs>::parse_from(["reth", "--proofs-history.window", "21601"])
-                .args;
-        assert_eq!(args.proofs_history_window, 21_601);
+            CommandParser::<RollupArgs>::parse_from(["reth", "--proofs-history.window", "1"]).args;
+        assert_eq!(args.proofs_history_window, 1);
     }
 
     #[test]
-    fn test_parse_proofs_history_window_rejects_twelve_hours_or_less() {
-        let result = CommandParser::<RollupArgs>::try_parse_from([
-            "reth",
-            "--proofs-history.window",
-            "21600",
-        ]);
+    fn test_parse_proofs_history_window_rejects_zero() {
+        let result =
+            CommandParser::<RollupArgs>::try_parse_from(["reth", "--proofs-history.window", "0"]);
         assert!(result.is_err());
     }
 }

@@ -95,9 +95,21 @@ zepter-fix:
 install-nextest:
     @command -v cargo-nextest >/dev/null 2>&1 || cargo install cargo-nextest --locked
 
+# Unoptimized Reth EVM execution overflows the 2 MiB stack libtest gives each test thread on
+# Linux. Do not move to nextest.toml `[env]`; nextest silently drops it.
+test_min_stack := "8388608"
+
 # Runs tests across workspace with all features enabled (excludes system tests)
 test: install-nextest build::contracts build::elfs
-    cargo nextest run --workspace --all-features --exclude base-system-tests --no-fail-fast
+    RUST_MIN_STACK={{ test_min_stack }} cargo nextest run --workspace --all-features --exclude base-system-tests --no-fail-fast
+
+# Checks published Base snapshot manifests without downloading snapshot archives (live network)
+check-snapshot-manifests:
+    cargo test --locked -p base --test snapshot_defaults -- --ignored --nocapture
+
+# Runs one real-devnet acceptance scenario (requires Docker and no existing devnet)
+acceptance scenario="smoke":
+    cargo run --locked -p base-acceptance-cli -- run acceptance/scenarios/{{ scenario }}.toml --output target/acceptance/{{ scenario }}-$(date +%s)
 
 # Runs tests only for crates affected by changes vs main (excludes system tests)
 test-affected base="main": install-nextest build::contracts build::elfs
@@ -113,11 +125,11 @@ test-affected base="main": install-nextest build::contracts build::elfs
         exit 0
     fi
     echo "Testing affected crates:${pkg_args[*]}"
-    cargo nextest run --all-features "${pkg_args[@]}"
+    RUST_MIN_STACK={{ test_min_stack }} cargo nextest run --all-features "${pkg_args[@]}"
 
 # Runs tests with ci profile for minimal disk usage
 test-ci: install-nextest build::contracts
-    cargo nextest run -P ci --locked --workspace --all-features --exclude base-system-tests --cargo-profile ci
+    RUST_MIN_STACK={{ test_min_stack }} cargo nextest run -P ci --locked --workspace --all-features --exclude base-system-tests --cargo-profile ci
 
 # Runs tests only for affected crates with ci profile (for PRs)
 test-affected-ci base="main": install-nextest build::contracts
@@ -133,7 +145,7 @@ test-affected-ci base="main": install-nextest build::contracts
         exit 0
     fi
     echo "Testing affected crates:${pkg_args[*]}"
-    cargo nextest run -P ci --locked --all-features --cargo-profile ci "${pkg_args[@]}" || {
+    RUST_MIN_STACK={{ test_min_stack }} cargo nextest run -P ci --locked --all-features --cargo-profile ci "${pkg_args[@]}" || {
         code=$?
         if [ $code -eq 4 ]; then
             echo "No tests to run."

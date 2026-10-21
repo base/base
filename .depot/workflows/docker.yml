@@ -50,7 +50,7 @@ jobs:
           password: ${{ secrets.GHCR_TOKEN }}
       - name: Build and push Docker image
         env:
-          PROFILE: maxperf
+          PROFILE: release
           TARGET: base
         run: |
           tag_args=()
@@ -83,7 +83,7 @@ jobs:
         uses: depot/setup-action@91bc8495a33ebfc504ffc89e5674379ccf23c29c # v1
       - name: Warm devnet image cache
         run: |
-          targets=(base execution consensus builder batcher)
+          targets=(base execution consensus builder)
           set_args=()
           for target in "${targets[@]}"; do
             set_args+=(--set "$target.platform=linux/amd64")

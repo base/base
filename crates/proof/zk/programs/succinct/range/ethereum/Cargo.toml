@@ -11,8 +11,8 @@ repository.workspace = true
 rkyv.workspace = true
 
 # base-consensus / base-proof
-# EIP-8130 execution without Tokio (`base-proof/std` pulls Tokio).
-base-proof = { workspace = true, features = ["evm-std"] }
+# Cobalt guests stay no_std. `evm-std` (8130 without Tokio) waits for Everest.
+base-proof.workspace = true
 
 # sp1
 sp1-zkvm.workspace = true

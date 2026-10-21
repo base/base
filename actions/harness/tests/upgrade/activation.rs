@@ -348,7 +348,7 @@ async fn single_batch_derives_with_fjord() {
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut builder = h.create_l2_sequencer(l1_chain);
 
-    let mut batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
+    let batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
     for _ in 0..2 {
         batcher.push_block(builder.build_next_block_with_single_transaction().await);
         batcher.advance(&mut h.l1).await;
@@ -403,7 +403,7 @@ async fn jovian_derivation_crosses_activation_boundary() {
     let mut builder = h.create_l2_sequencer(l1_chain);
 
     let mut block_hashes = [Default::default(); 5];
-    let mut batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
+    let batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
     for i in 1..=4u64 {
         let block = if i == 3 {
             // First Jovian block: must contain no user transactions.

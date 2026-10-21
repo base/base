@@ -8,8 +8,8 @@ use anyhow::{Result, anyhow};
 use base_common_genesis::RollupConfig;
 use base_consensus_derive::{BlobProvider, EthereumDataSource, Pipeline, SignalReceiver};
 use base_proof::{
-    BaseExecutor, BootInfo, OracleL1ChainProvider, OracleL2ChainProvider, OraclePipeline,
-    new_oracle_pipeline_cursor,
+    BaseExecutor, BootInfo, IntermediateRootSampler, OracleL1ChainProvider, OracleL2ChainProvider,
+    OraclePipeline, new_oracle_pipeline_cursor,
 };
 use base_proof_driver::{Driver, DriverPipeline, PipelineCursor};
 use base_proof_executor::TrieDBProvider;
@@ -140,9 +140,8 @@ where
 
     /// Run derivation and block execution to produce the proven boot info and derived L2 block.
     ///
-    /// The intermediate root sampling interval is taken from
-    /// [`BootInfo::intermediate_block_interval`] (committed via preimage key 9, same source as
-    /// the TEE), so callers do not need to pass it explicitly.
+    /// Intermediate roots are sampled every `boot.intermediate_block_interval` blocks, so the
+    /// proven range must span a non-zero multiple of that interval.
     pub async fn run<DP, P>(
         &self,
         boot: BootInfo,
@@ -159,7 +158,6 @@ where
 
         let boot_clone = boot.clone();
         let activation_admin_address = boot.activation_admin_address;
-        let intermediate_block_interval = boot.intermediate_block_interval.max(1);
 
         let rollup_config = Arc::new(boot.rollup_config);
 
@@ -181,9 +179,10 @@ where
             &mut driver,
             rollup_config.as_ref(),
             Some(boot.claimed_l2_block_number),
-            intermediate_block_interval,
+            IntermediateRootSampler::new(boot.intermediate_block_interval),
         )
         .await?;
+        let intermediate_roots = intermediate_roots.finish()?;
         #[cfg(target_os = "zkvm")]
         println!("cycle-tracker-report-end: block-execution-and-derivation");
 

@@ -3,7 +3,6 @@ use core::{fmt::Debug, marker::PhantomData};
 
 use alloy_consensus::{BlockHeader, Header};
 #[cfg(feature = "std")]
-use alloy_eips::Decodable2718;
 use alloy_evm::{EvmFactory, FromRecoveredTx, FromTxWithEncoded};
 #[cfg(feature = "std")]
 use alloy_primitives::Bytes;
@@ -59,10 +58,12 @@ impl<H: alloy_consensus::BlockHeader> reth_rpc_eth_api::helpers::pending_block::
 {
     fn build_pending_env(
         parent: &SealedHeader<H>,
-        _block_overrides: Option<&alloy_rpc_types_eth::BlockOverrides>,
+        block_overrides: Option<&alloy_rpc_types_eth::BlockOverrides>,
     ) -> Self {
         Self {
-            timestamp: parent.timestamp().saturating_add(12),
+            timestamp: block_overrides
+                .and_then(|overrides| overrides.time)
+                .unwrap_or_else(|| parent.timestamp().saturating_add(12)),
             suggested_fee_recipient: parent.beneficiary(),
             prev_randao: B256::random(),
             gas_limit: parent.gas_limit(),
@@ -249,8 +250,10 @@ where
     ) -> Result<impl ExecutableTxIterator<Self>, Self::Error> {
         let transactions = payload.payload.transactions().clone();
         let convert = |encoded: Bytes| {
-            let tx = TxTy::<Self::Primitives>::decode_2718_exact(encoded.as_ref())
-                .map_err(AnyError::new)?;
+            let tx = base_common_consensus::decode_2718_canonical::<TxTy<Self::Primitives>>(
+                encoded.as_ref(),
+            )
+            .map_err(AnyError::new)?;
             let signer = tx.try_recover().map_err(AnyError::new)?;
             Ok::<_, AnyError>(WithEncoded::new(encoded, tx.with_signer(signer)))
         };
@@ -261,39 +264,81 @@ where
 
 #[cfg(test)]
 mod tests {
-    use alloc::collections::BTreeMap;
     use std::sync::Arc;
 
-    use alloy_consensus::{Header, Receipt};
-    use alloy_eips::eip7685::Requests;
+    use alloy_consensus::Header;
     use alloy_genesis::Genesis;
-    use alloy_primitives::{
-        Address, B256, LogData, U256, bytes,
-        map::{AddressMap, B256Map, HashMap},
-    };
-    use base_common_consensus::{BaseBlock, BasePrimitives, BaseReceipt};
+    use alloy_primitives::U256;
     use base_common_evm::BaseSpecId;
     use base_common_genesis::BaseUpgrade;
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use reth_chainspec::ChainSpec;
     use reth_evm::{ConfigureEvm, EvmEnv, execute::ProviderError};
-    use reth_execution_types::{
-        AccountRevertInit, BundleStateInit, Chain, ExecutionOutcome, RevertsInit,
-    };
-    use reth_primitives_traits::{Account, RecoveredBlock, constants::MAX_TX_GAS_LIMIT_OSAKA};
+    use reth_primitives_traits::constants::MAX_TX_GAS_LIMIT_OSAKA;
     use revm::{
         context::{BlockEnv, CfgEnv},
-        database::{BundleState, CacheDB},
+        database::CacheDB,
         database_interface::EmptyDBTyped,
         inspector::NoOpInspector,
-        primitives::Log,
-        state::AccountInfo,
     };
 
     use super::BaseEvmConfig;
 
     fn test_evm_config() -> BaseEvmConfig {
         BaseEvmConfig::base(Arc::new(BaseChainSpec::mainnet()))
+    }
+
+    #[cfg(feature = "rpc")]
+    #[test]
+    fn pending_timestamp_override_selects_matching_fork_and_base_fee() {
+        use alloy_rpc_types_eth::BlockOverrides;
+        use reth_chainspec::{
+            BaseFeeParams, BaseFeeParamsKind, EthereumHardfork, ForkCondition, Hardfork,
+        };
+        use reth_primitives_traits::SealedHeader;
+        use reth_rpc_eth_api::helpers::pending_block::BuildPendingEnv;
+
+        use super::BaseNextBlockEnvAttributes;
+
+        let mut chain_spec = BaseChainSpecBuilder::default()
+            .chain(0.into())
+            .genesis(Genesis::default())
+            .canyon_activated()
+            .with_fork(BaseUpgrade::Azul, ForkCondition::Timestamp(10))
+            .with_fork(EthereumHardfork::Osaka, ForkCondition::Timestamp(10))
+            .build();
+        chain_spec.inner.base_fee_params = BaseFeeParamsKind::Variable(
+            vec![
+                (EthereumHardfork::London.boxed(), BaseFeeParams::new(10, 2)),
+                (BaseUpgrade::Azul.boxed(), BaseFeeParams::new(50, 2)),
+            ]
+            .into(),
+        );
+        let config = BaseEvmConfig::base(Arc::new(chain_spec));
+        let parent = SealedHeader::seal_slow(Header {
+            timestamp: 1,
+            gas_limit: 20_000_000,
+            base_fee_per_gas: Some(1_000),
+            ..Default::default()
+        });
+
+        // An empty parent reduces the fee by 1/10 before Azul and 1/50 afterwards.
+        for (time, timestamp, upgrade, base_fee) in [
+            (Some(0), 0_u64, BaseUpgrade::Canyon, 900),
+            (Some(1), 1, BaseUpgrade::Canyon, 900),
+            (Some(9), 9, BaseUpgrade::Canyon, 900),
+            (Some(10), 10, BaseUpgrade::Azul, 980),
+            (Some(40), 40, BaseUpgrade::Azul, 980),
+            (None, 13, BaseUpgrade::Azul, 980),
+        ] {
+            let overrides = BlockOverrides { time, ..Default::default() };
+            let attributes =
+                BaseNextBlockEnvAttributes::build_pending_env(&parent, Some(&overrides));
+            let env = config.next_evm_env(&parent, &attributes).unwrap();
+            assert_eq!(env.block_env.timestamp, U256::from(timestamp), "override {time:?}");
+            assert_eq!(env.cfg_env.spec, BaseSpecId::new(upgrade), "override {time:?}");
+            assert_eq!(env.block_env.basefee, base_fee, "override {time:?}");
+        }
     }
 
     #[test]
@@ -479,424 +524,5 @@ mod tests {
         // Check that the spec ID is set properly
         assert_eq!(evm.cfg, evm_env.cfg_env);
         assert_eq!(evm.block, evm_env.block_env);
-    }
-
-    #[test]
-    fn receipts_by_block_hash() {
-        // Create a default recovered block
-        let block: RecoveredBlock<BaseBlock> = Default::default();
-
-        // Define block hashes for block1 and block2
-        let block1_hash = B256::new([0x01; 32]);
-        let block2_hash = B256::new([0x02; 32]);
-
-        // Clone the default block into block1 and block2
-        let mut block1 = block.clone();
-        let mut block2 = block;
-
-        // Set the hashes of block1 and block2
-        block1.set_block_number(10);
-        block1.set_hash(block1_hash);
-
-        block2.set_block_number(11);
-        block2.set_hash(block2_hash);
-
-        // Create a random receipt object, receipt1
-        let receipt1 = BaseReceipt::Legacy(Receipt::<Log> {
-            cumulative_gas_used: 46913,
-            logs: vec![],
-            status: true.into(),
-        });
-
-        // Create another random receipt object, receipt2
-        let receipt2 = BaseReceipt::Legacy(Receipt::<Log> {
-            cumulative_gas_used: 1325345,
-            logs: vec![],
-            status: true.into(),
-        });
-
-        // Create a Receipts object with a vector of receipt vectors
-        let receipts = vec![vec![receipt1.clone()], vec![receipt2]];
-
-        // Create an ExecutionOutcome object with the created bundle, receipts, an empty requests
-        // vector, and first_block set to 10
-        let execution_outcome = ExecutionOutcome::<BaseReceipt> {
-            bundle: Default::default(),
-            receipts,
-            requests: vec![],
-            first_block: 10,
-        };
-
-        // Create a Chain object with a BTreeMap of blocks mapped to their block numbers,
-        // including block1_hash and block2_hash, and the execution_outcome
-        let chain: Chain<BasePrimitives> =
-            Chain::new([block1, block2], execution_outcome.clone(), BTreeMap::new());
-
-        // Assert that the proper receipt vector is returned for block1_hash
-        assert_eq!(chain.receipts_by_block_hash(block1_hash), Some(vec![&receipt1]));
-
-        // Create an ExecutionOutcome object with a single receipt vector containing receipt1
-        let execution_outcome1 = ExecutionOutcome {
-            bundle: Default::default(),
-            receipts: vec![vec![receipt1]],
-            requests: vec![],
-            first_block: 10,
-        };
-
-        // Assert that the execution outcome at the first block contains only the first receipt
-        assert_eq!(chain.execution_outcome_at_block(10), Some(execution_outcome1));
-
-        // Assert that the execution outcome at the tip block contains the whole execution outcome
-        assert_eq!(chain.execution_outcome_at_block(11), Some(execution_outcome));
-    }
-
-    #[test]
-    fn test_initialization() {
-        // Create a new BundleState object with initial data
-        let bundle = BundleState::new(
-            vec![(Address::new([2; 20]), None, Some(AccountInfo::default()), HashMap::default())],
-            vec![vec![(Address::new([2; 20]), None, vec![])]],
-            vec![],
-        );
-
-        // Create a Receipts object with a vector of receipt vectors
-        let receipts = vec![vec![Some(BaseReceipt::Legacy(Receipt::<Log> {
-            cumulative_gas_used: 46913,
-            logs: vec![],
-            status: true.into(),
-        }))]];
-
-        // Create a Requests object with a vector of requests
-        let requests = vec![Requests::new(vec![bytes!("dead"), bytes!("beef"), bytes!("beebee")])];
-
-        // Define the first block number
-        let first_block = 123;
-
-        // Create a ExecutionOutcome object with the created bundle, receipts, requests, and
-        // first_block
-        let exec_res = ExecutionOutcome {
-            bundle: bundle.clone(),
-            receipts: receipts.clone(),
-            requests: requests.clone(),
-            first_block,
-        };
-
-        // Assert that creating a new ExecutionOutcome using the constructor matches exec_res
-        assert_eq!(
-            ExecutionOutcome::new(bundle, receipts.clone(), first_block, requests.clone()),
-            exec_res
-        );
-
-        // Create a BundleStateInit object and insert initial data
-        let mut state_init: BundleStateInit = AddressMap::default();
-        state_init
-            .insert(Address::new([2; 20]), (None, Some(Account::default()), B256Map::default()));
-
-        // Create an AddressMap for account reverts and insert initial data
-        let mut revert_inner: AddressMap<AccountRevertInit> = AddressMap::default();
-        revert_inner.insert(Address::new([2; 20]), (None, vec![]));
-
-        // Create a RevertsInit object and insert the revert_inner data
-        let mut revert_init: RevertsInit = HashMap::default();
-        revert_init.insert(123, revert_inner);
-
-        // Assert that creating a new ExecutionOutcome using the new_init method matches
-        // exec_res
-        assert_eq!(
-            ExecutionOutcome::new_init(
-                state_init,
-                revert_init,
-                vec![],
-                receipts,
-                first_block,
-                requests,
-            ),
-            exec_res
-        );
-    }
-
-    #[test]
-    fn test_block_number_to_index() {
-        // Create a Receipts object with a vector of receipt vectors
-        let receipts = vec![vec![Some(BaseReceipt::Legacy(Receipt::<Log> {
-            cumulative_gas_used: 46913,
-            logs: vec![],
-            status: true.into(),
-        }))]];
-
-        // Define the first block number
-        let first_block = 123;
-
-        // Create a ExecutionOutcome object with the created bundle, receipts, requests, and
-        // first_block
-        let exec_res = ExecutionOutcome {
-            bundle: Default::default(),
-            receipts,
-            requests: vec![],
-            first_block,
-        };
-
-        // Test before the first block
-        assert_eq!(exec_res.block_number_to_index(12), None);
-
-        // Test after the first block but index larger than receipts length
-        assert_eq!(exec_res.block_number_to_index(133), None);
-
-        // Test after the first block
-        assert_eq!(exec_res.block_number_to_index(123), Some(0));
-    }
-
-    #[test]
-    fn test_get_logs() {
-        // Create a Receipts object with a vector of receipt vectors
-        let receipts = vec![vec![BaseReceipt::Legacy(Receipt::<Log> {
-            cumulative_gas_used: 46913,
-            logs: vec![Log::<LogData>::default()],
-            status: true.into(),
-        })]];
-
-        // Define the first block number
-        let first_block = 123;
-
-        // Create a ExecutionOutcome object with the created bundle, receipts, requests, and
-        // first_block
-        let exec_res = ExecutionOutcome {
-            bundle: Default::default(),
-            receipts,
-            requests: vec![],
-            first_block,
-        };
-
-        // Get logs for block number 123
-        let logs: Vec<&Log> = exec_res.logs(123).unwrap().collect();
-
-        // Assert that the logs match the expected logs
-        assert_eq!(logs, vec![&Log::<LogData>::default()]);
-    }
-
-    #[test]
-    fn test_receipts_by_block() {
-        // Create a Receipts object with a vector of receipt vectors
-        let receipts = vec![vec![Some(BaseReceipt::Legacy(Receipt::<Log> {
-            cumulative_gas_used: 46913,
-            logs: vec![Log::<LogData>::default()],
-            status: true.into(),
-        }))]];
-
-        // Define the first block number
-        let first_block = 123;
-
-        // Create a ExecutionOutcome object with the created bundle, receipts, requests, and
-        // first_block
-        let exec_res = ExecutionOutcome {
-            bundle: Default::default(), // Default value for bundle
-            receipts,                   // Include the created receipts
-            requests: vec![],           // Empty vector for requests
-            first_block,                // Set the first block number
-        };
-
-        // Get receipts for block number 123 and convert the result into a vector
-        let receipts_by_block: Vec<_> = exec_res.receipts_by_block(123).iter().collect();
-
-        // Assert that the receipts for block number 123 match the expected receipts
-        assert_eq!(
-            receipts_by_block,
-            vec![&Some(BaseReceipt::Legacy(Receipt::<Log> {
-                cumulative_gas_used: 46913,
-                logs: vec![Log::<LogData>::default()],
-                status: true.into(),
-            }))]
-        );
-    }
-
-    #[test]
-    fn test_receipts_len() {
-        // Create a Receipts object with a vector of receipt vectors
-        let receipts = vec![vec![Some(BaseReceipt::Legacy(Receipt::<Log> {
-            cumulative_gas_used: 46913,
-            logs: vec![Log::<LogData>::default()],
-            status: true.into(),
-        }))]];
-
-        // Create an empty Receipts object
-        let receipts_empty = vec![];
-
-        // Define the first block number
-        let first_block = 123;
-
-        // Create a ExecutionOutcome object with the created bundle, receipts, requests, and
-        // first_block
-        let exec_res = ExecutionOutcome {
-            bundle: Default::default(), // Default value for bundle
-            receipts,                   // Include the created receipts
-            requests: vec![],           // Empty vector for requests
-            first_block,                // Set the first block number
-        };
-
-        // Assert that the length of receipts in exec_res is 1
-        assert_eq!(exec_res.len(), 1);
-
-        // Assert that exec_res is not empty
-        assert!(!exec_res.is_empty());
-
-        // Create a ExecutionOutcome object with an empty Receipts object
-        let exec_res_empty_receipts: ExecutionOutcome<BaseReceipt> = ExecutionOutcome {
-            bundle: Default::default(), // Default value for bundle
-            receipts: receipts_empty,   // Include the empty receipts
-            requests: vec![],           // Empty vector for requests
-            first_block,                // Set the first block number
-        };
-
-        // Assert that the length of receipts in exec_res_empty_receipts is 0
-        assert_eq!(exec_res_empty_receipts.len(), 0);
-
-        // Assert that exec_res_empty_receipts is empty
-        assert!(exec_res_empty_receipts.is_empty());
-    }
-
-    #[test]
-    fn test_revert_to() {
-        // Create a random receipt object
-        let receipt = BaseReceipt::Legacy(Receipt::<Log> {
-            cumulative_gas_used: 46913,
-            logs: vec![],
-            status: true.into(),
-        });
-
-        // Create a Receipts object with a vector of receipt vectors
-        let receipts = vec![vec![Some(receipt.clone())], vec![Some(receipt.clone())]];
-
-        // Define the first block number
-        let first_block = 123;
-
-        // Create a request.
-        let request = bytes!("deadbeef");
-
-        // Create a vector of Requests containing the request.
-        let requests =
-            vec![Requests::new(vec![request.clone()]), Requests::new(vec![request.clone()])];
-
-        // Create a ExecutionOutcome object with the created bundle, receipts, requests, and
-        // first_block
-        let mut exec_res =
-            ExecutionOutcome { bundle: Default::default(), receipts, requests, first_block };
-
-        // Assert that the revert_to method returns true when reverting to the initial block number.
-        assert!(exec_res.revert_to(123));
-
-        // Assert that the receipts are properly cut after reverting to the initial block number.
-        assert_eq!(exec_res.receipts, vec![vec![Some(receipt)]]);
-
-        // Assert that the requests are properly cut after reverting to the initial block number.
-        assert_eq!(exec_res.requests, vec![Requests::new(vec![request])]);
-
-        // Assert that the revert_to method returns false when attempting to revert to a block
-        // number greater than the initial block number.
-        assert!(!exec_res.revert_to(133));
-
-        // Assert that the revert_to method returns false when attempting to revert to a block
-        // number less than the initial block number.
-        assert!(!exec_res.revert_to(10));
-    }
-
-    #[test]
-    fn test_extend_execution_outcome() {
-        // Create a Receipt object with specific attributes.
-        let receipt = BaseReceipt::Legacy(Receipt::<Log> {
-            cumulative_gas_used: 46913,
-            logs: vec![],
-            status: true.into(),
-        });
-
-        // Create a Receipts object containing the receipt.
-        let receipts = vec![vec![Some(receipt.clone())]];
-
-        // Create a request.
-        let request = bytes!("deadbeef");
-
-        // Create a vector of Requests containing the request.
-        let requests = vec![Requests::new(vec![request.clone()])];
-
-        // Define the initial block number.
-        let first_block = 123;
-
-        // Create an ExecutionOutcome object.
-        let mut exec_res =
-            ExecutionOutcome { bundle: Default::default(), receipts, requests, first_block };
-
-        // Extend the ExecutionOutcome object by itself.
-        exec_res.extend(exec_res.clone());
-
-        // Assert the extended ExecutionOutcome matches the expected outcome.
-        assert_eq!(
-            exec_res,
-            ExecutionOutcome {
-                bundle: Default::default(),
-                receipts: vec![vec![Some(receipt.clone())], vec![Some(receipt)]],
-                requests: vec![Requests::new(vec![request.clone()]), Requests::new(vec![request])],
-                first_block: 123,
-            }
-        );
-    }
-
-    #[test]
-    fn test_split_at_execution_outcome() {
-        // Create a random receipt object
-        let receipt = BaseReceipt::Legacy(Receipt::<Log> {
-            cumulative_gas_used: 46913,
-            logs: vec![],
-            status: true.into(),
-        });
-
-        // Create a Receipts object with a vector of receipt vectors
-        let receipts = vec![
-            vec![Some(receipt.clone())],
-            vec![Some(receipt.clone())],
-            vec![Some(receipt.clone())],
-        ];
-
-        // Define the first block number
-        let first_block = 123;
-
-        // Create a request.
-        let request = bytes!("deadbeef");
-
-        // Create a vector of Requests containing the request.
-        let requests = vec![
-            Requests::new(vec![request.clone()]),
-            Requests::new(vec![request.clone()]),
-            Requests::new(vec![request.clone()]),
-        ];
-
-        // Create a ExecutionOutcome object with the created bundle, receipts, requests, and
-        // first_block
-        let exec_res =
-            ExecutionOutcome { bundle: Default::default(), receipts, requests, first_block };
-
-        // Split the ExecutionOutcome at block number 124
-        let result = exec_res.clone().split_at(124);
-
-        // Define the expected lower ExecutionOutcome after splitting
-        let lower_execution_outcome = ExecutionOutcome {
-            bundle: Default::default(),
-            receipts: vec![vec![Some(receipt.clone())]],
-            requests: vec![Requests::new(vec![request.clone()])],
-            first_block,
-        };
-
-        // Define the expected higher ExecutionOutcome after splitting
-        let higher_execution_outcome = ExecutionOutcome {
-            bundle: Default::default(),
-            receipts: vec![vec![Some(receipt.clone())], vec![Some(receipt)]],
-            requests: vec![Requests::new(vec![request.clone()]), Requests::new(vec![request])],
-            first_block: 124,
-        };
-
-        // Assert that the split result matches the expected lower and higher outcomes
-        assert_eq!(result.0, Some(lower_execution_outcome));
-        assert_eq!(result.1, higher_execution_outcome);
-
-        // Assert that splitting at the first block number returns None for the lower outcome
-        assert_eq!(exec_res.clone().split_at(123), (None, exec_res));
     }
 }

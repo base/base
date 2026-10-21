@@ -24,14 +24,6 @@ use crate::{
 
 /// The Ethereum [EIP-2718] Transaction Envelope, modified for Base.
 ///
-/// # Note:
-///
-/// This enum distinguishes between tagged and untagged legacy transactions, as
-/// the in-protocol merkle tree may commit to EITHER 0-prefixed or raw.
-/// Therefore we must ensure that encoding returns the precise byte-array that
-/// was decoded, preserving the presence or absence of the `TransactionType`
-/// flag.
-///
 /// [EIP-2718]: https://eips.ethereum.org/EIPS/eip-2718
 #[derive(Debug, Clone, TransactionEnvelope)]
 #[envelope(tx_type_name = OpTxType, typed = BaseTypedTransaction, serde_cfg(feature = "serde"))]
@@ -881,11 +873,12 @@ mod tests {
     use alloc::vec;
 
     use alloy_consensus::{SignableTransaction, Transaction};
-    use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256, hex};
+    use alloy_primitives::{Address, Bytes, Signature, TxKind, U256, hex};
     #[cfg(feature = "reth")]
     use reth_codecs::Compact;
 
     use super::*;
+    use crate::test_utils::{sample_deposit, sample_signed_8130};
 
     #[test]
     fn test_tx_gas_limit() {
@@ -919,17 +912,7 @@ mod tests {
 
     #[test]
     fn test_encode_decode_deposit() {
-        let tx = TxDeposit {
-            source_hash: B256::left_padding_from(&[0xde, 0xad]),
-            from: Address::left_padding_from(&[0xbe, 0xef]),
-            mint: 1,
-            gas_limit: 2,
-            to: TxKind::Call(Address::left_padding_from(&[3])),
-            value: U256::from(4_u64),
-            input: Bytes::from(vec![5]),
-            is_system_transaction: false,
-        };
-        let tx_envelope = BaseTxEnvelope::Deposit(tx.seal_slow());
+        let tx_envelope = BaseTxEnvelope::Deposit(sample_deposit().seal_slow());
         let encoded = tx_envelope.encoded_2718();
         let decoded = BaseTxEnvelope::decode_2718(&mut encoded.as_ref()).unwrap();
         assert_eq!(encoded.len(), tx_envelope.encode_2718_len());
@@ -1118,75 +1101,23 @@ mod tests {
     }
 
     #[cfg(feature = "reth")]
-    #[test]
-    fn eip8130_compact_roundtrip() {
+    #[rstest::rstest]
+    #[case::no_trailing(&[])]
+    #[case::trailing_bytes(&[0xDE, 0xAD, 0xBE, 0xEF])]
+    fn eip8130_compact_roundtrip(#[case] trailing: &[u8]) {
         use alloy_consensus::Typed2718;
 
-        use crate::transaction::eip8130::{Eip8130Signed, TxEip8130};
+        let envelope = BaseTxEnvelope::Eip8130(sample_signed_8130(true));
 
-        let envelope = BaseTxEnvelope::Eip8130(Eip8130Signed::new(
-            TxEip8130 {
-                chain_id: 8453,
-                sender: Some(Address::with_last_byte(0x11)),
-                nonce_key: U256::from(7u64),
-                nonce_sequence: 3,
-                valid_after: 0,
-                valid_before: 123,
-                max_priority_fee_per_gas: 1_000,
-                max_fee_per_gas: 5_000,
-                gas_limit: 42_000,
-                account_changes: Vec::new(),
-                calls: Vec::new(),
-                metadata: Bytes::from_static(&[0x01, 0x02, 0x03]),
-                payer: Some(Address::with_last_byte(0x22)),
-            },
-            Bytes::from_static(&[0xAB; 65]),
-            Bytes::from_static(&[0xCD; 24]),
-        ));
-
-        let mut buf = Vec::new();
-        let len = envelope.to_compact(&mut buf);
-        let (decoded, remaining) = BaseTxEnvelope::from_compact(&buf, len);
-
-        assert_eq!(decoded, envelope);
-        assert!(remaining.is_empty());
-        assert_eq!(decoded.tx_type(), OpTxType::Eip8130);
-        assert_eq!(decoded.ty(), crate::EIP8130_TX_TYPE_ID);
-    }
-
-    #[cfg(feature = "reth")]
-    #[test]
-    fn eip8130_compact_decode_preserves_trailing_bytes() {
-        use crate::transaction::eip8130::{Eip8130Signed, TxEip8130};
-
-        let envelope = BaseTxEnvelope::Eip8130(Eip8130Signed::new(
-            TxEip8130 {
-                chain_id: 8453,
-                sender: Some(Address::with_last_byte(0x11)),
-                nonce_key: U256::from(7u64),
-                nonce_sequence: 3,
-                valid_after: 0,
-                valid_before: 123,
-                max_priority_fee_per_gas: 1_000,
-                max_fee_per_gas: 5_000,
-                gas_limit: 42_000,
-                account_changes: Vec::new(),
-                calls: Vec::new(),
-                metadata: Bytes::from_static(&[0x01, 0x02, 0x03]),
-                payer: Some(Address::with_last_byte(0x22)),
-            },
-            Bytes::from_static(&[0xAB; 65]),
-            Bytes::from_static(&[0xCD; 24]),
-        ));
-
-        let trailing = [0xDE, 0xAD, 0xBE, 0xEF];
         let mut buf = Vec::new();
         let _ = envelope.to_compact(&mut buf);
-        buf.extend_from_slice(&trailing);
+        buf.extend_from_slice(trailing);
 
         let (decoded, remaining) = BaseTxEnvelope::from_compact(&buf, buf.len());
 
         assert_eq!(decoded, envelope);
         assert_eq!(remaining, trailing);
+        assert_eq!(decoded.tx_type(), OpTxType::Eip8130);
+        assert_eq!(decoded.ty(), crate::EIP8130_TX_TYPE_ID);
     }
 }

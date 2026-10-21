@@ -2,16 +2,14 @@
 
 use std::{
     fs,
-    net::{IpAddr, SocketAddr, ToSocketAddrs},
+    net::{IpAddr, SocketAddr},
     num::{NonZeroUsize, ParseIntError},
-    ops::{Deref, DerefMut},
+    ops::Deref,
     path::PathBuf,
-    str::FromStr,
 };
 
 use alloy_primitives::{B256, b256};
 use alloy_provider::Provider;
-use alloy_signer_local::PrivateKeySigner;
 use backon::Retryable;
 use base_common_genesis::RollupConfig;
 use base_consensus_derive::ChainProvider;
@@ -32,33 +30,10 @@ use tokio::time::Duration;
 use tracing::{error, info, warn};
 use url::Url;
 
-use crate::signer::{SignerArgs, SignerArgsParseError};
-
-/// Resolves a hostname or IP address string to an [`IpAddr`].
-///
-/// Accepts either:
-/// - A valid IP address string (e.g., "127.0.0.1", "`::1`")
-/// - A DNS hostname (e.g., "node1.example.com")
-///
-/// For DNS hostnames, this performs synchronous DNS resolution and returns the first
-/// resolved IP address.
-fn resolve_host(host: &str) -> Result<IpAddr, String> {
-    // First, try to parse as a direct IP address
-    if let Ok(ip) = host.parse::<IpAddr>() {
-        return Ok(ip);
-    }
-
-    // If that fails, try DNS resolution
-    // We append a port to make it a valid socket address for resolution
-    let socket_addr = format!("{host}:0");
-    match socket_addr.to_socket_addrs() {
-        Ok(mut addrs) => addrs
-            .next()
-            .map(|addr| addr.ip())
-            .ok_or_else(|| format!("DNS resolution for '{host}' returned no addresses")),
-        Err(e) => Err(format!("Failed to resolve '{host}': {e}")),
-    }
-}
+use crate::{
+    resolve_host,
+    signer::{SignerArgs, SignerArgsParseError},
+};
 
 fn parse_nonzero_usize(arg: &str) -> Result<NonZeroUsize, String> {
     let value = arg.parse::<usize>().map_err(|err| err.to_string())?;
@@ -351,12 +326,6 @@ impl Deref for P2PArgs {
     }
 }
 
-impl DerefMut for P2PArgs {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.network
-    }
-}
-
 /// P2P CLI flags for an embedded validator-only node.
 #[derive(Parser, Clone, Debug, PartialEq, Eq)]
 pub struct EmbeddedP2PArgs {
@@ -391,27 +360,6 @@ pub enum P2PConfigError {
 }
 
 impl P2PArgs {
-    fn check_ports_inner(ip_addr: IpAddr, tcp_port: u16, udp_port: u16) -> Result<()> {
-        if tcp_port == 0 {
-            return Ok(());
-        }
-        if udp_port == 0 {
-            return Ok(());
-        }
-        let tcp_socket = std::net::TcpListener::bind((ip_addr, tcp_port));
-        let udp_socket = std::net::UdpSocket::bind((ip_addr, udp_port));
-        if let Err(e) = tcp_socket {
-            error!(target: "p2p::flags", tcp_port, error = %e, "Error binding TCP socket");
-            eyre::bail!("Error binding TCP socket on port {tcp_port}: {e}");
-        }
-        if let Err(e) = udp_socket {
-            error!(target: "p2p::flags", udp_port, error = %e, "Error binding UDP socket");
-            eyre::bail!("Error binding UDP socket on port {udp_port}: {e}");
-        }
-
-        Ok(())
-    }
-
     /// Checks if the listen ports are available on the system.
     ///
     /// If either of the ports are `0`, this check is skipped.
@@ -421,36 +369,31 @@ impl P2PArgs {
     /// - If the TCP port is already in use.
     /// - If the UDP port is already in use.
     pub fn check_ports(&self) -> Result<()> {
-        Self::check_ports_inner(self.listen_ip, self.listen_tcp_port, self.listen_udp_port)
-    }
-
-    /// Returns the private key as specified in the raw cli flag or via file path.
-    pub fn private_key(&self) -> Option<PrivateKeySigner> {
-        if let Some(key) = self.private_key {
-            match PrivateKeySigner::from_bytes(&key) {
-                Ok(signer) => return Some(signer),
-                Err(e) => {
-                    error!(target: "p2p::flags", error = %e, "Failed to parse private key");
-                    return None;
-                }
-            }
+        if self.listen_tcp_port == 0 || self.listen_udp_port == 0 {
+            return Ok(());
+        }
+        let tcp_socket = std::net::TcpListener::bind((self.listen_ip, self.listen_tcp_port));
+        let udp_socket = std::net::UdpSocket::bind((self.listen_ip, self.listen_udp_port));
+        if let Err(e) = tcp_socket {
+            error!(
+                target: "p2p::flags",
+                tcp_port = self.listen_tcp_port,
+                error = %e,
+                "Error binding TCP socket"
+            );
+            eyre::bail!("Error binding TCP socket on port {}: {e}", self.listen_tcp_port);
+        }
+        if let Err(e) = udp_socket {
+            error!(
+                target: "p2p::flags",
+                udp_port = self.listen_udp_port,
+                error = %e,
+                "Error binding UDP socket"
+            );
+            eyre::bail!("Error binding UDP socket on port {}: {e}", self.listen_udp_port);
         }
 
-        if let Some(path) = self.priv_path.as_ref()
-            && path.exists()
-        {
-            let contents = std::fs::read_to_string(path).ok()?;
-            let decoded = B256::from_str(&contents).ok()?;
-            match PrivateKeySigner::from_bytes(&decoded) {
-                Ok(signer) => return Some(signer),
-                Err(e) => {
-                    error!(target: "p2p::flags", error = %e, "Failed to parse private key from file");
-                    return None;
-                }
-            }
-        }
-
-        None
+        Ok(())
     }
 
     /// Returns the unsafe block signer from the CLI arguments.
@@ -649,14 +592,14 @@ impl P2PArgs {
         // If the advertise ip is set, we will disable the dynamic ENR updates.
         let static_ip = self.advertise_ip.is_some();
 
-        // If the advertise tcp port is null, use the listen tcp port
+        // If an advertised port is unset or zero, use the corresponding listen port.
         let advertise_tcp_port = match self.advertise_tcp_port {
-            None => self.listen_tcp_port,
+            None | Some(0) => self.listen_tcp_port,
             Some(port) => port,
         };
 
         let advertise_udp_port = match self.advertise_udp_port {
-            None => self.listen_udp_port,
+            None | Some(0) => self.listen_udp_port,
             Some(port) => port,
         };
 
@@ -802,9 +745,12 @@ impl P2PArgs {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
+    use std::{
+        str::FromStr,
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
     };
 
     use alloy_primitives::{Address, b256};
@@ -813,6 +759,7 @@ mod tests {
     use base_consensus_providers::L1_RPC_TIMEOUT;
     use clap::Parser;
     use httpmock::{HttpMockRequest, HttpMockResponse, Method::POST, MockServer};
+    use rstest::rstest;
     use serde_json::{Value, json};
 
     use super::*;
@@ -1249,6 +1196,46 @@ mod tests {
         let err = err.to_string();
         assert!(err.contains("502"), "unexpected error: {err}");
         mock.assert_calls_async(2).await;
+    }
+
+    #[rstest]
+    #[case::omitted(None, None, 9222, 9223)]
+    #[case::zero(Some("0"), Some("0"), 9222, 9223)]
+    #[case::overrides(Some("9333"), Some("9444"), 9333, 9444)]
+    #[case::zero_tcp(Some("0"), Some("9444"), 9222, 9444)]
+    #[case::zero_udp(Some("9333"), Some("0"), 9333, 9223)]
+    #[tokio::test]
+    async fn test_p2p_config_advertised_ports(
+        #[case] tcp: Option<&str>,
+        #[case] udp: Option<&str>,
+        #[case] expected_tcp: u16,
+        #[case] expected_udp: u16,
+    ) {
+        let mut cli_args = vec![
+            "test",
+            "--p2p.listen.tcp",
+            "9222",
+            "--p2p.listen.udp",
+            "9223",
+            "--p2p.advertise.ip",
+            "192.0.2.1",
+        ];
+        if let Some(port) = tcp {
+            cli_args.extend(["--p2p.advertise.tcp", port]);
+        }
+        if let Some(port) = udp {
+            cli_args.extend(["--p2p.advertise.udp", port]);
+        }
+        let args = MockCommand::parse_from(cli_args);
+        let config = args
+            .p2p
+            .config(&RollupConfig::default(), 8453, None, L1_RPC_TIMEOUT, Some(Address::ZERO))
+            .await
+            .unwrap();
+        let enr = config.discovery_address.build_enr(8453).unwrap();
+
+        assert_eq!(enr.tcp4(), Some(expected_tcp));
+        assert_eq!(enr.udp4(), Some(expected_udp));
     }
 
     #[tokio::test]

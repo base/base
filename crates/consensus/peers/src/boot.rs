@@ -1,6 +1,6 @@
 //! Contains the [`BootNode`] type which is used to represent a boot node in the network.
 
-use std::{net::IpAddr, str::FromStr};
+use std::str::FromStr;
 
 use derive_more::{Display, From};
 use discv5::{
@@ -42,17 +42,10 @@ impl BootNode {
     /// Parses a [`NodeRecord`] and serializes according to CL format. Note: [`discv5`] is
     /// originally a CL library hence needs this format to add the node.
     pub fn from_unsigned(node_record: NodeRecord) -> Result<Self, PeerIdConversionError> {
-        let NodeRecord { address, udp_port, id, tcp_port } = node_record;
-        let mut multi_address = Multiaddr::empty();
-        match address {
-            IpAddr::V4(ip) => multi_address.push(Protocol::Ip4(ip)),
-            IpAddr::V6(ip) => multi_address.push(Protocol::Ip6(ip)),
-        }
-
-        multi_address.push(Protocol::Udp(udp_port));
-        multi_address.push(Protocol::Tcp(tcp_port));
-        multi_address.push(Protocol::P2p(PeerUtils::local_id_to_p2p_id(id)?));
-
+        let multi_address = Multiaddr::from(node_record.address)
+            .with(Protocol::Udp(node_record.udp_port))
+            .with(Protocol::Tcp(node_record.tcp_port))
+            .with(Protocol::P2p(PeerUtils::local_id_to_p2p_id(node_record.id)?));
         Ok(Self::Enode(multi_address))
     }
 

@@ -179,6 +179,7 @@ mod tests {
             estimated_gas,
             validity: Vec::new(),
             cohort: SubmitCohort::Plain,
+            validity_signature: None,
         }
     }
 

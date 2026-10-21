@@ -22,6 +22,7 @@ use base_common_network::Base;
 use base_common_rpc_types::BaseTransactionRequest;
 use base_consensus_node::NodeMode;
 use base_execution_cli::ExecutionUpgradeSignalConfig;
+use base_execution_txpool::ValiditySignatureMode;
 use base_node_runner::BaseNodeExtension;
 use base_tx_forwarding::TxForwardingConfig;
 use base_upgrade_signal::UpgradeSignalConfig;
@@ -33,7 +34,7 @@ use super::{
     ChainSpecSource, InProcessBatcher, InProcessBatcherConfig, InProcessBuilder,
     InProcessBuilderConfig, InProcessClient, InProcessClientConfig, InProcessConsensus,
     InProcessConsensusConfig, InProcessFollowConsensus, InProcessFollowConsensusConfig,
-    L2ContainerConfig, ShadowSequencer, ShadowSequencerConfig,
+    InProcessNodeRuntime, L2ContainerConfig, ShadowSequencer, ShadowSequencerConfig,
 };
 use crate::config::{ANVIL_ACCOUNT_1, BATCHER, SEQUENCER};
 
@@ -79,9 +80,8 @@ pub struct L2StackConfig {
     /// Optional transaction forwarding configuration for the client node.
     /// When set, the client will forward transactions to builder RPC endpoints.
     pub tx_forwarding_config: Option<TxForwardingConfig>,
-    /// Whether both L2 nodes enable experimental validity transaction transport,
-    /// including `base_sendRawTransactionValidity` on the builder.
-    pub enable_experimental_validity_transactions: bool,
+    /// Signature policy shared by forwarding ingress and builder admission.
+    pub validity_signature_mode: ValiditySignatureMode,
     /// Whether the active builder cuts over from flashblocks to basic at Denim.
     pub payload_builder_cutover: bool,
     /// Number of L1 blocks to keep distance from the L1 head for the client (validator)
@@ -161,7 +161,7 @@ impl L2ClientConsensus {
 /// The startup order is:
 /// 1. Builder starts first (in-process EL)
 /// 2. Builder consensus node connects to builder's engine API (in-process CL, Sequencer mode)
-/// 3. Batcher connects to builder RPC and builder consensus RPC
+/// 3. Batcher connects to the builder consensus RPC, which forwards to the builder RPC
 /// 4. Client starts (in-process EL)
 /// 5. Client consensus node connects to client's engine API
 /// 6. Validator-mode client consensus connects to builder consensus via P2P
@@ -193,7 +193,7 @@ impl L2Stack {
     /// # Errors
     ///
     /// Returns an error if any component fails to start.
-    pub async fn start(config: L2StackConfig) -> Result<Self> {
+    pub async fn start(mut config: L2StackConfig) -> Result<Self> {
         let container_config = config.container_config.as_ref();
 
         let l1_rpc_url: Url = config.l1_rpc_url.parse().wrap_err("Invalid L1 RPC URL")?;
@@ -204,6 +204,11 @@ impl L2Stack {
         if config.shadow_sequencers.as_ref().is_some_and(|shadow| shadow.start_block.is_some()) {
             rollup_config.block_time = 2;
         }
+        // op-deployer supplies the legacy interval in rollup.json, not the EL genesis.
+        let mut genesis: serde_json::Value =
+            serde_json::from_slice(&config.l2_genesis).wrap_err("Failed to parse L2 genesis")?;
+        genesis["config"]["blockTime"] = rollup_config.block_time.into();
+        config.l2_genesis = serde_json::to_vec(&genesis)?;
         let l1_chain_config: ChainConfig = serde_json::from_slice(&config.l1_genesis)
             .wrap_err("Failed to parse L1 chain config")?;
         let builder_chain_spec =
@@ -212,6 +217,7 @@ impl L2Stack {
 
         // 1. Start the builder (in-process EL).
         let builder_config = InProcessBuilderConfig {
+            runtime: InProcessNodeRuntime::SystemTest,
             chain_spec: builder_chain_spec,
             datadir: config.builder_datadir,
             jwt_secret: config.jwt_secret,
@@ -221,12 +227,12 @@ impl L2Stack {
             p2p_port: container_config.and_then(|c| c.builder_p2p_port),
             flashblocks_port: container_config.and_then(|c| c.builder_flashblocks_port),
             metrics_port: None,
-            enable_experimental_validity_transactions: config
-                .enable_experimental_validity_transactions,
             payload_builder_cutover: config.payload_builder_cutover,
+            validity_signature_mode: config.validity_signature_mode,
             extra_extensions: config.extra_builder_extensions,
             block_time: Duration::from_secs(rollup_config.block_time),
             persistence_threshold: None,
+            persistence_backpressure_threshold: None,
             txpool_max_transactions: None,
             txpool_max_size_mb: None,
             txpool_max_account_slots: None,
@@ -258,6 +264,8 @@ impl L2Stack {
             verifier_l1_confs: 0,
             shadow_blocks_per_cycle: None,
             upgrade_signal: config.upgrade_signal.clone(),
+            // The batcher reads the L2 blocks and pushes its DA limits through this consensus RPC.
+            execution_forwarding_endpoint: Some(builder.rpc_url()?),
         };
         let builder_consensus = InProcessConsensus::start(builder_consensus_config)
             .await
@@ -273,8 +281,7 @@ impl L2Stack {
             Some(
                 InProcessBatcher::start(InProcessBatcherConfig {
                     l1_rpc_url: l1_rpc_url.clone(),
-                    l2_rpc_url: builder.rpc_url()?,
-                    rollup_rpc_url: builder_consensus.rpc_url(),
+                    sequencer_url: builder_consensus.rpc_url(),
                     batcher_key: config.batcher_key,
                     force_batch_submission: config.force_batch_submission,
                 })
@@ -297,6 +304,7 @@ impl L2Stack {
         };
 
         let client_config = InProcessClientConfig {
+            runtime: InProcessNodeRuntime::SystemTest,
             chain_spec: ChainSpecSource::GenesisJson(config.l2_genesis.clone()),
             datadir: config.client_datadir,
             jwt_secret: config.jwt_secret,
@@ -309,9 +317,9 @@ impl L2Stack {
             p2p_port: container_config.and_then(|c| c.client_p2p_port),
             metrics_port: None,
             persistence_threshold: None,
+            persistence_backpressure_threshold: None,
             tx_forwarding_config,
-            enable_experimental_validity_transactions: config
-                .enable_experimental_validity_transactions,
+            validity_signature_mode: config.validity_signature_mode,
             upgrade_signal: config.execution_upgrade_signal.clone(),
             extra_extensions: config.extra_client_extensions,
         };
@@ -341,6 +349,7 @@ impl L2Stack {
                     verifier_l1_confs: config.verifier_l1_confs,
                     shadow_blocks_per_cycle: None,
                     upgrade_signal: config.upgrade_signal.clone(),
+                    execution_forwarding_endpoint: None,
                 };
                 let client_consensus = InProcessConsensus::start(client_consensus_config)
                     .await
@@ -427,8 +436,7 @@ impl L2Stack {
             batcher = Some(
                 InProcessBatcher::start(InProcessBatcherConfig {
                     l1_rpc_url: l1_rpc_url.clone(),
-                    l2_rpc_url: builder.rpc_url()?,
-                    rollup_rpc_url: builder_consensus.rpc_url(),
+                    sequencer_url: builder_consensus.rpc_url(),
                     batcher_key: config.batcher_key,
                     force_batch_submission: true,
                 })

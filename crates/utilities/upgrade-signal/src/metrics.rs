@@ -3,7 +3,7 @@
 use alloy_primitives::U256;
 use base_common_genesis::BaseUpgrade;
 
-use crate::{UpgradeSignal, UpgradeSignalSchedule};
+use crate::{PackedProtocolVersion, UpgradeSignal, UpgradeSignalMode, UpgradeSignalSchedule};
 
 /// Upgrade signal metric layer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,6 +26,10 @@ impl UpgradeSignalMetricLayer {
 
 base_metrics::define_metrics! {
     base.upgrade_signal, struct = UpgradeSignalMetrics,
+    #[describe("1 for the configured upgrade signal mode; disabled when no contract is configured")]
+    #[label(layer)]
+    #[label(mode)]
+    mode_info: gauge,
     #[describe("Configured activation timestamp read from L1")]
     #[label(layer)]
     #[label(upgrade)]
@@ -64,12 +68,19 @@ base_metrics::define_metrics! {
 }
 
 impl UpgradeSignalMetrics {
-    /// Records all metrics derived from a successfully read schedule.
-    pub fn record_schedule(layer: UpgradeSignalMetricLayer, schedule: &UpgradeSignalSchedule) {
+    /// Records the startup mode after the metrics recorder is installed, without reading L1.
+    ///
+    /// `None` means no upgrade signal contract is configured. Only the selected mode is emitted;
+    /// it remains exposed on subsequent scrapes for the lifetime of the process.
+    pub fn record_mode(layer: UpgradeSignalMetricLayer, mode: Option<UpgradeSignalMode>) {
         Self::init();
-        for signal in &schedule.signals {
-            Self::record_signal(layer, schedule.l1_block_number, signal);
-        }
+        let mode = match mode {
+            Some(UpgradeSignalMode::MetricsOnly) => "metrics-only",
+            Some(UpgradeSignalMode::StartupApply) => "startup-apply",
+            Some(UpgradeSignalMode::RuntimeAdmin) => "runtime-admin",
+            None => "disabled",
+        };
+        Self::mode_info(layer.label(), mode).set(1.0);
     }
 
     /// Records all metrics derived from a successfully read schedule for all enabled layers.
@@ -79,7 +90,9 @@ impl UpgradeSignalMetrics {
     ) {
         Self::init();
         for layer in layers {
-            Self::record_schedule(*layer, schedule);
+            for signal in &schedule.signals {
+                Self::record_signal(*layer, schedule.l1_block_number, signal);
+            }
         }
     }
 
@@ -100,34 +113,22 @@ impl UpgradeSignalMetrics {
         Self::last_l1_read_block(layer, upgrade_id).set(l1_block_number as f64);
     }
 
-    /// Records failed L1 reads for all contract-backed upgrades.
-    pub fn record_l1_read_errors(layer: UpgradeSignalMetricLayer) {
-        Self::init();
-        for upgrade_id in BaseUpgrade::CONTRACT_VARIANTS {
-            Self::l1_read_errors_total(layer.label(), upgrade_id.contract_id().to_string())
-                .increment(1);
-        }
-    }
-
     /// Records failed L1 reads for all contract-backed upgrades across all enabled layers.
     pub fn record_l1_read_errors_for_layers(layers: &[UpgradeSignalMetricLayer]) {
         Self::init();
         for layer in layers {
-            Self::record_l1_read_errors(*layer);
+            for upgrade_id in BaseUpgrade::CONTRACT_VARIANTS {
+                Self::l1_read_errors_total(layer.label(), upgrade_id.contract_id().to_string())
+                    .increment(1);
+            }
         }
-    }
-
-    /// Records an empty (but successful) L1 schedule read for one layer.
-    pub fn record_empty_schedule_read(layer: UpgradeSignalMetricLayer) {
-        Self::init();
-        Self::empty_schedule_reads_total(layer.label()).increment(1);
     }
 
     /// Records an empty (but successful) L1 schedule read across all enabled layers.
     pub fn record_empty_schedule_reads_for_layers(layers: &[UpgradeSignalMetricLayer]) {
         Self::init();
         for layer in layers {
-            Self::record_empty_schedule_read(*layer);
+            Self::empty_schedule_reads_total(layer.label()).increment(1);
         }
     }
 
@@ -175,17 +176,60 @@ impl UpgradeSignalMetrics {
     ///
     /// Expects a contract-read packed semver value; non-semver inputs decode to garbage.
     pub fn protocol_version_to_f64(protocol_version: U256) -> f64 {
-        let limbs = protocol_version.as_limbs();
-        let major = limbs[1] >> 32;
-        let minor = limbs[1] & u64::from(u32::MAX);
-        let patch = limbs[0] >> 32;
-        (major * 1_000_000 + minor * 1_000 + patch) as f64
+        let v = PackedProtocolVersion::new(protocol_version);
+        (u64::from(v.major()) * 1_000_000 + u64::from(v.minor()) * 1_000 + u64::from(v.patch()))
+            as f64
     }
 }
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "metrics")]
+    use metrics_util::{
+        MetricKind,
+        debugging::{DebugValue, DebuggingRecorder},
+    };
+    #[cfg(feature = "metrics")]
+    use rstest::rstest;
+
     use super::*;
+
+    #[cfg(feature = "metrics")]
+    #[rstest]
+    #[case(None, "disabled")]
+    #[case(Some(UpgradeSignalMode::MetricsOnly), "metrics-only")]
+    #[case(Some(UpgradeSignalMode::StartupApply), "startup-apply")]
+    #[case(Some(UpgradeSignalMode::RuntimeAdmin), "runtime-admin")]
+    fn records_only_selected_mode(
+        #[case] mode: Option<UpgradeSignalMode>,
+        #[case] expected_mode: &str,
+        #[values(UpgradeSignalMetricLayer::Execution, UpgradeSignalMetricLayer::Consensus)]
+        layer: UpgradeSignalMetricLayer,
+    ) {
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        metrics::with_local_recorder(&recorder, || {
+            UpgradeSignalMetrics::record_mode(layer, mode);
+            UpgradeSignalMetrics::record_mode(layer, mode);
+        });
+
+        let snapshot = snapshotter.snapshot().into_vec();
+        let entries: Vec<_> = snapshot
+            .iter()
+            .filter(|(key, _, _, _)| key.key().name() == "base.upgrade_signal.mode_info")
+            .collect();
+        assert_eq!(entries.len(), 1);
+        let (key, _, _, value) = entries[0];
+        assert_eq!(key.kind(), MetricKind::Gauge);
+        assert_eq!(*value, DebugValue::Gauge(1.0.into()));
+        let mut labels: Vec<_> = key.key().labels().map(|l| (l.key(), l.value())).collect();
+        labels.sort_unstable();
+        let expected_layer = match layer {
+            UpgradeSignalMetricLayer::Execution => "el",
+            UpgradeSignalMetricLayer::Consensus => "cl",
+        };
+        assert_eq!(labels, [("layer", expected_layer), ("mode", expected_mode)]);
+    }
 
     #[test]
     fn converts_packed_semver_protocol_version_to_metric_value() {

@@ -13,16 +13,13 @@ confirmation.
 
 ### Core types
 
-- **`TxManager`** — trait defining the public API (`send`, `send_async`, `cancel_tx`,
-  `sender_address`).
+- **`TxManager`** — trait defining the public API (`send`, `send_async`, `sender_address`).
 - **`SimpleTxManager`** — default `TxManager` implementation. Handles gas estimation,
   nonce management, signing, submission with fee bumps, and receipt polling.
 - **`TxCandidate`** — input to the send pipeline (calldata, recipient, gas limit, value,
   optional blobs).
 - **`PreparedTx`** — signed transaction bytes and the fees, gas limit, nonce, and sidecar
   that were applied.
-- **`TxQueue`** — bounded async send queue with semaphore-based backpressure.
-- **`SendResult`** — pairs a caller-supplied ID with a transaction send outcome.
 
 ### Fee calculation
 

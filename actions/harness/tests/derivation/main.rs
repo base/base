@@ -18,10 +18,13 @@ use base_consensus_derive::{
     EthereumDataSource, PipelineBuilder, PipelineEncodingError, PipelineError, PipelineErrorKind,
     StatefulAttributesBuilder, StepResult,
 };
-use base_protocol::{BlockInfo, DERIVATION_VERSION_0, DepositDecodeError, Deposits, L2BlockInfo};
+use base_protocol::{DERIVATION_VERSION_0, DepositDecodeError, Deposits, L2BlockInfo};
 
+mod channels;
+mod da_switching;
 mod holocene_span_batches;
 mod node;
+mod sequencer_drift;
 
 /// The derivation pipeline reads a single batcher frame from L1 and derives
 /// the corresponding L2 block, advancing the safe head from genesis (0) to 1.
@@ -85,7 +88,7 @@ async fn multiple_l1_blocks_each_derive_one_l2_block() {
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut builder = h.create_l2_sequencer(l1_chain);
 
-    let mut batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
+    let batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
     for _ in 1..=L2_BLOCK_COUNT {
         batcher.push_block(builder.build_next_block_with_single_transaction().await);
         batcher.advance(&mut h.l1).await;
@@ -375,7 +378,7 @@ async fn orphaned_partial_channel_does_not_combine_with_canonical_remainder() {
 
     let mut source = ActionL2Source::new();
     source.push(block);
-    let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
+    let batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
     batcher.encode_only().await;
     assert!(
         batcher.pending_count() >= 2,
@@ -388,9 +391,9 @@ async fn orphaned_partial_channel_does_not_combine_with_canonical_remainder() {
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
 
-    batcher.stage_n_frames(&mut h.l1, 1);
+    batcher.stage_n_submissions(&mut h.l1, 1);
     h.l1.mine_block();
-    batcher.confirm_staged(h.l1.tip()).await;
+    batcher.observe_l1_block(h.l1.tip()).await;
     chain.push(h.l1.tip().clone());
 
     node.initialize().await;
@@ -403,9 +406,9 @@ async fn orphaned_partial_channel_does_not_combine_with_canonical_remainder() {
 
     let remaining = batcher.pending_count();
     assert!(remaining > 0, "test requires canonical remainder frames");
-    batcher.stage_n_frames(&mut h.l1, remaining);
+    batcher.stage_n_submissions(&mut h.l1, remaining);
     h.l1.mine_block();
-    batcher.confirm_staged(h.l1.tip()).await;
+    batcher.observe_l1_block(h.l1.tip()).await;
     chain.push(h.l1.tip().clone());
 
     node.act_reset(h.l2_genesis()).await;
@@ -521,7 +524,7 @@ async fn reorg_flip_flop_empty_middle_fork() {
     let l2_genesis = h.l2_genesis();
 
     // --- Fork A: mine A1 (batch for L2 block 1) and A2 (batch for L2 block 2). ---
-    let mut batcher_a = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
+    let batcher_a = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
     for block in [block1.clone(), block2.clone()] {
         batcher_a.push_block(block);
         batcher_a.advance(&mut h.l1).await;
@@ -564,7 +567,7 @@ async fn reorg_flip_flop_empty_middle_fork() {
     // --- Fork C: reorg to genesis; resubmit both batches; re-derive both blocks. ---
     h.l1.reorg_to(0).expect("reorg to fork C");
     chain.truncate_to(0);
-    let mut batcher_c = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
+    let batcher_c = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
     for block in [block1, block2] {
         batcher_c.push_block(block);
         batcher_c.advance(&mut h.l1).await;
@@ -863,7 +866,7 @@ async fn batcher_key_rotation_accepts_new_batcher() {
     let block3 = builder.build_next_block_with_single_transaction().await;
 
     // --- L1 blocks 1-2: batcher A submits → L2 blocks 1-2 derived. ---
-    let mut batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_a.clone());
+    let batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_a.clone());
     for block in [block1, block2] {
         batcher.push_block(block);
         batcher.advance(&mut h.l1).await;
@@ -980,7 +983,7 @@ async fn multi_l2_per_l1_epoch() {
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
 
-    let mut batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
+    let batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
     for _ in 1..=L2_COUNT {
         batcher.push_block(builder.build_next_block_with_single_transaction().await);
         batcher.advance(&mut h.l1).await;
@@ -1112,7 +1115,7 @@ async fn multi_epoch_sequence() {
     );
 
     // Batch each L2 block into a separate L1 inclusion block.
-    let mut batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
+    let batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
     for block in &blocks {
         batcher.push_block(block.clone());
         batcher.advance(&mut h.l1).await;
@@ -1199,7 +1202,7 @@ async fn deep_reorg_multi_block() {
     }
 
     // Submit each block's batch individually and mine an L1 block for each.
-    let mut batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
+    let batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
     for block in &blocks {
         batcher.push_block(block.clone());
         batcher.advance(&mut h.l1).await;
@@ -1228,7 +1231,7 @@ async fn deep_reorg_multi_block() {
     assert_eq!(node.l2_safe_number(), 0, "safe head reverted to genesis");
 
     // Re-submit all 5 batches on the new fork.
-    let mut resubmit_batcher =
+    let resubmit_batcher =
         Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
     for block in &blocks {
         resubmit_batcher.push_block(block.clone());
@@ -1300,64 +1303,6 @@ async fn garbage_frame_data_ignored() {
 
     let derived = node.run_until_idle().await;
     assert_eq!(derived, 1, "real frame after garbage must still be derived");
-    assert_eq!(node.l2_safe_number(), 1);
-}
-
-/// A channel whose compressed data exceeds `max_frame_size` is split across
-/// multiple frames. All frames are submitted in the same L1 block (as separate
-/// transactions) and the `ChannelBank` reassembles them into the original
-/// channel data, deriving the L2 block.
-///
-/// This exercises the `ChannelDriver` multi-frame output path and verifies
-/// that a small `max_frame_size` causes the encoder to produce multiple frame
-/// transactions that the derivation pipeline reassembles correctly.
-///
-/// NOTE: All frames must land in the same L1 block.
-#[tokio::test]
-async fn multi_frame_channel_reassembled() {
-    let batcher_cfg = BatcherConfig {
-        // Small max_frame_size forces the channel to spill across multiple frames.
-        encoder: EncoderConfig {
-            max_frame_size: 80,
-            da_type: DaType::Calldata,
-            ..EncoderConfig::default()
-        },
-        ..BatcherConfig::default()
-    };
-    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
-    let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
-
-    let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
-    let mut builder = h.create_l2_sequencer(l1_chain);
-    let block = builder.build_next_block_with_single_transaction().await;
-
-    let (mut node, chain) = h.create_test_rollup_node_from_sequencer(
-        &mut builder,
-        SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
-    );
-
-    // Encode the L2 block. With max_frame_size=80, the compressed channel data
-    // should spill across multiple frames — verified via pending_count before mining.
-    let mut source = ActionL2Source::new();
-    source.push(block);
-    let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
-    batcher.encode_only().await;
-    assert!(
-        batcher.pending_count() >= 2,
-        "expected at least 2 frame submissions with max_frame_size=80, got {}",
-        batcher.pending_count()
-    );
-
-    // Stage all frames, mine one L1 block, and confirm.
-    let n = batcher.pending_count();
-    batcher.stage_n_frames(&mut h.l1, n);
-    h.l1.mine_block();
-    batcher.confirm_staged(h.l1.tip()).await;
-    chain.push(h.l1.tip().clone());
-
-    node.initialize().await;
-    let derived = node.run_until_idle().await;
-    assert_eq!(derived, 1, "multi-frame channel should be reassembled and derived");
     assert_eq!(node.l2_safe_number(), 1);
 }
 
@@ -1720,7 +1665,7 @@ async fn l2_finalized_advances_via_l1_finalized_signal() {
     let block1 = sequencer.build_next_block_with_single_transaction().await;
     let block2 = sequencer.build_next_block_with_single_transaction().await;
 
-    let mut batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
+    let batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
     for block in [block1, block2] {
         batcher.push_block(block);
         batcher.advance(&mut h.l1).await;
@@ -1852,16 +1797,7 @@ async fn derive_chain_from_near_l1_genesis() {
     rollup_cfg.genesis.l2.hash = ActionEngineClient::compute_l2_genesis_hash(&rollup_cfg);
 
     // Build an L2 genesis head anchored to L1 block #5.
-    let genesis_head = L2BlockInfo {
-        block_info: BlockInfo {
-            hash: rollup_cfg.genesis.l2.hash,
-            number: rollup_cfg.genesis.l2.number,
-            parent_hash: Default::default(),
-            timestamp: rollup_cfg.genesis.l2_time,
-        },
-        l1_origin: BlockNumHash { number: 5, hash: l1_block_5_hash },
-        seq_num: 0,
-    };
+    let genesis_head = L2BlockInfo::from_l2_genesis(&rollup_cfg.genesis);
 
     // Update the harness rollup config so create_l2_sequencer uses the correct genesis.
     h.rollup_config = rollup_cfg.clone();
@@ -1872,7 +1808,7 @@ async fn derive_chain_from_near_l1_genesis() {
     let block_hashes = sequencer.block_hash_registry();
 
     // Build 2 L2 blocks and batch them into L1 blocks #6 and #7.
-    let mut batcher = Batcher::new(ActionL2Source::new(), &rollup_cfg, batcher_cfg.clone());
+    let batcher = Batcher::new(ActionL2Source::new(), &rollup_cfg, batcher_cfg.clone());
     for _ in 1..=2u64 {
         let block = sequencer.build_next_block_with_single_transaction().await;
         // With block_time=2 and L1 block 6 at ts=72, L2 block ts < 72
@@ -1930,6 +1866,7 @@ async fn derive_chain_from_near_l1_genesis() {
 // Blob DA derivation tests
 // ---------------------------------------------------------------------------
 
+/// One L2 block batched in a blob is derived and becomes the safe head.
 #[tokio::test]
 async fn single_l2_block_derived_from_blob() {
     let batcher_cfg = BatcherConfig::default(); // DaType::Blob by default
@@ -1955,6 +1892,7 @@ async fn single_l2_block_derived_from_blob() {
     assert_eq!(node.l2_safe_number(), 1, "safe head should be L2 block 1");
 }
 
+/// Three L2 blocks batched in a blob are all derived, and the last one becomes the safe head.
 #[tokio::test]
 async fn multiple_l2_blocks_derived_from_blob() {
     const L2_BLOCK_COUNT: u64 = 3;
@@ -2035,7 +1973,7 @@ async fn batcher_config_update_rolled_back_on_reorg() {
     let block2_clone = block2.clone();
 
     // --- Phase 2: Derive blocks 1-2 with batcher A (L1 blocks 1-2). ---
-    let mut batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_a.clone());
+    let batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_a.clone());
     for block in [block1, block2] {
         batcher.push_block(block);
         batcher.advance(&mut h.l1).await;
@@ -2091,8 +2029,7 @@ async fn batcher_config_update_rolled_back_on_reorg() {
     //     also with batcher A (no config update log). ---
     // Re-submit the same L2 blocks that were derived pre-reorg, plus block 3.
     let resubmit_blocks = [block1_clone, block2_clone, block3];
-    let mut resubmit_batcher =
-        Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_a.clone());
+    let resubmit_batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_a.clone());
     for block in resubmit_blocks {
         resubmit_batcher.push_block(block);
         resubmit_batcher.advance(&mut h.l1).await;

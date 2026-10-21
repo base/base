@@ -1,11 +1,11 @@
 //! Contains a utility method to check if attributes match a block.
 
-use alloy_eips::{Decodable2718, eip1559::BaseFeeParams};
+use alloy_eips::{Encodable2718, eip1559::BaseFeeParams};
 use alloy_network::TransactionResponse;
 use alloy_primitives::{Address, B256, Bytes};
 use alloy_rpc_types_eth::{Block, BlockTransactions, Withdrawals};
 use base_common_consensus::{
-    BaseTxEnvelope, EIP1559ParamError, HoloceneExtraData, JovianExtraData,
+    BaseTxEnvelope, EIP1559ParamError, HoloceneExtraData, JovianExtraData, decode_2718_canonical,
 };
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types::Transaction;
@@ -147,23 +147,22 @@ impl AttributesMatch {
                 block_tx_hash = %block_tx.tx_hash(),
                 "Checking attributes transaction against block transaction",
             );
-            // Let's try to deserialize the attributes transaction
-            let Ok(attr_tx) = BaseTxEnvelope::decode_2718_exact(attr_tx_bytes.as_ref()) else {
-                error!(
-                    "Impossible to deserialize transaction from attributes. If we have stored these attributes it means the transactions where well formatted. This is a bug"
-                );
+            if attr_tx_bytes.as_ref() == block_tx.inner.inner.inner().encoded_2718().as_slice() {
+                continue;
+            }
 
+            let Ok(attr_tx) = decode_2718_canonical::<BaseTxEnvelope>(attr_tx_bytes) else {
+                warn!(
+                    target: "engine",
+                    ?attr_tx_bytes,
+                    "Attributes transaction is not canonically encoded"
+                );
                 return AttributesMismatch::MalformedAttributesTransaction.into();
             };
 
-            if &attr_tx != block_tx.inner.inner.inner() {
-                warn!(target: "engine", ?attr_tx, ?block_tx, "Transaction mismatch in derived attributes");
-                return AttributesMismatch::TransactionContent(
-                    attr_tx.tx_hash(),
-                    block_tx.tx_hash(),
-                )
+            warn!(target: "engine", ?attr_tx, ?block_tx, "Transaction mismatch in derived attributes");
+            return AttributesMismatch::TransactionContent(attr_tx.tx_hash(), block_tx.tx_hash())
                 .into();
-            }
         }
 
         Self::Match
@@ -603,6 +602,27 @@ mod tests {
         let (attributes, block) = test_transactions_match_helper();
         let check = AttributesMatch::check(&cfg, &attributes, &block);
         assert_eq!(check, AttributesMatch::Match);
+    }
+
+    #[test]
+    fn attributes_mismatch_non_canonical_transaction_encoding() {
+        let cfg = rollup_config!(ChainConfig::MAINNET);
+        let (mut attributes, block) = loop {
+            let (attributes, block) = test_transactions_match_helper();
+            if attributes.attributes.transactions.as_ref().is_some_and(|transactions| {
+                transactions.iter().any(|tx| matches!(tx[0], 0x01 | 0x02 | 0x04))
+            }) {
+                break (attributes, block);
+            }
+        };
+        let transactions = attributes.attributes.transactions.as_mut().unwrap();
+        let index = transactions.iter().position(|tx| matches!(tx[0], 0x01 | 0x02 | 0x04)).unwrap();
+        transactions[index] = Bytes::copy_from_slice(&transactions[index][1..]);
+
+        assert_eq!(
+            AttributesMatch::check(&cfg, &attributes, &block),
+            AttributesMismatch::MalformedAttributesTransaction.into()
+        );
     }
 
     #[test]

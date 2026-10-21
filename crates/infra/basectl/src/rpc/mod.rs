@@ -6,6 +6,9 @@ pub use admin::{
     start_sequencer_node, stop_sequencer, stop_sequencer_node, unpause_sequencer_node,
 };
 
+mod batcher;
+pub use batcher::{BatcherClient, BatcherStatus};
+
 mod conductor;
 pub use conductor::{
     ConductorClusterSnapshot, ConductorControl, ConductorFanoutAction, ConductorFanoutReport,

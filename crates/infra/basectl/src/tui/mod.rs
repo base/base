@@ -4,6 +4,10 @@
 mod app_frame;
 pub use app_frame::{AppFrame, AppLayout};
 
+/// Default web browser launcher.
+mod browser;
+pub use browser::Browser;
+
 /// Keybinding display types.
 mod keybinding;
 pub use keybinding::Keybinding;

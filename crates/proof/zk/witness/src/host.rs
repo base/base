@@ -1,4 +1,4 @@
-use std::{fmt, sync::Arc};
+use std::{fmt, num::NonZeroU64, sync::Arc};
 
 use alloy_eips::BlockId;
 use alloy_primitives::B256;
@@ -66,18 +66,19 @@ impl SuccinctHost {
     /// - `l2_start_block`: The starting L2 block number.
     /// - `l2_end_block`: The ending L2 block number.
     /// - `l1_head_hash`: Optionally supplied L1 head block hash used as the L1 origin.
-    /// - `intermediate_block_interval`: L2 blocks between intermediate output roots, must match
-    ///   on-chain `INTERMEDIATE_BLOCK_INTERVAL` (same field committed into [`BootInfo`]).
     /// - `safe_db_fallback`: Flag to indicate whether to fallback to timestamp-based L1 head
     ///   estimation when `SafeDB` is not available.
+    /// - `schedule_l2_block_number`: L2 block used to pin the upgrade schedule.
+    /// - `intermediate_block_interval`: Number of blocks between two intermediate roots of the
+    ///   proven game; the range must span a multiple of it.
     pub async fn fetch(
         &self,
         l2_start_block: u64,
         l2_end_block: u64,
         l1_head_hash: Option<B256>,
-        intermediate_block_interval: u64,
         safe_db_fallback: bool,
         schedule_l2_block_number: Option<u64>,
+        intermediate_block_interval: NonZeroU64,
     ) -> Result<HostConfig> {
         let l1_head_hash = match l1_head_hash {
             Some(hash) => hash,
@@ -89,8 +90,8 @@ impl SuccinctHost {
                 l2_start_block,
                 l2_end_block,
                 l1_head_hash,
-                intermediate_block_interval,
                 schedule_l2_block_number,
+                intermediate_block_interval,
             )
             .await
     }

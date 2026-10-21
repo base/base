@@ -103,7 +103,7 @@ where
             }
             _ => self
                 .config_fetcher
-                .system_config_by_number(l2_parent.block_info.number, Arc::clone(&self.rollup_cfg))
+                .system_config_by_l2_hash(l2_parent.block_info.hash, Arc::clone(&self.rollup_cfg))
                 .await
                 .map_err(Into::into)?,
         };
@@ -223,6 +223,8 @@ where
                 + deposit_transactions.len()
                 + upgrade_transactions.len(),
         );
+        // L1-info remains tx[0]; BaseTime updates at tx[1] after Denim, before user execution.
+        // The L1-info execution path must not depend on current-block BaseTime millis.
         txs.push(encoded_l1_info_tx.into());
 
         if base_time_active {
@@ -328,7 +330,7 @@ mod tests {
     use super::*;
     use crate::{
         errors::ResetError,
-        test_utils::{TestChainProvider, TestSystemConfigL2Fetcher},
+        test_utils::{TestChainProvider, TestL2ChainProvider},
     };
 
     fn generate_valid_log() -> Log {
@@ -403,10 +405,13 @@ mod tests {
         }
     }
 
+    /// Timestamp of the block built on the parent returned by [`system_config_test_builder`].
+    const TARGET_TIME: u64 = 110;
+
     fn system_config_test_builder(
-        fetcher: TestSystemConfigL2Fetcher,
+        fetcher: TestL2ChainProvider,
     ) -> (
-        StatefulAttributesBuilder<TestChainProvider, TestSystemConfigL2Fetcher>,
+        StatefulAttributesBuilder<TestChainProvider, TestL2ChainProvider>,
         L2BlockInfo,
         BlockNumHash,
     ) {
@@ -438,57 +443,49 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_derive_deposits_empty() {
-        let receipts = vec![];
-        let deposit_contract = Address::default();
-        let result = derive_deposits(B256::default(), &receipts, deposit_contract).await;
-        assert!(result.unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    async fn test_derive_deposits_non_deposit_events_filtered_out() {
+    async fn test_derive_deposits() {
         let deposit_contract = address!("1111111111111111111111111111111111111111");
-        let mut invalid = generate_valid_receipt();
-        invalid.logs[0].data = LogData::new_unchecked(vec![], Bytes::default());
-        let receipts = vec![generate_valid_receipt(), generate_valid_receipt(), invalid];
-        let result = derive_deposits(B256::default(), &receipts, deposit_contract).await;
-        assert_eq!(result.unwrap().len(), 5);
-    }
 
-    #[tokio::test]
-    async fn test_derive_deposits_non_deposit_contract_addr() {
-        let deposit_contract = address!("1111111111111111111111111111111111111111");
-        let mut invalid = generate_valid_receipt();
-        invalid.logs[0].address = Address::default();
-        let receipts = vec![generate_valid_receipt(), generate_valid_receipt(), invalid];
-        let result = derive_deposits(B256::default(), &receipts, deposit_contract).await;
-        assert_eq!(result.unwrap().len(), 5);
-    }
+        let mut non_deposit_event = generate_valid_receipt();
+        non_deposit_event.logs[0].data = LogData::new_unchecked(vec![], Bytes::default());
 
-    #[tokio::test]
-    async fn test_derive_deposits_decoding_errors() {
-        let deposit_contract = address!("1111111111111111111111111111111111111111");
-        let mut invalid = generate_valid_receipt();
-        invalid.logs[0].data =
+        let mut non_deposit_contract = generate_valid_receipt();
+        non_deposit_contract.logs[0].address = Address::default();
+
+        let mut undecodable = generate_valid_receipt();
+        undecodable.logs[0].data =
             LogData::new_unchecked(vec![Deposits::EVENT_ABI_HASH], Bytes::default());
-        let receipts = vec![generate_valid_receipt(), generate_valid_receipt(), invalid];
-        let result = derive_deposits(B256::default(), &receipts, deposit_contract).await;
-        let downcasted = result.unwrap_err();
-        assert_eq!(downcasted, DepositDecodeError::UnexpectedTopicsLen(1).into());
-    }
 
-    #[tokio::test]
-    async fn test_derive_deposits_succeeds() {
-        let deposit_contract = address!("1111111111111111111111111111111111111111");
-        let receipts = vec![generate_valid_receipt(), generate_valid_receipt()];
-        let result = derive_deposits(B256::default(), &receipts, deposit_contract).await;
-        assert_eq!(result.unwrap().len(), 4);
+        let cases = [
+            ("empty", vec![], Ok(0)),
+            ("succeeds", vec![generate_valid_receipt(), generate_valid_receipt()], Ok(4)),
+            (
+                "non-deposit events are filtered out",
+                vec![generate_valid_receipt(), generate_valid_receipt(), non_deposit_event],
+                Ok(5),
+            ),
+            (
+                "non-deposit contract address is filtered out",
+                vec![generate_valid_receipt(), generate_valid_receipt(), non_deposit_contract],
+                Ok(5),
+            ),
+            (
+                "decoding errors are returned",
+                vec![generate_valid_receipt(), generate_valid_receipt(), undecodable],
+                Err(DepositDecodeError::UnexpectedTopicsLen(1).into()),
+            ),
+        ];
+
+        for (name, receipts, expected) in cases {
+            let result = derive_deposits(B256::default(), &receipts, deposit_contract).await;
+            assert_eq!(result.map(|deposits| deposits.len()), expected, "{name}");
+        }
     }
 
     #[tokio::test]
     async fn test_prepare_payload_uses_only_exact_parent_system_config_seed() {
         let (mut builder, parent, epoch) =
-            system_config_test_builder(TestSystemConfigL2Fetcher::default());
+            system_config_test_builder(TestL2ChainProvider::default());
         builder.seed_parent_system_config(
             parent,
             SystemConfig { gas_limit: 123, ..Default::default() },
@@ -503,11 +500,10 @@ mod tests {
         let payload = builder.prepare_payload_attributes(parent, epoch).await.unwrap();
         assert_eq!(payload.gas_limit, Some(123));
 
-        let mut fetcher = TestSystemConfigL2Fetcher::default();
-        fetcher.insert(
-            parent.block_info.number,
-            SystemConfig { gas_limit: 456, ..Default::default() },
-        );
+        let mut fetcher = TestL2ChainProvider::default();
+        fetcher
+            .system_configs
+            .insert(parent.block_info.hash, SystemConfig { gas_limit: 456, ..Default::default() });
         let (mut builder, parent, epoch) = system_config_test_builder(fetcher);
         let activation = builder.rollup_cfg.l2_block_timestamp(parent.block_info.number + 1);
         Arc::make_mut(&mut builder.rollup_cfg).upgrades.fjord_time = Some(activation);
@@ -519,11 +515,10 @@ mod tests {
         let payload = builder.prepare_payload_attributes(parent, epoch).await.unwrap();
         assert_eq!(payload.gas_limit, Some(456));
 
-        let mut fetcher = TestSystemConfigL2Fetcher::default();
-        fetcher.insert(
-            parent.block_info.number,
-            SystemConfig { gas_limit: 456, ..Default::default() },
-        );
+        let mut fetcher = TestL2ChainProvider::default();
+        fetcher
+            .system_configs
+            .insert(parent.block_info.hash, SystemConfig { gas_limit: 456, ..Default::default() });
         let (mut builder, parent, epoch) = system_config_test_builder(fetcher);
         let mut mismatched_parent = parent;
         mismatched_parent.block_info.hash = B256::left_padding_from(&[2]);
@@ -535,6 +530,27 @@ mod tests {
         let payload = builder.prepare_payload_attributes(parent, epoch).await.unwrap();
         assert_eq!(payload.gas_limit, Some(456));
         assert_eq!(builder.parent_system_config.unwrap().0, mismatched_parent);
+    }
+
+    #[tokio::test]
+    async fn test_prepare_payload_uses_system_config_for_exact_parent_hash() {
+        let canonical_hash = B256::left_padding_from(&[1]);
+        let reorged_hash = B256::left_padding_from(&[2]);
+        let mut fetcher = TestL2ChainProvider::default();
+        fetcher
+            .system_configs
+            .insert(canonical_hash, SystemConfig { gas_limit: 123, ..Default::default() });
+        fetcher
+            .system_configs
+            .insert(reorged_hash, SystemConfig { gas_limit: 456, ..Default::default() });
+        let (mut builder, mut parent, epoch) = system_config_test_builder(fetcher);
+        assert_eq!(parent.block_info.hash, canonical_hash);
+
+        // Both blocks have the same height but represent different forks. The requested parent
+        // must select the config attached to its hash, never a stale config at that height.
+        parent.block_info.hash = reorged_hash;
+        let payload = builder.prepare_payload_attributes(parent, epoch).await.unwrap();
+        assert_eq!(payload.gas_limit, Some(456));
     }
 
     #[tokio::test]
@@ -573,7 +589,7 @@ mod tests {
         let mut builder = StatefulAttributesBuilder::new(
             cfg,
             Arc::new(Sepolia::l1_config()),
-            TestSystemConfigL2Fetcher::default(),
+            TestL2ChainProvider::default(),
             provider,
         );
         let parent = L2BlockInfo {
@@ -603,8 +619,8 @@ mod tests {
         let cfg = Arc::new(RollupConfig::default());
         let l1_cfg = Arc::new(Sepolia::l1_config());
         let l2_number = 1;
-        let mut fetcher = TestSystemConfigL2Fetcher::default();
-        fetcher.insert(l2_number, SystemConfig::default());
+        let mut fetcher = TestL2ChainProvider::default();
+        fetcher.system_configs.insert(B256::ZERO, SystemConfig::default());
         let mut provider = TestChainProvider::default();
         let header = Header::default();
         let hash = header.hash_slow();
@@ -630,8 +646,8 @@ mod tests {
         let cfg = Arc::new(RollupConfig::default());
         let l1_cfg = Arc::new(Sepolia::l1_config());
         let l2_number = 1;
-        let mut fetcher = TestSystemConfigL2Fetcher::default();
-        fetcher.insert(l2_number, SystemConfig::default());
+        let mut fetcher = TestL2ChainProvider::default();
+        fetcher.system_configs.insert(B256::ZERO, SystemConfig::default());
         let mut provider = TestChainProvider::default();
         let header = Header::default();
         let hash = header.hash_slow();
@@ -658,8 +674,8 @@ mod tests {
         let cfg = Arc::new(RollupConfig { block_time, ..Default::default() });
         let l1_cfg = Arc::new(Sepolia::l1_config());
         let l2_number = 1;
-        let mut fetcher = TestSystemConfigL2Fetcher::default();
-        fetcher.insert(l2_number, SystemConfig::default());
+        let mut fetcher = TestL2ChainProvider::default();
+        fetcher.system_configs.insert(B256::ZERO, SystemConfig::default());
         let mut provider = TestChainProvider::default();
         let header = Header { timestamp, ..Default::default() };
         let hash = header.hash_slow();
@@ -685,64 +701,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_prepare_payload_without_forks() {
-        let block_time = 10_u64;
-        let timestamp = 100_u64;
-        let cfg = Arc::new(RollupConfig {
-            block_time,
-            genesis: ChainGenesis {
-                l2_time: timestamp.saturating_sub(block_time),
-                ..Default::default()
-            },
-            ..Default::default()
-        });
-        let l1_cfg = Arc::new(Sepolia::l1_config());
-        let l2_number = 1;
-        let mut fetcher = TestSystemConfigL2Fetcher::default();
-        fetcher.insert(l2_number, SystemConfig::default());
-        let mut provider = TestChainProvider::default();
-        let header = Header { timestamp, ..Default::default() };
-        let prev_randao = header.mix_hash;
-        let hash = header.hash_slow();
-        provider.insert_header(hash, header);
-        let mut builder =
-            StatefulAttributesBuilder::new(Arc::clone(&cfg), l1_cfg, fetcher, provider);
-        let epoch = BlockNumHash { hash, number: l2_number };
-        let l2_parent = L2BlockInfo {
-            block_info: BlockInfo {
-                hash: B256::ZERO,
-                number: l2_number,
-                timestamp,
-                parent_hash: hash,
-            },
-            l1_origin: BlockNumHash { hash, number: l2_number },
-            seq_num: 0,
-        };
-        let next_l2_time = cfg.l2_block_timestamp(l2_parent.block_info.number + 1);
-        let payload = builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap();
-        let expected = BasePayloadAttributes {
-            payload_attributes: PayloadAttributes {
-                timestamp: next_l2_time,
-                prev_randao,
-                suggested_fee_recipient: Predeploys::SEQUENCER_FEE_VAULT,
-                parent_beacon_block_root: None,
-                withdrawals: None,
-                slot_number: None,
-                target_gas_limit: None,
-            },
-            transactions: payload.transactions.clone(),
-            no_tx_pool: Some(true),
-            gas_limit: Some(u64::from_be_bytes(
-                alloy_primitives::U64::from(SystemConfig::default().gas_limit).to_be_bytes(),
-            )),
-            eip_1559_params: None,
-            min_base_fee: None,
-        };
-        assert_eq!(payload, expected);
-        assert_eq!(payload.transactions.unwrap().len(), 1);
-    }
-
-    #[tokio::test]
     async fn test_prepare_payload_inserts_base_time_update_at_tx_one() {
         let block_time = 2_u64;
         let timestamp = 100_u64;
@@ -763,8 +721,8 @@ mod tests {
         });
         let l1_cfg = Arc::new(Sepolia::l1_config());
         let l2_number = 1;
-        let mut fetcher = TestSystemConfigL2Fetcher::default();
-        fetcher.insert(l2_number, SystemConfig::default());
+        let mut fetcher = TestL2ChainProvider::default();
+        fetcher.system_configs.insert(B256::ZERO, SystemConfig::default());
         let mut provider = TestChainProvider::default();
         let header = Header { timestamp, ..Default::default() };
         let hash = header.hash_slow();
@@ -825,9 +783,9 @@ mod tests {
         });
         let l1_cfg = Arc::new(Sepolia::l1_config());
         let l2_number = 2;
-        let mut fetcher = TestSystemConfigL2Fetcher::default();
-        fetcher.insert(
-            l2_number,
+        let mut fetcher = TestL2ChainProvider::default();
+        fetcher.system_configs.insert(
+            B256::ZERO,
             SystemConfig {
                 gas_limit: 30_000_000,
                 eip1559_denominator: Some(500),
@@ -892,9 +850,9 @@ mod tests {
             ..Default::default()
         });
 
-        let mut fetcher = TestSystemConfigL2Fetcher::default();
-        fetcher.insert(
-            l2_number,
+        let mut fetcher = TestL2ChainProvider::default();
+        fetcher.system_configs.insert(
+            B256::ZERO,
             SystemConfig {
                 gas_limit: 300_000_000,
                 eip1559_denominator: Some(50),
@@ -958,181 +916,72 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_prepare_payload_with_canyon() {
-        let block_time = 10_u64;
-        let timestamp = 100_u64;
-        let cfg = Arc::new(RollupConfig {
-            block_time,
-            genesis: ChainGenesis {
-                l2_time: timestamp.saturating_sub(block_time),
-                ..Default::default()
-            },
-            upgrades: UpgradeConfig { canyon_time: Some(0), ..Default::default() },
-            ..Default::default()
-        });
-        let l1_cfg = Arc::new(Sepolia::l1_config());
-        let l2_number = 1;
-        let mut fetcher = TestSystemConfigL2Fetcher::default();
-        fetcher.insert(l2_number, SystemConfig::default());
-        let mut provider = TestChainProvider::default();
-        let header = Header { timestamp, ..Default::default() };
-        let prev_randao = header.mix_hash;
-        let hash = header.hash_slow();
-        provider.insert_header(hash, header);
-        let mut builder =
-            StatefulAttributesBuilder::new(Arc::clone(&cfg), l1_cfg, fetcher, provider);
-        let epoch = BlockNumHash { hash, number: l2_number };
-        let l2_parent = L2BlockInfo {
-            block_info: BlockInfo {
-                hash: B256::ZERO,
-                number: l2_number,
-                timestamp,
-                parent_hash: hash,
-            },
-            l1_origin: BlockNumHash { hash, number: l2_number },
-            seq_num: 0,
-        };
-        let next_l2_time = cfg.l2_block_timestamp(l2_parent.block_info.number + 1);
-        let payload = builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap();
-        let expected = BasePayloadAttributes {
-            payload_attributes: PayloadAttributes {
-                timestamp: next_l2_time,
-                prev_randao,
-                suggested_fee_recipient: Predeploys::SEQUENCER_FEE_VAULT,
-                parent_beacon_block_root: None,
-                withdrawals: Some(Vec::default()),
-                slot_number: None,
-                target_gas_limit: None,
-            },
-            transactions: payload.transactions.clone(),
-            no_tx_pool: Some(true),
-            gas_limit: Some(u64::from_be_bytes(
-                alloy_primitives::U64::from(SystemConfig::default().gas_limit).to_be_bytes(),
-            )),
-            eip_1559_params: None,
-            min_base_fee: None,
-        };
-        assert_eq!(payload, expected);
-        assert_eq!(payload.transactions.unwrap().len(), 1);
-    }
+    async fn test_prepare_payload_by_fork() {
+        let ecotone_txs: Vec<Bytes> = Upgrades::ECOTONE.txs().collect();
+        let fjord_txs: Vec<Bytes> = Upgrades::FJORD.txs().collect();
 
-    #[tokio::test]
-    async fn test_prepare_payload_with_ecotone() {
-        let block_time = 2_u64;
-        let timestamp = 100_u64;
-        let cfg = Arc::new(RollupConfig {
-            block_time,
-            genesis: ChainGenesis {
-                l2_time: timestamp.saturating_sub(block_time),
-                ..Default::default()
-            },
-            upgrades: UpgradeConfig { ecotone_time: Some(102), ..Default::default() },
-            ..Default::default()
-        });
-        let l1_cfg = Arc::new(Sepolia::l1_config());
-        let l2_number = 1;
-        let mut fetcher = TestSystemConfigL2Fetcher::default();
-        fetcher.insert(l2_number, SystemConfig::default());
-        let mut provider = TestChainProvider::default();
-        let header = Header { timestamp, ..Default::default() };
-        let parent_beacon_block_root = Some(header.parent_beacon_block_root.unwrap_or_default());
-        let prev_randao = header.mix_hash;
-        let hash = header.hash_slow();
-        provider.insert_header(hash, header);
-        let mut builder =
-            StatefulAttributesBuilder::new(Arc::clone(&cfg), l1_cfg, fetcher, provider);
-        let epoch = BlockNumHash { hash, number: l2_number };
-        let l2_parent = L2BlockInfo {
-            block_info: BlockInfo {
-                hash: B256::ZERO,
-                number: l2_number,
-                timestamp,
-                parent_hash: hash,
-            },
-            l1_origin: BlockNumHash { hash, number: l2_number },
-            seq_num: 0,
-        };
-        let next_l2_time = cfg.l2_block_timestamp(l2_parent.block_info.number + 1);
-        let payload = builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap();
-        let expected = BasePayloadAttributes {
-            payload_attributes: PayloadAttributes {
-                timestamp: next_l2_time,
-                prev_randao,
-                suggested_fee_recipient: Predeploys::SEQUENCER_FEE_VAULT,
-                parent_beacon_block_root,
-                withdrawals: Some(vec![]),
-                slot_number: None,
-                target_gas_limit: None,
-            },
-            transactions: payload.transactions.clone(),
-            no_tx_pool: Some(true),
-            gas_limit: Some(u64::from_be_bytes(
-                alloy_primitives::U64::from(SystemConfig::default().gas_limit).to_be_bytes(),
-            )),
-            eip_1559_params: None,
-            min_base_fee: None,
-        };
-        assert_eq!(payload, expected);
-        assert_eq!(payload.transactions.unwrap().len(), 7);
-    }
+        // Each fork activates in the block being built, so its upgrade transactions must follow
+        // the L1-info transaction. Ecotone and Fjord imply the earlier forks.
+        let cases = [
+            ("without forks", UpgradeConfig::default(), false, false, vec![]),
+            (
+                "canyon",
+                UpgradeConfig { canyon_time: Some(0), ..Default::default() },
+                true,
+                false,
+                vec![],
+            ),
+            (
+                "ecotone",
+                UpgradeConfig { ecotone_time: Some(TARGET_TIME), ..Default::default() },
+                true,
+                true,
+                ecotone_txs.clone(),
+            ),
+            (
+                "fjord",
+                UpgradeConfig { fjord_time: Some(TARGET_TIME), ..Default::default() },
+                true,
+                true,
+                [ecotone_txs, fjord_txs].concat(),
+            ),
+        ];
 
-    #[tokio::test]
-    async fn test_prepare_payload_with_fjord() {
-        let block_time = 2_u64;
-        let timestamp = 100_u64;
-        let cfg = Arc::new(RollupConfig {
-            block_time,
-            genesis: ChainGenesis {
-                l2_time: timestamp.saturating_sub(block_time),
-                ..Default::default()
-            },
-            upgrades: UpgradeConfig { fjord_time: Some(102), ..Default::default() },
-            ..Default::default()
-        });
-        let l1_cfg = Arc::new(Sepolia::l1_config());
-        let l2_number = 1;
-        let mut fetcher = TestSystemConfigL2Fetcher::default();
-        fetcher.insert(l2_number, SystemConfig::default());
-        let mut provider = TestChainProvider::default();
-        let header = Header { timestamp, ..Default::default() };
-        let prev_randao = header.mix_hash;
-        let hash = header.hash_slow();
-        provider.insert_header(hash, header);
-        let mut builder =
-            StatefulAttributesBuilder::new(Arc::clone(&cfg), l1_cfg, fetcher, provider);
-        let epoch = BlockNumHash { hash, number: l2_number };
-        let l2_parent = L2BlockInfo {
-            block_info: BlockInfo {
-                hash: B256::ZERO,
-                number: l2_number,
-                timestamp,
-                parent_hash: hash,
-            },
-            l1_origin: BlockNumHash { hash, number: l2_number },
-            seq_num: 0,
-        };
-        let next_l2_time = cfg.l2_block_timestamp(l2_parent.block_info.number + 1);
-        let payload = builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap();
-        let expected = BasePayloadAttributes {
-            payload_attributes: PayloadAttributes {
-                timestamp: next_l2_time,
-                prev_randao,
-                suggested_fee_recipient: Predeploys::SEQUENCER_FEE_VAULT,
-                parent_beacon_block_root: Some(B256::ZERO),
-                withdrawals: Some(vec![]),
-                slot_number: None,
-                target_gas_limit: None,
-            },
-            transactions: payload.transactions.clone(),
-            no_tx_pool: Some(true),
-            gas_limit: Some(u64::from_be_bytes(
-                alloy_primitives::U64::from(SystemConfig::default().gas_limit).to_be_bytes(),
-            )),
-            eip_1559_params: None,
-            min_base_fee: None,
-        };
-        assert_eq!(payload.transactions.as_ref().unwrap().len(), 10);
-        assert_eq!(payload, expected);
+        for (name, upgrades, withdrawals, beacon_root, upgrade_txs) in cases {
+            let mut fetcher = TestL2ChainProvider::default();
+            fetcher.system_configs.insert(B256::left_padding_from(&[1]), SystemConfig::default());
+            let (mut builder, parent, epoch) = system_config_test_builder(fetcher);
+            Arc::make_mut(&mut builder.rollup_cfg).upgrades = upgrades;
+
+            let payload = builder.prepare_payload_attributes(parent, epoch).await.unwrap();
+            let transactions = payload.transactions.clone().unwrap();
+
+            let l1_info = BaseTxEnvelope::decode_2718_exact(&transactions[0]).unwrap();
+            assert_eq!(
+                l1_info.as_deposit().unwrap().to,
+                alloy_primitives::TxKind::Call(Predeploys::L1_BLOCK_INFO),
+                "{name}: tx 0 must be the L1-info deposit"
+            );
+            assert_eq!(&transactions[1..], upgrade_txs.as_slice(), "{name}: upgrade txs");
+
+            let expected = BasePayloadAttributes {
+                payload_attributes: PayloadAttributes {
+                    timestamp: TARGET_TIME,
+                    prev_randao: B256::ZERO,
+                    suggested_fee_recipient: Predeploys::SEQUENCER_FEE_VAULT,
+                    parent_beacon_block_root: beacon_root.then_some(B256::ZERO),
+                    withdrawals: withdrawals.then(Vec::new),
+                    slot_number: None,
+                    target_gas_limit: None,
+                },
+                transactions: Some(transactions),
+                no_tx_pool: Some(true),
+                gas_limit: Some(SystemConfig::default().gas_limit),
+                eip_1559_params: None,
+                min_base_fee: None,
+            };
+            assert_eq!(payload, expected, "{name}");
+        }
     }
 
     #[tokio::test]
@@ -1146,8 +995,8 @@ mod tests {
         });
         let l1_cfg = Arc::new(Sepolia::l1_config());
         let l2_number = 1;
-        let mut fetcher = TestSystemConfigL2Fetcher::default();
-        fetcher.insert(l2_number, SystemConfig::default());
+        let mut fetcher = TestL2ChainProvider::default();
+        fetcher.system_configs.insert(B256::ZERO, SystemConfig::default());
         let mut provider = TestChainProvider::default();
 
         // The epoch header's parent_hash must match l2_parent.l1_origin.hash.

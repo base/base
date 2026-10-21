@@ -12,7 +12,7 @@ use alloy_signer_local::PrivateKeySigner;
 use base_common_genesis::RollupConfig;
 use base_common_network::Base;
 use base_common_rpc_types::BaseTransactionRequest;
-use base_system_tests::{ANVIL_ACCOUNT_1, SystemTestStackBuilder};
+use base_system_tests::{ANVIL_ACCOUNT_1, SetupImage, SystemTestStackBuilder};
 use eyre::{Result, WrapErr};
 use tokio::time::{sleep, timeout};
 
@@ -65,17 +65,31 @@ async fn denim_and_zenith_activation_matches_el_and_cl_configs() -> Result<()> {
 
 #[test]
 fn rejects_post_denim_block_without_whole_second_timestamp() {
-    let output = Command::new("bash")
-        .arg(concat!(env!("CARGO_MANIFEST_DIR"), "/../scripts/devnet/setup-l2.sh"))
-        .env("L2_BASE_DENIM_BLOCK", "25")
-        .env("L2_BASE_ZENITH_BLOCK", "26")
+    SetupImage::ensure_built().unwrap();
+    let output = Command::new("docker")
+        .args([
+            "run",
+            "--rm",
+            "--network",
+            "none",
+            "--entrypoint",
+            "op-deployer",
+            "-e",
+            "SEQUENCER_ADDR=0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc",
+            "devnet-setup:local-v2",
+            "--denim-block",
+            "25",
+            "--zenith-block",
+            "26",
+        ])
         .output()
         .unwrap();
 
     assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stdout).contains(
-        "L2_BASE_ZENITH_BLOCK must align to a whole-second timestamp after L2_BASE_DENIM_BLOCK"
-    ));
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("zenith must align to a whole second after Denim")
+    );
 }
 
 #[tokio::test]

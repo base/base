@@ -68,7 +68,8 @@ impl PolicyRegistryStorage<'_> {
                         || sel == IPolicyRegistry::policyExistsCall::SELECTOR
                         || sel == IPolicyRegistry::policyAdminCall::SELECTOR
                         || sel == IPolicyRegistry::pendingPolicyAdminCall::SELECTOR
-                        || sel == IPolicyRegistry::compositePolicyChildIdsCall::SELECTOR) =>
+                        || sel == IPolicyRegistry::compositePolicyChildIdsCall::SELECTOR
+                        || sel == IPolicyRegistry::invertedPolicyIdCall::SELECTOR) =>
             {
                 self.route(calldata, version, &observer)
             }
@@ -196,6 +197,11 @@ impl PolicyRegistryStorage<'_> {
                 let children = logic.composite_policy_child_ids(self, call.policyId)?;
                 Ok(IPolicyRegistry::compositePolicyChildIdsCall::abi_encode_returns(&children)
                     .into())
+            }
+            // Introduced in V3 (Denim).
+            C::invertedPolicyId(call) => {
+                let policy_id = logic.compute_inverted_policy_id(call.policyId)?;
+                Ok(IPolicyRegistry::invertedPolicyIdCall::abi_encode_returns(&policy_id).into())
             }
         }
     }
@@ -561,6 +567,20 @@ mod tests {
             Some(IPolicyRegistry::createPolicyCall::SELECTOR.as_ref()),
             "revert must be AbiDecodeFailed, not FeatureNotActivated"
         );
+    }
+
+    #[test]
+    fn malformed_known_selector_returns_selector_only_at_cobalt() {
+        let mut storage = HashMapStorageProvider::new_with_storage_features(
+            1,
+            base_precompile_storage::StorageFeatures::Cobalt,
+        );
+        let selector = IPolicyRegistry::policyExistsCall::SELECTOR;
+
+        let out = run_at(&mut storage, &selector, BaseUpgrade::Cobalt);
+
+        assert!(out.is_revert());
+        assert_eq!(out.bytes, Bytes::from(selector));
     }
 
     fn create_allowlist_policy(storage: &mut HashMapStorageProvider) -> u64 {

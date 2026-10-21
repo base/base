@@ -1,11 +1,15 @@
 //! Test [`UnsafeBlockSource`] and [`L1HeadSource`] implementations.
+//!
+//! Hand-rolled rather than mocked because `next` parks forever, which `mockall` expectations
+//! cannot express.
 
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::VecDeque,
+    sync::{Arc, Mutex},
+};
 
 use async_trait::async_trait;
-use base_batcher_source::{
-    L1HeadEvent, L1HeadSource, L2BlockEvent, SourceError, UnsafeBlockSource,
-};
+use base_batcher_source::{L1HeadSource, L2BlockEvent, UnsafeBlockSource};
 use base_protocol::BlockInfo;
 
 /// [`UnsafeBlockSource`] that parks the select arm forever.
@@ -18,67 +22,44 @@ pub struct PendingSource;
 
 #[async_trait]
 impl UnsafeBlockSource for PendingSource {
-    async fn next(&mut self) -> Result<L2BlockEvent, SourceError> {
+    async fn next(&mut self) -> L2BlockEvent {
         std::future::pending().await
     }
 }
 
-/// [`UnsafeBlockSource`] that records sequential catchup requests and otherwise parks.
+/// [`UnsafeBlockSource`] that delivers its queued events, then parks, and records sequential
+/// catchup requests.
 #[derive(Debug)]
 pub struct TrackingSource {
+    events: VecDeque<L2BlockEvent>,
     catchup_heads: Arc<Mutex<Vec<BlockInfo>>>,
 }
 
 impl TrackingSource {
-    /// Create a source and its shared catchup call log.
+    /// Create a source with no events and its shared catchup call log.
     pub fn new() -> (Self, Arc<Mutex<Vec<BlockInfo>>>) {
         let catchup_heads = Arc::new(Mutex::new(Vec::new()));
-        (Self { catchup_heads: Arc::clone(&catchup_heads) }, catchup_heads)
+        (Self { events: VecDeque::new(), catchup_heads: Arc::clone(&catchup_heads) }, catchup_heads)
+    }
+
+    /// Queue `events`, delivered in order before the source parks.
+    pub fn with_events(mut self, events: impl IntoIterator<Item = L2BlockEvent>) -> Self {
+        self.events.extend(events);
+        self
     }
 }
 
 #[async_trait]
 impl UnsafeBlockSource for TrackingSource {
-    async fn next(&mut self) -> Result<L2BlockEvent, SourceError> {
-        std::future::pending().await
+    async fn next(&mut self) -> L2BlockEvent {
+        match self.events.pop_front() {
+            Some(event) => event,
+            None => std::future::pending().await,
+        }
     }
 
     fn reset_catchup(&mut self, safe_head: BlockInfo) {
         self.catchup_heads.lock().unwrap().push(safe_head);
-    }
-}
-
-/// [`UnsafeBlockSource`] that delivers exactly one default block then parks forever.
-///
-/// Useful for tests that need a single block ingestion event without the source
-/// signalling exhaustion or causing a shutdown.
-#[derive(Debug)]
-pub struct OneBlockSource {
-    delivered: bool,
-}
-
-impl OneBlockSource {
-    /// Create a new source that has not yet delivered its block.
-    pub const fn new() -> Self {
-        Self { delivered: false }
-    }
-}
-
-impl Default for OneBlockSource {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[async_trait]
-impl UnsafeBlockSource for OneBlockSource {
-    async fn next(&mut self) -> Result<L2BlockEvent, SourceError> {
-        if !self.delivered {
-            self.delivered = true;
-            Ok(L2BlockEvent::Block(Box::default()))
-        } else {
-            std::future::pending().await
-        }
     }
 }
 
@@ -91,7 +72,7 @@ pub struct PendingL1HeadSource;
 
 #[async_trait]
 impl L1HeadSource for PendingL1HeadSource {
-    async fn next(&mut self) -> Result<L1HeadEvent, SourceError> {
+    async fn next(&mut self) -> u64 {
         std::future::pending().await
     }
 }

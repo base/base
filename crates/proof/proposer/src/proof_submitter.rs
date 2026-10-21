@@ -12,7 +12,7 @@ use tracing::{debug, info, instrument, warn};
 
 use crate::{
     Metrics, RecoveredState, driver::DriverConfig, error::ProposerError,
-    output_proposer::OutputProposer, proposal_intervals::ProposalIntervals,
+    output_proposer::OutputProposer, proposal_intervals::IntervalResolver,
 };
 
 const RECENT_GAME_LOOKUP_MAX_ATTEMPTS: usize = 3;
@@ -47,9 +47,8 @@ pub struct ProofSubmitter {
     rollup_client: Arc<dyn RollupProvider>,
     factory_client: Arc<dyn DisputeGameFactoryClient>,
     verifier_client: Arc<dyn AggregateVerifierClient>,
+    intervals: Arc<IntervalResolver>,
     game_type: u32,
-    block_interval: u64,
-    intermediate_block_interval: u64,
     output_fetch_concurrency: usize,
 }
 
@@ -57,8 +56,6 @@ impl std::fmt::Debug for ProofSubmitter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ProofSubmitter")
             .field("game_type", &self.game_type)
-            .field("block_interval", &self.block_interval)
-            .field("intermediate_block_interval", &self.intermediate_block_interval)
             .field("output_fetch_concurrency", &self.output_fetch_concurrency)
             .finish_non_exhaustive()
     }
@@ -71,6 +68,7 @@ impl ProofSubmitter {
         rollup_client: Arc<dyn RollupProvider>,
         factory_client: Arc<dyn DisputeGameFactoryClient>,
         verifier_client: Arc<dyn AggregateVerifierClient>,
+        intervals: Arc<IntervalResolver>,
         config: &DriverConfig,
     ) -> Self {
         Self {
@@ -78,9 +76,8 @@ impl ProofSubmitter {
             rollup_client,
             factory_client,
             verifier_client,
+            intervals,
             game_type: config.game_type,
-            block_interval: config.block_interval,
-            intermediate_block_interval: config.intermediate_block_interval,
             output_fetch_concurrency: config.recovery_scan_concurrency,
         }
     }
@@ -92,11 +89,20 @@ impl ProofSubmitter {
     /// RPC failures, root mismatches, invalid signers, or contract-level
     /// rejections — is mapped to a [`SubmitAction`] variant that tells the
     /// pipeline how to react.
-    #[instrument(skip_all, fields(target_block = target_block, parent_address = %parent_address))]
+    #[instrument(
+        name = "proposer.submit_proof",
+        skip_all,
+        fields(
+            starting_block_number = starting_block_number,
+            target_block = target_block,
+            parent_address = %parent_address,
+        )
+    )]
     pub async fn submit(
         &self,
         aggregate_proposal: &Proposal,
-        proposals: &[Proposal],
+        intermediate_roots: &[B256],
+        starting_block_number: u64,
         target_block: u64,
         parent_address: Address,
     ) -> Result<RecoveredState, SubmitAction> {
@@ -117,26 +123,32 @@ impl ProofSubmitter {
             return Err(SubmitAction::RootMismatch);
         }
 
-        // Extract intermediate roots.
-        let starting_block_number =
-            target_block.checked_sub(self.block_interval).ok_or_else(|| {
-                SubmitAction::Failed(ProposerError::Internal(format!(
-                    "target_block {target_block} < block_interval {}",
-                    self.block_interval
-                )))
-            })?;
-        let intermediate_blocks = ProposalIntervals::intermediate_block_numbers(
-            self.block_interval,
-            self.intermediate_block_interval,
-            starting_block_number,
-        )
-        .map_err(SubmitAction::Failed)?;
-        let intermediate_roots = Self::extract_intermediate_roots(
-            starting_block_number,
-            proposals,
-            &intermediate_blocks,
-        )
-        .map_err(SubmitAction::Failed)?;
+        // The intervals are a function of the starting block, not of process
+        // config: the verifier switches cadence at the Denim activation block.
+        let intervals = self
+            .intervals
+            .for_starting_block(starting_block_number)
+            .await
+            .map_err(SubmitAction::Failed)?;
+        if starting_block_number.checked_add(intervals.block_interval) != Some(target_block) {
+            return Err(SubmitAction::Failed(ProposerError::Internal(format!(
+                "target_block {target_block} is not {} blocks after starting block \
+                 {starting_block_number}",
+                intervals.block_interval
+            ))));
+        }
+
+        // The game commits the signed roots as is, one per intermediate checkpoint.
+        let intermediate_blocks = intervals
+            .intermediate_block_numbers(starting_block_number)
+            .map_err(SubmitAction::Failed)?;
+        if intermediate_roots.len() != intermediate_blocks.len() {
+            return Err(SubmitAction::Discard(ProposerError::Internal(format!(
+                "proof signed {} intermediate root(s), the game needs {}",
+                intermediate_roots.len(),
+                intermediate_blocks.len()
+            ))));
+        }
 
         let rollup_client = Arc::clone(&self.rollup_client);
         let target_root = canonical_output.output_root;
@@ -182,9 +194,9 @@ impl ProofSubmitter {
         let key = game_lookup_key(
             starting_block_number,
             parent_address,
-            self.block_interval,
-            self.intermediate_block_interval,
-            &intermediate_roots,
+            intervals.block_interval,
+            intervals.intermediate_block_interval.get(),
+            intermediate_roots,
         )
         .map_err(|e| SubmitAction::Failed(ProposerError::Config(e.to_string())))?;
         let existing_game = self
@@ -208,14 +220,13 @@ impl ProofSubmitter {
             output_root = ?aggregate_proposal.output_root,
             parent_address = %parent_address,
             intermediate_roots_count = intermediate_roots.len(),
-            proposals_count = proposals.len(),
             "Proposing output (creating dispute game)"
         );
 
         let mut propose_timer = base_metrics::timed!(Metrics::proposal_l1_tx_duration_seconds());
         let propose_result = self
             .output_proposer
-            .propose_output(aggregate_proposal, parent_address, &intermediate_roots)
+            .propose_output(aggregate_proposal, parent_address, intermediate_roots)
             .await;
 
         match propose_result {
@@ -393,32 +404,6 @@ impl ProofSubmitter {
 
         SubmitAction::Failed(error)
     }
-
-    /// Extracts intermediate output roots from per-block proposals.
-    ///
-    /// Samples at every `intermediate_block_interval` within the range.
-    fn extract_intermediate_roots(
-        starting_block_number: u64,
-        proposals: &[Proposal],
-        blocks: &[u64],
-    ) -> Result<Vec<B256>, ProposerError> {
-        blocks
-            .iter()
-            .map(|&target_block| {
-                let idx = target_block.checked_sub(starting_block_number + 1).ok_or_else(|| {
-                    ProposerError::Internal(format!(
-                        "underflow computing proposal index for block {target_block}"
-                    ))
-                })?;
-                proposals.get(idx as usize).map(|proposal| proposal.output_root).ok_or_else(|| {
-                    ProposerError::Internal(format!(
-                        "intermediate root at block {target_block} not found in proposals (index {idx}, len {})",
-                        proposals.len()
-                    ))
-                })
-            })
-            .collect()
-    }
 }
 
 #[cfg(test)]
@@ -434,17 +419,18 @@ mod tests {
     use super::*;
     use crate::test_utils::{
         MockAggregateVerifier, MockDisputeGameFactory, MockOutputProposer, MockRollupClient,
-        test_proposal, test_sync_status,
+        test_fixed_interval_resolver, test_proposal, test_sync_status,
     };
 
     const TEST_GAME_TYPE: u32 = 42;
     const TEST_BLOCK_INTERVAL: u64 = 100;
 
-    fn proof_result(target_block: u64) -> (Proposal, Vec<Proposal>) {
+    /// A proof for a game whose only intermediate checkpoint is its target block.
+    fn proof_result(target_block: u64) -> (Proposal, Vec<B256>) {
         let mut aggregate_proposal = test_proposal(target_block);
         aggregate_proposal.l1_origin_hash = B256::ZERO;
-        let proposals: Vec<Proposal> = (1..=target_block).map(test_proposal).collect();
-        (aggregate_proposal, proposals)
+        let intermediate_roots = vec![aggregate_proposal.output_root];
+        (aggregate_proposal, intermediate_roots)
     }
 
     fn submitter(
@@ -461,12 +447,8 @@ mod tests {
             }),
             Arc::new(factory),
             Arc::new(verifier),
-            &DriverConfig {
-                game_type: TEST_GAME_TYPE,
-                block_interval: TEST_BLOCK_INTERVAL,
-                intermediate_block_interval: TEST_BLOCK_INTERVAL,
-                ..Default::default()
-            },
+            test_fixed_interval_resolver(TEST_BLOCK_INTERVAL, TEST_BLOCK_INTERVAL),
+            &DriverConfig { game_type: TEST_GAME_TYPE, ..Default::default() },
         )
     }
 
@@ -480,9 +462,9 @@ mod tests {
             MockAggregateVerifier::default(),
         );
 
-        let (aggregate_proposal, proposals) = proof_result(TEST_BLOCK_INTERVAL);
+        let (aggregate_proposal, intermediate_roots) = proof_result(TEST_BLOCK_INTERVAL);
         let result = submitter
-            .submit(&aggregate_proposal, &proposals, TEST_BLOCK_INTERVAL, Address::ZERO)
+            .submit(&aggregate_proposal, &intermediate_roots, 0, TEST_BLOCK_INTERVAL, Address::ZERO)
             .await;
 
         assert!(result.is_ok());
@@ -509,9 +491,15 @@ mod tests {
                     MockAggregateVerifier::default(),
                 );
 
-                let (aggregate_proposal, proposals) = proof_result(TEST_BLOCK_INTERVAL);
+                let (aggregate_proposal, intermediate_roots) = proof_result(TEST_BLOCK_INTERVAL);
                 submitter
-                    .submit(&aggregate_proposal, &proposals, TEST_BLOCK_INTERVAL, Address::ZERO)
+                    .submit(
+                        &aggregate_proposal,
+                        &intermediate_roots,
+                        0,
+                        TEST_BLOCK_INTERVAL,
+                        Address::ZERO,
+                    )
                     .await
                     .unwrap();
             });
@@ -538,18 +526,19 @@ mod tests {
             }),
             Arc::new(MockDisputeGameFactory::with_uuid_game_responses([game_address])),
             Arc::new(MockAggregateVerifier::default()),
+            test_fixed_interval_resolver(TEST_BLOCK_INTERVAL, 25),
             &DriverConfig {
                 game_type: TEST_GAME_TYPE,
-                block_interval: TEST_BLOCK_INTERVAL,
-                intermediate_block_interval: 25,
                 recovery_scan_concurrency: 2,
                 ..Default::default()
             },
         );
 
-        let (aggregate_proposal, proposals) = proof_result(TEST_BLOCK_INTERVAL);
+        let (aggregate_proposal, _) = proof_result(TEST_BLOCK_INTERVAL);
+        let intermediate_roots: Vec<B256> =
+            [25, 50, 75, 100].map(|block| test_proposal(block).output_root).to_vec();
         let result = submitter
-            .submit(&aggregate_proposal, &proposals, TEST_BLOCK_INTERVAL, Address::ZERO)
+            .submit(&aggregate_proposal, &intermediate_roots, 0, TEST_BLOCK_INTERVAL, Address::ZERO)
             .await;
 
         assert!(result.is_ok());
@@ -567,9 +556,9 @@ mod tests {
             MockAggregateVerifier::default(),
         );
 
-        let (aggregate_proposal, proposals) = proof_result(TEST_BLOCK_INTERVAL);
+        let (aggregate_proposal, intermediate_roots) = proof_result(TEST_BLOCK_INTERVAL);
         let result = submitter
-            .submit(&aggregate_proposal, &proposals, TEST_BLOCK_INTERVAL, Address::ZERO)
+            .submit(&aggregate_proposal, &intermediate_roots, 0, TEST_BLOCK_INTERVAL, Address::ZERO)
             .await;
 
         assert!(result.is_ok());
@@ -591,9 +580,9 @@ mod tests {
             MockAggregateVerifier::default(),
         );
 
-        let (aggregate_proposal, proposals) = proof_result(TEST_BLOCK_INTERVAL);
+        let (aggregate_proposal, intermediate_roots) = proof_result(TEST_BLOCK_INTERVAL);
         let result = submitter
-            .submit(&aggregate_proposal, &proposals, TEST_BLOCK_INTERVAL, Address::ZERO)
+            .submit(&aggregate_proposal, &intermediate_roots, 0, TEST_BLOCK_INTERVAL, Address::ZERO)
             .await;
 
         let recovered = result.unwrap();
@@ -601,6 +590,58 @@ mod tests {
         assert_eq!(recovered.l2_block_number, TEST_BLOCK_INTERVAL);
         assert_eq!(*output.created.lock().unwrap(), 1);
         assert!(output.verified.lock().unwrap().is_empty());
+    }
+
+    /// The caller's target block must agree with the interval the verifier will
+    /// apply to the game's starting block. Across the cadence boundary a cursor
+    /// built from a stale interval would otherwise commit an under-sized range.
+    #[tokio::test]
+    async fn submit_rejects_target_block_that_contradicts_resolved_interval() {
+        let output = Arc::new(MockOutputProposer::default());
+        let submitter = submitter(
+            Arc::clone(&output),
+            MockDisputeGameFactory::default(),
+            MockAggregateVerifier::default(),
+        );
+
+        let (aggregate_proposal, intermediate_roots) = proof_result(TEST_BLOCK_INTERVAL);
+        let result = submitter
+            .submit(
+                &aggregate_proposal,
+                &intermediate_roots,
+                25,
+                TEST_BLOCK_INTERVAL,
+                Address::ZERO,
+            )
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(SubmitAction::Failed(ref error))
+                if error.to_string().contains("is not 100 blocks after starting block 25")
+        ));
+        assert_eq!(*output.created.lock().unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn submit_discards_proof_with_wrong_intermediate_root_count() {
+        let output = Arc::new(MockOutputProposer::default());
+        let submitter = submitter(
+            Arc::clone(&output),
+            MockDisputeGameFactory::default(),
+            MockAggregateVerifier::default(),
+        );
+
+        let (aggregate_proposal, _) = proof_result(TEST_BLOCK_INTERVAL);
+        let result =
+            submitter.submit(&aggregate_proposal, &[], 0, TEST_BLOCK_INTERVAL, Address::ZERO).await;
+
+        assert!(matches!(
+            result,
+            Err(SubmitAction::Discard(ref error))
+                if error.to_string().contains("proof signed 0 intermediate root(s), the game needs 1")
+        ));
+        assert_eq!(*output.created.lock().unwrap(), 0);
     }
 
     #[tokio::test]
@@ -614,9 +655,9 @@ mod tests {
             MockAggregateVerifier::default(),
         );
 
-        let (aggregate_proposal, proposals) = proof_result(TEST_BLOCK_INTERVAL);
+        let (aggregate_proposal, intermediate_roots) = proof_result(TEST_BLOCK_INTERVAL);
         let result = submitter
-            .submit(&aggregate_proposal, &proposals, TEST_BLOCK_INTERVAL, Address::ZERO)
+            .submit(&aggregate_proposal, &intermediate_roots, 0, TEST_BLOCK_INTERVAL, Address::ZERO)
             .await;
 
         assert!(matches!(
@@ -631,7 +672,8 @@ mod tests {
     #[tokio::test]
     async fn submit_recovers_when_existing_game_l1_head_mismatches() {
         let game_address = Address::repeat_byte(0xAA);
-        let verifier = MockAggregateVerifier { l1_head: B256::repeat_byte(0xCC) };
+        let verifier =
+            MockAggregateVerifier { l1_head: B256::repeat_byte(0xCC), ..Default::default() };
         let output = Arc::new(MockOutputProposer::default());
         let submitter = submitter(
             Arc::clone(&output),
@@ -639,9 +681,9 @@ mod tests {
             verifier,
         );
 
-        let (aggregate_proposal, proposals) = proof_result(TEST_BLOCK_INTERVAL);
+        let (aggregate_proposal, intermediate_roots) = proof_result(TEST_BLOCK_INTERVAL);
         let result = submitter
-            .submit(&aggregate_proposal, &proposals, TEST_BLOCK_INTERVAL, Address::ZERO)
+            .submit(&aggregate_proposal, &intermediate_roots, 0, TEST_BLOCK_INTERVAL, Address::ZERO)
             .await;
 
         assert!(matches!(result, Err(SubmitAction::GameAlreadyExists)));
@@ -675,9 +717,15 @@ mod tests {
                 MockAggregateVerifier::default(),
             );
 
-            let (aggregate_proposal, proposals) = proof_result(TEST_BLOCK_INTERVAL);
+            let (aggregate_proposal, intermediate_roots) = proof_result(TEST_BLOCK_INTERVAL);
             let result = submitter
-                .submit(&aggregate_proposal, &proposals, TEST_BLOCK_INTERVAL, Address::ZERO)
+                .submit(
+                    &aggregate_proposal,
+                    &intermediate_roots,
+                    0,
+                    TEST_BLOCK_INTERVAL,
+                    Address::ZERO,
+                )
                 .await;
 
             match expected_discard_label {
@@ -700,9 +748,9 @@ mod tests {
             MockAggregateVerifier::default(),
         );
 
-        let (aggregate_proposal, proposals) = proof_result(TEST_BLOCK_INTERVAL);
+        let (aggregate_proposal, intermediate_roots) = proof_result(TEST_BLOCK_INTERVAL);
         let result = submitter
-            .submit(&aggregate_proposal, &proposals, TEST_BLOCK_INTERVAL, Address::ZERO)
+            .submit(&aggregate_proposal, &intermediate_roots, 0, TEST_BLOCK_INTERVAL, Address::ZERO)
             .await;
 
         assert!(matches!(result, Err(SubmitAction::GameAlreadyExists)));

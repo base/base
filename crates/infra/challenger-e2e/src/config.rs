@@ -8,13 +8,57 @@
 use std::time::Duration;
 
 use alloy_primitives::Address;
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use url::Url;
+
+/// E2E scenario to execute.
+#[derive(Debug, Clone, Copy, Default, Eq, PartialEq, ValueEnum)]
+pub enum Scenario {
+    /// Every path on one fork: Path 1, Path 2 skip and dispute, Path 4 and
+    /// its follow-up, and a staged Path 3, over three games.
+    #[default]
+    All,
+    /// Path 1 followed by both the skip and dispute halves of Path 2. A
+    /// cheaper subset of `all`, for `real` prover runs.
+    Path1Path2,
+    /// A staged invalid ZK-only proposal. A cheaper subset of `all`, for
+    /// `real` prover runs.
+    Path3,
+}
+
+/// Where proofs come from.
+#[derive(Debug, Clone, Copy, Default, Eq, PartialEq, ValueEnum)]
+pub enum ProverMode {
+    /// An in-pod mock prover plus mock verifiers on the fork. Uses no shared
+    /// prover capacity; see `mock_prover` and `mock_verifier`.
+    #[default]
+    Mock,
+    /// The live prover-service at `BASE_CHALLENGER_ZK_RPC_URL` and the fork's
+    /// real verifiers. Each `path3`/`all` run costs a 600-block SNARK on the
+    /// shared SP1 cluster.
+    Real,
+}
+
+/// A failure the mock prover injects into the challenger's proof sessions.
+#[derive(Debug, Clone, Copy, Default, Eq, PartialEq, ValueEnum)]
+pub enum MockFault {
+    /// Every session succeeds after the proving time.
+    None,
+    /// The first attempt of each of the challenger's sessions reports
+    /// `Failed`, so every dispute also proves the challenger re-requests a
+    /// failed proof. The driver's own staging requests are never failed.
+    #[default]
+    FailFirst,
+}
 
 /// Runtime configuration for [`crate::ChallengerE2e`].
 #[derive(Debug, Parser)]
 #[command(name = "challenger-e2e", version, about, long_about = None)]
 pub struct Config {
+    /// E2E scenario to execute.
+    #[arg(long, env = "CHALLENGER_E2E_SCENARIO", default_value = "all")]
+    pub scenario: Scenario,
+
     /// L1 RPC that Anvil forks. Only ever read from.
     #[arg(long = "l1-eth-rpc", env = "BASE_CHALLENGER_L1_ETH_RPC")]
     pub l1_eth_rpc: Url,
@@ -23,8 +67,28 @@ pub struct Config {
     #[arg(long = "l2-eth-rpc", env = "BASE_CHALLENGER_L2_ETH_RPC")]
     pub l2_eth_rpc: Url,
 
-    /// Live prover-service JSON-RPC. Used to request a real SNARK of canonical
-    /// roots; never the Anvil fork URL.
+    /// Where proofs come from. `mock` keeps the run off the shared prover.
+    #[arg(long, env = "CHALLENGER_E2E_PROVER", default_value = "mock")]
+    pub prover: ProverMode,
+
+    /// How long the mock prover reports a session as running before it
+    /// succeeds, so the callers' polling loops are exercised.
+    #[arg(
+        long = "mock-proving-time",
+        env = "CHALLENGER_E2E_MOCK_PROVING_TIME",
+        default_value = "5s",
+        value_parser = humantime::parse_duration
+    )]
+    pub mock_proving_time: Duration,
+
+    /// Failure the mock prover injects into the challenger's proof sessions.
+    /// `mock` mode only.
+    #[arg(long = "mock-fault", env = "CHALLENGER_E2E_MOCK_FAULT", default_value = "fail-first")]
+    pub mock_fault: MockFault,
+
+    /// Prover-service JSON-RPC. In `real` mode, the live service the driver and
+    /// the challenger both use; in `mock` mode it is replaced at startup by the
+    /// in-pod mock's URL. Never the Anvil fork URL.
     #[arg(long = "zk-rpc-url", env = "BASE_CHALLENGER_ZK_RPC_URL")]
     pub zk_rpc_url: Url,
 
@@ -50,6 +114,16 @@ pub struct Config {
     /// for the keychain signer sidecar.
     #[arg(long = "anvil-port", env = "CHALLENGER_E2E_ANVIL_PORT", default_value = "18545")]
     pub anvil_port: u16,
+
+    /// Handshake file the driver writes to release the challenger. The chart's
+    /// sidecar waits on the default; override only to run the pair outside the
+    /// pod, e.g. locally.
+    #[arg(
+        long = "env-file",
+        env = "CHALLENGER_E2E_ENV_FILE",
+        default_value = "/shared/challenger.env"
+    )]
+    pub env_file: std::path::PathBuf,
 
     /// Prometheus endpoint of the challenger under test.
     #[arg(
@@ -95,6 +169,21 @@ pub struct Config {
     )]
     pub dispute_timeout: Duration,
 
+    /// How long the driver keeps retrying an L2 RPC read that fails the way an
+    /// unavailable node does (`no state found`, a refused connection, an HTTP
+    /// 502/503/504/429 from a load balancer), before it gives up and fails the
+    /// run as an infrastructure failure.
+    ///
+    /// Covers a node restart. The challenger reads the same node, so while it
+    /// is down no dispute can be expected of the challenger either.
+    #[arg(
+        long = "l2-retry-budget",
+        env = "CHALLENGER_E2E_L2_RETRY_BUDGET",
+        default_value = "10m",
+        value_parser = humantime::parse_duration
+    )]
+    pub l2_retry_budget: Duration,
+
     /// Interval between driver polls of the fork and the metrics endpoint.
     #[arg(
         long = "poll-interval",
@@ -103,4 +192,49 @@ pub struct Config {
         value_parser = humantime::parse_duration
     )]
     pub poll_interval: Duration,
+
+    /// `base/base` commit the driver was built from, logged at startup so a run
+    /// names the code it ran. The binary cannot discover it itself, so the image
+    /// has to set it from the commit it builds; unset, it is logged as unknown.
+    #[arg(long = "driver-commit", env = "CHALLENGER_E2E_DRIVER_COMMIT")]
+    pub driver_commit: Option<String>,
+
+    /// Fork block, recorded at startup. Every block after it was mined on the
+    /// fork, so it bounds the scan for the challenger's own transactions.
+    #[arg(skip)]
+    pub fork_block: u64,
+
+    /// Requests the mock prover accepted, in `mock` mode. Set by the driver
+    /// when it starts the mock; checked against each disputed checkpoint.
+    #[arg(skip)]
+    pub mock_requests: Option<crate::mock_prover::MockProofRequests>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_path1_path2_scenario() {
+        assert_eq!(Scenario::from_str("path1-path2", false), Ok(Scenario::Path1Path2));
+        assert_eq!(Scenario::from_str("path3", false), Ok(Scenario::Path3));
+    }
+
+    #[test]
+    fn prover_defaults_to_mock() {
+        let config = Config::try_parse_from([
+            "challenger-e2e",
+            "--l1-eth-rpc=http://l1",
+            "--l2-eth-rpc=http://l2",
+            "--zk-rpc-url=http://zk",
+            "--dispute-game-factory-addr=0x0000000000000000000000000000000000000001",
+            "--game-type=621",
+            "--anchor-state-registry-addr=0x0000000000000000000000000000000000000002",
+        ])
+        .expect("parses");
+        assert_eq!(config.prover, ProverMode::Mock);
+        assert_eq!(config.mock_fault, MockFault::FailFirst);
+        assert_eq!(MockFault::from_str("none", false), Ok(MockFault::None));
+        assert_eq!(ProverMode::from_str("real", false), Ok(ProverMode::Real));
+    }
 }

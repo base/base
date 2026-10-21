@@ -1,6 +1,6 @@
 //! ECDSA secp256k1 key generation, signing, and verification.
 
-use alloy_primitives::{Address, Bytes, keccak256};
+use alloy_primitives::{Bytes, keccak256};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use base_proof_primitives::ECDSA_SIGNATURE_LENGTH;
@@ -45,11 +45,6 @@ impl Ecdsa {
         let encoded_point = verifying_key.to_encoded_point(false);
         encoded_point.as_bytes().to_vec()
     }
-
-    /// Get the Ethereum address from a signer.
-    pub const fn address(signer: &PrivateKeySigner) -> Address {
-        signer.address()
-    }
 }
 
 /// Proposal signing and verification.
@@ -89,7 +84,7 @@ impl Signing {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{address, b256};
+    use alloy_primitives::{Address, address, b256};
     use base_proof_primitives::{PROOF_JOURNAL_BASE_LENGTH, ProofJournal};
     use rand_08::rngs::OsRng;
 
@@ -153,7 +148,7 @@ mod tests {
     fn test_signer_address() {
         let hex_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
         let signer = Ecdsa::from_hex(hex_key).expect("failed to parse hex key");
-        let address = Ecdsa::address(&signer);
+        let address = signer.address();
         let expected = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266".parse::<Address>().unwrap();
         assert_eq!(address, expected);
     }

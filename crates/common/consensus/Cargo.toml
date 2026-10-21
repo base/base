@@ -17,6 +17,7 @@ workspace = true
 # Alloy
 alloy-rlp.workspace = true
 alloy-eips.workspace = true
+alloy-genesis.workspace = true
 alloy-consensus.workspace = true
 alloy-sol-types.workspace = true
 alloy-primitives = { workspace = true, features = ["rlp"] }
@@ -27,6 +28,10 @@ alloy-rpc-types-eth = { workspace = true, optional = true }
 
 # misc
 thiserror.workspace = true
+ambassador.workspace = true
+
+# Base
+base-common-genesis.workspace = true
 
 # arbitrary
 arbitrary = { workspace = true, features = ["derive"], optional = true }
@@ -54,6 +59,7 @@ rstest.workspace = true
 serde_json.workspace = true
 alloy-signer.workspace = true
 alloy-signer-local.workspace = true
+base-common-chains.workspace = true
 bincode = { workspace = true, features = ["serde"] }
 arbitrary = { workspace = true, features = ["derive"] }
 alloy-primitives = { workspace = true, features = ["rand", "arbitrary"] }
@@ -64,11 +70,13 @@ std = [
 	"alloy-consensus/std",
 	"alloy-eips/std",
 	"alloy-evm?/std",
+	"alloy-genesis/std",
 	"alloy-primitives/std",
 	"alloy-rlp/std",
 	"alloy-rpc-types-eth?/std",
 	"alloy-serde?/std",
 	"alloy-sol-types/std",
+	"base-common-genesis/std",
 	"reth-codecs?/std",
 	"reth-primitives-traits?/std",
 	"reth-zstd-compressors?/std",
@@ -86,6 +94,8 @@ arbitrary = [
 	"alloy-primitives/rand",
 	"alloy-rpc-types-eth?/arbitrary",
 	"alloy-serde?/arbitrary",
+	"alloy-sol-types/arbitrary",
+	"base-common-genesis/arbitrary",
 	"dep:arbitrary",
 	"reth-codecs?/arbitrary",
 	"reth-db-api?/arbitrary",
@@ -98,6 +108,7 @@ serde = [
 	"alloy-eips/serde",
 	"alloy-primitives/serde",
 	"alloy-rpc-types-eth?/serde",
+	"base-common-genesis/serde",
 	"bytes?/serde",
 	"dep:alloy-serde",
 	"dep:serde",

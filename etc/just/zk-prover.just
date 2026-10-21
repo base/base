@@ -16,7 +16,8 @@ list:
     @just --justfile {{ source_file() }} methods
 
 # Request a proof for a block range: proof_type=compressed|snark zk_backend=dry_run|cluster|network
-prove start_block number_of_blocks='1' proof_type='compressed' zk_backend='dry_run' session_id='' prover_address='' l1_head='':
+# intermediate_block_interval must divide number_of_blocks; it defaults to number_of_blocks (one root)
+prove start_block number_of_blocks='1' proof_type='compressed' zk_backend='dry_run' session_id='' prover_address='' l1_head='' intermediate_block_interval='':
     #!/usr/bin/env bash
     set -euo pipefail
     command -v jq >/dev/null 2>&1 || { echo "jq is required" >&2; exit 1; }
@@ -31,6 +32,7 @@ prove start_block number_of_blocks='1' proof_type='compressed' zk_backend='dry_r
     session_id={{ quote(session_id) }}
     prover_address={{ quote(prover_address) }}
     l1_head={{ quote(l1_head) }}
+    intermediate_block_interval={{ quote(intermediate_block_interval) }}
 
     case "$start_block" in
       ''|*[!0-9]*) echo "start_block must be a non-negative integer" >&2; exit 1 ;;
@@ -40,6 +42,17 @@ prove start_block number_of_blocks='1' proof_type='compressed' zk_backend='dry_r
     esac
     if [ "$number_of_blocks" -eq 0 ]; then
       echo "number_of_blocks must be greater than zero" >&2
+      exit 1
+    fi
+    if [ -z "$intermediate_block_interval" ]; then
+      intermediate_block_interval="$number_of_blocks"
+    fi
+    case "$intermediate_block_interval" in
+      ''|*[!0-9]*) echo "intermediate_block_interval must be a positive integer" >&2; exit 1 ;;
+    esac
+    if [ "$intermediate_block_interval" -eq 0 ] \
+      || [ $((number_of_blocks % intermediate_block_interval)) -ne 0 ]; then
+      echo "intermediate_block_interval must be a nonzero divisor of number_of_blocks" >&2
       exit 1
     fi
     case "$zk_backend" in
@@ -60,11 +73,13 @@ prove start_block number_of_blocks='1' proof_type='compressed' zk_backend='dry_r
     block_payload="$(jq -n -c \
       --argjson start_block "$start_block" \
       --argjson number_of_blocks "$number_of_blocks" \
+      --argjson intermediate_block_interval "$intermediate_block_interval" \
       --arg l1_head "$l1_head" \
       --arg zk_backend "$zk_backend" \
       '{
         start_block_number: $start_block,
         number_of_blocks_to_prove: $number_of_blocks,
+        intermediate_block_interval: $intermediate_block_interval,
         zk_vm: "sp1",
         zk_backend: $zk_backend
       } + if $l1_head == "" then {} else {l1_head: $l1_head} end')"

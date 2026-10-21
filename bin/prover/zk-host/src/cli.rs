@@ -15,6 +15,7 @@ use base_proof_zk_host::{
 use base_prover_service_client::{ProverServiceClientConfig, ProverWorkerClient};
 use clap::Parser;
 use eyre::WrapErr;
+use reth_node_core::args::TraceArgs;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 use url::Url;
@@ -37,6 +38,10 @@ pub(crate) struct Cli {
     /// Metrics arguments.
     #[command(flatten)]
     metrics: MetricsArgs,
+
+    /// `OpenTelemetry` tracing export configuration.
+    #[command(flatten)]
+    traces: TraceArgs,
 }
 
 /// Worker-mode arguments for claiming and generating ZK proof jobs.
@@ -188,15 +193,17 @@ impl WorkerArgs {
 impl Cli {
     /// Run the worker.
     pub(crate) fn run(self) -> eyre::Result<()> {
-        let Self { worker, logging, metrics } = self;
-        LogConfig::from(logging).init_tracing_subscriber()?;
+        let Self { worker, logging, metrics, traces } = self;
         base_cli_utils::MetricsConfig::from(metrics).init_with(|| {
             base_cli_utils::register_version_metrics!();
         })?;
 
-        RuntimeManager::new()
-            .with_thread_stack_size(8 * 1024 * 1024)
-            .run_until_shutdown(|cancel| async move { worker.run(cancel).await })
+        RuntimeManager::new().with_thread_stack_size(8 * 1024 * 1024).run_until_shutdown(
+            |cancel| async move {
+                LogConfig::from(logging).init_with_trace_args(&traces, &[])?;
+                worker.run(cancel).await
+            },
+        )
     }
 }
 
@@ -222,11 +229,12 @@ impl WorkerArgs {
 
         let client_config = ProverServiceClientConfig::new(args.prover_service_endpoint.clone())
             .with_request_timeout(Duration::from_secs(args.prover_service_request_timeout_secs));
-        let Some(client) = Self::connect_prover_service_client(&client_config, &cancel).await?
-        else {
+        if cancel.is_cancelled() {
             info!("zk prover host worker startup cancelled");
             return Ok(());
-        };
+        }
+        let client = ProverWorkerClient::connect(&client_config)
+            .wrap_err("failed to connect to prover service")?;
 
         let heartbeat = ProofGeneratorHeartbeatConfig::with_max_consecutive_failures(
             Duration::from_secs(args.proof_generator_heartbeat_interval_secs),
@@ -253,19 +261,5 @@ impl WorkerArgs {
         );
         host.run_until_cancelled(cancel).await;
         Ok(())
-    }
-
-    async fn connect_prover_service_client(
-        client_config: &ProverServiceClientConfig,
-        cancel: &CancellationToken,
-    ) -> eyre::Result<Option<ProverWorkerClient>> {
-        tokio::select! {
-            biased;
-            () = cancel.cancelled() => Ok(None),
-            result = async {
-                ProverWorkerClient::connect(client_config)
-                    .wrap_err("failed to connect to prover service")
-            } => result.map(Some),
-        }
     }
 }

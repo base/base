@@ -244,7 +244,7 @@ mod tests {
             .try_acquire_owned()
             .expect("permit should be available before first acquire");
 
-        let err = pool.prove(ProofRequest::default()).await.unwrap_err();
+        let err = pool.prove(ProofRequest::for_tests(600, 30)).await.unwrap_err();
         assert!(matches!(err, NitroEnclavePoolError::Busy));
         assert!(err.is_busy());
 

@@ -6,7 +6,7 @@ use serde::{Deserialize, Deserializer, Serialize, de::Error as SerdeError};
 use url::Url;
 
 use super::{
-    parsing::validate_swap_amounts,
+    parsing::{require_address, validate_swap_amounts},
     precompile::PrecompileTarget,
     real_token::{RealTokenSetupConfig, parse_real_token_setup},
     validity::ValidityConfig,
@@ -277,6 +277,12 @@ pub enum TxTypeConfig {
         slots_per_tx: u32,
     },
 
+    /// Deterministic `DoubleCounter` `increment()` call.
+    DoubleCounter {
+        /// `DoubleCounter` contract address.
+        contract: Address,
+    },
+
     /// Precompile call.
     Precompile {
         /// Target precompile configuration.
@@ -295,11 +301,20 @@ pub enum TxTypeConfig {
     /// Uniswap V3 style swap.
     UniswapV3 {
         /// Router contract address.
-        router: Address,
+        ///
+        /// Required unless a harness flow auto-wires swap addresses.
+        #[serde(default)]
+        router: Option<Address>,
         /// Input token address.
-        token_in: Address,
+        ///
+        /// Required unless a harness flow auto-wires swap addresses.
+        #[serde(default)]
+        token_in: Option<Address>,
         /// Output token address.
-        token_out: Address,
+        ///
+        /// Required unless a harness flow auto-wires swap addresses.
+        #[serde(default)]
+        token_out: Option<Address>,
         /// Fee tier (default 3000 = 0.3%).
         #[serde(default = "default_uniswap_v3_fee")]
         fee: u32,
@@ -323,11 +338,20 @@ pub enum TxTypeConfig {
     /// Aerodrome Slipstream (concentrated liquidity) swap.
     AerodromeCl {
         /// CL Router contract address.
-        router: Address,
+        ///
+        /// Required unless a harness flow auto-wires swap addresses.
+        #[serde(default)]
+        router: Option<Address>,
         /// Input token address.
-        token_in: Address,
+        ///
+        /// Required unless a harness flow auto-wires swap addresses.
+        #[serde(default)]
+        token_in: Option<Address>,
         /// Output token address.
-        token_out: Address,
+        ///
+        /// Required unless a harness flow auto-wires swap addresses.
+        #[serde(default)]
+        token_out: Option<Address>,
         /// Tick spacing for the pool.
         #[serde(default = "default_aerodrome_tick_spacing")]
         tick_spacing: i32,
@@ -528,13 +552,6 @@ impl TestConfig {
         })
     }
 
-    /// Returns the checksummed funder address string, if the key resolves successfully.
-    ///
-    /// Checks the override first, then falls back to `FUNDER_KEY` env var.
-    pub fn funder_key_address(override_key: Option<&str>) -> Option<String> {
-        Self::resolve_funder_key(override_key).ok().map(|s| s.address().to_string())
-    }
-
     /// Parses the duration string into a Duration.
     pub fn parse_duration(&self) -> Result<Option<Duration>> {
         self.duration
@@ -611,7 +628,11 @@ impl TestConfig {
                 .unwrap_or_default(),
             fresh_recipient_ratio: self.fresh_recipient_ratio,
             validity_ratio: self.validity.ratio,
+            validity_signing: self.validity.signing,
             validity_predicate_count: self.validity.predicates.len(),
+            validity_priority_lead_ratio: self.validity.priority_lead_ratio,
+            validity_priority_lead_multiplier: self.validity.priority_lead_multiplier,
+            validity_priority_fee_divisor: self.validity.priority_fee_divisor,
             looper_contract: self.looper_contract.map(|addr| addr.to_string()),
             swap_token_amount: self.swap_token_amount.clone(),
             b20_mint_amount: self.b20_mint_amount.clone(),
@@ -678,9 +699,14 @@ impl TestConfig {
             batch_size: self.batch_size as usize,
             max_gas_price: crate::runner::DEFAULT_MAX_GAS_PRICE,
             flashblocks_ws: self.flashblocks_ws.clone(),
+            canonical_heads_ws: None,
             fresh_recipient_ratio: self.fresh_recipient_ratio,
             validity_ratio: self.validity.ratio,
+            validity_signing: self.validity.signing,
             validity_predicates: self.validity.to_templates()?,
+            validity_priority_lead_ratio: self.validity.priority_lead_ratio,
+            validity_priority_lead_multiplier: self.validity.priority_lead_multiplier,
+            validity_priority_fee_divisor: self.validity.priority_fee_divisor,
         })
     }
 
@@ -698,6 +724,9 @@ impl TestConfig {
                     )));
                 }
                 TxType::Storage { contract: *contract, slots_per_tx: *slots_per_tx }
+            }
+            TxTypeConfig::DoubleCounter { contract } => {
+                TxType::DoubleCounter { contract: *contract }
             }
             TxTypeConfig::Precompile { target, iterations } => {
                 let looper_contract = if *iterations > 1 {
@@ -742,10 +771,13 @@ impl TestConfig {
                     reverse_max_amount,
                     "uniswap_v3 reverse",
                 )?;
+                let router = require_address(*router, "uniswap_v3 router")?;
+                let token_in = require_address(*token_in, "uniswap_v3 token_in")?;
+                let token_out = require_address(*token_out, "uniswap_v3 token_out")?;
                 TxType::UniswapV3 {
-                    router: *router,
-                    token_in: *token_in,
-                    token_out: *token_out,
+                    router,
+                    token_in,
+                    token_out,
                     fee: *fee,
                     min_amount: *min_amount,
                     max_amount: *max_amount,
@@ -776,10 +808,13 @@ impl TestConfig {
                         "aerodrome_cl tick_spacing {tick_spacing} exceeds i24 range"
                     )));
                 }
+                let router = require_address(*router, "aerodrome_cl router")?;
+                let token_in = require_address(*token_in, "aerodrome_cl token_in")?;
+                let token_out = require_address(*token_out, "aerodrome_cl token_out")?;
                 TxType::AerodromeCl {
-                    router: *router,
-                    token_in: *token_in,
-                    token_out: *token_out,
+                    router,
+                    token_in,
+                    token_out,
                     tick_spacing: *tick_spacing,
                     min_amount: *min_amount,
                     max_amount: *max_amount,
@@ -828,13 +863,35 @@ where
 mod tests {
     use super::*;
 
+    /// Minimal valid config with the primary RPC and flashblocks websocket set, plus `extra`.
+    fn config_yaml(extra: &str) -> String {
+        format!(
+            "transaction_submission_rpcs: http://localhost:8545\nflashblocks_ws: ws://localhost:7111\n{extra}"
+        )
+    }
+
+    #[test]
+    fn denim_profile_preserves_gas_per_second() {
+        let baseline = TestConfig::from_yaml(include_str!("../../examples/devnet.yaml")).unwrap();
+        let config =
+            TestConfig::from_yaml(include_str!("../../examples/denim-devnet.yaml")).unwrap();
+        let load = config.to_load_config(Some(1337)).unwrap();
+
+        assert_eq!(load.block_time, Duration::from_millis(200));
+        assert_eq!(load.target_gps, baseline.target_gps);
+        assert_eq!(
+            serde_json::to_value(&config.transactions).unwrap(),
+            serde_json::to_value(&baseline.transactions).unwrap()
+        );
+        assert_eq!(load.target_gps.unwrap() as f64 * load.block_time.as_secs_f64(), 4_000_000.0);
+        assert!(load.flashblocks_ws.is_none());
+        assert!(load.txpool_nodes.is_empty());
+    }
+
     #[test]
     fn parse_minimal_config() {
-        let yaml = r#"
-transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
-"#;
-        let config = TestConfig::from_yaml(yaml).unwrap();
+        let yaml = config_yaml("");
+        let config = TestConfig::from_yaml(&yaml).unwrap();
         assert_eq!(config.primary_submission_rpc().unwrap().host_str(), Some("localhost"));
         assert_eq!(config.sender_count, 100);
         assert!(config.mnemonic.is_none());
@@ -920,12 +977,12 @@ transactions:
 
     #[test]
     fn parse_duration_formats() {
-        let yaml = r#"
-transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
+        let yaml = config_yaml(
+            r#"
 duration: "30s"
-"#;
-        let config = TestConfig::from_yaml(yaml).unwrap();
+"#,
+        );
+        let config = TestConfig::from_yaml(&yaml).unwrap();
         assert_eq!(config.parse_duration().unwrap().unwrap(), Duration::from_secs(30));
 
         let yaml2 = r#"
@@ -961,9 +1018,8 @@ measurement_blocks: 0
 
     #[test]
     fn parse_precompile_targets() {
-        let yaml = r#"
-transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
+        let yaml = config_yaml(
+            r#"
 funder_key: "0x1234"
 transactions:
   - weight: 10
@@ -979,8 +1035,9 @@ transactions:
   - weight: 10
     type: precompile
     target: ecrecover
-"#;
-        let config = TestConfig::from_yaml(yaml).unwrap();
+"#,
+        );
+        let config = TestConfig::from_yaml(&yaml).unwrap();
         assert_eq!(config.transactions.len(), 4);
 
         match &config.transactions[0].tx_type {
@@ -1018,9 +1075,8 @@ transactions:
 
     #[test]
     fn parse_precompile_with_iterations() {
-        let yaml = r#"
-transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
+        let yaml = config_yaml(
+            r#"
 funder_key: "0x1234"
 looper_contract: "0x1234567890123456789012345678901234567890"
 transactions:
@@ -1028,8 +1084,9 @@ transactions:
     type: precompile
     target: sha256
     iterations: 50
-"#;
-        let config = TestConfig::from_yaml(yaml).unwrap();
+"#,
+        );
+        let config = TestConfig::from_yaml(&yaml).unwrap();
         assert_eq!(config.transactions.len(), 1);
 
         match &config.transactions[0].tx_type {
@@ -1045,16 +1102,16 @@ transactions:
 
     #[test]
     fn parse_storage_config() {
-        let yaml = r#"
-transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
+        let yaml = config_yaml(
+            r#"
 transactions:
   - weight: 100
     type: storage
     contract: "0x1234567890123456789012345678901234567890"
     slots_per_tx: 25
-"#;
-        let config = TestConfig::from_yaml(yaml).unwrap();
+"#,
+        );
+        let config = TestConfig::from_yaml(&yaml).unwrap();
         assert_eq!(config.transactions.len(), 1);
         match &config.transactions[0].tx_type {
             TxTypeConfig::Storage { contract, slots_per_tx } => {
@@ -1084,15 +1141,15 @@ transactions:
 
     #[test]
     fn parse_storage_config_defaults_slots_per_tx() {
-        let yaml = r#"
-transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
+        let yaml = config_yaml(
+            r#"
 transactions:
   - weight: 100
     type: storage
     contract: "0x1234567890123456789012345678901234567890"
-"#;
-        let config = TestConfig::from_yaml(yaml).unwrap();
+"#,
+        );
+        let config = TestConfig::from_yaml(&yaml).unwrap();
         match &config.transactions[0].tx_type {
             TxTypeConfig::Storage { slots_per_tx, .. } => {
                 assert_eq!(*slots_per_tx, 10, "slots_per_tx must default to 10");
@@ -1150,17 +1207,17 @@ transactions:
 
     #[test]
     fn storage_config_rejects_invalid_contract_address() {
-        let yaml = r#"
-transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
+        let yaml = config_yaml(
+            r#"
 transactions:
   - weight: 100
     type: storage
     contract: "not_an_address"
     slots_per_tx: 5
-"#;
+"#,
+        );
         // An invalid address is now rejected eagerly by serde at deserialize time.
-        let err = TestConfig::from_yaml(yaml).unwrap_err();
+        let err = TestConfig::from_yaml(&yaml).unwrap_err();
         assert!(
             err.to_string().contains("failed to parse YAML"),
             "expected eager deserialize error for invalid address, got: {err}"
@@ -1191,23 +1248,20 @@ flashblocks_ws: ws://localhost:7111
 
     #[test]
     fn fresh_recipient_ratio_defaults_to_zero() {
-        let yaml = r#"
-transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
-"#;
-        let config = TestConfig::from_yaml(yaml).unwrap();
+        let yaml = config_yaml("");
+        let config = TestConfig::from_yaml(&yaml).unwrap();
         assert_eq!(config.fresh_recipient_ratio, 0.0);
         assert_eq!(config.to_load_config(Some(1337)).unwrap().fresh_recipient_ratio, 0.0);
     }
 
     #[test]
     fn fresh_recipient_ratio_explicit_one_round_trips() {
-        let yaml = r#"
-transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
+        let yaml = config_yaml(
+            r#"
 fresh_recipient_ratio: 1.0
-"#;
-        let config = TestConfig::from_yaml(yaml).unwrap();
+"#,
+        );
+        let config = TestConfig::from_yaml(&yaml).unwrap();
         assert_eq!(config.fresh_recipient_ratio, 1.0);
         assert_eq!(config.to_load_config(Some(1337)).unwrap().fresh_recipient_ratio, 1.0);
         assert_eq!(config.to_summary().fresh_recipient_ratio, 1.0);
@@ -1215,24 +1269,24 @@ fresh_recipient_ratio: 1.0
 
     #[test]
     fn fresh_recipient_ratio_explicit_half_round_trips() {
-        let yaml = r#"
-transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
+        let yaml = config_yaml(
+            r#"
 fresh_recipient_ratio: 0.5
-"#;
-        let config = TestConfig::from_yaml(yaml).unwrap();
+"#,
+        );
+        let config = TestConfig::from_yaml(&yaml).unwrap();
         assert_eq!(config.fresh_recipient_ratio, 0.5);
         assert_eq!(config.to_load_config(Some(1337)).unwrap().fresh_recipient_ratio, 0.5);
     }
 
     #[test]
     fn fresh_recipient_ratio_rejects_values_above_one() {
-        let yaml = r#"
-transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
+        let yaml = config_yaml(
+            r#"
 fresh_recipient_ratio: 1.1
-"#;
-        let err = TestConfig::from_yaml(yaml).unwrap_err();
+"#,
+        );
+        let err = TestConfig::from_yaml(&yaml).unwrap_err();
         assert!(err.to_string().contains("fresh_recipient_ratio"));
     }
 
@@ -1283,11 +1337,8 @@ transaction_submission_rpcs: http://localhost:8545
 
     #[test]
     fn flashblocks_ws_is_preserved_for_runtime() {
-        let yaml = r#"
-transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
-"#;
-        let config = TestConfig::from_yaml(yaml).unwrap();
+        let yaml = config_yaml("");
+        let config = TestConfig::from_yaml(&yaml).unwrap();
 
         assert_eq!(
             config
@@ -1302,9 +1353,8 @@ flashblocks_ws: ws://localhost:7111
 
     #[test]
     fn parse_uniswap_v3_config() {
-        let yaml = r#"
-transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
+        let yaml = config_yaml(
+            r#"
 transactions:
   - weight: 10
     type: uniswap_v3
@@ -1312,8 +1362,9 @@ transactions:
     token_in: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
     token_out: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
     fee: 500
-"#;
-        let config = TestConfig::from_yaml(yaml).unwrap();
+"#,
+        );
+        let config = TestConfig::from_yaml(&yaml).unwrap();
         assert_eq!(config.transactions.len(), 1);
         match &config.transactions[0].tx_type {
             TxTypeConfig::UniswapV3 { fee, .. } => {
@@ -1325,11 +1376,8 @@ transactions:
 
     #[test]
     fn validity_defaults_to_disabled() {
-        let yaml = r#"
-transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
-"#;
-        let config = TestConfig::from_yaml(yaml).unwrap();
+        let yaml = config_yaml("");
+        let config = TestConfig::from_yaml(&yaml).unwrap();
         assert_eq!(config.validity.ratio, 0.0);
         let load_config = config.to_load_config(Some(1337)).unwrap();
         assert_eq!(load_config.validity_ratio, 0.0);
@@ -1339,9 +1387,8 @@ flashblocks_ws: ws://localhost:7111
 
     #[test]
     fn validity_config_round_trips_predicates() {
-        let yaml = r#"
-transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
+        let yaml = config_yaml(
+            r#"
 validity:
   ratio: 0.25
   predicates:
@@ -1357,8 +1404,9 @@ validity:
         key: sender
       op: ">="
       value: "0x0"
-"#;
-        let config = TestConfig::from_yaml(yaml).unwrap();
+"#,
+        );
+        let config = TestConfig::from_yaml(&yaml).unwrap();
         assert_eq!(config.validity.ratio, 0.25);
         assert_eq!(config.validity.predicates.len(), 2);
 
@@ -1372,38 +1420,109 @@ validity:
     }
 
     #[test]
+    fn validity_devnet_example_parses_and_validates() {
+        // Guards the committed example against schema drift: it must parse,
+        // validate, and lower to a runnable LoadConfig with the validity cohort.
+        let yaml = include_str!("../../examples/validity-devnet.yaml");
+        let config = TestConfig::from_yaml(yaml).expect("validity-devnet.yaml must parse");
+        assert_eq!(config.validity.ratio, 0.5);
+        assert_eq!(config.validity.predicates.len(), 2);
+
+        let load_config = config.to_load_config(Some(1337)).expect("must lower to LoadConfig");
+        assert_eq!(load_config.validity_ratio, 0.5);
+        assert_eq!(load_config.validity_predicates.len(), 2);
+    }
+
+    #[test]
     fn validity_rejects_ratio_above_one() {
-        let yaml = r#"
-transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
+        let yaml = config_yaml(
+            r#"
 validity:
   ratio: 1.5
   predicates:
     - type: balance
       op: ">="
       value: "0"
-"#;
-        let err = TestConfig::from_yaml(yaml).unwrap_err();
+"#,
+        );
+        let err = TestConfig::from_yaml(&yaml).unwrap_err();
         assert!(err.to_string().contains("validity.ratio"));
     }
 
     #[test]
     fn validity_rejects_enabled_without_predicates() {
-        let yaml = r#"
-transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
+        let yaml = config_yaml(
+            r#"
 validity:
   ratio: 0.5
-"#;
-        let err = TestConfig::from_yaml(yaml).unwrap_err();
+"#,
+        );
+        let err = TestConfig::from_yaml(&yaml).unwrap_err();
         assert!(err.to_string().contains("validity.predicates must be non-empty"));
     }
 
     #[test]
-    fn parse_aerodrome_cl_config() {
+    fn double_counter_and_validity_priority_round_trip_to_runtime_and_summary() {
         let yaml = r#"
 transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
+transactions:
+  - weight: 100
+    type: double_counter
+    contract: "0x1111111111111111111111111111111111111111"
+validity:
+  priority_lead_ratio: 0.2
+  priority_lead_multiplier: 4
+  priority_fee_divisor: 3
+"#;
+        let config = TestConfig::from_yaml(yaml).unwrap();
+        assert_eq!(config.validity.priority_lead_ratio, 0.2);
+        assert_eq!(config.validity.priority_lead_multiplier, 4);
+        assert_eq!(config.validity.priority_fee_divisor, 3);
+        assert!(matches!(config.transactions[0].tx_type, TxTypeConfig::DoubleCounter { .. }));
+
+        let load = config.to_load_config(Some(1337)).unwrap();
+        assert_eq!(load.validity_priority_lead_ratio, 0.2);
+        assert_eq!(load.validity_priority_lead_multiplier, 4);
+        assert_eq!(load.validity_priority_fee_divisor, 3);
+        assert!(matches!(load.transactions[0].tx_type, TxType::DoubleCounter { .. }));
+        assert_eq!(config.to_summary().validity_priority_fee_divisor, 3);
+        assert_eq!(config.to_summary().validity_priority_lead_ratio, 0.2);
+        assert_eq!(config.to_summary().validity_priority_lead_multiplier, 4);
+    }
+
+    #[test]
+    fn validity_priority_divisor_defaults_to_one_and_rejects_zero() {
+        let config =
+            TestConfig::from_yaml("transaction_submission_rpcs: http://localhost:8545").unwrap();
+        assert_eq!(config.validity.priority_fee_divisor, 1);
+        assert_eq!(config.to_load_config(Some(1337)).unwrap().validity_priority_fee_divisor, 1);
+
+        let error = TestConfig::from_yaml(
+            "transaction_submission_rpcs: http://localhost:8545\nvalidity:\n  priority_fee_divisor: 0",
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("priority_fee_divisor must be >= 1"));
+    }
+
+    #[test]
+    fn validity_priority_lead_settings_reject_out_of_range_values() {
+        let error = TestConfig::from_yaml(
+            "transaction_submission_rpcs: http://localhost:8545\nvalidity:\n  priority_lead_ratio: 1.1",
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("priority_lead_ratio must be between 0.0 and 1.0"));
+
+        let error = TestConfig::from_yaml(
+            "transaction_submission_rpcs: http://localhost:8545\nvalidity:\n  priority_lead_multiplier: 0",
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("priority_lead_multiplier must be >= 1"));
+    }
+
+    #[test]
+    fn parse_aerodrome_cl_config() {
+        let yaml = config_yaml(
+            r#"
 transactions:
   - weight: 10
     type: aerodrome_cl
@@ -1411,8 +1530,9 @@ transactions:
     token_in: "0x4200000000000000000000000000000000000006"
     token_out: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
     tick_spacing: 200
-"#;
-        let config = TestConfig::from_yaml(yaml).unwrap();
+"#,
+        );
+        let config = TestConfig::from_yaml(&yaml).unwrap();
         assert_eq!(config.transactions.len(), 1);
         match &config.transactions[0].tx_type {
             TxTypeConfig::AerodromeCl { tick_spacing, .. } => {
@@ -1420,6 +1540,25 @@ transactions:
             }
             _ => panic!("expected AerodromeCl"),
         }
+    }
+
+    #[test]
+    fn swap_configs_allow_missing_addresses_until_runtime_resolution() {
+        let yaml = config_yaml(
+            r#"
+transactions:
+  - weight: 50
+    type: uniswap_v3
+    fee: 500
+  - weight: 50
+    type: aerodrome_cl
+    tick_spacing: 100
+"#,
+        );
+
+        let config = TestConfig::from_yaml(&yaml).unwrap();
+        let error = config.to_load_config(Some(84538453)).unwrap_err();
+        assert!(error.to_string().contains("uniswap_v3 router is required"));
     }
 
     #[test]

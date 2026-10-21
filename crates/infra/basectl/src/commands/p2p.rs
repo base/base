@@ -895,6 +895,7 @@ mod tests {
             consensus_node_rpc,
             chain_id: None,
             prover_rpc: None,
+            batcher_rpc: None,
             upgrades: None,
             system_config: Address::ZERO,
             batcher_address: None,

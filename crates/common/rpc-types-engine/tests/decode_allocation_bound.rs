@@ -1,11 +1,10 @@
-//! Pre-authentication allocation-amplification regression test for
-//! [`NetworkPayloadEnvelope::decode_v4`].
+//! Pre-authentication allocation regressions for all network payload versions.
 //!
 //! This lives in its own integration test binary rather than a unit test so the
 //! `#[global_allocator]` below is isolated to a single binary: a crate-wide
 //! allocator declared inside the crate's `#[cfg(test)] mod tests` would apply to
 //! every test in that binary (and would collide with any other test that
-//! declared its own allocator). Here it governs only this one measurement.
+//! declared its own allocator). Measurements are isolated per calling thread.
 
 #![cfg(feature = "std")]
 
@@ -14,7 +13,13 @@ use std::{
     cell::Cell,
 };
 
-use base_common_rpc_types_engine::{MAX_DECOMPRESSED_ENVELOPE_BYTES, NetworkPayloadEnvelope};
+use alloy_eips::eip4895::Withdrawal;
+use alloy_primitives::Bytes;
+use base_common_rpc_types_engine::{
+    MAX_DECOMPRESSED_ENVELOPE_BYTES, MAX_TRANSACTIONS_PER_PAYLOAD, NetworkPayloadEnvelope,
+    PayloadEnvelopeError,
+};
+use ssz::Decode;
 
 // Running total of bytes allocated on the current thread. Const-initialized so
 // reading it never allocates (which would recurse through the allocator).
@@ -26,7 +31,8 @@ thread_local! {
 /// system allocator. Lets the test measure how much heap a single decode forces.
 /// Only allocation (growth) is counted, which is what a resource-exhaustion
 /// bound cares about.
-struct CountingAllocator;
+#[derive(Debug)]
+pub struct CountingAllocator;
 
 // SAFETY: every call is forwarded to the system allocator with an unchanged
 // layout, so all `GlobalAlloc` invariants are those of `System`; the wrapper
@@ -52,71 +58,186 @@ unsafe impl GlobalAlloc for CountingAllocator {
 #[global_allocator]
 static COUNTING_ALLOCATOR: CountingAllocator = CountingAllocator;
 
-/// Regression test for the pre-authentication allocation-amplification
-/// denial-of-service (CWE-770). `decode_v4` is the gossip block-decode entry
-/// point that `BlockHandler::handle` runs for every message arriving on the
-/// public P2P port, before any signature check.
-///
-/// A frame only ~0.5 `MiB` on the wire can declare a `transactions` list of
-/// ~2.6M entries. An unbounded decode honors that count and allocates ~125 `MiB`
-/// of heap per frame; a length-bounded list must instead keep the per-frame heap
-/// within a small multiple of the decompressed size. This measures the actual
-/// bytes the decode allocates and holds it to that bound.
-#[test]
-fn decode_v4_transaction_bomb_allocation_is_bounded() {
-    // SSZ container fixed-region byte offsets (see the `from_ssz_bytes`
-    // regression test in the payload module for the full field layout).
-    const FIXED_LEN: usize = 560;
-    const EXTRA_DATA_OFFSET: usize = 436;
-    const TRANSACTIONS_OFFSET: usize = 504;
-    const WITHDRAWALS_OFFSET: usize = 508;
-    // Each envelope carries a 65-byte signature and 32-byte parent beacon root
-    // ahead of the SSZ container; the whole decompressed envelope must stay under
-    // the decompression cap.
-    const ENVELOPE_PREFIX: usize = 65 + 32;
+/// Wire layouts from the versioned SSZ execution payload schemas.
+#[derive(Clone, Copy, Debug)]
+pub struct PayloadVersion {
+    /// Payload version used in assertion diagnostics.
+    pub name: &'static str,
+    /// Size of the SSZ container's fixed region.
+    pub fixed_len: usize,
+    /// Signature and optional parent beacon block root preceding the container.
+    pub envelope_prefix: usize,
+    /// Whether this version has a withdrawals list.
+    pub has_withdrawals: bool,
+    /// Public network decoder exercised by this case.
+    pub decode: fn(&[u8]) -> Result<NetworkPayloadEnvelope, PayloadEnvelopeError>,
+}
 
-    let txs_len = ((MAX_DECOMPRESSED_ENVELOPE_BYTES - ENVELOPE_PREFIX - FIXED_LEN)
-        / ssz::BYTES_PER_LENGTH_OFFSET)
-        * ssz::BYTES_PER_LENGTH_OFFSET;
-    let declared_txs = txs_len / ssz::BYTES_PER_LENGTH_OFFSET;
+impl PayloadVersion {
+    /// Every subscribed block payload version.
+    pub const ALL: [Self; 4] = [
+        Self {
+            name: "v1",
+            fixed_len: 508,
+            envelope_prefix: 65,
+            has_withdrawals: false,
+            decode: NetworkPayloadEnvelope::decode_v1,
+        },
+        Self {
+            name: "v2",
+            fixed_len: 512,
+            envelope_prefix: 65,
+            has_withdrawals: true,
+            decode: NetworkPayloadEnvelope::decode_v2,
+        },
+        Self {
+            name: "v3",
+            fixed_len: 528,
+            envelope_prefix: 97,
+            has_withdrawals: true,
+            decode: NetworkPayloadEnvelope::decode_v3,
+        },
+        Self {
+            name: "v4",
+            fixed_len: 560,
+            envelope_prefix: 97,
+            has_withdrawals: true,
+            decode: NetworkPayloadEnvelope::decode_v4,
+        },
+    ];
 
-    // Container: zeroed fixed fields, empty extra_data/withdrawals, and a
-    // transactions region whose leading offset declares `declared_txs` empty
-    // items (every offset points past the end of the list).
-    let mut container = Vec::with_capacity(FIXED_LEN + txs_len);
-    container.resize(FIXED_LEN, 0);
-    container[EXTRA_DATA_OFFSET..][..4].copy_from_slice(&(FIXED_LEN as u32).to_le_bytes());
-    container[TRANSACTIONS_OFFSET..][..4].copy_from_slice(&(FIXED_LEN as u32).to_le_bytes());
-    container[WITHDRAWALS_OFFSET..][..4]
-        .copy_from_slice(&((FIXED_LEN + txs_len) as u32).to_le_bytes());
-    for _ in 0..declared_txs {
-        container.extend_from_slice(&(txs_len as u32).to_le_bytes());
+    /// Creates a compressed envelope without allocating a transaction object per element.
+    ///
+    /// All transaction offsets point to the end of the list, encoding empty items.
+    /// Withdrawals are zero-filled; non-multiple lengths exercise truncated items.
+    pub fn frame(self, transaction_count: usize, withdrawals_len: usize) -> Vec<u8> {
+        const EXTRA_DATA_OFFSET: usize = 436;
+        const TRANSACTIONS_OFFSET: usize = 504;
+        const WITHDRAWALS_OFFSET: usize = 508;
+
+        let transactions_len = transaction_count * ssz::BYTES_PER_LENGTH_OFFSET;
+        let decoded_len =
+            self.envelope_prefix + self.fixed_len + transactions_len + withdrawals_len;
+        assert!(decoded_len <= MAX_DECOMPRESSED_ENVELOPE_BYTES);
+        assert!(self.has_withdrawals || withdrawals_len == 0);
+
+        let mut data = Vec::with_capacity(decoded_len);
+        data.resize(self.envelope_prefix + self.fixed_len, 0);
+        // Structurally parseable signature; no sequencer authentication is needed to decode.
+        data[31] = 1;
+        data[63] = 1;
+        let container = &mut data[self.envelope_prefix..];
+        container[EXTRA_DATA_OFFSET..][..4].copy_from_slice(&(self.fixed_len as u32).to_le_bytes());
+        container[TRANSACTIONS_OFFSET..][..4]
+            .copy_from_slice(&(self.fixed_len as u32).to_le_bytes());
+        if self.has_withdrawals {
+            container[WITHDRAWALS_OFFSET..][..4]
+                .copy_from_slice(&((self.fixed_len + transactions_len) as u32).to_le_bytes());
+        }
+        for _ in 0..transaction_count {
+            data.extend_from_slice(&(transactions_len as u32).to_le_bytes());
+        }
+        data.resize(decoded_len, 0);
+        snap::raw::Encoder::new().compress_vec(&data).unwrap()
     }
 
-    // Envelope = signature (r=1, s=1, v=0 so it parses and the decode reaches the
-    // SSZ sink) + parent beacon root + container, snappy-compressed as it arrives
-    // on the wire.
-    let mut decompressed = Vec::with_capacity(ENVELOPE_PREFIX + container.len());
-    let mut signature = [0u8; 65];
-    signature[31] = 1;
-    signature[63] = 1;
-    decompressed.extend_from_slice(&signature);
-    decompressed.extend_from_slice(&[0u8; 32]);
-    decompressed.extend_from_slice(&container);
-    let frame = snap::raw::Encoder::new().compress_vec(&decompressed).unwrap();
+    /// Measures cumulative requested allocation, excluding fixture construction.
+    pub fn measured_decode(
+        self,
+        frame: &[u8],
+        max_allocation: usize,
+    ) -> Result<NetworkPayloadEnvelope, PayloadEnvelopeError> {
+        ALLOCATED.with(|c| c.set(0));
+        let decoded = (self.decode)(frame);
+        let allocated = ALLOCATED.with(|c| c.get());
+        assert!(
+            allocated < max_allocation,
+            "{} allocated {allocated} bytes (budget {max_allocation})",
+            self.name
+        );
+        decoded
+    }
+}
 
-    // Measure only the heap the decode itself grows on this thread.
-    ALLOCATED.with(|c| c.set(0));
-    let _ = NetworkPayloadEnvelope::decode_v4(&frame);
-    let allocated = ALLOCATED.with(|c| c.get());
+/// Oversized counts must fail without allocating the declared transaction objects.
+#[test]
+pub fn transaction_count_allocation_is_bounded_in_every_version() {
+    for version in PayloadVersion::ALL {
+        let maximum_wire_count =
+            (MAX_DECOMPRESSED_ENVELOPE_BYTES - version.envelope_prefix - version.fixed_len)
+                / ssz::BYTES_PER_LENGTH_OFFSET;
+        for count in [MAX_TRANSACTIONS_PER_PAYLOAD + 1, maximum_wire_count] {
+            let frame = version.frame(count, 0);
+            let declared = snap::raw::decompress_len(&frame).unwrap();
+            assert!(frame.len() < MAX_DECOMPRESSED_ENVELOPE_BYTES);
+            // Decompression plus the V3/V4 hashing copy, with room for container bookkeeping.
+            // No per-transaction allocation is permitted on this rejection path.
+            let decoded = version.measured_decode(&frame, 2 * declared + 64 * 1024);
+            assert_eq!(
+                decoded,
+                Err(PayloadEnvelopeError::BrokenSszEncoding),
+                "{} count {count}",
+                version.name
+            );
+        }
+    }
+}
 
-    // A legitimate decode allocates the decompressed buffer plus the hashing
-    // buffer (~2x the frame); anything approaching the bomb's ~125 MiB means the
-    // transaction list honored the attacker's element count.
-    let max_allocation = 4 * MAX_DECOMPRESSED_ENVELOPE_BYTES;
-    assert!(
-        allocated < max_allocation,
-        "decoding one frame declaring {declared_txs} transactions allocated {allocated} bytes \
-         pre-authentication (limit {max_allocation}); the transaction list is not length-bounded",
-    );
+/// Preserve the protocol maximum while making its remaining allocation budget explicit.
+#[test]
+pub fn permitted_transaction_counts_decode_in_every_version() {
+    for version in PayloadVersion::ALL {
+        for count in [0, MAX_TRANSACTIONS_PER_PAYLOAD - 1, MAX_TRANSACTIONS_PER_PAYLOAD] {
+            let frame = version.frame(count, 0);
+            let declared = snap::raw::decompress_len(&frame).unwrap();
+            let budget = 2 * declared + count * std::mem::size_of::<Bytes>() + 64 * 1024;
+            let decoded = version.measured_decode(&frame, budget).unwrap();
+            assert_eq!(decoded.payload.transactions().len(), count, "{}", version.name);
+            assert!(
+                decoded.payload.transactions().iter().all(|transaction| transaction.is_empty())
+            );
+        }
+    }
+}
+
+/// Base requires empty withdrawals from V2 onward, including before Isthmus.
+#[test]
+pub fn nonempty_withdrawals_are_rejected_without_list_allocation() {
+    for version in PayloadVersion::ALL.into_iter().filter(|version| version.has_withdrawals) {
+        let per_item = Withdrawal::ssz_fixed_len();
+        let maximum_wire_len =
+            (MAX_DECOMPRESSED_ENVELOPE_BYTES - version.envelope_prefix - version.fixed_len)
+                / per_item
+                * per_item;
+        for len in [1, per_item - 1, per_item, maximum_wire_len] {
+            let frame = version.frame(0, len);
+            let declared = snap::raw::decompress_len(&frame).unwrap();
+            let decoded = version.measured_decode(&frame, 2 * declared + 64 * 1024);
+            assert_eq!(
+                decoded,
+                Err(PayloadEnvelopeError::BrokenSszEncoding),
+                "{} withdrawals bytes {len}",
+                version.name
+            );
+        }
+    }
+}
+
+/// A count within the limit must not bypass SSZ offset validation.
+#[test]
+pub fn malformed_transaction_offsets_are_rejected_in_every_version() {
+    for version in PayloadVersion::ALL {
+        let frame = version.frame(3, 0);
+        let mut data = snap::raw::Decoder::new().decompress_vec(&frame).unwrap();
+        let last_offset =
+            version.envelope_prefix + version.fixed_len + 2 * ssz::BYTES_PER_LENGTH_OFFSET;
+        data[last_offset..][..4].copy_from_slice(&0u32.to_le_bytes());
+        let frame = snap::raw::Encoder::new().compress_vec(&data).unwrap();
+        assert_eq!(
+            (version.decode)(&frame),
+            Err(PayloadEnvelopeError::BrokenSszEncoding),
+            "{}",
+            version.name
+        );
+    }
 }

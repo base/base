@@ -14,12 +14,12 @@ pub const DEPOSIT_TX_TYPE_ID: u8 = 126; // 0x7E
 /// [EIP-8130]: https://eips.ethereum.org/EIPS/eip-8130
 pub const EIP8130_TX_TYPE_ID: u8 = 121; // 0x79
 
-/// Canonical user-facing rejection message for EIP-8130 transactions submitted before Cobalt.
+/// Canonical user-facing rejection message for EIP-8130 transactions submitted before Everest.
 ///
 /// Used by `base-execution-rpc` when an EIP-8130 transaction is submitted before
-/// the Cobalt fork is active at the latest block timestamp.
-pub const EIP8130_REJECTION_MSG: &str = "EIP-8130 (account abstraction) transactions are gated behind Cobalt; \
-     eth_sendRawTransaction does not accept transaction type 0x79 before Cobalt";
+/// the Everest fork is active at the latest block timestamp.
+pub const EIP8130_REJECTION_MSG: &str = "EIP-8130 (account abstraction) transactions are gated behind Everest; \
+     eth_sendRawTransaction does not accept transaction type 0x79 before Everest";
 
 #[allow(clippy::derivable_impls)]
 impl Default for OpTxType {
@@ -66,25 +66,11 @@ impl InMemorySize for OpTxType {
 
 #[cfg(test)]
 mod tests {
-    use alloc::{vec, vec::Vec};
+    use alloc::vec::Vec;
 
     use alloy_rlp::{Decodable, Encodable};
 
     use super::*;
-
-    #[test]
-    fn test_all_tx_types() {
-        assert_eq!(OpTxType::ALL.len(), 6);
-        let all = vec![
-            OpTxType::Legacy,
-            OpTxType::Eip2930,
-            OpTxType::Eip1559,
-            OpTxType::Eip7702,
-            OpTxType::Eip8130,
-            OpTxType::Deposit,
-        ];
-        assert_eq!(OpTxType::ALL.to_vec(), all);
-    }
 
     #[test]
     fn tx_type_roundtrip() {

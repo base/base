@@ -84,29 +84,37 @@ impl LogConfig {
     ///
     /// This sets the global default subscriber. Should only be called once.
     pub fn init_tracing_subscriber_with_directives(&self, directives: &[&str]) -> eyre::Result<()> {
-        self.init_tracing_subscriber_with_filter(self.build_filter_from_directives(directives))
+        self.init_tracing_subscriber_with_directives_and_extra_layer(directives, None)
     }
 
     /// Initialize the tracing subscriber with additional application-specific directives and an
     /// optional extra layer.
     ///
     /// The extra layer can be used to attach additional subscribers such as OTLP exporting.
+    ///
+    /// This sets the global default subscriber. Should only be called once.
     pub fn init_tracing_subscriber_with_directives_and_extra_layer(
         &self,
         directives: &[&str],
         extra_layer: Option<Box<dyn Layer<Registry> + Send + Sync>>,
     ) -> eyre::Result<()> {
-        self.init_tracing_subscriber_with_filter_and_extra_layer(
-            self.build_filter_from_directives(directives),
-            extra_layer,
-        )
-    }
+        let filter = self.build_filter_from_directives(directives);
+        let registry = tracing_subscriber::registry().with(extra_layer);
 
-    /// Initialize the tracing subscriber with a custom filter.
-    ///
-    /// This sets the global default subscriber. Should only be called once.
-    pub fn init_tracing_subscriber_with_filter(&self, filter: EnvFilter) -> eyre::Result<()> {
-        self.init_tracing_subscriber_with_filter_and_extra_layer(filter, None)
+        // Build stdout layer
+        let stdout_layer =
+            self.stdout_logs.as_ref().map(|config| build_stdout_layer(config, filter.clone()));
+
+        // Build file layer
+        let file_layer =
+            self.file_logs.as_ref().map(|config| build_file_layer(config, filter.clone()));
+
+        // Combine and init
+        registry
+            .with(stdout_layer)
+            .with(file_layer)
+            .try_init()
+            .map_err(|e| eyre::eyre!("Failed to initialize tracing subscriber: {}", e))
     }
 
     /// Initialize the tracing subscriber with [`reth_node_core::args::TraceArgs`] OTLP export.
@@ -114,6 +122,8 @@ impl LogConfig {
     /// Registers the W3C `TraceContextPropagator`, builds an optional OTLP span layer from
     /// `trace_args`, and initializes the subscriber with the given noise-suppression directives.
     /// This is the preferred entry point for binaries that want OTLP support.
+    ///
+    /// This sets the global default subscriber. Should only be called once.
     pub fn init_with_trace_args(
         &self,
         trace_args: &reth_node_core::args::TraceArgs,
@@ -161,29 +171,6 @@ impl LogConfig {
         }
 
         filter
-    }
-
-    fn init_tracing_subscriber_with_filter_and_extra_layer(
-        &self,
-        filter: EnvFilter,
-        extra_layer: Option<Box<dyn Layer<Registry> + Send + Sync>>,
-    ) -> eyre::Result<()> {
-        let registry = tracing_subscriber::registry().with(extra_layer);
-
-        // Build stdout layer
-        let stdout_layer =
-            self.stdout_logs.as_ref().map(|config| build_stdout_layer(config, filter.clone()));
-
-        // Build file layer
-        let file_layer =
-            self.file_logs.as_ref().map(|config| build_file_layer(config, filter.clone()));
-
-        // Combine and init
-        registry
-            .with(stdout_layer)
-            .with(file_layer)
-            .try_init()
-            .map_err(|e| eyre::eyre!("Failed to initialize tracing subscriber: {}", e))
     }
 }
 

@@ -60,11 +60,15 @@ pub trait OriginSelector: Debug + Send + Sync {
 /// The [`L1OriginSelector`] is responsible for selecting the L1 origin block based on the
 /// current L2 unsafe head's sequence epoch.
 ///
+/// Once Denim is active, every L2 block within the same whole second uses the unsafe head's L1
+/// origin, including when sequencer drift has been exceeded.
+///
 /// Next-origin lookups run in a self-aborting background task and are adopted only if they still
 /// extend the current origin under the same observed L1 chain view. While sequencer drift permits,
-/// an unfinished lookup does not prevent building on the current origin. Once drift is exceeded,
-/// selection returns [`L1OriginSelectorError::NotEnoughData`] until the lookup is ready rather than
-/// awaiting speculative work on the build path. Before the first observed L1 head, the selector may
+/// an unfinished lookup does not prevent building on the current origin. Once drift is exceeded
+/// and the origin is not pinned within a Denim second, selection returns
+/// [`L1OriginSelectorError::NotEnoughData`] until the lookup is ready rather than awaiting
+/// speculative work on the build path. Before the first observed L1 head, the selector may
 /// reuse the exact-hash current origin accepted by the engine reset, but it cannot prepare or advance
 /// to a successor. An L1 reorg that orphans the current origin is therefore detected when the
 /// background successor lookup completes its parent check, after which the sequencer requests an
@@ -88,10 +92,8 @@ impl<P: L1OriginSelectorProvider + Send + Sync> OriginSelector for L1OriginSelec
     /// Determines what the next L1 origin block should be, based off of the [`L2BlockInfo`] unsafe
     /// head.
     ///
-    /// The L1 origin is selected based off of the sequencing epoch, determined by the next L2
-    /// block's timestamp in relation to the current L1 origin's timestamp. If the next L2
-    /// block's timestamp is greater than the L2 unsafe head's L1 origin timestamp, the L1
-    /// origin is the block following the current L1 origin.
+    /// A ready successor may be adopted once the next L2 timestamp reaches its L1 timestamp.
+    /// After Denim, blocks sharing their parent's whole-second timestamp retain its origin.
     async fn next_l1_origin(
         &mut self,
         unsafe_head: L2BlockInfo,
@@ -158,6 +160,15 @@ impl<P: L1OriginSelectorProvider> L1OriginSelector<P> {
         let Some(current) = self.current.as_ref() else {
             return Err(L1OriginSelectorError::OriginNotFound(unsafe_head.l1_origin.hash));
         };
+
+        // Denim permits only one L1 origin per whole second. Keep the parent's origin until the
+        // next L2 timestamp advances, even when a successor is ready or sequencer drift expired.
+        if self.cfg.is_denim_active(next_l2_timestamp)
+            && next_l2_timestamp == unsafe_head.block_info.timestamp
+        {
+            return Ok(current.clone());
+        }
+
         let next = self.next_ready();
 
         // Start building on the next L1 origin block if the next L2 block's timestamp is
@@ -405,6 +416,8 @@ mod tests {
     use std::{collections::HashSet, sync::Mutex, time::Duration};
 
     use alloy_eips::NumHash;
+    use base_common_genesis::{BaseUpgradeConfig, ChainGenesis, UpgradeConfig};
+    use base_protocol::{BatchValidity, SingleBatch};
     #[cfg(feature = "metrics")]
     use metrics_util::debugging::{DebugValue, DebuggingRecorder};
     use rstest::rstest;
@@ -548,6 +561,72 @@ mod tests {
                 ..Default::default()
             },
             receipts: Some(Arc::new(Vec::new())),
+        }
+    }
+
+    #[tokio::test]
+    #[rstest]
+    #[case::within_drift(600)]
+    #[case::at_drift_limit(14)]
+    #[case::past_drift(10)]
+    async fn test_denim_same_second_origin_selection(#[case] max_sequencer_drift: u64) {
+        let cfg = Arc::new(RollupConfig {
+            block_time: 2,
+            max_sequencer_drift,
+            seq_window_size: 10,
+            genesis: ChainGenesis { l2_time: 98, ..Default::default() },
+            upgrades: UpgradeConfig {
+                base: BaseUpgradeConfig { denim: Some(102), ..Default::default() },
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        let current = BlockInfo {
+            number: 10,
+            hash: B256::repeat_byte(10),
+            timestamp: 88,
+            ..Default::default()
+        };
+        let next = BlockInfo {
+            number: 11,
+            hash: B256::repeat_byte(11),
+            parent_hash: current.hash,
+            timestamp: 100,
+        };
+        let provider = MockOriginSelectorProvider::default();
+        provider.with_block(current);
+        let mut selector = L1OriginSelector::new(Arc::clone(&cfg), provider.clone());
+        let mut parent = L2BlockInfo {
+            block_info: BlockInfo { number: 2, timestamp: 102, ..Default::default() },
+            l1_origin: current.id(),
+            ..Default::default()
+        };
+
+        // The successor is initially unknown, then becomes ready during this header second.
+        assert_eq!(selector.next_l1_origin(parent).await.unwrap(), current);
+        selector.await_inflight().await;
+        provider.with_block(next);
+        assert_eq!(selector.next_l1_origin(parent).await.unwrap(), current);
+        selector.await_inflight().await;
+        assert_eq!(selector.next(), Some(next));
+
+        for number in 2..=6 {
+            parent.block_info.number = number;
+            let origin = selector.next_l1_origin(parent).await.unwrap();
+            let (expected_origin, timestamp) =
+                if number < 6 { (current, 102) } else { (next, 103) };
+            assert_eq!(origin, expected_origin);
+            let batch = SingleBatch {
+                parent_hash: parent.block_info.hash,
+                epoch_num: origin.number,
+                epoch_hash: origin.hash,
+                timestamp,
+                transactions: Vec::new(),
+            };
+            assert_eq!(
+                batch.check_batch(&cfg, &[current, next], parent, &next),
+                BatchValidity::Accept,
+            );
         }
     }
 

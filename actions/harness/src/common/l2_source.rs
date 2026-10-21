@@ -1,61 +1,36 @@
-use std::collections::VecDeque;
-
 use base_common_consensus::BaseBlock;
 
-use crate::L2BlockProvider;
-
-/// A pre-built queue of [`BaseBlock`]s for the batcher to drain.
+/// The [`BaseBlock`]s a batcher is created with, in order, which form its L2 chain so far.
 ///
-/// Tests push fully-formed blocks into the source, which the batcher
-/// consumes one at a time via [`L2BlockProvider::next_block`].
+/// Each block must start with its L1-info deposit, because the batcher reads the block's L1
+/// epoch from it.
 #[derive(Debug, Default)]
 pub struct ActionL2Source {
-    blocks: VecDeque<BaseBlock>,
+    blocks: Vec<BaseBlock>,
 }
 
 impl ActionL2Source {
     /// Create an empty source.
     pub const fn new() -> Self {
-        Self { blocks: VecDeque::new() }
+        Self { blocks: Vec::new() }
     }
 
     /// Create a source containing the supplied blocks in iteration order.
     pub fn from_blocks(blocks: impl IntoIterator<Item = BaseBlock>) -> Self {
-        let mut source = Self::new();
-        source.extend(blocks);
-        source
+        Self { blocks: blocks.into_iter().collect() }
     }
 
-    /// Push a block to the back of the queue.
+    /// Append a block.
     pub fn push(&mut self, block: BaseBlock) {
-        self.blocks.push_back(block);
-    }
-
-    /// Return the number of blocks remaining.
-    pub fn remaining(&self) -> usize {
-        self.blocks.len()
-    }
-
-    /// Return `true` if the source has been fully drained.
-    pub fn is_empty(&self) -> bool {
-        self.blocks.is_empty()
+        self.blocks.push(block);
     }
 }
 
-impl Extend<BaseBlock> for ActionL2Source {
-    fn extend<T: IntoIterator<Item = BaseBlock>>(&mut self, iter: T) {
-        self.blocks.extend(iter);
-    }
-}
+impl IntoIterator for ActionL2Source {
+    type Item = BaseBlock;
+    type IntoIter = std::vec::IntoIter<BaseBlock>;
 
-impl FromIterator<BaseBlock> for ActionL2Source {
-    fn from_iter<T: IntoIterator<Item = BaseBlock>>(iter: T) -> Self {
-        Self::from_blocks(iter)
-    }
-}
-
-impl L2BlockProvider for ActionL2Source {
-    fn next_block(&mut self) -> Option<BaseBlock> {
-        self.blocks.pop_front()
+    fn into_iter(self) -> Self::IntoIter {
+        self.blocks.into_iter()
     }
 }

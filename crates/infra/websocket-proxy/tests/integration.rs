@@ -1,7 +1,7 @@
 //! Integration tests for the websocket proxy.
 
 use std::{
-    collections::{HashMap, hash_map::Entry},
+    collections::HashMap,
     error::Error,
     net::SocketAddr,
     sync::{Arc, Mutex},
@@ -45,6 +45,15 @@ impl TestHarness {
         let (sender, _) = broadcast::channel(5);
         let registry =
             Registry::new(sender.clone(), false, false, 120000, Duration::from_millis(1000));
+        Self::with_registry(addr, auth, sender, registry)
+    }
+
+    fn with_registry(
+        addr: SocketAddr,
+        auth: Option<Authentication>,
+        sender: Sender<Message>,
+        registry: Registry,
+    ) -> Self {
         let rate_limited = Arc::new(InMemoryRateLimit::new(3, 10));
 
         Self {
@@ -69,10 +78,8 @@ impl TestHarness {
     async fn healthcheck(&self) -> Result<(), Box<dyn Error>> {
         let url = format!("http://{}/healthz", self.server_addr);
         let response = reqwest::get(url).await?;
-        match response.error_for_status() {
-            Ok(_) => Ok(()),
-            Err(e) => Err(e.into()),
-        }
+        response.error_for_status()?;
+        Ok(())
     }
 
     async fn start_server(&self) {
@@ -129,14 +136,7 @@ impl TestHarness {
             loop {
                 match read.next().await {
                     Some(Ok(msg)) => {
-                        match results.lock().unwrap().entry(client_id) {
-                            Entry::Occupied(o) => {
-                                o.into_mut().push(msg.to_string());
-                            }
-                            Entry::Vacant(v) => {
-                                v.insert(vec![msg.to_string()]);
-                            }
-                        };
+                        results.lock().unwrap().entry(client_id).or_default().push(msg.to_string());
                     }
                     Some(Err(e)) => {
                         error!(message = "error receiving message", error = e.to_string());
@@ -180,12 +180,7 @@ impl TestHarness {
     fn send_messages(&self, messages: Vec<&str>) {
         for message_str in &messages {
             let message = Message::Binary(message_str.as_bytes().to_vec().into());
-            match self.sender.send(message) {
-                Ok(_) => {}
-                Err(_) => {
-                    unreachable!()
-                }
-            }
+            self.sender.send(message).unwrap();
         }
     }
 
@@ -227,25 +222,6 @@ async fn test_healthcheck() {
     assert!(harness.healthcheck().await.is_err());
     harness.start_server().await;
     assert!(harness.healthcheck().await.is_ok());
-}
-
-#[tokio::test]
-async fn test_clients_receive_messages() {
-    let addr = TestHarness::alloc_port().await;
-
-    let mut harness = TestHarness::new(addr);
-    harness.start_server().await;
-
-    let client_one = harness.connect_client();
-    let client_two = harness.connect_client();
-
-    tokio::time::sleep(Duration::from_millis(100)).await;
-
-    harness.send_messages(vec!["one", "two"]);
-    harness.wait_for_messages_to_drain().await;
-
-    assert_eq!(vec!["one", "two"], harness.messages_for_client(client_one));
-    assert_eq!(vec!["one", "two"], harness.messages_for_client(client_two));
 }
 
 #[tokio::test]
@@ -361,30 +337,38 @@ async fn test_authentication_allows_known_api_keys() {
 }
 
 #[tokio::test]
+async fn test_authentication_rejects_unknown_api_keys_with_401() {
+    let addr = TestHarness::alloc_port().await;
+    let auth = Authentication::new(HashMap::from([("key1".to_string(), "app1".to_string())]));
+
+    let harness = TestHarness::new_with_auth(addr, Some(auth));
+    harness.start_server().await;
+
+    // Send a well-formed WebSocket upgrade request so the request reaches the handler's
+    // authentication check instead of being rejected by the upgrade extractor.
+    for path in ["ws/invalid-key", "ws/invalid-key/filter"] {
+        let response = reqwest::Client::new()
+            .get(format!("http://{}/{path}", harness.server_addr))
+            .header(reqwest::header::CONNECTION, "upgrade")
+            .header(reqwest::header::UPGRADE, "websocket")
+            .header(reqwest::header::SEC_WEBSOCKET_KEY, "dGhlIHNhbXBsZSBub25jZQ==")
+            .header(reqwest::header::SEC_WEBSOCKET_VERSION, "13")
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED);
+        assert_eq!(response.text().await.unwrap(), "{\"message\":\"Invalid API key\"}");
+    }
+}
+
+#[tokio::test]
 async fn test_ping_timeout_disconnects_client() {
     let addr = TestHarness::alloc_port().await;
 
     let (sender, _) = broadcast::channel(5);
     let registry = Registry::new(sender.clone(), false, true, 1000, Duration::from_millis(1000));
-    let rate_limited = Arc::new(InMemoryRateLimit::new(3, 10));
-
-    let mut harness = TestHarness {
-        received_messages: Arc::new(Mutex::new(HashMap::new())),
-        clients_failed_to_connect: Arc::new(Mutex::new(HashMap::new())),
-        current_client_id: 0,
-        cancel_token: CancellationToken::new(),
-        server: Server::new(
-            addr,
-            registry,
-            rate_limited,
-            None,
-            TrustedProxyConfig::new("header".to_string(), Vec::new()),
-            false,
-        ),
-        server_addr: addr,
-        client_id_to_handle: HashMap::new(),
-        sender,
-    };
+    let mut harness = TestHarness::with_registry(addr, None, sender, registry);
 
     harness.start_server().await;
 

@@ -22,9 +22,6 @@ sol! {
 /// Discovers `CertManager` from the `NitroValidator` selected by the Registry.
 #[async_trait]
 pub trait NitroValidatorClient: Send + Sync + std::fmt::Debug {
-    /// Returns the validator address this client is bound to.
-    fn address(&self) -> Address;
-
     /// Returns the `CertManager` address configured on this validator.
     async fn cert_manager(&self) -> Result<Address, ContractError>;
 }
@@ -46,10 +43,6 @@ impl NitroValidatorContractClient {
 
 #[async_trait]
 impl NitroValidatorClient for NitroValidatorContractClient {
-    fn address(&self) -> Address {
-        *self.contract.address()
-    }
-
     async fn cert_manager(&self) -> Result<Address, ContractError> {
         contract_call!(self.contract.certManager().call(), "certManager()")
     }

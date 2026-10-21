@@ -128,6 +128,7 @@ where
     ///
     /// - The engine has not yet received a forkchoice update (`unsafe_head == B256::ZERO`).
     /// - `unsafe_head` does not match the engine's current unsafe head hash.
+    /// - A non-shadow sequencer is still EL-syncing or has unresolved canonical observations.
     ///
     /// When a conductor is configured, this checks `conductor_leader` before activating,
     /// matching the reference node's `Start()` behavior. If the node is not the leader the call returns
@@ -157,24 +158,10 @@ where
             }
         }
 
-        let engine_head = self.engine_client.get_unsafe_head().await.map_err(|e| {
-            error!(target: "sequencer", error = %e, "Failed to fetch engine unsafe head");
-            SequencerAdminAPIError::RequestError(e.to_string())
+        self.engine_client.prepare_sequencer_start(unsafe_head).await.map_err(|err| {
+            error!(target: "sequencer", error = %err, "Engine rejected sequencer start");
+            SequencerAdminAPIError::RequestError(err.to_string())
         })?;
-
-        if engine_head.block_info.hash == B256::ZERO {
-            return Err(SequencerAdminAPIError::RequestError(
-                "no prestate: engine unsafe head is uninitialized, cannot safely start sequencer"
-                    .to_string(),
-            ));
-        }
-
-        if unsafe_head != engine_head.block_info.hash {
-            return Err(SequencerAdminAPIError::RequestError(format!(
-                "block hash mismatch: engine unsafe head is {}, caller requested {}",
-                engine_head.block_info.hash, unsafe_head,
-            )));
-        }
 
         info!(target: "sequencer", unsafe_head = %unsafe_head, "Starting sequencer");
         self.is_active = true;

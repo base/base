@@ -150,9 +150,21 @@ contract_code() {
 
 write_env_file() {
   local contract="$1"
-  mkdir -p "$(dirname "$ENV_OUT")"
+  local env_dir
+  env_dir="$(dirname "$ENV_OUT")"
+  mkdir -p "$env_dir"
 
-  cat >"$ENV_OUT" <<EOF
+  local writer=(tee "$ENV_OUT")
+  if [[ -e "$ENV_OUT" && ! -w "$ENV_OUT" ]] || [[ ! -e "$ENV_OUT" && ! -w "$env_dir" ]]; then
+    # setup-devnet creates root-owned bind-mounted configs on Linux. Write only
+    # this file through Docker, without elevating the RPC/deployment commands or
+    # changing ownership of the configs shared with the running containers.
+    require_cmd docker
+    env_dir="$(cd "$env_dir" && pwd)"
+    writer=(docker run --rm -i --network none -v "$env_dir:/configs" alpine tee "/configs/$(basename "$ENV_OUT")")
+  fi
+
+  "${writer[@]}" >/dev/null <<EOF
 BASE_NODE_UPGRADE_SIGNAL_CONTRACT=$contract
 BASE_NODE_UPGRADE_SIGNAL_L1_RPC=$CONTAINER_L1_RPC
 BASE_NODE_UPGRADE_SIGNAL_MODE=$MODE

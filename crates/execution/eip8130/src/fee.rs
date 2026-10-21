@@ -110,11 +110,16 @@ impl FeeCheck {
         Ok(())
     }
 
-    /// Validates that worst-case gas and a declared coinbase tip are payable.
+    /// Validates that the payer's prepay and a declared coinbase tip are payable.
+    ///
+    /// `prepay` must be everything execution debits the payer before the
+    /// calls run: the chargeable gas (including payer authentication) at the
+    /// effective gas price, plus the L1 data fee and the operator fee. A
+    /// smaller amount would pass a sender whose tip phase then reverts.
     ///
     /// Self-pay (`payer_is_sender`) requires one balance to cover
-    /// `max_fee_charge + tip`. Sponsored payment requires the payer to cover
-    /// gas and the sender to cover the tip.
+    /// `prepay + tip`. Sponsored payment requires the payer to cover the
+    /// prepay and the sender to cover the tip.
     ///
     /// # Errors
     /// - [`FeeError::InsufficientBalance`] — a required balance is below its charge.
@@ -123,21 +128,18 @@ impl FeeCheck {
         payer_balance: U256,
         sender_balance: U256,
         payer_is_sender: bool,
-        gas_limit: u64,
-        payer_auth_cost: u64,
-        max_fee: u128,
+        prepay: U256,
         tip: U256,
     ) -> Result<(), FeeError> {
-        let gas = Self::max_fee_charge(gas_limit, payer_auth_cost, max_fee);
         if payer_is_sender {
-            let required = gas.saturating_add(tip);
+            let required = prepay.saturating_add(tip);
             if payer_balance < required {
                 return Err(FeeError::InsufficientBalance { balance: payer_balance, required });
             }
             return Ok(());
         }
-        if payer_balance < gas {
-            return Err(FeeError::InsufficientBalance { balance: payer_balance, required: gas });
+        if payer_balance < prepay {
+            return Err(FeeError::InsufficientBalance { balance: payer_balance, required: prepay });
         }
         if sender_balance < tip {
             return Err(FeeError::InsufficientBalance { balance: sender_balance, required: tip });
@@ -193,82 +195,33 @@ mod tests {
     }
 
     #[test]
-    fn self_pay_requires_gas_plus_tip_from_one_balance() {
-        // gas = 21_000 * 2 = 42_000; tip = 1_000; required = 43_000.
+    fn self_pay_requires_prepay_plus_tip_from_one_balance() {
+        // prepay = 42_000; tip = 1_000; required = 43_000.
+        let prepay = U256::from(42_000u64);
+        let tip = U256::from(1_000u64);
+        let funded = U256::from(43_000u64);
+        assert_eq!(FeeCheck::validate_gas_and_tip(funded, funded, true, prepay, tip), Ok(()));
+        let short = U256::from(42_999u64);
         assert_eq!(
-            FeeCheck::validate_gas_and_tip(
-                U256::from(43_000u64),
-                U256::from(43_000u64),
-                true,
-                21_000,
-                0,
-                2,
-                U256::from(1_000u64),
-            ),
-            Ok(())
-        );
-        assert_eq!(
-            FeeCheck::validate_gas_and_tip(
-                U256::from(42_999u64),
-                U256::from(42_999u64),
-                true,
-                21_000,
-                0,
-                2,
-                U256::from(1_000u64),
-            ),
-            Err(FeeError::InsufficientBalance {
-                balance: U256::from(42_999u64),
-                required: U256::from(43_000u64),
-            })
+            FeeCheck::validate_gas_and_tip(short, short, true, prepay, tip),
+            Err(FeeError::InsufficientBalance { balance: short, required: funded })
         );
     }
 
     #[test]
-    fn sponsored_checks_payer_gas_and_sender_tip_separately() {
-        let payer = U256::from(42_000u64);
-        let sender = U256::from(1_000u64);
+    fn sponsored_checks_payer_prepay_and_sender_tip_separately() {
+        let prepay = U256::from(42_000u64);
+        let tip = U256::from(1_000u64);
+        assert_eq!(FeeCheck::validate_gas_and_tip(prepay, tip, false, prepay, tip), Ok(()));
+        let short_payer = U256::from(41_999u64);
         assert_eq!(
-            FeeCheck::validate_gas_and_tip(
-                payer,
-                sender,
-                false,
-                21_000,
-                0,
-                2,
-                U256::from(1_000u64)
-            ),
-            Ok(())
+            FeeCheck::validate_gas_and_tip(short_payer, tip, false, prepay, tip),
+            Err(FeeError::InsufficientBalance { balance: short_payer, required: prepay })
         );
+        let short_sender = U256::from(999u64);
         assert_eq!(
-            FeeCheck::validate_gas_and_tip(
-                U256::from(41_999u64),
-                sender,
-                false,
-                21_000,
-                0,
-                2,
-                U256::from(1_000u64),
-            ),
-            Err(FeeError::InsufficientBalance {
-                balance: U256::from(41_999u64),
-                required: U256::from(42_000u64),
-            })
-        );
-        assert_eq!(
-            FeeCheck::validate_gas_and_tip(
-                payer,
-                U256::from(999u64),
-                false,
-                21_000,
-                0,
-                2,
-                U256::from(1_000u64),
-            ),
-            Err(FeeError::InsufficientBalance {
-                balance: U256::from(999u64),
-                required: U256::from(1_000u64),
-            })
+            FeeCheck::validate_gas_and_tip(prepay, short_sender, false, prepay, tip),
+            Err(FeeError::InsufficientBalance { balance: short_sender, required: tip })
         );
     }
 }

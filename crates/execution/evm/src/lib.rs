@@ -22,6 +22,11 @@ pub use env::BaseEvmEnvBuilder;
 mod error;
 pub use error::{BaseBlockExecutionError, L1BlockInfoError};
 
+#[cfg(feature = "rpc")]
+mod forecast;
+#[cfg(feature = "rpc")]
+pub use forecast::BasePendingForecast;
+
 mod l1;
 pub use l1::*;
 

@@ -6,7 +6,7 @@ use revm::precompile::PrecompileId;
 use url::Url;
 
 use crate::{
-    config::OsakaTarget,
+    config::{OsakaTarget, ValiditySigningMode},
     utils::{BaselineError, Result},
 };
 
@@ -34,6 +34,29 @@ pub enum SlotTemplate {
         /// Mapping key address, resolved per transaction.
         key: PredicateAddress,
     },
+}
+
+/// Source for a storage predicate's comparison value, resolved per transaction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PredicateValue {
+    /// A fixed comparison value used by every transaction.
+    Fixed(U256),
+    /// The low bit of the transaction sender's address.
+    ///
+    /// This deterministically splits senders between values zero and one, which
+    /// lets stress profiles keep both matching and parked transactions in the
+    /// pool while a shared one-bit storage value changes.
+    SenderParity,
+}
+
+impl PredicateValue {
+    /// Resolves the comparison value for `sender`.
+    pub fn resolve(self, sender: Address) -> U256 {
+        match self {
+            Self::Fixed(value) => value,
+            Self::SenderParity => U256::from(sender.as_slice()[19] & 1),
+        }
+    }
 }
 
 /// Bound for a `block_number` validity predicate.
@@ -68,6 +91,15 @@ pub enum ValidityPredicateTemplate {
         /// Right-hand comparison value.
         value: U256,
     },
+    /// Protocol-nonce comparison template.
+    Nonce {
+        /// Account whose protocol nonce is read.
+        address: PredicateAddress,
+        /// Comparison operator.
+        op: ValidityOperator,
+        /// Right-hand comparison value.
+        value: U256,
+    },
     /// Storage comparison template.
     Storage {
         /// Contract whose storage is read.
@@ -78,8 +110,8 @@ pub enum ValidityPredicateTemplate {
         mask: Option<U256>,
         /// Comparison operator.
         op: ValidityOperator,
-        /// Right-hand comparison value.
-        value: U256,
+        /// Comparison value source.
+        value: PredicateValue,
     },
     /// Block-number comparison template.
     ///
@@ -141,6 +173,11 @@ pub enum TxType {
         /// Number of storage slots to write per transaction.
         slots_per_tx: u32,
     },
+    /// Deterministic `DoubleCounter` `increment()` call.
+    DoubleCounter {
+        /// `DoubleCounter` contract address.
+        contract: Address,
+    },
     /// Precompile call.
     Precompile {
         /// Target precompile.
@@ -152,8 +189,8 @@ pub enum TxType {
         /// Looper contract address (required when iterations > 1).
         looper_contract: Option<Address>,
     },
-    /// B-20 precompile token transfer. Each sender creates and transfers its own token, created
-    /// per run during setup.
+    /// B-20 precompile token transfer. Each sender creates its own token per run during setup and
+    /// transfers it to a funded pair partner (alice <-> bob).
     B20,
     /// Osaka (Base Azul) opcode or precompile transaction.
     Osaka {
@@ -264,13 +301,23 @@ pub struct LoadConfig {
     pub max_gas_price: u128,
     /// Optional builder flashblocks WebSocket used for early inclusion signals.
     pub flashblocks_ws: Option<Url>,
+    /// Optional canonical `newHeads` WebSocket used for lightweight block-boundary pacing.
+    pub canonical_heads_ws: Option<Url>,
     /// Fraction of transactions that draw a fresh recipient address instead of cycling through
     /// the sender pool. Used to drive account-trie fan-out for account-create workloads.
     pub fresh_recipient_ratio: f64,
     /// Fraction `0.0..=1.0` of senders routed through `base_sendRawTransactionValidity`.
     pub validity_ratio: f64,
+    /// Sidecar signing strategy during staged signature rollout.
+    pub validity_signing: ValiditySigningMode,
     /// Predicate templates attached to each validity-bearing transaction.
     pub validity_predicates: Vec<ValidityPredicateTemplate>,
+    /// Fraction of validity senders in the priority-lead cohort.
+    pub validity_priority_lead_ratio: f64,
+    /// Priority-tip multiplier for the validity priority-lead cohort.
+    pub validity_priority_lead_multiplier: u128,
+    /// Priority-tip divisor for validity-cohort measured transactions.
+    pub validity_priority_fee_divisor: u128,
 }
 
 impl LoadConfig {
@@ -300,9 +347,14 @@ impl LoadConfig {
             batch_size: crate::rpc::MAX_BATCH_RPC_SIZE,
             max_gas_price: DEFAULT_MAX_GAS_PRICE,
             flashblocks_ws: None,
+            canonical_heads_ws: None,
             fresh_recipient_ratio: 0.0,
             validity_ratio: 0.0,
+            validity_signing: ValiditySigningMode::Adaptive,
             validity_predicates: Vec::new(),
+            validity_priority_lead_ratio: 0.0,
+            validity_priority_lead_multiplier: 1,
+            validity_priority_fee_divisor: 1,
         }
     }
 
@@ -357,6 +409,19 @@ impl LoadConfig {
         if !(0.0..=1.0).contains(&self.validity_ratio) {
             return Err(BaselineError::Config("validity_ratio must be between 0.0 and 1.0".into()));
         }
+        if !(0.0..=1.0).contains(&self.validity_priority_lead_ratio) {
+            return Err(BaselineError::Config(
+                "validity_priority_lead_ratio must be between 0.0 and 1.0".into(),
+            ));
+        }
+        if self.validity_priority_lead_multiplier < 1 {
+            return Err(BaselineError::Config(
+                "validity_priority_lead_multiplier must be >= 1".into(),
+            ));
+        }
+        if self.validity_priority_fee_divisor < 1 {
+            return Err(BaselineError::Config("validity_priority_fee_divisor must be >= 1".into()));
+        }
         if self.validity_predicates.len() > base_execution_txpool::DEFAULT_MAX_VALIDITY_PREDICATES {
             return Err(BaselineError::Config(format!(
                 "validity_predicates exceeds the maximum of {}",
@@ -396,62 +461,13 @@ impl LoadConfig {
         if self.flashblocks_ws.as_ref().is_some_and(|url| !matches!(url.scheme(), "ws" | "wss")) {
             return Err(BaselineError::Config("flashblocks_ws must use ws:// or wss://".into()));
         }
+        if self.canonical_heads_ws.as_ref().is_some_and(|url| !matches!(url.scheme(), "ws" | "wss"))
+        {
+            return Err(BaselineError::Config(
+                "canonical_heads_ws must use ws:// or wss://".into(),
+            ));
+        }
         Ok(())
-    }
-
-    /// Sets the transaction submission HTTP JSON-RPC URL.
-    pub fn with_rpc_http_url(mut self, url: Url) -> Self {
-        self.transaction_submission_rpcs = vec![url.clone()];
-        self.query_rpc = url;
-        self
-    }
-
-    /// Sets the chain ID.
-    pub const fn with_chain_id(mut self, chain_id: u64) -> Self {
-        self.chain_id = chain_id;
-        self
-    }
-
-    /// Sets the number of test accounts.
-    pub const fn with_account_count(mut self, count: usize) -> Self {
-        self.account_count = count;
-        self
-    }
-
-    /// Sets the seed for deterministic generation (only used if mnemonic is None).
-    pub const fn with_seed(mut self, seed: u64) -> Self {
-        self.seed = seed;
-        self
-    }
-
-    /// Sets the mnemonic for account derivation.
-    pub fn with_mnemonic(mut self, mnemonic: impl Into<String>) -> Self {
-        self.mnemonic = Some(mnemonic.into());
-        self
-    }
-
-    /// Sets the sender offset (skip first N accounts in derivation).
-    pub const fn with_sender_offset(mut self, offset: usize) -> Self {
-        self.sender_offset = offset;
-        self
-    }
-
-    /// Sets the transaction types with weights.
-    pub fn with_transactions(mut self, transactions: Vec<TxConfig>) -> Self {
-        self.transactions = transactions;
-        self
-    }
-
-    /// Sets an optional gas-per-second ceiling.
-    pub const fn with_target_gps(mut self, gps: Option<u64>) -> Self {
-        self.target_gps = gps;
-        self
-    }
-
-    /// Sets the test duration.
-    pub const fn with_duration(mut self, duration: Duration) -> Self {
-        self.duration = Some(duration);
-        self
     }
 
     /// Sets the test to run indefinitely until stopped via the stop flag or Ctrl-C.

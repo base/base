@@ -258,9 +258,10 @@ persists the current set of known ENRs to the boot store every 60 seconds.
 
 The driver communicates with the rest of the system through a
 [`Discv5Handler`](../../crates/consensus/disc/src/handler.rs),
-which is just a thin wrapper around an `mpsc::Sender`. Other parts of the system can request
-metrics, peer lists, the local ENR, or ask the discovery service to ban specific addresses. This
-channel-based design avoids the need for shared mutable state across async boundaries.
+which is just a thin wrapper around an `mpsc::Sender`. Other parts of the system can request the
+peer count, peer lists, routing table information, and the local ENR. They can also ask the discovery
+service to ban specific addresses. This channel-based design avoids the need for shared mutable
+state across async boundaries.
 
 
 ### Gossip: broadcasting blocks with libp2p and gossipsub
@@ -454,27 +455,34 @@ gossip level.
 ### The libp2p Behaviour: combining protocols
 
 The [`Behaviour`](https://github.com/base/base/blob/main/crates/consensus/gossip/src/behaviour.rs)
-struct is a libp2p `NetworkBehaviour` that combines several sub-protocols into a single swarm
-(libp2p's term for the combination of a transport layer, a set of protocol behaviors, and connection
-management — essentially the "networking engine"):
+struct is a libp2p `NetworkBehaviour` that combines connection limits and three sub-protocols into a
+single swarm (libp2p's term for the combination of a transport layer, a set of protocol behaviors,
+and connection management — essentially the "networking engine"):
 
 ```rust
 #[derive(NetworkBehaviour)]
+#[behaviour(out_event = "Event")]
 pub struct Behaviour {
+    pub connection_limits: libp2p::connection_limits::Behaviour,
     pub ping: libp2p::ping::Behaviour,
     pub gossipsub: libp2p::gossipsub::Behaviour,
     pub identify: libp2p::identify::Behaviour,
-    pub sync_req_resp: libp2p_stream::Behaviour,
 }
 ```
+
+The `connection_limits` behaviour caps pending and established connections and speaks no wire
+protocol. It is the first field because libp2p calls each behaviour's connection hooks in field
+order, so it rejects excess connections before the other behaviours allocate handlers. By default
+it allows 30 established connections, 5 pending inbound, 16 pending outbound and 1 per peer. The
+CLI sets the established cap from `--p2p.peers.hi` and the pending outbound cap from
+`--p2p.max-pending-outgoing`.
 
 The `ping` behaviour sends periodic keepalive pings to connected peers and measures round-trip
 times. The `gossipsub` behaviour handles the actual block gossip. The `identify` behaviour exchanges
 capability information between peers when they first connect (the Base node advertises its agent
-version as `"base"`). The `sync_req_resp` behaviour supports a legacy request-response protocol
-called `payload_by_number` that is part of the legacy rollup P2P spec. This is being deprecated, and the Base
-implementation responds with "not found" to all requests, but it is still present so that legacy
-peers don't penalize Base nodes for not supporting it.
+version as `"base"`). Base does not support the legacy op-node `payload_by_number`
+request-response protocol. Consensus-layer block propagation uses GossipSub; execution-layer
+block synchronization and follow mode's HTTP payload fetching are separate paths.
 
 The `GossipDriver`
 ([`gossip/src/driver.rs`](https://github.com/base/base/blob/main/crates/consensus/gossip/src/driver.rs))
@@ -699,7 +707,8 @@ polls the transaction pool for new pending transactions and queues them through 
 `tokio::mpsc` channel. The
 [`DestinationForwarder`](https://github.com/base/base/blob/main/crates/execution/tx-forwarding/src/forwarder/task.rs)
 receives queued transactions and forwards them via a custom JSON-RPC method
-(`base_insertValidatedTransactions`) to configured builder endpoints. One forwarder task is spawned
+(`base_insertValidatedTransaction`, or one `base_insertValidatedTransactions` call per batch with
+`--tx-forwarding-batched-insert`) to configured builder endpoints. One forwarder task is spawned
 per builder URL, so multiple downstream builders can receive transactions simultaneously. This
 pipeline runs as background tasks on the node's task executor.
 

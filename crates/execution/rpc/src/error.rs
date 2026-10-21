@@ -6,7 +6,9 @@ use alloy_json_rpc::ErrorPayload;
 use alloy_primitives::Bytes;
 use alloy_rpc_types_eth::{BlockError, error::EthRpcErrorCode};
 use alloy_transport::{RpcError, TransportErrorKind};
+use base_common_consensus::Eip8130CommittedPhasesError;
 use base_common_evm::{BaseHaltReason, BaseTransactionError};
+use base_common_rpc_types::BaseTxEnvError;
 use base_execution_evm::BaseBlockExecutionError;
 use jsonrpsee_types::error::INTERNAL_ERROR_CODE;
 use reth_evm::execute::ProviderError;
@@ -39,6 +41,10 @@ pub enum BaseEthApiError {
     /// Sequencer client error.
     #[error(transparent)]
     Sequencer(#[from] SequencerClientError),
+    /// A stored EIP-8130 receipt carries a committed phase count that violates the receipt
+    /// invariant.
+    #[error("invalid EIP-8130 receipt: {0}")]
+    Eip8130CommittedPhases(#[from] Eip8130CommittedPhasesError),
 }
 
 impl AsEthApiError for BaseEthApiError {
@@ -57,7 +63,8 @@ impl From<BaseEthApiError> for jsonrpsee_types::error::ErrorObject<'static> {
             BaseEthApiError::InvalidTransaction(err) => err.into(),
             BaseEthApiError::Evm(_)
             | BaseEthApiError::L1BlockFeeError
-            | BaseEthApiError::L1BlockGasError => internal_rpc_err(err.to_string()),
+            | BaseEthApiError::L1BlockGasError
+            | BaseEthApiError::Eip8130CommittedPhases(_) => internal_rpc_err(err.to_string()),
             BaseEthApiError::Sequencer(err) => err.into(),
         }
     }
@@ -76,11 +83,11 @@ pub enum BaseInvalidTransactionError {
     #[error("missing enveloped transaction bytes")]
     MissingEnvelopedTx,
     /// An EIP-8130 (account-abstraction) transaction was submitted via
-    /// `eth_sendRawTransaction` before the Cobalt fork was active.
+    /// `eth_sendRawTransaction` before the Everest fork was active.
     ///
     /// The transaction type byte (`0x79`) is recognised by the consensus layer for
     /// decoding/serialization purposes, but RPC admission is rejected until the
-    /// Cobalt fork is active. The txpool validator enforces the same fork gate for
+    /// Everest fork is active. The txpool validator enforces the same fork gate for
     /// transactions arriving over devp2p.
     #[error("{}", base_common_consensus::EIP8130_REJECTION_MSG)]
     Eip8130NotAccepted,
@@ -190,6 +197,17 @@ impl From<TransactionConversionError> for BaseEthApiError {
 impl From<EthTxEnvError> for BaseEthApiError {
     fn from(value: EthTxEnvError) -> Self {
         Self::Eth(EthApiError::from(value))
+    }
+}
+
+impl From<BaseTxEnvError> for BaseEthApiError {
+    fn from(value: BaseTxEnvError) -> Self {
+        match value {
+            BaseTxEnvError::Eth(error) => error.into(),
+            BaseTxEnvError::Eip8130Unsupported => {
+                Self::Eth(EthApiError::InvalidParams(value.to_string()))
+            }
+        }
     }
 }
 

@@ -285,10 +285,12 @@ mod tests {
         let expected_address = pubkey.address();
         const CHAIN_ID: u64 = 1337;
 
+        let mut execution_payload =
+            ExecutionPayloadV3::arbitrary(&mut arbitrary::Unstructured::new(&bytes)).unwrap();
+        // Base payloads require an empty withdrawals list, now enforced during SSZ decode.
+        execution_payload.payload_inner.withdrawals.clear();
         let block = BaseExecutionPayloadEnvelope {
-            execution_payload: BaseExecutionPayload::V3(
-                ExecutionPayloadV3::arbitrary(&mut arbitrary::Unstructured::new(&bytes)).unwrap(),
-            ),
+            execution_payload: BaseExecutionPayload::V3(execution_payload),
             parent_beacon_block_root: Some(B256::random()),
         };
 

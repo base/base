@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_rlp::{BufMut, Decodable, Encodable, Header};
-use base_common_consensus::{AccountChange, Call, Eip8130Signed, TxEip8130};
+use base_common_consensus::{AccountChange, Call, Eip8130Constants, Eip8130Signed, TxEip8130};
 
 use crate::{Channel, SpanBatchError, SpanDecodingError};
 
@@ -114,6 +114,13 @@ impl SpanBatchEip8130TransactionData {
         Ok((blob.slice(..20), blob.slice(20..)))
     }
 
+    /// Whether `payer` names an account, so its `payer_auth` carries an
+    /// authenticator prefix. Self-pay has no `payer_auth`, and open payer mode
+    /// carries a raw signature.
+    pub fn named_payer(payer: Option<Address>) -> bool {
+        payer.is_some_and(|payer| payer != Eip8130Constants::OPEN_PAYER)
+    }
+
     /// Reassembles an authentication blob from its authenticator and proof parts.
     ///
     /// Inverse of `split_auth`.
@@ -160,7 +167,7 @@ impl SpanBatchEip8130TransactionData {
         let sender_auth =
             Self::join_auth(&self.sender_authenticator, &sender_proof, self.sender.is_some());
         let payer_auth =
-            Self::join_auth(&self.payer_authenticator, &payer_proof, self.payer.is_some());
+            Self::join_auth(&self.payer_authenticator, &payer_proof, Self::named_payer(self.payer));
         let tx = TxEip8130 {
             chain_id,
             sender: self.sender,
@@ -214,13 +221,13 @@ impl Decodable for SpanBatchEip8130TransactionData {
             max_fee_per_gas: Decodable::decode(buf)?,
             payer: Self::decode_address_opt(buf)?,
             account_changes: Decodable::decode(buf)?,
-            calls: Decodable::decode(buf)?,
+            calls: TxEip8130::decode_calls(buf)?,
             metadata: Decodable::decode(buf)?,
             sender_authenticator: Decodable::decode(buf)?,
             payer_authenticator: Decodable::decode(buf)?,
         };
         Self::validate_authenticator(&this.sender_authenticator, this.sender.is_some())?;
-        Self::validate_authenticator(&this.payer_authenticator, this.payer.is_some())?;
+        Self::validate_authenticator(&this.payer_authenticator, Self::named_payer(this.payer))?;
         let consumed = started - buf.len();
         if consumed != header.payload_length {
             return Err(alloy_rlp::Error::ListLengthMismatch {
@@ -258,11 +265,12 @@ mod tests {
             calls: vec![
                 vec![Call {
                     to: address!("0x00000000000000000000000000000000000000dd"),
+                    value: U256::from(0x5678u64),
                     data: bytes!("deadbeef"),
                 }],
                 vec![
-                    Call { to: Address::ZERO, data: bytes!("01") },
-                    Call { to: Address::ZERO, data: bytes!("02") },
+                    Call { to: Address::ZERO, value: U256::ZERO, data: bytes!("01") },
+                    Call { to: Address::ZERO, value: U256::ZERO, data: bytes!("02") },
                 ],
             ],
             metadata: bytes!("c0ffee"),
@@ -365,5 +373,47 @@ mod tests {
         let mut payer_set = base;
         payer_set.payer_authenticator = Bytes::from_static(&[0u8; 20]);
         assert!(SpanBatchTransactionData::decode(&mut encode(&payer_set).as_slice()).is_err());
+    }
+
+    fn encode_with_call_phases(phases: usize) -> Vec<u8> {
+        let tx = SpanBatchEip8130TransactionData {
+            sender: None,
+            nonce_key: U256::ZERO,
+            valid_after: 0,
+            valid_before: 0,
+            max_priority_fee_per_gas: 1,
+            max_fee_per_gas: 1,
+            payer: None,
+            account_changes: Vec::new(),
+            calls: vec![Vec::new(); phases],
+            metadata: Bytes::new(),
+            sender_authenticator: Bytes::new(),
+            payer_authenticator: Bytes::new(),
+        };
+        let mut buf = Vec::new();
+        SpanBatchTransactionData::Eip8130(tx).encode(&mut buf);
+        buf
+    }
+
+    #[test]
+    fn decode_accepts_maximum_call_phases() {
+        let encoded = encode_with_call_phases(Eip8130Constants::MAX_CALL_PHASES_PER_TX);
+
+        let decoded = SpanBatchTransactionData::decode(&mut encoded.as_slice()).unwrap();
+
+        let SpanBatchTransactionData::Eip8130(decoded) = decoded else {
+            panic!("Expected SpanBatchEip8130TransactionData, got {decoded:?}");
+        };
+        assert_eq!(decoded.calls.len(), Eip8130Constants::MAX_CALL_PHASES_PER_TX);
+    }
+
+    #[test]
+    fn decode_rejects_excess_call_phases() {
+        let encoded = encode_with_call_phases(Eip8130Constants::MAX_CALL_PHASES_PER_TX + 1);
+
+        assert_eq!(
+            SpanBatchTransactionData::decode(&mut encoded.as_slice()),
+            Err(alloy_rlp::Error::Custom("too many EIP-8130 call phases"))
+        );
     }
 }

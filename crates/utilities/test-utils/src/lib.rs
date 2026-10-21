@@ -13,14 +13,13 @@ pub use accounts::Account;
 mod genesis;
 pub use genesis::{
     DEVNET_CHAIN_ID, GENESIS_GAS_LIMIT, build_test_genesis, build_test_genesis_azul,
-    build_test_genesis_cobalt,
+    build_test_genesis_cobalt, build_test_genesis_everest,
 };
 
 #[cfg(feature = "contracts")]
 mod contracts;
 #[cfg(feature = "contracts")]
 pub use contracts::{
-    AccessListContract, ContractFactory, DoubleCounter, Logic, Logic2, Minimal7702Account,
-    MockERC20, MockProtocolVersions, ParentBlockhashGuard, Proxy, SimpleStorage,
-    TransparentUpgradeableProxy,
+    ContractFactory, DoubleCounter, Minimal7702Account, MockERC20, MockProtocolVersions,
+    ParentBlockhashGuard, SimpleStorage, TransparentUpgradeableProxy,
 };

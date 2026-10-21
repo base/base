@@ -56,6 +56,7 @@ pub fn build_test_genesis() -> Genesis {
         terminal_total_difficulty_passed: true,
         // Rollup upgrades and settings via extra_fields
         extra_fields: [
+            ("blockTime", serde_json::json!(2)),
             ("bedrockBlock", serde_json::json!(0)),
             ("regolithTime", serde_json::json!(0)),
             ("canyonTime", serde_json::json!(0)),
@@ -149,6 +150,22 @@ pub fn build_test_genesis_cobalt() -> Genesis {
     genesis.config.extra_fields.insert(
         "activationAdminAddress".to_string(),
         serde_json::json!(Account::Deployer.address()),
+    );
+    genesis
+}
+
+/// Builds a test genesis with Denim and Everest enabled at timestamp 0.
+pub fn build_test_genesis_everest() -> Genesis {
+    let mut genesis = build_test_genesis_cobalt();
+    genesis.config.extra_fields.insert(
+        "base".to_string(),
+        serde_json::json!({
+            "azul": 0,
+            "beryl": 0,
+            "cobalt": 0,
+            "denim": 0,
+            "everest": 0
+        }),
     );
     genesis
 }

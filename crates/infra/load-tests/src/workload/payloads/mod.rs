@@ -21,8 +21,11 @@ pub use erc20::Erc20Payload;
 mod storage;
 pub use storage::StoragePayload;
 
+mod double_counter;
+pub use double_counter::{DOUBLE_COUNTER_GAS_LIMIT, DoubleCounterPayload};
+
 mod precompile;
-pub use precompile::{PrecompilePayload, parse_precompile_id};
+pub use precompile::PrecompilePayload;
 
 mod looper;
 pub use looper::PrecompileLooper;
@@ -53,6 +56,12 @@ pub trait Payload: Send + Sync + std::fmt::Debug {
 
     /// Returns true when this payload uses the runner-supplied recipient address.
     fn uses_runner_recipient(&self) -> bool;
+
+    /// Returns true when the runner recipient should be this sender's pair partner (alice <-> bob)
+    /// rather than the next sender in a ring.
+    fn uses_pair_recipient(&self) -> bool {
+        false
+    }
 
     /// Generates a transaction request.
     fn generate(&self, rng: &mut SeededRng, from: Address, to: Address) -> TransactionRequest;

@@ -11,7 +11,11 @@ use thiserror::Error;
 pub enum ProverServiceClientError {
     /// A JSON-RPC client, server, or transport error occurred.
     #[error("prover-service RPC/transport failure: {0}")]
-    RpcTransport(#[from] JsonRpcClientError),
+    RpcTransport(JsonRpcClientError),
+
+    /// The requester cancelled this proof job.
+    #[error("proof request was cancelled")]
+    ProofCancelled,
 
     /// The prover service reached a terminal failed proof state.
     #[error("proof failed: {message}")]
@@ -57,11 +61,15 @@ impl ProverServiceClientError {
     /// JSON-RPC code used by the prover service for failed preconditions.
     pub const ERROR_FAILED_PRECONDITION: i32 = -32017;
 
+    /// JSON-RPC code used when a requester cancelled a claimed proof job.
+    pub const ERROR_PROOF_CANCELLED: i32 = -32018;
+
     /// Returns a bounded label suitable for logs that must not expose
     /// transport URLs or server-provided error details.
     pub const fn kind(&self) -> &'static str {
         match self {
             Self::RpcTransport(_) => "rpc_transport",
+            Self::ProofCancelled => "proof_cancelled",
             Self::ProofFailure { .. } => "proof_failure",
             Self::WorkerLeaseRejected { .. } => "worker_lease_rejected",
             Self::LeaseBudgetExceeded(_) => "lease_budget_exceeded",
@@ -78,6 +86,7 @@ impl ProverServiceClientError {
             Self::RpcTransport(err) => Self::is_retryable_rpc_error(err),
             Self::Timeout(_) => true,
             Self::ProofFailure { .. }
+            | Self::ProofCancelled
             | Self::WorkerLeaseRejected { .. }
             | Self::LeaseBudgetExceeded(_)
             | Self::MissingResult(_)
@@ -96,6 +105,18 @@ impl ProverServiceClientError {
         call.code() == Self::ERROR_NOT_FOUND && call.message() == PROOF_REQUEST_NOT_FOUND_MESSAGE
     }
 
+    /// Returns `true` when the service rejected a proof request because its retry budget
+    /// is exhausted. This is terminal for replay; recovery requires deleting the failed
+    /// request before submitting it again, not retrying the same RPC indefinitely.
+    #[must_use]
+    pub fn is_retry_exhausted(&self) -> bool {
+        matches!(
+            self,
+            Self::RpcTransport(JsonRpcClientError::Call(call))
+                if call.code() == Self::ERROR_RESOURCE_EXHAUSTED
+        )
+    }
+
     /// Returns `true` when prover-service rejected a replay because the same
     /// session id is already bound to a request with a different L1 head.
     #[must_use]
@@ -103,6 +124,12 @@ impl ProverServiceClientError {
         let Self::RpcTransport(JsonRpcClientError::Call(call)) = self else { return false };
         call.code() == Self::ERROR_FAILED_PRECONDITION
             && call.message() == ProofRequestIdCollisionMessage::for_field(session_id, "l1_head")
+    }
+
+    /// Returns `true` when the requester cancelled the proof job.
+    #[must_use]
+    pub const fn is_proof_cancelled(&self) -> bool {
+        matches!(self, Self::ProofCancelled)
     }
 
     /// Returns `true` when the JSON-RPC error is classified as transient.
@@ -122,6 +149,19 @@ impl ProverServiceClientError {
     #[must_use]
     pub const fn is_retryable_rpc_code(code: i32) -> bool {
         code == Self::ERROR_UNAVAILABLE || code == ErrorCode::InternalError.code()
+    }
+}
+
+impl From<JsonRpcClientError> for ProverServiceClientError {
+    fn from(error: JsonRpcClientError) -> Self {
+        if matches!(
+            &error,
+            JsonRpcClientError::Call(call) if call.code() == Self::ERROR_PROOF_CANCELLED
+        ) {
+            Self::ProofCancelled
+        } else {
+            Self::RpcTransport(error)
+        }
     }
 }
 
@@ -198,6 +238,26 @@ mod tests {
     }
 
     #[test]
+    fn is_retry_exhausted_matches_only_resource_exhausted_rpc_calls() {
+        let exhausted = rpc_call_error(
+            ProverServiceClientError::ERROR_RESOURCE_EXHAUSTED,
+            "proof request retry budget exhausted",
+        );
+        assert!(exhausted.is_retry_exhausted());
+        assert!(!exhausted.is_retryable());
+
+        for error in [
+            rpc_call_error(ProverServiceClientError::ERROR_FAILED_PRECONDITION, "cancelled"),
+            rpc_call_error(ProverServiceClientError::ERROR_UNAVAILABLE, "down"),
+            ProverServiceClientError::from(JsonRpcClientError::RequestTimeout),
+            ProverServiceClientError::ProofCancelled,
+            ProverServiceClientError::ProofFailure { message: "failed".into() },
+        ] {
+            assert!(!error.is_retry_exhausted());
+        }
+    }
+
+    #[test]
     fn is_not_found_matches_only_missing_session_not_found() {
         let not_found = rpc_call_error(
             ProverServiceClientError::ERROR_NOT_FOUND,
@@ -234,5 +294,17 @@ mod tests {
         let other_precondition =
             rpc_call_error(ProverServiceClientError::ERROR_FAILED_PRECONDITION, "lease mismatch");
         assert!(!other_precondition.is_l1_head_conflict_for_session(session_id));
+    }
+
+    #[test]
+    fn proof_cancelled_code_is_detected() {
+        let cancelled =
+            rpc_call_error(ProverServiceClientError::ERROR_PROOF_CANCELLED, "cancelled");
+        assert!(cancelled.is_proof_cancelled());
+        assert!(!cancelled.is_retryable());
+
+        let other_precondition =
+            rpc_call_error(ProverServiceClientError::ERROR_FAILED_PRECONDITION, "cancelled");
+        assert!(!other_precondition.is_proof_cancelled());
     }
 }

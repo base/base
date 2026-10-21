@@ -5,7 +5,7 @@ use std::sync::Arc;
 use base_proof_zk_utils::{
     BlobStore,
     boot::BootInfoStruct,
-    witness::{WitnessExecutor, executor::get_inputs_for_pipeline, preimage_store::PreimageStore},
+    witness::{WitnessExecutor, executor::get_inputs_for_pipeline, preimage_store::WitnessOracle},
 };
 
 /// Sets up tracing for the range program
@@ -19,8 +19,8 @@ pub fn setup_tracing() {
 }
 
 /// Runs the range program.
-pub async fn run_range_program(oracle: Arc<PreimageStore>, beacon: BlobStore) {
-    let executor = WitnessExecutor::<PreimageStore, BlobStore>::new();
+pub async fn run_range_program(oracle: Arc<WitnessOracle>, beacon: BlobStore) {
+    let executor = WitnessExecutor::<WitnessOracle, BlobStore>::new();
 
     let (boot_info, input, l2_pre_block_number) =
         get_inputs_for_pipeline(Arc::clone(&oracle)).await.unwrap();

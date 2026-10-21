@@ -4,14 +4,12 @@
 //! [`NodeActor`]: crate::NodeActor
 
 mod builder;
-pub use builder::{
-    DerivationDelegateConfig, L1ConfigBuilder, RollupNodeBuilder, UpgradeSignalBuilderConfig,
-};
+pub use builder::{L1ConfigBuilder, RollupNodeBuilder, UpgradeSignalBuilderConfig};
 
 pub use crate::follow::{FollowNode, FollowNodeConfig};
 
 mod mode;
-pub use mode::NodeMode;
+pub use mode::{NodeMode, NodeOperatingMode};
 
 mod node;
 pub use node::{HEAD_STREAM_POLL_INTERVAL, L1Config, RollupNode};

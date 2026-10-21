@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use base_prover_service_client::{ProofRequesterClient, ProverServiceClientConfig};
 use base_prover_service_protocol::GetProofRequest;
-use base_system_tests::{InProcessProverService, InProcessZkHost};
+use base_system_tests::{InProcessProverService, InProcessZkHost, SystemTestStackBuilder};
 use eyre::{Result, WrapErr, bail, ensure};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
@@ -24,7 +24,7 @@ async fn in_process_prover_and_zk_host_start() -> Result<()> {
         .try_init();
 
     info!("starting Cobalt stack");
-    let (system, _provider) = cobalt::start_cobalt_system().await?;
+    let (system, _provider) = cobalt::start_cobalt_stack(SystemTestStackBuilder::new()).await?;
 
     info!("starting in-process prover-service");
     let service = InProcessProverService::start().await?;

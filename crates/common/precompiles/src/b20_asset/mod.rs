@@ -13,7 +13,7 @@ pub(crate) use versions::AssetCall;
 pub use versions::{AssetAbi, AssetAbiPair, AssetVersion, AssetVersions};
 
 mod logic;
-pub use logic::{Asset, AssetV1, AssetV2, B20AssetToken};
+pub use logic::{Asset, AssetV1, AssetV2, AssetV3, B20AssetToken};
 
 mod precompile;
 pub use precompile::B20AssetPrecompile;

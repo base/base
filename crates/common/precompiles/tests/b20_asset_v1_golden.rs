@@ -24,20 +24,20 @@
 //!    --test b20_asset_v1_golden -- --nocapture` and copy the printed `GOLDEN_ROOT` values.
 
 use alloy_primitives::{Address, B256, Bytes, U256, b256, keccak256};
-use alloy_sol_types::{SolCall, SolError, SolEvent, SolValue};
+use alloy_sol_types::{SolCall, SolError, SolEvent, SolInterface, SolValue};
 use base_common_genesis::BaseUpgrade;
 use base_common_precompiles::{
     Asset, AssetAccounting, AssetV1, AssetVersion, AssetVersions, B20_MAX_SUPPLY_CAP, B20AssetInit,
     B20AssetStorage, B20AssetToken, B20PolicyType, B20TokenRole, FakePolicyAccounting, IB20,
     IB20Asset, NoopPrecompileCallObserver, PolicyVersion, TokenAccounting,
-    UpgradeGatedStorageFeatures,
 };
 use base_precompile_storage::{BasePrecompileError, Handler, HashMapStorageProvider, StorageCtx};
 
 mod common;
 use common::{
-    ADMIN, ALICE, BOB, CAROL, CHAIN_ID, MEMO, POLICY_ID, TOKEN, anvil_owner, bless_or_assert_gas,
-    bless_or_assert_root, hash_token_state, ok_true, signed_permit, u,
+    ADMIN, ALICE, BOB, CAROL, CHAIN_ID, MEMO, POLICY_ID, TOKEN, allow0, anvil_owner,
+    assert_token_root as assert_root, bless_or_assert_gas, fund, give_role, last_topic0, ok_true,
+    signed_permit, storage_at, u,
 };
 
 // --- fixtures ---------------------------------------------------------------
@@ -129,10 +129,7 @@ const ROOT_ANNOUNCE: B256 =
 /// Fresh provider with an initialized `Base Asset` at [`TOKEN`], matching the factory
 /// bootstrap: the multiplier slot is left physically zero and the getter normalizes it to WAD.
 fn fresh() -> HashMapStorageProvider {
-    let mut storage = HashMapStorageProvider::new_with_storage_features(
-        CHAIN_ID,
-        UpgradeGatedStorageFeatures::from_upgrade(BaseUpgrade::Beryl),
-    );
+    let mut storage = storage_at(BaseUpgrade::Beryl);
     StorageCtx::enter(&mut storage, |ctx| {
         let mut token = B20AssetStorage::from_address(TOKEN, ctx);
         token
@@ -148,86 +145,18 @@ fn fresh() -> HashMapStorageProvider {
     storage
 }
 
-/// Mutates raw token storage through the accounting port (test setup only).
-fn seed(storage: &mut HashMapStorageProvider, f: impl FnOnce(&mut B20AssetStorage<'_>)) {
-    StorageCtx::enter(storage, |ctx| {
-        let mut token = B20AssetStorage::from_address(TOKEN, ctx);
-        f(&mut token);
-    });
-}
-
-/// Reads token state through the accounting port.
-fn read<R>(storage: &mut HashMapStorageProvider, f: impl FnOnce(&B20AssetStorage<'_>) -> R) -> R {
-    StorageCtx::enter(storage, |ctx| f(&B20AssetStorage::from_address(TOKEN, ctx)))
-}
-
-/// Drives one op through the resolver-gated (`Beryl` -> V1) unprivileged path.
-fn op(
-    storage: &mut HashMapStorageProvider,
-    caller: Address,
-    policy: FakePolicyAccounting,
-    calldata: Vec<u8>,
-) -> Result<Bytes, BasePrecompileError> {
-    storage.set_caller(caller);
-    StorageCtx::enter(storage, |ctx| {
-        let version =
-            AssetVersions::from_base_upgrade(BaseUpgrade::Beryl).expect("Beryl activates V1");
-        B20AssetToken::with_storage_and_policy(
-            B20AssetStorage::from_address(TOKEN, ctx),
-            policy,
-            PolicyVersion::V1,
-        )
-        .route(ctx, &calldata, version, false, NoopPrecompileCallObserver)
-    })
-}
-
-/// Drives one op through V1 with factory-init privilege (guards skipped).
-fn op_privileged(
-    storage: &mut HashMapStorageProvider,
-    caller: Address,
-    policy: FakePolicyAccounting,
-    calldata: Vec<u8>,
-) -> Result<Bytes, BasePrecompileError> {
-    storage.set_caller(caller);
-    StorageCtx::enter(storage, |ctx| {
-        B20AssetToken::with_storage_and_policy(
-            B20AssetStorage::from_address(TOKEN, ctx),
-            policy,
-            PolicyVersion::V1,
-        )
-        .route(ctx, &calldata, AssetVersion::V1, true, NoopPrecompileCallObserver)
-    })
-}
-
-/// Topic-0 (signature hash) of the last event emitted by the token.
-fn last_topic0(storage: &HashMapStorageProvider) -> B256 {
-    storage.get_events(TOKEN).last().expect("an emitted event").topics()[0]
-}
-
-/// Asserts the token's storage hash, or prints it under `BLESS_GOLDEN` for (re)pinning.
-#[track_caller]
-fn assert_root(label: &str, storage: HashMapStorageProvider, expected: B256) {
-    bless_or_assert_root(label, hash_token_state(storage, TOKEN), expected);
-}
-
-/// Grants `role` to `who` and bumps the role member count (setup only).
-fn give_role(token: &mut B20AssetStorage<'_>, role: B256, who: Address) {
-    token.set_role(role, who, true).unwrap();
-    let next = token.role_member_count(role).unwrap() + U256::ONE;
-    token.set_role_member_count(role, next).unwrap();
-}
-
-/// Credits `who` with `amount` and grows total supply to match (setup only).
-fn fund(token: &mut B20AssetStorage<'_>, who: Address, amount: U256) {
-    let balance = token.balance_of(who).unwrap();
-    token.set_balance(who, balance + amount).unwrap();
-    let supply = token.total_supply().unwrap();
-    token.set_total_supply(supply + amount).unwrap();
-}
-
 /// The asset operator role id: `keccak256("OPERATOR_ROLE")` (V1 pins this equality).
 fn operator_role() -> B256 {
     keccak256("OPERATOR_ROLE")
+}
+
+crate::token_golden_harness! {
+    storage: B20AssetStorage,
+    token: B20AssetToken,
+    versions: AssetVersions,
+    version: AssetVersion::V1,
+    upgrade: BaseUpgrade::Beryl,
+    policy: PolicyVersion::V1,
 }
 
 /// The V1 EIP-712 domain separator for the token at [`TOKEN`] on [`CHAIN_ID`].
@@ -480,23 +409,110 @@ fn golden_transfer_reverts_when_paused() {
     );
 }
 
-#[test]
-fn golden_transfer_with_memo_emits_transfer_then_memo() {
-    let mut s = fresh();
-    seed(&mut s, |t| fund(t, ALICE, u(100)));
-    let out = op_privileged(
-        &mut s,
+type MemoRun = fn(&mut HashMapStorageProvider) -> Result<Bytes, BasePrecompileError>;
+
+fn run_transfer_memo(s: &mut HashMapStorageProvider) -> Result<Bytes, BasePrecompileError> {
+    seed(s, |t| fund(t, ALICE, u(100)));
+    op_privileged(
+        s,
         ALICE,
         FakePolicyAccounting::new(),
         IB20::transferWithMemoCall { to: BOB, amount: u(30), memo: MEMO }.abi_encode(),
     )
-    .unwrap();
+}
 
-    assert_eq!(out, ok_true());
+fn run_transfer_from_memo(s: &mut HashMapStorageProvider) -> Result<Bytes, BasePrecompileError> {
+    seed(s, |t| {
+        fund(t, ALICE, u(100));
+        t.set_allowance(ALICE, BOB, u(40)).unwrap();
+    });
+    op_privileged(
+        s,
+        BOB,
+        FakePolicyAccounting::new(),
+        IB20::transferFromWithMemoCall { from: ALICE, to: CAROL, amount: u(30), memo: MEMO }
+            .abi_encode(),
+    )
+}
+
+fn run_mint_memo(s: &mut HashMapStorageProvider) -> Result<Bytes, BasePrecompileError> {
+    let mut policy = FakePolicyAccounting::new();
+    policy.allow(0, BOB);
+    op_privileged(
+        s,
+        ADMIN,
+        policy,
+        IB20::mintWithMemoCall { to: BOB, amount: u(40), memo: MEMO }.abi_encode(),
+    )
+}
+
+fn run_burn_memo(s: &mut HashMapStorageProvider) -> Result<Bytes, BasePrecompileError> {
+    seed(s, |t| {
+        fund(t, ALICE, u(100));
+        give_role(t, B20TokenRole::Burn.id(), ALICE);
+    });
+    op(
+        s,
+        ALICE,
+        FakePolicyAccounting::new(),
+        IB20::burnWithMemoCall { amount: u(40), memo: MEMO }.abi_encode(),
+    )
+}
+
+fn assert_memo_variant_emits_transfer_then_memo(
+    label: &str,
+    root: B256,
+    run: MemoRun,
+    expected: Bytes,
+) {
+    let mut s = fresh();
+    let out = run(&mut s).unwrap();
+
+    assert_eq!(out, expected);
     let events = s.get_events(TOKEN);
     assert_eq!(events[events.len() - 2].topics()[0], IB20::Transfer::SIGNATURE_HASH);
     assert_eq!(events[events.len() - 1].topics()[0], IB20::Memo::SIGNATURE_HASH);
-    assert_root("transfer_with_memo", s, ROOT_TRANSFER_WITH_MEMO);
+    assert_root(label, s, root);
+}
+
+#[test]
+fn golden_transfer_with_memo_emits_transfer_then_memo() {
+    assert_memo_variant_emits_transfer_then_memo(
+        "transfer_with_memo",
+        ROOT_TRANSFER_WITH_MEMO,
+        run_transfer_memo,
+        ok_true(),
+    );
+}
+
+#[test]
+fn golden_transfer_from_with_memo_emits_transfer_then_memo() {
+    assert_memo_variant_emits_transfer_then_memo(
+        "transfer_from_with_memo",
+        ROOT_TRANSFER_FROM_WITH_MEMO,
+        run_transfer_from_memo,
+        ok_true(),
+    );
+}
+
+#[test]
+fn golden_mint_with_memo_emits_transfer_then_memo() {
+    assert_memo_variant_emits_transfer_then_memo(
+        "mint_with_memo",
+        ROOT_MINT_WITH_MEMO,
+        run_mint_memo,
+        Bytes::new(),
+    );
+}
+
+#[test]
+fn golden_burn_with_memo_emits_transfer_then_memo() {
+    assert_memo_variant_emits_transfer_then_memo(
+        "burn_with_memo",
+        ROOT_BURN_WITH_MEMO,
+        run_burn_memo,
+        Bytes::new(),
+    );
 }
 
 // ============================================================================
@@ -595,29 +611,6 @@ fn golden_transfer_from_unprivileged_enforces_executor_policy() {
             policyId: POLICY_ID,
         })
     );
-}
-
-#[test]
-fn golden_transfer_from_with_memo() {
-    let mut s = fresh();
-    seed(&mut s, |t| {
-        fund(t, ALICE, u(100));
-        t.set_allowance(ALICE, BOB, u(40)).unwrap();
-    });
-    let out = op_privileged(
-        &mut s,
-        BOB,
-        FakePolicyAccounting::new(),
-        IB20::transferFromWithMemoCall { from: ALICE, to: CAROL, amount: u(30), memo: MEMO }
-            .abi_encode(),
-    )
-    .unwrap();
-
-    assert_eq!(out, ok_true());
-    let events = s.get_events(TOKEN);
-    assert_eq!(events[events.len() - 2].topics()[0], IB20::Transfer::SIGNATURE_HASH);
-    assert_eq!(events[events.len() - 1].topics()[0], IB20::Memo::SIGNATURE_HASH);
-    assert_root("transfer_from_with_memo", s, ROOT_TRANSFER_FROM_WITH_MEMO);
 }
 
 // ============================================================================
@@ -727,26 +720,6 @@ fn golden_mint_reverts_over_supply_cap() {
     );
 }
 
-#[test]
-fn golden_mint_with_memo() {
-    let mut s = fresh();
-    let mut policy = FakePolicyAccounting::new();
-    policy.allow(0, BOB);
-    let out = op_privileged(
-        &mut s,
-        ADMIN,
-        policy,
-        IB20::mintWithMemoCall { to: BOB, amount: u(40), memo: MEMO }.abi_encode(),
-    )
-    .unwrap();
-
-    assert!(out.is_empty());
-    let events = s.get_events(TOKEN);
-    assert_eq!(events[events.len() - 2].topics()[0], IB20::Transfer::SIGNATURE_HASH);
-    assert_eq!(events[events.len() - 1].topics()[0], IB20::Memo::SIGNATURE_HASH);
-    assert_root("mint_with_memo", s, ROOT_MINT_WITH_MEMO);
-}
-
 // ============================================================================
 // burn / burnBlocked
 // ============================================================================
@@ -787,28 +760,6 @@ fn golden_burn_requires_role_then_reduces_supply() {
     });
     assert_eq!(last_topic0(&s), IB20::Transfer::SIGNATURE_HASH);
     assert_root("burn", s, ROOT_BURN);
-}
-
-#[test]
-fn golden_burn_with_memo() {
-    let mut s = fresh();
-    seed(&mut s, |t| {
-        fund(t, ALICE, u(100));
-        give_role(t, B20TokenRole::Burn.id(), ALICE);
-    });
-    let out = op(
-        &mut s,
-        ALICE,
-        FakePolicyAccounting::new(),
-        IB20::burnWithMemoCall { amount: u(40), memo: MEMO }.abi_encode(),
-    )
-    .unwrap();
-
-    assert!(out.is_empty());
-    let events = s.get_events(TOKEN);
-    assert_eq!(events[events.len() - 2].topics()[0], IB20::Transfer::SIGNATURE_HASH);
-    assert_eq!(events[events.len() - 1].topics()[0], IB20::Memo::SIGNATURE_HASH);
-    assert_root("burn_with_memo", s, ROOT_BURN_WITH_MEMO);
 }
 
 #[test]
@@ -1255,6 +1206,30 @@ fn golden_permit_reverts_when_expired() {
     assert_eq!(err, BasePrecompileError::revert(IB20::ExpiredSignature { deadline: u(10) }));
 }
 
+/// V1 `permit` is deliberately UNMETERED (Beryl's gas schedule is frozen): it hashes with plain
+/// `keccak256` and recovers without a `deduct_gas` charge, so `gas_deducted()` stays `0`. The V2
+/// golden pins this at `3000`; that metered/unmetered contrast is the point of this pair.
+#[test]
+fn golden_permit_charges_no_recovery_gas() {
+    let mut s = fresh();
+    let owner = anvil_owner();
+    let calldata =
+        signed_permit(domain_separator(&mut fresh()), U256::ZERO, owner, BOB, u(500), U256::MAX)
+            .abi_encode();
+    s.set_caller(owner);
+    s.set_timestamp(U256::ZERO);
+    StorageCtx::enter(&mut s, |ctx| {
+        B20AssetToken::with_storage_and_policy(
+            B20AssetStorage::from_address(TOKEN, ctx),
+            FakePolicyAccounting::new(),
+            PolicyVersion::V1,
+        )
+        .route(ctx, &calldata, AssetVersion::V1, true, NoopPrecompileCallObserver)
+    })
+    .expect("permit must succeed");
+    assert_eq!(s.gas_deducted(), 0, "V1 permit must not charge any recovery gas (unmetered)");
+}
+
 // ============================================================================
 // computed reads
 // ============================================================================
@@ -1456,10 +1431,7 @@ fn dispatch_reverts_before_beryl() {
 #[test]
 fn dispatch_reverts_when_uninitialized() {
     // No `fresh()` init and no marker bytecode => is_initialized is false.
-    let mut s = HashMapStorageProvider::new_with_storage_features(
-        CHAIN_ID,
-        UpgradeGatedStorageFeatures::from_upgrade(BaseUpgrade::Beryl),
-    );
+    let mut s = storage_at(BaseUpgrade::Beryl);
     let calldata = IB20::balanceOfCall { account: ALICE }.abi_encode();
     let out = StorageCtx::enter(&mut s, |ctx| {
         B20AssetToken::with_storage_and_policy(
@@ -1848,10 +1820,7 @@ fn golden_revoke_role_noop_when_not_held() {
 #[test]
 fn golden_dispatch_no_observer_wrapper_reverts_uninitialized() {
     // Exercises the no-observer `dispatch()` wrapper + the is_initialized=false gate.
-    let mut s = HashMapStorageProvider::new_with_storage_features(
-        CHAIN_ID,
-        UpgradeGatedStorageFeatures::from_upgrade(BaseUpgrade::Beryl),
-    );
+    let mut s = storage_at(BaseUpgrade::Beryl);
     s.set_caller(ALICE);
     let calldata = IB20::balanceOfCall { account: ALICE }.abi_encode();
     let out = StorageCtx::enter(&mut s, |ctx| {
@@ -2325,6 +2294,35 @@ fn golden_announce_reverts_id_already_used() {
     );
 }
 
+/// Cantina #16 follow-up: a malformed `announce` (invalid UTF-8 in `id`) must keep falling
+/// through to the owned decoder's diagnostic at V1, unchanged — V1's revert bytes are
+/// consensus-frozen and must never take the new V2-only bounded-rejection path.
+#[test]
+fn golden_announce_malformed_id_stays_on_owned_diagnostic_at_v1() {
+    let mut s = fresh();
+    let marker = "malformed-id-marker";
+    let mut calldata = IB20Asset::announceCall {
+        internalCalls: vec![],
+        id: marker.into(),
+        description: String::new(),
+        uri: String::new(),
+    }
+    .abi_encode();
+    let at = calldata.windows(marker.len()).position(|w| w == marker.as_bytes()).unwrap();
+    calldata[at..at + marker.len()].fill(0xff);
+
+    let err = op(&mut s, ALICE, FakePolicyAccounting::new(), calldata.clone()).unwrap_err();
+    let oracle_error = IB20Asset::IB20AssetCalls::abi_decode_validate(&calldata).unwrap_err();
+    assert_eq!(
+        err,
+        BasePrecompileError::AbiDecodeFailed {
+            selector: IB20Asset::announceCall::SELECTOR,
+            error: oracle_error.to_string(),
+        },
+        "V1 must keep falling through to the owned decoder's diagnostic, unchanged",
+    );
+}
+
 #[test]
 fn golden_announce_reverts_internal_call_malformed() {
     let mut s = fresh();
@@ -2423,36 +2421,6 @@ fn golden_announce_unprivileged_requires_role() {
 // schedule-independent signal instead: the SLOAD / SSTORE / KECCAK256 op counts a
 // call performs. These are the storage-access footprint that drives real gas, so a
 // change here (e.g. an extra SLOAD in V1) is caught even when bytes/state/events match.
-
-/// Runs `calldata` privileged after `setup`, returning `(sload, sstore, keccak256)` counts.
-fn gas(
-    setup: impl FnOnce(&mut B20AssetStorage<'_>),
-    caller: Address,
-    policy: FakePolicyAccounting,
-    calldata: Vec<u8>,
-) -> (u64, u64, u64) {
-    let mut s = fresh();
-    seed(&mut s, setup);
-    s.set_caller(caller);
-    s.reset_counters();
-    StorageCtx::enter(&mut s, |ctx| {
-        B20AssetToken::with_storage_and_policy(
-            B20AssetStorage::from_address(TOKEN, ctx),
-            policy,
-            PolicyVersion::V1,
-        )
-        .route(ctx, &calldata, AssetVersion::V1, true, NoopPrecompileCallObserver)
-    })
-    .expect("gas-footprint op must succeed");
-    (s.counter_sload(), s.counter_sstore(), s.counter_keccak256())
-}
-
-/// An `FakePolicyAccounting` authorizing `who` under the default (0) scope.
-fn allow0(who: Address) -> FakePolicyAccounting {
-    let mut p = FakePolicyAccounting::new();
-    p.allow(0, who);
-    p
-}
 
 #[test]
 fn golden_gas_footprints() {
@@ -2678,6 +2646,23 @@ fn golden_gas_footprints() {
                 .abi_encode(),
             ),
         ),
+        (
+            "permit",
+            gas(
+                |_t| {},
+                anvil_owner(),
+                FakePolicyAccounting::new(),
+                signed_permit(
+                    domain_separator(&mut fresh()),
+                    U256::ZERO,
+                    anvil_owner(),
+                    BOB,
+                    u(500),
+                    U256::MAX,
+                )
+                .abi_encode(),
+            ),
+        ),
     ];
 
     let expected: &[(&str, (u64, u64, u64))] = &[
@@ -2701,6 +2686,7 @@ fn golden_gas_footprints() {
         ("batch_mint", (11, 4, 0)),
         ("announce", (1, 1, 0)),
         ("update_extra_metadata", (0, 1, 0)),
+        ("permit", (3, 2, 0)),
     ];
 
     bless_or_assert_gas(&actual, expected);
@@ -2756,7 +2742,11 @@ fn v1_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Asset::IB20AssetCall
             golden_approve_reverts_zero_approver,
         ]),
         C::transferWithMemo(_) => covered(&[golden_transfer_with_memo_emits_transfer_then_memo]),
-        C::transferFromWithMemo(_) => covered(&[golden_transfer_from_with_memo]),
+        C::transferFromWithMemo(_) => {
+            covered(&[golden_transfer_from_with_memo_emits_transfer_then_memo])
+        }
+        C::mintWithMemo(_) => covered(&[golden_mint_with_memo_emits_transfer_then_memo]),
+        C::burnWithMemo(_) => covered(&[golden_burn_with_memo_emits_transfer_then_memo]),
 
         // mint / burn
         C::mint(_) => covered(&[
@@ -2765,12 +2755,10 @@ fn v1_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Asset::IB20AssetCall
             golden_mint_reverts_over_supply_cap,
             golden_mint_reverts_zero_receiver,
         ]),
-        C::mintWithMemo(_) => covered(&[golden_mint_with_memo]),
         C::burn(_) => covered(&[
             golden_burn_requires_role_then_reduces_supply,
             golden_burn_reverts_insufficient_balance,
         ]),
-        C::burnWithMemo(_) => covered(&[golden_burn_with_memo]),
         C::burnBlocked(_) => covered(&[
             golden_burn_blocked_destroys_from_blocked_account,
             golden_burn_blocked_reverts_when_not_blocked,

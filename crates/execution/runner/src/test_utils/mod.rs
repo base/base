@@ -9,15 +9,14 @@
 mod constants;
 pub use constants::{
     BLOCK_BUILD_DELAY_MS, BLOCK_TIME_SECONDS, DEFAULT_JWT_SECRET, GAS_LIMIT,
-    L1_BLOCK_INFO_DEPOSIT_TX, L1_BLOCK_INFO_DEPOSIT_TX_HASH, NODE_STARTUP_DELAY_MS,
-    TEST_ACCOUNT_BALANCE_ETH,
+    L1_BLOCK_INFO_DEPOSIT_TX, NODE_STARTUP_DELAY_MS, TEST_ACCOUNT_BALANCE_ETH,
 };
 
 mod engine;
 pub use engine::{EngineAddress, EngineApi, EngineProtocol, HttpEngine, IpcEngine};
 
 mod fixtures;
-pub use fixtures::{create_provider_factory, load_chain_spec};
+pub use fixtures::load_chain_spec;
 
 mod harness;
 pub use harness::{PreparedBlock, TestHarness, TestHarnessBuilder};

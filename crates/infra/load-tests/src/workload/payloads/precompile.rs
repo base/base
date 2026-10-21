@@ -7,23 +7,6 @@ use revm::precompile::{PrecompileId, PrecompileSpecId};
 use super::Payload;
 use crate::workload::SeededRng;
 
-/// Parses a precompile identifier from a config string.
-pub fn parse_precompile_id(s: &str) -> Result<PrecompileId, String> {
-    match s.to_lowercase().as_str() {
-        "ecrecover" | "ec_recover" => Ok(PrecompileId::EcRec),
-        "sha256" => Ok(PrecompileId::Sha256),
-        "ripemd160" | "ripemd" => Ok(PrecompileId::Ripemd160),
-        "identity" => Ok(PrecompileId::Identity),
-        "modexp" => Ok(PrecompileId::ModExp),
-        "bn254_add" | "bn128_add" | "ecadd" => Ok(PrecompileId::Bn254Add),
-        "bn254_mul" | "bn128_mul" | "ecmul" => Ok(PrecompileId::Bn254Mul),
-        "bn254_pairing" | "bn128_pairing" | "ecpairing" => Ok(PrecompileId::Bn254Pairing),
-        "blake2f" | "blake2" => Ok(PrecompileId::Blake2F),
-        "kzg_point_evaluation" | "kzg" => Ok(PrecompileId::KzgPointEvaluation),
-        other => Err(format!("unknown precompile: {other}")),
-    }
-}
-
 fn precompile_address(id: &PrecompileId) -> Address {
     id.precompile(PrecompileSpecId::CANCUN).map(|p| *p.address()).unwrap_or_else(|| {
         let byte = match id {
@@ -52,11 +35,6 @@ pub struct PrecompilePayload {
 }
 
 impl PrecompilePayload {
-    /// Creates a new precompile payload.
-    pub const fn new(id: PrecompileId) -> Self {
-        Self { id, blake2f_rounds: None, iterations: 1, looper_contract: None }
-    }
-
     /// Creates a new precompile payload with all options.
     pub const fn with_options(
         id: PrecompileId,

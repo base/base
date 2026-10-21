@@ -1,4 +1,4 @@
-use alloy_primitives::Address;
+use alloy_primitives::{Address, address};
 use base_common_genesis::UpgradeActivationSink;
 use url::Url;
 
@@ -8,6 +8,8 @@ use super::{UpgradeSignalBlockTag, UpgradeSignalConfig, UpgradeSignalDefaults, U
 #[derive(Debug, Clone, Default, PartialEq, Eq, clap::Args)]
 pub struct UpgradeSignalArgs {
     /// L1 upgrade signal contract or proxy address.
+    /// Defaults to the network's contract for Base mainnet, Sepolia, and zeronet on
+    /// base-consensus and unified base nodes.
     #[arg(long = "upgrade-signal.contract", env = "BASE_NODE_UPGRADE_SIGNAL_CONTRACT")]
     pub contract_address: Option<Address>,
 
@@ -32,6 +34,18 @@ pub struct UpgradeSignalArgs {
 }
 
 impl UpgradeSignalArgs {
+    /// Defaults the contract for the selected L2 chain, preserving explicit CLI/env overrides.
+    /// Base mainnet, Sepolia, and zeronet have defaults; other chains remain opt-in.
+    pub fn apply_chain_default(&mut self, chain_id: u64) {
+        let contract = match chain_id {
+            8453 => address!("7480Afc8D99a5c645c247dB5A1e4a4f440e6e095"),
+            84532 => address!("15B721B12CF3b0C4400c8a2935A0Ae391c2eF65b"),
+            763360 => address!("30e172aaC675c9fe5A64792F92C9fD4d3E7cA9Da"),
+            _ => return,
+        };
+        self.contract_address.get_or_insert(contract);
+    }
+
     /// Builds a schedule read configuration if the upgrade signal is enabled.
     pub fn config(&self) -> Option<UpgradeSignalConfig> {
         let contract_address = self.contract_address?;
@@ -150,8 +164,81 @@ impl UpgradeSignalL1RpcArgs {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::address;
+    use rstest::rstest;
 
     use super::*;
+
+    #[rstest]
+    #[case(8453, address!("7480Afc8D99a5c645c247dB5A1e4a4f440e6e095"))]
+    #[case(84532, address!("15B721B12CF3b0C4400c8a2935A0Ae391c2eF65b"))]
+    #[case(763360, address!("30e172aaC675c9fe5A64792F92C9fD4d3E7cA9Da"))]
+    fn defaults_chain_contract_without_changing_mode(
+        #[case] chain_id: u64,
+        #[case] contract: Address,
+    ) {
+        let mut args = UpgradeSignalArgs::default();
+
+        args.apply_chain_default(chain_id);
+
+        let config = args.config().unwrap();
+        assert_eq!(config.contract_address, contract);
+        assert_eq!(config.mode, UpgradeSignalMode::MetricsOnly);
+        assert_eq!(config.l1_block_tag, UpgradeSignalBlockTag::Finalized);
+    }
+
+    #[rstest]
+    #[case(1)]
+    #[case(11155111)]
+    #[case(560048)]
+    #[case(12345)]
+    fn other_chains_remain_opt_in(#[case] chain_id: u64) {
+        let mut args = UpgradeSignalArgs::default();
+
+        args.apply_chain_default(chain_id);
+
+        assert_eq!(args.config(), None);
+    }
+
+    #[rstest]
+    #[case(84532)]
+    #[case(8453)]
+    #[case(763360)]
+    #[case(12345)]
+    fn chain_default_preserves_explicit_contract(#[case] chain_id: u64) {
+        let contract = address!("0000000000000000000000000000000000000001");
+        let mut args = UpgradeSignalArgs { contract_address: Some(contract), ..Default::default() };
+
+        args.apply_chain_default(chain_id);
+
+        assert_eq!(args.config().unwrap().contract_address, contract);
+    }
+
+    #[rstest]
+    #[case(8453, address!("7480Afc8D99a5c645c247dB5A1e4a4f440e6e095"))]
+    #[case(84532, address!("15B721B12CF3b0C4400c8a2935A0Ae391c2eF65b"))]
+    #[case(763360, address!("30e172aaC675c9fe5A64792F92C9fD4d3E7cA9Da"))]
+    fn chain_default_is_used_for_startup(
+        #[case] chain_id: u64,
+        #[case] contract: Address,
+        #[values(UpgradeSignalMode::StartupApply, UpgradeSignalMode::RuntimeAdmin)]
+        mode: UpgradeSignalMode,
+    ) {
+        let mut args = UpgradeSignalArgs {
+            mode,
+            l1_block_tag: UpgradeSignalBlockTag::Safe,
+            ..Default::default()
+        };
+        let l1_rpc_args = UpgradeSignalL1RpcArgs {
+            upgrade_signal_l1_rpc: Some(Url::parse("http://l1:8545").unwrap()),
+        };
+
+        args.apply_chain_default(chain_id);
+
+        let config = args.startup_config(&l1_rpc_args).unwrap().unwrap();
+        assert_eq!(config.signal_config.contract_address, contract);
+        assert_eq!(config.signal_config.mode, mode);
+        assert_eq!(config.signal_config.l1_block_tag, UpgradeSignalBlockTag::Safe);
+    }
 
     #[test]
     fn disabled_when_no_contract() {

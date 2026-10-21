@@ -8,7 +8,6 @@ use base_common_chains::Upgrades;
 use base_common_consensus::{
     BaseReceipt, BaseTxEnvelope, DepositReceipt, Eip8130Receipt, OpTxType,
 };
-use base_common_evm::Eip8130PhaseStatuses;
 use reth_evm::Evm;
 use revm::{Database, context::result::ExecutionResult};
 
@@ -31,7 +30,14 @@ pub enum ReceiptBuildError {
 ///
 /// ```ignore
 /// let builder = UnifiedReceiptBuilder::new(chain_spec);
-/// let receipt = builder.build(&mut evm, &transaction, result, cumulative_gas_used, timestamp)?;
+/// let receipt = builder.build(
+///     &mut evm,
+///     &transaction,
+///     result,
+///     cumulative_gas_used,
+///     timestamp,
+///     eip8130_committed_phases,
+/// )?;
 /// ```
 #[derive(Debug, Clone)]
 pub struct UnifiedReceiptBuilder<C> {
@@ -64,6 +70,8 @@ impl<C: Upgrades> UnifiedReceiptBuilder<C> {
     /// * `result` - The execution result
     /// * `cumulative_gas_used` - Cumulative gas used up to and including this transaction
     /// * `timestamp` - The block timestamp, used to determine active upgrades
+    /// * `eip8130_committed_phases` - The number of leading EIP-8130 call phases that committed
+    ///   when executing the transaction; only used for EIP-8130 receipts
     ///
     /// # Returns
     ///
@@ -76,6 +84,7 @@ impl<C: Upgrades> UnifiedReceiptBuilder<C> {
         result: &ExecutionResult<E::HaltReason>,
         cumulative_gas_used: u64,
         timestamp: u64,
+        eip8130_committed_phases: u64,
     ) -> Result<BaseReceipt, ReceiptBuildError>
     where
         E: Evm,
@@ -121,10 +130,8 @@ impl<C: Upgrades> UnifiedReceiptBuilder<C> {
                 OpTxType::Eip1559 => BaseReceipt::Eip1559(receipt),
                 OpTxType::Eip7702 => BaseReceipt::Eip7702(receipt),
                 OpTxType::Deposit => unreachable!(),
-                // Consume the per-phase statuses published by the executor for
-                // this transaction (see [`Eip8130PhaseStatuses`]).
                 OpTxType::Eip8130 => {
-                    BaseReceipt::Eip8130(Eip8130Receipt::new(receipt, Eip8130PhaseStatuses::take()))
+                    BaseReceipt::Eip8130(Eip8130Receipt::new(receipt, eip8130_committed_phases))
                 }
             })
         }
@@ -281,7 +288,7 @@ mod tests {
         let result = create_success_result();
 
         let receipt =
-            builder.build(&mut evm, &tx, &result, 21000, 0).expect("build should succeed");
+            builder.build(&mut evm, &tx, &result, 21000, 0, 0).expect("build should succeed");
 
         assert!(matches!(receipt, BaseReceipt::Legacy(_)));
         if let BaseReceipt::Legacy(inner) = receipt {
@@ -301,7 +308,7 @@ mod tests {
         let result = create_success_result();
 
         let receipt =
-            builder.build(&mut evm, &tx, &result, 21000, 0).expect("build should succeed");
+            builder.build(&mut evm, &tx, &result, 21000, 0, 0).expect("build should succeed");
 
         assert!(matches!(receipt, BaseReceipt::Deposit(_)));
         if let BaseReceipt::Deposit(deposit) = receipt {
@@ -324,7 +331,7 @@ mod tests {
         // Use a timestamp after Canyon activation (Base mainnet Canyon: 1704992401)
         let canyon_timestamp = 1704992401 + 1000;
         let receipt = builder
-            .build(&mut evm, &tx, &result, 21000, canyon_timestamp)
+            .build(&mut evm, &tx, &result, 21000, canyon_timestamp, 0)
             .expect("build should succeed");
 
         if let BaseReceipt::Deposit(deposit) = receipt {
@@ -352,7 +359,7 @@ mod tests {
         };
 
         let receipt =
-            builder.build(&mut evm, &tx, &result, 10000, 0).expect("build should succeed");
+            builder.build(&mut evm, &tx, &result, 10000, 0, 0).expect("build should succeed");
 
         if let BaseReceipt::Legacy(inner) = receipt {
             assert!(!inner.status.coerce_status()); // Failed transaction

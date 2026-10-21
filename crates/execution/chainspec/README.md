@@ -19,6 +19,16 @@ other fields for Base.
 Chain names are resolved from CLI strings via `SUPPORTED_CHAINS`, which maps `"base"`,
 `"base_sepolia"`, `"base-sepolia"`, and `"dev"` to specs built from `base-common-chains`.
 
+### Denim timestamps
+
+Execution validates Denim timestamps against the same block-number schedule as consensus.
+The schedule uses the genesis header's number and timestamp, the legacy block interval, and
+the runtime-aware Denim activation time. Built-in networks supply the interval from `ChainConfig`;
+integrated `base rpc`, `base sequencer`, and `base follow` use the loaded rollup config's
+`block_time`. Standalone execution nodes using a custom genesis must set a nonzero
+`config.blockTime` (seconds). Once Denim is scheduled, validation rejects missing or zero
+intervals rather than assuming a two-second cadence.
+
 ### Base fee computation
 
 Two helpers handle upgrade-specific base fee logic:

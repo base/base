@@ -6,8 +6,8 @@ use alloy_primitives::Address;
 use base_common_genesis::RollupConfig;
 use base_consensus_peers::{PeerMonitoring, PeerScoreLevel};
 use libp2p::{
-    Multiaddr, StreamProtocol, SwarmBuilder, gossipsub::Config, identity::Keypair,
-    noise::Config as NoiseConfig, tcp::Config as TcpConfig, yamux::Config as YamuxConfig,
+    Multiaddr, SwarmBuilder, gossipsub::Config, identity::Keypair, noise::Config as NoiseConfig,
+    tcp::Config as TcpConfig, yamux::Config as YamuxConfig,
 };
 use tokio::sync::watch::{self};
 
@@ -160,7 +160,6 @@ impl GossipDriverBuilder {
         let addr = self.gossip_addr;
         let signer_recv = self.signer;
         let rollup_config = self.rollup_config;
-        let l2_chain_id = rollup_config.l2_chain_id;
         let block_time = rollup_config.block_time;
 
         let (signer_tx, signer_rx) = watch::channel(signer_recv);
@@ -227,16 +226,6 @@ impl GossipDriverBuilder {
             }
         }
 
-        // Let's setup the sync request/response protocol stream.
-        let mut sync_handler = behaviour.sync_req_resp.new_control();
-
-        let protocol = format!("/opstack/req/payload_by_number/{l2_chain_id}/0/");
-        let sync_protocol_name = StreamProtocol::try_from_owned(protocol)
-            .map_err(|_| GossipDriverBuilderError::SetupSyncReqRespError)?;
-        let sync_protocol = sync_handler
-            .accept(sync_protocol_name)
-            .map_err(|_| GossipDriverBuilderError::SyncReqRespAlreadyAccepted)?;
-
         // Build the swarm with DNS+TCP transport.
         // Note: with_dns() must be called after with_tcp() to wrap TCP with DNS resolution.
         debug!(target: "gossip", peer_id = %keypair.public().to_peer_id(), "Building Swarm");
@@ -266,8 +255,6 @@ impl GossipDriverBuilder {
                 swarm,
                 addr,
                 handler,
-                sync_handler,
-                sync_protocol,
                 gate,
                 GossipDriverConfig {
                     max_identify_peerstore_peers,

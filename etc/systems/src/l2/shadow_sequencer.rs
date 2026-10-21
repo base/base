@@ -22,11 +22,13 @@ use alloy_primitives::{Address, B256};
 use alloy_rpc_types_engine::JwtSecret;
 use base_common_genesis::RollupConfig;
 use base_consensus_node::NodeMode;
+use base_execution_txpool::ValiditySignatureMode;
 use eyre::{Result, WrapErr};
 use url::Url;
 
 use super::{
     InProcessBuilder, InProcessBuilderConfig, InProcessConsensus, InProcessConsensusConfig,
+    InProcessNodeRuntime,
 };
 
 /// Configuration for starting a single [`ShadowSequencer`].
@@ -83,6 +85,7 @@ impl ShadowSequencer {
         let chain_spec = InProcessBuilderConfig::chain_spec_from_genesis_json(&config.l2_genesis)
             .wrap_err("Failed to parse shadow builder L2 chain spec")?;
         let builder = InProcessBuilder::start(InProcessBuilderConfig {
+            runtime: InProcessNodeRuntime::SystemTest,
             chain_spec,
             datadir: None,
             jwt_secret: config.jwt_secret,
@@ -92,11 +95,12 @@ impl ShadowSequencer {
             p2p_port: None,
             flashblocks_port: None,
             metrics_port: None,
-            enable_experimental_validity_transactions: false,
             payload_builder_cutover: false,
             extra_extensions: Vec::new(),
+            validity_signature_mode: ValiditySignatureMode::Off,
             block_time: Duration::from_secs(config.rollup_config.block_time),
             persistence_threshold: None,
+            persistence_backpressure_threshold: None,
             txpool_max_transactions: None,
             txpool_max_size_mb: None,
             txpool_max_account_slots: None,
@@ -123,6 +127,7 @@ impl ShadowSequencer {
             verifier_l1_confs: 0,
             shadow_blocks_per_cycle: Some(config.shadow_blocks_per_cycle),
             upgrade_signal: None,
+            execution_forwarding_endpoint: None,
         })
         .await
         .wrap_err("Failed to start shadow consensus")?;

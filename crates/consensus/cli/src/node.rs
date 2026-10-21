@@ -8,7 +8,7 @@ use base_cli_utils::{LogConfig, RuntimeManager};
 use base_common_chains::ChainConfig;
 use base_common_genesis::RollupConfig;
 use base_consensus_node::{
-    EngineConfig, L1ConfigBuilder, NodeMode, RollupNode, RollupNodeBuilder,
+    EngineConfig, L1ConfigBuilder, NodeMode, NodeOperatingMode, RollupNode, RollupNodeBuilder,
     UpgradeSignalBuilderConfig,
 };
 use base_upgrade_signal::{
@@ -351,19 +351,25 @@ impl From<EmbeddedSequencerConsensusNodeConfigArgs> for ConsensusNodeConfigArgs 
 impl ConsensusNodeArgs {
     /// Loads the configured L2 rollup config.
     pub fn load_rollup_config(&self) -> eyre::Result<RollupConfig> {
-        self.config.l2_config.load(&self.chain.l2_chain_id).map_err(|e| eyre::eyre!(e))
+        let mut config =
+            self.config.l2_config.load(&self.chain.l2_chain_id).map_err(|e| eyre::eyre!(e))?;
+        self.validate_da_batch_inbox_override()?;
+        self.config.l1_rpc_args.apply_da_batch_inbox_override(&mut config);
+        Ok(config)
     }
 
-    /// Validates that a non-shadow sequencer has a signing key configured.
+    /// Validates the signing-key requirements for the configured sequencer mode.
     pub fn validate_sequencer_key(&self) -> eyre::Result<()> {
-        if self.config.node_mode.is_sequencer()
-            && !self.config.sequencer_flags.config().is_shadow_sequencer()
-        {
+        if self.config.node_mode.is_sequencer() {
             let signer = &self.config.p2p_flags.signer;
-            if signer.sequencer_key.is_none()
-                && signer.sequencer_key_path.is_none()
-                && signer.endpoint.is_none()
-            {
+            let has_signing_key = signer.sequencer_key.is_some()
+                || signer.sequencer_key_path.is_some()
+                || signer.endpoint.is_some();
+            let operating_mode = self.operating_mode()?;
+            if operating_mode.is_isolated() && has_signing_key {
+                eyre::bail!("isolated sequencer must not configure a signing key");
+            }
+            if matches!(operating_mode, NodeOperatingMode::Sequencer) && !has_signing_key {
                 eyre::bail!(
                     "sequencer mode requires a signing key; \
                      provide --p2p.sequencer.key, --p2p.sequencer.key.path, \
@@ -372,6 +378,14 @@ impl ConsensusNodeArgs {
             }
         }
         Ok(())
+    }
+
+    fn operating_mode(&self) -> eyre::Result<NodeOperatingMode> {
+        let flags = &self.config.sequencer_flags;
+        self.config
+            .node_mode
+            .try_into_operating_mode(flags.isolated, flags.shadow_blocks_per_cycle)
+            .map_err(|e| eyre::eyre!(e))
     }
 
     /// Validates that synthetic account funding is confined to shadow sequencers.
@@ -387,8 +401,7 @@ impl ConsensusNodeArgs {
             eyre::bail!("shadow funding amount exceeds u128::MAX (TxDeposit::mint limit)");
         }
         if sequencer.shadow_funding_address.is_some()
-            && (!self.config.node_mode.is_sequencer()
-                || sequencer.shadow_blocks_per_cycle.is_none())
+            && !self.operating_mode()?.is_shadow_sequencer()
         {
             eyre::bail!("shadow funding is only supported in shadow sequencer mode");
         }
@@ -402,6 +415,18 @@ impl ConsensusNodeArgs {
         {
             eyre::bail!(
                 "--l1.dangerously-override-da-batcher-sender is only supported in validator mode"
+            );
+        }
+        Ok(())
+    }
+
+    /// Validates that the dangerous DA batch inbox override is only used by validators.
+    pub fn validate_da_batch_inbox_override(&self) -> eyre::Result<()> {
+        if self.config.l1_rpc_args.l1_da_batch_inbox_override.is_some()
+            && !self.config.node_mode.is_validator()
+        {
+            eyre::bail!(
+                "--l1.dangerously-override-da-batch-inbox is only supported in validator mode"
             );
         }
         Ok(())
@@ -440,13 +465,17 @@ impl ConsensusNodeArgs {
         self.validate_sequencer_key()?;
         self.validate_shadow_funding()?;
         self.validate_da_batcher_sender_override()?;
+        self.validate_da_batch_inbox_override()?;
+        self.config.l1_rpc_args.apply_da_batch_inbox_override(&mut cfg);
         if let Some(sender) = self.config.l1_rpc_args.l1_da_batcher_sender_override {
             warn!(
                 %sender,
                 "overriding the L1 data-availability batcher sender filter"
             );
         }
-        let upgrade_signal_config = self.config.upgrade_signal.config();
+        let mut upgrade_signal = self.config.upgrade_signal.clone();
+        upgrade_signal.apply_chain_default(cfg.l2_chain_id.id());
+        let upgrade_signal_config = upgrade_signal.config();
         let upgrade_signal_l1_rpc = overrides.upgrade_signal_l1_rpc.clone();
         if let Some(signal_config) = &upgrade_signal_config
             && startup_mode.reads_and_applies()
@@ -514,7 +543,7 @@ impl ConsensusNodeArgs {
             l2_jwt_secret: jwt_secret,
             l1_url: self.config.l1_rpc_args.l1_eth_rpc.clone(),
             l1_rpc_timeout: self.config.l1_rpc_args.l1_rpc_timeout,
-            mode: self.config.node_mode,
+            mode: self.operating_mode()?,
         };
 
         let mut builder = RollupNodeBuilder::new(
@@ -757,6 +786,29 @@ mod tests {
         assert_eq!(config.l1_rpc_args.l1_da_batcher_sender_override, Some(batcher));
     }
 
+    #[test]
+    fn embedded_consensus_applies_da_batch_inbox_override() {
+        let inbox = address!("3333333333333333333333333333333333333333");
+        let args = CommandParser::<EmbeddedConsensusNodeConfigArgs>::parse_from([
+            "base",
+            "--l1-eth-rpc",
+            "http://localhost:8545",
+            "--l1-beacon",
+            "http://localhost:5052",
+            "--l1.dangerously-override-da-batch-inbox",
+            "0x3333333333333333333333333333333333333333",
+        ])
+        .args;
+        let args = ConsensusNodeArgs::new(
+            ConsensusChainArgs { l2_chain_id: Chain::from(8453_u64) },
+            ConsensusNodeConfigArgs::from(args),
+        );
+
+        let config = args.load_rollup_config().unwrap();
+
+        assert_eq!(config.batch_inbox_address, inbox);
+    }
+
     fn upgrade_schedule(signals: &[(BaseUpgrade, u64)]) -> UpgradeSignalSchedule {
         UpgradeSignalSchedule::new(
             1,
@@ -941,7 +993,7 @@ mod tests {
         let args = ConsensusNodeArgs::new(
             ConsensusChainArgs { l2_chain_id: Chain::from(8453_u64) },
             ConsensusNodeConfigArgs {
-                node_mode: NodeMode::Sequencer,
+                node_mode: NodeMode::ShadowSequencer,
                 sequencer_flags: SequencerArgs {
                     shadow_blocks_per_cycle: std::num::NonZeroU64::new(10),
                     ..SequencerArgs::default()
@@ -951,6 +1003,75 @@ mod tests {
         );
 
         assert!(args.validate_sequencer_key().is_ok());
+    }
+
+    #[test]
+    fn isolated_sequencer_does_not_require_signing_key() {
+        let args = ConsensusNodeArgs::new(
+            ConsensusChainArgs { l2_chain_id: Chain::from(8453_u64) },
+            ConsensusNodeConfigArgs {
+                node_mode: NodeMode::IsolatedSequencer,
+                ..default_node_config_args()
+            },
+        );
+
+        assert!(args.validate_sequencer_key().is_ok());
+    }
+
+    #[rstest]
+    #[case::isolated(
+        SequencerArgs { isolated: true, ..SequencerArgs::default() },
+        NodeOperatingMode::IsolatedSequencer
+    )]
+    #[case::shadow(
+        SequencerArgs {
+            shadow_blocks_per_cycle: std::num::NonZeroU64::new(10),
+            ..SequencerArgs::default()
+        },
+        NodeOperatingMode::ShadowSequencer {
+            blocks_per_cycle: std::num::NonZeroU64::new(10).unwrap(),
+        }
+    )]
+    fn legacy_sequencer_flags_select_operating_mode(
+        #[case] sequencer_flags: SequencerArgs,
+        #[case] expected: NodeOperatingMode,
+    ) {
+        let args = ConsensusNodeArgs::new(
+            ConsensusChainArgs { l2_chain_id: Chain::from(8453_u64) },
+            ConsensusNodeConfigArgs {
+                node_mode: NodeMode::Sequencer,
+                sequencer_flags,
+                ..default_node_config_args()
+            },
+        );
+
+        assert_eq!(args.operating_mode().unwrap(), expected);
+        assert!(args.validate_sequencer_key().is_ok());
+    }
+
+    #[rstest]
+    #[case::raw_key(SignerArgs { sequencer_key: Some(B256::ZERO), ..Default::default() })]
+    #[case::key_path(SignerArgs {
+        sequencer_key_path: Some(PathBuf::from("/tmp/key.hex")),
+        ..Default::default()
+    })]
+    #[case::remote_endpoint(SignerArgs {
+        endpoint: Some(Url::parse("http://localhost:8080").unwrap()),
+        ..Default::default()
+    })]
+    fn isolated_sequencer_rejects_signing_key(#[case] signer: SignerArgs) {
+        let args = ConsensusNodeArgs::new(
+            ConsensusChainArgs { l2_chain_id: Chain::from(8453_u64) },
+            ConsensusNodeConfigArgs {
+                node_mode: NodeMode::IsolatedSequencer,
+                p2p_flags: P2PArgs { signer, ..P2PArgs::default() },
+                ..default_node_config_args()
+            },
+        );
+
+        let error = args.validate_sequencer_key().unwrap_err();
+
+        assert_eq!(error.to_string(), "isolated sequencer must not configure a signing key");
     }
 
     #[test]
@@ -1030,6 +1151,29 @@ mod tests {
         );
 
         assert!(args.validate_da_batcher_sender_override().is_err());
+    }
+
+    #[test]
+    fn da_batch_inbox_override_is_rejected_in_sequencer_mode() {
+        let args = ConsensusNodeArgs::new(
+            ConsensusChainArgs { l2_chain_id: Chain::from(8453_u64) },
+            ConsensusNodeConfigArgs {
+                node_mode: NodeMode::Sequencer,
+                l1_rpc_args: L1ClientArgs {
+                    l1_da_batch_inbox_override: Some(address!(
+                        "3333333333333333333333333333333333333333"
+                    )),
+                    ..L1ClientArgs::default()
+                },
+                ..default_node_config_args()
+            },
+        );
+
+        let error = args.load_rollup_config().unwrap_err();
+
+        assert!(error.to_string().contains(
+            "--l1.dangerously-override-da-batch-inbox is only supported in validator mode"
+        ));
     }
 
     #[test]

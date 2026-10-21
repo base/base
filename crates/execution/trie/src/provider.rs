@@ -15,18 +15,20 @@ use reth_revm::{
 };
 use reth_trie::{
     StateRoot, StorageRoot,
-    hashed_cursor::HashedCursor,
+    hashed_cursor::zero_destroyed_account_storage,
     proof::{self, Proof},
     witness::TrieWitness,
 };
 use reth_trie_common::{
-    AccountProof, ExecutionWitnessMode, HashedPostState, HashedStorage, KeccakKeyHasher,
-    MultiProof, MultiProofTargets, StorageMultiProof, StorageProof, TrieInput,
-    updates::TrieUpdates,
+    AccountProof, DecodedMultiProofV2, ExecutionWitnessMode, HashedPostState, HashedStorage,
+    KeccakKeyHasher, MultiProof, MultiProofTargets, MultiProofTargetsV2, StorageMultiProof,
+    StorageProof, TrieInput, updates::TrieUpdates,
 };
 
 use crate::{
-    BaseProofsStorage, BaseProofsStorageError, BaseProofsStore,
+    BaseProofsHashedAccountCursorFactory, BaseProofsStorage, BaseProofsStorageError,
+    BaseProofsStore,
+    metrics::{StateMetrics, StateSeekKind},
     proof::{
         DatabaseProof, DatabaseStateRoot, DatabaseStorageProof, DatabaseStorageRoot,
         DatabaseTrieWitness,
@@ -92,13 +94,19 @@ impl<'a, Storage: BaseProofsStore + Clone> BaseProofsStateProviderRef<'a, Storag
         hashed_key: B256,
     ) -> ProviderResult<Option<StorageValue>> {
         let tx = self.ensure_tx()?;
-        Ok(self
-            .storage
-            .storage_hashed_cursor_with_tx(&tx, keccak256(address.0), self.block_number)
-            .map_err(Into::<ProviderError>::into)?
-            .seek(hashed_key)
-            .map_err(Into::<ProviderError>::into)?
-            .and_then(|(key, val)| (key == hashed_key).then_some(val)))
+        let hashed_address = keccak256(address.0);
+        Ok(StateMetrics::record_seek(
+            StateSeekKind::Storage,
+            || {
+                self.storage.hashed_storage_with_tx(
+                    &tx,
+                    hashed_address,
+                    hashed_key,
+                    self.block_number,
+                )
+            },
+            Option::is_some,
+        )?)
     }
 }
 
@@ -221,13 +229,30 @@ impl<'a, Storage: BaseProofsStore + Clone> StateProofProvider
             .map_err(ProviderError::from)
             .map(|hm| hm.into_values().collect())
     }
+
+    fn multiproof_v2(
+        &self,
+        input: TrieInput,
+        targets: MultiProofTargetsV2,
+    ) -> ProviderResult<DecodedMultiProofV2> {
+        Proof::overlay_multiproof_v2(self.storage, self.block_number, input, targets)
+            .map_err(ProviderError::from)
+    }
 }
 
 impl<'a, Storage: BaseProofsStore> HashedPostStateProvider
     for BaseProofsStateProviderRef<'a, Storage>
 {
     fn hashed_post_state(&self, bundle_state: &BundleState) -> ProviderResult<HashedPostState> {
-        Ok(HashedPostState::from_bundle_state::<KeccakKeyHasher>(bundle_state.state()))
+        let mut hashed_state =
+            HashedPostState::from_bundle_state::<KeccakKeyHasher>(bundle_state.state());
+        let tx = self.ensure_tx()?;
+        zero_destroyed_account_storage(
+            &BaseProofsHashedAccountCursorFactory::new(self.storage, &tx, self.block_number),
+            bundle_state.state(),
+            &mut hashed_state,
+        )?;
+        Ok(hashed_state)
     }
 }
 
@@ -235,13 +260,11 @@ impl<'a, Storage: BaseProofsStore> AccountReader for BaseProofsStateProviderRef<
     fn basic_account(&self, address: &Address) -> ProviderResult<Option<Account>> {
         let hashed_key = keccak256(address.0);
         let tx = self.ensure_tx()?;
-        Ok(self
-            .storage
-            .account_hashed_cursor_with_tx(&tx, self.block_number)
-            .map_err(Into::<ProviderError>::into)?
-            .seek(hashed_key)
-            .map_err(Into::<ProviderError>::into)?
-            .and_then(|(key, account)| (key == hashed_key).then_some(account)))
+        Ok(StateMetrics::record_seek(
+            StateSeekKind::Account,
+            || self.storage.hashed_account_with_tx(&tx, hashed_key, self.block_number),
+            Option::is_some,
+        )?)
     }
 }
 
@@ -263,23 +286,23 @@ impl<'a, Storage: BaseProofsStore> BytecodeReader for BaseProofsStateProviderRef
 
 #[cfg(all(test, not(feature = "metrics")))]
 mod tests {
+    use alloy_primitives::U256;
     use reth_provider::noop::NoopProvider;
 
     use super::*;
-    use crate::InMemoryProofsStorage;
+    use crate::{BaseProofsInitialStateStore, InMemoryProofsStorage};
 
     #[test]
-    fn test_base_proofs_state_provider_ref_debug() {
+    fn basic_account_reads_from_proofs_storage() {
+        let address = Address::repeat_byte(0x42);
+        let account = Account { nonce: 7, balance: U256::from(1_000), bytecode_hash: None };
+        let storage = InMemoryProofsStorage::new();
+        storage.store_hashed_accounts(vec![(keccak256(address), Some(account))]).unwrap();
+
         let latest: Box<dyn StateProvider + Send> = Box::<NoopProvider>::default();
-        let storage: crate::BaseProofsStorage<InMemoryProofsStorage> =
-            InMemoryProofsStorage::new().into();
-        let block_number = 42u64;
+        let provider = BaseProofsStateProviderRef::new(latest, &storage, 42);
 
-        let provider = BaseProofsStateProviderRef::new(latest, &storage, block_number);
-
-        assert_eq!(
-            format!("{:?}", provider),
-            "BaseProofsStateProviderRef { storage: InMemoryProofsStorage { inner: RwLock { data: InMemoryStorageInner { account_branches: {}, storage_branches: {}, hashed_accounts: {}, hashed_storages: {}, trie_updates: {}, post_states: {}, earliest_block: None, anchor_block: None } } }, block_number: 42 }"
-        );
+        assert_eq!(provider.basic_account(&address).unwrap(), Some(account));
+        assert_eq!(provider.basic_account(&Address::repeat_byte(0x43)).unwrap(), None);
     }
 }

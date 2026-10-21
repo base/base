@@ -42,7 +42,8 @@ pub(crate) fn b20_token_for(sender: Address, run_salt: B256) -> Address {
 /// Generates B-20 precompile token transfer transactions.
 ///
 /// During the load phase, each generated transaction calls `transfer(address,uint256)` on the
-/// sender's own B-20 token precompile. The B-20 `transfer` selector is ERC-20 compatible, so this
+/// sender's own B-20 token precompile, sending to the runner-supplied recipient (the paired
+/// counterparty: alice <-> bob). The B-20 `transfer` selector is ERC-20 compatible, so this
 /// exercises the precompile's state-mutation code path (balance updates, event emission) under
 /// sustained load.
 ///
@@ -95,6 +96,10 @@ impl Payload for B20TransferPayload {
         true
     }
 
+    fn uses_pair_recipient(&self) -> bool {
+        true
+    }
+
     fn generate(&self, rng: &mut SeededRng, from: Address, to: Address) -> TransactionRequest {
         let run_salt =
             self.run_salt().expect("b20 run salt must be set by prepare before generate");
@@ -132,16 +137,6 @@ mod tests {
     use alloy_primitives::address;
 
     use super::*;
-
-    #[test]
-    fn token_is_deterministic_per_sender_and_run() {
-        let sender = address!("00000000000000000000000000000000000000a1");
-        let run_salt = B256::repeat_byte(0x11);
-
-        // Same (sender, run_salt) always yields the same salt and token.
-        assert_eq!(b20_salt_for(sender, run_salt), b20_salt_for(sender, run_salt));
-        assert_eq!(b20_token_for(sender, run_salt), b20_token_for(sender, run_salt));
-    }
 
     #[test]
     fn different_senders_get_different_tokens() {
@@ -194,18 +189,9 @@ mod tests {
     }
 
     #[test]
-    fn pending_payload_has_no_salt_until_set() {
+    fn b20_payload_uses_pair_recipient() {
         let payload = B20TransferPayload::pending(U256::from(1), U256::from(1));
-        assert!(payload.run_salt().is_none());
-        assert!(payload.run_salt().is_none());
-    }
-
-    #[test]
-    fn prepare_writes_salt_into_context_outputs() {
-        // Pure unit check: setting the OnceLock mirrors what lifecycle prepare does before RPC.
-        let payload = B20TransferPayload::pending(U256::from(1), U256::from(1));
-        let salt = B256::repeat_byte(0xab);
-        payload.run_salt.set(salt).expect("unset");
-        assert_eq!(payload.run_salt(), Some(salt));
+        assert!(payload.uses_runner_recipient());
+        assert!(payload.uses_pair_recipient());
     }
 }

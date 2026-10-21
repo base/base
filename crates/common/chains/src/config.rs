@@ -59,6 +59,8 @@ pub struct ChainConfig {
     pub cobalt_timestamp: Option<u64>,
     /// Denim activation timestamp (optional).
     pub denim_timestamp: Option<u64>,
+    /// Everest activation timestamp (optional).
+    pub everest_timestamp: Option<u64>,
 
     // Genesis
     /// L1 genesis block hash.
@@ -101,9 +103,8 @@ pub struct ChainConfig {
     // Roles
     /// Unsafe block signer address.
     pub unsafe_block_signer: Option<Address>,
-    // Gas limits
-    /// Maximum gas limit for L2 blocks.
-    pub max_gas_limit: u64,
+
+    // Pruning
     /// Maximum number of entries deleted per execution-layer pruning batch.
     pub prune_delete_limit: usize,
 
@@ -155,7 +156,7 @@ pub const ZERONET_BERYL_ACTIVATION_ADMIN_ADDRESS: Address =
 
 /// Local Docker devnet activation registry admin used by Beryl before Cobalt state-backed storage.
 ///
-/// Matches `L2_ACTIVATION_ADMIN_ADDR` in `etc/scripts/devnet/setup-l2.sh`, which defaults to the
+/// Matches `L2_ACTIVATION_ADMIN_ADDR` in the offline devnet `op-deployer`, which defaults to the
 /// deterministic devnet sequencer address.
 pub const DEVNET_BERYL_ACTIVATION_ADMIN_ADDRESS: Address =
     address!("9965507D1a55bcC2695C58ba16FB37d819B0A4dc");
@@ -171,13 +172,22 @@ impl ChainConfig {
     pub const ZERONET_NAME: &'static str = "base-zeronet";
     /// CLI chain name for the local Base devnet.
     pub const DEVNET_NAME: &'static str = "dev";
-    /// All chain names accepted by Base chain parsers.
+    /// Base-centric operator selector for Base Mainnet.
+    pub const MAINNET_SELECTOR: &'static str = "mainnet";
+    /// Base-centric operator selector for Base Sepolia.
+    pub const SEPOLIA_SELECTOR: &'static str = "sepolia";
+    /// Base-centric operator selector for Base Zeronet.
+    pub const ZERONET_SELECTOR: &'static str = "zeronet";
+    /// All chain names accepted by Base chain parsers, canonical selectors first.
     pub const SUPPORTED_NAMES: &'static [&'static str] = &[
+        Self::MAINNET_SELECTOR,
+        Self::SEPOLIA_SELECTOR,
+        Self::ZERONET_SELECTOR,
+        Self::DEVNET_NAME,
         Self::MAINNET_NAME,
         Self::SEPOLIA_ALIAS,
         Self::SEPOLIA_NAME,
         Self::ZERONET_NAME,
-        Self::DEVNET_NAME,
     ];
 
     /// Base Mainnet chain configuration.
@@ -243,10 +253,38 @@ impl ChainConfig {
     /// while `by_name("mainnet")` returns `None`.
     pub fn from_base_chain(name: &str) -> Option<&'static Self> {
         match name {
-            "mainnet" => Some(Self::mainnet()),
-            "sepolia" => Some(Self::sepolia()),
-            "zeronet" => Some(Self::zeronet()),
-            "dev" => Some(Self::devnet()),
+            Self::MAINNET_SELECTOR => Some(Self::mainnet()),
+            Self::SEPOLIA_SELECTOR => Some(Self::sepolia()),
+            Self::ZERONET_SELECTOR => Some(Self::zeronet()),
+            Self::DEVNET_NAME => Some(Self::devnet()),
+            _ => None,
+        }
+    }
+
+    /// Resolves a chain from either naming surface: the Base-centric selectors matched
+    /// by [`from_base_chain`](Self::from_base_chain) or the namespaced names matched by
+    /// [`by_name`](Self::by_name).
+    ///
+    /// Chain parsers should use this so every Base entry point accepts the same inputs.
+    pub fn by_any_name(name: &str) -> Option<&'static Self> {
+        Self::from_base_chain(name).or_else(|| Self::by_name(name))
+    }
+
+    /// Returns the Base-centric operator selector (`mainnet`, `sepolia`,
+    /// `zeronet`, `dev`) for this chain — the inverse of
+    /// [`from_base_chain`](Self::from_base_chain).
+    ///
+    /// Use this to normalize any recognized chain input back to the canonical
+    /// selector understood by the `base` binary's `--chain` surface, for example
+    /// `by_any_name(x).and_then(Self::base_chain_selector)`.
+    ///
+    /// Returns `None` for chains that have no built-in selector.
+    pub const fn base_chain_selector(&self) -> Option<&'static str> {
+        match self.chain_id {
+            8453 => Some(Self::MAINNET_SELECTOR),
+            84532 => Some(Self::SEPOLIA_SELECTOR),
+            763360 => Some(Self::ZERONET_SELECTOR),
+            84538453 => Some(Self::DEVNET_NAME),
             _ => None,
         }
     }
@@ -336,6 +374,9 @@ impl ChainConfig {
                 beryl: self.beryl_timestamp,
                 cobalt: self.cobalt_timestamp,
                 denim: self.denim_timestamp,
+                everest: self.everest_timestamp,
+                // Zenith is a genesis-only testing gate and must never enter a canonical chain
+                // schedule. Devnets and tests opt in through custom genesis config instead.
                 zenith: None,
             },
         }
@@ -432,8 +473,9 @@ const MAINNET: ChainConfig = ChainConfig {
     jovian_timestamp: 1_764_691_201,
     azul_timestamp: Some(1_779_991_200),
     beryl_timestamp: Some(1_782_410_400),
-    cobalt_timestamp: None,
-    denim_timestamp: None,
+    cobalt_timestamp: Some(1_790_791_200),
+    denim_timestamp: Some(1_793_901_600),
+    everest_timestamp: None,
 
     genesis_l1_hash: b256!("5c13d307623a926cd31415036c8b7fa14572f9dac64528e857a470511fc30771"),
     genesis_l1_number: 17_481_768,
@@ -456,7 +498,6 @@ const MAINNET: ChainConfig = ChainConfig {
 
     unsafe_block_signer: Some(address!("Af6E19BE0F9cE7f8afd49a1824851023A8249e8a")),
 
-    max_gas_limit: 105_000_000,
     prune_delete_limit: 20_000,
 
     bootnodes: Bootnodes {
@@ -506,8 +547,9 @@ const SEPOLIA: ChainConfig = ChainConfig {
     jovian_timestamp: 1_763_568_001,
     azul_timestamp: Some(1_776_708_000),
     beryl_timestamp: Some(1_781_805_600),
-    cobalt_timestamp: None,
-    denim_timestamp: None,
+    cobalt_timestamp: Some(1_790_186_400),
+    denim_timestamp: Some(1_792_605_600),
+    everest_timestamp: None,
 
     genesis_l1_hash: b256!("cac9a83291d4dec146d6f7f69ab2304f23f5be87b1789119a0c5b1e4482444ed"),
     genesis_l1_number: 4_370_868,
@@ -530,7 +572,6 @@ const SEPOLIA: ChainConfig = ChainConfig {
 
     unsafe_block_signer: Some(address!("b830b99c95Ea32300039624Cb567d324D4b1D83C")),
 
-    max_gas_limit: 45_000_000,
     prune_delete_limit: 10_000,
 
     bootnodes: Bootnodes {
@@ -573,6 +614,7 @@ const DEVNET: ChainConfig = ChainConfig {
     beryl_timestamp: None,
     cobalt_timestamp: None,
     denim_timestamp: None,
+    everest_timestamp: None,
 
     genesis_l1_hash: B256::ZERO,
     genesis_l1_number: 0,
@@ -595,7 +637,6 @@ const DEVNET: ChainConfig = ChainConfig {
 
     unsafe_block_signer: None,
 
-    max_gas_limit: 30_000_000,
     prune_delete_limit: 20_000,
 
     bootnodes: Bootnodes::EMPTY,
@@ -627,6 +668,7 @@ const ZERONET: ChainConfig = ChainConfig {
     beryl_timestamp: Some(1_782_349_188),
     cobalt_timestamp: None,
     denim_timestamp: None,
+    everest_timestamp: None,
 
     genesis_l1_hash: b256!("acb2c60e3887888b5111b05c8d8f32e2761c7d4a0f10562d199253ab072c3a71"),
     genesis_l1_number: 3_083_762,
@@ -649,19 +691,15 @@ const ZERONET: ChainConfig = ChainConfig {
 
     unsafe_block_signer: Some(address!("cf17274338d3128f6C96d9af54511a17e8b38a08")),
 
-    max_gas_limit: 25_000_000,
     prune_delete_limit: 10_000,
 
     bootnodes: Bootnodes {
         execution: &[
-            "enode://cd4528698249ad8b36fa7b1cad75aa5683ad355e6f0776629eaff1d83cfbb575062330d711efefbfa0d531c86969c2daf9a88fb28cddbbad216f46ac367981eb@44.198.4.118:30301",
-            "enode://cd4528698249ad8b36fa7b1cad75aa5683ad355e6f0776629eaff1d83cfbb575062330d711efefbfa0d531c86969c2daf9a88fb28cddbbad216f46ac367981eb@44.198.4.118:9200",
-            "enode://ea188fb5482ff8eb372956d674ecb6d09cbd42e6874121957a47b2ad252f54953c49866d2dcabcfc272fcc63e163a67b097fe4354283e56ddf077fc017b2a127@52.2.11.95:30301",
-            "enode://ea188fb5482ff8eb372956d674ecb6d09cbd42e6874121957a47b2ad252f54953c49866d2dcabcfc272fcc63e163a67b097fe4354283e56ddf077fc017b2a127@52.2.11.95:9200",
+            "enode://695c5367f2934114e567a3b4ea77a629ff1c9fdfa0290afbe4c79de9ebd8e1448763c4fc4ce203f5e4bce05f293b756e190ae73609bff858377d79fc7905b0d8@54.90.107.224:30301",
+            "enode://695c5367f2934114e567a3b4ea77a629ff1c9fdfa0290afbe4c79de9ebd8e1448763c4fc4ce203f5e4bce05f293b756e190ae73609bff858377d79fc7905b0d8@54.90.107.224:9200",
         ],
         consensus: &[
-            "enr:-J-4QDS5Z5P4BoDbOlLGOcdXjcv2Nc5_PgP28lIxP4lKU6qYR-m10c8rHdcHk0DdmTvZpndoSpuK__688dmX-tlOsNKGAZ22NI20gmlkgnY0gmlwhCzGBHaHb3BzdGFja4WA-80FAIlzZWNwMjU2azGhA4Qs8_ZWeMdUNldNdjnAxd018gjWofqKoW4_pr0qzvTtg3RjcIIkBoN1ZHCCJAY",
-            "enr:-J-4QKgMF6zAv7u_75LTXLJKgLtEn4HcI8gaqsDAl78nfw7VQE-EN6dUZCZW4_CI42MAOWUCinrV8rP5hbBu3aje-u-GAZ22LUBogmlkgnY0gmlwhDQCC1-Hb3BzdGFja4WA-80FAIlzZWNwMjU2azGhArwjzoKlEKQiEXtuZ0qT23Wy_3IeEXbAJo7VKDO2Yovig3RjcIIkBoN1ZHCCJAY",
+            "enr:-Ji4QLr5n2VbXQohRywhyi2_efPpMcKzKL7DtllVNgkn_fDuGszrobGsTjM9WX7TxVqbW6YX8pxEx7lmvHprVc3HX8wBgmlkgnY0gmlwhDZaa-CHb3BzdGFja4Tgyy4AiXNlY3AyNTZrMaEDG1GmDUlW2vWzc7QQ_QOgPFG1Gfn-sCC8FQTef-GdCo2DdGNwgiQGg3VkcIIkBg",
         ],
     },
 
@@ -729,7 +767,7 @@ mod tests {
     #[test]
     fn supported_chain_names_resolve() {
         for name in ChainConfig::SUPPORTED_NAMES {
-            assert!(ChainConfig::by_name(name).is_some(), "{name} should resolve");
+            assert!(ChainConfig::by_any_name(name).is_some(), "{name} should resolve");
         }
         assert_eq!(ChainConfig::by_name(ChainConfig::SEPOLIA_ALIAS), Some(ChainConfig::sepolia()));
         assert_eq!(
@@ -759,6 +797,44 @@ mod tests {
         // namespaced names matched by `by_name`.
         assert_eq!(ChainConfig::by_name("mainnet"), None);
         assert_eq!(ChainConfig::from_base_chain(ChainConfig::MAINNET_NAME), None);
+    }
+
+    #[test]
+    fn by_any_name_accepts_both_naming_surfaces() {
+        for (selector, namespaced) in [
+            (ChainConfig::MAINNET_SELECTOR, ChainConfig::MAINNET_NAME),
+            (ChainConfig::SEPOLIA_SELECTOR, ChainConfig::SEPOLIA_NAME),
+            (ChainConfig::ZERONET_SELECTOR, ChainConfig::ZERONET_NAME),
+        ] {
+            assert_eq!(
+                ChainConfig::by_any_name(selector),
+                ChainConfig::by_any_name(namespaced),
+                "{selector} and {namespaced} must resolve to the same chain"
+            );
+        }
+
+        assert_eq!(ChainConfig::by_any_name("not-a-chain"), None);
+    }
+
+    #[test]
+    fn base_chain_selector_is_inverse_of_from_base_chain() {
+        // Every selector round-trips through `from_base_chain`.
+        for selector in ["mainnet", "sepolia", "zeronet", "dev"] {
+            let config = ChainConfig::from_base_chain(selector).unwrap();
+            assert_eq!(config.base_chain_selector(), Some(selector));
+        }
+
+        // Legacy namespaced names normalize to the canonical selector, letting
+        // callers accept both surfaces: `by_name(x).and_then(base_chain_selector)`.
+        assert_eq!(ChainConfig::mainnet().base_chain_selector(), Some("mainnet"));
+        assert_eq!(
+            ChainConfig::by_name("base").and_then(ChainConfig::base_chain_selector),
+            Some("mainnet")
+        );
+        assert_eq!(
+            ChainConfig::by_name("base-sepolia").and_then(ChainConfig::base_chain_selector),
+            Some("sepolia")
+        );
     }
 
     #[test]

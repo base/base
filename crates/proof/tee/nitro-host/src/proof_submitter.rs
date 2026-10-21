@@ -26,7 +26,8 @@ impl ProofSubmitterRequest {
         worker_id: String,
         proof: NitroProofResult,
     ) -> Result<WorkerSubmitProofRequest, ProofSubmitterRequestError> {
-        let NitroProofResult::Tee { aggregate_proposal, proposals, tee_signer } = proof else {
+        let NitroProofResult::Tee { aggregate_proposal, intermediate_roots, tee_signer } = proof
+        else {
             return Err(ProofSubmitterRequestError::UnsupportedProofResult);
         };
 
@@ -36,7 +37,7 @@ impl ProofSubmitterRequest {
             worker_id,
             result: ServiceProofResult::Tee(TeeProofResult {
                 aggregate_proposal,
-                proposals,
+                intermediate_roots,
                 tee_kind: TeeKind::AwsNitro,
                 tee_signer,
             }),
@@ -74,7 +75,7 @@ mod tests {
             "worker-1".to_string(),
             NitroProofResult::Tee {
                 aggregate_proposal: proposal(10),
-                proposals: vec![proposal(8), proposal(9), proposal(10)],
+                intermediate_roots: vec![B256::repeat_byte(6), B256::repeat_byte(1)],
                 tee_signer,
             },
         )
@@ -89,7 +90,7 @@ mod tests {
         assert_eq!(result.tee_signer, tee_signer);
         assert_eq!(result.tee_kind, TeeKind::AwsNitro);
         assert_eq!(result.aggregate_proposal.l2_block_number, 10);
-        assert_eq!(result.proposals.len(), 3);
+        assert_eq!(result.intermediate_roots, vec![B256::repeat_byte(6), B256::repeat_byte(1)]);
     }
 
     #[test]

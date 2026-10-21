@@ -7,11 +7,9 @@ mod accounting;
 mod layout;
 mod namespace;
 mod packing;
-mod precompile;
 mod storable;
 mod storable_primitives;
 mod storable_tests;
-mod test_fields;
 mod utils;
 
 use proc_macro::TokenStream;
@@ -34,20 +32,6 @@ pub fn contract(attr: TokenStream, item: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn namespace(attr: TokenStream, item: TokenStream) -> TokenStream {
     namespace::expand(attr, item)
-}
-
-/// Generates EVM precompile constructor and optional singleton installation methods.
-///
-/// By default this expands through `crate::macros::base_precompile!` in the invoking crate. Callers
-/// outside `base-common-precompiles` can pass `macro_path = path::to::wrapper_macro` to override the
-/// runtime wrapper macro.
-///
-/// Optional bare `install` generates `Self::install`, registering at `<Storage>::ADDRESS` — the
-/// same address used for storage construction. Parenthesized `install(...)` is rejected so
-/// dispatch and storage addresses cannot desynchronize.
-#[proc_macro_attribute]
-pub fn precompile(attr: TokenStream, item: TokenStream) -> TokenStream {
-    precompile::expand(attr, item)
 }
 
 /// Derives the `Storable` trait for structs with named fields and `#[repr(u8)]` unit enums.
@@ -111,16 +95,4 @@ pub fn storable_arrays(_input: TokenStream) -> TokenStream {
 #[proc_macro]
 pub fn storable_nested_arrays(_input: TokenStream) -> TokenStream {
     storable_primitives::gen_nested_arrays().into()
-}
-
-/// Test helper macro for validating slots.
-#[proc_macro]
-pub fn gen_test_fields_layout(input: TokenStream) -> TokenStream {
-    test_fields::gen_layout(proc_macro2::TokenStream::from(input))
-}
-
-/// Test helper macro for validating struct field slots.
-#[proc_macro]
-pub fn gen_test_fields_struct(input: TokenStream) -> TokenStream {
-    test_fields::gen_struct_fields(proc_macro2::TokenStream::from(input))
 }

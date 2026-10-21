@@ -37,14 +37,15 @@ use base_common_precompiles::{
     Asset, AssetAccounting, AssetV2, AssetVersion, AssetVersions, B20_MAX_SUPPLY_CAP, B20AssetInit,
     B20AssetStorage, B20AssetToken, B20PolicyType, B20TokenRole, ERC165_INTERFACE_ID,
     ERC8056_INTERFACE_IDS, FakePolicyAccounting, IB20, IB20Asset, NoopPrecompileCallObserver,
-    PolicyVersion, TokenAccounting, UpgradeGatedStorageFeatures,
+    PolicyVersion, TokenAccounting,
 };
 use base_precompile_storage::{BasePrecompileError, Handler, HashMapStorageProvider, StorageCtx};
 
 mod common;
 use common::{
-    ADMIN, ALICE, BOB, CAROL, CHAIN_ID, MEMO, POLICY_ID, TOKEN, anvil_owner, bless_or_assert_gas,
-    bless_or_assert_root, hash_token_state, ok_true, signed_permit, u,
+    ADMIN, ALICE, BOB, CAROL, CHAIN_ID, MEMO, POLICY_ID, POLICY_ID_2, TOKEN, allow0, anvil_owner,
+    assert_token_root as assert_root, bless_or_assert_gas, fund, give_role, last_topic0, ok_true,
+    seize_receiver_policy, signed_permit, storage_at, u,
 };
 
 // --- fixtures ---------------------------------------------------------------
@@ -53,10 +54,6 @@ const NAME: &str = "Base Asset";
 const SYMBOL: &str = "bASSET";
 const DECIMALS: u8 = 6;
 const LOGIC: AssetV2 = AssetV2;
-
-/// A second policy id distinct from [`POLICY_ID`], used where a test needs both a
-/// seize-holder and a seize-receiver scope configured simultaneously.
-const POLICY_ID_2: u64 = (1u64 << 56) | 8;
 
 // --- pinned storage hashes (bless with BLESS_GOLDEN=1; see module docs) --------
 //
@@ -156,10 +153,7 @@ const ROOT_ANNOUNCE_V2: B256 =
 /// Fresh provider with an initialized `Base Asset` at [`TOKEN`], matching the factory
 /// bootstrap: the multiplier slot is left physically zero and the getter normalizes it to WAD.
 fn fresh() -> HashMapStorageProvider {
-    let mut storage = HashMapStorageProvider::new_with_storage_features(
-        CHAIN_ID,
-        UpgradeGatedStorageFeatures::from_upgrade(BaseUpgrade::Cobalt),
-    );
+    let mut storage = storage_at(BaseUpgrade::Cobalt);
     StorageCtx::enter(&mut storage, |ctx| {
         let mut token = B20AssetStorage::from_address(TOKEN, ctx);
         token
@@ -175,92 +169,25 @@ fn fresh() -> HashMapStorageProvider {
     storage
 }
 
-/// Mutates raw token storage through the accounting port (test setup only).
-fn seed(storage: &mut HashMapStorageProvider, f: impl FnOnce(&mut B20AssetStorage<'_>)) {
-    StorageCtx::enter(storage, |ctx| {
-        let mut token = B20AssetStorage::from_address(TOKEN, ctx);
-        f(&mut token);
-    });
-}
-
-/// Reads token state through the accounting port.
-fn read<R>(storage: &mut HashMapStorageProvider, f: impl FnOnce(&B20AssetStorage<'_>) -> R) -> R {
-    StorageCtx::enter(storage, |ctx| f(&B20AssetStorage::from_address(TOKEN, ctx)))
-}
-
 /// Advances the provider's block timestamp, for maturity/scheduling assertions.
 const fn warp(storage: &mut HashMapStorageProvider, ts: U256) {
     storage.set_timestamp(ts);
-}
-
-/// Drives one op through the resolver-gated (`Cobalt` -> V2) unprivileged path.
-fn op(
-    storage: &mut HashMapStorageProvider,
-    caller: Address,
-    policy: FakePolicyAccounting,
-    calldata: Vec<u8>,
-) -> Result<Bytes, BasePrecompileError> {
-    storage.set_caller(caller);
-    StorageCtx::enter(storage, |ctx| {
-        let version =
-            AssetVersions::from_base_upgrade(BaseUpgrade::Cobalt).expect("Cobalt activates V2");
-        B20AssetToken::with_storage_and_policy(
-            B20AssetStorage::from_address(TOKEN, ctx),
-            policy,
-            PolicyVersion::V2,
-        )
-        .route(ctx, &calldata, version, false, NoopPrecompileCallObserver)
-    })
-}
-
-/// Drives one op through V2 with factory-init privilege (guards skipped).
-fn op_privileged(
-    storage: &mut HashMapStorageProvider,
-    caller: Address,
-    policy: FakePolicyAccounting,
-    calldata: Vec<u8>,
-) -> Result<Bytes, BasePrecompileError> {
-    storage.set_caller(caller);
-    StorageCtx::enter(storage, |ctx| {
-        B20AssetToken::with_storage_and_policy(
-            B20AssetStorage::from_address(TOKEN, ctx),
-            policy,
-            PolicyVersion::V2,
-        )
-        .route(ctx, &calldata, AssetVersion::V2, true, NoopPrecompileCallObserver)
-    })
-}
-
-/// Topic-0 (signature hash) of the last event emitted by the token.
-fn last_topic0(storage: &HashMapStorageProvider) -> B256 {
-    storage.get_events(TOKEN).last().expect("an emitted event").topics()[0]
-}
-
-/// Asserts the token's storage hash, or prints it under `BLESS_GOLDEN` for (re)pinning.
-#[track_caller]
-fn assert_root(label: &str, storage: HashMapStorageProvider, expected: B256) {
-    bless_or_assert_root(label, hash_token_state(storage, TOKEN), expected);
-}
-
-/// Grants `role` to `who` and bumps the role member count (setup only).
-fn give_role(token: &mut B20AssetStorage<'_>, role: B256, who: Address) {
-    token.set_role(role, who, true).unwrap();
-    let next = token.role_member_count(role).unwrap() + U256::ONE;
-    token.set_role_member_count(role, next).unwrap();
-}
-
-/// Credits `who` with `amount` and grows total supply to match (setup only).
-fn fund(token: &mut B20AssetStorage<'_>, who: Address, amount: U256) {
-    let balance = token.balance_of(who).unwrap();
-    token.set_balance(who, balance + amount).unwrap();
-    let supply = token.total_supply().unwrap();
-    token.set_total_supply(supply + amount).unwrap();
 }
 
 /// The asset operator role id: `keccak256("OPERATOR_ROLE")` (frozen identically at V1 and V2).
 fn operator_role() -> B256 {
     keccak256("OPERATOR_ROLE")
 }
+
+crate::token_golden_harness! {
+    storage: B20AssetStorage,
+    token: B20AssetToken,
+    versions: AssetVersions,
+    version: AssetVersion::V2,
+    upgrade: BaseUpgrade::Cobalt,
+    policy: PolicyVersion::V2,
+}
+crate::unprivileged_revert_gas_harness!(B20AssetStorage);
 
 /// The V2 EIP-712 domain separator for the token at [`TOKEN`] on [`CHAIN_ID`].
 fn domain_separator(storage: &mut HashMapStorageProvider) -> B256 {
@@ -279,21 +206,6 @@ fn domain_separator(storage: &mut HashMapStorageProvider) -> B256 {
 fn make_seizable(token: &mut B20AssetStorage<'_>) {
     token.set_policy_id(B20PolicyType::SeizeExempt.id(), POLICY_ID).unwrap();
     token.set_policy_id(B20PolicyType::SeizeReceiver.id(), POLICY_ID_2).unwrap();
-}
-
-/// A `FakePolicyAccounting` that authorizes `who` under [`POLICY_ID_2`] (the seize-receiver
-/// scope configured by [`make_seizable`]), leaving [`POLICY_ID`] (seize-holder) with no members.
-fn seize_receiver_policy(who: Address) -> FakePolicyAccounting {
-    let mut policy = FakePolicyAccounting::new();
-    policy.allow(POLICY_ID_2, who);
-    policy
-}
-
-/// A `FakePolicyAccounting` authorizing `who` under the default (0) scope.
-fn allow0(who: Address) -> FakePolicyAccounting {
-    let mut p = FakePolicyAccounting::new();
-    p.allow(0, who);
-    p
 }
 
 /// Asserts an unprivileged metadata/admin op reverts for a caller lacking `role`.
@@ -344,10 +256,7 @@ fn dispatch_rejects_nonzero_value() {
 
 #[test]
 fn dispatch_reverts_when_uninitialized() {
-    let mut s = HashMapStorageProvider::new_with_storage_features(
-        CHAIN_ID,
-        UpgradeGatedStorageFeatures::from_upgrade(BaseUpgrade::Cobalt),
-    );
+    let mut s = storage_at(BaseUpgrade::Cobalt);
     let calldata = IB20::balanceOfCall { account: ALICE }.abi_encode();
     let out = StorageCtx::enter(&mut s, |ctx| {
         B20AssetToken::with_storage_and_policy(
@@ -370,10 +279,7 @@ fn dispatch_reverts_when_uninitialized() {
 #[test]
 fn golden_dispatch_no_observer_wrapper_reverts_uninitialized() {
     // Exercises the no-observer `dispatch()` wrapper + the is_initialized=false gate.
-    let mut s = HashMapStorageProvider::new_with_storage_features(
-        CHAIN_ID,
-        UpgradeGatedStorageFeatures::from_upgrade(BaseUpgrade::Cobalt),
-    );
+    let mut s = storage_at(BaseUpgrade::Cobalt);
     s.set_caller(ALICE);
     let calldata = IB20::balanceOfCall { account: ALICE }.abi_encode();
     let out = StorageCtx::enter(&mut s, |ctx| {
@@ -1868,6 +1774,31 @@ fn golden_permit_reverts_when_expired() {
     assert_eq!(err, BasePrecompileError::revert(IB20::ExpiredSignature { deadline: u(10) }));
 }
 
+/// V2 `permit` charges the fixed ECRECOVER-equivalent recovery cost (`PermitArgs::RECOVER_GAS`,
+/// 3000) on the real provider. The `.route(...)` path bills no calldata gas — that lives in
+/// `dispatch_with_observer` — so the observed `gas_deducted()` is exactly the recovery charge. The
+/// V1 golden pins this at `0`; that metered/unmetered contrast is the point of this pair.
+#[test]
+fn golden_permit_charges_recovery_gas() {
+    let mut s = fresh();
+    let owner = anvil_owner();
+    let calldata =
+        signed_permit(domain_separator(&mut fresh()), U256::ZERO, owner, BOB, u(500), U256::MAX)
+            .abi_encode();
+    s.set_caller(owner);
+    s.set_timestamp(U256::ZERO);
+    StorageCtx::enter(&mut s, |ctx| {
+        B20AssetToken::with_storage_and_policy(
+            B20AssetStorage::from_address(TOKEN, ctx),
+            FakePolicyAccounting::new(),
+            PolicyVersion::V2,
+        )
+        .route(ctx, &calldata, AssetVersion::V2, true, NoopPrecompileCallObserver)
+    })
+    .expect("permit must succeed");
+    assert_eq!(s.gas_deducted(), 3000, "V2 permit must charge the fixed ECRECOVER-equivalent cost");
+}
+
 // ============================================================================
 // computed + direct + constant reads (behavior-preserving: V1 roots reused)
 // ============================================================================
@@ -3006,6 +2937,36 @@ fn golden_announce_reverts_id_already_used() {
     );
 }
 
+/// Cantina #16 follow-up: the same malformed `announce` (invalid UTF-8 in `id`) short-circuits at
+/// V2/Cobalt with a cheap, calldata-size-independent rejection instead of paying the owned
+/// decoder's O(aliases · `tail_bytes`) diagnostic construction. Contrast with
+/// `golden_announce_malformed_id_stays_on_owned_diagnostic_at_v1` in the V1 suite, which pins the
+/// opposite: the frozen version must never take this path.
+#[test]
+fn golden_announce_malformed_id_short_circuits_at_v2() {
+    let mut s = fresh();
+    let marker = "malformed-id-marker";
+    let mut calldata = IB20Asset::announceCall {
+        internalCalls: vec![],
+        id: marker.into(),
+        description: String::new(),
+        uri: String::new(),
+    }
+    .abi_encode();
+    let at = calldata.windows(marker.len()).position(|w| w == marker.as_bytes()).unwrap();
+    calldata[at..at + marker.len()].fill(0xff);
+
+    let err = op(&mut s, ALICE, FakePolicyAccounting::new(), calldata).unwrap_err();
+    assert_eq!(
+        err,
+        BasePrecompileError::AbiDecodeFailed {
+            selector: IB20Asset::announceCall::SELECTOR,
+            error: "announce: malformed bytes[] payload".to_string(),
+        },
+        "V2 must reject with the bounded, calldata-size-independent error",
+    );
+}
+
 #[test]
 fn golden_announce_reverts_nested_announce() {
     let mut s = fresh();
@@ -3115,62 +3076,6 @@ fn golden_announce_unprivileged_requires_role() {
 // schedule-independent signal instead: the SLOAD / SSTORE / KECCAK256 op counts a
 // call performs. These are the storage-access footprint that drives real gas, so a
 // change here (e.g. an extra SLOAD in V2) is caught even when bytes/state/events match.
-
-/// Runs `calldata` privileged after `setup`, returning `(sload, sstore, keccak256)` counts.
-fn gas(
-    setup: impl FnOnce(&mut B20AssetStorage<'_>),
-    caller: Address,
-    policy: FakePolicyAccounting,
-    calldata: Vec<u8>,
-) -> (u64, u64, u64) {
-    let mut s = fresh();
-    seed(&mut s, setup);
-    s.set_caller(caller);
-    // Pinned so multiplier-scheduling calldata (`effectiveAt` etc.) is never accidentally
-    // "in the past" relative to the provider's real wall-clock default timestamp.
-    warp(&mut s, U256::ZERO);
-    s.reset_counters();
-    StorageCtx::enter(&mut s, |ctx| {
-        B20AssetToken::with_storage_and_policy(
-            B20AssetStorage::from_address(TOKEN, ctx),
-            policy,
-            PolicyVersion::V2,
-        )
-        .route(ctx, &calldata, AssetVersion::V2, true, NoopPrecompileCallObserver)
-    })
-    .expect("gas-footprint op must succeed");
-    (s.counter_sload(), s.counter_sstore(), s.counter_keccak256())
-}
-
-/// Unprivileged reject-path footprint: `(sload, sstore, keccak256)` after `calldata` reverts.
-///
-/// Locks that a zero-address `transfer` rejects before the transfer-policy-id SLOAD
-/// (Cantina #13 / BOP-600). Privileged success-path `gas()` cannot catch that.
-fn gas_unprivileged_revert(
-    setup: impl FnOnce(&mut B20AssetStorage<'_>),
-    caller: Address,
-    policy: FakePolicyAccounting,
-    calldata: Vec<u8>,
-) -> (u64, u64, u64) {
-    let mut s = fresh();
-    seed(&mut s, setup);
-    s.set_caller(caller);
-    warp(&mut s, U256::ZERO);
-    s.reset_counters();
-    let err = StorageCtx::enter(&mut s, |ctx| {
-        let version =
-            AssetVersions::from_base_upgrade(BaseUpgrade::Cobalt).expect("Cobalt activates V2");
-        B20AssetToken::with_storage_and_policy(
-            B20AssetStorage::from_address(TOKEN, ctx),
-            policy,
-            PolicyVersion::V2,
-        )
-        .route(ctx, &calldata, version, false, NoopPrecompileCallObserver)
-    })
-    .expect_err("reject-path gas golden must revert");
-    assert_eq!(err, BasePrecompileError::revert(IB20::InvalidReceiver { receiver: Address::ZERO }));
-    (s.counter_sload(), s.counter_sstore(), s.counter_keccak256())
-}
 
 #[test]
 fn golden_transfer_unprivileged_zero_receiver_storage_access() {
@@ -3453,6 +3358,23 @@ fn golden_gas_footprints() {
                 .abi_encode(),
             ),
         ),
+        (
+            "permit",
+            gas(
+                |_t| {},
+                anvil_owner(),
+                FakePolicyAccounting::new(),
+                signed_permit(
+                    domain_separator(&mut fresh()),
+                    U256::ZERO,
+                    anvil_owner(),
+                    BOB,
+                    u(500),
+                    U256::MAX,
+                )
+                .abi_encode(),
+            ),
+        ),
     ];
 
     let expected: &[(&str, (u64, u64, u64))] = &[
@@ -3479,6 +3401,7 @@ fn golden_gas_footprints() {
         ("batch_mint", (11, 4, 0)),
         ("announce", (1, 1, 0)),
         ("update_extra_metadata", (1, 1, 0)),
+        ("permit", (3, 2, 5)),
     ];
 
     bless_or_assert_gas(&actual, expected);

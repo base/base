@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use alloy_consensus::{SignableTransaction, TxReceipt};
 use alloy_eips::eip2718::Encodable2718;
+use alloy_json_rpc::RpcError;
 use alloy_network::TransactionBuilder;
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_provider::{Provider, RootProvider};
@@ -18,24 +19,27 @@ use base_common_consensus::{Call, Eip8130Signed, TxEip8130};
 use base_common_network::Base;
 use base_common_rpc_types::BaseTransactionRequest;
 use base_execution_txpool::{
-    DEFAULT_MAX_VALIDITY_PREDICATES, NoExtensions, ValidatedTransaction, ValidityOperator,
-    ValidityPredicate,
+    DEFAULT_MAX_VALIDITY_PREDICATES, NoExtensions, ValidatedTransaction, ValidityAuthorization,
+    ValidityOperator, ValidityPredicate, ValiditySignatureMode,
 };
 use base_system_tests::{
     ANVIL_ACCOUNT_1, ANVIL_ACCOUNT_2, ANVIL_ACCOUNT_3, ANVIL_ACCOUNT_4, SystemTestProviderExt,
     SystemTestStack, SystemTestStackBuilder,
 };
 use base_tx_forwarding::TxForwardingConfig;
-use base_txpool_rpc::SendRawTransactionValidityRequest;
+use base_txpool_rpc::SendRawTransactionValidityOptions;
 use eyre::{Result, WrapErr};
 use tokio::time::{sleep, timeout};
 
 const L1_CHAIN_ID: u64 = 1337;
 const L2_CHAIN_ID: u64 = 84538453;
-const COBALT_ACTIVATION_BLOCK: u64 = 0;
-const DENIM_ACTIVATION_BLOCK: u64 = 1;
+const DENIM_ACTIVATION_BLOCK: u64 = 0;
+const EVEREST_ACTIVATION_BLOCK: u64 = 0;
 const TX_RECEIPT_TIMEOUT: Duration = Duration::from_secs(60);
 const PENDING_TX_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Number of Denim full blocks in the default 60-second validity window.
+const VALIDITY_EXPIRY_BLOCKS: u64 = 300;
 
 /// Waits until the builder knows a transaction, proving forwarding completed.
 async fn wait_for_pending_transaction(provider: &RootProvider<Base>, tx_hash: B256) -> Result<()> {
@@ -51,18 +55,29 @@ async fn wait_for_pending_transaction(provider: &RootProvider<Base>, tx_hash: B2
     .wrap_err("transaction did not become pending on the builder")?
 }
 
+/// Builds the bounded block-number expiry required for validity transaction ingress.
+///
+/// `current_block` must be the latest block of the node receiving the submission: ingress measures
+/// the validity window from its own head, which can lag the builder's by a few blocks.
+fn block_expiry_bound(current_block: u64) -> ValidityPredicate {
+    ValidityPredicate::BlockNumber {
+        op: ValidityOperator::LessThanOrEqual,
+        value: U256::from(current_block.saturating_add(VALIDITY_EXPIRY_BLOCKS)),
+    }
+}
+
 /// Starts a separate mempool and builder pair using the native Denim payload builder with validity
-/// transport enabled on both nodes.
+/// transport enabled on both nodes and Everest active for EIP-8130 transactions.
 async fn start_validity_system() -> Result<SystemTestStack> {
     let system = SystemTestStackBuilder::new()
         .with_l1_chain_id(L1_CHAIN_ID)
         .with_l2_chain_id(L2_CHAIN_ID)
-        .with_base_cobalt_activation_block(COBALT_ACTIVATION_BLOCK)
+        .with_base_cobalt_activation_block(0)
         .with_base_denim_activation_block(DENIM_ACTIVATION_BLOCK)
+        .with_base_everest_activation_block(EVEREST_ACTIVATION_BLOCK)
         .with_tx_forwarding(
             TxForwardingConfig::new(vec![]).with_resend_after_ms(2000).with_max_batch_size(100),
         )
-        .with_experimental_validity_transactions()
         .with_payload_builder_cutover()
         .build()
         .await?;
@@ -121,7 +136,11 @@ fn create_signed_eip8130_tx(
         max_fee_per_gas: 1_000_000_000,
         gas_limit: 200_000,
         account_changes: Vec::new(),
-        calls: vec![vec![Call { to: Address::repeat_byte(0xde), data: Bytes::new() }]],
+        calls: vec![vec![Call {
+            to: Address::repeat_byte(0xde),
+            value: U256::ZERO,
+            data: Bytes::new(),
+        }]],
         metadata: Bytes::new(),
         payer: None,
     };
@@ -129,6 +148,73 @@ fn create_signed_eip8130_tx(
     let signed = Eip8130Signed::new(tx, signature.as_bytes().to_vec().into(), Bytes::new());
     let tx_hash = *signed.hash();
     Ok((signed.encoded_2718().into(), tx_hash))
+}
+
+/// User-signed predicates survive real forwarding and reach an enforcing builder's chain.
+#[tokio::test]
+async fn signed_validity_forwarding_is_included_by_an_enforcing_builder() -> Result<()> {
+    let system = SystemTestStackBuilder::new()
+        .with_l1_chain_id(L1_CHAIN_ID)
+        .with_l2_chain_id(L2_CHAIN_ID)
+        .with_base_cobalt_activation_block(0)
+        .with_base_denim_activation_block(DENIM_ACTIVATION_BLOCK)
+        .with_base_everest_activation_block(EVEREST_ACTIVATION_BLOCK)
+        .with_tx_forwarding(TxForwardingConfig::new(vec![]).with_resend_after_ms(2000))
+        .with_validity_signature_mode(ValiditySignatureMode::Required)
+        .with_payload_builder_cutover()
+        .build()
+        .await?;
+    let builder = system.l2_builder_provider()?;
+    let ingress = system.l2_client_provider()?;
+    builder.wait_for_block(3, Duration::from_secs(15)).await?;
+    ingress.wait_for_block(3, Duration::from_secs(15)).await?;
+    let signer: PrivateKeySigner =
+        format!("0x{}", hex::encode(ANVIL_ACCOUNT_1.private_key.as_slice())).parse()?;
+    let recipient = ANVIL_ACCOUNT_2.address;
+    let previous_balance = builder.get_balance(recipient).await?;
+    let nonce = ingress.get_transaction_count(signer.address()).await?;
+    let (_, raw, tx_hash) = create_signed_eip1559_tx(&signer, L2_CHAIN_ID, nonce, recipient)?;
+    let mut validity = vec![
+        ValidityPredicate::Balance {
+            address: signer.address(),
+            op: ValidityOperator::GreaterThan,
+            value: U256::ZERO,
+        },
+        block_expiry_bound(ingress.get_block_number().await?),
+    ];
+    let client = RpcClient::builder().http(system.l2_client_rpc_url()?);
+    let unsigned =
+        SendRawTransactionValidityOptions { validity: validity.clone(), validity_signature: None };
+    let error = client
+        .request::<_, B256>("base_sendRawTransactionValidity", (raw.clone(), unsigned))
+        .await
+        .expect_err("required ingress must reject unsigned predicates");
+    let RpcError::ErrorResp(error) = error else {
+        panic!("expected a JSON-RPC signature policy error, got {error}");
+    };
+    assert_eq!(error.data.expect("signature rejection reason").get(), r#""missing""#);
+    let signature = signer.sign_hash_sync(&ValidityAuthorization::signing_hash(
+        L2_CHAIN_ID,
+        tx_hash,
+        &validity,
+    ))?;
+    // Signing is independent of the evaluation order used during forwarding.
+    validity.reverse();
+    let options =
+        SendRawTransactionValidityOptions { validity, validity_signature: Some(signature) };
+    let submitted: B256 = client.request("base_sendRawTransactionValidity", (raw, options)).await?;
+    assert_eq!(submitted, tx_hash);
+    let receipt = builder.wait_for_receipt(tx_hash, TX_RECEIPT_TIMEOUT).await?;
+    assert_eq!(receipt.inner.transaction_hash, tx_hash);
+    assert!(receipt.inner.block_number.is_some());
+    assert!(receipt.inner.inner.status());
+    assert_eq!(receipt.inner.from, signer.address());
+    assert_eq!(
+        builder.get_balance(recipient).await?,
+        previous_balance + U256::from(1_000_000_000u64)
+    );
+    system.shutdown().await?;
+    Ok(())
 }
 
 /// Tests that a single transaction can be inserted via `base_insertValidatedTransaction`.
@@ -178,8 +264,8 @@ async fn test_insert_validated_transaction_single() -> Result<()> {
         create_signed_eip1559_tx(&signer, L2_CHAIN_ID, nonce, recipient)?;
 
     // Create the ValidatedTransaction payload
-    let validated_tx = ValidatedTransaction { sender, raw: raw_tx, extensions: NoExtensions {} };
-
+    let validated_tx =
+        ValidatedTransaction { sender, raw: raw_tx, metering: None, extensions: NoExtensions {} };
     // Create RPC client for the builder
     let builder_rpc_url = system.l2_rpc_url()?;
     let rpc_client = RpcClient::builder().http(builder_rpc_url);
@@ -230,13 +316,17 @@ async fn test_insert_validated_transaction_single() -> Result<()> {
 async fn test_tx_forwarding_pipeline_system() -> Result<()> {
     // Build a system test stack with tx forwarding enabled on the client.
     // The client will forward transactions to the builder's RPC endpoint
+    let forwarding =
+        TxForwardingConfig::new(vec![]).with_resend_after_ms(2000).with_max_batch_size(100);
+    assert!(
+        !forwarding.inline_simulation,
+        "inline simulation must stay off so this path still inserts then forwards"
+    );
+
     let system = SystemTestStackBuilder::new()
         .with_l1_chain_id(L1_CHAIN_ID)
         .with_l2_chain_id(L2_CHAIN_ID)
-        .with_tx_forwarding(
-            // Empty vector here because the stack will populate it with the builder RPC URL on start
-            TxForwardingConfig::new(vec![]).with_resend_after_ms(2000).with_max_batch_size(100),
-        )
+        .with_tx_forwarding(forwarding)
         .build()
         .await?;
 
@@ -337,12 +427,17 @@ async fn test_matching_validity_predicates_are_forwarded_and_included() -> Resul
     let recipient_balance_before = builder_provider.get_balance(recipient).await?;
     let (_, raw_tx, expected_tx_hash) =
         create_signed_eip1559_tx(&signer, L2_CHAIN_ID, nonce, recipient)?;
-    let current_block = builder_provider.get_block_number().await?;
+    let current_block = client_provider.get_block_number().await?;
     let validity = vec![
         ValidityPredicate::Balance {
             address: sender,
             op: ValidityOperator::GreaterThan,
             value: U256::ZERO,
+        },
+        ValidityPredicate::Nonce {
+            address: sender,
+            op: ValidityOperator::Equal,
+            value: U256::from(nonce),
         },
         ValidityPredicate::Storage {
             address: recipient,
@@ -355,13 +450,14 @@ async fn test_matching_validity_predicates_are_forwarded_and_included() -> Resul
             op: ValidityOperator::GreaterThan,
             value: U256::from(current_block),
         },
+        block_expiry_bound(current_block),
     ];
     let rpc_client = RpcClient::builder().http(system.l2_client_rpc_url()?);
 
     let tx_hash: B256 = rpc_client
         .request(
             "base_sendRawTransactionValidity",
-            (SendRawTransactionValidityRequest { tx: raw_tx, validity },),
+            (raw_tx, SendRawTransactionValidityOptions { validity, validity_signature: None }),
         )
         .await?;
 
@@ -399,18 +495,25 @@ async fn test_validity_transaction_submitted_directly_to_builder_is_included() -
     let recipient_balance_before = builder_provider.get_balance(recipient).await?;
     let (_, raw_tx, expected_tx_hash) =
         create_signed_eip1559_tx(&signer, L2_CHAIN_ID, nonce, recipient)?;
+    let current_block = builder_provider.get_block_number().await?;
     let rpc_client = RpcClient::builder().http(system.l2_rpc_url()?);
     let tx_hash: B256 = rpc_client
         .request(
             "base_sendRawTransactionValidity",
-            (SendRawTransactionValidityRequest {
-                tx: raw_tx,
-                validity: vec![ValidityPredicate::Balance {
-                    address: sender,
-                    op: ValidityOperator::GreaterThan,
-                    value: U256::ZERO,
-                }],
-            },),
+            (
+                raw_tx,
+                SendRawTransactionValidityOptions {
+                    validity: vec![
+                        ValidityPredicate::Balance {
+                            address: sender,
+                            op: ValidityOperator::GreaterThan,
+                            value: U256::ZERO,
+                        },
+                        block_expiry_bound(current_block),
+                    ],
+                    validity_signature: None,
+                },
+            ),
         )
         .await?;
 
@@ -427,10 +530,12 @@ async fn test_validity_transaction_submitted_directly_to_builder_is_included() -
         "direct builder ingress must not alter the signed transaction's state transition"
     );
 
+    system.shutdown().await?;
+
     Ok(())
 }
 
-/// Verifies a Cobalt EIP-8130 transaction can carry validity predicates through forwarding and be
+/// Verifies an Everest EIP-8130 transaction can carry validity predicates through forwarding and be
 /// included by the native Denim payload builder.
 #[tokio::test]
 async fn test_eip8130_validity_transaction_is_included_by_native_builder() -> Result<()> {
@@ -444,18 +549,25 @@ async fn test_eip8130_validity_transaction_is_included_by_native_builder() -> Re
     let nonce_sequence = client_provider.get_transaction_count(sender).await?;
     let (raw_tx, expected_tx_hash) =
         create_signed_eip8130_tx(&signer, L2_CHAIN_ID, nonce_sequence)?;
+    let current_block = client_provider.get_block_number().await?;
     let rpc_client = RpcClient::builder().http(system.l2_client_rpc_url()?);
     let tx_hash: B256 = rpc_client
         .request(
             "base_sendRawTransactionValidity",
-            (SendRawTransactionValidityRequest {
-                tx: raw_tx,
-                validity: vec![ValidityPredicate::Balance {
-                    address: sender,
-                    op: ValidityOperator::GreaterThan,
-                    value: U256::ZERO,
-                }],
-            },),
+            (
+                raw_tx,
+                SendRawTransactionValidityOptions {
+                    validity: vec![
+                        ValidityPredicate::Balance {
+                            address: sender,
+                            op: ValidityOperator::GreaterThan,
+                            value: U256::ZERO,
+                        },
+                        block_expiry_bound(current_block),
+                    ],
+                    validity_signature: None,
+                },
+            ),
         )
         .await?;
 
@@ -489,18 +601,25 @@ async fn test_validity_transaction_lands_after_balance_predicate_becomes_true() 
     let recipient: Address = "0x000000000000000000000000000000000000dEaD".parse()?;
     let (_, raw_validity_tx, validity_tx_hash) =
         create_signed_eip1559_tx(&validity_signer, L2_CHAIN_ID, validity_nonce, recipient)?;
+    let current_block = client_provider.get_block_number().await?;
     let rpc_client = RpcClient::builder().http(system.l2_client_rpc_url()?);
     let submitted_hash: B256 = rpc_client
         .request(
             "base_sendRawTransactionValidity",
-            (SendRawTransactionValidityRequest {
-                tx: raw_validity_tx,
-                validity: vec![ValidityPredicate::Balance {
-                    address: watched,
-                    op: ValidityOperator::GreaterThanOrEqual,
-                    value: U256::from(1),
-                }],
-            },),
+            (
+                raw_validity_tx,
+                SendRawTransactionValidityOptions {
+                    validity: vec![
+                        ValidityPredicate::Balance {
+                            address: watched,
+                            op: ValidityOperator::GreaterThanOrEqual,
+                            value: U256::from(1),
+                        },
+                        block_expiry_bound(current_block),
+                    ],
+                    validity_signature: None,
+                },
+            ),
         )
         .await?;
     assert_eq!(submitted_hash, validity_tx_hash);
@@ -537,6 +656,72 @@ async fn test_validity_transaction_lands_after_balance_predicate_becomes_true() 
     Ok(())
 }
 
+/// Verifies a forwarded transaction remains parked until another account's nonce advances.
+#[tokio::test]
+async fn test_validity_transaction_lands_after_nonce_predicate_becomes_true() -> Result<()> {
+    let system = start_validity_system().await?;
+    let builder_provider = system.l2_builder_provider()?;
+    let client_provider = system.l2_client_provider()?;
+    let validity_signer = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_1.private_key)?;
+    let trigger_signer = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_2.private_key)?;
+    client_provider.wait_for_balance(validity_signer.address(), Duration::from_secs(15)).await?;
+    client_provider.wait_for_balance(trigger_signer.address(), Duration::from_secs(15)).await?;
+
+    let watched = trigger_signer.address();
+    let trigger_nonce = client_provider.get_transaction_count(watched).await?;
+    let validity_nonce = client_provider.get_transaction_count(validity_signer.address()).await?;
+    let recipient: Address = "0x000000000000000000000000000000000000dEaD".parse()?;
+    let (_, raw_validity_tx, validity_tx_hash) =
+        create_signed_eip1559_tx(&validity_signer, L2_CHAIN_ID, validity_nonce, recipient)?;
+    let current_block = client_provider.get_block_number().await?;
+    let rpc_client = RpcClient::builder().http(system.l2_client_rpc_url()?);
+    let submitted_hash: B256 = rpc_client
+        .request(
+            "base_sendRawTransactionValidity",
+            (
+                raw_validity_tx,
+                SendRawTransactionValidityOptions {
+                    validity: vec![
+                        ValidityPredicate::Nonce {
+                            address: watched,
+                            op: ValidityOperator::Equal,
+                            value: U256::from(trigger_nonce + 1),
+                        },
+                        block_expiry_bound(current_block),
+                    ],
+                    validity_signature: None,
+                },
+            ),
+        )
+        .await?;
+    assert_eq!(submitted_hash, validity_tx_hash);
+
+    wait_for_pending_transaction(&builder_provider, validity_tx_hash).await?;
+    let pending_at = builder_provider.get_block_number().await?;
+    builder_provider.wait_for_block(pending_at + 2, Duration::from_secs(15)).await?;
+    assert!(
+        builder_provider.get_transaction_receipt(validity_tx_hash).await?.is_none(),
+        "transaction landed while its nonce predicate was false"
+    );
+
+    let (_, raw_trigger_tx, trigger_tx_hash) =
+        create_signed_eip1559_tx(&trigger_signer, L2_CHAIN_ID, trigger_nonce, recipient)?;
+    let pending_trigger = client_provider.send_raw_transaction(&raw_trigger_tx).await?;
+    assert_eq!(*pending_trigger.tx_hash(), trigger_tx_hash);
+    let trigger_receipt =
+        builder_provider.wait_for_receipt(trigger_tx_hash, TX_RECEIPT_TIMEOUT).await?;
+    let validity_receipt =
+        builder_provider.wait_for_receipt(validity_tx_hash, TX_RECEIPT_TIMEOUT).await?;
+    assert!(
+        trigger_receipt.inner.block_number <= validity_receipt.inner.block_number,
+        "validity transaction landed before the nonce advanced"
+    );
+    assert_eq!(builder_provider.get_transaction_count(watched).await?, trigger_nonce + 1);
+
+    system.shutdown().await?;
+    Ok(())
+}
+
 /// Verifies future block predicates defer inclusion, terminal bounds expire, and recoverable
 /// storage mismatches remain parked.
 #[tokio::test]
@@ -552,7 +737,7 @@ async fn test_validity_block_predicates_defer_and_expire_transactions() -> Resul
     client_provider.wait_for_balance(expiring_signer.address(), Duration::from_secs(15)).await?;
     client_provider.wait_for_balance(storage_signer.address(), Duration::from_secs(15)).await?;
 
-    let current_block = builder_provider.get_block_number().await?;
+    let current_block = client_provider.get_block_number().await?;
     // Native Denim blocks advance every 200 ms, so leave enough time to submit and observe all
     // three transactions before the future predicate becomes true.
     let target_block = current_block + 50;
@@ -571,13 +756,19 @@ async fn test_validity_block_predicates_defer_and_expire_transactions() -> Resul
     let submitted_future: B256 = rpc_client
         .request(
             "base_sendRawTransactionValidity",
-            (SendRawTransactionValidityRequest {
-                tx: raw_future_tx,
-                validity: vec![ValidityPredicate::BlockNumber {
-                    op: ValidityOperator::GreaterThanOrEqual,
-                    value: U256::from(target_block),
-                }],
-            },),
+            (
+                raw_future_tx,
+                SendRawTransactionValidityOptions {
+                    validity: vec![
+                        ValidityPredicate::BlockNumber {
+                            op: ValidityOperator::GreaterThanOrEqual,
+                            value: U256::from(target_block),
+                        },
+                        block_expiry_bound(current_block),
+                    ],
+                    validity_signature: None,
+                },
+            ),
         )
         .await?;
     assert_eq!(submitted_future, future_tx_hash);
@@ -585,19 +776,22 @@ async fn test_validity_block_predicates_defer_and_expire_transactions() -> Resul
     let submitted_expiring: B256 = rpc_client
         .request(
             "base_sendRawTransactionValidity",
-            (SendRawTransactionValidityRequest {
-                tx: raw_expiring_tx,
-                validity: vec![
-                    ValidityPredicate::BlockNumber {
-                        op: ValidityOperator::GreaterThanOrEqual,
-                        value: U256::from(target_block + 1),
-                    },
-                    ValidityPredicate::BlockNumber {
-                        op: ValidityOperator::LessThanOrEqual,
-                        value: U256::from(target_block),
-                    },
-                ],
-            },),
+            (
+                raw_expiring_tx,
+                SendRawTransactionValidityOptions {
+                    validity: vec![
+                        ValidityPredicate::BlockNumber {
+                            op: ValidityOperator::GreaterThanOrEqual,
+                            value: U256::from(target_block + 1),
+                        },
+                        ValidityPredicate::BlockNumber {
+                            op: ValidityOperator::LessThanOrEqual,
+                            value: U256::from(target_block),
+                        },
+                    ],
+                    validity_signature: None,
+                },
+            ),
         )
         .await?;
     assert_eq!(submitted_expiring, expiring_tx_hash);
@@ -605,16 +799,22 @@ async fn test_validity_block_predicates_defer_and_expire_transactions() -> Resul
     let submitted_storage: B256 = rpc_client
         .request(
             "base_sendRawTransactionValidity",
-            (SendRawTransactionValidityRequest {
-                tx: raw_storage_tx,
-                validity: vec![ValidityPredicate::Storage {
-                    address: recipient,
-                    slot: U256::from(1),
-                    mask: U256::MAX,
-                    op: ValidityOperator::Equal,
-                    value: U256::from(2),
-                }],
-            },),
+            (
+                raw_storage_tx,
+                SendRawTransactionValidityOptions {
+                    validity: vec![
+                        ValidityPredicate::Storage {
+                            address: recipient,
+                            slot: U256::from(1),
+                            mask: U256::MAX,
+                            op: ValidityOperator::Equal,
+                            value: U256::from(2),
+                        },
+                        block_expiry_bound(current_block),
+                    ],
+                    validity_signature: None,
+                },
+            ),
         )
         .await?;
     assert_eq!(submitted_storage, storage_tx_hash);
@@ -699,7 +899,10 @@ async fn test_invalid_validity_batches_are_rejected_at_mempool_ingress() -> Resu
         let error = rpc_client
             .request::<_, B256>(
                 "base_sendRawTransactionValidity",
-                (SendRawTransactionValidityRequest { tx: raw_tx.clone(), validity },),
+                (
+                    raw_tx.clone(),
+                    SendRawTransactionValidityOptions { validity, validity_signature: None },
+                ),
             )
             .await
             .expect_err("invalid validity batch should be rejected");

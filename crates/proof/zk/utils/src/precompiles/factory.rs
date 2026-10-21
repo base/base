@@ -34,11 +34,6 @@ impl ZkvmBaseEvmFactory {
     ) -> Self {
         Self { activation_admin_address }
     }
-
-    /// Returns the activation registry admin address.
-    pub const fn activation_admin_address(&self) -> Option<Address> {
-        self.activation_admin_address
-    }
 }
 
 impl Default for ZkvmBaseEvmFactory {

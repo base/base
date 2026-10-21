@@ -14,7 +14,7 @@ RUN apt-get update && \
 
 COPY . .
 
-ARG PROFILE=maxperf
+ARG PROFILE=release
 ARG CARGO_FEATURES=""
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \

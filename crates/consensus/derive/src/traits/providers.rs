@@ -41,23 +41,33 @@ pub trait L2ChainProvider: BatchValidationProviderDerive {
     /// The error type for the [`L2ChainProvider`].
     type Error: Display + Into<PipelineErrorKind>;
 
-    /// Returns the [`SystemConfig`] by L2 number.
-    async fn system_config_by_number(
+    /// Returns the [`SystemConfig`] for the L2 block with the given hash.
+    async fn system_config_by_l2_hash(
         &mut self,
-        number: u64,
+        hash: B256,
         rollup_config: Arc<RollupConfig>,
     ) -> Result<SystemConfig, <Self as L2ChainProvider>::Error>;
 }
 
 /// A super-trait for [`BatchValidationProvider`] that binds `Self::Error` to have a conversion into
 /// [`PipelineErrorKind`].
-pub trait BatchValidationProviderDerive: BatchValidationProvider {}
+pub trait BatchValidationProviderDerive: BatchValidationProvider {
+    /// Converts a [`BatchValidationProvider::Error`] into [`PipelineErrorKind`].
+    fn provider_error_into_pipeline_error(
+        error: <Self as BatchValidationProvider>::Error,
+    ) -> PipelineErrorKind;
+}
 
 // Auto-implement the [BatchValidationProviderDerive] trait for all types that implement
 // [BatchValidationProvider] where the error can be converted into [PipelineErrorKind].
 impl<T> BatchValidationProviderDerive for T
 where
     T: BatchValidationProvider,
-    <T as BatchValidationProvider>::Error: Into<PipelineErrorKind>,
+    PipelineErrorKind: From<<T as BatchValidationProvider>::Error>,
 {
+    fn provider_error_into_pipeline_error(
+        error: <Self as BatchValidationProvider>::Error,
+    ) -> PipelineErrorKind {
+        PipelineErrorKind::from(error)
+    }
 }

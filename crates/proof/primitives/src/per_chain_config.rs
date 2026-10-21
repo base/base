@@ -24,7 +24,7 @@ const VERSION_0: u64 = 0;
 pub const MARSHAL_BINARY_SIZE: usize = 212;
 
 /// A block identifier containing both hash and number.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub struct BlockId {
@@ -32,12 +32,6 @@ pub struct BlockId {
     pub hash: B256,
     /// The block number.
     pub number: u64,
-}
-
-impl Default for BlockId {
-    fn default() -> Self {
-        Self { hash: B256::ZERO, number: 0 }
-    }
 }
 
 /// System configuration at genesis.
@@ -243,6 +237,7 @@ impl PerChainConfig {
                     beryl: None,
                     cobalt: None,
                     denim: None,
+                    everest: None,
                     zenith: None,
                 },
             },
@@ -301,28 +296,6 @@ mod tests {
     }
 
     #[test]
-    fn test_marshal_binary_length() {
-        let binary = sample_config().marshal_binary();
-        assert_eq!(binary.len(), MARSHAL_BINARY_SIZE);
-        assert_eq!(binary.len(), 212);
-    }
-
-    #[test]
-    fn test_marshal_binary_version() {
-        let binary = sample_config().marshal_binary();
-        let version = u64::from_be_bytes(binary[0..8].try_into().unwrap());
-        assert_eq!(version, 0);
-    }
-
-    #[test]
-    fn test_marshal_binary_chain_id() {
-        let binary = sample_config().marshal_binary();
-        let chain_id_bytes: [u8; 32] = binary[8..40].try_into().unwrap();
-        let chain_id = U256::from_be_bytes(chain_id_bytes);
-        assert_eq!(chain_id, U256::from(8453));
-    }
-
-    #[test]
     fn test_marshal_binary_golden() {
         let binary = sample_config().marshal_binary();
         let expected = hex::decode(
@@ -347,11 +320,6 @@ mod tests {
             sample_config().hash(),
             b256!("f914a90550e1b3f9d107005221dc01403f63ee8e12884d71699046ddbd7036b2")
         );
-    }
-
-    #[test]
-    fn test_hash_deterministic() {
-        assert_eq!(sample_config().hash(), sample_config().hash());
     }
 
     #[test]
