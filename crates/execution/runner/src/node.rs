@@ -1,9 +1,12 @@
 //! Base Node types config.
 
+use std::sync::Arc;
+
 use base_common_consensus::BasePrimitives;
+use base_execution_candidates::CandidateRuntime;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_payload_builder::{
-    RejectionCache,
+    CandidateBuilderConfig, RejectionCache,
     config::{BaseDAConfig, GasLimitConfig, ResourceMeteringConfig},
 };
 use base_execution_rpc::eth::BaseEthApiBuilder;
@@ -48,6 +51,10 @@ pub struct BaseNode {
     pub resource_metering: ResourceMeteringConfig,
     /// Shared, cross-job cache of permanently rejected transaction hashes.
     pub rejection_cache: RejectionCache,
+    /// Candidate runtime shared by ingress, the pool and the payload builder.
+    pub candidate_runtime: Option<Arc<CandidateRuntime>>,
+    /// Candidate selection for the native payload builder (`BasePayloadBuilder`).
+    pub candidate_builder: Option<CandidateBuilderConfig>,
 }
 
 impl Default for BaseNode {
@@ -66,6 +73,8 @@ impl BaseNode {
             manifest_precheck_enabled: true,
             resource_metering: ResourceMeteringConfig::default(),
             rejection_cache: RejectionCache::default(),
+            candidate_runtime: None,
+            candidate_builder: None,
         }
     }
 
@@ -99,6 +108,18 @@ impl BaseNode {
         self
     }
 
+    /// Shares the candidate runtime with the pool and configures candidate selection in the
+    /// native payload builder (`BasePayloadBuilder`).
+    pub fn with_candidates(
+        mut self,
+        runtime: Option<Arc<CandidateRuntime>>,
+        builder: Option<CandidateBuilderConfig>,
+    ) -> Self {
+        self.candidate_runtime = runtime;
+        self.candidate_builder = builder;
+        self
+    }
+
     /// Returns the components for the given [`RollupArgs`].
     pub fn components<Node>(&self) -> BaseNodeComponentBuilder<Node>
     where
@@ -125,7 +146,8 @@ impl BaseNode {
                     .with_additional_trusted_delegation_targets(
                         self.args.mempool_trusted_delegation_targets.iter().copied(),
                     )
-                    .with_allowlisted_payers(self.args.mempool_allowlisted_payers.iter().copied()),
+                    .with_allowlisted_payers(self.args.mempool_allowlisted_payers.iter().copied())
+                    .with_candidate_runtime(self.candidate_runtime.clone()),
             )
             .executor(BaseExecutorBuilder::default())
             .payload(BasePayloadServiceBuilder::new(
@@ -134,7 +156,8 @@ impl BaseNode {
                     .with_gas_limit_config(self.gas_limit_config.clone())
                     .with_manifest_precheck_enabled(self.manifest_precheck_enabled)
                     .with_resource_metering(self.resource_metering.clone())
-                    .with_rejection_cache(self.rejection_cache.clone()),
+                    .with_rejection_cache(self.rejection_cache.clone())
+                    .with_candidates(self.candidate_builder.clone()),
             ))
             .network(BaseNetworkBuilder::new(!discovery_v4))
             .consensus(BaseConsensusBuilder::default())

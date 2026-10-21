@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use base_builder_cli::Args;
+use base_builder_cli::{Args, BuilderSetup};
 use base_builder_core::BuilderApiExtension;
 use base_builder_metering::MeteringStoreExtension;
 use base_builder_multiplex::MultiplexingServiceBuilder;
@@ -14,8 +14,8 @@ use base_node_runner::BaseNodeRunner;
 use base_observability_events::GlobalTransactionEventWriter;
 use base_shadow_indexer::{ShadowIndexerConfig, ShadowIndexerExtension};
 use base_txpool_rpc::{
-    SendRawTransactionValidityConfig, SendRawTransactionValidityExtension, TxPoolRpcConfig,
-    TxPoolRpcExtension,
+    SendRawTransactionValidityConfig, SendRawTransactionValidityExtension,
+    SendSwapTransactionExtension, TxPoolRpcConfig, TxPoolRpcExtension,
 };
 
 type BuilderCli = Cli<Args>;
@@ -50,9 +50,8 @@ fn main() {
         let shadow_indexer_config = ShadowIndexerConfig::try_from(&builder_args.shadow_indexer)?;
         let payload_builder_cutover = builder_args.payload_builder_cutover;
         let basic_payload_builder = builder_args.basic_payload_builder;
-        let builder_config = builder_args
-            .into_builder_config(Arc::clone(&metering_provider))
-            .expect("Failed to convert rollup args to builder config");
+        let BuilderSetup { config: builder_config, candidates } =
+            builder_args.into_builder_setup(Arc::clone(&metering_provider))?;
         let da_config = builder_config.da_config.clone();
         let gas_limit_config = builder_config.gas_limit_config.clone();
         let manifest_precheck_enabled = builder_config.manifest_precheck_enabled;
@@ -61,6 +60,7 @@ fn main() {
             .with_da_config(da_config)
             .with_gas_limit_config(gas_limit_config)
             .with_manifest_precheck_enabled(manifest_precheck_enabled)
+            .with_candidates(candidates.runtime, candidates.builder)
             .with_service_builder(
                 MultiplexingServiceBuilder::new(builder_config)
                     .with_cutover_enabled(payload_builder_cutover)
@@ -78,6 +78,9 @@ fn main() {
                 ..Default::default()
             },
         );
+        if let Some(swap_transaction) = candidates.swap_transaction {
+            runner.install_ext::<SendSwapTransactionExtension>(swap_transaction);
+        }
         runner.install_ext::<ShadowIndexerExtension>(shadow_indexer_config);
         StandardBaseRethNode::install_upgrade_signal_runtime_extension(&mut runner, &rollup_args)?;
         runner.add_started_callback(|| {

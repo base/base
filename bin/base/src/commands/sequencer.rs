@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use base_builder_cli::Args as BuilderArgs;
+use base_builder_cli::{Args as BuilderArgs, BuilderSetup};
 use base_builder_core::BuilderApiExtension;
 use base_builder_metering::MeteringStoreExtension;
 use base_builder_multiplex::MultiplexingServiceBuilder;
@@ -17,8 +17,8 @@ use base_execution_cli::{
 use base_node_runner::BaseNodeRunner;
 use base_shadow_indexer::{ShadowIndexerConfig, ShadowIndexerExtension};
 use base_txpool_rpc::{
-    SendRawTransactionValidityConfig, SendRawTransactionValidityExtension, TxPoolRpcConfig,
-    TxPoolRpcExtension,
+    SendRawTransactionValidityConfig, SendRawTransactionValidityExtension,
+    SendSwapTransactionExtension, TxPoolRpcConfig, TxPoolRpcExtension,
 };
 use base_upgrade_signal::UpgradeSignalStartupMode;
 use clap::Args;
@@ -72,13 +72,14 @@ impl SequencerCommand {
         let metering_provider: base_builder_core::SharedMeteringProvider =
             Arc::new(builder.build_metering_store());
         let builder_api_config = builder.builder_api_config();
-        // Build the shadow-indexer config before `into_builder_config` consumes `builder`. The
+        // Build the shadow-indexer config before `into_builder_setup` consumes `builder`. The
         // config carries an `enabled` flag (false unless ENABLE_SHADOW_INDEXER is set), so the
         // ExEx is installed unconditionally and no-ops for non-shadow sequencers.
         let shadow_indexer_config = ShadowIndexerConfig::try_from(&builder.shadow_indexer)?;
         let payload_builder_cutover = builder.payload_builder_cutover;
         let basic_payload_builder = builder.basic_payload_builder;
-        let builder_config = builder.into_builder_config(Arc::clone(&metering_provider))?;
+        let BuilderSetup { config: builder_config, candidates } =
+            builder.into_builder_setup(Arc::clone(&metering_provider))?;
         let da_config = builder_config.da_config.clone();
         let gas_limit_config = builder_config.gas_limit_config.clone();
         let manifest_precheck_enabled = builder_config.manifest_precheck_enabled;
@@ -107,6 +108,7 @@ impl SequencerCommand {
                 .with_da_config(da_config)
                 .with_gas_limit_config(gas_limit_config)
                 .with_manifest_precheck_enabled(manifest_precheck_enabled)
+                .with_candidates(candidates.runtime, candidates.builder)
                 .with_service_builder(
                     MultiplexingServiceBuilder::new(builder_config)
                         .with_cutover_enabled(payload_builder_cutover)
@@ -124,6 +126,9 @@ impl SequencerCommand {
                     ..Default::default()
                 },
             );
+            if let Some(swap_transaction) = candidates.swap_transaction {
+                runner.install_ext::<SendSwapTransactionExtension>(swap_transaction);
+            }
             runner.install_ext::<ShadowIndexerExtension>(shadow_indexer_config);
             StandardBaseRethNode::install_upgrade_signal_runtime_extension(
                 &mut runner,
@@ -376,5 +381,75 @@ mod tests {
 
         let rendered = err.to_string();
         assert!(rendered.contains("--mode"));
+    }
+
+    /// The embedded builder flags parsed from `base sequencer ... <candidate flags>`.
+    fn sequencer_builder(candidate_flags: &'static [&'static str]) -> base_builder_cli::Args {
+        let mut args = vec!["base", "sequencer", "--p2p.sequencer.key", SEQUENCER_KEY];
+        args.extend_from_slice(candidate_flags);
+        args.extend_from_slice(REQUIRED_CONSENSUS_ARGS);
+        let BaseCommand::Sequencer(sequencer) = BaseCli::parse_from(args).command else {
+            panic!("expected sequencer command");
+        };
+        sequencer.builder
+    }
+
+    fn builder_setup(
+        builder: base_builder_cli::Args,
+    ) -> eyre::Result<base_builder_cli::BuilderSetup> {
+        let metering_provider: base_builder_core::SharedMeteringProvider =
+            std::sync::Arc::new(builder.build_metering_store());
+        builder.into_builder_setup(metering_provider)
+    }
+
+    #[test]
+    fn sequencer_rejects_invalid_candidate_flags_like_the_builder() {
+        // Builder selection without the candidate runtime is refused at startup.
+        let builder = sequencer_builder(&["--builder.candidates.enabled"]);
+        let expected =
+            builder.candidate_capabilities().expect_err("bin/builder refuses these flags");
+        let error = builder_setup(builder).expect_err("the sequencer refuses them too");
+        assert_eq!(format!("{error:#}"), format!("{expected:#}"));
+    }
+
+    #[test]
+    fn sequencer_wires_builder_selection_into_the_builder_pool_and_ingress() {
+        let setup = builder_setup(sequencer_builder(&[
+            "--txpool.candidates.enabled",
+            "--txpool.candidates.ephemeral-ledger",
+            "--builder.candidates.enabled",
+            "--builder.basic-payload-builder",
+        ]))
+        .expect("valid candidate flags start");
+
+        let runtime = setup.candidates.runtime.as_ref().expect("the runtime is shared");
+        let selection = setup.config.candidates.as_ref().expect("the builder selects winners");
+        assert!(std::sync::Arc::ptr_eq(runtime, &selection.runtime));
+        let swap = setup.candidates.swap_transaction.as_ref().expect("ingress is installed");
+        assert!(std::sync::Arc::ptr_eq(runtime, &swap.capabilities.runtime));
+        assert_eq!(swap.evaluation, base_txpool_rpc::CandidateEvaluation::Builder);
+    }
+
+    #[test]
+    fn sequencer_wires_ingress_only_candidates_without_builder_selection() {
+        let setup = builder_setup(sequencer_builder(&[
+            "--txpool.candidates.enabled",
+            "--txpool.candidates.ephemeral-ledger",
+        ]))
+        .expect("ingress-only candidate flags start");
+
+        assert!(setup.config.candidates.is_none());
+        assert!(setup.candidates.builder.is_none());
+        let swap = setup.candidates.swap_transaction.as_ref().expect("ingress is installed");
+        assert_eq!(swap.evaluation, base_txpool_rpc::CandidateEvaluation::IngressOnly);
+    }
+
+    #[test]
+    fn sequencer_without_candidate_flags_wires_nothing() {
+        let setup = builder_setup(sequencer_builder(&[])).expect("defaults start");
+
+        assert!(setup.config.candidates.is_none());
+        assert!(setup.candidates.runtime.is_none());
+        assert!(setup.candidates.swap_transaction.is_none());
     }
 }

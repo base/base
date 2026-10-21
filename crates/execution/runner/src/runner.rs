@@ -1,9 +1,10 @@
 //! Contains the [`BaseNodeRunner`], which is responsible for configuring and launching a Base node.
 
-use std::fmt;
+use std::{fmt, sync::Arc};
 
+use base_execution_candidates::CandidateRuntime;
 use base_execution_payload_builder::{
-    RejectionCache,
+    CandidateBuilderConfig, RejectionCache,
     config::{BaseDAConfig, GasLimitConfig, ResourceMeteringConfig},
 };
 use base_node_core::args::RollupArgs;
@@ -46,6 +47,10 @@ pub struct BaseNodeRunner<SB: PayloadServiceBuilder = DefaultPayloadServiceBuild
     resource_metering: Option<ResourceMeteringConfig>,
     /// Shared rejection cache for permanently rejected transaction hashes.
     rejection_cache: Option<RejectionCache>,
+    /// Candidate runtime shared by ingress, the pool and the payload builder.
+    candidate_runtime: Option<Arc<CandidateRuntime>>,
+    /// Candidate selection for the native payload builder (`BasePayloadBuilder`).
+    candidate_builder: Option<CandidateBuilderConfig>,
     /// Binary-owned callbacks to run after the node has started.
     started_callbacks: Vec<StartedCallback>,
 }
@@ -62,6 +67,8 @@ impl BaseNodeRunner<DefaultPayloadServiceBuilder> {
             manifest_precheck_enabled: true,
             resource_metering: None,
             rejection_cache: None,
+            candidate_runtime: None,
+            candidate_builder: None,
             started_callbacks: Vec::new(),
         }
     }
@@ -77,6 +84,7 @@ impl<SB: PayloadServiceBuilder> fmt::Debug for BaseNodeRunner<SB> {
             .field("manifest_precheck_enabled", &self.manifest_precheck_enabled)
             .field("resource_metering", &self.resource_metering)
             .field("rejection_cache", &self.rejection_cache)
+            .field("candidates", &self.candidate_runtime.is_some())
             .field("started_callbacks", &self.started_callbacks.len())
             .finish()
     }
@@ -113,6 +121,18 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
         self
     }
 
+    /// Shares the candidate runtime with the pool and configures candidate selection in the
+    /// native payload builder (`BasePayloadBuilder`).
+    pub fn with_candidates(
+        mut self,
+        runtime: Option<Arc<CandidateRuntime>>,
+        builder: Option<CandidateBuilderConfig>,
+    ) -> Self {
+        self.candidate_runtime = runtime;
+        self.candidate_builder = builder;
+        self
+    }
+
     /// Swap the payload service builder.
     pub fn with_service_builder<SB2: PayloadServiceBuilder>(self, sb: SB2) -> BaseNodeRunner<SB2> {
         BaseNodeRunner {
@@ -124,6 +144,8 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
             manifest_precheck_enabled: self.manifest_precheck_enabled,
             resource_metering: self.resource_metering,
             rejection_cache: self.rejection_cache,
+            candidate_runtime: self.candidate_runtime,
+            candidate_builder: self.candidate_builder,
             started_callbacks: self.started_callbacks,
         }
     }
@@ -164,6 +186,8 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
             manifest_precheck_enabled,
             resource_metering,
             rejection_cache,
+            candidate_runtime,
+            candidate_builder,
             started_callbacks,
         } = self;
         let mut base_node = BaseNode::new(rollup_args);
@@ -180,6 +204,7 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
         if let Some(rejection_cache) = rejection_cache {
             base_node = base_node.with_rejection_cache(rejection_cache);
         }
+        base_node = base_node.with_candidates(candidate_runtime, candidate_builder);
         let components = service_builder.build_components(&base_node);
 
         let builder = builder

@@ -17,6 +17,8 @@ use base_observability_events::{
 };
 use tracing::warn;
 
+use crate::{BuilderPath, CandidateArgs, CandidateCapabilities, CandidateWiring};
+
 /// Parameters for Flashblocks configuration.
 ///
 /// The names in the struct are prefixed with `flashblocks` to avoid conflicts
@@ -290,12 +292,25 @@ pub struct Args {
     /// Shadow indexer `ExEx` configuration
     #[command(flatten)]
     pub shadow_indexer: ShadowIndexerArgs,
+
+    /// Candidate-group ingress and selection configuration
+    #[command(flatten)]
+    pub candidates: CandidateArgs,
 }
 
 impl HasRollupArgs for Args {
     fn rollup_args(&self) -> &RollupArgs {
         &self.rollup_args
     }
+}
+
+/// A [`BuilderConfig`] together with the candidate wiring the rest of the node takes.
+#[derive(Debug)]
+pub struct BuilderSetup {
+    /// Payload builder configuration, with candidate selection set from `candidates`.
+    pub config: BuilderConfig,
+    /// Candidate settings for the pool and `base_sendSwapTransaction` ingress.
+    pub candidates: CandidateWiring,
 }
 
 impl Args {
@@ -341,15 +356,49 @@ impl Default for Args {
             basic_payload_builder: false,
             transaction_events: TransactionEventsArgs::default(),
             shadow_indexer: ShadowIndexerArgs::default(),
+            candidates: CandidateArgs::default(),
         }
     }
 }
 
 impl Args {
+    /// Returns the payload builders this node can route a build to.
+    pub const fn builder_path(&self) -> BuilderPath {
+        if self.basic_payload_builder {
+            BuilderPath::BasicOnly
+        } else if self.payload_builder_cutover {
+            BuilderPath::Cutover
+        } else {
+            BuilderPath::FlashblocksOnly
+        }
+    }
+
+    /// Validates the candidate flags against this node's builder routing and block time, and
+    /// builds the candidate capabilities, or `None` when they are off.
+    pub fn candidate_capabilities(&self) -> eyre::Result<Option<CandidateCapabilities>> {
+        self.candidates
+            .capabilities(self.builder_path(), Duration::from_millis(self.chain_block_time))
+    }
+
     /// Builds configuration for the builder transaction insertion RPC.
     pub const fn builder_api_config(&self) -> BuilderApiExtensionConfig {
         BuilderApiExtensionConfig::new(self.validity_max_predicates)
             .with_validity_signature_mode(self.validity_signature_mode)
+    }
+
+    /// Validates the candidate flags fail-closed, then converts these arguments into a
+    /// [`BuilderConfig`] whose candidate selection matches the returned [`CandidateWiring`].
+    ///
+    /// Every builder entrypoint starts here, so candidate flags are never parsed and then
+    /// dropped. The metering provider is shared as in [`Self::into_builder_config`].
+    pub fn into_builder_setup(
+        self,
+        metering_provider: SharedMeteringProvider,
+    ) -> eyre::Result<BuilderSetup> {
+        let candidates = CandidateWiring::new(self.candidate_capabilities()?);
+        let mut config = self.into_builder_config(metering_provider)?;
+        config.candidates = candidates.builder.clone();
+        Ok(BuilderSetup { config, candidates })
     }
 
     /// Converts these CLI arguments into a [`BuilderConfig`] using the given shared metering
@@ -500,6 +549,26 @@ mod tests {
         let parsed =
             CommandParser::parse_from(["test", "--builder.eip8130-manifest-precheck=false"]);
         assert!(!parsed.args.manifest_precheck_enabled);
+    }
+
+    #[test]
+    fn builder_selection_starts_only_with_the_basic_payload_builder() {
+        let selection = [
+            "--txpool.candidates.enabled",
+            "--txpool.candidates.ephemeral-ledger",
+            "--builder.candidates.enabled",
+        ];
+        let start = |routing: Option<&str>| {
+            let flags = core::iter::once("test").chain(routing).chain(selection);
+            CommandParser::parse_from(flags).args.candidate_capabilities().map(|_| ())
+        };
+
+        assert!(start(None).is_err(), "flashblocks parks every group");
+        assert!(
+            start(Some("--builder.payload-builder-cutover")).is_err(),
+            "flashblocks before Denim"
+        );
+        start(Some("--builder.basic-payload-builder")).expect("the basic builder evaluates groups");
     }
 
     #[test]

@@ -1,6 +1,6 @@
 //! `TxPool` RPC extension for registering transaction pool management APIs.
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use base_execution_candidates::CandidateRuntime;
 use base_execution_rpc::SequencerClient;
@@ -8,9 +8,12 @@ use base_execution_txpool::AdmissionService;
 pub use base_execution_txpool::{
     DEFAULT_MAX_VALIDITY_EXPIRY_SECS, DEFAULT_MAX_VALIDITY_PREDICATES, ValiditySignatureMode,
 };
-use base_node_runner::{BaseNodeExtension, BaseRpcContext, FromExtensionConfig, NodeHooks};
+use base_node_runner::{
+    BaseNodeAdapter, BaseNodeExtension, BaseRpcContext, FromExtensionConfig, NodeHooks,
+};
 use jsonrpsee::RpcModule;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
+use reth_node_api::{FullNodeComponents, FullNodeTypes};
 use reth_rpc_server_types::RethRpcModule;
 
 use crate::{
@@ -119,6 +122,72 @@ impl FromExtensionConfig for SendRawTransactionValidityExtension {
     }
 }
 
+/// The [`AdmissionService`] over the Base node's provider and pool.
+pub type NodeAdmissionService = AdmissionService<
+    <BaseNodeAdapter as FullNodeTypes>::Provider,
+    <BaseNodeAdapter as FullNodeComponents>::Pool,
+>;
+
+/// Candidate capabilities shared by every ingress adapter in the process, independent of any
+/// one endpoint.
+///
+/// Clones share one [`AdmissionService`], created on first use from the node's provider and
+/// pool, so every adapter built from this configuration sees the same in-flight admissions.
+/// The provider and pool default to the Base node's.
+#[derive(Debug, Clone)]
+pub struct CandidateCapabilityConfig<
+    Provider = <BaseNodeAdapter as FullNodeTypes>::Provider,
+    Pool = <BaseNodeAdapter as FullNodeComponents>::Pool,
+> {
+    /// Candidate runtime shared with the pool and the payload builder.
+    pub runtime: Arc<CandidateRuntime>,
+    /// Lifetime of an admitted candidate group past the next block, in seconds.
+    pub group_lifetime_secs: u64,
+    admission: Arc<OnceLock<Arc<AdmissionService<Provider, Pool>>>>,
+}
+
+impl<Provider, Pool> CandidateCapabilityConfig<Provider, Pool> {
+    /// Creates the capability configuration over `runtime`.
+    pub fn new(runtime: Arc<CandidateRuntime>, group_lifetime_secs: u64) -> Self {
+        Self { runtime, group_lifetime_secs, admission: Arc::default() }
+    }
+
+    /// Returns the admission service shared by this configuration and its clones, creating it
+    /// over `provider` and `pool` on first use; later calls return that service and ignore
+    /// their arguments.
+    pub fn admission_from(
+        &self,
+        provider: Provider,
+        pool: Pool,
+    ) -> Arc<AdmissionService<Provider, Pool>> {
+        Arc::clone(self.admission.get_or_init(|| {
+            Arc::new(AdmissionService::new(
+                provider,
+                pool,
+                Arc::clone(&self.runtime),
+                self.group_lifetime_secs,
+            ))
+        }))
+    }
+}
+
+impl CandidateCapabilityConfig {
+    /// Returns the process's admission service, creating it from `ctx` on first use.
+    pub fn admission(&self, ctx: &BaseRpcContext<'_>) -> Arc<NodeAdmissionService> {
+        self.admission_from(ctx.provider().clone(), ctx.pool().clone())
+    }
+}
+
+/// Settings of the `base_sendSwapTransaction` endpoint itself.
+#[derive(Debug, Clone, Default)]
+pub struct SwapEndpointConfig {
+    /// Upstream node that proxy-mode ingress forwards every submission to, unchanged, instead
+    /// of admitting locally.
+    pub sequencer_url: Option<String>,
+    /// HTTP headers sent to the upstream node, in `name=value` form.
+    pub sequencer_headers: Vec<String>,
+}
+
 /// Whether a payload builder on this node evaluates candidate groups.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum CandidateEvaluation {
@@ -132,19 +201,15 @@ pub enum CandidateEvaluation {
 
 /// Configuration for `base_sendSwapTransaction`, the Swap Lane ingress.
 ///
-/// Install the extension only when `--txpool.candidates.enabled` is set; an unregistered method
+/// Install the extension only when the candidate capabilities run; an unregistered method
 /// returns `-32601`. While selection is disabled at runtime, the registered method admits only
 /// default transactions.
 #[derive(Debug, Clone)]
 pub struct SendSwapTransactionConfig {
-    /// Candidate runtime shared with the pool and the payload builder.
-    pub runtime: Arc<CandidateRuntime>,
-    /// Lifetime of an admitted candidate group past the next block, in seconds.
-    pub group_lifetime_secs: u64,
-    /// Upstream node that proxy-mode ingress forwards every submission to, unchanged.
-    pub sequencer_url: Option<String>,
-    /// HTTP headers sent to the upstream sequencer, in `name=value` form.
-    pub sequencer_headers: Vec<String>,
+    /// Capabilities the endpoint admits into.
+    pub capabilities: CandidateCapabilityConfig,
+    /// Endpoint settings.
+    pub endpoint: SwapEndpointConfig,
     /// Whether a builder here evaluates groups, which decides whether the selection toggle is
     /// registered.
     pub evaluation: CandidateEvaluation,
@@ -154,8 +219,9 @@ impl SendSwapTransactionConfig {
     /// Returns the `admin_setCandidateSelectionEnabled` module, or `None` on an ingress-only
     /// node, where the method stays unregistered so selection cannot be turned on.
     pub fn admin_module(&self) -> Option<RpcModule<AdminCandidateSelectionApiImpl>> {
-        (self.evaluation == CandidateEvaluation::Builder)
-            .then(|| AdminCandidateSelectionApiImpl::new(Arc::clone(&self.runtime)).into_rpc())
+        (self.evaluation == CandidateEvaluation::Builder).then(|| {
+            AdminCandidateSelectionApiImpl::new(Arc::clone(&self.capabilities.runtime)).into_rpc()
+        })
     }
 }
 
@@ -170,17 +236,12 @@ impl BaseNodeExtension for SendSwapTransactionExtension {
         let config = self.config;
         builder.add_rpc_module(move |ctx: &mut BaseRpcContext<'_>| {
             let chain_id = ctx.provider().chain_spec().chain_id();
-            let admission = Arc::new(AdmissionService::new(
-                ctx.provider().clone(),
-                ctx.pool().clone(),
-                Arc::clone(&config.runtime),
-                config.group_lifetime_secs,
-            ));
-            let mut api = SendSwapTransactionApiImpl::new(admission, chain_id);
-            if let Some(url) = &config.sequencer_url {
+            let capabilities = &config.capabilities;
+            let mut api = SendSwapTransactionApiImpl::new(capabilities.admission(ctx), chain_id);
+            if let Some(url) = &config.endpoint.sequencer_url {
                 api = api.with_sequencer_client(SequencerClient::new_http_with_headers(
                     url,
-                    config.sequencer_headers.clone(),
+                    config.endpoint.sequencer_headers.clone(),
                 )?);
             }
             ctx.modules.merge_configured(api.into_rpc())?;
@@ -230,10 +291,8 @@ mod tests {
             limits: CandidateLimits::default(),
         });
         SendSwapTransactionConfig {
-            runtime,
-            group_lifetime_secs: 60,
-            sequencer_url: None,
-            sequencer_headers: Vec::new(),
+            capabilities: CandidateCapabilityConfig::new(runtime, 60),
+            endpoint: SwapEndpointConfig::default(),
             evaluation,
         }
     }
