@@ -3,14 +3,14 @@ use std::{
     collections::HashSet,
 };
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use futures::{StreamExt, TryStreamExt};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     fetcher::{OPSuccinctDataFetcher, RPCMode},
     host::SuccinctHost,
-    rpc_types::{OutputResponse, SafeHeadResponse},
+    rpc_types::OutputResponse,
 };
 
 /// Get the start and end block numbers for a range, with validation.
@@ -122,17 +122,7 @@ pub async fn split_range_based_on_safe_heads(
     let mut current_l2_start = l2_start;
     let safe_heads = futures::stream::iter(l1_start..=l1_head_number)
         .map(|block| async move {
-            let l1_block_hex = format!("0x{block:x}");
-            let data_fetcher = OPSuccinctDataFetcher::default();
-            let result: SafeHeadResponse = data_fetcher
-                .fetch_rpc_data_with_mode(
-                    RPCMode::L2Node,
-                    "optimism_safeHeadAtL1Block",
-                    vec![l1_block_hex.into()],
-                )
-                .await
-                .with_context(|| format!("Failed to fetch safe head at L1 block {block}"))?;
-            anyhow::Ok(result.safe_head.number)
+            OPSuccinctDataFetcher::default().get_safe_head_at_l1_block(block).await
         })
         .buffered(15)
         .try_collect::<HashSet<_>>()

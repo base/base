@@ -23,7 +23,7 @@ use base_optimism_rpc::DebugProviderExt;
 use base_proof_host::HostConfig;
 use base_proof_zk_utils::boot::BootInfoStruct;
 use base_protocol::L2BlockInfo;
-use futures::{StreamExt, TryStreamExt, stream};
+use futures::{StreamExt, stream};
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -516,11 +516,7 @@ impl OPSuccinctDataFetcher {
         &self,
         boot_infos: &[BootInfoStruct],
     ) -> Result<Header> {
-        self.get_l1_heads_in_batch(boot_infos)
-            .await?
-            .into_iter()
-            .min_by_key(|header| header.number)
-            .ok_or_else(|| anyhow!("Failed to get earliest L1 header: empty batch"))
+        self.select_l1_head_in_batch(boot_infos, Ordering::Less, "earliest").await
     }
 
     /// Get the latest L1 header in a batch of boot infos.
@@ -528,22 +524,38 @@ impl OPSuccinctDataFetcher {
         &self,
         boot_infos: &[BootInfoStruct],
     ) -> Result<Header> {
-        self.get_l1_heads_in_batch(boot_infos)
-            .await?
-            .into_iter()
-            .max_by_key(|header| header.number)
-            .ok_or_else(|| anyhow!("Failed to get latest L1 header: empty batch"))
+        self.select_l1_head_in_batch(boot_infos, Ordering::Greater, "latest").await
     }
 
-    /// Fetch the L1 head header of every boot info, in order.
-    pub async fn get_l1_heads_in_batch(
+    /// Fetch each boot info's L1 head and keep only the one whose block number compares as
+    /// `preferred` against the current best, so memory stays constant in the batch size.
+    async fn select_l1_head_in_batch(
         &self,
         boot_infos: &[BootInfoStruct],
-    ) -> Result<Vec<Header>> {
-        stream::iter(boot_infos)
-            .then(|boot_info| self.get_l1_header(boot_info.l1Head.into()))
-            .try_collect()
+        preferred: Ordering,
+        label: &str,
+    ) -> Result<Header> {
+        let mut selected: Option<Header> = None;
+        for boot_info in boot_infos {
+            let header = self.get_l1_header(boot_info.l1Head.into()).await?;
+            if selected.as_ref().is_none_or(|best| header.number.cmp(&best.number) == preferred) {
+                selected = Some(header);
+            }
+        }
+        selected.ok_or_else(|| anyhow!("Failed to get {label} L1 header: empty batch"))
+    }
+
+    /// Fetch the L2 safe head block number at the given L1 block.
+    pub async fn get_safe_head_at_l1_block(&self, l1_block: u64) -> Result<u64> {
+        let result: SafeHeadResponse = self
+            .fetch_rpc_data_with_mode(
+                RPCMode::L2Node,
+                "optimism_safeHeadAtL1Block",
+                vec![format!("0x{l1_block:x}").into()],
+            )
             .await
+            .with_context(|| format!("Failed to fetch safe head at L1 block {l1_block}"))?;
+        Ok(result.safe_head.number)
     }
 
     /// Fetch headers for a range of blocks inclusive.
@@ -904,6 +916,7 @@ mod tests {
                 rollupConfigHash: B256::ZERO,
                 scheduleId: B256::ZERO,
                 intermediateRoots: Default::default(),
+                intermediateBlockInterval: 1,
             })
             .collect()
     }
@@ -940,6 +953,29 @@ mod tests {
 
         assert_eq!(earliest.number, 2);
         assert_eq!(latest.number, 9);
+    }
+
+    #[tokio::test]
+    async fn safe_head_fetch_error_includes_l1_block_and_rpc_cause() {
+        let server = httpmock::MockServer::start_async().await;
+        server
+            .mock_async(|when, then| {
+                when.method(httpmock::Method::POST);
+                then.status(200).json_body(json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "error": { "code": -32000, "message": "safe head unavailable" }
+                }));
+            })
+            .await;
+        let mut fetcher = fetcher_with_l1_blocks(&[]);
+        fetcher.rpc_config.l2_node_rpc = server.url("/").parse().unwrap();
+
+        let error = fetcher.get_safe_head_at_l1_block(255).await.unwrap_err();
+
+        let message = format!("{error:#}");
+        assert!(message.contains("L1 block 255"), "{message}");
+        assert!(message.contains("safe head unavailable"), "{message}");
     }
 
     fn rpc_config(l1: Option<PathBuf>, l2: Option<PathBuf>) -> RPCConfig {

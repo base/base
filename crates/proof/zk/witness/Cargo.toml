@@ -50,6 +50,7 @@ tracing.workspace = true
 
 [dev-dependencies]
 alloy-rpc-types-eth.workspace = true
+httpmock.workspace = true
 
 [lints]
 workspace = true
