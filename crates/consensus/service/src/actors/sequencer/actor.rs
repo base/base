@@ -821,12 +821,79 @@ mod tests {
 
     use super::*;
     use crate::{
-        EngineProcessor, EngineRequestReceiver, MockConductor, MockEngineDerivationClient,
-        MockOriginSelector, MockUnsafePayloadGossipClient, QueuedSequencerEngineClient,
-        SequencerEngineRequestCoordinator,
+        EngineActorRequest, EngineProcessor, EngineRequestReceiver, MockConductor,
+        MockEngineDerivationClient, MockOriginSelector, MockUnsafePayloadGossipClient,
+        QueuedSequencerEngineClient, SequencerEngineRequestCoordinator,
         actors::sequencer::tests::test_actor,
         test_utils::{EngineClientCall, FakeEngineClient, ScriptedForkchoiceResponse},
     };
+
+    #[tokio::test(start_paused = true)]
+    async fn startup_reset_survives_admin_queries() {
+        let config = Arc::new(RollupConfig { block_time: 2, ..Default::default() });
+        let (request_tx, mut request_rx) = mpsc::channel(8);
+        let (_head_tx, head_rx) = watch::channel(L2BlockInfo::default());
+        let (_state_tx, state_rx) = watch::channel(TestEngineStateBuilder::new().build());
+        let engine_client =
+            Arc::new(QueuedSequencerEngineClient::new(request_tx, head_rx, state_rx));
+        let (admin_tx, admin_rx) = mpsc::channel(8);
+        let cancellation = CancellationToken::new();
+        let recovery_mode = RecoveryModeGuard::new(false);
+        let actor = SequencerActor {
+            admin_api_rx: admin_rx,
+            builder: PayloadBuilder {
+                attributes_builder: TestAttributesBuilder::default(),
+                engine_client: Arc::clone(&engine_client),
+                origin_selector: MockOriginSelector::new(),
+                recovery_mode: recovery_mode.clone(),
+                rollup_config: Arc::clone(&config),
+            },
+            cancellation_token: cancellation.clone(),
+            conductor: None::<MockConductor>,
+            engine_client,
+            is_active: false,
+            mode: NodeOperatingMode::Sequencer,
+            shadow_funding: None,
+            recovery_mode,
+            rollup_config: config,
+            seal_offset: base_protocol::DEFAULT_SEAL_OFFSET,
+            schedule_delay: Duration::ZERO,
+            unsafe_payload_gossip_client: MockUnsafePayloadGossipClient::new(),
+            sealer: None,
+            pending_stop: None,
+        };
+        let actor = tokio::spawn(actor.start(()));
+        let EngineActorRequest::ResetRequest(reset) =
+            tokio::time::timeout(Duration::from_secs(1), request_rx.recv()).await.unwrap().unwrap()
+        else {
+            panic!("expected the startup reset");
+        };
+        assert_eq!(reset.reason, ResetReason::SequencerStartup);
+
+        // Receiving the request first ensures that the reset is in flight, rather than
+        // the admin query winning before it is ever submitted. Hold its reply beyond
+        // the retry backoff while checking that read-only admin queries stay responsive.
+        for _ in 0..3 {
+            tokio::time::advance(Duration::from_secs(1)).await;
+            let (result_tx, result_rx) = oneshot::channel();
+            admin_tx.send(SequencerAdminQuery::SequencerActive(result_tx)).await.unwrap();
+            assert!(
+                !tokio::time::timeout(Duration::from_secs(1), result_rx)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .unwrap()
+            );
+        }
+
+        let delivered = reset.result_tx.send(Ok(())).await;
+        let next_request = tokio::time::timeout(Duration::from_secs(4), request_rx.recv()).await;
+        cancellation.cancel();
+        actor.await.unwrap().unwrap();
+
+        assert!(delivered.is_ok(), "admin queries must not abandon the in-flight startup reset");
+        assert!(next_request.is_err(), "a successful startup reset must not be resubmitted");
+    }
 
     #[rstest]
     #[tokio::test(start_paused = true)]
