@@ -191,9 +191,8 @@ delay is measured for logging but is no longer included in the JSON output.
 | `sepolia.yaml` | Base Sepolia | Requires `FUNDER_KEY` |
 | `real-token-sepolia.yaml` | Base Sepolia | Uses predeployed WETH/USDC and the Uniswap V3 swap router; run with `just load-test real-token sepolia`; recover with `just load-test real-token-recover sepolia` |
 | `real-token-mainnet-snapshot.yaml` | Local/shadow Base mainnet snapshot | Wraps funded ETH into WETH, acquires USDC, then runs random-direction Uniswap V3 and Aerodrome CL swaps; run with `just load-test real-token mainnet-snapshot` |
-| `mainnet-mix-mainnet-snapshot.yaml` | `base-bench snapshot` on Base mainnet | Transaction mix and gas/s of a sampled mainnet week; regenerate with `etc/scripts/local/mainnet-mix.py`, whose docstring lists the mapping and its limits |
+| `mainnet-mix-mainnet-snapshot.yaml` | Everest-active `base-bench snapshot` | Sampled mainnet mix and gas/s target with the 41/1000 transfer weight replaced by native EIP-8430 transfers; not a measured native tx share. `etc/scripts/local/mainnet-mix.py` generates the original ordinary-transfer mix and documents its limits |
 | `eip8430-transfer.yaml` | Everest-active target | Native EOA self-pay ETH transfers; protocol nonce lane, one call per transaction |
-| `mainnet-mix-eip8430-mainnet-snapshot.yaml` | Everest-active snapshot | Synthetic PR6115 variant replacing the 41/1000 transfer weight with native transfers; not a measured EIP-8430 share |
 | `zeronet.yaml` | Base Zeronet | Requires `FUNDER_KEY` |
 
 EIP-8430 examples require Everest activation and native transaction support on the target.
@@ -205,7 +204,7 @@ Fresh recipients are supported through `fresh_recipient_ratio`. Validity submiss
 not supported with native transfers. These examples do not exercise configured-account
 authentication, sponsored payers, nonce-free transactions, or multiple calls/phases.
 The synthetic mix retains the baseline gas/s target and stand-in limitations; its gas/tx
-must be measured again and must not be inferred from the baseline header's estimate.
+must be measured again and must not be inferred from the original ordinary-transfer estimate.
 
 ### Contract Addresses
 

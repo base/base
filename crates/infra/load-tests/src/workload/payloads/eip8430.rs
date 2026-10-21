@@ -40,12 +40,12 @@ mod tests {
     use super::*;
     use crate::{config::TestConfig, runner::TxType, workload::WorkloadGenerator};
 
-    /// Both published profiles must map to native payloads without changing the baseline.
+    /// Both published profiles must map to native payloads with their exact transaction weights.
     #[test]
     fn eip8430_profiles_parse_and_generate_native_requests() {
         for (yaml, weights) in [
             (include_str!("../../../examples/eip8430-transfer.yaml"), vec![100]),
-            (include_str!("../../../examples/mainnet-mix-eip8430-mainnet-snapshot.yaml"), vec![41, 75, 585, 150, 149]),
+            (include_str!("../../../examples/mainnet-mix-mainnet-snapshot.yaml"), vec![41, 75, 585, 150, 149]),
         ] {
             let config: TestConfig = serde_yaml::from_str(yaml).expect("native profile must parse");
             let config = config.to_load_config(None).expect("native profile must convert");
