@@ -157,6 +157,7 @@ impl HeadState {
 /// re-evaluated.
 #[derive(Debug)]
 pub struct HeadSubscriptionHealthChecker<S: HeadSubscriber> {
+    /// Endpoint identifier for logs, without any URL credentials.
     node_url: String,
     subscriber: S,
     config: HealthcheckConfig,
@@ -173,13 +174,14 @@ impl<S: HeadSubscriber> HeadSubscriptionHealthChecker<S> {
         config: HealthcheckConfig,
         metrics: HealthcheckMetrics,
     ) -> Self {
+        let is_new_instance = node.is_new_instance;
         Self {
-            node_url: node.url,
+            node_url: node.display_url,
             subscriber,
             config,
             status_code: Arc::new(AtomicU8::new(HealthState::Healthy.code())),
             metrics,
-            state: Mutex::new(HeadState::new(node.is_new_instance)),
+            state: Mutex::new(HeadState::new(is_new_instance)),
         }
     }
 

@@ -93,8 +93,10 @@ impl HealthcheckConfig {
 /// The RPC target of a health checker plus a bootstrap flag.
 #[derive(Debug, Clone)]
 pub struct Node {
-    /// HTTP RPC URL of the execution-layer node.
+    /// RPC URL of the execution-layer node, including any credentials.
     pub url: String,
+    /// URL with any `user:password@` credentials removed, for logging.
+    pub display_url: String,
     /// When true, delayed/unhealthy classifications are suppressed until the first Healthy
     /// observation so pod startup doesn't page.
     pub is_new_instance: bool,
@@ -103,7 +105,23 @@ pub struct Node {
 impl Node {
     /// Construct a new `Node`.
     pub fn new(url: impl Into<String>, is_new_instance: bool) -> Self {
-        Self { url: url.into(), is_new_instance }
+        let url = url.into();
+        Self { display_url: Self::redact_credentials(&url), url, is_new_instance }
+    }
+
+    /// Strip `user:password@` userinfo and everything after the authority so URLs that
+    /// authenticate via their credentials, such as `wss://user:password@rpc.example`, can
+    /// be logged safely. Only `scheme://host[:port]` is kept.
+    fn redact_credentials(url: &str) -> String {
+        let Some((scheme, rest)) = url.split_once("://") else {
+            return url.to_string();
+        };
+        let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+        let host = match authority.rsplit_once('@') {
+            Some((_credentials, host)) => host,
+            None => authority,
+        };
+        format!("{scheme}://{host}")
     }
 }
 
@@ -162,7 +180,7 @@ impl<C: EthClient> BlockProductionHealthChecker<C> {
 
     /// Run a single health-check iteration: fetch latest header (2 s timeout), classify, store.
     pub async fn run_health_check(&mut self) {
-        let url = &self.node.url;
+        let url = &self.node.display_url;
 
         debug!(sequencer = %url, "checking block production health");
 
@@ -379,5 +397,15 @@ mod tests {
         // Re-run again with same head: should not re-emit; flag remains set
         checker.run_health_check().await;
         assert_eq!(checker.status_code.load(Ordering::Relaxed), HealthState::Unhealthy.code());
+    }
+
+    #[test]
+    fn display_url_omits_credentials() {
+        let node = Node::new("wss://user:password@rpc.example:8546/path", false);
+        assert_eq!(node.url, "wss://user:password@rpc.example:8546/path");
+        assert_eq!(node.display_url, "wss://rpc.example:8546");
+
+        let without_credentials = Node::new("ws://localhost:8546", false);
+        assert_eq!(without_credentials.display_url, "ws://localhost:8546");
     }
 }

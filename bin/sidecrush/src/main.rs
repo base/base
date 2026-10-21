@@ -135,8 +135,8 @@ async fn main() {
             );
             return;
         }
-        tracing::info!(ws_url = %ws_url, "using newHeads subscription health check");
         let node = Node::new(ws_url.clone(), args.new_instance);
+        tracing::info!(sequencer = %node.display_url, "using newHeads subscription health check");
         let subscriber = AlloyWsHeadSubscriber::new(ws_url);
         let checker = HeadSubscriptionHealthChecker::new(node, subscriber, config, metrics);
         let _status_handle = checker.spawn_status_emitter(args.status_interval_ms);
@@ -147,8 +147,8 @@ async fn main() {
             }
         }
     } else {
-        tracing::info!(node_url = %args.node_url, "using HTTP polling health check");
         let node = Node::new(args.node_url.clone(), args.new_instance);
+        tracing::info!(sequencer = %node.display_url, "using HTTP polling health check");
         let client = AlloyEthClient::new_http(&args.node_url).expect("failed to create client");
         let mut checker: BlockProductionHealthChecker<_> =
             BlockProductionHealthChecker::new(node, client, config, metrics);
