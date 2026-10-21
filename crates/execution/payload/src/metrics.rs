@@ -160,7 +160,18 @@ pub enum ValidityEvaluationOutcome {
 }
 
 impl ValidityEvaluationOutcome {
-    const COUNT: usize = Self::RescanBudgetExhausted as usize + 1;
+    /// Every variant in declaration order; its length sizes [`ValidityEvaluationCounters`].
+    const ALL: [Self; 8] = [
+        Self::Matched,
+        Self::NotSatisfied,
+        Self::ReadError,
+        Self::BudgetExhausted,
+        Self::RescanMatched,
+        Self::RescanNotSatisfied,
+        Self::RescanReadError,
+        Self::RescanBudgetExhausted,
+    ];
+    const COUNT: usize = Self::ALL.len();
 
     /// Returns the label value.
     pub const fn as_str(self) -> &'static str {
@@ -333,5 +344,12 @@ mod tests {
         });
 
         assert!(!handle.render().contains("predicate_accounts_loaded_total"));
+    }
+
+    #[test]
+    fn evaluation_outcome_variants_index_within_counters() {
+        for (index, outcome) in ValidityEvaluationOutcome::ALL.into_iter().enumerate() {
+            assert_eq!(outcome as usize, index);
+        }
     }
 }
