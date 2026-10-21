@@ -9,6 +9,7 @@ pub use base_execution_txpool::{
     DEFAULT_MAX_VALIDITY_EXPIRY_SECS, DEFAULT_MAX_VALIDITY_PREDICATES, ValiditySignatureMode,
 };
 use base_node_runner::{BaseNodeExtension, BaseRpcContext, FromExtensionConfig, NodeHooks};
+use jsonrpsee::RpcModule;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_rpc_server_types::RethRpcModule;
 
@@ -118,6 +119,17 @@ impl FromExtensionConfig for SendRawTransactionValidityExtension {
     }
 }
 
+/// Whether a payload builder on this node evaluates candidate groups.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum CandidateEvaluation {
+    /// No builder here evaluates groups, so selection must stay off: a group admitted with
+    /// selection on would be parked, and hold back its sender's later nonces, until it expires.
+    #[default]
+    IngressOnly,
+    /// The native builder evaluates groups.
+    Builder,
+}
+
 /// Configuration for `base_sendSwapTransaction`, the Swap Lane ingress.
 ///
 /// Install the extension only when `--txpool.candidates.enabled` is set; an unregistered method
@@ -133,6 +145,18 @@ pub struct SendSwapTransactionConfig {
     pub sequencer_url: Option<String>,
     /// HTTP headers sent to the upstream sequencer, in `name=value` form.
     pub sequencer_headers: Vec<String>,
+    /// Whether a builder here evaluates groups, which decides whether the selection toggle is
+    /// registered.
+    pub evaluation: CandidateEvaluation,
+}
+
+impl SendSwapTransactionConfig {
+    /// Returns the `admin_setCandidateSelectionEnabled` module, or `None` on an ingress-only
+    /// node, where the method stays unregistered so selection cannot be turned on.
+    pub fn admin_module(&self) -> Option<RpcModule<AdminCandidateSelectionApiImpl>> {
+        (self.evaluation == CandidateEvaluation::Builder)
+            .then(|| AdminCandidateSelectionApiImpl::new(Arc::clone(&self.runtime)).into_rpc())
+    }
 }
 
 /// Extension registering Swap Lane ingress and its candidate selection admin toggle.
@@ -160,8 +184,9 @@ impl BaseNodeExtension for SendSwapTransactionExtension {
                 )?);
             }
             ctx.modules.merge_configured(api.into_rpc())?;
-            let admin = AdminCandidateSelectionApiImpl::new(Arc::clone(&config.runtime));
-            ctx.modules.merge_if_module_configured(RethRpcModule::Admin, admin.into_rpc())?;
+            if let Some(admin) = config.admin_module() {
+                ctx.modules.merge_if_module_configured(RethRpcModule::Admin, admin)?;
+            }
             Ok(())
         })
     }
@@ -180,5 +205,47 @@ impl FromExtensionConfig for TxPoolRpcExtension {
 
     fn from_config(config: Self::Config) -> Self {
         Self { config }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use base_execution_candidates::{
+        CandidateLimits, CandidateSwitch, GroupLedger, PrincipalsFile, StaticAccessPolicy,
+    };
+
+    use super::*;
+
+    const TOGGLE: &str = "admin_setCandidateSelectionEnabled";
+
+    fn config(evaluation: CandidateEvaluation) -> SendSwapTransactionConfig {
+        let runtime = Arc::new(CandidateRuntime {
+            ledger: GroupLedger::default(),
+            policy: Arc::new(StaticAccessPolicy::new(PrincipalsFile {
+                policy_version: 1,
+                work_gas_quota: None,
+                principals: vec![],
+            })),
+            switch: CandidateSwitch::default(),
+            limits: CandidateLimits::default(),
+        });
+        SendSwapTransactionConfig {
+            runtime,
+            group_lifetime_secs: 60,
+            sequencer_url: None,
+            sequencer_headers: Vec::new(),
+            evaluation,
+        }
+    }
+
+    #[test]
+    fn ingress_only_nodes_cannot_enable_selection() {
+        assert!(config(CandidateEvaluation::IngressOnly).admin_module().is_none());
+    }
+
+    #[test]
+    fn builder_nodes_register_the_selection_toggle() {
+        let admin = config(CandidateEvaluation::Builder).admin_module().expect("toggle registered");
+        assert!(admin.method_names().any(|name| name == TOGGLE));
     }
 }

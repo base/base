@@ -416,7 +416,7 @@ digest = "b72a1536e1"
 
 ["crates/execution/txpool-rpc/README.md"]
 summary = "Txpool RPC admin/status APIs, validity submissions with staged signature modes, and base_sendSwapTransaction over the shared AdmissionService; lifetimes, delivery and proxying."
-digest = "9c3ecb1375"
+digest = "523fdf909f"
 
 ["crates/execution/txpool-tracing/README.md"]
 summary = "Txpool tracing extension: tracks mempool lifecycle events, txpool_transactionStatus RPC, enabling CLI flags, and reth_transaction_tracing_tx_event histogram. Use to debug tx latency or drops."

@@ -33,8 +33,9 @@ EIP-712 types, signature encoding, rollout requirements, and security limitation
 
 ## Swap Lane ingress
 
-`SendSwapTransactionExtension` registers `base_sendSwapTransaction` and
-`admin_setCandidateSelectionEnabled` when candidates are enabled. The endpoint parses the
+`SendSwapTransactionExtension` registers `base_sendSwapTransaction` when candidates are
+enabled, and `admin_setCandidateSelectionEnabled` only when a builder on the node also
+evaluates groups (`CandidateEvaluation::Builder`). The endpoint parses the
 request, resolves `maxAccessCharge`, routes on the selection kill switch, builds the response
 and journals ingress events. Admission itself runs in the process-shared
 `base_execution_txpool::AdmissionService`. That service owns in-flight duplicate waits,
