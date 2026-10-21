@@ -345,7 +345,8 @@ impl ConfirmJob {
                                 withdrawer.status(rpc, proofs, withdrawal, submitter),
                             )
                             .await
-                            .map_err(WithdrawerError::Timeout)?;
+                            .map_err(WithdrawerError::Timeout)
+                            .wrap_err_with(|| format!("{error:#}"))?;
                             match recheck {
                                 Ok(WithdrawalStatus::Finalized) => {
                                     info!(withdrawal_hash = %hash, "withdrawal already finalized");
@@ -626,6 +627,7 @@ mod tests {
             matches!(error.downcast_ref::<WithdrawerError>(), Some(WithdrawerError::Timeout(_))),
             "{error:#}"
         );
+        assert!(format!("{error:#}").contains("missing withdrawal transaction manager"));
     }
 
     #[test]
