@@ -270,7 +270,8 @@ where
     Provider: StateProviderFactory,
     Pool: TransactionPool<Transaction = BasePooledTransaction> + Clone,
 {
-    /// Rejects EIP-7702-delegated senders (design §4.2).
+    /// Rejects EIP-7702-delegated senders (design §4.2). Admission calls it only after the
+    /// allowlist accepts the sender, so a refused sender costs no state read.
     pub fn ensure_sender_not_delegated(&self, sender: Address) -> Result<(), AdmissionError> {
         let code = self.provider.latest()?.account_code(&sender)?;
         if code.is_some_and(|code| code.is_eip7702()) {
@@ -309,8 +310,8 @@ where
     ) -> Result<AdmissionReceipt, AdmissionError> {
         let hash = transaction.hash();
         let sender = transaction.transaction.signer();
-        self.ensure_sender_not_delegated(sender)?;
         let authorization = self.allowlisted(sender, Capability::SingleAdmission)?;
+        self.ensure_sender_not_delegated(sender)?;
         if self.runtime.ledger.suppresses_plain_reinsertion(&hash) {
             return Err(LedgerError::RepresentativeConflict.into());
         }
@@ -355,7 +356,6 @@ where
         &self,
         group: Arc<CandidateGroup>,
     ) -> Result<AdmissionReceipt, AdmissionError> {
-        self.ensure_sender_not_delegated(group.sender())?;
         let group_hash = group.group_hash();
 
         let in_flight = {
@@ -376,6 +376,7 @@ where
         let principal = policy
             .principal(group.sender(), capability)
             .ok_or(AdmissionError::PrincipalNotAllowed)?;
+        self.ensure_sender_not_delegated(group.sender())?;
         policy.admit(
             principal,
             &GroupSummary::of(group.descriptor(), group.envelope().max_access_charge),

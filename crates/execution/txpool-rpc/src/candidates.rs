@@ -1321,6 +1321,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_delegated_sender_outside_the_allowlist_is_not_allowed() {
+        // The allowlist answers before any state read, so a sender outside it learns only that.
+        let fixture = fixture();
+        let runtime = runtime(&[]);
+        let provider = provider();
+        let mut delegation = vec![0xef, 0x01, 0x00];
+        delegation.extend_from_slice(Address::repeat_byte(0xde).as_slice());
+        provider.add_account(
+            fixture.address(),
+            ExtendedAccount::new(0, U256::from(1_000_000_000u64))
+                .with_bytecode(Bytes::from(delegation)),
+        );
+        let api = rpc(provider, pool(), &runtime, MAX_EXPIRY_SECS);
+
+        let (default, options) = request(&fixture);
+        let error = api.send_swap_transaction(default, Some(options)).await.unwrap_err();
+        assert_eq!(label(&error), "principal_not_allowed");
+
+        let (default, options) = single(&fixture, 0);
+        let error = api.send_swap_transaction(default, Some(options)).await.unwrap_err();
+        assert_eq!(label(&error), "principal_not_allowed");
+        assert_eq!(api.admission.pool().pool_size().total, 0);
+    }
+
+    #[tokio::test]
     async fn disabled_selection_ignores_a_selection_signed_by_another_key() {
         let capture = TransactionEventCapture::install();
         let fixture = CandidateFixture::with_key(chain_id(), 0x78);
