@@ -213,6 +213,13 @@ impl CanonicalCatchupSource {
         }
     }
 
+    /// Drops the running fetch and any finished result, e.g. when the gossip they were validated
+    /// against is cleared by a reset.
+    pub fn discard(&mut self) {
+        self.in_flight = None;
+        self.completed = None;
+    }
+
     /// Delays the next fetch by [`Self::RETRY_DELAY`].
     pub fn back_off(&mut self) {
         self.retry_at = Some(Instant::now() + Self::RETRY_DELAY);

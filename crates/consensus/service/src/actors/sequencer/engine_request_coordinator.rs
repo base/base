@@ -347,6 +347,9 @@ where
                 SequencerEngineState::ShadowActive(gate) => gate.reanchor(anchor),
                 SequencerEngineState::CatchingUp { catchup } => {
                     *catchup = CanonicalUnsafeCatchup::default();
+                    if let Some(source) = &mut self.catchup_source {
+                        source.discard();
+                    }
                 }
                 SequencerEngineState::Regular | SequencerEngineState::IsolatedActive => {}
             }
@@ -394,6 +397,7 @@ where
         let SequencerEngineState::CatchingUp { catchup } = &mut self.sequencer_state else {
             return Ok(());
         };
+        catchup.commit(anchor);
         let mut payloads = Vec::new();
         if let Some(source) = &mut self.catchup_source {
             if let Some(gap) = catchup
@@ -555,6 +559,9 @@ where
                     if let SequencerEngineState::CatchingUp { catchup } = &mut self.sequencer_state
                     {
                         *catchup = CanonicalUnsafeCatchup::default();
+                        if let Some(source) = &mut self.catchup_source {
+                            source.discard();
+                        }
                     }
                 }
 
@@ -832,25 +839,31 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::{collections::BTreeMap, sync::Arc};
 
+    use alloy_consensus::{Block, BlockBody, Header};
     use alloy_primitives::B256;
     use alloy_rpc_types_engine::ExecutionPayloadV1;
+    use base_common_consensus::BaseTxEnvelope;
     use base_common_genesis::RollupConfig;
     use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
     use base_consensus_engine::{
         Engine, EngineState,
-        test_utils::{MockEngineClient, TestEngineStateBuilder, test_engine_client_builder},
+        test_utils::{
+            MockEngineClient, TestEngineStateBuilder, l1_info_deposit_tx,
+            test_engine_client_builder,
+        },
     };
-    use base_protocol::{BlockInfo, L2BlockInfo};
+    use base_protocol::{BlockInfo, L1BlockInfoBedrock, L2BlockInfo};
     use jsonrpsee::core::ClientError;
     use rstest::rstest;
-    use tokio::sync::watch;
+    use tokio::sync::{mpsc, watch};
 
     use super::{BootstrapRole, SequencerEngineRequestCoordinator, SequencerEngineState};
     use crate::{
-        CanonicalUnsafeCatchup, Conductor, ConductorError, EngineProcessor, MockConductor,
-        MockEngineDerivationClient, NodeOperatingMode, ShadowReconciliationGate,
+        CanonicalCatchupSource, CanonicalUnsafeCatchup, Conductor, ConductorError, EngineProcessor,
+        MockConductor, MockEngineDerivationClient, MockRemoteClient, NodeOperatingMode,
+        ResetOrigin, ResetReason, ResetRequest, ShadowReconciliationGate,
     };
 
     fn coordinator(
@@ -1139,5 +1152,144 @@ mod tests {
             coordinator.prepare_sequencer_start(requested_hash),
             Err(crate::EngineClientError::RequestError(message)) if message.contains("no prestate")
         ));
+    }
+
+    fn canonical_chain() -> BTreeMap<u64, BaseExecutionPayloadEnvelope> {
+        let mut chain = BTreeMap::new();
+        let mut parent_hash = B256::ZERO;
+        for number in 10..=14 {
+            let block: Block<BaseTxEnvelope> = Block {
+                header: Header { number, parent_hash, timestamp: number, ..Default::default() },
+                body: BlockBody {
+                    transactions: vec![l1_info_deposit_tx(L1BlockInfoBedrock::default())],
+                    ..Default::default()
+                },
+            };
+            // Round-trip so derived header fields such as the transactions root are populated.
+            let block: Block<BaseTxEnvelope> =
+                BaseExecutionPayload::from_block_unchecked(B256::ZERO, &block)
+                    .0
+                    .try_into_block()
+                    .expect("valid block");
+            parent_hash = block.header.hash_slow();
+            let (execution_payload, _) =
+                BaseExecutionPayload::from_block_unchecked(parent_hash, &block);
+            chain.insert(
+                number,
+                BaseExecutionPayloadEnvelope { parent_beacon_block_root: None, execution_payload },
+            );
+        }
+        chain
+    }
+
+    /// Catching-up coordinator at block 10 whose source serves `chain` and whose engine rejects
+    /// every `newPayload` call.
+    fn catchup_coordinator(
+        chain: &BTreeMap<u64, BaseExecutionPayloadEnvelope>,
+    ) -> (
+        SequencerEngineRequestCoordinator<MockEngineClient, MockEngineDerivationClient>,
+        Arc<MockEngineClient>,
+    ) {
+        let head = L2BlockInfo {
+            block_info: BlockInfo {
+                number: 10,
+                hash: chain[&10].execution_payload.block_hash(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let state = TestEngineStateBuilder::new()
+            .with_unsafe_head(head)
+            .with_safe_head(head)
+            .with_el_sync_finished(true)
+            .build();
+        let (state_tx, _) = watch::channel(state);
+        let (queue_tx, _) = watch::channel(0usize);
+        let client = Arc::new(test_engine_client_builder().build());
+        let mut derivation = MockEngineDerivationClient::new();
+        derivation.expect_send_signal().returning(|_| Ok(()));
+        derivation.expect_send_new_engine_safe_head().returning(|_| Ok(()));
+        let processor = EngineProcessor::new_skip_reset(
+            Arc::clone(&client),
+            Arc::new(RollupConfig::default()),
+            derivation,
+            Engine::new(state, state_tx, queue_tx),
+        );
+        let served = chain.clone();
+        let mut remote = MockRemoteClient::new();
+        remote.expect_get_payload_by_number().returning(move |number| Ok(served[&number].clone()));
+        let (head_tx, _) = watch::channel(head);
+        let mut coordinator = SequencerEngineRequestCoordinator::new(
+            processor,
+            NodeOperatingMode::Sequencer,
+            None,
+            true,
+            head_tx,
+        )
+        .with_catchup_source(CanonicalCatchupSource::new(
+            Arc::new(remote),
+            Arc::new(RollupConfig::default()),
+        ));
+        *coordinator.sequencer_state_mut() =
+            SequencerEngineState::CatchingUp { catchup: CanonicalUnsafeCatchup::default() };
+        (coordinator, client)
+    }
+
+    fn catchup(
+        coordinator: &mut SequencerEngineRequestCoordinator<
+            MockEngineClient,
+            MockEngineDerivationClient,
+        >,
+    ) -> &mut CanonicalUnsafeCatchup {
+        match coordinator.sequencer_state_mut() {
+            SequencerEngineState::CatchingUp { catchup } => catchup,
+            state => panic!("expected catch-up, got {state:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn reset_discards_fetched_catchup_payloads() {
+        let chain = canonical_chain();
+        let (mut coordinator, client) = catchup_coordinator(&chain);
+        catchup(&mut coordinator).buffer_payload(chain[&14].clone());
+        coordinator.advance_canonical_catchup().await.expect("fetch started");
+        coordinator.catchup_source.as_mut().expect("source").wait().await;
+
+        let (result_tx, _result_rx) = mpsc::channel(1);
+        coordinator
+            .handle_reset_request(ResetRequest {
+                result_tx,
+                origin: ResetOrigin::Derivation,
+                reason: ResetReason::DerivationL1Reorg,
+            })
+            .await
+            .expect("reset");
+        assert_eq!(
+            coordinator.processor.engine_state().sync_state.unsafe_head().block_info.number,
+            10
+        );
+        coordinator.advance_canonical_catchup().await.expect("no-op");
+
+        assert!(client.last_new_payload_v2().await.is_none(), "pre-reset payload reached the EL");
+    }
+
+    #[tokio::test]
+    async fn failed_insert_keeps_gossip_overlapping_fetch() {
+        let chain = canonical_chain();
+        let (mut coordinator, client) = catchup_coordinator(&chain);
+        catchup(&mut coordinator).buffer_payload(chain[&14].clone());
+        coordinator.advance_canonical_catchup().await.expect("fetch started");
+        catchup(&mut coordinator).buffer_payload(chain[&12].clone());
+        coordinator.catchup_source.as_mut().expect("source").wait().await;
+
+        coordinator.advance_canonical_catchup().await.expect("insert deferred");
+
+        assert!(client.last_new_payload_v2().await.is_some(), "fetched range was submitted");
+        let anchor = coordinator.processor.engine_state().sync_state.unsafe_head();
+        assert_eq!(
+            catchup(&mut coordinator).gap(anchor).map(|gap| (gap.first, gap.last)),
+            Some((11, 11)),
+            "gossip block 12 must survive the failed insert"
+        );
     }
 }
