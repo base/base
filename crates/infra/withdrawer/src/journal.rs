@@ -15,6 +15,15 @@ impl BroadcastJournal {
         self.hashes.lock().expect("broadcast journal lock poisoned").clone()
     }
 
+    /// Returns broadcast hashes with the confirmed receipt hash appended if it is missing.
+    pub fn hashes_with_receipt(&self, transaction_hash: B256) -> Vec<B256> {
+        let mut hashes = self.hashes();
+        if !hashes.contains(&transaction_hash) {
+            hashes.push(transaction_hash);
+        }
+        hashes
+    }
+
     /// Starts a new serialized submission.
     pub fn clear(&self) {
         self.hashes.lock().expect("broadcast journal lock poisoned").clear();
@@ -43,5 +52,27 @@ impl BroadcastJournal {
         if !hashes.contains(&hash) {
             hashes.push(hash);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_json_rpc::{Id, Request, RequestPacket};
+    use alloy_primitives::{B256, keccak256};
+
+    use super::BroadcastJournal;
+
+    #[test]
+    fn receipt_hash_is_retained_even_without_a_broadcast_record() {
+        let journal = BroadcastJournal::default();
+        let receipt_hash = B256::repeat_byte(1);
+        assert_eq!(journal.hashes_with_receipt(receipt_hash), vec![receipt_hash]);
+
+        let request =
+            Request::new("eth_sendRawTransaction", Id::Number(1), ["0x01"]).serialize().unwrap();
+        journal.record(&RequestPacket::Single(request));
+        let broadcast_hash = keccak256([1]);
+        assert_eq!(journal.hashes_with_receipt(receipt_hash), vec![broadcast_hash, receipt_hash]);
+        assert_eq!(journal.hashes_with_receipt(broadcast_hash), vec![broadcast_hash]);
     }
 }

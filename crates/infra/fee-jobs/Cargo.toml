@@ -37,6 +37,6 @@ rstest.workspace = true
 mockall.workspace = true
 serde_json.workspace = true
 base-proof-contracts.workspace = true
-tokio = { workspace = true, features = ["macros", "rt"] }
 tracing-subscriber = { workspace = true, features = ["fmt"] }
+tokio = { workspace = true, features = ["macros", "rt", "test-util"] }
 axum = { workspace = true, features = ["http1", "json", "tokio"] }
