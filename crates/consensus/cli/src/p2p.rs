@@ -87,9 +87,9 @@ pub struct P2PNetworkArgs {
     #[arg(long = "p2p.listen.udp", default_value = "9223", env = "BASE_NODE_P2P_LISTEN_UDP_PORT")]
     pub listen_udp_port: u16,
     /// Low-tide peer count. Discovery stops dialing new peers at this count, and trimming
-    /// disconnects peers back down to it.
-    #[arg(long = "p2p.peers.lo", default_value_t = DEFAULT_PEERS_LO, env = "BASE_NODE_P2P_PEERS_LO")]
-    pub peers_lo: u32,
+    /// disconnects peers back down to it. Defaults to 20, or `p2p.peers.hi` if that is lower.
+    #[arg(long = "p2p.peers.lo", env = "BASE_NODE_P2P_PEERS_LO")]
+    pub peers_lo: Option<u32>,
     /// High-tide peer count. Once the node has this many established connections, it trims
     /// unprotected peers past their grace period back down to `p2p.peers.lo`.
     #[arg(long = "p2p.peers.hi", default_value_t = DEFAULT_PEERS_HI, env = "BASE_NODE_P2P_PEERS_HI")]
@@ -574,6 +574,12 @@ impl P2PArgs {
         })
     }
 
+    /// Returns `--p2p.peers.lo`, defaulting to [`DEFAULT_PEERS_LO`] clamped to `--p2p.peers.hi` so
+    /// configs that only lower `--p2p.peers.hi` stay valid.
+    pub fn resolved_peers_lo(&self) -> u32 {
+        self.peers_lo.unwrap_or_else(|| DEFAULT_PEERS_LO.min(self.peers_hi))
+    }
+
     /// Constructs the P2P network [`NetworkConfig`] from CLI arguments.
     ///
     /// ## Parameters
@@ -593,11 +599,12 @@ impl P2PArgs {
         l1_rpc_timeout: Duration,
         genesis_signer: Option<alloy_primitives::Address>,
     ) -> Result<NetworkConfig, P2PConfigError> {
+        let peers_lo = self.resolved_peers_lo();
         let peers_max = self.peers_max.unwrap_or(self.peers_hi);
-        if !(self.peers_lo <= self.peers_hi && self.peers_hi <= peers_max) {
+        if !(0 < peers_lo && peers_lo <= self.peers_hi && self.peers_hi <= peers_max) {
             return Err(eyre::eyre!(
-                "peer limits must satisfy --p2p.peers.lo ({}) <= --p2p.peers.hi ({}) <= --p2p.peers.max ({})",
-                self.peers_lo,
+                "peer limits must satisfy 0 < --p2p.peers.lo ({}) <= --p2p.peers.hi ({}) <= --p2p.peers.max ({})",
+                peers_lo,
                 self.peers_hi,
                 peers_max
             )
@@ -712,7 +719,7 @@ impl P2PArgs {
                 ..ConnectionLimitsConfig::new(peers_max)
             },
             peer_targets: PeerTargets {
-                low: self.peers_lo,
+                low: peers_lo,
                 high: self.peers_hi,
                 grace_period: self.peers_grace,
                 ..PeerTargets::new()
@@ -1292,6 +1299,35 @@ mod tests {
         assert_eq!(config.connection_limits_config.max_established_incoming, 42);
         assert_eq!(config.connection_limits_config.max_established_outgoing, 42);
         assert_eq!(config.connection_limits_config.max_established, 42);
+    }
+
+    #[rstest]
+    #[case::defaults(&[], Some((20, 30, 30)))]
+    #[case::low_hi_clamps_default_lo(&["--p2p.peers.hi", "10"], Some((10, 10, 10)))]
+    #[case::max_above_hi(&["--p2p.peers.max", "40"], Some((20, 30, 40)))]
+    #[case::zero_lo(&["--p2p.peers.lo", "0"], None)]
+    #[case::lo_above_hi(&["--p2p.peers.lo", "31"], None)]
+    #[case::max_below_hi(&["--p2p.peers.max", "29"], None)]
+    #[tokio::test]
+    async fn test_p2p_config_peer_limits(
+        #[case] flags: &[&str],
+        #[case] expected: Option<(u32, u32, u32)>,
+    ) {
+        let args = MockCommand::parse_from(std::iter::once(&"test").chain(flags));
+
+        let config = args
+            .p2p
+            .config(&RollupConfig::default(), 8453, None, L1_RPC_TIMEOUT, Some(Address::ZERO))
+            .await;
+
+        let limits = config.ok().map(|config| {
+            (
+                config.peer_targets.low,
+                config.peer_targets.high,
+                config.connection_limits_config.max_established,
+            )
+        });
+        assert_eq!(limits, expected);
     }
 
     #[tokio::test]

@@ -111,7 +111,7 @@ impl CliMetrics {
                     Self::P2P_ADVERTISE_UDP_PORT,
                     p2p.advertise_udp_port.map_or_else(|| "auto".to_string(), |p| p.to_string())
                 ),
-                (Self::P2P_PEERS_LO, p2p.peers_lo.to_string()),
+                (Self::P2P_PEERS_LO, p2p.resolved_peers_lo().to_string()),
                 (Self::P2P_PEERS_HI, p2p.peers_hi.to_string()),
                 (Self::P2P_PEERS_MAX, p2p.peers_max.unwrap_or(p2p.peers_hi).to_string()),
                 (Self::P2P_MAX_PENDING_OUTGOING, p2p.max_pending_outgoing.to_string()),
