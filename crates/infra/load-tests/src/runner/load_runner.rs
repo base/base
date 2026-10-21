@@ -11,7 +11,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use alloy_network::{Ethereum, EthereumWallet, TransactionBuilder};
+use alloy_network::{Ethereum, EthereumWallet, ReceiptResponse, TransactionBuilder};
 use alloy_primitives::{Address, B256, TxHash, U256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_signer_local::PrivateKeySigner;
@@ -22,6 +22,7 @@ use tracing::{debug, info, instrument};
 
 use super::{
     LoadConfig, LoadTestDisplay, LoadTestStage, SubmissionPipeline, TxType, ValidityRouter,
+    submission::{Fees, PreparedTransaction, SubmitCohort},
 };
 use crate::{
     BaselineError, Result,
@@ -300,20 +301,37 @@ impl LoadRunner {
                 self.config.primary_submission_rpc().clone(),
                 EthereumWallet::from(account.signer.clone()),
             );
-            let receipt = provider
-                .send_transaction(request)
-                .await
-                .rpc("submit calibration transaction")?
-                .get_receipt()
-                .await
-                .rpc("confirm calibration transaction")?;
-            if !receipt.status() {
+            let (success, average) = if request.transaction_type == Some(0x79) {
+                let prepared = PreparedTransaction {
+                    native: true, from,
+                    to: request.to.and_then(|kind| kind.to().copied()),
+                    value: request.value.unwrap_or(U256::ZERO),
+                    data: request.input.input().cloned().unwrap_or_default(),
+                    gas_limit: request.gas.unwrap_or(200_000),
+                    estimated_gas: 0, validity: Vec::new(), cohort: SubmitCohort::Plain,
+                };
+                let signed = SubmissionPipeline::sign_at_nonce(
+                    &account.signer, &prepared, self.config.chain_id, nonce,
+                    Fees { max_fee, priority_fee },
+                )?;
+                let native_provider = RpcProviders::query(self.config.primary_submission_rpc().clone())?;
+                let receipt = native_provider.send_raw_transaction(&signed.raw).await
+                    .rpc("submit native calibration transaction")?
+                    .with_timeout(Some(Duration::from_secs(60)))
+                    .get_receipt().await.rpc("confirm native calibration transaction (requires Everest)")?;
+                (receipt.status() && receipt.phase_statuses.as_deref() == Some(&[1]), receipt.gas_used())
+            } else {
+                let receipt = provider.send_transaction(request).await
+                    .rpc("submit calibration transaction")?
+                    .get_receipt().await.rpc("confirm calibration transaction")?;
+                (receipt.status(), receipt.gas_used)
+            };
+            if !success {
                 return Err(BaselineError::Transaction(format!(
                     "calibration transaction type {type_index} ({:?}) reverted",
                     tx_config.tx_type
                 )));
             }
-            let average = receipt.gas_used;
             info!(
                 transaction_type_index = type_index,
                 weight = tx_config.weight,

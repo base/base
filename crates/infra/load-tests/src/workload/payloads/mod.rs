@@ -12,6 +12,9 @@ use crate::{
 mod transfer;
 pub use transfer::TransferPayload;
 
+mod eip8430;
+pub use eip8430::{EIP8430_TRANSFER_GAS_LIMIT, Eip8430TransferPayload};
+
 mod calldata;
 pub use calldata::CalldataPayload;
 

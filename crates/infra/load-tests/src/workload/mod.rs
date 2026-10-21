@@ -18,6 +18,7 @@ pub(crate) use chain_prep::{PREP_CONCURRENCY, await_token_balances, encode_erc20
 
 mod payloads;
 pub use payloads::{
+    EIP8430_TRANSFER_GAS_LIMIT, Eip8430TransferPayload,
     AerodromeClPayload, B20TransferPayload, CalldataPayload, DOUBLE_COUNTER_GAS_LIMIT,
     DoubleCounterPayload, Erc20Payload, OsakaPayload, Payload, PrecompileLooper, PrecompilePayload,
     StoragePayload, TransferPayload, UniswapV3Payload, recover_real_tokens,

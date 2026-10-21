@@ -19,6 +19,7 @@ use alloy_rpc_types::TransactionRequest;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use base_execution_txpool::{ValidityAuthorization, ValidityPredicate};
+use base_common_consensus::{Call, Eip8130Signed, TxEip8130};
 use base_tx_manager::NonceManager;
 use tokio::{
     sync::{Mutex, Semaphore, mpsc},
@@ -192,6 +193,8 @@ impl GasPricer {
 /// A transaction request ready for nonce assignment and signing.
 #[derive(Debug, Clone)]
 pub struct PreparedTransaction {
+    /// Sign a native EIP-8430 EOA self-pay envelope rather than EIP-1559.
+    pub native: bool,
     /// Sender address.
     pub from: Address,
     /// Optional destination address. `None` represents contract creation.
@@ -805,6 +808,36 @@ impl SubmissionPipeline {
         nonce: u64,
         fees: Fees,
     ) -> Result<SignedTransaction> {
+        if prepared.native {
+            let to = prepared.to.ok_or_else(||
+                BaselineError::Transaction("native transfer requires a recipient".into()))?;
+            if !prepared.validity.is_empty() || prepared.cohort.is_validity() {
+                return Err(BaselineError::Config("native transfers do not support validity submission".into()));
+            }
+            let tx = TxEip8130 {
+                chain_id,
+                nonce_sequence: nonce,
+                max_fee_per_gas: fees.max_fee,
+                max_priority_fee_per_gas: fees.priority_fee,
+                gas_limit: prepared.gas_limit,
+                calls: vec![vec![Call { to, value: prepared.value, data: prepared.data.clone() }]],
+                ..Default::default()
+            };
+            let signature = signer.sign_hash_sync(&tx.sender_signature_hash())
+                .map_err(|e| BaselineError::Transaction(format!("failed to sign native tx: {e}")))?;
+            let signed = Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
+            return Ok(SignedTransaction {
+                raw: Bytes::from(signed.encoded_2718()),
+                tx_hash: *signed.hash(),
+                from: prepared.from,
+                nonce,
+                gas_limit: prepared.gas_limit,
+                estimated_gas: prepared.estimated_gas,
+                validity: Vec::new(),
+                validity_signature: None,
+                cohort: prepared.cohort,
+            });
+        }
         let mut tx = TransactionRequest::default()
             .with_from(prepared.from)
             .with_value(prepared.value)
@@ -1360,6 +1393,8 @@ mod tests {
         time::Duration,
     };
 
+    use alloy_eips::Decodable2718;
+    use base_common_consensus::{BaseTxEnvelope, Call};
     use alloy_primitives::{Address, Bytes, TxHash, U256};
     use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
@@ -1531,11 +1566,52 @@ mod tests {
         assert_eq!(over_cap, Fees { max_fee: 1_000, priority_fee: 1_000 });
     }
 
+    /// Native and Ethereum envelopes share the allocated protocol nonce stream.
+    #[test]
+    fn eip8430_signing_preserves_native_shape_and_legacy_nonces() {
+        let signer = PrivateKeySigner::random();
+        let mut prepared = PreparedTransaction {
+            native: true, from: signer.address(), to: Some(Address::repeat_byte(0xab)),
+            value: U256::from(1234), data: Bytes::new(), gas_limit: 200_000,
+            estimated_gas: 50_000, validity: Vec::new(), cohort: SubmitCohort::Plain,
+        };
+        let fees = Fees { max_fee: 100, priority_fee: 10 };
+        for nonce in 7..10 {
+            prepared.native = nonce != 8;
+            let signed = SubmissionPipeline::sign_at_nonce(&signer, &prepared, 8453, nonce, fees)
+                .expect("both envelope types must sign successfully");
+            let decoded = BaseTxEnvelope::decode_2718(&mut signed.raw.as_ref())
+                .expect("raw bytes must decode as a Base envelope");
+            assert_eq!(signed.nonce, nonce, "allocated protocol nonce must be preserved");
+            assert_eq!(signed.tx_hash, decoded.tx_hash(), "tracked hash must match wire hash");
+            if let BaseTxEnvelope::Eip8130(native) = decoded {
+                assert!(prepared.native, "only native selections may produce native envelopes");
+                assert_eq!(native.recover_eoa_sender().expect("canonical EOA auth"), Some(signer.address()), "sender authentication must recover the signer");
+                let tx = native.tx();
+                assert_eq!(tx.chain_id, 8453, "native chain ID must be bound");
+                assert_eq!(tx.nonce_key, U256::ZERO, "native transfers must use protocol nonce lane");
+                assert_eq!(tx.nonce_sequence, nonce, "native sequence must use allocated nonce");
+                assert_eq!(tx.sender, None, "native transfer must use implicit EOA auth");
+                assert_eq!(tx.payer, None, "native transfer must self-pay");
+                assert_eq!(tx.calls, vec![vec![Call { to: prepared.to.unwrap(), value: prepared.value, data: Bytes::new() }]], "native envelope must contain exactly one value-transfer call");
+                assert_eq!(native.sender_auth().len(), 65, "EOA signature must have no authenticator prefix");
+                assert!(native.payer_auth().is_empty(), "self-payment needs no payer auth");
+            } else {
+                assert!(matches!(decoded, BaseTxEnvelope::Eip1559(_)), "legacy transfer must remain EIP-1559");
+                assert!(!prepared.native, "native requests must never fall back to Ethereum signing");
+            }
+        }
+        prepared.native = true;
+        prepared.to = None;
+        assert!(SubmissionPipeline::sign_at_nonce(&signer, &prepared, 8453, 10, fees).is_err(), "native transfer must reject contract creation");
+    }
+
     #[test]
     fn sign_at_nonce_produces_deterministic_hash_for_same_inputs() {
         let signer = PrivateKeySigner::random();
         let prepared = PreparedTransaction {
             from: signer.address(),
+            native: false,
             to: Some(Address::repeat_byte(0xAB)),
             value: U256::from(1),
             data: Bytes::new(),
@@ -1574,6 +1650,7 @@ mod tests {
                 id: 0,
                 base_fee: 1,
                 txs: vec![PreparedTransaction {
+                    native: false,
                     from: sender,
                     to: None,
                     value: U256::ZERO,
@@ -1727,6 +1804,7 @@ mod tests {
         let from = signer.address();
         let prepared = PreparedTransaction {
             from,
+            native: false,
             to: Some(Address::repeat_byte(0xbb)),
             value: U256::ZERO,
             data: Bytes::new(),
