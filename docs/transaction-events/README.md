@@ -337,10 +337,11 @@ suppressed, so the same `group_hash` can be admitted a second time, or the
 winner can be submitted alone. A winner re-sent while it is still canonical
 keeps its landed record, and so does any winner whose canonical nonce cannot be
 read. The first `TXPOOL_CANDIDATE_LANDED` is not retracted,
-so a reopened group can journal a second terminal event. A second landed event
-for the same group has the same `event_id` as the first, so a consumer that
-deduplicates by `event_id` keeps the first one; use `block_hash` and the
-canonical chain to tell which landing holds.
+so a reopened group can journal a second terminal event. A second landing is in
+a different block, so its `TXPOOL_CANDIDATE_LANDED` has a new `event_id` and
+survives deduplication by `event_id` alongside the first; join them on
+`data.group_hash` and use `block_hash` and the canonical chain to tell which
+landing holds.
 
 A group
 that left the pool another way, such as admin removal or pool-full eviction, is
