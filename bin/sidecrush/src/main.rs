@@ -32,6 +32,7 @@ struct Args {
     ws_url: Option<String>,
 
     /// Poll interval in milliseconds. In WebSocket mode, how often block age is re-evaluated.
+    /// Must be below the grace period, or the delayed state can never be observed.
     #[arg(
         long,
         env = "BBHC_SIDECAR_POLL_INTERVAL_MS",
@@ -123,6 +124,17 @@ async fn main() {
     );
 
     if let Some(ws_url) = args.ws_url {
+        // In WebSocket mode the poll interval is how often the age of the last head is
+        // re-evaluated. If it is not below the grace period, a stall jumps straight from
+        // healthy to unhealthy and `delayed` can never fire.
+        if args.poll_interval_ms >= args.grace_period_ms {
+            tracing::error!(
+                poll_interval_ms = args.poll_interval_ms,
+                grace_period_ms = args.grace_period_ms,
+                "poll_interval_ms must be below grace_period_ms in WebSocket mode, or the delayed state can never be observed"
+            );
+            return;
+        }
         tracing::info!(ws_url = %ws_url, "using newHeads subscription health check");
         let node = Node::new(ws_url.clone(), args.new_instance);
         let subscriber = AlloyWsHeadSubscriber::new(ws_url);

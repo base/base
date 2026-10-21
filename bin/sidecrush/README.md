@@ -8,3 +8,7 @@ an execution-layer node's HTTP RPC endpoint and reports on latest-block age.
 Set `BBHC_SIDECAR_WS_URL` (for example `ws://localhost:8546`) to measure block
 age as the time since the last `newHeads` notification instead. Use this for
 sub-second block times, where whole-second header timestamps are too coarse.
+In this mode the poll interval is how often the age of the last head is
+re-evaluated, so `BBHC_SIDECAR_POLL_INTERVAL_MS` must be set below the grace
+period (the sidecar refuses to start otherwise) or the `delayed` state can
+never be observed.
