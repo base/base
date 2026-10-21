@@ -828,6 +828,21 @@ where
                 state_nonce,
                 ..
             } => {
+                // The protocol pool rechecks the block gas limit at insert, which
+                // can have moved since validation.
+                let block_gas_limit = self.protocol_pool.block_info().block_gas_limit;
+                let gas_limit = transaction.transaction().gas_limit();
+                if gas_limit > block_gas_limit {
+                    return Err(reth_transaction_pool::error::PoolError::new(
+                        *transaction.transaction().hash(),
+                        reth_transaction_pool::error::PoolErrorKind::InvalidTransaction(
+                            reth_transaction_pool::error::InvalidPoolTransactionError::ExceedsGasLimit(
+                                gas_limit,
+                                block_gas_limit,
+                            ),
+                        ),
+                    ));
+                }
                 // Keep the sidecar lock order consistent everywhere: nonce_pool before listeners.
                 let mut nonce_pool = self.nonce_pool.write();
                 let mut listeners = self.listeners.write();
@@ -2111,7 +2126,7 @@ mod tests {
         SignableTransaction, Transaction, TxEip1559,
         transaction::{Recovered, SignerRecoverable},
     };
-    use alloy_eips::eip2718::Encodable2718;
+    use alloy_eips::{eip1559::ETHEREUM_BLOCK_GAS_LIMIT_30M, eip2718::Encodable2718};
     use alloy_primitives::{Bytes, TxKind, U256};
     use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
@@ -2123,6 +2138,7 @@ mod tests {
     };
     use base_common_evm::BaseSpecId;
     use base_execution_chainspec::BaseChainSpec;
+    use base_execution_eip8130::IntrinsicGas;
     use base_execution_evm::BaseEvmConfig;
     use base_test_utils::build_test_genesis_everest;
     use futures::{FutureExt, StreamExt, future::join_all};
@@ -2131,8 +2147,11 @@ mod tests {
     use reth_tasks::Runtime;
     use reth_transaction_pool::{
         CanonicalStateUpdate, PoolConfig, PoolUpdateKind, PriceBumpConfig, SubPoolLimit,
-        TransactionOrigin, blobstore::InMemoryBlobStore, error::PoolErrorKind,
-        identifier::TransactionId, validate::EthTransactionValidatorBuilder,
+        TransactionOrigin,
+        blobstore::InMemoryBlobStore,
+        error::{InvalidPoolTransactionError, PoolErrorKind},
+        identifier::TransactionId,
+        validate::EthTransactionValidatorBuilder,
     };
 
     use super::*;
@@ -2240,6 +2259,10 @@ mod tests {
             metadata: Bytes::new(),
             payer: None,
         };
+        sign_eoa_8130(signer, tx)
+    }
+
+    fn sign_eoa_8130(signer: &PrivateKeySigner, tx: TxEip8130) -> BasePooledTransaction {
         let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
         let signed =
             Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
@@ -2428,10 +2451,46 @@ mod tests {
         build_integration_pool_at(false, PoolConfig::default(), true)
     }
 
+    /// Operator pool policies the node passes to the validator.
+    struct PoolPolicies {
+        block_gas_limit: u64,
+        max_tx_gas_limit: Option<u64>,
+        minimum_priority_fee: Option<u128>,
+        tx_fee_cap: u128,
+    }
+
+    impl Default for PoolPolicies {
+        /// The validator builder's defaults.
+        fn default() -> Self {
+            Self {
+                block_gas_limit: ETHEREUM_BLOCK_GAS_LIMIT_30M,
+                max_tx_gas_limit: None,
+                minimum_priority_fee: None,
+                tx_fee_cap: 1_000_000_000_000_000_000,
+            }
+        }
+    }
+
+    /// [`build_integration_pool`] with the given operator pool policies.
+    fn build_integration_pool_with_policies(
+        policies: PoolPolicies,
+    ) -> (IntegrationPool, MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>) {
+        build_integration_pool_full(false, PoolConfig::default(), false, policies)
+    }
+
     fn build_integration_pool_at(
         zenith: bool,
         config: PoolConfig,
         l1_fees: bool,
+    ) -> (IntegrationPool, MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>) {
+        build_integration_pool_full(zenith, config, l1_fees, PoolPolicies::default())
+    }
+
+    fn build_integration_pool_full(
+        zenith: bool,
+        config: PoolConfig,
+        l1_fees: bool,
+        policies: PoolPolicies,
     ) -> (IntegrationPool, MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>) {
         let mut genesis = build_test_genesis_everest();
         genesis.config.chain_id = test_chain_id();
@@ -2452,6 +2511,10 @@ mod tests {
         let validator = EthTransactionValidatorBuilder::new(client.clone(), evm_config)
             .no_shanghai()
             .no_cancun()
+            .set_block_gas_limit(policies.block_gas_limit)
+            .with_max_tx_gas_limit(policies.max_tx_gas_limit)
+            .with_minimum_priority_fee(policies.minimum_priority_fee)
+            .set_tx_fee_cap(policies.tx_fee_cap)
             .build_with_tasks(Runtime::test(), blob_store.clone())
             .map(|inner| {
                 // Seed a realistic wall clock so millisecond-scale nonce-free
@@ -2463,7 +2526,8 @@ mod tests {
                 // clock writer rather than a second, unsynchronized setter.
                 let validator =
                     BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default())
-                        .require_l1_data_gas_fee(l1_fees);
+                        .require_l1_data_gas_fee(l1_fees)
+                        .with_max_tx_gas_limit(policies.max_tx_gas_limit);
                 let header = alloy_consensus::Header {
                     timestamp: INTEGRATION_POOL_NOW_SECS,
                     ..Default::default()
@@ -3105,6 +3169,224 @@ mod tests {
             .await
             .expect_err("the sidecar must apply the protocol fee floor");
         assert!(matches!(error.kind, PoolErrorKind::FeeCapBelowMinimumProtocolFeeCap(1_000)));
+    }
+
+    /// Gas limit of the transactions in the operator pool policy tests.
+    const POLICY_GAS_LIMIT: u64 = 100_000;
+    /// `max_fee_per_gas` of the transactions in the operator pool policy tests.
+    const POLICY_MAX_FEE: u128 = 1_000;
+    /// The protocol lane (nonce key zero) and a 2D nonce sidecar channel.
+    const EIP8130_ROUTES: [U256; 2] = [U256::ZERO, U256::from_limbs([1, 0, 0, 0])];
+
+    fn policy_tx(nonce_key: U256) -> TxEip8130 {
+        TxEip8130 {
+            chain_id: test_chain_id(),
+            nonce_key,
+            max_fee_per_gas: POLICY_MAX_FEE,
+            gas_limit: POLICY_GAS_LIMIT,
+            ..Default::default()
+        }
+    }
+
+    fn invalid_kind(
+        error: &reth_transaction_pool::error::PoolError,
+    ) -> &InvalidPoolTransactionError {
+        match &error.kind {
+            PoolErrorKind::InvalidTransaction(kind) => kind,
+            other => panic!("expected an invalid transaction, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn eip8130_routes_enforce_the_minimum_priority_fee() {
+        let (pool, client) = build_integration_pool_with_policies(PoolPolicies {
+            minimum_priority_fee: Some(10),
+            ..Default::default()
+        });
+        let signer = signer();
+        fund(&client, signer.address());
+
+        for nonce_key in EIP8130_ROUTES {
+            let with_tip = |max_priority_fee_per_gas| {
+                sign_eoa_8130(
+                    &signer,
+                    TxEip8130 { max_priority_fee_per_gas, ..policy_tx(nonce_key) },
+                )
+            };
+            let error = pool
+                .add_transaction(TransactionOrigin::External, with_tip(9))
+                .await
+                .expect_err("a tip below the minimum is rejected");
+            assert!(
+                matches!(
+                    invalid_kind(&error),
+                    InvalidPoolTransactionError::PriorityFeeBelowMinimum {
+                        minimum_priority_fee: 10
+                    }
+                ),
+                "nonce key {nonce_key}: {error:?}"
+            );
+            pool.add_transaction(TransactionOrigin::External, with_tip(10))
+                .await
+                .expect("a tip at the minimum is admitted");
+        }
+    }
+
+    #[tokio::test]
+    async fn eip8130_routes_enforce_the_block_gas_limit() {
+        let (pool, client) = build_integration_pool_with_policies(PoolPolicies {
+            block_gas_limit: POLICY_GAS_LIMIT,
+            ..Default::default()
+        });
+        let signer = signer();
+        fund(&client, signer.address());
+
+        for nonce_key in EIP8130_ROUTES {
+            let with_gas =
+                |gas_limit| sign_eoa_8130(&signer, TxEip8130 { gas_limit, ..policy_tx(nonce_key) });
+            let error = pool
+                .add_transaction(TransactionOrigin::External, with_gas(POLICY_GAS_LIMIT + 1))
+                .await
+                .expect_err("gas above the block gas limit is rejected");
+            assert!(
+                matches!(
+                    invalid_kind(&error),
+                    InvalidPoolTransactionError::ExceedsGasLimit(gas, limit)
+                        if *gas == POLICY_GAS_LIMIT + 1 && *limit == POLICY_GAS_LIMIT
+                ),
+                "nonce key {nonce_key}: {error:?}"
+            );
+            pool.add_transaction(TransactionOrigin::External, with_gas(POLICY_GAS_LIMIT))
+                .await
+                .expect("gas at the block gas limit is admitted");
+        }
+    }
+
+    /// Execution reserves `gas_limit + payer_auth` against the block, so a
+    /// sponsored transaction whose `gas_limit` alone fits is still rejected.
+    #[tokio::test]
+    async fn eip8130_block_gas_limit_includes_payer_authentication() {
+        const SPONSORED_GAS_LIMIT: u64 = 1_000_000;
+        let (pool, client) = build_integration_pool_with_policies(PoolPolicies {
+            block_gas_limit: SPONSORED_GAS_LIMIT,
+            ..Default::default()
+        });
+        let (signer, payer) = (signer(), signer());
+        fund(&client, signer.address());
+        fund(&client, payer.address());
+
+        for nonce_key in EIP8130_ROUTES {
+            let transaction = sponsored_eoa_8130(&signer, &payer, nonce_key, POLICY_MAX_FEE);
+            let signed = transaction.as_eip8130().expect("EIP-8130 transaction");
+            assert_eq!(signed.tx().gas_limit, SPONSORED_GAS_LIMIT);
+            let payer_auth = IntrinsicGas::max_payer_auth_cost(signed).unwrap();
+            assert!(payer_auth > 0);
+
+            let error = pool
+                .add_transaction(TransactionOrigin::External, transaction)
+                .await
+                .expect_err("gas_limit plus payer authentication exceeds the block gas limit");
+            assert!(
+                matches!(
+                    invalid_kind(&error),
+                    InvalidPoolTransactionError::ExceedsGasLimit(gas, limit)
+                        if *gas == SPONSORED_GAS_LIMIT + payer_auth
+                            && *limit == SPONSORED_GAS_LIMIT
+                ),
+                "nonce key {nonce_key}: {error:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn eip8130_routes_enforce_the_max_tx_gas_limit() {
+        let (pool, client) = build_integration_pool_with_policies(PoolPolicies {
+            max_tx_gas_limit: Some(POLICY_GAS_LIMIT - 1),
+            ..Default::default()
+        });
+        let signer = signer();
+        fund(&client, signer.address());
+
+        for nonce_key in EIP8130_ROUTES {
+            let error = pool
+                .add_transaction(
+                    TransactionOrigin::External,
+                    sign_eoa_8130(&signer, policy_tx(nonce_key)),
+                )
+                .await
+                .expect_err("gas above the operator cap is rejected");
+            assert!(
+                matches!(
+                    invalid_kind(&error),
+                    InvalidPoolTransactionError::MaxTxGasLimitExceeded(gas, cap)
+                        if *gas == POLICY_GAS_LIMIT && *cap == POLICY_GAS_LIMIT - 1
+                ),
+                "nonce key {nonce_key}: {error:?}"
+            );
+        }
+    }
+
+    /// The RPC fee cap bounds the payer's maximum gas charge, and only for
+    /// local submissions.
+    #[tokio::test]
+    async fn eip8130_routes_enforce_the_fee_cap_for_local_submissions() {
+        let max_tx_fee = u128::from(POLICY_GAS_LIMIT) * POLICY_MAX_FEE;
+        let (pool, client) = build_integration_pool_with_policies(PoolPolicies {
+            tx_fee_cap: max_tx_fee - 1,
+            ..Default::default()
+        });
+        let signer = signer();
+        fund(&client, signer.address());
+
+        for nonce_key in EIP8130_ROUTES {
+            let transaction = sign_eoa_8130(&signer, policy_tx(nonce_key));
+            let error = pool
+                .add_transaction(TransactionOrigin::Local, transaction.clone())
+                .await
+                .expect_err("a local submission above the fee cap is rejected");
+            assert!(
+                matches!(
+                    invalid_kind(&error),
+                    InvalidPoolTransactionError::ExceedsFeeCap { max_tx_fee_wei, tx_fee_cap_wei }
+                        if *max_tx_fee_wei == max_tx_fee && *tx_fee_cap_wei == max_tx_fee - 1
+                ),
+                "nonce key {nonce_key}: {error:?}"
+            );
+            pool.add_transaction(TransactionOrigin::External, transaction)
+                .await
+                .expect("the fee cap does not apply to external transactions");
+        }
+    }
+
+    /// Both routes recheck the block gas limit at insert against the pool's
+    /// block info, which can move after validation.
+    #[tokio::test]
+    async fn eip8130_routes_recheck_the_block_gas_limit_at_insert() {
+        let (pool, client) = build_integration_pool();
+        let signer = signer();
+        fund(&client, signer.address());
+        pool.set_block_info(BlockInfo {
+            block_gas_limit: POLICY_GAS_LIMIT - 1,
+            ..pool.block_info()
+        });
+
+        for nonce_key in EIP8130_ROUTES {
+            let error = pool
+                .add_transaction(
+                    TransactionOrigin::External,
+                    sign_eoa_8130(&signer, policy_tx(nonce_key)),
+                )
+                .await
+                .expect_err("gas above the pool's block gas limit is rejected at insert");
+            assert!(
+                matches!(
+                    invalid_kind(&error),
+                    InvalidPoolTransactionError::ExceedsGasLimit(gas, limit)
+                        if *gas == POLICY_GAS_LIMIT && *limit == POLICY_GAS_LIMIT - 1
+                ),
+                "nonce key {nonce_key}: {error:?}"
+            );
+        }
     }
 
     #[tokio::test]
