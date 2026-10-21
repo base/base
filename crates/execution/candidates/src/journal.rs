@@ -54,8 +54,9 @@ pub struct GroupTerminal {
 }
 
 impl GroupTerminal {
-    /// Journals the transition. The event ID depends only on the group, so a replayed
-    /// delivery deduplicates.
+    /// Journals the transition. The event ID covers the group hash and the event's `tx_hash`,
+    /// plus the block hash and number for a landing, so a replayed delivery deduplicates but a
+    /// landing in a different block gets a new ID.
     pub fn journal(&self, instance: u64) {
         if GlobalTransactionEventWriter::get().is_none() {
             return;
