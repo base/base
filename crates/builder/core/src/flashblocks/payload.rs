@@ -26,7 +26,7 @@ use base_execution_consensus::{calculate_receipt_root_no_memo, isthmus};
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
 use base_execution_payload_builder::{
     BaseBuiltPayload, BasePayloadBuilderAttributes, BuilderMetrics as SharedBuilderMetrics,
-    PrewarmWorkerPool, PrewarmingBestTransactions, ValidityMetrics,
+    DeferralJournal, PrewarmWorkerPool, PrewarmingBestTransactions, ValidityMetrics,
 };
 use base_execution_txpool::AccountStateDiff;
 use base_observability_events::{GlobalTransactionEventWriter, TransactionEventType};
@@ -128,6 +128,9 @@ pub(super) struct BasePayloadBuilder<Pool, Client> {
     pub outputs: BuilderOutputs,
     /// Last flashblock emitted by this builder instance.
     last_emitted_flashblock_id: Arc<LastEmittedFlashblockId>,
+    /// Deferrals journaled in recent blocks, so a transaction parked across blocks is reported
+    /// as deferred once.
+    deferral_journal: DeferralJournal,
 }
 
 impl<Pool, Client> BasePayloadBuilder<Pool, Client> {
@@ -147,6 +150,7 @@ impl<Pool, Client> BasePayloadBuilder<Pool, Client> {
             config,
             outputs,
             last_emitted_flashblock_id: Arc::default(),
+            deferral_journal: DeferralJournal::default(),
         }
     }
 
@@ -498,7 +502,7 @@ where
 
         // Highest executed nonce per sender, updated incrementally per flashblock.
         let mut executed_sender_nonces: HashMap<Address, u64> = HashMap::default();
-        let mut deferrals = BlockDeferrals::default();
+        let mut deferrals = self.deferral_journal.begin_block(ctx.block_number());
 
         // Process flashblocks in a blocking loop
         loop {

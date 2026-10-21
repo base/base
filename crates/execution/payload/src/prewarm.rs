@@ -394,7 +394,7 @@ impl Drop for PrewarmJob {
 /// main iterator and is only ever advanced.
 pub struct PrewarmingBestTransactions<I, T>
 where
-    I: ParkablePayloadTransactions<Transaction = T>,
+    I: ParkablePayloadTransactions<Pooled = T>,
     T: PoolTransaction + BasePooledTx,
 {
     /// The build's main transaction iterator, delegated to unchanged.
@@ -408,7 +408,7 @@ where
 
 impl<I, T> std::fmt::Debug for PrewarmingBestTransactions<I, T>
 where
-    I: ParkablePayloadTransactions<Transaction = T>,
+    I: ParkablePayloadTransactions<Pooled = T>,
     T: PoolTransaction + BasePooledTx,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -421,7 +421,7 @@ where
 
 impl<I, T> PrewarmingBestTransactions<I, T>
 where
-    I: ParkablePayloadTransactions<Transaction = T>,
+    I: ParkablePayloadTransactions<Pooled = T>,
     T: PoolTransaction + BasePooledTx,
 {
     /// Wraps the build's transaction iterator with prewarm lookahead scheduling.
@@ -485,10 +485,10 @@ where
 
 impl<I, T> PayloadTransactions for PrewarmingBestTransactions<I, T>
 where
-    I: ParkablePayloadTransactions<Transaction = T>,
+    I: ParkablePayloadTransactions<Pooled = T>,
     T: PoolTransaction + BasePooledTx,
 {
-    type Transaction = T;
+    type Transaction = Arc<ValidPoolTransaction<T>>;
 
     fn next(&mut self, ctx: ()) -> Option<Self::Transaction> {
         let transaction = self.inner.next(ctx)?;
@@ -503,9 +503,11 @@ where
 
 impl<I, T> ParkablePayloadTransactions for PrewarmingBestTransactions<I, T>
 where
-    I: ParkablePayloadTransactions<Transaction = T>,
+    I: ParkablePayloadTransactions<Pooled = T>,
     T: PoolTransaction + BasePooledTx,
 {
+    type Pooled = T;
+
     fn park_current(&mut self) {
         self.inner.park_current();
     }
@@ -1064,21 +1066,16 @@ mod tests {
     }
 
     /// Inner adapter double that yields a fixed candidate list.
-    struct InnerStub(VecDeque<BasePooledTransaction>);
+    struct InnerStub(VecDeque<Arc<ValidPoolTransaction<BasePooledTransaction>>>);
 
     impl InnerStub {
         fn new(transactions: Vec<Arc<ValidPoolTransaction<BasePooledTransaction>>>) -> Self {
-            Self(
-                transactions
-                    .into_iter()
-                    .map(|transaction| transaction.transaction.clone())
-                    .collect(),
-            )
+            Self(transactions.into())
         }
     }
 
     impl PayloadTransactions for InnerStub {
-        type Transaction = BasePooledTransaction;
+        type Transaction = Arc<ValidPoolTransaction<BasePooledTransaction>>;
 
         fn next(&mut self, _ctx: ()) -> Option<Self::Transaction> {
             self.0.pop_front()
@@ -1088,6 +1085,8 @@ mod tests {
     }
 
     impl ParkablePayloadTransactions for InnerStub {
+        type Pooled = BasePooledTransaction;
+
         fn park_current(&mut self) {}
 
         fn mark_current_committed(&mut self) {}

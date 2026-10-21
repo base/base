@@ -4,8 +4,9 @@ use std::{
     time::Duration,
 };
 
-use alloy_json_rpc::{RequestPacket, ResponsePacket};
+use alloy_json_rpc::{Request, RequestPacket, Response, ResponsePacket, ResponsePayload};
 use alloy_network::Network;
+use alloy_primitives::{Bytes, keccak256};
 use alloy_provider::RootProvider;
 use alloy_rpc_client::ClientBuilder;
 use alloy_transport::{TransportError, TransportErrorKind, TransportFut, utils::guess_local_url};
@@ -14,7 +15,7 @@ use tower::Service;
 use tracing::{instrument::WithSubscriber, subscriber::NoSubscriber};
 use url::Url;
 
-use crate::WithdrawerConfig;
+use crate::{BroadcastJournal, WithdrawerConfig, WithdrawerError};
 
 /// Bounded exponential retries and credential-safe errors over reqwest HTTP.
 #[derive(Clone)]
@@ -23,6 +24,8 @@ pub struct WithdrawalRpcTransport {
     url: Url,
     max_retries: u32,
     retry_delay: Duration,
+    redact_errors: bool,
+    journal: Option<BroadcastJournal>,
 }
 
 impl fmt::Debug for WithdrawalRpcTransport {
@@ -35,7 +38,7 @@ impl fmt::Debug for WithdrawalRpcTransport {
 }
 
 impl WithdrawalRpcTransport {
-    /// Maximum duration of one HTTP attempt, further capped at half the operation timeout.
+    /// Maximum duration of one HTTP attempt, further capped by operation and submission deadlines.
     pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
     /// Builds a typed HTTP provider with bounded requests and retries, without network I/O.
@@ -56,6 +59,35 @@ impl WithdrawalRpcTransport {
                 url: url.clone(),
                 max_retries: config.max_retries,
                 retry_delay: config.retry_delay,
+                redact_errors: false,
+                journal: None,
+            },
+            guess_local_url(url),
+        )))
+    }
+
+    /// Builds a redacting submission provider that records hashes before forwarding requests.
+    pub fn connect_for_submission<N: Network>(
+        url: &Url,
+        config: &WithdrawerConfig,
+        journal: BroadcastJournal,
+    ) -> Result<RootProvider<N>, WithdrawerError> {
+        if !matches!(url.scheme(), "http" | "https") {
+            return Err(TransportErrorKind::non_retryable_str("RPC URL must use HTTP(S)").into());
+        }
+        let attempt_timeout = config.submission_request_timeout()?;
+        let client = reqwest::Client::builder()
+            .timeout(attempt_timeout)
+            .build()
+            .map_err(|error| Self::redact(TransportErrorKind::custom(error)))?;
+        Ok(RootProvider::new(ClientBuilder::default().transport(
+            Self {
+                client,
+                url: url.clone(),
+                max_retries: config.max_retries,
+                retry_delay: config.retry_delay,
+                redact_errors: true,
+                journal: Some(journal),
             },
             guess_local_url(url),
         )))
@@ -152,6 +184,9 @@ impl Service<RequestPacket> for WithdrawalRpcTransport {
     }
 
     fn call(&mut self, request: RequestPacket) -> Self::Future {
+        if let Some(journal) = &self.journal {
+            journal.record(&request);
+        }
         let this = self.clone();
         Box::pin(async move {
             let mut delay = this.retry_delay;
@@ -195,13 +230,299 @@ impl Service<RequestPacket> for WithdrawalRpcTransport {
                     Ok(response) => return Ok(response),
                     Err(error) => error,
                 };
+                if attempt > 0
+                    && this.journal.is_some()
+                    && let RequestPacket::Single(request) = &request
+                    && request.method() == "eth_sendRawTransaction"
+                    && let Some(params) = request.params()
+                    && let Ok([raw]) = serde_json::from_str::<[Bytes; 1]>(params.get())
+                {
+                    let hash = keccak256(raw);
+                    let known =
+                        match base_tx_manager::RpcErrorClassifier::classify_rpc_error(&error) {
+                            base_tx_manager::TxManagerError::AlreadyKnown => true,
+                            base_tx_manager::TxManagerError::NonceTooLow => {
+                                let lookup = Request::new(
+                                    "eth_getTransactionByHash",
+                                    request.id().clone(),
+                                    [hash],
+                                )
+                                .serialize()
+                                .expect("transaction hash serializes");
+                                // A consumed nonce alone does not identify the accepted transaction.
+                                matches!(
+                                    this.clone().call(RequestPacket::Single(lookup)).await,
+                                    Ok(ResponsePacket::Single(response))
+                                        if response.try_success_as::<Option<serde_json::Value>>()
+                                            .is_some_and(|result| matches!(result, Ok(Some(_))))
+                                )
+                            }
+                            _ => false,
+                        };
+                    if known {
+                        return Ok(ResponsePacket::Single(Response {
+                            id: request.id().clone(),
+                            payload: ResponsePayload::Success(
+                                serde_json::value::to_raw_value(&hash)
+                                    .expect("transaction hash serializes"),
+                            ),
+                        }));
+                    }
+                }
                 if attempt == this.max_retries || !Self::should_retry(&error) {
-                    return Err(Self::redact(error));
+                    return Err(if this.redact_errors {
+                        // Fee-bump and nonce policy need typed errors, not server diagnostics.
+                        let classified =
+                            base_tx_manager::RpcErrorClassifier::classify_rpc_error(&error);
+                        let mut error = Self::redact_diagnostic(error);
+                        if !matches!(
+                            classified,
+                            base_tx_manager::TxManagerError::Rpc(_)
+                                | base_tx_manager::TxManagerError::ExecutionReverted { .. }
+                        ) && let TransportError::ErrorResp(payload) = &mut error
+                        {
+                            payload.message = classified.to_string().into();
+                        }
+                        error
+                    } else {
+                        Self::redact(error)
+                    });
                 }
                 tokio::time::sleep(delay).await;
                 delay = delay.saturating_mul(2);
             }
             unreachable!("the initial request attempt always runs")
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    use alloy_json_rpc::Id;
+    use alloy_network::{Ethereum, EthereumWallet};
+    use alloy_primitives::B256;
+    use axum::{Json, Router, http::StatusCode, response::IntoResponse, routing::post};
+    use base_tx_manager::{NoopTxMetrics, SendState, SimpleTxManager};
+    use clap::Parser;
+    use serde_json::{Value, json};
+    use tokio::net::TcpListener;
+
+    use super::*;
+
+    #[test]
+    fn submission_deadline_error_preserves_configuration_cause() {
+        let mut config = WithdrawerConfig::try_from(
+            crate::WithdrawerArgs::try_parse_from([
+                "withdrawer",
+                "--l1-rpc-url=http://localhost:8545",
+                "--withdrawal",
+                &B256::ZERO.to_string(),
+                "--private-key",
+                &B256::repeat_byte(1).to_string(),
+            ])
+            .unwrap(),
+        )
+        .unwrap();
+        config.tx_manager.network_timeout = config.retry_delay;
+        let error = WithdrawalRpcTransport::connect_for_submission::<Ethereum>(
+            &config.l1_rpc_url,
+            &config,
+            BroadcastJournal::default(),
+        )
+        .unwrap_err();
+        assert!(matches!(error, WithdrawerError::Config(crate::ConfigError::RetryDeadline)));
+        assert!(error.to_string().contains("--tx-manager.network-timeout"));
+    }
+
+    #[tokio::test]
+    async fn lost_broadcast_response_is_reconciled_before_the_manager_deadline() {
+        let broadcasts = Arc::new(AtomicUsize::new(0));
+        let attempts = Arc::clone(&broadcasts);
+        let app = Router::new().route(
+            "/",
+            post(move |Json(request): Json<Value>| {
+                let attempts = Arc::clone(&attempts);
+                async move {
+                    if request["method"] == "eth_chainId" {
+                        return Json(json!({
+                            "jsonrpc": "2.0", "id": request["id"], "result": "0x1",
+                        }));
+                    }
+                    assert_eq!(request["method"], "eth_sendRawTransaction");
+                    if attempts.fetch_add(1, Ordering::SeqCst) == 0 {
+                        std::future::pending::<()>().await;
+                    }
+                    Json(json!({
+                        "jsonrpc": "2.0", "id": request["id"],
+                        "error": {"code": -32000, "message": "already known"},
+                    }))
+                }
+            }),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let config = WithdrawerConfig::try_from(
+            crate::WithdrawerArgs::try_parse_from([
+                "withdrawer",
+                "--l1-rpc-url",
+                &url,
+                "--withdrawal",
+                &B256::ZERO.to_string(),
+                "--private-key",
+                &B256::repeat_byte(1).to_string(),
+                "--tx-manager.network-timeout=1s",
+                "--retry-delay=100ms",
+            ])
+            .unwrap(),
+        )
+        .unwrap();
+        let journal = BroadcastJournal::default();
+        let provider = WithdrawalRpcTransport::connect_for_submission::<Ethereum>(
+            &config.l1_rpc_url,
+            &config,
+            journal.clone(),
+        )
+        .unwrap();
+        let signer = crate::WithdrawalSigner::new(&config.signer).await.unwrap();
+        let manager = SimpleTxManager::from_wallet(
+            provider,
+            EthereumWallet::from(signer),
+            config.tx_manager.clone(),
+            1,
+            Arc::new(NoopTxMetrics),
+        )
+        .await
+        .unwrap();
+        let raw = Bytes::from_static(&[2, 3]);
+        let send_state = SendState::new(config.tx_manager.safe_abort_nonce_too_low_count).unwrap();
+        let started = tokio::time::Instant::now();
+        let result = manager.publish_tx(&send_state, &raw, None).await;
+        server.abort();
+        assert_eq!(result.unwrap(), keccak256(&raw));
+        assert!(started.elapsed() < config.tx_manager.network_timeout);
+        assert_eq!(broadcasts.load(Ordering::SeqCst), 2);
+        assert_eq!(journal.hashes(), vec![keccak256(&raw)]);
+    }
+
+    #[tokio::test]
+    async fn replayed_broadcast_reconciles_only_the_accepted_transaction() {
+        for (retry, rejection, transaction, accepted) in [
+            (true, "already known", Value::Null, true),
+            (true, "nonce too low", json!({"hash": keccak256([2, 3])}), true),
+            (true, "nonce too low", Value::Null, false),
+            (false, "already known", Value::Null, false),
+            (false, "nonce too low", json!({"hash": keccak256([2, 3])}), false),
+        ] {
+            let broadcasts = Arc::new(AtomicUsize::new(0));
+            let attempts = Arc::clone(&broadcasts);
+            let app = Router::new().route(
+                "/",
+                post(move |Json(request): Json<Value>| {
+                    let attempts = Arc::clone(&attempts);
+                    let transaction = transaction.clone();
+                    async move {
+                        if request["method"] == "eth_sendRawTransaction" {
+                            if attempts.fetch_add(1, Ordering::SeqCst) == 0 && retry {
+                                return StatusCode::BAD_GATEWAY.into_response();
+                            }
+                            Json(json!({
+                                "jsonrpc": "2.0", "id": request["id"],
+                                "error": {"code": -32000, "message": rejection},
+                            }))
+                            .into_response()
+                        } else {
+                            assert_eq!(request["method"], "eth_getTransactionByHash");
+                            assert_eq!(request["params"][0], json!(keccak256([2, 3])));
+                            Json(json!({
+                                "jsonrpc": "2.0", "id": request["id"], "result": transaction,
+                            }))
+                            .into_response()
+                        }
+                    }
+                }),
+            );
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let url = format!("http://{}", listener.local_addr().unwrap()).parse().unwrap();
+            let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+            let mut transport = WithdrawalRpcTransport {
+                client: reqwest::Client::new(),
+                url,
+                max_retries: 1,
+                retry_delay: Duration::from_millis(1),
+                redact_errors: true,
+                journal: Some(BroadcastJournal::default()),
+            };
+            let request = Request::new(
+                "eth_sendRawTransaction",
+                Id::Number(7),
+                [Bytes::from_static(&[2, 3])],
+            )
+            .serialize()
+            .unwrap();
+            let result = transport.call(RequestPacket::Single(request)).await;
+            server.abort();
+            if accepted {
+                let ResponsePacket::Single(response) = result.unwrap() else {
+                    panic!("expected a single send response");
+                };
+                assert_eq!(response.id, Id::Number(7));
+                assert_eq!(response.try_success_as::<B256>().unwrap().unwrap(), keccak256([2, 3]));
+            } else {
+                let error = result.unwrap_err();
+                assert_eq!(
+                    base_tx_manager::RpcErrorClassifier::classify_rpc_error(&error),
+                    if rejection == "already known" {
+                        base_tx_manager::TxManagerError::AlreadyKnown
+                    } else {
+                        base_tx_manager::TxManagerError::NonceTooLow
+                    },
+                );
+            }
+            assert_eq!(broadcasts.load(Ordering::SeqCst), if retry { 2 } else { 1 });
+        }
+    }
+
+    #[tokio::test]
+    async fn failed_broadcasts_retain_distinct_hashes_including_batches() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap()).parse().unwrap();
+        drop(listener);
+        let journal = BroadcastJournal::default();
+        let mut transport = WithdrawalRpcTransport {
+            client: reqwest::Client::new(),
+            url,
+            max_retries: 1,
+            retry_delay: Duration::from_millis(1),
+            redact_errors: true,
+            journal: Some(journal.clone()),
+        };
+        let request =
+            Request::new("eth_sendRawTransaction", Id::Number(1), [Bytes::from_static(&[2, 3])])
+                .serialize()
+                .unwrap();
+        let replacement =
+            Request::new("eth_sendRawTransaction", Id::Number(4), [Bytes::from_static(&[2, 4])])
+                .serialize()
+                .unwrap();
+        let malformed = Request::new("eth_sendRawTransaction", Id::Number(2), json!(["not hex"]))
+            .serialize()
+            .unwrap();
+        let read = Request::new("eth_call", Id::Number(3), [Bytes::from_static(&[4])])
+            .serialize()
+            .unwrap();
+        assert!(transport.call(RequestPacket::Single(request.clone())).await.is_err());
+        assert!(
+            transport
+                .call(RequestPacket::Batch(vec![request, replacement, malformed, read]))
+                .await
+                .is_err()
+        );
+        assert_eq!(journal.hashes(), vec![keccak256([2, 3]), keccak256([2, 4])]);
     }
 }

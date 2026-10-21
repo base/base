@@ -455,18 +455,27 @@ gossip level.
 ### The libp2p Behaviour: combining protocols
 
 The [`Behaviour`](https://github.com/base/base/blob/main/crates/consensus/gossip/src/behaviour.rs)
-struct is a libp2p `NetworkBehaviour` that combines several sub-protocols into a single swarm
-(libp2p's term for the combination of a transport layer, a set of protocol behaviors, and connection
-management — essentially the "networking engine"):
+struct is a libp2p `NetworkBehaviour` that combines connection limits and three sub-protocols into a
+single swarm (libp2p's term for the combination of a transport layer, a set of protocol behaviors,
+and connection management — essentially the "networking engine"):
 
 ```rust
 #[derive(NetworkBehaviour)]
+#[behaviour(out_event = "Event")]
 pub struct Behaviour {
+    pub connection_limits: libp2p::connection_limits::Behaviour,
     pub ping: libp2p::ping::Behaviour,
     pub gossipsub: libp2p::gossipsub::Behaviour,
     pub identify: libp2p::identify::Behaviour,
 }
 ```
+
+The `connection_limits` behaviour caps pending and established connections and speaks no wire
+protocol. It is the first field because libp2p calls each behaviour's connection hooks in field
+order, so it rejects excess connections before the other behaviours allocate handlers. By default
+it allows 30 established connections, 5 pending inbound, 16 pending outbound and 1 per peer. The
+CLI sets the established cap from `--p2p.peers.hi` and the pending outbound cap from
+`--p2p.max-pending-outgoing`.
 
 The `ping` behaviour sends periodic keepalive pings to connected peers and measures round-trip
 times. The `gossipsub` behaviour handles the actual block gossip. The `identify` behaviour exchanges
