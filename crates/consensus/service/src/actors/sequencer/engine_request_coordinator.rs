@@ -395,6 +395,8 @@ where
     async fn advance_canonical_catchup(&mut self) -> Result<(), EngineError> {
         let anchor = self.processor.engine_state().sync_state.unsafe_head();
         let SequencerEngineState::CatchingUp { catchup } = &mut self.sequencer_state else {
+            // Catch-up is only entered at bootstrap, so the source is never needed again.
+            self.catchup_source = None;
             return Ok(());
         };
         catchup.commit(anchor);
@@ -1271,6 +1273,20 @@ mod tests {
         coordinator.advance_canonical_catchup().await.expect("no-op");
 
         assert!(client.last_new_payload_v2().await.is_none(), "pre-reset payload reached the EL");
+    }
+
+    #[tokio::test]
+    async fn completed_catchup_releases_source() {
+        let chain = canonical_chain();
+        let (mut coordinator, _) = catchup_coordinator(&chain);
+        catchup(&mut coordinator).buffer_payload(chain[&14].clone());
+        coordinator.advance_canonical_catchup().await.expect("fetch started");
+        assert!(coordinator.catchup_source.as_ref().is_some_and(|source| source.is_fetching()));
+
+        *coordinator.sequencer_state_mut() = SequencerEngineState::Regular;
+        coordinator.advance_canonical_catchup().await.expect("no-op");
+
+        assert!(coordinator.catchup_source.is_none());
     }
 
     #[tokio::test]
