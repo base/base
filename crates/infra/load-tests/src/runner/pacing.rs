@@ -2573,7 +2573,7 @@ mod tests {
                         Instant::now(),
                     ),
                     fallback_block_gas_limit: 30_000_000,
-                    block_time: Duration::from_secs(2),
+                    block_time: Duration::from_millis(200),
                     presign_target_gas: 0,
                     max_in_flight_per_sender: 1,
                     max_total_in_flight: 1,
@@ -2602,7 +2602,9 @@ mod tests {
 
         let summary = collector.summarize(Duration::from_secs(1), None);
         assert_eq!(summary.pacing.canonical_cycles, 0);
-        assert!(summary.pacing.safety_cycles >= 2);
+        // The immediate refill and the interval's first tick both run at the start, so a third
+        // cycle means the periodic refill fired before the deadline.
+        assert!(summary.pacing.safety_cycles >= 3);
         assert!(!results_tracker.measurement_finished());
     }
 }
