@@ -713,6 +713,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn forwards_a_transaction_whose_simulation_times_out() {
+        let sequencer = MockServer::start();
+        let mock = sequencer.mock(|when, then| {
+            when.method(POST).body_includes("payer_sendTransaction");
+            rpc_result(then, json!({ "transactionHash": format!("0x{}", "11".repeat(32)) }));
+        });
+        let state = failing_simulation(
+            EthRpcErrorCode::InvalidInput.code(),
+            "execution aborted (timeout = 5s)",
+        );
+        let api = PayerApiImpl::new(everest_provider(), client(&sequencer), state, false);
+
+        api.send_transaction(sponsored_request()).await.unwrap();
+
+        mock.assert_calls(1);
+    }
+
+    #[tokio::test]
     async fn proxies_send_transaction_without_caching() {
         let sequencer = MockServer::start();
         let request = sponsored_request();

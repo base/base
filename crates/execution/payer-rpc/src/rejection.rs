@@ -1,7 +1,7 @@
 //! ERC-8168 `PAYER_REJECTED` errors for transactions rejected before they are forwarded.
 
 use alloy_rpc_types_eth::error::EthRpcErrorCode;
-use jsonrpsee::types::{ErrorCode, ErrorObjectOwned};
+use jsonrpsee::types::ErrorObjectOwned;
 use serde_json::{Value, json};
 
 /// Builds the `PAYER_REJECTED` errors a payer returns, for `payer_sendTransaction`
@@ -28,10 +28,12 @@ impl PayerRejection {
 
     /// The rejection for a phase-0 simulation that failed with `error`: `EXECUTION_REVERTED`
     /// for a revert, carrying its data, and `INVALID_TRANSACTION` for a halt or a transaction
-    /// the simulation refuses.
+    /// the EVM refuses, such as one whose sender cannot pay.
     ///
-    /// Returns `None` when the simulation could not run, which says nothing about the
-    /// transaction.
+    /// Returns `None` for any other error, which says nothing reliable about the transaction.
+    /// reth shares `-32000` between request checks and node failures such as execution
+    /// timeouts, and the validity-window check (`-32602`) runs on the latest block's clock,
+    /// which trails the pool's.
     pub fn for_phase_zero(error: &ErrorObjectOwned) -> Option<ErrorObjectOwned> {
         let code = error.code();
         if code == EthRpcErrorCode::ExecutionError.code() {
@@ -47,12 +49,8 @@ impl PayerRejection {
                 "revert": revert,
             })));
         }
-        let refused = [
-            ErrorCode::InvalidParams.code(),
-            EthRpcErrorCode::InvalidInput.code(),
-            EthRpcErrorCode::TransactionRejected.code(),
-        ];
-        refused.contains(&code).then(|| Self::invalid_transaction(error.message()))
+        (code == EthRpcErrorCode::TransactionRejected.code())
+            .then(|| Self::invalid_transaction(error.message()))
     }
 
     fn error(data: Value) -> ErrorObjectOwned {
@@ -62,6 +60,8 @@ impl PayerRejection {
 
 #[cfg(test)]
 mod tests {
+    use jsonrpsee::types::ErrorCode;
+
     use super::*;
 
     fn data(error: &ErrorObjectOwned) -> Value {
@@ -107,13 +107,16 @@ mod tests {
     }
 
     #[test]
-    fn passes_a_simulation_that_could_not_run() {
-        let internal = ErrorObjectOwned::owned(
-            ErrorCode::InternalError.code(),
-            "state unavailable",
-            None::<()>,
-        );
+    fn passes_a_simulation_that_says_nothing_about_the_transaction() {
+        let undecided = [
+            (ErrorCode::InternalError.code(), "state unavailable"),
+            (EthRpcErrorCode::InvalidInput.code(), "execution aborted (timeout = 5s)"),
+            (ErrorCode::InvalidParams.code(), "invalid EIP-8130 estimate request: expiry too far"),
+        ];
 
-        assert!(PayerRejection::for_phase_zero(&internal).is_none());
+        for (code, message) in undecided {
+            let error = ErrorObjectOwned::owned(code, message, None::<()>);
+            assert!(PayerRejection::for_phase_zero(&error).is_none(), "{message}");
+        }
     }
 }
