@@ -8,11 +8,13 @@ use alloy_eips::{
 };
 use alloy_primitives::{Address, B128, B256, TxHash, U256, map::AddressSet};
 use base_common_precompiles::NonceManagerStorage;
+use base_execution_candidates::CandidateRuntime;
 use futures::StreamExt;
 use parking_lot::{Mutex, RwLock};
 use reth_eth_wire_types::HandleMempoolData;
 use reth_execution_types::ChangedAccount;
 use reth_primitives_traits::Recovered;
+use reth_storage_api::StateProviderFactory;
 use reth_transaction_pool::{
     AddedTransactionOutcome, AllPoolTransactions, AllTransactionsEvents, BestTransactions,
     BestTransactionsAttributes, BlobStore, BlobStoreError, BlockInfo, FullTransactionEvent,
@@ -122,6 +124,9 @@ pub struct BaseTransactionPool<
     /// deadline eviction, so a same-nonce submission cannot race the sweep.
     /// Validation itself remains outside this lock.
     protocol_admission_lock: Arc<Mutex<()>>,
+    /// Shared candidate runtime, when candidates are enabled: group expiry, ledger maintenance
+    /// and the guard against reinserting a known sibling as a plain transaction.
+    candidates: Option<Arc<CandidateRuntime>>,
 }
 
 impl<Client, S, Evm, T, O> fmt::Debug for BaseTransactionPool<Client, S, Evm, T, O>
@@ -157,6 +162,7 @@ where
             block_expiry: Arc::clone(&self.block_expiry),
             published_flashblock: Arc::clone(&self.published_flashblock),
             protocol_admission_lock: Arc::clone(&self.protocol_admission_lock),
+            candidates: self.candidates.clone(),
         }
     }
 }
@@ -202,7 +208,16 @@ where
             block_expiry: Arc::new(RwLock::new(crate::BlockExpiryIndex::new())),
             published_flashblock: Arc::new(RwLock::new(None)),
             protocol_admission_lock: Arc::new(Mutex::new(())),
+            candidates: None,
         }
+    }
+
+    /// Enables candidate-group handling: expiry, ledger reconciliation and fail-closed
+    /// suppression of plain sibling reinsertion. Call before sharing the pool.
+    #[must_use]
+    pub fn with_candidate_runtime(mut self, runtime: Arc<CandidateRuntime>) -> Self {
+        self.candidates = Some(runtime);
+        self
     }
 
     /// Configures EIP-8130 admission limits. Call before sharing the pool.
@@ -444,13 +459,15 @@ where
         }
     }
 
-    /// Returns the block-expiry bound for a validated transaction's validity
-    /// predicates, or `None` when they impose no finite block bound.
+    /// Returns the block-expiry bound for a validated transaction: the earlier of its validity
+    /// predicates' finite block bound and its candidate group's node-assigned inclusive expiry
+    /// block, when either exists.
     fn validity_block_expiry_bound(validated: &TransactionValidationOutcome<T>) -> Option<u64> {
-        let transaction = validated.as_valid_transaction()?;
-        crate::ValidityPredicate::block_expiry_bound(
-            transaction.transaction().validity_predicates(),
-        )
+        let transaction = validated.as_valid_transaction()?.transaction();
+        let group = transaction.candidate_group().map(|group| group.expiry_block());
+        let predicates =
+            crate::ValidityPredicate::block_expiry_bound(transaction.validity_predicates());
+        group.into_iter().chain(predicates).min()
     }
 
     /// Optional flashblock upper bound, paired with the block bound for pool eviction.
@@ -525,6 +542,10 @@ where
         // validity predicates, so an evicted tx can also hold guard capacity.
         // `release` is a no-op for the common EIP-1559 case that is not tracked.
         self.release_from_guard(&removed);
+        if let Some(candidates) = &self.candidates {
+            candidates.ledger.reconcile(|hash| self.protocol_pool.contains(hash), committed_block);
+            candidates.ledger.prune(committed_block);
+        }
         if !removed.is_empty() {
             GuardMetrics::record_block_expiry_invalidations(removed.len());
             debug!(
@@ -1027,6 +1048,80 @@ where
     }
 }
 
+impl<Client, S, Evm, T, O> BaseTransactionPool<Client, S, Evm, T, O>
+where
+    Client: StateProviderFactory + 'static,
+    Evm: 'static,
+    BaseTransactionValidator<Client, T, Evm>: TransactionValidator<Transaction = T>,
+    T: BasePooledTx + reth_transaction_pool::EthPoolTransaction + 'static,
+    O: reth_transaction_pool::TransactionOrdering<Transaction = T> + Clone,
+    S: BlobStore + Clone,
+{
+    /// Rejects automatic plain insertion of a known candidate sibling (design §4.6).
+    ///
+    /// Reth reinjects reorged-out transactions without sidecars, which would turn a candidate
+    /// sibling into an ordinary transaction, and validity predicates can be attached to any
+    /// known transaction bytes. While candidates are enabled this suppresses every transaction
+    /// without a candidate group whose hash the ledger retains as a sibling, whatever its origin
+    /// and whether or not it carries validity predicates; the group must be resubmitted. When a suppressed hash is a `Landed` group's winner and
+    /// the sender's canonical account nonce is still at or below the winner's nonce, the winner
+    /// was reorged out, so the group is reopened
+    /// ([`GroupLedger::reopen_reorged`](base_execution_candidates::GroupLedger::reopen_reorged))
+    /// and the identical group, or the winner alone, is admitted again. A re-sent winner that
+    /// is still canonical has its nonce consumed and keeps its landed record, as does any winner
+    /// whose canonical nonce cannot be read. The pool backup saves only `Local` transactions, so
+    /// it never carries Private candidate representatives. The ledger is not restart-durable,
+    /// which is why enabling candidates requires acknowledging an ephemeral ledger.
+    fn reject_plain_candidate_reinsertion(
+        &self,
+        origin: TransactionOrigin,
+        transaction: &T,
+    ) -> PoolResult<()> {
+        let Some(candidates) = &self.candidates else { return Ok(()) };
+        if transaction.candidate_group().is_some() {
+            return Ok(());
+        }
+        let hash = *transaction.hash();
+        if candidates.ledger.suppresses_plain_reinsertion(&hash) {
+            let reopened =
+                self.nonce_unconsumed(transaction) && candidates.ledger.reopen_reorged(&hash);
+            debug!(
+                tx_hash = %hash,
+                origin = ?origin,
+                reopened,
+                "suppressed plain reinsertion of a candidate sibling"
+            );
+            return Err(reth_transaction_pool::error::PoolError::other(
+                hash,
+                "candidate siblings cannot be inserted as plain transactions",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Returns `true` when the sender's canonical account nonce has not passed the
+    /// transaction's nonce. A provider error fails closed.
+    fn nonce_unconsumed(&self, transaction: &T) -> bool {
+        let canonical = self
+            .validator()
+            .validator()
+            .client()
+            .latest()
+            .and_then(|state| state.account_nonce(&transaction.sender()));
+        match canonical {
+            Ok(nonce) => nonce.unwrap_or_default() <= transaction.nonce(),
+            Err(error) => {
+                debug!(
+                    tx_hash = %transaction.hash(),
+                    error = %error,
+                    "canonical nonce unavailable; keeping the landed group"
+                );
+                false
+            }
+        }
+    }
+}
+
 impl<Client, S, Evm, T, O> StateDiffInvalidation for BaseTransactionPool<Client, S, Evm, T, O>
 where
     Client: 'static,
@@ -1069,7 +1164,7 @@ where
 
 impl<Client, S, Evm, T, O> TransactionPool for BaseTransactionPool<Client, S, Evm, T, O>
 where
-    Client: 'static,
+    Client: StateProviderFactory + 'static,
     Evm: 'static,
     BaseTransactionValidator<Client, T, Evm>: TransactionValidator<Transaction = T>,
     T: BasePooledTx + reth_transaction_pool::EthPoolTransaction + 'static,
@@ -1103,6 +1198,7 @@ where
         origin: TransactionOrigin,
         transaction: Self::Transaction,
     ) -> PoolResult<TransactionEvents> {
+        self.reject_plain_candidate_reinsertion(origin, &transaction)?;
         if !self.is_sidecar_transaction(&transaction) {
             let hash = *transaction.hash();
             let sender = transaction.sender();
@@ -1150,6 +1246,7 @@ where
         origin: TransactionOrigin,
         transaction: Self::Transaction,
     ) -> PoolResult<AddedTransactionOutcome> {
+        self.reject_plain_candidate_reinsertion(origin, &transaction)?;
         if self.is_sidecar_transaction(&transaction) {
             self.add_sidecar_transaction(origin, transaction).await
         } else {
@@ -1691,7 +1788,7 @@ where
 
 impl<Client, S, Evm, T, O> ParkableTransactionPool for BaseTransactionPool<Client, S, Evm, T, O>
 where
-    Client: 'static,
+    Client: StateProviderFactory + 'static,
     Evm: 'static,
     BaseTransactionValidator<Client, T, Evm>: TransactionValidator<Transaction = T>,
     T: BasePooledTx + reth_transaction_pool::EthPoolTransaction + 'static,
@@ -1715,7 +1812,7 @@ where
 
 impl<Client, S, Evm, T, O> TransactionPoolExt for BaseTransactionPool<Client, S, Evm, T, O>
 where
-    Client: 'static,
+    Client: StateProviderFactory + 'static,
     Evm: 'static,
     BaseTransactionValidator<Client, T, Evm>: TransactionValidator<Transaction = T>,
     T: BasePooledTx + reth_transaction_pool::EthPoolTransaction + 'static,
@@ -1736,6 +1833,9 @@ where
         let now = update.timestamp();
         let block_number = update.number();
         let mined_transactions = update.mined_transactions.clone();
+        let account_nonces: Vec<_> = self.candidates.as_ref().map_or_else(Vec::new, |_| {
+            update.changed_accounts.iter().map(|account| (account.address, account.nonce)).collect()
+        });
         // Free mined capacity atomically with admission before the heavier pool
         // maintenance. The transaction is already canonical, so it no longer
         // consumes an admission slot even until its pool entry is pruned below.
@@ -1778,6 +1878,12 @@ where
             for transaction in &expired {
                 guard.release(transaction.hash());
             }
+        }
+        if let Some(candidates) = &self.candidates {
+            // Record canonical landings before `record_nonces` and `expire_by_block`, so a
+            // mined sibling ends as `Landed` rather than `NonceConsumed` or `Expired`.
+            candidates.ledger.record_landed(&mined_transactions, block_number, block_hash);
+            candidates.ledger.record_nonces(account_nonces);
         }
         self.expire_due_buckets(now);
         self.expire_by_block(block_number);
@@ -4143,5 +4249,642 @@ mod tests {
             assert_eq!(pool.get(&hash).is_some(), remains_live);
             assert_eq!(pool.guard.read().contains(&hash), remains_live);
         }
+    }
+
+    fn candidate_runtime() -> Arc<CandidateRuntime> {
+        Arc::new(CandidateRuntime {
+            ledger: base_execution_candidates::GroupLedger::default(),
+            policy: Arc::new(base_execution_candidates::StaticAccessPolicy::default()),
+            switch: base_execution_candidates::CandidateSwitch::default(),
+            limits: base_execution_candidates::CandidateLimits::default(),
+        })
+    }
+
+    /// A funded two-sibling group, recorded in `runtime`'s ledger, and its representative.
+    fn candidate_submission(
+        client: &MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>,
+        runtime: &CandidateRuntime,
+    ) -> (Arc<base_execution_candidates::CandidateGroup>, BasePooledTransaction) {
+        let fixture = base_execution_candidates::test_utils::CandidateFixture::with_key(
+            test_chain_id(),
+            0x51,
+        );
+        fund(client, fixture.address());
+        let (raw, envelope, _) = fixture.submission(2, 0);
+        let group = Arc::new(fixture.group(&raw, envelope));
+        runtime
+            .ledger
+            .create(
+                Arc::clone(group.descriptor()),
+                base_execution_candidates::PrincipalId(1),
+                0,
+                |_| false,
+            )
+            .expect("group is admitted");
+        let representative =
+            BasePooledTransaction::recover_raw_transaction(&group.representative().encoded)
+                .expect("representative decodes")
+                .with_candidate_group(Arc::clone(&group));
+        (group, representative)
+    }
+
+    fn plain_sibling(
+        group: &base_execution_candidates::CandidateGroup,
+        index: usize,
+    ) -> BasePooledTransaction {
+        BasePooledTransaction::recover_raw_transaction(&group.siblings()[index].encoded)
+            .expect("sibling decodes")
+    }
+
+    #[tokio::test]
+    async fn candidate_siblings_are_not_reinserted_as_plain_transactions() {
+        let (pool, client) = build_integration_pool();
+        let runtime = candidate_runtime();
+        let pool = pool.with_candidate_runtime(Arc::clone(&runtime));
+        let (group, representative) = candidate_submission(&client, &runtime);
+
+        for origin in [TransactionOrigin::External, TransactionOrigin::Local] {
+            for index in 0..group.siblings().len() {
+                let err = pool
+                    .add_transaction(origin, plain_sibling(&group, index))
+                    .await
+                    .expect_err("a known sibling is suppressed as a plain transaction");
+                assert!(matches!(err.kind, PoolErrorKind::Other(_)), "got {err:?}");
+            }
+        }
+
+        pool.add_transaction(TransactionOrigin::Private, representative)
+            .await
+            .expect("the representative carrying its group is admitted");
+        assert!(pool.get(&group.representative().hash()).is_some());
+    }
+
+    #[tokio::test]
+    async fn canonical_inclusion_of_a_sibling_journals_candidate_landing() {
+        let capture = base_observability_events::TransactionEventCapture::install();
+        let (pool, client) = build_integration_pool();
+        let runtime = candidate_runtime();
+        let pool = pool.with_candidate_runtime(Arc::clone(&runtime));
+        let (group, representative) = candidate_submission(&client, &runtime);
+        pool.add_transaction(TransactionOrigin::Private, representative)
+            .await
+            .expect("the representative carrying its group is admitted");
+        let winner = group.siblings()[1].hash();
+        let block = SealedBlock::seal_slow(BaseBlock {
+            header: alloy_consensus::Header {
+                number: 1,
+                gas_limit: pool.block_info().block_gas_limit,
+                timestamp: INTEGRATION_POOL_NOW_SECS,
+                ..Default::default()
+            },
+            body: Default::default(),
+        });
+
+        for _ in 0..2 {
+            pool.on_canonical_state_change(CanonicalStateUpdate {
+                new_tip: &block,
+                pending_block_base_fee: 0,
+                pending_block_blob_fee: None,
+                changed_accounts: Vec::new(),
+                mined_transactions: vec![winner],
+                update_kind: PoolUpdateKind::Commit,
+            });
+        }
+
+        let landed = candidate_events(&capture, &runtime, &group);
+        assert_eq!(landed.len(), 1, "a group lands once: {landed:?}");
+        assert_eq!(
+            base_observability_events::TransactionEventType::TxpoolCandidateLanded,
+            landed[0].event_type
+        );
+        assert_eq!(landed[0].tx_hash, Some(winner));
+        assert_eq!(landed[0].block_number, Some(1));
+        assert_eq!(landed[0].block_hash, Some(block.hash()));
+    }
+
+    #[tokio::test]
+    async fn canonical_nonce_consumed_by_another_transaction_ends_the_group_at_once() {
+        let capture = base_observability_events::TransactionEventCapture::install();
+        let (pool, client) = build_integration_pool();
+        let runtime = candidate_runtime();
+        let pool = pool.with_candidate_runtime(Arc::clone(&runtime));
+        let (group, representative) = candidate_submission(&client, &runtime);
+        pool.add_transaction(TransactionOrigin::Private, representative)
+            .await
+            .expect("the representative carrying its group is admitted");
+        runtime.ledger.confirm_pooled(group.group_hash(), |hash| pool.get(hash).is_some());
+        let block = SealedBlock::seal_slow(BaseBlock {
+            header: alloy_consensus::Header {
+                number: 1,
+                gas_limit: pool.block_info().block_gas_limit,
+                timestamp: INTEGRATION_POOL_NOW_SECS,
+                ..Default::default()
+            },
+            body: Default::default(),
+        });
+
+        // A sponsor's EIP-7702 authorization advanced the sender's nonce; no sibling was mined.
+        pool.on_canonical_state_change(CanonicalStateUpdate {
+            new_tip: &block,
+            pending_block_base_fee: 0,
+            pending_block_blob_fee: None,
+            changed_accounts: vec![ChangedAccount {
+                address: group.sender(),
+                nonce: group.nonce() + 1,
+                balance: U256::MAX,
+            }],
+            mined_transactions: Vec::new(),
+            update_kind: PoolUpdateKind::Commit,
+        });
+
+        let entry = runtime.ledger.lookup(&group.group_hash()).expect("ledger keeps the entry");
+        assert_eq!(
+            entry.state,
+            base_execution_candidates::GroupState::Evicted(
+                base_execution_candidates::EvictionReason::NonceConsumed
+            )
+        );
+        assert!(
+            runtime.ledger.suppresses_plain_reinsertion(&group.siblings()[1].hash()),
+            "reinjection tombstones outlive the terminal until prune"
+        );
+        let terminals = candidate_events(&capture, &runtime, &group);
+        assert_eq!(terminals.len(), 1, "journaled once, before the recovery window: {terminals:?}");
+        assert_eq!(terminals[0].data["terminal_reason"], "nonce_consumed");
+    }
+
+    /// Applies a canonical update at `number` that sets `sender`'s nonce and mines `mined`.
+    fn canonical_nonce_update(
+        pool: &IntegrationPool,
+        number: u64,
+        sender: Address,
+        nonce: u64,
+        mined: Vec<TxHash>,
+        update_kind: PoolUpdateKind,
+    ) {
+        let block = SealedBlock::seal_slow(BaseBlock {
+            header: alloy_consensus::Header {
+                number,
+                gas_limit: pool.block_info().block_gas_limit,
+                timestamp: INTEGRATION_POOL_NOW_SECS,
+                ..Default::default()
+            },
+            body: Default::default(),
+        });
+        pool.on_canonical_state_change(CanonicalStateUpdate {
+            new_tip: &block,
+            pending_block_base_fee: 0,
+            pending_block_blob_fee: None,
+            changed_accounts: vec![ChangedAccount { address: sender, nonce, balance: U256::MAX }],
+            mined_transactions: mined,
+            update_kind,
+        });
+    }
+
+    #[tokio::test]
+    async fn nonce_consumed_between_insertion_and_settlement_ends_the_group() {
+        let capture = base_observability_events::TransactionEventCapture::install();
+        let (pool, client) = build_integration_pool();
+        let runtime = candidate_runtime();
+        let pool = pool.with_candidate_runtime(Arc::clone(&runtime));
+        let (group, representative) = candidate_submission(&client, &runtime);
+        let hash = group.representative().hash();
+        pool.add_transaction(TransactionOrigin::Private, representative)
+            .await
+            .expect("the representative carrying its group is admitted");
+
+        // Canonical maintenance runs after the insertion but before ingress settles it.
+        canonical_nonce_update(
+            &pool,
+            1,
+            group.sender(),
+            group.nonce() + 1,
+            Vec::new(),
+            PoolUpdateKind::Commit,
+        );
+        assert!(pool.get(&hash).is_none(), "maintenance removed the stale representative");
+        runtime.ledger.confirm_pooled(group.group_hash(), |hash| pool.get(hash).is_some());
+
+        let entry = runtime.ledger.lookup(&group.group_hash()).expect("ledger keeps the entry");
+        assert_eq!(
+            entry.state,
+            base_execution_candidates::GroupState::Evicted(
+                base_execution_candidates::EvictionReason::NonceConsumed
+            )
+        );
+        let terminals = candidate_events(&capture, &runtime, &group);
+        assert_eq!(terminals.len(), 1, "journaled once at settlement: {terminals:?}");
+        assert_eq!(terminals[0].data["terminal_reason"], "nonce_consumed");
+    }
+
+    #[tokio::test]
+    async fn stale_validation_inserted_after_nonce_consumption_ends_the_group() {
+        let capture = base_observability_events::TransactionEventCapture::install();
+        let (pool, client) = build_integration_pool();
+        let runtime = candidate_runtime();
+        let pool = pool.with_candidate_runtime(Arc::clone(&runtime));
+        let (group, representative) = candidate_submission(&client, &runtime);
+        let hash = group.representative().hash();
+
+        // `add_transaction` validates, then inserts. Run the two steps apart so the canonical
+        // block lands after validation against the old state and before the insertion.
+        let (sender, nonce) = (group.sender(), group.nonce());
+        let validated =
+            pool.validator().validate_transaction(TransactionOrigin::Private, representative).await;
+        assert!(validated.is_valid(), "validated against the state before the block");
+
+        // A canonical block consumes the nonce. Reth does not track the sender yet, so it
+        // ignores the account change and still inserts the stale outcome.
+        canonical_nonce_update(&pool, 1, sender, nonce + 1, Vec::new(), PoolUpdateKind::Commit);
+        client.add_account(sender, ExtendedAccount::new(nonce + 1, U256::MAX));
+        pool.add_validated_protocol_transaction(
+            TransactionOrigin::Private,
+            hash,
+            sender,
+            nonce,
+            validated,
+        )
+        .expect("the pool inserts the stale validated outcome");
+        assert!(pool.get(&hash).is_some(), "the pool holds a representative with a used nonce");
+
+        let stale =
+            runtime.ledger.confirm_pooled(group.group_hash(), |hash| pool.get(hash).is_some());
+        assert_eq!(stale, Some(hash), "settlement hands back the stale representative");
+        pool.remove_transactions(vec![hash]);
+        assert!(pool.get(&hash).is_none());
+        let entry = runtime.ledger.lookup(&group.group_hash()).expect("ledger keeps the entry");
+        assert_eq!(
+            entry.state,
+            base_execution_candidates::GroupState::Evicted(
+                base_execution_candidates::EvictionReason::NonceConsumed
+            )
+        );
+        let terminals = candidate_events(&capture, &runtime, &group);
+        assert_eq!(terminals.len(), 1, "journaled once at settlement: {terminals:?}");
+        assert_eq!(terminals[0].data["terminal_reason"], "nonce_consumed");
+        assert_eq!(runtime.ledger.counts(), (0, 1), "the sender's slot is free");
+        assert!(runtime.ledger.suppresses_plain_reinsertion(&group.siblings()[1].hash()));
+
+        // A later block that does not touch the sender changes nothing.
+        canonical_nonce_update(
+            &pool,
+            2,
+            Address::repeat_byte(0x77),
+            5,
+            Vec::new(),
+            PoolUpdateKind::Commit,
+        );
+        assert_eq!(candidate_events(&capture, &runtime, &group).len(), 1);
+    }
+
+    #[tokio::test]
+    async fn reorged_out_sibling_stays_suppressed_after_nonce_consumed() {
+        let (pool, client) = build_integration_pool();
+        let runtime = candidate_runtime();
+        let pool = pool.with_candidate_runtime(Arc::clone(&runtime));
+        let (group, representative) = candidate_submission(&client, &runtime);
+        pool.add_transaction(TransactionOrigin::Private, representative)
+            .await
+            .expect("the representative carrying its group is admitted");
+        runtime.ledger.confirm_pooled(group.group_hash(), |hash| pool.get(hash).is_some());
+        let sibling = group.siblings()[1].hash();
+
+        // An unrelated transaction consumes the nonce. A competing branch built earlier mined
+        // sibling S instead, and a further reorg drops S and restores the nonce.
+        canonical_nonce_update(&pool, 1, group.sender(), 1, Vec::new(), PoolUpdateKind::Commit);
+        canonical_nonce_update(&pool, 1, group.sender(), 1, vec![sibling], PoolUpdateKind::Reorg);
+        canonical_nonce_update(&pool, 1, group.sender(), 0, Vec::new(), PoolUpdateKind::Reorg);
+        fund(&client, group.sender());
+
+        // Reth reinjects S without its group, as an external plain transaction.
+        let err = pool
+            .add_transaction(TransactionOrigin::External, plain_sibling(&group, 1))
+            .await
+            .expect_err("a reorged-out sibling stays suppressed through the recovery window");
+        assert!(matches!(err.kind, PoolErrorKind::Other(_)), "got {err:?}");
+        assert!(pool.get(&sibling).is_none());
+    }
+
+    #[tokio::test]
+    async fn reorged_out_winner_reopens_its_group_for_resubmission() {
+        let (pool, client) = build_integration_pool();
+        let runtime = candidate_runtime();
+        let pool = pool.with_candidate_runtime(Arc::clone(&runtime));
+        let (group, representative) = candidate_submission(&client, &runtime);
+        pool.add_transaction(TransactionOrigin::Private, representative.clone())
+            .await
+            .expect("the representative carrying its group is admitted");
+        runtime.ledger.confirm_pooled(group.group_hash(), |hash| pool.get(hash).is_some());
+        let winner = group.siblings()[1].hash();
+
+        // Block 1 mines sibling 1, then a reorg removes block 1 and restores the nonce.
+        canonical_nonce_update(&pool, 1, group.sender(), 1, vec![winner], PoolUpdateKind::Commit);
+        canonical_nonce_update(&pool, 1, group.sender(), 0, Vec::new(), PoolUpdateKind::Reorg);
+        fund(&client, group.sender());
+
+        // Reth reinjects the winner without its group: still suppressed, but the group reopens.
+        pool.add_transaction(TransactionOrigin::External, plain_sibling(&group, 1))
+            .await
+            .expect_err("a reinjected winner is not pooled as a plain transaction");
+        assert!(runtime.ledger.lookup(&group.group_hash()).is_none(), "the landed entry reopens");
+        assert!(
+            !runtime.ledger.suppresses_plain_reinsertion(&winner),
+            "the winner may be submitted alone"
+        );
+        assert_eq!(
+            runtime.ledger.create(
+                Arc::clone(group.descriptor()),
+                base_execution_candidates::PrincipalId(1),
+                1,
+                |hash| pool.get(hash).is_some()
+            ),
+            Ok(base_execution_candidates::LedgerAdmission::Created),
+            "the identical group is admitted again"
+        );
+        pool.add_transaction(TransactionOrigin::Private, representative)
+            .await
+            .expect("the resubmitted representative is pooled");
+    }
+
+    #[tokio::test]
+    async fn unreadable_canonical_nonce_keeps_a_reorged_winner_landed() {
+        let (pool, client) = build_integration_pool();
+        let runtime = candidate_runtime();
+        let pool = pool.with_candidate_runtime(Arc::clone(&runtime));
+        let (group, representative) = candidate_submission(&client, &runtime);
+        pool.add_transaction(TransactionOrigin::Private, representative)
+            .await
+            .expect("the representative carrying its group is admitted");
+        runtime.ledger.confirm_pooled(group.group_hash(), |hash| pool.get(hash).is_some());
+        let winner = group.siblings()[1].hash();
+        canonical_nonce_update(&pool, 1, group.sender(), 1, vec![winner], PoolUpdateKind::Commit);
+        canonical_nonce_update(&pool, 1, group.sender(), 0, Vec::new(), PoolUpdateKind::Reorg);
+        fund(&client, group.sender());
+
+        // The reinjected winner would reopen its group, but the canonical state cannot be read.
+        client.set_snap_state_reads_fail(true);
+        let error = pool
+            .add_transaction(TransactionOrigin::External, plain_sibling(&group, 1))
+            .await
+            .expect_err("a reinjected winner is not pooled as a plain transaction");
+        assert!(error.to_string().contains("cannot be inserted as plain transactions"));
+        assert!(runtime.ledger.lookup(&group.group_hash()).is_some(), "the landed entry stays");
+        assert!(runtime.ledger.suppresses_plain_reinsertion(&winner), "tombstones are kept");
+    }
+
+    #[tokio::test]
+    async fn resending_a_canonical_winner_keeps_its_group_landed() {
+        let (pool, client) = build_integration_pool();
+        let runtime = candidate_runtime();
+        let pool = pool.with_candidate_runtime(Arc::clone(&runtime));
+        let (group, representative) = candidate_submission(&client, &runtime);
+        pool.add_transaction(TransactionOrigin::Private, representative)
+            .await
+            .expect("the representative carrying its group is admitted");
+        runtime.ledger.confirm_pooled(group.group_hash(), |hash| pool.get(hash).is_some());
+        let winner = group.siblings()[1].hash();
+
+        // Block 1 mines sibling 1 and stays canonical: the sender's canonical nonce is consumed.
+        canonical_nonce_update(&pool, 1, group.sender(), 1, vec![winner], PoolUpdateKind::Commit);
+        client.add_account(
+            group.sender(),
+            ExtendedAccount::new(1, U256::from(1_000_000_000_000_000_000u64)),
+        );
+
+        // Someone re-sends the canonical winner as a plain transaction.
+        pool.add_transaction(TransactionOrigin::Local, plain_sibling(&group, 1))
+            .await
+            .expect_err("a known sibling is not pooled as a plain transaction");
+        let entry = runtime.ledger.lookup(&group.group_hash()).expect("the landed entry stays");
+        let base_execution_candidates::GroupState::Landed { winner: landed, .. } = entry.state
+        else {
+            panic!("expected a landed group, got {:?}", entry.state);
+        };
+        assert_eq!(landed, winner);
+        assert!(runtime.ledger.suppresses_plain_reinsertion(&winner), "tombstones are kept");
+    }
+
+    #[tokio::test]
+    async fn stateless_invalid_canonical_winner_keeps_its_group_landed() {
+        let (pool, client) = build_integration_pool();
+        let runtime = candidate_runtime();
+        let pool = pool.with_candidate_runtime(Arc::clone(&runtime));
+        let (group, representative) = candidate_submission(&client, &runtime);
+        pool.add_transaction(TransactionOrigin::Private, representative)
+            .await
+            .expect("the representative carrying its group is admitted");
+        runtime.ledger.confirm_pooled(group.group_hash(), |hash| pool.get(hash).is_some());
+        let winner = group.siblings()[1].hash();
+
+        // Block 1 mines sibling 1 and stays canonical, and its gas limit is below the winner's,
+        // so validating the winner again fails a stateless check before reaching its nonce.
+        let block = SealedBlock::seal_slow(BaseBlock {
+            header: alloy_consensus::Header {
+                number: 1,
+                gas_limit: 1,
+                timestamp: INTEGRATION_POOL_NOW_SECS,
+                ..Default::default()
+            },
+            body: Default::default(),
+        });
+        pool.on_canonical_state_change(CanonicalStateUpdate {
+            new_tip: &block,
+            pending_block_base_fee: 0,
+            pending_block_blob_fee: None,
+            changed_accounts: vec![ChangedAccount {
+                address: group.sender(),
+                nonce: 1,
+                balance: U256::MAX,
+            }],
+            mined_transactions: vec![winner],
+            update_kind: PoolUpdateKind::Commit,
+        });
+        client.add_account(
+            group.sender(),
+            ExtendedAccount::new(1, U256::from(1_000_000_000_000_000_000u64)),
+        );
+
+        pool.add_transaction(TransactionOrigin::External, plain_sibling(&group, 1))
+            .await
+            .expect_err("a known sibling is not pooled as a plain transaction");
+        let entry = runtime.ledger.lookup(&group.group_hash()).expect("the landed entry stays");
+        let base_execution_candidates::GroupState::Landed { winner: landed, .. } = entry.state
+        else {
+            panic!("expected a landed group, got {:?}", entry.state);
+        };
+        assert_eq!(landed, winner);
+        assert!(runtime.ledger.suppresses_plain_reinsertion(&winner), "tombstones are kept");
+    }
+
+    #[tokio::test]
+    async fn private_plain_ingress_is_unaffected_while_candidates_are_enabled() {
+        let (pool, client) = build_integration_pool();
+        let runtime = candidate_runtime();
+        let pool = pool.with_candidate_runtime(Arc::clone(&runtime));
+        let (group, _) = candidate_submission(&client, &runtime);
+        let signer = signer();
+        fund(&client, signer.address());
+
+        pool.add_transaction(TransactionOrigin::Private, signed_1559(&signer, 0))
+            .await
+            .expect("only known siblings are suppressed, not every sidecar-free Private entry");
+        let err = pool
+            .add_transaction(TransactionOrigin::Private, plain_sibling(&group, 1))
+            .await
+            .expect_err("a known sibling stays suppressed under Private origin");
+        assert!(matches!(err.kind, PoolErrorKind::Other(_)), "got {err:?}");
+    }
+
+    #[tokio::test]
+    async fn a_known_sibling_with_validity_predicates_is_suppressed() {
+        let (pool, client) = build_integration_pool();
+        let runtime = candidate_runtime();
+        let pool = pool.with_candidate_runtime(Arc::clone(&runtime));
+        let (group, representative) = candidate_submission(&client, &runtime);
+        pool.add_transaction(TransactionOrigin::Private, representative)
+            .await
+            .expect("the representative carrying its group is admitted");
+        runtime.ledger.confirm_pooled(group.group_hash(), |hash| pool.get(hash).is_some());
+
+        // Validity predicates are not a group: the sibling must not stand alone.
+        let sibling = plain_sibling(&group, 1).with_validity_predicates(vec![
+            ValidityPredicate::BlockNumber {
+                op: ValidityOperator::LessThan,
+                value: U256::from(1_000),
+            },
+        ]);
+        let hash = *sibling.hash();
+        let err = pool
+            .add_transaction(TransactionOrigin::Private, sibling)
+            .await
+            .expect_err("a known sibling with validity predicates stays suppressed");
+        assert!(matches!(err.kind, PoolErrorKind::Other(_)), "got {err:?}");
+        assert!(pool.get(&hash).is_none());
+    }
+
+    #[tokio::test]
+    async fn a_reorged_out_winner_with_validity_predicates_reopens_its_group() {
+        let (pool, client) = build_integration_pool();
+        let runtime = candidate_runtime();
+        let pool = pool.with_candidate_runtime(Arc::clone(&runtime));
+        let (group, representative) = candidate_submission(&client, &runtime);
+        pool.add_transaction(TransactionOrigin::Private, representative)
+            .await
+            .expect("the representative carrying its group is admitted");
+        runtime.ledger.confirm_pooled(group.group_hash(), |hash| pool.get(hash).is_some());
+        let winner = group.siblings()[1].hash();
+        canonical_nonce_update(&pool, 1, group.sender(), 1, vec![winner], PoolUpdateKind::Commit);
+        canonical_nonce_update(&pool, 1, group.sender(), 0, Vec::new(), PoolUpdateKind::Reorg);
+        fund(&client, group.sender());
+
+        // Anyone holding the public winner can attach a predicate under the default signature
+        // mode; it is still suppressed, and the group reopens like a plain reinjection.
+        let resent = plain_sibling(&group, 1).with_validity_predicates(vec![
+            ValidityPredicate::BlockNumber {
+                op: ValidityOperator::LessThan,
+                value: U256::from(1_000),
+            },
+        ]);
+        pool.add_transaction(TransactionOrigin::Private, resent)
+            .await
+            .expect_err("a reorged-out winner with predicates is not pooled outside its group");
+        assert!(pool.get(&winner).is_none());
+        assert!(runtime.ledger.lookup(&group.group_hash()).is_none(), "the landed entry reopens");
+        assert!(!runtime.ledger.suppresses_plain_reinsertion(&winner));
+    }
+
+    #[tokio::test]
+    async fn plain_transactions_are_unaffected_without_a_candidate_runtime() {
+        let (pool, client) = build_integration_pool();
+        let runtime = candidate_runtime();
+        let (group, _) = candidate_submission(&client, &runtime);
+        let signer = signer();
+        fund(&client, signer.address());
+
+        pool.add_transaction(TransactionOrigin::External, plain_sibling(&group, 1))
+            .await
+            .expect("sibling bytes are an ordinary transaction when candidates are disabled");
+        pool.add_transaction(TransactionOrigin::Private, signed_1559(&signer, 0))
+            .await
+            .expect("Private origin is unaffected when candidates are disabled");
+    }
+
+    #[tokio::test]
+    async fn candidate_group_expires_after_its_inclusive_expiry_block() {
+        let capture = base_observability_events::TransactionEventCapture::install();
+        let (pool, client) = build_integration_pool();
+        let runtime = candidate_runtime();
+        let pool = pool.with_candidate_runtime(Arc::clone(&runtime));
+        let (group, representative) = candidate_submission(&client, &runtime);
+        let expiry = group.expiry_block();
+        let hash = group.representative().hash();
+        pool.add_transaction(TransactionOrigin::Private, representative).await.unwrap();
+        runtime.ledger.confirm_pooled(group.group_hash(), |hash| pool.get(hash).is_some());
+
+        // Committing `expiry - 1` leaves `expiry` as the next block, which may still include it.
+        pool.expire_by_block(expiry - 1);
+        assert!(pool.get(&hash).is_some());
+
+        pool.expire_by_block(expiry);
+        assert!(pool.get(&hash).is_none());
+        let entry = runtime.ledger.lookup(&group.group_hash()).expect("ledger keeps the entry");
+        assert_eq!(
+            entry.state,
+            base_execution_candidates::GroupState::Evicted(
+                base_execution_candidates::EvictionReason::Expired
+            )
+        );
+        assert!(
+            runtime.ledger.suppresses_plain_reinsertion(&hash),
+            "tombstones outlive pool removal"
+        );
+        pool.expire_by_block(expiry + 1);
+
+        let terminals = candidate_events(&capture, &runtime, &group);
+        assert_eq!(terminals.len(), 1, "one terminal across repeated maintenance: {terminals:?}");
+        assert_eq!(
+            terminals[0].event_type,
+            base_observability_events::TransactionEventType::TxpoolCandidateEvicted
+        );
+        assert_eq!(terminals[0].data["terminal_reason"], "expired");
+    }
+
+    #[tokio::test]
+    async fn candidate_group_expires_at_the_earlier_of_its_lifetime_and_a_validity_bound() {
+        let (pool, client) = build_integration_pool();
+        let runtime = candidate_runtime();
+        let pool = pool.with_candidate_runtime(Arc::clone(&runtime));
+        let (group, representative) = candidate_submission(&client, &runtime);
+        let bound = group.expiry_block() - 50;
+        let representative =
+            representative.with_validity_predicates(vec![crate::ValidityPredicate::BlockNumber {
+                op: crate::ValidityOperator::LessThanOrEqual,
+                value: alloy_primitives::U256::from(bound),
+            }]);
+        let hash = group.representative().hash();
+        pool.add_transaction(TransactionOrigin::Private, representative).await.unwrap();
+
+        pool.expire_by_block(bound - 1);
+        assert!(pool.get(&hash).is_some());
+        pool.expire_by_block(bound);
+        assert!(pool.get(&hash).is_none(), "the tighter validity bound wins");
+    }
+
+    /// Events `runtime`'s ledger journaled for `group`.
+    fn candidate_events(
+        capture: &base_observability_events::TransactionEventCapture,
+        runtime: &CandidateRuntime,
+        group: &base_execution_candidates::CandidateGroup,
+    ) -> Vec<base_observability_events::TransactionEvent> {
+        let instance = serde_json::json!(format!("{:016x}", runtime.ledger.instance()));
+        let group_hash = serde_json::json!(format!("{:#x}", group.group_hash()));
+        capture
+            .events()
+            .into_iter()
+            .filter(|event| {
+                event.data.get("candidate_instance") == Some(&instance)
+                    && event.data.get("group_hash") == Some(&group_hash)
+            })
+            .collect()
     }
 }

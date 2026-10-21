@@ -22,6 +22,7 @@ use base_common_consensus::{
     BaseTransactionSigned, CoinbaseTip, EIP8130_TX_TYPE_ID, Eip8130Constants, Eip8130Signed,
     Predeploys,
 };
+use base_execution_candidates::CandidateGroup;
 use c_kzg::KzgSettings;
 use reth_primitives_traits::{InMemorySize, SignedTransaction};
 use reth_transaction_pool::{
@@ -118,13 +119,42 @@ pub struct BasePooledTransaction<
     /// EIP-8130 validation. Unset for other transaction types; see
     /// [`crate::WatchManifest`].
     watch_manifest: OnceLock<crate::WatchManifest>,
-    /// In-process `meter_bundle` result, attached after sim and before pool insert.
+    /// Optional payload attached before pool insert: an in-process `meter_bundle` result or a
+    /// candidate group. One shared slot keeps plain transactions free of per-entry overhead.
     ///
     /// Behind [`Arc`] so [`Clone`] (payload-building `ParkableBestPayloadTransactions`)
-    /// stays a pointer bump once later PRs populate this. `None` on
-    /// sequencer/builder inserts and on mempool txs while inline simulation is
-    /// off. The later consumer only forwards `Some`.
-    metering: Option<Arc<MeterBundleResponse>>,
+    /// stays a pointer bump. `None` on sequencer/builder inserts and on mempool txs while
+    /// inline simulation is off.
+    extension: Option<Arc<PoolTransactionExtension>>,
+}
+
+/// Optional payload carried by a pooled transaction. The variants are exclusive: candidate
+/// ingress does not meter its representative.
+#[derive(Debug)]
+pub enum PoolTransactionExtension {
+    /// In-process `meter_bundle` result. The later consumer only forwards `Some`. Boxed so
+    /// the extension stays pointer-sized for candidate representatives.
+    Metering(Box<MeterBundleResponse>),
+    /// Candidate group carried by the default transaction of a `base_sendSwapTransaction`
+    /// request with alternatives. The default (the group's representative) is only the pool
+    /// and iterator lifecycle identity; the builder selects and commits one sibling.
+    Candidate(Arc<CandidateGroup>),
+}
+
+impl PoolTransactionExtension {
+    /// Returns the bytes this extension adds to a pooled transaction: the [`Arc`] allocation
+    /// plus the payload's heap.
+    pub fn allocation_size(&self) -> usize {
+        core::mem::size_of::<Self>()
+            + match self {
+                Self::Metering(metering) => {
+                    core::mem::size_of::<MeterBundleResponse>() + metering.heap_size()
+                }
+                Self::Candidate(group) => {
+                    core::mem::size_of::<CandidateGroup>() + group.heap_size()
+                }
+            }
+    }
 }
 
 impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
@@ -166,20 +196,44 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
             sender_cost: OnceLock::new(),
             coinbase_tip_backing: CoinbaseTipBacking::default(),
             watch_manifest: OnceLock::new(),
-            metering: None,
+            extension: None,
         }
     }
 
     /// Attaches an in-process `meter_bundle` result to this transaction.
     #[must_use]
     pub fn with_metering(mut self, metering: MeterBundleResponse) -> Self {
-        self.metering = Some(Arc::new(metering));
+        self.extension = Some(Arc::new(PoolTransactionExtension::Metering(Box::new(metering))));
         self
     }
 
     /// Returns the attached `meter_bundle` result, if any.
     pub fn metering(&self) -> Option<&MeterBundleResponse> {
-        self.metering.as_deref()
+        match self.extension.as_deref()? {
+            PoolTransactionExtension::Metering(metering) => Some(metering.as_ref()),
+            PoolTransactionExtension::Candidate(_) => None,
+        }
+    }
+
+    /// Returns the attached candidate group, if any.
+    pub fn candidate(&self) -> Option<&Arc<CandidateGroup>> {
+        match self.extension.as_deref()? {
+            PoolTransactionExtension::Candidate(group) => Some(group),
+            PoolTransactionExtension::Metering(_) => None,
+        }
+    }
+
+    /// Attaches a validated candidate group to its representative.
+    ///
+    /// Caches the group's maximum sibling obligation, capped at [`Self::MAX_POOL_COST`], in
+    /// `sender_cost`, a slot plain EIP-1559 transactions do not populate, so the representative's
+    /// pool cost is that obligation. Replaces any attached metering result. Callers must
+    /// validate the group first; this method does not verify it.
+    #[must_use]
+    pub fn with_candidate_group(mut self, group: Arc<CandidateGroup>) -> Self {
+        self.sender_cost = OnceLock::from(group.max_cost().min(Self::MAX_POOL_COST));
+        self.extension = Some(Arc::new(PoolTransactionExtension::Candidate(group)));
+        self
     }
 
     /// Sets the validity predicates required for this transaction's inclusion.
@@ -323,6 +377,11 @@ where
     /// which [`BasePooledTx::coinbase_tip`] reads, before the classification,
     /// so the value is fixed while the transaction is pooled.
     fn cost(&self) -> &U256 {
+        if self.candidate().is_some()
+            && let Some(cost) = self.sender_cost.get()
+        {
+            return cost;
+        }
         let Some(class) = self.limit_class.get() else {
             return &self.inner.cost;
         };
@@ -365,9 +424,9 @@ impl<Cons: InMemorySize, Pooled> InMemorySize for BasePooledTransaction<Cons, Po
             .get()
             .map_or(0, |manifest| core::mem::size_of_val(manifest.config_slots()));
         let validity_predicates_size = core::mem::size_of_val(self.validity_predicates.as_slice());
-        let metering_size = self.metering.as_ref().map_or(0, |metering| {
-            core::mem::size_of::<MeterBundleResponse>() + metering.heap_size()
-        });
+        // Fixed when attached, so the reported size is stable while pooled.
+        let extension_size =
+            self.extension.as_deref().map_or(0, PoolTransactionExtension::allocation_size);
         self.inner.size()
             + core::mem::size_of::<u128>()
             + core::mem::size_of::<Vec<crate::ValidityPredicate>>()
@@ -379,8 +438,8 @@ impl<Cons: InMemorySize, Pooled> InMemorySize for BasePooledTransaction<Cons, Po
             + core::mem::size_of::<OnceLock<crate::WatchManifest>>()
             + manifest_slots_size
             + validity_predicates_size
-            + core::mem::size_of::<Option<Arc<MeterBundleResponse>>>()
-            + metering_size
+            + core::mem::size_of::<Option<Arc<PoolTransactionExtension>>>()
+            + extension_size
     }
 }
 
@@ -607,6 +666,13 @@ pub trait BasePooledTx: PoolTransaction + DataAvailabilitySized {
         None
     }
 
+    /// Returns the candidate group carried by this representative, if any.
+    ///
+    /// Defaults to `None` for implementers that never carry candidate groups.
+    fn candidate_group(&self) -> Option<&Arc<CandidateGroup>> {
+        None
+    }
+
     /// Returns whether this transaction belongs in the EIP-8130 sidecar.
     fn is_eip8130_sidecar_transaction(&self) -> bool {
         self.eip8130_nonce_channel_key().is_some() || self.is_eip8130_nonce_free()
@@ -625,6 +691,10 @@ where
 
     fn validity_predicates(&self) -> &[crate::ValidityPredicate] {
         &self.validity_predicates
+    }
+
+    fn candidate_group(&self) -> Option<&Arc<CandidateGroup>> {
+        self.candidate()
     }
 
     fn as_eip8130(&self) -> Option<&Eip8130Signed> {
@@ -697,7 +767,7 @@ where
     }
 
     fn metering(&self) -> Option<&MeterBundleResponse> {
-        self.metering.as_deref()
+        Self::metering(self)
     }
 }
 
@@ -743,7 +813,7 @@ mod tests {
 
     use crate::{
         BasePooledTransaction, BasePooledTx, BaseTransactionValidator, ConfigSlot, InvalidationKey,
-        ValidityOperator, ValidityPredicate, WatchManifest, WatchSet,
+        PoolTransactionExtension, ValidityOperator, ValidityPredicate, WatchManifest, WatchSet,
     };
 
     fn meter_response(results: usize) -> MeterBundleResponse {
@@ -1064,8 +1134,11 @@ mod tests {
 
         assert_eq!(
             transaction.size(),
-            size_without_metering + core::mem::size_of::<MeterBundleResponse>() + results_size,
-            "attaching metering should add the Arc-allocated response plus the results slice"
+            size_without_metering
+                + core::mem::size_of::<PoolTransactionExtension>()
+                + core::mem::size_of::<MeterBundleResponse>()
+                + results_size,
+            "attaching metering should add the Arc-allocated extension plus the results slice"
         );
         assert!(transaction.metering().is_some(), "metering should stay attached");
     }
@@ -1091,6 +1164,7 @@ mod tests {
         assert_eq!(
             transaction.size(),
             size_without_metering
+                + core::mem::size_of::<PoolTransactionExtension>()
                 + core::mem::size_of::<MeterBundleResponse>()
                 + results_size
                 + opcode_gas_size
@@ -1114,5 +1188,54 @@ mod tests {
             BasePooledTx::validity_predicates(&transaction),
             core::slice::from_ref(&predicate)
         );
+    }
+
+    fn candidate_representative(
+        fixture: &base_execution_candidates::test_utils::CandidateFixture,
+    ) -> (BasePooledTransaction, Arc<base_execution_candidates::CandidateGroup>) {
+        let cheap = fixture.encode(fixture.sibling_tx(0, Address::repeat_byte(1), U256::ZERO));
+        let rich =
+            fixture.encode(fixture.sibling_tx(0, Address::repeat_byte(2), U256::from(1_000_000)));
+        let raw = vec![cheap, rich];
+        let group = Arc::new(fixture.group(&raw, fixture.envelope_for(&raw, 0)));
+        let representative =
+            BasePooledTransaction::recover_raw_transaction(&group.representative().encoded)
+                .expect("representative decodes");
+        (representative, group)
+    }
+
+    #[test]
+    fn candidate_representative_reports_the_maximum_sibling_obligation() {
+        let fixture = base_execution_candidates::test_utils::CandidateFixture::new(8453);
+        let (representative, group) = candidate_representative(&fixture);
+        let plain_cost = *representative.cost();
+        assert!(BasePooledTx::candidate_group(&representative).is_none());
+
+        let carrying = representative.with_candidate_group(Arc::clone(&group));
+        assert_eq!(*carrying.cost(), group.max_cost());
+        assert!(*carrying.cost() > plain_cost, "the value-carrying sibling sets the cost");
+        assert_eq!(
+            BasePooledTx::candidate_group(&carrying).map(|group| group.group_hash()),
+            Some(group.group_hash())
+        );
+    }
+
+    /// Plain transactions must not pay for candidate groups in layout: the extension slot that
+    /// replaced the metering `Option<Arc<_>>` is still one pointer.
+    #[test]
+    fn plain_transactions_pay_no_candidate_overhead() {
+        assert_eq!(
+            core::mem::size_of::<Option<Arc<PoolTransactionExtension>>>(),
+            core::mem::size_of::<usize>()
+        );
+    }
+
+    #[test]
+    fn candidate_sidecar_counts_toward_pool_size() {
+        let fixture = base_execution_candidates::test_utils::CandidateFixture::new(8453);
+        let (representative, group) = candidate_representative(&fixture);
+        let plain_size = representative.size();
+        let carrying = representative.with_candidate_group(Arc::clone(&group));
+        assert!(carrying.size() >= plain_size + group.heap_size());
     }
 }

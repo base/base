@@ -325,7 +325,25 @@ sender's nonce past the group's without a sibling landing, for example through
 a sponsor's EIP-7702 authorization or a plain same-nonce transaction, or when
 an admission that was still settling at that block settles. The group's sibling
 hashes stay suppressed until the recovery window closes, so a reorg cannot
-reinsert a sibling without its group. A group
+reinsert a sibling without its group.
+
+Reorg reopen: when a reorg removes a landed winner, reth reinjects it without
+its group. The pool still refuses it as a plain transaction, as it refuses any
+known sibling submitted without its group, with or without validity predicates,
+and when the
+sender's canonical account nonce is still at or below the winner's nonce the
+ledger reopens the group: the landed record is removed and the sibling hashes are no longer
+suppressed, so the same `group_hash` can be admitted a second time, or the
+winner can be submitted alone. A winner re-sent while it is still canonical
+keeps its landed record, and so does any winner whose canonical nonce cannot be
+read. The first `TXPOOL_CANDIDATE_LANDED` is not retracted,
+so a reopened group can journal a second terminal event. A second landing is in
+a different block, so its `TXPOOL_CANDIDATE_LANDED` has a new `event_id` and
+survives deduplication by `event_id` alongside the first; join them on
+`data.group_hash` and use `block_hash` and the canonical chain to tell which
+landing holds.
+
+A group
 that left the pool another way, such as admin removal or pool-full eviction, is
 `dropped` only once the recovery window closes, because a canonical landing can
 still correct it.
