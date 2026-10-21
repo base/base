@@ -213,14 +213,23 @@ impl<S: HeadSubscriber> HeadSubscriptionHealthChecker<S> {
         let url = &self.node_url;
         let mut backoff = MIN_BACKOFF;
         'subscribe: loop {
+            let mut advanced_since_subscribe = false;
             match timeout(SUBSCRIBE_TIMEOUT, self.subscriber.subscribe()).await {
                 Ok(Ok(mut stream)) => {
                     info!(sequencer = %url, "subscribed to newHeads");
                     self.lock_state().on_subscribed(Instant::now());
-                    backoff = MIN_BACKOFF;
                     loop {
                         match timeout(IDLE_RESUBSCRIBE, stream.next()).await {
-                            Ok(Some(header)) => self.record_head(&header),
+                            Ok(Some(header)) => {
+                                // The backoff only resets once the subscription has proven
+                                // itself by delivering an advancing head. Otherwise a node
+                                // that accepts `eth_subscribe` and immediately closes the
+                                // socket is retried at the minimum delay forever.
+                                if self.record_head(&header) && !advanced_since_subscribe {
+                                    backoff = MIN_BACKOFF;
+                                    advanced_since_subscribe = true;
+                                }
+                            }
                             Ok(None) => {
                                 warn!(sequencer = %url, "newHeads subscription ended");
                                 break;
@@ -257,23 +266,29 @@ impl<S: HeadSubscriber> HeadSubscriptionHealthChecker<S> {
         }
     }
 
-    fn record_head(&self, header: &HeaderSummary) {
+    /// Record a head. Returns `true` if it advanced the block number past every earlier
+    /// head on the current subscription.
+    fn record_head(&self, header: &HeaderSummary) -> bool {
         let now_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
             .unwrap_or(0);
         let header_lag_ms =
             now_ms.saturating_sub(header.timestamp_unix_seconds.saturating_mul(1000));
-        let became_healthy = self.lock_state().on_head(
+        let mut guard = self.lock_state();
+        let advanced = guard.last_number().is_none_or(|last| header.number > last);
+        let became_healthy = guard.on_head(
             header.number,
             header_lag_ms,
             self.config.grace_period_ms,
             Instant::now(),
         );
+        drop(guard);
         if became_healthy {
             info!(block_number = header.number, sequencer = %self.node_url, "node becoming healthy");
         }
         debug!(block_number = header.number, sequencer = %self.node_url, "new head");
+        advanced
     }
 
     /// Re-classify every `poll_interval_ms` and log state transitions.
@@ -312,7 +327,7 @@ impl<S: HeadSubscriber> HeadSubscriptionHealthChecker<S> {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::VecDeque, net::UdpSocket};
+    use std::{collections::VecDeque, net::UdpSocket, sync::atomic::AtomicUsize};
 
     use cadence::{StatsdClient, UdpMetricSink};
     use tokio::sync::mpsc;
@@ -322,19 +337,21 @@ mod tests {
     /// Hands out one pre-made subscription per `subscribe` call; fails once they run out.
     struct MockSubscriber {
         streams: Mutex<VecDeque<mpsc::UnboundedReceiver<HeaderSummary>>>,
+        calls: Arc<AtomicUsize>,
     }
 
     impl MockSubscriber {
         fn new(count: usize) -> (Self, Vec<mpsc::UnboundedSender<HeaderSummary>>) {
             let (senders, receivers): (Vec<_>, VecDeque<_>) =
                 (0..count).map(|_| mpsc::unbounded_channel()).unzip();
-            (Self { streams: Mutex::new(receivers) }, senders)
+            (Self { streams: Mutex::new(receivers), calls: Arc::new(AtomicUsize::new(0)) }, senders)
         }
     }
 
     #[async_trait]
     impl HeadSubscriber for MockSubscriber {
         async fn subscribe(&self) -> Result<HeadStream, Box<dyn std::error::Error + Send + Sync>> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
             let rx = self.streams.lock().unwrap().pop_front().ok_or("no more subscriptions")?;
             Ok(Box::pin(futures::stream::unfold(rx, |mut rx| async move {
                 rx.recv().await.map(|h| (h, rx))
@@ -478,6 +495,27 @@ mod tests {
         senders[0].send(head(2, now_secs())).unwrap();
         sleep(Duration::from_millis(100)).await;
         assert_eq!(checker.status(), HealthState::Healthy);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn immediately_ended_subscriptions_do_not_reset_backoff() {
+        // Every subscription is accepted and then ends at once, as if the node closed the
+        // socket right after `eth_subscribe`.
+        let (subscriber, senders) = MockSubscriber::new(5);
+        let calls = Arc::clone(&subscriber.calls);
+        drop(senders);
+        let checker = start(subscriber, false);
+
+        // With the backoff left alone, five subscribe attempts span 100 + 200 + 400 + 800 +
+        // 1600 = 3100 ms. If the backoff reset as soon as `subscribe` succeeded, all five
+        // would happen within about 500 ms and keep repeating at that pace forever.
+        sleep(Duration::from_millis(1_000)).await;
+        assert_eq!(checker.status(), HealthState::Error);
+        assert!(
+            calls.load(Ordering::Relaxed) <= 6,
+            "subscribe was called {} times within 1 s; the backoff resets too early",
+            calls.load(Ordering::Relaxed)
+        );
     }
 
     #[tokio::test(start_paused = true)]
