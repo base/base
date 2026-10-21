@@ -3,7 +3,7 @@ use std::{collections::VecDeque, error::Error as StdError, sync::Arc};
 use alloy_eips::BlockNumberOrTag;
 use alloy_network::{EthereumWallet, TxSigner};
 use alloy_primitives::{Address, B256, Bytes, U256};
-use alloy_provider::{Provider, RootProvider};
+use alloy_provider::Provider;
 use alloy_rpc_types_eth::{TransactionReceipt, TransactionRequest};
 use alloy_sol_types::{Error as SolError, SolCall, SolEvent};
 use alloy_transport::TransportError;
@@ -12,14 +12,15 @@ use base_common_consensus::Predeploys;
 use base_proof_contracts::{GameStatus, IAnchorStateRegistry, IDisputeGameFactory};
 use base_tx_manager::{NoopTxMetrics, SimpleTxManager, TxCandidate, TxManager, TxManagerError};
 use thiserror::Error;
+use tokio::time::{Instant, timeout_at};
 
 use crate::{
     BroadcastJournal, ConfigError, FaultProofContracts, FaultProofPortal, LegacyWithdrawalPortal,
-    MessagePassed, PreparedWithdrawalTransaction, ProofSystem, ResolvedProofSystem,
+    MessagePassed, PreparedWithdrawalTransaction, ProofSystem, ResolvedProofSystem, SubmitError,
     VerifiedWithdrawalProof, Withdrawal, WithdrawalDisputeGame, WithdrawalError,
     WithdrawalOutputOracle, WithdrawalPortal, WithdrawalRpc, WithdrawalRpcError,
-    WithdrawalRpcTransport, WithdrawalSigner, WithdrawalSignerError, WithdrawalTransactionError,
-    WithdrawerConfig,
+    WithdrawalRpcTransport, WithdrawalSender, WithdrawalSigner, WithdrawalSignerError,
+    WithdrawalTransactionError, WithdrawerConfig,
 };
 
 /// Next step determined from the portal and proof contracts.
@@ -117,17 +118,9 @@ pub enum WithdrawerError {
     /// The operation deadline elapsed.
     #[error("withdrawal operation timed out")]
     Timeout(#[source] tokio::time::error::Elapsed),
-    /// Broadcast transactions may have reached L1; check their hashes for inclusion.
-    #[error(
-        "transactions {transaction_hashes:?} may have been broadcast or included; check them before retrying: {source}"
-    )]
-    Unconfirmed {
-        /// Every broadcast hash that may have reached L1.
-        transaction_hashes: Vec<B256>,
-        /// Submission, receipt, or event validation failure, with credential-bearing details removed.
-        #[source]
-        source: Box<Self>,
-    },
+    /// A submission may already be included; check every reported hash before retrying.
+    #[error(transparent)]
+    Submit(Box<SubmitError>),
     /// The portal consumed the withdrawal, but its target call failed; it cannot be retried.
     #[error(
         "withdrawal {withdrawal_hash} finalized in transaction {transaction_hash}, but its target call failed; broadcast transactions: {transaction_hashes:?}"
@@ -209,52 +202,62 @@ impl Withdrawer {
 
     /// Processes every withdrawal in receipt log order within one shared deadline.
     pub async fn run(&self) -> Result<Vec<WithdrawalOutcome>, WithdrawerError> {
-        let pending_transaction = BroadcastJournal::default();
+        let deadline = Instant::now() + self.config.timeout;
         let mut manager = None;
-        let result = tokio::time::timeout(self.config.timeout, async {
-            let rpc = WithdrawalRpc::new(&self.config)?;
-            let proofs = self.resolve_proof_system(&rpc).await?;
-            let signer = WithdrawalSigner::new(&self.config.signer).await?;
-            let sender = signer.address();
-            if !self.config.dry_run {
-                manager = Some(self.manager(signer, pending_transaction.clone()).await?);
-            }
-            let receipt = rpc
-                .l2
-                .get_transaction_receipt(self.config.withdrawal)
-                .await?
-                .ok_or(WithdrawerError::MissingReceipt)?;
-            let withdrawals = Withdrawal::from_receipt(&receipt)?;
+        let result = async {
+            let (rpc, proofs, sender, withdrawals) = timeout_at(deadline, async {
+                let rpc = WithdrawalRpc::new(&self.config)?;
+                let proofs = self.resolve_proof_system(&rpc).await?;
+                let signer = WithdrawalSigner::new(&self.config.signer).await?;
+                let sender = signer.address();
+                if !self.config.dry_run {
+                    manager = Some(self.manager(signer).await?);
+                }
+                let receipt = rpc
+                    .l2
+                    .get_transaction_receipt(self.config.withdrawal)
+                    .await?
+                    .ok_or(WithdrawerError::MissingReceipt)?;
+                let withdrawals = Withdrawal::from_receipt(&receipt)?;
+                Ok::<_, WithdrawerError>((rpc, proofs, sender, withdrawals))
+            })
+            .await
+            .map_err(WithdrawerError::Timeout)??;
             let mut outcomes = Vec::with_capacity(withdrawals.len());
             for withdrawal in withdrawals {
-                pending_transaction.clear();
-                let status = self.status(&rpc, proofs, &withdrawal, sender).await?;
                 let hash = withdrawal.hash();
-                tracing::info!(withdrawal_hash = %hash, ?status, "withdrawal decision");
-                let transaction_hash = match status {
-                    WithdrawalStatus::Prove | WithdrawalStatus::Finalize => {
-                        let calldata = if status == WithdrawalStatus::Prove {
-                            self.prove_calldata(&rpc, proofs, &withdrawal).await?
-                        } else {
+                let (status, calldata) = timeout_at(deadline, async {
+                    let status = self.status(&rpc, proofs, &withdrawal, sender).await?;
+                    tracing::info!(withdrawal_hash = %hash, ?status, "withdrawal decision");
+                    let calldata = match status {
+                        WithdrawalStatus::Prove => {
+                            Some(self.prove_calldata(&rpc, proofs, &withdrawal).await?)
+                        }
+                        WithdrawalStatus::Finalize => Some(
                             WithdrawalPortal::finalizeWithdrawalTransactionCall {
                                 withdrawal: withdrawal.transaction.clone(),
                             }
                             .abi_encode()
-                            .into()
-                        };
-                        self.submit(
-                            &rpc,
-                            sender,
-                            manager.as_ref(),
-                            calldata,
-                            (status == WithdrawalStatus::Finalize).then_some(hash),
-                            &pending_transaction,
-                        )
-                        .await?
-                    }
-                    WithdrawalStatus::Finalized
-                    | WithdrawalStatus::Paused
-                    | WithdrawalStatus::NotReady { .. } => None,
+                            .into(),
+                        ),
+                        _ => None,
+                    };
+                    Ok::<_, WithdrawerError>((status, calldata))
+                })
+                .await
+                .map_err(WithdrawerError::Timeout)??;
+                let transaction_hash = if let Some(calldata) = calldata {
+                    self.submit(
+                        &rpc,
+                        sender,
+                        manager.as_ref(),
+                        calldata,
+                        (status == WithdrawalStatus::Finalize).then_some(hash),
+                        deadline,
+                    )
+                    .await?
+                } else {
+                    None
                 };
                 outcomes.push(WithdrawalOutcome {
                     withdrawal_hash: hash,
@@ -263,35 +266,24 @@ impl Withdrawer {
                 });
             }
             Ok(outcomes)
-        })
-        .await
-        .map_err(|source| {
-            let transaction_hashes = pending_transaction.hashes();
-            if transaction_hashes.is_empty() {
-                WithdrawerError::Timeout(source)
-            } else {
-                WithdrawerError::Unconfirmed {
-                    transaction_hashes,
-                    source: Box::new(WithdrawerError::Timeout(source)),
-                }
-            }
-        });
-        if let Some(manager) = manager {
-            manager.close();
         }
-        result?
+        .await;
+        if let Some(manager) = manager {
+            manager.manager.close();
+        }
+        result
     }
 
     /// Builds a serialized wallet-backed sender using pending nonces.
     pub async fn manager(
         &self,
         signer: WithdrawalSigner,
-        journal: BroadcastJournal,
-    ) -> Result<SimpleTxManager<RootProvider>, WithdrawerError> {
+    ) -> Result<WithdrawalSender, WithdrawerError> {
+        let journal = BroadcastJournal::default();
         let provider = WithdrawalRpcTransport::connect_for_submission(
             &self.config.l1_rpc_url,
             &self.config,
-            journal,
+            journal.clone(),
         )?;
         let chain_id =
             tokio::time::timeout(self.config.tx_manager.network_timeout, provider.get_chain_id())
@@ -304,7 +296,7 @@ impl Withdrawer {
                 WithdrawalTransactionError::L1ChainMismatch { expected, actual: chain_id }.into()
             );
         }
-        Ok(SimpleTxManager::from_wallet(
+        let manager = SimpleTxManager::from_wallet(
             provider,
             EthereumWallet::from(signer),
             self.config.tx_manager.clone(),
@@ -312,7 +304,8 @@ impl Withdrawer {
             Arc::new(NoopTxMetrics),
         )
         .await?
-        .with_pending_nonce())
+        .with_pending_nonce();
+        Ok(WithdrawalSender { manager, journal })
     }
 
     /// Reads and validates the portal's proof contracts, or keeps the configured legacy oracle.
@@ -742,75 +735,70 @@ impl Withdrawer {
         .into())
     }
 
-    /// Estimates a dry run or sends through the manager, retaining hashes on errors and cancellation.
+    /// Estimates or submits within the deadline, classifying failures by transport broadcasts.
     ///
-    /// The manager must use this journal and pending nonces, with no concurrent sends.
-    /// Clear the journal before each submission and retain it until the send or deadline resolves.
+    /// Sends through the same sender must be serialized. The journal is cleared for each call.
     pub async fn submit(
         &self,
         rpc: &WithdrawalRpc,
         sender: Address,
-        manager: Option<&SimpleTxManager<RootProvider>>,
+        manager: Option<&WithdrawalSender>,
         calldata: Bytes,
         finalize_withdrawal: Option<B256>,
-        published: &BroadcastJournal,
-    ) -> Result<Option<B256>, WithdrawerError> {
-        if self.config.dry_run {
-            let prepared = PreparedWithdrawalTransaction::prepare(
-                &self.config,
-                rpc,
-                sender,
-                self.config.network.portal,
-                calldata,
-            )
-            .await?;
-            let transaction = &prepared.candidate;
-            tracing::info!(
-                target = %self.config.network.portal,
-                calldata_length = transaction.tx_data.len(),
-                selector = %Bytes::copy_from_slice(&transaction.tx_data[..transaction.tx_data.len().min(4)]),
-                gas_limit = transaction.gas_limit,
-                max_fee_per_gas = prepared.max_fee_per_gas,
-                maximum_gas_cost = %prepared.maximum_gas_cost(),
-                "dry run prepared withdrawal transaction"
-            );
-            return Ok(None);
+        deadline: Instant,
+    ) -> Result<Option<B256>, SubmitError> {
+        if let Some(manager) = manager {
+            manager.journal.clear();
         }
-        let manager = manager.ok_or_else(|| {
-            TxManagerError::InvalidConfig("missing withdrawal transaction manager".into())
-        })?;
-        // Withdrawals are serialized, but other jobs can publish with the same account.
-        // Refresh pending state after both completed and cancelled sends.
-        manager.nonce_manager().reset().await;
-        let receipt = manager
-            .send(TxCandidate {
+        let result = timeout_at(deadline, async {
+            if self.config.dry_run {
+                let prepared = PreparedWithdrawalTransaction::prepare(
+                    &self.config, rpc, sender, self.config.network.portal, calldata,
+                ).await?;
+                let transaction = &prepared.candidate;
+                tracing::info!(
+                    target = %self.config.network.portal,
+                    calldata_length = transaction.tx_data.len(),
+                    selector = %Bytes::copy_from_slice(&transaction.tx_data[..transaction.tx_data.len().min(4)]),
+                    gas_limit = transaction.gas_limit,
+                    max_fee_per_gas = prepared.max_fee_per_gas,
+                    maximum_gas_cost = %prepared.maximum_gas_cost(),
+                    "dry run prepared withdrawal transaction"
+                );
+                return Ok(None);
+            }
+            let sender = manager.ok_or_else(|| {
+                TxManagerError::InvalidConfig("missing withdrawal transaction manager".into())
+            })?;
+            let manager = &sender.manager;
+            // Withdrawals are serialized, but other jobs can publish with the same account.
+            // Refresh pending state after both completed and cancelled sends.
+            manager.nonce_manager().reset().await;
+            let receipt = manager.send(TxCandidate {
                 to: Some(self.config.network.portal),
                 tx_data: calldata,
                 gas_limit: self.config.gas_limit.unwrap_or_default(),
                 ..Default::default()
-            })
-            .await
-            .map_err(|source| {
-                let source = WithdrawerError::TxManager(source);
-                let transaction_hashes = published.hashes();
-                if transaction_hashes.is_empty() {
-                    source
-                } else {
-                    WithdrawerError::Unconfirmed { transaction_hashes, source: Box::new(source) }
-                }
-            })?;
-        let hash = receipt.transaction_hash;
-        if !receipt.status() {
-            return Err(WithdrawerError::Unconfirmed {
-                transaction_hashes: published.hashes(),
-                source: Box::new(WithdrawalRpcError::Reverted(hash).into()),
-            });
-        }
-        if let Some(withdrawal_hash) = finalize_withdrawal {
-            self.check_finalization(&receipt, withdrawal_hash, hash, &published.hashes())?;
-        }
-        tracing::info!(transaction_hash = %hash, "withdrawal transaction confirmed");
-        Ok(Some(hash))
+            }).await?;
+            let hash = receipt.transaction_hash;
+            if !receipt.status() {
+                return Err(WithdrawalRpcError::Reverted(hash).into());
+            }
+            if let Some(withdrawal_hash) = finalize_withdrawal {
+                self.check_finalization(&receipt, withdrawal_hash, hash, &sender.journal.hashes())?;
+            }
+            tracing::info!(transaction_hash = %hash, "withdrawal transaction confirmed");
+            Ok(Some(hash))
+        }).await.map_err(WithdrawerError::Timeout).and_then(std::convert::identity);
+        result.map_err(|source| {
+            let transaction_hashes =
+                manager.map(|sender| sender.journal.hashes()).unwrap_or_default();
+            if transaction_hashes.is_empty() {
+                SubmitError::NotSent(source)
+            } else {
+                SubmitError::MaybeIncluded { transaction_hashes, source: Box::new(source) }
+            }
+        })
     }
 
     /// Checks the portal's finalization result, which can fail despite a successful L1 receipt.
@@ -830,12 +818,11 @@ impl Withdrawer {
                 continue;
             }
             let event = WithdrawalPortal::WithdrawalFinalized::decode_log_validate(&log.inner)
-                .map_err(|error| WithdrawerError::Unconfirmed {
-                    transaction_hashes: transaction_hashes.to_vec(),
-                    source: Box::new(WithdrawerError::decode_error(
+                .map_err(|error| {
+                    WithdrawerError::decode_error(
                         WithdrawalPortal::WithdrawalFinalized::SIGNATURE,
                         error,
-                    )),
+                    )
                 })?
                 .data;
             return if event.success {
@@ -2055,7 +2042,10 @@ mod tests {
         let _guard = tracing::subscriber::set_default(subscriber);
         let result = server.run().await;
         let error = result.unwrap_err();
-        let WithdrawerError::Unconfirmed { transaction_hashes, source } = &error else {
+        let WithdrawerError::Submit(error) = &error else {
+            panic!("missing submit error: {error:?}")
+        };
+        let SubmitError::MaybeIncluded { transaction_hashes, source } = error.as_ref() else {
             panic!("missing broadcast hash: {error:?}");
         };
         let transaction_hash = &transaction_hashes[0];
@@ -2085,7 +2075,10 @@ mod tests {
         .start()
         .await;
         let error = server.run().await.unwrap_err();
-        let WithdrawerError::Unconfirmed { transaction_hashes, source } = &error else {
+        let WithdrawerError::Submit(error) = &error else {
+            panic!("missing submit error: {error:?}")
+        };
+        let SubmitError::MaybeIncluded { transaction_hashes, source } = error.as_ref() else {
             panic!("missing signed hash: {error:?}");
         };
         let transaction_hash = &transaction_hashes[0];
@@ -2104,19 +2097,33 @@ mod tests {
         let rpc = WithdrawalRpc::new(&server.config).unwrap();
         let signer = WithdrawalSigner::new(&server.config.signer).await.unwrap();
         let sender = signer.address();
-        let published = BroadcastJournal::default();
-        let manager = flow.manager(signer, published.clone()).await.unwrap();
-        assert!(
-            tokio::time::timeout(
-                Duration::from_millis(200),
-                flow.submit(&rpc, sender, Some(&manager), Bytes::new(), None, &published),
+        let manager = flow.manager(signer).await.unwrap();
+        let error = flow
+            .submit(
+                &rpc,
+                sender,
+                Some(&manager),
+                Bytes::new(),
+                None,
+                Instant::now() + Duration::from_millis(200),
             )
             .await
-            .is_err()
-        );
-        assert_eq!(published.hashes().len(), 1);
-        published.clear();
-        flow.submit(&rpc, sender, Some(&manager), Bytes::new(), None, &published).await.unwrap();
+            .unwrap_err();
+        let SubmitError::MaybeIncluded { transaction_hashes, source } = error else {
+            panic!("missing initial broadcast hash: {error:?}");
+        };
+        assert_eq!(transaction_hashes.len(), 1);
+        assert!(matches!(*source, WithdrawerError::Timeout(_)));
+        flow.submit(
+            &rpc,
+            sender,
+            Some(&manager),
+            Bytes::new(),
+            None,
+            Instant::now() + server.config.timeout,
+        )
+        .await
+        .unwrap();
         let sent = server.sent.lock().unwrap();
         assert_eq!(sent.len(), 1);
         assert_eq!(sent[0].nonce(), 0);
@@ -2165,7 +2172,10 @@ mod tests {
         server.config.max_retries = 2;
         server.config.retry_delay = Duration::from_millis(1);
         let error = server.run().await.unwrap_err();
-        let WithdrawerError::Unconfirmed { transaction_hashes, source } = error else {
+        let WithdrawerError::Submit(error) = error else {
+            panic!("missing submit error: {error:?}")
+        };
+        let SubmitError::MaybeIncluded { transaction_hashes, source } = *error else {
             panic!("missing signed hash: {error:?}");
         };
         let transaction_hash = transaction_hashes[0];
@@ -2186,7 +2196,10 @@ mod tests {
         .start()
         .await;
         let error = server.run().await.unwrap_err();
-        let WithdrawerError::Unconfirmed { transaction_hashes, source } = &error else {
+        let WithdrawerError::Submit(error) = &error else {
+            panic!("missing submit error: {error:?}")
+        };
+        let SubmitError::MaybeIncluded { transaction_hashes, source } = error.as_ref() else {
             panic!("missing broadcast hash: {error:?}");
         };
         let transaction_hash = &transaction_hashes[0];
@@ -2203,7 +2216,10 @@ mod tests {
         let mut server = Scenario { receipt_pending: true, ..Default::default() }.start().await;
         server.config.timeout = Duration::from_secs(1);
         let error = server.run().await.unwrap_err();
-        let WithdrawerError::Unconfirmed { transaction_hashes, source } = error else {
+        let WithdrawerError::Submit(error) = error else {
+            panic!("missing submit error: {error:?}")
+        };
+        let SubmitError::MaybeIncluded { transaction_hashes, source } = *error else {
             panic!("missing broadcast hash: {error:?}");
         };
         let transaction_hash = transaction_hashes[0];
@@ -2215,7 +2231,10 @@ mod tests {
     async fn reverted_receipt_retains_broadcast_hash() {
         let server = Scenario { receipt_reverted: true, ..Default::default() }.start().await;
         let error = server.run().await.unwrap_err();
-        let WithdrawerError::Unconfirmed { transaction_hashes, source } = error else {
+        let WithdrawerError::Submit(error) = error else {
+            panic!("missing submit error: {error:?}")
+        };
+        let SubmitError::MaybeIncluded { transaction_hashes, source } = *error else {
             panic!("missing broadcast hash: {error:?}");
         };
         let transaction_hash = transaction_hashes[0];
@@ -2237,7 +2256,10 @@ mod tests {
         .await;
         server.config.timeout = Duration::from_secs(3);
         let error = server.run().await.unwrap_err();
-        let WithdrawerError::Unconfirmed { transaction_hashes, source } = error else {
+        let WithdrawerError::Submit(error) = error else {
+            panic!("missing submit error: {error:?}")
+        };
+        let SubmitError::MaybeIncluded { transaction_hashes, source } = *error else {
             panic!("missing hashes: {error:?}");
         };
         assert!(matches!(*source, WithdrawerError::Timeout(_)));
@@ -2251,7 +2273,10 @@ mod tests {
         let mut server = Scenario { receipt_pending: true, ..Default::default() }.start().await;
         server.config.tx_manager.tx_send_timeout = Duration::from_millis(1500);
         let error = server.run().await.unwrap_err();
-        let WithdrawerError::Unconfirmed { transaction_hashes, source } = error else {
+        let WithdrawerError::Submit(error) = error else {
+            panic!("missing submit error: {error:?}")
+        };
+        let SubmitError::MaybeIncluded { transaction_hashes, source } = *error else {
             panic!("missing hashes: {error:?}");
         };
         assert!(matches!(*source, WithdrawerError::TxManager(TxManagerError::SendTimeout)));
@@ -2281,11 +2306,17 @@ mod tests {
                 if success {
                     assert_eq!(result.unwrap()[0].transaction_hash, Some(transaction_hash));
                 } else {
+                    let WithdrawerError::Submit(error) = result.unwrap_err() else {
+                        panic!("missing submit error");
+                    };
+                    let SubmitError::MaybeIncluded { source, .. } = *error else {
+                        panic!("target failure was not classified as published");
+                    };
                     let WithdrawerError::TargetCallFailed {
                         withdrawal_hash,
                         transaction_hash: actual,
                         ..
-                    } = result.unwrap_err()
+                    } = *source
                     else {
                         panic!("target failure was not reported");
                     };
@@ -2311,8 +2342,13 @@ mod tests {
         ] {
             let server = Scenario { proven: 100, ..scenario }.start().await;
             let error = server.run().await.unwrap_err();
+            let WithdrawerError::Submit(error) = error else { panic!("missing submit error") };
+            let SubmitError::MaybeIncluded { source, .. } = *error else {
+                panic!("missing event was not classified as published");
+            };
             assert!(
-                matches!(error, WithdrawerError::MissingFinalizationEvent { transaction_hash, .. } if transaction_hash == *server.sent.lock().unwrap()[0].tx_hash())
+                matches!(*source, WithdrawerError::MissingFinalizationEvent { transaction_hash, .. }
+                if transaction_hash == *server.sent.lock().unwrap()[0].tx_hash())
             );
             assert!(
                 server.sent.lock().unwrap()[0].is_eip1559(),
@@ -2329,7 +2365,7 @@ mod tests {
         server.config.retry_delay = Duration::from_millis(1);
         let flow = Withdrawer::new(server.config.clone());
         let signer = WithdrawalSigner::new(&server.config.signer).await.unwrap();
-        let error = flow.manager(signer, BroadcastJournal::default()).await.unwrap_err();
+        let error = flow.manager(signer).await.unwrap_err();
         assert!(matches!(error, WithdrawerError::NetworkTimeout(_)), "{error:?}");
         assert_eq!(error.to_string(), "transaction manager network timeout elapsed");
     }
