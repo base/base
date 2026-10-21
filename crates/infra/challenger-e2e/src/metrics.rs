@@ -70,6 +70,16 @@ impl Scrape {
             .sum()
     }
 
+    /// Value of label `key` on the first series named `name`, e.g. the
+    /// `version` of `base_info{version="1.5.0",binary="base-challenger"}`.
+    pub fn label_value(&self, name: &str, key: &str) -> Option<&str> {
+        let (_, labels, _) = self.series.iter().find(|(series_name, ..)| series_name == name)?;
+        labels.split(',').find_map(|pair| {
+            let (k, v) = pair.split_once('=')?;
+            (k.trim() == key).then(|| v.trim().trim_matches('"'))
+        })
+    }
+
     fn parse(body: &str) -> Self {
         let series = body
             .lines()
@@ -112,6 +122,18 @@ mod tests {
         assert_eq!(scrape.label_sum("base_challenger_nullify_tx_outcome_total", "reverted"), 2.0);
         // A counter that never fired is not exported, and reads as zero.
         assert_eq!(scrape.sum("base_challenger_challenge_tx_submitted_total"), 0.0);
+    }
+
+    #[test]
+    fn reads_one_label_of_a_series() {
+        let scrape = Scrape::parse(
+            r#"base_info{version="1.5.0",binary="base-challenger"} 1
+            base_challenger_up 1"#,
+        );
+        assert_eq!(scrape.label_value("base_info", "version"), Some("1.5.0"));
+        assert_eq!(scrape.label_value("base_info", "binary"), Some("base-challenger"));
+        assert_eq!(scrape.label_value("base_info", "commit"), None);
+        assert_eq!(scrape.label_value("base_challenger_up", "version"), None);
     }
 
     #[test]

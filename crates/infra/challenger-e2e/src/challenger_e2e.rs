@@ -16,8 +16,9 @@ use alloy_rpc_types_eth::BlockNumberOrTag;
 use alloy_signer_local::PrivateKeySigner;
 use base_proof_contracts::{
     AggregateVerifierClient, AggregateVerifierContractClient, AnchorStateRegistryClient,
-    AnchorStateRegistryContractClient, DisputeGameFactoryClient, DisputeGameFactoryContractClient,
-    GameStatus, decode_dispute_calldata, describe_revert, encode_nullify_calldata,
+    AnchorStateRegistryContractClient, DelayedWETHClient, DelayedWETHContractClient,
+    DisputeGameFactoryClient, DisputeGameFactoryContractClient, GameStatus,
+    decode_dispute_calldata, describe_revert, encode_nullify_calldata,
 };
 use base_proof_rpc::L2HttpProvider;
 use base_proof_submission::{AggregateProofSubmitter, ProofSubmissionError};
@@ -33,7 +34,8 @@ use tracing::{debug, info, warn};
 use url::Url;
 
 use crate::{
-    config::{Config, ProverMode, Scenario},
+    BondStorage, Unavailable,
+    config::{Config, MockFault, ProverMode, Scenario},
     metrics::Scrape,
     mock_prover::MockProver,
     mock_verifier,
@@ -51,6 +53,10 @@ const PATH3_STAGING_ROOT: B256 = B256::repeat_byte(0xde);
 
 /// How often a wait or an observation window logs that it is still going.
 const HEARTBEAT: Duration = Duration::from_secs(30);
+
+/// How often the challenger scans for bonds to claim during a run. Production
+/// uses the 300s default; the bonds phase would wait that long per step.
+const BOND_DISCOVERY_INTERVAL: &str = "5s";
 
 /// Counters that must stay at zero for as long as every game on the fork is
 /// valid. Checked absolutely at the baseline and as a delta over the window.
@@ -79,6 +85,8 @@ const VALIDATION_ERRORS: &str = "base_challenger_validation_errors_total";
 #[derive(Debug, Clone, Copy)]
 struct Candidate {
     address: Address,
+    /// Factory index; the bond scan's lookback is sized to reach it.
+    index: u64,
     root_count: u64,
 }
 
@@ -160,6 +168,8 @@ pub enum Phase {
     Path4,
     /// The collateral-damage check over games never under test.
     Bystanders,
+    /// The challenger resolves the game it won and claims the bond.
+    Bonds,
 }
 
 impl Phase {
@@ -176,6 +186,7 @@ impl Phase {
             Self::Path3 => "path3",
             Self::Path4 => "path4",
             Self::Bystanders => "bystanders",
+            Self::Bonds => "bonds",
         }
     }
 
@@ -192,6 +203,7 @@ impl Phase {
             Self::Path3 => "Path 3",
             Self::Path4 => "Path 4",
             Self::Bystanders => "Bystanders",
+            Self::Bonds => "Bonds",
         }
     }
 }
@@ -247,7 +259,10 @@ impl ChallengerE2e {
     pub async fn run() -> Result<()> {
         let config = Config::parse();
         let mut progress = Progress::new(config.scenario);
-        let result = Self::run_scenario(config, &mut progress).await;
+        let mut challenger_released = false;
+        let result = Self::run_scenario(config, &mut progress, &mut challenger_released)
+            .await
+            .map_err(|error| Self::classify_failure(error, progress.phase(), challenger_released));
         if let Err(error) = &result {
             progress.fail(error);
         }
@@ -255,7 +270,33 @@ impl ChallengerE2e {
         result
     }
 
-    async fn run_scenario(mut config: Config, progress: &mut Progress) -> Result<()> {
+    /// Marks a transient RPC failure as [`Unavailable`] if it happened during
+    /// Setup and before the challenger was released.
+    ///
+    /// Until then the run has only read the chain into a fork of its own, and a
+    /// retried pod starts over on a fresh fork, so such a failure (most often
+    /// Anvil's upstream L1 RPC resetting a connection) cannot be the
+    /// challenger's. From the release on it can: a challenger that crashes on
+    /// start fails `await_first_scan` with `connection refused` from its own
+    /// metrics endpoint. Later phases are not excused either, since a dispute
+    /// timeout can carry a transport error from a dead fork.
+    fn classify_failure(
+        error: eyre::Report,
+        phase: Option<Phase>,
+        challenger_released: bool,
+    ) -> eyre::Report {
+        if phase == Some(Phase::Setup) && !challenger_released {
+            Unavailable::classify(error, "an RPC during setup")
+        } else {
+            error
+        }
+    }
+
+    async fn run_scenario(
+        mut config: Config,
+        progress: &mut Progress,
+        challenger_released: &mut bool,
+    ) -> Result<()> {
         // Two distinct accounts: A (driver) signs setup only, B is the
         // challenger. Both are generated per run and never leave the pod.
         let driver = PrivateKeySigner::random();
@@ -274,11 +315,12 @@ impl ChallengerE2e {
             quiet_window = ?config.quiet_window,
             dispute_timeout = ?config.dispute_timeout,
             game_type = config.game_type,
+            driver_commit = config.driver_commit.as_deref().unwrap_or("unknown"),
             "starting scenario"
         );
         progress.start(Phase::Setup);
         let stages_dual_proof = matches!(config.scenario, Scenario::All | Scenario::Path3);
-        let setup_steps = if stages_dual_proof { 5 } else { 4 };
+        let setup_steps = if stages_dual_proof { 6 } else { 5 };
 
         // Held until the end of run(); the fork dies with this binding.
         progress::step(Phase::Setup, 1, setup_steps, "forking L1 and funding both keys");
@@ -286,6 +328,9 @@ impl ChallengerE2e {
         let fork_url = anvil.endpoint_url();
         let provider: RootProvider = RootProvider::new_http(fork_url.clone());
         config.fork_block = provider.get_block_number().await?;
+        // Every later read of L1 state is as of this block, so it is what a
+        // rerun against the same chain state needs.
+        info!(phase = %Phase::Setup, fork_block = config.fork_block, "forked L1");
         Self::fund(&provider, &[driver.address(), challenger.address()]).await?;
 
         // Up before anything asks for a proof: the dual-proof staging below
@@ -294,7 +339,12 @@ impl ChallengerE2e {
         // staging and the challenger's env file — now points at the mock.
         let _mock_prover = match config.prover {
             ProverMode::Mock => {
-                let mock = MockProver::start(config.mock_proving_time).await?;
+                let mock = MockProver::start(
+                    config.mock_proving_time,
+                    config.mock_fault,
+                    challenger.address(),
+                )
+                .await?;
                 config.zk_rpc_url = mock.url().clone();
                 config.mock_requests = Some(mock.requests());
                 Some(mock)
@@ -323,6 +373,17 @@ impl ChallengerE2e {
             Self::select_games(&config, &factory, &verifier, &anchor_registry, wanted).await?;
         let under_test: Vec<Address> = games.iter().map(|game| game.address).collect();
         let (game_a, game_b) = (games[0], games[1]);
+
+        // Every path corrupts a root by computing the canonical one from the
+        // L2 RPC first. Checked here, before the challenger exists, so a node
+        // that has no state to serve fails the run as an infrastructure failure
+        // instead of surfacing mid-path as a failure of the challenger.
+        progress::step(Phase::Setup, 3, setup_steps, "checking the L2 RPC serves the games");
+        for game in &games {
+            let fork_config = Self::fork_config(&config, &fork_url, &driver, *game);
+            Self::await_l2_state(&config, &verifier, &fork_config, *game).await?;
+        }
+
         if config.prover == ProverMode::Mock {
             Self::install_mock_verifiers(&config, &provider, &verifier, &under_test).await?;
         }
@@ -330,14 +391,14 @@ impl ChallengerE2e {
         // Taken before the challenger boots. Every dispute assertion below is
         // scoped to the games under test, so without this a challenger that also
         // disputes games it was never given would pass the run.
-        progress::step(Phase::Setup, 3, setup_steps, "snapshotting bystander games");
+        progress::step(Phase::Setup, 4, setup_steps, "snapshotting bystander games");
         let bystanders =
             Self::snapshot_bystanders(&config, &factory, &verifier, &under_test).await?;
 
         // B carries Path 4 in `all` and Path 3 in `path3`; C carries Path 3 in
         // `all`. Every game after A starts as a valid dual-proof game.
         if stages_dual_proof {
-            progress::step(Phase::Setup, 4, setup_steps, "staging the dual-proof games");
+            progress::step(Phase::Setup, 5, setup_steps, "staging the dual-proof games");
             for game in &games[1..] {
                 Self::stage_dual_proof(&config, &fork_url, &verifier, &provider, &driver, *game)
                     .await?;
@@ -350,8 +411,21 @@ impl ChallengerE2e {
             setup_steps,
             "releasing the challenger and waiting for its first scan",
         );
-        Self::release_challenger(&config.env_file, &fork_url, &config.zk_rpc_url, &challenger)?;
+        // The bond scan covers every game from the oldest one under test to
+        // the newest, so the bonds phase finds the game the challenger won.
+        let bond_lookback = factory.game_count().await?
+            - games.iter().map(|game| game.index).min().unwrap_or_default();
+        // Set first: a failure from here on can be the challenger's.
+        *challenger_released = true;
+        Self::release_challenger(
+            &config.env_file,
+            &fork_url,
+            &config.zk_rpc_url,
+            &challenger,
+            bond_lookback,
+        )?;
         Self::await_first_scan(&config).await?;
+        Self::log_challenger_build(&config).await;
         progress.pass();
 
         progress.start(Phase::QuietWindow);
@@ -536,8 +610,211 @@ impl ChallengerE2e {
             asserted.extend([Phase::Path2Skip, Phase::Path2Dispute]);
         }
         asserted.extend([Phase::Path4, Phase::Path3, Phase::Bystanders]);
+
+        // Last: it patches the won game's parent, which can be a bystander.
+        progress.start(Phase::Bonds);
+        match Self::won_game(&verifier, challenger.address(), &games).await? {
+            Some(game) => {
+                Self::run_bonds(&config, &fork_url, &provider, &verifier, &challenger, game)
+                    .await?;
+                progress.pass();
+                asserted.push(Phase::Bonds);
+            }
+            None => progress.skip(
+                Phase::Bonds,
+                "the challenger won no game under test, so there is no bond to claim",
+            ),
+        }
         Self::log_scenario_complete(&config, &asserted);
         Ok(())
+    }
+
+    /// The first game under test the challenger won: still in progress,
+    /// challenged, with the challenger as its ZK prover. `resolve` pays such a
+    /// game's bond to its ZK prover.
+    async fn won_game(
+        verifier: &AggregateVerifierContractClient,
+        challenger: Address,
+        games: &[Candidate],
+    ) -> Result<Option<Address>> {
+        for game in games {
+            if verifier.status(game.address).await? == GameStatus::InProgress
+                && verifier.countered_index(game.address).await? > 0
+                && verifier.zk_prover(game.address).await? == challenger
+            {
+                return Ok(Some(game.address));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Bonds: the challenger must resolve the game it won, unlock the bond,
+    /// and withdraw it once the `DelayedWETH` delay has passed — the two
+    /// `claimCredit` calls production relies on to recover what it staked.
+    ///
+    /// The deadlines are moved to now instead of waited out (see
+    /// [`BondStorage`] for why time is not warped). Every patch is read back
+    /// through the contract before the run relies on it. The parent is set
+    /// to `DEFENDER_WINS` because `resolve` requires a resolved parent and
+    /// the challenger, claiming for its own key only, never resolves a game
+    /// whose bond is someone else's.
+    async fn run_bonds(
+        config: &Config,
+        fork_url: &Url,
+        provider: &RootProvider,
+        verifier: &AggregateVerifierContractClient,
+        challenger: &PrivateKeySigner,
+        game: Address,
+    ) -> Result<()> {
+        progress::step(Phase::Bonds, 1, 4, "making the won game due for resolution");
+        // Path 3's nullify left the shared ZK verifier nullified. `resolve`
+        // checks both verifiers first and refutes the proof of a nullified one,
+        // which here is the challenger's own winning challenge, so the game
+        // would fall back to in progress with nothing to claim.
+        Self::revive_verifiers(provider, verifier, game).await?;
+        let due = Self::fork_time(provider).await?.saturating_sub(1);
+        let word =
+            BondStorage::storage(provider, game, BondStorage::EXPECTED_RESOLUTION_SLOT).await?;
+        mock_verifier::set_storage(
+            provider,
+            game,
+            BondStorage::EXPECTED_RESOLUTION_SLOT,
+            BondStorage::with_expected_resolution(word, due),
+        )
+        .await?;
+        ensure!(
+            verifier.expected_resolution(game).await? == due && verifier.game_over(game).await?,
+            "patched expectedResolution of game {game} to {due}, but the game does not read as \
+             over; the AggregateVerifier storage layout has drifted from the bonds module"
+        );
+        let parent = verifier.game_info(game).await?.parent_address;
+        if parent != config.anchor_state_registry_addr
+            && verifier.status(parent).await? == GameStatus::InProgress
+        {
+            let word = BondStorage::storage(provider, parent, BondStorage::STATUS_SLOT).await?;
+            mock_verifier::set_storage(
+                provider,
+                parent,
+                BondStorage::STATUS_SLOT,
+                BondStorage::with_status(word, GameStatus::DefenderWins),
+            )
+            .await?;
+            ensure!(
+                verifier.status(parent).await? == GameStatus::DefenderWins,
+                "patched the status of game {game}'s parent {parent}, but it does not read as \
+                 DEFENDER_WINS; the AggregateVerifier storage layout has drifted from the bonds \
+                 module"
+            );
+        }
+        info!(phase = %Phase::Bonds, game = %game, parent = %parent, "the won game is due");
+        let balance_before = provider.get_balance(challenger.address()).await?;
+
+        progress::step(Phase::Bonds, 2, 4, "waiting for the challenger to resolve and unlock");
+        // A game resolved any other way is never unlocked, because the challenger
+        // claims only bonds paid to it, so it ends the wait at once rather than
+        // running out the dispute timeout and blaming the challenger.
+        Self::poll_until(
+            config,
+            config.dispute_timeout,
+            "the challenger to resolve the game it won and unlock the bond",
+            || async {
+                let status = verifier.status(game).await?;
+                if status != GameStatus::InProgress {
+                    let recipient = verifier.bond_recipient(game).await?;
+                    if status != GameStatus::ChallengerWins || recipient != challenger.address() {
+                        return Ok(Some(Err(eyre!(
+                            "game {game} resolved as {status:?} with bond recipient {recipient}, \
+                             but the challenger {} won it",
+                            challenger.address()
+                        ))));
+                    }
+                }
+                Ok(verifier.bond_unlocked(game).await?.then_some(Ok(())))
+            },
+        )
+        .await??;
+        let (status, recipient) =
+            tokio::try_join!(verifier.status(game), verifier.bond_recipient(game))?;
+        ensure!(
+            status == GameStatus::ChallengerWins && recipient == challenger.address(),
+            "game {game} resolved as {status:?} with bond recipient {recipient}, but the \
+             challenger {} won it",
+            challenger.address()
+        );
+        info!(
+            phase = %Phase::Bonds,
+            game = %game,
+            status = ?status,
+            "the challenger resolved the game it won and unlocked the bond"
+        );
+
+        progress::step(Phase::Bonds, 3, 4, "ending the DelayedWETH delay early");
+        let weth_address = verifier.delayed_weth(game).await?;
+        let weth = DelayedWETHContractClient::new(weth_address, fork_url.clone())?;
+        let delay = weth.delay().await?;
+        let unlocked_at = weth.withdrawal_timestamp(game, challenger.address()).await?;
+        let slot = BondStorage::find_withdrawal_slot(
+            provider,
+            weth_address,
+            game,
+            challenger.address(),
+            unlocked_at,
+        )
+        .await?;
+        let started = Self::fork_time(provider).await?.saturating_sub(delay.as_secs() + 1);
+        mock_verifier::set_storage(
+            provider,
+            weth_address,
+            slot + U256::from(1),
+            U256::from(started).into(),
+        )
+        .await?;
+        ensure!(
+            weth.withdrawal_timestamp(game, challenger.address()).await? == started,
+            "patched the DelayedWETH withdrawal of game {game} to start at {started}, but it does \
+             not read back"
+        );
+        info!(
+            phase = %Phase::Bonds,
+            game = %game,
+            delayed_weth = %weth_address,
+            delay_s = delay.as_secs(),
+            unlocked_at,
+            "the DelayedWETH delay is over"
+        );
+
+        progress::step(Phase::Bonds, 4, 4, "waiting for the challenger to withdraw the bond");
+        Self::poll_until(
+            config,
+            config.dispute_timeout,
+            "the challenger to withdraw the bond it won",
+            || async { Ok(verifier.bond_claimed(game).await?.then_some(())) },
+        )
+        .await?;
+        // Net of the gas for `resolve` and both `claimCredit` calls, which is
+        // far below any bond.
+        let balance_after = provider.get_balance(challenger.address()).await?;
+        ensure!(
+            balance_after > balance_before,
+            "game {game}'s bond reads as claimed, but the challenger's balance went from \
+             {balance_before} to {balance_after}"
+        );
+        info!(
+            phase = %Phase::Bonds,
+            game = %game,
+            net_gain_wei = %(balance_after - balance_before),
+            "the challenger withdrew the bond it won"
+        );
+        Ok(())
+    }
+
+    /// Timestamp of the fork's latest block.
+    async fn fork_time(provider: &RootProvider) -> Result<u64> {
+        let block = provider
+            .get_block_by_number(BlockNumberOrTag::Latest)
+            .await?
+            .ok_or_else(|| eyre!("the fork has no latest block"))?;
+        Ok(block.header.timestamp)
     }
 
     /// Path 3 on a dual-proof `game`: stage it as an invalid ZK-only proposal,
@@ -788,7 +1065,7 @@ impl ChallengerE2e {
                 slot = ["a", "b", "c"].get(selected.len()).copied().unwrap_or("extra"),
                 "selected game"
             );
-            selected.push(Candidate { address: game.proxy, root_count });
+            selected.push(Candidate { address: game.proxy, index, root_count });
             if selected.len() == wanted {
                 break;
             }
@@ -797,24 +1074,29 @@ impl ChallengerE2e {
         if selected.len() == wanted {
             return Ok(selected);
         }
-        ensure!(
-            stale == 0,
-            "found {} candidate game(s) pinned to an aggregation program other than the \
-             implementation's {expected_hash}, and only {} usable; the factory's implementation \
-             has changed and the proposer has not yet created enough games against it. Proving \
-             against the older clones would spend a SNARK and then revert InvalidProof(), so this \
-             run stops here instead",
-            stale,
-            selected.len()
-        );
-        bail!(
-            "need {wanted} in-progress, uncountered games of type {} above the anchor in the \
-             newest {} factory indices, found {}; the fork source may be behind, the proposer \
-             may be stalled, or the anchor may have advanced past them",
-            config.game_type,
-            game_count - floor,
-            selected.len()
-        )
+        // Neither is the challenger's doing: the chain has too few games the
+        // run can use, so both are infrastructure failures.
+        let error = if stale == 0 {
+            eyre!(
+                "need {wanted} in-progress, uncountered games of type {} above the anchor in the \
+                 newest {} factory indices, found {}; the fork source may be behind, the proposer \
+                 may be stalled, or the anchor may have advanced past them",
+                config.game_type,
+                game_count - floor,
+                selected.len()
+            )
+        } else {
+            eyre!(
+                "found {} candidate game(s) pinned to an aggregation program other than the \
+                 implementation's {expected_hash}, and only {} usable; the factory's \
+                 implementation has changed and the proposer has not yet created enough games \
+                 against it. Proving against the older clones would spend a SNARK and then revert \
+                 InvalidProof(), so this run stops here instead",
+                stale,
+                selected.len()
+            )
+        };
+        Err(Unavailable::mark(error, "too few eligible games on the chain"))
     }
 
     /// Attaches a real SNARK of B's canonical roots via `verifyProposalProof`.
@@ -1058,9 +1340,15 @@ impl ChallengerE2e {
         // Only now does the game become invalid, and every scan from here on
         // classifies it from its ZK-only shape.
         progress::step(Phase::Path3, 3, 5, "corrupting a root of the ZK-only game");
-        let checkpoint = Checkpoint::patch(&fork_config, verifier)
-            .await
-            .context("failed to corrupt the ZK-only game on the fork")?;
+        Self::await_l2_state(config, verifier, &fork_config, game).await?;
+        let checkpoint = match Checkpoint::patch(&fork_config, verifier).await {
+            Ok(checkpoint) => checkpoint,
+            Err(error) => {
+                return Err(Self::blame_l2_if_down(error, config, "the L2 RPC")
+                    .await
+                    .wrap_err("failed to corrupt the ZK-only game on the fork"));
+            }
+        };
 
         info!(
             phase = %Phase::Path3,
@@ -1243,6 +1531,26 @@ impl ChallengerE2e {
                 schedule_l2_block_number = schedule,
                 "the challenger requested the proof a real dispute would need"
             );
+
+            // The dispute landed, so the proof it carried came from a session
+            // the mock served. Under `fail-first` that session's first attempt
+            // failed, and only a re-request could have produced the proof.
+            if config.mock_fault == MockFault::FailFirst {
+                let (failures, requeues) = requests.faults_of(&expected).unwrap_or_default();
+                ensure!(
+                    failures >= 1 && requeues >= 1,
+                    "the mock prover was set to fail the challenger's first attempt at the proof \
+                     for game {game}, but its session shows {failures} injected failure(s) and \
+                     {requeues} requeue(s); the dispute cannot have come from a recovered session"
+                );
+                info!(
+                    phase = %phase,
+                    game = %game,
+                    injected_failures = failures,
+                    requeues,
+                    "the challenger recovered from a failed proof session"
+                );
+            }
         }
         Ok(())
     }
@@ -1441,11 +1749,18 @@ impl ChallengerE2e {
     /// blocked on this file appearing.
     ///
     /// Written via a rename so the sidecar can never source a partial file.
+    ///
+    /// The challenger claims bonds for its own key only, as production claims
+    /// for its own. The scan interval is short so the bonds phase takes
+    /// seconds. The scan then reads every game in the lookback window on each
+    /// challenger step, in every scenario, and acts only once a game it can
+    /// claim is over.
     fn release_challenger(
         path: &Path,
         fork_url: &Url,
         zk_rpc_url: &Url,
         signer: &PrivateKeySigner,
+        bond_lookback: u64,
     ) -> Result<()> {
         // Sourced after /envmapper/mapping.env, so these override the
         // config-service values for the run.
@@ -1459,10 +1774,16 @@ impl ChallengerE2e {
              unset BASE_CHALLENGER_SIGNER_ADDRESS\n\
              export BASE_CHALLENGER_L1_ETH_RPC={}\n\
              export BASE_CHALLENGER_ZK_RPC_URL={}\n\
-             export BASE_CHALLENGER_PRIVATE_KEY={}\n",
+             export BASE_CHALLENGER_PRIVATE_KEY={}\n\
+             export BASE_CHALLENGER_BOND_CLAIM_ADDRESSES={}\n\
+             export BASE_CHALLENGER_BOND_DISCOVERY_INTERVAL={}\n\
+             export BASE_CHALLENGER_BOND_DISCOVERY_LOOKBACK_GAMES={}\n",
             shell_quote(fork_url.as_str()),
             shell_quote(zk_rpc_url.as_str()),
-            shell_quote(&hex::encode_prefixed(signer.to_bytes()))
+            shell_quote(&hex::encode_prefixed(signer.to_bytes())),
+            signer.address(),
+            BOND_DISCOVERY_INTERVAL,
+            bond_lookback.max(1),
         );
 
         let staging = path.with_extension("tmp");
@@ -1493,6 +1814,28 @@ impl ChallengerE2e {
             },
         )
         .await
+    }
+
+    /// Logs the version the challenger under test reports in `base_info`.
+    ///
+    /// The challenger is a separate image, pinned separately, so this is the
+    /// driver's only view of what it is testing. Best effort: a failed scrape or
+    /// a missing series is logged as unknown rather than failing the run, and a
+    /// failed scrape logs its error first so the two can be told apart.
+    async fn log_challenger_build(config: &Config) {
+        let scrape = match Scrape::fetch(&config.challenger_metrics_url).await {
+            Ok(scrape) => scrape,
+            Err(error) => {
+                warn!(phase = %Phase::Setup, error = %error, "failed to read the challenger's base_info");
+                Scrape::default()
+            }
+        };
+        info!(
+            phase = %Phase::Setup,
+            challenger_version = scrape.label_value("base_info", "version").unwrap_or("unknown"),
+            challenger_binary = scrape.label_value("base_info", "binary").unwrap_or("unknown"),
+            "challenger under test"
+        );
     }
 
     /// Positive case: a challenger that disputes valid games fails here.
@@ -1581,9 +1924,15 @@ impl ChallengerE2e {
         // meant to precede, and its correct dispute would read as nobody's.
         let nonce = provider.get_transaction_count(challenger.address()).await?;
         progress::step(Phase::Path1, 1, 3, "corrupting a root of game A");
-        let checkpoint = Checkpoint::patch(&fork_config, verifier)
-            .await
-            .context("failed to corrupt an intermediate output root on the fork")?;
+        Self::await_l2_state(config, verifier, &fork_config, game).await?;
+        let checkpoint = match Checkpoint::patch(&fork_config, verifier).await {
+            Ok(checkpoint) => checkpoint,
+            Err(error) => {
+                return Err(Self::blame_l2_if_down(error, config, "the L2 RPC")
+                    .await
+                    .wrap_err("failed to corrupt an intermediate output root on the fork"));
+            }
+        };
         info!(
             game = %game.address,
             invalid_index = checkpoint.index,
@@ -1881,9 +2230,15 @@ impl ChallengerE2e {
         // Sampled before the patch for the reason given in `run_path1`.
         let nonce = provider.get_transaction_count(challenger.address()).await?;
         progress::step(Phase::Path4, 1, 3, "corrupting a root of dual-proof game B");
-        let checkpoint = Checkpoint::patch(&fork_config, verifier)
-            .await
-            .context("failed to corrupt the dual-proof game on the fork")?;
+        Self::await_l2_state(config, verifier, &fork_config, game).await?;
+        let checkpoint = match Checkpoint::patch(&fork_config, verifier).await {
+            Ok(checkpoint) => checkpoint,
+            Err(error) => {
+                return Err(Self::blame_l2_if_down(error, config, "the L2 RPC")
+                    .await
+                    .wrap_err("failed to corrupt the dual-proof game on the fork"));
+            }
+        };
         info!(
             game = %game.address,
             invalid_index = checkpoint.index,
@@ -2085,7 +2440,12 @@ impl ChallengerE2e {
 
     /// Appends the challenger's failure counters to a dispute timeout, which is
     /// otherwise indistinguishable from "nothing happened".
+    ///
+    /// Also reads L2 state once. The challenger validates every root against
+    /// the same L2 RPC, so a timeout while that node serves no state is the
+    /// node's failure, and is marked as one.
     async fn annotate_timeout(error: eyre::Report, config: &Config) -> eyre::Report {
+        let error = Self::blame_l2_if_down(error, config, "the L2 RPC at timeout").await;
         let Ok(scrape) = Scrape::fetch(&config.challenger_metrics_url).await else {
             return error;
         };
@@ -2101,6 +2461,38 @@ impl ChallengerE2e {
             scrape.label_sum("base_challenger_challenge_tx_outcome_total", "reverted"),
             scrape.sum("base_challenger_pending_proofs"),
         ))
+    }
+
+    /// [`Unavailable::blame_l2`] with a fresh probe of `config`'s L2 RPC.
+    ///
+    /// `Checkpoint::patch` reads the fork, then the L2 RPC, then writes the
+    /// fork, so its failure is the node's only if the node is down now. A fork
+    /// that died after the challenger was released stays a plain failure.
+    async fn blame_l2_if_down(error: eyre::Report, config: &Config, what: &str) -> eyre::Report {
+        let l2 = L2HttpProvider::new_http(config.l2_eth_rpc.clone());
+        Unavailable::blame_l2(error, Unavailable::l2_state_unavailable(&l2).await, what)
+    }
+
+    /// Waits, for up to `l2_retry_budget`, until the L2 RPC serves the state
+    /// behind `game`'s final root, the one every path corrupts.
+    ///
+    /// The same read `Checkpoint::patch` makes before it touches the fork, so
+    /// a patch that follows this rarely meets a node that cannot answer.
+    async fn await_l2_state(
+        config: &Config,
+        verifier: &AggregateVerifierContractClient,
+        fork_config: &ForkConfig,
+        game: Candidate,
+    ) -> Result<()> {
+        let block = verifier.game_info(game.address).await?.l2_block_number;
+        Unavailable::retry(config.l2_retry_budget, config.poll_interval, "the L2 RPC", || {
+            fork_config.output_root_at_block(block)
+        })
+        .await
+        .with_context(|| {
+            format!("the L2 RPC serves no state for game {} at block {block}", game.address)
+        })?;
+        Ok(())
     }
 
     fn fork_config(
@@ -2290,6 +2682,25 @@ mod tests {
         assert!(!report.contains("reverted with"), "{report}");
     }
 
+    #[test]
+    fn transient_failures_are_excused_only_in_setup_before_the_release() {
+        let transient = || eyre::eyre!("error sending request for url (http://localhost:18545/)");
+        let infra = |phase, released| {
+            Unavailable::is_infra(&ChallengerE2e::classify_failure(transient(), phase, released))
+        };
+        assert!(infra(Some(Phase::Setup), false));
+        // A challenger that never starts fails `await_first_scan` this way.
+        assert!(!infra(Some(Phase::Setup), true));
+        assert!(!infra(Some(Phase::Path1), true));
+        assert!(!infra(None, true));
+        let assertion = eyre::eyre!("selected game has no intermediate roots");
+        assert!(!Unavailable::is_infra(&ChallengerE2e::classify_failure(
+            assertion,
+            Some(Phase::Setup),
+            false
+        )));
+    }
+
     /// These strings are what Datadog facets, dashboards and monitors filter
     /// on, so a rename is a breaking change to whatever watches them.
     #[test]
@@ -2302,6 +2713,7 @@ mod tests {
         assert_eq!(Phase::Path3.as_str(), "path3");
         assert_eq!(Phase::Path4.as_str(), "path4");
         assert_eq!(Phase::Bystanders.as_str(), "bystanders");
+        assert_eq!(Phase::Bonds.as_str(), "bonds");
         assert_eq!(Verdict::Pass.as_str(), "pass");
         assert_eq!(Verdict::Skip.as_str(), "skip");
         assert_eq!(Verdict::Fail.as_str(), "fail");

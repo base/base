@@ -64,6 +64,7 @@ jsonrpsee = { workspace = true, features = ["http-client", "server", "macros"] }
 
 [dev-dependencies]
 rstest.workspace = true
+criterion.workspace = true
 alloy-signer.workspace = true
 alloy-signer-local.workspace = true
 reth-tasks.workspace = true
@@ -73,6 +74,10 @@ metrics-util = { workspace = true, features = ["debugging"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
 reth-transaction-pool = { workspace = true, features = ["test-utils"] }
 tokio = { workspace = true, features = ["time", "rt-multi-thread", "macros"] }
+
+[[bench]]
+name = "ingest_codec"
+harness = false
 
 [features]
 default = [ "metrics" ]

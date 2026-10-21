@@ -109,11 +109,6 @@ impl MultiplexRouter {
         }
     }
 
-    /// Returns whether Denim selects the basic builder at `timestamp`.
-    pub fn basic_selected_at(&self, timestamp: u64) -> bool {
-        self.chain_spec.is_denim_active_at_timestamp(timestamp)
-    }
-
     /// Returns the recorded route for a payload, defaulting unknown payloads to flashblocks.
     pub fn basic_selected_for_payload(&self, payload_id: PayloadId) -> bool {
         self.payload_routes
@@ -155,11 +150,7 @@ impl MultiplexRouter {
                 biased;
                 Some(()) = responses.next(), if !responses.is_empty() => {}
                 command = rx.recv() => match command {
-                    Some(command) => {
-                        if let Some(response) = self.handle_command(command) {
-                            responses.push(response);
-                        }
-                    }
+                    Some(command) => responses.push(self.handle_command(command)),
                     None => break,
                 }
             }
@@ -170,21 +161,21 @@ impl MultiplexRouter {
     pub fn handle_command(
         &mut self,
         command: PayloadServiceCommand<BaseEngineTypes>,
-    ) -> Option<BoxFuture<'static, ()>> {
+    ) -> BoxFuture<'static, ()> {
         match command {
             PayloadServiceCommand::BuildNewPayload(input, _span, tx) => {
-                Some(self.handle_build_new_payload(*input, tx))
+                self.handle_build_new_payload(*input, tx)
             }
             PayloadServiceCommand::BestPayload(payload_id, tx) => {
-                Some(self.handle_best_payload(payload_id, tx))
+                self.handle_best_payload(payload_id, tx)
             }
             PayloadServiceCommand::PayloadTimestamp(payload_id, tx) => {
-                Some(self.handle_payload_timestamp(payload_id, tx))
+                self.handle_payload_timestamp(payload_id, tx)
             }
             PayloadServiceCommand::Resolve(payload_id, kind, tx) => {
-                Some(self.handle_resolve(payload_id, kind, tx))
+                self.handle_resolve(payload_id, kind, tx)
             }
-            PayloadServiceCommand::Subscribe(tx) => Some(self.handle_subscribe(tx)),
+            PayloadServiceCommand::Subscribe(tx) => self.handle_subscribe(tx),
         }
     }
 
@@ -195,7 +186,8 @@ impl MultiplexRouter {
         tx: tokio::sync::oneshot::Sender<Result<PayloadId, PayloadBuilderError>>,
     ) -> BoxFuture<'static, ()> {
         let payload_id = input.payload_id();
-        let selected_basic = self.basic_selected_at(input.attributes.timestamp());
+        let selected_basic =
+            self.chain_spec.is_denim_active_at_timestamp(input.attributes.timestamp());
         self.record_payload_route(payload_id, selected_basic);
 
         let mut shadow_attributes = input.attributes.clone();

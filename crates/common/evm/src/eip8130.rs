@@ -33,8 +33,9 @@
 //! call that halts exceptionally (anything but `REVERT`) consumes all of it.
 //!
 //! Dispatching a call draws EIP-2929 account-access gas from the pool as a
-//! `CALL` would: the cold account access cost for a cold `call.to`, and again
-//! for a cold EIP-7702 delegation target. The precompiles, the coinbase, the
+//! `CALL` would: the cold account access cost for a cold `call.to` or the warm
+//! access cost for a warm one, and the same again for the target of an EIP-7702
+//! delegation at `call.to`. The precompiles, the coinbase, the
 //! sender, the payer, and every account the pre-call pipeline touched start
 //! warm.
 //!
@@ -43,8 +44,8 @@
 //! Protocol-injected account-change logs (`ActorAuthorized`, `ActorRevoked`,
 //! `AccountCreated`) are written to the journal during the
 //! pre-call apply step and surface in the transaction receipt ahead of any
-//! `calls` logs. Per-phase receipt status (`phaseStatuses`) is reported on the
-//! EIP-8130 receipt; the overall transaction status (all-phases-succeeded vs
+//! `calls` logs. The number of committed phases (`committedPhases`) is reported
+//! on the EIP-8130 receipt; the overall transaction status (all-phases-succeeded vs
 //! reverted) is reported through the returned [`ExecutionResult`] variant
 //! ([`ExecutionResult::Success`] vs [`ExecutionResult::Revert`]).
 //!
@@ -75,8 +76,10 @@ use revm::{
     inspector::{InspectorEvmTr, InspectorHandler, JournalExt},
     interpreter::{
         CallInput, CallInputs, CallOutcome, CallScheme, CallValue, FrameInput, Gas,
-        InstructionResult, InterpreterResult, SharedMemory, gas::COLD_ACCOUNT_ACCESS_COST,
-        interpreter::EthInterpreter, interpreter_action::FrameInit,
+        InstructionResult, InterpreterResult, SharedMemory,
+        gas::{COLD_ACCOUNT_ACCESS_COST, WARM_STORAGE_READ_COST},
+        interpreter::EthInterpreter,
+        interpreter_action::FrameInit,
     },
     primitives::{KECCAK_EMPTY, hardfork::SpecId},
     state::Bytecode,
@@ -84,8 +87,8 @@ use revm::{
 
 use crate::{
     BaseContext, BaseContextTr, BaseEvm, BaseHaltReason, BaseSpecId, BaseTime, BaseTransaction,
-    BaseTransactionError, BaseTxTr, BaseUpgrade, Eip8130PhaseStatuses, L1BlockInfo,
-    handler::BaseHandler,
+    BaseTransactionError, BaseTxTr, BaseUpgrade, Eip8130CommittedPhases, Eip8130ExecutionMode,
+    L1BlockInfo, handler::BaseHandler,
 };
 
 /// EIP-3529 maximum gas refund quotient: refunds are capped at `gas_used / 5`.
@@ -197,11 +200,10 @@ struct CallsResult {
     /// the return data of the last call (empty when `calls` was empty), which
     /// is what an EIP-8130 `eth_call` returns.
     output: Bytes,
-    /// Per-phase execution status, one entry per phase in `calls` and in phase
-    /// order: `0x01` if the phase committed, `0x00` if it reverted or was skipped
-    /// because an earlier phase reverted. Empty when `calls` was empty. This is
-    /// the EIP-8130 `phaseStatuses` array surfaced through the receipt.
-    phase_statuses: Vec<u8>,
+    /// Number of leading phases in `calls` that committed. Phases run in order
+    /// and stop at the first revert, so every phase at or after this index
+    /// reverted or was skipped. This is the EIP-8130 receipt's `committedPhases`.
+    committed_phases: u64,
 }
 
 /// Executes enshrined EIP-8130 transactions against the block-execution journal.
@@ -237,11 +239,11 @@ impl Eip8130Executor {
                 Journal: core::fmt::Debug + JournalExt,
             >,
     {
-        // Discard any phase statuses a previous transaction may have leaked into
-        // the thread-local slot (e.g. via a panic caught between its `set` and the
-        // `transact` caller's `take`), so this transaction's result can only ever
-        // carry its own statuses. See [`Eip8130PhaseStatuses`] panic safety.
-        Eip8130PhaseStatuses::clear();
+        // Discard any committed phase count a previous transaction may have leaked
+        // into the thread-local slot (e.g. via a panic caught between its `set` and
+        // the `transact` caller's `take`), so this transaction's result can only
+        // ever carry its own count. See [`Eip8130CommittedPhases`] panic safety.
+        Eip8130CommittedPhases::clear();
 
         // The signed envelope is cloned out of the context because the pipeline
         // borrows `ctx` mutably (journal/account access) while needing the
@@ -352,7 +354,7 @@ impl Eip8130Executor {
 
         let inspection =
             Self::start_inspection(evm, outcome.sender, encoded.clone(), outcome.gas_limit);
-        let mut calls =
+        let calls =
             match Self::execute_calls(evm, &signed, &outcome, outcome.execution_gas_available) {
                 Ok(calls) => calls,
                 Err(err) => {
@@ -415,17 +417,17 @@ impl Eip8130Executor {
         evm.ctx().local_mut().clear();
         evm.frame_stack().clear();
 
-        // Hand the per-phase statuses to the caller of `Evm::transact`, which takes
-        // them on this thread as soon as the call returns and carries them with the
-        // execution result to the receipt builder (see [`Eip8130PhaseStatuses`]).
-        // `transact` can only return a `ResultAndState`, whose `output` already
-        // carries the transaction's revert data. Published as the last step before
-        // returning — after the transaction is fully settled and committed — so
-        // neither a `settle_fees` error nor a panic in the journal teardown above
-        // can leave stale statuses in the slot for the next transaction; only the
-        // allocation-free result construction below runs before the caller's
-        // `take`.
-        Eip8130PhaseStatuses::set(core::mem::take(&mut calls.phase_statuses));
+        // Hand the committed phase count to the caller of `Evm::transact`, which
+        // takes it on this thread as soon as the call returns and carries it with
+        // the execution result to the receipt builder (see
+        // [`Eip8130CommittedPhases`]). `transact` can only return a
+        // `ResultAndState`, whose `output` already carries the transaction's revert
+        // data. Published as the last step before returning — after the transaction
+        // is fully settled and committed — so neither a `settle_fees` error nor a
+        // panic in the journal teardown above can leave a stale count in the slot
+        // for the next transaction; only the allocation-free result construction
+        // below runs before the caller's `take`.
+        Eip8130CommittedPhases::set(calls.committed_phases);
 
         // The gas refund is already folded into `gas_used` (via `net_used` in
         // `settle_fees`), so the `refunded` counter is left 0.
@@ -465,6 +467,11 @@ impl Eip8130Executor {
     /// authenticator the caller declared is priced from the synthesized
     /// `sender_auth` / `payer_auth` blob shape. No signature is ever verified, so
     /// the declared authenticator only selects which schedule entry is charged.
+    ///
+    /// In [`Eip8130ExecutionMode::Call`] the calls run once at the
+    /// transaction's gas limit and the reported gas is that run's metered gas.
+    /// In [`Eip8130ExecutionMode::Simulate`] the reported gas is the searched
+    /// gas limit at which the calls succeed.
     pub fn simulate<DB, I, P>(
         evm: &mut BaseEvm<DB, I, P>,
     ) -> Result<ExecutionResult<BaseHaltReason>, EVMError<DB::Error, BaseTransactionError>>
@@ -482,11 +489,11 @@ impl Eip8130Executor {
     {
         // Clone the envelope + optional acting-actor hint before taking a mutable
         // borrow of `ctx` (same pattern as `execute`).
-        let (signed, acting_actor_hint) = evm
+        let (signed, acting_actor_hint, mode) = evm
             .ctx()
             .tx()
             .eip8130_parts()
-            .map(|parts| (parts.signed.clone(), parts.simulation_sender_actor_id))
+            .map(|parts| (parts.signed.clone(), parts.simulation_sender_actor_id, parts.mode))
             .ok_or_else(|| {
                 BaseTransactionError::eip8130("transaction is not an EIP-8130 transaction")
             })?;
@@ -546,6 +553,11 @@ impl Eip8130Executor {
         let inspection =
             Self::start_inspection(evm, outcome.sender, encoded.clone(), outcome.gas_limit);
 
+        let ceiling_pool = outcome.execution_gas_available;
+        if mode == Eip8130ExecutionMode::Call {
+            return Self::simulate_single_run(evm, &signed, &outcome, inspection, ceiling_pool);
+        }
+
         // The estimate must return a gas *limit* that guarantees execution
         // succeeds, not the net charge. Two effects make that more than the gas a
         // single happy-path run consumes:
@@ -566,8 +578,7 @@ impl Eip8130Executor {
         // applied account changes, and warmed accounts above are shared by every
         // probe, so only the call pool varies. Determinism of the EIP-8130 schedule
         // keeps the search to a handful of iterations.
-        let ceiling_pool = outcome.execution_gas_available;
-
+        //
         // First run at the request's full pool: measures the baseline call spend
         // and decides whether the transaction can succeed at all. Probed under a
         // nested checkpoint so its writes (and logs) are rolled back before the
@@ -601,42 +612,7 @@ impl Eip8130Executor {
         // and any logs the committed phases emitted before the failing phase.
         if ceiling.reverted {
             evm.inspect = inspect;
-            let final_calls = match Self::execute_calls(evm, &signed, &outcome, ceiling_pool) {
-                Ok(final_calls) => final_calls,
-                Err(err) => {
-                    Self::end_inspection(
-                        evm,
-                        inspection,
-                        true,
-                        Bytes::new(),
-                        outcome.gas_limit,
-                        outcome.gas_limit,
-                    );
-                    Self::discard_transaction_state(evm);
-                    return Err(err);
-                }
-            };
-            let logs = evm.ctx_mut().journal_mut().take_logs();
-            // EIP-7623: the sender portion is floored at the calldata floor even
-            // on a revert, so the reported gas reflects the minimum a data-heavy
-            // transaction is metered.
-            let gross = outcome
-                .metered_gas(outcome.sender_intrinsic.saturating_add(final_calls.call_gas_spent));
-            Self::end_inspection(
-                evm,
-                inspection,
-                true,
-                final_calls.output.clone(),
-                outcome.gas_limit,
-                gross,
-            );
-            Self::discard_transaction_state(evm);
-            let result_gas = ResultGas::new_with_state_gas(gross, 0, 0, 0);
-            return Ok(ExecutionResult::Revert {
-                gas: result_gas,
-                logs,
-                output: final_calls.output,
-            });
+            return Self::simulate_single_run(evm, &signed, &outcome, inspection, ceiling_pool);
         }
 
         let feasible_pool = match Self::search_estimate_pool(
@@ -710,6 +686,69 @@ impl Eip8130Executor {
                 gas: result_gas,
                 logs,
                 output: Output::Call(final_calls.output),
+            })
+        }
+    }
+
+    /// Runs the phased `calls` once at `pool` (un-reverted, so the output and
+    /// logs are captured), closes the trace root, and discards all simulated
+    /// state. Reports the metered gas of that run, with the EIP-7623 sender
+    /// floor applied, as a success or a revert.
+    fn simulate_single_run<DB, I, P>(
+        evm: &mut BaseEvm<DB, I, P>,
+        signed: &base_common_consensus::Eip8130Signed,
+        outcome: &Eip8130Outcome,
+        inspection: Option<CallInputs>,
+        pool: u64,
+    ) -> Result<ExecutionResult<BaseHaltReason>, EVMError<DB::Error, BaseTransactionError>>
+    where
+        DB: AlloyDatabase,
+        I: Inspector<BaseContext<DB>>,
+        P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
+        BaseContext<DB>: BaseContextTr
+            + ContextTr<
+                Db = DB,
+                Tx = BaseTransaction<TxEnv>,
+                Block = BlockEnv,
+                Journal: core::fmt::Debug + JournalExt,
+            >,
+    {
+        let calls = match Self::execute_calls(evm, signed, outcome, pool) {
+            Ok(calls) => calls,
+            Err(err) => {
+                Self::end_inspection(
+                    evm,
+                    inspection,
+                    true,
+                    Bytes::new(),
+                    outcome.gas_limit,
+                    outcome.gas_limit,
+                );
+                Self::discard_transaction_state(evm);
+                return Err(err);
+            }
+        };
+        let logs = evm.ctx_mut().journal_mut().take_logs();
+        let gross =
+            outcome.metered_gas(outcome.sender_intrinsic.saturating_add(calls.call_gas_spent));
+        Self::end_inspection(
+            evm,
+            inspection,
+            calls.reverted,
+            calls.output.clone(),
+            outcome.gas_limit,
+            gross,
+        );
+        Self::discard_transaction_state(evm);
+        let gas = ResultGas::new_with_state_gas(gross, 0, 0, 0);
+        if calls.reverted {
+            Ok(ExecutionResult::Revert { gas, logs, output: calls.output })
+        } else {
+            Ok(ExecutionResult::Success {
+                reason: SuccessReason::Return,
+                gas,
+                logs,
+                output: Output::Call(calls.output),
             })
         }
     }
@@ -1316,10 +1355,7 @@ impl Eip8130Executor {
         // Signed transaction-level refund counter: refunds are accounted across
         // the whole transaction, not per call. See [`CallsResult::refund`].
         let mut refund: i64 = 0;
-        let total_phases = signed.tx().calls.len();
-        // One status byte per phase; phases not reached after a revert are filled
-        // with `0x00` below.
-        let mut phase_statuses: Vec<u8> = Vec::with_capacity(total_phases);
+        let mut committed_phases: u64 = 0;
         let mut last_output = Bytes::new();
 
         for phase in &signed.tx().calls {
@@ -1394,16 +1430,14 @@ impl Eip8130Executor {
 
             if phase_reverted {
                 evm.ctx_mut().journal_mut().checkpoint_revert(checkpoint);
-                // This phase reverted; record it and report every remaining
-                // (unexecuted) phase as reverted too, per EIP-8130.
-                phase_statuses.push(0x00);
-                phase_statuses.resize(total_phases, 0x00);
+                // This phase and every remaining (unexecuted) phase count as
+                // reverted, per EIP-8130, so the count stops here.
                 return Ok(CallsResult {
                     call_gas_spent: pool.saturating_sub(remaining),
                     refund,
                     reverted: true,
                     output: phase_output,
-                    phase_statuses,
+                    committed_phases,
                 });
             }
 
@@ -1414,7 +1448,7 @@ impl Eip8130Executor {
             // surfaces a database error. Committed phases are only durable once
             // `commit_tx` runs.
             evm.ctx_mut().journal_mut().checkpoint_commit();
-            phase_statuses.push(0x01);
+            committed_phases += 1;
             refund = refund.saturating_add(phase_refund);
         }
 
@@ -1423,7 +1457,7 @@ impl Eip8130Executor {
             refund,
             reverted: false,
             output: last_output,
-            phase_statuses,
+            committed_phases,
         })
     }
 
@@ -1510,10 +1544,10 @@ impl Eip8130Executor {
 
     /// EIP-2929 account-access gas for dispatching a root call to `to`, as the
     /// `CALL` opcode would charge it: [`COLD_ACCOUNT_ACCESS_COST`] if `to` is
-    /// cold, plus the same again if `to` carries an EIP-7702 delegation whose
-    /// target is cold. Warm accounts cost nothing here, since a root call has no
-    /// opcode base cost. Loading warms both accounts, so a repeated target and
-    /// later accesses inside the call pay the warm rate.
+    /// cold or [`WARM_STORAGE_READ_COST`] if it is warm, plus the same again
+    /// for the delegation target if `to` carries an EIP-7702 delegation.
+    /// Loading warms both accounts, so a repeated target and later accesses
+    /// inside the call pay the warm rate.
     fn root_call_access_gas<DB, I, P>(
         evm: &mut BaseEvm<DB, I, P>,
         to: Address,
@@ -1522,15 +1556,17 @@ impl Eip8130Executor {
         DB: AlloyDatabase,
         BaseContext<DB>: ContextTr<Db = DB, Journal: JournalExt>,
     {
+        let access_cost =
+            |is_cold: bool| if is_cold { COLD_ACCOUNT_ACCESS_COST } else { WARM_STORAGE_READ_COST };
         let journal = evm.ctx_mut().journal_mut();
         let target = journal.load_account_with_code(to).map_err(EVMError::Database)?;
-        let mut cold_accounts = u64::from(target.is_cold);
+        let mut gas = access_cost(target.is_cold);
         let delegate = target.data.info.code.as_ref().and_then(Bytecode::eip7702_address);
         if let Some(delegate) = delegate {
             let delegate = journal.load_account_with_code(delegate).map_err(EVMError::Database)?;
-            cold_accounts += u64::from(delegate.is_cold);
+            gas += access_cost(delegate.is_cold);
         }
-        Ok(cold_accounts * COLD_ACCOUNT_ACCESS_COST)
+        Ok(gas)
     }
 
     /// Whether a call moving `value` from `sender` to `to` creates `to`, so it
@@ -2029,7 +2065,13 @@ impl Eip8130Executor {
 
 #[cfg(test)]
 mod tests {
-    use alloy_evm::{Evm, EvmError, FromTxWithEncoded, precompiles::PrecompilesMap};
+    use alloc::sync::Arc;
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
+    use alloy_evm::{
+        Evm, EvmError, FromTxWithEncoded,
+        precompiles::{DynPrecompile, PrecompileInput, PrecompilesMap},
+    };
     use alloy_primitives::{Address, B256, Bytes, U256, address, bytes, keccak256};
     use alloy_sol_types::{SolValue, sol};
     use base_common_consensus::{
@@ -2047,6 +2089,7 @@ mod tests {
         database::InMemoryDB,
         database_interface::DBErrorMarker,
         inspector::NoOpInspector,
+        precompile::PrecompileOutput,
         state::AccountInfo,
     };
 
@@ -2232,7 +2275,7 @@ mod tests {
             refund: 0,
             reverted: false,
             output: Bytes::new(),
-            phase_statuses: Vec::new(),
+            committed_phases: 0,
         };
         assert_eq!(
             Eip8130Executor::billable_gas(&base, &cheap),
@@ -3486,15 +3529,16 @@ mod tests {
         // payload EIP-2028 DA over the two-phase tx 1_888
         // nonce_key protocol nonce (key 0), even on first use 0
         // sender_auth ECRECOVER 3_000 + cold SLOAD 2_100 5_100
-        // access cold loader account in phase 0 only (COLD_ACCOUNT_ACCESS_COST)
+        // access cold loader account in phase 0 (COLD_ACCOUNT_ACCESS_COST),
+        //        warm in phase 1 (WARM_STORAGE_READ_COST)
         // call phase 0 JUMPDEST pad + PUSH1 (3) + COLD SLOAD (2_100) + STOP
         // call phase 1 JUMPDEST pad + PUSH1 (3) + WARM SLOAD (100) + STOP
-        // total 24_194 + COLD_ACCOUNT_ACCESS_COST + 2 * WARMTH_PROBE_PAD_GAS (the pad
-        // runs once per phase; the two calls each carry a value word, adding one
-        // 0x80 calldata byte per call)
+        // total 24_194 + COLD_ACCOUNT_ACCESS_COST + WARM_STORAGE_READ_COST
+        // + 2 * WARMTH_PROBE_PAD_GAS (the pad runs once per phase; the two calls
+        // each carry a value word, adding one 0x80 calldata byte per call)
         assert_eq!(
             outcome.result.gas().tx_gas_used(),
-            24_194 + COLD_ACCOUNT_ACCESS_COST + 2 * WARMTH_PROBE_PAD_GAS,
+            24_194 + COLD_ACCOUNT_ACCESS_COST + WARM_STORAGE_READ_COST + 2 * WARMTH_PROBE_PAD_GAS,
             "phase 1's SLOAD must be WARM (100): committed phase 0 warmed \
              (loader, slot 0). A cold read (2_100) would be 2_000 more, meaning \
              the committed phase's warmth failed to carry across phases",
@@ -4269,6 +4313,28 @@ mod tests {
         outcome.result.tx_gas_used()
     }
 
+    /// Call-pool gas the floor burner spends ahead of the targets: its cold
+    /// access plus its `JUMPDEST` padding.
+    const FLOOR_BURNER_CALL_GAS: u64 = COLD_ACCOUNT_ACCESS_COST + WARMTH_PROBE_PAD_GAS;
+
+    /// Gas `signed` draws from the call pool when executed with `coinbase` as
+    /// the block beneficiary: the gas used minus its sender intrinsic gas.
+    fn call_pool_gas_with_coinbase(
+        signed: &Eip8130Signed,
+        sender: Address,
+        accounts: &[(Address, Bytes)],
+        coinbase: Address,
+    ) -> u64 {
+        let envelope = BaseTxEnvelope::Eip8130(signed.clone());
+        let encoded: Bytes = alloy_eips::eip2718::Encodable2718::encoded_2718(&envelope).into();
+        let intrinsic =
+            IntrinsicGas::compute(signed, &encoded, &IntrinsicGasInput::new(sender, true))
+                .expect("intrinsic gas");
+        let gas_used = gas_used_with_coinbase(signed, sender, accounts, coinbase);
+        assert!(gas_used > intrinsic.sender_floor(), "gas used must bill above the calldata floor");
+        gas_used - intrinsic.sender_intrinsic()
+    }
+
     #[test]
     fn root_call_to_cold_target_charges_cold_account_access() {
         let key = signing_key(0xe1);
@@ -4276,27 +4342,44 @@ mod tests {
         let target = address!("0x00000000000000000000000000000000000000cc");
         let signed = signed_root_calls(&key, &[target]);
 
-        let cold = gas_used_with_coinbase(&signed, sender, &[], BENEFICIARY);
-        let warm = gas_used_with_coinbase(&signed, sender, &[], target);
-        assert_eq!(cold - warm, COLD_ACCOUNT_ACCESS_COST);
+        assert_eq!(
+            call_pool_gas_with_coinbase(&signed, sender, &[], BENEFICIARY),
+            FLOOR_BURNER_CALL_GAS + COLD_ACCOUNT_ACCESS_COST
+        );
     }
 
+    /// A root call to a warm target pays the warm access cost, as a `CALL` does.
     #[test]
-    fn repeated_root_call_target_pays_cold_access_once() {
+    fn root_call_to_warm_target_charges_warm_account_access() {
+        let key = signing_key(0xe5);
+        let sender = eoa_address(&key);
+        let target = address!("0x00000000000000000000000000000000000000cc");
+        let signed = signed_root_calls(&key, &[target]);
+
+        assert_eq!(
+            call_pool_gas_with_coinbase(&signed, sender, &[], target),
+            FLOOR_BURNER_CALL_GAS + WARM_STORAGE_READ_COST
+        );
+    }
+
+    /// A repeated target pays the cold access once and the warm access after.
+    #[test]
+    fn repeated_root_call_target_pays_cold_then_warm_access() {
         let key = signing_key(0xe2);
         let sender = eoa_address(&key);
         let target = address!("0x00000000000000000000000000000000000000cc");
         let signed = signed_root_calls(&key, &[target, target]);
 
-        let cold = gas_used_with_coinbase(&signed, sender, &[], BENEFICIARY);
-        let warm = gas_used_with_coinbase(&signed, sender, &[], target);
-        assert_eq!(cold - warm, COLD_ACCOUNT_ACCESS_COST);
+        assert_eq!(
+            call_pool_gas_with_coinbase(&signed, sender, &[], BENEFICIARY),
+            FLOOR_BURNER_CALL_GAS + COLD_ACCOUNT_ACCESS_COST + WARM_STORAGE_READ_COST
+        );
     }
 
-    /// A root call into an EIP-7702 delegated account also pays the cold
-    /// access of the delegation target, as a `CALL` does.
+    /// A root call into an EIP-7702 delegated account also pays the access of
+    /// the delegation target, cold or warm, as a `CALL` does.
     #[test]
-    fn root_call_to_delegated_account_charges_cold_delegate_access() {
+    fn root_call_to_delegated_account_charges_delegate_access() {
         let key = signing_key(0xe3);
         let sender = eoa_address(&key);
         let delegated = address!("0x00000000000000000000000000000000000000cc");
@@ -4304,17 +4387,34 @@ mod tests {
         let accounts = [(delegated, Bytecode::new_eip7702(delegate).original_bytes())];
         let signed = signed_root_calls(&key, &[delegated]);
 
-        let both_cold = gas_used_with_coinbase(&signed, sender, &accounts, BENEFICIARY);
-        let delegate_warm = gas_used_with_coinbase(&signed, sender, &accounts, delegate);
-        let delegated_warm = gas_used_with_coinbase(&signed, sender, &accounts, delegated);
-        assert_eq!(both_cold - delegate_warm, COLD_ACCOUNT_ACCESS_COST);
-        assert_eq!(both_cold - delegated_warm, COLD_ACCOUNT_ACCESS_COST);
+        let call_gas = |coinbase| call_pool_gas_with_coinbase(&signed, sender, &accounts, coinbase);
+        let one_cold = FLOOR_BURNER_CALL_GAS + COLD_ACCOUNT_ACCESS_COST + WARM_STORAGE_READ_COST;
+        assert_eq!(call_gas(BENEFICIARY), FLOOR_BURNER_CALL_GAS + 2 * COLD_ACCOUNT_ACCESS_COST);
+        assert_eq!(call_gas(delegate), one_cold);
+        assert_eq!(call_gas(delegated), one_cold);
     }
 
-    /// The estimate includes the cold access charge, so it still equals the
-    /// execution charge for a call to a cold target.
+    /// Once a delegated account and its delegation target are both warm, a
+    /// root call to it pays the warm access cost for each.
     #[test]
-    fn simulate_estimate_includes_root_call_cold_access() {
+    fn root_call_to_warm_delegated_account_charges_two_warm_accesses() {
+        let key = signing_key(0xe6);
+        let sender = eoa_address(&key);
+        let delegated = address!("0x00000000000000000000000000000000000000cc");
+        let delegate = address!("0x00000000000000000000000000000000000000cd");
+        let accounts = [(delegated, Bytecode::new_eip7702(delegate).original_bytes())];
+        let signed = signed_root_calls(&key, &[delegated, delegated]);
+
+        assert_eq!(
+            call_pool_gas_with_coinbase(&signed, sender, &accounts, BENEFICIARY),
+            FLOOR_BURNER_CALL_GAS + 2 * COLD_ACCOUNT_ACCESS_COST + 2 * WARM_STORAGE_READ_COST
+        );
+    }
+
+    /// The estimate includes the root call access charge, so it equals the
+    /// execution charge for a call to a cold or a warm target.
+    #[test]
+    fn simulate_estimate_includes_root_call_access() {
         let key = signing_key(0xe4);
         let sender = eoa_address(&key);
         let target = address!("0x00000000000000000000000000000000000000cc");
@@ -4335,8 +4435,13 @@ mod tests {
         };
 
         let cold_estimate = estimate(BENEFICIARY);
-        assert_eq!(cold_estimate - estimate(target), COLD_ACCOUNT_ACCESS_COST);
+        let warm_estimate = estimate(target);
+        assert_eq!(
+            cold_estimate - warm_estimate,
+            COLD_ACCOUNT_ACCESS_COST - WARM_STORAGE_READ_COST
+        );
         assert_eq!(cold_estimate, gas_used_with_coinbase(&signed, sender, &[], BENEFICIARY));
+        assert_eq!(warm_estimate, gas_used_with_coinbase(&signed, sender, &[], target));
     }
 
     /// Executes and estimates a single-call transaction into a contract running
@@ -4410,7 +4515,7 @@ mod tests {
 
         assert!(matches!(outcome.result, ExecutionResult::Revert { .. }));
         assert_eq!(outcome.result.tx_gas_used(), signed.tx().gas_limit);
-        assert_eq!(Eip8130PhaseStatuses::take(), vec![0x01, 0x00, 0x00]);
+        assert_eq!(Eip8130CommittedPhases::take(), 1);
         let slot0 = |address: Address| {
             outcome
                 .state
@@ -4484,5 +4589,46 @@ mod tests {
         evm.ctx_mut().tx = sim;
         let err = Eip8130Executor::simulate(&mut evm).unwrap_err();
         assert!(err.to_string().contains("below the EIP-7623 calldata floor"), "got {err}");
+    }
+
+    /// Installs a precompile at `address` that succeeds without output and
+    /// counts how many times it is invoked.
+    fn install_counting_precompile(
+        evm: &mut BaseEvm<InMemoryDB, NoOpInspector, PrecompilesMap>,
+        address: Address,
+    ) -> Arc<AtomicUsize> {
+        let runs = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&runs);
+        evm.precompiles_mut().apply_precompile(&address, move |_| {
+            Some(DynPrecompile::from(move |_: PrecompileInput<'_>| {
+                counter.fetch_add(1, Ordering::SeqCst);
+                Ok(PrecompileOutput::new(0, Bytes::new(), 0))
+            }))
+        });
+        runs
+    }
+
+    /// An `eth_call` simulation runs the phased calls exactly once instead of
+    /// repeating them for the gas-limit search.
+    #[test]
+    fn simulate_call_mode_executes_the_calls_once() {
+        let key = signing_key(0xe8);
+        let sender = eoa_address(&key);
+        let counted = address!("0x00000000000000000000000000000000000000e8");
+        let mut tx = base_tx();
+        tx.calls = vec![vec![Call { to: counted, value: U256::ZERO, data: Bytes::new() }]];
+        let signed = eoa_signed(tx, &key);
+
+        let mut evm = evm_with(U256::from(10u64).pow(U256::from(18u64)), sender);
+        let runs = install_counting_precompile(&mut evm, counted);
+        let mut call = into_base_tx(&signed);
+        call.base.caller = sender;
+        if let Some(parts) = call.eip8130.as_mut() {
+            parts.mode = Eip8130ExecutionMode::Call;
+        }
+
+        let outcome = evm.transact_raw(call).expect("call simulation runs");
+        assert!(outcome.result.is_success(), "expected success, got {:?}", outcome.result);
+        assert_eq!(runs.load(Ordering::SeqCst), 1, "eth_call must execute the calls once");
     }
 }

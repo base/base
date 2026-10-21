@@ -344,6 +344,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn registrar_rpc_server_healthz_accepts_pending_image() {
+        let pending = alloy_primitives::B256::repeat_byte(1);
+        let registry = MockRegistry::new(false);
+        *registry.image_hash.lock().unwrap() = pending;
+        let server = Arc::new(EnclaveServer::new_local().unwrap());
+        let transport = Arc::new(NitroTransport::local(server));
+        let checker = Arc::new(
+            RegistrationChecker::new(vec![Arc::clone(&transport)], registry)
+                .unwrap()
+                .with_pending_image_hash(Some(pending))
+                .unwrap(),
+        );
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+        let handle =
+            NitroProverServer::run_registrar_rpc_server(addr, vec![transport], Some(checker))
+                .await
+                .unwrap();
+
+        let status = http_status(addr, "/healthz").await;
+        handle.stop().unwrap();
+        assert_eq!(status, 200);
+    }
+
+    #[tokio::test]
     async fn registrar_rpc_server_readyz_bypasses_registration() {
         let server = Arc::new(EnclaveServer::new_local().unwrap());
         let transport = Arc::new(NitroTransport::local(server));

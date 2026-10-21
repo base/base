@@ -30,13 +30,13 @@ use crate::{
     AlloyL1BlockFetcher, CheckpointActor, CheckpointClient, CheckpointDB, CheckpointWriter,
     Conductor, ConductorClient, DelayedL1OriginSelectorProvider, DerivationActor, EngineActor,
     EngineActorRequest, EngineConfig, EngineProcessor, EngineRequestReceiver, EngineRpcProcessor,
-    L1OriginSelector, L1WatcherActor, L1WatcherQueryProcessor, NetworkActor, NetworkBuilder,
-    NetworkConfig, NodeActor, NodeOperatingMode, PayloadBuilder, PrefetchedChainProvider,
-    PreparedL1Origin, QueuedDerivationEngineClient, QueuedEngineDerivationClient,
-    QueuedEngineRpcClient, QueuedL1WatcherDerivationClient, QueuedNetworkEngineClient,
-    QueuedSequencerAdminAPIClient, QueuedSequencerEngineClient, RecoveryModeGuard, RpcActor,
-    RpcContext, SequencerActor, SequencerConfig, SequencerEngineRequestCoordinator,
-    UpgradeSignalNodeConfig, ValidatorEngineRequestHandler,
+    L1OriginSelector, L1WatcherActor, L1WatcherQueryExecutor, L1WatcherQueryProcessor,
+    NetworkActor, NetworkBuilder, NetworkConfig, NodeActor, NodeOperatingMode, PayloadBuilder,
+    PrefetchedChainProvider, PreparedL1Origin, QueuedDerivationEngineClient,
+    QueuedEngineDerivationClient, QueuedEngineRpcClient, QueuedL1WatcherDerivationClient,
+    QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient, QueuedSequencerEngineClient,
+    RecoveryModeGuard, RpcActor, RpcContext, SequencerActor, SequencerConfig,
+    SequencerEngineRequestCoordinator, UpgradeSignalNodeConfig, ValidatorEngineRequestHandler,
     actors::{BlockStream, NetworkInboundData, QueuedUnsafePayloadGossipClient},
 };
 
@@ -73,7 +73,8 @@ pub struct L1Config {
     pub beacon_client: OnlineBeaconClient,
     /// The general L1 execution JSON-RPC provider.
     pub engine_provider: RootProvider,
-    /// How frequently to poll L1 for a new finalized block.
+    /// How frequently to poll L1 for new finalized and safe blocks, both of which advance once
+    /// per L1 epoch.
     ///
     /// The right value depends on the L1 finality cadence:
     /// - Ethereum mainnet/Sepolia: one epoch (~384 s = 32 slots × 12 s)
@@ -314,43 +315,6 @@ impl RollupNode {
         self.start_inner(engine_client, pipeline, l1_head_number, cancellation).await
     }
 
-    /// Starts the rollup node service with a pre-built derivation pipeline.
-    ///
-    /// This is the underlying implementation of [`Self::start`]. It accepts any pipeline
-    /// implementing [`Pipeline`] and [`SignalReceiver`], enabling callers to substitute
-    /// in-memory or test pipelines without modifying `RollupNode` itself.
-    ///
-    /// Production callers should use [`Self::start`], which constructs the standard
-    /// [`OnlinePipeline`] automatically.
-    ///
-    /// **Note:** `verifier_l1_confs` has no effect when using this method. The
-    /// [`ConfDepthProvider`](base_consensus_providers::ConfDepthProvider) is only wired into
-    /// pipelines constructed by [`Self::start`]. If the caller's pipeline needs confirmation
-    /// depth gating, it must enforce that in its own chain provider.
-    pub async fn start_with<P>(&self, pipeline: P) -> Result<(), String>
-    where
-        P: Pipeline + SignalReceiver + Send + Sync + 'static,
-    {
-        let l1_head_number: base_consensus_providers::L1HeadNumber = Arc::new(AtomicU64::new(0));
-        let engine_client =
-            Arc::new(self.engine_config().build_engine_client().await.map_err(|e| e.to_string())?);
-        self.start_inner(engine_client, pipeline, l1_head_number, CancellationToken::new()).await
-    }
-
-    /// Starts the rollup node with a pre-built engine client.
-    ///
-    /// This method enables dependency injection of the engine client, useful for testing
-    /// scenarios where a mock or in-memory engine client should be used instead of
-    /// connecting to a live L2 Engine API.
-    pub async fn start_with_engine_client<E: EngineClient + 'static>(
-        &self,
-        engine_client: Arc<E>,
-    ) -> Result<(), String> {
-        let l1_head_number: base_consensus_providers::L1HeadNumber = Arc::new(AtomicU64::new(0));
-        let pipeline = self.create_pipeline(Arc::clone(&l1_head_number)).await;
-        self.start_inner(engine_client, pipeline, l1_head_number, CancellationToken::new()).await
-    }
-
     async fn start_inner<E, P>(
         &self,
         engine_client: Arc<E>,
@@ -471,30 +435,44 @@ impl RollupNode {
             BlockNumberOrTag::Latest,
             Duration::from_secs(HEAD_STREAM_POLL_INTERVAL),
         )?;
+        let safe_stream = BlockStream::new_as_stream(
+            self.l1_config.engine_provider.clone(),
+            BlockNumberOrTag::Safe,
+            self.l1_config.finalized_poll_interval,
+        )?;
         let finalized_stream = BlockStream::new_as_stream(
             self.l1_config.engine_provider.clone(),
             BlockNumberOrTag::Finalized,
             self.l1_config.finalized_poll_interval,
         )?;
+        let (l1_safe_tx, l1_safe_rx) = watch::channel(None);
+        let (l1_finalized_tx, l1_finalized_rx) = watch::channel(None);
 
         // Create the [`L1WatcherActor`]. Previously known as the DA watcher actor.
         let l1_watcher = L1WatcherActor::new(
             Arc::clone(&self.config),
             AlloyL1BlockFetcher(self.l1_config.engine_provider.clone()),
             l1_head_updates_tx.clone(),
+            l1_safe_tx,
+            l1_finalized_tx,
             QueuedL1WatcherDerivationClient::new(derivation_actor_request_tx),
             Some(signer),
             cancellation.clone(),
             head_stream,
+            safe_stream,
             finalized_stream,
             self.l1_config.verifier_l1_confs,
             l1_head_number,
         );
         let l1_query_processor = L1WatcherQueryProcessor::new(
-            Arc::clone(&self.config),
-            AlloyL1BlockFetcher(self.l1_config.engine_provider.clone()),
+            L1WatcherQueryExecutor::new(
+                Arc::clone(&self.config),
+                l1_head_updates_tx.subscribe(),
+                l1_safe_rx,
+                l1_finalized_rx,
+                derivation_origin_rx,
+            ),
             l1_query_rx,
-            derivation_origin_rx,
             cancellation.clone(),
         );
         // One refresher instance is shared between the metrics actor (live auto-apply) and the

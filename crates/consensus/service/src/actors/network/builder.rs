@@ -106,11 +106,6 @@ impl NetworkBuilder {
         Self { gossip: self.gossip.with_max_identify_peerstore_peers(max_peers), ..self }
     }
 
-    /// Sets the signer for the [`NetworkBuilder`].
-    pub fn with_signer(self, signer: Option<BlockSigner>) -> Self {
-        Self { signer, ..self }
-    }
-
     /// Sets the bootstore path for the [`Discv5Builder`].
     pub fn with_bootstore(self, bootstore: Option<BootStoreFile>) -> Self {
         Self { discovery: self.discovery.with_bootstore_file(bootstore), ..self }
@@ -164,11 +159,6 @@ impl NetworkBuilder {
     /// Sets the gossip address for the [`GossipDriverBuilder`].
     pub fn with_gossip_address(self, addr: Multiaddr) -> Self {
         Self { gossip: self.gossip.with_address(addr), ..self }
-    }
-
-    /// Sets the timeout for the [`GossipDriverBuilder`].
-    pub fn with_timeout(self, timeout: Duration) -> Self {
-        Self { gossip: self.gossip.with_timeout(timeout), ..self }
     }
 
     /// Builds the [`NetworkDriver`].

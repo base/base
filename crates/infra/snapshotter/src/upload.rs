@@ -648,7 +648,7 @@ impl SnapshotUploader {
         match result {
             Ok(bytes_uploaded) => Ok(bytes_uploaded),
             Err(error) => {
-                self.abort_streaming_multipart_upload(&key, &upload_id).await;
+                self.abort_multipart_upload(&key, &upload_id).await;
                 Err(error)
             }
         }
@@ -713,39 +713,7 @@ impl SnapshotUploader {
         parts: Vec<CompletedPart>,
     ) -> Result<()> {
         retry_upload(
-            || async {
-                let completed = CompletedMultipartUpload::builder().set_parts(Some(parts.clone())).build();
-                match self
-                    .client
-                    .complete_multipart_upload()
-                    .bucket(&self.bucket)
-                    .key(key)
-                    .upload_id(upload_id)
-                    .multipart_upload(completed)
-                    .send()
-                    .await
-                {
-                    Ok(_) => Ok(()),
-                    Err(error) => {
-                        let error = anyhow::Error::from(error);
-                        if self.remote_object_size(key).await.map_err(UploadAttemptError::Fatal)?
-                            == Some(size)
-                        {
-                            warn!(
-                                key = %key,
-                                upload_id,
-                                error = %error,
-                                error_debug = ?error,
-                                size,
-                                "streaming multipart completion response failed after object appeared; treating upload as successful"
-                            );
-                            Ok(())
-                        } else {
-                            Err(UploadAttemptError::Retry(error))
-                        }
-                    }
-                }
-            },
+            || async { self.complete_or_confirm(key, upload_id, size, &parts).await },
             |attempt, error| {
                 warn!(
                     key = %key,
@@ -764,7 +732,47 @@ impl SnapshotUploader {
         .await
     }
 
-    async fn abort_streaming_multipart_upload(&self, key: &str, upload_id: &str) {
+    async fn complete_or_confirm(
+        &self,
+        key: &str,
+        upload_id: &str,
+        size: u64,
+        parts: &[CompletedPart],
+    ) -> Result<(), UploadAttemptError> {
+        let completed = CompletedMultipartUpload::builder().set_parts(Some(parts.to_vec())).build();
+        match self
+            .client
+            .complete_multipart_upload()
+            .bucket(&self.bucket)
+            .key(key)
+            .upload_id(upload_id)
+            .multipart_upload(completed)
+            .send()
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(error) => {
+                let error = anyhow::Error::from(error);
+                if self.remote_object_size(key).await.map_err(UploadAttemptError::Fatal)?
+                    == Some(size)
+                {
+                    warn!(
+                        key = %key,
+                        upload_id,
+                        error = %error,
+                        error_debug = ?error,
+                        size,
+                        "multipart completion response failed after object appeared; treating upload as successful"
+                    );
+                    Ok(())
+                } else {
+                    Err(UploadAttemptError::Retry(error))
+                }
+            }
+        }
+    }
+
+    async fn abort_multipart_upload(&self, key: &str, upload_id: &str) {
         match self
             .client
             .abort_multipart_upload()
@@ -775,14 +783,14 @@ impl SnapshotUploader {
             .await
         {
             Ok(_) => {
-                warn!(key = %key, upload_id, "aborted streaming multipart upload after failure")
+                warn!(key = %key, upload_id, "aborted multipart upload after failure")
             }
             Err(error) => error!(
                 key = %key,
                 upload_id,
                 error = %error,
                 error_debug = ?error,
-                "failed to abort streaming multipart upload after failure"
+                "failed to abort multipart upload after failure"
             ),
         }
     }
@@ -1384,29 +1392,7 @@ impl SnapshotUploader {
                 .await
             }
             Err(e) => {
-                match self
-                    .client
-                    .abort_multipart_upload()
-                    .bucket(&self.bucket)
-                    .key(key)
-                    .upload_id(&upload_id)
-                    .send()
-                    .await
-                {
-                    Ok(_) => {
-                        warn!(key = %key, upload_id, "aborted multipart upload after failure")
-                    }
-                    Err(abort_error) => {
-                        error!(
-                            key = %key,
-                            upload_id,
-                            error = %abort_error,
-                            error_debug = ?abort_error,
-                            "failed to abort multipart upload after failure"
-                        );
-                    }
-                }
-
+                self.abort_multipart_upload(key, &upload_id).await;
                 Err(e)
             }
         }
@@ -1456,38 +1442,7 @@ impl SnapshotUploader {
         retry_upload(
             || async {
                 progress.set_stage(key, UploadStage::CompletingMultipart);
-                let completed =
-                    CompletedMultipartUpload::builder().set_parts(Some(parts.clone())).build();
-                match self
-                    .client
-                    .complete_multipart_upload()
-                    .bucket(&self.bucket)
-                    .key(key)
-                    .upload_id(upload_id)
-                    .multipart_upload(completed)
-                    .send()
-                    .await
-                {
-                    Ok(_) => Ok(()),
-                    Err(error) => {
-                        let error = anyhow::Error::from(error);
-                        if self.remote_object_size(key).await.map_err(UploadAttemptError::Fatal)?
-                            == Some(file_size)
-                        {
-                            warn!(
-                                key = %key,
-                                upload_id,
-                                error = %error,
-                                error_debug = ?error,
-                                size = file_size,
-                                "multipart completion response failed after object appeared; treating upload as successful"
-                            );
-                            Ok(())
-                        } else {
-                            Err(UploadAttemptError::Retry(error))
-                        }
-                    }
-                }
+                self.complete_or_confirm(key, upload_id, file_size, &parts).await
             },
             |attempt, error| {
                 warn!(

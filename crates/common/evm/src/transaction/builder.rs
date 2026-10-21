@@ -67,12 +67,6 @@ impl BaseTransactionBuilder {
         self
     }
 
-    /// Set the deposit transaction to be a deposit transaction.
-    pub fn is_deposit_tx(mut self) -> Self {
-        self.base = self.base.tx_type(Some(DEPOSIT_TRANSACTION_TYPE));
-        self
-    }
-
     /// Build the [`BaseTransaction`] with default values for missing fields.
     ///
     /// This is useful for testing and debugging where it is not necessary to

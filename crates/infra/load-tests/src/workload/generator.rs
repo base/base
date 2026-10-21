@@ -191,11 +191,6 @@ impl WorkloadGenerator {
         self
     }
 
-    /// Returns the workload configuration.
-    pub const fn config(&self) -> &WorkloadConfig {
-        &self.config
-    }
-
     /// Generates a transaction payload with caller-provided addresses.
     #[instrument(skip(self))]
     pub fn generate_payload(
@@ -236,12 +231,6 @@ impl WorkloadGenerator {
         to: alloy_primitives::Address,
     ) -> TransactionRequest {
         selected.payload.generate(&mut self.rng, from, to)
-    }
-
-    /// Resets the generator to its initial state.
-    pub fn reset(&mut self) {
-        let seed = self.config.seed.unwrap_or(0);
-        self.rng = SeededRng::new(seed);
     }
 }
 

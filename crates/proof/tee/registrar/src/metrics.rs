@@ -47,6 +47,7 @@ base_metrics::define_metrics! {
     revoke_cert_success_total: counter,
 
     #[describe("Registrar L1 account balance in wei")]
+    #[no_zero]
     account_balance_wei: gauge,
 
     #[describe("Total number of signer-registration tasks spawned by the run() loop")]
@@ -202,5 +203,40 @@ impl RegistrarMetrics {
     /// Records a certificate-cache transaction outcome.
     pub fn record_cache_tx(kind: CertKind, outcome: &'static str) {
         Self::cert_cache_tx_total(Self::cert_kind_label(kind), outcome).increment(1);
+    }
+}
+
+#[cfg(all(test, feature = "metrics"))]
+mod tests {
+    use metrics_util::{
+        MetricKind,
+        debugging::{DebugValue, DebuggingRecorder},
+    };
+
+    use super::RegistrarMetrics;
+
+    #[test]
+    fn balance_is_absent_until_observed_including_zero() {
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        metrics::with_local_recorder(&recorder, || {
+            RegistrarMetrics::init();
+            assert!(
+                !snapshotter.snapshot().into_vec().iter().any(|(key, _, _, _)| {
+                    key.key().name() == "base_registrar.account_balance_wei"
+                }),
+                "balance must be absent before a successful read"
+            );
+
+            RegistrarMetrics::account_balance_wei().set(0.0);
+            assert!(
+                snapshotter.snapshot().into_vec().iter().any(|(key, _, _, value)| {
+                    key.kind() == MetricKind::Gauge
+                        && key.key().name() == "base_registrar.account_balance_wei"
+                        && *value == DebugValue::Gauge(0.0.into())
+                }),
+                "an observed zero balance must be published"
+            );
+        });
     }
 }

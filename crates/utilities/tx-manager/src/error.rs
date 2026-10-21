@@ -76,11 +76,6 @@ pub enum TxManagerError {
     #[error("mempool deadline expired")]
     MempoolDeadlineExpired,
 
-    /// A runtime-backed mempool deadline was checked without a runtime
-    /// timestamp.
-    #[error("runtime mempool deadline requires critical_error_at")]
-    RuntimeMempoolDeadlineMissingTimestamp,
-
     /// Nonce arithmetic overflowed `u64::MAX`.
     #[error("nonce overflow")]
     NonceOverflow,
@@ -438,10 +433,6 @@ mod tests {
     #[case::intrinsic_gas_too_low(TxManagerError::IntrinsicGasTooLow, false)]
     #[case::execution_reverted(TxManagerError::ExecutionReverted { reason: None, data: None }, false)]
     #[case::mempool_deadline(TxManagerError::MempoolDeadlineExpired, false)]
-    #[case::runtime_mempool_deadline_missing_timestamp(
-        TxManagerError::RuntimeMempoolDeadlineMissingTimestamp,
-        false
-    )]
     #[case::channel_closed(TxManagerError::ChannelClosed, false)]
     #[case::fee_limit_exceeded(TxManagerError::FeeLimitExceeded { fee: 0, ceiling: 0 }, false)]
     #[case::invalid_safe_abort(TxManagerError::InvalidSafeAbortNonceTooLowCount, false)]
@@ -496,10 +487,6 @@ mod tests {
     #[case::intrinsic_gas_too_low(TxManagerError::IntrinsicGasTooLow, "intrinsic gas too low")]
     #[case::execution_reverted(TxManagerError::ExecutionReverted { reason: None, data: None }, "execution reverted")]
     #[case::mempool_deadline(TxManagerError::MempoolDeadlineExpired, "mempool deadline expired")]
-    #[case::runtime_mempool_deadline_missing_timestamp(
-        TxManagerError::RuntimeMempoolDeadlineMissingTimestamp,
-        "runtime mempool deadline requires critical_error_at"
-    )]
     #[case::underpriced(TxManagerError::Underpriced, "transaction underpriced")]
     #[case::replacement_underpriced(
         TxManagerError::ReplacementUnderpriced,

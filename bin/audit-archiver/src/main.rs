@@ -51,11 +51,6 @@ enum MigrationDirection {
     Up,
 }
 
-#[derive(Debug, Clone)]
-struct HealthState {
-    transaction_event_sink: PgTransactionEventSink,
-}
-
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
@@ -388,15 +383,15 @@ fn health_router(transaction_event_sink: PgTransactionEventSink) -> axum::Router
     axum::Router::new()
         .route("/healthz", get(healthz_handler))
         .route("/readyz", get(readyz_handler))
-        .with_state(HealthState { transaction_event_sink })
+        .with_state(transaction_event_sink)
 }
 
 async fn healthz_handler() -> &'static str {
     "ok\n"
 }
 
-async fn readyz_handler(State(state): State<HealthState>) -> Response {
-    match state.transaction_event_sink.check_schema_ready().await {
+async fn readyz_handler(State(sink): State<PgTransactionEventSink>) -> Response {
+    match sink.check_schema_ready().await {
         Ok(()) => (StatusCode::OK, "ready\n".to_string()).into_response(),
         Err(err) => {
             error!(error = %err, "audit archiver readiness check failed");

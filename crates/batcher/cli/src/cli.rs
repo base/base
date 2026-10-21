@@ -8,10 +8,10 @@ use std::{
 use alloy_primitives::Address;
 use base_batcher_core::{ThrottleConfig, ThrottleStrategy};
 use base_batcher_service::{BatcherConfig, BatcherService, ShadowConfig};
-use base_cli_utils::RuntimeManager;
 use base_runtime::TokioRuntime;
 use base_tx_manager::SignerConfig;
 use clap::Parser;
+use tokio_util::sync::CancellationToken;
 use url::Url;
 
 base_tx_manager::define_signer_cli!("BASE_BATCHER");
@@ -132,7 +132,8 @@ pub struct BatcherArgs {
     #[arg(
         long = "max-pending-transactions",
         default_value = "1",
-        env = "BASE_BATCHER_MAX_PENDING_TRANSACTIONS"
+        env = "BASE_BATCHER_MAX_PENDING_TRANSACTIONS",
+        value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..)
     )]
     pub max_pending_transactions: usize,
 
@@ -401,14 +402,21 @@ impl BatcherArgs {
         })
     }
 
-    /// Execute the batcher.
-    pub async fn exec(self, metrics_enabled: bool) -> eyre::Result<()> {
+    /// Execute the batcher until `cancellation` is cancelled.
+    pub async fn exec(
+        self,
+        metrics_enabled: bool,
+        cancellation: CancellationToken,
+    ) -> eyre::Result<()> {
         let config = self.into_config(metrics_enabled)?;
-        let rt = TokioRuntime::new();
-        let _signal_handle = RuntimeManager::install_signal_handler(rt.token().clone());
+        let rt = TokioRuntime::with_token(cancellation.clone());
 
-        let service = BatcherService::new(config);
-        service.setup(rt).await?.run().await
+        let setup = BatcherService::new(config).setup(rt);
+        let ready = tokio::select! {
+            ready = setup => ready?,
+            () = cancellation.cancelled() => return Ok(()),
+        };
+        ready.run().await
     }
 }
 
@@ -557,6 +565,16 @@ mod tests {
         args.extend_from_slice(["--brotli-quality", "12"].as_slice());
 
         assert!(BatcherArgs::try_parse_from(args).is_err());
+    }
+
+    /// Zero in-flight transactions would mean the batcher never submits, so reject it at parse time.
+    #[test]
+    fn cli_rejects_zero_max_pending_transactions() {
+        let mut args = base_args();
+        args.extend_from_slice(["--max-pending-transactions", "0"].as_slice());
+
+        let error = BatcherArgs::try_parse_from(args).unwrap_err();
+        assert_eq!(error.kind(), clap::error::ErrorKind::ValueValidation);
     }
 
     /// A calldata batcher's frame size is its calldata cap minus the derivation version byte.

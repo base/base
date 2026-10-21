@@ -32,6 +32,7 @@ pub(crate) const fn plan(scenario: Scenario) -> &'static [Phase] {
             Phase::Path4,
             Phase::Path3,
             Phase::Bystanders,
+            Phase::Bonds,
         ],
         Scenario::Path1Path2 => &[
             Phase::Setup,
@@ -75,6 +76,11 @@ impl Progress {
     /// 1-based position of `phase` in the plan.
     fn position(&self, phase: Phase) -> usize {
         self.plan.iter().position(|p| *p == phase).map_or(0, |i| i + 1)
+    }
+
+    /// The phase running now, if any.
+    pub(crate) fn phase(&self) -> Option<Phase> {
+        self.current.map(|(phase, _)| phase)
     }
 
     /// Marks `phase` as running.
@@ -135,6 +141,7 @@ impl Progress {
             phase = %phase,
             verdict = %Verdict::Fail,
             elapsed_ms,
+            infra = crate::Unavailable::is_infra(cause),
             error = %cause,
             "{} failed",
             phase.label()
@@ -185,12 +192,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn every_plan_starts_with_setup_and_ends_with_bystanders() {
+    fn every_plan_starts_with_setup_and_checks_bystanders_last() {
+        // Bonds mutates games outside the ones under test, so it may only
+        // follow the bystander check, never precede it.
         for scenario in [Scenario::All, Scenario::Path1Path2, Scenario::Path3] {
-            let plan = plan(scenario);
+            let plan: Vec<_> =
+                plan(scenario).iter().copied().filter(|phase| *phase != Phase::Bonds).collect();
             assert_eq!(plan.first(), Some(&Phase::Setup), "{scenario:?}");
             assert_eq!(plan.last(), Some(&Phase::Bystanders), "{scenario:?}");
         }
+        assert_eq!(super::plan(Scenario::All).last(), Some(&Phase::Bonds));
     }
 
     #[test]

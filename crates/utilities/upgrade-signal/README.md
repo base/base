@@ -64,8 +64,11 @@ counted, but they do not clear the last observed schedule or stop the node.
 Every schedule path uses a size-bounded Alloy HTTP provider with a fifteen-second request deadline
 by default and a 256 `KiB` maximum response. Consensus readers continue to honor the configured
 `--l1.rpc-timeout-ms` as their request deadline. The reader rejects a `getSchedule()` ABI array
-declaring more than 256 entries before allocating the decoded vector. Startup and manual reads make
-at most three attempts with the shared capped, jittered exponential backoff, while live reads are
+declaring more than 256 entries before allocating the decoded vector. Each bounded schedule read
+makes up to three attempts on provider failures with capped, jittered exponential backoff. Empty
+schedules and decode errors return immediately from that read. Startup retries empty schedules and
+provider failures indefinitely at a fixed interval, failing closed, but aborts on decode errors.
+Manual refresh returns the error after the bounded read. Live polls make a single attempt and are
 dropped immediately when the node's shutdown signal wins its cancellation selection.
 
 `startup-apply` reads and validates the L1 schedule before the node starts serving.

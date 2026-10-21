@@ -21,33 +21,6 @@ use tokio_util::sync::CancellationToken;
 use tracing::info;
 
 // ---------------------------------------------------------------------------
-// Shared state
-// ---------------------------------------------------------------------------
-
-/// State shared across all HTTP handlers.
-#[derive(Clone)]
-struct ServerState {
-    /// Set to `true` once the service has completed initialisation.
-    ready: Arc<AtomicBool>,
-}
-
-impl ServerState {
-    /// `GET /healthz` — liveness probe.
-    async fn liveness() -> StatusCode {
-        StatusCode::OK
-    }
-
-    /// `GET /readyz` — readiness probe.
-    async fn readiness(State(state): State<Self>) -> StatusCode {
-        if state.ready.load(Ordering::Relaxed) {
-            StatusCode::OK
-        } else {
-            StatusCode::SERVICE_UNAVAILABLE
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -65,11 +38,19 @@ impl HealthServer {
     /// health routes with other middleware. For the common case of a
     /// standalone health server, prefer [`serve`](Self::serve) instead.
     pub fn router(ready: Arc<AtomicBool>) -> Router {
-        let state = ServerState { ready };
         Router::new()
-            .route("/healthz", get(ServerState::liveness))
-            .route("/readyz", get(ServerState::readiness))
-            .with_state(state)
+            .route("/healthz", get(|| async { StatusCode::OK }))
+            .route(
+                "/readyz",
+                get(|State(ready): State<Arc<AtomicBool>>| async move {
+                    if ready.load(Ordering::Relaxed) {
+                        StatusCode::OK
+                    } else {
+                        StatusCode::SERVICE_UNAVAILABLE
+                    }
+                }),
+            )
+            .with_state(ready)
     }
 
     /// Starts the health HTTP server.
@@ -115,17 +96,13 @@ mod tests {
         },
     };
 
-    use rstest::rstest;
-    use tokio::task::JoinHandle;
     use tokio_util::sync::CancellationToken;
 
     use super::*;
 
     /// Starts the health server on an ephemeral port and returns its address
     /// along with a cancellation token for graceful shutdown.
-    async fn start_test_server(
-        ready: Arc<AtomicBool>,
-    ) -> (SocketAddr, JoinHandle<()>, CancellationToken) {
+    async fn start_test_server(ready: Arc<AtomicBool>) -> (SocketAddr, CancellationToken) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
 
@@ -133,31 +110,23 @@ mod tests {
         let cancel = CancellationToken::new();
         let cancel_for_shutdown = cancel.clone();
 
-        let handle = tokio::spawn(async move {
+        tokio::spawn(async move {
             axum::serve(listener, app)
                 .with_graceful_shutdown(async move { cancel_for_shutdown.cancelled().await })
                 .await
                 .unwrap();
         });
 
-        (addr, handle, cancel)
+        (addr, cancel)
     }
 
-    #[rstest]
-    #[case::liveness_always_ok(false, "/healthz", 200)]
-    #[case::readiness_not_ready(false, "/readyz", 503)]
-    #[case::readiness_ready(true, "/readyz", 200)]
     #[tokio::test]
-    async fn test_health_endpoint(
-        #[case] initial_ready: bool,
-        #[case] endpoint: &str,
-        #[case] expected_status: u16,
-    ) {
-        let ready = Arc::new(AtomicBool::new(initial_ready));
-        let (addr, _handle, cancel) = start_test_server(ready).await;
+    async fn test_liveness_ok_when_not_ready() {
+        let ready = Arc::new(AtomicBool::new(false));
+        let (addr, cancel) = start_test_server(ready).await;
 
-        let resp = reqwest::get(format!("http://{addr}{endpoint}")).await.unwrap();
-        assert_eq!(resp.status(), expected_status);
+        let resp = reqwest::get(format!("http://{addr}/healthz")).await.unwrap();
+        assert_eq!(resp.status(), 200);
 
         cancel.cancel();
     }
@@ -165,7 +134,7 @@ mod tests {
     #[tokio::test]
     async fn test_readiness_transitions() {
         let ready = Arc::new(AtomicBool::new(false));
-        let (addr, _handle, cancel) = start_test_server(Arc::clone(&ready)).await;
+        let (addr, cancel) = start_test_server(Arc::clone(&ready)).await;
 
         // Initially not ready
         let resp = reqwest::get(format!("http://{addr}/readyz")).await.unwrap();

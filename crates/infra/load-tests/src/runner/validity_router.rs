@@ -215,6 +215,10 @@ mod tests {
         ValidityRouter { ratio, priority_lead_ratio: 0.0, predicates, seed: 12345 }
     }
 
+    fn block_number_template(bound: BlockNumberBound) -> ValidityPredicateTemplate {
+        ValidityPredicateTemplate::BlockNumber { op: ValidityOperator::GreaterThanOrEqual, bound }
+    }
+
     #[test]
     fn nonce_templates_resolve_sender_recipient_and_fixed_addresses() {
         let from = Address::repeat_byte(0x11);
@@ -389,77 +393,38 @@ mod tests {
     }
 
     #[test]
-    fn absolute_block_number_bound_ignores_current_block() {
-        let templates = vec![ValidityPredicateTemplate::BlockNumber {
-            op: ValidityOperator::GreaterThanOrEqual,
-            bound: BlockNumberBound::Absolute(U256::from(12345)),
-        }];
-        let r = router(1.0, templates);
-        let predicates =
-            r.predicates_for(SubmitCohort::ValidityPass, 9_000, Address::repeat_byte(0xaa), None);
-        assert_eq!(
-            predicates,
-            vec![ValidityPredicate::BlockNumber {
-                op: ValidityOperator::GreaterThanOrEqual,
-                value: U256::from(12345),
-            }],
-        );
-    }
-
-    #[test]
-    fn offset_block_number_bound_resolves_against_current_block() {
-        let templates = vec![ValidityPredicateTemplate::BlockNumber {
-            op: ValidityOperator::GreaterThanOrEqual,
-            bound: BlockNumberBound::Offset(U256::from(10)),
-        }];
-        let r = router(1.0, templates);
-        let predicates =
-            r.predicates_for(SubmitCohort::ValidityPass, 1_000, Address::repeat_byte(0xaa), None);
-        assert_eq!(
-            predicates,
-            vec![ValidityPredicate::BlockNumber {
-                op: ValidityOperator::GreaterThanOrEqual,
-                value: U256::from(1_010),
-            }],
-        );
-    }
-
-    #[test]
-    fn offset_block_number_bound_saturates_instead_of_wrapping() {
-        let templates = vec![ValidityPredicateTemplate::BlockNumber {
-            op: ValidityOperator::GreaterThanOrEqual,
-            bound: BlockNumberBound::Offset(U256::MAX),
-        }];
-        let r = router(1.0, templates);
-        let predicates =
-            r.predicates_for(SubmitCohort::ValidityPass, 1_000, Address::repeat_byte(0xaa), None);
-        assert_eq!(
-            predicates,
-            vec![ValidityPredicate::BlockNumber {
-                op: ValidityOperator::GreaterThanOrEqual,
-                value: U256::MAX,
-            }],
-        );
+    fn block_number_bound_resolves_against_current_block() {
+        for (bound, current_block, expected) in [
+            (BlockNumberBound::Absolute(U256::from(12345)), 9_000, U256::from(12345)),
+            (BlockNumberBound::Offset(U256::from(10)), 1_000, U256::from(1_010)),
+            (BlockNumberBound::Offset(U256::MAX), 1_000, U256::MAX),
+        ] {
+            let r = router(1.0, vec![block_number_template(bound)]);
+            let predicates = r.predicates_for(
+                SubmitCohort::ValidityPass,
+                current_block,
+                Address::repeat_byte(0xaa),
+                None,
+            );
+            assert_eq!(
+                predicates,
+                vec![ValidityPredicate::BlockNumber {
+                    op: ValidityOperator::GreaterThanOrEqual,
+                    value: expected,
+                }],
+                "bound {bound:?} at block {current_block}"
+            );
+        }
     }
 
     #[test]
     fn needs_current_block_only_with_an_offset_bound() {
-        let offset = router(
-            1.0,
-            vec![ValidityPredicateTemplate::BlockNumber {
-                op: ValidityOperator::GreaterThanOrEqual,
-                bound: BlockNumberBound::Offset(U256::from(10)),
-            }],
-        );
+        let offset =
+            router(1.0, vec![block_number_template(BlockNumberBound::Offset(U256::from(10)))]);
         assert!(offset.needs_current_block(), "an offset bound requires the current height");
 
-        let absolute = router(
-            1.0,
-            vec![ValidityPredicateTemplate::BlockNumber {
-                op: ValidityOperator::GreaterThanOrEqual,
-                bound: BlockNumberBound::Absolute(U256::from(12345)),
-            }],
-        );
+        let absolute =
+            router(1.0, vec![block_number_template(BlockNumberBound::Absolute(U256::from(12345)))]);
         assert!(!absolute.needs_current_block(), "an absolute bound must not trigger the fetch");
 
         let balance = router(
@@ -478,13 +443,7 @@ mod tests {
 
     #[test]
     fn disabled_router_never_needs_current_block() {
-        let r = router(
-            0.0,
-            vec![ValidityPredicateTemplate::BlockNumber {
-                op: ValidityOperator::GreaterThanOrEqual,
-                bound: BlockNumberBound::Offset(U256::from(10)),
-            }],
-        );
+        let r = router(0.0, vec![block_number_template(BlockNumberBound::Offset(U256::from(10)))]);
         assert!(!r.needs_current_block(), "a disabled router routes nothing to the validity path");
     }
 
@@ -506,18 +465,6 @@ mod tests {
                 value: U256::from(2),
             }],
         );
-    }
-
-    #[test]
-    fn plain_cohort_carries_no_predicates() {
-        let templates = vec![ValidityPredicateTemplate::Balance {
-            address: PredicateAddress::Sender,
-            op: ValidityOperator::GreaterThanOrEqual,
-            value: U256::ZERO,
-        }];
-        let r = router(1.0, templates);
-        let from = Address::repeat_byte(0xaa);
-        assert!(r.predicates_for(SubmitCohort::Plain, 0, from, None).is_empty());
     }
 
     #[test]

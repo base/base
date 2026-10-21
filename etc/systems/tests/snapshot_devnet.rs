@@ -34,7 +34,7 @@ async fn snapshot_devnet_mines_follows_and_includes_rpc_transaction() -> Result<
     let rollup_config = std::env::var_os("BASE_SNAPSHOT_ROLLUP_CONFIG").map(Into::into);
     let mut config = DevnetConfig::snapshot(
         builder_datadir.into(),
-        client_datadir.into(),
+        Some(client_datadir.into()),
         SnapshotChainConfig { chain, rollup_config },
     )?;
     let signer: PrivateKeySigner =

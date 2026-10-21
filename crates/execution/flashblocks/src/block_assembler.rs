@@ -52,11 +52,6 @@ impl AssembledBlock {
 pub struct BlockAssembler;
 
 impl BlockAssembler {
-    /// Creates a new block assembler.
-    pub const fn new() -> Self {
-        Self
-    }
-
     /// Assembles a complete block from a slice of flashblocks.
     ///
     /// # Arguments

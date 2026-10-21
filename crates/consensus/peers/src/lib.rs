@@ -25,9 +25,6 @@ pub use score::PeerScoreLevel;
 mod enr;
 pub use enr::{BaseEnr, BaseEnrError, EnrValidation};
 
-mod any;
-pub use any::{AnyNode, DialOptsError};
-
 mod boot;
 pub use boot::{BootNode, BootNodeParseError};
 

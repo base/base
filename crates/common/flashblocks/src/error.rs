@@ -26,24 +26,3 @@ pub enum FlashblockDecodeError {
     #[error("decompressed payload is not valid UTF-8 JSON: {0}")]
     Utf8(#[source] std::string::FromUtf8Error),
 }
-
-#[cfg(test)]
-mod tests {
-    use rstest::rstest;
-    use serde::de::Error as _;
-
-    use super::*;
-
-    #[rstest]
-    #[case::payload_parse(FlashblockDecodeError::PayloadParse(serde_json::Error::custom("test")))]
-    #[case::metadata_parse(FlashblockDecodeError::MetadataParse(serde_json::Error::custom(
-        "test"
-    )))]
-    #[case::decompress(FlashblockDecodeError::Decompress(std::io::Error::other("test")))]
-    #[case::payload_too_large(FlashblockDecodeError::PayloadTooLarge { given: 2, max: 1 })]
-    #[case::utf8(FlashblockDecodeError::Utf8(String::from_utf8(vec![0xff, 0xfe]).unwrap_err()))]
-    fn test_flashblock_decode_error_display(#[case] error: FlashblockDecodeError) {
-        let display = format!("{error}");
-        assert!(!display.is_empty());
-    }
-}

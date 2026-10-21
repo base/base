@@ -13,3 +13,4 @@ mod validator;
 
 mod task;
 pub(super) use task::DestinationReader;
+pub use task::ReaderPool;

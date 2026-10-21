@@ -141,14 +141,6 @@ impl<P: EngineProtocol> EngineApi<P> {
             .await?)
     }
 
-    /// Get a payload by ID from the Engine API.
-    pub async fn get_payload(
-        &self,
-        payload_id: PayloadId,
-    ) -> eyre::Result<<BaseEngineTypes as EngineTypes>::ExecutionPayloadEnvelopeV4> {
-        self.get_payload_v4(payload_id).await
-    }
-
     /// Submit a new payload to the Engine API
     pub async fn new_payload(
         &self,

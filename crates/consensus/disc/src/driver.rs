@@ -1,11 +1,13 @@
 //! Discovery Module.
 
+use std::net::SocketAddr;
+
 use backon::{ExponentialBuilder, RetryableWithContext};
 use base_consensus_peers::{
     BootNode, BootNodes, BootStore, BootStoreFile, EnrValidation, PeerUtils,
 };
 use derive_more::Debug;
-use discv5::{Config, Discv5, Enr, enr::NodeId};
+use discv5::{Config, Discv5, Enr, IpMode, enr::NodeId};
 use tokio::{
     sync::mpsc::{Sender, channel, error::TrySendError},
     time::{Duration, sleep},
@@ -39,11 +41,8 @@ fn try_forward_enr(enr_sender: &Sender<Enr>, enr: Enr) -> bool {
 /// Channels are used to communicate between the [`Discv5Handler`]
 /// and the spawned task containing the [`Discv5`] service.
 ///
-/// Since some requested operations are asynchronous, this pattern of message
-/// passing is used as opposed to wrapping the [`Discv5`] in an `Arc<Mutex<>>`.
-/// If an `Arc<Mutex<>>` were used, a lock held across the operation's future
-/// would be needed since some asynchronous operations require a mutable
-/// reference to the [`Discv5`] service.
+/// Message passing gives the driver exclusive access to the discovery service
+/// while allowing other tasks to inspect the routing table and ban addresses.
 #[derive(Debug)]
 pub struct Discv5Driver {
     /// The [`Discv5`] discovery service.
@@ -94,6 +93,19 @@ impl Discv5Driver {
             remove_interval: None,
             store_interval: Duration::from_secs(60),
             bootstore,
+        })
+    }
+
+    /// Whether an unverifiable ENR can be pinged without contacting a different IP.
+    ///
+    /// Uses the same address-family selection as [`Discv5::send_ping`].
+    pub fn should_verify_advertised_socket(
+        ip_mode: IpMode,
+        enr: &Enr,
+        observed: SocketAddr,
+    ) -> bool {
+        ip_mode.get_contactable_addr(enr).is_some_and(|advertised| {
+            advertised.ip().to_canonical() == observed.ip().to_canonical()
         })
     }
 
@@ -228,12 +240,6 @@ impl Discv5Driver {
                     msg = req_recv.recv() => {
                         match msg {
                             Some(msg) => match msg {
-                                HandlerRequest::Metrics(tx) => {
-                                    let metrics = self.disc.metrics();
-                                    if let Err(e) = tx.send(metrics) {
-                                        warn!(target: "discovery", error = ?e, "Failed to send metrics");
-                                    }
-                                }
                                 HandlerRequest::PeerCount(tx) => {
                                     let peers = self.disc.connected_peers();
                                     if let Err(e) = tx.send(peers) {
@@ -244,15 +250,6 @@ impl Discv5Driver {
                                     let enr = self.disc.local_enr().clone();
                                     if let Err(e) = tx.send(enr.clone()) {
                                         warn!(target: "discovery", error = ?e, "Failed to send local enr");
-                                    }
-                                }
-                                HandlerRequest::AddEnr(enr) => {
-                                    let _ = self.disc.add_enr(enr);
-                                }
-                                HandlerRequest::RequestEnr{out, addr} => {
-                                    let enr = self.disc.request_enr(addr).await;
-                                    if let Err(e) = out.send(enr) {
-                                        warn!(target: "discovery", error = ?e, "Failed to send request enr");
                                     }
                                 }
                                 HandlerRequest::TableEnrs(tx) => {
@@ -310,11 +307,33 @@ impl Discv5Driver {
                                     store.add_enr(enr);
                                 }
                             }
-                            discv5::Event::UnverifiableEnr { enr, .. }
+                            discv5::Event::UnverifiableEnr { enr, socket, .. }
                                 if EnrValidation::validate(&enr, chain_id).is_valid() =>
                             {
                                 debug!(target: "discovery", enr = ?enr, "Valid ENR discovered, forwarding to swarm");
                                 Metrics::discovery_event("unverifiable_enr").increment(1.0);
+
+                                // discv5 only adds a node to its table after a session whose source
+                                // socket matches the node's ENR. Peers behind port-translating NAT
+                                // (e.g. K8s pods exposed through a hostPort) fail that check on the
+                                // sessions they start, so they are never handed out to other peers.
+                                // Ping the advertised socket instead: if it answers, discv5 sets up a
+                                // verified session and adds the node to the table.
+                                if Self::should_verify_advertised_socket(self.disc.ip_mode(), &enr, socket) {
+                                    let ping = self.disc.send_ping(enr.clone());
+                                    tokio::spawn(async move {
+                                        match ping.await {
+                                            Ok(_) => {
+                                                debug!(target: "discovery", observed = %socket, "Unverifiable ENR answered ping at its advertised socket");
+                                                Metrics::discovery_event("unverifiable_enr_verified").increment(1.0);
+                                            }
+                                            Err(err) => {
+                                                debug!(target: "discovery", observed = %socket, error = ?err, "Unverifiable ENR did not answer ping at its advertised socket");
+                                            }
+                                        }
+                                    });
+                                }
+
                                 if try_forward_enr(&enr_sender, enr.clone()) {
                                     store.add_enr(enr);
                                 }
@@ -378,7 +397,10 @@ impl Discv5Driver {
 
 #[cfg(test)]
 mod tests {
-    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+    use std::{
+        net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+        time::Instant,
+    };
 
     use base_common_chains::ChainConfig;
     use discv5::{
@@ -387,7 +409,7 @@ mod tests {
         handler::NodeContact,
     };
     use tempfile::tempdir;
-    use tokio::sync::mpsc;
+    use tokio::{net::UdpSocket, sync::mpsc};
 
     use super::*;
     use crate::LocalNode;
@@ -578,6 +600,144 @@ mod tests {
                 mainnet.iter().any(|pub_key| pub_key == &enr.public_key()),
                 "Discovery table does not contain mainnet ENR: {enr:?}"
             );
+        }
+    }
+
+    #[test]
+    fn verifies_only_the_contactable_advertised_socket() {
+        let key = CombinedKey::generate_secp256k1();
+        let ipv4 = Ipv4Addr::new(192, 0, 2, 1);
+        let ipv6: Ipv6Addr = "2001:db8::1".parse().unwrap();
+        let dual = Enr::builder().ip4(ipv4).udp4(9000).ip6(ipv6).udp6(9001).build(&key).unwrap();
+        let v4_only = Enr::builder().ip4(ipv4).udp4(9000).build(&key).unwrap();
+        let v6_only = Enr::builder().ip6(ipv6).udp6(9001).build(&key).unwrap();
+        let mapped = Enr::builder().ip6(ipv4.to_ipv6_mapped()).udp6(9001).build(&key).unwrap();
+        let no_socket = test_enr();
+        let observed_v4 = SocketAddr::from((ipv4, 5000));
+        let observed_v6 = SocketAddr::from((ipv6, 5001));
+        let observed_mapped = SocketAddr::from((ipv4.to_ipv6_mapped(), 5000));
+
+        for (mode, enr, observed, expected) in [
+            (IpMode::Ip4, &dual, observed_v4, true),
+            (IpMode::Ip4, &dual, observed_v6, false),
+            (IpMode::Ip6, &dual, observed_v4, false),
+            (IpMode::Ip6, &dual, observed_v6, true),
+            (IpMode::DualStack, &dual, observed_v4, false),
+            (IpMode::DualStack, &dual, observed_v6, true),
+            (IpMode::DualStack, &v4_only, observed_mapped, true),
+            (IpMode::DualStack, &v6_only, observed_v6, true),
+            (IpMode::Ip6, &v4_only, observed_v4, false),
+            (IpMode::Ip4, &v6_only, observed_v6, false),
+            (IpMode::Ip6, &mapped, observed_mapped, false),
+            (IpMode::DualStack, &no_socket, observed_v4, false),
+            (IpMode::Ip4, &dual, "198.51.100.1:5000".parse().unwrap(), false),
+            (IpMode::Ip6, &dual, "[2001:db8::2]:5001".parse().unwrap(), false),
+        ] {
+            assert_eq!(
+                Discv5Driver::should_verify_advertised_socket(mode, enr, observed),
+                expected,
+                "mode {mode:?}, observed {observed}, enr {enr:?}"
+            );
+        }
+    }
+
+    /// Reserves a free localhost UDP port.
+    fn free_udp_port() -> u16 {
+        std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap().local_addr().unwrap().port()
+    }
+
+    /// Forwards UDP like a K8s hostPort: datagrams sent to the returned address reach `target`
+    /// and its replies leave from the returned address, while packets `target` sends on its own
+    /// bypass the forwarder and leave from `target`'s socket.
+    async fn spawn_port_forward(target: SocketAddr) -> SocketAddr {
+        let public = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let inner = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let public_addr = public.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut inbound, mut outbound) = ([0u8; 2048], [0u8; 2048]);
+            let mut client = None;
+            loop {
+                tokio::select! {
+                    Ok((len, from)) = public.recv_from(&mut inbound) => {
+                        client = Some(from);
+                        let _ = inner.send_to(&inbound[..len], target).await;
+                    }
+                    Ok((len, _)) = inner.recv_from(&mut outbound) => {
+                        if let Some(client) = client {
+                            let _ = public.send_to(&outbound[..len], client).await;
+                        }
+                    }
+                }
+            }
+        });
+        public_addr
+    }
+
+    /// Starts a driver listening on `listen_port` whose ENR advertises `advertised_port`.
+    fn start_driver(
+        listen_port: u16,
+        advertised_port: u16,
+        bootnodes: BootNodes,
+        bootstore: std::path::PathBuf,
+    ) -> Discv5Handler {
+        let CombinedKey::Secp256k1(secret_key) = CombinedKey::generate_secp256k1() else {
+            unreachable!()
+        };
+        let localhost = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        let listen = SocketAddr::new(localhost, listen_port);
+        let (handle, _) = Discv5Driver::builder(
+            LocalNode::new(secret_key, localhost, advertised_port, advertised_port),
+            TEST_CHAIN_ID,
+            ConfigBuilder::new(listen.into()).build(),
+        )
+        .with_bootnodes(bootnodes)
+        .with_bootstore_file(Some(BootStoreFile::Custom(bootstore)))
+        .with_interval(Duration::from_millis(500))
+        .build()
+        .expect("Failed to build discovery service")
+        .start();
+        handle
+    }
+
+    /// Chain ID with no hardcoded bootnodes, so the test never leaves localhost.
+    const TEST_CHAIN_ID: u64 = 7_777_777;
+
+    #[tokio::test]
+    async fn admits_peer_whose_packets_leave_from_a_translated_port() {
+        let dir = tempdir().unwrap();
+
+        // Observer, e.g. a bootnode, with a plain socket.
+        let observer_port = free_udp_port();
+        let observer = start_driver(
+            observer_port,
+            observer_port,
+            BootNodes(vec![]),
+            dir.path().join("a.json"),
+        );
+        let observer_enr = observer.local_enr().await.unwrap();
+
+        // Peer behind a hostPort-style forward: it advertises the forwarded port, but the
+        // sessions it starts come from its own listen port, so the observer cannot verify
+        // its ENR from those sessions.
+        let peer_port = free_udp_port();
+        let forwarded =
+            spawn_port_forward(SocketAddr::from((Ipv4Addr::LOCALHOST, peer_port))).await;
+        let peer = start_driver(
+            peer_port,
+            forwarded.port(),
+            BootNodes(vec![BootNode::Enr(observer_enr)]),
+            dir.path().join("b.json"),
+        );
+        let peer_id = peer.local_enr().await.unwrap().node_id();
+
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            let table = observer.table_enrs().await.unwrap();
+            if table.iter().any(|enr| enr.node_id() == peer_id) {
+                break;
+            }
+            assert!(Instant::now() < deadline, "peer never entered the observer's table");
+            sleep(Duration::from_millis(200)).await;
         }
     }
 }

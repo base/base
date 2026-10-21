@@ -263,8 +263,10 @@ where
                 error!(error = %error, "derived L2 block parity pass failed");
             }
 
-            if !Self::sleep_or_cancel(self.config.poll_interval, &cancellation).await {
-                break;
+            tokio::select! {
+                biased;
+                () = cancellation.cancelled() => break,
+                () = tokio::time::sleep(self.config.poll_interval) => {}
             }
         }
 
@@ -423,15 +425,6 @@ where
                     "derived L2 block parity skipped missing block"
                 );
             }
-        }
-    }
-
-    /// Sleeps for the interval or returns false if cancellation fires.
-    pub async fn sleep_or_cancel(interval: Duration, cancellation: &CancellationToken) -> bool {
-        tokio::select! {
-            biased;
-            () = cancellation.cancelled() => false,
-            () = tokio::time::sleep(interval) => true,
         }
     }
 }

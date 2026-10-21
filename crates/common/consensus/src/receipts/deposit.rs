@@ -81,11 +81,6 @@ impl<T> DepositReceipt<T> {
         }
     }
 
-    /// Attaches the given bloom to the receipt returning [`ReceiptWithBloom`].
-    pub const fn with_bloom_unchecked(self, bloom: Bloom) -> ReceiptWithBloom<Self> {
-        ReceiptWithBloom::new(self, bloom)
-    }
-
     /// Consumes the type and returns the inner [`Receipt`].
     pub fn into_inner(self) -> Receipt<T> {
         self.inner
@@ -407,7 +402,7 @@ mod tests {
     use alloc::{vec, vec::Vec};
 
     use alloy_consensus::Receipt;
-    use alloy_primitives::{Bytes, Log, LogData, address, b256, bytes, hex};
+    use alloy_primitives::{Log, LogData, address, b256, bytes, hex};
     use alloy_rlp::{Decodable, Encodable};
 
     use super::*;
@@ -451,66 +446,18 @@ mod tests {
     }
 
     #[test]
-    fn gigantic_receipt() {
-        let receipt = DepositReceipt {
-            inner: Receipt {
-                cumulative_gas_used: 16747627,
-                status: true.into(),
-                logs: vec![
-                    Log {
-                        address: address!("4bf56695415f725e43c3e04354b604bcfb6dfb6e"),
-                        data: LogData::new_unchecked(
-                            vec![b256!(
-                                "c69dc3d7ebff79e41f525be431d5cd3cc08f80eaf0f7819054a726eeb7086eb9"
-                            )],
-                            Bytes::from(vec![1; 0xffffff]),
-                        ),
-                    },
-                    Log {
-                        address: address!("faca325c86bf9c2d5b413cd7b90b209be92229c2"),
-                        data: LogData::new_unchecked(
-                            vec![b256!(
-                                "8cca58667b1e9ffa004720ac99a3d61a138181963b294d270d91c53d36402ae2"
-                            )],
-                            Bytes::from(vec![1; 0xffffff]),
-                        ),
-                    },
-                ],
-            },
-            deposit_nonce: None,
-            deposit_receipt_version: None,
-        }
-        .with_bloom();
-
-        let mut data = vec![];
-
-        receipt.encode(&mut data);
-        let decoded = DepositReceiptWithBloom::decode(&mut &data[..]).unwrap();
-
-        // receipt.clone().to_compact(&mut data);
-        // let (decoded, _) = Receipt::from_compact(&data[..], data.len());
-        assert_eq!(decoded, receipt);
-    }
-
-    #[test]
     fn regolith_receipt_roundtrip() {
         let data = hex!(
             "f9010c0182b741b9010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000c0833d3bbf"
         );
 
         // Deposit Receipt (post-regolith)
-        let expected = DepositReceiptWithBloom {
-            receipt: DepositReceipt {
-                inner: Receipt::<Log> {
-                    cumulative_gas_used: 46913,
-                    logs: vec![],
-                    status: true.into(),
-                },
-                deposit_nonce: Some(4012991),
-                deposit_receipt_version: None,
-            },
-            logs_bloom: [0; 256].into(),
-        };
+        let expected = DepositReceipt {
+            inner: Receipt::<Log> { cumulative_gas_used: 46913, logs: vec![], status: true.into() },
+            deposit_nonce: Some(4012991),
+            deposit_receipt_version: None,
+        }
+        .with_bloom();
 
         let receipt = DepositReceiptWithBloom::decode(&mut &data[..]).unwrap();
         assert_eq!(receipt, expected);

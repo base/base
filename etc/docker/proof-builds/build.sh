@@ -31,6 +31,6 @@ case "$component" in
     challenger-e2e) package=base-challenger-e2e-bin; binary=base-challenger-e2e; profile=release ;;
     *) echo "unknown build component: $component" >&2; exit 1 ;;
 esac
-cargo build --profile "$profile" --package "$package" --bin "$binary"
+cargo build --locked --profile "$profile" --package "$package" --bin "$binary"
 if [ "$profile" = dev ]; then profile=debug; fi
 cp "/app/target/$profile/$binary" "/app/$binary"

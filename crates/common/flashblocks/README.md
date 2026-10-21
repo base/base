@@ -6,9 +6,10 @@ Flashblocks primitive types for Base's pre-confirmation infrastructure.
 
 Provides the core data structures for flashblock payloads, metadata, and delta encoding used in
 Base's pre-confirmation system. Flashblocks are sub-block updates broadcast by the builder before
-a full block is sealed. This crate defines the wire format for those updates, including
-`FlashblocksPayloadV1` (the payload envelope), `FlashblocksDiff` (incremental state delta), and
-`FlashblocksMetadata` (builder metadata).
+a full block is sealed. `FlashblocksPayloadV1` is the wire payload envelope. Its `diff` field is an
+`ExecutionPayloadFlashblockDeltaV1` containing updated execution fields and new transactions.
+The envelope's `metadata` field is a `serde_json::Value`. `Metadata` is the parsed metadata type
+used by `Flashblock`, containing the block number and previous flashblock identifier.
 
 ## Usage
 
@@ -20,10 +21,10 @@ base-common-flashblocks = { workspace = true }
 ```
 
 ```rust,ignore
-use base_common_flashblocks::{FlashblocksPayloadV1, FlashblocksDiff};
+use base_common_flashblocks::{ExecutionPayloadFlashblockDeltaV1, FlashblocksPayloadV1};
 
 let payload: FlashblocksPayloadV1 = serde_json::from_str(&msg)?;
-let diff = payload.diff;
+let diff: ExecutionPayloadFlashblockDeltaV1 = payload.diff;
 ```
 
 ## License

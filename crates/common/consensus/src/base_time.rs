@@ -325,7 +325,7 @@ pub enum BaseTimeScheduleError {
 mod tests {
     use alloy_consensus::{Sealable, TxLegacy};
     use alloy_primitives::{Address, B256, Signature, TxKind, U256};
-    use base_common_genesis::{BaseUpgradeConfig, ChainGenesis, RollupConfig, UpgradeConfig};
+    use rstest::rstest;
 
     use super::{
         BaseTimeMetadataError, BaseTimeScheduleError, BaseTimeUpdateDecodeError,
@@ -333,7 +333,7 @@ mod tests {
     };
     use crate::{
         BaseTransactionSigned, BaseTypedTransaction, Predeploys, REGOLITH_SYSTEM_TX_GAS,
-        SystemAddresses, TxDeposit,
+        SystemAddresses, TxDeposit, test_utils::denim_rollup_config,
     };
 
     fn base_time_deposit(block_number: u64, timestamp_millis_part: u16) -> TxDeposit {
@@ -450,15 +450,7 @@ mod tests {
 
     #[test]
     fn validates_denim_block_timestamp_against_absolute_schedule() {
-        let config = RollupConfig {
-            genesis: ChainGenesis { l2_time: 10, ..Default::default() },
-            block_time: 2,
-            upgrades: UpgradeConfig {
-                base: BaseUpgradeConfig { denim: Some(14), ..Default::default() },
-                ..Default::default()
-            },
-            ..Default::default()
-        };
+        let config = denim_rollup_config();
         let transactions = |block_number, millis_part| -> Vec<BaseTransactionSigned> {
             vec![
                 TxDeposit::default().seal_slow().into(),
@@ -494,15 +486,7 @@ mod tests {
 
     #[test]
     fn skips_schedule_validation_before_denim() {
-        let config = RollupConfig {
-            genesis: ChainGenesis { l2_time: 10, ..Default::default() },
-            block_time: 2,
-            upgrades: UpgradeConfig {
-                base: BaseUpgradeConfig { denim: Some(14), ..Default::default() },
-                ..Default::default()
-            },
-            ..Default::default()
-        };
+        let config = denim_rollup_config();
 
         assert_eq!(
             BaseTimeUpdateTx::validate_block_timestamp::<BaseTransactionSigned>(
@@ -534,98 +518,64 @@ mod tests {
         );
     }
 
-    #[test]
-    fn rejects_invalid_base_time_deposit_envelope() {
+    #[rstest]
+    #[case::source_hash(
+        |d: &mut TxDeposit| d.source_hash = B256::ZERO,
+        BaseTimeMetadataError::InvalidSourceHash,
+    )]
+    #[case::sender(|d: &mut TxDeposit| d.from = Address::ZERO, BaseTimeMetadataError::InvalidSender)]
+    #[case::recipient(
+        |d: &mut TxDeposit| d.to = TxKind::Call(Address::ZERO),
+        BaseTimeMetadataError::InvalidRecipient,
+    )]
+    #[case::mint(|d: &mut TxDeposit| d.mint = 1, BaseTimeMetadataError::NonZeroMint)]
+    #[case::value(
+        |d: &mut TxDeposit| d.value = U256::from(1),
+        BaseTimeMetadataError::NonZeroValue,
+    )]
+    #[case::gas_limit(|d: &mut TxDeposit| d.gas_limit -= 1, BaseTimeMetadataError::InvalidGasLimit)]
+    #[case::system_transaction(
+        |d: &mut TxDeposit| d.is_system_transaction = true,
+        BaseTimeMetadataError::SystemTransaction,
+    )]
+    #[case::selector(
+        |d: &mut TxDeposit| {
+            let mut input = d.input.to_vec();
+            input[0] ^= 0xff;
+            d.input = input.into();
+        },
+        BaseTimeMetadataError::InvalidCalldata(BaseTimeUpdateDecodeError::InvalidSelector),
+    )]
+    #[case::millis_part(
+        |d: &mut TxDeposit| {
+            let mut input = d.input.to_vec();
+            input[34..].copy_from_slice(&100_u16.to_be_bytes());
+            d.input = input.into();
+        },
+        BaseTimeMetadataError::InvalidCalldata(
+            BaseTimeUpdateDecodeError::InvalidTimestampMillisPart(
+                BaseTimeUpdateError::InvalidTimestampMillisPart(100)
+            )
+        ),
+    )]
+    #[case::truncated_selector(
+        |d: &mut TxDeposit| d.input = d.input[..3].to_vec().into(),
+        BaseTimeMetadataError::InvalidCalldata(BaseTimeUpdateDecodeError::MissingSelector),
+    )]
+    #[case::trailing_byte(
+        |d: &mut TxDeposit| {
+            let mut input = d.input.to_vec();
+            input.push(0);
+            d.input = input.into();
+        },
+        BaseTimeMetadataError::InvalidCalldata(BaseTimeUpdateDecodeError::InvalidLength(36, 37)),
+    )]
+    fn rejects_invalid_base_time_deposit(
+        #[case] mutate: fn(&mut TxDeposit),
+        #[case] expected: BaseTimeMetadataError,
+    ) {
         let mut deposit = base_time_deposit(9, 600);
-        deposit.source_hash = B256::ZERO;
-        assert_eq!(
-            BaseTimeUpdateTx::validate_deposit(&deposit, 9),
-            Err(BaseTimeMetadataError::InvalidSourceHash)
-        );
-
-        let mut deposit = base_time_deposit(9, 600);
-        deposit.from = Address::ZERO;
-        assert_eq!(
-            BaseTimeUpdateTx::validate_deposit(&deposit, 9),
-            Err(BaseTimeMetadataError::InvalidSender)
-        );
-
-        let mut deposit = base_time_deposit(9, 600);
-        deposit.to = TxKind::Call(Address::ZERO);
-        assert_eq!(
-            BaseTimeUpdateTx::validate_deposit(&deposit, 9),
-            Err(BaseTimeMetadataError::InvalidRecipient)
-        );
-
-        let mut deposit = base_time_deposit(9, 600);
-        deposit.mint = 1;
-        assert_eq!(
-            BaseTimeUpdateTx::validate_deposit(&deposit, 9),
-            Err(BaseTimeMetadataError::NonZeroMint)
-        );
-
-        let mut deposit = base_time_deposit(9, 600);
-        deposit.value = U256::from(1);
-        assert_eq!(
-            BaseTimeUpdateTx::validate_deposit(&deposit, 9),
-            Err(BaseTimeMetadataError::NonZeroValue)
-        );
-
-        let mut deposit = base_time_deposit(9, 600);
-        deposit.gas_limit -= 1;
-        assert_eq!(
-            BaseTimeUpdateTx::validate_deposit(&deposit, 9),
-            Err(BaseTimeMetadataError::InvalidGasLimit)
-        );
-
-        let mut deposit = base_time_deposit(9, 600);
-        deposit.is_system_transaction = true;
-        assert_eq!(
-            BaseTimeUpdateTx::validate_deposit(&deposit, 9),
-            Err(BaseTimeMetadataError::SystemTransaction)
-        );
-    }
-
-    #[test]
-    fn rejects_invalid_base_time_deposit_calldata() {
-        let mut deposit = base_time_deposit(9, 600);
-        let mut input = deposit.input.to_vec();
-        input[0] ^= 0xff;
-        deposit.input = input.into();
-        assert_eq!(
-            BaseTimeUpdateTx::validate_deposit(&deposit, 9),
-            Err(BaseTimeMetadataError::InvalidCalldata(BaseTimeUpdateDecodeError::InvalidSelector))
-        );
-
-        let mut deposit = base_time_deposit(9, 600);
-        let mut input = deposit.input.to_vec();
-        input[34..].copy_from_slice(&100_u16.to_be_bytes());
-        deposit.input = input.into();
-        assert_eq!(
-            BaseTimeUpdateTx::validate_deposit(&deposit, 9),
-            Err(BaseTimeMetadataError::InvalidCalldata(
-                BaseTimeUpdateDecodeError::InvalidTimestampMillisPart(
-                    BaseTimeUpdateError::InvalidTimestampMillisPart(100)
-                )
-            ))
-        );
-
-        let mut deposit = base_time_deposit(9, 600);
-        deposit.input = deposit.input[..3].to_vec().into();
-        assert_eq!(
-            BaseTimeUpdateTx::validate_deposit(&deposit, 9),
-            Err(BaseTimeMetadataError::InvalidCalldata(BaseTimeUpdateDecodeError::MissingSelector))
-        );
-
-        let mut deposit = base_time_deposit(9, 600);
-        let mut input = deposit.input.to_vec();
-        input.push(0);
-        deposit.input = input.into();
-        assert_eq!(
-            BaseTimeUpdateTx::validate_deposit(&deposit, 9),
-            Err(BaseTimeMetadataError::InvalidCalldata(BaseTimeUpdateDecodeError::InvalidLength(
-                36, 37
-            )))
-        );
+        mutate(&mut deposit);
+        assert_eq!(BaseTimeUpdateTx::validate_deposit(&deposit, 9), Err(expected));
     }
 }

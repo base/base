@@ -208,8 +208,7 @@ pub trait BaseProofsStore: Send + Sync + Debug {
 
     /// Store a batch of trie updates.
     ///
-    /// If wiped is true, the entire storage trie is wiped, but this is unsupported going forward,
-    /// so should only happen for legacy reasons.
+    /// Storage deletions are represented by zero-valued slots and removed trie nodes.
     fn store_trie_updates(
         &self,
         block_ref: BlockWithParent,

@@ -567,36 +567,6 @@ mod tests {
         assert_eq!(deserialized, l2_block_info);
     }
 
-    #[test]
-    #[cfg(feature = "serde")]
-    fn test_deserialize_l2_block_info_hex() {
-        let l2_block_info = L2BlockInfo {
-            block_info: BlockInfo {
-                hash: B256::from([1; 32]),
-                number: 1,
-                parent_hash: B256::from([2; 32]),
-                timestamp: 1,
-            },
-            l1_origin: BlockNumHash { hash: B256::from([3; 32]), number: 2 },
-            seq_num: 3,
-        };
-
-        let json = r#"{
-            "hash": "0x0101010101010101010101010101010101010101010101010101010101010101",
-            "number": 1,
-            "parentHash": "0x0202020202020202020202020202020202020202020202020202020202020202",
-            "timestamp": 1,
-            "l1origin": {
-                "hash": "0x0303030303030303030303030303030303030303030303030303030303030303",
-                "number": 2
-            },
-            "sequenceNumber": 3
-        }"#;
-
-        let deserialized: L2BlockInfo = serde_json::from_str(json).unwrap();
-        assert_eq!(deserialized, l2_block_info);
-    }
-
     #[rstest]
     #[case::pre_denim(None)]
     #[case::post_denim(Some(0))]

@@ -2,12 +2,10 @@
 
 use alloy_consensus::BlockHeader;
 use alloy_primitives::B256;
-use alloy_trie::EMPTY_ROOT_HASH;
 use base_common_consensus::Predeploys;
 use reth_storage_api::{StorageRootProvider, errors::ProviderResult};
 use reth_trie_common::HashedStorage;
 use revm::database::BundleState;
-use tracing::warn;
 
 use crate::BaseConsensusError;
 
@@ -58,43 +56,6 @@ pub fn withdrawals_root_prehashed<DB: StorageRootProvider>(
 /// Verifies block header field `withdrawals_root` against storage root of
 /// `L2ToL1MessagePasser.sol` predeploy post block execution.
 ///
-/// Takes state updates resulting from execution of block.
-///
-/// See <https://specs.base.org/upgrades/isthmus/exec-engine#l2tol1messagepasser-storage-root-in-header>.
-pub fn verify_withdrawals_root<DB, H>(
-    state_updates: &BundleState,
-    state: DB,
-    header: H,
-) -> Result<(), BaseConsensusError>
-where
-    DB: StorageRootProvider,
-    H: BlockHeader,
-{
-    let header_storage_root =
-        header.withdrawals_root().ok_or(BaseConsensusError::L2WithdrawalsRootMissing)?;
-
-    let storage_root = withdrawals_root(state_updates, state)
-        .map_err(BaseConsensusError::L2WithdrawalsRootCalculationFail)?;
-
-    if storage_root == EMPTY_ROOT_HASH {
-        // if there was no MessagePasser contract storage, something is wrong
-        // (it should at least store an implementation address and owner address)
-        warn!("isthmus: no storage root for L2ToL1MessagePasser contract");
-    }
-
-    if header_storage_root != storage_root {
-        return Err(BaseConsensusError::L2WithdrawalsRootMismatch {
-            header: header_storage_root,
-            exec_res: storage_root,
-        });
-    }
-
-    Ok(())
-}
-
-/// Verifies block header field `withdrawals_root` against storage root of
-/// `L2ToL1MessagePasser.sol` predeploy post block execution.
-///
 /// Takes pre-hashed storage updates of `L2ToL1MessagePasser.sol` predeploy, resulting from
 /// execution of block, if any. Otherwise takes empty [`HashedStorage::default`].
 ///
@@ -139,7 +100,6 @@ mod tests {
         StateWriter, providers::BlockchainProvider,
         test_utils::create_test_provider_factory_with_node_types,
     };
-    use reth_revm::db::BundleState;
     use reth_storage_api::StateProviderFactory;
     use reth_trie::{HashedStorage, test_utils::storage_root_prehashed};
     use reth_trie_common::HashedPostState;
@@ -185,9 +145,9 @@ mod tests {
         // create state provider factory
         let state_provider_factory = BlockchainProvider::new(provider_factory).unwrap();
 
-        // validate block against existing state by passing empty state updates
-        verify_withdrawals_root(
-            &BundleState::default(),
+        // validate block against existing state by passing empty pre-hashed storage updates
+        verify_withdrawals_root_prehashed(
+            HashedStorage::default(),
             state_provider_factory.latest().expect("load state"),
             &header,
         )

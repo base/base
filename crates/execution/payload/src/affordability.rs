@@ -1,26 +1,83 @@
 //! Build-time check that a declared EIP-8130 coinbase tip is payable.
 
 use alloy_primitives::{Address, U256};
+use base_common_evm::{BaseSpecId, L1BlockInfo};
 use base_execution_eip8130::FeeCheck;
 use base_execution_txpool::BasePooledTx;
 use revm::Database;
+use tracing::warn;
 
-/// Whether a statically decoded coinbase tip can be paid with worst-case gas.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CoinbaseTipAffordability;
+/// Whether a statically decoded coinbase tip can be paid after the payer's
+/// prepay, priced with the L1 fee parameters and base fee of the block being
+/// built.
+#[derive(Debug, Clone)]
+pub struct CoinbaseTipAffordability {
+    l1_block_info: L1BlockInfo,
+    spec: BaseSpecId,
+    base_fee: u128,
+}
 
 impl CoinbaseTipAffordability {
-    /// Returns `true` when `sender` and `payer` cannot cover worst-case gas plus
-    /// `tip` from the balances currently in `db`.
+    /// Creates a check pricing prepay with `l1_block_info` under `spec` at
+    /// `base_fee`.
+    pub const fn new(l1_block_info: L1BlockInfo, spec: BaseSpecId, base_fee: u128) -> Self {
+        Self { l1_block_info, spec, base_fee }
+    }
+
+    /// Creates a check from the L1 block info in `db` for `block_number`.
+    ///
+    /// Must run after the block's L1 attributes deposit has executed. A failed
+    /// read prices the L1 and operator fees at zero, so a transient DB error
+    /// does not drop otherwise-valid candidates.
+    pub fn load<DB: Database>(
+        db: &mut DB,
+        block_number: u64,
+        spec: BaseSpecId,
+        base_fee: u128,
+    ) -> Self {
+        let l1_block_info = L1BlockInfo::try_fetch(db, U256::from(block_number), spec)
+            .unwrap_or_else(|error| {
+                warn!(
+                    target: "payload_builder",
+                    error = %error,
+                    "failed to load L1 block info for coinbase tip affordability"
+                );
+                L1BlockInfo::default()
+            });
+        Self::new(l1_block_info, spec, base_fee)
+    }
+
+    /// Returns what execution debits the payer before the calls run: the
+    /// chargeable gas at the effective gas price plus the L1 data fee and the
+    /// operator fee.
+    pub fn prepay(
+        &mut self,
+        encoded: &[u8],
+        gas_limit: u64,
+        payer_auth: u64,
+        max_fee: u128,
+        max_priority_fee: u128,
+    ) -> U256 {
+        let gas_price = FeeCheck::effective_gas_price(max_fee, max_priority_fee, self.base_fee);
+        let max_gas = FeeCheck::max_chargeable_gas(gas_limit, payer_auth);
+        self.l1_block_info.clear_tx_l1_cost();
+        let l1_cost = self.l1_block_info.calculate_tx_l1_cost(encoded, self.spec);
+        let operator_cost =
+            self.l1_block_info.operator_fee_charge(encoded, U256::from(max_gas), self.spec);
+        FeeCheck::max_fee_charge(gas_limit, payer_auth, gas_price)
+            .saturating_add(l1_cost)
+            .saturating_add(operator_cost)
+    }
+
+    /// Returns `true` when `payer` cannot cover `prepay` or `sender` cannot
+    /// then cover `tip` from the balances currently in `db`.
     ///
     /// A failed account read is treated as affordable so a transient DB error
     /// does not drop an otherwise-valid candidate.
     pub fn unaffordable_tip<DB: Database>(
         sender: Address,
         payer: Address,
-        gas_limit: u64,
-        payer_auth: u64,
-        max_fee: u128,
+        prepay: U256,
         tip: U256,
         db: &mut DB,
     ) -> bool {
@@ -36,23 +93,15 @@ impl CoinbaseTipAffordability {
             };
             sender_info.map_or(U256::ZERO, |info| info.balance)
         };
-        FeeCheck::validate_gas_and_tip(
-            payer_balance,
-            sender_balance,
-            payer == sender,
-            gas_limit,
-            payer_auth,
-            max_fee,
-            tip,
-        )
-        .is_err()
+        FeeCheck::validate_gas_and_tip(payer_balance, sender_balance, payer == sender, prepay, tip)
+            .is_err()
     }
 
     /// Returns `true` when the transaction declares a static coinbase tip that
-    /// the sender and gas payer cannot cover together with worst-case gas.
+    /// the sender and gas payer cannot cover together with the prepay.
     ///
     /// Transactions without a statically decoded tip are treated as affordable.
-    pub fn unaffordable<T, DB>(tx: &T, payer_auth: u64, db: &mut DB) -> bool
+    pub fn unaffordable<T, DB>(&mut self, tx: &T, payer_auth: u64, db: &mut DB) -> bool
     where
         T: BasePooledTx,
         DB: Database,
@@ -77,15 +126,14 @@ impl CoinbaseTipAffordability {
                 payer
             }
         };
-        Self::unaffordable_tip(
-            sender,
-            payer,
+        let prepay = self.prepay(
+            &tx.encoded_2718(),
             tx.gas_limit(),
             payer_auth,
             tx.max_fee_per_gas(),
-            tip,
-            db,
-        )
+            tx.max_priority_fee_per_gas().unwrap_or_default(),
+        );
+        Self::unaffordable_tip(sender, payer, prepay, tip, db)
     }
 }
 
@@ -94,9 +142,11 @@ mod tests {
     use alloy_consensus::transaction::Recovered;
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{Address, B256, Bytes, U256};
+    use base_common_chains::BaseUpgrade;
     use base_common_consensus::{
         BaseTxEnvelope, Call, Eip8130Constants, Eip8130Signed, Predeploys, TxEip8130,
     };
+    use base_common_evm::{BaseSpecId, L1BlockInfo};
     use base_execution_txpool::{BasePooledTransaction, BasePooledTx, LimitClass};
     use revm::{
         Database,
@@ -110,6 +160,12 @@ mod tests {
     const SENDER: Address = Address::repeat_byte(0x11);
     const PAYER: Address = Address::repeat_byte(0x22);
     const TIP: U256 = U256::from_limbs([1_000, 0, 0, 0]);
+    const GAS_LIMIT: u64 = 21_000;
+    /// [`GAS_LIMIT`] gas at `2` wei.
+    const GAS_CHARGE: U256 = U256::from_limbs([42_000, 0, 0, 0]);
+    /// Equal to the test transactions' fee caps, so the effective gas price is
+    /// the fee cap.
+    const BASE_FEE: u128 = 2;
 
     #[derive(Debug, thiserror::Error)]
     #[error("test database read failed")]
@@ -140,6 +196,14 @@ mod tests {
         }
     }
 
+    fn without_l1_fees() -> CoinbaseTipAffordability {
+        CoinbaseTipAffordability::new(
+            L1BlockInfo::default(),
+            BaseSpecId::new(BaseUpgrade::Isthmus),
+            BASE_FEE,
+        )
+    }
+
     fn fund(db: &mut InMemoryDB, address: Address, balance: u64) {
         db.insert_account_info(
             address,
@@ -151,7 +215,7 @@ mod tests {
     fn missing_account_cannot_cover_gas_plus_tip() {
         let mut db = InMemoryDB::default();
         assert!(CoinbaseTipAffordability::unaffordable_tip(
-            SENDER, SENDER, 21_000, 0, 2, TIP, &mut db
+            SENDER, SENDER, GAS_CHARGE, TIP, &mut db
         ));
     }
 
@@ -161,7 +225,7 @@ mod tests {
         // gas = 21_000 * 2 = 42_000; tip = 1_000.
         fund(&mut db, SENDER, 43_000);
         assert!(!CoinbaseTipAffordability::unaffordable_tip(
-            SENDER, SENDER, 21_000, 0, 2, TIP, &mut db
+            SENDER, SENDER, GAS_CHARGE, TIP, &mut db
         ));
     }
 
@@ -170,7 +234,7 @@ mod tests {
         let mut db = InMemoryDB::default();
         fund(&mut db, SENDER, 42_999);
         assert!(CoinbaseTipAffordability::unaffordable_tip(
-            SENDER, SENDER, 21_000, 0, 2, TIP, &mut db
+            SENDER, SENDER, GAS_CHARGE, TIP, &mut db
         ));
     }
 
@@ -180,7 +244,7 @@ mod tests {
         fund(&mut db, PAYER, 42_000);
         fund(&mut db, SENDER, 999);
         assert!(CoinbaseTipAffordability::unaffordable_tip(
-            SENDER, PAYER, 21_000, 0, 2, TIP, &mut db
+            SENDER, PAYER, GAS_CHARGE, TIP, &mut db
         ));
     }
 
@@ -190,7 +254,7 @@ mod tests {
         fund(&mut db, PAYER, 42_000);
         fund(&mut db, SENDER, 1_000);
         assert!(!CoinbaseTipAffordability::unaffordable_tip(
-            SENDER, PAYER, 21_000, 0, 2, TIP, &mut db
+            SENDER, PAYER, GAS_CHARGE, TIP, &mut db
         ));
     }
 
@@ -227,7 +291,7 @@ mod tests {
         fund(&mut db, SENDER, 1_000);
         let tx = unrecoverable_open_payer_tip();
         assert!(
-            CoinbaseTipAffordability::unaffordable(&tx, 0, &mut db),
+            without_l1_fees().unaffordable(&tx, 0, &mut db),
             "an unclassified open payer that does not recover is unaffordable"
         );
 
@@ -243,7 +307,7 @@ mod tests {
             max_cost: U256::from(42_000u64),
         });
         assert!(
-            !CoinbaseTipAffordability::unaffordable(&tx, 0, &mut db),
+            !without_l1_fees().unaffordable(&tx, 0, &mut db),
             "the classified payer covers gas and the sender covers the tip"
         );
     }
@@ -267,13 +331,13 @@ mod tests {
             max_cost: U256::from(42_000u64),
         });
         assert!(
-            CoinbaseTipAffordability::unaffordable(&tx, 0, &mut db),
+            without_l1_fees().unaffordable(&tx, 0, &mut db),
             "an ungated sender short of gas plus the tip is unaffordable"
         );
 
         tx.set_sender_policy_target(Address::repeat_byte(0x77));
         assert!(
-            !CoinbaseTipAffordability::unaffordable(&tx, 0, &mut db),
+            !without_l1_fees().unaffordable(&tx, 0, &mut db),
             "a gated sender's reverting tip is not priced"
         );
     }
@@ -283,11 +347,97 @@ mod tests {
         assert!(!CoinbaseTipAffordability::unaffordable_tip(
             SENDER,
             SENDER,
-            21_000,
-            0,
-            2,
+            GAS_CHARGE,
             TIP,
             &mut FailingDatabase
         ));
+    }
+
+    /// Non-zero L1 data and operator fee parameters.
+    fn l1_block_info_with_fees() -> L1BlockInfo {
+        L1BlockInfo {
+            l1_base_fee: U256::from(1_000_000_000u64),
+            l1_base_fee_scalar: U256::from(1_000_000u64),
+            l1_blob_base_fee: Some(U256::from(1u64)),
+            l1_blob_base_fee_scalar: Some(U256::from(1u64)),
+            operator_fee_scalar: Some(U256::from(1_000_000u64)),
+            operator_fee_constant: Some(U256::from(500u64)),
+            ..Default::default()
+        }
+    }
+
+    /// A self-paid transaction tipping the fee vault.
+    fn self_paid_tip(
+        max_fee_per_gas: u128,
+        max_priority_fee_per_gas: u128,
+    ) -> BasePooledTransaction {
+        let tx = TxEip8130 {
+            gas_limit: GAS_LIMIT,
+            max_fee_per_gas,
+            max_priority_fee_per_gas,
+            calls: vec![vec![Call {
+                to: Predeploys::SEQUENCER_FEE_VAULT,
+                value: TIP,
+                data: Bytes::new(),
+            }]],
+            ..Default::default()
+        };
+        let envelope = BaseTxEnvelope::Eip8130(Eip8130Signed::new(
+            tx,
+            Bytes::from(vec![0u8; 65]),
+            Bytes::new(),
+        ));
+        let encoded_len = envelope.encode_2718_len();
+        BasePooledTransaction::new(Recovered::new_unchecked(envelope, SENDER), encoded_len)
+    }
+
+    /// Execution debits a self-paying sender the L1 data and operator fees
+    /// before the tip phase, so a balance of exactly gas plus the tip cannot
+    /// pay the tip, and the builder must skip the transaction.
+    #[test]
+    fn self_pay_must_cover_l1_and_operator_fees_before_the_tip() {
+        let spec = BaseSpecId::new(BaseUpgrade::Isthmus);
+        let tx = self_paid_tip(BASE_FEE, BASE_FEE);
+        let encoded = tx.encoded_2718();
+        let mut l1_block_info = l1_block_info_with_fees();
+        let l1_fee = l1_block_info.calculate_tx_l1_cost(encoded, spec);
+        let operator_fee = l1_block_info.operator_fee_charge(encoded, U256::from(GAS_LIMIT), spec);
+        assert!(!l1_fee.is_zero() && !operator_fee.is_zero(), "fixture must charge both fees");
+        let mut affordability =
+            CoinbaseTipAffordability::new(l1_block_info_with_fees(), spec, BASE_FEE);
+
+        let mut db = InMemoryDB::default();
+        let gas_plus_tip = GAS_CHARGE + TIP;
+        db.insert_account_info(SENDER, AccountInfo { balance: gas_plus_tip, ..Default::default() });
+        assert!(
+            affordability.unaffordable(&tx, 0, &mut db),
+            "gas plus the tip leaves nothing for the L1 and operator fees"
+        );
+
+        let full = gas_plus_tip + l1_fee + operator_fee;
+        db.insert_account_info(SENDER, AccountInfo { balance: full, ..Default::default() });
+        assert!(!affordability.unaffordable(&tx, 0, &mut db));
+        db.insert_account_info(
+            SENDER,
+            AccountInfo { balance: full - U256::from(1u64), ..Default::default() },
+        );
+        assert!(affordability.unaffordable(&tx, 0, &mut db));
+    }
+
+    /// Execution prepays gas at the block's effective gas price, so a sender
+    /// funded for that and the tip is affordable even below its fee cap.
+    #[test]
+    fn gas_is_priced_at_the_effective_gas_price() {
+        // min(max_fee = 10, base_fee + priority = 2 + 1) = 3 wei per gas.
+        let tx = self_paid_tip(10, 1);
+        let mut db = InMemoryDB::default();
+        let balance = U256::from(GAS_LIMIT * 3) + TIP;
+        db.insert_account_info(SENDER, AccountInfo { balance, ..Default::default() });
+        assert!(!without_l1_fees().unaffordable(&tx, 0, &mut db));
+        db.insert_account_info(
+            SENDER,
+            AccountInfo { balance: balance - U256::from(1u64), ..Default::default() },
+        );
+        assert!(without_l1_fees().unaffordable(&tx, 0, &mut db));
     }
 }
