@@ -133,7 +133,8 @@ async fn main() {
                 grace_period_ms = args.grace_period_ms,
                 "poll_interval_ms must be below grace_period_ms in WebSocket mode, or the delayed state can never be observed"
             );
-            return;
+            // Exit non-zero so orchestrators treat this as a crash, not a clean stop.
+            std::process::exit(1);
         }
         let node = Node::new(ws_url.clone(), args.new_instance);
         tracing::info!(sequencer = %node.display_url, "using newHeads subscription health check");
