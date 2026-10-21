@@ -439,8 +439,8 @@ summary = "Behavioural e2e test of the challenger: forks L1 into Anvil, patches 
 digest = "a085a1e104"
 
 ["crates/infra/load-tests/README.md"]
-summary = "Load testing: devnet/sepolia profiles, YAML workloads, calibration, adaptive or proactive validity signing, resource pacing, benchmark/report tools, and rollout limitations."
-digest = "a5633d6f46"
+summary = "Load testing: YAML workloads, validity signing, pacing and reports, shared Amsterdam gas estimation/admission budgets, token setup/recovery, devnet profiles and deployment-workload limitations."
+digest = "4d3d2154ab"
 
 ["crates/infra/roxy/README.md"]
 summary = "Scaffold-only Rust JSON-RPC reverse proxy meant to replace the ProxyD fork; currently just a listen-address flag plus /healthz and /readyz probes, no proxying yet."
