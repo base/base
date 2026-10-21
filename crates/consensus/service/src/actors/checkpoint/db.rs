@@ -31,7 +31,7 @@ const SEQ_NUM_OFFSET: usize = L1_ORIGIN_HASH_OFFSET + B256_LEN;
 const PAYLOAD_END: usize = SEQ_NUM_OFFSET + U64_LEN;
 
 /// Encoded checkpoint value length. Fixed at 128 bytes so the on-disk schema is identical
-/// to the original layout shipped in #2698; any existing databases continue to round-trip
+/// to the original layout; any existing databases continue to round-trip
 /// without migration.
 ///
 /// The current payload (`PAYLOAD_END`) fills this slot exactly — there is no spare capacity.
@@ -192,9 +192,9 @@ mod tests {
         }
     }
 
-    /// Hand-constructed bytes of the v0.13 / #2698 layout. Any encoder change that perturbs
-    /// these bytes \u2014 or any decoder change that fails to reconstruct
-    /// [`sample_checkpoint`] from them \u2014 will fail the round-trip tests below and surface
+    /// Hand-constructed bytes of the original v0.13 layout.
+    /// Any encoder change that perturbs these bytes, or any decoder change that fails to
+    /// reconstruct [`sample_checkpoint`] from them, will fail the round-trip tests below and surface
     /// loudly instead of silently producing wrong records on already-deployed databases.
     fn legacy_encoded_bytes() -> [u8; CheckpointDB::VALUE_LEN] {
         let mut bytes = [0u8; CheckpointDB::VALUE_LEN];

@@ -158,12 +158,7 @@ impl<C: EthClient> BlockProductionHealthChecker<C> {
                 ticker.tick().await;
                 let code = status.load(Ordering::Relaxed);
                 let state = HealthState::try_from(code).unwrap_or(HealthState::Error);
-                match state {
-                    HealthState::Healthy => metrics.increment_status_healthy(),
-                    HealthState::Delayed => metrics.increment_status_delayed(),
-                    HealthState::Unhealthy => metrics.increment_status_unhealthy(),
-                    HealthState::Error => metrics.increment_status_error(),
-                }
+                metrics.increment_status(state);
             }
         })
     }

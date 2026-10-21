@@ -88,8 +88,6 @@ pub struct Discv5Builder {
     bootstore: Option<BootStoreFile>,
     /// Additional bootnodes to manually add to the initial bootstore
     bootnodes: BootNodes,
-    /// The interval to store the bootnodes to disk.
-    store_interval: Option<Duration>,
     /// Whether or not to forward the initial set of valid ENRs to the gossip layer.
     forward: bool,
 }
@@ -105,7 +103,6 @@ impl Discv5Builder {
             randomize: None,
             bootstore: None,
             bootnodes: BootNodes::default(),
-            store_interval: None,
             forward: true,
         }
     }
@@ -122,21 +119,9 @@ impl Discv5Builder {
         self
     }
 
-    /// Sets the interval to store the bootnodes to disk.
-    pub const fn with_store_interval(mut self, store_interval: Duration) -> Self {
-        self.store_interval = Some(store_interval);
-        self
-    }
-
     /// Sets the discovery service advertised local node information.
     pub fn with_local_node(mut self, local_node: LocalNode) -> Self {
         self.local_node = local_node;
-        self
-    }
-
-    /// Sets the chain ID of the network.
-    pub const fn with_chain_id(mut self, chain_id: u64) -> Self {
-        self.chain_id = chain_id;
         self
     }
 
@@ -181,7 +166,6 @@ impl Discv5Builder {
         let mut driver =
             Discv5Driver::new(disc, interval, chain_id, self.bootstore, self.bootnodes)
                 .map_err(|e| Discv5BuilderError::Discv5CreationFailed(e.to_string()))?;
-        driver.store_interval = self.store_interval.unwrap_or(Duration::from_secs(60));
         driver.forward = self.forward;
         driver.remove_interval = self.randomize;
         Ok(driver)

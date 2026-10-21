@@ -1,5 +1,5 @@
-//! Standalone `eth_getTransactionCount` override that adds EIP-8130
-//! `nonce_key` support on nodes without flashblocks.
+//! Standalone EIP-8130 `eth_getTransactionCount`, `eth_estimateGas` and `eth_call`
+//! overrides for nodes without flashblocks.
 
 use alloy_eips::BlockId;
 use alloy_evm::EvmFactory;
@@ -27,12 +27,12 @@ use tracing::debug;
 
 use crate::{ChannelNonceReader, Eip8130EverestGate, Eip8130GasEstimator};
 
-/// Eth API override trait that adds EIP-8130 `nonce_key` support to
-/// `eth_getTransactionCount`.
+/// Eth API overrides for EIP-8130 `nonce_key` lookups via `eth_getTransactionCount`
+/// and Everest-gated simulation via `eth_estimateGas` and `eth_call`.
 ///
-/// Registered only on nodes where the flashblocks override is not
-/// registering, since flashblocks's override already extends the same
-/// method with `nonce_key` plus its own pending-state semantics.
+/// Plain estimation and call requests delegate to the standard reth implementation.
+/// Register only on nodes without the flashblocks override, which owns the same
+/// three methods with its own pending-state handling.
 #[rpc(server, namespace = "eth")]
 pub trait Eip8130EthApiOverride {
     /// Returns transaction count for an address.
@@ -74,9 +74,10 @@ pub trait Eip8130EthApiOverride {
 
     /// Executes a call.
     ///
-    /// A request carrying EIP-8130 fields (or `type: 0x79`) runs the same
-    /// read-only EIP-8130 simulation as `eth_estimateGas` (gated on the Everest
-    /// fork) and returns the output of its final call. A plain request falls
+    /// A request carrying EIP-8130 fields (or `type: 0x79`) runs the read-only
+    /// EIP-8130 simulation once at the request's gas, without the
+    /// `eth_estimateGas` gas-limit search (gated on the Everest fork), and
+    /// returns the output of its final call. A plain request falls
     /// through to the standard reth `eth_call` unchanged.
     #[method(name = "call")]
     async fn call(
@@ -88,15 +89,15 @@ pub trait Eip8130EthApiOverride {
     ) -> RpcResult<Bytes>;
 }
 
-/// Standalone EIP-8130 `eth_getTransactionCount` extension.
+/// Standalone EIP-8130 `eth_getTransactionCount`, `eth_estimateGas` and `eth_call` overrides.
 #[derive(Debug)]
 pub struct Eip8130EthApiExt<Eth: EthApiTypes> {
     eth_api: Eth,
 }
 
 impl<Eth: EthApiTypes> Eip8130EthApiExt<Eth> {
-    /// Creates a new standalone EIP-8130 `eth_getTransactionCount`
-    /// extension over the supplied Eth API.
+    /// Creates standalone EIP-8130 `eth_getTransactionCount`, `eth_estimateGas`
+    /// and `eth_call` overrides over the supplied Eth API.
     pub const fn new(eth_api: Eth) -> Self {
         Self { eth_api }
     }

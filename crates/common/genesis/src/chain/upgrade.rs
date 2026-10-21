@@ -72,14 +72,13 @@ hardfork!(
     /// are contract-backed config upgrades that do not change EVM execution and therefore never
     /// enter the execution fork ladder.
     ///
-    /// [`Denim`](BaseUpgrade::Denim) is the fourth Base-specific network upgrade. It is
-    /// unscheduled for now, but it is a first-class upgrade: contract-backed and part of the
-    /// execution fork ladder, so live chains can activate it once an activation time is
+    /// [`Denim`](BaseUpgrade::Denim) is the fourth Base-specific network upgrade. It is scheduled
+    /// on Base Sepolia and Base Mainnet. It is a first-class upgrade: contract-backed and part of
+    /// the execution fork ladder, so live chains can activate it once an activation time is
     /// configured.
     ///
-    /// [`Everest`](BaseUpgrade::Everest) is the fifth Base-specific network upgrade. Like
-    /// [`Denim`](BaseUpgrade::Denim) it is unscheduled for now, contract-backed, and part of the
-    /// execution fork ladder.
+    /// [`Everest`](BaseUpgrade::Everest) is the fifth Base-specific network upgrade. It is
+    /// unscheduled for now, contract-backed, and part of the execution fork ladder.
     ///
     /// [`Zenith`](BaseUpgrade::Zenith) is a hardfork for future experimental features. It is
     /// genesis-configurable but not contract-backed, since the L1 upgrade-signal contract does
@@ -120,7 +119,7 @@ hardfork!(
         Beryl,
         /// Cobalt: Third Base-specific network upgrade.
         Cobalt,
-        /// Denim: Fourth Base-specific network upgrade. Unscheduled for now.
+        /// Denim: Fourth Base-specific network upgrade.
         Denim,
         /// Everest: Fifth Base-specific network upgrade. Unscheduled for now.
         Everest,
@@ -671,7 +670,7 @@ impl UpgradeConfig {
             azul: Some(1_779_991_200),
             beryl: Some(1_782_410_400),
             cobalt: Some(1_790_791_200),
-            denim: None,
+            denim: Some(1_793_901_600),
             everest: None,
             zenith: None,
         },
@@ -696,7 +695,7 @@ impl UpgradeConfig {
             azul: Some(1_776_708_000),
             beryl: Some(1_781_805_600),
             cobalt: Some(1_790_186_400),
-            denim: None,
+            denim: Some(1_792_605_600),
             everest: None,
             zenith: None,
         },
@@ -1118,7 +1117,7 @@ mod runtime_tests {
 
         assert_eq!(
             BaseUpgrade::from_chain_and_timestamp(CHAIN_ID, u64::MAX),
-            Some(BaseUpgrade::Cobalt),
+            Some(BaseUpgrade::Denim),
         );
 
         RuntimeUpgradeRegistry::clear_chain(CHAIN_ID);
@@ -1136,13 +1135,10 @@ mod runtime_tests {
         let _guard = RUNTIME_REGISTRY_TEST_LOCK.lock();
         RuntimeUpgradeRegistry::clear_chain(8453);
         RuntimeUpgradeRegistry::clear_chain(84532);
-        assert_eq!(
-            BaseUpgrade::from_chain_and_timestamp(8453, u64::MAX),
-            Some(BaseUpgrade::Cobalt)
-        );
+        assert_eq!(BaseUpgrade::from_chain_and_timestamp(8453, u64::MAX), Some(BaseUpgrade::Denim));
         assert_eq!(
             BaseUpgrade::from_chain_and_timestamp(84532, u64::MAX),
-            Some(BaseUpgrade::Cobalt)
+            Some(BaseUpgrade::Denim)
         );
     }
 }

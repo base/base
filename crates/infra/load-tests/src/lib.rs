@@ -7,7 +7,7 @@ pub use config::{
     OsakaTarget, PrecompileTarget, PredicateAddressConfig, PredicateSlotConfig,
     PredicateValueConfig, RealTokenAcquisitionConfig, RealTokenPairTokenConfig,
     RealTokenSetupConfig, TestConfig, TxTypeConfig, ValidityConfig, ValidityPredicateConfig,
-    WeightedTxType, WorkloadConfig,
+    ValiditySigningMode, WeightedTxType, WorkloadConfig,
 };
 
 mod executor;
@@ -41,7 +41,7 @@ pub use workload::{
     ChainPrepOutputs, DOUBLE_COUNTER_GAS_LIMIT, DoubleCounterPayload, Erc20Payload, FundedAccount,
     KeyStream, OsakaPayload, Payload, PrecompileLooper, PrecompilePayload, RealTokenAcquisition,
     RealTokenPairTokenSetup, RealTokenRecoverySummary, RealTokenSetup, SeededRng, StoragePayload,
-    TransferPayload, UniswapV3Payload, WorkloadGenerator, parse_precompile_id, recover_real_tokens,
+    TransferPayload, UniswapV3Payload, WorkloadGenerator, recover_real_tokens,
 };
 
 mod runner;

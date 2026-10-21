@@ -37,23 +37,11 @@ pub struct L2BlockRef {
 
 /// Minimal L1 block identifier containing only hash and number.
 ///
-/// Used for `L2BlockRef`.l1origin and genesis config where the full `L1BlockRef` fields
+/// Used for `L2BlockRef`.l1origin where the full `L1BlockRef` fields
 /// (parentHash, timestamp) are not provided by the RPC response.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct L1BlockId {
-    /// Block hash.
-    pub hash: B256,
-    /// Block number.
-    pub number: u64,
-}
-
-/// Minimal L2 block reference for genesis config.
-///
-/// Unlike `L2BlockRef`, this only contains hash and number as returned by `optimism_rollupConfig`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GenesisL2BlockRef {
     /// Block hash.
     pub hash: B256,
     /// Block number.

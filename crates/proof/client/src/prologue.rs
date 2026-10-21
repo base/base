@@ -161,19 +161,3 @@ where
         .await?;
     Ok(B256::from_slice(&output_preimage[96..128]))
 }
-
-#[cfg(test)]
-mod tests {
-    use alloy_primitives::address;
-
-    use super::BaseEvmFactory;
-
-    #[test]
-    fn base_evm_factory_records_activation_admin_address() {
-        let admin = address!("331C9d37BbcebBC9dfAf98FBE3C5B8A39Dd6E771");
-
-        let factory = BaseEvmFactory::default().with_activation_admin_address(Some(admin));
-
-        assert_eq!(factory.activation_admin_address(), Some(admin));
-    }
-}

@@ -14,9 +14,9 @@ use base_common_consensus::{Eip8130Constants, Eip8130Contracts};
 /// are EIP-2028; together they reproduce the EIP-8130 `nonce_key_cost` table
 /// (cold SLOAD + SSTORE set = 22,100; cold SLOAD + warm SSTORE reset = 5,000).
 /// The authenticator execution costs are the chain-policy values for the
-/// enshrined canonical authenticators, set to the EVM precompile costs Base uses
-/// (see the crate docs). The revm-backed `gas_primitives_match_evm_reference`
-/// test in `base-execution-eip8130` is a drift tripwire that pins the EVM
+/// enshrined canonical authenticators, set to the EVM precompile costs Base uses.
+/// The revm-backed `gas_primitives_match_evm_reference` test in
+/// `base-execution-eip8130` is a drift tripwire that pins the EVM
 /// primitives to revm's canonical constants, so an upstream repricing is
 /// surfaced and re-decided deliberately rather than tracked silently.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,6 +68,10 @@ impl Eip8130GasSchedule {
     /// a slot on each write).
     pub const NONCE_FREE_COST: u64 =
         2 * Self::COLD_SLOAD + Self::WARM_SLOAD + 3 * Self::SSTORE_RESET;
+    /// `nonce_key_cost` for the protocol nonce (`nonce_key == 0`). It is the
+    /// account nonce, bumped without touching the nonce manager, so the bump is
+    /// covered by `AA_BASE_COST` as it is by a legacy transaction's base cost.
+    pub const PROTOCOL_NONCE_COST: u64 = 0;
     /// `nonce_key_cost` for the first use of a sequence nonce key (cold SLOAD +
     /// SSTORE set).
     pub const NONCE_KEY_FIRST_USE_COST: u64 = Self::COLD_SLOAD + Self::SSTORE_SET;

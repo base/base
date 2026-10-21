@@ -484,7 +484,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
+    use std::{
+        num::NonZeroU64,
+        sync::{Arc, Mutex},
+    };
 
     use async_trait::async_trait;
     use base_prover_service_protocol::{
@@ -635,6 +638,7 @@ mod tests {
             sequence_window: None,
             l1_head: None,
             schedule_l2_block_number: None,
+            intermediate_block_interval: NonZeroU64::MIN,
             zk_vm: ZkVm::Sp1,
             zk_backend: ZkBackend::Cluster,
         }

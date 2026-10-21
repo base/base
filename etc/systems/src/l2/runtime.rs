@@ -1,5 +1,6 @@
 //! Bounded Rayon runtime configuration for in-process test nodes.
 
+use reth_node_core::node_config::NodeConfig;
 use reth_tasks::{RayonConfig, RuntimeConfig};
 
 /// Runtime sizing policy for an in-process execution node.
@@ -19,6 +20,17 @@ impl InProcessNodeRuntime {
             Self::SystemTest => TestNodeRuntime::config(),
         }
     }
+
+    /// Applies this policy's memory bounds to a node's engine configuration.
+    ///
+    /// Reth sizes its cross-block state cache at 4 `GiB` per node by default. A system-test stack
+    /// runs a builder and client node in one process and several stacks run at once, so the
+    /// default reserves far more than a devnet's state needs.
+    pub fn bound_engine_memory<C>(self, node_config: &mut NodeConfig<C>) {
+        if self == Self::SystemTest {
+            node_config.engine.cross_block_cache_size = TestNodeRuntime::CROSS_BLOCK_CACHE_SIZE_MB;
+        }
+    }
 }
 
 /// Small, fixed Rayon thread-pool sizing for the reth runtime backing an in-process test node.
@@ -32,6 +44,8 @@ impl InProcessNodeRuntime {
 pub struct TestNodeRuntime;
 
 impl TestNodeRuntime {
+    /// Cross-block state cache size, in MB, for each in-process test node.
+    const CROSS_BLOCK_CACHE_SIZE_MB: usize = 64;
     /// Threads for the Rayon CPU, RPC, and storage pools.
     const POOL_THREADS: usize = 2;
     /// Threads for the proof, prewarming, BAL streaming, and state-trie overlay pools.

@@ -8,18 +8,6 @@
 mod v1;
 pub use v1::{IB20Factory, IB20Factory as IB20FactoryV1};
 
-impl IB20Factory::IB20FactoryCalls {
-    /// Returns the stable metric label for this decoded factory call.
-    pub const fn as_label(&self) -> &'static str {
-        match self {
-            Self::createB20(_) => "factory.createB20",
-            Self::getB20Address(_) => "factory.getB20Address",
-            Self::isB20(_) => "factory.isB20",
-            Self::isB20Initialized(_) => "factory.isB20Initialized",
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, b256};
@@ -57,19 +45,6 @@ mod tests {
             IB20Factory::B20Variant::try_from(discriminant as u8)
                 .expect("generated B20Variant discriminant should decode");
         }
-    }
-
-    #[test]
-    fn factory_call_labels_are_stable() {
-        assert_eq!(
-            IB20Factory::IB20FactoryCalls::getB20Address(IB20Factory::getB20AddressCall {
-                variant: IB20Factory::B20Variant::ASSET,
-                sender: Address::ZERO,
-                salt: B256::ZERO,
-            })
-            .as_label(),
-            "factory.getB20Address"
-        );
     }
 
     /// The ABI ordinal of each variant *is* byte `[10]` of every token that variant deploys

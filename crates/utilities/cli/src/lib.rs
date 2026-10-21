@@ -14,15 +14,14 @@ mod backtrace;
 pub use backtrace::Backtracing;
 
 mod prometheus;
-pub use prometheus::{BuildError, MetricsConfig, PrometheusServer};
+pub use prometheus::{BuildError, MetricsConfig};
 
 mod styles;
 pub use styles::CliStyles;
 
 mod logging;
 pub use logging::{
-    FileLogConfig, LogConfig, LogFormat, LogLevel, LogRotation, StdoutLogConfig,
-    verbosity_to_level_filter,
+    FileLogConfig, LogConfig, LogFormat, LogRotation, StdoutLogConfig, verbosity_to_level_filter,
 };
 
 mod tracing;
@@ -30,9 +29,6 @@ pub use tracing::{LogfmtFormatter, init_test_tracing};
 
 mod version;
 pub use version::Version;
-
-mod logs_dir;
-pub use logs_dir::LogsDir;
 
 mod cli;
 

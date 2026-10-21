@@ -40,9 +40,6 @@ pub use tx_error::TxAuthError;
 mod verify;
 pub use verify::{ActorTxVerifier, AuthorizedActor, TxActors};
 
-mod signature;
-pub use signature::{SignatureError, SignatureType, SignatureVerifier};
-
 mod config;
 pub use config::ConfigChangeAuthorizer;
 
@@ -65,3 +62,6 @@ pub use transaction::{AppliedTransaction, TransactionAuthorizer};
 
 mod fee;
 pub use fee::{FeeCheck, FeeError};
+
+#[cfg(test)]
+pub mod test_utils;

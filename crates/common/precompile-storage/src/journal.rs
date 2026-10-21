@@ -13,9 +13,9 @@
 //!
 //! [`EvmPrecompileStorageProvider`]: crate::EvmPrecompileStorageProvider
 
-use alloc::string::ToString;
+use alloc::string::{String, ToString};
 
-use alloy_evm::EvmInternals;
+use alloy_evm::{EvmInternals, EvmInternalsError};
 use alloy_primitives::{Address, B256, Log, LogData, U256};
 use revm::{
     context::journaled_state::JournalCheckpoint,
@@ -36,9 +36,16 @@ use crate::{
 /// read and write the real EVM journal. All gas accounting methods are no-ops:
 /// [`gas_limit`](PrecompileStorageProvider::gas_limit) reports [`u64::MAX`] and
 /// nothing is ever deducted.
+///
+/// Journal database failures surface to the storage layer as
+/// [`BasePrecompileError::Fatal`], which callers may stringify into a
+/// transaction-level error. The provider therefore also records the first such
+/// failure so the caller can tell a database fault apart from an invalid
+/// transaction via [`take_database_error`](Self::take_database_error).
 #[derive(Debug)]
 pub struct JournalStorageProvider<'a> {
     internals: EvmInternals<'a>,
+    database_error: Option<String>,
     caller: Address,
     block_number: u64,
     timestamp: U256,
@@ -63,7 +70,31 @@ impl<'a> JournalStorageProvider<'a> {
         let beneficiary = internals.block_env().beneficiary();
         let origin = internals.tx_origin();
 
-        Self { internals, caller, block_number, timestamp, chain_id, beneficiary, origin }
+        Self {
+            internals,
+            database_error: None,
+            caller,
+            block_number,
+            timestamp,
+            chain_id,
+            beneficiary,
+            origin,
+        }
+    }
+
+    /// Takes the first journal database failure observed since construction (or
+    /// the previous take), if any.
+    pub const fn take_database_error(&mut self) -> Option<String> {
+        self.database_error.take()
+    }
+
+    fn database_failure(
+        database_error: &mut Option<String>,
+        error: EvmInternalsError,
+    ) -> BasePrecompileError {
+        let message = error.to_string();
+        database_error.get_or_insert_with(|| message.clone());
+        BasePrecompileError::Fatal(message)
     }
 }
 
@@ -91,7 +122,7 @@ impl PrecompileStorageProvider for JournalStorageProvider<'_> {
     fn set_code(&mut self, address: Address, code: Bytecode) -> Result<()> {
         self.internals
             .set_code(address, code)
-            .map_err(|e| BasePrecompileError::Fatal(e.to_string()))
+            .map_err(|e| Self::database_failure(&mut self.database_error, e))
     }
 
     fn with_account_info(
@@ -106,7 +137,7 @@ impl PrecompileStorageProvider for JournalStorageProvider<'_> {
         let state_load = self
             .internals
             .load_account(address)
-            .map_err(|e| BasePrecompileError::Fatal(e.to_string()))?;
+            .map_err(|e| Self::database_failure(&mut self.database_error, e))?;
         f(&state_load.data.info);
         Ok(())
     }
@@ -117,7 +148,7 @@ impl PrecompileStorageProvider for JournalStorageProvider<'_> {
         let state_load = self
             .internals
             .load_account_code(address)
-            .map_err(|e| BasePrecompileError::Fatal(e.to_string()))?;
+            .map_err(|e| Self::database_failure(&mut self.database_error, e))?;
         let expected_hash = *state_load.data.code_hash();
         let code = state_load.data.code().ok_or_else(|| {
             BasePrecompileError::Fatal(
@@ -133,7 +164,7 @@ impl PrecompileStorageProvider for JournalStorageProvider<'_> {
         let s = self
             .internals
             .sload(address, key)
-            .map_err(|e| BasePrecompileError::Fatal(e.to_string()))?;
+            .map_err(|e| Self::database_failure(&mut self.database_error, e))?;
         Ok(s.data)
     }
 
@@ -155,7 +186,7 @@ impl PrecompileStorageProvider for JournalStorageProvider<'_> {
         // storage survives end-of-block state clearing without a per-write guard.
         self.internals
             .sstore(address, key, value)
-            .map_err(|e| BasePrecompileError::Fatal(e.to_string()))?;
+            .map_err(|e| Self::database_failure(&mut self.database_error, e))?;
 
         Ok(())
     }

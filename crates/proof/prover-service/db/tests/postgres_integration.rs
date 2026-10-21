@@ -13,10 +13,10 @@
 //! They run sequentially (`--test-threads=1`) because they share the same database;
 //! each test creates unique UUIDs so they don't collide.
 
-use std::time::Duration;
+use std::{num::NonZeroU64, time::Duration};
 
 use alloy_primitives::Address;
-use base_proof_primitives::Proposal;
+use base_proof_primitives::{ProofRequest as PrimitiveProofRequest, Proposal};
 use base_prover_service_db::{
     AbandonProofJob, AbandonProofOutcome, ApiProofType, CancelProofRequestOutcome, ClaimProofJob,
     CompleteClaimedProofJob, CreateProofRequest, CreateProofRequestError,
@@ -74,6 +74,7 @@ fn compressed_request_at_with_backend(
             sequence_window: Some(50),
             l1_head: None,
             schedule_l2_block_number: None,
+            intermediate_block_interval: NonZeroU64::new(5).unwrap(),
             zk_vm: ZkVm::Sp1,
             zk_backend,
         }),
@@ -90,6 +91,7 @@ fn compressed_request_with_l1_head(l1_head: &str) -> CreateProofRequest {
             sequence_window: Some(50),
             l1_head: Some(l1_head.parse().expect("valid hash")),
             schedule_l2_block_number: None,
+            intermediate_block_interval: NonZeroU64::new(5).unwrap(),
             zk_vm: ZkVm::Sp1,
             zk_backend: ZkBackend::Cluster,
         }),
@@ -111,6 +113,7 @@ fn snark_request() -> CreateProofRequest {
                         .expect("valid hash"),
                 ),
                 schedule_l2_block_number: None,
+                intermediate_block_interval: NonZeroU64::new(10).unwrap(),
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,
             },
@@ -126,7 +129,7 @@ fn tee_request() -> CreateProofRequest {
     CreateProofRequest::new(ProtocolProofRequest {
         session_id: Uuid::new_v4().to_string(),
         request: ProtocolProofRequestKind::Tee(TeeProofRequest {
-            proof: Default::default(),
+            proof: PrimitiveProofRequest::for_tests(600, 30),
             tee_kind: ProtocolTeeKind::AwsNitro,
         }),
     })
@@ -1543,7 +1546,7 @@ async fn test_delete_proof_requests_by_tee_signer() {
                         config_hash: Default::default(),
                         schedule_id: Default::default(),
                     },
-                    proposals: vec![],
+                    intermediate_roots: vec![],
                     tee_kind: ProtocolTeeKind::AwsNitro,
                     tee_signer: submitted_signer.parse().unwrap(),
                 }),

@@ -28,7 +28,8 @@ pub struct TxActors {
     pub sender: AuthorizedActor,
     /// The gas payer, scope-gated for [`Operation::SelfPayer`] (explicit
     /// self-pay) or [`Operation::SponsorPayer`] (distinct sponsor), or `None`
-    /// when the sender implicitly pays (`tx.payer == None`).
+    /// when the sender implicitly pays (`tx.payer == None`). A payer resolves
+    /// no policy, so its `policy_target` is always zero.
     pub payer: Option<AuthorizedActor>,
 }
 
@@ -91,7 +92,8 @@ impl ActorTxVerifier {
                 let recovered = RecoveredActorId::recover_k1(hash, signed.payer_auth())
                     .map_err(|_| TxAuthError::PayerRecovery)?;
                 let account = recovered.address();
-                let resolved = ActorAuthorizer::authorize_k1(storage, account, recovered, now)?;
+                let resolved =
+                    ActorAuthorizer::authorize_k1_payer(storage, account, recovered, now)?;
                 let operation = if account == sender.account {
                     Operation::SelfPayer
                 } else {
@@ -112,14 +114,16 @@ impl ActorTxVerifier {
                 } else {
                     Operation::SponsorPayer
                 };
-                let resolved = Self::authorize_scoped(
+                let resolved = ActorAuthorizer::authenticate_payer(
                     storage,
                     account,
                     hash,
                     signed.payer_auth(),
-                    operation,
                     now,
                 )?;
+                if !operation.is_granted(&resolved) {
+                    return Err(TxAuthError::Scope { operation, scope: resolved.scope });
+                }
                 Some(AuthorizedActor { account, resolved })
             }
         };
@@ -201,83 +205,24 @@ impl ActorTxVerifier {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{B256, Bytes, U256, address, keccak256};
-    use base_common_consensus::{Eip8130Constants, TxEip8130};
-    use base_precompile_storage::{Handler, HashMapStorageProvider, StorageCtx};
-    use k256::ecdsa::SigningKey as K256SigningKey;
+    use alloy_primitives::{B256, Bytes, address};
+    use base_common_consensus::Eip8130Constants;
+    use base_precompile_storage::Handler;
 
     use super::*;
-    use crate::AuthorizeError;
-
-    const NOW: u64 = 1_000;
-    const K1: Address = Eip8130Constants::K1_AUTHENTICATOR;
-
-    fn key(byte: u8) -> K256SigningKey {
-        K256SigningKey::from_slice(&[byte; 32]).unwrap()
-    }
-
-    fn addr(key: &K256SigningKey) -> Address {
-        let point = key.verifying_key().to_encoded_point(false);
-        Address::from_slice(&keccak256(&point.as_bytes()[1..])[12..])
-    }
-
-    fn actor_id(account: Address) -> B256 {
-        AccountConfigurationStorage::self_actor_id(account)
-    }
-
-    /// 65-byte `r || s || v` signature over `hash`, `v` in `{27, 28}`, low-s.
-    fn sig(key: &K256SigningKey, hash: B256) -> Vec<u8> {
-        let (signature, recid) = key.sign_prehash_recoverable(hash.as_slice()).unwrap();
-        let mut out = vec![0u8; 65];
-        out[..64].copy_from_slice(&signature.to_bytes());
-        out[64] = recid.to_byte() + 27;
-        out
-    }
-
-    /// `authenticator(20) || data`.
-    fn auth_blob(authenticator: Address, data: &[u8]) -> Bytes {
-        let mut out = Vec::with_capacity(20 + data.len());
-        out.extend_from_slice(authenticator.as_slice());
-        out.extend_from_slice(data);
-        Bytes::from(out)
-    }
-
-    /// Canonical Solidity packing of `ActorConfig` (authenticator 0..160, expiry
-    /// 160..208, scope 208..224).
-    fn pack(authenticator: Address, scope: u16, expiry: u64) -> U256 {
-        U256::from_be_slice(authenticator.as_slice())
-            | (U256::from(expiry) << 160)
-            | (U256::from(scope) << 208)
-    }
-
-    fn base_tx(sender: Option<Address>, payer: Option<Address>) -> TxEip8130 {
-        TxEip8130 {
-            chain_id: 8453,
-            sender,
-            nonce_key: U256::ZERO,
-            nonce_sequence: 0,
-            valid_after: 0,
-            valid_before: 0,
-            max_priority_fee_per_gas: 1_000_000_000,
-            max_fee_per_gas: 5_000_000_000,
-            gas_limit: 250_000,
-            account_changes: Vec::new(),
-            calls: Vec::new(),
-            metadata: Bytes::new(),
-            payer,
-        }
-    }
-
-    fn with_storage<R>(body: impl FnOnce(&mut AccountConfigurationStorage<'_>) -> R) -> R {
-        let mut storage = HashMapStorageProvider::new(1);
-        StorageCtx::enter(&mut storage, |ctx| body(&mut AccountConfigurationStorage::new(ctx)))
-    }
+    use crate::{
+        AuthorizeError,
+        test_utils::{
+            K1, NOW, actor_id, addr, auth_blob, key, pack, pack_default_eoa_scope, sig, tx_with,
+            with_storage,
+        },
+    };
 
     #[test]
     fn eoa_sender_authorizes_as_unrestricted_owner() {
         let k = key(0x11);
         let account = addr(&k);
-        let tx = base_tx(None, None);
+        let tx = tx_with(None, None, vec![]);
         let hash = tx.sender_signature_hash();
         let signed = Eip8130Signed::new(tx, Bytes::from(sig(&k, hash)), Bytes::new());
         with_storage(|acc| {
@@ -291,7 +236,7 @@ mod tests {
     #[test]
     fn self_pay_with_payer_auth_is_rejected() {
         let k = key(0x11);
-        let tx = base_tx(None, None);
+        let tx = tx_with(None, None, vec![]);
         let hash = tx.sender_signature_hash();
         let signed =
             Eip8130Signed::new(tx, Bytes::from(sig(&k, hash)), Bytes::from_static(&[0xab; 32]));
@@ -308,7 +253,7 @@ mod tests {
         let k = key(0x22);
         let account = address!("0x00000000000000000000000000000000000000aa");
         let id = actor_id(addr(&k));
-        let tx = base_tx(Some(account), None);
+        let tx = tx_with(Some(account), None, vec![]);
         let hash = tx.sender_signature_hash();
         let signed = Eip8130Signed::new(tx, auth_blob(K1, &sig(&k, hash)), Bytes::new());
         with_storage(|acc| {
@@ -340,7 +285,7 @@ mod tests {
         let k = key(0x22);
         let account = address!("0x00000000000000000000000000000000000000aa");
         let id = actor_id(addr(&k));
-        let tx = base_tx(Some(account), None);
+        let tx = tx_with(Some(account), None, vec![]);
         let hash = tx.sender_signature_hash();
         let signed = Eip8130Signed::new(tx, auth_blob(K1, &sig(&k, hash)), Bytes::new());
         with_storage(|acc| {
@@ -368,7 +313,7 @@ mod tests {
         let k = key(0x22);
         let account = address!("0x00000000000000000000000000000000000000aa");
         let id = actor_id(addr(&k));
-        let tx = base_tx(Some(account), None);
+        let tx = tx_with(Some(account), None, vec![]);
         let hash = tx.sender_signature_hash();
         let signed = Eip8130Signed::new(tx, auth_blob(K1, &sig(&k, hash)), Bytes::new());
         with_storage(|acc| {
@@ -397,7 +342,7 @@ mod tests {
         let payer_account = address!("0x00000000000000000000000000000000000000cc");
         let pid = actor_id(addr(&pk));
 
-        let tx = base_tx(Some(sender_account), Some(payer_account));
+        let tx = tx_with(Some(sender_account), Some(payer_account), vec![]);
         let sender_hash = tx.sender_signature_hash();
         let payer_hash = tx.payer_signature_hash(sender_account);
         let signed = Eip8130Signed::new(
@@ -438,7 +383,7 @@ mod tests {
         let payer_account = address!("0x00000000000000000000000000000000000000cc");
         let pid = actor_id(addr(&pk));
 
-        let tx = base_tx(None, Some(payer_account));
+        let tx = tx_with(None, Some(payer_account), vec![]);
         let sender_hash = tx.sender_signature_hash();
         let payer_hash = tx.payer_signature_hash(sender_account);
         let signed = Eip8130Signed::new(
@@ -470,7 +415,7 @@ mod tests {
         let pk = key(0x57);
         let payer_account = addr(&pk);
 
-        let tx = base_tx(None, Some(Eip8130Constants::OPEN_PAYER));
+        let tx = tx_with(None, Some(Eip8130Constants::OPEN_PAYER), vec![]);
         let sender_hash = tx.sender_signature_hash();
         let payer_hash = tx.payer_signature_hash(sender_account);
         let signed = Eip8130Signed::new(
@@ -488,6 +433,58 @@ mod tests {
     }
 
     #[test]
+    fn policy_scoped_payer_resolves_no_policy() {
+        // A payer needs only its sponsor scope: even with SCOPE_POLICY and a
+        // policy manager set, payer authorization resolves no policy target.
+        let sk = key(0x48);
+        let sender_account = addr(&sk);
+        let manager = address!("0x00000000000000000000000000000000000000d4");
+        let gated = Eip8130Constants::SCOPE_SPONSOR_PAYER | Eip8130Constants::SCOPE_POLICY;
+
+        // Named payer authorized by a bound k1 actor.
+        let pk = key(0x59);
+        let pid = actor_id(addr(&pk));
+        let payer_account = address!("0x00000000000000000000000000000000000000cc");
+        let tx = tx_with(None, Some(payer_account), vec![]);
+        let sender_hash = tx.sender_signature_hash();
+        let payer_hash = tx.payer_signature_hash(sender_account);
+        let named = Eip8130Signed::new(
+            tx,
+            Bytes::from(sig(&sk, sender_hash)),
+            auth_blob(K1, &sig(&pk, payer_hash)),
+        );
+
+        // Open payer authorized by its inline k1 self.
+        let ok = key(0x5a);
+        let open_account = addr(&ok);
+        let tx = tx_with(None, Some(Eip8130Constants::OPEN_PAYER), vec![]);
+        let sender_hash = tx.sender_signature_hash();
+        let payer_hash = tx.payer_signature_hash(sender_account);
+        let open = Eip8130Signed::new(
+            tx,
+            Bytes::from(sig(&sk, sender_hash)),
+            Bytes::from(sig(&ok, payer_hash)),
+        );
+
+        with_storage(|acc| {
+            acc.actors.at_mut(&pid).at_mut(&payer_account).write(pack(K1, gated, 0)).unwrap();
+            acc.set_policy(payer_account, pid, manager, B256::ZERO).unwrap();
+            acc.account_state.at_mut(&open_account).write(pack_default_eoa_scope(gated)).unwrap();
+            acc.set_policy(open_account, actor_id(open_account), manager, B256::ZERO).unwrap();
+
+            for (signed, account) in [(&named, payer_account), (&open, open_account)] {
+                let payer = ActorTxVerifier::verify(signed, acc, NOW)
+                    .unwrap()
+                    .payer
+                    .expect("payer present");
+                assert_eq!(payer.account, account);
+                assert_eq!(payer.resolved.scope, gated);
+                assert_eq!(payer.resolved.policy_target, Address::ZERO);
+            }
+        });
+    }
+
+    #[test]
     fn open_payer_signature_bound_to_another_sender_resolves_elsewhere() {
         // The open-mode payer hash binds to the resolved sender, so a signature
         // issued for another sender recovers to an unrelated address.
@@ -495,7 +492,7 @@ mod tests {
         let pk = key(0x58);
         let payer_account = addr(&pk);
 
-        let tx = base_tx(None, Some(Eip8130Constants::OPEN_PAYER));
+        let tx = tx_with(None, Some(Eip8130Constants::OPEN_PAYER), vec![]);
         let sender_hash = tx.sender_signature_hash();
         let foreign_hash = tx.payer_signature_hash(Address::repeat_byte(0x99));
         let signed = Eip8130Signed::new(
@@ -515,7 +512,7 @@ mod tests {
         let sender_account = addr(&sk);
         let pk = key(0x59);
 
-        let tx = base_tx(None, Some(Eip8130Constants::OPEN_PAYER));
+        let tx = tx_with(None, Some(Eip8130Constants::OPEN_PAYER), vec![]);
         let sender_hash = tx.sender_signature_hash();
         let payer_hash = tx.payer_signature_hash(sender_account);
         let signed = Eip8130Signed::new(
@@ -542,7 +539,7 @@ mod tests {
         let pid = actor_id(addr(&pk));
         let wrong_sender = address!("0x00000000000000000000000000000000000000ee");
 
-        let tx = base_tx(None, Some(payer_account));
+        let tx = tx_with(None, Some(payer_account), vec![]);
         let sender_hash = tx.sender_signature_hash();
         let wrong_payer_hash = tx.payer_signature_hash(wrong_sender);
         let signed = Eip8130Signed::new(
@@ -574,7 +571,7 @@ mod tests {
         let payer_account = address!("0x00000000000000000000000000000000000000cc");
         let pid = actor_id(addr(&pk));
 
-        let tx = base_tx(Some(sender_account), Some(payer_account));
+        let tx = tx_with(Some(sender_account), Some(payer_account), vec![]);
         let sender_hash = tx.sender_signature_hash();
         let payer_hash = tx.payer_signature_hash(sender_account);
         let signed = Eip8130Signed::new(
@@ -610,7 +607,7 @@ mod tests {
 
     #[test]
     fn malformed_eoa_sender_signature_is_rejected() {
-        let tx = base_tx(None, None);
+        let tx = tx_with(None, None, vec![]);
         // 64 bytes is one short of a valid r||s||v payload.
         let signed = Eip8130Signed::new(tx, Bytes::from(vec![0u8; 64]), Bytes::new());
         with_storage(|acc| {
@@ -625,7 +622,7 @@ mod tests {
     fn unbound_configured_sender_propagates_authorize_error() {
         let k = key(0x22);
         let account = address!("0x00000000000000000000000000000000000000aa");
-        let tx = base_tx(Some(account), None);
+        let tx = tx_with(Some(account), None, vec![]);
         let hash = tx.sender_signature_hash();
         let signed = Eip8130Signed::new(tx, auth_blob(K1, &sig(&k, hash)), Bytes::new());
         with_storage(|acc| {

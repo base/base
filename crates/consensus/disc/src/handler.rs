@@ -1,8 +1,8 @@
 //! Handler to the [`discv5::Discv5`] service spawned in a thread.
 
-use std::{collections::HashSet, string::String, sync::Arc, time::Duration};
+use std::{collections::HashSet, sync::Arc, time::Duration};
 
-use discv5::{Enr, RequestError, enr::NodeId, kbucket::NodeStatus, metrics::Metrics};
+use discv5::{Enr, enr::NodeId, kbucket::NodeStatus};
 use libp2p::Multiaddr;
 use tokio::sync::mpsc::Sender;
 
@@ -13,34 +13,11 @@ use tokio::sync::mpsc::Sender;
 /// the discovery table and peer management.
 #[derive(Debug)]
 pub enum HandlerRequest {
-    /// Request current metrics from the discovery service.
-    ///
-    /// Returns performance and operational statistics including query counts,
-    /// success rates, and table population metrics.
-    Metrics(tokio::sync::oneshot::Sender<Metrics>),
-
     /// Get the current number of connected peers in the discovery table.
     ///
     /// Returns the count of peers currently maintained in the routing table,
     /// which indicates the health and connectivity of the discovery service.
     PeerCount(tokio::sync::oneshot::Sender<usize>),
-
-    /// Add an ENR to the discovery service's routing table.
-    ///
-    /// Manually inserts a peer record into the table, typically used for
-    /// adding bootstrap nodes or peers discovered through other channels.
-    AddEnr(Enr),
-
-    /// Request an ENR from a specific network address.
-    ///
-    /// Initiates a discovery query to retrieve the ENR for a peer at the
-    /// given address. Used for peer verification and metadata retrieval.
-    RequestEnr {
-        /// Channel to receive the result of the ENR request.
-        out: tokio::sync::oneshot::Sender<Result<Enr, RequestError>>,
-        /// Network address to query for the ENR.
-        addr: String,
-    },
 
     /// Get the local node's ENR.
     ///
@@ -127,37 +104,6 @@ impl Discv5Handler {
         tokio::spawn(async move {
             if let Err(e) = sender.send(HandlerRequest::LocalEnr(tx)).await {
                 warn!(target: "discovery", err = ?e, "Failed to send local ENR request");
-            }
-        });
-        rx
-    }
-
-    /// Requests an [`Enr`] from the discv5 service given a [`Multiaddr`].
-    pub fn request_enr(
-        &self,
-        addr: Multiaddr,
-    ) -> tokio::sync::oneshot::Receiver<Result<Enr, RequestError>> {
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        let sender = self.sender.clone();
-        tokio::spawn(async move {
-            if let Err(e) =
-                sender.send(HandlerRequest::RequestEnr { out: tx, addr: addr.to_string() }).await
-            {
-                warn!(target: "discv5_handler", error = ?e, "Failed to send request ENR request");
-            }
-        });
-        rx
-    }
-
-    /// Blocking request for the metrics of the discovery service.
-    ///
-    /// The returned receiver yields `Err` if the request could not be sent or received.
-    pub fn metrics(&self) -> tokio::sync::oneshot::Receiver<Metrics> {
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        let sender = self.sender.clone();
-        tokio::spawn(async move {
-            if let Err(e) = sender.send(HandlerRequest::Metrics(tx)).await {
-                warn!(target: "discovery", err = ?e, "Failed to send metrics request");
             }
         });
         rx

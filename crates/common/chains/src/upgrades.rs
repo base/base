@@ -134,35 +134,17 @@ impl Upgrades for RollupConfig {
                 .upgrade_activation_timestamp(BaseUpgrade::Isthmus)
                 .map(ForkCondition::Timestamp)
                 .unwrap_or_else(|| self.fork_condition(BaseUpgrade::Jovian)),
-            BaseUpgrade::Jovian => self
-                .upgrade_activation_timestamp(BaseUpgrade::Jovian)
-                .map(ForkCondition::Timestamp)
-                .unwrap_or(ForkCondition::Never),
-            BaseUpgrade::Azul => self
-                .upgrade_activation_timestamp(BaseUpgrade::Azul)
-                .map(ForkCondition::Timestamp)
-                .unwrap_or(ForkCondition::Never),
-            BaseUpgrade::Beryl => self
-                .upgrade_activation_timestamp(BaseUpgrade::Beryl)
-                .map(ForkCondition::Timestamp)
-                .unwrap_or(ForkCondition::Never),
-            BaseUpgrade::Cobalt => self
-                .upgrade_activation_timestamp(BaseUpgrade::Cobalt)
-                .map(ForkCondition::Timestamp)
-                .unwrap_or(ForkCondition::Never),
-            BaseUpgrade::Denim => self
-                .upgrade_activation_timestamp(BaseUpgrade::Denim)
-                .map(ForkCondition::Timestamp)
-                .unwrap_or(ForkCondition::Never),
-            BaseUpgrade::Everest => self
-                .upgrade_activation_timestamp(BaseUpgrade::Everest)
-                .map(ForkCondition::Timestamp)
-                .unwrap_or(ForkCondition::Never),
+            BaseUpgrade::Jovian
+            | BaseUpgrade::Azul
+            | BaseUpgrade::Beryl
+            | BaseUpgrade::Cobalt
+            | BaseUpgrade::Denim
+            | BaseUpgrade::Everest
             // Zenith is the genesis-only gate for future hardfork feature testing: the runtime
             // registry drops Zenith writes, so only a genesis-configured timestamp can appear
             // here.
-            BaseUpgrade::Zenith => self
-                .upgrade_activation_timestamp(BaseUpgrade::Zenith)
+            | BaseUpgrade::Zenith => self
+                .upgrade_activation_timestamp(fork)
                 .map(ForkCondition::Timestamp)
                 .unwrap_or(ForkCondition::Never),
             // Contract-only upgrades (Delta, PectraBlobSchedule) and any future variants are

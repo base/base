@@ -6,6 +6,8 @@
 //! Talks to the JSON-RPC prover-service requester API (`prover_proveBlockRange`
 //! / `prover_getProof`), not the legacy zk gRPC service.
 
+use std::num::NonZeroU64;
+
 use alloy_primitives::Address;
 use alloy_provider::{Identity, Provider, ProviderBuilder};
 use alloy_rpc_types::{BlockId, BlockNumberOrTag};
@@ -35,8 +37,10 @@ const POLL_TIMEOUT_SECS: u64 = 14400; // 4 hours
 const SEQUENCE_WINDOW: u64 = 100;
 
 /// When L1 hasn't finalized far enough for the target L2 block, step back
-/// this many L2 blocks at a time and recheck.
-const L2_BLOCK_STEP_BACK: u64 = 10;
+/// this many L2 blocks at a time and recheck. With `MAX_STEP_BACKS` this
+/// reaches 30,000 blocks back, 100 minutes at a 200ms block time, enough to
+/// cover L1 finality plus `SEQUENCE_WINDOW` L1 blocks.
+const L2_BLOCK_STEP_BACK: u64 = 100;
 
 /// Maximum number of times we step back before giving up.
 const MAX_STEP_BACKS: u64 = 300;
@@ -284,6 +288,8 @@ impl SnarkE2e {
                             sequence_window: Some(SEQUENCE_WINDOW),
                             l1_head: None,
                             schedule_l2_block_number: None,
+                            // A single-block range commits its one output root.
+                            intermediate_block_interval: NonZeroU64::MIN,
                             zk_vm: ZkVm::Sp1,
                             zk_backend: ZkBackend::Cluster,
                         },

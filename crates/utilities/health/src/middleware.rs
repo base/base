@@ -77,8 +77,6 @@ where
     }
 
     fn call(&mut self, req: HttpRequest<B>) -> Self::Future {
-        // Mirror go-ethereum rpc/http.go: return 200 for empty GET / with no query string.
-        // Used by AWS health checks and similar load balancer probes for node liveness.
         // Mirror go-ethereum's r.ContentLength semantics:
         //   - absent header        → 0  (no body; Go's net/http reports ContentLength = 0
         //                               when no Content-Length header and no body is read)
@@ -241,7 +239,6 @@ mod tests {
     async fn test_bare_query_marker_returns_200() {
         // GET /? has an empty query string (uri().query() == Some("")), not absent
         // (uri().query() == None). go-ethereum's RawQuery == "" is true for both cases.
-        // The implementation uses query().map_or(true, |q| q.is_empty()) to accept both.
         // This test guards against regression to query().is_none(), which would have
         // passed None but rejected Some(""), causing GET /? to fall through to the
         // transport and return 405 instead of 200.

@@ -477,7 +477,10 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-    use crate::test_utils::{RAW_BEDROCK_INFO_TX, RAW_ECOTONE_INFO_TX, RAW_ISTHMUS_INFO_TX};
+    use crate::test_utils::{
+        RAW_BEDROCK_INFO_TX, RAW_ECOTONE_INFO_TX, RAW_ISTHMUS_INFO_TX, isthmus_l1_header,
+        isthmus_rollup_config, isthmus_system_config, try_new_info,
+    };
 
     #[test]
     fn test_l1_block_info_missing_selector() {
@@ -522,80 +525,9 @@ mod tests {
     }
 
     #[test]
-    fn test_l1_block_info_tx_block_hash() {
-        let bedrock = L1BlockInfoTx::Bedrock(L1BlockInfoBedrock::new_from_block_hash(b256!(
-            "392012032675be9f94aae5ab442de73c5f4fb1bf30fa7dd0d2442239899a40fc"
-        )));
-        assert_eq!(
-            bedrock.block_hash(),
-            b256!("392012032675be9f94aae5ab442de73c5f4fb1bf30fa7dd0d2442239899a40fc")
-        );
-
-        let ecotone = L1BlockInfoTx::Ecotone(L1BlockInfoEcotone::new_from_block_hash(b256!(
-            "1c4c84c50740386c7dc081efddd644405f04cde73e30a2e381737acce9f5add3"
-        )));
-        assert_eq!(
-            ecotone.block_hash(),
-            b256!("1c4c84c50740386c7dc081efddd644405f04cde73e30a2e381737acce9f5add3")
-        );
-    }
-
-    #[test]
     fn test_decode_calldata_invalid_selector() {
         let err = L1BlockInfoTx::decode_calldata(&[0xde, 0xad, 0xbe, 0xef]);
         assert_eq!(err, Err(DecodeError::InvalidSelector));
-    }
-
-    #[test]
-    fn test_l1_block_info_id() {
-        let bedrock = L1BlockInfoTx::Bedrock(L1BlockInfoBedrock::new_from_number_and_block_hash(
-            123,
-            b256!("392012032675be9f94aae5ab442de73c5f4fb1bf30fa7dd0d2442239899a40fc"),
-        ));
-        assert_eq!(
-            bedrock.id(),
-            BlockNumHash {
-                number: 123,
-                hash: b256!("392012032675be9f94aae5ab442de73c5f4fb1bf30fa7dd0d2442239899a40fc")
-            }
-        );
-
-        let ecotone = L1BlockInfoTx::Ecotone(L1BlockInfoEcotone::new_from_number_and_block_hash(
-            456,
-            b256!("1c4c84c50740386c7dc081efddd644405f04cde73e30a2e381737acce9f5add3"),
-        ));
-
-        assert_eq!(
-            ecotone.id(),
-            BlockNumHash {
-                number: 456,
-                hash: b256!("1c4c84c50740386c7dc081efddd644405f04cde73e30a2e381737acce9f5add3")
-            }
-        );
-
-        let isthmus = L1BlockInfoTx::Isthmus(L1BlockInfoIsthmus::new_from_number_and_block_hash(
-            101112,
-            b256!("4f98b83baf52c498b49bfff33e59965b27da7febbea9a2fcc4719d06dc06932a"),
-        ));
-        assert_eq!(
-            isthmus.id(),
-            BlockNumHash {
-                number: 101112,
-                hash: b256!("4f98b83baf52c498b49bfff33e59965b27da7febbea9a2fcc4719d06dc06932a")
-            }
-        );
-    }
-
-    #[test]
-    fn test_l1_block_info_sequence_number() {
-        let bedrock = L1BlockInfoTx::Bedrock(L1BlockInfoBedrock::new_from_sequence_number(123));
-        assert_eq!(bedrock.sequence_number(), 123);
-
-        let ecotone = L1BlockInfoTx::Ecotone(L1BlockInfoEcotone::new_from_sequence_number(456));
-        assert_eq!(ecotone.sequence_number(), 456);
-
-        let isthmus = L1BlockInfoTx::Isthmus(L1BlockInfoIsthmus::new_from_sequence_number(101112));
-        assert_eq!(isthmus.sequence_number(), 101112);
     }
 
     #[test]
@@ -631,126 +563,104 @@ mod tests {
     }
 
     #[test]
-    fn test_operator_fee_constant() {
-        let bedrock = L1BlockInfoTx::Bedrock(L1BlockInfoBedrock::default());
-        assert_eq!(bedrock.operator_fee_constant(), 0);
+    fn test_bedrock_getters() {
+        let hash = b256!("392012032675be9f94aae5ab442de73c5f4fb1bf30fa7dd0d2442239899a40fc");
+        let batcher = address!("6887246668a3b87f54deb3b94ba47a6f63f32985");
+        let tx = L1BlockInfoTx::Bedrock;
 
-        let ecotone = L1BlockInfoTx::Ecotone(L1BlockInfoEcotone::default());
-        assert_eq!(ecotone.operator_fee_constant(), 0);
-
-        let isthmus =
-            L1BlockInfoTx::Isthmus(L1BlockInfoIsthmus::new_from_operator_fee_constant(123));
-        assert_eq!(isthmus.operator_fee_constant(), 123);
+        assert_eq!(
+            tx(L1BlockInfoBedrock::new_from_number_and_block_hash(123, hash)).id(),
+            BlockNumHash { number: 123, hash }
+        );
+        assert_eq!(tx(L1BlockInfoBedrock::new_from_block_hash(hash)).block_hash(), hash);
+        assert_eq!(tx(L1BlockInfoBedrock::new_from_base_fee(123)).l1_base_fee(), U256::from(123));
+        assert_eq!(
+            tx(L1BlockInfoBedrock::new_from_batcher_address(batcher)).batcher_address(),
+            batcher
+        );
+        assert_eq!(
+            tx(L1BlockInfoBedrock::new_from_l1_fee_overhead(U256::from(123))).l1_fee_overhead(),
+            U256::from(123)
+        );
+        assert_eq!(
+            tx(L1BlockInfoBedrock::new_from_l1_fee_scalar(U256::from(123))).l1_fee_scalar(),
+            U256::from(123)
+        );
+        assert!(!tx(L1BlockInfoBedrock::default()).empty_scalars());
     }
 
     #[test]
-    fn test_operator_fee_scalar() {
-        let bedrock = L1BlockInfoTx::Bedrock(L1BlockInfoBedrock::default());
-        assert_eq!(bedrock.operator_fee_scalar(), 0);
+    fn test_ecotone_getters() {
+        let hash = b256!("1c4c84c50740386c7dc081efddd644405f04cde73e30a2e381737acce9f5add3");
+        let batcher = address!("6887246668a3b87f54deb3b94ba47a6f63f32985");
+        let tx = L1BlockInfoTx::Ecotone;
 
-        let ecotone = L1BlockInfoTx::Ecotone(L1BlockInfoEcotone::default());
-        assert_eq!(ecotone.operator_fee_scalar(), 0);
-
-        let isthmus = L1BlockInfoTx::Isthmus(L1BlockInfoIsthmus::new_from_operator_fee_scalar(123));
-        assert_eq!(isthmus.operator_fee_scalar(), 123);
+        assert_eq!(
+            tx(L1BlockInfoEcotone::new_from_number_and_block_hash(456, hash)).id(),
+            BlockNumHash { number: 456, hash }
+        );
+        assert_eq!(tx(L1BlockInfoEcotone::new_from_block_hash(hash)).block_hash(), hash);
+        assert_eq!(tx(L1BlockInfoEcotone::new_from_base_fee(456)).l1_base_fee(), U256::from(456));
+        assert_eq!(
+            tx(L1BlockInfoEcotone::new_from_batcher_address(batcher)).batcher_address(),
+            batcher
+        );
+        assert_eq!(
+            tx(L1BlockInfoEcotone::new_from_base_fee_scalar(456)).l1_fee_scalar(),
+            U256::from(456)
+        );
+        assert_eq!(
+            tx(L1BlockInfoEcotone::new_from_blob_base_fee(456)).blob_base_fee(),
+            U256::from(456)
+        );
+        assert_eq!(
+            tx(L1BlockInfoEcotone::new_from_blob_base_fee_scalar(456)).blob_base_fee_scalar(),
+            U256::from(456)
+        );
+        assert_eq!(
+            tx(L1BlockInfoEcotone::new_from_l1_fee_overhead(U256::from(456))).l1_fee_overhead(),
+            U256::from(456)
+        );
+        assert!(tx(L1BlockInfoEcotone::new_from_empty_scalars(true)).empty_scalars());
+        assert!(!tx(L1BlockInfoEcotone::default()).empty_scalars());
     }
 
     #[test]
-    fn test_l1_base_fee() {
-        let bedrock = L1BlockInfoTx::Bedrock(L1BlockInfoBedrock::new_from_base_fee(123));
-        assert_eq!(bedrock.l1_base_fee(), U256::from(123));
+    fn test_isthmus_getters() {
+        let hash = b256!("4f98b83baf52c498b49bfff33e59965b27da7febbea9a2fcc4719d06dc06932a");
+        let batcher = address!("6887246668a3b87f54deb3b94ba47a6f63f32985");
+        let tx = L1BlockInfoTx::Isthmus;
 
-        let ecotone = L1BlockInfoTx::Ecotone(L1BlockInfoEcotone::new_from_base_fee(456));
-        assert_eq!(ecotone.l1_base_fee(), U256::from(456));
-
-        let isthmus = L1BlockInfoTx::Isthmus(L1BlockInfoIsthmus::new_from_base_fee(101112));
-        assert_eq!(isthmus.l1_base_fee(), U256::from(101112));
-    }
-
-    #[test]
-    fn test_l1_fee_overhead() {
-        let bedrock =
-            L1BlockInfoTx::Bedrock(L1BlockInfoBedrock::new_from_l1_fee_overhead(U256::from(123)));
-        assert_eq!(bedrock.l1_fee_overhead(), U256::from(123));
-
-        let ecotone =
-            L1BlockInfoTx::Ecotone(L1BlockInfoEcotone::new_from_l1_fee_overhead(U256::from(456)));
-        assert_eq!(ecotone.l1_fee_overhead(), U256::from(456));
-
-        let isthmus = L1BlockInfoTx::Isthmus(L1BlockInfoIsthmus::default());
-        assert_eq!(isthmus.l1_fee_overhead(), U256::ZERO);
-    }
-
-    #[test]
-    fn test_batcher_address() {
-        let bedrock = L1BlockInfoTx::Bedrock(L1BlockInfoBedrock::new_from_batcher_address(
-            address!("6887246668a3b87f54deb3b94ba47a6f63f32985"),
-        ));
-        assert_eq!(bedrock.batcher_address(), address!("6887246668a3b87f54deb3b94ba47a6f63f32985"));
-
-        let ecotone = L1BlockInfoTx::Ecotone(L1BlockInfoEcotone::new_from_batcher_address(
-            address!("6887246668a3b87f54deb3b94ba47a6f63f32985"),
-        ));
-        assert_eq!(ecotone.batcher_address(), address!("6887246668a3b87f54deb3b94ba47a6f63f32985"));
-
-        let isthmus = L1BlockInfoTx::Isthmus(L1BlockInfoIsthmus::new_from_batcher_address(
-            address!("6887246668a3b87f54deb3b94ba47a6f63f32985"),
-        ));
-        assert_eq!(isthmus.batcher_address(), address!("6887246668a3b87f54deb3b94ba47a6f63f32985"));
-    }
-
-    #[test]
-    fn test_l1_fee_scalar() {
-        let bedrock =
-            L1BlockInfoTx::Bedrock(L1BlockInfoBedrock::new_from_l1_fee_scalar(U256::from(123)));
-        assert_eq!(bedrock.l1_fee_scalar(), U256::from(123));
-
-        let ecotone = L1BlockInfoTx::Ecotone(L1BlockInfoEcotone::new_from_base_fee_scalar(456));
-        assert_eq!(ecotone.l1_fee_scalar(), U256::from(456));
-
-        let isthmus = L1BlockInfoTx::Isthmus(L1BlockInfoIsthmus::new_from_base_fee_scalar(101112));
-        assert_eq!(isthmus.l1_fee_scalar(), U256::from(101112));
-    }
-
-    #[test]
-    fn test_blob_base_fee() {
-        let bedrock = L1BlockInfoTx::Bedrock(Default::default());
-        assert_eq!(bedrock.blob_base_fee(), U256::ZERO);
-
-        let ecotone = L1BlockInfoTx::Ecotone(L1BlockInfoEcotone::new_from_blob_base_fee(456));
-        assert_eq!(ecotone.blob_base_fee(), U256::from(456));
-
-        let isthmus = L1BlockInfoTx::Isthmus(L1BlockInfoIsthmus::new_from_blob_base_fee(101112));
-        assert_eq!(isthmus.blob_base_fee(), U256::from(101112));
-    }
-
-    #[test]
-    fn test_blob_base_fee_scalar() {
-        let bedrock = L1BlockInfoTx::Bedrock(L1BlockInfoBedrock::default());
-        assert_eq!(bedrock.blob_base_fee_scalar(), U256::ZERO);
-
-        let ecotone =
-            L1BlockInfoTx::Ecotone(L1BlockInfoEcotone::new_from_blob_base_fee_scalar(456));
-        assert_eq!(ecotone.blob_base_fee_scalar(), U256::from(456));
-
-        let isthmus =
-            L1BlockInfoTx::Isthmus(L1BlockInfoIsthmus::new_from_blob_base_fee_scalar(101112));
-        assert_eq!(isthmus.blob_base_fee_scalar(), U256::from(101112));
-    }
-
-    #[test]
-    fn test_empty_scalars() {
-        let bedrock = L1BlockInfoTx::Bedrock(Default::default());
-        assert!(!bedrock.empty_scalars());
-
-        let ecotone = L1BlockInfoTx::Ecotone(L1BlockInfoEcotone::new_from_empty_scalars(true));
-        assert!(ecotone.empty_scalars());
-
-        let ecotone = L1BlockInfoTx::Ecotone(L1BlockInfoEcotone::default());
-        assert!(!ecotone.empty_scalars());
-
-        let isthmus = L1BlockInfoTx::Isthmus(L1BlockInfoIsthmus::default());
-        assert!(!isthmus.empty_scalars());
+        assert_eq!(
+            tx(L1BlockInfoIsthmus::new_from_number_and_block_hash(101112, hash)).id(),
+            BlockNumHash { number: 101112, hash }
+        );
+        assert_eq!(tx(L1BlockInfoIsthmus::new_from_base_fee(7)).l1_base_fee(), U256::from(7));
+        assert_eq!(
+            tx(L1BlockInfoIsthmus::new_from_batcher_address(batcher)).batcher_address(),
+            batcher
+        );
+        assert_eq!(
+            tx(L1BlockInfoIsthmus::new_from_base_fee_scalar(7)).l1_fee_scalar(),
+            U256::from(7)
+        );
+        assert_eq!(
+            tx(L1BlockInfoIsthmus::new_from_blob_base_fee(7)).blob_base_fee(),
+            U256::from(7)
+        );
+        assert_eq!(
+            tx(L1BlockInfoIsthmus::new_from_blob_base_fee_scalar(7)).blob_base_fee_scalar(),
+            U256::from(7)
+        );
+        assert_eq!(
+            tx(L1BlockInfoIsthmus::new_from_operator_fee_constant(7)).operator_fee_constant(),
+            7
+        );
+        assert_eq!(
+            tx(L1BlockInfoIsthmus::new_from_operator_fee_scalar(7)).operator_fee_scalar(),
+            7
+        );
+        assert_eq!(tx(L1BlockInfoIsthmus::default()).l1_fee_overhead(), U256::ZERO);
     }
 
     #[test]
@@ -827,36 +737,28 @@ mod tests {
 
     #[test]
     fn test_try_new_bedrock() {
-        let rollup_config = RollupConfig::default();
-        let l1_config = Sepolia::l1_config();
-        let system_config = SystemConfig::default();
-        let sequence_number = 0;
         let l1_header = Header::default();
-        let l2_block_time = 0u64;
 
-        let l1_info = L1BlockInfoTx::try_new(
-            &rollup_config,
-            &l1_config,
-            &system_config,
-            sequence_number,
+        let l1_info = try_new_info(
+            &RollupConfig::default(),
+            &Sepolia::l1_config(),
+            &SystemConfig::default(),
             &l1_header,
-            l2_block_time.saturating_sub(2),
-            l2_block_time,
-        )
-        .unwrap();
+            0,
+        );
 
         let L1BlockInfoTx::Bedrock(l1_info) = l1_info else {
             panic!("Wrong fork");
         };
 
-        assert_eq!(l1_info.number(), l1_header.number);
-        assert_eq!(l1_info.time(), l1_header.timestamp);
-        assert_eq!(l1_info.base_fee(), { l1_header.base_fee_per_gas.unwrap_or(0) });
+        assert_eq!(l1_info.number(), 0);
+        assert_eq!(l1_info.time(), 0);
+        assert_eq!(l1_info.base_fee(), 0);
         assert_eq!(l1_info.block_hash(), l1_header.hash_slow());
-        assert_eq!(l1_info.sequence_number(), sequence_number);
-        assert_eq!(l1_info.batcher_address(), system_config.batcher_address);
-        assert_eq!(l1_info.l1_fee_overhead(), system_config.overhead);
-        assert_eq!(l1_info.l1_fee_scalar(), system_config.scalar);
+        assert_eq!(l1_info.sequence_number(), 0);
+        assert_eq!(l1_info.batcher_address(), Address::ZERO);
+        assert_eq!(l1_info.l1_fee_overhead(), U256::ZERO);
+        assert_eq!(l1_info.l1_fee_scalar(), U256::ZERO);
     }
 
     #[test]
@@ -865,49 +767,29 @@ mod tests {
             upgrades: UpgradeConfig { ecotone_time: Some(1), ..Default::default() },
             ..Default::default()
         };
-        let l1_config = Sepolia::l1_config();
-        let system_config = SystemConfig::default();
-        let sequence_number = 0;
         let l1_header = Header::default();
-        let l2_block_time = 0xFFu64;
 
-        let l1_info = L1BlockInfoTx::try_new(
+        let l1_info = try_new_info(
             &rollup_config,
-            &l1_config,
-            &system_config,
-            sequence_number,
+            &Sepolia::l1_config(),
+            &SystemConfig::default(),
             &l1_header,
-            l2_block_time.saturating_sub(2),
-            l2_block_time,
-        )
-        .unwrap();
+            0xFF,
+        );
 
         let L1BlockInfoTx::Ecotone(l1_info) = l1_info else {
             panic!("Wrong fork");
         };
 
-        assert_eq!(l1_info.number(), l1_header.number);
-        assert_eq!(l1_info.time(), l1_header.timestamp);
-        assert_eq!(l1_info.base_fee(), { l1_header.base_fee_per_gas.unwrap_or(0) });
+        assert_eq!(l1_info.number(), 0);
+        assert_eq!(l1_info.time(), 0);
+        assert_eq!(l1_info.base_fee(), 0);
         assert_eq!(l1_info.block_hash(), l1_header.hash_slow());
-        assert_eq!(l1_info.sequence_number(), sequence_number);
-        assert_eq!(l1_info.batcher_address(), system_config.batcher_address);
-        assert_eq!(l1_info.blob_base_fee(), l1_header.blob_fee(BlobParams::cancun()).unwrap_or(1));
-
-        let scalar = system_config.scalar.to_be_bytes::<32>();
-        let blob_base_fee_scalar = if scalar[0] == L1BlockInfoEcotone::L1_SCALAR {
-            {
-                u32::from_be_bytes(
-                    scalar[24..28].try_into().expect("Failed to parse L1 blob base fee scalar"),
-                )
-            }
-        } else {
-            Default::default()
-        };
-        let base_fee_scalar =
-            u32::from_be_bytes(scalar[28..32].try_into().expect("Failed to parse base fee scalar"));
-        assert_eq!(l1_info.blob_base_fee_scalar(), blob_base_fee_scalar);
-        assert_eq!(l1_info.base_fee_scalar(), base_fee_scalar);
+        assert_eq!(l1_info.sequence_number(), 0);
+        assert_eq!(l1_info.batcher_address(), Address::ZERO);
+        assert_eq!(l1_info.blob_base_fee(), 1);
+        assert_eq!(l1_info.blob_base_fee_scalar(), 0);
+        assert_eq!(l1_info.base_fee_scalar(), 0);
     }
 
     #[test]
@@ -917,17 +799,13 @@ mod tests {
             upgrades: UpgradeConfig { ecotone_time: Some(l2_block_time), ..Default::default() },
             ..Default::default()
         };
-        let l1_config = Sepolia::l1_config();
-        let system_config = SystemConfig::default();
-        let sequence_number = 0;
-        let l1_header = Header::default();
 
         let l1_info = L1BlockInfoTx::try_new(
             &rollup_config,
-            &l1_config,
-            &system_config,
-            sequence_number,
-            &l1_header,
+            &Sepolia::l1_config(),
+            &SystemConfig::default(),
+            0,
+            &Header::default(),
             l2_block_time,
             l2_block_time,
         )
@@ -958,8 +836,6 @@ mod tests {
         let mut l1_genesis: ChainConfig = Sepolia::l1_config();
         l1_genesis.prague_time = Some(2);
 
-        let system_config = SystemConfig::default();
-        let sequence_number = 0;
         let l1_header = Header {
             timestamp: if fork_active { 2 } else { 1 },
             excess_blob_gas: Some(0x5080000),
@@ -967,29 +843,15 @@ mod tests {
             requests_hash: Some(B256::ZERO),
             ..Default::default()
         };
-        let l2_block_time = 0xFFu64;
 
-        let l1_info = L1BlockInfoTx::try_new(
-            &rollup_config,
-            &l1_genesis,
-            &system_config,
-            sequence_number,
-            &l1_header,
-            l2_block_time.saturating_sub(2),
-            l2_block_time,
-        )
-        .unwrap();
+        let l1_info =
+            try_new_info(&rollup_config, &l1_genesis, &SystemConfig::default(), &l1_header, 0xFF);
 
         let L1BlockInfoTx::Ecotone(l1_info) = l1_info else {
             panic!("Wrong fork");
         };
 
-        assert_eq!(l1_info.number(), l1_header.number);
         assert_eq!(l1_info.time(), l1_header.timestamp);
-        assert_eq!(l1_info.base_fee(), { l1_header.base_fee_per_gas.unwrap_or(0) });
-        assert_eq!(l1_info.block_hash(), l1_header.hash_slow());
-        assert_eq!(l1_info.sequence_number(), sequence_number);
-        assert_eq!(l1_info.batcher_address(), system_config.batcher_address);
         assert_eq!(
             l1_info.blob_base_fee(),
             l1_header
@@ -1000,21 +862,6 @@ mod tests {
                 })
                 .unwrap_or(1)
         );
-
-        let scalar = system_config.scalar.to_be_bytes::<32>();
-        let blob_base_fee_scalar = if scalar[0] == L1BlockInfoEcotone::L1_SCALAR {
-            {
-                u32::from_be_bytes(
-                    scalar[24..28].try_into().expect("Failed to parse L1 blob base fee scalar"),
-                )
-            }
-        } else {
-            Default::default()
-        };
-        let base_fee_scalar =
-            u32::from_be_bytes(scalar[28..32].try_into().expect("Failed to parse base fee scalar"));
-        assert_eq!(l1_info.blob_base_fee_scalar(), blob_base_fee_scalar);
-        assert_eq!(l1_info.base_fee_scalar(), base_fee_scalar);
     }
 
     #[test]
@@ -1043,18 +890,8 @@ mod tests {
             requests_hash: Some(B256::ZERO),
             ..Default::default()
         };
-        let l2_block_time = 0xFFu64;
 
-        let l1_info = L1BlockInfoTx::try_new(
-            &rollup_config,
-            &l1_genesis,
-            &system_config,
-            0,
-            &l1_header,
-            l2_block_time.saturating_sub(2),
-            l2_block_time,
-        )
-        .unwrap();
+        let l1_info = try_new_info(&rollup_config, &l1_genesis, &system_config, &l1_header, 0xFF);
 
         let L1BlockInfoTx::Ecotone(l1_info) = l1_info else {
             panic!("Wrong fork");
@@ -1062,16 +899,7 @@ mod tests {
         assert_eq!(l1_info.blob_base_fee(), l1_header.blob_fee(BlobParams::cancun()).unwrap_or(1));
 
         let l1_header = Header { timestamp: 3, ..l1_header };
-        let l1_info = L1BlockInfoTx::try_new(
-            &rollup_config,
-            &l1_genesis,
-            &system_config,
-            0,
-            &l1_header,
-            l2_block_time.saturating_sub(2),
-            l2_block_time,
-        )
-        .unwrap();
+        let l1_info = try_new_info(&rollup_config, &l1_genesis, &system_config, &l1_header, 0xFF);
 
         let L1BlockInfoTx::Ecotone(l1_info) = l1_info else {
             panic!("Wrong fork");
@@ -1081,176 +909,63 @@ mod tests {
         RuntimeUpgradeRegistry::clear_chain(chain_id);
     }
 
-    #[test]
-    fn test_try_new_isthmus_before_pectra_blob_schedule() {
+    #[rstest]
+    // Pectra is scheduled but not active yet, so the Cancun blob fee applies.
+    #[case::before_pectra_blob_schedule(Some(1713121140), 95_662_720_442)]
+    // No schedule, so the Prague blob fee applies immediately.
+    #[case::no_pectra_blob_schedule(None, 20_916_760)]
+    fn test_try_new_isthmus(
+        #[case] pectra_blob_schedule_time: Option<u64>,
+        #[case] expected_blob_fee: u128,
+    ) {
         let rollup_config = RollupConfig {
             upgrades: UpgradeConfig {
-                isthmus_time: Some(1),
-                pectra_blob_schedule_time: Some(1713121140),
-                ..Default::default()
+                pectra_blob_schedule_time,
+                ..isthmus_rollup_config().upgrades
             },
             ..Default::default()
         };
-        let l1_config = Sepolia::l1_config();
-        let system_config = SystemConfig {
-            batcher_address: address!("6887246668a3b87f54deb3b94ba47a6f63f32985"),
-            operator_fee_scalar: Some(0xabcd),
-            operator_fee_constant: Some(0xdcba),
-            ..Default::default()
-        };
-        let sequence_number = 0;
+        // L1 has activated Prague, so the blob schedule decides which fee parameters apply.
+        let mut l1_config = Sepolia::l1_config();
+        l1_config.prague_time = Some(1713121139);
         let l1_header = Header {
-            number: 19655712,
-            timestamp: 1713121139,
-            base_fee_per_gas: Some(10445852825),
-            // Assume Pectra is active on L1
+            excess_blob_gas: Some(0x5080000),
+            blob_gas_used: Some(0x100000),
             requests_hash: Some(B256::ZERO),
-            ..Default::default()
+            ..isthmus_l1_header()
         };
-        let l2_block_time = 0xFFu64;
 
-        let l1_info = L1BlockInfoTx::try_new(
-            &rollup_config,
-            &l1_config,
-            &system_config,
-            sequence_number,
-            &l1_header,
-            l2_block_time.saturating_sub(2),
-            l2_block_time,
-        )
-        .unwrap();
-
-        assert!(matches!(l1_info, L1BlockInfoTx::Isthmus(_)));
-
-        let scalar = system_config.scalar.to_be_bytes::<32>();
-        let blob_base_fee_scalar = if scalar[0] == L1BlockInfoIsthmus::L1_SCALAR {
-            {
-                u32::from_be_bytes(
-                    scalar[24..28].try_into().expect("Failed to parse L1 blob base fee scalar"),
-                )
-            }
-        } else {
-            Default::default()
-        };
-        let base_fee_scalar =
-            u32::from_be_bytes(scalar[28..32].try_into().expect("Failed to parse base fee scalar"));
+        let l1_info =
+            try_new_info(&rollup_config, &l1_config, &isthmus_system_config(), &l1_header, 0xFF);
 
         assert_eq!(
             l1_info,
             L1BlockInfoTx::Isthmus(L1BlockInfoIsthmus::new(
-                l1_header.number,
-                l1_header.timestamp,
-                l1_header.base_fee_per_gas.unwrap_or(0),
+                19655712,
+                1713121139,
+                10445852825,
                 l1_header.hash_slow(),
-                sequence_number,
-                system_config.batcher_address,
-                // Expect cancun blob schedule to be used, since pectra blob schedule is scheduled
-                // but not active yet.
-                l1_header.blob_fee(BlobParams::cancun()).unwrap_or(1),
-                blob_base_fee_scalar,
-                base_fee_scalar,
-                system_config.operator_fee_scalar.unwrap_or_default(),
-                system_config.operator_fee_constant.unwrap_or_default(),
-            ))
-        );
-    }
-
-    #[test]
-    fn test_try_new_isthmus() {
-        let rollup_config = RollupConfig {
-            upgrades: UpgradeConfig { isthmus_time: Some(1), ..Default::default() },
-            ..Default::default()
-        };
-        let l1_config = Sepolia::l1_config();
-        let system_config = SystemConfig {
-            batcher_address: address!("6887246668a3b87f54deb3b94ba47a6f63f32985"),
-            operator_fee_scalar: Some(0xabcd),
-            operator_fee_constant: Some(0xdcba),
-            ..Default::default()
-        };
-        let sequence_number = 0;
-        let l1_header = Header {
-            number: 19655712,
-            timestamp: 1713121139,
-            base_fee_per_gas: Some(10445852825),
-            ..Default::default()
-        };
-        let l2_block_time = 0xFFu64;
-
-        let l1_info = L1BlockInfoTx::try_new(
-            &rollup_config,
-            &l1_config,
-            &system_config,
-            sequence_number,
-            &l1_header,
-            l2_block_time.saturating_sub(2),
-            l2_block_time,
-        )
-        .unwrap();
-
-        assert!(matches!(l1_info, L1BlockInfoTx::Isthmus(_)));
-
-        let scalar = system_config.scalar.to_be_bytes::<32>();
-        let blob_base_fee_scalar = if scalar[0] == L1BlockInfoIsthmus::L1_SCALAR {
-            {
-                u32::from_be_bytes(
-                    scalar[24..28].try_into().expect("Failed to parse L1 blob base fee scalar"),
-                )
-            }
-        } else {
-            Default::default()
-        };
-        let base_fee_scalar =
-            u32::from_be_bytes(scalar[28..32].try_into().expect("Failed to parse base fee scalar"));
-
-        assert_eq!(
-            l1_info,
-            L1BlockInfoTx::Isthmus(L1BlockInfoIsthmus::new(
-                l1_header.number,
-                l1_header.timestamp,
-                l1_header.base_fee_per_gas.unwrap_or(0),
-                l1_header.hash_slow(),
-                sequence_number,
-                system_config.batcher_address,
-                l1_header.blob_fee(BlobParams::prague()).unwrap_or(1),
-                blob_base_fee_scalar,
-                base_fee_scalar,
-                system_config.operator_fee_scalar.unwrap_or_default(),
-                system_config.operator_fee_constant.unwrap_or_default(),
+                0,
+                address!("6887246668a3b87f54deb3b94ba47a6f63f32985"),
+                expected_blob_fee,
+                0,
+                0,
+                0xabcd,
+                0xdcba,
             ))
         );
     }
 
     #[test]
     fn test_try_new_with_deposit_tx() {
-        let rollup_config = RollupConfig {
-            upgrades: UpgradeConfig { isthmus_time: Some(1), ..Default::default() },
-            ..Default::default()
-        };
-        let l1_config = Sepolia::l1_config();
-        let system_config = SystemConfig {
-            batcher_address: address!("6887246668a3b87f54deb3b94ba47a6f63f32985"),
-            operator_fee_scalar: Some(0xabcd),
-            operator_fee_constant: Some(0xdcba),
-            ..Default::default()
-        };
-        let sequence_number = 0;
-        let l1_header = Header {
-            number: 19655712,
-            timestamp: 1713121139,
-            base_fee_per_gas: Some(10445852825),
-            ..Default::default()
-        };
-        let l2_block_time = 0xFFu64;
-
         let (l1_info, deposit_tx) = L1BlockInfoTx::try_new_with_deposit_tx(
-            &rollup_config,
-            &l1_config,
-            &system_config,
-            sequence_number,
-            &l1_header,
-            l2_block_time.saturating_sub(2),
-            l2_block_time,
+            &isthmus_rollup_config(),
+            &Sepolia::l1_config(),
+            &isthmus_system_config(),
+            0,
+            &isthmus_l1_header(),
+            0xFF - 2,
+            0xFF,
         )
         .unwrap();
 

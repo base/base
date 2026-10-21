@@ -30,15 +30,6 @@ pub trait TrieHinter {
     /// The error type for hinting trie node preimages.
     type Error: Display;
 
-    /// Hints the host to fetch the trie node preimage by hash.
-    ///
-    /// ## Takes
-    /// - `hash`: The hash of the trie node to hint.
-    ///
-    /// ## Returns
-    /// - Ok(()): If the hint was successful.
-    fn hint_trie_node(&self, hash: B256) -> Result<(), Self::Error>;
-
     /// Hints the host to fetch the trie node preimages on the path to the given address.
     ///
     /// ## Takes

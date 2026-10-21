@@ -22,7 +22,7 @@ async fn eip8130_transaction_executes_and_derives_at_everest() {
         panic!("expected an EIP-8130 receipt");
     };
     assert!(receipt.inner.status());
-    assert_eq!(receipt.phase_statuses, vec![0x01]);
+    assert_eq!(receipt.committed_phases, 1);
 
     // Send both blocks through the batcher and verifier, asserting the verifier
     // re-derives them with matching state.

@@ -7,7 +7,6 @@ use std::{
 
 use async_trait::async_trait;
 use base_proof_zk_host::{ZkProver, ZkProverError, ZkSessionState};
-use base_proof_zk_utils::INTERMEDIATE_ROOT_INTERVAL;
 use base_prover_service_protocol::{
     ExecutionStats, ProofResult, SessionType, SnarkPlonkProofRequest, SnarkPlonkProofResult,
     ZkProofRequest, ZkProofResult, ZkVm,
@@ -163,7 +162,7 @@ impl DryRunZkProver {
             end_block = end_block,
             number_of_blocks = request.number_of_blocks_to_prove,
             sequence_window = sequence_window,
-            intermediate_root_interval = INTERMEDIATE_ROOT_INTERVAL,
+            intermediate_block_interval = request.intermediate_block_interval,
             range_cycle_limit = self.range_cycle_limit,
             l1_head = ?request.l1_head,
             "starting dry-run SP1 execution"
@@ -184,6 +183,7 @@ impl DryRunZkProver {
                     L1HeadSource::Pinned,
                 ),
                 schedule_l2_block_number: request.schedule_l2_block_number,
+                intermediate_block_interval: request.intermediate_block_interval,
             })
             .await
         {

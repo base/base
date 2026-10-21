@@ -132,11 +132,14 @@ see the `just prover` recipes and
 The easiest way to interact with Docker is through the Justfile recipes:
 
 ```bash
-just devnet up     # Start fresh devnet (stops existing, clears data, rebuilds)
+just devnet up-single # Start a fresh single-sequencer devnet (stops existing, clears data, rebuilds)
+just devnet up     # Same, with a 3-node HA conductor cluster
 just devnet down   # Stop devnet and remove data
 just devnet logs   # Stream logs from all containers
 just devnet status # Check block numbers and sync status
 ```
+
+To choose between this devnet and the snapshot devnet, see [docs/guides/DEVNET.md](../../docs/guides/DEVNET.md).
 
 ### Single-Anvil L1 local Nitro proving
 
