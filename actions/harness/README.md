@@ -135,9 +135,6 @@ Remaining gaps:
 
 - The harness does not execute `SystemConfig`, `OptimismPortal`, or other L1
   contracts; event helpers still encode their expected logs directly.
-- `ActionL1BlockFetcher::get_logs` is still intentionally narrow. Tests that
-  require real `eth_getLogs` filtering should use an opt-in external L1 smoke
-  mode or extend this fetcher deliberately.
 
 ### 3. Tx Manager Realism
 
