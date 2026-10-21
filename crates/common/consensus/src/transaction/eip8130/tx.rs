@@ -452,6 +452,26 @@ impl TxEip8130 {
         keccak256(&buf)
     }
 
+    /// Transaction hash: the sender signature hash with `resolved_sender` in the
+    /// `sender` slot.
+    ///
+    /// `keccak256(EIP8130_TX_TYPE || rlp([all body fields through `payer`]))`,
+    /// with the `sender` slot replaced by the resolved sender address and
+    /// `payer` kept as its wire value. `sender_auth` and `payer_auth` are
+    /// excluded, so the hash is known before either is signed and does not
+    /// change when either is re-signed. For a named sender it equals
+    /// [`Self::sender_signature_hash`]. The resolved sender keeps two recovered
+    /// senders signing identical bodies distinct.
+    pub fn transaction_hash(&self, resolved_sender: Address) -> B256 {
+        let sender = Some(resolved_sender);
+        let payload_length = self.rlp_encoded_fields_length_with_sender(&sender);
+        let mut buf = Vec::with_capacity(1 + length_of_length(payload_length) + payload_length);
+        buf.put_u8(Eip8130Constants::EIP8130_TX_TYPE);
+        Header { list: true, payload_length }.encode(&mut buf);
+        self.rlp_encode_fields_with_sender(&sender, &mut buf);
+        keccak256(&buf)
+    }
+
     /// In-memory size heuristic.
     pub fn size(&self) -> usize {
         mem::size_of::<Self>()

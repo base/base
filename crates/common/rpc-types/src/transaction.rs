@@ -423,7 +423,10 @@ mod tests {
         let sender_auth = Bytes::from_static(&[0xAB; 32]);
         let payer_auth = Bytes::new();
         let signed = Eip8130Signed::new(tx_body, sender_auth, payer_auth);
-        let canonical_hash = alloy_primitives::keccak256(signed.encoded_2718());
+        // The transaction hash excludes `sender_auth`, so it is not the
+        // `keccak256` of the EIP-2718 encoding.
+        let canonical_hash = *signed.hash();
+        assert_ne!(canonical_hash, alloy_primitives::keccak256(signed.encoded_2718()));
         let envelope = BaseTxEnvelope::Eip8130(signed);
 
         // Wrap the envelope with its explicit sender directly rather than going

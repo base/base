@@ -74,6 +74,18 @@ pub enum BaseTxPoolError {
         /// Static validation label for the failure.
         reason: &'static str,
     },
+    /// The transaction failed because of its `sender_auth` or `payer_auth`.
+    ///
+    /// The transaction hash does not cover either field, so anyone can attach
+    /// invalid authentication to a valid body under that body's hash. This
+    /// error is therefore not a bad transaction: the network layer must not
+    /// cache the hash as invalid, or a copy with junk authentication would
+    /// block the valid transaction.
+    #[error("EIP-8130 authentication failed: {reason}")]
+    Eip8130Authentication {
+        /// Static validation label for the failure.
+        reason: &'static str,
+    },
 }
 
 /// Resolved EIP-8130 actors and state data required to build the pool outcome.
@@ -669,7 +681,7 @@ impl PrecompileStorageProvider for OverlayPrecompileStorage<'_> {
 
 impl PoolTransactionError for BaseTxPoolError {
     fn is_bad_transaction(&self) -> bool {
-        true
+        !matches!(self, Self::Eip8130Authentication { .. })
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -1644,10 +1656,12 @@ where
 
     fn map_tx_auth_error(error: TxAuthError) -> InvalidPoolTransactionError {
         tracing::debug!(error = ?error, "EIP-8130 actor authorization failed");
+        let from_auth = Self::is_auth_derived(&error);
         let reason = match error {
-            TxAuthError::UnsupportedAccountChange | TxAuthError::UnsupportedAuthenticator => {
+            TxAuthError::UnsupportedAccountChange => {
                 return InvalidTransactionError::TxTypeNotSupported.into();
             }
+            TxAuthError::UnsupportedAuthenticator => "unsupported authenticator",
             TxAuthError::Authorize(AuthorizeError::Authenticate(_)) => {
                 "actor authentication failed"
             }
@@ -1681,7 +1695,31 @@ where
             }
             TxAuthError::Apply(apply) => Self::map_apply_error(apply),
         };
-        Self::eip8130_error(reason)
+        if from_auth { Self::eip8130_auth_error(reason) } else { Self::eip8130_error(reason) }
+    }
+
+    /// Whether `error` is decided by `sender_auth` or `payer_auth` (which
+    /// authenticator or key signed, and whether the signature verifies) rather
+    /// than by the transaction body or account state. Those fields are not
+    /// covered by the transaction hash.
+    const fn is_auth_derived(error: &TxAuthError) -> bool {
+        matches!(
+            error,
+            TxAuthError::Authorize(
+                AuthorizeError::Authenticate(_)
+                    | AuthorizeError::AuthenticationFailed
+                    | AuthorizeError::AuthenticatorMismatch { .. }
+                    | AuthorizeError::DefaultEoaRevoked { .. }
+                    | AuthorizeError::ActorExpired { .. }
+                    | AuthorizeError::NestedSignatureScope { .. }
+            ) | TxAuthError::SenderRecovery
+                | TxAuthError::PayerRecovery
+                | TxAuthError::UnexpectedPayerAuth
+                | TxAuthError::Scope { .. }
+                | TxAuthError::DelegationUnauthorized
+                | TxAuthError::UnsupportedAuthenticator
+                | TxAuthError::SignerMismatch
+        )
     }
 
     /// Maps an [`ApplyError`] (surfaced via [`TxAuthError::Apply`] when an
@@ -1806,6 +1844,10 @@ where
         InvalidPoolTransactionError::other(BaseTxPoolError::Eip8130Validation { reason })
     }
 
+    fn eip8130_auth_error(reason: &'static str) -> InvalidPoolTransactionError {
+        InvalidPoolTransactionError::other(BaseTxPoolError::Eip8130Authentication { reason })
+    }
+
     fn provider_unavailable(error: impl core::fmt::Display) -> InvalidPoolTransactionError {
         tracing::debug!(error = %error, "EIP-8130 state provider unavailable");
         Self::eip8130_error("state provider unavailable")
@@ -1855,9 +1897,9 @@ where
         // Without the Keystore an EIP-8130 transaction may use only delegation
         // and native secp256k1 keys; anything else is an unsupported type.
         if !BaseSpecId::from_timestamp(self.chain_spec(), now).is_enabled_in(BaseUpgrade::Zenith)
-            && TransactionAuthorizer::check_without_keystore(signed).is_err()
+            && let Err(error) = TransactionAuthorizer::check_without_keystore(signed)
         {
-            return Err(InvalidTransactionError::TxTypeNotSupported.into());
+            return Err(Self::map_tx_auth_error(error));
         }
         let local_chain_id = self.inner.chain_spec().chain().id();
         signed.validate_static(local_chain_id).map_err(InvalidPoolTransactionError::from)?;
@@ -1886,16 +1928,21 @@ where
     }
 
     /// Maps a structural rule failure to the pool's rejection: a named reason for
-    /// the call phase cap, and an unsupported transaction type for every
-    /// malformed shape (the pool's long-standing response to those).
+    /// the call phase cap, an authentication error for a malformed
+    /// `sender_auth` or `payer_auth` (not covered by the transaction hash), and
+    /// an unsupported transaction type for the other malformed shapes.
     fn map_structural_error(error: Eip8130StructuralError) -> InvalidPoolTransactionError {
         match error {
             Eip8130StructuralError::TooManyCallPhases => {
                 Self::eip8130_error("call phase count exceeds maximum")
             }
-            Eip8130StructuralError::MalformedSenderAuth
-            | Eip8130StructuralError::MalformedPayerAuth
-            | Eip8130StructuralError::TooManyAccountChanges
+            Eip8130StructuralError::MalformedSenderAuth => {
+                Self::eip8130_auth_error("sender_auth is malformed")
+            }
+            Eip8130StructuralError::MalformedPayerAuth => {
+                Self::eip8130_auth_error("payer_auth is malformed")
+            }
+            Eip8130StructuralError::TooManyAccountChanges
             | Eip8130StructuralError::MalformedAccountChange => {
                 InvalidTransactionError::TxTypeNotSupported.into()
             }
@@ -2470,7 +2517,8 @@ mod tests {
     }
 
     /// Helper: assert a structural (`()`-returning) validation failed with a
-    /// named [`BaseTxPoolError::Eip8130Validation`] reason.
+    /// named [`BaseTxPoolError::Eip8130Validation`] or
+    /// [`BaseTxPoolError::Eip8130Authentication`] reason.
     #[track_caller]
     fn assert_structural_reason(
         result: Result<(), InvalidPoolTransactionError>,
@@ -2479,13 +2527,38 @@ mod tests {
         match result {
             Err(InvalidPoolTransactionError::Other(error)) => {
                 match error.as_any().downcast_ref::<BaseTxPoolError>() {
-                    Some(BaseTxPoolError::Eip8130Validation { reason }) => {
+                    Some(
+                        BaseTxPoolError::Eip8130Validation { reason }
+                        | BaseTxPoolError::Eip8130Authentication { reason },
+                    ) => {
                         assert_eq!(*reason, expected);
                     }
                     other => panic!("expected Eip8130Validation, got {other:?}"),
                 }
             }
             other => panic!("expected Eip8130Validation, got {other:?}"),
+        }
+    }
+
+    /// Helper: assert validation failed with [`BaseTxPoolError::Eip8130Authentication`]
+    /// and `expected` as the reason, and that the error does not mark the
+    /// transaction hash as bad (the hash does not cover the authentication).
+    #[track_caller]
+    fn assert_auth_error<T: core::fmt::Debug>(
+        result: Result<T, InvalidPoolTransactionError>,
+        expected: &'static str,
+    ) {
+        match result {
+            Err(InvalidPoolTransactionError::Other(error)) => {
+                assert!(!error.is_bad_transaction());
+                match error.as_any().downcast_ref::<BaseTxPoolError>() {
+                    Some(BaseTxPoolError::Eip8130Authentication { reason }) => {
+                        assert_eq!(*reason, expected);
+                    }
+                    other => panic!("expected Eip8130Authentication, got {other:?}"),
+                }
+            }
+            other => panic!("expected Eip8130Authentication, got {other:?}"),
         }
     }
 
@@ -2497,7 +2570,10 @@ mod tests {
         match result {
             Err(InvalidPoolTransactionError::Other(error)) => {
                 match error.as_any().downcast_ref::<BaseTxPoolError>() {
-                    Some(BaseTxPoolError::Eip8130Validation { reason }) => {
+                    Some(
+                        BaseTxPoolError::Eip8130Validation { reason }
+                        | BaseTxPoolError::Eip8130Authentication { reason },
+                    ) => {
                         assert_eq!(*reason, expected);
                     }
                     other => panic!("expected Eip8130Validation, got {other:?}"),
@@ -2806,14 +2882,20 @@ mod tests {
         // EOA path requires exactly 65 bytes; anything else is rejected.
         let tx = minimal_valid_eoa_tx();
         let signed = Eip8130Signed::new(tx, Bytes::from_static(&[0u8; 32]), Bytes::new());
-        assert_unsupported(structural(Eip8130Structure::validate_sender_auth(&signed)));
+        assert_auth_error(
+            structural(Eip8130Structure::validate_sender_auth(&signed)),
+            "sender_auth is malformed",
+        );
     }
 
     #[test]
     fn rejects_eip8130_with_empty_sender_auth() {
         let tx = minimal_valid_eoa_tx();
         let signed = Eip8130Signed::new(tx, Bytes::new(), Bytes::new());
-        assert_unsupported(structural(Eip8130Structure::validate_sender_auth(&signed)));
+        assert_auth_error(
+            structural(Eip8130Structure::validate_sender_auth(&signed)),
+            "sender_auth is malformed",
+        );
     }
 
     // Regression: configured-actor path must reject the reserved authenticator
@@ -2824,21 +2906,30 @@ mod tests {
         let tx = TxEip8130 { sender: Some(Address::repeat_byte(0xaa)), ..minimal_valid_eoa_tx() };
         let auth = Bytes::from(Address::ZERO.to_vec());
         let signed = Eip8130Signed::new(tx, auth, Bytes::new());
-        assert_unsupported(structural(Eip8130Structure::validate_sender_auth(&signed)));
+        assert_auth_error(
+            structural(Eip8130Structure::validate_sender_auth(&signed)),
+            "sender_auth is malformed",
+        );
     }
 
     #[test]
     fn rejects_eip8130_configured_actor_with_short_auth() {
         let tx = TxEip8130 { sender: Some(Address::repeat_byte(0xaa)), ..minimal_valid_eoa_tx() };
         let signed = Eip8130Signed::new(tx, Bytes::from_static(&[0u8; 5]), Bytes::new());
-        assert_unsupported(structural(Eip8130Structure::validate_sender_auth(&signed)));
+        assert_auth_error(
+            structural(Eip8130Structure::validate_sender_auth(&signed)),
+            "sender_auth is malformed",
+        );
     }
 
     #[test]
     fn rejects_eip8130_payer_present_without_auth() {
         let tx = TxEip8130 { payer: Some(Address::repeat_byte(0x11)), ..minimal_valid_eoa_tx() };
         let signed = Eip8130Signed::new(tx, Bytes::from_static(&[0u8; 65]), Bytes::new());
-        assert_unsupported(structural(Eip8130Structure::validate_payer_auth(&signed)));
+        assert_auth_error(
+            structural(Eip8130Structure::validate_payer_auth(&signed)),
+            "payer_auth is malformed",
+        );
     }
 
     #[test]
@@ -2846,7 +2937,10 @@ mod tests {
         let tx = minimal_valid_eoa_tx();
         let signed =
             Eip8130Signed::new(tx, Bytes::from_static(&[0u8; 65]), Bytes::from_static(&[0u8; 20]));
-        assert_unsupported(structural(Eip8130Structure::validate_payer_auth(&signed)));
+        assert_auth_error(
+            structural(Eip8130Structure::validate_payer_auth(&signed)),
+            "payer_auth is malformed",
+        );
     }
 
     #[test]
@@ -2857,11 +2951,15 @@ mod tests {
             Bytes::from_static(&[0u8; 65]),
             Bytes::from(Address::ZERO.to_vec()),
         );
-        assert_unsupported(structural(Eip8130Structure::validate_payer_auth(&signed)));
+        assert_auth_error(
+            structural(Eip8130Structure::validate_payer_auth(&signed)),
+            "payer_auth is malformed",
+        );
     }
 
-    /// A configured sender naming a canonical non-k1 authenticator is an
-    /// unsupported transaction type before Zenith, and admissible from it.
+    /// A configured sender naming a canonical non-k1 authenticator is rejected
+    /// as unsupported authentication (not a bad transaction) before Zenith, and
+    /// admissible from it.
     #[test]
     fn non_k1_sender_authenticator_is_unsupported_before_zenith() {
         let tx = TxEip8130 { sender: Some(Address::repeat_byte(0xaa)), ..minimal_valid_eoa_tx() };
@@ -2869,7 +2967,10 @@ mod tests {
         auth.extend_from_slice(&[0u8; 64]);
         let signed = Eip8130Signed::new(tx, Bytes::from(auth), Bytes::new());
 
-        assert_unsupported(build_test_validator().validate_eip8130_structural(&signed));
+        assert_auth_error(
+            build_test_validator().validate_eip8130_structural(&signed),
+            "unsupported authenticator",
+        );
         let zenith = build_test_validator_with_spec(zenith_chain_spec());
         assert!(!matches!(
             zenith.validate_eip8130_structural(&signed),
