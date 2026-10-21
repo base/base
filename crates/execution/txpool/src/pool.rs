@@ -1060,9 +1060,10 @@ where
     /// Rejects automatic plain insertion of a known candidate sibling (design §4.6).
     ///
     /// Reth reinjects reorged-out transactions without sidecars, which would turn a candidate
-    /// sibling into an ordinary transaction. While candidates are enabled this suppresses any
-    /// sidecar-free transaction whose hash the ledger retains as a sibling, whatever its origin;
-    /// the group must be resubmitted. When a suppressed hash is a `Landed` group's winner and
+    /// sibling into an ordinary transaction, and validity predicates can be attached to any
+    /// known transaction bytes. While candidates are enabled this suppresses every transaction
+    /// without a candidate group whose hash the ledger retains as a sibling, whatever its origin
+    /// and whether or not it carries validity predicates; the group must be resubmitted. When a suppressed hash is a `Landed` group's winner and
     /// the sender's canonical account nonce is still at or below the winner's nonce, the winner
     /// was reorged out, so the group is reopened
     /// ([`GroupLedger::reopen_reorged`](base_execution_candidates::GroupLedger::reopen_reorged))
@@ -1077,8 +1078,7 @@ where
         transaction: &T,
     ) -> PoolResult<()> {
         let Some(candidates) = &self.candidates else { return Ok(()) };
-        if transaction.candidate_group().is_some() || !transaction.validity_predicates().is_empty()
-        {
+        if transaction.candidate_group().is_some() {
             return Ok(());
         }
         let hash = *transaction.hash();
@@ -4733,6 +4733,64 @@ mod tests {
             .await
             .expect_err("a known sibling stays suppressed under Private origin");
         assert!(matches!(err.kind, PoolErrorKind::Other(_)), "got {err:?}");
+    }
+
+    #[tokio::test]
+    async fn a_known_sibling_with_validity_predicates_is_suppressed() {
+        let (pool, client) = build_integration_pool();
+        let runtime = candidate_runtime();
+        let pool = pool.with_candidate_runtime(Arc::clone(&runtime));
+        let (group, representative) = candidate_submission(&client, &runtime);
+        pool.add_transaction(TransactionOrigin::Private, representative)
+            .await
+            .expect("the representative carrying its group is admitted");
+        runtime.ledger.confirm_pooled(group.group_hash(), |hash| pool.get(hash).is_some());
+
+        // Validity predicates are not a group: the sibling must not stand alone.
+        let sibling = plain_sibling(&group, 1).with_validity_predicates(vec![
+            ValidityPredicate::BlockNumber {
+                op: ValidityOperator::LessThan,
+                value: U256::from(1_000),
+            },
+        ]);
+        let hash = *sibling.hash();
+        let err = pool
+            .add_transaction(TransactionOrigin::Private, sibling)
+            .await
+            .expect_err("a known sibling with validity predicates stays suppressed");
+        assert!(matches!(err.kind, PoolErrorKind::Other(_)), "got {err:?}");
+        assert!(pool.get(&hash).is_none());
+    }
+
+    #[tokio::test]
+    async fn a_reorged_out_winner_with_validity_predicates_reopens_its_group() {
+        let (pool, client) = build_integration_pool();
+        let runtime = candidate_runtime();
+        let pool = pool.with_candidate_runtime(Arc::clone(&runtime));
+        let (group, representative) = candidate_submission(&client, &runtime);
+        pool.add_transaction(TransactionOrigin::Private, representative)
+            .await
+            .expect("the representative carrying its group is admitted");
+        runtime.ledger.confirm_pooled(group.group_hash(), |hash| pool.get(hash).is_some());
+        let winner = group.siblings()[1].hash();
+        canonical_nonce_update(&pool, 1, group.sender(), 1, vec![winner], PoolUpdateKind::Commit);
+        canonical_nonce_update(&pool, 1, group.sender(), 0, Vec::new(), PoolUpdateKind::Reorg);
+        fund(&client, group.sender());
+
+        // Anyone holding the public winner can attach a predicate under the default signature
+        // mode; it is still suppressed, and the group reopens like a plain reinjection.
+        let resent = plain_sibling(&group, 1).with_validity_predicates(vec![
+            ValidityPredicate::BlockNumber {
+                op: ValidityOperator::LessThan,
+                value: U256::from(1_000),
+            },
+        ]);
+        pool.add_transaction(TransactionOrigin::Private, resent)
+            .await
+            .expect_err("a reorged-out winner with predicates is not pooled outside its group");
+        assert!(pool.get(&winner).is_none());
+        assert!(runtime.ledger.lookup(&group.group_hash()).is_none(), "the landed entry reopens");
+        assert!(!runtime.ledger.suppresses_plain_reinsertion(&winner));
     }
 
     #[tokio::test]
