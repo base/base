@@ -93,22 +93,12 @@ impl Executor {
 }
 
 /// Task queue: counter, ready set, and running map.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Tasks {
     counter: Mutex<u128>,
     ready: Mutex<Vec<u128>>,
     /// All live tasks, keyed by monotonic ID.
     pub running: Mutex<BTreeMap<u128, Arc<Task>>>,
-}
-
-impl Default for Tasks {
-    fn default() -> Self {
-        Self {
-            counter: Mutex::new(0),
-            ready: Mutex::new(Vec::new()),
-            running: Mutex::new(BTreeMap::new()),
-        }
-    }
 }
 
 impl Tasks {

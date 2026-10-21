@@ -348,6 +348,11 @@ mod tests {
                 BaseUpgrade::Cobalt,
             ),
             (
+                Chain::base_mainnet(),
+                ChainConfig::mainnet().denim_timestamp.unwrap(),
+                BaseUpgrade::Denim,
+            ),
+            (
                 Chain::base_sepolia(),
                 ChainConfig::sepolia().azul_timestamp.unwrap(),
                 BaseUpgrade::Azul,
@@ -361,6 +366,11 @@ mod tests {
                 Chain::base_sepolia(),
                 ChainConfig::sepolia().cobalt_timestamp.unwrap(),
                 BaseUpgrade::Cobalt,
+            ),
+            (
+                Chain::base_sepolia(),
+                ChainConfig::sepolia().denim_timestamp.unwrap(),
+                BaseUpgrade::Denim,
             ),
             (
                 Chain::from_id(ChainConfig::zeronet().chain_id),

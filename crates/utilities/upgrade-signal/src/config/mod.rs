@@ -24,7 +24,7 @@ impl UpgradeSignalDefaults {
     /// Default total deadline for each upgrade signal JSON-RPC request.
     pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 
-    /// Default number of attempts to read the L1 upgrade signal schedule before failing startup.
+    /// Default number of attempts per bounded L1 upgrade signal schedule read.
     pub const READ_ATTEMPTS: u32 = 3;
 
     /// Initial backoff between L1 upgrade signal schedule read attempts.

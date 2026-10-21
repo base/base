@@ -2,6 +2,7 @@
 //! through the `PreimageOracle` ABI as local keys.
 
 use alloc::vec::Vec;
+use core::num::NonZeroU64;
 
 use alloy_genesis::ChainConfig;
 use alloy_primitives::{Address, B256, U256, uint};
@@ -68,16 +69,10 @@ pub const L1_CONFIG_KEY: U256 = uint!(7_U256);
 /// so on-chain verification can match it against the actual `msg.sender`.
 pub const PROPOSER_KEY: U256 = uint!(8_U256);
 
-/// Number of L2 blocks between intermediate output root checkpoints.
-///
-/// The host writes this into [`INTERMEDIATE_BLOCK_INTERVAL_KEY`]. Callers do not
-/// supply it on a proof request.
-pub const INTERMEDIATE_BLOCK_INTERVAL: u64 = 300;
-
 /// The local key identifier for the intermediate block interval.
 ///
-/// This key retrieves [`INTERMEDIATE_BLOCK_INTERVAL`]. The enclave uses it to
-/// sample intermediate roots when constructing the aggregate proof journal.
+/// This key retrieves the proven game's number of L2 blocks between two intermediate output roots,
+/// as a non-zero big-endian `u64`. The proof programs sample the roots they commit at this interval.
 pub const INTERMEDIATE_BLOCK_INTERVAL_KEY: U256 = uint!(9_U256);
 
 /// The local key identifier for the L1 head block number.
@@ -183,12 +178,11 @@ pub struct BootInfo {
     /// transaction sender matches this value.
     #[serde(default)]
     pub proposer: Address,
-    /// The number of L2 blocks between intermediate output root checkpoints.
+    /// The number of L2 blocks between two intermediate output roots of the proven game.
     ///
-    /// Used by the enclave to sample the correct intermediate roots when
-    /// constructing the aggregate proof journal. Defaults to 0 when not set.
-    #[serde(default)]
-    pub intermediate_block_interval: u64,
+    /// **Security**: User-submitted input; the on-chain contract rebuilds the journal from the
+    /// game's own intermediate roots, so a proof sampled at another interval does not verify.
+    pub intermediate_block_interval: NonZeroU64,
     /// The block number of the L1 head.
     ///
     /// Stored alongside `l1_head` so the enclave can reference the L1 head
@@ -201,6 +195,10 @@ pub struct BootInfo {
 }
 
 impl BootInfo {
+    /// Whether this build's EVM executes EIP-8130 transactions. Both features enable
+    /// `base-common-evm/std`, which carries the EIP-8130 pipeline.
+    pub const EXECUTES_EIP8130: bool = cfg!(any(feature = "std", feature = "evm-std"));
+
     /// Read an optional local preimage by key.
     ///
     /// Returns `Ok(None)` only when the oracle reports the key as absent, which callers may safely
@@ -382,20 +380,17 @@ impl BootInfo {
             }
         };
 
-        // Load intermediate block interval (optional — defaults to 0 for backwards compatibility).
         let intermediate_block_interval =
-            match Self::get_optional_local(oracle, INTERMEDIATE_BLOCK_INTERVAL_KEY).await? {
-                Some(bytes) => u64::from_be_bytes(
-                    bytes.as_slice().try_into().map_err(OracleProviderError::SliceConversion)?,
-                ),
-                None => {
-                    debug!(
-                        target: "boot_loader",
-                        "Intermediate block interval preimage not found, defaulting to 0"
-                    );
-                    0
-                }
-            };
+            Self::get_optional_local(oracle, INTERMEDIATE_BLOCK_INTERVAL_KEY)
+                .await?
+                .ok_or(OracleProviderError::MissingIntermediateBlockInterval)?;
+        let intermediate_block_interval = NonZeroU64::new(u64::from_be_bytes(
+            intermediate_block_interval
+                .as_slice()
+                .try_into()
+                .map_err(OracleProviderError::SliceConversion)?,
+        ))
+        .ok_or(OracleProviderError::ZeroIntermediateBlockInterval)?;
 
         // Load L1 head block number (optional — defaults to 0 for backwards compatibility).
         let l1_head_number = match Self::get_optional_local(oracle, L1_HEAD_NUMBER_KEY).await? {
@@ -469,6 +464,15 @@ impl BootInfo {
             None => {}
         }
 
+        // Without `base-common-evm/std` the EVM cannot execute EIP-8130 transactions, and the
+        // resulting validation error would make the driver re-execute the block as deposits only,
+        // diverging from the node. Refuse to prove any range in which Everest is active.
+        if !Self::EXECUTES_EIP8130
+            && rollup_config.upgrades.base.everest.is_some_and(|time| time <= l2_claim_timestamp)
+        {
+            return Err(OracleProviderError::UnsupportedEverestUpgrade);
+        }
+
         let schedule_id = ScheduleId::pin(&mut rollup_config, l2_schedule_timestamp);
 
         // Only a pinned Beryl schedule requires its trusted built-in admin.
@@ -505,6 +509,7 @@ mod tests {
         PreimageKey, PreimageOracleClient,
         errors::{PreimageOracleError, PreimageOracleResult},
     };
+    use rstest::rstest;
 
     use super::*;
 
@@ -525,12 +530,26 @@ mod tests {
     }
 
     impl MockOracle {
+        /// Builds an oracle serving only an intermediate block interval, the one required key no
+        /// test derives from its chain configuration.
         fn new() -> Self {
-            Self { data: Vec::new(), timeout_keys: Vec::new(), miss_returns_invalid_key: false }
+            let mut oracle = Self {
+                data: Vec::new(),
+                timeout_keys: Vec::new(),
+                miss_returns_invalid_key: false,
+            };
+            oracle.insert(INTERMEDIATE_BLOCK_INTERVAL_KEY, 30u64.to_be_bytes().to_vec());
+            oracle
         }
 
         fn insert(&mut self, key: U256, value: Vec<u8>) {
+            self.remove(key);
             self.data.push((PreimageKey::new_local(key.to()), value));
+        }
+
+        fn remove(&mut self, key: U256) {
+            let key = PreimageKey::new_local(key.to());
+            self.data.retain(|(entry_key, _)| *entry_key != key);
         }
 
         fn fail_with_timeout(&mut self, key: U256) {
@@ -884,6 +903,33 @@ mod tests {
         }
     }
 
+    #[rstest]
+    #[case::active_at_genesis(0, true)]
+    #[case::active_before_claim(1_000, true)]
+    #[case::after_claim(u64::MAX, false)]
+    #[tokio::test]
+    async fn everest_requires_eip8130_execution(
+        #[case] everest_timestamp: u64,
+        #[case] everest_active: bool,
+    ) {
+        let mut rollup_config = BaseChainConfig::MAINNET.rollup_config();
+        rollup_config.upgrades.base.everest = Some(everest_timestamp);
+
+        let mut oracle = MockOracle::new();
+        oracle.insert(L1_HEAD_KEY, B256::repeat_byte(0x11).to_vec());
+        oracle.insert(L2_OUTPUT_ROOT_KEY, B256::repeat_byte(0x22).to_vec());
+        oracle.insert(L2_CLAIM_KEY, B256::repeat_byte(0x33).to_vec());
+        oracle.insert(L2_CLAIM_BLOCK_NUMBER_KEY, 100u64.to_be_bytes().to_vec());
+        oracle.insert_rollup_config(DEVNET_CHAIN_ID, &rollup_config);
+
+        let result = BootInfo::load(&oracle).await;
+        if everest_active && !BootInfo::EXECUTES_EIP8130 {
+            assert!(matches!(result, Err(OracleProviderError::UnsupportedEverestUpgrade)));
+        } else {
+            result.expect("boot info should load");
+        }
+    }
+
     #[tokio::test]
     async fn clears_future_zenith_upgrade() {
         const CLAIM_BLOCK: u64 = 100;
@@ -1194,9 +1240,16 @@ mod tests {
         let boot_info = BootInfo::load(&oracle).await.expect("boot info should load");
 
         assert_eq!(boot_info.proposer, Address::ZERO);
-        assert_eq!(boot_info.intermediate_block_interval, 0);
         assert_eq!(boot_info.l1_head_number, 0);
         assert_eq!(boot_info.claimed_l2_block_number, 100);
+
+        let mut oracle = oracle_with_required_keys();
+        oracle.remove(INTERMEDIATE_BLOCK_INTERVAL_KEY);
+        let err = BootInfo::load(&oracle).await.expect_err("missing interval should fail");
+        assert!(matches!(err, OracleProviderError::MissingIntermediateBlockInterval));
+        oracle.insert(INTERMEDIATE_BLOCK_INTERVAL_KEY, 0u64.to_be_bytes().to_vec());
+        let err = BootInfo::load(&oracle).await.expect_err("zero interval should fail");
+        assert!(matches!(err, OracleProviderError::ZeroIntermediateBlockInterval));
     }
 
     #[tokio::test]
@@ -1230,7 +1283,6 @@ mod tests {
         let boot_info = BootInfo::load(&oracle).await.expect("boot info should load");
 
         assert_eq!(boot_info.proposer, Address::ZERO);
-        assert_eq!(boot_info.intermediate_block_interval, 0);
         assert_eq!(boot_info.l1_head_number, 0);
         assert_eq!(boot_info.claimed_l2_block_number, 100);
     }

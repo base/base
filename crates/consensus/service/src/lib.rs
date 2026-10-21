@@ -11,9 +11,8 @@ extern crate tracing;
 
 mod service;
 pub use service::{
-    DerivationDelegateConfig, FollowNode, FollowNodeConfig, HEAD_STREAM_POLL_INTERVAL, L1Config,
-    L1ConfigBuilder, NodeMode, NodeOperatingMode, RollupNode, RollupNodeBuilder, ShutdownSignal,
-    UpgradeSignalBuilderConfig,
+    FollowNode, FollowNodeConfig, HEAD_STREAM_POLL_INTERVAL, L1Config, L1ConfigBuilder, NodeMode,
+    NodeOperatingMode, RollupNode, RollupNodeBuilder, ShutdownSignal, UpgradeSignalBuilderConfig,
 };
 
 mod follow;
@@ -21,37 +20,44 @@ pub use follow::{FollowError, RemoteClient, RemoteL2Client, RemoteL2ClientError}
 
 mod standalone;
 pub use standalone::{
-    StandaloneAttributesBuilder, StandaloneDerivationClient, StandaloneOriginSelector,
-    StandalonePrefund, StandaloneSequencerNode, StandaloneUnsafePayloadGossipClient,
+    StandaloneAttributesBuilder, StandaloneDenimSchedule, StandaloneDerivationClient,
+    StandaloneOriginSelector, StandalonePrefund, StandaloneScheduleError, StandaloneSequencerNode,
 };
+
+mod standalone_impersonation;
+pub use standalone_impersonation::{
+    ImpersonationError, ImpersonationRequest, StandaloneImpersonationQueue,
+    StandaloneImpersonationState,
+};
+
+mod standalone_dev;
+pub use standalone_dev::{StandaloneDevChain, StandaloneDevError, StandaloneDevState};
 
 mod actors;
 pub use actors::{
     AlloyL1BlockFetcher, BlockStream, BuildOutcome, BuildPipelineState, BuildRequest,
     CancellableContext, CanonicalReconciliationInputs, CanonicalUnsafeCatchup, CheckpointActor,
     CheckpointClient, CheckpointDB, CheckpointError, CheckpointRequest, CheckpointWriter,
-    Conductor, ConductorClient, ConductorError, DelayedL1OriginSelectorProvider,
-    DelegateDerivationActor, DerivationActor, DerivationActorRequest, DerivationClientError,
-    DerivationClientResult, DerivationDelegateClient, DerivationDelegateClientError,
-    DerivationEngineClient, DerivationError, DerivationState, DerivationStateMachine,
-    DerivationStateTransitionError, DerivationStateUpdate, EngineActor, EngineActorRequest,
-    EngineClientError, EngineClientResult, EngineConfig, EngineDerivationClient, EngineError,
-    EngineProcessor, EngineRequestReceiver, EngineRpcProcessor, EngineRpcRequest,
-    ExecutionForwarding, ExecutionForwardingLayer, ForwardedParams, GetPayloadRequest,
-    GossipTransport, InsertUnsafePayloadRequest, L1BlockFetcher, L1OriginSelector,
-    L1OriginSelectorError, L1OriginSelectorProvider, L1WatcherActor, L1WatcherActorError,
-    L1WatcherDerivationClient, L1WatcherQueryExecutor, L1WatcherQueryProcessor, L2Finalizer,
-    LogRetrier, NetworkActor, NetworkActorError, NetworkBuilder, NetworkBuilderError,
-    NetworkConfig, NetworkDriver, NetworkDriverError, NetworkEngineClient, NetworkHandler,
-    NetworkInboundData, NodeActor, NoopCheckpointWriter, OriginSelector, PayloadBuilder,
-    PayloadSealer, PendingStopSender, PoolActivation, PrefetchedChainProvider,
-    PrefetchedChainProviderError, PreparedL1Origin, QueuedDerivationEngineClient,
-    QueuedEngineDerivationClient, QueuedEngineRpcClient, QueuedL1WatcherDerivationClient,
-    QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient, QueuedSequencerEngineClient,
-    QueuedUnsafePayloadGossipClient, ReconcileShadowRequest, RecoveryModeGuard, ResetOrigin,
-    ResetOutcome, ResetReason, ResetRequest, ResetRequestOutcome, ResetResponder, RpcActor,
-    RpcActorError, RpcContext, ScheduledTicker, SealState, SealStepError, SealStepOutcome,
-    SequencerActor, SequencerActorError, SequencerAdminQuery, SequencerConfig,
+    Conductor, ConductorClient, ConductorError, DelayedL1OriginSelectorProvider, DerivationActor,
+    DerivationActorRequest, DerivationClientError, DerivationClientResult, DerivationEngineClient,
+    DerivationError, DerivationState, DerivationStateMachine, DerivationStateTransitionError,
+    DerivationStateUpdate, EngineActor, EngineActorRequest, EngineClientError, EngineClientResult,
+    EngineConfig, EngineDerivationClient, EngineError, EngineProcessor, EngineRequestReceiver,
+    EngineRpcProcessor, EngineRpcRequest, ExecutionForwarding, ExecutionForwardingLayer,
+    ForwardedParams, GetPayloadRequest, GossipTransport, InsertUnsafePayloadRequest,
+    L1BlockFetcher, L1OriginSelector, L1OriginSelectorError, L1OriginSelectorProvider,
+    L1WatcherActor, L1WatcherActorError, L1WatcherDerivationClient, L1WatcherQueryExecutor,
+    L1WatcherQueryProcessor, L2Finalizer, LogRetrier, NetworkActor, NetworkActorError,
+    NetworkBuilder, NetworkBuilderError, NetworkConfig, NetworkDriver, NetworkDriverError,
+    NetworkEngineClient, NetworkHandler, NetworkInboundData, NodeActor, NoopCheckpointWriter,
+    OriginSelector, PayloadBuilder, PayloadSealer, PendingStopSender, PoolActivation,
+    PrefetchedChainProvider, PrefetchedChainProviderError, PreparedL1Origin,
+    QueuedDerivationEngineClient, QueuedEngineDerivationClient, QueuedEngineRpcClient,
+    QueuedL1WatcherDerivationClient, QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient,
+    QueuedSequencerEngineClient, QueuedUnsafePayloadGossipClient, ReconcileShadowRequest,
+    RecoveryModeGuard, ResetOrigin, ResetOutcome, ResetReason, ResetRequest, ResetRequestOutcome,
+    ResetResponder, RpcActor, RpcActorError, RpcContext, ScheduledTicker, SealState, SealStepError,
+    SealStepOutcome, SequencerActor, SequencerActorError, SequencerAdminQuery, SequencerConfig,
     SequencerEngineClient, SequencerEngineRequestCoordinator, SequencerEngineState, SequencerKind,
     ShadowCycle, ShadowFunding, ShadowReconciliationGate, ShadowReconciliationTask,
     ShadowSequencingState, UnsafePayloadGossipClient, UnsafePayloadGossipClientError,

@@ -221,7 +221,7 @@ impl Decodable for SpanBatchEip8130TransactionData {
             max_fee_per_gas: Decodable::decode(buf)?,
             payer: Self::decode_address_opt(buf)?,
             account_changes: Decodable::decode(buf)?,
-            calls: Decodable::decode(buf)?,
+            calls: TxEip8130::decode_calls(buf)?,
             metadata: Decodable::decode(buf)?,
             sender_authenticator: Decodable::decode(buf)?,
             payer_authenticator: Decodable::decode(buf)?,
@@ -373,5 +373,47 @@ mod tests {
         let mut payer_set = base;
         payer_set.payer_authenticator = Bytes::from_static(&[0u8; 20]);
         assert!(SpanBatchTransactionData::decode(&mut encode(&payer_set).as_slice()).is_err());
+    }
+
+    fn encode_with_call_phases(phases: usize) -> Vec<u8> {
+        let tx = SpanBatchEip8130TransactionData {
+            sender: None,
+            nonce_key: U256::ZERO,
+            valid_after: 0,
+            valid_before: 0,
+            max_priority_fee_per_gas: 1,
+            max_fee_per_gas: 1,
+            payer: None,
+            account_changes: Vec::new(),
+            calls: vec![Vec::new(); phases],
+            metadata: Bytes::new(),
+            sender_authenticator: Bytes::new(),
+            payer_authenticator: Bytes::new(),
+        };
+        let mut buf = Vec::new();
+        SpanBatchTransactionData::Eip8130(tx).encode(&mut buf);
+        buf
+    }
+
+    #[test]
+    fn decode_accepts_maximum_call_phases() {
+        let encoded = encode_with_call_phases(Eip8130Constants::MAX_CALL_PHASES_PER_TX);
+
+        let decoded = SpanBatchTransactionData::decode(&mut encoded.as_slice()).unwrap();
+
+        let SpanBatchTransactionData::Eip8130(decoded) = decoded else {
+            panic!("Expected SpanBatchEip8130TransactionData, got {decoded:?}");
+        };
+        assert_eq!(decoded.calls.len(), Eip8130Constants::MAX_CALL_PHASES_PER_TX);
+    }
+
+    #[test]
+    fn decode_rejects_excess_call_phases() {
+        let encoded = encode_with_call_phases(Eip8130Constants::MAX_CALL_PHASES_PER_TX + 1);
+
+        assert_eq!(
+            SpanBatchTransactionData::decode(&mut encoded.as_slice()),
+            Err(alloy_rlp::Error::Custom("too many EIP-8130 call phases"))
+        );
     }
 }

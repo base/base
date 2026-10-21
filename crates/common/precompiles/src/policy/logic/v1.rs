@@ -424,122 +424,29 @@ impl<S: PolicyAccounting> PolicyRegistryLogic<S> for PolicyRegistryV1 {
 
 #[cfg(test)]
 mod tests {
-    use alloc::{collections::BTreeMap, vec, vec::Vec};
+    use alloc::{vec, vec::Vec};
 
-    use alloy_primitives::{Address, LogData, U256, address};
+    use alloy_primitives::{Address, U256, address};
     use alloy_sol_types::SolEvent;
     use base_precompile_storage::{BasePrecompileError, Result};
     use rstest::rstest;
 
     use crate::{
-        IPolicyRegistry, IPolicyRegistry::PolicyType, PolicyAccounting, PolicyRegistryLogic,
+        FakePolicyAccounting, IPolicyRegistry, IPolicyRegistry::PolicyType, PolicyRegistryLogic,
         PolicyRegistryV1,
     };
 
-    const REGISTRY: Address = address!("0x8453000000000000000000000000000000000002");
     const ADMIN: Address = address!("0x1000000000000000000000000000000000000001");
     const ALICE: Address = address!("0xA000000000000000000000000000000000000001");
     const BOB: Address = address!("0xB000000000000000000000000000000000000001");
     const NEW_ADMIN: Address = address!("0x2000000000000000000000000000000000000002");
     const LOGIC: PolicyRegistryV1 = PolicyRegistryV1;
 
-    // --- Self-contained in-memory fake (no dependency on `common::test_utils`, so shared
-    //     test scaffolding can never drift this frozen version's coverage) ---
-
-    /// Minimal [`PolicyAccounting`] backed by in-memory maps. `delete_*` removes the key so
-    /// its read semantics match `Mapping::delete` (a zeroed slot), not a written zero value.
-    #[derive(Debug)]
-    struct FakePolicyAccounting {
-        caller: Address,
-        initialized: bool,
-        policies: BTreeMap<u64, U256>,
-        members: BTreeMap<(u64, Address), bool>,
-        pending_admins: BTreeMap<u64, Address>,
-        next_counter: u64,
-        events: Vec<LogData>,
-    }
-
-    impl FakePolicyAccounting {
-        fn new() -> Self {
-            Self {
-                caller: ADMIN,
-                initialized: false,
-                policies: BTreeMap::new(),
-                members: BTreeMap::new(),
-                pending_admins: BTreeMap::new(),
-                next_counter: 0,
-                events: Vec::new(),
-            }
-        }
-    }
-
-    impl PolicyAccounting for FakePolicyAccounting {
-        fn registry_address(&self) -> Address {
-            REGISTRY
-        }
-        fn caller(&self) -> Address {
-            self.caller
-        }
-        fn read_policy_word(&self, policy_id: u64) -> Result<U256> {
-            Ok(self.policies.get(&policy_id).copied().unwrap_or(U256::ZERO))
-        }
-        fn write_policy_word(&mut self, policy_id: u64, word: U256) -> Result<()> {
-            self.policies.insert(policy_id, word);
-            Ok(())
-        }
-        fn read_member(&self, policy_id: u64, account: Address) -> Result<bool> {
-            Ok(self.members.get(&(policy_id, account)).copied().unwrap_or(false))
-        }
-        fn set_member(&mut self, policy_id: u64, account: Address) -> Result<()> {
-            self.members.insert((policy_id, account), true);
-            Ok(())
-        }
-        fn delete_member(&mut self, policy_id: u64, account: Address) -> Result<()> {
-            self.members.remove(&(policy_id, account));
-            Ok(())
-        }
-        fn read_pending_admin(&self, policy_id: u64) -> Result<Address> {
-            Ok(self.pending_admins.get(&policy_id).copied().unwrap_or(Address::ZERO))
-        }
-        fn write_pending_admin(&mut self, policy_id: u64, admin: Address) -> Result<()> {
-            self.pending_admins.insert(policy_id, admin);
-            Ok(())
-        }
-        fn delete_pending_admin(&mut self, policy_id: u64) -> Result<()> {
-            self.pending_admins.remove(&policy_id);
-            Ok(())
-        }
-        fn read_next_counter(&self) -> Result<u64> {
-            Ok(self.next_counter)
-        }
-        fn write_next_counter(&mut self, counter: u64) -> Result<()> {
-            self.next_counter = counter;
-            Ok(())
-        }
-        fn emit_event(&mut self, log: LogData) -> Result<()> {
-            self.events.push(log);
-            Ok(())
-        }
-        fn mark_initialized(&mut self) -> Result<()> {
-            self.initialized = true;
-            Ok(())
-        }
-
-        // V1 has no composite policies; this fake never stores children.
-        fn read_children(&self, _policy_id: u64) -> Result<Vec<u64>> {
-            Ok(Vec::new())
-        }
-
-        fn write_children(&mut self, _policy_id: u64, _child_policy_ids: &[u64]) -> Result<()> {
-            Ok(())
-        }
-    }
-
     type Storage = FakePolicyAccounting;
 
     /// Bare storage (no built-ins seeded), caller = `ADMIN`.
     fn bare() -> Storage {
-        FakePolicyAccounting::new()
+        FakePolicyAccounting::with_caller(ADMIN)
     }
 
     /// Storage with both built-in policies seeded and the counter at 2.
@@ -550,7 +457,7 @@ mod tests {
     }
 
     fn set_caller(storage: &mut Storage, caller: Address) {
-        storage.caller = caller;
+        storage.set_caller(caller);
     }
 
     fn create_allowlist(storage: &mut Storage) -> u64 {
@@ -803,15 +710,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn update_blocklist_on_allowlist_policy_by_non_admin_reverts_with_incompatible_type() {
-        let mut rt = initialized();
-        let id = create_allowlist(&mut rt);
-        set_caller(&mut rt, ALICE);
-        let err = LOGIC.update_blocklist(&mut rt, id, true, vec![BOB]).unwrap_err();
-        assert_eq!(err, BasePrecompileError::revert(IPolicyRegistry::IncompatiblePolicyType {}));
-    }
-
     // --- createPolicyWithAccounts ---
 
     #[test]
@@ -1053,6 +951,12 @@ mod tests {
         create_blocklist,
         ALICE,
         |mut rt: Storage, id: u64| LOGIC.update_allowlist(&mut rt, id, true, vec![ALICE]),
+        BasePrecompileError::revert(IPolicyRegistry::IncompatiblePolicyType {})
+    )]
+    #[case::update_blocklist_on_allowlist_as_non_admin(
+        create_allowlist,
+        ALICE,
+        |mut rt: Storage, id: u64| LOGIC.update_blocklist(&mut rt, id, true, vec![ALICE]),
         BasePrecompileError::revert(IPolicyRegistry::IncompatiblePolicyType {})
     )]
     #[case::finalize_admin_without_pending(

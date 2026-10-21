@@ -261,7 +261,8 @@ impl Eip8130Constants {
     /// window is `NonceManagerStorage::NONCE_FREE_EXPIRY_WINDOW` (currently
     /// **30,000 ms**), enforced against the block timestamp when the nonce-free
     /// replay entry is recorded at inclusion. This value MUST remain `<=` that
-    /// on-chain window so the pool never admits a transaction whose `valid_before`
+    /// on-chain window (a compile-time assertion in `base-execution-txpool`
+    /// enforces this) so the pool never admits a transaction whose `valid_before`
     /// the block-inclusion check would reject (which would waste block space on
     /// transactions that can never land). The gap between the two (20,000 vs
     /// 30,000 ms) is deliberate headroom that also absorbs the skew between the

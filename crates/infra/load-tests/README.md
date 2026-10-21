@@ -50,6 +50,31 @@ cargo test -p base-load-tests
 cargo run -p base-load-tester-bin --bin base-load-tester -- path/to/config.yaml
 ```
 
+## Signed validity rollout
+
+Validity workloads default to `validity.signing: adaptive`: requests start
+unsigned. An explicit signature-required ingress error switches that endpoint
+to signing and retries the same raw transaction with a user-authorized sidecar.
+The endpoint state is shared by workers; subsequent requests sign immediately.
+Retries remain bounded, transaction hashes and nonces are unchanged, and signed
+submissions never silently downgrade to unsigned or plain transactions.
+
+For proactive migration, including nodes in `off` mode or the fleet's
+`verify-if-present` stage, configure:
+
+```yaml
+validity:
+  signing: signed
+```
+
+Keep the existing validity ratio and predicate configuration alongside that setting.
+Signing uses the controlled sender's key and the EIP-712 contract documented in
+[base-execution-txpool](../../execution/txpool/README.md#signed-validity-predicates).
+Adaptive mode observes ingress errors only: an asynchronous builder drop cannot
+trigger it. In `off` mode, nodes preserve signatures without checking them; operators
+should deploy `verify-if-present` fleet-wide to verify signed requests while accepting
+legacy clients, and use explicit signing before enabling required enforcement.
+
 ## 200ms devnet profile
 
 `examples/denim-devnet.yaml` uses canonical polling at 200ms, without a Flashblocks WebSocket.
@@ -166,6 +191,7 @@ delay is measured for logging but is no longer included in the JSON output.
 | `sepolia.yaml` | Base Sepolia | Requires `FUNDER_KEY` |
 | `real-token-sepolia.yaml` | Base Sepolia | Uses predeployed WETH/USDC and the Uniswap V3 swap router; run with `just load-test real-token sepolia`; recover with `just load-test real-token-recover sepolia` |
 | `real-token-mainnet-snapshot.yaml` | Local/shadow Base mainnet snapshot | Wraps funded ETH into WETH, acquires USDC, then runs random-direction Uniswap V3 and Aerodrome CL swaps; run with `just load-test real-token mainnet-snapshot` |
+| `mainnet-mix-mainnet-snapshot.yaml` | `base-bench snapshot` on Base mainnet | Transaction mix and gas/s of a sampled mainnet week; regenerate with `etc/scripts/local/mainnet-mix.py`, whose docstring lists the mapping and its limits |
 | `zeronet.yaml` | Base Zeronet | Requires `FUNDER_KEY` |
 
 ### Contract Addresses
@@ -494,8 +520,8 @@ If `validity.ratio > 0` but the ingress endpoint does not serve
 `base_sendRawTransactionValidity`, the run fails loudly at startup rather than
 silently degrading to plain submission.
 
-**Interpreting the results.** There is no validity-specific builder rejection
-metric, so a transaction whose predicate is false is skipped by the builder and
+**Interpreting the results.** Signature-rejection metrics describe admission policy,
+not unsatisfied predicates. A transaction whose predicate is false is skipped by the builder and
 simply never confirms (it is not distinguishable from an ordinary drop by a
 counter alone). Compare the `by_cohort` inclusion rates *relative to each other*
 rather than against an absolute target; to confirm the skip path directly,

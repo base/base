@@ -3,7 +3,7 @@
 use alloy_primitives::U256;
 use base_common_genesis::BaseUpgrade;
 
-use crate::{UpgradeSignal, UpgradeSignalMode, UpgradeSignalSchedule};
+use crate::{PackedProtocolVersion, UpgradeSignal, UpgradeSignalMode, UpgradeSignalSchedule};
 
 /// Upgrade signal metric layer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -83,14 +83,6 @@ impl UpgradeSignalMetrics {
         Self::mode_info(layer.label(), mode).set(1.0);
     }
 
-    /// Records all metrics derived from a successfully read schedule.
-    pub fn record_schedule(layer: UpgradeSignalMetricLayer, schedule: &UpgradeSignalSchedule) {
-        Self::init();
-        for signal in &schedule.signals {
-            Self::record_signal(layer, schedule.l1_block_number, signal);
-        }
-    }
-
     /// Records all metrics derived from a successfully read schedule for all enabled layers.
     pub fn record_schedule_for_layers(
         layers: &[UpgradeSignalMetricLayer],
@@ -98,7 +90,9 @@ impl UpgradeSignalMetrics {
     ) {
         Self::init();
         for layer in layers {
-            Self::record_schedule(*layer, schedule);
+            for signal in &schedule.signals {
+                Self::record_signal(*layer, schedule.l1_block_number, signal);
+            }
         }
     }
 
@@ -119,34 +113,22 @@ impl UpgradeSignalMetrics {
         Self::last_l1_read_block(layer, upgrade_id).set(l1_block_number as f64);
     }
 
-    /// Records failed L1 reads for all contract-backed upgrades.
-    pub fn record_l1_read_errors(layer: UpgradeSignalMetricLayer) {
-        Self::init();
-        for upgrade_id in BaseUpgrade::CONTRACT_VARIANTS {
-            Self::l1_read_errors_total(layer.label(), upgrade_id.contract_id().to_string())
-                .increment(1);
-        }
-    }
-
     /// Records failed L1 reads for all contract-backed upgrades across all enabled layers.
     pub fn record_l1_read_errors_for_layers(layers: &[UpgradeSignalMetricLayer]) {
         Self::init();
         for layer in layers {
-            Self::record_l1_read_errors(*layer);
+            for upgrade_id in BaseUpgrade::CONTRACT_VARIANTS {
+                Self::l1_read_errors_total(layer.label(), upgrade_id.contract_id().to_string())
+                    .increment(1);
+            }
         }
-    }
-
-    /// Records an empty (but successful) L1 schedule read for one layer.
-    pub fn record_empty_schedule_read(layer: UpgradeSignalMetricLayer) {
-        Self::init();
-        Self::empty_schedule_reads_total(layer.label()).increment(1);
     }
 
     /// Records an empty (but successful) L1 schedule read across all enabled layers.
     pub fn record_empty_schedule_reads_for_layers(layers: &[UpgradeSignalMetricLayer]) {
         Self::init();
         for layer in layers {
-            Self::record_empty_schedule_read(*layer);
+            Self::empty_schedule_reads_total(layer.label()).increment(1);
         }
     }
 
@@ -194,11 +176,9 @@ impl UpgradeSignalMetrics {
     ///
     /// Expects a contract-read packed semver value; non-semver inputs decode to garbage.
     pub fn protocol_version_to_f64(protocol_version: U256) -> f64 {
-        let limbs = protocol_version.as_limbs();
-        let major = limbs[1] >> 32;
-        let minor = limbs[1] & u64::from(u32::MAX);
-        let patch = limbs[0] >> 32;
-        (major * 1_000_000 + minor * 1_000 + patch) as f64
+        let v = PackedProtocolVersion::new(protocol_version);
+        (u64::from(v.major()) * 1_000_000 + u64::from(v.minor()) * 1_000 + u64::from(v.patch()))
+            as f64
     }
 }
 

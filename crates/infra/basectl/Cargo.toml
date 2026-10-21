@@ -57,6 +57,7 @@ tokio-tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"] }
 alloy-provider = { workspace = true, features = ["admin-api", "net-api", "pubsub", "txpool-api", "ws"] }
 
 [dev-dependencies]
+rstest = { workspace = true }
 tempfile = { workspace = true }
 jsonrpsee = { workspace = true, features = ["server"] }
 axum = { workspace = true, features = ["tokio", "http1", "json"] }

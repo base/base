@@ -9,7 +9,8 @@ use reth_cli_runner::CliRunner;
 
 use crate::{
     commands::{
-        bootnode::BootnodeCommand, follow::FollowCommand, reth::RethCommand, rpc::RpcCommand,
+        bootnode::BootnodeCommand, consensus::ConsensusCommand, dev::DevCommand,
+        execution::ExecutionCommand, follow::FollowCommand, reth::RethCommand, rpc::RpcCommand,
         sequencer::SequencerCommand, snapshot::SnapshotCommand, update::UpdateCommand,
     },
     config::ChainResolver,
@@ -34,6 +35,15 @@ pub(crate) enum BaseCommand {
     /// Run integrated execution, builder, and consensus services in sequencer mode.
     #[command(name = "sequencer")]
     Sequencer(Box<SequencerCommand>),
+    /// Run an L1-free development chain on an existing snapshot datadir.
+    #[command(name = "dev")]
+    Dev(Box<DevCommand>),
+    /// Run only the execution layer.
+    #[command(name = "execution")]
+    Execution(Box<ExecutionCommand>),
+    /// Run only the consensus layer.
+    #[command(name = "consensus")]
+    Consensus(Box<ConsensusCommand>),
     /// Update the base binary to the latest release.
     #[command(name = "update")]
     Update(Box<UpdateCommand>),
@@ -57,12 +67,18 @@ impl BaseCommand {
         match self {
             Self::Batcher(batcher) => {
                 chain_resolver.reject_for_reth_command("base batcher")?;
-                RuntimeManager::new().run_until_ctrl_c((*batcher).exec(metrics_enabled))
+                RuntimeManager::new()
+                    .run_until_shutdown(|cancel| (*batcher).exec(metrics_enabled, cancel))
             }
             Self::Bootnode(bootnode) => (*bootnode).run(chain_resolver.resolve()?, metrics_enabled),
             Self::Rpc(rpc) => (*rpc).run(chain_resolver.resolve()?),
             Self::Follow(follow) => (*follow).run(chain_resolver.resolve()?),
             Self::Sequencer(sequencer) => (*sequencer).run(chain_resolver.resolve()?),
+            Self::Dev(dev) => (*dev).run(chain_resolver.resolve()?),
+            Self::Execution(execution) => (*execution).run(chain_resolver.resolve()?),
+            Self::Consensus(consensus) => {
+                (*consensus).run(chain_resolver.resolve()?, metrics_enabled)
+            }
             Self::Update(update) => (*update).run(),
             Self::Reth(reth) => {
                 chain_resolver.reject_for_reth_command("base reth")?;

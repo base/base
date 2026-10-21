@@ -524,6 +524,7 @@ impl LoadRunner {
                 validity_priority_lead_multiplier: self.config.validity_priority_lead_multiplier,
                 validity_priority_fee_divisor: self.config.validity_priority_fee_divisor,
                 max_concurrent_submit_requests: self.config.max_concurrent_submit_requests,
+                validity_signing: self.config.validity_signing,
             },
         );
         let next_submit_batch_id = AtomicU64::new(0);
@@ -2199,11 +2200,33 @@ mod tests {
             SubmitCohort, SubmitEvent,
         },
     };
+
     #[test]
     fn mempool_target_rounds_up_and_clamps_to_capacity() {
         assert_eq!(LoadRunner::mempool_target_transactions(300, 70, 10).unwrap(), 5);
         assert_eq!(LoadRunner::mempool_target_transactions(300, 70, 4).unwrap(), 4);
         assert!(LoadRunner::mempool_target_transactions(300, 0, 10).is_err());
+    }
+
+    fn test_pipeline(
+        results_tracker: &ResultsTracker,
+        submit_event_tx: mpsc::Sender<SubmitEvent>,
+    ) -> SubmissionPipeline {
+        SubmissionPipeline::start(
+            Arc::new(HashMap::new()),
+            Arc::new(HashMap::new()),
+            Arc::new(Vec::new()),
+            results_tracker.clone(),
+            submit_event_tx,
+            PipelineStartConfig {
+                chain_id: 1,
+                max_gas_price: u128::MAX,
+                validity_priority_lead_multiplier: 1,
+                validity_priority_fee_divisor: 1,
+                max_concurrent_submit_requests: None,
+                validity_signing: crate::config::ValiditySigningMode::Adaptive,
+            },
+        )
     }
 
     fn test_signed_batch(id: u64, from: Address) -> SignedBatch {
@@ -2220,6 +2243,7 @@ mod tests {
                 estimated_gas: 21_000,
                 validity: Vec::new(),
                 cohort: SubmitCohort::Plain,
+                validity_signature: None,
             }],
         }
     }
@@ -2235,20 +2259,7 @@ mod tests {
         let mut queued_gas = 21_000u128;
 
         let (submit_event_tx, mut submit_event_rx) = mpsc::channel(1);
-        let mut submission_pipeline = SubmissionPipeline::start(
-            Arc::new(HashMap::new()),
-            Arc::new(HashMap::new()),
-            Arc::new(Vec::new()),
-            results_tracker.clone(),
-            submit_event_tx.clone(),
-            PipelineStartConfig {
-                chain_id: 1,
-                max_gas_price: u128::MAX,
-                validity_priority_lead_multiplier: 1,
-                validity_priority_fee_divisor: 1,
-                max_concurrent_submit_requests: None,
-            },
-        );
+        let mut submission_pipeline = test_pipeline(&results_tracker, submit_event_tx.clone());
 
         submission_pipeline.shutdown_and_join(Duration::from_secs(1)).await;
 
@@ -2414,20 +2425,7 @@ mod tests {
         let (base_fee_tx, _base_fee_rx) = tokio::sync::watch::channel(1_u128);
         let mut progress = EnqueueProgress { presigned_generated: 0, offered_gas: 0 };
         let mut presign_buffer = PresignBuffer::new(1);
-        let pipeline = SubmissionPipeline::start(
-            Arc::new(HashMap::new()),
-            Arc::new(HashMap::new()),
-            Arc::new(Vec::new()),
-            results_tracker.clone(),
-            mpsc::channel(1).0,
-            PipelineStartConfig {
-                chain_id: 1,
-                max_gas_price: u128::MAX,
-                validity_priority_lead_multiplier: 1,
-                validity_priority_fee_divisor: 1,
-                max_concurrent_submit_requests: None,
-            },
-        );
+        let pipeline = test_pipeline(&results_tracker, mpsc::channel(1).0);
         let next_submit_batch_id = AtomicU64::new(0);
         let stop_flag = AtomicBool::new(false);
         let (pulse_tx, mut pulse_rx) = mpsc::channel(8);
@@ -2547,20 +2545,7 @@ mod tests {
         let (base_fee_tx, _base_fee_rx) = tokio::sync::watch::channel(1_u128);
         let mut progress = EnqueueProgress { presigned_generated: 0, offered_gas: 0 };
         let mut presign_buffer = PresignBuffer::new(1);
-        let pipeline = SubmissionPipeline::start(
-            Arc::new(HashMap::new()),
-            Arc::new(HashMap::new()),
-            Arc::new(Vec::new()),
-            results_tracker.clone(),
-            mpsc::channel(1).0,
-            PipelineStartConfig {
-                chain_id: 1,
-                max_gas_price: u128::MAX,
-                validity_priority_lead_multiplier: 1,
-                validity_priority_fee_divisor: 1,
-                max_concurrent_submit_requests: None,
-            },
-        );
+        let pipeline = test_pipeline(&results_tracker, mpsc::channel(1).0);
         let next_submit_batch_id = AtomicU64::new(0);
         let stop_flag = AtomicBool::new(false);
         let (_pulse_tx, mut pulse_rx) = mpsc::channel(1);

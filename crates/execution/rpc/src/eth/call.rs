@@ -18,7 +18,7 @@ use reth_chainspec::{ChainSpecProvider, EthChainSpec, EthereumHardforks, Hardfor
 use reth_errors::RethError;
 use reth_evm::{ConfigureEvm, Evm, HaltReasonFor, execute::BlockBuilder};
 use reth_primitives_traits::SealedHeader;
-use reth_revm::{cancelled::CancelOnDrop, database::StateProviderDatabase, db::State};
+use reth_revm::{database::StateProviderDatabase, db::State};
 use reth_rpc_convert::RpcTxReq;
 use reth_rpc_eth_api::{
     EthApiTypes, FromEvmError, RpcBlock, RpcConvert,
@@ -32,6 +32,8 @@ use reth_rpc_eth_types::{
     error::{AsEthApiError, FromEthApiError},
     simulate::{self, EthSimulateError},
 };
+use reth_storage_api::StateProvider;
+use reth_tasks::CancelOnDrop;
 use revm::{
     context::Block,
     context_interface::{Cfg, result::ResultAndState},
@@ -82,7 +84,9 @@ where
         self.spawn_with_state_at_block(block, move |this, db| {
             let state_provider = db.database.0.0;
             let mut db = State::builder()
-                .with_database(StateProviderDatabase::new(&state_provider))
+                .with_database(StateProviderDatabase::new(
+                    (&state_provider).into_evm_state_provider(),
+                ))
                 .with_bundle_update()
                 .build();
             let mut parent = parent;
@@ -275,7 +279,7 @@ where
                 forecast
                     .state_overrides(
                         this.provider().chain_spec().as_ref(),
-                        StateProviderDatabase::new(&state),
+                        StateProviderDatabase::new((&state).into_evm_state_provider()),
                         overrides,
                     )
                     .map_err(RethError::other)
@@ -283,7 +287,13 @@ where
             } else {
                 overrides
             };
-            EstimateCall::estimate_gas_with(&this, evm_env, request, state, overrides)
+            EstimateCall::estimate_gas_with(
+                &this,
+                evm_env,
+                request,
+                state.into_evm_state_provider(),
+                overrides,
+            )
         })
         .await
     }

@@ -31,19 +31,4 @@ impl TipCursor {
     ) -> Self {
         Self { l2_safe_head, l2_safe_head_header, l2_safe_head_output_root }
     }
-
-    /// Returns a reference to the L2 safe head block information.
-    pub const fn l2_safe_head(&self) -> &L2BlockInfo {
-        &self.l2_safe_head
-    }
-
-    /// Returns a reference to the sealed header of the L2 safe head.
-    pub const fn l2_safe_head_header(&self) -> &Sealed<Header> {
-        &self.l2_safe_head_header
-    }
-
-    /// Returns a reference to the output root of the L2 safe head.
-    pub const fn l2_safe_head_output_root(&self) -> &B256 {
-        &self.l2_safe_head_output_root
-    }
 }

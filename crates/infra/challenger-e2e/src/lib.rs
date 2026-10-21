@@ -1,14 +1,20 @@
 #![doc = include_str!("../README.md")]
 
 mod config;
-pub use config::{Config, ProverMode, Scenario};
+pub use config::{Config, MockFault, ProverMode, Scenario};
 
 mod mock_prover;
 pub use mock_prover::{MockProofRequests, MockProver};
 
 mod mock_verifier;
 
+mod bonds;
+pub use bonds::BondStorage;
+
 mod progress;
+
+mod infra;
+pub use infra::{INFRA_EXIT_CODE, Unavailable};
 
 mod metrics;
 pub use metrics::Scrape;

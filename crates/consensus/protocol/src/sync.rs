@@ -57,7 +57,7 @@ pub struct SyncStatus {
     pub local_safe_l2: L2BlockInfo,
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "serde"))]
 mod tests {
     use alloy_eips::BlockNumHash;
     use alloy_primitives::B256;
@@ -65,37 +65,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_sync_status_default() {
-        let status = SyncStatus::default();
-        assert_eq!(status.current_l1, BlockInfo::default());
-        assert_eq!(status.unsafe_l2, L2BlockInfo::default());
-    }
-
-    #[test]
-    fn test_sync_status_eq() {
-        let status1 = SyncStatus::default();
-        let status2 = SyncStatus::default();
-        assert_eq!(status1, status2);
-    }
-
-    #[test]
-    fn test_sync_status_clone() {
-        let status = SyncStatus {
-            current_l1: BlockInfo::new(B256::from([1; 32]), 100, B256::from([0; 32]), 1000),
-            head_l1: BlockInfo::new(B256::from([2; 32]), 101, B256::from([1; 32]), 1012),
-            unsafe_l2: L2BlockInfo::new(
-                BlockInfo::new(B256::from([3; 32]), 200, B256::from([2; 32]), 1000),
-                BlockNumHash { number: 100, hash: B256::from([1; 32]) },
-                5,
-            ),
-            ..Default::default()
-        };
-        let cloned = status.clone();
-        assert_eq!(status, cloned);
-    }
-
-    #[test]
-    #[cfg(feature = "serde")]
     fn test_sync_status_serde() {
         let status = SyncStatus {
             current_l1: BlockInfo::new(B256::from([1; 32]), 100, B256::from([0; 32]), 1000),

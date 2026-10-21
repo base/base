@@ -612,121 +612,28 @@ impl<S: PolicyAccounting> PolicyRegistryLogic<S> for PolicyRegistryV3 {
 
 #[cfg(test)]
 mod tests {
-    use alloc::{collections::BTreeMap, vec, vec::Vec};
+    use alloc::{vec, vec::Vec};
 
-    use alloy_primitives::{Address, LogData, U256, address};
+    use alloy_primitives::{Address, U256, address};
     use alloy_sol_types::SolEvent;
-    use base_precompile_storage::{BasePrecompileError, Result};
+    use base_precompile_storage::BasePrecompileError;
 
     use crate::{
-        IPolicyRegistry, IPolicyRegistry::PolicyType, PolicyAccounting, PolicyRegistryLogic,
+        FakePolicyAccounting, IPolicyRegistry, IPolicyRegistry::PolicyType, PolicyRegistryLogic,
         PolicyRegistryV3,
     };
 
-    const REGISTRY: Address = address!("0x8453000000000000000000000000000000000002");
     const ADMIN: Address = address!("0x1000000000000000000000000000000000000001");
     const ALICE: Address = address!("0xA000000000000000000000000000000000000001");
     const BOB: Address = address!("0xB000000000000000000000000000000000000001");
     const NEW_ADMIN: Address = address!("0x2000000000000000000000000000000000000002");
     const LOGIC: PolicyRegistryV3 = PolicyRegistryV3;
 
-    // --- Self-contained in-memory fake (no dependency on `common::test_utils`, so shared
-    //     test scaffolding can never drift this frozen version's coverage) ---
-
-    /// Minimal [`PolicyAccounting`] backed by in-memory maps. `delete_*` removes the key so
-    /// its read semantics match `Mapping::delete` (a zeroed slot), not a written zero value.
-    #[derive(Debug)]
-    struct FakePolicyAccounting {
-        caller: Address,
-        initialized: bool,
-        policies: BTreeMap<u64, U256>,
-        members: BTreeMap<(u64, Address), bool>,
-        pending_admins: BTreeMap<u64, Address>,
-        next_counter: u64,
-        children: BTreeMap<u64, Vec<u64>>,
-        events: Vec<LogData>,
-    }
-
-    impl FakePolicyAccounting {
-        fn new() -> Self {
-            Self {
-                caller: ADMIN,
-                initialized: false,
-                policies: BTreeMap::new(),
-                members: BTreeMap::new(),
-                pending_admins: BTreeMap::new(),
-                next_counter: 0,
-                children: BTreeMap::new(),
-                events: Vec::new(),
-            }
-        }
-    }
-
-    impl PolicyAccounting for FakePolicyAccounting {
-        fn registry_address(&self) -> Address {
-            REGISTRY
-        }
-        fn caller(&self) -> Address {
-            self.caller
-        }
-        fn read_policy_word(&self, policy_id: u64) -> Result<U256> {
-            Ok(self.policies.get(&policy_id).copied().unwrap_or(U256::ZERO))
-        }
-        fn write_policy_word(&mut self, policy_id: u64, word: U256) -> Result<()> {
-            self.policies.insert(policy_id, word);
-            Ok(())
-        }
-        fn read_member(&self, policy_id: u64, account: Address) -> Result<bool> {
-            Ok(self.members.get(&(policy_id, account)).copied().unwrap_or(false))
-        }
-        fn set_member(&mut self, policy_id: u64, account: Address) -> Result<()> {
-            self.members.insert((policy_id, account), true);
-            Ok(())
-        }
-        fn delete_member(&mut self, policy_id: u64, account: Address) -> Result<()> {
-            self.members.remove(&(policy_id, account));
-            Ok(())
-        }
-        fn read_pending_admin(&self, policy_id: u64) -> Result<Address> {
-            Ok(self.pending_admins.get(&policy_id).copied().unwrap_or(Address::ZERO))
-        }
-        fn write_pending_admin(&mut self, policy_id: u64, admin: Address) -> Result<()> {
-            self.pending_admins.insert(policy_id, admin);
-            Ok(())
-        }
-        fn delete_pending_admin(&mut self, policy_id: u64) -> Result<()> {
-            self.pending_admins.remove(&policy_id);
-            Ok(())
-        }
-        fn read_next_counter(&self) -> Result<u64> {
-            Ok(self.next_counter)
-        }
-        fn write_next_counter(&mut self, counter: u64) -> Result<()> {
-            self.next_counter = counter;
-            Ok(())
-        }
-        fn emit_event(&mut self, log: LogData) -> Result<()> {
-            self.events.push(log);
-            Ok(())
-        }
-        fn mark_initialized(&mut self) -> Result<()> {
-            self.initialized = true;
-            Ok(())
-        }
-        fn read_children(&self, policy_id: u64) -> Result<Vec<u64>> {
-            Ok(self.children.get(&policy_id).cloned().unwrap_or_default())
-        }
-        fn write_children(&mut self, policy_id: u64, child_policy_ids: &[u64]) -> Result<()> {
-            self.children.insert(policy_id, child_policy_ids.to_vec());
-            Ok(())
-        }
-    }
-
     type Storage = FakePolicyAccounting;
 
     /// Bare storage (no built-ins seeded), caller = `ADMIN`.
     fn bare() -> Storage {
-        FakePolicyAccounting::new()
+        FakePolicyAccounting::with_caller(ADMIN)
     }
 
     /// Storage with both built-in policies seeded and the counter at 2.
@@ -737,7 +644,7 @@ mod tests {
     }
 
     fn set_caller(storage: &mut Storage, caller: Address) {
-        storage.caller = caller;
+        storage.set_caller(caller);
     }
 
     fn create_allowlist(storage: &mut Storage) -> u64 {

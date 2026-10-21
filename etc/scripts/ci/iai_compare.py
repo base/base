@@ -11,6 +11,12 @@ threshold the body is a single green line with the full table tucked inside a
 collapsed `<details>`. When a benchmark moves beyond the threshold, the changed
 benchmarks are surfaced in a visible table while the unchanged ones stay
 collapsed, so the comment only grows when there is something to look at.
+
+Each benchmark named with `--gate` (its displayed id) must produce a head result,
+and fails the run (exit status 1) when its head count rises by `--fail-pct` or
+more. A gated benchmark missing on base is skipped only when the base output says
+the commit lacks it (the GATED_ABSENT line run_iai_subset.sh prints, e.g. in the
+PR that introduces it); otherwise its base run failed, and the gate fails too.
 """
 
 from __future__ import annotations
@@ -21,6 +27,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 MARKER = "<!-- iai-bench-results -->"
+# Printed by run_iai_subset.sh on a commit that does not have the gated benchmark.
+GATED_ABSENT = "iai-subset: gated bench absent on this commit"
 
 # iai-callgrind colorizes output; strip ANSI so parsing is colour-independent.
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
@@ -49,8 +57,12 @@ class Delta:
 class IaiCompare:
     """Parses iai-callgrind output and renders a base-vs-head PR comment."""
 
-    def __init__(self, threshold_pct: float) -> None:
+    def __init__(
+        self, threshold_pct: float, gates: list[str] | None = None, fail_pct: float = 0.0
+    ) -> None:
         self.threshold_pct = threshold_pct
+        self.gates = gates or []
+        self.fail_pct = fail_pct
 
     @staticmethod
     def parse(text: str) -> dict[str, int]:
@@ -97,6 +109,27 @@ class IaiCompare:
         delta = row.delta_pct
         return delta is not None and abs(delta) >= self.threshold_pct
 
+    def gate_failures(
+        self, base: dict[str, int], head: dict[str, int], base_absent: bool
+    ) -> list[str]:
+        """Reasons the gated benchmarks fail, one per failing benchmark."""
+        base = {self.humanize(bench): count for bench, count in base.items()}
+        head = {self.humanize(bench): count for bench, count in head.items()}
+        failures = []
+        for name in self.gates:
+            row = Delta(name, base.get(name), head.get(name))
+            if row.head is None:
+                failures.append(f"`{name}` produced no result on head")
+            elif row.base is None:
+                if not base_absent:
+                    failures.append(f"`{name}` produced no result on base, which has the bench")
+            elif (row.delta_pct or 0.0) >= self.fail_pct:
+                failures.append(
+                    f"`{name}` instructions rose {row.delta_pct:+.2f}% "
+                    f"(gate: +{self.fail_pct:g}%)"
+                )
+        return failures
+
     @staticmethod
     def _cell(value: int | None, *, missing: str) -> str:
         """Format an instruction count, or a placeholder when the side is missing."""
@@ -140,16 +173,27 @@ class IaiCompare:
             "</details>",
         ]
 
-    def render(self, base: dict[str, int], head: dict[str, int], run_url: str) -> str:
-        """Render the full PR comment body."""
+    def render(
+        self, base: dict[str, int], head: dict[str, int], run_url: str, failures: list[str]
+    ) -> str:
+        """Render the full PR comment body, led by any gate failures."""
         rows = self.rows(base, head)
         notable = [row for row in rows if self.is_notable(row)]
         within = [row for row in rows if not self.is_notable(row) and row.base is not None]
         new = [row for row in rows if row.base is None]
 
         lead = f"[View run]({run_url})"
+        gate = []
+        if failures:
+            gate = [
+                "> [!CAUTION]",
+                "> Benchmark gate failed:",
+                *(f"> - {failure}" for failure in failures),
+                "",
+            ]
         if not rows:
-            return f"{MARKER}\n\n⚠️ No iai-callgrind results were produced. {lead}\n"
+            body = [MARKER, "", *gate, f"⚠️ No iai-callgrind results were produced. {lead}"]
+            return "\n".join(body) + "\n"
 
         # Happy path: nothing crossed the threshold. One line, table collapsed.
         if not notable:
@@ -163,13 +207,15 @@ class IaiCompare:
                 )
             else:
                 note = f" · {len(new)} new" if new else ""
+                status = "Benchmark gate failed" if failures else "✅ All benchmarks green"
                 summary = (
-                    f"✅ All benchmarks green — {compared} within "
+                    f"{status} — {compared} within "
                     f"±{self.threshold_pct:.0f}% (deterministic instruction counts){note}."
                 )
             body = [
                 MARKER,
                 "",
+                *gate,
                 f"{summary} {lead}",
                 "",
                 *self.details(f"Benchmark details ({len(rows)})", rows),
@@ -183,6 +229,7 @@ class IaiCompare:
         body = [
             MARKER,
             "",
+            *gate,
             "> [!WARNING]" if regressions else "> [!NOTE]",
             f"> {len(notable)} benchmark(s) changed by more than "
             f"±{self.threshold_pct:.0f}% — instruction counts are deterministic, so "
@@ -208,17 +255,28 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--run-url", required=True)
     parser.add_argument("--threshold-pct", type=float, default=2.0)
+    parser.add_argument(
+        "--gate",
+        action="append",
+        default=[],
+        help="displayed benchmark id that must run on head and must not regress; repeatable",
+    )
+    parser.add_argument("--fail-pct", type=float, default=3.0)
     return parser.parse_args()
 
 
 def main() -> int:
     """Entry point for the iai-callgrind comparison renderer."""
     args = parse_args()
-    compare = IaiCompare(args.threshold_pct)
-    base = compare.parse(args.base.read_text(encoding="utf-8"))
+    compare = IaiCompare(args.threshold_pct, args.gate, args.fail_pct)
+    base_text = args.base.read_text(encoding="utf-8")
+    base = compare.parse(base_text)
     head = compare.parse(args.head.read_text(encoding="utf-8"))
-    args.output.write_text(compare.render(base, head, args.run_url), encoding="utf-8")
-    return 0
+    failures = compare.gate_failures(base, head, GATED_ABSENT in base_text.splitlines())
+    args.output.write_text(compare.render(base, head, args.run_url, failures), encoding="utf-8")
+    for failure in failures:
+        print(f"::error title=Benchmark gate::{failure}")
+    return 1 if failures else 0
 
 
 if __name__ == "__main__":

@@ -64,16 +64,43 @@ pub trait TxManager: Send + Sync + Debug {
 
 #[cfg(test)]
 mod tests {
+    use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
+    use alloy_primitives::{B256, Bloom};
     use tokio::sync::oneshot;
 
     use super::*;
-    use crate::{TxManagerError, test_utils::StubReceipt};
+    use crate::TxManagerError;
+
+    fn success_receipt() -> TransactionReceipt {
+        let inner = ReceiptEnvelope::Legacy(ReceiptWithBloom {
+            receipt: Receipt {
+                status: Eip658Value::success(),
+                cumulative_gas_used: 21_000,
+                logs: vec![],
+            },
+            logs_bloom: Bloom::ZERO,
+        });
+        TransactionReceipt {
+            inner,
+            transaction_hash: B256::ZERO,
+            transaction_index: Some(0),
+            block_hash: Some(B256::ZERO),
+            block_number: Some(1),
+            gas_used: 21_000,
+            effective_gas_price: 1_000_000_000,
+            blob_gas_used: None,
+            blob_gas_price: None,
+            from: Address::ZERO,
+            to: Some(Address::ZERO),
+            contract_address: None,
+        }
+    }
 
     #[tokio::test]
     async fn send_handle_yields_ok_on_success() {
         let (tx, rx) = oneshot::channel();
         let handle = SendHandle::new(rx);
-        let receipt = StubReceipt::success();
+        let receipt = success_receipt();
         tx.send(Ok(receipt.clone())).unwrap();
         let result = handle.await;
         assert_eq!(result.unwrap(), receipt);

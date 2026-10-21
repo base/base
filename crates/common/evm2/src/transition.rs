@@ -35,12 +35,6 @@ impl BaseForkActivations for UpgradeConfig {
     }
 }
 
-impl<T: BaseForkActivations> BaseForkActivations for &T {
-    fn is_active_at_timestamp(&self, upgrade: BaseUpgrade, timestamp: u64) -> bool {
-        (*self).is_active_at_timestamp(upgrade, timestamp)
-    }
-}
-
 /// A single account's irregular state change: its pre-change account info, post-change account
 /// info (with optional bytecode), and any storage-slot writes.
 ///

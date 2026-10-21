@@ -2,8 +2,9 @@
 //!
 //! Provides a [`BalanceMonitorLayer`] that plugs into any alloy provider stack
 //! via [`ProviderBuilder::layer`]. When the layer is applied it spawns a
-//! background task that periodically polls the monitored address's balance
-//! and publishes the latest value through a [`tokio::sync::watch`] channel.
+//! background task that polls the monitored address's balance immediately,
+//! then every configured interval. Successful reads publish through a
+//! [`tokio::sync::watch`] channel; failed reads only log a warning.
 //!
 //! The layer is an identity layer — it returns the inner provider unchanged,
 //! so the resulting provider type is the same as if the layer were never
@@ -72,10 +73,13 @@ impl BalanceMonitorLayer {
     /// Default polling interval (12 seconds, matching L1 block time).
     pub const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(12);
 
-    /// Creates a new layer that polls `address` every `poll_interval`.
+    /// Creates a layer that polls `address` immediately when applied, then every `poll_interval`.
     ///
     /// The returned [`watch::Receiver`] yields the latest observed balance
-    /// (as [`U256`] in wei). The initial value is [`U256::ZERO`].
+    /// (as [`U256`] in wei). The initial [`U256::ZERO`] is a placeholder, not an
+    /// observed balance. Wait for [`watch::Receiver::changed`] before reading it.
+    /// Every successful read notifies receivers, even for zero or unchanged
+    /// balances. Failed reads log a warning without publishing an update.
     pub fn new(
         address: Address,
         cancel: CancellationToken,
@@ -107,7 +111,6 @@ where
 
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(poll_interval);
-            interval.tick().await;
             loop {
                 tokio::select! {
                     () = cancel.cancelled() => break,
@@ -141,24 +144,45 @@ mod tests {
     use super::BalanceMonitorLayer;
 
     #[tokio::test]
-    async fn publishes_balance_on_first_tick() {
+    async fn publishes_balance_before_default_poll_interval() {
         let anvil = alloy_node_bindings::Anvil::new().spawn();
         let address: Address = anvil.addresses()[0];
         let cancel = CancellationToken::new();
 
-        let (layer, mut balance_rx) =
-            BalanceMonitorLayer::new(address, cancel.clone(), Duration::from_millis(100));
+        let (layer, mut balance_rx) = BalanceMonitorLayer::new(
+            address,
+            cancel.clone(),
+            BalanceMonitorLayer::DEFAULT_POLL_INTERVAL,
+        );
         let _provider = ProviderBuilder::new().layer(layer).connect_http(anvil.endpoint_url());
 
-        tokio::time::timeout(Duration::from_secs(5), balance_rx.changed())
-            .await
-            .expect("timed out waiting for balance update")
+        let update = tokio::time::timeout(Duration::from_secs(3), balance_rx.changed()).await;
+        cancel.cancel();
+        update
+            .expect("first balance read must not wait for the polling interval")
             .expect("watch channel closed unexpectedly");
 
         let balance = *balance_rx.borrow();
         assert!(balance > U256::ZERO, "balance should be positive, got {balance}");
+    }
 
+    #[tokio::test]
+    async fn publishes_zero_balance_on_first_read() {
+        let anvil = alloy_node_bindings::Anvil::new().spawn();
+        let cancel = CancellationToken::new();
+        let (layer, mut balance_rx) = BalanceMonitorLayer::new(
+            Address::ZERO,
+            cancel.clone(),
+            BalanceMonitorLayer::DEFAULT_POLL_INTERVAL,
+        );
+        let _provider = ProviderBuilder::new().layer(layer).connect_http(anvil.endpoint_url());
+
+        let update = tokio::time::timeout(Duration::from_secs(3), balance_rx.changed()).await;
         cancel.cancel();
+        update
+            .expect("a real zero balance must notify the receiver without waiting for the interval")
+            .expect("watch channel closed unexpectedly");
+        assert_eq!(*balance_rx.borrow(), U256::ZERO);
     }
 
     #[tokio::test]

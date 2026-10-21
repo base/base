@@ -8,8 +8,8 @@ use std::{
 };
 
 use alloy_consensus::BlockHeader;
-use alloy_primitives::{Address, B64, B256, Bytes, bytes::BytesMut, map::AddressSet};
-use alloy_rlp::Encodable;
+use alloy_primitives::{Address, B64, B256, Bytes, map::AddressSet};
+use alloy_rlp::encode;
 use base_common_chains::Upgrades;
 use base_common_consensus::{BasePrimitives, BaseTransaction, BaseTxEnvelope};
 use base_common_rpc_types_engine::{BasePayloadAttributes, ExecutionData};
@@ -49,8 +49,7 @@ use reth_node_builder::{
     BuilderContext, DebugNode, Node, NodeAdapter, NodeComponentsBuilder,
     components::{
         BasicPayloadServiceBuilder, ComponentsBuilder, ConsensusBuilder, ExecutorBuilder,
-        NetworkBuilder, PayloadBuilderBuilder, PoolBuilder, PoolBuilderConfigOverrides,
-        spawn_maintenance_tasks,
+        NetworkBuilder, PayloadBuilderBuilder, PoolBuilder, spawn_maintenance_tasks,
     },
     node::{FullNodeTypes, NodeTypes},
     rpc::{
@@ -414,12 +413,6 @@ pub struct BaseAddOns<
     pub da_config: BaseDAConfig,
     /// Gas limit configuration for the payload builder.
     pub gas_limit_config: GasLimitConfig,
-    /// Sequencer client, configured to forward submitted transactions to sequencer of the given
-    /// Base network.
-    pub sequencer_url: Option<String>,
-    /// Headers to use for the sequencer client requests.
-    pub sequencer_headers: Vec<String>,
-    min_suggested_priority_fee: u64,
 }
 
 impl<N, EthB, PVB, EB, EVB, RpcMiddleware> BaseAddOns<N, EthB, PVB, EB, EVB, RpcMiddleware>
@@ -428,23 +421,12 @@ where
     EthB: EthApiBuilder<N>,
 {
     /// Creates a new instance from components.
-    #[allow(clippy::too_many_arguments)]
     pub const fn new(
         rpc_add_ons: RpcAddOns<N, EthB, PVB, EB, EVB, RpcMiddleware>,
         da_config: BaseDAConfig,
         gas_limit_config: GasLimitConfig,
-        sequencer_url: Option<String>,
-        sequencer_headers: Vec<String>,
-        min_suggested_priority_fee: u64,
     ) -> Self {
-        Self {
-            rpc_add_ons,
-            da_config,
-            gas_limit_config,
-            sequencer_url,
-            sequencer_headers,
-            min_suggested_priority_fee,
-        }
+        Self { rpc_add_ons, da_config, gas_limit_config }
     }
 }
 
@@ -486,22 +468,10 @@ where
         self,
         engine_api_builder: T,
     ) -> BaseAddOns<N, EthB, PVB, T, EVB, RpcMiddleware> {
-        let Self {
-            rpc_add_ons,
-            da_config,
-            gas_limit_config,
-            sequencer_url,
-            sequencer_headers,
-            min_suggested_priority_fee,
-            ..
-        } = self;
         BaseAddOns::new(
-            rpc_add_ons.with_engine_api(engine_api_builder),
-            da_config,
-            gas_limit_config,
-            sequencer_url,
-            sequencer_headers,
-            min_suggested_priority_fee,
+            self.rpc_add_ons.with_engine_api(engine_api_builder),
+            self.da_config,
+            self.gas_limit_config,
         )
     }
 
@@ -510,22 +480,10 @@ where
         self,
         payload_validator_builder: T,
     ) -> BaseAddOns<N, EthB, T, EB, EVB, RpcMiddleware> {
-        let Self {
-            rpc_add_ons,
-            da_config,
-            gas_limit_config,
-            sequencer_url,
-            sequencer_headers,
-            min_suggested_priority_fee,
-            ..
-        } = self;
         BaseAddOns::new(
-            rpc_add_ons.with_payload_validator(payload_validator_builder),
-            da_config,
-            gas_limit_config,
-            sequencer_url,
-            sequencer_headers,
-            min_suggested_priority_fee,
+            self.rpc_add_ons.with_payload_validator(payload_validator_builder),
+            self.da_config,
+            self.gas_limit_config,
         )
     }
 
@@ -537,22 +495,10 @@ where
     ///
     /// See also [`RpcAddOns::with_rpc_middleware`].
     pub fn with_rpc_middleware<T>(self, rpc_middleware: T) -> BaseAddOns<N, EthB, PVB, EB, EVB, T> {
-        let Self {
-            rpc_add_ons,
-            da_config,
-            gas_limit_config,
-            sequencer_url,
-            sequencer_headers,
-            min_suggested_priority_fee,
-            ..
-        } = self;
         BaseAddOns::new(
-            rpc_add_ons.with_rpc_middleware(rpc_middleware),
-            da_config,
-            gas_limit_config,
-            sequencer_url,
-            sequencer_headers,
-            min_suggested_priority_fee,
+            self.rpc_add_ons.with_rpc_middleware(rpc_middleware),
+            self.da_config,
+            self.gas_limit_config,
         )
     }
 
@@ -604,7 +550,7 @@ where
         self,
         ctx: reth_node_api::AddOnsContext<'_, N>,
     ) -> eyre::Result<Self::Handle> {
-        let Self { rpc_add_ons, da_config, gas_limit_config, .. } = self;
+        let Self { rpc_add_ons, da_config, gas_limit_config } = self;
         let eth_config =
             BaseEthConfigHandler::new(ctx.node.provider().clone(), ctx.node.evm_config().clone());
 
@@ -719,8 +665,6 @@ pub struct BaseAddOnsBuilder<NetworkT, RpcMiddleware = Identity> {
     min_suggested_priority_fee: u64,
     /// RPC middleware to use
     rpc_middleware: RpcMiddleware,
-    /// Optional tokio runtime to use for the RPC server.
-    tokio_runtime: Option<tokio::runtime::Handle>,
 }
 
 impl<NetworkT> Default for BaseAddOnsBuilder<NetworkT> {
@@ -733,7 +677,6 @@ impl<NetworkT> Default for BaseAddOnsBuilder<NetworkT> {
             min_suggested_priority_fee: 1_000_000,
             _nt: PhantomData,
             rpc_middleware: Identity::new(),
-            tokio_runtime: None,
         }
     }
 }
@@ -769,14 +712,6 @@ impl<NetworkT, RpcMiddleware> BaseAddOnsBuilder<NetworkT, RpcMiddleware> {
         self
     }
 
-    /// Configures a custom tokio runtime for the RPC server.
-    ///
-    /// Caution: This runtime must not be created from within asynchronous context.
-    pub fn with_tokio_runtime(mut self, tokio_runtime: Option<tokio::runtime::Handle>) -> Self {
-        self.tokio_runtime = tokio_runtime;
-        self
-    }
-
     /// Configure the RPC middleware to use
     pub fn with_rpc_middleware<T>(self, rpc_middleware: T) -> BaseAddOnsBuilder<NetworkT, T> {
         let Self {
@@ -785,7 +720,6 @@ impl<NetworkT, RpcMiddleware> BaseAddOnsBuilder<NetworkT, RpcMiddleware> {
             da_config,
             gas_limit_config,
             min_suggested_priority_fee,
-            tokio_runtime,
             _nt,
             ..
         } = self;
@@ -797,7 +731,6 @@ impl<NetworkT, RpcMiddleware> BaseAddOnsBuilder<NetworkT, RpcMiddleware> {
             min_suggested_priority_fee,
             _nt,
             rpc_middleware,
-            tokio_runtime,
         }
     }
 }
@@ -821,28 +754,23 @@ impl<NetworkT, RpcMiddleware> BaseAddOnsBuilder<NetworkT, RpcMiddleware> {
             gas_limit_config,
             min_suggested_priority_fee,
             rpc_middleware,
-            tokio_runtime,
             ..
         } = self;
 
         BaseAddOns::new(
             RpcAddOns::new(
                 BaseEthApiBuilder::default()
-                    .with_sequencer(sequencer_url.clone())
-                    .with_sequencer_headers(sequencer_headers.clone())
+                    .with_sequencer(sequencer_url)
+                    .with_sequencer_headers(sequencer_headers)
                     .with_min_suggested_priority_fee(min_suggested_priority_fee),
                 PVB::default(),
                 EB::default(),
                 EVB::default(),
                 rpc_middleware,
                 Identity::new(),
-            )
-            .with_tokio_runtime(tokio_runtime),
+            ),
             da_config.unwrap_or_default(),
             gas_limit_config.unwrap_or_default(),
-            sequencer_url,
-            sequencer_headers,
-            min_suggested_priority_fee,
         )
     }
 }
@@ -874,8 +802,6 @@ where
 /// config.
 #[derive(Debug)]
 pub struct BasePoolBuilder<T = BasePooledTransaction> {
-    /// Enforced overrides that are applied to the pool config.
-    pub pool_config_overrides: PoolBuilderConfigOverrides,
     /// The ordering strategy for the transaction pool.
     pub ordering: BaseOrdering<T>,
     /// Maximum inflight EIP-7702 delegated account transactions per sender.
@@ -893,7 +819,6 @@ pub struct BasePoolBuilder<T = BasePooledTransaction> {
 impl<T> Default for BasePoolBuilder<T> {
     fn default() -> Self {
         Self {
-            pool_config_overrides: Default::default(),
             ordering: BaseOrdering::default(),
             max_inflight_delegated_slots: 4,
             guard_limits: GuardLimits::default(),
@@ -907,7 +832,6 @@ impl<T> Default for BasePoolBuilder<T> {
 impl<T> Clone for BasePoolBuilder<T> {
     fn clone(&self) -> Self {
         Self {
-            pool_config_overrides: self.pool_config_overrides.clone(),
             ordering: self.ordering.clone(),
             max_inflight_delegated_slots: self.max_inflight_delegated_slots,
             guard_limits: self.guard_limits,
@@ -921,15 +845,6 @@ impl<T> Clone for BasePoolBuilder<T> {
 }
 
 impl<T> BasePoolBuilder<T> {
-    /// Sets the [`PoolBuilderConfigOverrides`] on the pool builder.
-    pub fn with_pool_config_overrides(
-        mut self,
-        pool_config_overrides: PoolBuilderConfigOverrides,
-    ) -> Self {
-        self.pool_config_overrides = pool_config_overrides;
-        self
-    }
-
     /// Sets the ordering strategy for the transaction pool.
     pub const fn with_ordering(mut self, ordering: BaseOrdering<T>) -> Self {
         self.ordering = ordering;
@@ -980,7 +895,6 @@ where
         evm_config: Evm,
     ) -> eyre::Result<Self::Pool> {
         let Self {
-            pool_config_overrides,
             ordering,
             max_inflight_delegated_slots,
             guard_limits,
@@ -998,11 +912,7 @@ where
                 .set_tx_fee_cap(ctx.config().rpc.rpc_tx_fee_cap)
                 .with_max_tx_gas_limit(ctx.config().txpool.max_tx_gas_limit)
                 .with_minimum_priority_fee(ctx.config().txpool.minimum_priority_fee)
-                .with_additional_tasks(
-                    pool_config_overrides
-                        .additional_validation_tasks
-                        .unwrap_or_else(|| ctx.config().txpool.additional_validation_tasks),
-                )
+                .with_additional_tasks(ctx.config().txpool.additional_validation_tasks)
                 .build_with_tasks(ctx.task_executor().clone(), blob_store.clone())
                 .map(|validator| {
                     BaseTransactionValidator::new(validator)
@@ -1015,7 +925,7 @@ where
                         .with_allowlisted_payers(allowlisted_payers.iter().copied())
                 });
 
-        let mut final_pool_config = pool_config_overrides.apply(ctx.pool_config());
+        let mut final_pool_config = ctx.pool_config();
         final_pool_config.max_inflight_delegated_slot_limit = max_inflight_delegated_slots;
 
         let transaction_pool = reth_transaction_pool::Pool::new(
@@ -1329,18 +1239,8 @@ impl BaseDiscoveryConfig {
     /// Encodes the NAT-discovered external IP as an ENR key-value pair.
     pub fn enr_ip_kv_pair(external_addr: Option<IpAddr>) -> Option<(&'static [u8], Bytes)> {
         match external_addr {
-            Some(IpAddr::V4(addr)) => {
-                let addr = addr.octets();
-                let mut out = BytesMut::with_capacity(addr.length());
-                addr.encode(&mut out);
-                Some((IP_ENR_KEY, Bytes::from(out.freeze())))
-            }
-            Some(IpAddr::V6(addr)) => {
-                let addr = addr.octets();
-                let mut out = BytesMut::with_capacity(addr.length());
-                addr.encode(&mut out);
-                Some((IP6_ENR_KEY, Bytes::from(out.freeze())))
-            }
+            Some(IpAddr::V4(addr)) => Some((IP_ENR_KEY, Bytes::from(encode(addr.octets())))),
+            Some(IpAddr::V6(addr)) => Some((IP6_ENR_KEY, Bytes::from(encode(addr.octets())))),
             None => None,
         }
     }

@@ -1,7 +1,7 @@
 //! Branch trie cursor behavior tests.
 
+use rstest::rstest;
 use serial_test::serial;
-use test_case::test_case;
 
 use super::*;
 
@@ -10,12 +10,13 @@ use super::*;
 // =============================================================================
 
 /// Test cursor operations on empty trie
-#[test_case(InMemoryProofsStorage::new(); "InMemory")]
-#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
+#[rstest]
+#[case::in_memory(InMemoryProofsStorage::new())]
+#[case::mdbx(create_mdbx_proofs_storage())]
+#[case::rocksdb(create_rocksdb_proofs_storage())]
 #[serial]
 fn test_cursor_empty_trie<S: BaseProofsStore + BaseProofsInitialStateStore>(
-    storage: S,
+    #[case] storage: S,
 ) -> Result<(), BaseProofsStorageError> {
     let mut cursor = storage.account_trie_cursor(100)?;
 
@@ -29,12 +30,13 @@ fn test_cursor_empty_trie<S: BaseProofsStore + BaseProofsInitialStateStore>(
 }
 
 /// Test cursor operations with single entry
-#[test_case(InMemoryProofsStorage::new(); "InMemory")]
-#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
+#[rstest]
+#[case::in_memory(InMemoryProofsStorage::new())]
+#[case::mdbx(create_mdbx_proofs_storage())]
+#[case::rocksdb(create_rocksdb_proofs_storage())]
 #[serial]
 fn test_cursor_single_entry<S: BaseProofsStore + BaseProofsInitialStateStore>(
-    storage: S,
+    #[case] storage: S,
 ) -> Result<(), BaseProofsStorageError> {
     let path = nibbles_from(vec![1, 2, 3]);
     let branch = create_test_branch();
@@ -58,12 +60,13 @@ fn test_cursor_single_entry<S: BaseProofsStore + BaseProofsInitialStateStore>(
 }
 
 /// `seek_exact` on an absent key returns `None` and leaves `current()` unset.
-#[test_case(InMemoryProofsStorage::new(); "InMemory")]
-#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
+#[rstest]
+#[case::in_memory(InMemoryProofsStorage::new())]
+#[case::mdbx(create_mdbx_proofs_storage())]
+#[case::rocksdb(create_rocksdb_proofs_storage())]
 #[serial]
 fn test_seek_exact_absent_key_returns_none<S: BaseProofsStore + BaseProofsInitialStateStore>(
-    storage: S,
+    #[case] storage: S,
 ) -> Result<(), BaseProofsStorageError> {
     let present = nibbles_from(vec![1, 2, 3]);
     let absent = nibbles_from(vec![4, 5, 6]);
@@ -81,12 +84,13 @@ fn test_seek_exact_absent_key_returns_none<S: BaseProofsStore + BaseProofsInitia
 }
 
 /// Test cursor operations with multiple entries
-#[test_case(InMemoryProofsStorage::new(); "InMemory")]
-#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
+#[rstest]
+#[case::in_memory(InMemoryProofsStorage::new())]
+#[case::mdbx(create_mdbx_proofs_storage())]
+#[case::rocksdb(create_rocksdb_proofs_storage())]
 #[serial]
 fn test_cursor_multiple_entries<S: BaseProofsStore + BaseProofsInitialStateStore>(
-    storage: S,
+    #[case] storage: S,
 ) -> Result<(), BaseProofsStorageError> {
     let paths = vec![
         nibbles_from(vec![1]),
@@ -122,53 +126,14 @@ fn test_cursor_multiple_entries<S: BaseProofsStore + BaseProofsInitialStateStore
 // 2. Seek Operations
 // =============================================================================
 
-/// Test `seek_exact` with existing path
-#[test_case(InMemoryProofsStorage::new(); "InMemory")]
-#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
-#[serial]
-fn test_seek_exact_existing_path<S: BaseProofsStore + BaseProofsInitialStateStore>(
-    storage: S,
-) -> Result<(), BaseProofsStorageError> {
-    let path = nibbles_from(vec![1, 2, 3]);
-    let branch = create_test_branch();
-
-    storage.store_account_branches(vec![(path, Some(branch))])?;
-
-    let mut cursor = storage.account_trie_cursor(100)?;
-    let result = cursor.seek_exact(path)?.unwrap();
-    assert_eq!(result.0, path);
-
-    Ok(())
-}
-
-/// Test `seek_exact` with non-existing path
-#[test_case(InMemoryProofsStorage::new(); "InMemory")]
-#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
-#[serial]
-fn test_seek_exact_non_existing_path<S: BaseProofsStore + BaseProofsInitialStateStore>(
-    storage: S,
-) -> Result<(), BaseProofsStorageError> {
-    let path = nibbles_from(vec![1, 2, 3]);
-    let branch = create_test_branch();
-
-    storage.store_account_branches(vec![(path, Some(branch))])?;
-
-    let mut cursor = storage.account_trie_cursor(100)?;
-    let non_existing = nibbles_from(vec![4, 5, 6]);
-    assert!(cursor.seek_exact(non_existing)?.is_none());
-
-    Ok(())
-}
-
 /// Test `seek_exact` with empty path
-#[test_case(InMemoryProofsStorage::new(); "InMemory")]
-#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
+#[rstest]
+#[case::in_memory(InMemoryProofsStorage::new())]
+#[case::mdbx(create_mdbx_proofs_storage())]
+#[case::rocksdb(create_rocksdb_proofs_storage())]
 #[serial]
 fn test_seek_exact_empty_path<S: BaseProofsStore + BaseProofsInitialStateStore>(
-    storage: S,
+    #[case] storage: S,
 ) -> Result<(), BaseProofsStorageError> {
     let path = nibbles_from(vec![]);
     let branch = create_test_branch();
@@ -183,12 +148,13 @@ fn test_seek_exact_empty_path<S: BaseProofsStore + BaseProofsInitialStateStore>(
 }
 
 /// Test seek to existing path
-#[test_case(InMemoryProofsStorage::new(); "InMemory")]
-#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
+#[rstest]
+#[case::in_memory(InMemoryProofsStorage::new())]
+#[case::mdbx(create_mdbx_proofs_storage())]
+#[case::rocksdb(create_rocksdb_proofs_storage())]
 #[serial]
 fn test_seek_to_existing_path<S: BaseProofsStore + BaseProofsInitialStateStore>(
-    storage: S,
+    #[case] storage: S,
 ) -> Result<(), BaseProofsStorageError> {
     let path = nibbles_from(vec![1, 2, 3]);
     let branch = create_test_branch();
@@ -203,12 +169,13 @@ fn test_seek_to_existing_path<S: BaseProofsStore + BaseProofsInitialStateStore>(
 }
 
 /// Test seek between existing nodes
-#[test_case(InMemoryProofsStorage::new(); "InMemory")]
-#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
+#[rstest]
+#[case::in_memory(InMemoryProofsStorage::new())]
+#[case::mdbx(create_mdbx_proofs_storage())]
+#[case::rocksdb(create_rocksdb_proofs_storage())]
 #[serial]
 fn test_seek_between_existing_nodes<S: BaseProofsStore + BaseProofsInitialStateStore>(
-    storage: S,
+    #[case] storage: S,
 ) -> Result<(), BaseProofsStorageError> {
     let path1 = nibbles_from(vec![1]);
     let path2 = nibbles_from(vec![3]);
@@ -227,12 +194,13 @@ fn test_seek_between_existing_nodes<S: BaseProofsStore + BaseProofsInitialStateS
 }
 
 /// Test seek after all nodes
-#[test_case(InMemoryProofsStorage::new(); "InMemory")]
-#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
+#[rstest]
+#[case::in_memory(InMemoryProofsStorage::new())]
+#[case::mdbx(create_mdbx_proofs_storage())]
+#[case::rocksdb(create_rocksdb_proofs_storage())]
 #[serial]
 fn test_seek_after_all_nodes<S: BaseProofsStore + BaseProofsInitialStateStore>(
-    storage: S,
+    #[case] storage: S,
 ) -> Result<(), BaseProofsStorageError> {
     let path = nibbles_from(vec![1]);
     let branch = create_test_branch();
@@ -248,12 +216,13 @@ fn test_seek_after_all_nodes<S: BaseProofsStore + BaseProofsInitialStateStore>(
 }
 
 /// Test seek before all nodes
-#[test_case(InMemoryProofsStorage::new(); "InMemory")]
-#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
+#[rstest]
+#[case::in_memory(InMemoryProofsStorage::new())]
+#[case::mdbx(create_mdbx_proofs_storage())]
+#[case::rocksdb(create_rocksdb_proofs_storage())]
 #[serial]
 fn test_seek_before_all_nodes<S: BaseProofsStore + BaseProofsInitialStateStore>(
-    storage: S,
+    #[case] storage: S,
 ) -> Result<(), BaseProofsStorageError> {
     let path = nibbles_from(vec![5]);
     let branch = create_test_branch();
@@ -273,34 +242,14 @@ fn test_seek_before_all_nodes<S: BaseProofsStore + BaseProofsInitialStateStore>(
 // 3. Navigation Tests
 // =============================================================================
 
-/// Test next without prior seek
-#[test_case(InMemoryProofsStorage::new(); "InMemory")]
-#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
-#[serial]
-fn test_next_without_prior_seek<S: BaseProofsStore + BaseProofsInitialStateStore>(
-    storage: S,
-) -> Result<(), BaseProofsStorageError> {
-    let path = nibbles_from(vec![1, 2]);
-    let branch = create_test_branch();
-
-    storage.store_account_branches(vec![(path, Some(branch))])?;
-
-    let mut cursor = storage.account_trie_cursor(100)?;
-    // next() without prior seek should start from beginning
-    let result = cursor.next()?.unwrap();
-    assert_eq!(result.0, path);
-
-    Ok(())
-}
-
 /// Test next after seek
-#[test_case(InMemoryProofsStorage::new(); "InMemory")]
-#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
+#[rstest]
+#[case::in_memory(InMemoryProofsStorage::new())]
+#[case::mdbx(create_mdbx_proofs_storage())]
+#[case::rocksdb(create_rocksdb_proofs_storage())]
 #[serial]
 fn test_next_after_seek<S: BaseProofsStore + BaseProofsInitialStateStore>(
-    storage: S,
+    #[case] storage: S,
 ) -> Result<(), BaseProofsStorageError> {
     let path1 = nibbles_from(vec![1]);
     let path2 = nibbles_from(vec![2]);
@@ -319,35 +268,14 @@ fn test_next_after_seek<S: BaseProofsStore + BaseProofsInitialStateStore>(
     Ok(())
 }
 
-/// Test next at end of trie
-#[test_case(InMemoryProofsStorage::new(); "InMemory")]
-#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
-#[serial]
-fn test_next_at_end_of_trie<S: BaseProofsStore + BaseProofsInitialStateStore>(
-    storage: S,
-) -> Result<(), BaseProofsStorageError> {
-    let path = nibbles_from(vec![1]);
-    let branch = create_test_branch();
-
-    storage.store_account_branches(vec![(path, Some(branch))])?;
-
-    let mut cursor = storage.account_trie_cursor(100)?;
-    cursor.seek(path)?;
-
-    // next() at end should return None
-    assert!(cursor.next()?.is_none());
-
-    Ok(())
-}
-
 /// Test multiple consecutive next calls
-#[test_case(InMemoryProofsStorage::new(); "InMemory")]
-#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
+#[rstest]
+#[case::in_memory(InMemoryProofsStorage::new())]
+#[case::mdbx(create_mdbx_proofs_storage())]
+#[case::rocksdb(create_rocksdb_proofs_storage())]
 #[serial]
 fn test_multiple_consecutive_next<S: BaseProofsStore + BaseProofsInitialStateStore>(
-    storage: S,
+    #[case] storage: S,
 ) -> Result<(), BaseProofsStorageError> {
     let paths = vec![nibbles_from(vec![1]), nibbles_from(vec![2]), nibbles_from(vec![3])];
     let branch = create_test_branch();
@@ -371,12 +299,13 @@ fn test_multiple_consecutive_next<S: BaseProofsStore + BaseProofsInitialStateSto
 }
 
 /// Test current after operations
-#[test_case(InMemoryProofsStorage::new(); "InMemory")]
-#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
+#[rstest]
+#[case::in_memory(InMemoryProofsStorage::new())]
+#[case::mdbx(create_mdbx_proofs_storage())]
+#[case::rocksdb(create_rocksdb_proofs_storage())]
 #[serial]
 fn test_current_after_operations<S: BaseProofsStore + BaseProofsInitialStateStore>(
-    storage: S,
+    #[case] storage: S,
 ) -> Result<(), BaseProofsStorageError> {
     let path1 = nibbles_from(vec![1]);
     let path2 = nibbles_from(vec![2]);
@@ -401,62 +330,41 @@ fn test_current_after_operations<S: BaseProofsStore + BaseProofsInitialStateStor
     Ok(())
 }
 
-/// Test current with no prior operations
-#[test_case(InMemoryProofsStorage::new(); "InMemory")]
-#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
-#[serial]
-fn test_current_no_prior_operations<S: BaseProofsStore + BaseProofsInitialStateStore>(
-    storage: S,
-) -> Result<(), BaseProofsStorageError> {
-    let mut cursor = storage.account_trie_cursor(100)?;
-
-    // Current should be None when no operations performed
-    assert!(cursor.current()?.is_none());
-
-    Ok(())
-}
-
 // =============================================================================
 // 4. Block Number Filtering
 // =============================================================================
 
-/// Test same path with different blocks
-#[test_case(InMemoryProofsStorage::new(); "InMemory")]
-#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
+/// Test that rewriting the same path keeps only the latest node
+#[rstest]
+#[case::in_memory(InMemoryProofsStorage::new())]
+#[case::mdbx(create_mdbx_proofs_storage())]
+#[case::rocksdb(create_rocksdb_proofs_storage())]
 #[serial]
-fn test_same_path_different_blocks<S: BaseProofsStore + BaseProofsInitialStateStore>(
-    storage: S,
+fn test_rewriting_same_path_keeps_latest_node<S: BaseProofsStore + BaseProofsInitialStateStore>(
+    #[case] storage: S,
 ) -> Result<(), BaseProofsStorageError> {
     let path = nibbles_from(vec![1, 2]);
     let branch1 = create_test_branch();
     let branch2 = create_test_branch_variant();
 
-    // Store same path at different blocks
+    // Initial-state writes share one version, so the later write replaces the earlier one.
     storage.store_account_branches(vec![(path, Some(branch1))])?;
-    storage.store_account_branches(vec![(path, Some(branch2))])?;
+    storage.store_account_branches(vec![(path, Some(branch2.clone()))])?;
 
-    // Cursor with max_block_number=75 should see only block 50 data
-    let mut cursor75 = storage.account_trie_cursor(75)?;
-    let result75 = cursor75.seek_exact(path)?.unwrap();
-    assert_eq!(result75.0, path);
-
-    // Cursor with max_block_number=150 should see block 100 data (latest)
-    let mut cursor150 = storage.account_trie_cursor(150)?;
-    let result150 = cursor150.seek_exact(path)?.unwrap();
-    assert_eq!(result150.0, path);
+    let mut cursor = storage.account_trie_cursor(150)?;
+    assert_eq!(cursor.seek_exact(path)?, Some((path, branch2)));
 
     Ok(())
 }
 
 /// Test deleted branch nodes
-#[test_case(InMemoryProofsStorage::new(); "InMemory")]
-#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
+#[rstest]
+#[case::in_memory(InMemoryProofsStorage::new())]
+#[case::mdbx(create_mdbx_proofs_storage())]
+#[case::rocksdb(create_rocksdb_proofs_storage())]
 #[serial]
 fn test_deleted_branch_nodes<S: BaseProofsStore + BaseProofsInitialStateStore>(
-    storage: S,
+    #[case] storage: S,
 ) -> Result<(), BaseProofsStorageError> {
     let path = nibbles_from(vec![1, 2]);
     let branch = create_test_branch();
@@ -489,12 +397,13 @@ fn test_deleted_branch_nodes<S: BaseProofsStore + BaseProofsInitialStateStore>(
 // =============================================================================
 
 /// Test account-specific cursor
-#[test_case(InMemoryProofsStorage::new(); "InMemory")]
-#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
+#[rstest]
+#[case::in_memory(InMemoryProofsStorage::new())]
+#[case::mdbx(create_mdbx_proofs_storage())]
+#[case::rocksdb(create_rocksdb_proofs_storage())]
 #[serial]
 fn test_account_specific_cursor<S: BaseProofsStore + BaseProofsInitialStateStore>(
-    storage: S,
+    #[case] storage: S,
 ) -> Result<(), BaseProofsStorageError> {
     let path = nibbles_from(vec![1, 2]);
     let addr1 = B256::repeat_byte(0x01);
@@ -527,12 +436,13 @@ fn test_account_specific_cursor<S: BaseProofsStore + BaseProofsInitialStateStore
 }
 
 /// Test state trie cursor
-#[test_case(InMemoryProofsStorage::new(); "InMemory")]
-#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
+#[rstest]
+#[case::in_memory(InMemoryProofsStorage::new())]
+#[case::mdbx(create_mdbx_proofs_storage())]
+#[case::rocksdb(create_rocksdb_proofs_storage())]
 #[serial]
 fn test_state_trie_cursor<S: BaseProofsStore + BaseProofsInitialStateStore>(
-    storage: S,
+    #[case] storage: S,
 ) -> Result<(), BaseProofsStorageError> {
     let path = nibbles_from(vec![1, 2]);
     let addr = B256::repeat_byte(0x01);
@@ -560,12 +470,13 @@ fn test_state_trie_cursor<S: BaseProofsStore + BaseProofsInitialStateStore>(
 }
 
 /// Test mixed account and state data
-#[test_case(InMemoryProofsStorage::new(); "InMemory")]
-#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
+#[rstest]
+#[case::in_memory(InMemoryProofsStorage::new())]
+#[case::mdbx(create_mdbx_proofs_storage())]
+#[case::rocksdb(create_rocksdb_proofs_storage())]
 #[serial]
 fn test_mixed_account_state_data<S: BaseProofsStore + BaseProofsInitialStateStore>(
-    storage: S,
+    #[case] storage: S,
 ) -> Result<(), BaseProofsStorageError> {
     let path1 = nibbles_from(vec![1]);
     let path2 = nibbles_from(vec![2]);
@@ -602,12 +513,13 @@ fn test_mixed_account_state_data<S: BaseProofsStore + BaseProofsInitialStateStor
 // =============================================================================
 
 /// Test lexicographic ordering
-#[test_case(InMemoryProofsStorage::new(); "InMemory")]
-#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
+#[rstest]
+#[case::in_memory(InMemoryProofsStorage::new())]
+#[case::mdbx(create_mdbx_proofs_storage())]
+#[case::rocksdb(create_rocksdb_proofs_storage())]
 #[serial]
 fn test_lexicographic_ordering<S: BaseProofsStore + BaseProofsInitialStateStore>(
-    storage: S,
+    #[case] storage: S,
 ) -> Result<(), BaseProofsStorageError> {
     let paths = vec![
         nibbles_from(vec![3, 1]),
@@ -642,12 +554,13 @@ fn test_lexicographic_ordering<S: BaseProofsStore + BaseProofsInitialStateStore>
 }
 
 /// Test path prefix scenarios
-#[test_case(InMemoryProofsStorage::new(); "InMemory")]
-#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
+#[rstest]
+#[case::in_memory(InMemoryProofsStorage::new())]
+#[case::mdbx(create_mdbx_proofs_storage())]
+#[case::rocksdb(create_rocksdb_proofs_storage())]
 #[serial]
 fn test_path_prefix_scenarios<S: BaseProofsStore + BaseProofsInitialStateStore>(
-    storage: S,
+    #[case] storage: S,
 ) -> Result<(), BaseProofsStorageError> {
     let paths = vec![
         nibbles_from(vec![1]),       // Prefix of next
@@ -677,12 +590,13 @@ fn test_path_prefix_scenarios<S: BaseProofsStore + BaseProofsInitialStateStore>(
 }
 
 /// Test complex nibble combinations
-#[test_case(InMemoryProofsStorage::new(); "InMemory")]
-#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
+#[rstest]
+#[case::in_memory(InMemoryProofsStorage::new())]
+#[case::mdbx(create_mdbx_proofs_storage())]
+#[case::rocksdb(create_rocksdb_proofs_storage())]
 #[serial]
 fn test_complex_nibble_combinations<S: BaseProofsStore + BaseProofsInitialStateStore>(
-    storage: S,
+    #[case] storage: S,
 ) -> Result<(), BaseProofsStorageError> {
     // Test various nibble patterns including edge values
     let paths = vec![

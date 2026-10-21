@@ -21,7 +21,6 @@ pub struct HashMapStorageProvider {
     internals: HashMap<(Address, U256), U256>,
     transient: HashMap<(Address, U256), U256>,
     accounts: HashMap<Address, AccountInfo>,
-    fail_on_sload: Option<(Address, U256)>,
     chain_id: u64,
     timestamp: U256,
     beneficiary: Address,
@@ -60,7 +59,6 @@ impl HashMapStorageProvider {
             internals: HashMap::new(),
             transient: HashMap::new(),
             accounts: HashMap::new(),
-            fail_on_sload: None,
             events: HashMap::new(),
             snapshots: Vec::new(),
             chain_id,
@@ -208,9 +206,6 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
     }
 
     fn sload(&mut self, address: Address, key: U256) -> Result<U256, BasePrecompileError> {
-        if self.fail_on_sload == Some((address, key)) {
-            return Err(BasePrecompileError::Fatal("injected sload failure".into()));
-        }
         self.counter_sload += 1;
         Ok(self.internals.get(&(address, key)).copied().unwrap_or(U256::ZERO))
     }
@@ -337,11 +332,6 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
 
 #[cfg(any(test, feature = "test-utils"))]
 impl HashMapStorageProvider {
-    /// Injects an SLOAD failure at the given address and slot (test-utils only).
-    pub const fn fail_next_sload_at(&mut self, address: Address, slot: U256) {
-        self.fail_on_sload = Some((address, slot));
-    }
-
     /// Returns account info for the given address (test-utils only).
     pub fn get_account_info(&self, address: Address) -> Option<&AccountInfo> {
         self.accounts.get(&address)
@@ -368,16 +358,6 @@ impl HashMapStorageProvider {
     /// Overrides the block timestamp (test-utils only).
     pub const fn set_timestamp(&mut self, timestamp: U256) {
         self.timestamp = timestamp;
-    }
-
-    /// Overrides the block beneficiary (test-utils only).
-    pub const fn set_beneficiary(&mut self, beneficiary: Address) {
-        self.beneficiary = beneficiary;
-    }
-
-    /// Overrides the block number (test-utils only).
-    pub const fn set_block_number(&mut self, block_number: u64) {
-        self.block_number = block_number;
     }
 
     /// Sets the caller address (test-utils only).
@@ -440,11 +420,6 @@ impl HashMapStorageProvider {
     /// Returns an iterator over all stored (address, slot, value) triples (test-utils only).
     pub fn into_storage(self) -> impl Iterator<Item = (Address, U256, U256)> {
         self.internals.into_iter().map(|((addr, slot), value)| (addr, slot, value))
-    }
-
-    /// Reads a storage slot directly without journal overhead (test-utils only).
-    pub fn sload_direct(&self, address: Address, key: U256) -> U256 {
-        self.internals.get(&(address, key)).copied().unwrap_or(U256::ZERO)
     }
 
     /// Overrides the gas parameters used for state gas accounting (test-utils only).

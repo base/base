@@ -24,6 +24,10 @@ blocks retain the current origin until the next second even when maximum sequenc
 exceeded; sequenced user transactions remain forbidden past drift. At the next second, the existing
 origin-advancement rules resume. Pre-Denim behavior is unchanged.
 
+Denim also raises the maximum sequencer drift from 1800 seconds to 21600 seconds (6 hours) so the
+sequencer can keep including transactions through longer L1 RPC outages. Like the Fjord value, it
+is selected by the L1 origin's timestamp, not the L2 block's.
+
 ## Usage
 
 Add the dependency to your `Cargo.toml`:

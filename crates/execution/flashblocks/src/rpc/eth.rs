@@ -385,11 +385,7 @@ where
             _ => MAX_TIMEOUT_SEND_RAW_TX_SYNC_MS,
         };
 
-        let tx_hash = match EthTransactions::send_raw_transaction(&self.eth_api, transaction).await
-        {
-            Ok(hash) => hash,
-            Err(e) => return Err(e.into()),
-        };
+        let tx_hash = EthTransactions::send_raw_transaction(&self.eth_api, transaction).await?;
 
         debug!(
             message = "rpc::send_raw_transaction_sync::sent_transaction",
@@ -398,26 +394,14 @@ where
         );
 
         let timeout = Duration::from_millis(timeout_ms);
-        tokio::select! {
-            receipt = self.wait_for_flashblocks_receipt(tx_hash) => {
-                receipt.ok_or_else(|| EthApiError::TransactionConfirmationTimeout {
-                    hash: tx_hash,
-                    duration: timeout,
-                }.into())
-            }
-            receipt = self.wait_for_canonical_receipt(tx_hash) => {
-                receipt.ok_or_else(|| EthApiError::TransactionConfirmationTimeout {
-                    hash: tx_hash,
-                    duration: timeout,
-                }.into())
-            }
-            _ = time::sleep(timeout) => {
-                Err(EthApiError::TransactionConfirmationTimeout {
-                    hash: tx_hash,
-                    duration: timeout,
-                }.into())
-            }
-        }
+        let receipt = tokio::select! {
+            receipt = self.wait_for_flashblocks_receipt(tx_hash) => receipt,
+            receipt = self.wait_for_canonical_receipt(tx_hash) => receipt,
+            _ = time::sleep(timeout) => None,
+        };
+        receipt.ok_or_else(|| {
+            EthApiError::TransactionConfirmationTimeout { hash: tx_hash, duration: timeout }.into()
+        })
     }
 
     async fn call(

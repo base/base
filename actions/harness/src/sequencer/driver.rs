@@ -281,6 +281,7 @@ impl<E: SequencerEngineBackend> L2Sequencer<E> {
             recovery_mode: RecoveryModeGuard::new(false),
             rollup_config: self.actor_rollup_config(),
             seal_offset: base_protocol::DEFAULT_SEAL_OFFSET,
+            schedule_delay: Duration::ZERO,
             unsafe_payload_gossip_client: ActionUnsafePayloadGossipClient,
             sealer: None,
             pending_stop: None,

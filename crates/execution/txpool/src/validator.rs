@@ -14,8 +14,8 @@ use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, LogData, U256, map::AddressSet};
 use base_common_chains::{BaseUpgrade, Upgrades};
 use base_common_consensus::{
-    Eip8130Constants, Eip8130Contracts, Eip8130Signed, Eip8130StructuralError, Eip8130Structure,
-    Eip8130TimestampError,
+    BaseTimeUpdateTx, Eip8130Constants, Eip8130Contracts, Eip8130Signed, Eip8130StructuralError,
+    Eip8130Structure, Eip8130TimestampError,
 };
 use base_common_evm::{BaseSpecId, L1BlockInfo};
 use base_common_genesis::DaFootprintGasScalarUpdate;
@@ -83,25 +83,34 @@ struct Eip8130ValidationState {
     payer: Address,
     classification_generation: u64,
     payer_balance: U256,
-    payer_balance_after_auth: U256,
+    /// The sender's balance, which reth's per-sender accounting checks the
+    /// sender's `cost()` against. The payer's balance is enforced by admission
+    /// and the guard's payer balance watch.
+    sender_balance: U256,
     sender_nonce: u64,
+    /// The sender's code hash when the sender is EIP-7702 delegated, the only
+    /// sender code reth's delegation slot limit is meant for; `None` otherwise.
     sender_bytecode_hash: Option<B256>,
-    /// Payer-authentication gas metered on top of `gas_limit`. The execution
-    /// path charges the operator fee on `gas_limit + payer_auth`, so admission
-    /// must do the same to avoid admitting operator-fee-underfunded sponsored
-    /// transactions. Zero for self-pay transactions.
-    payer_auth: u64,
     watch_set: WatchSet,
     sender_locked: bool,
     payer_locked: bool,
     payer_trusted: bool,
     payer_allowlisted: bool,
     payer_max_cost: U256,
+    /// The sender's policy gate target, when the sender actor is policy-gated.
+    sender_policy_target: Option<Address>,
     /// Authorization reads and predicates used for build-time revalidation.
     manifest: WatchManifest,
 }
 
 const LIMIT_CLASS_CACHE_CAPACITY: NonZeroUsize = NonZeroUsize::new(100_000).unwrap();
+
+// The pool must never admit a nonce-free transaction whose `valid_before` the
+// consensus inclusion check would reject.
+const _: () = assert!(
+    Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW <= NonceManagerStorage::NONCE_FREE_EXPIRY_WINDOW,
+    "mempool nonce-free expiry window exceeds the consensus inclusion window",
+);
 
 /// Cached lock state and trusted-delegation classification by account.
 #[derive(Debug)]
@@ -675,6 +684,8 @@ pub struct BaseL1BlockInfo {
     l1_block_info: RwLock<L1BlockInfo>,
     /// Current block timestamp.
     timestamp: AtomicU64,
+    /// Current block timestamp in milliseconds.
+    timestamp_ms: AtomicU64,
 }
 
 impl BaseL1BlockInfo {
@@ -727,6 +738,12 @@ impl<Client, Tx, Evm> BaseTransactionValidator<Client, Tx, Evm> {
     /// Returns the current block timestamp.
     fn block_timestamp(&self) -> u64 {
         self.block_info.timestamp.load(Ordering::Relaxed)
+    }
+
+    /// Returns the current block timestamp in milliseconds, the clock EIP-8130
+    /// validity windows and the nonce-free replay ring are evaluated against.
+    pub fn block_timestamp_ms(&self) -> u64 {
+        self.block_info.timestamp_ms.load(Ordering::Relaxed)
     }
 
     /// Whether to ensure that the transaction's sender has enough balance to also cover the L1 gas
@@ -803,7 +820,7 @@ impl<Client, Tx, Evm> BaseTransactionValidator<Client, Tx, Evm> {
                 cache.invalidate_code(diff.address);
             }
             if diff.address == AccountConfigurationStorage::ADDRESS {
-                for slot in &diff.changed_slots {
+                for (slot, _) in &diff.changed_slots {
                     changed = true;
                     cache.invalidate_slot(slot);
                 }
@@ -857,9 +874,13 @@ where
             // genesis block has no txs, so we can't extract L1 info, we set the block info to empty
             // so that we will accept txs into the pool before the first block
             if block.header().number() == 0 {
-                this.block_info.timestamp.store(block.header().timestamp(), Ordering::Relaxed);
+                let timestamp = block.header().timestamp();
+                this.block_info.timestamp.store(timestamp, Ordering::Relaxed);
+                this.block_info
+                    .timestamp_ms
+                    .store(timestamp.saturating_mul(1_000), Ordering::Relaxed);
             } else {
-                this.update_l1_block_info(block.header(), block.body().transactions().first());
+                this.update_l1_block_info(block.header(), block.body().transactions());
             }
         }
 
@@ -886,17 +907,32 @@ where
         }
     }
 
-    /// Update the L1 block info for the given header and system transaction, if any.
+    /// Update the block clock and L1 block info from the given header and its
+    /// transactions.
     ///
-    /// Note: this supports optional system transaction, in case this is used in a dev setup
-    pub fn update_l1_block_info<H, T>(&self, header: &H, tx: Option<&T>)
+    /// The L1 block info is read from the first (system) transaction. From
+    /// Denim, the millisecond timestamp is decoded from the `BaseTime` update at
+    /// `tx[1]`; before Denim, or without one, it is the whole second.
+    ///
+    /// Note: the system transactions are optional, in case this is used in a dev setup
+    pub fn update_l1_block_info<H, T>(&self, header: &H, transactions: &[T])
     where
         H: BlockHeader,
         T: Transaction,
     {
-        self.block_info.timestamp.store(header.timestamp(), Ordering::Relaxed);
+        let timestamp = header.timestamp();
+        let timestamp_ms = self
+            .chain_spec()
+            .is_denim_active_at_timestamp(timestamp)
+            .then(|| BaseTimeUpdateTx::decode_timestamp_ms(transactions, timestamp))
+            .flatten()
+            .unwrap_or_else(|| timestamp.saturating_mul(1_000));
+        self.block_info.timestamp.store(timestamp, Ordering::Relaxed);
+        self.block_info.timestamp_ms.store(timestamp_ms, Ordering::Relaxed);
 
-        if let Some(Ok(l1_block_info)) = tx.map(base_execution_evm::extract_l1_info_from_tx) {
+        if let Some(Ok(l1_block_info)) =
+            transactions.first().map(base_execution_evm::extract_l1_info_from_tx)
+        {
             *self.block_info.l1_block_info.write() = l1_block_info;
         }
     }
@@ -969,6 +1005,9 @@ where
                 matches!(origin, TransactionOrigin::External | TransactionOrigin::Local);
             transaction.set_watch_set(state.watch_set.clone());
             transaction.set_watch_manifest(state.manifest.clone());
+            if let Some(target) = state.sender_policy_target {
+                transaction.set_sender_policy_target(target);
+            }
             transaction.set_limit_class(LimitClass {
                 sender: state.sender,
                 payer: state.payer,
@@ -981,17 +1020,20 @@ where
                 max_cost: state.payer_max_cost,
             });
             let outcome = TransactionValidationOutcome::Valid {
-                balance: state.payer_balance_after_auth,
+                balance: state.sender_balance,
                 state_nonce: state.sender_nonce,
                 transaction: ValidTransaction::new(transaction, None),
                 propagate,
                 bytecode_hash: state.sender_bytecode_hash,
-                authorities: (state.payer != state.sender).then_some(vec![state.payer]),
+                // Reth reserves authorities under its EIP-7702 delegation slot
+                // limit. A payer installs no delegation; the payer-keyed guard
+                // bounds what it sponsors.
+                authorities: None,
             };
-            return self.apply_base_checks(outcome, state.payer_auth);
+            return self.apply_base_checks(outcome, false);
         }
         let outcome = self.inner.validate_one_with_state(origin, transaction, state);
-        self.apply_base_checks(outcome, 0)
+        self.apply_base_checks(outcome, true)
     }
 
     /// Returns a low-cardinality sender authenticator label for metrics.
@@ -1042,6 +1084,7 @@ where
         let classification_generation = self.limit_class_cache_generation();
         let local_chain_id = self.inner.chain_spec().chain().id();
         let now = self.block_timestamp();
+        let now_ms = self.block_timestamp_ms();
         // Before Zenith there is no Keystore: authorization, lock state, and the
         // high-rate payer classification never read `AccountConfiguration`.
         let keystore =
@@ -1116,12 +1159,8 @@ where
         // of this transaction and cannot satisfy its own admission nonce.
         let mut storage = StateProviderPrecompileStorage::new(&*state, local_chain_id, now);
         // `NonceValidator::validate` compares the nonce-free replay ring's stored
-        // `valid_before` (Unix milliseconds) against `now`, so it must be passed in
-        // milliseconds (`block.timestamp * 1000`) — the storage overlay above keeps
-        // `now` in seconds for `block.timestamp`. Passing raw seconds here would
-        // make every replay entry look unexpired ~1000x too long and reject valid
-        // nonce-free re-submissions.
-        let now_ms = now.saturating_mul(1_000);
+        // `valid_before` (Unix milliseconds) against `now_ms`; the storage overlay
+        // above keeps `now` in seconds for `block.timestamp`.
         StorageCtx::enter(&mut storage, |ctx| {
             let nonce_storage = NonceManagerStorage::new(ctx);
             NonceValidator::validate(
@@ -1142,16 +1181,13 @@ where
         // Admission uses the same safe ceiling as `eth_estimateGas`, so a tx whose
         // `gas_limit` was set from the estimate is never rejected here and can
         // never be admitted only to OOG at inclusion. The non-monotonic,
-        // state-dependent costs are pinned to their worst case: both policy gates
-        // charged and zero revoke discount. Execution reprices them precisely.
+        // state-dependent costs are pinned to their worst case: the sender's policy
+        // gate charged (from Zenith; there are none before) and zero revoke discount.
+        // Execution reprices them precisely.
         let intrinsic = IntrinsicGas::compute(
             signed,
             encoded.as_ref(),
-            &IntrinsicGasInput::worst_case(
-                sender,
-                nonce_key_first_use,
-                signed.tx().payer.is_some(),
-            ),
+            &IntrinsicGasInput::worst_case(sender, nonce_key_first_use, keystore),
         )
         .map_err(|err| {
             Self::eip8130_error(match err {
@@ -1203,8 +1239,6 @@ where
                 .into(),
             ))
         })?;
-        let payer_auth_charge = U256::from(intrinsic.payer_auth)
-            .saturating_mul(U256::from(signed.tx().max_fee_per_gas));
 
         let nonce_free = signed.tx().nonce_key == Eip8130Constants::NONCE_KEY_MAX;
         let transaction_expiry =
@@ -1349,10 +1383,9 @@ where
             payer,
             classification_generation,
             payer_balance: payer_account.balance,
-            payer_balance_after_auth: payer_account.balance.saturating_sub(payer_auth_charge),
+            sender_balance: sender_account.balance,
             sender_nonce,
-            sender_bytecode_hash: sender_account.bytecode_hash,
-            payer_auth: intrinsic.payer_auth,
+            sender_bytecode_hash: Self::delegated_code_hash(&*state, &sender_account)?,
             watch_set,
             // Without the Keystore an account's only key is its own secp256k1
             // key, which can never change: its authorization is as stable as a
@@ -1362,6 +1395,9 @@ where
             payer_trusted,
             payer_allowlisted,
             payer_max_cost,
+            sender_policy_target: sender_actor
+                .is_policy_gated()
+                .then_some(sender_actor.policy_target),
             manifest,
         })
     }
@@ -1573,6 +1609,23 @@ where
         })
     }
 
+    /// Returns `account`'s code hash when its code is an EIP-7702 delegation
+    /// indicator, matching the only sender code a standard transaction can
+    /// report to reth.
+    fn delegated_code_hash(
+        state: &dyn StateProvider,
+        account: &reth_primitives_traits::Account,
+    ) -> Result<Option<B256>, InvalidPoolTransactionError> {
+        let Some(code_hash) = account.bytecode_hash.filter(|hash| *hash != KECCAK_EMPTY) else {
+            return Ok(None);
+        };
+        let delegated = state
+            .bytecode_by_hash(&code_hash)
+            .map_err(|error| Self::state_read_error(error, "sender code read failed"))?
+            .is_some_and(|code| code.is_eip7702());
+        Ok(delegated.then_some(code_hash))
+    }
+
     fn account_has_code(
         state: &dyn StateProvider,
         address: Address,
@@ -1682,6 +1735,7 @@ where
             NonceError::NonceFreeSequence { .. } => {
                 Self::eip8130_error("nonce-free transaction has a non-zero nonce sequence")
             }
+            NonceError::SequenceSaturated => Self::eip8130_error("nonce sequence is saturated"),
             NonceError::Storage(_) => Self::eip8130_error("nonce state read failed"),
         }
     }
@@ -1789,10 +1843,10 @@ where
         // Cheap shape checks run before the fork gate and signature recovery.
         Eip8130Structure::validate(signed).map_err(Self::map_structural_error)?;
 
-        // Single read of the head-block timestamp so the fork gate and the
-        // expiry check see the same value even when `on_new_head_block` updates
-        // the atomic concurrently.
+        // Read the head-block clock up front so a concurrent `on_new_head_block`
+        // cannot move it between the fork gate and the expiry check.
         let now = self.block_timestamp();
+        let now_ms = self.block_timestamp_ms();
         // Fork gate: EIP-8130 (account abstraction) transactions are only
         // admissible to the pool once the Everest upgrade is active.
         if !self.chain_spec().is_everest_active_at_timestamp(now) {
@@ -1807,9 +1861,8 @@ where
         }
         let local_chain_id = self.inner.chain_spec().chain().id();
         signed.validate_static(local_chain_id).map_err(InvalidPoolTransactionError::from)?;
-        // The validity window is evaluated in milliseconds against
-        // `block.timestamp * 1000`; the fork gate above uses seconds.
-        let now_ms = now.saturating_mul(1_000);
+        // The validity window is evaluated against the head block's millisecond
+        // timestamp; the fork gate above uses seconds.
         signed
             .validate_timestamp(now_ms)
             .map_err(|error| Self::map_timestamp_error(error, signed, now_ms))?;
@@ -1849,19 +1902,18 @@ where
         }
     }
 
-    /// Performs the necessary Base-specific checks based on top of the regular eth outcome.
+    /// Performs the necessary Base-specific checks on top of the regular eth outcome: the DA
+    /// footprint limit and, when `check_cost` is set, that `balance` covers the transaction's
+    /// cost plus its L1 data and operator fees.
     ///
-    /// `operator_fee_gas_addition` is gas charged the operator fee on top of the
-    /// transaction's signed `gas_limit`. It is zero for ordinary transactions; for
-    /// EIP-8130 it is the payer-authentication gas, because the execution path meters
-    /// the operator fee on `gas_limit + payer_auth` (the gas-price portion of that
-    /// payer-auth gas is already reflected in the reduced `balance`). Mirroring it here
-    /// prevents admitting sponsored transactions that are operator-fee-underfunded and
-    /// would never execute.
+    /// EIP-8130 admission already requires the payer to cover gas plus those fees (see
+    /// `validate_eip8130_full`), so it passes `check_cost = false`: its `cost()` is the
+    /// sender's obligation, including a declared coinbase tip that admission deliberately does
+    /// not require.
     fn apply_base_checks(
         &self,
         outcome: TransactionValidationOutcome<Tx>,
-        operator_fee_gas_addition: u64,
+        check_cost: bool,
     ) -> TransactionValidationOutcome<Tx> {
         if !self.requires_l1_data_gas_fee() {
             // no need to check L1 gas fee
@@ -1901,6 +1953,17 @@ where
                 }
             }
 
+            if !check_cost {
+                return TransactionValidationOutcome::Valid {
+                    balance,
+                    state_nonce,
+                    transaction: valid_tx,
+                    propagate,
+                    bytecode_hash,
+                    authorities,
+                };
+            }
+
             let encoded = valid_tx.transaction().encoded_2718();
 
             // Must mirror the execution-side cost in `BaseHandler` (L1 data fee + operator fee
@@ -1908,9 +1971,7 @@ where
             let spec_id = BaseSpecId::from_timestamp(self.chain_spec(), self.block_timestamp());
             let cost_addition = l1_block_info.tx_cost(
                 &encoded,
-                U256::from(
-                    valid_tx.transaction().gas_limit().saturating_add(operator_fee_gas_addition),
-                ),
+                U256::from(valid_tx.transaction().gas_limit()),
                 spec_id,
             );
             let cost = valid_tx.transaction().cost().saturating_add(cost_addition);
@@ -1956,12 +2017,24 @@ where
         self.validate_one(origin, transaction).await
     }
 
+    /// Validates the batch in order against one state provider, as reth's
+    /// `EthTransactionValidator` does, instead of opening one per transaction.
+    async fn validate_transactions(
+        &self,
+        transactions: impl IntoIterator<Item = (TransactionOrigin, Self::Transaction), IntoIter: Send>
+        + Send,
+    ) -> Vec<TransactionValidationOutcome<Self::Transaction>> {
+        let mut state = None;
+        let mut outcomes = Vec::new();
+        for (origin, transaction) in transactions {
+            outcomes.push(self.validate_one_with_state(origin, transaction, &mut state).await);
+        }
+        outcomes
+    }
+
     fn on_new_head_block(&self, new_tip_block: &SealedBlock<Self::Block>) {
         self.inner.on_new_head_block(new_tip_block);
-        self.update_l1_block_info(
-            new_tip_block.header(),
-            new_tip_block.body().transactions().first(),
-        );
+        self.update_l1_block_info(new_tip_block.header(), new_tip_block.body().transactions());
     }
 }
 
@@ -2129,7 +2202,7 @@ mod tests {
         crate::AccountStateDiff {
             address,
             balance: Some(U256::from(balance)),
-            nonce_changed: false,
+            nonce: None,
             code_changed: false,
             changed_slots: Vec::new(),
         }
@@ -2222,7 +2295,7 @@ mod tests {
         let nonce_diff = crate::AccountStateDiff {
             address: trusted,
             balance: None,
-            nonce_changed: true,
+            nonce: Some(1),
             code_changed: false,
             changed_slots: Vec::new(),
         };
@@ -2594,7 +2667,7 @@ mod tests {
         // the raw expiry comparison.
         let validator = build_test_validator();
         let header = alloy_consensus::Header { timestamp: 1_700_000_100, ..Default::default() };
-        validator.update_l1_block_info::<_, TxEip1559>(&header, None);
+        validator.update_l1_block_info::<_, TxEip1559>(&header, &[]);
         let tx = TxEip8130 {
             nonce_key: Eip8130Constants::NONCE_KEY_MAX,
             nonce_sequence: 0,
@@ -2609,6 +2682,40 @@ mod tests {
     }
 
     #[test]
+    fn eip8130_window_uses_the_head_block_millisecond_clock() {
+        // The head block is 400 ms past its whole second, so a `valid_before`
+        // 100 ms past that second has already elapsed.
+        let timestamp = 1_700_000_000;
+        let header = alloy_consensus::Header { timestamp, ..Default::default() };
+        let block_transactions: [BaseTransactionSigned; 2] = [
+            TxDeposit::default().into(),
+            BaseTimeUpdateTx::new(400).unwrap().into_deposit_tx(1).into_inner().into(),
+        ];
+        let tx = TxEip8130 {
+            nonce_key: Eip8130Constants::NONCE_KEY_MAX,
+            nonce_sequence: 0,
+            valid_before: timestamp * 1_000 + 100,
+            ..minimal_valid_eoa_tx()
+        };
+        let signed = sign_eoa_eip8130(tx);
+
+        let validator = build_test_validator();
+        validator.update_l1_block_info(&header, &block_transactions);
+        assert_eq!(validator.block_timestamp_ms(), timestamp * 1_000 + 400);
+        assert_structural_reason(
+            validator.validate_eip8130_structural(&signed),
+            "nonce-free transaction validity window has elapsed",
+        );
+
+        // Before Denim there is no `BaseTime` update, so the clock stays on the
+        // whole second.
+        let pre_denim = BaseChainSpecBuilder::base_mainnet().cobalt_activated().build();
+        let validator = build_test_validator_with_spec(Arc::new(pre_denim));
+        validator.update_l1_block_info(&header, &block_transactions);
+        assert_eq!(validator.block_timestamp_ms(), timestamp * 1_000);
+    }
+
+    #[test]
     fn rejects_eip8130_nonce_free_not_yet_valid() {
         // Realistic millisecond clock (both bounds >= TIMESTAMP_MS_THRESHOLD, so
         // normalization is a no-op). A future `valid_after` opens the window
@@ -2616,7 +2723,7 @@ mod tests {
         // the expiry checks (which `validate_timestamp` evaluates afterward).
         let validator = build_test_validator();
         let header = alloy_consensus::Header { timestamp: 1_700_000_000, ..Default::default() };
-        validator.update_l1_block_info::<_, TxEip1559>(&header, None);
+        validator.update_l1_block_info::<_, TxEip1559>(&header, &[]);
         let now_ms = 1_700_000_000_000;
         let tx = TxEip8130 {
             nonce_key: Eip8130Constants::NONCE_KEY_MAX,
@@ -2640,7 +2747,7 @@ mod tests {
         // `NotYetValid`.
         let validator = build_test_validator();
         let header = alloy_consensus::Header { timestamp: 1_700_000_000, ..Default::default() };
-        validator.update_l1_block_info::<_, TxEip1559>(&header, None);
+        validator.update_l1_block_info::<_, TxEip1559>(&header, &[]);
         let now_ms = 1_700_000_000_000;
         let tx = TxEip8130 { valid_after: now_ms + 50_000, ..minimal_valid_eoa_tx() };
         let signed = sign_eoa_eip8130(tx);
@@ -2659,7 +2766,7 @@ mod tests {
         // the mirror of `accepts_eip8130_nonce_free_at_expiry_window_edge`.
         let validator = build_test_validator();
         let header = alloy_consensus::Header { timestamp: 1_700_000_000, ..Default::default() };
-        validator.update_l1_block_info::<_, TxEip1559>(&header, None);
+        validator.update_l1_block_info::<_, TxEip1559>(&header, &[]);
         let now_ms = 1_700_000_000_000;
         let tx = TxEip8130 {
             nonce_key: Eip8130Constants::NONCE_KEY_MAX,
@@ -2682,7 +2789,7 @@ mod tests {
         // this checks the inclusive edge in true milliseconds.
         let validator = build_test_validator();
         let header = alloy_consensus::Header { timestamp: 1_700_000_000, ..Default::default() };
-        validator.update_l1_block_info::<_, TxEip1559>(&header, None);
+        validator.update_l1_block_info::<_, TxEip1559>(&header, &[]);
         let now_ms = 1_700_000_000_000;
         let tx = TxEip8130 {
             nonce_key: Eip8130Constants::NONCE_KEY_MAX,
@@ -2692,25 +2799,6 @@ mod tests {
         };
         let signed = sign_eoa_eip8130(tx);
         assert!(validator.validate_eip8130_structural(&signed).is_ok());
-    }
-
-    /// The mempool pre-filter window must never exceed the authoritative,
-    /// consensus-critical on-chain inclusion window. If it did, the pool would
-    /// admit nonce-free transactions whose `expiry` the block-inclusion replay
-    /// check (`NonceManagerStorage::check_and_mark_expiring_nonce`) rejects,
-    /// wasting block space on transactions that can never land. See the note on
-    /// `Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW`.
-    #[test]
-    fn mempool_expiry_window_within_onchain_inclusion_window() {
-        const {
-            assert!(
-                Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW
-                    <= NonceManagerStorage::NONCE_FREE_EXPIRY_WINDOW,
-                "mempool expiry window exceeds the on-chain inclusion window; raising it is a \
-                 fork-level change (bump NONCE_FREE_EXPIRY_WINDOW and resize \
-                 REPLAY_BUFFER_CAPACITY)",
-            );
-        }
     }
 
     #[test]
@@ -3434,7 +3522,7 @@ mod tests {
             input: isthmus_data.into(),
         }
         .into();
-        validator.update_l1_block_info(&header, Some(&l1_info_tx));
+        validator.update_l1_block_info(&header, &[l1_info_tx]);
 
         let pooled_tx: BasePooledTransaction =
             BasePooledTransaction::new(recovered_tx, envelope.encode_2718_len());
@@ -3500,16 +3588,14 @@ mod tests {
             input: isthmus_data.clone().into(),
         }
         .into();
-        validator.update_l1_block_info(&header, Some(&l1_info_tx));
+        validator.update_l1_block_info(&header, &[l1_info_tx]);
 
         let state = validator.validate_eip8130_full(&signed).expect("valid funded EIP-8130 tx");
         let encoded = validator.eip8130_encoded(&signed);
-        let max_gas = FeeCheck::max_chargeable_gas(signed.tx().gas_limit, state.payer_auth);
-        let gas_charge = FeeCheck::max_fee_charge(
-            signed.tx().gas_limit,
-            state.payer_auth,
-            signed.tx().max_fee_per_gas,
-        );
+        // Self-pay: no payer authentication gas.
+        let max_gas = FeeCheck::max_chargeable_gas(signed.tx().gas_limit, 0);
+        let gas_charge =
+            FeeCheck::max_fee_charge(signed.tx().gas_limit, 0, signed.tx().max_fee_per_gas);
         let spec_id = BaseSpecId::from_timestamp(&chain_spec, chain_config.isthmus_timestamp);
         let mut l1_block_info = base_execution_evm::parse_l1_info(&isthmus_data).unwrap();
         let additional_fees = l1_block_info.tx_cost(&encoded, U256::from(max_gas), spec_id);
@@ -3657,7 +3743,7 @@ mod tests {
         let validator: TestValidator =
             BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default());
         let header = alloy_consensus::Header { timestamp: now, ..Default::default() };
-        validator.update_l1_block_info::<_, TxEip1559>(&header, None);
+        validator.update_l1_block_info::<_, TxEip1559>(&header, &[]);
 
         let state = validator.validate_eip8130_full(&signed).expect("valid nonce-free tx");
         assert_eq!(state.manifest.effective_expiry(), (valid_before - 1) / 1000);
@@ -3859,5 +3945,31 @@ mod tests {
         assert_eq!(state.payer, sender);
         assert_eq!(state.sender_bytecode_hash, Some(expected_hash));
         assert!(state.watch_set.iter().any(|key| *key == InvalidationKey::CodeHash(sender)));
+    }
+
+    /// Reth applies its EIP-7702 delegation slot limit to any sender reported
+    /// with code, so a sender whose code is not a delegation indicator must
+    /// report none, as a standard transaction's sender would.
+    #[test]
+    fn sender_with_non_delegation_code_reports_no_code_hash() {
+        let signer = PrivateKeySigner::random();
+        let sender = signer.address();
+        let tx = TxEip8130 {
+            chain_id: test_chain_id(),
+            nonce_key: U256::ZERO,
+            max_fee_per_gas: 100,
+            gas_limit: 1_000_000,
+            ..Default::default()
+        };
+        let sender_auth = k1_auth_blob(&signer, tx.sender_signature_hash()).slice(20..);
+        let signed = Eip8130Signed::new(tx, sender_auth, Bytes::new());
+        let account = ExtendedAccount::new(0, U256::from(1_000_000_000_000_000_000u64))
+            .with_bytecode(Bytes::from_static(&[0x60, 0x00]));
+        let validator = build_test_validator_with_account(sender, account);
+
+        let state = validator
+            .validate_eip8130_full(&signed)
+            .expect("a sender with code may send an EIP-8130 transaction");
+        assert_eq!(state.sender_bytecode_hash, None);
     }
 }

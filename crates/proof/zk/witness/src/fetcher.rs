@@ -1,6 +1,7 @@
 use std::{
     cmp::{Ordering, min},
     env, fmt, fs,
+    num::NonZeroU64,
     path::{Path, PathBuf},
     str::FromStr,
     sync::Arc,
@@ -750,6 +751,7 @@ impl OPSuccinctDataFetcher {
         l2_end_block: u64,
         l1_head_hash: B256,
         schedule_l2_block_number: Option<u64>,
+        intermediate_block_interval: NonZeroU64,
     ) -> Result<HostConfig> {
         let Some(rollup_config) = &self.rollup_config else {
             return Err(anyhow::anyhow!("Rollup config not loaded."));
@@ -851,6 +853,7 @@ impl OPSuccinctDataFetcher {
             // We don't need to set the proposer for the range proof zk program
             proposer: Address::ZERO,
             schedule_l2_block_number,
+            intermediate_block_interval,
         };
 
         let prover = base_proof_host::ProverConfig {

@@ -272,26 +272,12 @@ pub async fn fetch_info(rpc: &Url, cl_rpc: &Url) -> Result<(NodeInfoReport, Peer
 
 /// Adds an execution-layer peer through `admin_addPeer`.
 pub async fn add_peer(rpc: &Url, enode: &str) -> Result<bool> {
-    let el_provider = connect_el(rpc).await?;
-    match el_provider.add_peer(enode).await {
-        Ok(accepted) => Ok(accepted),
-        Err(err) if is_method_not_found(&err) => {
-            Err(err).with_context(|| format!("`admin_addPeer` not exposed by {rpc}"))
-        }
-        Err(err) => Err(err).with_context(|| format!("calling admin_addPeer on {rpc}")),
-    }
+    el_admin_peer_bool(rpc, "admin_addPeer", enode).await
 }
 
 /// Removes an execution-layer peer through `admin_removePeer`.
 pub async fn remove_peer(rpc: &Url, enode: &str) -> Result<bool> {
-    let el_provider = connect_el(rpc).await?;
-    match el_provider.remove_peer(enode).await {
-        Ok(accepted) => Ok(accepted),
-        Err(err) if is_method_not_found(&err) => {
-            Err(err).with_context(|| format!("`admin_removePeer` not exposed by {rpc}"))
-        }
-        Err(err) => Err(err).with_context(|| format!("calling admin_removePeer on {rpc}")),
-    }
+    el_admin_peer_bool(rpc, "admin_removePeer", enode).await
 }
 
 /// Bans an execution-layer peer through `admin_banPeer`.

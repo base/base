@@ -16,7 +16,7 @@ use base_proof_contracts::{
     AnchorStateRegistryClient, ContractError, DisputeGameFactoryClient, GameAtIndex, GameInfo,
     GameStatus,
 };
-use base_proof_primitives::Proposal;
+use base_proof_primitives::{ProofRequest, Proposal};
 use base_proof_rpc::{
     BaseBlock, BaseHeader, L1Provider, L2Provider, RollupProvider, RpcError, RpcResult,
 };
@@ -457,6 +457,12 @@ pub fn test_proposal(block_number: u64) -> Proposal {
     }
 }
 
+/// Creates a zeroed TEE [`ProofRequest`] for a game with one intermediate root
+/// at the mock verifier's default block interval.
+pub fn test_proof_request() -> ProofRequest {
+    ProofRequest::for_tests(0, MockAggregateVerifier::default().block_interval)
+}
+
 /// Mock prover-service requester for pipeline tests.
 #[derive(Debug, Default)]
 pub struct MockProofRequester {
@@ -531,11 +537,21 @@ impl ProofRequesterProvider for MockProofRequester {
             ));
         };
         let target = tee_request.proof.claimed_l2_block_number;
-        // Proof requests no longer carry a stride. This fake covers one game at the
-        // mock verifier's default block interval, which is what proposer tests use.
-        let span = MockAggregateVerifier::default().block_interval.max(1);
+        // Sample like the enclave over one game at the mock verifier's default block interval,
+        // which is what proposer tests use.
+        let span = MockAggregateVerifier::default().block_interval;
+        let interval = tee_request.proof.intermediate_block_interval.get();
         let start = target.saturating_sub(span);
-        let proposals = ((start + 1)..=target).map(test_proposal).collect::<Vec<_>>();
+        let intermediate_roots = (1..=span / interval)
+            .map(|i| start + i * interval)
+            .map(|block| {
+                if block == target {
+                    tee_request.proof.claimed_l2_output_root
+                } else {
+                    test_proposal(block).output_root
+                }
+            })
+            .collect();
         let aggregate_proposal = Proposal {
             output_root: tee_request.proof.claimed_l2_output_root,
             l1_origin_hash: tee_request.proof.l1_head,
@@ -549,7 +565,7 @@ impl ProofRequesterProvider for MockProofRequester {
             error_message: None,
             result: Some(ApiProofResult::Tee(TeeProofResult {
                 aggregate_proposal,
-                proposals,
+                intermediate_roots,
                 tee_kind: TeeKind::AwsNitro,
                 tee_signer: Address::repeat_byte(0x11),
             })),

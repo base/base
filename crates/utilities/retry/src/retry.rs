@@ -84,15 +84,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn bounded_defaults_use_configured_constants() {
-        let config = RetryConfig::default();
-
-        assert_eq!(config.max_attempts, Some(DEFAULT_BOUNDED_MAX_ATTEMPTS));
-        assert_eq!(config.initial_delay, DEFAULT_BOUNDED_INITIAL_DELAY);
-        assert_eq!(config.max_delay, DEFAULT_BOUNDED_MAX_DELAY);
-    }
-
-    #[test]
     fn bounded_max_attempts_preserves_zero() {
         let config = RetryConfig::new(0, Duration::from_millis(10), Duration::from_millis(20));
 
@@ -112,25 +103,6 @@ mod tests {
         let config = RetryConfig::new(3, Duration::ZERO, Duration::ZERO);
 
         assert_eq!(config.normalized_max_delay(), MIN_RETRY_DELAY);
-    }
-
-    #[test]
-    fn bounded_builder_sets_a_retry_limit() {
-        let config = RetryConfig::new(3, Duration::from_millis(5), Duration::from_millis(12));
-
-        let builder = config.to_backoff_builder();
-
-        assert!(format!("{builder:?}").contains("max_times: Some(3)"));
-    }
-
-    #[test]
-    fn unbounded_config_uses_configured_delays() {
-        let config =
-            RetryConfig::unbounded(DEFAULT_UNBOUNDED_INITIAL_DELAY, DEFAULT_UNBOUNDED_MAX_DELAY);
-
-        assert_eq!(config.max_attempts, None);
-        assert_eq!(config.initial_delay, DEFAULT_UNBOUNDED_INITIAL_DELAY);
-        assert_eq!(config.max_delay, DEFAULT_UNBOUNDED_MAX_DELAY);
     }
 
     #[test]

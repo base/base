@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 
 use async_trait::async_trait;
-use base_consensus_engine::ConsolidateInput;
+use base_protocol::AttributesWithParent;
 use derive_more::Constructor;
 use tokio::sync::mpsc;
 
@@ -11,7 +11,7 @@ use crate::{
 };
 
 /// Client to use to interact with the engine.
-#[cfg_attr(test, mockall::automock(type SafeL2Signal = AttributesWithParent;))]
+#[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait DerivationEngineClient: Debug + Send + Sync {
     /// Resets the engine's forkchoice.
@@ -21,14 +21,13 @@ pub trait DerivationEngineClient: Debug + Send + Sync {
     /// Note: This does not wait for the engine to process it.
     async fn send_finalized_l2_block(&self, block_number: u64) -> EngineClientResult<()>;
 
-    /// Sends a consolidation signal to the engine.
-    ///
-    /// This is the unified entry point for all consolidation-related inputs,
-    /// including derived attributes and safe L2 block information, as represented
-    /// by [`ConsolidateInput`].
+    /// Sends derived attributes to the engine, which consolidates its safe head with them.
     ///
     /// Note: This does not wait for the engine to process it.
-    async fn send_safe_l2_signal(&self, signal: ConsolidateInput) -> EngineClientResult<()>;
+    async fn send_derived_attributes(
+        &self,
+        attributes: AttributesWithParent,
+    ) -> EngineClientResult<()>;
 }
 
 /// Client to use to send messages to the Engine Actor's inbound channel.
@@ -73,10 +72,13 @@ impl DerivationEngineClient for QueuedDerivationEngineClient {
         Ok(())
     }
 
-    async fn send_safe_l2_signal(&self, signal: ConsolidateInput) -> EngineClientResult<()> {
-        trace!(target: "derivation", ?signal, "Sending safe L2 signal info to engine.");
+    async fn send_derived_attributes(
+        &self,
+        attributes: AttributesWithParent,
+    ) -> EngineClientResult<()> {
+        trace!(target: "derivation", ?attributes, "Sending derived attributes to engine.");
         self.engine_actor_request_tx
-            .send(EngineActorRequest::ProcessSafeL2SignalRequest(signal))
+            .send(EngineActorRequest::ProcessDerivedAttributesRequest(Box::new(attributes)))
             .await
             .map_err(|_| EngineClientError::RequestError("request channel closed.".to_string()))?;
 
