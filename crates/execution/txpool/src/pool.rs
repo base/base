@@ -1207,10 +1207,16 @@ where
             .iter()
             .map(|(origin, tx)| (*origin, *tx.hash(), tx.sender(), tx.nonce()))
             .collect();
+        let validation_requested = Instant::now();
         let validated = self.validator().validate_transactions(transactions).await;
+        // One await covers the whole batch, so each transaction records its even share and the
+        // histogram counts the same inserts as the other stages.
+        let share =
+            validation_requested.elapsed() / u32::try_from(keys.len()).unwrap_or(u32::MAX).max(1);
         keys.into_iter()
             .zip(validated)
             .map(|((origin, hash, sender, nonce), validated)| {
+                self.insert_histograms.validation_call.record(share);
                 self.add_validated_protocol_transaction(origin, hash, sender, nonce, validated)
             })
             .collect()
@@ -2784,6 +2790,42 @@ mod tests {
             assert!(
                 recorded.contains(&(name.to_string(), 1)),
                 "{name} not recorded once: {recorded:?}"
+            );
+        }
+    }
+
+    /// A batch insert records the same three stage histograms once per transaction.
+    #[tokio::test]
+    async fn batch_insert_records_every_stage_per_transaction() {
+        let recorder = metrics_util::debugging::DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        let _guard = metrics::set_default_local_recorder(&recorder);
+        let (pool, client) = build_integration_pool();
+        let signer = signer();
+        fund(&client, signer.address());
+
+        let batch = (0..2).map(|nonce| signed_1559(&signer, nonce)).collect();
+        pool.add_transactions(TransactionOrigin::External, batch).await;
+
+        let recorded: Vec<_> = snapshotter
+            .snapshot()
+            .into_vec()
+            .into_iter()
+            .filter_map(|(key, _, _, value)| match value {
+                metrics_util::debugging::DebugValue::Histogram(values) => {
+                    Some((key.key().name().to_string(), values.len()))
+                }
+                _ => None,
+            })
+            .collect();
+        for name in [
+            "txpool.insert.validation_call_seconds",
+            "txpool.insert.admission_wait_seconds",
+            "txpool.insert.pool_insert_seconds",
+        ] {
+            assert!(
+                recorded.contains(&(name.to_string(), 2)),
+                "{name} not recorded per transaction: {recorded:?}"
             );
         }
     }

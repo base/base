@@ -129,7 +129,7 @@ base_metrics::define_metrics! {
 base_metrics::define_metrics! {
     txpool.insert,
     struct = InsertMetrics,
-    #[describe("Time an ordinary insert awaits its validation result, including the wait for a validation worker; compare with txpool.validator.validate_seconds to estimate validation queue and dispatch overhead")]
+    #[describe("Time an ordinary insert awaits its validation result, including the wait for a validation worker (an even share of the batch await for batch inserts); compare with txpool.validator.validate_seconds to estimate validation queue and dispatch overhead")]
     validation_call_seconds: histogram,
     #[describe("Time an ordinary insert waits to acquire the protocol admission lock")]
     admission_wait_seconds: histogram,
