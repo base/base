@@ -15,7 +15,9 @@ use reth_storage_api::BlockReaderIdExt;
 use serde_json::Value;
 use tracing::{debug, warn};
 
-use crate::{PayerChainState, PayerRejection, PayerRequestFilter, PayerTransaction, TermsCache};
+use crate::{
+    PayerChainState, PayerRejection, PayerRequestFilter, PayerTransaction, ProxydError, TermsCache,
+};
 
 /// Rejection returned when `payer_*` is called before Everest activates EIP-8430.
 pub const PAYER_PRE_EVEREST_RPC_ERROR: &str = "payer methods require EIP-8430, which is gated \
@@ -175,7 +177,10 @@ where
             }
             Err(error) => {
                 let SequencerClientError::HttpError(inner) = &error;
-                if inner.is_error_resp() {
+                if inner
+                    .as_error_resp()
+                    .is_some_and(|payload| !ProxydError::is_proxyd_error(payload.code))
+                {
                     cache.clear();
                     return Err(error.into());
                 }
@@ -458,6 +463,33 @@ mod tests {
             then.status(502).body("bad gateway");
         });
         assert!(api.get_terms(terms_request(1)).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn serves_cached_terms_while_proxyd_reports_the_payer_down() {
+        let sequencer = MockServer::start();
+        let mut terms = sequencer.mock(|when, then| {
+            when.method(POST).body_includes("payer_getTerms");
+            rpc_result(then, terms_response());
+        });
+        let api = PayerApiImpl::new(everest_provider(), client(&sequencer), passing_state(), true);
+        api.get_terms(terms_request(1)).await.unwrap();
+        reject_send(&api, &sequencer, "PAYMENT_INSUFFICIENT").await;
+        terms.delete();
+        let payer_down = sequencer.mock(|when, then| {
+            when.method(POST).body_includes("payer_getTerms");
+            then.status(503).header("content-type", "application/json").json_body(json!({
+                "jsonrpc": "2.0",
+                "id": 0,
+                "error": {
+                    "code": ProxydError::NO_HEALTHY_BACKEND,
+                    "message": "no backend is currently healthy to serve traffic"
+                }
+            }));
+        });
+
+        assert_eq!(api.get_terms(terms_request(1)).await.unwrap(), terms_response());
+        payer_down.assert_calls(1);
     }
 
     #[tokio::test]
