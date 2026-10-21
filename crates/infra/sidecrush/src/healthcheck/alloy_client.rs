@@ -65,7 +65,11 @@ impl HeadSubscriber for AlloyWsHeadSubscriber {
     async fn subscribe(&self) -> Result<HeadStream, Box<dyn std::error::Error + Send + Sync>> {
         let provider = ProviderBuilder::new()
             .disable_recommended_fillers()
-            .connect_ws(WsConnect::new(self.url.as_str()))
+            // Disable alloy's internal reconnect retries (default 10, with backoff up to 30 s)
+            // so a dropped connection ends the stream promptly. The checker then reports
+            // `Error` and reconnects with its own backoff, instead of the outage showing up
+            // as a stall while alloy retries in the background.
+            .connect_ws(WsConnect::new(self.url.as_str()).with_max_retries(0))
             .await?;
         let subscription = provider.subscribe_blocks().await?;
         // The subscription only delivers heads while the provider's pubsub backend is alive,
