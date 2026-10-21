@@ -8,7 +8,7 @@ use base_execution_txpool::{
     BasePooledTransaction, BuilderApiImpl, BuilderApiServer, InsertMetering, TransactionValidity,
     ValidatedTransaction, ValidityOperator, ValidityPredicate, ValiditySignatureMode,
 };
-use jsonrpsee::core::RpcResult;
+use jsonrpsee::{core::RpcResult, types::ErrorObjectOwned};
 use reth_transaction_pool::TransactionPool;
 
 use crate::{BuilderApiExtensionConfig, BuilderMetrics, SharedMeteringProvider};
@@ -155,11 +155,27 @@ where
         &self,
         mut tx: ValidatedTransaction<TransactionValidity>,
     ) -> RpcResult<()> {
-        let outcome = self.config.inject(&mut tx);
+        self.inject(&mut tx);
+        self.inner.insert_validated_transaction(tx).await
+    }
+
+    async fn insert_validated_transactions(
+        &self,
+        mut txs: Vec<ValidatedTransaction<TransactionValidity>>,
+    ) -> RpcResult<Vec<Option<ErrorObjectOwned>>> {
+        // Reject oversized batches before recording injection metrics for them.
+        BuilderApiImpl::<P, TransactionValidity>::check_batch_size(txs.len())?;
+        txs.iter_mut().for_each(|tx| self.inject(tx));
+        self.inner.insert_validated_transactions(txs).await
+    }
+}
+
+impl<P> ShadowValidityBuilderApi<P> {
+    fn inject(&self, tx: &mut ValidatedTransaction<TransactionValidity>) {
+        let outcome = self.config.inject(tx);
         if self.config.is_enabled() {
             BuilderMetrics::shadow_validity_injection_total(outcome.label()).increment(1);
         }
-        self.inner.insert_validated_transaction(tx).await
     }
 }
 

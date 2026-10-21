@@ -697,7 +697,8 @@ polls the transaction pool for new pending transactions and queues them through 
 `tokio::mpsc` channel. The
 [`DestinationForwarder`](https://github.com/base/base/blob/main/crates/execution/tx-forwarding/src/forwarder/task.rs)
 receives queued transactions and forwards them via a custom JSON-RPC method
-(`base_insertValidatedTransactions`) to configured builder endpoints. One forwarder task is spawned
+(`base_insertValidatedTransaction`, or one `base_insertValidatedTransactions` call per batch with
+`--tx-forwarding-batched-insert`) to configured builder endpoints. One forwarder task is spawned
 per builder URL, so multiple downstream builders can receive transactions simultaneously. This
 pipeline runs as background tasks on the node's task executor.
 
