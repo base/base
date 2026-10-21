@@ -2,7 +2,9 @@
 
 use std::time::{Duration, Instant};
 
-use alloy_primitives::keccak256;
+use alloy_eips::Decodable2718;
+use alloy_primitives::{TxHash, keccak256};
+use base_common_consensus::{Eip8130Constants, Eip8130Signed};
 use base_common_flashblocks::Flashblock;
 use futures::StreamExt;
 use tokio::sync::mpsc;
@@ -173,7 +175,10 @@ impl FlashblockWatcher {
             .diff
             .transactions
             .iter()
-            .map(|tx_bytes| FlashblockInclusion { tx_hash: keccak256(tx_bytes), included_at: now })
+            .map(|tx_bytes| FlashblockInclusion {
+                tx_hash: inclusion_hash(tx_bytes),
+                included_at: now,
+            })
             .collect();
         self.publish_inclusions(inclusions, now).await;
     }
@@ -189,13 +194,44 @@ impl FlashblockWatcher {
     }
 }
 
+/// Returns the transaction hash of a flashblock transaction's EIP-2718 bytes.
+///
+/// For every type except EIP-8130 this is `keccak256` of the bytes. An EIP-8130
+/// hash excludes `sender_auth` and `payer_auth`, so it is decoded and taken
+/// from [`Eip8130Signed::hash`] to match the hash recorded at submission.
+fn inclusion_hash(tx_bytes: &[u8]) -> TxHash {
+    if tx_bytes.first() == Some(&Eip8130Constants::EIP8130_TX_TYPE)
+        && let Ok(signed) = Eip8130Signed::decode_2718_exact(tx_bytes)
+    {
+        return *signed.hash();
+    }
+    keccak256(tx_bytes)
+}
+
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Address, TxHash};
+    use alloy_eips::Encodable2718;
+    use alloy_primitives::{Address, Bytes as TxBytes};
+    use base_common_consensus::TxEip8130;
     use tokio::sync::mpsc;
 
     use super::*;
     use crate::runner::{InclusionSource, SentTransaction, SubmitCohort};
+
+    #[test]
+    fn inclusion_hash_uses_eip8130_transaction_hash() {
+        let tx = TxEip8130 {
+            chain_id: 8453,
+            sender: Some(Address::with_last_byte(1)),
+            ..Default::default()
+        };
+        let signed = Eip8130Signed::new(tx, TxBytes::from_static(&[0xAB; 32]), TxBytes::new());
+        let raw = signed.encoded_2718();
+
+        assert_ne!(*signed.hash(), keccak256(&raw));
+        assert_eq!(inclusion_hash(&raw), *signed.hash());
+        assert_eq!(inclusion_hash(&[0x02, 0xc0]), keccak256([0x02, 0xc0]));
+    }
 
     #[tokio::test]
     async fn matching_flashblock_publishes_early_refill_pulse() {
