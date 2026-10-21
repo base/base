@@ -36,7 +36,7 @@ use reth_transaction_pool::{
 use tracing::{debug, instrument, warn};
 
 use super::BaseTimeCache;
-use crate::{BaseEthApi, BaseEthApiError, BaseInvalidTransactionError, SequencerClient};
+use crate::{BaseEthApi, BaseEthApiError, BaseInvalidTransactionError};
 
 impl<N, Rpc> EthTransactions for BaseEthApi<N, Rpc>
 where
@@ -85,7 +85,7 @@ where
 
         // On Base, transactions are forwarded directly to the sequencer to be included in
         // blocks that it builds.
-        if let Some(client) = self.raw_tx_forwarder().as_ref() {
+        if let Some(client) = self.sequencer_client() {
             debug!(target: "rpc::eth", hash = %tx_hash, "forwarding raw transaction to sequencer");
             let hash = client.forward_raw_transaction(&tx).await.inspect_err(|err| {
                     debug!(target: "rpc::eth", error = %err, hash = %tx_hash, "failed to forward raw transaction");
@@ -219,17 +219,6 @@ where
         }
 
         Ok(None)
-    }
-}
-
-impl<N, Rpc> BaseEthApi<N, Rpc>
-where
-    N: RpcNodeCore,
-    Rpc: RpcConvert<Primitives = N::Primitives>,
-{
-    /// Returns the [`SequencerClient`] if one is set.
-    pub fn raw_tx_forwarder(&self) -> Option<SequencerClient> {
-        self.inner.sequencer_client.clone()
     }
 }
 

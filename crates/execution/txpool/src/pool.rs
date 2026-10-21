@@ -4,9 +4,10 @@ use std::{collections::HashMap, fmt, sync::Arc};
 
 use alloy_eips::{
     eip4844::{BlobAndProofV1, BlobAndProofV2, BlobCellsAndProofsV1},
-    eip7594::BlobTransactionSidecarVariant,
+    eip7594::{BlobCellMask, BlobTransactionSidecarVariant},
 };
-use alloy_primitives::{Address, B128, B256, TxHash, U256, map::AddressSet};
+use alloy_primitives::{Address, B256, TxHash, U256, map::AddressSet};
+use base_common_precompiles::NonceManagerStorage;
 use futures::StreamExt;
 use parking_lot::{Mutex, RwLock};
 use reth_eth_wire_types::HandleMempoolData;
@@ -20,18 +21,21 @@ use reth_transaction_pool::{
     TransactionListenerKind, TransactionOrigin, TransactionPool, TransactionPoolExt,
     TransactionValidationOutcome, TransactionValidationTaskExecutor, TransactionValidator,
     ValidPoolTransaction,
-    pool::{AddedTransactionState, TransactionEvent},
+    pool::{AddedTransactionState, QueuedReason, TransactionEvent},
 };
-use tokio::{spawn, sync::mpsc};
+use tokio::{
+    spawn,
+    sync::mpsc::{self, error::TrySendError},
+};
 use tracing::debug;
 
 use crate::{
     Admission, BasePooledTx, BaseTransactionValidator, FlashblockExpiry, GuardLimits, GuardMetrics,
     InvalidationCause, InvalidationKey, LimitRejection, MempoolGuard, ParkableBestTransactions,
     ParkableTransactionPool, ParkedBestTransactions, PredicateContext, StateDiffInvalidation,
-    ValidityPoolMetrics, ValidityPredicate,
+    ValidityPoolMetrics,
     best::MergeBestTransactions,
-    two_d_nonce_pool::{InsertOutcome, TwoDNoncePool},
+    two_d_nonce_pool::{InsertOutcome, LaneId, LaneUpdate, SidecarLimits, TwoDNoncePool},
 };
 
 const SIDE_CAR_EVENT_CHANNEL_SIZE: usize = 1024;
@@ -43,12 +47,12 @@ pub struct AccountStateDiff {
     pub address: Address,
     /// New balance, when changed.
     pub balance: Option<U256>,
-    /// Whether the protocol nonce changed.
-    pub nonce_changed: bool,
+    /// New protocol nonce, when changed (`0` once the account is destroyed).
+    pub nonce: Option<u64>,
     /// Whether the bytecode hash changed.
     pub code_changed: bool,
-    /// Changed contract storage slots.
-    pub changed_slots: Vec<B256>,
+    /// Changed contract storage slots with their new values.
+    pub changed_slots: Vec<(B256, U256)>,
 }
 
 impl AccountStateDiff {
@@ -58,18 +62,37 @@ impl AccountStateDiff {
         Self { address, ..Default::default() }
     }
 
+    /// Pushes the surfaces whose change invalidates every watcher. Nonce
+    /// surfaces are excluded; see [`Self::push_nonce_advances`].
     fn push_exact_keys(&self, out: &mut Vec<InvalidationKey>) {
-        if self.nonce_changed {
-            out.push(InvalidationKey::ProtocolNonce(self.address));
-        }
         if self.code_changed {
             out.push(InvalidationKey::CodeHash(self.address));
         }
-        out.extend(
-            self.changed_slots
-                .iter()
-                .map(|slot| InvalidationKey::Slot { address: self.address, slot: *slot }),
-        );
+        if self.address != NonceManagerStorage::ADDRESS {
+            out.extend(
+                self.changed_slots
+                    .iter()
+                    .map(|(slot, _)| InvalidationKey::Slot { address: self.address, slot: *slot }),
+            );
+        }
+    }
+
+    /// Pushes the nonce surfaces this diff advances, with their new values: the
+    /// protocol nonce and every nonce manager slot. Including a lane head
+    /// advances the nonce its successors are sequenced on, so these only
+    /// invalidate the transactions left below the new value.
+    fn push_nonce_advances(&self, out: &mut Vec<(InvalidationKey, u64)>) {
+        if let Some(nonce) = self.nonce {
+            out.push((InvalidationKey::ProtocolNonce(self.address), nonce));
+        }
+        if self.address == NonceManagerStorage::ADDRESS {
+            out.extend(self.changed_slots.iter().map(|(slot, value)| {
+                (
+                    InvalidationKey::Slot { address: self.address, slot: *slot },
+                    value.saturating_to(),
+                )
+            }));
+        }
     }
 }
 
@@ -170,11 +193,13 @@ where
         >,
         ordering: O,
     ) -> Self {
-        let price_bump_config = protocol_pool.config().price_bumps;
+        let config = protocol_pool.config();
+        let nonce_pool = TwoDNoncePool::new(config.price_bumps)
+            .with_limits(SidecarLimits::from_pool_config(config));
         Self {
             protocol_pool,
             ordering,
-            nonce_pool: Arc::new(RwLock::new(TwoDNoncePool::new(price_bump_config))),
+            nonce_pool: Arc::new(RwLock::new(nonce_pool)),
             listeners: Arc::new(RwLock::new(SidecarListeners::default())),
             guard: Arc::new(RwLock::new(MempoolGuard::unlimited())),
             block_expiry: Arc::new(RwLock::new(crate::BlockExpiryIndex::new())),
@@ -254,12 +279,36 @@ where
         // Advance validator classification generation before dropping guard records.
         self.validator().validator().invalidate_limit_class_cache(diffs);
         let mut exact = Vec::new();
+        let mut advances = Vec::new();
         for diff in diffs {
             diff.push_exact_keys(&mut exact);
+            diff.push_nonce_advances(&mut advances);
+        }
+        self.nonce_pool.write().apply_balance_updates(
+            diffs.iter().filter_map(|diff| Some((diff.address, diff.balance?))),
+        );
+        let (behind, lane_moves) = self.resolve_nonce_advances(&advances);
+        // Move lane cursors before releasing what fell behind them, so a
+        // successor that stays pending is not re-announced as promoted.
+        let mut removed = Vec::new();
+        if !lane_moves.is_empty() {
+            let mut nonce_pool = self.nonce_pool.write();
+            let mut listeners = self.listeners.write();
+            let mut update = LaneUpdate::default();
+            for (lane_id, nonce) in lane_moves {
+                update.extend(nonce_pool.advance_lane_nonce(lane_id, nonce));
+            }
+            listeners.on_lane_update(&update);
+            let mut guard = self.guard.write();
+            for transaction in &update.discarded {
+                guard.release(transaction.hash());
+            }
+            removed.extend(update.discarded);
         }
         let dropped = {
             let mut guard = self.guard.write();
             let mut dropped = guard.invalidate_exact(exact);
+            dropped.extend(behind.into_iter().filter(|hash| guard.release(hash)));
             for diff in diffs {
                 if let Some(balance) = diff.balance {
                     dropped.extend(guard.on_balance_changed(diff.address, balance));
@@ -267,7 +316,7 @@ where
             }
             dropped
         };
-        let removed = self.remove_dropped_across_pools(dropped);
+        removed.extend(self.remove_dropped_across_pools(dropped));
         GuardMetrics::record_state_diff_invalidations(removed.len());
         if !removed.is_empty() {
             debug!(count = removed.len(), "EIP-8130 transactions invalidated by state diff");
@@ -288,6 +337,57 @@ where
         let removed = self.remove_dropped_across_pools(dropped);
         GuardMetrics::record_bulk_invalidations(removed.len(), cause);
         removed
+    }
+
+    /// Resolves the watchers of each nonce advance. A watcher survives only when
+    /// it is an EIP-8130 transaction sequenced on that nonce at or after the new
+    /// value; every other watcher is returned to be invalidated, as an exact
+    /// match would. Each surviving sidecar lane is returned with the nonce its
+    /// cursor moves to.
+    fn resolve_nonce_advances(
+        &self,
+        advances: &[(InvalidationKey, u64)],
+    ) -> (Vec<TxHash>, Vec<(LaneId, u64)>) {
+        let mut behind = Vec::new();
+        let mut lane_moves = Vec::new();
+        if advances.is_empty() {
+            return (behind, lane_moves);
+        }
+        let watchers: Vec<_> = {
+            let guard = self.guard.read();
+            advances.iter().map(|(key, nonce)| (key, *nonce, guard.watchers(key))).collect()
+        };
+        let nonce_pool = self.nonce_pool.read();
+        for (key, nonce, hashes) in watchers {
+            let mut moved_lane = None;
+            for hash in hashes {
+                let transaction = nonce_pool.get(&hash).or_else(|| self.protocol_pool.get(&hash));
+                let lane = transaction.and_then(|transaction| {
+                    let tx = transaction.transaction.as_eip8130()?.tx();
+                    let lane = (transaction.sender(), tx.nonce_key);
+                    let sequenced_on_key = match key {
+                        InvalidationKey::ProtocolNonce(account) => {
+                            tx.nonce_key.is_zero() && lane.0 == *account
+                        }
+                        InvalidationKey::Slot { slot, .. } => {
+                            NonceManagerStorage::nonce_slot(lane.0, tx.nonce_key)
+                                .is_ok_and(|channel| B256::from(channel) == *slot)
+                        }
+                        _ => false,
+                    };
+                    (sequenced_on_key && tx.nonce_sequence >= nonce).then_some(lane)
+                });
+                match lane {
+                    Some(lane) if nonce_pool.contains(&hash) => moved_lane = Some(lane),
+                    Some(_) => {}
+                    None => behind.push(hash),
+                }
+            }
+            if let Some(lane) = moved_lane {
+                lane_moves.push((lane, nonce));
+            }
+        }
+        (behind, lane_moves)
     }
 
     fn remove_dropped_across_pools(
@@ -351,9 +451,7 @@ where
     /// predicates, or `None` when they impose no finite block bound.
     fn validity_block_expiry_bound(validated: &TransactionValidationOutcome<T>) -> Option<u64> {
         let transaction = validated.as_valid_transaction()?;
-        crate::ValidityPredicate::block_expiry_bound(
-            transaction.transaction().validity_predicates(),
-        )
+        transaction.transaction().validity_conditions().block().expiry_bound()
     }
 
     /// Optional flashblock upper bound, paired with the block bound for pool eviction.
@@ -361,7 +459,7 @@ where
         validated: &TransactionValidationOutcome<T>,
     ) -> Option<u64> {
         let transaction = validated.as_valid_transaction()?;
-        ValidityPredicate::flashblock_expiry_bound(transaction.transaction().validity_predicates())
+        transaction.transaction().validity_conditions().flashblock().expiry_bound()
     }
 
     /// Rejects a late arrival whose deadline is behind the published position.
@@ -377,10 +475,7 @@ where
                 block_number: position.block_number,
                 flashblock_index: position.flashblock_index.saturating_add(1),
             };
-            if ValidityPredicate::is_batch_expired(
-                transaction.transaction().validity_predicates(),
-                &next,
-            ) {
+            if transaction.transaction().validity_conditions().is_expired(&next) {
                 return Err(reth_transaction_pool::error::PoolError::other(
                     hash,
                     "validity deadline expired at published flashblock",
@@ -470,7 +565,7 @@ where
     fn has_validity_predicates(validated: &TransactionValidationOutcome<T>) -> bool {
         validated
             .as_valid_transaction()
-            .is_some_and(|transaction| !transaction.transaction().validity_predicates().is_empty())
+            .is_some_and(|transaction| !transaction.transaction().validity_conditions().is_empty())
     }
 
     fn reconcile_guard(&self) {
@@ -700,14 +795,18 @@ where
         origin: TransactionOrigin,
         transaction: T,
     ) -> PoolResult<AddedTransactionOutcome> {
+        let balance_epoch = self.nonce_pool.read().balance_epoch();
         let validated = self.validator().validate_transaction(origin, transaction).await;
-        self.add_validated_sidecar_transaction(validated, origin)
+        self.add_validated_sidecar_transaction(validated, origin, balance_epoch)
     }
 
+    /// Inserts a validated sidecar transaction. `balance_epoch` is the sidecar
+    /// balance epoch read before validation started.
     fn add_validated_sidecar_transaction(
         &self,
         validated: TransactionValidationOutcome<T>,
         origin: TransactionOrigin,
+        balance_epoch: u64,
     ) -> PoolResult<AddedTransactionOutcome> {
         // Capture the block-expiry bound before `validated` is consumed by the
         // match below, mirroring the protocol admission paths. A sidecar (EIP-8130)
@@ -723,31 +822,33 @@ where
         }
         match validated {
             TransactionValidationOutcome::Valid {
+                balance,
                 transaction,
                 propagate,
-                authorities,
                 state_nonce,
                 ..
             } => {
                 // Keep the sidecar lock order consistent everywhere: nonce_pool before listeners.
                 let mut nonce_pool = self.nonce_pool.write();
                 let mut listeners = self.listeners.write();
-                let validated = self.validated_pool_transaction(
-                    transaction,
-                    origin,
-                    propagate,
-                    authorities,
-                    &mut nonce_pool,
-                );
+                let validated = Self::validated_pool_transaction(transaction, origin, propagate);
                 let generation = validated
                     .transaction
                     .limit_class()
                     .map(|class| class.classification_generation);
                 let admission = Self::admission_for(&validated.transaction);
-                let is_validity = !validated.transaction.validity_predicates().is_empty();
-                let outcome = nonce_pool.insert_validated(validated, state_nonce)?;
+                let is_validity = !validated.transaction.validity_conditions().is_empty();
+                let sender = validated.sender();
+                let mut outcome = nonce_pool.insert_validated(validated, state_nonce)?;
+                nonce_pool.record_validated_balance(sender, balance, balance_epoch);
                 // nonce_pool serializes sidecar replacement. Never acquire it while holding guard.
                 let mut guard = self.guard.write();
+                // Transactions below the anchored lane cursor are gone whether or
+                // not this insertion is kept.
+                for transaction in &outcome.anchor.discarded {
+                    guard.release(transaction.hash());
+                }
+                listeners.on_discarded(&outcome.anchor.discarded);
                 let current = generation.is_none_or(|generation| {
                     generation == self.validator().validator().limit_class_cache_generation()
                 });
@@ -765,6 +866,7 @@ where
                 if let Some(error) = rejection {
                     let removed = nonce_pool.remove_transactions(&[hash]);
                     listeners.on_discarded(&removed);
+                    listeners.on_lane_moved(&outcome.anchor);
                     if let Some(replaced) = &outcome.replaced {
                         let restored = ValidPoolTransaction {
                             transaction_id: replaced.transaction_id,
@@ -778,6 +880,7 @@ where
                             guard.release(replaced.hash());
                             listeners.on_discarded(std::slice::from_ref(replaced));
                         }
+                        nonce_pool.record_validated_balance(sender, balance, balance_epoch);
                     }
                     return Err(error);
                 }
@@ -794,12 +897,35 @@ where
                             let hash = outcome.outcome.hash;
                             let removed = nonce_pool.remove_transactions(&[hash]);
                             listeners.on_discarded(&removed);
+                            listeners.on_lane_moved(&outcome.anchor);
                             return Err(Self::limit_rejection_error(hash, rejection));
                         }
                     }
                     (None, None) => {}
                 }
+                let mut evicted = nonce_pool.evict_over_capacity();
+                for transaction in &evicted {
+                    guard.release(transaction.hash());
+                }
                 drop(guard);
+                let inserted_hash = outcome.outcome.hash;
+                let survived = |moved: &Arc<ValidPoolTransaction<T>>| {
+                    !evicted.iter().any(|transaction| transaction.hash() == moved.hash())
+                };
+                outcome.anchor.promoted.retain(survived);
+                outcome.anchor.queued.retain(survived);
+                outcome.promoted.retain(survived);
+                if evicted.iter().any(|transaction| *transaction.hash() == inserted_hash) {
+                    evicted.retain(|transaction| *transaction.hash() != inserted_hash);
+                    evicted.extend(outcome.replaced);
+                    listeners.on_discarded(&evicted);
+                    listeners.on_lane_moved(&outcome.anchor);
+                    return Err(reth_transaction_pool::error::PoolError::new(
+                        inserted_hash,
+                        reth_transaction_pool::error::PoolErrorKind::DiscardedOnInsert,
+                    ));
+                }
+                listeners.on_discarded(&evicted);
                 listeners.on_inserted(&nonce_pool, &outcome);
                 if is_validity {
                     ValidityPoolMetrics::record_admission(outcome.replaced.is_some());
@@ -808,7 +934,6 @@ where
                 // dropping the replaced hash's stale entry in the same pass.
                 // Release the sidecar locks first so the block-expiry index is
                 // not acquired while holding the nonce pool.
-                let inserted_hash = outcome.outcome.hash;
                 let replaced_hash = outcome.replaced.as_ref().map(|replaced| *replaced.hash());
                 drop(listeners);
                 drop(nonce_pool);
@@ -832,33 +957,24 @@ where
         }
     }
 
+    /// Wraps a validated sidecar transaction. Its sender and authority ids are
+    /// placeholders until [`TwoDNoncePool::insert_validated`] assigns them.
     fn validated_pool_transaction(
-        &self,
         transaction: reth_transaction_pool::validate::ValidTransaction<T>,
         origin: TransactionOrigin,
         propagate: bool,
-        authorities: Option<Vec<Address>>,
-        nonce_pool: &mut TwoDNoncePool<T>,
     ) -> ValidPoolTransaction<T> {
         let transaction = transaction.into_transaction();
-        let sender_id = nonce_pool.sender_id_or_create(transaction.sender());
-        let authority_ids = authorities.map(|authorities| {
-            authorities
-                .into_iter()
-                .map(|authority| nonce_pool.sender_id_or_create(authority))
-                .collect()
-        });
-
         ValidPoolTransaction {
             transaction_id: reth_transaction_pool::identifier::TransactionId::new(
-                sender_id,
+                0u64.into(),
                 transaction.nonce(),
             ),
             transaction,
             propagate,
             timestamp: std::time::Instant::now(),
             origin,
-            authority_ids,
+            authority_ids: None,
         }
     }
 
@@ -965,9 +1081,9 @@ where
         let nonce_pool = self.nonce_pool.read();
         let (pending, queued) = nonce_pool.pending_and_queued_txn_count();
         let pending_size: usize =
-            nonce_pool.pending_transactions().iter().map(|tx| tx.encoded_length()).sum();
+            nonce_pool.pending_transactions().iter().map(|tx| tx.transaction.size()).sum();
         let queued_size: usize =
-            nonce_pool.queued_transactions().iter().map(|tx| tx.encoded_length()).sum();
+            nonce_pool.queued_transactions().iter().map(|tx| tx.transaction.size()).sum();
         size.pending += pending;
         size.pending_size += pending_size;
         size.queued += queued;
@@ -1048,22 +1164,39 @@ where
         origin: TransactionOrigin,
         transactions: Vec<Self::Transaction>,
     ) -> Vec<PoolResult<AddedTransactionOutcome>> {
-        let mut results = Vec::with_capacity(transactions.len());
-        for transaction in transactions {
-            results.push(self.add_transaction(origin, transaction).await);
-        }
-        results
+        self.add_transactions_with_origins(
+            transactions.into_iter().map(|transaction| (origin, transaction)).collect(),
+        )
+        .await
     }
 
     async fn add_transactions_with_origins(
         &self,
         transactions: Vec<(TransactionOrigin, Self::Transaction)>,
     ) -> Vec<PoolResult<AddedTransactionOutcome>> {
-        let mut results = Vec::with_capacity(transactions.len());
-        for (origin, transaction) in transactions {
-            results.push(self.add_transaction(origin, transaction).await);
+        if transactions.iter().any(|(_, transaction)| self.is_sidecar_transaction(transaction)) {
+            let mut results = Vec::with_capacity(transactions.len());
+            for (origin, transaction) in transactions {
+                results.push(self.add_transaction(origin, transaction).await);
+            }
+            return results;
         }
-        results
+        // Protocol validation reads canonical state, never pool contents. Every
+        // transaction is validated against one snapshot taken when the batch
+        // job starts and admitted in order only after the whole batch is
+        // validated, so outcomes match per-transaction adds unless the
+        // canonical head or the pool changes concurrently in that window.
+        let keys: Vec<_> = transactions
+            .iter()
+            .map(|(origin, tx)| (*origin, *tx.hash(), tx.sender(), tx.nonce()))
+            .collect();
+        let validated = self.validator().validate_transactions(transactions).await;
+        keys.into_iter()
+            .zip(validated)
+            .map(|((origin, hash, sender, nonce), validated)| {
+                self.add_validated_protocol_transaction(origin, hash, sender, nonce, validated)
+            })
+            .collect()
     }
 
     fn transaction_event_listener(&self, tx_hash: TxHash) -> Option<TransactionEvents> {
@@ -1294,6 +1427,17 @@ where
         hashes
     }
 
+    fn all_transactions_by_sender(
+        &self,
+        sender: Address,
+    ) -> AllPoolTransactions<Self::Transaction> {
+        let mut transactions = self.protocol_pool.all_transactions_by_sender(sender);
+        let nonce_pool = self.nonce_pool.read();
+        transactions.pending.extend(nonce_pool.pending_transactions_by_sender(sender));
+        transactions.queued.extend(nonce_pool.queued_transactions_by_sender(sender));
+        transactions
+    }
+
     fn remove_transactions(
         &self,
         hashes: Vec<TxHash>,
@@ -1349,9 +1493,16 @@ where
         let (protocol_hashes, sidecar_hashes) = self.partition_hashes_by_pool(hashes);
         let mut removed = self.protocol_pool.prune_transactions(protocol_hashes);
         self.release_from_guard(&removed);
-        let pruned = self.nonce_pool.write().prune_mined(&sidecar_hashes);
+        let pruned = {
+            let mut nonce_pool = self.nonce_pool.write();
+            let pruned = nonce_pool.prune_mined(&sidecar_hashes);
+            self.listeners.write().on_lane_update(&pruned.lanes);
+            pruned
+        };
         self.release_from_guard(&pruned.removed);
+        self.release_from_guard(&pruned.lanes.discarded);
         removed.extend(pruned.removed);
+        removed.extend(pruned.lanes.discarded);
         removed
     }
 
@@ -1547,9 +1698,9 @@ where
     fn get_blobs_for_versioned_hashes_v4(
         &self,
         versioned_hashes: &[B256],
-        indices_bitarray: B128,
+        cell_mask: BlobCellMask,
     ) -> Result<Vec<Option<BlobCellsAndProofsV1>>, BlobStoreError> {
-        self.protocol_pool.get_blobs_for_versioned_hashes_v4(versioned_hashes, indices_bitarray)
+        self.protocol_pool.get_blobs_for_versioned_hashes_v4(versioned_hashes, cell_mask)
     }
 
     fn has_blobs_for_versioned_hashes(
@@ -1633,19 +1784,21 @@ where
         {
             let mut nonce_pool = self.nonce_pool.write();
             let pruned = nonce_pool.prune_mined(&mined_transactions);
-            // The nonce-free validity window is in milliseconds, evaluated
-            // against `block.timestamp * 1000`.
-            let expired = nonce_pool.remove_expired_nonce_free(now.saturating_mul(1_000));
+            // `protocol_pool.on_canonical_state_change` has already advanced the
+            // validator's head clock to this block.
+            let expired = nonce_pool
+                .remove_expired_nonce_free(self.validator().validator().block_timestamp_ms());
             let mut listeners = self.listeners.write();
             if !pruned.removed.is_empty() {
                 listeners.on_mined(&pruned.removed, block_hash);
             }
+            listeners.on_lane_update(&pruned.lanes);
             if !expired.is_empty() {
                 listeners.on_discarded(&expired);
             }
             // Sidecar maintenance lock order is nonce_pool -> listeners -> guard.
             let mut guard = self.guard.write();
-            for transaction in &pruned.removed {
+            for transaction in pruned.removed.iter().chain(&pruned.lanes.discarded) {
                 guard.release(transaction.hash());
             }
             for transaction in &expired {
@@ -1663,6 +1816,9 @@ where
         // dropped reservation cannot be recreated from an older validation
         // snapshot after reth publishes the transaction.
         let _admission_guard = self.protocol_admission_lock.lock();
+        self.nonce_pool.write().apply_balance_updates(
+            accounts.iter().map(|account| (account.address, account.balance)),
+        );
         let dropped = {
             let mut guard = self.guard.write();
             let mut dropped = Vec::new();
@@ -1709,6 +1865,10 @@ where
 }
 
 #[derive(Debug)]
+/// Event listeners for transactions in the 2D nonce sidecar.
+///
+/// Bounded listeners follow reth's listener semantics: a listener whose channel is full misses
+/// that event but stays subscribed, and is removed only once its receiver is dropped.
 struct SidecarListeners<T: BasePooledTx> {
     by_hash: HashMap<TxHash, Vec<mpsc::UnboundedSender<TransactionEvent>>>,
     all_events: Vec<mpsc::Sender<FullTransactionEvent<T>>>,
@@ -1809,8 +1969,27 @@ impl<T: BasePooledTx> SidecarListeners<T> {
             }
         }
 
+        self.on_lane_moved(&outcome.anchor);
         for promoted in &outcome.promoted {
             self.broadcast_pending_transaction(promoted);
+        }
+    }
+
+    /// Publishes a lane cursor move: removed transactions are discarded, and
+    /// the rest of the lane is re-announced where its subpool changed.
+    fn on_lane_update(&mut self, update: &LaneUpdate<T>) {
+        self.on_discarded(&update.discarded);
+        self.on_lane_moved(update);
+    }
+
+    fn on_lane_moved(&mut self, update: &LaneUpdate<T>) {
+        for promoted in &update.promoted {
+            self.broadcast_pending_transaction(promoted);
+        }
+        for queued in &update.queued {
+            let hash = *queued.hash();
+            self.broadcast_hash_event(&hash, TransactionEvent::Queued);
+            self.broadcast_all(FullTransactionEvent::Queued(hash, Some(QueuedReason::NonceGap)));
         }
     }
 
@@ -1841,7 +2020,7 @@ impl<T: BasePooledTx> SidecarListeners<T> {
     }
 
     fn broadcast_all(&mut self, event: FullTransactionEvent<T>) {
-        self.all_events.retain(|listener| listener.try_send(event.clone()).is_ok());
+        Self::send_to_open(&mut self.all_events, &event);
     }
 
     fn broadcast_pending_transaction(&mut self, transaction: &Arc<ValidPoolTransaction<T>>) {
@@ -1853,18 +2032,30 @@ impl<T: BasePooledTx> SidecarListeners<T> {
     }
 
     fn broadcast_pending(&mut self, transaction: &Arc<ValidPoolTransaction<T>>) {
-        self.pending_all.retain(|listener| listener.try_send(*transaction.hash()).is_ok());
+        let hash = *transaction.hash();
+        Self::send_to_open(&mut self.pending_all, &hash);
         if transaction.propagate {
-            self.pending_propagate
-                .retain(|listener| listener.try_send(*transaction.hash()).is_ok());
+            Self::send_to_open(&mut self.pending_propagate, &hash);
         }
     }
 
     fn broadcast_new(&mut self, event: NewTransactionEvent<T>) {
-        self.new_all.retain(|listener| listener.try_send(event.clone()).is_ok());
+        Self::send_to_open(&mut self.new_all, &event);
         if event.transaction.propagate {
-            self.new_propagate.retain(|listener| listener.try_send(event.clone()).is_ok());
+            Self::send_to_open(&mut self.new_propagate, &event);
         }
+    }
+
+    /// Sends `item` to every listener without waiting, dropping only listeners whose receiver is
+    /// gone.
+    ///
+    /// A full channel drops the item but keeps the listener: a consumer that falls behind for a
+    /// while must not lose its subscription for good, since a merged listener stays open on the
+    /// protocol side and the consumer would never learn that sidecar events stopped.
+    fn send_to_open<I: Clone>(listeners: &mut Vec<mpsc::Sender<I>>, item: &I) {
+        listeners.retain(|listener| {
+            !matches!(listener.try_send(item.clone()), Err(TrySendError::Closed(_)))
+        });
     }
 }
 
@@ -1927,25 +2118,28 @@ mod tests {
     use base_common_chains::ChainConfig;
     use base_common_consensus::{
         BaseBlock, BasePooledTransaction as ConsensusPooledTransaction, BasePrimitives,
-        BaseTxEnvelope, Eip8130Constants, Eip8130Signed, TxEip8130,
+        BaseTransactionSigned, BaseTxEnvelope, Call, Eip8130Constants, Eip8130Signed, Predeploys,
+        TxDeposit, TxEip8130,
     };
+    use base_common_evm::BaseSpecId;
     use base_execution_chainspec::BaseChainSpec;
     use base_execution_evm::BaseEvmConfig;
     use base_test_utils::build_test_genesis_everest;
-    use futures::{StreamExt, future::join_all};
-    use reth_primitives_traits::SealedBlock;
+    use futures::{FutureExt, StreamExt, future::join_all};
+    use reth_primitives_traits::{InMemorySize, SealedBlock};
     use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
     use reth_tasks::Runtime;
     use reth_transaction_pool::{
-        CanonicalStateUpdate, PoolConfig, PoolUpdateKind, PriceBumpConfig, TransactionOrigin,
-        blobstore::InMemoryBlobStore, identifier::TransactionId,
-        validate::EthTransactionValidatorBuilder,
+        CanonicalStateUpdate, PoolConfig, PoolUpdateKind, PriceBumpConfig, SubPoolLimit,
+        TransactionOrigin, blobstore::InMemoryBlobStore, error::PoolErrorKind,
+        identifier::TransactionId, validate::EthTransactionValidatorBuilder,
     };
 
     use super::*;
     use crate::{
-        BaseL1BlockInfo, BaseOrdering, BasePooledTransaction, LimitClass, ValidityOperator,
-        ValidityPredicate, WatchSet,
+        BaseL1BlockInfo, BaseOrdering, BasePooledTransaction, BuilderApiImpl, BuilderApiServer,
+        LimitClass, NoExtensions, ValidatedTransaction, ValidityOperator, ValidityPredicate,
+        WatchSet,
     };
 
     fn test_chain_id() -> u64 {
@@ -1963,19 +2157,31 @@ mod tests {
         let diff = AccountStateDiff {
             address,
             balance: Some(U256::from(1)),
-            nonce_changed: true,
+            nonce: Some(3),
             code_changed: true,
-            changed_slots: vec![slot],
+            changed_slots: vec![(slot, U256::from(9))],
         };
-        let mut keys = Vec::new();
+        let (mut keys, mut advances) = (Vec::new(), Vec::new());
         diff.push_exact_keys(&mut keys);
+        diff.push_nonce_advances(&mut advances);
         assert_eq!(
             keys,
-            vec![
-                InvalidationKey::ProtocolNonce(address),
-                InvalidationKey::CodeHash(address),
-                InvalidationKey::Slot { address, slot },
-            ]
+            vec![InvalidationKey::CodeHash(address), InvalidationKey::Slot { address, slot }]
+        );
+        assert_eq!(advances, vec![(InvalidationKey::ProtocolNonce(address), 3)]);
+
+        let nonce_manager = AccountStateDiff {
+            address: NonceManagerStorage::ADDRESS,
+            changed_slots: vec![(slot, U256::from(9))],
+            ..Default::default()
+        };
+        let (mut keys, mut advances) = (Vec::new(), Vec::new());
+        nonce_manager.push_exact_keys(&mut keys);
+        nonce_manager.push_nonce_advances(&mut advances);
+        assert!(keys.is_empty());
+        assert_eq!(
+            advances,
+            vec![(InvalidationKey::Slot { address: NonceManagerStorage::ADDRESS, slot }, 9)]
         );
     }
 
@@ -2200,17 +2406,32 @@ mod tests {
 
     fn build_integration_pool()
     -> (IntegrationPool, MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>) {
-        build_integration_pool_at(false)
+        build_integration_pool_at(false, PoolConfig::default(), false)
     }
 
     /// [`build_integration_pool`] with the Keystore active (Zenith at genesis).
     fn build_zenith_integration_pool()
     -> (IntegrationPool, MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>) {
-        build_integration_pool_at(true)
+        build_integration_pool_at(true, PoolConfig::default(), false)
+    }
+
+    fn build_integration_pool_with_config(
+        config: PoolConfig,
+    ) -> (IntegrationPool, MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>) {
+        build_integration_pool_at(false, config, false)
+    }
+
+    /// [`build_integration_pool`] charging the L1 data and operator fees of
+    /// [`ISTHMUS_L1_INFO_CALLDATA`].
+    fn build_integration_pool_with_l1_fees()
+    -> (IntegrationPool, MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>) {
+        build_integration_pool_at(false, PoolConfig::default(), true)
     }
 
     fn build_integration_pool_at(
         zenith: bool,
+        config: PoolConfig,
+        l1_fees: bool,
     ) -> (IntegrationPool, MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>) {
         let mut genesis = build_test_genesis_everest();
         genesis.config.chain_id = test_chain_id();
@@ -2237,23 +2458,25 @@ mod tests {
                 // `valid_before` bounds evaluate against a representative `now`
                 // (default is timestamp 0, where no future ms bound is reachable).
                 // Reuse the same seam the live head uses: `update_l1_block_info`
-                // with `tx = None` stores only the header timestamp and leaves the
+                // with no transactions stores only the header timestamp and leaves the
                 // L1 block info untouched, so the harness shares the one admission
                 // clock writer rather than a second, unsynchronized setter.
                 let validator =
                     BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default())
-                        .require_l1_data_gas_fee(false);
-                validator.update_l1_block_info::<_, TxEip1559>(
-                    &alloy_consensus::Header {
-                        timestamp: INTEGRATION_POOL_NOW_SECS,
-                        ..Default::default()
-                    },
-                    None,
-                );
+                        .require_l1_data_gas_fee(l1_fees);
+                let header = alloy_consensus::Header {
+                    timestamp: INTEGRATION_POOL_NOW_SECS,
+                    ..Default::default()
+                };
+                if l1_fees {
+                    validator.update_l1_block_info(&header, &[l1_info_deposit()]);
+                } else {
+                    validator.update_l1_block_info::<_, TxEip1559>(&header, &[]);
+                }
                 validator
             });
         let ordering = BaseOrdering::default();
-        let pool = Pool::new(validator, ordering.clone(), blob_store, PoolConfig::default());
+        let pool = Pool::new(validator, ordering.clone(), blob_store, config);
         (BaseTransactionPool::new(pool, ordering).with_guard_limits(GuardLimits::default()), client)
     }
 
@@ -2269,12 +2492,21 @@ mod tests {
     }
 
     fn signed_1559(signer: &PrivateKeySigner, nonce: u64) -> BasePooledTransaction {
+        signed_1559_with_fees(signer, nonce, 1_000, 0)
+    }
+
+    fn signed_1559_with_fees(
+        signer: &PrivateKeySigner,
+        nonce: u64,
+        max_fee_per_gas: u128,
+        max_priority_fee_per_gas: u128,
+    ) -> BasePooledTransaction {
         let tx = TxEip1559 {
             chain_id: test_chain_id(),
             nonce,
             gas_limit: 50_000,
-            max_fee_per_gas: 1_000,
-            max_priority_fee_per_gas: 0,
+            max_fee_per_gas,
+            max_priority_fee_per_gas,
             to: TxKind::Call(Address::repeat_byte(0xEE)),
             value: U256::ZERO,
             access_list: Default::default(),
@@ -2297,6 +2529,196 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn sender_snapshot_includes_both_nonce_lanes_and_filters_other_senders() {
+        let (pool, client) = build_integration_pool();
+        let sender = signer();
+        let other = signer();
+        fund(&client, sender.address());
+        fund(&client, other.address());
+
+        let protocol_pending = signed_1559(&sender, 0);
+        let protocol_queued = signed_1559(&sender, 2);
+        let sidecar_pending = signed_channel_tx(&sender, U256::from(1), 0, 1_000);
+        let sidecar_queued = signed_channel_tx(&sender, U256::from(1), 2, 1_000);
+        let mut expected_pending = vec![*protocol_pending.hash(), *sidecar_pending.hash()];
+        let mut expected_queued = vec![*protocol_queued.hash(), *sidecar_queued.hash()];
+
+        for transaction in [
+            protocol_pending,
+            protocol_queued,
+            sidecar_pending,
+            sidecar_queued,
+            signed_1559(&other, 0),
+        ] {
+            pool.add_transaction(TransactionOrigin::External, transaction).await.unwrap();
+        }
+
+        let snapshot = pool.all_transactions_by_sender(sender.address());
+        let mut pending =
+            snapshot.pending.iter().map(|transaction| *transaction.hash()).collect::<Vec<_>>();
+        let mut queued =
+            snapshot.queued.iter().map(|transaction| *transaction.hash()).collect::<Vec<_>>();
+        pending.sort_unstable();
+        queued.sort_unstable();
+        expected_pending.sort_unstable();
+        expected_queued.sort_unstable();
+        assert_eq!(pending, expected_pending);
+        assert_eq!(queued, expected_queued);
+    }
+
+    #[tokio::test]
+    async fn batch_add_matches_sequential_add() {
+        let (funded, unfunded) = (signer(), signer());
+        let batch = [
+            signed_1559(&funded, 0),
+            signed_1559(&funded, 1),
+            signed_1559(&funded, 0),
+            signed_1559(&funded, 3),
+            signed_1559(&unfunded, 0),
+            signed_1559(&funded, 2),
+        ];
+        let batch = batch.map(|tx| (TransactionOrigin::Local, tx)).to_vec();
+        let (batched, pool) = assert_batch_matches_sequential(batch, &[funded.address()]).await;
+        assert!(
+            matches!(batched[4], Err(ref e) if matches!(e.kind, PoolErrorKind::InvalidTransaction(_)))
+        );
+        assert_eq!(pool.pool_size().pending, 4);
+    }
+
+    #[tokio::test]
+    async fn batch_add_matches_sequential_add_for_in_batch_replacements() {
+        let sender = signer();
+        let replacement = signed_1559_with_fees(&sender, 0, 2_000, 0);
+        let replacement_hash = *replacement.hash();
+        // A 5% bump over the replacement is below the pool's 10% price bump.
+        let batch = [
+            signed_1559_with_fees(&sender, 0, 1_000, 0),
+            replacement,
+            signed_1559_with_fees(&sender, 0, 2_100, 0),
+        ];
+        let batch = batch.map(|tx| (TransactionOrigin::Local, tx)).to_vec();
+        let (batched, pool) = assert_batch_matches_sequential(batch, &[sender.address()]).await;
+        assert!(batched[1].is_ok());
+        assert!(
+            matches!(batched[2], Err(ref e) if matches!(e.kind, PoolErrorKind::ReplacementUnderpriced))
+        );
+        assert!(pool.get(&replacement_hash).is_some());
+    }
+
+    #[tokio::test]
+    async fn batch_add_matches_sequential_add_with_mixed_origins() {
+        let (first, second) = (signer(), signer());
+        let batch = vec![
+            (TransactionOrigin::Local, signed_1559(&first, 0)),
+            (TransactionOrigin::External, signed_1559(&second, 0)),
+            (TransactionOrigin::Private, signed_1559(&first, 1)),
+        ];
+        let expected: Vec<_> = batch.iter().map(|(origin, tx)| (*tx.hash(), *origin)).collect();
+        let (batched, pool) =
+            assert_batch_matches_sequential(batch, &[first.address(), second.address()]).await;
+        assert!(batched.iter().all(Result::is_ok));
+        for (hash, origin) in expected {
+            assert_eq!(pool.get(&hash).expect("pooled").origin, origin);
+        }
+    }
+
+    #[tokio::test]
+    async fn batch_with_a_sidecar_transaction_matches_sequential_add() {
+        let sender = signer();
+        let sidecar = self_paid_eoa_8130(&sender, U256::from(2), 0, 0, 1_000);
+        let sidecar_hash = *sidecar.hash();
+        let batch = vec![
+            (TransactionOrigin::Local, signed_1559(&sender, 0)),
+            (TransactionOrigin::Local, sidecar),
+            (TransactionOrigin::Local, signed_1559(&sender, 1)),
+        ];
+        let (batched, pool) = assert_batch_matches_sequential(batch, &[sender.address()]).await;
+        assert!(batched.iter().all(Result::is_ok));
+        assert!(pool.nonce_pool.read().contains(&sidecar_hash));
+    }
+
+    /// Adds `batch` one transaction at a time to one fresh pool and as one
+    /// batch to another, both funding `funded`, and asserts the same outcome
+    /// per transaction and the same pool size. Returns the batched outcomes
+    /// and pool.
+    async fn assert_batch_matches_sequential(
+        batch: Vec<(TransactionOrigin, BasePooledTransaction)>,
+        funded: &[Address],
+    ) -> (Vec<PoolResult<AddedTransactionOutcome>>, IntegrationPool) {
+        // `PoolErrorKind` is not `PartialEq`; compare errors by hash and message.
+        let comparable = |results: &[PoolResult<AddedTransactionOutcome>]| {
+            results
+                .iter()
+                .map(|result| match result {
+                    Ok(outcome) => Ok(outcome.clone()),
+                    Err(error) => Err((error.hash, error.kind.to_string())),
+                })
+                .collect::<Vec<_>>()
+        };
+        let (sequential_pool, client) = build_integration_pool();
+        funded.iter().for_each(|account| fund(&client, *account));
+        let mut sequential = Vec::new();
+        for (origin, transaction) in batch.clone() {
+            sequential.push(sequential_pool.add_transaction(origin, transaction).await);
+        }
+
+        let (batch_pool, client) = build_integration_pool();
+        funded.iter().for_each(|account| fund(&client, *account));
+        let batched = batch_pool.add_transactions_with_origins(batch).await;
+
+        assert_eq!(comparable(&batched), comparable(&sequential));
+        let size = |pool: &IntegrationPool| (pool.pool_size().pending, pool.pool_size().queued);
+        assert_eq!(size(&batch_pool), size(&sequential_pool));
+        (batched, batch_pool)
+    }
+
+    #[tokio::test]
+    async fn rpc_batch_insert_matches_single_inserts() {
+        let (funded, unfunded) = (signer(), signer());
+        let wire = |tx: BasePooledTransaction| {
+            let recovered = tx.clone_into_consensus();
+            ValidatedTransaction {
+                sender: recovered.signer(),
+                raw: recovered.inner().encoded_2718().into(),
+                metering: None,
+                extensions: NoExtensions::default(),
+            }
+        };
+        let mut undecodable = wire(signed_1559(&funded, 4));
+        undecodable.raw = Bytes::from_static(&[0x02, 0xff]);
+        let batch = vec![
+            wire(signed_1559(&funded, 0)),
+            wire(signed_1559(&funded, 1)),
+            wire(signed_1559(&funded, 0)),
+            undecodable,
+            wire(signed_1559(&unfunded, 0)),
+            wire(signed_1559(&funded, 2)),
+        ];
+
+        let (single_pool, client) = build_integration_pool();
+        fund(&client, funded.address());
+        let single = BuilderApiImpl::new(single_pool.clone());
+        let mut expected = Vec::new();
+        for tx in batch.clone() {
+            expected.push(single.insert_validated_transaction(tx).await.err());
+        }
+
+        let (batch_pool, client) = build_integration_pool();
+        fund(&client, funded.address());
+        let batched =
+            BuilderApiImpl::new(batch_pool.clone()).insert_validated_transactions(batch).await;
+
+        assert_eq!(batched.unwrap(), expected);
+        assert_eq!(
+            expected.iter().map(Option::is_none).collect::<Vec<_>>(),
+            [true, true, false, false, false, true]
+        );
+        let size = |pool: &IntegrationPool| (pool.pool_size().pending, pool.pool_size().queued);
+        assert_eq!(size(&batch_pool), size(&single_pool));
+        assert_eq!(size(&batch_pool), (3, 0));
+    }
+
+    #[tokio::test]
     async fn standard_transactions_are_not_eip8130_gated() {
         let (pool, client) = build_integration_pool();
         let signer = signer();
@@ -2312,7 +2734,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn protocol_validity_transaction_replaces_with_only_a_higher_max_fee() {
+    async fn protocol_eip8130_validity_replacement_requires_the_price_bump() {
         let (pool, client) = build_integration_pool();
         let signer = signer();
         fund(&client, signer.address());
@@ -2323,12 +2745,20 @@ mod tests {
         let original_hash = *original.hash();
         pool.add_transaction(TransactionOrigin::Local, original).await.unwrap();
 
-        let replacement = self_paid_eoa_8130(&signer, U256::ZERO, 0, 0, 1_001)
+        let underpriced = self_paid_eoa_8130(&signer, U256::ZERO, 0, 0, 1_001)
+            .with_validity_predicates(vec![predicate.clone()]);
+        let err = pool
+            .add_transaction(TransactionOrigin::Local, underpriced)
+            .await
+            .expect_err("an EIP-8130 validity replacement still needs the price bump");
+        assert!(matches!(err.kind, PoolErrorKind::ReplacementUnderpriced), "got {err:?}");
+
+        let replacement = self_paid_eoa_8130(&signer, U256::ZERO, 0, 0, 1_100)
             .with_validity_predicates(vec![predicate]);
         let replacement_hash = *replacement.hash();
         pool.add_transaction(TransactionOrigin::Local, replacement)
             .await
-            .expect("validity replacement only requires a higher max fee");
+            .expect("a bumped EIP-8130 validity replacement is accepted");
 
         assert!(pool.get(&original_hash).is_none());
         assert!(pool.get(&replacement_hash).is_some());
@@ -2581,6 +3011,103 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn full_sidecar_evicts_the_cheapest_channel_transaction() {
+        let config =
+            PoolConfig { pending_limit: SubPoolLimit::new(1, usize::MAX), ..PoolConfig::default() };
+        let (pool, client) = build_integration_pool_with_config(config);
+        let incumbent_signer = signer();
+        let cheap_signer = signer();
+        let rich_signer = signer();
+        for signer in [&incumbent_signer, &cheap_signer, &rich_signer] {
+            fund(&client, signer.address());
+        }
+
+        let incumbent = self_paid_eoa_8130(&incumbent_signer, U256::from(1), 0, 0, 2_000);
+        let incumbent_hash = *incumbent.hash();
+        pool.add_transaction(TransactionOrigin::External, incumbent).await.unwrap();
+        let mut incumbent_events = pool.listeners.write().subscribe_hash(incumbent_hash).0;
+
+        let cheap = self_paid_eoa_8130(&cheap_signer, U256::from(1), 0, 0, 1_000);
+        let cheap_hash = *cheap.hash();
+        let error = pool
+            .add_transaction(TransactionOrigin::External, cheap)
+            .await
+            .expect_err("a full sidecar must not admit a cheaper transaction");
+        assert!(matches!(error.kind, PoolErrorKind::DiscardedOnInsert));
+        assert!(pool.get(&cheap_hash).is_none());
+        assert!(!pool.guard.read().contains(&cheap_hash));
+        assert!(pool.get(&incumbent_hash).is_some());
+
+        let rich = self_paid_eoa_8130(&rich_signer, U256::from(1), 0, 0, 3_000);
+        let rich_hash = *rich.hash();
+        pool.add_transaction(TransactionOrigin::External, rich).await.unwrap();
+        assert!(pool.get(&rich_hash).is_some());
+        assert!(pool.get(&incumbent_hash).is_none());
+        assert!(!pool.guard.read().contains(&incumbent_hash));
+        assert!(matches!(incumbent_events.next().await, Some(TransactionEvent::Discarded)));
+    }
+
+    #[tokio::test]
+    async fn sidecar_pool_size_reports_in_memory_size() {
+        let (pool, client) = build_integration_pool();
+        let signer = signer();
+        fund(&client, signer.address());
+        let transaction = self_paid_eoa_8130(&signer, U256::from(1), 0, 0, 1_000);
+        let hash = *transaction.hash();
+        pool.add_transaction(TransactionOrigin::External, transaction).await.unwrap();
+        let pooled = pool.get(&hash).expect("sidecar holds the transaction");
+
+        let reported = pool.pool_size();
+        assert_eq!(reported.pending, 1);
+        assert_eq!(reported.pending_size, pooled.transaction.size());
+        assert_ne!(reported.pending_size, pooled.encoded_length());
+    }
+
+    #[tokio::test]
+    async fn promoted_transaction_evicted_on_insert_is_not_announced_pending() {
+        let config =
+            PoolConfig { pending_limit: SubPoolLimit::new(2, usize::MAX), ..PoolConfig::default() };
+        let (pool, client) = build_integration_pool_with_config(config);
+        let lane_signer = signer();
+        let other_signer = signer();
+        fund(&client, lane_signer.address());
+        fund(&client, other_signer.address());
+
+        let cheap_queued = self_paid_eoa_8130(&lane_signer, U256::from(1), 1, 0, 1_000);
+        let cheap_queued_hash = *cheap_queued.hash();
+        pool.add_transaction(TransactionOrigin::External, cheap_queued).await.unwrap();
+        let other = self_paid_eoa_8130(&other_signer, U256::from(1), 0, 0, 5_000);
+        pool.add_transaction(TransactionOrigin::External, other).await.unwrap();
+        let mut pending = pool.listeners.write().subscribe_pending(TransactionListenerKind::All);
+
+        let gap_filler = self_paid_eoa_8130(&lane_signer, U256::from(1), 0, 0, 5_000);
+        let gap_filler_hash = *gap_filler.hash();
+        pool.add_transaction(TransactionOrigin::External, gap_filler).await.unwrap();
+
+        assert!(pool.get(&cheap_queued_hash).is_none());
+        let mut announced = Vec::new();
+        while let Ok(hash) = pending.try_recv() {
+            announced.push(hash);
+        }
+        assert_eq!(announced, vec![gap_filler_hash]);
+    }
+
+    #[tokio::test]
+    async fn sidecar_rejects_fee_cap_below_the_protocol_floor() {
+        let config = PoolConfig { minimal_protocol_basefee: 1_001, ..PoolConfig::default() };
+        let (pool, client) = build_integration_pool_with_config(config);
+        let signer = signer();
+        fund(&client, signer.address());
+
+        let transaction = self_paid_eoa_8130(&signer, U256::from(1), 0, 0, 1_000);
+        let error = pool
+            .add_transaction(TransactionOrigin::External, transaction)
+            .await
+            .expect_err("the sidecar must apply the protocol fee floor");
+        assert!(matches!(error.kind, PoolErrorKind::FeeCapBelowMinimumProtocolFeeCap(1_000)));
+    }
+
+    #[tokio::test]
     async fn stale_sidecar_replacement_restores_original_transaction() {
         let (pool, client) = build_integration_pool();
         let signer = signer();
@@ -2593,12 +3120,13 @@ mod tests {
         let replacement = self_paid_eoa_8130(&signer, U256::from(1), 0, 0, 1_250);
         let replacement_hash = *replacement.hash();
         let mut replacement_events = pool.listeners.write().subscribe_hash(replacement_hash).0;
+        let balance_epoch = pool.nonce_pool.read().balance_epoch();
         let validated =
             pool.validator().validate_transaction(TransactionOrigin::Local, replacement).await;
         pool.validator().validator().clear_limit_class_cache();
 
         let error = pool
-            .add_validated_sidecar_transaction(validated, TransactionOrigin::Local)
+            .add_validated_sidecar_transaction(validated, TransactionOrigin::Local, balance_epoch)
             .expect_err("stale classification must reject the replacement");
         assert!(error.to_string().contains("classification changed during validation"));
         assert!(pool.get(&replacement_hash).is_none());
@@ -2606,6 +3134,113 @@ mod tests {
         assert!(pool.guard.read().contains(&original_hash));
         assert!(!pool.guard.read().contains(&replacement_hash));
         assert!(matches!(replacement_events.next().await, Some(TransactionEvent::Discarded)));
+    }
+
+    #[tokio::test]
+    async fn rolled_back_insert_still_announces_the_anchored_lane() {
+        let (pool, client) = build_integration_pool();
+        let signer = signer();
+        fund(&client, signer.address());
+
+        let queued = self_paid_eoa_8130(&signer, U256::from(1), 1, 0, 1_000);
+        let queued_hash = *queued.hash();
+        pool.add_transaction(TransactionOrigin::Local, queued).await.unwrap();
+        let mut queued_events = pool.listeners.write().subscribe_hash(queued_hash).0;
+
+        let successor = self_paid_eoa_8130(&signer, U256::from(1), 2, 0, 1_000);
+        let balance_epoch = pool.nonce_pool.read().balance_epoch();
+        let validated = match pool
+            .validator()
+            .validate_transaction(TransactionOrigin::Local, successor)
+            .await
+        {
+            TransactionValidationOutcome::Valid {
+                balance,
+                bytecode_hash,
+                transaction,
+                propagate,
+                authorities,
+                ..
+            } => TransactionValidationOutcome::Valid {
+                balance,
+                state_nonce: 1,
+                bytecode_hash,
+                transaction,
+                propagate,
+                authorities,
+            },
+            other => panic!("successor must validate: {other:?}"),
+        };
+        pool.validator().validator().clear_limit_class_cache();
+
+        pool.add_validated_sidecar_transaction(validated, TransactionOrigin::Local, balance_epoch)
+            .expect_err("stale classification must roll back the insert");
+
+        let pending = pool.nonce_pool.read().pending_transactions();
+        assert!(pending.iter().any(|transaction| *transaction.hash() == queued_hash));
+        assert!(matches!(
+            queued_events.next().now_or_never(),
+            Some(Some(TransactionEvent::Pending))
+        ));
+    }
+
+    #[tokio::test]
+    async fn insert_discarded_by_eviction_still_announces_the_anchored_lane() {
+        let config =
+            PoolConfig { pending_limit: SubPoolLimit::new(2, usize::MAX), ..PoolConfig::default() };
+        let (pool, client) = build_integration_pool_with_config(config);
+        let lane_signer = signer();
+        let other_signer = signer();
+        fund(&client, lane_signer.address());
+        fund(&client, other_signer.address());
+
+        let queued = self_paid_eoa_8130(&lane_signer, U256::from(1), 1, 0, 1_000);
+        let queued_hash = *queued.hash();
+        pool.add_transaction(TransactionOrigin::External, queued).await.unwrap();
+        let other = self_paid_eoa_8130(&other_signer, U256::from(1), 0, 0, 5_000);
+        pool.add_transaction(TransactionOrigin::External, other).await.unwrap();
+        let mut queued_events = pool.listeners.write().subscribe_hash(queued_hash).0;
+
+        let successor = self_paid_eoa_8130(&lane_signer, U256::from(1), 2, 0, 1_000);
+        let balance_epoch = pool.nonce_pool.read().balance_epoch();
+        let validated = match pool
+            .validator()
+            .validate_transaction(TransactionOrigin::External, successor)
+            .await
+        {
+            TransactionValidationOutcome::Valid {
+                balance,
+                bytecode_hash,
+                transaction,
+                propagate,
+                authorities,
+                ..
+            } => TransactionValidationOutcome::Valid {
+                balance,
+                state_nonce: 1,
+                bytecode_hash,
+                transaction,
+                propagate,
+                authorities,
+            },
+            other => panic!("successor must validate: {other:?}"),
+        };
+
+        let error = pool
+            .add_validated_sidecar_transaction(
+                validated,
+                TransactionOrigin::External,
+                balance_epoch,
+            )
+            .expect_err("the cheapest tail is the inserted transaction");
+        assert!(matches!(error.kind, PoolErrorKind::DiscardedOnInsert));
+
+        let pending = pool.nonce_pool.read().pending_transactions();
+        assert!(pending.iter().any(|transaction| *transaction.hash() == queued_hash));
+        assert!(matches!(
+            queued_events.next().now_or_never(),
+            Some(Some(TransactionEvent::Pending))
+        ));
     }
 
     #[tokio::test]
@@ -2631,12 +3266,13 @@ mod tests {
 
         let removed = pool.apply_state_diff(&[AccountStateDiff {
             address,
-            changed_slots: vec![slot],
+            changed_slots: vec![(slot, U256::from(1))],
             ..Default::default()
         }]);
         assert_eq!(removed.len(), 1);
         assert_eq!(*removed[0].hash(), keyed_hash);
         assert!(pool.get(&keyed_hash).is_none());
+        assert!(!pool.guard.read().contains(&keyed_hash));
 
         let channel = self_paid_eoa_8130(&signer, U256::from(1), 0, 0, 1_000);
         let channel_hash = *channel.hash();
@@ -2648,6 +3284,94 @@ mod tests {
         assert_eq!(*removed[0].hash(), channel_hash);
         assert!(pool.get(&channel_hash).is_none());
         assert!(pool.guard.read().is_empty());
+    }
+
+    /// Including a lane head advances the nonce its successors watch. Canonical
+    /// invalidation drops only what the advance leaves behind, on both the
+    /// sidecar (2D channel slot) and protocol (key-0 account nonce) routes.
+    #[tokio::test]
+    async fn canonical_nonce_advance_keeps_lane_successors() {
+        let (pool, client) = build_integration_pool();
+        let signer = signer();
+        fund(&client, signer.address());
+        let channel = U256::from(2);
+        let lane: Vec<_> = (0..2)
+            .map(|sequence| self_paid_eoa_8130(&signer, channel, sequence, 0, 1_000))
+            .collect();
+        let protocol: Vec<_> = (0..2)
+            .map(|sequence| self_paid_eoa_8130(&signer, U256::ZERO, sequence, 0, 1_000))
+            .collect();
+        for transaction in lane.iter().chain(&protocol) {
+            pool.add_transaction(TransactionOrigin::Local, transaction.clone()).await.unwrap();
+        }
+        let mut successor_events = pool.listeners.write().subscribe_hash(*lane[1].hash()).0;
+        let slot = NonceManagerStorage::nonce_slot(signer.address(), channel).unwrap();
+
+        let removed = pool.apply_state_diff(&[
+            AccountStateDiff {
+                address: NonceManagerStorage::ADDRESS,
+                changed_slots: vec![(B256::from(slot), U256::from(1))],
+                ..Default::default()
+            },
+            AccountStateDiff { address: signer.address(), nonce: Some(1), ..Default::default() },
+        ]);
+
+        let mut removed: Vec<_> = removed.iter().map(|transaction| *transaction.hash()).collect();
+        removed.sort_unstable();
+        let mut expected = vec![*lane[0].hash(), *protocol[0].hash()];
+        expected.sort_unstable();
+        assert_eq!(removed, expected);
+        for kept in [&lane[1], &protocol[1]] {
+            assert!(pool.get(kept.hash()).is_some());
+            assert!(pool.guard.read().contains(kept.hash()));
+        }
+        let pending: Vec<_> = pool
+            .nonce_pool
+            .read()
+            .pending_transactions()
+            .iter()
+            .map(|transaction| *transaction.hash())
+            .collect();
+        assert!(pending.contains(lane[1].hash()));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), successor_events.next()).await.is_err(),
+            "a successor that stays pending is not re-announced"
+        );
+    }
+
+    #[tokio::test]
+    async fn stale_nonce_diff_does_not_rewind_a_lane() {
+        let (pool, client) = build_integration_pool();
+        let signer = signer();
+        fund(&client, signer.address());
+        let channel = U256::from(2);
+        let lane: Vec<_> = (0..3)
+            .map(|sequence| self_paid_eoa_8130(&signer, channel, sequence, 0, 1_000))
+            .collect();
+        for transaction in &lane {
+            pool.add_transaction(TransactionOrigin::Local, transaction.clone()).await.unwrap();
+        }
+        let slot = B256::from(NonceManagerStorage::nonce_slot(signer.address(), channel).unwrap());
+        let nonce_diff = |value: u64| AccountStateDiff {
+            address: NonceManagerStorage::ADDRESS,
+            changed_slots: vec![(slot, U256::from(value))],
+            ..Default::default()
+        };
+        pool.apply_state_diff(&[nonce_diff(2)]);
+        let mut head_events = pool.listeners.write().subscribe_hash(*lane[2].hash()).0;
+
+        let removed = pool.apply_state_diff(&[nonce_diff(1)]);
+
+        assert!(removed.is_empty());
+        let pending: Vec<_> = pool
+            .nonce_pool
+            .read()
+            .pending_transactions()
+            .iter()
+            .map(|transaction| *transaction.hash())
+            .collect();
+        assert_eq!(pending, vec![*lane[2].hash()]);
+        assert!(head_events.next().now_or_never().is_none(), "the head must not be re-queued");
     }
 
     #[tokio::test]
@@ -2703,6 +3427,613 @@ mod tests {
 
         assert!(pool.get(&hash).is_none());
         assert!(!pool.guard.read().contains(&hash));
+    }
+
+    fn is_pending(pool: &IntegrationPool, hash: TxHash) -> bool {
+        pool.pending_transactions().iter().any(|transaction| *transaction.hash() == hash)
+    }
+
+    #[tokio::test]
+    async fn sponsored_key0_transaction_is_not_demoted_by_sender_account_changes() {
+        let (pool, client) = build_integration_pool();
+        let [sender, payer] = std::array::from_fn(|_| signer());
+        fund(&client, payer.address());
+        let transaction = sponsored_eoa_8130(&sender, &payer, U256::ZERO, 1_000);
+        let hash = *transaction.hash();
+        pool.add_transaction(TransactionOrigin::External, transaction).await.unwrap();
+        assert!(is_pending(&pool, hash));
+
+        pool.update_accounts(vec![ChangedAccount {
+            address: sender.address(),
+            nonce: 0,
+            balance: U256::from(1),
+        }]);
+        assert!(is_pending(&pool, hash), "the unfunded sender does not pay for a sponsored tx");
+        assert!(pool.best_transactions().any(|transaction| *transaction.hash() == hash));
+
+        pool.update_accounts(vec![ChangedAccount {
+            address: payer.address(),
+            nonce: 0,
+            balance: U256::from(1),
+        }]);
+        assert!(pool.get(&hash).is_none(), "the payer's balance still bounds a sponsored tx");
+    }
+
+    /// More of a payer's own transactions than reth's EIP-7702 delegation
+    /// slot limit allows a delegated account.
+    fn over_delegation_slot_limit() -> u64 {
+        PoolConfig::default().max_inflight_delegated_slot_limit as u64 + 1
+    }
+
+    #[tokio::test]
+    async fn sponsoring_a_key0_transaction_does_not_limit_the_payers_own_transactions() {
+        let (pool, client) = build_integration_pool();
+        let [sender, payer] = std::array::from_fn(|_| signer());
+        fund(&client, payer.address());
+        let sponsored = sponsored_eoa_8130(&sender, &payer, U256::ZERO, 1_000);
+        pool.add_transaction(TransactionOrigin::External, sponsored).await.unwrap();
+
+        for nonce in 0..over_delegation_slot_limit() {
+            let result =
+                pool.add_transaction(TransactionOrigin::External, signed_1559(&payer, nonce)).await;
+            assert!(result.is_ok(), "payer transaction {nonce} was rejected: {result:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_payer_with_pending_transactions_can_sponsor_a_key0_transaction() {
+        let (pool, client) = build_integration_pool();
+        let [sender, payer] = std::array::from_fn(|_| signer());
+        fund(&client, payer.address());
+        for nonce in 0..over_delegation_slot_limit() {
+            pool.add_transaction(TransactionOrigin::External, signed_1559(&payer, nonce))
+                .await
+                .unwrap();
+        }
+
+        let sponsored = sponsored_eoa_8130(&sender, &payer, U256::ZERO, 1_000);
+        let hash = *sponsored.hash();
+        let result = pool.add_transaction(TransactionOrigin::External, sponsored).await;
+        assert!(result.is_ok(), "the sponsored transaction was rejected: {result:?}");
+        assert!(is_pending(&pool, hash));
+    }
+
+    #[tokio::test]
+    async fn self_paid_key0_transaction_leaves_pending_when_sender_balance_drops() {
+        let (pool, client) = build_integration_pool();
+        let sender = signer();
+        fund(&client, sender.address());
+        let transaction = self_paid_eoa_8130(&sender, U256::ZERO, 0, 0, 1_000);
+        let hash = *transaction.hash();
+        pool.add_transaction(TransactionOrigin::External, transaction).await.unwrap();
+        assert!(is_pending(&pool, hash));
+
+        pool.update_accounts(vec![ChangedAccount {
+            address: sender.address(),
+            nonce: 0,
+            balance: U256::from(1),
+        }]);
+        assert!(!is_pending(&pool, hash));
+        assert!(pool.best_transactions().all(|transaction| *transaction.hash() != hash));
+    }
+
+    const TIPPING_MAX_FEE_PER_GAS: u128 = 1_000;
+    const TIPPING_GAS_LIMIT: u64 = 1_000_000;
+    const TIPPING_NONCE_KEY: U256 = U256::from_limbs([7, 0, 0, 0]);
+
+    /// The most a [`tipping_eoa_8130`] transaction can charge in fees.
+    fn tipping_fees() -> U256 {
+        U256::from(TIPPING_GAS_LIMIT) * U256::from(TIPPING_MAX_FEE_PER_GAS)
+    }
+
+    /// A key-0 EIP-8130 transaction declaring `tip` to the sequencer fee vault.
+    fn tipping_eoa_8130(
+        signer: &PrivateKeySigner,
+        payer: Option<&PrivateKeySigner>,
+        nonce_sequence: u64,
+        tip: U256,
+    ) -> BasePooledTransaction {
+        tipping_8130(signer, payer, U256::ZERO, nonce_sequence, 0, tip)
+    }
+
+    /// A tipping finite-channel sidecar transaction on [`TIPPING_NONCE_KEY`].
+    fn tipping_channel_8130(
+        signer: &PrivateKeySigner,
+        payer: Option<&PrivateKeySigner>,
+        nonce_sequence: u64,
+        tip: U256,
+    ) -> BasePooledTransaction {
+        tipping_8130(signer, payer, TIPPING_NONCE_KEY, nonce_sequence, 0, tip)
+    }
+
+    /// A tipping nonce-free sidecar transaction; `expiry_offset_ms` keeps
+    /// each one a distinct sidecar member.
+    fn tipping_nonce_free_8130(
+        signer: &PrivateKeySigner,
+        expiry_offset_ms: u64,
+        tip: U256,
+    ) -> BasePooledTransaction {
+        tipping_8130(
+            signer,
+            None,
+            Eip8130Constants::NONCE_KEY_MAX,
+            0,
+            INTEGRATION_POOL_NOW_MS + expiry_offset_ms + 1,
+            tip,
+        )
+    }
+
+    fn tipping_8130(
+        signer: &PrivateKeySigner,
+        payer: Option<&PrivateKeySigner>,
+        nonce_key: U256,
+        nonce_sequence: u64,
+        valid_before: u64,
+        tip: U256,
+    ) -> BasePooledTransaction {
+        tipping_8130_with_fees(
+            signer,
+            payer,
+            nonce_key,
+            nonce_sequence,
+            valid_before,
+            tip,
+            (0, TIPPING_MAX_FEE_PER_GAS),
+        )
+    }
+
+    /// [`tipping_8130`] with explicit `(max_priority_fee_per_gas, max_fee_per_gas)`.
+    fn tipping_8130_with_fees(
+        signer: &PrivateKeySigner,
+        payer: Option<&PrivateKeySigner>,
+        nonce_key: U256,
+        nonce_sequence: u64,
+        valid_before: u64,
+        tip: U256,
+        (max_priority_fee_per_gas, max_fee_per_gas): (u128, u128),
+    ) -> BasePooledTransaction {
+        let tx = TxEip8130 {
+            chain_id: test_chain_id(),
+            sender: None,
+            nonce_key,
+            nonce_sequence,
+            valid_after: 0,
+            valid_before,
+            max_priority_fee_per_gas,
+            max_fee_per_gas,
+            gas_limit: TIPPING_GAS_LIMIT,
+            account_changes: Vec::new(),
+            calls: vec![vec![Call {
+                to: Predeploys::SEQUENCER_FEE_VAULT,
+                value: tip,
+                data: Bytes::new(),
+            }]],
+            metadata: Bytes::new(),
+            payer: payer.map(PrivateKeySigner::address),
+        };
+        let sender_auth = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
+        let payer_auth = payer.map_or_else(Vec::new, |payer| {
+            let payer_sig =
+                payer.sign_hash_sync(&tx.payer_signature_hash(signer.address())).unwrap();
+            let mut payer_auth = Eip8130Constants::K1_AUTHENTICATOR.to_vec();
+            payer_auth.extend_from_slice(&payer_sig.as_bytes());
+            payer_auth
+        });
+        let signed = Eip8130Signed::new(
+            tx,
+            Bytes::from(sender_auth.as_bytes().to_vec()),
+            Bytes::from(payer_auth),
+        );
+        let pooled = ConsensusPooledTransaction::Eip8130(signed);
+        BasePooledTransaction::from_pooled(Recovered::new_unchecked(pooled, signer.address()))
+    }
+
+    fn set_balance(pool: &IntegrationPool, address: Address, balance: U256) {
+        pool.update_accounts(vec![ChangedAccount { address, nonce: 0, balance }]);
+    }
+
+    fn is_best(pool: &IntegrationPool, hash: TxHash) -> bool {
+        pool.best_transactions().any(|transaction| *transaction.hash() == hash)
+    }
+
+    #[tokio::test]
+    async fn one_balance_backs_only_one_full_balance_coinbase_tip() {
+        let mut config = PoolConfig::default();
+        config.pending_limit.max_txs = 2;
+        let (pool, client) = build_integration_pool_with_config(config);
+        let [attacker, honest] = std::array::from_fn(|_| signer());
+        let balance = U256::from(10) * tipping_fees();
+        client.add_account(attacker.address(), ExtendedAccount::new(0, balance));
+        fund(&client, honest.address());
+
+        let honest_tx = signed_1559_with_fees(&honest, 0, 1_000, 1);
+        let honest_hash = *honest_tx.hash();
+        pool.add_transaction(TransactionOrigin::External, honest_tx).await.unwrap();
+
+        let full_balance_tip = balance - tipping_fees();
+        let mut hashes = Vec::new();
+        for nonce in 0..4 {
+            let transaction = tipping_eoa_8130(&attacker, None, nonce, full_balance_tip);
+            hashes.push(*transaction.hash());
+            let _ = pool.add_transaction(TransactionOrigin::External, transaction).await;
+        }
+
+        assert!(is_pending(&pool, honest_hash), "unbacked tips must not evict an honest tx");
+        assert!(is_best(&pool, honest_hash));
+        assert!(is_pending(&pool, hashes[0]), "the balance backs the first tip");
+        for hash in &hashes[1..] {
+            assert!(!is_pending(&pool, *hash), "an over-committed tip must not rank");
+            assert!(!is_best(&pool, *hash));
+        }
+    }
+
+    #[tokio::test]
+    async fn only_the_backed_prefix_of_coinbase_tips_is_pending() {
+        let (pool, client) = build_integration_pool();
+        let sender = signer();
+        // The balance covers all three transactions' fees but only the first tip.
+        let tip = U256::from(2) * tipping_fees();
+        client.add_account(
+            sender.address(),
+            ExtendedAccount::new(0, U256::from(3) * tipping_fees() + tip),
+        );
+
+        let mut hashes = Vec::new();
+        for nonce in 0..3 {
+            let transaction = tipping_eoa_8130(&sender, None, nonce, tip);
+            hashes.push(*transaction.hash());
+            pool.add_transaction(TransactionOrigin::External, transaction).await.unwrap();
+        }
+
+        assert!(is_pending(&pool, hashes[0]));
+        for hash in &hashes[1..] {
+            assert!(pool.get(hash).is_some());
+            assert!(!is_pending(&pool, *hash));
+        }
+    }
+
+    #[tokio::test]
+    async fn coinbase_tip_ranks_only_while_the_sender_balance_backs_it() {
+        let (pool, client) = build_integration_pool();
+        let sender = signer();
+        let tip = tipping_fees();
+        let backed = tipping_fees() + tip;
+        client.add_account(sender.address(), ExtendedAccount::new(0, backed));
+        let transaction = tipping_eoa_8130(&sender, None, 0, tip);
+        let hash = *transaction.hash();
+        pool.add_transaction(TransactionOrigin::External, transaction).await.unwrap();
+        assert!(is_pending(&pool, hash));
+
+        set_balance(&pool, sender.address(), backed - U256::from(1));
+        assert!(pool.get(&hash).is_some(), "the fees are still covered");
+        assert!(!is_pending(&pool, hash));
+        assert!(!is_best(&pool, hash));
+
+        set_balance(&pool, sender.address(), backed);
+        assert!(is_pending(&pool, hash));
+    }
+
+    /// Isthmus L1 attributes calldata with non-zero L1 data and operator fee
+    /// parameters.
+    const ISTHMUS_L1_INFO_CALLDATA: [u8; 176] = alloy_primitives::hex!(
+        "098999be00000558000c5fc500000000000000030000000067a9f765"
+        "0000000000000029000000000000000000000000000000000000000000000000"
+        "00000000006a6d090000000000000000000000000000000000000000000000000000000000000001"
+        "72fcc8e8886636bdbe96ba0e4baab67ea7e7811633f52b52e8cf7a5123213b6f"
+        "000000000000000000000000d3f2c5afb2d76f5579f326b0cd7da5f5a4126c35"
+        "00004e2000000000000001f4"
+    );
+
+    fn l1_info_deposit() -> BaseTransactionSigned {
+        TxDeposit {
+            to: TxKind::Create,
+            input: Bytes::from_static(&ISTHMUS_L1_INFO_CALLDATA),
+            ..Default::default()
+        }
+        .into()
+    }
+
+    /// The L1 data and operator fees a self-paid transaction prepays under
+    /// [`ISTHMUS_L1_INFO_CALLDATA`].
+    fn l1_and_operator_fees(pool: &IntegrationPool, transaction: &BasePooledTransaction) -> U256 {
+        let mut l1_block_info = base_execution_evm::parse_l1_info(&ISTHMUS_L1_INFO_CALLDATA)
+            .expect("valid L1 info fixture");
+        let spec = BaseSpecId::from_timestamp(
+            pool.validator().validator().chain_spec(),
+            INTEGRATION_POOL_NOW_SECS,
+        );
+        l1_block_info.tx_cost(transaction.encoded_2718(), U256::from(transaction.gas_limit()), spec)
+    }
+
+    /// A self-paid tip is prepaid after the L1 data and operator fees, so a
+    /// balance of exactly gas plus the tip does not back it.
+    #[tokio::test]
+    async fn self_paid_coinbase_tip_is_backed_only_after_l1_and_operator_fees() {
+        let (pool, client) = build_integration_pool_with_l1_fees();
+        let [short, funded] = std::array::from_fn(|_| signer());
+        let tip = U256::from(10u64).pow(U256::from(18u64));
+
+        let short_tx = tipping_eoa_8130(&short, None, 0, tip);
+        let short_hash = *short_tx.hash();
+        assert!(!l1_and_operator_fees(&pool, &short_tx).is_zero(), "fixture must charge fees");
+        client.add_account(short.address(), ExtendedAccount::new(0, tipping_fees() + tip));
+        pool.add_transaction(TransactionOrigin::External, short_tx).await.unwrap();
+        assert!(pool.get(&short_hash).is_some(), "the balance still covers the fees");
+        assert!(!is_pending(&pool, short_hash), "gas plus the tip must not back the tip");
+        assert!(!is_best(&pool, short_hash));
+
+        let funded_tx = tipping_eoa_8130(&funded, None, 0, tip);
+        let funded_hash = *funded_tx.hash();
+        let balance = tipping_fees() + l1_and_operator_fees(&pool, &funded_tx) + tip;
+        client.add_account(funded.address(), ExtendedAccount::new(0, balance));
+        pool.add_transaction(TransactionOrigin::External, funded_tx).await.unwrap();
+        assert!(is_pending(&pool, funded_hash));
+    }
+
+    #[tokio::test]
+    async fn sponsored_coinbase_tip_is_backed_by_the_sender() {
+        let (pool, client) = build_integration_pool();
+        let [unfunded, funded, payer] = std::array::from_fn(|_| signer());
+        fund(&client, payer.address());
+        let tip = tipping_fees();
+        client.add_account(funded.address(), ExtendedAccount::new(0, tip));
+
+        let unbacked = tipping_eoa_8130(&unfunded, Some(&payer), 0, tip);
+        let unbacked_hash = *unbacked.hash();
+        pool.add_transaction(TransactionOrigin::External, unbacked).await.unwrap();
+        assert!(pool.get(&unbacked_hash).is_some());
+        assert!(!is_pending(&pool, unbacked_hash), "the payer does not back the sender's tip");
+
+        let backed = tipping_eoa_8130(&funded, Some(&payer), 0, tip);
+        let backed_hash = *backed.hash();
+        pool.add_transaction(TransactionOrigin::External, backed).await.unwrap();
+        assert!(is_pending(&pool, backed_hash));
+
+        set_balance(&pool, funded.address(), tip - U256::from(1));
+        assert!(!is_pending(&pool, backed_hash));
+        assert!(!is_best(&pool, backed_hash));
+    }
+
+    /// Adds a backed self-paid tx0 below the honest transaction's rank, then
+    /// tx1 declaring `tx1_tip(c0)` where `c0` is tx0's cost, and asserts tx1
+    /// neither pends nor outranks the honest transaction.
+    async fn assert_tip_cannot_wrap_cumulative_cost(tx1_tip: impl FnOnce(U256) -> U256) {
+        let (pool, client) = build_integration_pool();
+        let attacker = signer();
+        let (honest_hash, _) = setup_tip_race(&pool, &client, &attacker).await;
+        let tx0_tip = U256::from(3);
+        let tx0 = tipping_eoa_8130(&attacker, None, 0, tx0_tip);
+        let tx0_hash = *tx0.hash();
+        pool.add_transaction(TransactionOrigin::External, tx0).await.unwrap();
+        assert!(is_pending(&pool, tx0_hash));
+
+        let tx1 = tipping_eoa_8130(&attacker, None, 1, tx1_tip(tipping_fees() + tx0_tip));
+        let tx1_hash = *tx1.hash();
+        let _ = pool.add_transaction(TransactionOrigin::External, tx1).await;
+
+        assert!(!is_pending(&pool, tx1_hash), "an unbacked tip must not wrap into pending");
+        assert!(!is_best(&pool, tx1_hash));
+        assert_eq!(best_hashes(&pool).first(), Some(&honest_hash));
+    }
+
+    #[tokio::test]
+    async fn maximal_coinbase_tip_cannot_wrap_the_cumulative_cost() {
+        assert_tip_cannot_wrap_cumulative_cost(|_| U256::MAX).await;
+    }
+
+    #[tokio::test]
+    async fn exact_wrapping_coinbase_tip_cannot_wrap_the_cumulative_cost() {
+        assert_tip_cannot_wrap_cumulative_cost(|c0| U256::ZERO.wrapping_sub(c0) + U256::from(1))
+            .await;
+    }
+
+    fn best_hashes(pool: &IntegrationPool) -> Vec<TxHash> {
+        pool.best_transactions().map(|transaction| *transaction.hash()).collect()
+    }
+
+    /// Funds `attacker` with ten times the tipping fees, adds an honest
+    /// EIP-1559 transaction with priority fee 1, and returns its hash and the
+    /// attacker's balance.
+    async fn setup_tip_race(
+        pool: &IntegrationPool,
+        client: &MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>,
+        attacker: &PrivateKeySigner,
+    ) -> (TxHash, U256) {
+        let honest = signer();
+        fund(client, honest.address());
+        let balance = U256::from(10) * tipping_fees();
+        client.add_account(attacker.address(), ExtendedAccount::new(0, balance));
+        let honest_tx = signed_1559_with_fees(&honest, 0, 1_000, 1);
+        let honest_hash = *honest_tx.hash();
+        pool.add_transaction(TransactionOrigin::External, honest_tx).await.unwrap();
+        (honest_hash, balance)
+    }
+
+    #[tokio::test]
+    async fn sidecar_lane_balance_backs_only_one_full_balance_coinbase_tip() {
+        let (pool, client) = build_integration_pool();
+        let attacker = signer();
+        let (honest_hash, balance) = setup_tip_race(&pool, &client, &attacker).await;
+        let full_balance_tip = balance - tipping_fees();
+
+        let backed = tipping_channel_8130(&attacker, None, 0, full_balance_tip);
+        let backed_hash = *backed.hash();
+        pool.add_transaction(TransactionOrigin::External, backed).await.unwrap();
+        assert_eq!(best_hashes(&pool)[0], backed_hash, "a backed tip ranks by the tip");
+
+        for nonce in 1..3 {
+            let transaction = tipping_channel_8130(&attacker, None, nonce, full_balance_tip);
+            pool.add_transaction(TransactionOrigin::External, transaction).await.unwrap();
+        }
+        assert!(is_pending(&pool, backed_hash));
+        assert_eq!(best_hashes(&pool)[0], honest_hash, "over-committed tips rank by priority fee");
+    }
+
+    #[tokio::test]
+    async fn nonce_free_balance_backs_only_one_full_balance_coinbase_tip() {
+        let (pool, client) = build_integration_pool();
+        let attacker = signer();
+        let (honest_hash, balance) = setup_tip_race(&pool, &client, &attacker).await;
+        let full_balance_tip = balance - tipping_fees();
+
+        let backed = tipping_nonce_free_8130(&attacker, 0, full_balance_tip);
+        let backed_hash = *backed.hash();
+        pool.add_transaction(TransactionOrigin::External, backed).await.unwrap();
+        assert_eq!(best_hashes(&pool)[0], backed_hash, "a backed tip ranks by the tip");
+
+        for offset in 1..3 {
+            let transaction = tipping_nonce_free_8130(&attacker, offset, full_balance_tip);
+            pool.add_transaction(TransactionOrigin::External, transaction).await.unwrap();
+        }
+        assert!(is_pending(&pool, backed_hash));
+        assert_eq!(best_hashes(&pool)[0], honest_hash, "over-committed tips rank by priority fee");
+    }
+
+    #[tokio::test]
+    async fn sidecar_coinbase_tip_backing_follows_sender_balance_updates() {
+        let (pool, client) = build_integration_pool();
+        let attacker = signer();
+        let (honest_hash, balance) = setup_tip_race(&pool, &client, &attacker).await;
+        let tip = balance - tipping_fees();
+        let transaction = tipping_channel_8130(&attacker, None, 0, tip);
+        let hash = *transaction.hash();
+        pool.add_transaction(TransactionOrigin::External, transaction).await.unwrap();
+        assert_eq!(best_hashes(&pool)[0], hash);
+
+        set_balance(&pool, attacker.address(), balance - U256::from(1));
+        assert!(pool.get(&hash).is_some(), "the fees are still covered");
+        assert_eq!(best_hashes(&pool)[0], honest_hash, "a balance drop un-backs the tip");
+
+        pool.apply_state_diff(&[AccountStateDiff {
+            balance: Some(balance),
+            ..AccountStateDiff::new(attacker.address())
+        }]);
+        assert_eq!(best_hashes(&pool)[0], hash, "a canonical balance restore re-backs the tip");
+    }
+
+    /// Validates `transaction`, applies `balance` for its sender as a newer
+    /// account update, then inserts the validated transaction.
+    async fn insert_after_balance_drop(
+        pool: &IntegrationPool,
+        transaction: BasePooledTransaction,
+        balance: U256,
+    ) {
+        let sender = transaction.sender();
+        let balance_epoch = pool.nonce_pool.read().balance_epoch();
+        let validated =
+            pool.validator().validate_transaction(TransactionOrigin::External, transaction).await;
+        set_balance(pool, sender, balance);
+        pool.add_validated_sidecar_transaction(
+            validated,
+            TransactionOrigin::External,
+            balance_epoch,
+        )
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn balance_drop_during_validation_of_a_first_sidecar_tip_is_not_overwritten() {
+        let (pool, client) = build_integration_pool();
+        let attacker = signer();
+        let (honest_hash, balance) = setup_tip_race(&pool, &client, &attacker).await;
+        let tip = balance - tipping_fees();
+
+        let transaction = tipping_channel_8130(&attacker, None, 0, tip);
+        let hash = *transaction.hash();
+        insert_after_balance_drop(&pool, transaction, balance - U256::from(1)).await;
+        assert!(is_pending(&pool, hash));
+        assert_eq!(best_hashes(&pool)[0], honest_hash, "the stale balance must not back the tip");
+    }
+
+    #[tokio::test]
+    async fn balance_drop_during_validation_of_a_further_sidecar_tip_is_not_overwritten() {
+        let (pool, client) = build_integration_pool();
+        let attacker = signer();
+        let (honest_hash, balance) = setup_tip_race(&pool, &client, &attacker).await;
+        let untipped = tipping_nonce_free_8130(&attacker, 0, U256::ZERO);
+        pool.add_transaction(TransactionOrigin::External, untipped).await.unwrap();
+        let tip = balance - U256::from(2) * tipping_fees();
+
+        let transaction = tipping_channel_8130(&attacker, None, 0, tip);
+        let hash = *transaction.hash();
+        insert_after_balance_drop(&pool, transaction, balance - U256::from(1)).await;
+        assert!(is_pending(&pool, hash));
+        assert_eq!(best_hashes(&pool)[0], honest_hash, "the stale balance must not back the tip");
+
+        set_balance(&pool, attacker.address(), balance);
+        assert_eq!(best_hashes(&pool)[0], hash, "a current balance backs the tip again");
+    }
+
+    #[tokio::test]
+    async fn replacing_an_oversized_sidecar_tip_keeps_it_unbacked() {
+        let (pool, client) = build_integration_pool();
+        let attacker = signer();
+        let (honest_hash, _) = setup_tip_race(&pool, &client, &attacker).await;
+        let original = tipping_channel_8130(&attacker, None, 0, U256::MAX);
+        pool.add_transaction(TransactionOrigin::External, original).await.unwrap();
+
+        let bumped_fees = (0, TIPPING_MAX_FEE_PER_GAS * 2);
+        let replacement = tipping_8130_with_fees(
+            &attacker,
+            None,
+            TIPPING_NONCE_KEY,
+            0,
+            0,
+            U256::MAX,
+            bumped_fees,
+        );
+        let replacement_hash = *replacement.hash();
+        let outcome = pool.add_transaction(TransactionOrigin::External, replacement).await.unwrap();
+        assert_eq!(outcome.hash, replacement_hash);
+        assert!(is_pending(&pool, replacement_hash));
+        assert_eq!(best_hashes(&pool)[0], honest_hash, "an impossible tip must not rank");
+    }
+
+    #[tokio::test]
+    async fn removing_one_of_two_oversized_sidecar_tips_keeps_the_other_unbacked() {
+        let (pool, client) = build_integration_pool();
+        let attacker = signer();
+        let (honest_hash, _) = setup_tip_race(&pool, &client, &attacker).await;
+        let [kept, removed] =
+            [0, 1].map(|offset| tipping_nonce_free_8130(&attacker, offset, U256::MAX));
+        let removed_hash = *removed.hash();
+        pool.add_transaction(TransactionOrigin::External, kept).await.unwrap();
+        pool.add_transaction(TransactionOrigin::External, removed).await.unwrap();
+
+        assert_eq!(pool.remove_transactions(vec![removed_hash]).len(), 1);
+        assert_eq!(best_hashes(&pool)[0], honest_hash, "an impossible tip must not rank");
+    }
+
+    #[tokio::test]
+    async fn sponsored_tip_validated_before_its_sender_is_drained_is_unbacked() {
+        let (pool, client) = build_integration_pool();
+        let [sender, payer] = std::array::from_fn(|_| signer());
+        let (honest_hash, _) = setup_tip_race(&pool, &client, &signer()).await;
+        fund(&client, payer.address());
+        let tip = tipping_fees();
+        client.add_account(sender.address(), ExtendedAccount::new(0, U256::from(2) * tip));
+        let first = tipping_channel_8130(&sender, Some(&payer), 0, tip);
+        pool.add_transaction(TransactionOrigin::External, first).await.unwrap();
+
+        let second = tipping_channel_8130(&sender, Some(&payer), 1, tip);
+        insert_after_balance_drop(&pool, second, U256::ZERO).await;
+        let best = best_hashes(&pool);
+        assert_eq!(best[0], honest_hash, "neither of the drained sender's tips may rank");
+        assert_eq!(best.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn sponsored_sidecar_coinbase_tip_from_an_unfunded_sender_is_unbacked() {
+        let (pool, client) = build_integration_pool();
+        let [unfunded, payer] = std::array::from_fn(|_| signer());
+        let (honest_hash, _) = setup_tip_race(&pool, &client, &signer()).await;
+        fund(&client, payer.address());
+
+        let transaction = tipping_channel_8130(&unfunded, Some(&payer), 0, tipping_fees());
+        let hash = *transaction.hash();
+        pool.add_transaction(TransactionOrigin::External, transaction).await.unwrap();
+        assert!(is_pending(&pool, hash), "the payer still funds the transaction");
+        assert_eq!(best_hashes(&pool)[0], honest_hash, "the payer does not back the sender's tip");
     }
 
     #[test]
@@ -3046,5 +4377,84 @@ mod tests {
             assert_eq!(pool.get(&hash).is_some(), remains_live);
             assert_eq!(pool.guard.read().contains(&hash), remains_live);
         }
+    }
+
+    fn sidecar_channel_tx(channel: u64) -> Arc<ValidPoolTransaction<BasePooledTransaction>> {
+        Arc::new(valid_pool_transaction(signed_channel_tx(
+            &signer(),
+            U256::from(channel),
+            0,
+            1_000,
+        )))
+    }
+
+    /// A consumer of the merged pending listener that stops draining for longer than the channels
+    /// can buffer must still be woken by sidecar transactions once it catches up. The merged
+    /// receiver stays open on the protocol side, so a dropped sidecar listener would go unnoticed.
+    #[tokio::test]
+    async fn merged_pending_listener_keeps_sidecar_wakeups_after_consumer_stalls() {
+        let mut listeners = SidecarListeners::<BasePooledTransaction>::default();
+        let (_protocol_tx, protocol_rx) = mpsc::channel::<TxHash>(16);
+        let sidecar_rx = listeners.subscribe_pending(TransactionListenerKind::All);
+        let mut merged = merge_receivers(protocol_rx, sidecar_rx);
+
+        // The forwarder fills the merged channel, blocks on it, and then the sidecar channel fills.
+        let stalled = sidecar_channel_tx(1);
+        for _ in 0..3 * SIDE_CAR_EVENT_CHANNEL_SIZE {
+            listeners.broadcast_pending(&stalled);
+            tokio::task::yield_now().await;
+        }
+        while let Ok(Some(_)) = tokio::time::timeout(Duration::from_millis(20), merged.recv()).await
+        {
+        }
+
+        let next = sidecar_channel_tx(2);
+        listeners.broadcast_pending(&next);
+        let woken = tokio::time::timeout(Duration::from_secs(1), merged.recv()).await;
+        assert_eq!(woken.ok().flatten(), Some(*next.hash()));
+    }
+
+    #[tokio::test]
+    async fn new_and_all_event_listeners_survive_full_channels() {
+        let mut listeners = SidecarListeners::<BasePooledTransaction>::default();
+        let mut new_events = listeners.subscribe_new_transactions(TransactionListenerKind::All);
+        let mut all_events = listeners.subscribe_all();
+
+        let stalled = sidecar_channel_tx(1);
+        for _ in 0..=SIDE_CAR_EVENT_CHANNEL_SIZE {
+            listeners.broadcast_pending_transaction(&stalled);
+        }
+        for _ in 0..SIDE_CAR_EVENT_CHANNEL_SIZE {
+            new_events.recv().await.unwrap();
+            all_events.next().await.unwrap();
+        }
+
+        let next = sidecar_channel_tx(2);
+        listeners.broadcast_pending_transaction(&next);
+        assert_eq!(
+            new_events.recv().await.map(|event| *event.transaction.hash()),
+            Some(*next.hash())
+        );
+        assert!(
+            matches!(all_events.next().await, Some(FullTransactionEvent::Pending(hash)) if hash == *next.hash())
+        );
+    }
+
+    #[tokio::test]
+    async fn listeners_with_dropped_receivers_are_removed() {
+        let mut listeners = SidecarListeners::<BasePooledTransaction>::default();
+        drop(listeners.subscribe_pending(TransactionListenerKind::All));
+        drop(listeners.subscribe_pending(TransactionListenerKind::PropagateOnly));
+        drop(listeners.subscribe_new_transactions(TransactionListenerKind::All));
+        drop(listeners.subscribe_new_transactions(TransactionListenerKind::PropagateOnly));
+        drop(listeners.subscribe_all());
+
+        listeners.broadcast_pending_transaction(&sidecar_channel_tx(1));
+
+        assert!(listeners.pending_all.is_empty());
+        assert!(listeners.pending_propagate.is_empty());
+        assert!(listeners.new_all.is_empty());
+        assert!(listeners.new_propagate.is_empty());
+        assert!(listeners.all_events.is_empty());
     }
 }

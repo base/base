@@ -10,7 +10,6 @@ use alloc::vec::Vec;
 use core::{cell::RefCell, fmt};
 
 use alloy_primitives::{Address, B256, Bytes, LogData, U256};
-use alloy_sol_types::SolInterface;
 use revm::{context::journaled_state::JournalCheckpoint, state::Bytecode};
 
 use crate::{
@@ -245,21 +244,6 @@ impl<'a> StorageCtx<'a> {
         out
     }
 
-    /// Returns an ABI-encoded success output.
-    pub fn abi_success(&self, output: impl SolInterface) -> PrecompileOutput {
-        self.success_output(output.abi_encode().into())
-    }
-
-    /// Returns a revert [`PrecompileOutput`] with the current gas used.
-    pub fn revert_output(&self, output: Bytes) -> PrecompileOutput {
-        PrecompileOutput::revert(self.gas_used(), output, self.state_gas_used())
-    }
-
-    /// Reverts with an ABI-encoded error.
-    pub fn abi_revert(&self, error: impl SolInterface) -> PrecompileOutput {
-        self.revert_output(error.abi_encode().into())
-    }
-
     /// Returns a [`PrecompileResult`] constructed from the given error.
     pub fn error_result(&self, error: impl Into<BasePrecompileError>) -> PrecompileResult {
         error.into().into_precompile_result_with_features(
@@ -411,16 +395,6 @@ impl StorageCtx<'_> {
     /// Overrides the block timestamp (test-utils only).
     pub fn set_timestamp(&self, timestamp: U256) {
         self.with_hashmap(|storage| storage.set_timestamp(timestamp))
-    }
-
-    /// Overrides the block beneficiary (test-utils only).
-    pub fn set_beneficiary(&self, beneficiary: Address) {
-        self.with_hashmap(|storage| storage.set_beneficiary(beneficiary))
-    }
-
-    /// Overrides the block number (test-utils only).
-    pub fn set_block_number(&self, block_number: u64) {
-        self.with_hashmap(|storage| storage.set_block_number(block_number))
     }
 
     /// Clears all transient storage (test-utils only).

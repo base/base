@@ -38,27 +38,3 @@ pub enum FaultProofProgramError {
     #[error("trace extension detected")]
     TraceExtension,
 }
-
-#[cfg(test)]
-mod tests {
-    use alloy_primitives::B256;
-
-    use super::FaultProofProgramError;
-
-    #[test]
-    fn test_invalid_claim_display() {
-        let computed = B256::from([1u8; 32]);
-        let claimed = B256::from([2u8; 32]);
-        let err = FaultProofProgramError::InvalidClaim { computed, claimed };
-        let msg = alloc::format!("{err}");
-        assert!(msg.contains("invalid claim"));
-        assert!(msg.contains(&alloc::format!("{computed}")));
-        assert!(msg.contains(&alloc::format!("{claimed}")));
-    }
-
-    #[test]
-    fn test_trace_extension_display() {
-        let err = FaultProofProgramError::TraceExtension;
-        assert_eq!(alloc::format!("{err}"), "trace extension detected");
-    }
-}

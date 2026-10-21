@@ -1,7 +1,8 @@
-//! How the [`Batcher`] recovers on its own, with every fork through Cobalt active, from a channel
+//! How the [`Batcher`], with every fork through Cobalt active, recovers on its own from a channel
 //! that timed out in derivation, a confirmed batch that derivation passed over, a safe head that
-//! went back, and an unsafe chain the sequencer replaced. No test builds a second batcher, and each
-//! ends with derivation reading what the batcher resent by itself.
+//! went back and an unsafe chain the sequencer replaced, and how it leaves a node behind on L1
+//! alone. No test builds a second batcher, and each recovery ends with derivation reading what the
+//! batcher resent by itself.
 
 use base_action_harness::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, L1MinerConfig, SharedL1Chain,
@@ -135,8 +136,9 @@ async fn batcher_resends_a_confirmed_batch_that_derivation_passed_over() {
     );
 }
 
-/// When derivation loses derived blocks to an L1 reorg, its safe head goes back. The batcher,
-/// told so, resends every block above the new safe head, and derivation reads them again.
+/// When derivation loses derived blocks to an L1 reorg, its safe head goes back. Once it has
+/// read the new fork past the L1 block the blocks were reported safe at, the batcher resends
+/// every block above the new safe head, and derivation reads them again.
 #[tokio::test]
 async fn batcher_resends_the_blocks_above_a_safe_head_that_went_back() {
     let batcher_cfg = batcher_config();
@@ -155,16 +157,30 @@ async fn batcher_resends_the_blocks_above_a_safe_head_that_went_back() {
     chain.push(h.l1.tip().clone());
     node.initialize().await;
     assert_eq!(node.run_until_idle().await, 3, "the three blocks derive");
-    batcher.observe_derivation(node.derivation_status()).await;
+    let derived = node.derivation_status();
+    batcher.observe_derivation(derived).await;
 
     // An L1 reorg replaces L1 block 1 with an empty block. Reset the node to genesis, as its
-    // L1 reorg handling would, and tell the batcher the safe head is back to 0.
+    // L1 reorg handling would. Until it reads the new fork past L1 block 1, it reports safe
+    // head 0 as a node behind on L1 would, and the batcher resends nothing.
     h.l1.reorg_to(0).expect("reorg to genesis");
     chain.truncate_to(0);
     h.mine_and_push(&chain);
     batcher.observe_l1_block(h.l1.tip()).await;
     node.act_reset(h.l2_genesis()).await;
-    batcher.observe_derivation(node.derivation_status()).await;
+    let reset = node.derivation_status();
+    assert!(reset.current_l1.number <= derived.current_l1.number, "the reset node is behind on L1");
+    batcher.observe_derivation(reset).await;
+    h.mine_and_push(&chain);
+    batcher.observe_l1_block(h.l1.tip()).await;
+    assert_eq!(batcher.pending_count(), 0, "nothing is resent while the node is behind on L1");
+
+    // The node reads the new fork past L1 block 1 and its safe head is still 0, so the batcher
+    // resends the three blocks.
+    assert_eq!(node.run_until_idle().await, 0, "the batches are gone from L1");
+    let passed = node.derivation_status();
+    assert!(passed.current_l1.number > derived.current_l1.number, "derivation passed L1 block 1");
+    batcher.observe_derivation(passed).await;
 
     // The next L1 block closes the fresh channel, the one after carries it.
     h.mine_and_push(&chain);
@@ -178,6 +194,40 @@ async fn batcher_resends_the_blocks_above_a_safe_head_that_went_back() {
         blocks[2].header.hash_slow(),
         "derivation read the three blocks again"
     );
+}
+
+/// A node behind on L1, as a new leader after a failover is, reports a lower safe head on the
+/// same chain. The batcher resends nothing: that node derives the posted blocks on its own.
+#[tokio::test]
+async fn batcher_resends_nothing_for_a_node_behind_on_l1() {
+    let batcher_cfg = batcher_config();
+    let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_config(&batcher_cfg));
+    let mut sequencer = h.create_l2_sequencer(SharedL1Chain::from_blocks(h.l1.chain().to_vec()));
+    let blocks = sequencer.build_next_blocks_with_single_transactions(3).await;
+    let (mut node, chain) = h.create_test_rollup_node_from_sequencer(
+        &mut sequencer,
+        SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
+    );
+
+    // The three blocks derive from L1 block 1, and the batcher hears the safe head is 3. The
+    // status of the node before it read L1 block 1 is the status a node behind on L1 reports.
+    let batcher = Batcher::new(ActionL2Source::from_blocks(blocks), &h.rollup_config, batcher_cfg);
+    batcher.advance(&mut h.l1).await;
+    chain.push(h.l1.tip().clone());
+    node.initialize().await;
+    let behind = node.derivation_status();
+    assert_eq!(node.run_until_idle().await, 3, "the three blocks derive");
+    let derived = node.derivation_status();
+    assert!(behind.current_l1.number < derived.current_l1.number, "the node read L1 block 1");
+    batcher.observe_derivation(derived).await;
+
+    // Told the safe head is 0 by a node that has not read L1 block 1, the batcher leaves its
+    // state alone: an L1 block later, when a resent channel would have closed, nothing is
+    // pending.
+    batcher.observe_derivation(behind).await;
+    h.mine_and_push(&chain);
+    batcher.observe_l1_block(h.l1.tip()).await;
+    assert_eq!(batcher.pending_count(), 0, "nothing is resent for a node behind on L1");
 }
 
 /// When the sequencer replaces an unsafe block the batcher already took, as a new leader that

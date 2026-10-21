@@ -1,6 +1,7 @@
 //! Base transaction abstraction containing the `[BaseTxTr]` trait and corresponding `[BaseTransaction]` type.
 
 use alloc::vec;
+use core::cmp::min;
 
 use alloy_eips::Encodable2718;
 use alloy_evm::{FromRecoveredTx, FromTxWithEncoded, tx::IntoTxEnv};
@@ -191,6 +192,12 @@ impl<T: Transaction> Transaction for BaseTransaction<T> {
         if self.tx_type() == DEPOSIT_TRANSACTION_TYPE {
             return self.gas_price();
         }
+        // The EIP-8130 placeholder env keeps the legacy `tx_type`, which would
+        // report `gas_price` (the fee cap) unchanged; price it as EIP-1559.
+        if self.eip8130.is_some() {
+            let tip = self.max_priority_fee_per_gas().unwrap_or_default();
+            return min(self.gas_price(), base_fee.saturating_add(tip));
+        }
         self.base.effective_gas_price(base_fee)
     }
 
@@ -297,8 +304,9 @@ impl FromTxWithEncoded<BaseTxEnvelope> for BaseTransaction<TxEnv> {
                 // env that have no EIP-8130 analogue — `kind`, `value`, and
                 // `input` — return `TxEnv` defaults (a zero-address call, zero
                 // value, empty input) for an 8130 transaction and must not be
-                // relied on for execution; `effective_gas_price` stays correct
-                // because the fee caps are projected above. The handler routes
+                // relied on for execution. `gas_price` carries the fee cap, and
+                // `BaseTransaction::effective_gas_price` prices it as EIP-1559
+                // (what the `GASPRICE` opcode reports). The handler routes
                 // 8130 transactions to the executor before any of these are hit
                 // (see `BaseEvm::transact_raw`).
                 //
@@ -350,13 +358,21 @@ impl FromTxWithEncoded<TxDeposit> for BaseTransaction<TxEnv> {
 #[cfg(test)]
 mod tests {
     use alloy_eips::Encodable2718;
-    use base_common_consensus::{BaseTxEnvelope, Eip8130Signed, TxEip8130};
+    use alloy_evm::Evm;
+    use alloy_primitives::{address, bytes, keccak256};
+    use base_common_consensus::{BaseTxEnvelope, Call, Eip8130Signed, TxEip8130};
+    use k256::ecdsa::SigningKey;
     use revm::{
+        context::{BlockEnv, CfgEnv, Context},
         context_interface::Transaction,
+        database::InMemoryDB,
+        inspector::NoOpInspector,
         primitives::{Address, B256, Bytes},
+        state::{AccountInfo, Bytecode},
     };
 
     use super::*;
+    use crate::{BaseSpecId, BaseUpgrade, Builder, DefaultBase};
 
     #[test]
     fn test_deposit_transaction_fields() {
@@ -410,5 +426,65 @@ mod tests {
         // `nonce()` is a guarded placeholder for 8130 (it drops `nonce_key`);
         // assert the projection on the base env directly to avoid the guard.
         assert_eq!(tx.base.nonce(), 7);
+    }
+
+    /// `GASPRICE` inside an EIP-8130 call reports the EIP-1559 effective gas
+    /// price `min(max_fee, base_fee + max_priority_fee)` that the payer is
+    /// charged, not the `max_fee_per_gas` cap.
+    #[cfg(feature = "std")]
+    #[test]
+    fn eip8130_gasprice_opcode_reports_effective_gas_price() {
+        const BASE_FEE: u64 = 1_000_000_000;
+        const MAX_PRIORITY_FEE: u128 = 7;
+        const MAX_FEE: u128 = 5_000_000_000;
+        let probe = address!("0x00000000000000000000000000000000000000e1");
+        // GASPRICE PUSH1 0 SSTORE STOP
+        let probe_code = bytes!("3a60005500");
+
+        let key = SigningKey::from_slice(&[0x31; 32]).unwrap();
+        let point = key.verifying_key().to_encoded_point(false);
+        let sender = Address::from_slice(&keccak256(&point.as_bytes()[1..])[12..]);
+        let tx = TxEip8130 {
+            chain_id: 8453,
+            max_priority_fee_per_gas: MAX_PRIORITY_FEE,
+            max_fee_per_gas: MAX_FEE,
+            gas_limit: 1_000_000,
+            calls: vec![vec![Call { to: probe, value: U256::ZERO, data: Bytes::new() }]],
+            ..Default::default()
+        };
+        let (signature, recid) =
+            key.sign_prehash_recoverable(tx.sender_signature_hash().as_slice()).unwrap();
+        let mut sender_auth = signature.to_bytes().to_vec();
+        sender_auth.push(recid.to_byte() + 27);
+        let envelope =
+            BaseTxEnvelope::Eip8130(Eip8130Signed::new(tx, sender_auth.into(), Bytes::new()));
+
+        let mut db = InMemoryDB::default();
+        db.insert_account_info(
+            sender,
+            AccountInfo { balance: U256::from(10u64).pow(U256::from(18u64)), ..Default::default() },
+        );
+        db.insert_account_info(
+            probe,
+            AccountInfo {
+                code_hash: keccak256(&probe_code),
+                code: Some(Bytecode::new_raw(probe_code)),
+                ..Default::default()
+            },
+        );
+        let mut evm = Context::base()
+            .with_db(db)
+            .with_cfg(
+                CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Everest)).with_chain_id(8453),
+            )
+            .with_block(BlockEnv { basefee: BASE_FEE, ..Default::default() })
+            .build_with_inspector(NoOpInspector);
+        let outcome = evm
+            .transact_raw(BaseTransaction::from_recovered_tx(&envelope, sender))
+            .expect("8130 tx should execute");
+
+        assert!(outcome.result.is_success(), "expected success, got {:?}", outcome.result);
+        let seen = outcome.state[&probe].storage[&U256::ZERO].present_value;
+        assert_eq!(seen, U256::from(u128::from(BASE_FEE) + MAX_PRIORITY_FEE));
     }
 }

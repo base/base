@@ -19,7 +19,7 @@ inputs:
     default: "false"
   sp1-version:
     description: SP1 release tag used when sp1 is enabled (matches etc/just/succinct.just)
-    default: "v6.8.1"
+    default: "v6.9.0"
   native-deps:
     description: Install native build dependencies (clang, llvm, etc.)
     default: "false"
@@ -98,8 +98,8 @@ runs:
       shell: bash
       env:
         GITHUB_TOKEN: ${{ github.token }}
-        # Commit for succinctlabs/sp1 v6.8.1; update alongside SP1_VERSION.
-        SP1UP_REF: c84ada1ed5911f28c4d3c9d0ed2f9e6cd7edb824
+        # Commit for succinctlabs/sp1 v6.9.0; update alongside SP1_VERSION.
+        SP1UP_REF: b8387fa61e1361d90ee7de49f551863418ca0f08
         SP1_VERSION: ${{ inputs.sp1-version }}
       run: |
         if [ -x "$HOME/.sp1/bin/cargo-prove" ]; then

@@ -83,6 +83,11 @@ pub struct SequencerActor<
     ///
     /// [`SequencerConfig::seal_offset`]: crate::SequencerConfig::seal_offset
     pub seal_offset: Duration,
+    /// Delay added to scheduled block timestamps only in isolated sequencer mode.
+    ///
+    /// Other modes ignore this value and follow absolute chain time. An isolated sequencer
+    /// extending historical state sets the head's age to pace blocks without changing timestamps.
+    pub schedule_delay: Duration,
     /// A client to asynchronously sign and gossip built payloads to the network actor.
     pub unsafe_payload_gossip_client: UnsafePayloadGossipClient_,
     /// In-flight seal pipeline. [`Some`] while a sealed payload is being committed,
@@ -355,8 +360,7 @@ where
         block_number: u64,
         last_seal_duration: Duration,
     ) -> SystemTime {
-        let target = UNIX_EPOCH
-            + Duration::from_millis(self.rollup_config.l2_block_timestamp_millis(block_number));
+        let target = self.block_deadline(block_number);
         if self.rollup_config.is_denim_active(self.rollup_config.l2_block_timestamp(block_number)) {
             let interval =
                 Duration::from_millis(RollupConfig::NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS);
@@ -366,12 +370,17 @@ where
         target - last_seal_duration.min(block_interval / 2)
     }
 
-    fn next_block_seal_target(
-        &self,
-        block_number: u64,
-        last_seal_duration: Duration,
-    ) -> SystemTime {
-        self.block_seal_target(block_number.saturating_add(1), last_seal_duration)
+    /// Local wall-clock time of `block_number`'s scheduled timestamp.
+    fn block_deadline(&self, block_number: u64) -> SystemTime {
+        let delay = match self.mode {
+            NodeOperatingMode::IsolatedSequencer => self.schedule_delay,
+            NodeOperatingMode::Validator
+            | NodeOperatingMode::Sequencer
+            | NodeOperatingMode::ShadowSequencer { .. } => Duration::ZERO,
+        };
+        UNIX_EPOCH
+            + delay
+            + Duration::from_millis(self.rollup_config.l2_block_timestamp_millis(block_number))
     }
 
     /// Handles one admin API query received while the main loop is running, applying any
@@ -485,6 +494,9 @@ where
                             "Failed to cache acknowledged parent system config"
                         ),
                     }
+                    self.builder.attributes_builder.acknowledge_inserted_transactions(
+                        sealer.envelope.execution_payload.transactions(),
+                    );
                 }
 
                 if let Some(sealer) = self.sealer.take() {
@@ -515,11 +527,8 @@ where
                     // Queue the acknowledged parent instead of starting its child build here. Its
                     // timestamp is a hard lower bound for the steady-state child build because
                     // variable getPayload durations can make insertion complete early.
-                    let parent_millis = self
-                        .rollup_config
-                        .l2_block_timestamp_millis(inserted_head.block_info.number);
                     pipeline.pending_build_parent = Some(inserted_head);
-                    build_ticker.reset_at(UNIX_EPOCH + Duration::from_millis(parent_millis));
+                    build_ticker.reset_at(self.block_deadline(inserted_head.block_info.number));
                 }
             }
             Ok(SealStepOutcome::Pending) => {}
@@ -601,8 +610,10 @@ where
             Some((new_sealer, dur)) => {
                 pipeline.last_seal_duration = dur;
                 self.sealer = Some(new_sealer);
-                let target =
-                    self.next_block_seal_target(handle_block_number, pipeline.last_seal_duration);
+                let target = self.block_seal_target(
+                    handle_block_number.saturating_add(1),
+                    pipeline.last_seal_duration,
+                );
                 // Do not call build() here. The next payload is built after the engine
                 // acknowledges insertion of the sealed payload.
                 build_ticker.reset_at(target);
@@ -938,6 +949,7 @@ mod tests {
             recovery_mode,
             rollup_config: config,
             seal_offset: base_protocol::DEFAULT_SEAL_OFFSET,
+            schedule_delay: Duration::ZERO,
             unsafe_payload_gossip_client: gossip,
             sealer: None,
             pending_stop: None,
@@ -1032,6 +1044,9 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(actor.builder.attributes_builder.parent_system_configs, vec![(head, config)]);
+        let inserted = actor.builder.attributes_builder.inserted_transactions.clone();
+        assert_eq!(inserted.len(), 1);
+        assert_eq!(inserted[0].len(), 1);
 
         let (sealer, mut mismatched_head, _) = valid_sealer();
         mismatched_head.block_info.hash = B256::left_padding_from(&[1]);
@@ -1047,6 +1062,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(actor.builder.attributes_builder.parent_system_configs.len(), 1);
+        assert_eq!(actor.builder.attributes_builder.inserted_transactions, inserted);
 
         let (mut sealer, head, _) = valid_sealer();
         sealer.envelope.execution_payload.transactions_mut().clear();

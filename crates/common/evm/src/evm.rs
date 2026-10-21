@@ -81,22 +81,10 @@ impl<DB: RevmDatabase, I, P> BaseEvm<DB, I, P> {
         self.inner.ctx
     }
 
-    /// Consumes `self` and returns the inspector.
-    pub fn into_inspector(self) -> I {
-        self.inner.inspector
-    }
-
     /// Consumes `self` and returns a new [`BaseEvm`] with the given inspector, preserving
     /// the inspect flag. Used to swap inspectors without rebuilding from context.
     pub fn with_inspector<J>(self, inspector: J) -> BaseEvm<DB, J, P> {
         BaseEvm { inner: self.inner.with_inspector(inspector), inspect: self.inspect }
-    }
-
-    /// Consumes `self` and returns a new [`BaseEvm`] with the given precompile set,
-    /// preserving the inspect flag. Used to substitute the default [`PrecompilesMap`] with
-    /// custom implementations such as FPVM-accelerated precompiles in the proof system.
-    pub fn with_precompiles<Q>(self, precompiles: Q) -> BaseEvm<DB, I, Q> {
-        BaseEvm { inner: self.inner.with_precompiles(precompiles), inspect: self.inspect }
     }
 }
 

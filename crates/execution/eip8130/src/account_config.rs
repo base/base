@@ -263,11 +263,6 @@ impl AccountConfigurationStorage<'_> {
         Ok(self.get_account_state(account)?.is_locked(now))
     }
 
-    /// Mirrors `AccountConfiguration.getLockStatus`.
-    pub fn get_lock_status(&self, account: Address, now: u64) -> Result<LockStatus> {
-        Ok(self.get_account_state(account)?.lock_status(now))
-    }
-
     /// The implicit-EOA self-actor id for `account`:
     /// `bytes32(uint256(uint160(account)))`, i.e. the address right-aligned in the
     /// low 20 bytes (matches the finalized `Keystore.ActorId.fromAddress`).
@@ -349,12 +344,6 @@ pub struct ActorConfig {
 impl ActorConfig {
     /// The empty (unset) actor config: a zeroed storage slot.
     pub const EMPTY: Self = Self { authenticator: Address::ZERO, expiry: 0, scope: 0 };
-
-    /// Returns whether the reserved high 32 bits of a packed word are non-zero.
-    #[must_use]
-    pub fn has_nonzero_reserved(word: U256) -> bool {
-        word.to_be_bytes::<32>()[..4].iter().any(|&byte| byte != 0)
-    }
 
     /// Unpacks a raw `ActorConfig` storage word.
     #[must_use]
@@ -633,18 +622,10 @@ mod tests {
     use base_precompile_storage::{Handler, HashMapStorageProvider, StorageCtx};
 
     use super::*;
+    use crate::test_utils::pack;
 
     const ACCOUNT: Address = address!("0x00000000000000000000000000000000000000a1");
     const ACTOR: B256 = b256!("0x00000000000000000000000000000000000000b2000000000000000000000000");
-
-    /// Canonical Solidity packing of `ActorConfig` (each field at its bit
-    /// offset). Independent of the byte-slice [`ActorConfig::from_word`] decoder,
-    /// so agreement cross-checks the layout.
-    fn pack_actor_config(authenticator: Address, scope: u16, expiry: u64) -> U256 {
-        U256::from_be_slice(authenticator.as_slice())
-            | (U256::from(expiry) << 160)
-            | (U256::from(scope) << 208)
-    }
 
     fn pack_account_state(
         multichain: u64,
@@ -713,7 +694,7 @@ mod tests {
         let manager = address!("0x00000000000000000000000000000000000000d4");
         let commitment =
             b256!("0x4444444444444444444444444444444444444444444444444444444444444444");
-        let config_word = pack_actor_config(manager, Eip8130Constants::SCOPE_POLICY, 0);
+        let config_word = pack(manager, Eip8130Constants::SCOPE_POLICY, 0);
         let mut storage = HashMapStorageProvider::new(1);
         StorageCtx::enter(&mut storage, |ctx| {
             let mut acc = AccountConfigurationStorage::new(ctx);
@@ -749,7 +730,7 @@ mod tests {
     fn actor_config_unpacks_each_field_from_its_slot_position() {
         let authenticator = address!("0x1234567890abcDEF1234567890aBcdef12345678");
         let expiry = (1u64 << 48) - 1; // full uint48
-        let word = pack_actor_config(authenticator, 0xAB, expiry);
+        let word = pack(authenticator, 0xAB, expiry);
 
         let mut storage = HashMapStorageProvider::new(1);
         StorageCtx::enter(&mut storage, |ctx| {
@@ -784,7 +765,7 @@ mod tests {
             assert_eq!(acc.resolve_actor_config(ACCOUNT, ACTOR).unwrap(), ActorConfig::EMPTY);
 
             // Explicit entry wins verbatim.
-            acc.actors.at_mut(&ACTOR).at_mut(&ACCOUNT).write(pack(bound)).unwrap();
+            acc.actors.at_mut(&ACTOR).at_mut(&ACCOUNT).write(pack(bound, 0, 0)).unwrap();
             assert_eq!(
                 acc.resolve_actor_config(ACCOUNT, ACTOR).unwrap(),
                 ActorConfig { authenticator: bound, scope: 0, expiry: 0 }
@@ -812,7 +793,7 @@ mod tests {
             assert_eq!(acc.resolve_actor_config(ACCOUNT, self_id).unwrap(), ActorConfig::EMPTY);
 
             // Explicit (non-k1) self entry wins even while the revoked flag is set.
-            acc.actors.at_mut(&self_id).at_mut(&ACCOUNT).write(pack(bound)).unwrap();
+            acc.actors.at_mut(&self_id).at_mut(&ACCOUNT).write(pack(bound, 0, 0)).unwrap();
             assert_eq!(
                 acc.resolve_actor_config(ACCOUNT, self_id).unwrap(),
                 ActorConfig { authenticator: bound, scope: 0, expiry: 0 }
@@ -829,7 +810,7 @@ mod tests {
             let mut acc = AccountConfigurationStorage::new(ctx);
 
             // Bound to a real authenticator -> actor.
-            acc.actors.at_mut(&ACTOR).at_mut(&ACCOUNT).write(pack(bound)).unwrap();
+            acc.actors.at_mut(&ACTOR).at_mut(&ACCOUNT).write(pack(bound, 0, 0)).unwrap();
             assert!(acc.is_actor(ACCOUNT, ACTOR).unwrap());
 
             // Empty slot, non-self actor id -> not an actor.
@@ -848,7 +829,7 @@ mod tests {
 
             // Explicit self entry stays live even with the flag set (re-registered
             // scoped/owner k1 self key); the entry-exists => flag-set invariant.
-            acc.actors.at_mut(&self_id).at_mut(&ACCOUNT).write(pack(bound)).unwrap();
+            acc.actors.at_mut(&self_id).at_mut(&ACCOUNT).write(pack(bound, 0, 0)).unwrap();
             assert!(acc.is_actor(ACCOUNT, self_id).unwrap());
         });
     }
@@ -863,12 +844,12 @@ mod tests {
             let mut acc = AccountConfigurationStorage::new(ctx);
 
             // Ungated actor -> zeroed regardless of stored slots.
-            acc.actors.at_mut(&ACTOR).at_mut(&ACCOUNT).write(pack(manager)).unwrap();
+            acc.actors.at_mut(&ACTOR).at_mut(&ACCOUNT).write(pack(manager, 0, 0)).unwrap();
             acc.set_policy(ACCOUNT, ACTOR, manager, B256::ZERO).unwrap();
             assert_eq!(acc.get_policy(ACCOUNT, ACTOR).unwrap(), (Address::ZERO, B256::ZERO));
 
             // Gated actor -> (manager, commitment).
-            let gated = pack_actor_config(manager, Eip8130Constants::SCOPE_POLICY, 0);
+            let gated = pack(manager, Eip8130Constants::SCOPE_POLICY, 0);
             acc.actors.at_mut(&ACTOR).at_mut(&ACCOUNT).write(gated).unwrap();
             acc.set_policy(ACCOUNT, ACTOR, manager, commitment).unwrap();
             assert_eq!(acc.get_policy(ACCOUNT, ACTOR).unwrap(), (manager, commitment));
@@ -919,7 +900,7 @@ mod tests {
         let mut storage = HashMapStorageProvider::new(1);
         StorageCtx::enter(&mut storage, |ctx| {
             let mut acc = AccountConfigurationStorage::new(ctx);
-            let gated = pack_actor_config(authenticator, Eip8130Constants::SCOPE_POLICY, 0);
+            let gated = pack(authenticator, Eip8130Constants::SCOPE_POLICY, 0);
             acc.actors.at_mut(&self_id).at_mut(&ACCOUNT).write(gated).unwrap();
             acc.set_policy(ACCOUNT, self_id, manager, commitment).unwrap();
             acc.account_state
@@ -1016,7 +997,7 @@ mod tests {
                 .write(pack_account_state(0, 1, Eip8130Constants::FLAG_LOCKED, delay as u64, 0, 0))
                 .unwrap();
             assert!(acc.is_locked(ACCOUNT, 1_000).unwrap());
-            let status = acc.get_lock_status(ACCOUNT, 1_000).unwrap();
+            let status = acc.get_account_state(ACCOUNT).unwrap().lock_status(1_000);
             assert!(status.locked);
             assert!(!status.has_initiated_unlock);
             assert_eq!(status.unlocks_at, AccountState::UNLOCKS_AT_MAX);
@@ -1036,7 +1017,7 @@ mod tests {
                 .unwrap();
             assert!(acc.is_locked(ACCOUNT, 1_000).unwrap()); // before unlocks_at
             assert!(!acc.is_locked(ACCOUNT, 2_000).unwrap()); // at/after unlocks_at
-            let status = acc.get_lock_status(ACCOUNT, 1_000).unwrap();
+            let status = acc.get_account_state(ACCOUNT).unwrap().lock_status(1_000);
             assert!(status.locked);
             assert!(status.has_initiated_unlock);
             assert_eq!(status.unlocks_at, 2_000);
@@ -1044,30 +1025,27 @@ mod tests {
             // Never locked: no lock flags set.
             acc.account_state.at_mut(&ACCOUNT).write(pack_account_state(0, 1, 0, 0, 0, 0)).unwrap();
             assert!(!acc.is_locked(ACCOUNT, 0).unwrap());
-            assert!(!acc.get_lock_status(ACCOUNT, 0).unwrap().has_initiated_unlock);
+            assert!(!acc.get_account_state(ACCOUNT).unwrap().lock_status(0).has_initiated_unlock);
         });
     }
 
     #[test]
     fn actor_config_to_word_inverts_from_word_and_matches_packing() {
         let authenticator = address!("0x1234567890abcDEF1234567890aBcdef12345678");
-        let config =
-            ActorConfig::from_word(pack_actor_config(authenticator, 0xAB, (1u64 << 48) - 1));
+        let config = ActorConfig::from_word(pack(authenticator, 0xAB, (1u64 << 48) - 1));
         // to_word matches the independent Solidity packing, and round-trips.
-        assert_eq!(config.to_word(), pack_actor_config(authenticator, 0xAB, (1u64 << 48) - 1));
+        assert_eq!(config.to_word(), pack(authenticator, 0xAB, (1u64 << 48) - 1));
         assert_eq!(ActorConfig::from_word(config.to_word()), config);
         assert_eq!(ActorConfig::EMPTY.to_word(), U256::ZERO);
     }
 
     #[test]
-    fn actor_config_reserved_bits_are_detected_and_cleared_on_write() {
+    fn actor_config_reserved_bits_are_cleared_on_write() {
         // Reserved region is the top 4 bytes (bits 224..256), above the uint16
         // scope (bits 208..224).
-        let word = pack_actor_config(ACCOUNT, 0xAB, 42) | (U256::from(1) << 224);
-        assert!(ActorConfig::has_nonzero_reserved(word));
+        let word = pack(ACCOUNT, 0xAB, 42) | (U256::from(1) << 224);
         let config = ActorConfig::from_word(word);
-        assert!(!ActorConfig::has_nonzero_reserved(config.to_word()));
-        assert_eq!(config.to_word(), pack_actor_config(ACCOUNT, 0xAB, 42));
+        assert_eq!(config.to_word(), pack(ACCOUNT, 0xAB, 42));
     }
 
     #[test]
@@ -1113,11 +1091,5 @@ mod tests {
         let id = AccountConfigurationStorage::self_actor_id(ACCOUNT);
         assert_eq!(&id.as_slice()[12..], ACCOUNT.as_slice());
         assert_eq!(&id.as_slice()[..12], &[0u8; 12]);
-    }
-
-    /// Packs an `ActorConfig` carrying only an authenticator (scope/expiry/policy
-    /// zero) — the common shape for the `is_actor` predicate.
-    fn pack(authenticator: Address) -> U256 {
-        pack_actor_config(authenticator, 0, 0)
     }
 }

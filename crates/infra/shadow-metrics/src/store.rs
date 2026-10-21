@@ -41,12 +41,6 @@ impl ShadowMetricsStore {
         Ok(Self { pool })
     }
 
-    /// Wraps an existing pool.
-    #[must_use]
-    pub const fn new(pool: PgPool) -> Self {
-        Self { pool }
-    }
-
     /// Returns the pool.
     #[must_use]
     pub const fn pool(&self) -> &PgPool {

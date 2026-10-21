@@ -60,3 +60,4 @@ rpc-client = [
 	"serde",
 	"std",
 ]
+test-utils = []

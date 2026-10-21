@@ -66,8 +66,7 @@ mod tests {
         );
 
         assert_eq!(request.to, Some(contract.into()));
-        let expected = DoubleCounterPayload::encode_increment2();
-        assert_eq!(request.input.input(), Some(&expected));
+        assert_eq!(request.input.input(), Some(&Bytes::from_static(&[0xab, 0x57, 0xb1, 0x28])));
         assert_eq!(request.gas, Some(DOUBLE_COUNTER_GAS_LIMIT));
     }
 }

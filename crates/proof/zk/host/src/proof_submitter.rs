@@ -55,7 +55,7 @@ mod tests {
     fn tee_result_is_rejected() {
         let tee_result = ProofResult::Tee(TeeProofResult {
             aggregate_proposal: proposal(),
-            proposals: vec![proposal()],
+            intermediate_roots: vec![proposal().output_root],
             tee_kind: TeeKind::AwsNitro,
             tee_signer: alloy_primitives::Address::repeat_byte(0x11),
         });

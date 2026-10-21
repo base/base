@@ -7,6 +7,14 @@ pub(super) fn parse_address(s: &str, field: &str) -> Result<Address> {
         .map_err(|e| BaselineError::Config(format!("invalid {field} address '{s}': {e}")))
 }
 
+pub(super) fn require_address(value: Option<Address>, label: &str) -> Result<Address> {
+    value.ok_or_else(|| {
+        BaselineError::Config(format!(
+            "{label} is required (set deploy_devnet_swap_harness for fresh-devnet auto-deploy)"
+        ))
+    })
+}
+
 pub(super) fn validate_swap_amounts(min: U256, max: U256, tx_type: &str) -> Result<()> {
     if min > max {
         return Err(BaselineError::Config(format!(

@@ -41,7 +41,9 @@ fn sanitize_system_contracts_for_fork(chain_spec: &impl Upgrades, fork_config: &
         // Base does not support L1-style deposit, consolidation, or withdrawal request contracts.
         SystemContract::ConsolidationRequestPredeploy
         | SystemContract::DepositContract
-        | SystemContract::WithdrawalRequestPredeploy => false,
+        | SystemContract::WithdrawalRequestPredeploy
+        | SystemContract::BuilderDepositContract
+        | SystemContract::BuilderExitContract => false,
         SystemContract::Other(_) => true,
     });
 }
@@ -134,8 +136,12 @@ mod tests {
 
     use super::{sanitize_system_contracts_for_fork, zero_blob_params};
 
-    fn prague_system_contracts() -> BTreeMap<SystemContract, alloy_primitives::Address> {
-        SystemContract::cancun().into_iter().chain(SystemContract::prague(None)).collect()
+    fn ethereum_system_contracts() -> BTreeMap<SystemContract, alloy_primitives::Address> {
+        SystemContract::cancun()
+            .into_iter()
+            .chain(SystemContract::prague(None))
+            .chain(SystemContract::amsterdam())
+            .collect()
     }
 
     fn fork_config(activation_time: u64) -> EthForkConfig {
@@ -145,7 +151,7 @@ mod tests {
             chain_id: 1,
             fork_id: Default::default(),
             precompiles: Default::default(),
-            system_contracts: prague_system_contracts(),
+            system_contracts: ethereum_system_contracts(),
         }
     }
 

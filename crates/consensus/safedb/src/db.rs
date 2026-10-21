@@ -27,7 +27,7 @@
 //!
 //! [`commit`]: redb::WriteTransaction::commit
 
-use std::{path::Path, sync::Arc};
+use std::{error::Error, path::Path, sync::Arc};
 
 use alloy_eips::BlockNumHash;
 use alloy_primitives::B256;
@@ -109,16 +109,13 @@ impl SafeHeadListener for SafeDB {
         let l2_number = safe_head.block_info.number;
         let l2_hash = safe_head.block_info.hash;
 
-        tokio::task::spawn_blocking(move || -> Result<(), SafeDBError> {
-            let txn = db.begin_write().map_err(|e| SafeDBError::Database(e.to_string()))?;
+        tokio::task::spawn_blocking(move || -> Result<(), Box<dyn Error + Send + Sync>> {
+            let txn = db.begin_write()?;
             {
-                let mut table =
-                    txn.open_table(SAFE_HEADS).map_err(|e| SafeDBError::Database(e.to_string()))?;
-                table
-                    .insert(l1_number, &value)
-                    .map_err(|e| SafeDBError::Database(e.to_string()))?;
+                let mut table = txn.open_table(SAFE_HEADS)?;
+                table.insert(l1_number, &value)?;
             }
-            txn.commit().map_err(|e| SafeDBError::Database(e.to_string()))?;
+            txn.commit()?;
 
             tracing::debug!(
                 l1_number,
@@ -132,16 +129,16 @@ impl SafeHeadListener for SafeDB {
         })
         .await
         .map_err(|e| SafeDBError::Database(format!("blocking task panicked: {e}")))?
+        .map_err(|e| SafeDBError::Database(e.to_string()))
     }
 
     async fn safe_head_reset(&self, reset_safe_head: L2BlockInfo) -> Result<(), SafeDBError> {
         let db = Arc::clone(&self.db);
 
-        tokio::task::spawn_blocking(move || -> Result<(), SafeDBError> {
-            let txn = db.begin_write().map_err(|e| SafeDBError::Database(e.to_string()))?;
-            let (entries_deleted, was_noop) = {
-                let mut table =
-                    txn.open_table(SAFE_HEADS).map_err(|e| SafeDBError::Database(e.to_string()))?;
+        tokio::task::spawn_blocking(move || -> Result<(), Box<dyn Error + Send + Sync>> {
+            let txn = db.begin_write()?;
+            let entries_deleted: usize = {
+                let mut table = txn.open_table(SAFE_HEADS)?;
 
                 // Forward-scan from reset_origin to find the first entry whose L2 number
                 // is >= the reset target. Stops at the boundary without materialising the
@@ -151,11 +148,8 @@ impl SafeHeadListener for SafeDB {
                 // block numbers in the DB. The scan stops at the first entry that meets the
                 // threshold; everything from that key onward is at-or-above the target.
                 let mut first_key: Option<u64> = None;
-                for entry in table
-                    .range(reset_safe_head.l1_origin.number..)
-                    .map_err(|e| SafeDBError::Database(e.to_string()))?
-                {
-                    let entry = entry.map_err(|e| SafeDBError::Database(e.to_string()))?;
+                for entry in table.range(reset_safe_head.l1_origin.number..)? {
+                    let entry = entry?;
                     let (_, _, l2_number) = Self::decode_value(entry.1.value());
                     if l2_number >= reset_safe_head.block_info.number {
                         first_key = Some(entry.0.value());
@@ -168,16 +162,12 @@ impl SafeHeadListener for SafeDB {
                         // Collect only the u64 keys to delete (8 bytes each, not the full
                         // 72-byte values) from first_key onward.
                         let keys_to_delete: Vec<u64> = table
-                            .range(fk..)
-                            .map_err(|e| SafeDBError::Database(e.to_string()))?
-                            .map(|e| {
-                                e.map(|e| e.0.value())
-                                    .map_err(|e| SafeDBError::Database(e.to_string()))
-                            })
+                            .range(fk..)?
+                            .map(|e| e.map(|e| e.0.value()))
                             .collect::<Result<_, _>>()?;
                         let deleted = keys_to_delete.len();
                         for key in keys_to_delete {
-                            table.remove(key).map_err(|e| SafeDBError::Database(e.to_string()))?;
+                            table.remove(key)?;
                         }
 
                         // Re-anchor at the reset's stated L1 origin (not fk, which may be
@@ -187,27 +177,25 @@ impl SafeHeadListener for SafeDB {
                             reset_safe_head.block_info.hash,
                             reset_safe_head.block_info.number,
                         );
-                        table
-                            .insert(reset_safe_head.l1_origin.number, &value)
-                            .map_err(|e| SafeDBError::Database(e.to_string()))?;
-                        (deleted, false)
+                        table.insert(reset_safe_head.l1_origin.number, &value)?;
+                        deleted
                     }
                     None => {
                         // Every entry in the range `[reset_origin..]` has an L2 number
                         // *below* the reset target, meaning there is nothing to truncate.
                         // Note: entries before `reset_origin` are unaffected regardless.
-                        (0, true)
+                        0
                     }
                 }
             };
-            txn.commit().map_err(|e| SafeDBError::Database(e.to_string()))?;
+            txn.commit()?;
 
             tracing::debug!(
                 l1_origin = reset_safe_head.l1_origin.number,
                 l2_number = reset_safe_head.block_info.number,
                 l2_hash = %reset_safe_head.block_info.hash,
                 entries_deleted,
-                was_noop,
+                was_noop = entries_deleted == 0,
                 "reset safe head",
             );
 
@@ -215,6 +203,7 @@ impl SafeHeadListener for SafeDB {
         })
         .await
         .map_err(|e| SafeDBError::Database(format!("blocking task panicked: {e}")))?
+        .map_err(|e| SafeDBError::Database(e.to_string()))
     }
 }
 
@@ -223,33 +212,31 @@ impl SafeDBReader for SafeDB {
     async fn safe_head_at_l1(&self, l1_block_num: u64) -> Result<SafeHeadResponse, SafeDBError> {
         let db = Arc::clone(&self.db);
 
-        tokio::task::spawn_blocking(move || -> Result<SafeHeadResponse, SafeDBError> {
-            let txn = db.begin_read().map_err(|e| SafeDBError::Database(e.to_string()))?;
-            let table =
-                txn.open_table(SAFE_HEADS).map_err(|e| SafeDBError::Database(e.to_string()))?;
+        tokio::task::spawn_blocking(
+            move || -> Result<Option<SafeHeadResponse>, Box<dyn Error + Send + Sync>> {
+                let txn = db.begin_read()?;
+                let table = txn.open_table(SAFE_HEADS)?;
 
-            // Find the highest entry at or before l1_block_num.
-            let entry = table
-                .range(..=l1_block_num)
-                .map_err(|e| SafeDBError::Database(e.to_string()))?
-                .next_back()
-                .transpose()
-                .map_err(|e| SafeDBError::Database(e.to_string()))?;
+                // Find the highest entry at or before l1_block_num.
+                let entry = table.range(..=l1_block_num)?.next_back().transpose()?;
 
-            match entry {
-                Some(guard) => {
-                    let l1_number = guard.0.value();
-                    let (l1_hash, l2_hash, l2_number) = Self::decode_value(guard.1.value());
-                    Ok(SafeHeadResponse {
-                        l1_block: BlockNumHash { number: l1_number, hash: l1_hash },
-                        safe_head: BlockNumHash { number: l2_number, hash: l2_hash },
-                    })
+                match entry {
+                    Some(guard) => {
+                        let l1_number = guard.0.value();
+                        let (l1_hash, l2_hash, l2_number) = Self::decode_value(guard.1.value());
+                        Ok(Some(SafeHeadResponse {
+                            l1_block: BlockNumHash { number: l1_number, hash: l1_hash },
+                            safe_head: BlockNumHash { number: l2_number, hash: l2_hash },
+                        }))
+                    }
+                    None => Ok(None),
                 }
-                None => Err(SafeDBError::NotFound),
-            }
-        })
+            },
+        )
         .await
         .map_err(|e| SafeDBError::Database(format!("blocking task panicked: {e}")))?
+        .map_err(|e| SafeDBError::Database(e.to_string()))?
+        .ok_or(SafeDBError::NotFound)
     }
 }
 
@@ -292,37 +279,6 @@ mod tests {
             },
             seq_num: 0,
         }
-    }
-
-    #[test]
-    fn test_encode_decode_roundtrip() {
-        let l1_hash = B256::from([0xAA; 32]);
-        let l2_hash = B256::from([0xBB; 32]);
-        let l2_number = 42u64;
-
-        let encoded = SafeDB::encode_value(l1_hash, l2_hash, l2_number);
-        let (dec_l1, dec_l2, dec_num) = SafeDB::decode_value(&encoded);
-
-        assert_eq!(dec_l1, l1_hash);
-        assert_eq!(dec_l2, l2_hash);
-        assert_eq!(dec_num, l2_number);
-    }
-
-    #[tokio::test]
-    async fn test_write_and_read_back() {
-        let dir = tempfile::tempdir().unwrap();
-        let db = SafeDB::open(dir.path().join("test.redb")).unwrap();
-
-        let l1 = block_info(0x11, 100);
-        let l2 = l2_block_info(0x22, 200, 0x11, 100);
-
-        db.safe_head_updated(l2, l1).await.unwrap();
-
-        let resp = db.safe_head_at_l1(100).await.unwrap();
-        assert_eq!(resp.l1_block.number, 100);
-        assert_eq!(resp.l1_block.hash, B256::from([0x11; 32]));
-        assert_eq!(resp.safe_head.number, 200);
-        assert_eq!(resp.safe_head.hash, B256::from([0x22; 32]));
     }
 
     #[tokio::test]

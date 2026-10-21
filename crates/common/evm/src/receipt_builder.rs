@@ -6,7 +6,9 @@ use core::fmt::Debug;
 
 use alloy_consensus::{Eip658Value, TransactionEnvelope};
 use alloy_evm::{Evm, eth::receipt_builder::ReceiptBuilderCtx};
-use base_common_consensus::{BaseReceiptEnvelope, BaseTxEnvelope, DepositReceipt, OpTxType};
+use base_common_consensus::{
+    BaseReceiptEnvelope, BaseTxEnvelope, DepositReceipt, Eip8130Receipt, OpTxType,
+};
 
 /// Boxed receipt-builder context returned for deposit transactions.
 pub(crate) type ReceiptBuilderError<'a, Tx, E> = Box<ReceiptBuilderCtx<'a, Tx, E>>;
@@ -21,11 +23,16 @@ pub trait BaseReceiptBuilder: Debug {
 
     /// Builds a receipt given a transaction and the result of the execution.
     ///
+    /// `eip8130_committed_phases` is the number of leading call phases that committed when
+    /// executing an EIP-8130 transaction (see [`crate::BaseTxResult::eip8130_committed_phases`]);
+    /// it is zero for every other transaction type.
+    ///
     /// Note: this method should return `Err` if the transaction is a deposit transaction. In that
     /// case, the `build_deposit_receipt` method will be called.
     fn build_receipt<'a, E: Evm>(
         &self,
         ctx: ReceiptBuilderCtx<'a, <Self::Transaction as TransactionEnvelope>::TxType, E>,
+        eip8130_committed_phases: u64,
     ) -> Result<
         Self::Receipt,
         ReceiptBuilderError<'a, <Self::Transaction as TransactionEnvelope>::TxType, E>,
@@ -47,6 +54,7 @@ impl BaseReceiptBuilder for AlloyReceiptBuilder {
     fn build_receipt<'a, E: Evm>(
         &self,
         ctx: ReceiptBuilderCtx<'a, OpTxType, E>,
+        eip8130_committed_phases: u64,
     ) -> Result<Self::Receipt, ReceiptBuilderError<'a, OpTxType, E>> {
         match ctx.tx_type {
             OpTxType::Deposit => Err(Box::new(ctx)),
@@ -64,7 +72,9 @@ impl BaseReceiptBuilder for AlloyReceiptBuilder {
                     OpTxType::Eip1559 => BaseReceiptEnvelope::Eip1559(receipt),
                     OpTxType::Eip7702 => BaseReceiptEnvelope::Eip7702(receipt),
                     OpTxType::Deposit => unreachable!(),
-                    OpTxType::Eip8130 => BaseReceiptEnvelope::Eip8130(receipt),
+                    OpTxType::Eip8130 => BaseReceiptEnvelope::Eip8130(
+                        receipt.map_receipt(|r| Eip8130Receipt::new(r, eip8130_committed_phases)),
+                    ),
                 })
             }
         }

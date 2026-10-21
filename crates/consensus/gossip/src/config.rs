@@ -147,10 +147,10 @@ impl From<ConnectionLimitsConfig> for ConnectionLimits {
 ///
 /// Notable defaults:
 /// - `flood_publish`: false (call `.flood_publish(true)` on the [`ConfigBuilder`] to enable)
-/// - `backoff_slack`: 1
-/// - heart beat interval: 1 second
-/// - peer exchange is disabled
-/// - maximum byte size for gossip messages: 2048 bytes
+/// - `backoff_slack`: 1 (inherited libp2p default)
+/// - heartbeat interval: [`GOSSIP_HEARTBEAT`] (500 ms)
+/// - peer exchange is disabled (inherited libp2p default)
+/// - maximum gossip message size: [`MAX_GOSSIP_SIZE`] (10 `MiB`)
 ///
 /// # Returns
 ///

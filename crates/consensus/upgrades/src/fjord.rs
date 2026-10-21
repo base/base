@@ -13,11 +13,6 @@ use crate::{Upgrade, UpgradeCalldata};
 pub struct Fjord;
 
 impl Fjord {
-    /// The Gas Price Oracle Address
-    /// This is computed by using go-ethereum's `crypto.CreateAddress` function,
-    /// with the Gas Price Oracle Deployer Address and nonce 0.
-    pub const GAS_PRICE_ORACLE: Address = address!("b528d11cc114e026f138fe568744c6d45ce6da7a");
-
     /// Fjord Gas Price Oracle address.
     pub const FJORD_GAS_PRICE_ORACLE: Address =
         address!("a919894851548179a0750865e7974da599c0fac7");

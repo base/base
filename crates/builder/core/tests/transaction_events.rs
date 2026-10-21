@@ -54,6 +54,7 @@ async fn recoverable_predicate_emits_builder_deferred() -> eyre::Result<()> {
                         op: ValidityOperator::Equal,
                         value: U256::from_limbs([1, 0, 0, 0]),
                     }],
+                    validity_signature: None,
                 },
             },),
         )
@@ -111,10 +112,10 @@ async fn recoverable_predicate_emits_builder_deferred() -> eyre::Result<()> {
     Ok(())
 }
 
-/// A transaction that stays blocked is re-evaluated and parked again on every flashblock of the
+/// A transaction that stays blocked is re-evaluated and parked again on every flashblock of every
 /// block, but the journal records its deferral once.
 #[tokio::test]
-async fn blocked_transaction_emits_one_builder_deferred_per_block() -> eyre::Result<()> {
+async fn blocked_transaction_emits_one_builder_deferred_across_blocks() -> eyre::Result<()> {
     let capture = TransactionEventCapture::install();
     let instance = validity_instance().build().await?;
     let driver = instance.driver().await?;
@@ -142,16 +143,19 @@ async fn blocked_transaction_emits_one_builder_deferred_per_block() -> eyre::Res
                         op: ValidityOperator::Equal,
                         value: U256::from(1),
                     }],
+                    validity_signature: None,
                 },
             },),
         )
         .await?;
 
-    let block = driver.build_new_block().await?;
-    assert!(
-        !block.transactions.into_transactions().any(|tx| tx.tx_hash() == blocked_hash),
-        "a transaction whose predicate never holds must not be included"
-    );
+    for _ in 0..2 {
+        let block = driver.build_new_block().await?;
+        assert!(
+            !block.transactions.into_transactions().any(|tx| tx.tx_hash() == blocked_hash),
+            "a transaction whose predicate never holds must not be included"
+        );
+    }
 
     let events = capture.events();
     let deferred_in_flashblocks: Vec<_> = events
@@ -203,6 +207,7 @@ async fn expired_position_predicate_emits_builder_expired() -> eyre::Result<()> 
                         op: ValidityOperator::LessThanOrEqual,
                         value: U256::from(latest.header.number),
                     }],
+                    validity_signature: None,
                 },
             },),
         )
@@ -292,6 +297,7 @@ async fn expired_flashblock_predicate_releases_same_nonce_before_block_seals() -
                             value: U256::ZERO,
                         },
                     ],
+                    validity_signature: None,
                 },
             },),
         )

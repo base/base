@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use base_batcher_core::{
-    AdminError,
+    AdminError, DerivationStatus,
     test_utils::{
         BlockStub, DriverFixture, ScriptedTxManager, SubmissionStub, TrackingPipeline,
         TrackingSource,
@@ -50,7 +50,7 @@ fn test_start_triggers_catchup_from_safe_head() {
             ScriptedTxManager::confirming_at(1),
         )
         .source(source)
-        .safe_head(safe_head)
+        .derivation_status(DerivationStatus { safe_l2: safe_head, ..Default::default() })
         .build();
         let handle = ctx.spawn(driver.run());
 

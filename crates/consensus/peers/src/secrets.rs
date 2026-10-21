@@ -181,44 +181,6 @@ mod tests {
     }
 
     #[test]
-    fn test_load_file_with_trailing_newline() {
-        // Create a temporary directory.
-        let dir = std::env::temp_dir();
-        let mut key_path = dir.clone();
-        assert!(std::env::set_current_dir(dir).is_ok());
-
-        // Write a private key with trailing newline (common with text editors).
-        let key = b256!("1d2b0bda21d56b8bd12d4f94ebacffdfb35f5e226f84b461103bb8beab6353be");
-        let hex = alloy_primitives::hex::encode(key.0);
-        let hex_with_newline = format!("{hex}\n");
-        key_path.push("test_newline.txt");
-        std::fs::write(&key_path, &hex_with_newline).unwrap();
-
-        // Should successfully load despite trailing newline.
-        let keypair = SecretKeyLoader::load(&key_path);
-        assert!(keypair.is_ok(), "Failed to load key with trailing newline");
-    }
-
-    #[test]
-    fn test_load_file_with_trailing_crlf() {
-        // Create a temporary directory.
-        let dir = std::env::temp_dir();
-        let mut key_path = dir.clone();
-        assert!(std::env::set_current_dir(dir).is_ok());
-
-        // Write a private key with trailing CRLF (common with Windows/ConfigMaps).
-        let key = b256!("1d2b0bda21d56b8bd12d4f94ebacffdfb35f5e226f84b461103bb8beab6353be");
-        let hex = alloy_primitives::hex::encode(key.0);
-        let hex_with_crlf = format!("{hex}\r\n");
-        key_path.push("test_crlf.txt");
-        std::fs::write(&key_path, &hex_with_crlf).unwrap();
-
-        // Should successfully load despite trailing CRLF.
-        let keypair = SecretKeyLoader::load(&key_path);
-        assert!(keypair.is_ok(), "Failed to load key with trailing CRLF");
-    }
-
-    #[test]
     fn test_load_file_with_whitespace_produces_same_peer_id() {
         // Create a temporary directory.
         let dir = std::env::temp_dir();

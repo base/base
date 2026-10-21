@@ -9,32 +9,25 @@ use anyhow::Result;
 pub struct Confirm;
 
 impl Confirm {
-    /// Prints `prompt` and reads a `y`/`yes` answer from stdin.
-    pub fn prompt(prompt: &str, skip: bool) -> Result<bool> {
-        let stdin = io::stdin();
-        let stdout = io::stdout();
-        Self::prompt_with_io(prompt, skip, &mut stdin.lock(), &mut stdout.lock())
-    }
-
     /// Confirms a destructive action and prints `aborted` when declined.
     pub fn prompt_or_abort(prompt: &str, skip: bool) -> Result<bool> {
-        let confirmed = Self::prompt(prompt, skip)?;
+        let confirmed =
+            Self::prompt_with_io(prompt, skip, &mut io::stdin().lock(), &mut io::stdout().lock())?;
         if !confirmed {
             println!("aborted");
         }
         Ok(confirmed)
     }
 
-    /// Confirms a destructive action by requiring an exact typed value.
-    pub fn typed(prompt: &str, expected: &str, skip: bool) -> Result<bool> {
-        let stdin = io::stdin();
-        let stdout = io::stdout();
-        Self::typed_with_io(prompt, expected, skip, &mut stdin.lock(), &mut stdout.lock())
-    }
-
     /// Confirms a typed destructive action and prints `aborted` when declined.
     pub fn typed_or_abort(prompt: &str, expected: &str, skip: bool) -> Result<bool> {
-        let confirmed = Self::typed(prompt, expected, skip)?;
+        let confirmed = Self::typed_with_io(
+            prompt,
+            expected,
+            skip,
+            &mut io::stdin().lock(),
+            &mut io::stdout().lock(),
+        )?;
         if !confirmed {
             println!("aborted");
         }

@@ -17,11 +17,6 @@ impl SeededRng {
         Self { rng: StdRng::seed_from_u64(seed), seed }
     }
 
-    /// Returns the seed value.
-    pub const fn seed(&self) -> u64 {
-        self.seed
-    }
-
     /// Resets the RNG to its initial state.
     pub fn reset(&mut self) {
         self.rng = StdRng::seed_from_u64(self.seed);
@@ -49,11 +44,6 @@ impl SeededRng {
         let mut bytes = [0u8; N];
         self.rng.fill(&mut bytes);
         bytes
-    }
-
-    /// Returns a mutable reference to the inner RNG.
-    pub const fn inner(&mut self) -> &mut StdRng {
-        &mut self.rng
     }
 }
 

@@ -17,8 +17,8 @@ pub use attributes::StatefulAttributesBuilder;
 
 mod errors;
 pub use errors::{
-    BatchDecompressionError, BlobDecodingError, BlobProviderError, BuilderError,
-    PipelineEncodingError, PipelineError, PipelineErrorKind, ResetError,
+    BlobDecodingError, BlobProviderError, BuilderError, PipelineEncodingError, PipelineError,
+    PipelineErrorKind, ResetError,
 };
 
 mod pipeline;
@@ -46,7 +46,7 @@ mod traits;
 pub use traits::{
     AttributesBuilder, AttributesProvider, BatchValidationProviderDerive, BlobProvider,
     ChainProvider, DataAvailabilityProvider, L2ChainProvider, NextAttributes, OriginAdvancer,
-    OriginProvider, Pipeline, ResetProvider, SignalReceiver, StageReset,
+    OriginProvider, Pipeline, SignalReceiver, StageReset,
 };
 
 mod types;

@@ -1212,6 +1212,8 @@ pub struct FailExpiredProofJobs<'a> {
 
 #[cfg(test)]
 mod tests {
+    use std::num::NonZeroU64;
+
     use base_prover_service_protocol::{
         SnarkPlonkProofResult, ZkBackend, ZkProofRequest, ZkProofResult, ZkVm,
     };
@@ -1255,6 +1257,7 @@ mod tests {
                 sequence_window: Some(50),
                 l1_head: None,
                 schedule_l2_block_number: None,
+                intermediate_block_interval: NonZeroU64::new(5).unwrap(),
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,
             }),
