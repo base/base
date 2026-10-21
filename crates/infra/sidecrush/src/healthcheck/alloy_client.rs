@@ -1,5 +1,7 @@
 use alloy_provider::{Provider, ProviderBuilder, RootProvider, WsConnect};
+use alloy_pubsub::{ConnectionHandle, PubSubConnect};
 use alloy_rpc_types_eth::BlockId;
+use alloy_transport::{TransportErrorKind, TransportResult};
 use async_trait::async_trait;
 use futures::{StreamExt, stream};
 
@@ -60,16 +62,37 @@ impl AlloyWsHeadSubscriber {
     }
 }
 
+/// A [`WsConnect`] that never reconnects internally.
+///
+/// Alloy's retry limit only bounds *failed* internal reconnects: on a dropped socket the
+/// pubsub service still transparently reconnects and re-issues subscriptions, hiding the
+/// outage from the checker (worst case it stays hidden while a replacement handshake hangs).
+/// This connector keeps only the initial connect. Any internal reconnect attempt fails with
+/// a non-retryable error, which shuts the pubsub service down and ends the head stream, so
+/// the checker's own classification and backoff stay authoritative.
+#[derive(Debug, Clone)]
+struct SingleConnectWs(WsConnect);
+
+impl PubSubConnect for SingleConnectWs {
+    fn is_local(&self) -> bool {
+        PubSubConnect::is_local(&self.0)
+    }
+
+    async fn connect(&self) -> TransportResult<ConnectionHandle> {
+        PubSubConnect::connect(&self.0).await
+    }
+
+    async fn try_reconnect(&self) -> TransportResult<ConnectionHandle> {
+        Err(TransportErrorKind::non_retryable_str("internal reconnects are disabled"))
+    }
+}
+
 #[async_trait]
 impl HeadSubscriber for AlloyWsHeadSubscriber {
     async fn subscribe(&self) -> Result<HeadStream, Box<dyn std::error::Error + Send + Sync>> {
         let provider = ProviderBuilder::new()
             .disable_recommended_fillers()
-            // Disable alloy's internal reconnect retries (default 10, with backoff up to 30 s)
-            // so a dropped connection ends the stream promptly. The checker then reports
-            // `Error` and reconnects with its own backoff, instead of the outage showing up
-            // as a stall while alloy retries in the background.
-            .connect_ws(WsConnect::new(self.url.as_str()).with_max_retries(0))
+            .connect_pubsub_with(SingleConnectWs(WsConnect::new(self.url.as_str())))
             .await?;
         let subscription = provider.subscribe_blocks().await?;
         // The subscription only delivers heads while the provider's pubsub backend is alive,
@@ -87,5 +110,62 @@ impl HeadSubscriber for AlloyWsHeadSubscriber {
             },
         );
         Ok(Box::pin(heads))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use futures::{SinkExt, StreamExt};
+    use tokio::net::TcpListener;
+    use tokio_tungstenite::tungstenite::Message;
+
+    use super::*;
+
+    /// Serve one WebSocket connection: complete the handshake, answer `eth_subscribe`, then
+    /// close the socket. The next connection is accepted but never completes the handshake,
+    /// so any internal reconnect attempt hangs instead of succeeding.
+    async fn spawn_handshake_then_stall_server() -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (conn, _) = listener.accept().await.unwrap();
+            let mut ws = tokio_tungstenite::accept_async(conn).await.unwrap();
+            let request = ws.next().await.unwrap().unwrap();
+            let request: serde_json::Value =
+                serde_json::from_str(request.to_text().unwrap()).unwrap();
+            let response = serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": request["id"].clone(),
+                "result": "0xdeadbeef",
+            });
+            ws.send(Message::text(response.to_string())).await.unwrap();
+            // Abruptly close the established connection, as a node restart would.
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            drop(ws);
+
+            // Hold a TCP connection open without a WebSocket handshake. It can only be
+            // reached by an internal reconnect, which must never be attempted.
+            let (_held, _) = listener.accept().await.unwrap();
+            // Outlives the test's 10 s stream timeout; the runtime drops it at test end.
+            tokio::time::sleep(Duration::from_secs(30)).await;
+        });
+        format!("ws://{addr}")
+    }
+
+    #[tokio::test]
+    async fn closed_socket_ends_subscription_instead_of_internal_reconnect() {
+        let url = spawn_handshake_then_stall_server().await;
+        let subscriber = AlloyWsHeadSubscriber::new(url);
+
+        let mut stream = subscriber.subscribe().await.expect("subscribe should succeed");
+
+        // The server closed the connection right after the subscription was confirmed, and
+        // its replacement connection never completes the handshake. The stream must end so
+        // the checker reports `Error` and reconnects with its own backoff; a pending stream
+        // would mean alloy silently reconnected internally.
+        let ended = tokio::time::timeout(Duration::from_secs(10), stream.next()).await;
+        assert!(matches!(ended, Ok(None)), "head stream should end, got {ended:?}");
     }
 }
