@@ -113,7 +113,7 @@ impl CliMetrics {
                 ),
                 (Self::P2P_PEERS_LO, p2p.resolved_peers_lo().to_string()),
                 (Self::P2P_PEERS_HI, p2p.peers_hi.to_string()),
-                (Self::P2P_PEERS_MAX, p2p.peers_max.unwrap_or(p2p.peers_hi).to_string()),
+                (Self::P2P_PEERS_MAX, p2p.resolved_peers_max().to_string()),
                 (Self::P2P_MAX_PENDING_OUTGOING, p2p.max_pending_outgoing.to_string()),
                 (Self::P2P_IDENTIFY_PEERSTORE_SIZE, p2p.identify_peerstore_size.to_string()),
                 (Self::P2P_GOSSIP_MESH_D, p2p.gossip_mesh_d.to_string()),

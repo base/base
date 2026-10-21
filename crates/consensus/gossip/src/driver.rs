@@ -393,7 +393,7 @@ where
             .collect();
         candidates.sort_by(|a, b| a.1.total_cmp(&b.1));
 
-        let excess = connected.saturating_sub(self.peer_targets.low as usize);
+        let excess = established.saturating_sub(self.peer_targets.low) as usize;
         let mut trimmed = 0;
         for (peer_id, _) in candidates.into_iter().take(excess) {
             if self.swarm.disconnect_peer_id(peer_id).is_ok() {

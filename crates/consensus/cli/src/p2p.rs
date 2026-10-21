@@ -580,6 +580,11 @@ impl P2PArgs {
         self.peers_lo.unwrap_or_else(|| DEFAULT_PEERS_LO.min(self.peers_hi))
     }
 
+    /// Returns `--p2p.peers.max`, defaulting to `--p2p.peers.hi`.
+    pub fn resolved_peers_max(&self) -> u32 {
+        self.peers_max.unwrap_or(self.peers_hi)
+    }
+
     /// Constructs the P2P network [`NetworkConfig`] from CLI arguments.
     ///
     /// ## Parameters
@@ -600,7 +605,7 @@ impl P2PArgs {
         genesis_signer: Option<alloy_primitives::Address>,
     ) -> Result<NetworkConfig, P2PConfigError> {
         let peers_lo = self.resolved_peers_lo();
-        let peers_max = self.peers_max.unwrap_or(self.peers_hi);
+        let peers_max = self.resolved_peers_max();
         if !(0 < peers_lo && peers_lo <= self.peers_hi && self.peers_hi <= peers_max) {
             return Err(eyre::eyre!(
                 "peer limits must satisfy 0 < --p2p.peers.lo ({}) <= --p2p.peers.hi ({}) <= --p2p.peers.max ({})",

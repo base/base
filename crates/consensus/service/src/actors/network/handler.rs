@@ -35,7 +35,8 @@ pub struct NetworkHandler {
     pub gater_pruner: tokio::time::Interval,
     /// Periodic pruner for pending outbound dials that have timed out.
     pub pending_dial_pruner: tokio::time::Interval,
-    /// Periodic trimmer that frees connection slots once the swarm is at its connection limit.
+    /// Periodic trimmer that frees connection slots once the swarm reaches its high-tide
+    /// connection count.
     pub peer_trimmer: tokio::time::Interval,
     /// A handler for the block signer.
     pub signer: Option<BlockSignerHandler>,
