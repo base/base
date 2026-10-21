@@ -2,7 +2,7 @@
 
 RPC proxy for the network payer service (ERC-8168).
 
-Query nodes expose `payer_getTerms` and `payer_sendTransaction` on the execution RPC and forward them to the payer. The upstream defaults to the sequencer URL when it is an HTTP URL: `--rollup.sequencer`, or `--rpc.forwarding-endpoint` on `base rpc`. With a websocket sequencer, the proxy stays off unless `--rollup.payer` is set. `--rollup.payer` selects a different URL. Each upstream call times out after 15 seconds, longer than proxyd's 10-second payer timeout, so a hung payer cannot hold the node connection open. `payer_signTransaction` and `payer_getSponsorshipBalance` are not registered.
+Query nodes that opt in expose `payer_getTerms` and `payer_sendTransaction` on the execution RPC and forward them to the payer. The methods are off by default, so a node relays wallet payer traffic only when its operator chooses to. `--rollup.payer-enabled` forwards them to the sequencer URL when it is an HTTP URL: `--rollup.sequencer`, or `--rpc.forwarding-endpoint` on `base rpc`. `--rollup.payer` selects a different URL and enables the methods on its own, including on a node whose sequencer URL is a websocket. Each upstream call times out after 15 seconds, longer than proxyd's 10-second payer timeout, so a hung payer cannot hold the node connection open. `payer_signTransaction` and `payer_getSponsorshipBalance` are not registered.
 
 Requests are rejected locally before the Everest network upgrade activates EIP-8430 account abstraction transactions, when `chainId` does not match this node, or when the body is malformed.
 

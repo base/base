@@ -374,15 +374,22 @@ pub struct RpcStandardNodeArgs {
     )]
     pub validity_max_expiry_secs: u64,
 
-    /// Payer service URL for `payer_getTerms` and `payer_sendTransaction`.
+    /// Serve `payer_getTerms` and `payer_sendTransaction`, forwarding them to the sequencer URL,
+    /// whose proxyd routes them to the payer.
     ///
-    /// When unset, nodes that have `--rollup.sequencer` forward those methods there.
+    /// Off by default, so a node relays wallet payer traffic only when its operator opts in.
+    /// Setting `--rollup.payer` also enables them.
+    #[arg(long = "rollup.payer-enabled")]
+    pub payer_enabled: bool,
+
+    /// Payer service URL for `payer_getTerms` and `payer_sendTransaction`, in place of the
+    /// sequencer URL. Enables those methods.
     #[arg(long = "rollup.payer", value_name = "PAYER_URL")]
     pub payer_url: Option<String>,
 
     /// Serve `payer_getTerms` from one shared entry, refetched at most every 5 seconds.
     ///
-    /// Defaults to on when the payer is reached through `--rollup.sequencer`, whose payer returns
+    /// Defaults to on when the payer is reached through the sequencer URL, whose payer returns
     /// the same terms for every request, and off for a separate `--rollup.payer`. Override with
     /// `--rollup.payer-cache=true|false`.
     #[arg(long = "rollup.payer-cache", value_name = "BOOL")]
@@ -491,15 +498,15 @@ pub struct RpcStandardNodeArgs {
 }
 
 impl RpcStandardNodeArgs {
-    /// Payer proxy target. `--rollup.payer` wins; otherwise the sequencer URL is used when it
-    /// is HTTP, since the payer client cannot speak websocket. The `payer_getTerms` cache
-    /// defaults to on only through the sequencer.
+    /// Payer proxy target, or `None` unless `--rollup.payer-enabled` or `--rollup.payer` is set.
+    /// `--rollup.payer` wins; otherwise the sequencer URL is used when it is HTTP, since the
+    /// payer client cannot speak websocket. The `payer_getTerms` cache defaults to on only
+    /// through the sequencer.
     fn payer_upstream(&self) -> Option<PayerRpcConfig> {
         let sequencer = self.rollup_args.sequencer.clone();
-        let upstream_url = self
-            .payer_url
-            .clone()
-            .or_else(|| sequencer.clone().filter(|url| Self::is_http_url(url)))?;
+        let upstream_url = self.payer_url.clone().or_else(|| {
+            sequencer.clone().filter(|url| self.payer_enabled && Self::is_http_url(url))
+        })?;
         let via_sequencer = self.payer_url.is_none() || self.payer_url == sequencer;
         let upstream_headers =
             if via_sequencer { self.rollup_args.sequencer_headers.clone() } else { Vec::new() };
@@ -863,13 +870,13 @@ impl StandardBaseRethNode {
         runner.install_ext::<TxForwardingExtension>(tx_forwarding_config);
         if let Some(payer) = args.rpc.payer_upstream() {
             runner.install_ext::<PayerRpcExtension>(payer);
-        } else if args.rpc.rollup_args.sequencer.is_some() {
+        } else if args.rpc.payer_enabled {
             warn!(
-                "payer RPC proxy disabled: --rollup.sequencer is not an HTTP URL and --rollup.payer is unset"
+                "payer RPC proxy disabled: --rollup.payer-enabled needs an HTTP sequencer URL or --rollup.payer"
             );
         } else if args.rpc.payer_cache.is_some() {
             warn!(
-                "--rollup.payer-cache has no effect without --rollup.payer or --rollup.sequencer"
+                "--rollup.payer-cache has no effect without --rollup.payer-enabled or --rollup.payer"
             );
         }
         runner.install_ext::<ProofsHistoryExtension>(rollup_args.clone());
@@ -1080,14 +1087,39 @@ mod tests {
             inline_simulation_workers: DEFAULT_INLINE_SIMULATION_WORKERS,
             inline_simulation_queue_capacity: DEFAULT_INLINE_SIMULATION_QUEUE_CAPACITY,
             inline_simulation_timeout_ms: DEFAULT_INLINE_SIMULATION_TIMEOUT_MS,
+            payer_enabled: false,
             payer_url: None,
             payer_cache: None,
         }
     }
 
     #[test]
+    fn payer_methods_are_off_unless_enabled_or_given_a_payer() {
+        let mut args = default_rpc_standard_node_args();
+        args.rollup_args.sequencer = Some("http://sequencer".into());
+        assert!(args.payer_upstream().is_none());
+
+        args.payer_enabled = true;
+        assert_eq!(args.payer_upstream().expect("enabled").upstream_url, "http://sequencer");
+
+        args.payer_enabled = false;
+        args.payer_url = Some("http://payer".into());
+        assert_eq!(args.payer_upstream().expect("payer url").upstream_url, "http://payer");
+
+        let parse = |flags: &[&str]| {
+            CommandParser::<RpcStandardNodeArgs>::try_parse_from(
+                ["reth"].iter().chain(flags).copied(),
+            )
+            .map(|parsed| parsed.args.payer_enabled)
+        };
+        assert!(!parse(&[]).unwrap());
+        assert!(parse(&["--rollup.payer-enabled"]).unwrap());
+    }
+
+    #[test]
     fn payer_upstream_caches_by_default_only_through_the_sequencer() {
         let mut args = default_rpc_standard_node_args();
+        args.payer_enabled = true;
         assert!(args.payer_upstream().is_none());
 
         args.rollup_args.sequencer = Some("http://sequencer".into());
@@ -1131,6 +1163,7 @@ mod tests {
     #[test]
     fn payer_upstream_skips_a_websocket_sequencer() {
         let mut args = default_rpc_standard_node_args();
+        args.payer_enabled = true;
         args.rollup_args.sequencer = Some("ws://sequencer:8546".into());
         assert!(args.payer_upstream().is_none());
 
