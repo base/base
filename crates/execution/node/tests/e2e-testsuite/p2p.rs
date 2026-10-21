@@ -6,10 +6,6 @@ use base_node_core::utils::{advance_chain, setup};
 use futures::StreamExt;
 use tokio::sync::Mutex;
 
-// Ignored: reth's deferred_trie `wait_cloned` debug_assert fires when called from a Rayon
-// worker thread during proof computation in debug builds. This is a known upstream reth issue.
-// Run with `--include-ignored` once https://github.com/paradigmxyz/reth is fixed.
-#[ignore]
 #[tokio::test]
 async fn can_sync() -> eyre::Result<()> {
     reth_tracing::init_test_tracing();
@@ -21,7 +17,7 @@ async fn can_sync() -> eyre::Result<()> {
     let mut second_node = nodes.pop().unwrap();
     let mut first_node = nodes.pop().unwrap();
 
-    let tip: usize = 20;
+    let tip: usize = 90;
     let tip_index: usize = tip - 1;
     let reorg_depth = 2;
 
