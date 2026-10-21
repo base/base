@@ -2206,8 +2206,12 @@ mod tests {
     #[tokio::test]
     async fn eip8430_preparation_preserves_envelope_and_recipient() {
         let config = crate::runner::LoadConfig {
-            account_count: 2, fresh_recipient_ratio: 1.0,
-            transactions: vec![crate::runner::TxConfig { weight: 100, tx_type: crate::runner::TxType::Eip8430Transfer }],
+            account_count: 2,
+            fresh_recipient_ratio: 1.0,
+            transactions: vec![crate::runner::TxConfig {
+                weight: 100,
+                tx_type: crate::runner::TxType::Eip8430Transfer,
+            }],
             ..crate::runner::LoadConfig::devnet()
         };
         let runner = LoadRunner::new(config.clone()).expect("native runner must initialize");
@@ -2216,30 +2220,44 @@ mod tests {
         let (signed_chunk_tx, _) = mpsc::channel(1);
         let (_, nonce_reset_rx) = mpsc::channel(1);
         let presign = super::PresignConfig {
-            sender_addresses: addresses.clone(), sender_next_nonces: vec![7, 9],
-            sender_generations: vec![0, 0], signers: runner.signers.clone(),
-            nonce_managers: runner.nonce_managers.clone(), chain_id: config.chain_id,
-            base_fee_rx: rx, max_gas_price: config.max_gas_price,
-            validity_priority_lead_multiplier: 1, validity_priority_fee_divisor: 1,
-            estimated_gas: 50_000, fresh_recipient_ratio: 1.0,
-            signed_chunk_tx, nonce_reset_rx,
+            sender_addresses: addresses.clone(),
+            sender_next_nonces: vec![7, 9],
+            sender_generations: vec![0, 0],
+            signers: Arc::clone(&runner.signers),
+            nonce_managers: Arc::clone(&runner.nonce_managers),
+            chain_id: config.chain_id,
+            base_fee_rx: rx,
+            max_gas_price: config.max_gas_price,
+            validity_priority_lead_multiplier: 1,
+            validity_priority_fee_divisor: 1,
+            estimated_gas: 50_000,
+            fresh_recipient_ratio: 1.0,
+            signed_chunk_tx,
+            nonce_reset_rx,
             validity_router: crate::runner::ValidityRouter::new(&config),
             query_client: runner.client.clone(),
         };
         let mut generator = runner.generator;
         let mut keys = runner.recipient_keys;
         let mut rng = crate::workload::SeededRng::new(42);
-        let jobs = LoadRunner::build_sender_jobs(&mut generator, &mut keys, &mut rng, &presign, 1, 0)
-            .expect("native requests must prepare");
+        let jobs =
+            LoadRunner::build_sender_jobs(&mut generator, &mut keys, &mut rng, &presign, 1, 0)
+                .expect("native requests must prepare");
         assert_eq!(jobs.len(), 2, "exactly one job per sender must be prepared");
         for (i, job) in jobs.iter().enumerate() {
             assert_eq!(job.start_nonce, [7, 9][i], "existing sender nonce must be retained");
             assert_eq!(job.prepared_txs.len(), 1, "exactly one request per sender is requested");
             let tx = &job.prepared_txs[0];
             assert!(tx.native, "native marker must survive request preparation");
-            assert!(!addresses.contains(&tx.to.expect("transfer recipient")), "fresh recipient must not be a sender-pool address");
+            assert!(
+                !addresses.contains(&tx.to.expect("transfer recipient")),
+                "fresh recipient must not be a sender-pool address"
+            );
             assert_eq!(tx.gas_limit, 200_000, "native gas ceiling must survive preparation");
-            assert_eq!(tx.estimated_gas, 50_000, "pacing must use calibrated gas rather than ceiling");
+            assert_eq!(
+                tx.estimated_gas, 50_000,
+                "pacing must use calibrated gas rather than ceiling"
+            );
         }
     }
 

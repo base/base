@@ -303,27 +303,45 @@ impl LoadRunner {
             );
             let (success, average) = if request.transaction_type == Some(0x79) {
                 let prepared = PreparedTransaction {
-                    native: true, from,
+                    native: true,
+                    from,
                     to: request.to.and_then(|kind| kind.to().copied()),
                     value: request.value.unwrap_or(U256::ZERO),
                     data: request.input.input().cloned().unwrap_or_default(),
                     gas_limit: request.gas.unwrap_or(200_000),
-                    estimated_gas: 0, validity: Vec::new(), cohort: SubmitCohort::Plain,
+                    estimated_gas: 0,
+                    validity: Vec::new(),
+                    cohort: SubmitCohort::Plain,
                 };
                 let signed = SubmissionPipeline::sign_at_nonce(
-                    &account.signer, &prepared, self.config.chain_id, nonce,
+                    &account.signer,
+                    &prepared,
+                    self.config.chain_id,
+                    nonce,
                     Fees { max_fee, priority_fee },
                 )?;
-                let native_provider = RpcProviders::query(self.config.primary_submission_rpc().clone())?;
-                let receipt = native_provider.send_raw_transaction(&signed.raw).await
+                let native_provider =
+                    RpcProviders::query(self.config.primary_submission_rpc().clone())?;
+                let receipt = native_provider
+                    .send_raw_transaction(&signed.raw)
+                    .await
                     .rpc("submit native calibration transaction")?
                     .with_timeout(Some(Duration::from_secs(60)))
-                    .get_receipt().await.rpc("confirm native calibration transaction (requires Everest)")?;
-                (receipt.status() && receipt.phase_statuses.as_deref() == Some(&[1]), receipt.gas_used())
+                    .get_receipt()
+                    .await
+                    .rpc("confirm native calibration transaction (requires Everest)")?;
+                (
+                    receipt.status() && receipt.phase_statuses.as_deref() == Some(&[1]),
+                    receipt.gas_used(),
+                )
             } else {
-                let receipt = provider.send_transaction(request).await
+                let receipt = provider
+                    .send_transaction(request)
+                    .await
                     .rpc("submit calibration transaction")?
-                    .get_receipt().await.rpc("confirm calibration transaction")?;
+                    .get_receipt()
+                    .await
+                    .rpc("confirm calibration transaction")?;
                 (receipt.status(), receipt.gas_used)
             };
             if !success {
