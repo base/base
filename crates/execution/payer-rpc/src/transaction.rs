@@ -15,6 +15,9 @@ pub struct PayerTransaction {
     sender: Address,
     /// The key that signed for a declared sender, when it is not the sender's own.
     signer: Option<Address>,
+    /// Whether the signing actor is known, so phase 0 runs under its policy. A non-K1
+    /// authenticator under the keystore does not recover an address to name it by.
+    simulable: bool,
 }
 
 impl PayerTransaction {
@@ -47,24 +50,22 @@ impl PayerTransaction {
         let Some(sender) = signed.explicit_sender() else {
             let sender =
                 signed.recover_sender().map_err(|_| PayerTransactionError::SenderSignature)?;
-            return Ok(Self { signed, sender, signer: None });
+            return Ok(Self { signed, sender, signer: None, simulable: true });
         };
         let k1_signature =
             signed.sender_auth().strip_prefix(Eip8130Constants::K1_AUTHENTICATOR.as_slice());
-        let signer = match k1_signature {
-            Some(signature) => {
-                let signer =
-                    Eip8130Signed::recover_raw_k1(signed.tx().sender_signature_hash(), signature)
-                        .map_err(|_| PayerTransactionError::SenderSignature)?;
-                if signer != sender && !keystore {
-                    return Err(PayerTransactionError::SenderMismatch);
-                }
-                (signer != sender).then_some(signer)
+        let Some(signature) = k1_signature else {
+            if !keystore {
+                return Err(PayerTransactionError::UnsupportedSenderAuthenticator);
             }
-            None if keystore => None,
-            None => return Err(PayerTransactionError::UnsupportedSenderAuthenticator),
+            return Ok(Self { signed, sender, signer: None, simulable: false });
         };
-        Ok(Self { signed, sender, signer })
+        let signer = Eip8130Signed::recover_raw_k1(signed.tx().sender_signature_hash(), signature)
+            .map_err(|_| PayerTransactionError::SenderSignature)?;
+        if signer != sender && !keystore {
+            return Err(PayerTransactionError::SenderMismatch);
+        }
+        Ok(Self { signed, sender, signer: (signer != sender).then_some(signer), simulable: true })
     }
 
     /// The sender and `nonce_key` whose nonce this transaction uses, or `None` for a nonce-free
@@ -86,15 +87,23 @@ impl PayerTransaction {
 
     /// This transaction cut to its first call phase, as an EIP-8130 `eth_call` request.
     ///
-    /// It keeps the transaction's gas, fees, account changes, validity window, and payer, so the
-    /// phase runs as it would on chain. A transaction without calls yields a request without calls.
-    pub fn phase_zero_request(&self) -> BaseTransactionRequest {
+    /// It keeps the transaction's gas, fees, account changes, expiry, and payer, so the phase
+    /// runs as it would on chain. `valid_after` is dropped: the simulated block trails the wall
+    /// clock, so a window about to open would read as not yet valid. A transaction without calls
+    /// yields a request without calls.
+    ///
+    /// Returns `None` when the signing actor is not known, since phase 0 would run under the
+    /// wrong actor's policy.
+    pub fn phase_zero_request(&self) -> Option<BaseTransactionRequest> {
+        if !self.simulable {
+            return None;
+        }
         let tx = self.signed.tx();
         let fields = Eip8130RequestFields {
             nonce_key: Some(tx.nonce_key),
             account_changes: Some(tx.account_changes.clone()),
             calls: Some(tx.calls.iter().take(1).cloned().collect()),
-            valid_after: Some(tx.valid_after),
+            valid_after: None,
             valid_before: Some(tx.valid_before),
             metadata: Some(tx.metadata.clone()),
             sender: tx.sender,
@@ -103,13 +112,15 @@ impl PayerTransaction {
             payer_auth: None,
             sender_actor_id: self.signer.map(|signer| signer.into_word()),
         };
-        BaseTransactionRequest::default()
-            .from(self.sender)
-            .chain_id(tx.chain_id)
-            .gas_limit(tx.gas_limit)
-            .max_fee_per_gas(tx.max_fee_per_gas)
-            .max_priority_fee_per_gas(tx.max_priority_fee_per_gas)
-            .eip8130_fields(fields)
+        Some(
+            BaseTransactionRequest::default()
+                .from(self.sender)
+                .chain_id(tx.chain_id)
+                .gas_limit(tx.gas_limit)
+                .max_fee_per_gas(tx.max_fee_per_gas)
+                .max_priority_fee_per_gas(tx.max_priority_fee_per_gas)
+                .eip8130_fields(fields),
+        )
     }
 }
 
@@ -194,16 +205,20 @@ mod tests {
     #[test]
     fn accepts_an_eoa_transaction_and_simulates_only_its_first_phase() {
         let signer = PrivateKeySigner::random();
-        let tx = transaction(None, payer());
+        let mut tx = transaction(None, payer());
+        tx.valid_after = u64::MAX - 1;
+        tx.valid_before = u64::MAX;
         let raw = encode(tx.clone(), signature(&signer, &tx).to_vec(), Bytes::new());
 
-        let request = PayerTransaction::decode(&raw, CHAIN_ID, false).unwrap().phase_zero_request();
+        let request =
+            PayerTransaction::decode(&raw, CHAIN_ID, false).unwrap().phase_zero_request().unwrap();
 
         assert_eq!(request.as_ref().from, Some(signer.address()));
         let fields = request.as_eip8130().unwrap();
         assert_eq!(fields.calls, Some(vec![vec![call(0x11)]]));
         assert_eq!(fields.payer, payer());
         assert_eq!(fields.payer_auth, None);
+        assert_eq!((fields.valid_after, fields.valid_before), (None, Some(u64::MAX)));
     }
 
     #[test]
@@ -304,8 +319,10 @@ mod tests {
         passkey_auth.extend_from_slice(&[0x01; 64]);
         let passkey = encode(tx, passkey_auth, Bytes::new());
 
-        let request =
-            PayerTransaction::decode(&own_key, CHAIN_ID, false).unwrap().phase_zero_request();
+        let request = PayerTransaction::decode(&own_key, CHAIN_ID, false)
+            .unwrap()
+            .phase_zero_request()
+            .unwrap();
         assert_eq!(request.as_ref().from, Some(sender.address()));
         assert_eq!(request.as_eip8130().unwrap().sender_actor_id, None);
         assert_eq!(
@@ -331,14 +348,17 @@ mod tests {
         forged[84] = 0x00;
         let forged = encode(tx, forged, Bytes::new());
 
-        let request =
-            PayerTransaction::decode(&session, CHAIN_ID, true).unwrap().phase_zero_request();
+        let request = PayerTransaction::decode(&session, CHAIN_ID, true)
+            .unwrap()
+            .phase_zero_request()
+            .unwrap();
         assert_eq!(request.as_ref().from, Some(sender.address()));
         assert_eq!(
             request.as_eip8130().unwrap().sender_actor_id,
             Some(session_key.address().into_word())
         );
-        assert!(PayerTransaction::decode(&passkey, CHAIN_ID, true).is_ok());
+        let passkey = PayerTransaction::decode(&passkey, CHAIN_ID, true).unwrap();
+        assert!(passkey.phase_zero_request().is_none());
         assert_eq!(
             PayerTransaction::decode(&forged, CHAIN_ID, true).unwrap_err(),
             PayerTransactionError::SenderSignature

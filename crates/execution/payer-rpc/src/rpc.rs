@@ -101,7 +101,8 @@ where
     /// decode, does not leave a payer to co-sign, lacks a valid sender signature, reuses a
     /// nonce, or whose phase 0 fails at the latest block.
     ///
-    /// A state read that fails passes the transaction on, since the payer checks it too.
+    /// A state read that fails, or a phase 0 whose signing actor is not known, passes the
+    /// transaction on, since the payer checks it too.
     async fn check_transaction(&self, raw: &[u8], timestamp: u64) -> RpcResult<()> {
         let keystore = self.provider.chain_spec().is_zenith_active_at_timestamp(timestamp);
         let transaction =
@@ -120,7 +121,10 @@ where
                 }
             }
         }
-        let Err(error) = self.state.simulate(transaction.phase_zero_request()).await else {
+        let Some(request) = transaction.phase_zero_request() else {
+            return Ok(());
+        };
+        let Err(error) = self.state.simulate(request).await else {
             return Ok(());
         };
         let Some(rejection) = PayerRejection::for_phase_zero(&error) else {
@@ -339,6 +343,15 @@ mod tests {
         })
     }
 
+    /// Asserts `served` is [`terms_response`], with its `ttl` counted down by at most a few
+    /// seconds of cache age.
+    fn assert_terms(mut served: Value) {
+        let ttl = served["options"][0]["ttl"].as_u64().expect("ttl");
+        assert!((55..=60).contains(&ttl), "ttl {ttl}");
+        served["options"][0]["ttl"] = 60.into();
+        assert_eq!(served, terms_response());
+    }
+
     #[tokio::test]
     async fn rejects_get_terms_before_everest_without_forwarding() {
         let sequencer = MockServer::start();
@@ -381,7 +394,7 @@ mod tests {
         let second = api.get_terms(terms_request(2)).await.unwrap();
 
         assert_eq!(first, response);
-        assert_eq!(second, response);
+        assert_terms(second);
         mock.assert_calls(1);
     }
 
@@ -443,7 +456,7 @@ mod tests {
             then.status(502).body("bad gateway");
         });
         reject_send(&api, &sequencer, "TEMPORARILY_UNAVAILABLE").await;
-        assert_eq!(api.get_terms(terms_request(1)).await.unwrap(), terms_response());
+        assert_terms(api.get_terms(terms_request(1)).await.unwrap());
         unreachable.assert_calls(0);
     }
 
@@ -490,7 +503,7 @@ mod tests {
             proxyd_payer_down(then);
         });
 
-        assert_eq!(api.get_terms(terms_request(1)).await.unwrap(), terms_response());
+        assert_terms(api.get_terms(terms_request(1)).await.unwrap());
         payer_down.assert_calls(1);
     }
 
@@ -618,7 +631,7 @@ mod tests {
         );
 
         for served in [first, second, third] {
-            assert_eq!(served.unwrap(), terms_response());
+            assert_terms(served.unwrap());
         }
         slow.assert_calls(1);
     }

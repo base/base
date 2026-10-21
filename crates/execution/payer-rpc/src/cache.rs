@@ -52,14 +52,14 @@ impl CachedTerms {
         now.saturating_duration_since(self.fetched_at) < GET_TERMS_FRESH_FOR
     }
 
-    /// The response with every offer `ttl` reduced by the entry's age, or
-    /// `None` once the shortest has run out.
+    /// The response with every offer `ttl` reduced by the entry's age, rounded
+    /// up to whole seconds, or `None` once the shortest has run out.
     fn served(&self, now: Instant) -> Option<Value> {
         let age = now.saturating_duration_since(self.fetched_at);
-        if age >= self.ttl {
+        let age_secs = age.as_nanos().div_ceil(1_000_000_000) as u64;
+        if age_secs >= self.ttl.as_secs() {
             return None;
         }
-        let age_secs = age.as_secs();
         let mut response = self.response.clone();
         for option in Self::options(&mut response) {
             if let Some(ttl) = option.get("ttl").and_then(Value::as_u64) {
@@ -255,20 +255,20 @@ mod tests {
 
         let served = cache.get_stale().unwrap();
 
-        assert_eq!(served["options"][0]["ttl"], 15);
+        assert_eq!(served["options"][0]["ttl"], 14);
         let expired = TermsCache::new();
-        expired.insert_at(&terms(1), Instant::now() - Duration::from_secs(1));
+        expired.insert_at(&terms(1), Instant::now() - Duration::from_millis(500));
         assert!(expired.get_stale().is_none());
     }
 
     #[test]
     fn serves_an_invalidated_response_only_as_stale() {
         let cache = TermsCache::new();
-        cache.insert(&terms(60));
+        cache.insert_at(&terms(60), Instant::now() - Duration::from_millis(10));
         cache.invalidate(Some(&rejection("PAYMENT_INSUFFICIENT")));
 
         assert!(cache.get().is_none());
-        assert_eq!(cache.get_stale(), Some(terms(60)));
+        assert_eq!(cache.get_stale(), Some(terms(59)));
     }
 
     #[test]
