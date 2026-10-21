@@ -750,11 +750,16 @@ impl Withdrawer {
         if let Some(manager) = manager {
             manager.journal.clear();
         }
-        let result = timeout_at(deadline, async {
+        let submission = async {
             if self.config.dry_run {
                 let prepared = PreparedWithdrawalTransaction::prepare(
-                    &self.config, rpc, sender, self.config.network.portal, calldata,
-                ).await?;
+                    &self.config,
+                    rpc,
+                    sender,
+                    self.config.network.portal,
+                    calldata,
+                )
+                .await?;
                 let transaction = &prepared.candidate;
                 tracing::info!(
                     target = %self.config.network.portal,
@@ -767,29 +772,40 @@ impl Withdrawer {
                 );
                 return Ok(None);
             }
-            let sender = manager.ok_or_else(|| {
+            let withdrawal_sender = manager.ok_or_else(|| {
                 TxManagerError::InvalidConfig("missing withdrawal transaction manager".into())
             })?;
-            let manager = &sender.manager;
+            let tx_manager = &withdrawal_sender.manager;
             // Withdrawals are serialized, but other jobs can publish with the same account.
             // Refresh pending state after both completed and cancelled sends.
-            manager.nonce_manager().reset().await;
-            let receipt = manager.send(TxCandidate {
-                to: Some(self.config.network.portal),
-                tx_data: calldata,
-                gas_limit: self.config.gas_limit.unwrap_or_default(),
-                ..Default::default()
-            }).await?;
+            tx_manager.nonce_manager().reset().await;
+            let receipt = tx_manager
+                .send(TxCandidate {
+                    to: Some(self.config.network.portal),
+                    tx_data: calldata,
+                    gas_limit: self.config.gas_limit.unwrap_or_default(),
+                    ..Default::default()
+                })
+                .await?;
             let hash = receipt.transaction_hash;
             if !receipt.status() {
                 return Err(WithdrawalRpcError::Reverted(hash).into());
             }
             if let Some(withdrawal_hash) = finalize_withdrawal {
-                self.check_finalization(&receipt, withdrawal_hash, hash, &sender.journal.hashes())?;
+                self.check_finalization(
+                    &receipt,
+                    withdrawal_hash,
+                    hash,
+                    &withdrawal_sender.journal.hashes(),
+                )?;
             }
             tracing::info!(transaction_hash = %hash, "withdrawal transaction confirmed");
             Ok(Some(hash))
-        }).await.map_err(WithdrawerError::Timeout).and_then(std::convert::identity);
+        };
+        let result = timeout_at(deadline, submission)
+            .await
+            .map_err(WithdrawerError::Timeout)
+            .and_then(std::convert::identity);
         result.map_err(|source| {
             let transaction_hashes =
                 manager.map(|sender| sender.journal.hashes()).unwrap_or_default();

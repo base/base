@@ -277,8 +277,10 @@ impl ConfirmJob {
         let result: eyre::Result<ConfirmOutcome> = async {
             let hash = withdrawal.hash();
             let submitter = sender.address;
-            let status = timeout_at(deadline, withdrawer.status(rpc, proofs, withdrawal, submitter))
-                .await.map_err(WithdrawerError::Timeout)??;
+            let status =
+                timeout_at(deadline, withdrawer.status(rpc, proofs, withdrawal, submitter))
+                    .await
+                    .map_err(WithdrawerError::Timeout)??;
             info!(withdrawal_hash = %hash, ?status, "withdrawal decision");
             match status {
                 WithdrawalStatus::Finalized => {
@@ -294,11 +296,14 @@ impl ConfirmJob {
                     Ok(ConfirmOutcome::Pending { timing: Some(timing) })
                 }
                 WithdrawalStatus::Prove => {
-                    let calldata = timeout_at(deadline, withdrawer.prove_calldata(rpc, proofs, withdrawal))
-                        .await.map_err(WithdrawerError::Timeout)??;
+                    let calldata =
+                        timeout_at(deadline, withdrawer.prove_calldata(rpc, proofs, withdrawal))
+                            .await
+                            .map_err(WithdrawerError::Timeout)??;
                     let transaction_hash = withdrawer
                         .submit(rpc, submitter, sender.manager, calldata, None, deadline)
-                        .await.map_err(WithdrawerError::from)?;
+                        .await
+                        .map_err(WithdrawerError::from)?;
                     if self.args.dry_run {
                         info!(withdrawal_hash = %hash, "dry run proof prepared");
                     } else {
@@ -320,38 +325,61 @@ impl ConfirmJob {
                             if self.args.dry_run {
                                 info!(withdrawal_hash = %hash, "dry run finalization prepared");
                             } else {
-                                info!(withdrawal_hash = %hash, ?transaction_hash, "withdrawal finalized");
+                                info!(
+                                    withdrawal_hash = %hash,
+                                    ?transaction_hash,
+                                    "withdrawal finalized"
+                                );
                             }
                             Ok(ConfirmOutcome::Finalized(transaction_hash))
                         }
-                        Err(error @ SubmitError::MaybeIncluded { .. }) => Err(WithdrawerError::from(error).into()),
+                        Err(error @ SubmitError::MaybeIncluded { .. }) => {
+                            Err(WithdrawerError::from(error).into())
+                        }
                         Err(SubmitError::NotSent(error)) => {
                             if Instant::now() >= deadline {
                                 return Err(error.into());
                             }
-                            match timeout_at(
-                            deadline, withdrawer.status(rpc, proofs, withdrawal, submitter),
-                        ).await.map_err(WithdrawerError::Timeout).and_then(std::convert::identity) {
-                            Ok(WithdrawalStatus::Finalized) => {
-                                info!(withdrawal_hash = %hash, "withdrawal already finalized");
-                                Ok(ConfirmOutcome::AlreadyFinalized)
+                            let recheck = timeout_at(
+                                deadline,
+                                withdrawer.status(rpc, proofs, withdrawal, submitter),
+                            )
+                            .await
+                            .map_err(WithdrawerError::Timeout)?;
+                            match recheck {
+                                Ok(WithdrawalStatus::Finalized) => {
+                                    info!(withdrawal_hash = %hash, "withdrawal already finalized");
+                                    Ok(ConfirmOutcome::AlreadyFinalized)
+                                }
+                                Ok(WithdrawalStatus::NotReady {
+                                    ready_at,
+                                    l1_timestamp,
+                                    waiting_for_game,
+                                }) => {
+                                    let timing =
+                                        ConfirmTiming { ready_at, l1_timestamp, waiting_for_game };
+                                    info!(
+                                        withdrawal_hash = %hash,
+                                        error = %format_args!("{error:#}"),
+                                        "withdrawal not ready"
+                                    );
+                                    timing.log(hash);
+                                    Ok(ConfirmOutcome::Pending { timing: Some(timing) })
+                                }
+                                Ok(WithdrawalStatus::Prove) => {
+                                    info!(
+                                        withdrawal_hash = %hash,
+                                        error = %format_args!("{error:#}"),
+                                        "withdrawal pending; a new proof is needed"
+                                    );
+                                    Ok(ConfirmOutcome::Pending { timing: None })
+                                }
+                                Ok(_) => Err(error.into()),
+                                Err(recheck_error) => Err(error).wrap_err(format!(
+                                    "could not recheck withdrawal status: {recheck_error:#}"
+                                )),
                             }
-                            Ok(WithdrawalStatus::NotReady { ready_at, l1_timestamp, waiting_for_game }) => {
-                                let timing = ConfirmTiming { ready_at, l1_timestamp, waiting_for_game };
-                                info!(withdrawal_hash = %hash, error = %format_args!("{error:#}"), "withdrawal not ready");
-                                timing.log(hash);
-                                Ok(ConfirmOutcome::Pending { timing: Some(timing) })
-                            }
-                            Ok(WithdrawalStatus::Prove) => {
-                                info!(withdrawal_hash = %hash, error = %format_args!("{error:#}"), "withdrawal pending; a new proof is needed");
-                                Ok(ConfirmOutcome::Pending { timing: None })
-                            }
-                            Ok(_) => Err(error.into()),
-                            Err(recheck_error) => Err(error).wrap_err(format!(
-                                "could not recheck withdrawal status: {recheck_error:#}"
-                            )),
-                            }
-                        },
+                        }
                     }
                 }
             }
@@ -421,10 +449,11 @@ impl ConfirmJob {
 #[cfg(test)]
 mod tests {
     use std::{
+        future::{Future, pending, ready},
         io::{self, Write},
         sync::{
             Arc, Mutex,
-            atomic::{AtomicBool, Ordering},
+            atomic::{AtomicBool, AtomicUsize, Ordering},
         },
     };
 
@@ -433,7 +462,8 @@ mod tests {
     use axum::{Json, Router, routing::post};
     use base_proof_contracts::IAnchorStateRegistry;
     use base_withdrawer::{
-        FaultProofPortal, MessagePassed, WithdrawalDisputeGame, WithdrawalTransaction,
+        FaultProofContracts, FaultProofPortal, MessagePassed, WithdrawalDisputeGame,
+        WithdrawalTransaction,
     };
     use rstest::rstest;
     use serde_json::{Value, json};
@@ -464,12 +494,21 @@ mod tests {
 
     impl Server {
         async fn new(handler: impl Fn(Value) -> Value + Send + Sync + 'static) -> Self {
+            Self::new_async(move |request| ready(handler(request))).await
+        }
+
+        async fn new_async<F: Future<Output = Value> + Send + 'static>(
+            handler: impl Fn(Value) -> F + Send + Sync + 'static,
+        ) -> Self {
             let handler = Arc::new(handler);
             let router = Router::new().fallback(post(move |Json(request): Json<Value>| {
-                let mut response = handler(request.clone());
-                response["jsonrpc"] = json!("2.0");
-                response["id"] = request["id"].clone();
-                async move { Json(response) }
+                let response = handler(request.clone());
+                async move {
+                    let mut response = response.await;
+                    response["jsonrpc"] = json!("2.0");
+                    response["id"] = request["id"].clone();
+                    Json(response)
+                }
             }));
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let url = format!("http://{}", listener.local_addr().unwrap()).parse().unwrap();
@@ -500,6 +539,93 @@ mod tests {
                 withdrawal_timeout: Duration::from_secs(10),
             },
         }
+    }
+
+    #[tokio::test]
+    async fn recheck_deadline_preserves_typed_timeout() {
+        let status_reads = Arc::new(AtomicUsize::new(0));
+        let captured = Arc::clone(&status_reads);
+        let server = Server::new_async(move |request| {
+            let status_reads = Arc::clone(&captured);
+            async move {
+                match request["method"].as_str().unwrap() {
+                    "eth_getBlockByNumber" => {
+                        let mut block = Block::<Transaction>::default();
+                        block.header.inner.timestamp = 1000;
+                        json!({"result": block})
+                    }
+                    "eth_call" => {
+                        let data: Bytes =
+                            serde_json::from_value(request["params"][0]["input"].clone()).unwrap();
+                        if data[..4] == WithdrawalPortal::finalizedWithdrawalsCall::SELECTOR
+                            && status_reads.fetch_add(1, Ordering::Relaxed) > 0
+                        {
+                            tokio::time::pause();
+                            return pending().await;
+                        }
+                        macro_rules! reply {
+                            ($call:ty, $($value:expr),* $(,)?) => {
+                                if data[..4] == <$call>::SELECTOR {
+                                    return json!({"result": Bytes::from(
+                                        <$call>::abi_encode_returns_tuple(&($($value,)*))
+                                    )});
+                                }
+                            };
+                        }
+                        reply!(WithdrawalPortal::finalizedWithdrawalsCall, false);
+                        reply!(IAnchorStateRegistry::pausedCall, false);
+                        reply!(
+                            FaultProofPortal::provenWithdrawalsCall,
+                            Address::repeat_byte(8),
+                            800u64
+                        );
+                        reply!(IAnchorStateRegistry::isGameBlacklistedCall, false);
+                        reply!(IAnchorStateRegistry::isGameRetiredCall, false);
+                        reply!(IAnchorStateRegistry::isGameProperCall, true);
+                        reply!(IAnchorStateRegistry::isGameRespectedCall, true);
+                        reply!(WithdrawalDisputeGame::statusCall, 2u8);
+                        reply!(FaultProofPortal::proofMaturityDelaySecondsCall, U256::from(100));
+                        reply!(WithdrawalDisputeGame::resolvedAtCall, 700u64);
+                        reply!(
+                            IAnchorStateRegistry::disputeGameFinalityDelaySecondsCall,
+                            U256::from(200)
+                        );
+                        reply!(IAnchorStateRegistry::isGameFinalizedCall, true);
+                        reply!(FaultProofPortal::checkWithdrawalCall,);
+                        panic!("unexpected contract selector {data}");
+                    }
+                    method => panic!("unexpected RPC method {method}"),
+                }
+            }
+        })
+        .await;
+        let mut job = job(&server.url);
+        job.args.dry_run = false;
+        let mut config = job.config().unwrap();
+        // Keep the HTTP attempt alive beyond the job deadline without relying on retries.
+        config.timeout = Duration::from_secs(60);
+        let rpc = WithdrawalRpc::new(&config).unwrap();
+        let withdrawer = Withdrawer::new(config);
+        let receipt = serde_json::from_value(disbursal_receipt(
+            Predeploys::L2_CROSS_DOMAIN_MESSENGER,
+            Predeploys::L2_STANDARD_BRIDGE,
+            job.args.l2_fee_disburser_address,
+        ))
+        .unwrap();
+        let withdrawal = Withdrawal::from_receipt(&receipt).unwrap().remove(0);
+        let proofs = ResolvedProofSystem::FaultProofs(FaultProofContracts {
+            dispute_game_factory: Address::repeat_byte(2),
+            anchor_state_registry: Address::repeat_byte(3),
+        });
+        // A missing manager fails before broadcast, leaving time for the status recheck.
+        let sender = ConfirmSender { address: Address::repeat_byte(9), manager: None };
+        let outcome = job.confirm_withdrawal(&withdrawer, &rpc, proofs, &sender, &withdrawal).await;
+        let ConfirmOutcome::Failed(error) = outcome else { panic!("{outcome:?}") };
+        assert_eq!(status_reads.load(Ordering::Relaxed), 2);
+        assert!(
+            matches!(error.downcast_ref::<WithdrawerError>(), Some(WithdrawerError::Timeout(_))),
+            "{error:#}"
+        );
     }
 
     #[test]

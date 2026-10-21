@@ -11,7 +11,9 @@ pub struct WithdrawalSender {
     /// Transaction manager using pending nonces.
     pub manager: SimpleTxManager<RootProvider>,
     /// Hashes recorded by this manager's submission transport.
-    pub(crate) journal: BroadcastJournal,
+    /// [`Withdrawer::submit`](crate::Withdrawer::submit) clears it before each send.
+    /// Callers should only read it.
+    pub journal: BroadcastJournal,
 }
 
 /// Submission failure classified by whether any transaction may have reached L1.
