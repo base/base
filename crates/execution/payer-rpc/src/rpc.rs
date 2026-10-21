@@ -126,11 +126,10 @@ where
     /// answer. The payer's own errors pass through unchanged.
     async fn forward(&self, method: &'static str, request: &Value) -> RpcResult<Value> {
         self.client.request(method, (request,)).await.map_err(|error| {
-            if PayerRejection::is_unanswered(&error) {
+            PayerRejection::from_upstream(&error).unwrap_or_else(|| {
                 debug!(error = %error, method, "payer did not answer");
-                return PayerRejection::temporarily_unavailable(PAYER_UNREACHABLE_RPC_ERROR);
-            }
-            error.into()
+                PayerRejection::temporarily_unavailable(PAYER_UNREACHABLE_RPC_ERROR)
+            })
         })
     }
 }
@@ -355,22 +354,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn passes_the_payer_rejection_through_unchanged() {
-        let sequencer = MockServer::start();
+    async fn passes_the_payer_rejection_through_unchanged_whatever_its_http_status() {
         let rejection = json!({ "code": "PAYMENT_INSUFFICIENT", "reason": "rate moved" });
-        sequencer.mock(|when, then| {
-            when.method(POST).body_includes("payer_sendTransaction");
-            then.status(200).header("content-type", "application/json").json_body(json!({
-                "jsonrpc": "2.0",
-                "id": 0,
-                "error": { "code": -32000, "message": "PAYER_REJECTED", "data": rejection }
-            }));
-        });
-        let api = PayerApiImpl::new(everest_provider(), client(&sequencer), passing_state());
 
-        let error = api.send_transaction(send_request()).await.expect_err("rejected");
+        for status in [200, 400, 500] {
+            let sequencer = MockServer::start();
+            sequencer.mock(|when, then| {
+                when.method(POST).body_includes("payer_sendTransaction");
+                then.status(status).header("content-type", "application/json").json_body(json!({
+                    "jsonrpc": "2.0",
+                    "id": 0,
+                    "error": { "code": -32000, "message": "PAYER_REJECTED", "data": rejection }
+                }));
+            });
+            let api = PayerApiImpl::new(everest_provider(), client(&sequencer), passing_state());
 
-        assert_eq!(rejection_data(&error), rejection);
+            let error = api.send_transaction(send_request()).await.expect_err("rejected");
+
+            assert_eq!(rejection_data(&error), rejection, "status {status}");
+        }
     }
 
     #[tokio::test]
