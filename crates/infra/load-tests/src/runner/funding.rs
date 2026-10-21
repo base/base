@@ -605,6 +605,7 @@ impl LoadRunner {
                     tokens.insert(*token_out);
                 }
                 TxType::Transfer
+                | TxType::Eip8430Transfer
                 | TxType::Calldata { .. }
                 | TxType::Erc20 { .. }
                 | TxType::Storage { .. }
@@ -626,6 +627,7 @@ impl LoadRunner {
                     routers.insert(*router);
                 }
                 TxType::Transfer
+                | TxType::Eip8430Transfer
                 | TxType::Calldata { .. }
                 | TxType::Erc20 { .. }
                 | TxType::Storage { .. }
