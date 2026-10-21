@@ -342,8 +342,9 @@ per admitted group, keyed by the group alone so replays deduplicate.
 block's mined transactions, under the winner's `tx_hash` with `block_hash` and
 `block_number`. Otherwise `TXPOOL_CANDIDATE_EVICTED`, under the
 representative, has `data.terminal_reason`: `replaced` (a same-nonce group
-replaced it), `expired` (pool maintenance passed the group's node-assigned
-expiry block), `budget_exhausted`, `revoked`, `permanent_exclusion`, `nonce_consumed`, or
+replaced it), `expired` (the committed head reached the group's node-assigned
+expiry block after its representative left the pool; pool maintenance or a
+later ingress call settles it, by the same rule), `budget_exhausted`, `revoked`, `permanent_exclusion`, `nonce_consumed`, or
 `dropped`. `nonce_consumed` is journaled when a canonical block advances the
 sender's nonce past the group's without a sibling landing, for example through
 a sponsor's EIP-7702 authorization or a plain same-nonce transaction, or when
@@ -351,7 +352,21 @@ an admission that was still settling at that block settles. If the pool
 inserted that admission's representative from a validation before the block,
 ingress removes it and the request fails with `group_terminal`. The group's sibling
 hashes stay suppressed until the recovery window closes, so a reorg cannot
-reinsert a sibling without its group. A group
+reinsert a sibling without its group.
+
+Reorg reopen: when a reorg removes a landed winner, reth reinjects it without
+its group. The pool still refuses it as a plain transaction, and when the
+canonical state has not consumed the winner's nonce the ledger reopens the
+group: the landed record is removed and the sibling hashes are no longer
+suppressed, so the same `group_hash` can be admitted a second time, or the
+winner can be submitted alone. A winner re-sent while it is still canonical
+keeps its landed record. The first `TXPOOL_CANDIDATE_LANDED` is not retracted,
+so a reopened group can journal a second terminal event. A second landed event
+for the same group has the same `event_id` as the first, so a consumer that
+deduplicates by `event_id` keeps the first one; use `block_hash` and the
+canonical chain to tell which landing holds.
+
+A group
 that left the pool another way, such as admin removal or pool-full eviction, is
 `dropped` only once the recovery window closes, because a canonical landing can
 still correct it.

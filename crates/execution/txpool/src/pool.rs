@@ -13,7 +13,7 @@ use futures::StreamExt;
 use parking_lot::{Mutex, RwLock};
 use reth_eth_wire_types::HandleMempoolData;
 use reth_execution_types::ChangedAccount;
-use reth_primitives_traits::Recovered;
+use reth_primitives_traits::{Recovered, transaction::error::InvalidTransactionError};
 use reth_transaction_pool::{
     AddedTransactionOutcome, AllPoolTransactions, AllTransactionsEvents, BestTransactions,
     BestTransactionsAttributes, BlobStore, BlobStoreError, BlockInfo, FullTransactionEvent,
@@ -22,6 +22,7 @@ use reth_transaction_pool::{
     TransactionListenerKind, TransactionOrigin, TransactionPool, TransactionPoolExt,
     TransactionValidationOutcome, TransactionValidationTaskExecutor, TransactionValidator,
     ValidPoolTransaction,
+    error::InvalidPoolTransactionError,
     pool::{AddedTransactionState, QueuedReason, TransactionEvent},
 };
 use tokio::{spawn, sync::mpsc};
@@ -474,14 +475,16 @@ where
     /// Reth reinjects reorged-out transactions without sidecars, which would turn a candidate
     /// sibling into an ordinary transaction. While candidates are enabled this suppresses any
     /// sidecar-free transaction whose hash the ledger retains as a sibling, whatever its origin;
-    /// the group must be resubmitted. A suppressed hash that was a group's canonical winner was
-    /// reorged out, so its `Landed` group is reopened
+    /// the group must be resubmitted. When a suppressed hash is a `Landed` group's winner and
+    /// the canonical state has not consumed its nonce, the winner was reorged out, so the group
+    /// is reopened
     /// ([`GroupLedger::reopen_reorged`](base_execution_candidates::GroupLedger::reopen_reorged))
-    /// and the identical group, or the winner alone, is admitted again. The pool backup saves only
-    /// `Local` transactions, so it
-    /// never carries Private candidate representatives. The ledger is not restart-durable, which
-    /// is why enabling candidates requires acknowledging an ephemeral ledger.
-    fn reject_plain_candidate_reinsertion(
+    /// and the identical group, or the winner alone, is admitted again. A re-sent winner that
+    /// is still canonical fails that check and keeps its landed record. The pool backup saves
+    /// only `Local` transactions, so it never carries Private candidate representatives. The
+    /// ledger is not restart-durable, which is why enabling candidates requires acknowledging an
+    /// ephemeral ledger.
+    async fn reject_plain_candidate_reinsertion(
         &self,
         origin: TransactionOrigin,
         transaction: &T,
@@ -493,7 +496,10 @@ where
         }
         let hash = *transaction.hash();
         if candidates.ledger.suppresses_plain_reinsertion(&hash) {
-            let reopened = candidates.ledger.reopen_reorged(&hash);
+            // Suppression is rare (reth reinjection or a re-send), so validating here is cheap.
+            let validated =
+                self.validator().validate_transaction(origin, transaction.clone()).await;
+            let reopened = Self::nonce_open(&validated) && candidates.ledger.reopen_reorged(&hash);
             debug!(
                 tx_hash = %hash,
                 origin = ?origin,
@@ -506,6 +512,21 @@ where
             ));
         }
         Ok(())
+    }
+
+    /// Returns `true` when validation against the canonical state left the transaction's nonce
+    /// unconsumed. A provider error fails closed.
+    const fn nonce_open(validated: &TransactionValidationOutcome<T>) -> bool {
+        match validated {
+            TransactionValidationOutcome::Valid { .. } => true,
+            TransactionValidationOutcome::Invalid(_, error) => !matches!(
+                error,
+                InvalidPoolTransactionError::Consensus(
+                    InvalidTransactionError::NonceNotConsistent { .. }
+                )
+            ),
+            TransactionValidationOutcome::Error(..) => false,
+        }
     }
 
     /// Optional flashblock upper bound, paired with the block bound for pool eviction.
@@ -1162,7 +1183,7 @@ where
         origin: TransactionOrigin,
         transaction: Self::Transaction,
     ) -> PoolResult<TransactionEvents> {
-        self.reject_plain_candidate_reinsertion(origin, &transaction)?;
+        self.reject_plain_candidate_reinsertion(origin, &transaction).await?;
         if !self.is_sidecar_transaction(&transaction) {
             let hash = *transaction.hash();
             let sender = transaction.sender();
@@ -1210,7 +1231,7 @@ where
         origin: TransactionOrigin,
         transaction: Self::Transaction,
     ) -> PoolResult<AddedTransactionOutcome> {
-        self.reject_plain_candidate_reinsertion(origin, &transaction)?;
+        self.reject_plain_candidate_reinsertion(origin, &transaction).await?;
         if self.is_sidecar_transaction(&transaction) {
             self.add_sidecar_transaction(origin, transaction).await
         } else {
@@ -4568,6 +4589,38 @@ mod tests {
         pool.add_transaction(TransactionOrigin::Private, representative)
             .await
             .expect("the resubmitted representative is pooled");
+    }
+
+    #[tokio::test]
+    async fn resending_a_canonical_winner_keeps_its_group_landed() {
+        let (pool, client) = build_integration_pool();
+        let runtime = candidate_runtime();
+        let pool = pool.with_candidate_runtime(Arc::clone(&runtime));
+        let (group, representative) = candidate_submission(&client, &runtime);
+        pool.add_transaction(TransactionOrigin::Private, representative)
+            .await
+            .expect("the representative carrying its group is admitted");
+        runtime.ledger.confirm_pooled(group.group_hash(), |hash| pool.get(hash).is_some());
+        let winner = group.siblings()[1].hash();
+
+        // Block 1 mines sibling 1 and stays canonical: the sender's canonical nonce is consumed.
+        canonical_nonce_update(&pool, 1, group.sender(), 1, vec![winner], PoolUpdateKind::Commit);
+        client.add_account(
+            group.sender(),
+            ExtendedAccount::new(1, U256::from(1_000_000_000_000_000_000u64)),
+        );
+
+        // Someone re-sends the canonical winner as a plain transaction.
+        pool.add_transaction(TransactionOrigin::Local, plain_sibling(&group, 1))
+            .await
+            .expect_err("a known sibling is not pooled as a plain transaction");
+        let entry = runtime.ledger.lookup(&group.group_hash()).expect("the landed entry stays");
+        let base_execution_candidates::GroupState::Landed { winner: landed, .. } = entry.state
+        else {
+            panic!("expected a landed group, got {:?}", entry.state);
+        };
+        assert_eq!(landed, winner);
+        assert!(runtime.ledger.suppresses_plain_reinsertion(&winner), "tombstones are kept");
     }
 
     #[tokio::test]
