@@ -333,7 +333,7 @@ impl ConfirmJob {
                             }
                             Ok(ConfirmOutcome::Finalized(transaction_hash))
                         }
-                        Err(error @ SubmitError::MaybeIncluded { .. }) => {
+                        Err(error @ SubmitError::MaybeIncluded(_)) => {
                             Err(WithdrawerError::from(error).into())
                         }
                         Err(SubmitError::NotSent(error)) => {
@@ -1236,14 +1236,12 @@ mod tests {
                     return;
                 }
                 if message == "was signed" {
-                    let Some(SubmitError::MaybeIncluded { transaction_hashes, .. }) =
-                        error.downcast_ref::<WithdrawerError>().and_then(|error| match error {
-                            WithdrawerError::Submit(error) => Some(error.as_ref()),
-                            _ => None,
-                        })
+                    let Some(WithdrawerError::MaybeIncluded(submit)) =
+                        error.downcast_ref::<WithdrawerError>()
                     else {
                         panic!("missing signed hashes: {error:#}");
                     };
+                    let transaction_hashes = &submit.transaction_hashes;
                     assert!(published.len() >= 2, "withdrawal must fee-bump before its deadline");
                     assert!(published.iter().all(|hash| transaction_hashes.contains(hash)));
                     assert!(transaction_hashes.len() >= published.len());
@@ -1252,13 +1250,12 @@ mod tests {
                 let message =
                     if message == "was signed" { "may have been broadcast" } else { message };
                 assert!(format!("{error:#}").contains(message), "{error:#}");
-                let Some(WithdrawerError::Submit(error)) = error.downcast_ref::<WithdrawerError>()
+                let Some(WithdrawerError::MaybeIncluded(submit)) =
+                    error.downcast_ref::<WithdrawerError>()
                 else {
                     panic!("missing submission error");
                 };
-                let SubmitError::MaybeIncluded { transaction_hashes, .. } = error.as_ref() else {
-                    panic!("published finalization must not be rechecked");
-                };
+                let transaction_hashes = &submit.transaction_hashes;
                 assert!(published.iter().all(|hash| transaction_hashes.contains(hash)));
                 assert_eq!(
                     *status_reads.lock().unwrap(),
@@ -1284,16 +1281,15 @@ mod tests {
                 recheck.is_none()
             );
             assert!(!format!("{error:#} {error:?}").contains("secret.endpoint"));
-            if let Some(WithdrawerError::Submit(submit)) = error.downcast_ref::<WithdrawerError>() {
-                let SubmitError::MaybeIncluded { transaction_hashes, .. } = submit.as_ref() else {
-                    panic!("missing hashes")
-                };
-                let expected = transaction_hashes.clone();
+            if let Some(WithdrawerError::MaybeIncluded(submit)) =
+                error.downcast_ref::<WithdrawerError>()
+            {
+                let expected = submit.transaction_hashes.clone();
                 let error = report.into_result().unwrap_err();
                 assert!(matches!(
                     error.downcast_ref::<WithdrawerError>(),
-                    Some(WithdrawerError::Submit(submit))
-                        if matches!(submit.as_ref(), SubmitError::MaybeIncluded { transaction_hashes, .. } if *transaction_hashes == expected)
+                    Some(WithdrawerError::MaybeIncluded(submit))
+                        if submit.transaction_hashes == expected
                 ));
             }
         }

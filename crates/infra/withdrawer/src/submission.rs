@@ -19,27 +19,32 @@ pub struct WithdrawalSender {
 /// Submission failure classified by whether any transaction may have reached L1.
 #[derive(Debug, Error)]
 pub enum SubmitError {
-    /// No transaction was broadcast by this submission.
+    /// No broadcast was recorded and no receipt was returned by this submission.
     #[error(transparent)]
     NotSent(WithdrawerError),
     /// At least one transaction may already be onchain; do not infer success from portal state.
-    #[error(
-        "transactions {transaction_hashes:?} may have been broadcast or included; check them before retrying: {source}"
-    )]
-    MaybeIncluded {
-        /// Every distinct broadcast hash, including fee replacements.
-        transaction_hashes: Vec<B256>,
-        /// Redacted submission, receipt, event validation, or deadline failure.
-        #[source]
-        source: Box<WithdrawerError>,
-    },
+    #[error(transparent)]
+    MaybeIncluded(MaybeIncluded),
+}
+
+/// A submission failure with transactions that may have been broadcast or included.
+#[derive(Debug, Error)]
+#[error(
+    "transactions {transaction_hashes:?} may have been broadcast or included; check them before retrying: {source}"
+)]
+pub struct MaybeIncluded {
+    /// Every distinct broadcast or receipt hash, including fee replacements.
+    pub transaction_hashes: Vec<B256>,
+    /// Redacted submission, receipt, event validation, or deadline failure.
+    #[source]
+    pub source: Box<WithdrawerError>,
 }
 
 impl From<SubmitError> for WithdrawerError {
     fn from(error: SubmitError) -> Self {
         match error {
             SubmitError::NotSent(source) => source,
-            error @ SubmitError::MaybeIncluded { .. } => Self::Submit(Box::new(error)),
+            SubmitError::MaybeIncluded(error) => Self::MaybeIncluded(error),
         }
     }
 }

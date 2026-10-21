@@ -16,8 +16,8 @@ use tokio::time::{Instant, timeout_at};
 
 use crate::{
     BroadcastJournal, ConfigError, FaultProofContracts, FaultProofPortal, LegacyWithdrawalPortal,
-    MessagePassed, PreparedWithdrawalTransaction, ProofSystem, ResolvedProofSystem, SubmitError,
-    VerifiedWithdrawalProof, Withdrawal, WithdrawalDisputeGame, WithdrawalError,
+    MaybeIncluded, MessagePassed, PreparedWithdrawalTransaction, ProofSystem, ResolvedProofSystem,
+    SubmitError, VerifiedWithdrawalProof, Withdrawal, WithdrawalDisputeGame, WithdrawalError,
     WithdrawalOutputOracle, WithdrawalPortal, WithdrawalRpc, WithdrawalRpcError,
     WithdrawalRpcTransport, WithdrawalSender, WithdrawalSigner, WithdrawalSignerError,
     WithdrawalTransactionError, WithdrawerConfig,
@@ -120,7 +120,7 @@ pub enum WithdrawerError {
     Timeout(#[source] tokio::time::error::Elapsed),
     /// A submission may already be included; check every reported hash before retrying.
     #[error(transparent)]
-    Submit(Box<SubmitError>),
+    MaybeIncluded(MaybeIncluded),
     /// The portal consumed the withdrawal, but its target call failed; it cannot be retried.
     #[error(
         "withdrawal {withdrawal_hash} finalized in transaction {transaction_hash}, but its target call failed; broadcast transactions: {transaction_hashes:?}"
@@ -735,7 +735,7 @@ impl Withdrawer {
         .into())
     }
 
-    /// Estimates or submits within the deadline, classifying failures by transport broadcasts.
+    /// Estimates or submits within the deadline, classifying failures by broadcasts or receipts.
     ///
     /// Sends through the same sender must be serialized. The journal is cleared for each call.
     pub async fn submit(
@@ -750,6 +750,18 @@ impl Withdrawer {
         if let Some(manager) = manager {
             manager.journal.clear();
         }
+        let classify = |source| {
+            let transaction_hashes =
+                manager.map(|sender| sender.journal.hashes()).unwrap_or_default();
+            if transaction_hashes.is_empty() {
+                SubmitError::NotSent(source)
+            } else {
+                SubmitError::MaybeIncluded(MaybeIncluded {
+                    transaction_hashes,
+                    source: Box::new(source),
+                })
+            }
+        };
         let submission = async {
             if self.config.dry_run {
                 let prepared = PreparedWithdrawalTransaction::prepare(
@@ -759,7 +771,8 @@ impl Withdrawer {
                     self.config.network.portal,
                     calldata,
                 )
-                .await?;
+                .await
+                .map_err(|error| classify(error.into()))?;
                 let transaction = &prepared.candidate;
                 tracing::info!(
                     target = %self.config.network.portal,
@@ -773,7 +786,9 @@ impl Withdrawer {
                 return Ok(None);
             }
             let withdrawal_sender = manager.ok_or_else(|| {
-                TxManagerError::InvalidConfig("missing withdrawal transaction manager".into())
+                SubmitError::NotSent(WithdrawerError::TxManager(TxManagerError::InvalidConfig(
+                    "missing withdrawal transaction manager".into(),
+                )))
             })?;
             let tx_manager = &withdrawal_sender.manager;
             // Withdrawals are serialized, but other jobs can publish with the same account.
@@ -786,35 +801,29 @@ impl Withdrawer {
                     gas_limit: self.config.gas_limit.unwrap_or_default(),
                     ..Default::default()
                 })
-                .await?;
+                .await
+                .map_err(|error| classify(error.into()))?;
             let hash = receipt.transaction_hash;
+            let transaction_hashes = withdrawal_sender.journal.hashes_with_receipt(hash);
+            let included = |source| {
+                SubmitError::MaybeIncluded(MaybeIncluded {
+                    transaction_hashes: transaction_hashes.clone(),
+                    source: Box::new(source),
+                })
+            };
             if !receipt.status() {
-                return Err(WithdrawalRpcError::Reverted(hash).into());
+                return Err(included(WithdrawalRpcError::Reverted(hash).into()));
             }
             if let Some(withdrawal_hash) = finalize_withdrawal {
-                self.check_finalization(
-                    &receipt,
-                    withdrawal_hash,
-                    hash,
-                    &withdrawal_sender.journal.hashes(),
-                )?;
+                self.check_finalization(&receipt, withdrawal_hash, hash, &transaction_hashes)
+                    .map_err(included)?;
             }
             tracing::info!(transaction_hash = %hash, "withdrawal transaction confirmed");
             Ok(Some(hash))
         };
-        let result = timeout_at(deadline, submission)
+        timeout_at(deadline, submission)
             .await
-            .map_err(WithdrawerError::Timeout)
-            .and_then(std::convert::identity);
-        result.map_err(|source| {
-            let transaction_hashes =
-                manager.map(|sender| sender.journal.hashes()).unwrap_or_default();
-            if transaction_hashes.is_empty() {
-                SubmitError::NotSent(source)
-            } else {
-                SubmitError::MaybeIncluded { transaction_hashes, source: Box::new(source) }
-            }
-        })
+            .map_err(|error| classify(WithdrawerError::Timeout(error)))?
     }
 
     /// Checks the portal's finalization result, which can fail despite a successful L1 receipt.
@@ -2058,11 +2067,9 @@ mod tests {
         let _guard = tracing::subscriber::set_default(subscriber);
         let result = server.run().await;
         let error = result.unwrap_err();
-        let WithdrawerError::Submit(error) = &error else {
-            panic!("missing submit error: {error:?}")
-        };
-        let SubmitError::MaybeIncluded { transaction_hashes, source } = error.as_ref() else {
-            panic!("missing broadcast hash: {error:?}");
+        let WithdrawerError::MaybeIncluded(MaybeIncluded { transaction_hashes, source }) = &error
+        else {
+            panic!("missing maybe-included error");
         };
         let transaction_hash = &transaction_hashes[0];
         assert_eq!(*transaction_hash, *server.sent.lock().unwrap()[0].tx_hash());
@@ -2091,11 +2098,9 @@ mod tests {
         .start()
         .await;
         let error = server.run().await.unwrap_err();
-        let WithdrawerError::Submit(error) = &error else {
-            panic!("missing submit error: {error:?}")
-        };
-        let SubmitError::MaybeIncluded { transaction_hashes, source } = error.as_ref() else {
-            panic!("missing signed hash: {error:?}");
+        let WithdrawerError::MaybeIncluded(MaybeIncluded { transaction_hashes, source }) = &error
+        else {
+            panic!("missing maybe-included error");
         };
         let transaction_hash = &transaction_hashes[0];
         assert_eq!(*transaction_hash, *server.sent.lock().unwrap()[0].tx_hash());
@@ -2125,7 +2130,7 @@ mod tests {
             )
             .await
             .unwrap_err();
-        let SubmitError::MaybeIncluded { transaction_hashes, source } = error else {
+        let SubmitError::MaybeIncluded(MaybeIncluded { transaction_hashes, source }) = error else {
             panic!("missing initial broadcast hash: {error:?}");
         };
         assert_eq!(transaction_hashes.len(), 1);
@@ -2215,11 +2220,9 @@ mod tests {
         server.config.max_retries = 2;
         server.config.retry_delay = Duration::from_millis(1);
         let error = server.run().await.unwrap_err();
-        let WithdrawerError::Submit(error) = error else {
-            panic!("missing submit error: {error:?}")
-        };
-        let SubmitError::MaybeIncluded { transaction_hashes, source } = *error else {
-            panic!("missing signed hash: {error:?}");
+        let WithdrawerError::MaybeIncluded(MaybeIncluded { transaction_hashes, source }) = error
+        else {
+            panic!("missing maybe-included error");
         };
         let transaction_hash = transaction_hashes[0];
         assert_eq!(transaction_hash, *server.sent.lock().unwrap()[0].tx_hash());
@@ -2239,11 +2242,9 @@ mod tests {
         .start()
         .await;
         let error = server.run().await.unwrap_err();
-        let WithdrawerError::Submit(error) = &error else {
-            panic!("missing submit error: {error:?}")
-        };
-        let SubmitError::MaybeIncluded { transaction_hashes, source } = error.as_ref() else {
-            panic!("missing broadcast hash: {error:?}");
+        let WithdrawerError::MaybeIncluded(MaybeIncluded { transaction_hashes, source }) = &error
+        else {
+            panic!("missing maybe-included error");
         };
         let transaction_hash = &transaction_hashes[0];
         assert_eq!(*transaction_hash, *server.sent.lock().unwrap()[0].tx_hash());
@@ -2259,11 +2260,9 @@ mod tests {
         let mut server = Scenario { receipt_pending: true, ..Default::default() }.start().await;
         server.config.timeout = Duration::from_secs(1);
         let error = server.run().await.unwrap_err();
-        let WithdrawerError::Submit(error) = error else {
-            panic!("missing submit error: {error:?}")
-        };
-        let SubmitError::MaybeIncluded { transaction_hashes, source } = *error else {
-            panic!("missing broadcast hash: {error:?}");
+        let WithdrawerError::MaybeIncluded(MaybeIncluded { transaction_hashes, source }) = error
+        else {
+            panic!("missing maybe-included error");
         };
         let transaction_hash = transaction_hashes[0];
         assert_eq!(transaction_hash, *server.sent.lock().unwrap()[0].tx_hash());
@@ -2274,11 +2273,9 @@ mod tests {
     async fn reverted_receipt_retains_broadcast_hash() {
         let server = Scenario { receipt_reverted: true, ..Default::default() }.start().await;
         let error = server.run().await.unwrap_err();
-        let WithdrawerError::Submit(error) = error else {
-            panic!("missing submit error: {error:?}")
-        };
-        let SubmitError::MaybeIncluded { transaction_hashes, source } = *error else {
-            panic!("missing broadcast hash: {error:?}");
+        let WithdrawerError::MaybeIncluded(MaybeIncluded { transaction_hashes, source }) = error
+        else {
+            panic!("missing maybe-included error");
         };
         let transaction_hash = transaction_hashes[0];
         assert_eq!(transaction_hash, *server.sent.lock().unwrap()[0].tx_hash());
@@ -2299,11 +2296,9 @@ mod tests {
         .await;
         server.config.timeout = Duration::from_secs(3);
         let error = server.run().await.unwrap_err();
-        let WithdrawerError::Submit(error) = error else {
-            panic!("missing submit error: {error:?}")
-        };
-        let SubmitError::MaybeIncluded { transaction_hashes, source } = *error else {
-            panic!("missing hashes: {error:?}");
+        let WithdrawerError::MaybeIncluded(MaybeIncluded { transaction_hashes, source }) = error
+        else {
+            panic!("missing maybe-included error");
         };
         assert!(matches!(*source, WithdrawerError::Timeout(_)));
         let sent = server.sent.lock().unwrap();
@@ -2316,11 +2311,9 @@ mod tests {
         let mut server = Scenario { receipt_pending: true, ..Default::default() }.start().await;
         server.config.tx_manager.tx_send_timeout = Duration::from_millis(1500);
         let error = server.run().await.unwrap_err();
-        let WithdrawerError::Submit(error) = error else {
-            panic!("missing submit error: {error:?}")
-        };
-        let SubmitError::MaybeIncluded { transaction_hashes, source } = *error else {
-            panic!("missing hashes: {error:?}");
+        let WithdrawerError::MaybeIncluded(MaybeIncluded { transaction_hashes, source }) = error
+        else {
+            panic!("missing maybe-included error");
         };
         assert!(matches!(*source, WithdrawerError::TxManager(TxManagerError::SendTimeout)));
         let sent = server.sent.lock().unwrap();
@@ -2349,11 +2342,10 @@ mod tests {
                 if success {
                     assert_eq!(result.unwrap()[0].transaction_hash, Some(transaction_hash));
                 } else {
-                    let WithdrawerError::Submit(error) = result.unwrap_err() else {
-                        panic!("missing submit error");
-                    };
-                    let SubmitError::MaybeIncluded { source, .. } = *error else {
-                        panic!("target failure was not classified as published");
+                    let WithdrawerError::MaybeIncluded(MaybeIncluded { source, .. }) =
+                        result.unwrap_err()
+                    else {
+                        panic!("missing maybe-included error");
                     };
                     let WithdrawerError::TargetCallFailed {
                         withdrawal_hash,
@@ -2385,9 +2377,8 @@ mod tests {
         ] {
             let server = Scenario { proven: 100, ..scenario }.start().await;
             let error = server.run().await.unwrap_err();
-            let WithdrawerError::Submit(error) = error else { panic!("missing submit error") };
-            let SubmitError::MaybeIncluded { source, .. } = *error else {
-                panic!("missing event was not classified as published");
+            let WithdrawerError::MaybeIncluded(MaybeIncluded { source, .. }) = error else {
+                panic!("missing maybe-included error");
             };
             assert!(
                 matches!(*source, WithdrawerError::MissingFinalizationEvent { transaction_hash, .. }
