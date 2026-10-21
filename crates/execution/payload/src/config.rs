@@ -16,12 +16,11 @@ use reth_storage_api::{EvmStateProvider, EvmStateProviderBox, StateProvider};
 use revm::state::EvmState;
 use tracing::{debug, warn};
 
-// Re-exported so builders can configure prewarming through the config module.
-pub use crate::PrewarmConfig;
 use crate::{
     DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, MeteringProvider, NoopMeteringProvider,
-    RejectionCache, ResourceMeteringError, ResourceMeteringMetrics, ResourceMeteringSchedule,
-    ResourceMeteringUsage, ResourceSample, ResourceThrottlingDecision, SharedMeteringProvider,
+    PrewarmConfig, RejectionCache, ResourceMeteringError, ResourceMeteringMetrics,
+    ResourceMeteringSchedule, ResourceMeteringUsage, ResourceSample, ResourceThrottlingDecision,
+    SharedMeteringProvider,
 };
 
 /// Settings for the Base payload builder.
