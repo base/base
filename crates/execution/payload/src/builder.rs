@@ -57,9 +57,9 @@ use crate::{
     Attributes, BasePayloadBuilderAttributes, BlockDeferrals, BuilderMetrics,
     CoinbaseTipAffordability, InclusionTracker, MeteringProvider, ParkableBestPayloadTransactions,
     ParkablePayloadTransactions, ParkedPredicateIndex, PayloadPrimitives, PredicateLoadTracker,
-    PredicateReadRecorder, RejectionCacheMetrics, StateChangeEffects, ValidityMetrics,
-    ValidityPredicateEvaluation, config::BaseBuilderConfig, error::BasePayloadBuilderError,
-    payload::BaseBuiltPayload,
+    PredicateReadRecorder, PrewarmWorkerPool, PrewarmingBestTransactions, RejectionCacheMetrics,
+    StateChangeEffects, ValidityMetrics, ValidityPredicateEvaluation, config::BaseBuilderConfig,
+    error::BasePayloadBuilderError, payload::BaseBuiltPayload,
 };
 
 macro_rules! emit_native_validity_event {
@@ -111,6 +111,9 @@ pub struct BasePayloadBuilder<
     pub client: Client,
     /// Settings for the builder, e.g. DA settings.
     pub config: BaseBuilderConfig,
+    /// Shared, bounded prewarm IO worker pool. Threads are spawned once per builder and
+    /// reused across builds; no worker holds a cache handle between jobs.
+    pub prewarm_pool: Arc<PrewarmWorkerPool>,
     /// Marker for the payload attributes type.
     _pd: PhantomData<Attrs>,
 }
@@ -127,6 +130,7 @@ where
             pool: self.pool.clone(),
             client: self.client.clone(),
             config: self.config.clone(),
+            prewarm_pool: Arc::clone(&self.prewarm_pool),
             _pd: PhantomData,
         }
     }
@@ -141,13 +145,17 @@ impl<Pool, Client, Evm, Attrs> BasePayloadBuilder<Pool, Client, Evm, Attrs> {
     }
 
     /// Configures the builder with the given [`BaseBuilderConfig`].
-    pub const fn with_builder_config(
+    ///
+    /// Creates the shared prewarm worker pool up front; a disabled configuration spawns
+    /// no workers.
+    pub fn with_builder_config(
         pool: Pool,
         client: Client,
         evm_config: Evm,
         config: BaseBuilderConfig,
     ) -> Self {
-        Self { pool, client, evm_config, config, _pd: PhantomData }
+        let prewarm_pool = Arc::new(PrewarmWorkerPool::new(&config.prewarm));
+        Self { pool, client, evm_config, config, prewarm_pool, _pd: PhantomData }
     }
 }
 
@@ -180,9 +188,8 @@ where
         best: impl FnOnce(BestTransactionsAttributes) -> Txs + Send + Sync + 'a,
     ) -> Result<BuildOutcome<BaseBuiltPayload<N>>, PayloadBuilderError>
     where
-        Txs: ParkablePayloadTransactions<
-            Pooled: PoolTransaction<Consensus = N::SignedTx> + BasePooledTx,
-        >,
+        Txs: ParkablePayloadTransactions<Pooled = Pool::Transaction>,
+        Client: Clone + 'static,
     {
         let BuildArguments {
             mut cached_reads,
@@ -204,8 +211,37 @@ where
         tracing::Span::current().record("payload_id", tracing::field::display(ctx.payload_id()));
         tracing::Span::current().record("parent_num", ctx.parent().number());
 
+        // Opt-in predicate-state prewarming: warms the declared validity-predicate state of
+        // lookahead transactions into this build's shared execution cache while the build
+        // loop executes. The job owns no state between builds and releases its workers'
+        // cache handles when dropped. No shared cache means no prewarming.
+        let prewarm = if ctx.attributes().no_tx_pool() {
+            None
+        } else {
+            execution_cache.as_ref().and_then(|cache| {
+                self.prewarm_pool.try_start_job(
+                    {
+                        let client = self.client.clone();
+                        let parent = ctx.parent().hash();
+                        move || client.state_by_block_hash(parent)
+                    },
+                    cache.cache().clone(),
+                )
+            })
+        };
+
+        // Wrap the transaction selector so the build's iterator carries the prewarm
+        // lookahead adapter. When prewarming is inactive the adapter is a pure
+        // pass-through over the inner iterator.
+        let prewarm_scheduler = prewarm.as_ref().map(|job| Arc::clone(&job.scheduler));
+        let cursor_pool = self.pool.clone();
+        let best_with_prewarm = move |attributes: BestTransactionsAttributes| {
+            let inner = best(attributes);
+            PrewarmingBestTransactions::new(inner, cursor_pool, attributes, prewarm_scheduler)
+        };
+
         let pool = self.pool.clone();
-        let builder = Builder::new(best).with_permanent_eviction(move |hashes| {
+        let builder = Builder::new(best_with_prewarm).with_permanent_eviction(move |hashes| {
             let _ = pool.remove_transactions(hashes);
         });
 
@@ -269,7 +305,11 @@ where
 impl<Pool, Client, Evm, N, Attrs> PayloadBuilder for BasePayloadBuilder<Pool, Client, Evm, Attrs>
 where
     N: PayloadPrimitives,
-    Client: StateProviderFactory + ChainSpecProvider<ChainSpec: Upgrades> + BlockReader + Clone,
+    Client: StateProviderFactory
+        + ChainSpecProvider<ChainSpec: Upgrades>
+        + BlockReader
+        + Clone
+        + 'static,
     Pool: ParkableTransactionPool<Transaction: BasePooledTx<Consensus = N::SignedTx>>,
     Evm: ConfigureEvm<
             Primitives = N,

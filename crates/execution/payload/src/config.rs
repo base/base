@@ -18,8 +18,9 @@ use tracing::{debug, warn};
 
 use crate::{
     DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, MeteringProvider, NoopMeteringProvider,
-    RejectionCache, ResourceMeteringError, ResourceMeteringMetrics, ResourceMeteringSchedule,
-    ResourceMeteringUsage, ResourceSample, ResourceThrottlingDecision, SharedMeteringProvider,
+    PrewarmConfig, RejectionCache, ResourceMeteringError, ResourceMeteringMetrics,
+    ResourceMeteringSchedule, ResourceMeteringUsage, ResourceSample, ResourceThrottlingDecision,
+    SharedMeteringProvider,
 };
 
 /// Settings for the Base payload builder.
@@ -53,6 +54,8 @@ pub struct BaseBuilderConfig {
     /// label. Adds overhead to every state read, so it follows reth's
     /// `--engine.state-provider-metrics` and stays off by default.
     pub state_provider_metrics: bool,
+    /// Opt-in concurrent predicate-state prewarming during builds. Disabled by default.
+    pub prewarm: PrewarmConfig,
 }
 
 impl Default for BaseBuilderConfig {
@@ -66,6 +69,7 @@ impl Default for BaseBuilderConfig {
             resource_metering: ResourceMeteringConfig::default(),
             rejection_cache: RejectionCache::default(),
             state_provider_metrics: false,
+            prewarm: PrewarmConfig::default(),
         }
     }
 }
@@ -86,6 +90,7 @@ impl BaseBuilderConfig {
             resource_metering: ResourceMeteringConfig::default(),
             rejection_cache: RejectionCache::default(),
             state_provider_metrics: false,
+            prewarm: PrewarmConfig::default(),
         }
     }
 
