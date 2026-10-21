@@ -706,7 +706,8 @@ mod tests {
             Box::new(std::iter::empty())
         });
         let pooled = Arc::clone(&tx);
-        pool.expect_get().returning(move |hash| (hash == pooled.hash()).then(|| Arc::clone(&pooled)));
+        pool.expect_get()
+            .returning(move |hash| (hash == pooled.hash()).then(|| Arc::clone(&pooled)));
         let (sender, mut queue) = mpsc::channel(64);
         let cancel = CancellationToken::new();
         let mut reader = paced_reader(pool, sender, cancel.clone());
@@ -723,6 +724,50 @@ mod tests {
 
         assert_eq!(forwarded.tx_hash, *tx.hash());
         assert!(reads.try_recv().is_err(), "no second full read was needed");
+    }
+
+    /// The pool drops announcements when a listener's channel is full, so a transaction that
+    /// becomes pending without one must still be forwarded by a later full read.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_transaction_without_an_announcement_is_forwarded_by_a_later_full_read() {
+        let tx = transaction(0);
+        let (_announce, announcements) = mpsc::channel(16);
+        let mut pool = MockReaderPool::new();
+        pool.expect_block_info().returning(BlockInfo::default);
+        pool.expect_pending_transactions_listener_for().return_once(move |_| announcements);
+        pool.expect_get().returning(|_| None);
+        // Pending only after the first read, and never announced.
+        let pending = Arc::clone(&tx);
+        let mut first = true;
+        pool.expect_best_transactions().returning(move || {
+            let txs =
+                if std::mem::take(&mut first) { Vec::new() } else { vec![Arc::clone(&pending)] };
+            Box::new(txs.into_iter())
+        });
+        let (sender, mut queue) = mpsc::channel(64);
+        let cancel = CancellationToken::new();
+        let mut reader: DestinationReader<MockReaderPool> = DestinationReader::new(
+            pool,
+            ReaderConfig {
+                resend_after: Duration::from_secs(60),
+                channel_capacity: 64,
+                poll_interval: ReaderConfig::POLL_INTERVAL,
+                fifo_percent: 20,
+            },
+            sender,
+            cancel.clone(),
+            "http://builder.test".parse().unwrap(),
+        );
+
+        let run = tokio::spawn(async move { reader.run().await });
+        let forwarded = time::timeout(Duration::from_secs(5), queue.recv())
+            .await
+            .expect("the unannounced transaction is forwarded")
+            .unwrap();
+        cancel.cancel();
+        time::timeout(Duration::from_secs(5), run).await.expect("reader exits").unwrap();
+
+        assert_eq!(forwarded.tx_hash, *tx.hash());
     }
 
     /// Cancelling while the reader waits out the gap after an expensive snapshot must end the

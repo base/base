@@ -31,6 +31,11 @@ A transaction's position is fixed once it enters the queue. The queue defaults t
 Under a deep backlog the reader reuses a pool snapshot for up to 10ms rather than re-reading the
 pool for every free slot, so a new transaction can wait that long before it is considered.
 
+The reader reads the whole pool at most every 100ms. In between, it looks up each newly pending
+transaction the pool announces and adds it to the current snapshot, so forwarding a new
+transaction does not cost a pass over every pending one. The periodic full read sends transactions
+due for a resend and anything whose announcement was dropped, so neither waits longer than that.
+
 A slow builder backpressures only its own reader. Transactions are marked as recently sent only
 after that builder's queue accepts them, so another destination cannot suppress their delivery.
 Each forwarder sends an isolated request immediately, but drains any other requests already waiting
