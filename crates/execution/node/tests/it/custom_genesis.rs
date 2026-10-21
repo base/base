@@ -13,6 +13,7 @@ use base_node_core::{
 use reth_e2e_test_utils::E2ETestSetupBuilder;
 use reth_provider::{HeaderProvider, StageCheckpointReader};
 use reth_stages_types::StageId;
+use reth_tasks::Runtime;
 use tokio::sync::Mutex;
 
 /// Tests that a Base node can initialize with a custom genesis block number.
@@ -31,7 +32,9 @@ async fn test_base_node_custom_genesis_number() {
     let chain_spec =
         Arc::new(BaseChainSpecBuilder::base_mainnet().genesis(genesis).ecotone_activated().build());
 
+    let runtime = Runtime::test();
     let (mut node, wallet) = E2ETestSetupBuilder::<BaseNode>::new(1, chain_spec)
+        .with_runtime(runtime.clone())
         .with_attributes_generator(payload_attributes)
         .build_single()
         .await
@@ -69,4 +72,9 @@ async fn test_base_node_custom_genesis_number() {
         1001,
         "Block number should be 1001 after advancing from genesis 100"
     );
+
+    // Stop the node's tasks before the process exits, otherwise they can still run during exit
+    // teardown and abort the test binary.
+    drop(node);
+    runtime.graceful_shutdown();
 }
