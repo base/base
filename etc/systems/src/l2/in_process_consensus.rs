@@ -30,11 +30,11 @@ use base_upgrade_signal::{
 };
 use eyre::{Result, WrapErr};
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
-use tempfile::TempDir;
 use tokio::{
     task::JoinHandle,
     time::{sleep, timeout},
 };
+use tokio_util::sync::{CancellationToken, DropGuard};
 use tracing::info;
 use url::Url;
 
@@ -102,8 +102,8 @@ pub struct InProcessConsensus {
     rpc_client: HttpClient,
     p2p_tcp_port: u16,
     peer_id: String,
-    _checkpoint_dir: TempDir,
     _handle: JoinHandle<()>,
+    _cancel_on_drop: DropGuard,
 }
 
 impl std::fmt::Debug for InProcessConsensus {
@@ -150,9 +150,10 @@ impl InProcessConsensus {
             }
         }
 
-        let rpc_port = config.rpc_port.unwrap_or_else(PortPool::claim);
-        let p2p_tcp_port = config.p2p_tcp_port.unwrap_or_else(PortPool::claim);
-        let p2p_udp_port = config.p2p_udp_port.unwrap_or_else(PortPool::claim);
+        let mut ports = PortPool::default();
+        let rpc_port = config.rpc_port.unwrap_or_else(|| ports.claim());
+        let p2p_tcp_port = config.p2p_tcp_port.unwrap_or_else(|| ports.claim());
+        let p2p_udp_port = config.p2p_udp_port.unwrap_or_else(|| ports.claim());
         let listen_ip = IpAddr::V4(Ipv4Addr::LOCALHOST);
 
         // Build keypair from P2P key or generate a random one.
@@ -181,6 +182,9 @@ impl InProcessConsensus {
         );
         net_config.scoring = PeerScoreLevel::Off;
         net_config.keypair = keypair;
+        // Sandbox forwarders can bind the same port on another interface. Reusing our
+        // loopback listener port for a wildcard outbound bind then fails with EADDRINUSE.
+        net_config.reuse_listener_port = false;
         // Use flood_publish since the mesh may not fully form with only two peers.
         net_config.gossip_config = base_consensus_gossip::default_config_builder()
             .flood_publish(true)
@@ -264,10 +268,15 @@ impl InProcessConsensus {
         let node = builder.build().await.wrap_err("Failed to build consensus node")?;
 
         let mode = config.mode;
+        let cancellation = CancellationToken::new();
+        let cancel_on_drop = cancellation.clone().drop_guard();
         let (startup_tx, startup_rx) = tokio::sync::oneshot::channel();
         let handle = tokio::spawn(async move {
+            // Retain claims until the node's actors finish, not just until abort is requested.
+            let _ports = ports;
+            let _checkpoint_dir = checkpoint_dir;
             info!(mode = %mode, rpc_port, "starting in-process consensus node");
-            if let Err(e) = node.start().await {
+            if let Err(e) = node.start_with_cancellation(cancellation).await {
                 let _ = startup_tx.send(Err(eyre::eyre!("consensus node failed: {e}")));
                 return;
             }
@@ -294,8 +303,8 @@ impl InProcessConsensus {
             rpc_client,
             p2p_tcp_port,
             peer_id,
-            _checkpoint_dir: checkpoint_dir,
             _handle: handle,
+            _cancel_on_drop: cancel_on_drop,
         })
     }
 
@@ -398,12 +407,6 @@ impl InProcessConsensus {
     /// Returns the libp2p peer ID string.
     pub fn peer_id(&self) -> &str {
         &self.peer_id
-    }
-}
-
-impl Drop for InProcessConsensus {
-    fn drop(&mut self) {
-        self._handle.abort();
     }
 }
 

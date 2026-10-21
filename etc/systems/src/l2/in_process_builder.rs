@@ -113,6 +113,8 @@ pub struct InProcessBuilder {
     _node: Box<dyn Any + Sync + Send>,
     _runtime: Runtime,
     _temp_dir: Option<TempDir>,
+    // Retain claims through explicit shutdown and drop them after the runtime on plain drop.
+    _ports: PortPool,
 }
 
 impl std::fmt::Debug for InProcessBuilder {
@@ -140,6 +142,7 @@ impl InProcessBuilder {
         std::fs::write(&jwt_path, config.jwt_secret.as_bytes().encode_hex().as_bytes())
             .wrap_err("Failed to write JWT secret")?;
 
+        let mut ports = PortPool::default();
         let runtime = RuntimeBuilder::new(
             config
                 .runtime
@@ -150,10 +153,10 @@ impl InProcessBuilder {
 
         let chain_spec = Arc::clone(&config.chain_spec);
 
-        let flashblocks_port = config.flashblocks_port.unwrap_or_else(PortPool::claim);
+        let flashblocks_port = config.flashblocks_port.unwrap_or_else(|| ports.claim());
         let metrics_addr = SocketAddr::new(
             Ipv4Addr::LOCALHOST.into(),
-            config.metrics_port.unwrap_or_else(PortPool::claim),
+            config.metrics_port.unwrap_or_else(|| ports.claim()),
         );
         let builder_config = BuilderConfig {
             block_time: config.block_time,
@@ -271,6 +274,7 @@ impl InProcessBuilder {
             _node: Box::new(node_handle),
             _runtime: runtime,
             _temp_dir: temp_dir,
+            _ports: ports,
         })
     }
 

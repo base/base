@@ -45,6 +45,8 @@ pub struct GossipDriverConfig {
     pub peer_monitoring: Option<PeerMonitoring>,
     /// The configured libp2p connection limits enforced by the swarm.
     pub connection_limits_config: ConnectionLimitsConfig,
+    /// Whether outbound TCP connections may reuse the listener port.
+    pub reuse_listener_port: bool,
 }
 
 /// A driver for a [`Swarm`] instance.
@@ -76,6 +78,8 @@ pub struct GossipDriver<G: ConnectionGate> {
     /// Next check for obsolete block topics. Kept across polls so busy traffic
     /// or cancellation of `next` cannot indefinitely postpone retirement.
     pub next_topic_retirement: TokioInstant,
+    /// Whether outbound TCP connections may reuse the listener port.
+    pub reuse_listener_port: bool,
 }
 
 impl<G> GossipDriver<G>
@@ -115,6 +119,7 @@ where
             connection_limits_config: config.connection_limits_config,
             ping: Arc::new(Mutex::new(Default::default())),
             next_topic_retirement: TokioInstant::now(),
+            reuse_listener_port: config.reuse_listener_port,
         };
         #[cfg(feature = "metrics")]
         driver.record_block_topic_metrics();
@@ -338,8 +343,12 @@ where
 
         let dial_opts = DialOpts::peer_id(peer_id)
             .addresses(vec![addr.clone()])
-            .condition(PeerCondition::DisconnectedAndNotDialing)
-            .build();
+            .condition(PeerCondition::DisconnectedAndNotDialing);
+        let dial_opts = if self.reuse_listener_port {
+            dial_opts.build()
+        } else {
+            dial_opts.allocate_new_port().build()
+        };
 
         match self.swarm.dial(dial_opts) {
             Ok(_) => {
@@ -1020,6 +1029,48 @@ mod tests {
         let mut driver = test_driver();
 
         assert_eq!(driver.clear_pending_connections(), 0);
+    }
+
+    #[tokio::test]
+    async fn fresh_dial_port_avoids_listener_on_another_interface() {
+        for reuse in [true, false] {
+            let mut builder = GossipDriverBuilder::new(
+                RollupConfig::default(),
+                Address::ZERO,
+                "/ip4/127.0.0.1/tcp/0".parse().unwrap(),
+                Keypair::generate_secp256k1(),
+            );
+            if !reuse {
+                builder = builder.with_reuse_listener_port(false);
+            }
+            let (mut dialer, _signer) = builder.build().unwrap();
+            let mut listen_addr = dialer.start().await.unwrap();
+            let Some(libp2p::multiaddr::Protocol::Tcp(port)) = listen_addr.pop() else {
+                panic!("expected TCP listen address");
+            };
+            // Model a sandbox forwarder: same port, different local IP, no SO_REUSEPORT.
+            let _forwarder = std::net::TcpListener::bind(("127.0.0.2", port)).unwrap();
+            let mut listener = test_driver();
+            let mut peer_addr = listener.start().await.unwrap();
+            peer_addr.push(libp2p::multiaddr::Protocol::P2p(*listener.local_peer_id()));
+            dialer.dial_multiaddr(peer_addr);
+
+            let connected = tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    tokio::select! {
+                        event = dialer.next() => match event.unwrap() {
+                            SwarmEvent::ConnectionEstablished { .. } => break true,
+                            SwarmEvent::OutgoingConnectionError { .. } => break false,
+                            event => { dialer.handle_event(event); }
+                        },
+                        event = listener.next() => { listener.handle_event(event.unwrap()); }
+                    }
+                }
+            })
+            .await
+            .expect("dial must complete");
+            assert_eq!(connected, !reuse, "only fresh-port dialing should avoid the conflict");
+        }
     }
 
     #[tokio::test]
