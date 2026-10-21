@@ -41,6 +41,10 @@ base-proof-zk-utils = { path = "../../utils" }
 
 # OpenVM (must match the cargo-openvm tag)
 openvm = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.2" }
+openvm-ecc-guest = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.2" }
+openvm-algebra-guest = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.2" }
+openvm-keccak256 = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.2", default-features = false }
+openvm-pairing = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.2", default-features = false }
 
 # alloy (must match root Cargo.toml versions)
 alloy-sol-types = { version = "1.6.1", default-features = false }
@@ -65,7 +69,11 @@ panic = "unwind"
 codegen-units = 16
 
 # kzg-rs 0.2.8 depends on `sp1_bls12_381`, which emits SP1 syscalls on
-# `target_os = "zkvm"`. OpenVM uses that same target, so replace it with
-# vanilla bls12_381 under the crate name kzg-rs expects.
+# `target_os = "zkvm"`. OpenVM uses that same target, so replace it with a
+# bls12_381 wrapper that runs MSM and pairings on OpenVM intrinsics.
 [patch.crates-io]
 sp1_bls12_381 = { path = "sp1-bls12-shim" }
+# OpenVM forks that route curve arithmetic to the `ecc` extension, so tx sender
+# recovery and the ecrecover / P256VERIFY precompiles run as intrinsics.
+k256 = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.2" }
+p256 = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.2" }

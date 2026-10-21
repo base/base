@@ -11,7 +11,13 @@ use base_proof_zk_utils::witness::{DefaultWitnessData, WitnessData};
 // std guests use a normal `fn main()`. `openvm::entry!` is a no-op when std is
 // on; `#![no_main]` then leaves RISC-V `_start` with no `main` symbol.
 use openvm::{self as _, io::read_vec};
+use openvm_keccak256 as _;
 use rkyv::rancor::Error;
+
+/// Registers the moduli, complex fields, and curves declared in `openvm.toml`.
+mod init {
+    openvm::init!();
+}
 
 fn main() {
     #[cfg(feature = "tracing-subscriber")]

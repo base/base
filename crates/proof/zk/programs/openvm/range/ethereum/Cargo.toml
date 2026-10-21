@@ -12,6 +12,14 @@ rkyv.workspace = true
 # The default bump allocator never frees, and real blocks exhaust the 512 MiB
 # guest address space.
 openvm = { workspace = true, features = ["std", "heap-embedded-alloc"] }
+# `openvm::init!` expands to moduli, complex, and curve setup from these crates.
+openvm-ecc-guest.workspace = true
+openvm-algebra-guest.workspace = true
+# Declares the BN254 and BLS12-381 moduli that `openvm.toml` enables.
+openvm-pairing = { workspace = true, features = ["bn254", "bls12_381"] }
+# Provides the `native_keccak256` symbol that alloy's `native-keccak` links to.
+openvm-keccak256.workspace = true
+alloy-primitives = { workspace = true, features = ["native-keccak"] }
 
 # base-consensus / base-proof
 # EIP-8130 execution without Tokio (`base-proof/std` pulls Tokio).
