@@ -164,7 +164,10 @@ mod tests {
             assert_eq!(cfg.spec.into_eth_spec(), eth_spec, "Ethereum spec at {timestamp}");
             let amsterdam = eth_spec == SpecId::AMSTERDAM;
             assert_eq!(cfg.enable_amsterdam_eip8037, amsterdam, "state gas gate at {timestamp}");
-            assert_eq!(cfg.enable_amsterdam_eip2780, amsterdam, "intrinsic gas gate at {timestamp}");
+            assert_eq!(
+                cfg.enable_amsterdam_eip2780, amsterdam,
+                "intrinsic gas gate at {timestamp}"
+            );
             assert!(!cfg.amsterdam_eip7708_disabled, "transfer logs must retain upstream default");
             assert_eq!(cfg.tx_gas_limit_cap, Some(MAX_TX_GAS_LIMIT_OSAKA), "retain Azul cap");
             assert_eq!(
@@ -179,8 +182,16 @@ mod tests {
                 "zero and nonzero calldata bytes must use the fork's L1 floor at {timestamp}",
             );
             assert!(!cfg.amsterdam_eip8246_delayed_clear_disabled, "retain upstream clearing");
-            assert_eq!(cfg.max_code_size(), if amsterdam { 65_536 } else { 24_576 }, "L1 code limit");
-            assert_eq!(cfg.max_initcode_size(), if amsterdam { 131_072 } else { 49_152 }, "L1 initcode limit");
+            assert_eq!(
+                cfg.max_code_size(),
+                if amsterdam { 65_536 } else { 24_576 },
+                "L1 code limit"
+            );
+            assert_eq!(
+                cfg.max_initcode_size(),
+                if amsterdam { 131_072 } else { 49_152 },
+                "L1 initcode limit"
+            );
             assert_eq!(
                 cfg.gas_params().transfer_value_cost(),
                 if amsterdam { 11_300 } else { 9_000 },

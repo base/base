@@ -20,14 +20,13 @@ mod utils;
 pub use utils::{BaselineError, Result};
 
 mod rpc;
+/// Shared fork-aware transaction gas estimator for benchmark setup callers.
+pub use rpc::GasEstimator;
 pub use rpc::{
     BaseFeeExt, BatchRpcClient, BatchSendError, BatchSendResult, JSON_RPC_METHOD_NOT_FOUND,
     MAX_BATCH_RPC_SIZE, QueryProvider, RPC_TIMEOUT, RpcProviders, RpcResultExt, SubmitItem,
     TxpoolAdminClient, WalletProvider, create_wallet_provider,
 };
-
-/// Shared fork-aware transaction gas estimator for benchmark setup callers.
-pub use rpc::GasEstimator;
 
 mod metrics;
 pub use metrics::{

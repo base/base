@@ -104,7 +104,7 @@ Pacing still calibrates **receipt gas**, not independent E/S block-budget usage;
 use execution traces and headers to establish regular/state saturation.
 
 The CLZ workload still creates an empty-runtime account; there is no general
-24 KiB/64 KiB deployment workload. Gas budgeting does not change workload semantics.
+`24 KiB`/`64 KiB` deployment workload. Gas budgeting does not change workload semantics.
 
 ## 200ms devnet profile
 

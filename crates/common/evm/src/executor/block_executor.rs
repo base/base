@@ -426,7 +426,9 @@ mod tests {
         EvmEnv, EvmFactory, ToTxEnv, block::BlockExecutorFactory, precompiles::PrecompilesMap,
     };
     use alloy_hardforks::ForkCondition;
-    use alloy_primitives::{Address, Bytes, Sealable, Signature, U256, address, bytes, keccak256, uint};
+    use alloy_primitives::{
+        Address, Bytes, Sealable, Signature, U256, address, bytes, keccak256, uint,
+    };
     use base_common_chains::{BaseUpgradeExt, ChainUpgrades};
     use base_common_consensus::{
         BaseTxEnvelope, Call, Eip8130Constants, Eip8130Signed, Predeploys, TxDeposit, TxEip8130,
@@ -826,16 +828,12 @@ mod tests {
             );
             let tx = Recovered::new_unchecked(
                 BaseTxEnvelope::Legacy(
-                    TxLegacy {
-                        gas_limit: 100_000,
-                        to: target.into(),
-                        ..Default::default()
-                    }
-                    .into_signed(Signature::new(
-                        Default::default(),
-                        Default::default(),
-                        Default::default(),
-                    )),
+                    TxLegacy { gas_limit: 100_000, to: target.into(), ..Default::default() }
+                        .into_signed(Signature::new(
+                            Default::default(),
+                            Default::default(),
+                            Default::default(),
+                        )),
                 ),
                 Address::ZERO,
             );
@@ -846,7 +844,8 @@ mod tests {
             let fee = executor.commit_transaction(output).tx_gas_used();
             // PUSH1 + PUSH0 cost 5. Jovian: 21_000 + 5_000 + 5, minus 4_800 refund.
             // Amsterdam: 15_000 + 12_100 + 5, minus min(11_616, 27_105 / 5) = 5_421.
-            let (expected_regular, expected_fee, expected_header) = if upgrade == BaseUpgrade::Denim {
+            let (expected_regular, expected_fee, expected_header) = if upgrade == BaseUpgrade::Denim
+            {
                 (27_105, 21_684, 27_105)
             } else {
                 (26_005, 21_205, 21_205)
@@ -860,7 +859,10 @@ mod tests {
                 expected_fee,
                 "storage clear receipt retains the exact capped refund"
             );
-            assert_eq!(result.gas_used, expected_header, "fork-appropriate storage clear header gas");
+            assert_eq!(
+                result.gas_used, expected_header,
+                "fork-appropriate storage clear header gas"
+            );
         }
     }
 
@@ -899,11 +901,8 @@ mod tests {
             // Return 64 KiB of zero bytecode; Jovian retains its 24 KiB code-size limit.
             let mut initcode = bytes!("62010000600e5f39620100005ff3").to_vec();
             initcode.resize(14 + 65_536, 0);
-            let deployment = TxLegacy {
-                gas_limit: 115_000_000,
-                input: initcode.into(),
-                ..Default::default()
-            };
+            let deployment =
+                TxLegacy { gas_limit: 115_000_000, input: initcode.into(), ..Default::default() };
             let deployment = Recovered::new_unchecked(
                 BaseTxEnvelope::Legacy(deployment.into_signed(Signature::new(
                     Default::default(),
@@ -989,8 +988,7 @@ mod tests {
             );
             if amsterdam {
                 assert_eq!(
-                    result.gas_used,
-                    100_453_680,
+                    result.gas_used, 100_453_680,
                     "header is max(4_219_200 + 12_000, 100_453_680 + 0)"
                 );
             } else {
@@ -1264,6 +1262,10 @@ mod tests {
         executor.commit_transaction(result);
         let (_, block) = executor.finish().expect("finish native transaction block");
         assert_eq!(block.gas_used, regular.max(state), "native tx reports count in block gas");
-        assert_eq!(block.receipts[0].cumulative_gas_used(), charged, "native receipt uses charged gas");
+        assert_eq!(
+            block.receipts[0].cumulative_gas_used(),
+            charged,
+            "native receipt uses charged gas"
+        );
     }
 }
