@@ -63,10 +63,11 @@ async fn can_sync() -> eyre::Result<()> {
     // By returning Valid here, the consensus node will finally return a finalized hash
     let _ = third_node.submit_payload(side_payload_chain[0].clone()).await;
 
-    // It will issue a pipeline reorg to 88a, and then make 89b canonical AND finalized.
+    // Reorgs the third node to 88a, then makes 89b canonical AND finalized.
     third_node.update_forkchoice(side_chain[0], side_chain[0]).await?;
 
-    // Make sure we have the updated block
+    // Make sure we have the updated block. The Headers checkpoint is not asserted: persistence
+    // unwinds it to 88 and then advances it with 89b, so polling for 88 races.
     third_node
         .wait_block(
             side_payload_chain[0].block().number,
