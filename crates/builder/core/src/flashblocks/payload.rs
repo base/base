@@ -270,6 +270,9 @@ where
         let span = if config.parent_header.number.is_multiple_of(self.config.sampling_ratio) {
             span!(parent: &parent_span, Level::INFO, "build_payload", block_number)
         } else {
+            // Release the engine-request span handle so unsampled builds do not keep it open
+            // (and inflate its exported duration) for the whole build.
+            drop(parent_span);
             tracing::Span::none()
         };
         let _entered = span.enter();
