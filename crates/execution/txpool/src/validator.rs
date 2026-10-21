@@ -1714,6 +1714,11 @@ where
     /// authenticator or key signed, and whether the signature verifies) rather
     /// than by the transaction body or account state. Those fields are not
     /// covered by the transaction hash.
+    ///
+    /// [`TxAuthError::SenderRecovery`] is excluded: it only arises on the EOA
+    /// path, where an unrecoverable `sender_auth` makes the transaction hash
+    /// fall back to the encoded hash, so the rejection identifies these exact
+    /// bytes and stays a bad transaction.
     const fn is_auth_derived(error: &TxAuthError) -> bool {
         matches!(
             error,
@@ -1724,8 +1729,7 @@ where
                     | AuthorizeError::DefaultEoaRevoked { .. }
                     | AuthorizeError::ActorExpired { .. }
                     | AuthorizeError::NestedSignatureScope { .. }
-            ) | TxAuthError::SenderRecovery
-                | TxAuthError::PayerRecovery
+            ) | TxAuthError::PayerRecovery
                 | TxAuthError::UnexpectedPayerAuth
                 | TxAuthError::Scope { .. }
                 | TxAuthError::DelegationUnauthorized
@@ -1913,7 +1917,8 @@ where
             return Err(Self::eip8130_auth_error("encoded size exceeds max_tx_input_bytes"));
         }
         // Cheap shape checks run before the fork gate and signature recovery.
-        Eip8130Structure::validate(signed).map_err(Self::map_structural_error)?;
+        Eip8130Structure::validate(signed)
+            .map_err(|error| Self::map_structural_error(signed, error))?;
 
         // Read the head-block clock up front so a concurrent `on_new_head_block`
         // cannot move it between the fork gate and the expiry check.
@@ -1961,10 +1966,20 @@ where
     /// the call phase cap, an authentication error for a malformed
     /// `sender_auth` or `payer_auth` (not covered by the transaction hash), and
     /// an unsupported transaction type for the other malformed shapes.
-    fn map_structural_error(error: Eip8130StructuralError) -> InvalidPoolTransactionError {
+    ///
+    /// A malformed EOA-path `sender_auth` is the exception: it cannot recover a
+    /// sender, so the transaction hash falls back to the encoded hash and
+    /// identifies these exact bytes. That rejection stays a bad transaction.
+    fn map_structural_error(
+        signed: &Eip8130Signed,
+        error: Eip8130StructuralError,
+    ) -> InvalidPoolTransactionError {
         match error {
             Eip8130StructuralError::TooManyCallPhases => {
                 Self::eip8130_error("call phase count exceeds maximum")
+            }
+            Eip8130StructuralError::MalformedSenderAuth if signed.explicit_sender().is_none() => {
+                Self::eip8130_error("sender_auth is malformed")
             }
             Eip8130StructuralError::MalformedSenderAuth => {
                 Self::eip8130_auth_error("sender_auth is malformed")
@@ -2525,11 +2540,13 @@ mod tests {
         }
     }
 
-    /// Maps a shared structural check to the pool's rejection, as admission does.
+    /// Runs a shared structural check on `signed` and maps it to the pool's
+    /// rejection, as admission does.
     fn structural(
-        result: Result<(), Eip8130StructuralError>,
+        signed: &Eip8130Signed,
+        check: fn(&Eip8130Signed) -> Result<(), Eip8130StructuralError>,
     ) -> Result<(), InvalidPoolTransactionError> {
-        result.map_err(TestValidator::map_structural_error)
+        check(signed).map_err(|error| TestValidator::map_structural_error(signed, error))
     }
 
     /// Helper: assert structural validation returns `Invalid` with `TxTypeNotSupported`.
@@ -2609,6 +2626,36 @@ mod tests {
             }
             other => panic!("expected Eip8130Authentication, got {other:?}"),
         }
+    }
+
+    /// Helper: assert validation failed with [`BaseTxPoolError::Eip8130Validation`]
+    /// and `expected` as the reason, and that the error marks the transaction
+    /// hash as bad.
+    #[track_caller]
+    fn assert_bad_validation_error<T: core::fmt::Debug>(
+        result: Result<T, InvalidPoolTransactionError>,
+        expected: &'static str,
+    ) {
+        match result {
+            Err(InvalidPoolTransactionError::Other(error)) => {
+                assert!(error.is_bad_transaction());
+                match error.as_any().downcast_ref::<BaseTxPoolError>() {
+                    Some(BaseTxPoolError::Eip8130Validation { reason }) => {
+                        assert_eq!(*reason, expected);
+                    }
+                    other => panic!("expected Eip8130Validation, got {other:?}"),
+                }
+            }
+            other => panic!("expected Eip8130Validation, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn eoa_sender_recovery_failure_is_bad_transaction() {
+        assert_bad_validation_error::<()>(
+            Err(TestValidator::map_tx_auth_error(TxAuthError::SenderRecovery)),
+            "EOA sender recovery failed",
+        );
     }
 
     #[track_caller]
@@ -2966,8 +3013,8 @@ mod tests {
         // EOA path requires exactly 65 bytes; anything else is rejected.
         let tx = minimal_valid_eoa_tx();
         let signed = Eip8130Signed::new(tx, Bytes::from_static(&[0u8; 32]), Bytes::new());
-        assert_auth_error(
-            structural(Eip8130Structure::validate_sender_auth(&signed)),
+        assert_bad_validation_error(
+            structural(&signed, Eip8130Structure::validate_sender_auth),
             "sender_auth is malformed",
         );
     }
@@ -2976,8 +3023,8 @@ mod tests {
     fn rejects_eip8130_with_empty_sender_auth() {
         let tx = minimal_valid_eoa_tx();
         let signed = Eip8130Signed::new(tx, Bytes::new(), Bytes::new());
-        assert_auth_error(
-            structural(Eip8130Structure::validate_sender_auth(&signed)),
+        assert_bad_validation_error(
+            structural(&signed, Eip8130Structure::validate_sender_auth),
             "sender_auth is malformed",
         );
     }
@@ -2991,7 +3038,7 @@ mod tests {
         let auth = Bytes::from(Address::ZERO.to_vec());
         let signed = Eip8130Signed::new(tx, auth, Bytes::new());
         assert_auth_error(
-            structural(Eip8130Structure::validate_sender_auth(&signed)),
+            structural(&signed, Eip8130Structure::validate_sender_auth),
             "sender_auth is malformed",
         );
     }
@@ -3001,7 +3048,7 @@ mod tests {
         let tx = TxEip8130 { sender: Some(Address::repeat_byte(0xaa)), ..minimal_valid_eoa_tx() };
         let signed = Eip8130Signed::new(tx, Bytes::from_static(&[0u8; 5]), Bytes::new());
         assert_auth_error(
-            structural(Eip8130Structure::validate_sender_auth(&signed)),
+            structural(&signed, Eip8130Structure::validate_sender_auth),
             "sender_auth is malformed",
         );
     }
@@ -3011,7 +3058,7 @@ mod tests {
         let tx = TxEip8130 { payer: Some(Address::repeat_byte(0x11)), ..minimal_valid_eoa_tx() };
         let signed = Eip8130Signed::new(tx, Bytes::from_static(&[0u8; 65]), Bytes::new());
         assert_auth_error(
-            structural(Eip8130Structure::validate_payer_auth(&signed)),
+            structural(&signed, Eip8130Structure::validate_payer_auth),
             "payer_auth is malformed",
         );
     }
@@ -3022,7 +3069,7 @@ mod tests {
         let signed =
             Eip8130Signed::new(tx, Bytes::from_static(&[0u8; 65]), Bytes::from_static(&[0u8; 20]));
         assert_auth_error(
-            structural(Eip8130Structure::validate_payer_auth(&signed)),
+            structural(&signed, Eip8130Structure::validate_payer_auth),
             "payer_auth is malformed",
         );
     }
@@ -3036,7 +3083,7 @@ mod tests {
             Bytes::from(Address::ZERO.to_vec()),
         );
         assert_auth_error(
-            structural(Eip8130Structure::validate_payer_auth(&signed)),
+            structural(&signed, Eip8130Structure::validate_payer_auth),
             "payer_auth is malformed",
         );
     }
@@ -3062,7 +3109,7 @@ mod tests {
                 InvalidTransactionError::TxTypeNotSupported
             ))
         ));
-        assert!(structural(Eip8130Structure::validate_sender_auth(&signed)).is_ok());
+        assert!(structural(&signed, Eip8130Structure::validate_sender_auth).is_ok());
     }
 
     /// Returns an authenticator address comfortably above the `K1_AUTHENTICATOR`
@@ -3116,9 +3163,10 @@ mod tests {
             ],
             ..minimal_valid_eoa_tx()
         };
-        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
+        assert_unsupported(structural(
             &sign_eoa_eip8130(tx),
-        )));
+            Eip8130Structure::validate_account_changes,
+        ));
     }
 
     #[test]
@@ -3130,9 +3178,10 @@ mod tests {
             ],
             ..minimal_valid_eoa_tx()
         };
-        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
+        assert_unsupported(structural(
             &sign_eoa_eip8130(tx),
-        )));
+            Eip8130Structure::validate_account_changes,
+        ));
     }
 
     #[test]
@@ -3143,9 +3192,10 @@ mod tests {
             account_changes: vec![AccountChange::Create(entry)],
             ..minimal_valid_eoa_tx()
         };
-        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
+        assert_unsupported(structural(
             &sign_eoa_eip8130(tx),
-        )));
+            Eip8130Structure::validate_account_changes,
+        ));
     }
 
     #[test]
@@ -3156,9 +3206,10 @@ mod tests {
             account_changes: vec![AccountChange::Create(entry)],
             ..minimal_valid_eoa_tx()
         };
-        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
+        assert_unsupported(structural(
             &sign_eoa_eip8130(tx),
-        )));
+            Eip8130Structure::validate_account_changes,
+        ));
     }
 
     #[test]
@@ -3169,9 +3220,10 @@ mod tests {
             account_changes: vec![AccountChange::Create(entry)],
             ..minimal_valid_eoa_tx()
         };
-        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
+        assert_unsupported(structural(
             &sign_eoa_eip8130(tx),
-        )));
+            Eip8130Structure::validate_account_changes,
+        ));
     }
 
     #[test]
@@ -3182,9 +3234,10 @@ mod tests {
             account_changes: vec![AccountChange::Create(entry)],
             ..minimal_valid_eoa_tx()
         };
-        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
+        assert_unsupported(structural(
             &sign_eoa_eip8130(tx),
-        )));
+            Eip8130Structure::validate_account_changes,
+        ));
     }
 
     #[test]
@@ -3198,7 +3251,7 @@ mod tests {
             ..minimal_valid_eoa_tx()
         };
         assert!(
-            structural(Eip8130Structure::validate_account_changes(&sign_eoa_eip8130(tx))).is_ok()
+            structural(&sign_eoa_eip8130(tx), Eip8130Structure::validate_account_changes).is_ok()
         );
     }
 
@@ -3212,9 +3265,10 @@ mod tests {
             account_changes: vec![AccountChange::Create(entry)],
             ..minimal_valid_eoa_tx()
         };
-        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
+        assert_unsupported(structural(
             &sign_eoa_eip8130(tx),
-        )));
+            Eip8130Structure::validate_account_changes,
+        ));
     }
 
     #[test]
@@ -3227,7 +3281,7 @@ mod tests {
             ..minimal_valid_eoa_tx()
         };
         assert!(
-            structural(Eip8130Structure::validate_account_changes(&sign_eoa_eip8130(tx))).is_ok()
+            structural(&sign_eoa_eip8130(tx), Eip8130Structure::validate_account_changes).is_ok()
         );
     }
 
@@ -3242,9 +3296,10 @@ mod tests {
             account_changes: vec![AccountChange::Create(entry)],
             ..minimal_valid_eoa_tx()
         };
-        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
+        assert_unsupported(structural(
             &sign_eoa_eip8130(tx),
-        )));
+            Eip8130Structure::validate_account_changes,
+        ));
     }
 
     #[test]
@@ -3259,7 +3314,7 @@ mod tests {
             ..minimal_valid_eoa_tx()
         };
         assert!(
-            structural(Eip8130Structure::validate_account_changes(&sign_eoa_eip8130(tx))).is_ok()
+            structural(&sign_eoa_eip8130(tx), Eip8130Structure::validate_account_changes).is_ok()
         );
     }
 
@@ -3283,9 +3338,10 @@ mod tests {
             account_changes: vec![AccountChange::ConfigChange(cfg)],
             ..minimal_valid_eoa_tx()
         };
-        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
+        assert_unsupported(structural(
             &sign_eoa_eip8130(tx),
-        )));
+            Eip8130Structure::validate_account_changes,
+        ));
     }
 
     #[test]
@@ -3304,7 +3360,7 @@ mod tests {
             ..minimal_valid_eoa_tx()
         };
         assert!(
-            structural(Eip8130Structure::validate_account_changes(&sign_eoa_eip8130(tx))).is_ok()
+            structural(&sign_eoa_eip8130(tx), Eip8130Structure::validate_account_changes).is_ok()
         );
     }
 
@@ -3322,9 +3378,10 @@ mod tests {
             account_changes: vec![AccountChange::ConfigChange(cfg)],
             ..minimal_valid_eoa_tx()
         };
-        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
+        assert_unsupported(structural(
             &sign_eoa_eip8130(tx),
-        )));
+            Eip8130Structure::validate_account_changes,
+        ));
     }
 
     #[test]
@@ -3339,9 +3396,10 @@ mod tests {
             account_changes: vec![AccountChange::ConfigChange(cfg)],
             ..minimal_valid_eoa_tx()
         };
-        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
+        assert_unsupported(structural(
             &sign_eoa_eip8130(tx),
-        )));
+            Eip8130Structure::validate_account_changes,
+        ));
     }
 
     #[test]
@@ -3354,9 +3412,10 @@ mod tests {
             account_changes: vec![AccountChange::ConfigChange(cfg)],
             ..minimal_valid_eoa_tx()
         };
-        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
+        assert_unsupported(structural(
             &sign_eoa_eip8130(tx),
-        )));
+            Eip8130Structure::validate_account_changes,
+        ));
     }
 
     // Repeated `actor_id` targets within one batch are admitted: Keystore and the
@@ -3378,7 +3437,7 @@ mod tests {
             ..minimal_valid_eoa_tx()
         };
         assert!(
-            structural(Eip8130Structure::validate_account_changes(&sign_eoa_eip8130(tx))).is_ok()
+            structural(&sign_eoa_eip8130(tx), Eip8130Structure::validate_account_changes).is_ok()
         );
     }
 
@@ -3395,9 +3454,10 @@ mod tests {
             account_changes: vec![AccountChange::ConfigChange(cfg)],
             ..minimal_valid_eoa_tx()
         };
-        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
+        assert_unsupported(structural(
             &sign_eoa_eip8130(tx),
-        )));
+            Eip8130Structure::validate_account_changes,
+        ));
     }
 
     #[test]
@@ -3412,7 +3472,7 @@ mod tests {
             ..minimal_valid_eoa_tx()
         };
         assert!(
-            structural(Eip8130Structure::validate_account_changes(&sign_eoa_eip8130(tx))).is_ok()
+            structural(&sign_eoa_eip8130(tx), Eip8130Structure::validate_account_changes).is_ok()
         );
     }
 
@@ -3426,9 +3486,10 @@ mod tests {
             account_changes: vec![AccountChange::ConfigChange(cfg)],
             ..minimal_valid_eoa_tx()
         };
-        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
+        assert_unsupported(structural(
             &sign_eoa_eip8130(tx),
-        )));
+            Eip8130Structure::validate_account_changes,
+        ));
     }
 
     // A `RevokeActor` op carries only its 32-byte target and names no
@@ -3445,7 +3506,7 @@ mod tests {
             ..minimal_valid_eoa_tx()
         };
         assert!(
-            structural(Eip8130Structure::validate_account_changes(&sign_eoa_eip8130(tx))).is_ok()
+            structural(&sign_eoa_eip8130(tx), Eip8130Structure::validate_account_changes).is_ok()
         );
     }
 
@@ -3466,9 +3527,10 @@ mod tests {
             account_changes: vec![AccountChange::ConfigChange(cfg)],
             ..minimal_valid_eoa_tx()
         };
-        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
+        assert_unsupported(structural(
             &sign_eoa_eip8130(tx),
-        )));
+            Eip8130Structure::validate_account_changes,
+        ));
     }
 
     // The authenticator word (`payload[32..64]`) is an ABI-encoded `address`;
@@ -3485,9 +3547,10 @@ mod tests {
             account_changes: vec![AccountChange::ConfigChange(cfg)],
             ..minimal_valid_eoa_tx()
         };
-        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
+        assert_unsupported(structural(
             &sign_eoa_eip8130(tx),
-        )));
+            Eip8130Structure::validate_account_changes,
+        ));
     }
 
     // A batch may target the same `actor_id` across mixed `Authorize`/`Revoke`
@@ -3508,7 +3571,7 @@ mod tests {
             ..minimal_valid_eoa_tx()
         };
         assert!(
-            structural(Eip8130Structure::validate_account_changes(&sign_eoa_eip8130(tx))).is_ok()
+            structural(&sign_eoa_eip8130(tx), Eip8130Structure::validate_account_changes).is_ok()
         );
     }
 
@@ -3522,9 +3585,10 @@ mod tests {
         let account_changes =
             (0..count).map(|_| AccountChange::ConfigChange(make_valid_config_change())).collect();
         let tx = TxEip8130 { account_changes, ..minimal_valid_eoa_tx() };
-        assert_unsupported(structural(Eip8130Structure::validate_account_change_entries(
+        assert_unsupported(structural(
             &sign_eoa_eip8130(tx),
-        )));
+            Eip8130Structure::validate_account_change_entries,
+        ));
     }
 
     #[test]
@@ -3537,7 +3601,7 @@ mod tests {
             (0..count).map(|_| AccountChange::ConfigChange(make_valid_config_change())).collect();
         let tx = TxEip8130 { account_changes, ..minimal_valid_eoa_tx() };
         assert!(
-            structural(Eip8130Structure::validate_account_change_entries(&sign_eoa_eip8130(tx)))
+            structural(&sign_eoa_eip8130(tx), Eip8130Structure::validate_account_change_entries)
                 .is_ok()
         );
     }
@@ -3549,7 +3613,7 @@ mod tests {
             (0..count).map(|_| AccountChange::ConfigChange(make_valid_config_change())).collect();
         let tx = TxEip8130 { account_changes, ..minimal_valid_eoa_tx() };
         assert!(
-            structural(Eip8130Structure::validate_account_changes(&sign_eoa_eip8130(tx))).is_ok()
+            structural(&sign_eoa_eip8130(tx), Eip8130Structure::validate_account_changes).is_ok()
         );
     }
 
@@ -3559,9 +3623,10 @@ mod tests {
         let account_changes =
             (0..count).map(|_| AccountChange::ConfigChange(make_valid_config_change())).collect();
         let tx = TxEip8130 { account_changes, ..minimal_valid_eoa_tx() };
-        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
+        assert_unsupported(structural(
             &sign_eoa_eip8130(tx),
-        )));
+            Eip8130Structure::validate_account_changes,
+        ));
     }
 
     #[test]
@@ -3573,9 +3638,10 @@ mod tests {
             ],
             ..minimal_valid_eoa_tx()
         };
-        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
+        assert_unsupported(structural(
             &sign_eoa_eip8130(tx),
-        )));
+            Eip8130Structure::validate_account_changes,
+        ));
     }
 
     #[test]
@@ -3589,9 +3655,10 @@ mod tests {
             AccountChange::Delegation(Delegation { target: Address::repeat_byte(0x55) }),
         ];
         let tx = TxEip8130 { account_changes, ..minimal_valid_eoa_tx() };
-        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
+        assert_unsupported(structural(
             &sign_eoa_eip8130(tx),
-        )));
+            Eip8130Structure::validate_account_changes,
+        ));
     }
 
     #[test]
@@ -3604,9 +3671,10 @@ mod tests {
             AccountChange::Delegation(Delegation { target: Address::repeat_byte(0x55) }),
         ];
         let tx = TxEip8130 { account_changes, ..minimal_valid_eoa_tx() };
-        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
+        assert_unsupported(structural(
             &sign_eoa_eip8130(tx),
-        )));
+            Eip8130Structure::validate_account_changes,
+        ));
     }
 
     /// L1 attribute deposit calldata that activates Isthmus and seeds a non-zero
