@@ -43,16 +43,23 @@ mod tests {
     /// Both published profiles must map to native payloads with their exact transaction weights.
     #[test]
     fn eip8430_profiles_parse_and_generate_native_requests() {
-        for (yaml, weights) in [
-            (include_str!("../../../examples/eip8430-transfer.yaml"), vec![100]),
-            (include_str!("../../../examples/mainnet-mix-mainnet-snapshot.yaml"), vec![41, 75, 585, 150, 149]),
+        for (yaml, weights, native_index) in [
+            (include_str!("../../../examples/eip8430-transfer.yaml"), vec![100], 0),
+            (include_str!("../../../examples/mainnet-mix-mainnet-snapshot.yaml"), vec![21, 20, 75, 585, 150, 149], 1),
         ] {
             let config: TestConfig = serde_yaml::from_str(yaml).expect("native profile must parse");
             let config = config.to_load_config(None).expect("native profile must convert");
             assert_eq!(config.transactions.iter().map(|tx| tx.weight).collect::<Vec<_>>(), weights, "profile must preserve exact transaction weights");
-            assert!(matches!(config.transactions[0].tx_type, TxType::Eip8430Transfer), "first workload must select native transfers");
+            assert!(matches!(config.transactions[native_index].tx_type, TxType::Eip8430Transfer), "native workload must select EIP-8430 transfers");
+            if native_index == 1 {
+                assert!(matches!(config.transactions[0].tx_type, TxType::Transfer), "mainnet mix must retain regular ETH transfers");
+                let regular = WorkloadGenerator::from_tx_configs(
+                    crate::config::WorkloadConfig::new("test"), &config.transactions[..1], None,
+                ).expect("regular transfer payload must install");
+                assert_eq!(regular.payload_names(), vec!["transfer"], "regular ETH transfers must retain their original payload");
+            }
             let generator = WorkloadGenerator::from_tx_configs(
-                crate::config::WorkloadConfig::new("test"), &config.transactions[..1], None,
+                crate::config::WorkloadConfig::new("test"), &config.transactions[native_index..=native_index], None,
             ).expect("native payload must install");
             assert_eq!(generator.payload_names(), vec!["eip8430_transfer"], "native config must map to native payload");
         }
