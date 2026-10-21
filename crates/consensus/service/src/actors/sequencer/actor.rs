@@ -238,36 +238,41 @@ where
         loop {
             let engine_client = Arc::clone(&self.engine_client);
             let shadow_cycle_coordinated = self.is_shadow_sequencer();
-            select! {
-                biased;
-                _ = self.cancellation_token.cancelled() => return Ok(()),
-                Some(query) = self.admin_api_rx.recv() => {
-                    let was_active = self.is_active;
-                    self.handle_admin_query(next_payload, query).await;
-                    if !was_active && self.is_active && !shadow_cycle_coordinated {
-                        return Ok(());
-                    }
+            let reset = async {
+                if shadow_cycle_coordinated {
+                    engine_client
+                        .reset_engine_forkchoice_coordinated(ResetReason::ShadowCycle)
+                        .await
+                } else {
+                    engine_client.reset_engine_forkchoice(ResetReason::SequencerStartup).await
                 }
-                result = async {
-                    if shadow_cycle_coordinated {
-                        engine_client
-                            .reset_engine_forkchoice_coordinated(ResetReason::ShadowCycle)
-                            .await
-                    } else {
-                        engine_client
-                            .reset_engine_forkchoice(ResetReason::SequencerStartup)
-                            .await
+            };
+            // Once queued, the engine reset outlives this future. Keep its response receiver
+            // across admin queries so they cannot discard completion and trigger another reset.
+            tokio::pin!(reset);
+            let result = loop {
+                select! {
+                    biased;
+                    _ = self.cancellation_token.cancelled() => return Ok(()),
+                    Some(query) = self.admin_api_rx.recv() => {
+                        let was_active = self.is_active;
+                        self.handle_admin_query(next_payload, query).await;
+                        if !was_active && self.is_active && !shadow_cycle_coordinated {
+                            return Ok(());
+                        }
                     }
-                } => match result {
-                    Ok(()) => return Ok(()),
-                    Err(EngineClientError::ELSyncing) => {
-                        info!(target: "sequencer", "EL sync or canonical catch-up in progress; deferring initial engine reset");
-                    }
-                    Err(err) => {
-                        error!(target: "sequencer", error = ?err, "Failed to send reset request to engine");
-                        return Err(err.into());
-                    }
-                },
+                    result = &mut reset => break result,
+                }
+            };
+            match result {
+                Ok(()) => return Ok(()),
+                Err(EngineClientError::ELSyncing) => {
+                    info!(target: "sequencer", "EL sync or canonical catch-up in progress; deferring initial engine reset");
+                }
+                Err(err) => {
+                    error!(target: "sequencer", error = ?err, "Failed to send reset request to engine");
+                    return Err(err.into());
+                }
             }
             // Wait one block time before retrying the reset, but service admin queries
             // and honour cancellation throughout the backoff window.
