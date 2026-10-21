@@ -3,11 +3,18 @@ name = "sp1_bls12_381"
 version = "0.8.0-sp1-6.0.0"
 edition = "2021"
 publish = false
-description = "Vanilla bls12_381 re-export so kzg-rs does not pull SP1 syscalls."
+description = "bls12_381 wrapper so kzg-rs uses OpenVM intrinsics instead of SP1 syscalls."
 
 [dependencies]
 subtle = { version = "2.6", default-features = false }
 bls12_381 = { version = "0.8.0", default-features = false, features = ["groups", "pairings", "alloc"] }
+
+# kzg-rs's build script also links this crate on the host, where the OpenVM
+# pairing hint is unavailable, so the accelerated path is guest-only.
+[target.'cfg(target_os = "zkvm")'.dependencies]
+openvm-ecc-guest = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.2" }
+openvm-algebra-guest = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.2" }
+openvm-pairing = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.2", default-features = false, features = ["bls12_381"] }
 
 [features]
 default = []
