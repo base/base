@@ -28,6 +28,9 @@ pub use transport::WithdrawalRpcTransport;
 mod journal;
 pub use journal::BroadcastJournal;
 
+mod submission;
+pub use submission::{MaybeIncluded, SubmitError, WithdrawalSender};
+
 mod signer;
 pub use signer::{WithdrawalSigner, WithdrawalSignerError};
 
