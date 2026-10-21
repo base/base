@@ -679,7 +679,6 @@ mod tests {
     use rstest::{fixture, rstest};
 
     use super::{DOMAIN_TYPEHASH, VERSION};
-
     use crate::{
         B20PolicyType, B20StablecoinToken, B20TokenRole, FakePolicyAccounting, IB20,
         InMemoryTokenAccounting, PermitArgs, PolicyRegistryStorage, PolicyVersion, Stablecoin,
