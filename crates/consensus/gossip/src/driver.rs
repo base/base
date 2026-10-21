@@ -302,10 +302,12 @@ where
         cleared
     }
 
-    /// Dials the given [`Enr`] from discovery, unless the swarm already has
-    /// [`PeerTargets::low`] peers.
+    /// Dials the given [`Enr`] from discovery, unless connected peers plus pending outbound dials
+    /// already reach [`PeerTargets::low`].
     pub fn dial(&mut self, enr: Enr) {
-        if self.connected_peers() >= self.peer_targets.low as usize {
+        let pending_outgoing =
+            self.swarm.network_info().connection_counters().num_pending_outgoing() as usize;
+        if self.connected_peers() + pending_outgoing >= self.peer_targets.low as usize {
             trace!(target: "gossip", low = self.peer_targets.low, "At low-tide peer count, not dialing discovered peer");
             return;
         }
