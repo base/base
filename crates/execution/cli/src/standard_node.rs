@@ -375,7 +375,7 @@ pub struct RpcStandardNodeArgs {
     pub validity_max_expiry_secs: u64,
 
     /// Serve `payer_getTerms` and `payer_sendTransaction`, forwarding them to the sequencer URL,
-    /// whose proxyd routes them to the payer.
+    /// which routes them to the payer.
     ///
     /// Off by default, so a node relays wallet payer traffic only when its operator opts in.
     /// Setting `--rollup.payer` also enables them.

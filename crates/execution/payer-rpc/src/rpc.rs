@@ -15,9 +15,7 @@ use reth_storage_api::BlockReaderIdExt;
 use serde_json::Value;
 use tracing::{debug, warn};
 
-use crate::{
-    PayerChainState, PayerRejection, PayerRequestFilter, PayerTransaction, ProxydError, TermsCache,
-};
+use crate::{PayerChainState, PayerRejection, PayerRequestFilter, PayerTransaction, TermsCache};
 
 /// Rejection returned when `payer_*` is called before Everest activates EIP-8430.
 pub const PAYER_PRE_EVEREST_RPC_ERROR: &str = "payer methods require EIP-8430, which is gated \
@@ -139,7 +137,7 @@ where
     /// answer. The payer's own errors pass through unchanged.
     async fn forward(&self, method: &'static str, request: &Value) -> RpcResult<Value> {
         self.client.request(method, (request,)).await.map_err(|error| {
-            if ProxydError::is_unanswered(&error) {
+            if PayerRejection::is_unanswered(&error) {
                 debug!(error = %error, method, "payer did not answer");
                 return PayerRejection::temporarily_unavailable(PAYER_UNREACHABLE_RPC_ERROR);
             }
@@ -180,7 +178,7 @@ where
                 Ok(TermsCache::order_for(request, response))
             }
             Err(error) => {
-                if !ProxydError::is_unanswered(&error) {
+                if !PayerRejection::is_unanswered(&error) {
                     cache.clear();
                     return Err(error.into());
                 }
@@ -412,13 +410,13 @@ mod tests {
         }));
     }
 
-    /// Answers as proxyd does when no payer backend is healthy.
-    fn proxyd_payer_down(then: httpmock::Then) {
+    /// Answers as a gateway such as proxyd does when no payer backend is healthy.
+    fn gateway_payer_down(then: httpmock::Then) {
         then.status(503).header("content-type", "application/json").json_body(json!({
             "jsonrpc": "2.0",
             "id": 0,
             "error": {
-                "code": ProxydError::NO_HEALTHY_BACKEND,
+                "code": -32011,
                 "message": "no backend is currently healthy to serve traffic"
             }
         }));
@@ -488,7 +486,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn serves_cached_terms_while_proxyd_reports_the_payer_down() {
+    async fn serves_cached_terms_while_a_gateway_reports_the_payer_down() {
         let sequencer = MockServer::start();
         let mut terms = sequencer.mock(|when, then| {
             when.method(POST).body_includes("payer_getTerms");
@@ -500,7 +498,7 @@ mod tests {
         terms.delete();
         let payer_down = sequencer.mock(|when, then| {
             when.method(POST).body_includes("payer_getTerms");
-            proxyd_payer_down(then);
+            gateway_payer_down(then);
         });
 
         assert_terms(api.get_terms(terms_request(1)).await.unwrap());
@@ -512,7 +510,7 @@ mod tests {
         let sequencer = MockServer::start();
         sequencer.mock(|when, then| {
             when.method(POST).body_includes("payer_getTerms");
-            proxyd_payer_down(then);
+            gateway_payer_down(then);
         });
 
         for cache_get_terms in [false, true] {
@@ -759,7 +757,7 @@ mod tests {
         let sequencer = MockServer::start();
         let mut payer_down = sequencer.mock(|when, then| {
             when.method(POST).body_includes("payer_sendTransaction");
-            proxyd_payer_down(then);
+            gateway_payer_down(then);
         });
         let api = PayerApiImpl::new(everest_provider(), client(&sequencer), passing_state(), false);
         let error = api.send_transaction(sponsored_request()).await.expect_err("payer down");

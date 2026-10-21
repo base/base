@@ -3,6 +3,7 @@
 use std::str::FromStr;
 
 use alloy_primitives::{Address, hex};
+use base_common_consensus::Eip8130Constants;
 use serde_json::{Map, Value};
 use thiserror::Error;
 
@@ -17,9 +18,6 @@ impl PayerRequestFilter {
     /// Maximum JSON size of a payer request, in bytes: a hex-encoded
     /// [`Self::MAX_TRANSACTION_BYTES`] payload plus 32 kibibytes for `context` and framing.
     pub const MAX_REQUEST_BYTES: usize = 2 * Self::MAX_TRANSACTION_BYTES + 32 * 1024;
-
-    /// Maximum number of `calls` or `frames` entries.
-    pub const MAX_INTENT_LEN: usize = 64;
 
     /// Checks a `payer_getTerms` body against `chain_id`.
     pub fn validate_get_terms(request: &Value, chain_id: u64) -> Result<(), PayerRequestError> {
@@ -92,9 +90,6 @@ impl PayerRequestFilter {
     }
 
     fn validate_calls(calls: &[Value]) -> Result<(), PayerRequestError> {
-        if calls.len() > Self::MAX_INTENT_LEN {
-            return Err(PayerRequestError::InvalidCalls);
-        }
         if calls.iter().any(|call| call.get("to").and_then(Value::as_str).is_none()) {
             return Err(PayerRequestError::InvalidCalls);
         }
@@ -102,7 +97,7 @@ impl PayerRequestFilter {
     }
 
     const fn validate_frames(frames: &[Value]) -> Result<(), PayerRequestError> {
-        if frames.is_empty() || frames.len() > Self::MAX_INTENT_LEN {
+        if frames.is_empty() || frames.len() > Eip8130Constants::MAX_CALL_PHASES_PER_TX {
             return Err(PayerRequestError::InvalidFrames);
         }
         Ok(())
@@ -135,10 +130,10 @@ pub enum PayerRequestError {
     /// `payer_getTerms` carries both `calls` and `frames`, or one of them is not a list.
     #[error("payer_getTerms accepts at most one of calls or frames, as a list")]
     IntentShape,
-    /// `calls` is too long or a call is missing `to`.
+    /// A call in `calls` is missing `to`.
     #[error("payer_getTerms calls must be a list of call objects")]
     InvalidCalls,
-    /// `frames` is empty or too long.
+    /// `frames` is empty or has more entries than an EIP-8130 transaction has call phases.
     #[error("payer_getTerms frames must be a non-empty list")]
     InvalidFrames,
     /// `transaction` is missing, empty, or larger than the size cap.
@@ -197,6 +192,20 @@ mod tests {
         let mut no_calls = terms();
         no_calls["calls"] = json!([]);
         assert!(PayerRequestFilter::validate_get_terms(&no_calls, CHAIN_ID).is_ok());
+    }
+
+    #[test]
+    fn get_terms_accepts_frames_up_to_the_call_phase_limit() {
+        let mut request = terms();
+        request.as_object_mut().unwrap().remove("calls");
+        request["frames"] = json!(vec![json!({}); Eip8130Constants::MAX_CALL_PHASES_PER_TX]);
+        assert!(PayerRequestFilter::validate_get_terms(&request, CHAIN_ID).is_ok());
+
+        request["frames"] = json!(vec![json!({}); Eip8130Constants::MAX_CALL_PHASES_PER_TX + 1]);
+        assert_eq!(
+            PayerRequestFilter::validate_get_terms(&request, CHAIN_ID),
+            Err(PayerRequestError::InvalidFrames)
+        );
     }
 
     #[test]

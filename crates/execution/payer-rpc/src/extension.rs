@@ -10,8 +10,8 @@ use crate::{Eip8130ChainState, PayerApiImpl, PayerApiServer};
 
 /// Bound on one upstream payer HTTP call, including connect and the response body.
 ///
-/// Longer than proxyd's 10-second payer backend timeout, so proxyd ends a slow call and its
-/// error reaches the wallet.
+/// Longer than the 10-second backend timeout of a gateway such as proxyd, so a gateway in
+/// front of the payer ends a slow call and its error reaches the wallet.
 pub const PAYER_UPSTREAM_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Upstream payer endpoint and whether `payer_getTerms` responses are cached.

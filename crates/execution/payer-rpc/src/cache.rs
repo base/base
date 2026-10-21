@@ -9,7 +9,7 @@ use serde_json::Value;
 use tokio::sync::{Mutex as AsyncMutex, MutexGuard};
 
 /// Upper bound on a cached `payer_getTerms` response, in seconds.
-pub const MAX_GET_TERMS_CACHE_SECS: u64 = 300;
+pub const MAX_GET_TERMS_CACHE_SECS: u64 = 60;
 
 /// How long a fetched response is served before the next request refetches it.
 ///

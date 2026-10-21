@@ -16,9 +16,6 @@ pub use extension::{PAYER_UPSTREAM_TIMEOUT, PayerRpcConfig, PayerRpcExtension};
 mod filter;
 pub use filter::{PayerRequestError, PayerRequestFilter};
 
-mod proxyd;
-pub use proxyd::ProxydError;
-
 mod rejection;
 pub use rejection::PayerRejection;
 
