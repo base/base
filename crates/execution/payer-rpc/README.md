@@ -6,7 +6,7 @@ Query nodes that opt in expose `payer_getTerms` and `payer_sendTransaction` on t
 
 Requests are rejected locally before the Everest network upgrade activates EIP-8430 account abstraction transactions, when `chainId` does not match this node, when the body is malformed, or when the transaction is larger than 128 kibibytes, the transaction pool's default limit.
 
-Both methods answer `TEMPORARILY_UNAVAILABLE`, which wallets retry, when the node cannot serve them right now: the payer does not answer, or the node cannot read its latest block. A payer answers with `PAYER_REJECTED` (`-32000`) or a standard request error (`-32601`, `-32602`), and those pass through unchanged. Any other error, or no response, means the payer did not answer: the upstream cannot be reached, or a gateway in front of the payer answered in its place. A payer may have submitted a transaction whose answer was lost; a retry resends the same signed transaction, so it cannot be included twice.
+Both methods answer `TEMPORARILY_UNAVAILABLE`, which wallets retry, when the node cannot serve them right now: the payer does not answer, or the node cannot read its latest block. A payer answers with `PAYER_REJECTED` (`-32000`) or a standard request error (`-32601`, `-32602`), and those pass through unchanged whatever the HTTP status of the reply. Any other error, or no response, means the payer did not answer: the upstream cannot be reached, or a gateway in front of the payer answered in its place. A payer may have submitted a transaction whose answer was lost; a retry resends the same signed transaction, so it cannot be included twice.
 
 ## Usage
 

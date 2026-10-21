@@ -21,21 +21,37 @@ impl PayerRejection {
         Self::error(json!({ "code": "TEMPORARILY_UNAVAILABLE", "reason": reason.to_string() }))
     }
 
-    /// Returns whether the payer did not answer `error`: the upstream could not be reached, or
-    /// something in front of the payer, such as a gateway, answered in its place.
+    /// The payer's own error in `error`, or `None` when the payer did not answer: the upstream
+    /// could not be reached, or something in front of the payer, such as a gateway, answered in
+    /// its place.
     ///
     /// A payer answers with `PAYER_REJECTED` or a standard request error (`-32601`, `-32602`),
-    /// so any other error did not come from it.
-    pub fn is_unanswered(error: &SequencerClientError) -> bool {
+    /// so any other error did not come from it. The error is also read from the body of a
+    /// non-2xx reply, which the HTTP transport leaves unparsed.
+    pub fn from_upstream(error: &SequencerClientError) -> Option<ErrorObjectOwned> {
         let SequencerClientError::HttpError(inner) = error;
-        inner.as_error_resp().is_none_or(|payload| {
-            let rejected =
-                payload.code == i64::from(Self::CODE) && payload.message == Self::MESSAGE;
-            let request_error = [ErrorCode::MethodNotFound, ErrorCode::InvalidParams]
-                .iter()
-                .any(|code| payload.code == i64::from(code.code()));
-            !rejected && !request_error
-        })
+        let answer = match inner.as_error_resp() {
+            Some(payload) => ErrorObjectOwned::owned(
+                i32::try_from(payload.code).ok()?,
+                payload.message.to_string(),
+                payload.data.clone(),
+            ),
+            None => {
+                let body = &inner.as_transport_err()?.as_http_error()?.body;
+                let body: Value = serde_json::from_str(body).ok()?;
+                let error = body.get("error")?;
+                ErrorObjectOwned::owned(
+                    i32::try_from(error.get("code")?.as_i64()?).ok()?,
+                    error.get("message")?.as_str()?.to_owned(),
+                    error.get("data").cloned(),
+                )
+            }
+        };
+        let rejected = answer.code() == Self::CODE && answer.message() == Self::MESSAGE;
+        let request_error = [ErrorCode::MethodNotFound, ErrorCode::InvalidParams]
+            .iter()
+            .any(|code| answer.code() == code.code());
+        (rejected || request_error).then_some(answer)
     }
 
     fn error(data: Value) -> ErrorObjectOwned {
