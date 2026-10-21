@@ -1,6 +1,9 @@
-//! Bootnode command with discv5 NAT fix.
+//! Discovery-only bootnode command.
 
-use std::{net::SocketAddr, path::PathBuf};
+use std::{
+    net::{IpAddr, SocketAddr},
+    path::PathBuf,
+};
 
 use base_node_core::BASE_V0_PROTOCOL_VERSION;
 use clap::Parser;
@@ -65,24 +68,17 @@ impl Command {
 
         if self.v5 {
             info!("Initializing discv5");
-            let config = self.discv5_config();
-            let (discv5, updates) = Discv5::start(&sk, config).await?;
-
-            // The upstream reth bootnode skips NAT resolution for discv5, leaving the ENR with
-            // no IP address. Peers receiving the ENR cannot send WHOAREYOU back because they
-            // have no address to target. Resolve the external IP and update the ENR here.
-            match external_addr_with(nat).await {
-                Some(external_ip) => {
-                    let socket = SocketAddr::new(external_ip, self.v5_addr.port());
-                    discv5.with_discv5(|d| d.update_local_enr_socket(socket, false));
-                }
-                None => {
-                    warn!(
-                        addr = %self.v5_addr,
-                        "Could not resolve external IP via NAT; discv5 ENR has no IP and may not be reachable"
-                    );
-                }
+            // Resolve dynamic NAT methods (`any`, `upnp`, `publicip`) too: discv5 only learns
+            // its IP from peers after they can reach it, so a bootnode ENR must carry one up front.
+            let external_ip = external_addr_with(nat).await;
+            if external_ip.is_none() {
+                warn!(
+                    addr = %self.v5_addr,
+                    "Could not resolve external IP via NAT; discv5 ENR has no IP and may not be reachable"
+                );
             }
+            let config = self.discv5_config(external_ip);
+            let (discv5, updates) = Discv5::start(&sk, config).await?;
 
             info!(enr = %discv5.local_enr(), "Started discv5");
 
@@ -136,8 +132,8 @@ impl Command {
         Discv4Config::builder().external_ip_resolver(Some(self.nat.clone())).build()
     }
 
-    /// Build the discv5 configuration.
-    pub fn discv5_config(&self) -> Config {
+    /// Build the discv5 configuration, advertising `external_ip` in the local ENR when known.
+    pub fn discv5_config(&self, external_ip: Option<IpAddr>) -> Config {
         let mut inner_builder = Discv5ConfigBuilder::new(DEFAULT_DISCOVERY_V5_LISTEN_CONFIG);
 
         inner_builder.protocol_identity(ProtocolIdentity {
@@ -145,7 +141,11 @@ impl Command {
             ..Default::default()
         });
 
-        Config::builder(self.v5_addr).discv5_config(inner_builder.build()).build()
+        let builder = Config::builder(self.v5_addr).discv5_config(inner_builder.build());
+        match external_ip {
+            Some(ip) => builder.advertised_ip(ip).build(),
+            None => builder.build(),
+        }
     }
 
     fn network_secret(&self) -> eyre::Result<SecretKey> {
@@ -158,7 +158,7 @@ impl Command {
 
 #[cfg(test)]
 mod tests {
-    use reth_discv5::DEFAULT_DISCOVERY_V5_PORT;
+    use reth_discv5::{DEFAULT_DISCOVERY_V5_PORT, build_local_enr};
     use rstest::rstest;
 
     use super::*;
@@ -215,10 +215,23 @@ mod tests {
         #[case] v5_addr: &str,
     ) {
         let command = cmd(v4_addr, v5_addr);
-        let config = command.discv5_config();
+        let config = command.discv5_config(None);
 
         assert_eq!(config.rlpx_socket(), &command.v5_addr);
         assert_eq!(config.discovery_socket().ip(), command.v5_addr.ip());
         assert_eq!(config.discovery_socket().port(), DEFAULT_DISCOVERY_V5_PORT);
+    }
+
+    #[test]
+    fn discv5_enr_advertises_resolved_external_ip() {
+        let command = cmd("0.0.0.0:30301", "0.0.0.0:9200");
+        let external_ip = "192.0.2.1".parse().unwrap();
+        let config = command.discv5_config(Some(external_ip));
+        let sk = SecretKey::from_byte_array(&[1u8; 32]).unwrap();
+
+        let (enr, _, _, _) = build_local_enr(&sk, &config);
+
+        assert_eq!(enr.ip4(), Some("192.0.2.1".parse().unwrap()));
+        assert_eq!(enr.udp4(), Some(DEFAULT_DISCOVERY_V5_PORT));
     }
 }
