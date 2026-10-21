@@ -474,8 +474,15 @@ The `connection_limits` behaviour caps pending and established connections and s
 protocol. It is the first field because libp2p calls each behaviour's connection hooks in field
 order, so it rejects excess connections before the other behaviours allocate handlers. By default
 it allows 30 established connections, 5 pending inbound, 16 pending outbound and 1 per peer. The
-CLI sets the established cap from `--p2p.peers.max` (default `--p2p.peers.hi`) and the pending outbound cap from
-`--p2p.max-pending-outgoing`.
+CLI sets the established cap from `--p2p.peers.max` (defaulting to `--p2p.peers.hi`) and the
+pending outbound cap from `--p2p.max-pending-outgoing`.
+
+Below that hard cap, peer counts are managed like op-node's connection manager. Discovery stops
+dialing at `--p2p.peers.lo` (default 20). Every minute, a node with at least `--p2p.peers.hi`
+(default 30) established connections disconnects unprotected peers connected for longer than
+`--p2p.peers.grace` (default 30s), lowest gossip score first, until it is back at
+`--p2p.peers.lo`. Setting `--p2p.peers.max` above `--p2p.peers.hi` leaves room for new and
+protected peers to connect between trims.
 
 The `ping` behaviour sends periodic keepalive pings to connected peers and measures round-trip
 times. The `gossipsub` behaviour handles the actual block gossip. The `identify` behaviour exchanges
