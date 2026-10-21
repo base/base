@@ -302,12 +302,15 @@ where
         cleared
     }
 
-    /// Dials the given [`Enr`] from discovery, unless connected peers plus pending outbound dials
-    /// already reach [`PeerTargets::low`].
+    /// Dials the given [`Enr`] from discovery, unless the swarm already has
+    /// [`PeerTargets::low`] connected peers.
+    ///
+    /// Only established peers are counted here (matching op-node's `DiscoveryProcess`): discovery
+    /// forwards bootnodes and `find_node` results in bursts, so counting in-flight dials would
+    /// drop remaining ENRs before any TCP handshake completes. Any overshoot is trimmed by
+    /// [`Self::trim_peers`].
     pub fn dial(&mut self, enr: Enr) {
-        let pending_outgoing =
-            self.swarm.network_info().connection_counters().num_pending_outgoing() as usize;
-        if self.connected_peers() + pending_outgoing >= self.peer_targets.low as usize {
+        if self.connected_peers() >= self.peer_targets.low as usize {
             trace!(target: "gossip", low = self.peer_targets.low, "At low-tide peer count, not dialing discovered peer");
             return;
         }
@@ -576,7 +579,7 @@ where
                 Metrics::gossipsub_connection("connected").increment(1.0);
                 Metrics::gossip_peer_count().set(peer_count as f64);
 
-                self.peer_connection_start.insert(peer_id, Instant::now());
+                self.peer_connection_start.entry(peer_id).or_insert_with(Instant::now);
             }
             SwarmEvent::OutgoingConnectionError { peer_id: _peer_id, error, .. } => {
                 debug!(target: "gossip", error = ?error, "Outgoing connection error");
@@ -592,14 +595,18 @@ where
                 debug!(target: "gossip", error = ?error, "Incoming connection error");
                 Metrics::gossipsub_connection("incoming_error").increment(1.0);
             }
-            SwarmEvent::ConnectionClosed { peer_id, cause, .. } => {
+            SwarmEvent::ConnectionClosed { peer_id, cause, num_established, .. } => {
                 let peer_count = self.swarm.connected_peers().count();
                 debug!(target: "gossip", ?peer_id, ?cause, peer_count, "Connection closed");
                 Metrics::gossipsub_connection("closed").increment(1.0);
                 Metrics::gossip_peer_count().set(peer_count as f64);
 
-                // Record the total connection duration.
-                if let Some(start_time) = self.peer_connection_start.remove(&peer_id) {
+                // If this was the last connection to the peer, record the total connection
+                // duration; otherwise keep `peer_connection_start` so the peer stays eligible for
+                // trimming after its grace period.
+                if num_established == 0
+                    && let Some(start_time) = self.peer_connection_start.remove(&peer_id)
+                {
                     Metrics::gossip_peer_connection_duration_seconds()
                         .record(start_time.elapsed().as_secs_f64());
                 }

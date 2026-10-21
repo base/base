@@ -501,9 +501,9 @@ around a block's contents — transactions, state root, gas used, etc.), selects
 the appropriate topic
 based on the block's timestamp and active upgrade, encodes it with version-appropriate
 serialization, and publishes it to gossipsub. Its `dial()` method takes an ENR from discovery,
-skips it if connected peers plus pending dials already reach `--p2p.peers.lo`, validates the
-chain ID, extracts the TCP multiaddr (a self-describing network address format used by libp2p,
-e.g. `/ip4/192.168.1.1/tcp/9222`), checks the connection gate, and initiates a connection.
+skips it if the node already has `--p2p.peers.lo` peers, validates the chain ID, extracts the TCP
+multiaddr (a self-describing network address format used by libp2p, e.g.
+`/ip4/192.168.1.1/tcp/9222`), checks the connection gate, and initiates a connection.
 
 
 ### Putting it all together: the Network Actor
