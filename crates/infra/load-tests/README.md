@@ -84,9 +84,15 @@ self-transfer from the funded, non-delegated funding EOA: 21,000 before Amsterda
 
 Pre-Amsterdam payload budgets are unchanged. On Amsterdam, funding (including
 replacements and affordability), calibration, setup/cleanup, and measured payloads
-use uncapped `eth_estimateGas` with 25% rounded-up headroom, retaining any larger
-legacy budget. This covers EIP-8037 state creation, EIP-8038/2780 access charges,
-and EIP-7976's 64 gas/byte floor without duplicating node pricing in each workload.
+use uncapped `eth_estimateGas` with 25% rounded-up headroom, retaining larger legacy
+hints only within the latest block gas limit. Estimates above that admission
+capacity fail clearly; the regular-only cap is not a total declared-gas ceiling.
+ERC-20 `transfer` requests additionally reserve one fresh recipient balance slot
+(64 × 1,530 state gas) because presigned recipients can be drained before inclusion.
+This intentionally also reserves headroom when estimation already saw a fresh slot.
+Real-token setup checks each effective estimated budget against pending balance
+after preceding setup dependencies settle. Other EIP-8037 state creation,
+EIP-8038/2780 access charges, and EIP-7976's 64 gas/byte floor follow node estimates.
 The same budgets apply to plain and validity submissions; payloads and predicates
 are not modified to make a simulation succeed. An estimation revert is an error.
 
