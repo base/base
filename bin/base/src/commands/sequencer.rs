@@ -406,7 +406,8 @@ mod tests {
     fn sequencer_rejects_invalid_candidate_flags_like_the_builder() {
         // Builder selection without the candidate runtime is refused at startup.
         let builder = sequencer_builder(&["--builder.candidates.enabled"]);
-        let expected = builder.candidate_capabilities().expect_err("bin/builder refuses these flags");
+        let expected =
+            builder.candidate_capabilities().expect_err("bin/builder refuses these flags");
         let error = builder_setup(builder).expect_err("the sequencer refuses them too");
         assert_eq!(format!("{error:#}"), format!("{expected:#}"));
     }
