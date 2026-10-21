@@ -311,7 +311,8 @@ Measured sizes for a two-sibling group, as serialized JSON: landed 712
 bytes, evicted 652 to 661.
 
 Terminal events: the node's candidate ledger emits exactly one terminal event
-per admitted group, keyed by the group alone so replays deduplicate.
+per admitted group. Its `event_id` covers `data.group_hash`, `tx_hash`,
+`block_hash` and `block_number`, so a replayed delivery deduplicates.
 `TXPOOL_CANDIDATE_LANDED` is canonical: a sibling appeared in a canonical
 block's mined transactions, under the winner's `tx_hash` with `block_hash` and
 `block_number`. Otherwise `TXPOOL_CANDIDATE_EVICTED`, under the
