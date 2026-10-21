@@ -50,6 +50,9 @@ pub trait ReaderPool: Send + Sync {
         &self,
         kind: TransactionListenerKind,
     ) -> mpsc::Receiver<TxHash>;
+
+    /// See [`TransactionPool::get`].
+    fn get(&self, hash: &TxHash) -> Option<Arc<ValidPoolTransaction<Self::Transaction>>>;
 }
 
 impl<P: TransactionPool> ReaderPool for P {
@@ -70,6 +73,10 @@ impl<P: TransactionPool> ReaderPool for P {
         kind: TransactionListenerKind,
     ) -> mpsc::Receiver<TxHash> {
         TransactionPool::pending_transactions_listener_for(self, kind)
+    }
+
+    fn get(&self, hash: &TxHash) -> Option<Arc<ValidPoolTransaction<Self::Transaction>>> {
+        TransactionPool::get(self, hash)
     }
 }
 
@@ -132,6 +139,15 @@ where
     /// took, so it has no fixed ceiling: it grows with the pool.
     const SNAPSHOT_MAX_AGE: Duration = Duration::from_millis(10);
 
+    /// Longest the reader goes between full pool reads while it serves announcements one by one.
+    ///
+    /// Within this window a wake caused by announcements looks the announced transactions up
+    /// individually and adds them to the current snapshot instead of re-reading every pending
+    /// transaction to find the few new ones. The next full read picks up whatever announcements
+    /// missed (the listener drops them when its channel is full) and transactions due for a
+    /// resend, so neither waits longer than this.
+    const FULL_SNAPSHOT_INTERVAL: Duration = Duration::from_millis(100);
+
     /// Creates a reader for one destination.
     pub(crate) fn new(
         pool: P,
@@ -165,6 +181,10 @@ where
             Some(self.pool.pending_transactions_listener_for(TransactionListenerKind::All));
         // When the last snapshot finished, how long it took, and what is left of it.
         let mut snapshot: Option<(Instant, Duration, Snapshot<P::Transaction>)> = None;
+        // When the last full pool read finished and how long it took.
+        let mut last_full: Option<(Instant, Duration)> = None;
+        // Announced since the last pool read and not yet looked up.
+        let mut announced = Vec::new();
         while self.wait_for_capacity().await {
             // A snapshot that still has transactions is reused until the pacing gap after it has
             // passed, so a deep backlog keeps refilling the queue instead of idling in the gap.
@@ -172,28 +192,43 @@ where
                 lanes.is_empty() || taken_at.elapsed() >= Self::SNAPSHOT_MAX_AGE.max(*cost)
             });
             if stale {
-                let gap = snapshot
-                    .as_ref()
-                    .and_then(|(taken_at, cost, _)| cost.checked_sub(taken_at.elapsed()));
-                if let Some(gap) = gap {
-                    tokio::select! {
-                        () = time::sleep(gap) => {}
-                        () = self.cancel.cancelled() => break,
+                Self::drain_announcements(&mut pending, &mut announced);
+                let recent_full = last_full
+                    .is_some_and(|(taken_at, _)| taken_at.elapsed() < Self::FULL_SNAPSHOT_INTERVAL);
+                if recent_full && pending.is_some() {
+                    // With nothing announced the current lanes are still the latest view; the
+                    // next full read is due when the interval runs out.
+                    if !announced.is_empty() {
+                        let mut lanes =
+                            snapshot.take().map_or_else(LaneScheduler::new, |(_, _, lanes)| lanes);
+                        self.push_announced(&mut lanes, &mut announced);
+                        snapshot = Some((Instant::now(), Duration::ZERO, lanes));
                     }
+                } else {
+                    let gap =
+                        last_full.and_then(|(taken_at, cost)| cost.checked_sub(taken_at.elapsed()));
+                    if let Some(gap) = gap {
+                        tokio::select! {
+                            () = time::sleep(gap) => {}
+                            () = self.cancel.cancelled() => break,
+                        }
+                    }
+                    // Everything announced so far is in the pool, so the snapshot below covers it.
+                    Self::drain_announcements(&mut pending, &mut announced);
+                    announced.clear();
+                    let started = Instant::now();
+                    let Some(lanes) = self.take_snapshot() else { break };
+                    let taken_at = Instant::now();
+                    last_full = Some((taken_at, taken_at - started));
+                    snapshot = Some((taken_at, taken_at - started, lanes));
                 }
-                // Everything announced so far is in the pool, so the snapshot below covers it.
-                Self::drain_announcements(&mut pending);
-                let started = Instant::now();
-                let Some(lanes) = self.take_snapshot() else { break };
-                let taken_at = Instant::now();
-                snapshot = Some((taken_at, taken_at - started, lanes));
             }
             let Some((_, _, lanes)) = snapshot.as_mut() else { break };
 
             Metrics::iterations(Arc::clone(&self.url_label)).increment(1);
             match self.fill_queue(lanes) {
                 None => return,
-                Some(0) => self.wait_for_pending(&mut pending).await,
+                Some(0) => announced.extend(self.wait_for_pending(&mut pending).await),
                 Some(_) => {}
             }
         }
@@ -244,6 +279,29 @@ where
         Some(lanes)
     }
 
+    /// Looks up `announced` transactions and adds those still pooled and not recently sent to
+    /// `lanes`, in nonce order per sender so each sequence stays gapless.
+    fn push_announced(
+        &mut self,
+        lanes: &mut Snapshot<P::Transaction>,
+        announced: &mut Vec<TxHash>,
+    ) {
+        let base_fee = self.pool.block_info().pending_basefee;
+        let ordering = UnifiedTipOrdering::<P::Transaction>::default();
+        let mut txs: Vec<_> = announced.drain(..).filter_map(|hash| self.pool.get(&hash)).collect();
+        txs.sort_unstable_by_key(|tx| (tx.sender(), tx.nonce(), *tx.hash()));
+        txs.dedup_by_key(|tx| *tx.hash());
+        for tx in txs {
+            if self.recently_sent.was_recently_sent(tx.hash()) {
+                continue;
+            }
+            let sequence = BestTransactionLane::for_transaction(&tx);
+            let arrived = tx.timestamp;
+            let priority = ordering.priority(&tx.transaction, base_fee);
+            lanes.push(tx, sequence, arrived, priority);
+        }
+    }
+
     /// Moves transactions from `lanes` into the destination queue until it is full or `lanes` is
     /// empty, alternating lanes per [`LaneMix`]. Returns how many were queued, or `None` if the
     /// forwarder is gone.
@@ -252,6 +310,10 @@ where
         while self.sender.capacity() > 0 {
             let Some(tx) = lanes.pop(self.lane_mix.next_lane()) else { break };
             let hash = *tx.hash();
+            // An announcement can repeat a transaction a full read already put in the lanes.
+            if self.recently_sent.was_recently_sent(&hash) {
+                continue;
+            }
             match self.try_enqueue(&tx) {
                 Ok(()) => {
                     self.recently_sent.mark_sent(hash);
@@ -267,15 +329,18 @@ where
         Some(txs_sent)
     }
 
-    /// Discards queued pending-transaction announcements without waiting.
+    /// Moves queued pending-transaction announcements into `announced` without waiting.
     ///
     /// Drops the listener once the pool closes it, so later waits fall back to the poll interval
     /// instead of spinning on a closed channel.
-    fn drain_announcements(pending: &mut Option<mpsc::Receiver<TxHash>>) {
+    fn drain_announcements(
+        pending: &mut Option<mpsc::Receiver<TxHash>>,
+        announced: &mut Vec<TxHash>,
+    ) {
         let Some(receiver) = pending else { return };
         loop {
             match receiver.try_recv() {
-                Ok(_) => {}
+                Ok(hash) => announced.push(hash),
                 Err(mpsc::error::TryRecvError::Empty) => return,
                 Err(mpsc::error::TryRecvError::Disconnected) => {
                     *pending = None;
@@ -286,26 +351,31 @@ where
     }
 
     /// Waits until the pool announces a pending transaction, the poll interval elapses, or the
-    /// reader is cancelled, whichever comes first.
+    /// reader is cancelled, whichever comes first. Returns the announced hash, if any.
     ///
-    /// An announcement may concern a transaction the last snapshot already covered; the cost of
-    /// such a spurious wake is one extra snapshot.
-    async fn wait_for_pending(&self, pending: &mut Option<mpsc::Receiver<TxHash>>) {
+    /// An announcement may concern a transaction the last snapshot already covered; such a
+    /// spurious wake costs one lookup.
+    async fn wait_for_pending(
+        &self,
+        pending: &mut Option<mpsc::Receiver<TxHash>>,
+    ) -> Option<TxHash> {
         let announced = async {
             match pending {
                 Some(receiver) => {
-                    if receiver.recv().await.is_none() {
+                    let hash = receiver.recv().await;
+                    if hash.is_none() {
                         *pending = None;
                         time::sleep(self.config.poll_interval).await;
                     }
+                    hash
                 }
                 None => std::future::pending().await,
             }
         };
         tokio::select! {
-            () = announced => {}
-            () = time::sleep(self.config.poll_interval) => {}
-            () = self.cancel.cancelled() => {}
+            hash = announced => hash,
+            () = time::sleep(self.config.poll_interval) => None,
+            () = self.cancel.cancelled() => None,
         }
     }
 
@@ -490,6 +560,7 @@ mod tests {
         let mut pool = MockReaderPool::new();
         pool.expect_block_info().returning(BlockInfo::default);
         pool.expect_pending_transactions_listener_for().return_once(move |_| announcements);
+        pool.expect_get().returning(|_| None);
         pool.expect_best_transactions().returning(move || {
             let started = Instant::now();
             std::thread::sleep(cost);
@@ -618,6 +689,40 @@ mod tests {
         let mut expected: Vec<_> = txs.iter().map(|tx| *tx.hash()).collect();
         expected.sort();
         assert_eq!(delivered, expected, "every transaction is forwarded exactly once");
+    }
+
+    /// Shortly after a full read, an announced transaction is looked up and forwarded on its own
+    /// instead of by reading every pending transaction again.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_announcement_soon_after_a_full_read_is_forwarded_by_lookup() {
+        let tx = transaction(0);
+        let (announce, announcements) = mpsc::channel(16);
+        let (read_tx, mut reads) = mpsc::unbounded_channel();
+        let mut pool = MockReaderPool::new();
+        pool.expect_block_info().returning(BlockInfo::default);
+        pool.expect_pending_transactions_listener_for().return_once(move |_| announcements);
+        pool.expect_best_transactions().returning(move || {
+            let _ = read_tx.send(());
+            Box::new(std::iter::empty())
+        });
+        let pooled = Arc::clone(&tx);
+        pool.expect_get().returning(move |hash| (hash == pooled.hash()).then(|| Arc::clone(&pooled)));
+        let (sender, mut queue) = mpsc::channel(64);
+        let cancel = CancellationToken::new();
+        let mut reader = paced_reader(pool, sender, cancel.clone());
+
+        let run = tokio::spawn(async move { reader.run().await });
+        reads.recv().await.expect("the reader starts with a full read");
+        announce.send(*tx.hash()).await.unwrap();
+        let forwarded = time::timeout(Duration::from_secs(5), queue.recv())
+            .await
+            .expect("the announced transaction is forwarded")
+            .unwrap();
+        cancel.cancel();
+        time::timeout(Duration::from_secs(5), run).await.expect("reader exits").unwrap();
+
+        assert_eq!(forwarded.tx_hash, *tx.hash());
+        assert!(reads.try_recv().is_err(), "no second full read was needed");
     }
 
     /// Cancelling while the reader waits out the gap after an expensive snapshot must end the

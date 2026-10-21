@@ -87,7 +87,8 @@ impl<T, P: Ord + Clone, K: Hash + Eq> LaneScheduler<T, P, K> {
         }
     }
 
-    /// Adds a transaction. Must be called in snapshot order.
+    /// Adds a transaction. Must be called in snapshot order; a transaction pushed after its
+    /// sequence's earlier transactions were picked is eligible at once.
     ///
     /// `arrived` orders the FIFO lane and `priority` orders the priority lane; ties in the
     /// priority lane go to the earlier arrival. A transaction with a `sequence` is held back until
@@ -97,7 +98,8 @@ impl<T, P: Ord + Clone, K: Hash + Eq> LaneScheduler<T, P, K> {
         self.entries.push(Entry { item: Some(item), arrived, priority, next_in_sequence: None });
         self.remaining += 1;
         let previous = sequence.and_then(|sequence| self.last_of_sequence.insert(sequence, index));
-        match previous {
+        // A predecessor that was already picked no longer holds this transaction back.
+        match previous.filter(|previous| self.entries[*previous].item.is_some()) {
             Some(previous) => self.entries[previous].next_in_sequence = Some(index),
             None => self.make_eligible(index),
         }
@@ -200,6 +202,21 @@ mod tests {
         scheduler.push("earlier", sequence(2), at(base, 0), 7);
 
         assert_eq!(scheduler.pop(Lane::Priority), Some("earlier"));
+    }
+
+    /// A transaction added after its predecessor was already forwarded has nothing left to wait
+    /// for; holding it back would strand it until the lanes are rebuilt.
+    #[test]
+    fn a_transaction_pushed_after_its_predecessor_was_picked_is_eligible() {
+        let base = Instant::now();
+        let mut scheduler = LaneScheduler::new();
+        scheduler.push("a0", sequence(0xa), at(base, 0), 1);
+        assert_eq!(scheduler.pop(Lane::Fifo), Some("a0"));
+
+        scheduler.push("a1", sequence(0xa), at(base, 1), 1);
+
+        assert_eq!(scheduler.pop(Lane::Priority), Some("a1"));
+        assert!(scheduler.is_empty());
     }
 
     /// A high bid on a sender's second nonce must not overtake that sender's first nonce: the
