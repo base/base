@@ -213,9 +213,15 @@ async fn submit_b20_create(
         .await
         .rpc("get pending transaction count")?;
 
-    let estimated = crate::rpc::GasEstimator::setup(&query_client,
-        TransactionRequest::default().with_to(B20FactoryStorage::ADDRESS)
-            .with_input(input.clone()).with_gas_limit(gas_limit), sender).await?;
+    let estimated = crate::rpc::GasEstimator::setup(
+        &query_client,
+        TransactionRequest::default()
+            .with_to(B20FactoryStorage::ADDRESS)
+            .with_input(input.clone())
+            .with_gas_limit(gas_limit),
+        sender,
+    )
+    .await?;
     let gas_limit = estimated.gas.expect("setup request has gas");
 
     let build = |nonce: u64, max_fee: u128, priority_fee: u128| {
@@ -345,8 +351,9 @@ pub(super) async fn teardown(
                     .with_max_fee_per_gas(max_fee)
                     .with_max_priority_fee_per_gas(max_priority_fee);
 
-                let tx = crate::rpc::GasEstimator::setup(&query_client, tx, sender).await
-                    .map_err(|error| (sender, eyre::eyre!("burn gas estimation failed: {error}")))?;
+                let tx = crate::rpc::GasEstimator::setup(&query_client, tx, sender).await.map_err(
+                    |error| (sender, eyre::eyre!("burn gas estimation failed: {error}")),
+                )?;
                 match provider.send_transaction(tx).await {
                     Ok(pending) => Ok((sender, balance, pending)),
                     Err(e) => Err((sender, eyre::eyre!("send failed: {e}"))),

@@ -553,8 +553,12 @@ pub async fn recover_real_tokens(
 }
 
 fn setup_cost(tx: &TransactionRequest) -> Result<U256> {
-    let gas = tx.gas.ok_or_else(|| BaselineError::Config("setup request missing effective gas budget".into()))?;
-    let fee = tx.max_fee_per_gas.ok_or_else(|| BaselineError::Config("setup request missing max fee".into()))?;
+    let gas = tx.gas.ok_or_else(|| {
+        BaselineError::Config("setup request missing effective gas budget".into())
+    })?;
+    let fee = tx
+        .max_fee_per_gas
+        .ok_or_else(|| BaselineError::Config("setup request missing max fee".into()))?;
     Ok(tx.value.unwrap_or_default().saturating_add(U256::from(gas).saturating_mul(U256::from(fee))))
 }
 
@@ -564,8 +568,11 @@ async fn ensure_setup_affordable(
     tx: &TransactionRequest,
 ) -> Result<()> {
     let required = setup_cost(tx)?;
-    let balance = client.get_balance(sender).block_id(BlockNumberOrTag::Pending.into())
-        .await.rpc("get pending balance for estimated real-token setup")?;
+    let balance = client
+        .get_balance(sender)
+        .block_id(BlockNumberOrTag::Pending.into())
+        .await
+        .rpc("get pending balance for estimated real-token setup")?;
     if balance < required {
         return Err(BaselineError::Transaction(format!(
             "sender {sender} has insufficient balance for estimated real-token setup: has {balance} wei, needs {required} wei (gas budget {})",
@@ -588,23 +595,56 @@ mod gas_budget_tests {
             then.json_body(serde_json::json!({"jsonrpc":"2.0","id":0,"result":format!("0x{:x}", 200_000_000_000_000u64)}));
         });
         let client = crate::rpc::RpcProviders::query(server.url("/").parse().unwrap()).unwrap();
-        let request = TransactionRequest::default().with_gas_limit(178_865).with_max_fee_per_gas(2_000_000_000);
+        let request = TransactionRequest::default()
+            .with_gas_limit(178_865)
+            .with_max_fee_per_gas(2_000_000_000);
         let error = ensure_setup_affordable(&client, Address::ZERO, &request).await.unwrap_err();
-        assert_eq!(error.to_string(), format!("transaction failed: sender {} has insufficient balance for estimated real-token setup: has 200000000000000 wei, needs 357730000000000 wei (gas budget 178865)", Address::ZERO), "a balance sufficient for the old 65k hint must fail the effective-budget preflight before broadcast");
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "transaction failed: sender {} has insufficient balance for estimated real-token setup: has 200000000000000 wei, needs 357730000000000 wei (gas budget 178865)",
+                Address::ZERO
+            ),
+            "a balance sufficient for the old 65k hint must fail the effective-budget preflight before broadcast"
+        );
         balance.assert_calls(1);
     }
 
     #[test]
     fn amsterdam_gas_budget_real_token_affordability() {
-        let request = TransactionRequest::default().with_value(U256::from(1_000_000))
-            .with_gas_limit(255_750).with_max_fee_per_gas(2_000_000_000);
-        assert_eq!(setup_cost(&request).unwrap(), U256::from(511_500_001_000_000u64), "deposit value plus the effective 255,750-gas budget at 2 gwei, not the legacy 100k hint");
-        let approval = TransactionRequest::default().with_gas_limit(178_865).with_max_fee_per_gas(2_000_000_000);
-        assert_eq!(setup_cost(&approval).unwrap(), U256::from(357_730_000_000_000u64), "approval preflight must use the estimated budget rather than 65k");
-        let swap = TransactionRequest::default().with_gas_limit(568_879).with_max_fee_per_gas(2_000_000_000);
-        assert_eq!(setup_cost(&swap).unwrap(), U256::from(1_137_758_000_000_000u64), "swap preflight must use the estimated budget rather than 250k");
-        let legacy = TransactionRequest::default().with_gas_limit(65_000).with_max_fee_per_gas(2_000_000_000);
-        assert_eq!(setup_cost(&legacy).unwrap(), U256::from(130_000_000_000_000u64), "legacy declared-budget arithmetic remains unchanged");
+        let request = TransactionRequest::default()
+            .with_value(U256::from(1_000_000))
+            .with_gas_limit(255_750)
+            .with_max_fee_per_gas(2_000_000_000);
+        assert_eq!(
+            setup_cost(&request).unwrap(),
+            U256::from(511_500_001_000_000u64),
+            "deposit value plus the effective 255,750-gas budget at 2 gwei, not the legacy 100k hint"
+        );
+        let approval = TransactionRequest::default()
+            .with_gas_limit(178_865)
+            .with_max_fee_per_gas(2_000_000_000);
+        assert_eq!(
+            setup_cost(&approval).unwrap(),
+            U256::from(357_730_000_000_000u64),
+            "approval preflight must use the estimated budget rather than 65k"
+        );
+        let swap = TransactionRequest::default()
+            .with_gas_limit(568_879)
+            .with_max_fee_per_gas(2_000_000_000);
+        assert_eq!(
+            setup_cost(&swap).unwrap(),
+            U256::from(1_137_758_000_000_000u64),
+            "swap preflight must use the estimated budget rather than 250k"
+        );
+        let legacy = TransactionRequest::default()
+            .with_gas_limit(65_000)
+            .with_max_fee_per_gas(2_000_000_000);
+        assert_eq!(
+            setup_cost(&legacy).unwrap(),
+            U256::from(130_000_000_000_000u64),
+            "legacy declared-budget arithmetic remains unchanged"
+        );
     }
 }
 
