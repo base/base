@@ -15,7 +15,7 @@ use reth_storage_api::BlockReaderIdExt;
 use serde_json::Value;
 use tracing::{debug, warn};
 
-use crate::{PayerRejection, PayerRequestFilter};
+use crate::{PayerChainState, PayerRejection, PayerRequestFilter, PayerTransaction};
 
 /// Rejection returned when `payer_*` is called before Everest activates EIP-8430.
 pub const PAYER_PRE_EVEREST_RPC_ERROR: &str = "payer methods require EIP-8430, which is gated \
@@ -34,34 +34,37 @@ pub trait PayerApi {
     #[method(name = "getTerms")]
     async fn get_terms(&self, request: Value) -> RpcResult<Value>;
 
-    /// Forwards a sender-signed transaction for the payer to co-sign and submit.
+    /// Checks a sender-signed transaction and forwards it for the payer to co-sign and submit.
     #[method(name = "sendTransaction")]
     async fn send_transaction(&self, request: Value) -> RpcResult<Value>;
 }
 
 /// Proxies payer methods to the upstream payer service.
-pub struct PayerApiImpl<Provider> {
+pub struct PayerApiImpl<Provider, State> {
     provider: Provider,
     client: SequencerClient,
+    state: State,
 }
 
-impl<Provider> fmt::Debug for PayerApiImpl<Provider> {
+impl<Provider, State> fmt::Debug for PayerApiImpl<Provider, State> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PayerApiImpl").finish_non_exhaustive()
     }
 }
 
-impl<Provider> PayerApiImpl<Provider> {
-    /// Creates a proxy that forwards payer methods through `client`.
-    pub const fn new(provider: Provider, client: SequencerClient) -> Self {
-        Self { provider, client }
+impl<Provider, State> PayerApiImpl<Provider, State> {
+    /// Creates a proxy that forwards payer methods through `client` and checks each
+    /// `payer_sendTransaction` against `state`.
+    pub const fn new(provider: Provider, client: SequencerClient, state: State) -> Self {
+        Self { provider, client, state }
     }
 }
 
-impl<Provider> PayerApiImpl<Provider>
+impl<Provider, State> PayerApiImpl<Provider, State>
 where
     Provider: BlockReaderIdExt + ChainSpecProvider + Clone,
     Provider::ChainSpec: Upgrades + EthChainSpec,
+    State: PayerChainState,
 {
     fn chain_id(&self) -> u64 {
         self.provider.chain_spec().chain().id()
@@ -81,6 +84,44 @@ where
             .ok_or_else(|| invalid_params(PAYER_PRE_EVEREST_RPC_ERROR))
     }
 
+    /// Rejects a transaction the payer would reject, without forwarding it: one that does not
+    /// decode, does not leave a payer to co-sign, lacks a valid sender signature, reuses a
+    /// nonce, or whose phase 0 fails at the latest block.
+    ///
+    /// A state read that fails, or a phase 0 whose signing actor is not known, passes the
+    /// transaction on, since the payer checks it too.
+    async fn check_transaction(&self, raw: &[u8], timestamp: u64) -> RpcResult<()> {
+        let keystore = self.provider.chain_spec().is_zenith_active_at_timestamp(timestamp);
+        let transaction =
+            PayerTransaction::decode(raw, self.chain_id(), keystore).map_err(|error| {
+                debug!(error = %error, "rejected payer_sendTransaction transaction before forward");
+                PayerRejection::invalid_transaction(error)
+            })?;
+        if let Some((sender, nonce_key)) = transaction.nonce_channel() {
+            match self.state.nonce(sender, nonce_key).await {
+                Ok(next) => transaction.check_nonce(next).map_err(|error| {
+                    debug!(error = %error, "rejected payer_sendTransaction nonce before forward");
+                    PayerRejection::invalid_transaction(error)
+                })?,
+                Err(error) => {
+                    warn!(error = %error, "payer_sendTransaction nonce could not be read");
+                }
+            }
+        }
+        let Some(request) = transaction.phase_zero_request() else {
+            return Ok(());
+        };
+        let Err(error) = self.state.simulate(request).await else {
+            return Ok(());
+        };
+        let Some(rejection) = PayerRejection::for_phase_zero(&error) else {
+            warn!(error = %error, "payer_sendTransaction phase 0 could not be simulated");
+            return Ok(());
+        };
+        debug!(error = %error, "payer_sendTransaction phase 0 failed before forward");
+        Err(rejection)
+    }
+
     /// Forwards `method`, rejecting it as `TEMPORARILY_UNAVAILABLE` when the payer does not
     /// answer. The payer's own errors pass through unchanged.
     async fn forward(&self, method: &'static str, request: &Value) -> RpcResult<Value> {
@@ -95,10 +136,11 @@ where
 }
 
 #[async_trait]
-impl<Provider> PayerApiServer for PayerApiImpl<Provider>
+impl<Provider, State> PayerApiServer for PayerApiImpl<Provider, State>
 where
     Provider: BlockReaderIdExt + ChainSpecProvider + Clone + Send + Sync + 'static,
     Provider::ChainSpec: Upgrades + EthChainSpec,
+    State: PayerChainState,
 {
     async fn get_terms(&self, request: Value) -> RpcResult<Value> {
         self.everest_timestamp()?;
@@ -110,11 +152,12 @@ where
     }
 
     async fn send_transaction(&self, request: Value) -> RpcResult<Value> {
-        self.everest_timestamp()?;
-        PayerRequestFilter::validate_send_transaction(&request).map_err(|error| {
+        let timestamp = self.everest_timestamp()?;
+        let raw = PayerRequestFilter::validate_send_transaction(&request).map_err(|error| {
             debug!(error = %error, "rejected payer_sendTransaction before forward");
             invalid_params(error)
         })?;
+        self.check_transaction(&raw, timestamp).await?;
         self.forward("payer_sendTransaction", &request).await
     }
 }
@@ -127,8 +170,13 @@ fn invalid_params(error: impl ToString) -> ErrorObjectOwned {
 mod tests {
     use std::sync::Arc;
 
+    use alloy_eips::Encodable2718;
+    use alloy_primitives::{Address, Bytes, U256, hex};
+    use alloy_rpc_types_eth::error::EthRpcErrorCode;
+    use alloy_signer::SignerSync;
+    use alloy_signer_local::PrivateKeySigner;
     use base_common_chains::ChainConfig;
-    use base_common_consensus::BasePrimitives;
+    use base_common_consensus::{BasePrimitives, BaseTxEnvelope, Call, Eip8130Signed, TxEip8130};
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_test_utils::build_test_genesis_everest;
     use httpmock::prelude::*;
@@ -136,6 +184,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+    use crate::{PayerTransactionError, state::MockPayerChainState};
 
     fn everest_provider() -> MockEthProvider<BasePrimitives, Arc<BaseChainSpec>> {
         let mut genesis = build_test_genesis_everest();
@@ -175,8 +224,45 @@ mod tests {
         })
     }
 
+    fn state_error(code: i32, message: &'static str) -> ErrorObjectOwned {
+        ErrorObjectOwned::owned(code, message, Some("0x"))
+    }
+
+    /// State under which every nonce is unused and every phase 0 succeeds.
+    fn passing_state() -> MockPayerChainState {
+        let mut state = MockPayerChainState::new();
+        state.expect_nonce().returning(|_, _| Ok(U256::ZERO));
+        state.expect_simulate().returning(|_| Ok(()));
+        state
+    }
+
+    /// State under which every phase 0 fails with `code`.
+    fn failing_simulation(code: i32, message: &'static str) -> MockPayerChainState {
+        let mut state = MockPayerChainState::new();
+        state.expect_nonce().returning(|_, _| Ok(U256::ZERO));
+        state.expect_simulate().returning(move |_| Err(state_error(code, message)));
+        state
+    }
+
+    /// A `payer_sendTransaction` request for an EOA-signed transaction paid by `payer`.
+    fn send_request_paid_by(payer: Option<Address>) -> Value {
+        let signer = PrivateKeySigner::random();
+        let call = Call { to: Address::repeat_byte(0x11), value: U256::ZERO, data: Bytes::new() };
+        let tx = TxEip8130 {
+            chain_id: ChainConfig::mainnet().chain_id,
+            max_fee_per_gas: 1,
+            gas_limit: 100_000,
+            calls: vec![vec![call]],
+            payer,
+            ..Default::default()
+        };
+        let sender_auth = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap().as_bytes();
+        let signed = Eip8130Signed::new(tx, Bytes::from(sender_auth.to_vec()), Bytes::new());
+        json!({ "transaction": hex::encode_prefixed(BaseTxEnvelope::Eip8130(signed).encoded_2718()) })
+    }
+
     fn send_request() -> Value {
-        json!({ "transaction": "0x7b01" })
+        send_request_paid_by(Some(Address::repeat_byte(0xaa)))
     }
 
     fn rejection_data(error: &ErrorObjectOwned) -> Value {
@@ -209,7 +295,11 @@ mod tests {
             when.method(POST).path("/");
             then.status(500);
         });
-        let api = PayerApiImpl::new(pre_everest_provider(), client(&sequencer));
+        let api = PayerApiImpl::new(
+            pre_everest_provider(),
+            client(&sequencer),
+            MockPayerChainState::new(),
+        );
 
         let error = api.get_terms(terms_request(1)).await.expect_err("pre-everest rejection");
 
@@ -225,7 +315,7 @@ mod tests {
             when.method(POST).body_includes("payer_getTerms");
             rpc_result(then, terms_response());
         });
-        let api = PayerApiImpl::new(everest_provider(), client(&sequencer));
+        let api = PayerApiImpl::new(everest_provider(), client(&sequencer), passing_state());
 
         assert_eq!(api.get_terms(terms_request(1)).await.unwrap(), terms_response());
         assert_eq!(api.get_terms(terms_request(1)).await.unwrap(), terms_response());
@@ -240,7 +330,7 @@ mod tests {
             when.method(POST).body_includes("payer_getTerms");
             gateway_payer_down(then);
         });
-        let api = PayerApiImpl::new(everest_provider(), client(&sequencer));
+        let api = PayerApiImpl::new(everest_provider(), client(&sequencer), passing_state());
 
         let error = api.get_terms(terms_request(1)).await.expect_err("payer down");
 
@@ -255,7 +345,7 @@ mod tests {
             when.method(POST).body_includes("payer_sendTransaction");
             rpc_result(then, json!({ "transactionHash": hash }));
         });
-        let api = PayerApiImpl::new(everest_provider(), client(&sequencer));
+        let api = PayerApiImpl::new(everest_provider(), client(&sequencer), passing_state());
 
         let result = api.send_transaction(send_request()).await.unwrap();
         api.send_transaction(send_request()).await.unwrap();
@@ -276,7 +366,7 @@ mod tests {
                 "error": { "code": -32000, "message": "PAYER_REJECTED", "data": rejection }
             }));
         });
-        let api = PayerApiImpl::new(everest_provider(), client(&sequencer));
+        let api = PayerApiImpl::new(everest_provider(), client(&sequencer), passing_state());
 
         let error = api.send_transaction(send_request()).await.expect_err("rejected");
 
@@ -290,14 +380,14 @@ mod tests {
             when.method(POST).body_includes("payer_sendTransaction");
             gateway_payer_down(then);
         });
-        let api = PayerApiImpl::new(everest_provider(), client(&sequencer));
+        let api = PayerApiImpl::new(everest_provider(), client(&sequencer), passing_state());
         let error = api.send_transaction(send_request()).await.expect_err("payer down");
         assert_eq!(rejection_data(&error)["code"], "TEMPORARILY_UNAVAILABLE");
         payer_down.delete();
 
         let unreachable =
             SequencerClient::new_http_with_headers("http://127.0.0.1:9", vec![]).unwrap();
-        let api = PayerApiImpl::new(everest_provider(), unreachable);
+        let api = PayerApiImpl::new(everest_provider(), unreachable, passing_state());
         let error = api.send_transaction(send_request()).await.expect_err("unreachable");
         assert_eq!(rejection_data(&error)["code"], "TEMPORARILY_UNAVAILABLE");
 
@@ -309,15 +399,106 @@ mod tests {
                 "error": { "code": -32601, "message": "Method not found" }
             }));
         });
-        let api = PayerApiImpl::new(everest_provider(), client(&sequencer));
+        let api = PayerApiImpl::new(everest_provider(), client(&sequencer), passing_state());
         let error = api.send_transaction(send_request()).await.expect_err("no payer");
         assert_eq!(error.code(), ErrorCode::MethodNotFound.code());
+    }
+
+    #[tokio::test]
+    async fn rejects_a_transaction_without_a_payer_without_forwarding() {
+        let sequencer = MockServer::start();
+        let mock = sequencer.mock(|when, then| {
+            when.method(POST);
+            then.status(500);
+        });
+        let api =
+            PayerApiImpl::new(everest_provider(), client(&sequencer), MockPayerChainState::new());
+
+        let error = api.send_transaction(send_request_paid_by(None)).await.expect_err("no payer");
+
+        assert_eq!(rejection_data(&error)["code"], "INVALID_TRANSACTION");
+        mock.assert_calls(0);
+    }
+
+    #[tokio::test]
+    async fn rejects_a_transaction_whose_first_phase_reverts_without_forwarding() {
+        let sequencer = MockServer::start();
+        let mock = sequencer.mock(|when, then| {
+            when.method(POST);
+            then.status(500);
+        });
+        let state =
+            failing_simulation(EthRpcErrorCode::ExecutionError.code(), "execution reverted");
+        let api = PayerApiImpl::new(everest_provider(), client(&sequencer), state);
+
+        let error = api.send_transaction(send_request()).await.expect_err("reverted");
+
+        let data = rejection_data(&error);
+        assert_eq!(data["code"], "EXECUTION_REVERTED");
+        assert_eq!(data["revert"], json!({ "phase": 0, "data": "0x" }));
+        mock.assert_calls(0);
+    }
+
+    #[tokio::test]
+    async fn rejects_a_transaction_whose_nonce_was_used_without_forwarding() {
+        let sequencer = MockServer::start();
+        let mock = sequencer.mock(|when, then| {
+            when.method(POST);
+            then.status(500);
+        });
+        let mut state = MockPayerChainState::new();
+        state.expect_nonce().returning(|_, _| Ok(U256::from(1)));
+        let api = PayerApiImpl::new(everest_provider(), client(&sequencer), state);
+
+        let error = api.send_transaction(send_request()).await.expect_err("replayed");
+
+        let data = rejection_data(&error);
+        assert_eq!(data["code"], "INVALID_TRANSACTION");
+        assert_eq!(data["reason"], PayerTransactionError::NonceUsed.to_string());
+        mock.assert_calls(0);
+    }
+
+    #[tokio::test]
+    async fn forwards_a_transaction_whose_state_cannot_be_read() {
+        let sequencer = MockServer::start();
+        let mock = sequencer.mock(|when, then| {
+            when.method(POST).body_includes("payer_sendTransaction");
+            rpc_result(then, json!({ "transactionHash": format!("0x{}", "11".repeat(32)) }));
+        });
+        let unavailable = || state_error(ErrorCode::InternalError.code(), "state unavailable");
+        let mut state = MockPayerChainState::new();
+        state.expect_nonce().returning(move |_, _| Err(unavailable()));
+        state.expect_simulate().returning(move |_| Err(unavailable()));
+        let api = PayerApiImpl::new(everest_provider(), client(&sequencer), state);
+
+        api.send_transaction(send_request()).await.unwrap();
+
+        mock.assert_calls(1);
+    }
+
+    #[tokio::test]
+    async fn forwards_a_transaction_whose_simulation_times_out() {
+        let sequencer = MockServer::start();
+        let mock = sequencer.mock(|when, then| {
+            when.method(POST).body_includes("payer_sendTransaction");
+            rpc_result(then, json!({ "transactionHash": format!("0x{}", "11".repeat(32)) }));
+        });
+        let state = failing_simulation(
+            EthRpcErrorCode::InvalidInput.code(),
+            "execution aborted (timeout = 5s)",
+        );
+        let api = PayerApiImpl::new(everest_provider(), client(&sequencer), state);
+
+        api.send_transaction(send_request()).await.unwrap();
+
+        mock.assert_calls(1);
     }
 
     #[test]
     fn registers_only_the_enabled_payer_methods() {
         let client = SequencerClient::new_http_with_headers("http://127.0.0.1:9", vec![]).unwrap();
-        let module = PayerApiImpl::new(everest_provider(), client).into_rpc();
+        let module =
+            PayerApiImpl::new(everest_provider(), client, MockPayerChainState::new()).into_rpc();
         let names: Vec<_> = module.method_names().collect();
 
         assert!(names.contains(&"payer_getTerms"));

@@ -20,3 +20,9 @@ mod rpc;
 pub use rpc::{
     PAYER_PRE_EVEREST_RPC_ERROR, PAYER_UNREACHABLE_RPC_ERROR, PayerApiImpl, PayerApiServer,
 };
+
+mod state;
+pub use state::{Eip8130ChainState, PayerChainState};
+
+mod transaction;
+pub use transaction::{PayerTransaction, PayerTransactionError};
