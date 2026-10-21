@@ -1070,7 +1070,7 @@ mod tests {
 
     impl InnerStub {
         fn new(transactions: Vec<Arc<ValidPoolTransaction<BasePooledTransaction>>>) -> Self {
-            Self(transactions.into_iter().collect())
+            Self(transactions.into())
         }
     }
 
