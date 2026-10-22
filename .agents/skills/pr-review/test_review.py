@@ -276,11 +276,11 @@ class PlanTests(unittest.TestCase):
         self.assertEqual([f.severity for f in plan.outside], ["minor"])
 
     def test_reply_resolve_and_reopen(self) -> None:
-        self.threads.append(resolved_by_bot("marked"))
-        plan = self.plan({"type": "reply", "thread_id": "open", "body": "more"},
+        self.threads.extend([thread("other"), resolved_by_bot("marked")])
+        plan = self.plan({"type": "reply", "thread_id": "other", "body": "more"},
                          {"type": "resolve", "thread_id": "open", "body": "fixed in `run`"},
                          {"type": "reopen", "thread_id": "marked", "body": "still broken"})
-        self.assertEqual([r["thread_id"] for r in plan.replies], ["open"])
+        self.assertEqual([r["thread_id"] for r in plan.replies], ["other"])
         self.assertIn("**Follow-up:** more", plan.replies[0]["body"])
         [resolve] = plan.resolves
         self.assertEqual((resolve["thread_id"], resolve["comment_id"]), ("open", 100))
@@ -794,8 +794,21 @@ class RepeatTests(unittest.TestCase):
         self.assertEqual(len(plan.new) + len(plan.outside), 2)
 
     def test_a_thread_gets_one_follow_up(self) -> None:
-        plan = self.plan([{"type": "reply", "thread_id": "open", "body": "a"},
-                          {"type": "reply", "thread_id": "open", "body": "b"}])
+        for kinds in (("reply", "reply"), ("reply", "resolve"), ("resolve", "reply"),
+                      ("reply", "reopen"), ("reopen", "reply")):
+            with self.subTest(kinds=kinds):
+                target = resolved_by_bot("t") if "reopen" in kinds else thread("t")
+                plan = review.build_plan({"actions": [
+                    {"type": kind, "thread_id": "t", "body": str(i)} for i, kind in enumerate(kinds)]},
+                    [target], set())
+                self.assertEqual(len(plan.replies) + len(plan.resolves) + len(plan.reopens), 1)
+                accepted = {"reply": plan.replies, "resolve": plan.resolves, "reopen": plan.reopens}
+                self.assertEqual(len(accepted[kinds[0]]), 1)
+                self.assertEqual(len(plan.rejected), 1)
+
+        # A rejected action must not consume the thread's slot.
+        plan = self.plan([{"type": "reopen", "thread_id": "open", "body": "invalid"},
+                          {"type": "reply", "thread_id": "open", "body": "valid"}])
         self.assertEqual((len(plan.replies), len(plan.rejected)), (1, 1))
 
     def test_apply_plan_keeps_only_the_replies_it_posted(self) -> None:
@@ -2415,8 +2428,9 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(self.events, ["snapshot", "triage", "review-general", "decide"])
 
     def test_one_decision_may_comment_reply_resolve_and_reopen_and_is_posted_once(self) -> None:
+        self.ctx.threads.append(thread("other"))
         self.decision = {"actions": [
-            comment(), {"type": "reply", "thread_id": "open", "body": "more"},
+            comment(), {"type": "reply", "thread_id": "other", "body": "more"},
             {"type": "resolve", "thread_id": "open", "body": "fixed"},
             {"type": "reopen", "thread_id": "marked", "body": "back"}], "overview": "x", "dropped": []}
         outcome = self.run_pipeline(post=True)

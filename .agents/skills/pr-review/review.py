@@ -881,7 +881,6 @@ def build_plan(decision: dict[str, Any], threads: list[dict[str, Any]],
     plan = Plan()
     anchored: list[render.Finding] = []
     touched: set[str] = set()
-    replied_now: set[str] = set()
     seen_here: set[tuple[str | None, str]] = set()
     for action in decision.get("actions", []):
         kind = action["type"]
@@ -897,15 +896,12 @@ def build_plan(decision: dict[str, Any], threads: list[dict[str, Any]],
         body = action["body"].strip()
         if thread is None or not thread["owned_by_bot"]:
             plan.rejected.append(f"{kind}: unknown or foreign thread {action.get('thread_id')}")
-        elif kind == "reply":
-            if thread["thread_id"] in replied_now:
-                plan.rejected.append(f"reply: thread {thread['thread_id']} already got a follow-up in this run")
-            else:
-                replied_now.add(thread["thread_id"])
-                plan.replies.append({"thread_id": thread["thread_id"],
-                                     "body": f"{render.MARKER}\n**Follow-up:** {body}"})
         elif thread["thread_id"] in touched:
             plan.rejected.append(f"{kind}: thread {thread['thread_id']} already has a change in this run")
+        elif kind == "reply":
+            touched.add(thread["thread_id"])
+            plan.replies.append({"thread_id": thread["thread_id"],
+                                 "body": f"{render.MARKER}\n**Follow-up:** {body}"})
         elif kind == "resolve":
             if thread["resolved"] or thread["bot_resolved"]:
                 plan.rejected.append(f"resolve: thread {thread['thread_id']} is already resolved")
