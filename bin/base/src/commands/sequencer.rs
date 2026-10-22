@@ -278,8 +278,8 @@ mod tests {
 
     #[test]
     fn parses_resource_metering_schedule_in_sequencer_command() {
-        let schedule_path = std::env::temp_dir()
-            .join(format!("base-sequencer-resource-metering-{}.json", std::process::id()));
+        let dir = tempfile::tempdir().expect("tempdir");
+        let schedule_path = dir.path().join("schedule.json");
         std::fs::write(
             &schedule_path,
             r#"{
@@ -325,7 +325,6 @@ mod tests {
             .builder
             .into_builder_config(Arc::clone(&metering_provider))
             .expect("valid schedule should build active BuilderConfig");
-        let _ = std::fs::remove_file(&schedule_path);
 
         assert!(builder_config.resource_metering.enabled);
         assert!(builder_config.resource_metering.is_active());
