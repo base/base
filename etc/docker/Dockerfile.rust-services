@@ -1,16 +1,21 @@
 # syntax=docker/dockerfile:1
+# Optional ca_bundle secret mounts support custom CA bundles; see etc/docker/README.md.
 ARG RUST_VERSION=1.96.0
 ARG RUSTFLAGS="-C link-arg=-fuse-ld=lld"
 FROM public.ecr.aws/docker/library/rust:${RUST_VERSION}-trixie AS rust-builder-base
 ARG RUSTFLAGS
 WORKDIR /app
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
+RUN --mount=type=secret,id=ca_bundle,target=/run/secrets/ca_bundle,required=false,mode=0444 \
+    if [ -f /run/secrets/ca_bundle ]; then apt_ca="-o Acquire::https::CaInfo=/run/secrets/ca_bundle"; else apt_ca=""; fi && \
+    apt-get $apt_ca update && \
+    apt-get $apt_ca install -y --no-install-recommends \
       git libclang-dev libssl-dev pkg-config curl build-essential cmake lld \
       protobuf-compiler libprotobuf-dev && \
     rm -rf /var/lib/apt/lists/*
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=secret,id=ca_bundle,target=/run/secrets/ca_bundle,required=false \
+    if [ -f /run/secrets/ca_bundle ]; then export SSL_CERT_FILE=/run/secrets/ca_bundle CARGO_HTTP_CAINFO=/run/secrets/ca_bundle GIT_SSL_CAINFO=/run/secrets/ca_bundle; fi && \
     cargo install cargo-chef sccache --locked
 ENV RUSTC_WRAPPER=sccache
 ENV SCCACHE_DIR=/sccache
@@ -18,10 +23,14 @@ ENV CARGO_INCREMENTAL=0
 ENV RUSTFLAGS=${RUSTFLAGS}
 
 FROM rust-builder-base AS zk-builder-base
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends unzip && \
+RUN --mount=type=secret,id=ca_bundle,target=/run/secrets/ca_bundle,required=false,mode=0444 \
+    if [ -f /run/secrets/ca_bundle ]; then apt_ca="-o Acquire::https::CaInfo=/run/secrets/ca_bundle"; else apt_ca=""; fi && \
+    apt-get $apt_ca update && \
+    apt-get $apt_ca install -y --no-install-recommends unzip && \
     rm -rf /var/lib/apt/lists/*
-RUN set -eux; \
+RUN --mount=type=secret,id=ca_bundle,target=/run/secrets/ca_bundle,required=false \
+    set -eux; \
+    if [ -f /run/secrets/ca_bundle ]; then export SSL_CERT_FILE=/run/secrets/ca_bundle CURL_CA_BUNDLE=/run/secrets/ca_bundle; fi; \
     GO_VERSION=1.23.3; \
     case "$(uname -m)" in \
       x86_64) GO_ARCH=amd64; GO_SHA256=a0afb9744c00648bafb1b90b4aba5bdb86f424f02f9275399ce0c20b93a2c3a8 ;; \
@@ -33,7 +42,9 @@ RUN set -eux; \
     tar -C /usr/local -xzf /tmp/go.tar.gz; \
     rm /tmp/go.tar.gz
 ENV PATH="/usr/local/go/bin:${PATH}"
-RUN set -eux; \
+RUN --mount=type=secret,id=ca_bundle,target=/run/secrets/ca_bundle,required=false \
+    set -eux; \
+    if [ -f /run/secrets/ca_bundle ]; then export SSL_CERT_FILE=/run/secrets/ca_bundle CURL_CA_BUNDLE=/run/secrets/ca_bundle; fi; \
     PROTOC_VERSION=33.4; \
     case "$(uname -m)" in \
       x86_64) PROTOC_ARCH=x86_64; PROTOC_SHA256=c0040ea9aef08fdeb2c74ca609b18d5fdbfc44ea0042fcfbfb38860d35f7dd66 ;; \
@@ -71,6 +82,8 @@ COPY --from=planner /app/recipe.json recipe.json
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,id=${SCCACHE_CACHE_ID},target=/sccache,sharing=locked \
+    --mount=type=secret,id=ca_bundle,target=/run/secrets/ca_bundle,required=false \
+    if [ -f /run/secrets/ca_bundle ]; then export SSL_CERT_FILE=/run/secrets/ca_bundle CARGO_HTTP_CAINFO=/run/secrets/ca_bundle GIT_SSL_CAINFO=/run/secrets/ca_bundle; fi && \
     cargo chef cook --profile "$PROFILE" --recipe-path recipe.json ${CARGO_CHEF_ARGS} ${CARGO_FEATURES}
 
 FROM rust-deps AS source
@@ -83,7 +96,9 @@ ARG SCCACHE_CACHE_ID=rust-services-sccache
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,id=${SCCACHE_CACHE_ID},target=/sccache,sharing=locked \
+    --mount=type=secret,id=ca_bundle,target=/run/secrets/ca_bundle,required=false \
     set -eux; \
+    if [ -f /run/secrets/ca_bundle ]; then export SSL_CERT_FILE=/run/secrets/ca_bundle CARGO_HTTP_CAINFO=/run/secrets/ca_bundle GIT_SSL_CAINFO=/run/secrets/ca_bundle; fi; \
     if [ "$PROFILE" = "dev" ]; then export CARGO_PROFILE_DEV_DEBUG=0; fi; \
     cargo build --profile "$PROFILE" ${CARGO_FEATURES} \
       --package base --bin base \
@@ -103,6 +118,8 @@ ARG SCCACHE_CACHE_ID=rust-services-sccache
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,id=${SCCACHE_CACHE_ID},target=/sccache,sharing=locked \
+    --mount=type=secret,id=ca_bundle,target=/run/secrets/ca_bundle,required=false \
+    if [ -f /run/secrets/ca_bundle ]; then export SSL_CERT_FILE=/run/secrets/ca_bundle CARGO_HTTP_CAINFO=/run/secrets/ca_bundle GIT_SSL_CAINFO=/run/secrets/ca_bundle; fi && \
     cargo build --profile "$PROFILE" ${CARGO_FEATURES} --package base --bin base && \
     cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/base /app/base
 
@@ -113,6 +130,8 @@ ARG SCCACHE_CACHE_ID=rust-services-sccache
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,id=${SCCACHE_CACHE_ID},target=/sccache,sharing=locked \
+    --mount=type=secret,id=ca_bundle,target=/run/secrets/ca_bundle,required=false \
+    if [ -f /run/secrets/ca_bundle ]; then export SSL_CERT_FILE=/run/secrets/ca_bundle CARGO_HTTP_CAINFO=/run/secrets/ca_bundle GIT_SSL_CAINFO=/run/secrets/ca_bundle; fi && \
     cargo build --profile "$PROFILE" ${CARGO_FEATURES} --package base-reth-node --bin base-reth-node && \
     cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/base-reth-node /app/base-reth-node
 
@@ -122,6 +141,8 @@ ARG SCCACHE_CACHE_ID=rust-services-sccache
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,id=${SCCACHE_CACHE_ID},target=/sccache,sharing=locked \
+    --mount=type=secret,id=ca_bundle,target=/run/secrets/ca_bundle,required=false \
+    if [ -f /run/secrets/ca_bundle ]; then export SSL_CERT_FILE=/run/secrets/ca_bundle CARGO_HTTP_CAINFO=/run/secrets/ca_bundle GIT_SSL_CAINFO=/run/secrets/ca_bundle; fi && \
     cargo build --profile $PROFILE --package base-consensus --bin base-consensus && \
     cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/base-consensus /app/base-consensus
 
@@ -132,6 +153,8 @@ ARG SCCACHE_CACHE_ID=rust-services-sccache
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,id=${SCCACHE_CACHE_ID},target=/sccache,sharing=locked \
+    --mount=type=secret,id=ca_bundle,target=/run/secrets/ca_bundle,required=false \
+    if [ -f /run/secrets/ca_bundle ]; then export SSL_CERT_FILE=/run/secrets/ca_bundle CARGO_HTTP_CAINFO=/run/secrets/ca_bundle GIT_SSL_CAINFO=/run/secrets/ca_bundle; fi && \
     cargo build --profile "$PROFILE" ${CARGO_FEATURES} --package base-builder-bin --bin base-builder && \
     cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/base-builder /app/base-builder
 
@@ -141,6 +164,8 @@ ARG SCCACHE_CACHE_ID=rust-services-sccache
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,id=${SCCACHE_CACHE_ID},target=/sccache,sharing=locked \
+    --mount=type=secret,id=ca_bundle,target=/run/secrets/ca_bundle,required=false \
+    if [ -f /run/secrets/ca_bundle ]; then export SSL_CERT_FILE=/run/secrets/ca_bundle CARGO_HTTP_CAINFO=/run/secrets/ca_bundle GIT_SSL_CAINFO=/run/secrets/ca_bundle; fi && \
     cargo build --profile $PROFILE --package basectl --bin basectl && \
     cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/basectl /app/basectl
 
@@ -150,6 +175,8 @@ ARG SCCACHE_CACHE_ID=rust-services-sccache
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,id=${SCCACHE_CACHE_ID},target=/sccache,sharing=locked \
+    --mount=type=secret,id=ca_bundle,target=/run/secrets/ca_bundle,required=false \
+    if [ -f /run/secrets/ca_bundle ]; then export SSL_CERT_FILE=/run/secrets/ca_bundle CARGO_HTTP_CAINFO=/run/secrets/ca_bundle GIT_SSL_CAINFO=/run/secrets/ca_bundle; fi && \
     cargo build --profile $PROFILE --package base-snapshotter-bin --bin snapshotter && \
     cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/snapshotter /app/snapshotter
 
@@ -159,6 +186,8 @@ ARG SCCACHE_CACHE_ID=rust-services-sccache
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,id=${SCCACHE_CACHE_ID},target=/sccache,sharing=locked \
+    --mount=type=secret,id=ca_bundle,target=/run/secrets/ca_bundle,required=false \
+    if [ -f /run/secrets/ca_bundle ]; then export SSL_CERT_FILE=/run/secrets/ca_bundle CARGO_HTTP_CAINFO=/run/secrets/ca_bundle GIT_SSL_CAINFO=/run/secrets/ca_bundle; fi && \
     cargo build --profile $PROFILE --package base-proposer-bin --bin base-proposer && \
     cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/base-proposer /app/base-proposer
 
@@ -168,6 +197,8 @@ ARG SCCACHE_CACHE_ID=rust-services-sccache
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,id=${SCCACHE_CACHE_ID},target=/sccache,sharing=locked \
+    --mount=type=secret,id=ca_bundle,target=/run/secrets/ca_bundle,required=false \
+    if [ -f /run/secrets/ca_bundle ]; then export SSL_CERT_FILE=/run/secrets/ca_bundle CARGO_HTTP_CAINFO=/run/secrets/ca_bundle GIT_SSL_CAINFO=/run/secrets/ca_bundle; fi && \
     cargo build --profile $PROFILE --package websocket-proxy-bin --bin websocket-proxy && \
     cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/websocket-proxy /app/websocket-proxy
 
@@ -177,6 +208,8 @@ ARG SCCACHE_CACHE_ID=rust-services-sccache
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,id=${SCCACHE_CACHE_ID},target=/sccache,sharing=locked \
+    --mount=type=secret,id=ca_bundle,target=/run/secrets/ca_bundle,required=false \
+    if [ -f /run/secrets/ca_bundle ]; then export SSL_CERT_FILE=/run/secrets/ca_bundle CARGO_HTTP_CAINFO=/run/secrets/ca_bundle GIT_SSL_CAINFO=/run/secrets/ca_bundle; fi && \
     cargo build --profile $PROFILE --package audit-archiver --bin audit-archiver && \
     cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/audit-archiver /app/audit-archiver
 
@@ -186,6 +219,8 @@ ARG SCCACHE_CACHE_ID=rust-services-sccache
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,id=${SCCACHE_CACHE_ID},target=/sccache,sharing=locked \
+    --mount=type=secret,id=ca_bundle,target=/run/secrets/ca_bundle,required=false \
+    if [ -f /run/secrets/ca_bundle ]; then export SSL_CERT_FILE=/run/secrets/ca_bundle CARGO_HTTP_CAINFO=/run/secrets/ca_bundle GIT_SSL_CAINFO=/run/secrets/ca_bundle; fi && \
     cargo build --profile $PROFILE --package base-sidecrush-bin --bin sidecrush && \
     cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/sidecrush /app/sidecrush
 
@@ -195,6 +230,8 @@ ARG SCCACHE_CACHE_ID=rust-services-sccache
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,id=${SCCACHE_CACHE_ID},target=/sccache,sharing=locked \
+    --mount=type=secret,id=ca_bundle,target=/run/secrets/ca_bundle,required=false \
+    if [ -f /run/secrets/ca_bundle ]; then export SSL_CERT_FILE=/run/secrets/ca_bundle CARGO_HTTP_CAINFO=/run/secrets/ca_bundle GIT_SSL_CAINFO=/run/secrets/ca_bundle; fi && \
     cargo build --profile $PROFILE --package base-prover-service-bin --bin base-prover-service && \
     cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/base-prover-service /app/base-prover-service
 
@@ -208,18 +245,24 @@ ARG SCCACHE_CACHE_ID=rust-services-sccache
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,id=${SCCACHE_CACHE_ID},target=/sccache,sharing=locked \
+    --mount=type=secret,id=ca_bundle,target=/run/secrets/ca_bundle,required=false \
+    if [ -f /run/secrets/ca_bundle ]; then export SSL_CERT_FILE=/run/secrets/ca_bundle CARGO_HTTP_CAINFO=/run/secrets/ca_bundle GIT_SSL_CAINFO=/run/secrets/ca_bundle; fi && \
     cargo build --profile $PROFILE --package base-prover-zk-host --bin base-prover-zk-host && \
     cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/base-prover-zk-host /app/base-prover-zk-host
 
 FROM public.ecr.aws/docker/library/debian:trixie-slim AS runtime-base
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends ca-certificates curl && \
+RUN --mount=type=secret,id=ca_bundle,target=/run/secrets/ca_bundle,required=false,mode=0444 \
+    if [ -f /run/secrets/ca_bundle ]; then apt_ca="-o Acquire::https::CaInfo=/run/secrets/ca_bundle"; else apt_ca=""; fi && \
+    apt-get $apt_ca update && \
+    apt-get $apt_ca install -y --no-install-recommends ca-certificates curl && \
     rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 
 FROM runtime-base AS base
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends supervisor && \
+RUN --mount=type=secret,id=ca_bundle,target=/run/secrets/ca_bundle,required=false,mode=0444 \
+    if [ -f /run/secrets/ca_bundle ]; then apt_ca="-o Acquire::https::CaInfo=/run/secrets/ca_bundle"; else apt_ca=""; fi && \
+    apt-get $apt_ca update && \
+    apt-get $apt_ca install -y --no-install-recommends supervisor && \
     rm -rf /var/lib/apt/lists/*
 RUN mkdir -p /var/log/supervisor
 COPY --from=base-image-builder /app/base ./base

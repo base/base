@@ -1,5 +1,6 @@
 # syntax=docker/dockerfile:1
 # check=skip=FromPlatformFlagConstDisallowed
+# Optional ca_bundle secret mounts support custom CA bundles; see etc/docker/README.md.
 
 # Builds the base-prover-nitro-enclave EIF (Enclave Image Format).
 # All stages use --platform=linux/amd64 because Nitro enclaves only support x86_64.
@@ -22,7 +23,9 @@ ENV OPENSSL_STATIC=1
 ENV OPENSSL_LIB_DIR=/usr/lib
 ENV OPENSSL_INCLUDE_DIR=/usr/include
 
-RUN apk add --no-cache \
+RUN --mount=type=secret,id=ca_bundle,target=/run/secrets/ca_bundle,required=false \
+    if [ -f /run/secrets/ca_bundle ]; then export SSL_CERT_FILE=/run/secrets/ca_bundle; fi && \
+    apk add --no-cache \
     musl-dev \
     openssl-dev \
     openssl-libs-static \
@@ -41,7 +44,9 @@ FROM rust AS builder
 
 ARG LINUXKIT_VERSION=v1.8.2
 ARG LINUXKIT_SHA256=18b97b0d83401dd88ade14f207eb26358d9a7fde5d3dc4b1e24bd8faf087be6f
-RUN wget -q -O /usr/local/bin/linuxkit \
+RUN --mount=type=secret,id=ca_bundle,target=/run/secrets/ca_bundle,required=false \
+    if [ -f /run/secrets/ca_bundle ]; then export SSL_CERT_FILE=/run/secrets/ca_bundle; fi && \
+    wget -q -O /usr/local/bin/linuxkit \
     "https://github.com/linuxkit/linuxkit/releases/download/${LINUXKIT_VERSION}/linuxkit-linux-amd64" && \
     echo "${LINUXKIT_SHA256}  /usr/local/bin/linuxkit" | sha256sum -c - && \
     chmod +x /usr/local/bin/linuxkit
@@ -51,6 +56,8 @@ COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry,id=enclave-registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,id=enclave-git,sharing=locked \
     --mount=type=cache,target=/app/target,id=enclave-target,sharing=locked \
+    --mount=type=secret,id=ca_bundle,target=/run/secrets/ca_bundle,required=false \
+    if [ -f /run/secrets/ca_bundle ]; then export SSL_CERT_FILE=/run/secrets/ca_bundle CARGO_HTTP_CAINFO=/run/secrets/ca_bundle GIT_SSL_CAINFO=/run/secrets/ca_bundle; fi && \
     cargo build --release --locked --target x86_64-unknown-linux-musl --package base-prover-nitro-enclave --bin base-prover-nitro-enclave && \
     cp target/x86_64-unknown-linux-musl/release/base-prover-nitro-enclave /app/base-prover-nitro-enclave
 
@@ -67,7 +74,9 @@ WORKDIR /build
 
 ENV REPO=https://github.com/aws/aws-nitro-enclaves-image-format.git
 ENV COMMIT=483114f1da3bad913ad1fb7d5c00dadacc6cbae6
-RUN git init && \
+RUN --mount=type=secret,id=ca_bundle,target=/run/secrets/ca_bundle,required=false \
+    if [ -f /run/secrets/ca_bundle ]; then export SSL_CERT_FILE=/run/secrets/ca_bundle GIT_SSL_CAINFO=/run/secrets/ca_bundle; fi && \
+    git init && \
     git remote add origin $REPO && \
     git fetch --depth=1 origin $COMMIT && \
     git reset --hard FETCH_HEAD
@@ -76,6 +85,8 @@ COPY etc/docker/nitro-enclave/aws-nitro-enclaves-image-format.Cargo.lock Cargo.l
 RUN --mount=type=cache,target=/usr/local/cargo/registry,id=eif-registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,id=eif-git,sharing=locked \
     --mount=type=cache,target=/build/target,id=eif-target,sharing=locked \
+    --mount=type=secret,id=ca_bundle,target=/run/secrets/ca_bundle,required=false \
+    if [ -f /run/secrets/ca_bundle ]; then export SSL_CERT_FILE=/run/secrets/ca_bundle CARGO_HTTP_CAINFO=/run/secrets/ca_bundle GIT_SSL_CAINFO=/run/secrets/ca_bundle; fi && \
     cargo build --all --release --locked && \
     cp target/release/eif_build /usr/local/bin/eif_build
 
@@ -99,14 +110,18 @@ FROM --platform=linux/amd64 rust:1.95@sha256:443dd9a3260cf23c22fc05051dd5661dd7b
 
 WORKDIR /app
 
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends pkg-config libssl-dev && \
+RUN --mount=type=secret,id=ca_bundle,target=/run/secrets/ca_bundle,required=false,mode=0444 \
+    if [ -f /run/secrets/ca_bundle ]; then apt_ca="-o Acquire::https::CaInfo=/run/secrets/ca_bundle"; else apt_ca=""; fi && \
+    apt-get $apt_ca update && \
+    apt-get $apt_ca install -y --no-install-recommends pkg-config libssl-dev && \
     rm -rf /var/lib/apt/lists/*
 
 ENV REPO=https://github.com/aws/aws-nitro-enclaves-cli.git
 # v1.3.3
 ENV COMMIT=afb7264b477ad241922236dd61f1730154212034
-RUN git init && \
+RUN --mount=type=secret,id=ca_bundle,target=/run/secrets/ca_bundle,required=false \
+    if [ -f /run/secrets/ca_bundle ]; then export SSL_CERT_FILE=/run/secrets/ca_bundle GIT_SSL_CAINFO=/run/secrets/ca_bundle; fi && \
+    git init && \
     git remote add origin $REPO && \
     git fetch --depth=1 origin $COMMIT && \
     git reset --hard FETCH_HEAD
@@ -114,6 +129,8 @@ RUN git init && \
 RUN --mount=type=cache,target=/root/.cargo/registry,id=nitro-cli-registry,sharing=locked \
     --mount=type=cache,target=/root/.cargo/git,id=nitro-cli-git,sharing=locked \
     --mount=type=cache,target=/app/target,id=nitro-cli-target,sharing=locked \
+    --mount=type=secret,id=ca_bundle,target=/run/secrets/ca_bundle,required=false \
+    if [ -f /run/secrets/ca_bundle ]; then export SSL_CERT_FILE=/run/secrets/ca_bundle CARGO_HTTP_CAINFO=/run/secrets/ca_bundle GIT_SSL_CAINFO=/run/secrets/ca_bundle; fi && \
     cargo build --release --locked && \
     cp target/release/nitro-cli /usr/local/bin/nitro-cli
 
@@ -130,8 +147,10 @@ RUN mkdir -p /var/log/nitro_enclaves
 # Stage 7: Runtime - EC2 deployment image for enclave lifecycle
 FROM --platform=linux/amd64 debian:trixie-slim@sha256:1d3c811171a08a5adaa4a163fbafd96b61b87aa871bbc7aa15431ac275d3d430
 
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends udev systemd file ca-certificates && \
+RUN --mount=type=secret,id=ca_bundle,target=/run/secrets/ca_bundle,required=false,mode=0444 \
+    if [ -f /run/secrets/ca_bundle ]; then apt_ca="-o Acquire::https::CaInfo=/run/secrets/ca_bundle"; else apt_ca=""; fi && \
+    apt-get $apt_ca update && \
+    apt-get $apt_ca install -y --no-install-recommends udev systemd file ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

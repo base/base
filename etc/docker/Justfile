@@ -5,6 +5,7 @@ _ha := "-f etc/docker/docker-compose.yml -f etc/docker/docker-compose.ha.yml"
 _base := "-f etc/docker/docker-compose.yml"
 _anvil := "-f etc/docker/docker-compose.yml -f etc/docker/docker-compose.anvil-l1.yml"
 _env := "--env-file etc/docker/devnet-env"
+import '../just/ca-bundle.just'
 
 mod snapshot '../just/snapshot.just'
 
@@ -59,7 +60,7 @@ down-anvil:
 
 # Builds the latest Base-Anvil default branch used by the local Nitro devnet
 build-anvil-image source='https://github.com/base/base-anvil.git':
-    docker buildx build --load \
+    docker buildx build --load {{ _ca_bundle_secret }} \
       --tag base-anvil:prover-single-l1 \
       --build-arg RUST_PROFILE=release \
       --build-arg RUST_FEATURES=anvil/cli \
@@ -244,11 +245,11 @@ build-image target='base' profile='dev':
         esac
         ;;
     esac
-    PROFILE="{{ profile }}" ZK_HOST_PROFILE=release BASE_SUCCINCT_ELF_REQUIRE="${elf_require}" docker buildx bake -f etc/docker/docker-bake.hcl "{{ target }}" --load
+    DOCKER_CA_BUNDLE={{ quote(_ca_bundle) }} PROFILE="{{ profile }}" ZK_HOST_PROFILE=release BASE_SUCCINCT_ELF_REQUIRE="${elf_require}" docker buildx bake -f etc/docker/docker-bake.hcl "{{ target }}" --load
 
 # Prepares Docker images needed for system tests
 pull-images:
-    docker build --load -t devnet-setup:local-v2 -f etc/docker/Dockerfile.devnet .
+    docker build --load {{ _ca_bundle_secret }} -t devnet-setup:local-v2 -f etc/docker/Dockerfile.devnet .
     docker pull ghcr.io/paradigmxyz/reth:v2.5.2
     docker pull sigp/lighthouse:v8.2.2
 
@@ -278,11 +279,11 @@ _install-nextest:
 
 [private]
 _build-setup-image:
-    docker build --load -t devnet-setup:local-v2 -f etc/docker/Dockerfile.devnet .
+    docker build --load {{ _ca_bundle_secret }} -t devnet-setup:local-v2 -f etc/docker/Dockerfile.devnet .
 
 [private]
 _build-profiling-tools-image:
-    docker buildx bake -f etc/docker/docker-bake.hcl profiling-tools --load
+    DOCKER_CA_BUNDLE={{ quote(_ca_bundle) }} docker buildx bake -f etc/docker/docker-bake.hcl profiling-tools --load
 
 [private]
 _build-rust-images group profile='dev':
@@ -296,11 +297,11 @@ _build-rust-images group profile='dev':
         esac
         ;;
     esac
-    PROFILE="{{ profile }}" ZK_HOST_PROFILE=release BASE_SUCCINCT_ELF_REQUIRE="${elf_require}" docker buildx bake -f etc/docker/docker-bake.hcl "{{ group }}" --load
+    DOCKER_CA_BUNDLE={{ quote(_ca_bundle) }} PROFILE="{{ profile }}" ZK_HOST_PROFILE=release BASE_SUCCINCT_ELF_REQUIRE="${elf_require}" docker buildx bake -f etc/docker/docker-bake.hcl "{{ group }}" --load
 
 [private]
 _build-nitro-images profile='dev':
-    PROFILE="{{ profile }}" docker buildx bake -f etc/docker/docker-bake.hcl proposer prover-service nitro-host-local --load
+    DOCKER_CA_BUNDLE={{ quote(_ca_bundle) }} PROFILE="{{ profile }}" docker buildx bake -f etc/docker/docker-bake.hcl proposer prover-service nitro-host-local --load
 
 [private]
 _up-devnet compose_profile mode:

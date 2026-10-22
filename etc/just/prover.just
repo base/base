@@ -2,6 +2,7 @@ set positional-arguments := true
 set working-directory := '../..'
 
 _compose_file := "etc/docker/docker-compose.prover.yml"
+import 'ca-bundle.just'
 
 # Show standalone prover commands
 default:
@@ -83,7 +84,7 @@ up network:
       fi
     done
 
-    PROFILE=dev ZK_HOST_PROFILE=release BASE_SUCCINCT_ELF_REQUIRE=1 \
+    DOCKER_CA_BUNDLE={{ quote(_ca_bundle) }} PROFILE=dev ZK_HOST_PROFILE=release BASE_SUCCINCT_ELF_REQUIRE=1 \
       docker buildx bake -f etc/docker/docker-bake.hcl prover-service zk-host --load
 
     PROVER_NETWORK="$network" docker compose -p "base-prover-${network}" \

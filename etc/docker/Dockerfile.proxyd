@@ -1,11 +1,20 @@
+# Optional ca_bundle secret mounts support custom CA bundles; see etc/docker/README.md.
 FROM public.ecr.aws/docker/library/golang:1.23-alpine3.20 AS builder
-RUN apk add --no-cache make git gcc musl-dev
+RUN --mount=type=secret,id=ca_bundle,target=/run/secrets/ca_bundle,required=false \
+    if [ -f /run/secrets/ca_bundle ]; then export SSL_CERT_FILE=/run/secrets/ca_bundle; fi && \
+    apk add --no-cache make git gcc musl-dev
 WORKDIR /app
-RUN git clone --depth 1 --branch release-rb https://github.com/base/infra-routing.git .
+RUN --mount=type=secret,id=ca_bundle,target=/run/secrets/ca_bundle,required=false \
+    if [ -f /run/secrets/ca_bundle ]; then export SSL_CERT_FILE=/run/secrets/ca_bundle GIT_SSL_CAINFO=/run/secrets/ca_bundle; fi && \
+    git clone --depth 1 --branch release-rb https://github.com/base/infra-routing.git .
 WORKDIR /app/proxyd
-RUN go build -o /bin/proxyd ./cmd/proxyd
+RUN --mount=type=secret,id=ca_bundle,target=/run/secrets/ca_bundle,required=false \
+    if [ -f /run/secrets/ca_bundle ]; then export SSL_CERT_FILE=/run/secrets/ca_bundle GIT_SSL_CAINFO=/run/secrets/ca_bundle; fi && \
+    go build -o /bin/proxyd ./cmd/proxyd
 
 FROM public.ecr.aws/docker/library/alpine:3.20
-RUN apk add --no-cache ca-certificates curl
+RUN --mount=type=secret,id=ca_bundle,target=/run/secrets/ca_bundle,required=false \
+    if [ -f /run/secrets/ca_bundle ]; then export SSL_CERT_FILE=/run/secrets/ca_bundle; fi && \
+    apk add --no-cache ca-certificates curl
 COPY --from=builder /bin/proxyd /bin/proxyd
 ENTRYPOINT ["/bin/proxyd"]

@@ -280,3 +280,20 @@ Plain `docker build` still works if you prefer it:
 ```bash
 docker build -t base -f etc/docker/Dockerfile.rust-services --target base .
 ```
+
+### Building with a custom CA bundle
+
+When building on a host behind a TLS-inspecting proxy or custom root CA, configure the container runtime, BuildKit builder, and `DOCKER_CA_BUNDLE` environment variable so image pulls and build steps trust the custom CA:
+
+1. **Registry and builder trust (`FROM` and `ADD https://...`):** Configure `public.ecr.aws` (and its CloudFront blob CDN `d2glxqk2uabbnd.cloudfront.net`) and Docker Hub to trust your custom CA in Podman (`~/.config/containers/certs.d` and the Podman VM system trust store) and in your Buildx `docker-container` builder (`buildkitd.toml`, selected with `docker buildx use --global <builder>`). Because `moby/buildkit:buildx-stable-1` inside the builder container (`buildx_buildkit_<builder>0`) ships `ca-certificates-bundle` without `update-ca-certificates`, copy your custom CA PEM file into the builder container, check with `grep -Fq` before appending it to `/etc/ssl/certs/ca-certificates.crt`, and restart the builder container so `ADD https://github.com/...` trusts the custom CA (re-apply this step after `docker buildx rm <builder>` or whenever the builder container is recreated):
+
+   ```bash
+   docker cp <path/to/custom-ca.pem> buildx_buildkit_<builder>0:/usr/local/share/ca-certificates/custom-ca.crt
+   docker exec buildx_buildkit_<builder>0 sh -c '
+     marker=$(sed -n "2p" /usr/local/share/ca-certificates/custom-ca.crt)
+     grep -Fq "$marker" /etc/ssl/certs/ca-certificates.crt || cat /usr/local/share/ca-certificates/custom-ca.crt >> /etc/ssl/certs/ca-certificates.crt
+   '
+   docker restart buildx_buildkit_<builder>0
+   ```
+2. **In-build `RUN` steps (`id=ca_bundle` and `DOCKER_CA_BUNDLE`):** Network-fetching `RUN` instructions mount the optional BuildKit secret `id=ca_bundle` (`target=/run/secrets/ca_bundle,required=false`) and point `SSL_CERT_FILE`, `GIT_SSL_CAINFO`, `CARGO_HTTP_CAINFO`, `CURL_CA_BUNDLE`, or `apt-get -o Acquire::https::CaInfo` at `/run/secrets/ca_bundle` only when that file is present. Export `DOCKER_CA_BUNDLE=/path/to/ca-bundle.pem` (a PEM bundle containing your custom CA plus standard public root CAs) in your shell environment; `etc/docker/Justfile`, `etc/just/prover.just`, `crates/proof/tee/Justfile`, and `base-system-tests` (`SetupImage`) pass `--secret id=ca_bundle,src=...` (or `DOCKER_CA_BUNDLE` to `docker buildx bake`) only when `DOCKER_CA_BUNDLE` is set and names an existing regular file, and omit it in CI and on hosts where `DOCKER_CA_BUNDLE` is unset. The CA bundle is never copied into image layers.
+3. **Compose `--build` limitation:** `docker compose --build` (including root `docker-compose.yml` and `etc/docker/docker-compose*.yml`) does not pass the `ca_bundle` BuildKit secret because Compose top-level `secrets:` cannot be made conditional on host file existence. On hosts using a custom CA bundle, build images with `just devnet`, `docker buildx bake`, or `docker build` before running `docker compose up --no-build`.

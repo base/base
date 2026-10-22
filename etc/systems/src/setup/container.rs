@@ -26,6 +26,7 @@ const SETUP_IMAGE_BUILD_LOCK_TIMEOUT: Duration = Duration::from_secs(600);
 const SETUP_IMAGE_BUILD_LOCK_POLL_INTERVAL: Duration = Duration::from_millis(500);
 const SETUP_DOCKERFILE_PATH: &str = "etc/docker/Dockerfile.devnet";
 const SETUP_TIMEOUT_SECS: u64 = 300;
+const DOCKER_CA_BUNDLE_ENV: &str = "DOCKER_CA_BUNDLE";
 
 /// Builder enode ID
 pub const BUILDER_ENODE_ID: &str = "3255458e24278e31d5940f304b16300fdff3f6efd3e2a030b5818310ac67af45e28d057e6a332d07e0c5ab09d6947fd4eed1a646edbf224e2d2fec6f49f90abc";
@@ -99,8 +100,12 @@ impl SetupImage {
 
             ensure!(dockerfile_path.exists(), "{SETUP_DOCKERFILE_PATH} not found");
 
+            let ca_bundle_env = std::env::var_os(DOCKER_CA_BUNDLE_ENV).map(PathBuf::from);
+            let ca_bundle = Self::resolve_ca_bundle(ca_bundle_env.as_deref());
+            let build_args = Self::build_args(ca_bundle.as_deref());
+
             let status = Command::new("docker")
-                .args(["build", "-t", SETUP_IMAGE_REFERENCE, "-f", SETUP_DOCKERFILE_PATH, "."])
+                .args(&build_args)
                 .current_dir(&repo_root)
                 .status()
                 .wrap_err("Failed to run docker build")?;
@@ -120,6 +125,32 @@ impl SetupImage {
                 Err(error)
             }
         }
+    }
+    /// Resolves the optional host CA bundle file for the `ca_bundle` `BuildKit` secret.
+    ///
+    /// Returns `Some` only when `ca_bundle_env` (`DOCKER_CA_BUNDLE`) is non-empty and
+    /// points to an existing regular file (`is_file()`).
+    pub fn resolve_ca_bundle(ca_bundle_env: Option<&Path>) -> Option<PathBuf> {
+        let candidate = ca_bundle_env.filter(|path| !path.as_os_str().is_empty())?;
+        candidate.is_file().then(|| candidate.to_path_buf())
+    }
+
+    /// Returns the `docker build` arguments for [`SetupImage`], passing `--secret id=ca_bundle,src=…`
+    /// only when `ca_bundle` points to an existing regular file.
+    pub fn build_args(ca_bundle: Option<&Path>) -> Vec<String> {
+        let mut args = vec!["build".to_string()];
+        if let Some(bundle) = ca_bundle.filter(|path| path.is_file()) {
+            args.push("--secret".to_string());
+            args.push(format!("id=ca_bundle,src={}", bundle.display()));
+        }
+        args.extend([
+            "-t".to_string(),
+            SETUP_IMAGE_REFERENCE.to_string(),
+            "-f".to_string(),
+            SETUP_DOCKERFILE_PATH.to_string(),
+            ".".to_string(),
+        ]);
+        args
     }
 
     /// Finds the repository root that contains the setup Dockerfile.
@@ -401,5 +432,69 @@ impl SetupContainer {
             L1GenesisOutput { output_dir: self.output_dir.clone() },
             L2DeploymentOutput { output_dir: self.output_dir.clone() },
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{fs, path::Path};
+
+    use tempfile::tempdir;
+
+    use super::{SETUP_DOCKERFILE_PATH, SETUP_IMAGE_REFERENCE, SetupImage};
+
+    #[test]
+    fn build_args_omits_secret_when_bundle_is_absent_or_directory() {
+        let expected_no_secret = vec![
+            "build".to_string(),
+            "-t".to_string(),
+            SETUP_IMAGE_REFERENCE.to_string(),
+            "-f".to_string(),
+            SETUP_DOCKERFILE_PATH.to_string(),
+            ".".to_string(),
+        ];
+        assert_eq!(SetupImage::build_args(None), expected_no_secret);
+        assert_eq!(
+            SetupImage::build_args(Some(Path::new("/nonexistent/custom-ca.pem"))),
+            expected_no_secret
+        );
+
+        let dir = tempdir().expect("tempdir");
+        assert_eq!(SetupImage::build_args(Some(dir.path())), expected_no_secret);
+    }
+
+    #[test]
+    fn build_args_includes_secret_when_bundle_is_regular_file() {
+        let dir = tempdir().expect("tempdir");
+        let bundle = dir.path().join("custom-ca-bundle.pem");
+        fs::write(&bundle, b"-----BEGIN CERTIFICATE-----\nFAKE\n-----END CERTIFICATE-----\n")
+            .expect("write bundle");
+
+        assert_eq!(
+            SetupImage::build_args(Some(&bundle)),
+            vec![
+                "build".to_string(),
+                "--secret".to_string(),
+                format!("id=ca_bundle,src={}", bundle.display()),
+                "-t".to_string(),
+                SETUP_IMAGE_REFERENCE.to_string(),
+                "-f".to_string(),
+                SETUP_DOCKERFILE_PATH.to_string(),
+                ".".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn resolve_ca_bundle_requires_explicit_regular_file() {
+        let dir = tempdir().expect("tempdir");
+        let bundle = dir.path().join("custom-ca-bundle.pem");
+        fs::write(&bundle, b"pem").expect("write bundle");
+
+        assert_eq!(SetupImage::resolve_ca_bundle(None), None);
+        assert_eq!(SetupImage::resolve_ca_bundle(Some(Path::new(""))), None);
+        assert_eq!(SetupImage::resolve_ca_bundle(Some(Path::new("/nonexistent.pem"))), None);
+        assert_eq!(SetupImage::resolve_ca_bundle(Some(dir.path())), None);
+        assert_eq!(SetupImage::resolve_ca_bundle(Some(&bundle)), Some(bundle));
     }
 }

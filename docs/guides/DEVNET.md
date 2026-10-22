@@ -18,7 +18,7 @@ devnet to test those.
 ## Docker Devnet
 
 Requires Docker with Compose v2 and Buildx, [`just`](https://github.com/casey/just) `1.51.0` or newer,
-`jq`, and Foundry `cast`.
+`jq`, and Foundry `cast`. On hosts behind a TLS-inspecting proxy or custom root CA, configure registry/builder CA trust and export `DOCKER_CA_BUNDLE=/path/to/ca-bundle.pem` first (see [etc/docker/README.md](../../etc/docker/README.md#building-with-a-custom-ca-bundle)); `just devnet` passes `DOCKER_CA_BUNDLE` as the optional `ca_bundle` BuildKit secret only when it names an existing regular file (note that `docker compose --build` does not pass this secret; build via `just devnet` or `docker buildx bake`).
 
 ```sh
 just devnet up-single   # or `just devnet up` for the HA cluster
