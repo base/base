@@ -13,6 +13,7 @@ use testcontainers::{
     core::{Mount, WaitFor, wait::ExitWaitStrategy},
     runners::SyncRunner,
 };
+use tracing::warn;
 
 use crate::config::{BATCHER, BUILDER, CHALLENGER, DEPLOYER, PROPOSER, SEQUENCER};
 
@@ -131,9 +132,17 @@ impl SetupImage {
     /// Returns the canonicalized path (`Some`) only when `ca_bundle_env` (`DOCKER_CA_BUNDLE`)
     /// is non-empty and points to an existing regular file (`is_file()`). Canonicalizing here
     /// ensures relative paths stay valid when `docker build` runs with `current_dir(&repo_root)`.
+    /// Logs a warning and returns `None` when a non-empty path does not resolve to a regular file.
     pub fn resolve_ca_bundle(ca_bundle_env: Option<&Path>) -> Option<PathBuf> {
         let candidate = ca_bundle_env.filter(|path| !path.as_os_str().is_empty())?;
-        candidate.canonicalize().ok().filter(|path| path.is_file())
+        let Some(resolved) = candidate.canonicalize().ok().filter(|path| path.is_file()) else {
+            warn!(
+                path = %candidate.display(),
+                "DOCKER_CA_BUNDLE is set but is not a regular file; skipping ca_bundle secret"
+            );
+            return None;
+        };
+        Some(resolved)
     }
 
     /// Returns the `docker build` arguments for [`SetupImage`], passing `--secret id=ca_bundle,src=…`

@@ -114,15 +114,17 @@ def check_dockerfiles(errors: list[str]) -> set[str]:
     )
 
 
-def eval_just_var(justfile: str, var: str, env: dict[str, str]) -> str:
+def eval_just_var(
+    justfile: str, var: str, env: dict[str, str], cwd: Path = REPO_ROOT
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        ["just", "--justfile", justfile, "--evaluate", var],
-        cwd=REPO_ROOT,
+        ["just", "--justfile", str(REPO_ROOT / justfile), "--evaluate", var],
+        cwd=cwd,
         env=env,
         capture_output=True,
         text=True,
         check=True,
-    ).stdout
+    )
 
 
 def check_justfiles(errors: list[str]) -> bool:
@@ -158,22 +160,38 @@ def check_justfiles(errors: list[str]) -> bool:
         base_env = {**os.environ, "HOME": str(tmp_home)}
         base_env.pop("DOCKER_CA_BUNDLE", None)
 
+        sub_dir = Path(tmp_dir) / "subdir"
+        sub_dir.mkdir(parents=True, exist_ok=True)
+        sub_ca = sub_dir / "rel-ca.pem"
+        sub_ca.write_text("-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n", encoding="utf-8")
+        expected_sub_ca = str(sub_ca.resolve())
+
         for rel in justfiles:
-            if eval_just_var(rel, "_ca_bundle_secret", base_env) != "":
-                errors.append(f"{rel}: _ca_bundle_secret should be empty when DOCKER_CA_BUNDLE is unset")
-            if eval_just_var(rel, "_ca_bundle_secret", {**base_env, "DOCKER_CA_BUNDLE": ""}) != "":
-                errors.append(f"{rel}: _ca_bundle_secret should be empty when DOCKER_CA_BUNDLE=''")
-            if eval_just_var(rel, "_ca_bundle_secret", {**base_env, "DOCKER_CA_BUNDLE": str(tmp_home)}) != "":
-                errors.append(f"{rel}: _ca_bundle_secret should be empty when DOCKER_CA_BUNDLE is a directory")
-            if eval_just_var(rel, "_ca_bundle_secret", {**base_env, "DOCKER_CA_BUNDLE": str(Path(tmp_dir) / "missing.pem")}) != "":
-                errors.append(f"{rel}: _ca_bundle_secret should be empty when DOCKER_CA_BUNDLE does not exist")
-            if not eval_just_var(rel, "_ca_bundle_secret", {**base_env, "DOCKER_CA_BUNDLE": str(ca_file)}).startswith(
-                "--secret id=ca_bundle,src="
-            ):
-                errors.append(f"{rel}: _ca_bundle_secret not populated when DOCKER_CA_BUNDLE names a regular file")
-        rel_eval = eval_just_var("crates/proof/tee/Justfile", "_ca_bundle", {**base_env, "DOCKER_CA_BUNDLE": "Justfile"})
-        if rel_eval != str((REPO_ROOT / "crates/proof/tee/Justfile").resolve()):
-            errors.append(f"crates/proof/tee/Justfile: relative DOCKER_CA_BUNDLE not canonicalized: {rel_eval!r}")
+            res_unset = eval_just_var(rel, "_ca_bundle_secret", base_env)
+            if res_unset.stdout != "" or res_unset.stderr != "":
+                errors.append(f"{rel}: unset DOCKER_CA_BUNDLE must yield empty stdout/stderr, got {res_unset.stdout!r} / {res_unset.stderr!r}")
+
+            res_empty = eval_just_var(rel, "_ca_bundle_secret", {**base_env, "DOCKER_CA_BUNDLE": ""})
+            if res_empty.stdout != "" or res_empty.stderr != "":
+                errors.append(f"{rel}: empty DOCKER_CA_BUNDLE='' must yield empty stdout/stderr, got {res_empty.stdout!r} / {res_empty.stderr!r}")
+
+            res_dir = eval_just_var(rel, "_ca_bundle_secret", {**base_env, "DOCKER_CA_BUNDLE": str(tmp_home)})
+            if res_dir.stdout != "" or "warning:" not in res_dir.stderr.lower():
+                errors.append(f"{rel}: directory DOCKER_CA_BUNDLE must yield empty stdout and warning on stderr, got {res_dir.stdout!r} / {res_dir.stderr!r}")
+
+            res_missing = eval_just_var(rel, "_ca_bundle_secret", {**base_env, "DOCKER_CA_BUNDLE": str(Path(tmp_dir) / "missing.pem")})
+            if res_missing.stdout != "" or "warning:" not in res_missing.stderr.lower():
+                errors.append(f"{rel}: missing DOCKER_CA_BUNDLE must yield empty stdout and warning on stderr, got {res_missing.stdout!r} / {res_missing.stderr!r}")
+
+            res_abs = eval_just_var(rel, "_ca_bundle_secret", {**base_env, "DOCKER_CA_BUNDLE": str(ca_file)})
+            if not res_abs.stdout.startswith("--secret id=ca_bundle,src=") or res_abs.stderr != "":
+                errors.append(f"{rel}: regular-file DOCKER_CA_BUNDLE failed: {res_abs.stdout!r} / {res_abs.stderr!r}")
+
+            res_rel = eval_just_var(rel, "_ca_bundle", {**base_env, "DOCKER_CA_BUNDLE": "rel-ca.pem"}, cwd=sub_dir)
+            if res_rel.stdout != expected_sub_ca or res_rel.stderr != "":
+                errors.append(
+                    f"{rel}: relative DOCKER_CA_BUNDLE from subdirectory {sub_dir} resolved to {res_rel.stdout!r} (expected {expected_sub_ca!r}, stderr={res_rel.stderr!r})"
+                )
     return True
 
 
