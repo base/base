@@ -154,6 +154,8 @@ pub struct TxConfig {
 pub enum TxType {
     /// Simple ETH transfer.
     Transfer,
+    /// EIP-8430 EOA self-pay ETH transfer (requires Everest activation).
+    Eip8430Transfer,
     /// ETH transfer with random calldata.
     Calldata {
         /// Maximum calldata size in bytes.
@@ -367,6 +369,16 @@ impl LoadConfig {
 
     /// Validates the configuration, returning an error if invalid.
     pub fn validate(&self) -> Result<()> {
+        if self.validity_ratio > 0.0
+            && self
+                .transactions
+                .iter()
+                .any(|tx| tx.weight > 0 && matches!(tx.tx_type, TxType::Eip8430Transfer))
+        {
+            return Err(BaselineError::Config(
+                "eip8430_transfer cannot be combined with validity submission".into(),
+            ));
+        }
         if self.account_count == 0 {
             return Err(BaselineError::Config("account_count must be > 0".into()));
         }
