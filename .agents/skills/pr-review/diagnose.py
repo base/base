@@ -57,7 +57,7 @@ MODEL_RULES: tuple[tuple[re.Pattern[str], Diagnosis], ...] = tuple(
                    retryable=True)),
         (r"`claude` timed out after",
          Diagnosis("A review stage using {target} did not finish within its wall-clock limit.",
-                   "Each stage's Claude Code process is stopped after 600 s by default (`timeout_seconds` in the "
+                   "Each stage's Claude Code process is stopped after 300 s by default (`timeout_seconds` in the "
                    "agent file). The stage is not restarted; run the review again, or lower `effort`.",
                    retryable=True)),
         (r"not logged in|please run /login|missing api key|no api key|x-api-key header is required",

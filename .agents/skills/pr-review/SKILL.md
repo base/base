@@ -49,7 +49,7 @@ Models do not post to GitHub: each stage returns JSON, and only `review.py` writ
 `run_agent` in `review.py` starts one `claude -p` process per stage. The fixed policy, which no agent file can change:
 
 - **Tools:** only `Read`, `Grep`, and `Glob` (`--tools` and `--allowedTools`), with `--safe-mode --restricted`, an empty MCP configuration (`--strict-mcp-config`), no setting sources, hooks disabled, slash commands disabled, permission prompts off, and no session persistence. Restricted mode confines file tools to the reviewed checkout; this is a CLI permission boundary, not an OS sandbox. Bash, file-editing, web, and MCP tools are not enabled.
-- **Bounds:** at most 12 turns (`--max-turns`, `MODEL_MAX_TURNS`) and a 600-second wall-clock limit on the process (`MODEL_TIMEOUT_SECONDS`, or `timeout_seconds` in the agent file). The working directory is the reviewed checkout.
+- **Bounds:** at most 12 turns (`--max-turns`, `MODEL_MAX_TURNS`) and a 300-second wall-clock limit on the process (`MODEL_TIMEOUT_SECONDS`, or `timeout_seconds` in the agent file). The working directory is the reviewed checkout.
 - **Environment:** `HOME` and `CLAUDE_CONFIG_DIR` point at a fresh temporary directory, so user settings, logins, and CLI state from your home directory are not loaded. The process gets only a short allowlist of runtime and proxy variables plus the gateway settings (`ANTHROPIC_BASE_URL`, `ANTHROPIC_API_KEY`), `CLAUDE_CODE_MAX_RETRIES=0`, and settings that turn off compaction, attachments, and nonessential traffic. `GH_TOKEN`, `GITHUB_TOKEN`, and other inherited variables are not passed.
 - **No outer retry:** a stage that fails, times out, runs out of turns, or returns invalid JSON is reported as failed. The script does not restart it.
 
@@ -71,7 +71,7 @@ A deep run that finds less runs fewer stages (no votes without other members' fi
 
 ### Failure handling
 
-A failed stage is reported, not restarted. If a reviewer or council member fails, the summary says the review is incomplete and the rest continue. If a vote fails, the chair is told who did not vote. If the chair fails, the unmerged findings go to the decider, marked as not cross-checked. If every reviewer fails, the run stops. If the decider fails, no review actions are applied and the summary says so. To try again, ask for another run (`/review` in CI, or run the command again locally).
+A failed stage is reported, not restarted. If a reviewer or council member fails, the summary says the review is incomplete and the rest continue. If a vote fails, the chair is told who did not vote. A ballot must contain exactly one vote for every other member's finding; missing, duplicate, unknown, or self-reported IDs fail the ballot. If the chair fails, the unmerged findings go to the decider, marked as not cross-checked. If every reviewer fails, the run stops. If the decider fails, no review actions are applied and the summary says so. To try again, ask for another run (`/review` in CI, or run the command again locally).
 
 ### The source snapshot
 
@@ -161,7 +161,7 @@ Every agent is `agents/<name>.md`: front matter, then the system prompt.
 | `when` | `review` agents only: comma-separated `always`, `block-production`, `deep`. The agent runs if any condition holds. Default `always`. |
 | `model` | Model ID passed to Claude Code as `--model`. Use an ID the gateway serves. |
 | `effort` | `low`, `medium`, `high`, `xhigh`, or `max`, passed as `--effort`. Default `high`. |
-| `timeout_seconds` | Optional wall-clock limit for the stage's Claude Code process. Default 600. |
+| `timeout_seconds` | Optional wall-clock limit for the stage's Claude Code process. Default 300. |
 | `max_output_tokens` | Optional output-token limit per model response (`CLAUDE_CODE_MAX_OUTPUT_TOKENS`). Default 16000. Gemini agents set 32000. |
 
 There is no `tools` field: every stage gets the same fixed `Read`, `Grep`, and `Glob` policy and 12-turn limit, and an agent file with `tools` or `max_budget_usd` is rejected.
@@ -202,7 +202,7 @@ A Grok member was dropped: the gateway answers `403 Access denied to restricted 
 
 ## How long it takes
 
-Each stage is one Claude Code process with a wall-clock limit of 600 seconds by default (`timeout_seconds` per agent) and at most 12 turns. The longest chain is triage, then a council member's review, its vote, the chair, and the decider; reviewers run in parallel with the council. Everything is posted in one pass, at the end, so a slow stage delays the whole review. The workflow job stops at 30 minutes as a backstop. A job killed during inference posts nothing; one killed during posting can leave partial updates. Until a new summary is posted, the status line keeps pointing at the previous review. A stage that hits its time or turn limit is reported as "(did not finish)" and the review goes on without it, except the decider, whose failure means no actions are applied.
+Each stage is one Claude Code process with a wall-clock limit of 300 seconds by default (`timeout_seconds` per agent) and at most 12 turns. The longest chain is triage, then a council member's review, its vote, the chair, and the decider; reviewers run in parallel with the council. The five default stage limits total 25 minutes, leaving five minutes of the 30-minute job for setup and posting; per-agent overrides must fit that budget too. Everything is posted in one pass, at the end, so a slow stage delays the whole review. The workflow job stops at 30 minutes as a backstop. A job killed during inference posts nothing; one killed during posting can leave partial updates. Until a new summary is posted, the status line keeps pointing at the previous review. A stage that hits its time or turn limit is reported as "(did not finish)" and the review goes on without it, except the decider, whose failure means no actions are applied.
 
 Effort, `max_output_tokens`, and how much a stage reads are the levers on how long it takes. Timings and costs from earlier versions of this pipeline do not apply; measure real runs before quoting new ones.
 
