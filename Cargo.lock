@@ -6315,11 +6315,16 @@ name = "base-sidecrush"
 version = "0.0.0"
 dependencies = [
  "alloy-provider",
+ "alloy-pubsub",
  "alloy-rpc-types-eth 2.5.0",
+ "alloy-transport",
  "anyhow",
  "async-trait",
  "cadence",
+ "futures",
+ "serde_json",
  "tokio",
+ "tokio-tungstenite",
  "tracing",
 ]
 
