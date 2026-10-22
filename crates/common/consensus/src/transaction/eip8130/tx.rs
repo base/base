@@ -92,9 +92,11 @@ pub struct TxEip8130 {
     )]
     pub gas_limit: u64,
     /// Account-mutation entries applied before calls execute.
+    #[cfg_attr(feature = "arbitrary", arbitrary(with = TxEip8130::arbitrary_account_changes))]
     pub account_changes: Vec<AccountChange>,
     /// Calls dispatched by the protocol after account changes apply, grouped
     /// into phases (`Vec<Vec<Call>>`).
+    #[cfg_attr(feature = "arbitrary", arbitrary(with = TxEip8130::arbitrary_calls))]
     pub calls: Vec<Vec<Call>>,
     /// Opaque attribution/annotation bytes; empty when unused. Carried in the
     /// wire body between `calls` and `payer` and committed to by both the
@@ -221,6 +223,30 @@ impl TxEip8130 {
             payload_len += phase.length();
         }
         length_of_length(payload_len) + payload_len
+    }
+
+    /// Generates `account_changes` that [`Self::decode_account_changes`]
+    /// accepts, so arbitrary transactions survive an encode and decode round
+    /// trip. [`AccountChange`]'s own generator still yields every entry type.
+    #[cfg(feature = "arbitrary")]
+    pub fn arbitrary_account_changes(
+        u: &mut arbitrary::Unstructured<'_>,
+    ) -> arbitrary::Result<Vec<AccountChange>> {
+        Ok(if u.arbitrary()? {
+            vec![AccountChange::Delegation(u.arbitrary()?)]
+        } else {
+            Vec::new()
+        })
+    }
+
+    /// Generates `calls` that [`Self::decode_calls`] accepts: at most
+    /// [`Eip8130Constants::MAX_CALL_PHASES_PER_TX`] phases.
+    #[cfg(feature = "arbitrary")]
+    pub fn arbitrary_calls(
+        u: &mut arbitrary::Unstructured<'_>,
+    ) -> arbitrary::Result<Vec<Vec<Call>>> {
+        let phases = u.int_in_range(0..=Eip8130Constants::MAX_CALL_PHASES_PER_TX)?;
+        (0..phases).map(|_| u.arbitrary()).collect()
     }
 
     /// Decodes the `account_changes` list, accepting at most one entry, which
@@ -823,6 +849,20 @@ mod tests {
 
             assert_eq!(TxEip8130::decode_account_changes(&mut input).unwrap(), changes);
             assert!(input.is_empty());
+        }
+    }
+
+    #[cfg(feature = "arbitrary")]
+    #[test]
+    fn arbitrary_transactions_roundtrip() {
+        use arbitrary::{Arbitrary, Unstructured};
+
+        for seed in 0..=u8::MAX {
+            let data: Vec<u8> = (0..4_096u32).map(|i| (i as u8).wrapping_mul(31) ^ seed).collect();
+            let tx = TxEip8130::arbitrary(&mut Unstructured::new(&data)).unwrap();
+            let encoded = alloy_rlp::encode(&tx);
+
+            assert_eq!(TxEip8130::decode(&mut encoded.as_slice()).unwrap(), tx);
         }
     }
 
