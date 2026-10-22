@@ -22,8 +22,14 @@ sol! {
         /// Nonce key `0` is reserved for the protocol nonce and cannot be incremented here.
         error InvalidNonceKey();
 
+        /// Nonce key `uint256.max` selects nonce-free mode and has no sequence channel.
+        error NonceFreeKeyNotSupported();
+
         /// The 2D nonce for the `(account, nonceKey)` channel is already at its maximum.
         error NonceOverflow();
+
+        /// Replay id is the zero hash, which the ring uses as its empty-slot sentinel.
+        error InvalidReplayId();
 
         /// Expiring-nonce `validBefore` is outside the allowed `(now, now + maxExpiry]` window.
         error InvalidExpiringNonceExpiry();
