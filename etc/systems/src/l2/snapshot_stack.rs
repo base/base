@@ -54,7 +54,7 @@ pub struct SnapshotL2Stack {
     builder: InProcessBuilder,
     boundary: SnapshotBoundary,
     standalone_consensus: Option<InProcessStandaloneSequencer>,
-    client: InProcessClient,
+    client: Option<InProcessClient>,
     follow_consensus: Option<InProcessFollowConsensus>,
     follow_config: Option<InProcessFollowConsensusConfig>,
     block_interval: DevnetBlockInterval,
@@ -147,12 +147,13 @@ impl SnapshotL2Stack {
             local_schedule.set(schedule).expect("snapshot schedule is initialized only once");
         }
 
-        let client = InProcessClient::start(InProcessClientConfig {
+        let builder_rpc_url = builder.rpc_url()?.to_string();
+        let client_config = config.snapshot.client_datadir.map(|datadir| InProcessClientConfig {
             runtime: InProcessNodeRuntime::Host,
             chain_spec: ChainSpecSource::Parsed(chain_spec),
-            datadir: Some(config.snapshot.client_datadir),
+            datadir: Some(datadir),
             jwt_secret,
-            builder_rpc_url: builder.rpc_url()?.to_string(),
+            builder_rpc_url,
             // Snapshot validation replays canonical payloads only after sequencing finishes.
             builder_flashblocks_url: None,
             builder_p2p_enode: builder.p2p_enode(),
@@ -169,29 +170,38 @@ impl SnapshotL2Stack {
             upgrade_signal: None,
             extra_extensions: Vec::new(),
             validity_signature_mode: ValiditySignatureMode::Off,
-        })
-        .await
-        .wrap_err("failed to start snapshot client")?;
-        tokio::try_join!(
-            Self::wait_for_el_ready(builder.rpc_url()?, SNAPSHOT_EL_READY_TIMEOUT),
-            Self::wait_for_el_ready(client.rpc_url()?, SNAPSHOT_EL_READY_TIMEOUT),
-        )?;
+        });
+        let client = match client_config {
+            Some(client_config) => Some(
+                InProcessClient::start(client_config)
+                    .await
+                    .wrap_err("failed to start snapshot client")?,
+            ),
+            None => None,
+        };
+        Self::wait_for_el_ready(builder.rpc_url()?, SNAPSHOT_EL_READY_TIMEOUT).await?;
+        if let Some(client) = &client {
+            Self::wait_for_el_ready(client.rpc_url()?, SNAPSHOT_EL_READY_TIMEOUT).await?;
+        }
         Self::ensure_schedule_anchor_is_future(first_block_timestamp, SystemTime::now())?;
 
         let unused_l1_url = Url::parse("http://127.0.0.1:1").expect("valid unused L1 URL");
-        let follow_config = InProcessFollowConsensusConfig {
-            rollup_config: rollup_config.as_ref().clone(),
-            jwt_secret,
-            l1_rpc_url: unused_l1_url,
-            local_l2_rpc_url: client.rpc_url()?,
-            source_l2_rpc_url: builder.rpc_url()?,
-            l2_engine_url: client.engine_url()?,
-            rpc_port: container.and_then(|value| value.client_consensus_rpc_port),
-            // Keep catch-up observable by the per-block Prometheus scraper. This does not alter
-            // measured execution latency; it only prevents multiple canonical inserts between
-            // scrapes while the validator processes the already-produced range.
-            insert_delay: Duration::from_millis(100),
-            upgrade_signal: None,
+        let follow_config = match &client {
+            Some(client) => Some(InProcessFollowConsensusConfig {
+                rollup_config: rollup_config.as_ref().clone(),
+                jwt_secret,
+                l1_rpc_url: unused_l1_url,
+                local_l2_rpc_url: client.rpc_url()?,
+                source_l2_rpc_url: builder.rpc_url()?,
+                l2_engine_url: client.engine_url()?,
+                rpc_port: container.and_then(|value| value.client_consensus_rpc_port),
+                // Keep catch-up observable by the per-block Prometheus scraper. This does not
+                // alter measured execution latency; it only prevents multiple canonical inserts
+                // between scrapes while the validator processes the already-produced range.
+                insert_delay: Duration::from_millis(100),
+                upgrade_signal: None,
+            }),
+            None => None,
         };
         let mut standalone_consensus =
             InProcessStandaloneSequencer::start(InProcessStandaloneSequencerConfig {
@@ -226,7 +236,7 @@ impl SnapshotL2Stack {
             standalone_consensus: Some(standalone_consensus),
             client,
             follow_consensus: None,
-            follow_config: Some(follow_config),
+            follow_config,
             block_interval,
             block_gas_limit,
             rollup_config: canonical_rollup_config,
@@ -262,7 +272,7 @@ impl SnapshotL2Stack {
     pub async fn wait_for_validator(&self) -> Result<()> {
         let target =
             RootProvider::<Base>::new_http(self.builder.rpc_url()?).get_block_number().await?;
-        Self::wait_for_block(self.client.rpc_url()?, target, Duration::from_secs(30))
+        Self::wait_for_block(self.client()?.rpc_url()?, target, Duration::from_secs(30))
             .await
             .wrap_err("snapshot validator did not catch up to the sequencer")
     }
@@ -413,7 +423,7 @@ impl SnapshotL2Stack {
 
     /// Returns the client RPC URL.
     pub fn client_rpc_url(&self) -> Result<Url> {
-        self.client.rpc_url()
+        self.client()?.rpc_url()
     }
 
     /// Returns the builder Prometheus metrics URL.
@@ -423,7 +433,7 @@ impl SnapshotL2Stack {
 
     /// Returns the client Prometheus metrics URL.
     pub fn client_metrics_url(&self) -> Result<Url> {
-        self.client.metrics_url()
+        self.client()?.metrics_url()
     }
 
     /// Returns the builder Flashblocks WebSocket URL.
@@ -445,11 +455,15 @@ impl SnapshotL2Stack {
     /// Verifies both ELs currently report the same block number.
     pub async fn ensure_heads_match(&self) -> Result<()> {
         let builder = RootProvider::<Base>::new_http(self.builder.rpc_url()?);
-        let client = RootProvider::<Base>::new_http(self.client.rpc_url()?);
+        let client = RootProvider::<Base>::new_http(self.client()?.rpc_url()?);
         let (builder_head, client_head) =
             tokio::try_join!(builder.get_block_number(), client.get_block_number())?;
         ensure!(builder_head == client_head, "builder head {builder_head} != client {client_head}");
         Ok(())
+    }
+
+    fn client(&self) -> Result<&InProcessClient> {
+        self.client.as_ref().ok_or_else(|| eyre::eyre!("snapshot stack has no follow client"))
     }
 
     /// Gracefully stops consensus tasks before dropping their execution nodes.
@@ -460,7 +474,9 @@ impl SnapshotL2Stack {
         if let Some(consensus) = self.follow_consensus.take() {
             consensus.shutdown().await;
         }
-        tokio::try_join!(self.builder.shutdown(), self.client.shutdown())?;
+        tokio::try_join!(self.builder.shutdown(), async {
+            if let Some(client) = self.client { client.shutdown().await } else { Ok(()) }
+        })?;
         Ok(())
     }
 }
@@ -475,7 +491,7 @@ mod tests {
     use super::{
         SNAPSHOT_STARTUP_LEAD, SnapshotL2Stack, snapshot_persistence_backpressure_threshold,
     };
-    use crate::DevnetBlockInterval;
+    use crate::{DevnetBlockInterval, DevnetConfig, DevnetL2State, SnapshotChainConfig};
 
     #[test]
     fn persistence_backpressure_window_scales_with_cadence() {
@@ -686,6 +702,56 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    #[test]
+    fn builder_only_mainnet_snapshot_activates_amsterdam() {
+        let datadir = tempfile::tempdir().expect("builder datadir must be available");
+        let config =
+            DevnetConfig::snapshot(datadir.path().into(), None, SnapshotChainConfig::default())
+                .expect("builder-only mainnet config must resolve");
+        config.validate().expect("builder-only config must not require a client datadir");
+        let DevnetL2State::Snapshot(snapshot) = config.l2_state else {
+            panic!("snapshot configuration must select snapshot state");
+        };
+        assert_eq!(snapshot.client_datadir, None, "this run must not launch a validator");
+        let chain = snapshot.chain.resolve().expect("mainnet chain must resolve");
+        assert_eq!(chain.l2_chain_id, 8453, "builder-only fixture must use Base mainnet");
+        let mut canonical = (*chain.rollup_config).clone();
+        canonical.clear_upgrade_activation_timestamp(BaseUpgrade::Denim);
+        let mut original = (*chain.chain_spec).clone();
+        original.set_fork(BaseUpgrade::Denim, ForkCondition::Never);
+        original.set_fork(EthereumHardfork::Amsterdam, ForkCondition::Never);
+        let activation = 2_000_000_001;
+        let interval = DevnetBlockInterval::TwoHundredMilliseconds;
+        let spec = SnapshotL2Stack::chain_spec(original, activation, interval);
+        let rollup =
+            SnapshotL2Stack::anchored_rollup_config(canonical, 48_526_665, activation, interval)
+                .expect("builder-only schedule must anchor without a client");
+        assert_eq!(
+            rollup.l2_block_timestamp_parts(48_526_666),
+            (activation, 0),
+            "first builder-only benchmark block must begin at T",
+        );
+        for (timestamp, active, upgrade) in [
+            (activation - 1, false, BaseUpgrade::Cobalt),
+            (activation, true, BaseUpgrade::Denim),
+            (rollup.l2_block_timestamp(48_526_666), true, BaseUpgrade::Denim),
+        ] {
+            assert_eq!(
+                (
+                    spec.is_amsterdam_active_at_timestamp(timestamp),
+                    spec.is_denim_active_at_timestamp(timestamp)
+                ),
+                (active, rollup.is_denim_active(timestamp)),
+                "builder-only Amsterdam and CL Denim must agree at {timestamp}",
+            );
+            assert_eq!(
+                BaseUpgrade::from_timestamp(&spec, timestamp).into_eth_spec(),
+                upgrade.into_eth_spec(),
+                "builder-only EVM must use Osaka before T and Amsterdam from the first block",
+            );
         }
     }
 
