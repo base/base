@@ -47,6 +47,7 @@ pub struct PreparedBlock {
 pub struct TestHarnessBuilder {
     extensions: Vec<Box<dyn BaseNodeExtension>>,
     chain_spec: Option<Arc<BaseChainSpec>>,
+    rpc_gas_cap: Option<u64>,
 }
 
 impl TestHarnessBuilder {
@@ -77,6 +78,13 @@ impl TestHarnessBuilder {
         self
     }
 
+    /// Set the node's `--rpc.gascap`, the gas bound for `eth_call` and
+    /// `eth_estimateGas`. Defaults to reth's default.
+    pub const fn with_rpc_gas_cap(mut self, rpc_gas_cap: u64) -> Self {
+        self.rpc_gas_cap = Some(rpc_gas_cap);
+        self
+    }
+
     /// Build and launch the test harness.
     pub async fn build(self) -> Result<TestHarness> {
         init_silenced_tracing();
@@ -86,7 +94,7 @@ impl TestHarnessBuilder {
             Arc::new(BaseChainSpec::from_genesis(genesis))
         });
 
-        let node = LocalNode::new(self.extensions, chain_spec).await?;
+        let node = LocalNode::new(self.extensions, chain_spec, self.rpc_gas_cap).await?;
         let engine = node.engine_api()?;
 
         sleep(Duration::from_millis(NODE_STARTUP_DELAY_MS)).await;

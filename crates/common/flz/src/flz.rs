@@ -26,9 +26,12 @@ pub fn data_gas_fjord(input: &[u8]) -> u64 {
 /// This value is computed based on the following formula:
 /// max(minTransactionSize, intercept + fastlzCoef*fastlzSize)
 pub fn tx_estimated_size_fjord(input: &[u8]) -> u64 {
-    let fastlz_size = flz_compress_len(input) as u64;
+    tx_estimated_size_fjord_from_fastlz_size(flz_compress_len(input))
+}
 
-    fastlz_size
+/// [`tx_estimated_size_fjord`] for an input whose [`flz_compress_len`] is `fastlz_size`.
+pub fn tx_estimated_size_fjord_from_fastlz_size(fastlz_size: u32) -> u64 {
+    (fastlz_size as u64)
         .saturating_mul(L1_COST_FASTLZ_COEF)
         .saturating_sub(L1_COST_INTERCEPT)
         .max(MIN_TX_SIZE_SCALED)
