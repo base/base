@@ -1,10 +1,11 @@
 use std::{
+    collections::HashMap,
     fmt,
     sync::Arc,
     time::{Duration, Instant},
 };
 
-use alloy_primitives::TxHash;
+use alloy_primitives::{Address, TxHash, U256};
 use base_execution_txpool::{
     BasePooledTx, BestTransactionLane, NoExtensions, UnifiedTipOrdering, UnifiedTipPriority,
     ValidatedTransaction, ValidatedTransactionExtensions,
@@ -53,6 +54,13 @@ pub trait ReaderPool: Send + Sync {
 
     /// See [`TransactionPool::get`].
     fn get(&self, hash: &TxHash) -> Option<Arc<ValidPoolTransaction<Self::Transaction>>>;
+
+    /// See [`TransactionPool::get_transaction_by_sender_and_nonce`].
+    fn get_transaction_by_sender_and_nonce(
+        &self,
+        sender: Address,
+        nonce: u64,
+    ) -> Option<Arc<ValidPoolTransaction<Self::Transaction>>>;
 }
 
 impl<P: TransactionPool> ReaderPool for P {
@@ -77,6 +85,14 @@ impl<P: TransactionPool> ReaderPool for P {
 
     fn get(&self, hash: &TxHash) -> Option<Arc<ValidPoolTransaction<Self::Transaction>>> {
         TransactionPool::get(self, hash)
+    }
+
+    fn get_transaction_by_sender_and_nonce(
+        &self,
+        sender: Address,
+        nonce: u64,
+    ) -> Option<Arc<ValidPoolTransaction<Self::Transaction>>> {
+        TransactionPool::get_transaction_by_sender_and_nonce(self, sender, nonce)
     }
 }
 
@@ -114,6 +130,10 @@ pub(crate) struct DestinationReader<P: ReaderPool, E = NoExtensions> {
     pool: P,
     config: ReaderConfig,
     recently_sent: RecentlySent,
+    /// Highest nonce of each sequence added to the current lanes since the last full read.
+    queued: HashMap<BestTransactionLane, u64>,
+    /// See [`Self::FULL_SNAPSHOT_INTERVAL`]; a field so tests can pin it.
+    full_read_interval: Duration,
     lane_mix: LaneMix,
     sender: mpsc::Sender<InsertValidatedTransaction<E>>,
     cancel: CancellationToken,
@@ -145,7 +165,9 @@ where
     /// individually and adds them to the current snapshot instead of re-reading every pending
     /// transaction to find the few new ones. The next full read picks up whatever announcements
     /// missed (the listener drops them when its channel is full) and transactions due for a
-    /// resend, so neither waits longer than this.
+    /// resend. It also adds announced transactions that could not be placed in nonce order (see
+    /// [`Self::in_nonce_order`]). This is the normal repair cadence rather than a delivery
+    /// ceiling: a full read waits for queue capacity like any other pass.
     const FULL_SNAPSHOT_INTERVAL: Duration = Duration::from_millis(100);
 
     /// Creates a reader for one destination.
@@ -159,7 +181,18 @@ where
         let recently_sent = RecentlySent::new(config.resend_after);
         let lane_mix = LaneMix::new(config.fifo_percent);
         let url_label = builder_url.to_string().into();
-        Self { pool, config, recently_sent, lane_mix, sender, cancel, builder_url, url_label }
+        Self {
+            pool,
+            config,
+            recently_sent,
+            queued: HashMap::new(),
+            full_read_interval: Self::FULL_SNAPSHOT_INTERVAL,
+            lane_mix,
+            sender,
+            cancel,
+            builder_url,
+            url_label,
+        }
     }
 
     /// Reader loop — runs until the [`CancellationToken`] is cancelled.
@@ -194,7 +227,7 @@ where
             if stale {
                 Self::drain_announcements(&mut pending, &mut announced);
                 let recent_full = last_full
-                    .is_some_and(|(taken_at, _)| taken_at.elapsed() < Self::FULL_SNAPSHOT_INTERVAL);
+                    .is_some_and(|(taken_at, _)| taken_at.elapsed() < self.full_read_interval);
                 if recent_full && pending.is_some() {
                     // With nothing announced the current lanes are still the latest view; the
                     // next full read is due when the interval runs out.
@@ -245,6 +278,7 @@ where
         let base_fee = self.pool.block_info().pending_basefee;
         let ordering = UnifiedTipOrdering::<P::Transaction>::default();
         let mut lanes = LaneScheduler::new();
+        self.queued.clear();
         for tx in self.pool.best_transactions() {
             if self.cancel.is_cancelled() {
                 info!("reader cancelled during iteration");
@@ -264,6 +298,9 @@ where
                 || (tx.timestamp, ordering.priority(&tx.transaction, base_fee)),
                 |due| (due, Priority::None),
             );
+            if let Some(sequence) = sequence {
+                self.queued.insert(sequence, tx.nonce());
+            }
             lanes.push(tx, sequence, arrived, priority);
         }
 
@@ -284,7 +321,8 @@ where
     }
 
     /// Looks up `announced` transactions and adds those still pooled and not recently sent to
-    /// `lanes`, in nonce order per sender so each sequence stays gapless.
+    /// `lanes`, in nonce order per sender so each sequence stays gapless. A transaction that
+    /// cannot be placed in nonce order is left for the next full read.
     fn push_announced(
         &mut self,
         lanes: &mut Snapshot<P::Transaction>,
@@ -300,10 +338,47 @@ where
                 continue;
             }
             let sequence = BestTransactionLane::for_transaction(&tx);
+            if let Some(sequence) = sequence {
+                if !self.in_nonce_order(&tx, sequence) {
+                    continue;
+                }
+                self.queued.insert(sequence, tx.nonce());
+            }
             let arrived = tx.timestamp;
             let priority = ordering.priority(&tx.transaction, base_fee);
             lanes.push(tx, sequence, arrived, priority);
         }
+    }
+
+    /// Returns whether an announced `tx` can join the current lanes without the builder seeing its
+    /// sequence out of nonce order.
+    ///
+    /// It can if it replaces or directly follows the sequence's latest transaction in the lanes,
+    /// or if its predecessor has been sent or is no longer pooled. It cannot if a later nonce of
+    /// the sequence is already in the lanes, since it would be sent after it, or if its
+    /// predecessor is pooled but unsent, as when that announcement was dropped. Predecessors in
+    /// EIP-8130 keyed nonce lanes cannot be looked up, so those are left to the full read too.
+    fn in_nonce_order(
+        &self,
+        tx: &Arc<ValidPoolTransaction<P::Transaction>>,
+        sequence: BestTransactionLane,
+    ) -> bool {
+        let nonce = tx.nonce();
+        if let Some(&last) = self.queued.get(&sequence) {
+            if nonce < last {
+                return false;
+            }
+            if nonce - last <= 1 {
+                return true;
+            }
+        }
+        let Some(previous) = nonce.checked_sub(1) else { return true };
+        if sequence.nonce_key != U256::ZERO {
+            return false;
+        }
+        self.pool
+            .get_transaction_by_sender_and_nonce(sequence.sender, previous)
+            .is_none_or(|previous| self.recently_sent.was_sent(previous.hash()))
     }
 
     /// Moves transactions from `lanes` into the destination queue until it is full or `lanes` is
@@ -445,8 +520,8 @@ impl<P: ReaderPool, E> fmt::Debug for DestinationReader<P, E> {
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::transaction::Recovered;
-    use alloy_primitives::{Address, B256, TxKind, U256};
+    use alloy_consensus::{SignableTransaction, TxEip1559, transaction::Recovered};
+    use alloy_primitives::{Address, B256, Signature, TxKind, U256};
     use base_common_consensus::{BaseTransactionSigned, TxDeposit};
     use base_execution_txpool::BasePooledTransaction;
     use reth_transaction_pool::{
@@ -471,6 +546,38 @@ mod tests {
             is_system_transaction: false,
             input: Default::default(),
         }
+        .into();
+        let transaction = BasePooledTransaction::new(Recovered::new_unchecked(signed, sender), 128);
+        Arc::new(ValidPoolTransaction {
+            transaction_id: TransactionId::new(0u64.into(), nonce),
+            transaction,
+            propagate: true,
+            timestamp: Instant::now(),
+            origin: TransactionOrigin::External,
+            authority_ids: None,
+        })
+    }
+
+    /// An EIP-1559 transaction from sender `sender` at `nonce`; another `salt` with the same
+    /// sender and nonce makes a replacement.
+    fn from_sender(
+        sender: u8,
+        nonce: u64,
+        salt: u8,
+    ) -> Arc<ValidPoolTransaction<BasePooledTransaction>> {
+        let sender = Address::repeat_byte(sender);
+        let signed: BaseTransactionSigned = TxEip1559 {
+            chain_id: 1,
+            nonce,
+            gas_limit: 21_000,
+            max_fee_per_gas: 1,
+            max_priority_fee_per_gas: 1,
+            to: TxKind::Call(Address::repeat_byte(0x42)),
+            value: U256::from(salt),
+            access_list: Default::default(),
+            input: Default::default(),
+        }
+        .into_signed(Signature::test_signature())
         .into();
         let transaction = BasePooledTransaction::new(Recovered::new_unchecked(signed, sender), 128);
         Arc::new(ValidPoolTransaction {
@@ -716,6 +823,8 @@ mod tests {
         let (sender, mut queue) = mpsc::channel(64);
         let cancel = CancellationToken::new();
         let mut reader = paced_reader(pool, sender, cancel.clone());
+        // No second full read can come due during the test, so only a lookup can forward it.
+        reader.full_read_interval = Duration::from_secs(3600);
 
         let run = tokio::spawn(async move { reader.run().await });
         reads.recv().await.expect("the reader starts with a full read");
@@ -729,6 +838,56 @@ mod tests {
 
         assert_eq!(forwarded.tx_hash, *tx.hash());
         assert!(reads.try_recv().is_err(), "no second full read was needed");
+    }
+
+    /// A successor announced while its predecessor is pooled but unsent, as when the
+    /// predecessor's announcement was dropped, must wait for the full read rather than reach the
+    /// builder ahead of it; once the predecessor has been sent, the successor goes by lookup.
+    #[test]
+    fn an_announced_successor_waits_until_its_predecessor_was_sent() {
+        let (previous, next) = (from_sender(0xaa, 4, 1), from_sender(0xaa, 5, 2));
+        let mut pool = MockReaderPool::new();
+        pool.expect_block_info().returning(BlockInfo::default);
+        let pooled = Arc::clone(&next);
+        pool.expect_get()
+            .returning(move |hash| (hash == pooled.hash()).then(|| Arc::clone(&pooled)));
+        let pooled = Arc::clone(&previous);
+        pool.expect_get_transaction_by_sender_and_nonce()
+            .returning(move |_, nonce| (nonce == 4).then(|| Arc::clone(&pooled)));
+        let (sender, _queue) = mpsc::channel(4);
+        let mut reader = paced_reader(pool, sender, CancellationToken::new());
+        let mut lanes = LaneScheduler::new();
+
+        reader.push_announced(&mut lanes, &mut vec![*next.hash()]);
+        assert!(lanes.is_empty(), "held back while the predecessor is unsent");
+
+        reader.recently_sent.mark_sent(*previous.hash());
+        reader.push_announced(&mut lanes, &mut vec![*next.hash()]);
+        assert_eq!(lanes.pop(Lane::Priority).map(|tx| *tx.hash()), Some(*next.hash()));
+    }
+
+    /// A replacement announced while later nonces of its sender wait in the lanes would be sent
+    /// after them, so it is left for the full read, which orders the sequence again.
+    #[test]
+    fn a_replacement_behind_later_nonces_waits_for_the_full_read() {
+        let (first, second) = (from_sender(0xaa, 0, 1), from_sender(0xaa, 1, 2));
+        let replacement = from_sender(0xaa, 0, 3);
+        let mut pool = MockReaderPool::new();
+        pool.expect_block_info().returning(BlockInfo::default);
+        let txs = vec![Arc::clone(&first), Arc::clone(&second)];
+        pool.expect_best_transactions().returning(move || Box::new(txs.clone().into_iter()));
+        let pooled = Arc::clone(&replacement);
+        pool.expect_get()
+            .returning(move |hash| (hash == pooled.hash()).then(|| Arc::clone(&pooled)));
+        let (sender, _queue) = mpsc::channel(4);
+        let mut reader = paced_reader(pool, sender, CancellationToken::new());
+        let mut lanes = reader.take_snapshot().unwrap();
+
+        reader.push_announced(&mut lanes, &mut vec![*replacement.hash()]);
+
+        let order: Vec<_> =
+            std::iter::from_fn(|| lanes.pop(Lane::Fifo)).map(|tx| *tx.hash()).collect();
+        assert_eq!(order, vec![*first.hash(), *second.hash()]);
     }
 
     /// The pool drops announcements when a listener's channel is full, so a transaction that
