@@ -61,7 +61,8 @@ MODEL_TIMEOUT_SECONDS = 600
 MODEL_MAX_TURNS = 12
 READ_TOOLS = "Read,Grep,Glob"
 
-MAX_DIFF_CHARS = 400_000
+# Leave room for tool output on gateway models with smaller context windows than Opus.
+MAX_DIFF_CHARS = 160_000
 MAX_COMMENT_CHARS = 2_000
 MAX_INLINE_COMMENTS = 20
 DEFAULT_REPO = "base/base"
@@ -422,7 +423,7 @@ class Context:
     source_context: str = ""
 
 
-MAX_SOURCE_CHARS = 240_000
+MAX_SOURCE_CHARS = 100_000
 MAX_SOURCE_FILE_CHARS = 40_000
 
 
@@ -1404,7 +1405,7 @@ def main(argv: list[str] | None = None) -> int:
                 if not summary_problems:
                     try:
                         refresh_status(args.pr, args.repo)
-                    except ReviewError as exc:
+                    except (ReviewError, ValueError, KeyError) as exc:
                         log(f"warning: could not refresh the status line ({exc})")
             log(f"Posted {len(plan.new)} comment(s) and {len(plan.replies)} reply(ies); "
                 f"{len(plan.resolves)} thread(s) marked resolved and {len(plan.reopens)} reopened")
@@ -1413,7 +1414,7 @@ def main(argv: list[str] | None = None) -> int:
                 return 1
         print(dumps(outcome.decision) if args.json else render_report(plan))
         log(f"Artifacts: {artifacts}")
-        if "decide" in outcome.failed:
+        if any(a.stage == "decide" and a.name in outcome.failed for a in agents):
             return 1
     except SetupError as exc:
         # Not a bug: something on this machine needs attention. Say what, once, without a traceback.
