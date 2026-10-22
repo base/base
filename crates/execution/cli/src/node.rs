@@ -17,16 +17,13 @@ use reth_node_core::{
     node_config::NodeConfig,
     version,
 };
-use reth_rpc_server_types::{
-    LenientRpcModuleValidator, RpcModuleValidator, constants::DEFAULT_ENGINE_API_IPC_ENDPOINT,
-};
+use reth_rpc_server_types::{LenientRpcModuleValidator, RpcModuleValidator};
 use tracing::info;
 
 use crate::{MeteringArgs, RpcStandardNodeArgs, ShadowIndexerArgs, StandardNodeArgs};
 
 const DEFAULT_BASE_MAX_INBOUND_EL_PEERS: usize = 80;
 const DEFAULT_BASE_MAX_OUTBOUND_EL_PEERS: usize = 80;
-const DEFAULT_UNIFIED_AUTH_IPC_FILENAME: &str = "engine.ipc";
 
 /// Chainless execution-node arguments shared by embedded Base commands.
 #[derive(Debug, Clone, Args)]
@@ -208,24 +205,12 @@ impl ExecutionNodeRuntimeConfig {
     }
 
     /// Configures the embedded execution node auth endpoint used by unified Base binaries.
+    ///
+    /// Embedded consensus talks to the auth module in memory, so the auth server is only bound to
+    /// an OS-assigned loopback port and auth IPC is left to the `--auth-ipc` flag.
     pub fn configure_unified_auth_endpoint(node_config: &mut NodeConfig<BaseChainSpec>) {
-        if node_config.rpc.auth_ipc_path == DEFAULT_ENGINE_API_IPC_ENDPOINT {
-            node_config.rpc.auth_ipc_path = node_config
-                .datadir()
-                .data_dir()
-                .join(DEFAULT_UNIFIED_AUTH_IPC_FILENAME)
-                .to_string_lossy()
-                .into_owned();
-        }
-
-        node_config.rpc.auth_ipc = true;
         node_config.rpc.auth_port = 0;
         node_config.rpc.auth_addr = Ipv4Addr::LOCALHOST.into();
-    }
-
-    /// Returns the configured authenticated Engine API IPC path from the supplied node config.
-    pub const fn auth_ipc_path_for(node_config: &NodeConfig<BaseChainSpec>) -> &str {
-        node_config.rpc.auth_ipc_path.as_str()
     }
 
     /// Enables authenticated Engine API over IPC.
@@ -244,11 +229,6 @@ impl ExecutionNodeRuntimeConfig {
     pub fn with_unified_auth_endpoint(mut self) -> Self {
         Self::configure_unified_auth_endpoint(&mut self.node_config);
         self
-    }
-
-    /// Returns the configured authenticated Engine API IPC path.
-    pub const fn auth_ipc_path(&self) -> &str {
-        Self::auth_ipc_path_for(&self.node_config)
     }
 
     /// Converts the runtime config into a reth node builder.
@@ -331,11 +311,6 @@ impl ExecutionNodeLaunchConfig {
     pub fn with_unified_auth_endpoint(mut self) -> Self {
         ExecutionNodeRuntimeConfig::configure_unified_auth_endpoint(&mut self.node_config);
         self
-    }
-
-    /// Returns the configured authenticated Engine API IPC path.
-    pub const fn auth_ipc_path(&self) -> &str {
-        ExecutionNodeRuntimeConfig::auth_ipc_path_for(&self.node_config)
     }
 
     /// Launches the execution node and returns its handle.
@@ -441,40 +416,15 @@ mod tests {
         let runtime = args.into_runtime_config(Arc::new(BaseChainSpec::devnet())).with_auth_ipc();
 
         assert!(runtime.node_config.rpc.auth_ipc);
-        assert_eq!(runtime.auth_ipc_path(), "/tmp/engine.ipc");
+        assert_eq!(runtime.node_config.rpc.auth_ipc_path, "/tmp/engine.ipc");
     }
 
     #[test]
-    fn runtime_config_uses_datadir_auth_ipc_path_for_unified_defaults() {
+    fn unified_auth_endpoint_binds_loopback_without_enabling_ipc() {
         let args = CommandParser::<ExecutionNodeConfigArgs>::parse_from([
             "reth",
-            "--datadir=/tmp/base-node-a",
-        ])
-        .args;
-
-        let runtime = args
-            .into_runtime_config(Arc::new(BaseChainSpec::devnet()))
-            .with_unified_auth_endpoint();
-        let expected = runtime
-            .node_config
-            .datadir()
-            .data_dir()
-            .join(DEFAULT_UNIFIED_AUTH_IPC_FILENAME)
-            .to_string_lossy()
-            .into_owned();
-
-        assert!(runtime.node_config.rpc.auth_ipc);
-        assert_eq!(runtime.node_config.rpc.auth_port, 0);
-        assert_eq!(runtime.node_config.rpc.auth_addr, Ipv4Addr::LOCALHOST);
-        assert_eq!(runtime.auth_ipc_path(), expected);
-    }
-
-    #[test]
-    fn runtime_config_preserves_explicit_auth_ipc_path_for_unified() {
-        let args = CommandParser::<ExecutionNodeConfigArgs>::parse_from([
-            "reth",
-            "--datadir=/tmp/base-node-a",
-            "--auth-ipc.path=/tmp/custom-engine.ipc",
+            "--authrpc.addr=0.0.0.0",
+            "--authrpc.port=8551",
         ])
         .args;
 
@@ -482,10 +432,9 @@ mod tests {
             .into_runtime_config(Arc::new(BaseChainSpec::devnet()))
             .with_unified_auth_endpoint();
 
-        assert!(runtime.node_config.rpc.auth_ipc);
+        assert!(!runtime.node_config.rpc.auth_ipc);
         assert_eq!(runtime.node_config.rpc.auth_port, 0);
         assert_eq!(runtime.node_config.rpc.auth_addr, Ipv4Addr::LOCALHOST);
-        assert_eq!(runtime.auth_ipc_path(), "/tmp/custom-engine.ipc");
     }
 
     #[test]
@@ -526,10 +475,10 @@ mod tests {
         let launch = args.into_launch_config(Arc::new(BaseChainSpec::devnet())).with_auth_ipc();
 
         assert!(launch.node_config.rpc.auth_ipc);
-        assert_eq!(launch.auth_ipc_path(), "/tmp/engine.ipc");
+        assert_eq!(launch.node_config.rpc.auth_ipc_path, "/tmp/engine.ipc");
 
         let (runtime, _standard) = launch.into_runtime_config();
         assert!(runtime.node_config.rpc.auth_ipc);
-        assert_eq!(runtime.auth_ipc_path(), "/tmp/engine.ipc");
+        assert_eq!(runtime.node_config.rpc.auth_ipc_path, "/tmp/engine.ipc");
     }
 }

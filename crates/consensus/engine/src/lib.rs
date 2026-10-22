@@ -22,7 +22,12 @@ mod attributes;
 pub use attributes::{AttributesMatch, AttributesMismatch};
 
 mod client;
-pub use client::{BaseEngineClient, EngineClient, EngineClientBuilder, EngineClientError};
+pub use client::{
+    BaseEngineClient, EngineClient, EngineClientBuilder, EngineClientError, EngineEndpoint,
+};
+
+mod in_memory;
+pub use in_memory::InMemoryTransport;
 
 mod trace_layer;
 pub use trace_layer::{TraceContextLayer, TraceContextService};

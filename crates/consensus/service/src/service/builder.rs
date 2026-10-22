@@ -4,11 +4,10 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use alloy_genesis::ChainConfig;
 use alloy_primitives::Address;
-use alloy_provider::RootProvider;
 use alloy_transport::{TransportErrorKind, TransportResult};
 use base_common_genesis::RollupConfig;
 use base_common_network::Base;
-use base_consensus_engine::BaseEngineClient;
+use base_consensus_engine::EngineEndpoint;
 use base_consensus_providers::{L1RpcProvider, OnlineBeaconClient};
 use base_consensus_rpc::RpcBuilder;
 use base_upgrade_signal::UpgradeSignalConfig;
@@ -204,11 +203,11 @@ impl RollupNodeBuilder {
             l1_config.engine_provider.clone()
         };
 
-        let l2_provider_url = Self::derivation_l2_provider_url(self.engine_config.l2_url.clone());
-        let l2_provider = BaseEngineClient::<RootProvider, RootProvider<Base>>::rpc_client::<Base>(
-            l2_provider_url,
-            self.engine_config.l2_jwt_secret,
-        )
+        let l2_provider = match self.engine_config.l2_endpoint.clone() {
+            EngineEndpoint::Url(url) => EngineEndpoint::Url(Self::derivation_l2_provider_url(url)),
+            in_memory @ EngineEndpoint::InMemory(_) => in_memory,
+        }
+        .connect::<Base>(self.engine_config.l2_jwt_secret)
         .await?;
 
         let rollup_config = Arc::new(self.config);
@@ -289,7 +288,7 @@ mod tests {
         };
         let engine_config = EngineConfig {
             config: Arc::new(rollup_config.clone()),
-            l2_url,
+            l2_endpoint: EngineEndpoint::Url(l2_url),
             l2_jwt_secret: JwtSecret::random(),
             l1_url: Url::parse("http://127.0.0.1:8545").unwrap(),
             l1_rpc_timeout: base_consensus_providers::L1_RPC_TIMEOUT,
@@ -340,7 +339,10 @@ mod tests {
         let rollup_node =
             test_builder(Url::parse("ws://127.0.0.1:8551").unwrap()).build().await.unwrap();
 
-        assert_eq!(rollup_node.engine_config.l2_url.scheme(), "ws");
+        assert!(matches!(
+            rollup_node.engine_config.l2_endpoint,
+            EngineEndpoint::Url(ref url) if url.scheme() == "ws"
+        ));
     }
 
     #[tokio::test]

@@ -31,6 +31,7 @@ base-execution-evm.workspace = true
 base-consensus-node.workspace = true
 base-upgrade-signal.workspace = true
 base-builder-metering.workspace = true
+base-consensus-engine.workspace = true
 base-builder-multiplex.workspace = true
 base-execution-chainspec.workspace = true
 base-execution-consensus.workspace = true
@@ -53,7 +54,6 @@ reth-cli-util.workspace = true
 clap = { workspace = true, features = ["env"] }
 
 # misc
-url.workspace = true
 eyre.workspace = true
 tokio.workspace = true
 tracing.workspace = true
@@ -62,6 +62,7 @@ serde = { workspace = true, features = ["derive"] }
 figment = { workspace = true, features = ["env", "toml"] }
 
 [dev-dependencies]
+url.workspace = true
 rstest.workspace = true
 reqwest.workspace = true
 tempfile.workspace = true
