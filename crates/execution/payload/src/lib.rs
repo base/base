@@ -38,7 +38,7 @@ pub use parkable::{
 };
 
 mod metrics;
-pub use metrics::{BuilderMetrics, ValidityMetrics};
+pub use metrics::{BuilderMetrics, PrewarmMetrics, ValidityMetrics};
 
 mod deferrals;
 pub use deferrals::{BlockDeferrals, DeferralJournal};
@@ -48,6 +48,12 @@ pub use inclusion::{FLOW_STANDARD, FLOW_VALIDITY, InclusionFlow, InclusionTracke
 
 mod predicate_loads;
 pub use predicate_loads::{PredicateLoadTracker, PredicateReadRecorder};
+
+mod prewarm;
+pub use prewarm::{
+    PrewarmConfig, PrewarmJob, PrewarmScheduler, PrewarmWorkerPool, PrewarmingBestTransactions,
+    SchedulerState, WarmKey, WorkerJob,
+};
 
 mod traits;
 pub use traits::*;

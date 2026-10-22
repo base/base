@@ -36,7 +36,7 @@ fn main() {
 
     cli.run(|builder, builder_args| async move {
         let rollup_args = builder_args.rollup_args.clone();
-        let builder =
+        let mut builder =
             StandardBaseRethNode::apply_initial_upgrade_signal(builder, &builder_args).await?;
 
         let metering_provider: base_builder_core::SharedMeteringProvider =
@@ -53,6 +53,11 @@ fn main() {
         let builder_config = builder_args
             .into_builder_config(Arc::clone(&metering_provider))
             .expect("Failed to convert rollup args to builder config");
+        // Prewarming reads the shared execution cache the engine hands to the payload
+        // builder, so enable that sharing automatically when prewarming is opted into.
+        if builder_config.prewarm.enabled {
+            builder.config_mut().engine.share_execution_cache_with_payload_builder = true;
+        }
         let da_config = builder_config.da_config.clone();
         let gas_limit_config = builder_config.gas_limit_config.clone();
         let manifest_precheck_enabled = builder_config.manifest_precheck_enabled;
