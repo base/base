@@ -22,7 +22,7 @@ You are reviewing a pull request for Base Reth Node, a Rust Ethereum L2 node bui
 - Look for meaningful redundancy, unnecessary complexity, or missed reuse of existing abstractions.
 - Do not report formatting or style. clippy and rustfmt handle those.
 - Do not report praise, "looks good", or filler. If nothing is wrong, return no findings.
-- Review the change, not the whole repository. Check each suspicion against the diff and the source snapshot before you report it. Where it depends on code that is not in the snapshot, such as a caller in an unchanged file, do not claim you checked it: report it only if the supplied code shows the problem, say which step you could not see, and mark it `low` confidence.
+- Review the change, not the whole repository. Check each suspicion against the diff and the source snapshot before you report it. Where it depends on code that is not in the snapshot, such as a caller in an unchanged file, read that code if you can. If you neither were given nor read it, do not claim you checked it: report it only if the code you have shows the problem, say which step you could not see, and mark it `low` confidence.
 - Report only findings you can defend. Say what input or state triggers the problem and what goes wrong. Mark speculative ones `low` confidence.
 
 ## What to look for

@@ -102,7 +102,7 @@ jobs:
       !cancelled() && needs.authorize.result == 'success' && needs.authorize.outputs.allowed == 'true'
     runs-on:
       group: BaseRunnerGroup
-    # Each stage makes one bounded HTTP request; the job limit also bounds the full review.
+    # Each stage runs one bounded read-only Claude Code session; the job limit bounds the full review.
     # Findings are posted only after the single final decision succeeds.
     timeout-minutes: 30
     steps:
@@ -115,6 +115,7 @@ jobs:
             github.com:443
             objects.githubusercontent.com:443
             release-assets.githubusercontent.com:443
+            registry.npmjs.org:443
             ${{ vars.LLM_GATEWAY_HOSTNAME }}:443
 
       # Read the pull request from the API, not from the event: a comment event does not carry it, and the
@@ -168,6 +169,14 @@ jobs:
             echo "head_sha=$head_sha"
           } >> "$GITHUB_OUTPUT"
 
+      # Install before checking out untrusted PR files, so npm cannot pick up a PR's configuration.
+      - name: Install Claude Code
+        if: steps.pr.outputs.ok == 'true'
+        working-directory: ${{ runner.temp }}
+        run: |
+          npm install --prefix "$RUNNER_TEMP/claude-code" --no-save --no-package-lock --no-audit --no-fund @anthropic-ai/claude-code@2.1.293
+          echo "$RUNNER_TEMP/claude-code/node_modules/.bin" >> "$GITHUB_PATH"
+
       # The controller snapshots tracked PR files before inference. Check out the head, not the merge
       # commit, so line numbers match the diff. Never leave credentials in the reviewed checkout.
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -180,8 +189,8 @@ jobs:
       # Models, prompts, and which reviewers run are defined in .agents/skills/pr-review/.
       # The script that holds the secrets always comes from a clean checkout of the default branch, never
       # from the pull request: a pull request cannot add or replace files (agents, prompts, or a module that
-      # shadows the standard library) in code it does not control. The controller reads PR files as data;
-      # no model gets tools, shell access, or a CLI session. The one exception is the pull request that
+      # shadows the standard library) in code it does not control. Models can read PR files with restricted
+      # Read/Grep/Glob tools, but cannot run shell commands or write files. The one exception is the PR that
       # introduces the pipeline, which has no default-branch copy yet and runs its own; that is allowed
       # for a `pull_request` run only, whose workflow file is the PR's own anyway. A `/review` comment
       # never runs a pull request's copy.

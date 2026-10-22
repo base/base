@@ -3,13 +3,12 @@
 
 import argparse
 import contextlib
-import http.server
 import json
 import os
+import socket
 import subprocess
 import sys
 import tempfile
-import threading
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -77,14 +76,13 @@ class AgentTests(unittest.TestCase):
             path.write_text("---\nstage: review\nwhen: deep, block-production\nmodel: m\n---\nDo the thing.\n")
             agent = review.parse_agent(path)
         self.assertEqual(agent.when, ("deep", "block-production"))
-        self.assertEqual((agent.model, agent.effort, agent.tools, agent.max_budget_usd), ("m", "high", "", None))
+        self.assertEqual((agent.model, agent.effort), ("m", "high"))
         self.assertEqual(agent.prompt, "Do the thing.")
 
-    def test_checked_in_agents_name_explicit_models_and_have_no_tools_or_budget(self) -> None:
+    def test_checked_in_agents_name_explicit_models(self) -> None:
         for agent in review.load_agents():
             with self.subTest(agent=agent.name):
                 self.assertNotIn(agent.model, ("opus", "sonnet", "haiku"))
-                self.assertEqual((agent.tools, agent.max_budget_usd), ("", None))
         models = {a.name: a.model for a in review.load_agents()}
         self.assertEqual(models["decide"], "claude-sonnet-5-5")
         self.assertEqual(models["council-chair"], "claude-opus-5-5")  # it checks other models' claims
@@ -96,6 +94,7 @@ class AgentTests(unittest.TestCase):
             "bad stage": "---\nstage: nope\nmodel: m\n---\nx",
             "bad when": "---\nstage: review\nwhen: sometimes\nmodel: m\n---\nx",
             "when on triage": "---\nstage: triage\nwhen: deep\nmodel: m\n---\nx",
+            # The read-only tool set and turn bound are fixed by review.py; an agent file cannot widen them.
             "tools": "---\nstage: review\nmodel: m\ntools: Read,Grep,Glob\n---\nx",
             "budget": "---\nstage: review\nmodel: m\nmax_budget_usd: 2.5\n---\nx",
         }
@@ -700,10 +699,15 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn('[ "$code" -eq 3 ]', self.review_job)
         self.assertIn(f"EXIT_HEAD_MOVED = {review.EXIT_HEAD_MOVED}", (review.SKILL_DIR / "review.py").read_text())
 
-    def test_the_review_job_installs_no_agent_cli_and_hands_the_gateway_settings_to_the_script(self) -> None:
-        # No model gets a CLI session with tools; the script makes the gateway requests itself.
-        for needle in ("npm", "claude-code", "Install Claude Code", "registry.npmjs.org", "ANTHROPIC_"):
-            self.assertNotIn(needle, self.review_job)
+    def test_the_review_job_installs_a_pinned_cli_before_checkout_and_hands_the_gateway_settings_to_the_script(
+            self) -> None:
+        install = self.review_job.find("@anthropic-ai/claude-code@2.1.293")
+        self.assertNotEqual(install, -1, "Claude Code must be installed at a pinned version")
+        self.assertNotIn("@anthropic-ai/claude-code@latest", self.review_job)
+        # Installing after the checkout would let a pull request's npm configuration steer the install.
+        self.assertLess(install, self.review_job.index("ref: ${{ steps.pr.outputs.head_sha }}"))
+        # review.py maps the gateway onto Claude Code's settings itself; the job sets no provider variables.
+        self.assertNotIn("ANTHROPIC_", self.review_job)
         self.assertIn("LLM_GATEWAY_HOSTNAME: ${{ vars.LLM_GATEWAY_HOSTNAME }}", self.review_job)
         self.assertIn("LLM_GATEWAY_API_KEY: ${{ secrets.LLM_GATEWAY_API_KEY }}", self.review_job)
         self.assertIn("${{ vars.LLM_GATEWAY_HOSTNAME }}:443", self.review_job)  # the only model egress
@@ -1109,15 +1113,24 @@ class SetupFailureTests(unittest.TestCase):
             with self.subTest(summary=diagnosis.summary[:50]):
                 self.assertIn("{target}", diagnosis.summary)
 
-    def preflight(self, env: dict[str, str]) -> None:
-        """Run preflight with exactly these gateway settings, failing if it starts a process or opens a connection."""
+    def preflight(self, env: dict[str, str], claude: str | None = "/usr/local/bin/claude") -> None:
+        """Run preflight with exactly these gateway settings and `claude` lookup result, failing if it starts
+        a process or opens a connection."""
         forbidden = AssertionError("preflight must only read configuration")
         with mock.patch.dict(os.environ, {**without_gateway_env(), **env}, clear=True), mock.patch.object(
-                review.subprocess, "run", side_effect=forbidden), mock.patch.object(
+                review.shutil, "which", side_effect=lambda name: claude if name == "claude" else None), \
+                mock.patch.object(review.subprocess, "run", side_effect=forbidden), mock.patch.object(
                 review.subprocess, "Popen", side_effect=forbidden), mock.patch.object(
-                review.urllib.request, "urlopen", side_effect=forbidden), mock.patch.object(
-                review.urllib.request, "build_opener", side_effect=forbidden):
+                socket.socket, "connect", side_effect=forbidden), mock.patch.object(
+                socket, "getaddrinfo", side_effect=forbidden):
             review.preflight()
+
+    def test_a_missing_claude_cli_is_a_setup_problem_found_without_running_it(self) -> None:
+        with self.assertRaises(review.SetupError) as caught:
+            self.preflight(GATEWAY_ENV, claude=None)
+        self.assertIn("claude", str(caught.exception))
+        self.assertIn("2.1.293", str(caught.exception))
+        self.assertNotIn("sk-test-secret", str(caught.exception))
 
     def test_a_missing_gateway_setting_is_named(self) -> None:
         for missing in GATEWAY_ENV:
@@ -1143,7 +1156,7 @@ class SetupFailureTests(unittest.TestCase):
 
     def test_requests_always_go_to_https_on_the_configured_gateway(self) -> None:
         with mock.patch.dict(os.environ, {**GATEWAY_ENV, "LLM_GATEWAY_HOSTNAME": "gw.example:8443"}):
-            self.assertEqual(review.gateway_config(), ("https://gw.example:8443/v1/messages", "sk-test-secret"))
+            self.assertEqual(review.gateway_config(), ("https://gw.example:8443", "sk-test-secret"))
         with mock.patch.dict(os.environ, {**without_gateway_env(), "ANTHROPIC_BASE_URL": "https://api.anthropic.com",
                                           "ANTHROPIC_API_KEY": "x"}, clear=True), self.assertRaises(review.SetupError):
             review.gateway_config()  # no fallback to another provider's settings
@@ -1619,238 +1632,270 @@ WORKFLOW = find_workflow()
 JOB_LIMIT_SECONDS = 30 * 60  # timeout-minutes in claude-review.yml; a test checks that the two agree
 
 
-class GatewayServer:
-    """A loopback HTTP stand-in for the model gateway that records every request it receives.
+class FakeClaude:
+    """A stand-in for `subprocess.run` that plays Claude Code and records each invocation.
 
-    Production only builds HTTPS URLs from LLM_GATEWAY_HOSTNAME; tests point `gateway_config` here so that
-    run_agent's real urllib transport, headers, body and response handling are exercised without a network.
-    Each queued response is `(status, body)` or `(status, body, headers)`; a dict body is sent as JSON.
+    Each queued outcome is `(returncode, stdout)`, `(returncode, stdout, stderr)`, or an exception to raise.
+    Any command other than `claude` fails the test. The isolated HOME is inspected while the process "runs",
+    because run_agent removes it afterwards.
     """
 
-    def __init__(self, *responses) -> None:
-        self.responses = list(responses)
-        self.requests: list[dict] = []
-        outer = self
+    def __init__(self, *outcomes) -> None:
+        self.outcomes = list(outcomes)
+        self.calls: list[dict] = []
 
-        class Handler(http.server.BaseHTTPRequestHandler):
-            def handle_one(self) -> None:
-                length = int(self.headers.get("Content-Length") or 0)
-                raw = self.rfile.read(length)
-                outer.requests.append({"method": self.command, "path": self.path, "raw": raw,
-                                       "headers": {k.lower(): v for k, v in self.headers.items()}})
-                status, body, *rest = outer.responses.pop(0) if outer.responses else (500, {"error": "none queued"})
-                data = json.dumps(body).encode() if isinstance(body, (dict, list)) else body
-                self.send_response(status)
-                for key, value in (rest[0] if rest else {}).items():
-                    self.send_header(key, value)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(data)))
-                self.end_headers()
-                self.wfile.write(data)
+    def __call__(self, cmd, *, input=None, cwd=None, env=None, timeout=None, **kwargs):
+        if cmd[0] != "claude":
+            raise AssertionError(f"a review stage must only run Claude Code, not {cmd[0]}")
+        home = Path(env["HOME"]) if env and "HOME" in env else None
+        self.calls.append({"cmd": list(cmd), "input": input, "cwd": cwd, "env": dict(env or {}), "timeout": timeout,
+                           "home_was_dir": bool(home and home.is_dir()),
+                           "home_files": sorted(p.name for p in home.iterdir()) if home and home.is_dir() else None})
+        outcome = self.outcomes.pop(0) if self.outcomes else (1, "", "no outcome queued")
+        if isinstance(outcome, BaseException):
+            raise outcome
+        returncode, stdout, *stderr = outcome
+        return subprocess.CompletedProcess(cmd, returncode, stdout, stderr[0] if stderr else "")
 
-            do_GET = do_POST = do_PUT = handle_one
-
-            def log_message(self, *args) -> None:
-                pass
-
-        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-        self.url = f"http://127.0.0.1:{self.server.server_address[1]}/v1/messages"
-        self.thread = threading.Thread(target=self.server.serve_forever, kwargs={"poll_interval": 0.01},
-                                       daemon=True)
-
-    def __enter__(self) -> "GatewayServer":
-        self.thread.start()
-        return self
-
-    def __exit__(self, *exc) -> None:
-        self.server.shutdown()
-        self.server.server_close()
-
-    def body(self, index: int = -1) -> dict:
-        return json.loads(self.requests[index]["raw"])
+    @property
+    def call(self) -> dict:
+        [only] = self.calls
+        return only
 
 
-def message(output, *, model: str = "claude-opus-5-5-20261001", stop_reason: str = "end_turn",
-            blocks: list | None = None) -> dict:
-    """An Anthropic Messages API response whose text is `output` (JSON-encoded unless it is a string)."""
-    text = output if isinstance(output, str) else json.dumps(output)
-    return {"id": "msg_1", "type": "message", "role": "assistant", "model": model, "stop_reason": stop_reason,
-            "content": blocks if blocks is not None else [
-                {"type": "thinking", "thinking": "Looking at the diff.", "signature": "sig"},
-                {"type": "redacted_thinking", "data": "opaque"},
-                {"type": "text", "text": text}],
-            "usage": {"input_tokens": 10, "output_tokens": 5}}
+def envelope(output, *, subtype: str = "success", is_error: bool = False, stop_reason: str | None = "end_turn",
+             model: str = "claude-opus-5-5-20261001", drop: tuple[str, ...] = ()) -> str:
+    """A Claude Code `--output-format json` result whose final text is `output` (JSON-encoded unless a string)."""
+    data = {"type": "result", "subtype": subtype, "is_error": is_error, "duration_ms": 1200, "num_turns": 3,
+            "result": output if isinstance(output, str) else json.dumps(output), "stop_reason": stop_reason,
+            "session_id": "00000000-0000-0000-0000-000000000000", "total_cost_usd": 0.12,
+            "usage": {"input_tokens": 10, "output_tokens": 5},
+            "modelUsage": {model: {"inputTokens": 10, "outputTokens": 5}}}
+    return json.dumps({k: v for k, v in data.items() if k not in drop})
+
+
+def flag(cmd: list[str], name: str) -> str:
+    """The value that follows a CLI flag."""
+    return cmd[cmd.index(name) + 1]
 
 
 TRIAGE_OUTPUT = {"depth": "standard", "block_production_sensitive": False, "reasoning": "r", "focus_areas": []}
+# Inherited settings that must never reach the model's process: GitHub credentials, other providers, and
+# Claude Code settings that could add tools, hooks, a different endpoint, or the runner's real config.
+INHERITED_ENV = {
+    "GH_TOKEN": "gh-secret", "GITHUB_TOKEN": "gh-secret-2", "GH_ENTERPRISE_TOKEN": "gh-secret-3",
+    "ACTIONS_RUNTIME_TOKEN": "gh-secret-4", "ACTIONS_ID_TOKEN_REQUEST_TOKEN": "gh-secret-5",
+    "ANTHROPIC_API_KEY": "provider-secret", "ANTHROPIC_AUTH_TOKEN": "provider-secret-2",
+    "ANTHROPIC_BASE_URL": "https://api.anthropic.com", "ANTHROPIC_CUSTOM_HEADERS": "x-leak: provider-secret-3",
+    "OPENAI_API_KEY": "provider-secret-4", "AWS_SECRET_ACCESS_KEY": "provider-secret-5",
+    "CLAUDE_CODE_USE_BEDROCK": "1", "CLAUDE_CODE_USE_VERTEX": "1", "CLAUDE_CODE_OAUTH_TOKEN": "provider-secret-6",
+    "CLAUDE_CONFIG_DIR": "/home/runner/.claude", "HOME": "/home/runner", "NODE_OPTIONS": "--require /tmp/x.js",
+    "PATH": "/usr/local/bin:/usr/bin", "HTTPS_PROXY": "http://proxy.internal:3128",
+}
+SECRETS = ("sk-test-secret", "gh-secret", "provider-secret")
 
 
 class AgentRunTests(unittest.TestCase):
-    """run_agent makes exactly one direct gateway request, with no tools, retries, or commands."""
+    """run_agent runs one bounded, read-only Claude Code session through the gateway and never restarts it."""
 
     def agent(self, **overrides) -> review.Agent:
         fields = dict(name="a", stage="review", when=("always",), model="claude-opus-5-5", effort="medium",
-                      tools="", timeout_seconds=None, max_budget_usd=None, max_output_tokens=None,
-                      prompt="You are the reviewer prompt.", path=Path("a.md"))
+                      timeout_seconds=None, max_output_tokens=None, prompt="You are the reviewer prompt.",
+                      path=Path("a.md"))
         return review.Agent(**{**fields, **overrides})
 
-    def call(self, *responses, agent: review.Agent | None = None, url: str | None = None, **kwargs):
-        """Run one agent against a loopback gateway; any attempt to start a process fails the test."""
-        no_commands = AssertionError("a model answer must never run a command")
-        env = {"GH_TOKEN": "gh-secret", "GITHUB_TOKEN": "gh-secret-2", "no_proxy": "*", "NO_PROXY": "*"}
-        with GatewayServer(*responses) as server, tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
-                os.environ, env), mock.patch.object(review, "gateway_config",
-                                                    return_value=(url or server.url, "sk-test-secret")), \
-                mock.patch.object(review.subprocess, "run", side_effect=no_commands), mock.patch.object(
-                review.subprocess, "Popen", side_effect=no_commands), mock.patch.object(
-                review.os, "system", side_effect=no_commands), mock.patch.object(review, "log"):
+    def call(self, *outcomes, agent: review.Agent | None = None, env: dict[str, str] | None = None,
+             model_override: str | None = None, **kwargs):
+        """Run one agent against a fake `claude`; returns (output or ReviewError, fake, cwd, artifact texts)."""
+        no_shell = AssertionError("a review stage must not start any other process")
+        fake = FakeClaude(*outcomes)
+        with tempfile.TemporaryDirectory() as cwd, tempfile.TemporaryDirectory() as artifacts, mock.patch.dict(
+                os.environ, {**INHERITED_ENV, **GATEWAY_ENV, **(env or {})}), \
+                mock.patch.object(review.subprocess, "run", side_effect=fake), mock.patch.object(
+                review.subprocess, "Popen", side_effect=no_shell), mock.patch.object(
+                review.os, "system", side_effect=no_shell), mock.patch.object(review, "log"):
             try:
-                result = review.run_agent(agent or self.agent(), "the user prompt", Path(tmp), Path(tmp), None,
-                                          **kwargs)
+                result = review.run_agent(agent or self.agent(), "the user prompt", Path(cwd), Path(artifacts),
+                                          model_override, **kwargs)
             except review.ReviewError as exc:
                 result = exc
-        return result, server
+            written = {p.name: p.read_text() for p in Path(artifacts).iterdir()}
+        return result, fake, Path(cwd), written
 
     @staticmethod
     def working_guide() -> str:
         return review.WORKING_GUIDE.read_text().strip().splitlines()[0]
 
-    @staticmethod
-    def system_text(body: dict) -> str:
-        system = body["system"]
-        return system if isinstance(system, str) else "".join(b.get("text", "") for b in system)
-
-    def test_one_request_carries_the_prompt_schema_and_settings_and_offers_no_tools(self) -> None:
-        result, server = self.call((200, message({"findings": []})))
+    def test_one_session_has_only_read_tools_a_turn_and_time_bound_and_no_extensions(self) -> None:
+        result, fake, cwd, _ = self.call((0, envelope({"findings": []})))
         self.assertEqual(result, {"findings": []})
-        [request] = server.requests
-        self.assertEqual((request["method"], request["path"]), ("POST", "/v1/messages"))
-        headers = request["headers"]
-        self.assertTrue(headers.get("x-api-key") == "sk-test-secret"
-                        or headers.get("authorization") == "Bearer sk-test-secret")
-        self.assertTrue(headers.get("user-agent", "").startswith("base-pr-review/"))
-        self.assertNotIn(b"gh-secret", request["raw"] + json.dumps(headers).encode())
-        body = server.body()
-        self.assertEqual((body["model"], body["max_tokens"]), ("claude-opus-5-5", 16000))
-        self.assertFalse(body.get("tools"))
-        self.assertNotIn("tool_choice", body)
-        self.assertEqual(body["output_config"]["effort"], "medium")
-        self.assertEqual(body["output_config"]["format"]["type"], "json_schema")
-        schema = json.loads((review.SCHEMAS_DIR / "review.json").read_text())
-        self.assertEqual(body["output_config"]["format"]["schema"]["required"], schema["required"])
-        system = self.system_text(body)
+        call = fake.call
+        cmd = call["cmd"]
+        self.assertEqual(cmd[:2], ["claude", "-p"])
+        self.assertEqual(call["cwd"], cwd)  # the reviewed checkout is what the tools can read
+        self.assertEqual(set(flag(cmd, "--tools").split(",")), {"Read", "Grep", "Glob"})
+        self.assertEqual(set(flag(cmd, "--allowedTools").split(",")), {"Read", "Grep", "Glob"})
+        self.assertIn("--safe-mode", cmd)
+        self.assertIn("--restricted", cmd)
+        self.assertEqual(flag(cmd, "--permission-mode"), "dontAsk")  # anything not allowed is denied, unprompted
+        self.assertEqual(flag(cmd, "--permission-prompts"), "none")
+        self.assertEqual(flag(cmd, "--max-turns"), "12")
+        self.assertEqual(call["timeout"], review.MODEL_TIMEOUT_SECONDS)
+        # No MCP servers, hooks, project or user settings, slash commands, or saved session.
+        self.assertIn("--strict-mcp-config", cmd)
+        self.assertEqual(json.loads(flag(cmd, "--mcp-config")), {"mcpServers": {}})
+        self.assertEqual(flag(cmd, "--setting-sources"), "")
+        self.assertIs(json.loads(flag(cmd, "--settings")).get("disableAllHooks"), True)
+        self.assertIn("--disable-slash-commands", cmd)
+        self.assertIn("--no-session-persistence", cmd)
+        for forbidden in ("--dangerously-skip-permissions", "--allow-dangerously-skip-permissions", "--add-dir",
+                          "--resume", "--continue", "--fork-session", "--session-id", "--fallback-model",
+                          "--plugin-dir", "--agents", "--disallowedTools", "--append-system-prompt",
+                          # Claude Code repairs a --json-schema mismatch with extra turns; the script validates once.
+                          "--json-schema"):
+            self.assertNotIn(forbidden, cmd)
+        self.assertEqual(flag(cmd, "--output-format"), "json")
+        self.assertEqual((flag(cmd, "--model"), flag(cmd, "--effort")), ("claude-opus-5-5", "medium"))
+        # The prompt arrives on stdin; the system prompt carries the instructions, guide, and schema.
+        self.assertEqual(call["input"], "the user prompt")
+        self.assertNotIn("the user prompt", cmd)
+        system = flag(cmd, "--system-prompt")
         self.assertIn("You are the reviewer prompt.", system)
         self.assertIn(review.FINDING_GUIDE.read_text().strip()[:200], system)
-        self.assertIn("JSON", system)
-        self.assertEqual([m["role"] for m in body["messages"]], ["user"])
-        self.assertIn("the user prompt", json.dumps(body["messages"]))
+        self.assertIn((review.SCHEMAS_DIR / "review.json").read_text(), system)
 
-    def test_max_tokens_and_the_model_come_from_the_agent_file_or_the_override(self) -> None:
-        _, server = self.call((200, message({"findings": []})), agent=self.agent(max_output_tokens=32000))
-        self.assertEqual(server.body()["max_tokens"], 32000)
-        with GatewayServer((200, message({"findings": []}))) as server, tempfile.TemporaryDirectory() as tmp, \
-                mock.patch.dict(os.environ, {"no_proxy": "*", "NO_PROXY": "*"}), mock.patch.object(
-                review, "gateway_config", return_value=(server.url, "k")):
-            review.run_agent(self.agent(), "p", Path(tmp), Path(tmp), "claude-sonnet-5-5")
-        self.assertEqual(server.body()["model"], "claude-sonnet-5-5")
+    def test_the_process_gets_the_gateway_an_empty_home_and_no_inherited_credentials_or_settings(self) -> None:
+        _, fake, cwd, written = self.call((0, envelope({"findings": []})),
+                                          env={"LLM_GATEWAY_HOSTNAME": "gw.example:8443"})
+        call = fake.call
+        env = call["env"]
+        self.assertEqual(env["ANTHROPIC_BASE_URL"], "https://gw.example:8443")
+        self.assertEqual(env["ANTHROPIC_API_KEY"], "sk-test-secret")
+        self.assertEqual(env["CLAUDE_CODE_MAX_RETRIES"], "0")  # a failed request is not silently repeated
+        self.assertEqual(env["CLAUDE_CODE_RETRY_WATCHDOG"], "0")
+        self.assertEqual(env["DISABLE_COMPACT"], "1")
+        self.assertEqual(env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"], "16000")
+        for name in ("ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_CUSTOM_HEADERS", "CLAUDE_CODE_USE_BEDROCK",
+                     "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_OAUTH_TOKEN", "NODE_OPTIONS", "OPENAI_API_KEY"):
+            self.assertNotIn(name, env)
+        for name in env:
+            self.assertFalse(name.startswith(("GH_", "GITHUB_", "ACTIONS_", "AWS_", "LLM_GATEWAY_")), name)
+        leaked = [k for k, v in env.items() if any(s in v for s in ("gh-secret", "provider-secret"))]
+        self.assertEqual(leaked, [])
+        self.assertEqual((env["PATH"], env["HTTPS_PROXY"]), (INHERITED_ENV["PATH"], INHERITED_ENV["HTTPS_PROXY"]))
+        # The gateway key is only in the process environment: not in argv, stdin, or the saved artifacts.
+        self.assertNotIn("sk-test-secret", json.dumps([call["cmd"], call["input"]]))
+        self.assertFalse(any("sk-test-secret" in text for text in written.values()))
+        # A fresh, empty HOME and config directory outside the checkout the model can read, removed afterwards.
+        home = Path(env["HOME"])
+        self.assertEqual(env.get("CLAUDE_CONFIG_DIR"), env["HOME"])
+        self.assertNotEqual(env["HOME"], INHERITED_ENV["HOME"])
+        self.assertTrue(call["home_was_dir"])
+        self.assertEqual(call["home_files"], [])
+        self.assertFalse(home.resolve().is_relative_to(cwd.resolve()))
+        self.assertFalse(home.exists())
+
+    def test_output_tokens_time_limit_and_model_come_from_the_agent_file_or_the_override(self) -> None:
+        _, fake, _, _ = self.call((0, envelope({"findings": []})),
+                                  agent=self.agent(max_output_tokens=32000, timeout_seconds=90))
+        self.assertEqual(fake.call["env"]["CLAUDE_CODE_MAX_OUTPUT_TOKENS"], "32000")
+        self.assertEqual(fake.call["timeout"], 90)
+        _, fake, _, _ = self.call((0, envelope({"findings": []})), model_override="claude-sonnet-5-5")
+        self.assertEqual(flag(fake.call["cmd"], "--model"), "claude-sonnet-5-5")
+
+    def test_missing_gateway_settings_stop_before_claude_starts(self) -> None:
+        for missing in GATEWAY_ENV:
+            with self.subTest(missing=missing):
+                result, fake, _, _ = self.call((0, envelope({"findings": []})), env={missing: ""})
+                self.assertIsInstance(result, review.SetupError)
+                self.assertEqual(fake.calls, [])
 
     def test_the_model_that_really_ran_is_recorded(self) -> None:
         review.MODELS_RAN.clear()
-        self.call((200, message({"findings": []}, model="claude-opus-5-5-20261001")), agent=self.agent(name="x"))
+        self.call((0, envelope({"findings": []}, model="claude-opus-5-5-20261001")), agent=self.agent(name="x"))
         self.assertEqual(review.MODELS_RAN["x"], "claude-opus-5-5-20261001")
 
-    def test_a_bad_answer_fails_once_and_is_never_retried(self) -> None:
-        tool_use = {"type": "tool_use", "id": "t1", "name": "bash", "input": {"command": "cat ~/.ssh/id_rsa"}}
-        server_tool = {"type": "server_tool_use", "id": "t2", "name": "web_fetch", "input": {"url": "https://x"}}
+    def test_a_bad_or_unfinished_session_fails_once_and_is_never_restarted(self) -> None:
+        leak = "sk-test-secret gh-secret provider-secret"
         cases = {
-            "server error": (500, {"type": "error", "error": {"type": "api_error", "message": "boom"}}),
-            "rate limited": (429, {"type": "error", "error": {"type": "rate_limit_error", "message": "slow"}}),
-            "bad key": (401, {"type": "error", "error": {"type": "authentication_error", "message": "no"}}),
-            "forbidden": (403, b"error code: 1010\nsk-test-secret"),
-            "cut off": (200, message({"findings": []}, stop_reason="max_tokens")),
-            "asks for a tool": (200, message({"findings": []}, stop_reason="tool_use",
-                                             blocks=[{"type": "text", "text": "{}"}, tool_use])),
-            "tool block at end_turn": (200, message(None, blocks=[
-                tool_use, {"type": "text", "text": '{"findings": []}'}])),
-            "server tool": (200, message(None, blocks=[server_tool, {"type": "text", "text": '{"findings": []}'}])),
-            "refusal": (200, message({"findings": []}, stop_reason="refusal")),
-            "no text": (200, message(None, blocks=[{"type": "thinking", "thinking": "hm", "signature": "s"}])),
-            "not JSON": (200, message("Here are my findings: none")),
-            "missing field": (200, message({})),
-            "extra field": (200, message({"findings": [], "run": "rm -rf /"})),
-            "wrong type": (200, message({"findings": "none"})),
-            "not an envelope": (200, b"<html>gateway</html>"),
-            "empty body": (200, b""),
+            "failed exit": (1, envelope(f"API Error: 500 {leak}", subtype="error_during_execution", is_error=True),
+                            f"stderr {leak}"),
+            "error at exit 0": (0, envelope({"findings": []}, is_error=True)),
+            "max turns": (0, envelope({"findings": []}, subtype="error_max_turns", is_error=True)),
+            "max turns without is_error": (0, envelope({"findings": []}, subtype="error_max_turns")),
+            "cut off at max_tokens": (0, envelope({"findings": []}, stop_reason="max_tokens")),
+            "refusal": (0, envelope({"findings": []}, stop_reason="refusal")),
+            "stopped for a tool": (0, envelope({"findings": []}, stop_reason="tool_use")),
+            "not JSON": (0, envelope("Here are my findings: none")),
+            "no result": (0, envelope({"findings": []}, drop=("result",))),
+            "no subtype": (0, envelope({"findings": []}, drop=("subtype",))),
+            "result is not text": (0, json.dumps({**json.loads(envelope({})), "result": {"findings": []}})),
+            "missing field": (0, envelope({})),
+            "extra field": (0, envelope({"findings": [], "run": "rm -rf /"})),
+            "wrong type": (0, envelope({"findings": "none"})),
+            "not an envelope": (0, "<html>gateway</html>"),
+            "list envelope": (0, "[]"),
+            "stream lines": (0, envelope({"findings": []}) + "\n" + envelope({"findings": []})),
+            "empty stdout": (0, ""),
+            "oversized": (0, " " * 4_000_001),
+            "timeout": subprocess.TimeoutExpired(["claude"], review.MODEL_TIMEOUT_SECONDS, output=leak),
+            "not installed": FileNotFoundError(2, "No such file or directory", "claude"),
         }
-        for label, response in cases.items():
+        for label, outcome in cases.items():
             with self.subTest(label):
-                result, server = self.call(response, (200, message({"findings": []})))
+                result, fake, _, _ = self.call(outcome, (0, envelope({"findings": []})))
                 self.assertIsInstance(result, review.ReviewError)
-                self.assertEqual(len(server.requests), 1)  # the good answer queued second was never asked for
-                self.assertNotIn("sk-test-secret", str(result))
-                if label == "forbidden":
-                    self.assertIn("HTTP 403", str(result))
-                    self.assertNotIn("will not let your key use", str(result))
+                self.assertEqual(len(fake.calls), 1)  # the good answer queued second was never asked for
+                for secret in SECRETS:
+                    self.assertNotIn(secret, str(result))
 
-    def test_a_redirect_is_not_followed_and_the_key_goes_nowhere_else(self) -> None:
-        for status in (301, 302, 303, 307, 308):
-            with self.subTest(status=status), GatewayServer((200, message({"findings": []}))) as elsewhere:
-                result, server = self.call((status, b"", {"Location": elsewhere.url}))
-                self.assertIsInstance(result, review.ReviewError)
-                self.assertEqual((len(server.requests), elsewhere.requests), (1, []))
-
-    def test_an_unreachable_gateway_fails_once(self) -> None:
-        with GatewayServer() as closed:
-            url = closed.url
-        result, server = self.call(url=url)
+    def test_a_known_model_service_failure_is_explained_without_its_raw_text(self) -> None:
+        result, fake, _, _ = self.call(
+            (1, json.dumps({"type": "result", "subtype": "success", "is_error": True,
+                            "result": "Invalid API key · sk-test-secret"}), ""),
+            (0, envelope({"findings": []})))
         self.assertIsInstance(result, review.ReviewError)
-        self.assertEqual(server.requests, [])
+        self.assertEqual(len(fake.calls), 1)
+        self.assertIn("rejected your credentials", str(result))
+        self.assertNotIn("sk-test-secret", str(result))
 
     def test_the_answer_is_checked_against_the_stage_schema(self) -> None:
         agent = self.agent(stage="triage", name="triage")
-        result, _ = self.call((200, message(TRIAGE_OUTPUT)), agent=agent)
+        result, _, _, _ = self.call((0, envelope(TRIAGE_OUTPUT)), agent=agent)
         self.assertEqual(result, TRIAGE_OUTPUT)
         for bad in ({**TRIAGE_OUTPUT, "depth": "shallow"}, {**TRIAGE_OUTPUT, "focus_areas": ["a"] * 6},
                     {**TRIAGE_OUTPUT, "block_production_sensitive": "yes"}):
             with self.subTest(bad=bad):
-                result, server = self.call((200, message(bad)), agent=agent)
+                result, fake, _, _ = self.call((0, envelope(bad)), agent=agent)
                 self.assertIsInstance(result, review.ReviewError)
-                self.assertEqual(len(server.requests), 1)
-        result, server = self.call((200, message({"votes": []})), agent=self.agent(stage="council"),
-                                   schema="votes", label="a.vote")
+                self.assertEqual(len(fake.calls), 1)
+        result, _, _, _ = self.call((0, envelope({"votes": []})), agent=self.agent(stage="council"),
+                                    schema="votes", label="a.vote")
         self.assertEqual(result, {"votes": []})
         finding = {"title": "Boundary failure", "severity": "major", "category": "correctness",
                    "confidence": "high", "path": "x.rs", "line": 7, "explanation": "Input zero fails."}
-        result, server = self.call((200, message({"findings": [finding]})))
+        result, _, _, _ = self.call((0, envelope({"findings": [finding]})))
         self.assertEqual(result, {"findings": [finding]})
-        # The wire schema omits bounds the API cannot enforce; local validation must still enforce them.
         for changes in ({"line": 0}, {"line": True}, {"severity": "urgent"}, {"command": "touch unsafe"}):
             with self.subTest(changes=changes):
-                result, server = self.call((200, message({"findings": [{**finding, **changes}]})))
+                result, fake, _, _ = self.call((0, envelope({"findings": [{**finding, **changes}]})))
                 self.assertIsInstance(result, review.ReviewError)
-                self.assertEqual(len(server.requests), 1)
-
-    def test_configured_tools_or_budget_are_refused_before_any_request(self) -> None:
-        for overrides in ({"tools": "Read,Grep,Glob"}, {"max_budget_usd": 1.0}):
-            with self.subTest(overrides=overrides):
-                result, server = self.call((200, message({"findings": []})), agent=self.agent(**overrides))
-                self.assertIsInstance(result, review.ReviewError)
-                self.assertEqual(server.requests, [])
+                self.assertEqual(len(fake.calls), 1)
 
     def test_agents_that_explore_are_told_to_work_fast_and_the_ones_that_judge_are_not(self) -> None:
         output = {"triage": TRIAGE_OUTPUT, "chair": {"findings": []},
                   "decide": {"actions": [], "overview": None, "dropped": []}}
         for stage in review.STAGES:
             with self.subTest(stage=stage):
-                _, server = self.call((200, message(output.get(stage, {"findings": []}))),
-                                      agent=self.agent(stage=stage))
-                self.assertEqual(self.working_guide() in self.system_text(server.body()),
+                _, fake, _, _ = self.call((0, envelope(output.get(stage, {"findings": []}))),
+                                          agent=self.agent(stage=stage))
+                self.assertEqual(self.working_guide() in flag(fake.call["cmd"], "--system-prompt"),
                                  stage in review.EXPLORING_STAGES)
 
     def test_a_ballot_is_not_capped_even_though_a_council_member_casts_it(self) -> None:
-        _, server = self.call((200, message({"votes": []})), agent=self.agent(stage="council"),
-                              schema="votes", label="m.vote")
-        self.assertNotIn(self.working_guide(), self.system_text(server.body()))
+        _, fake, _, _ = self.call((0, envelope({"votes": []})), agent=self.agent(stage="council"),
+                                  schema="votes", label="m.vote")
+        self.assertNotIn(self.working_guide(), flag(fake.call["cmd"], "--system-prompt"))
 
     def test_a_cut_off_diff_names_the_files_it_lost(self) -> None:
         def file_diff(name: str) -> str:
