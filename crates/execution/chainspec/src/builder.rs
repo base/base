@@ -201,6 +201,8 @@ impl BaseChainSpecBuilder {
             inner,
             activation_admin_address: self.activation_admin_address,
             block_time: self.block_time,
+            #[cfg(feature = "std")]
+            local_denim_timestamp_schedule: None,
         })
     }
 
