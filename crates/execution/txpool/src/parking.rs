@@ -187,18 +187,28 @@ where
         }
     }
 
-    /// Discards all locally tracked members of a terminally invalid lane.
+    /// Terminally invalidates a lane for the remainder of this iterator.
     ///
     /// Buffered descendants have already been consumed from `inner`. Invalidating the yielded lane
     /// head notifies `inner`, whose lane bookkeeping excludes its remaining descendants.
+    ///
+    /// Parked and ready members of the lane are not removed here: the build loop invalidates a
+    /// lane on every rejection, and scanning both maps each time costs O(parked + ready) per
+    /// rejection. [`BestTransactionLaneState::Invalid`] is terminal, so `promote`, `discard_parked`,
+    /// [`Self::ready_priority`], and [`Self::pop_ready`] drop those members when they next touch
+    /// them.
     pub fn invalidate_lane(&mut self, lane: BestTransactionLane) {
         self.lanes.insert(lane, BestTransactionLaneState::Invalid);
         if self.source_head.as_ref().is_some_and(|(_, head_lane)| *head_lane == Some(lane)) {
             self.source_head = None;
         }
-        self.parked.retain(|_, (_, parked_lane)| *parked_lane != Some(lane));
-        self.ready.retain(|_, (_, ready_lane)| *ready_lane != Some(lane));
-        self.ready_heap.retain(|(_, hash)| self.ready.contains_key(hash));
+    }
+
+    /// Returns whether `lane` was terminally invalidated during this iteration.
+    pub fn is_lane_invalid(&self, lane: Option<BestTransactionLane>) -> bool {
+        lane.is_some_and(|lane| {
+            matches!(self.lanes.get(&lane), Some(BestTransactionLaneState::Invalid))
+        })
     }
 
     /// Pulls through blocked descendants until the next source candidate is lane-eligible.
@@ -228,21 +238,31 @@ where
         }
     }
 
-    /// Removes stale heap entries and returns the highest-priority ready key.
+    /// Removes stale and invalid-lane heap entries and returns the highest-priority ready key.
     pub fn ready_priority(&mut self) -> Option<&BestTransactionPriority<O::PriorityValue>> {
-        while self.ready_heap.peek().is_some_and(|(_, hash)| !self.ready.contains_key(hash)) {
+        while let Some(&(_, hash)) = self.ready_heap.peek() {
+            let live = self.ready.get(&hash).map(|(_, lane)| !self.is_lane_invalid(*lane));
+            if live == Some(true) {
+                break;
+            }
+            if live == Some(false) {
+                self.ready.remove(&hash);
+            }
             self.ready_heap.pop();
         }
         self.ready_heap.peek().map(|(priority, _)| priority)
     }
 
-    /// Pops the highest-priority non-stale ready transaction and its sequential lane.
+    /// Pops the highest-priority ready transaction and its sequential lane, skipping stale heap
+    /// entries and members of invalidated lanes.
     pub fn pop_ready(
         &mut self,
     ) -> Option<(Arc<ValidPoolTransaction<T>>, Option<BestTransactionLane>)> {
         loop {
             let (_, hash) = self.ready_heap.pop()?;
-            if let Some(entry) = self.ready.remove(&hash) {
+            if let Some(entry) = self.ready.remove(&hash)
+                && !self.is_lane_invalid(entry.1)
+            {
                 return Some(entry);
             }
         }
@@ -329,6 +349,9 @@ where
         let Some((transaction, lane)) = self.parked.remove(&transaction_hash) else {
             return false;
         };
+        if self.is_lane_invalid(lane) {
+            return false;
+        }
         self.push_ready(transaction, lane);
         true
     }
@@ -341,6 +364,9 @@ where
         let Some((transaction, lane)) = self.parked.remove(&transaction_hash) else {
             return false;
         };
+        if self.is_lane_invalid(lane) {
+            return false;
+        }
         if let Some(lane) = lane {
             self.invalidate_lane(lane);
         }
@@ -544,7 +570,7 @@ mod tests {
     }
 
     #[test]
-    fn invalidating_lane_removes_its_ready_heap_entries() {
+    fn invalidating_lane_excludes_its_ready_transactions() {
         let signer = PrivateKeySigner::random();
         let transaction = transaction(&signer, U256::from(1), 0, 100);
         let lane = BestTransactionLane::for_transaction(&transaction).unwrap();
@@ -554,8 +580,47 @@ mod tests {
         best.push_ready(transaction, Some(lane));
         best.invalidate_lane(lane);
 
-        assert!(best.ready.is_empty());
-        assert!(best.ready_heap.is_empty());
+        assert!(best.ready_priority().is_none());
+        assert!(best.next().is_none());
+    }
+
+    #[test]
+    fn invalidated_ready_transaction_is_skipped_in_priority_order() {
+        let invalid_signer = PrivateKeySigner::random();
+        let high_signer = PrivateKeySigner::random();
+        let low_signer = PrivateKeySigner::random();
+        let invalid = transaction(&invalid_signer, U256::ZERO, 0, 100);
+        let high = transaction(&high_signer, U256::ZERO, 0, 90);
+        let low = transaction(&low_signer, U256::ZERO, 0, 10);
+        let invalid_lane = BestTransactionLane::for_transaction(&invalid).unwrap();
+        let inner = StaticBestTransactions::new(Vec::new());
+        let mut best = ParkedBestTransactions::new(inner, BaseOrdering::coinbase_tip(), 0);
+
+        for transaction in [&invalid, &high, &low] {
+            let lane = BestTransactionLane::for_transaction(transaction);
+            best.push_ready(Arc::clone(transaction), lane);
+        }
+        best.invalidate_lane(invalid_lane);
+
+        assert_eq!(best.next().unwrap().hash(), high.hash());
+        assert_eq!(best.next().unwrap().hash(), low.hash());
+        assert!(best.next().is_none());
+    }
+
+    #[test]
+    fn discarding_parked_member_of_invalidated_lane_is_a_no_op() {
+        let signer = PrivateKeySigner::random();
+        let parked = transaction(&signer, U256::from(1), 0, 100);
+        let lane = BestTransactionLane::for_transaction(&parked).unwrap();
+        let inner = StaticBestTransactions::new(vec![Arc::clone(&parked)]);
+        let mut best = ParkedBestTransactions::new(inner, BaseOrdering::coinbase_tip(), 0);
+
+        let yielded = best.next().unwrap();
+        best.park(&yielded);
+        best.invalidate_lane(lane);
+
+        assert!(!best.discard_parked(*parked.hash(), InvalidPoolTransactionError::Underpriced));
+        assert!(!best.promote(*parked.hash()));
     }
 
     #[test]
