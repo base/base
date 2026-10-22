@@ -91,6 +91,14 @@ pub enum BaseTxPoolError {
     },
 }
 
+impl BaseTxPoolError {
+    /// [`Self::Eip8130Authentication`] reason for an EIP-8130 transaction whose
+    /// `gas_limit` fits the block gas limit but whose payer authentication gas,
+    /// metered on top of it, does not.
+    pub const PAYER_AUTH_EXCEEDS_BLOCK_GAS_LIMIT: &'static str =
+        "gas limit plus payer authentication gas exceeds the block gas limit";
+}
+
 /// Resolved EIP-8130 actors and state data required to build the pool outcome.
 #[derive(Debug, Clone)]
 struct Eip8130ValidationState {
@@ -2032,11 +2040,19 @@ where
             IntrinsicGas::max_payer_auth_cost(signed).map_err(Self::map_intrinsic_gas_error)?;
         let reserved_gas = FeeCheck::max_chargeable_gas(tx.gas_limit, payer_auth);
 
+        // A `gas_limit` over the block gas limit on its own is a bad body; one
+        // pushed over only by `payer_auth` gas is not, because the hash does not
+        // cover `payer_auth`.
         let block_gas_limit = self.inner.block_gas_limit();
         if reserved_gas > block_gas_limit {
-            return Err(InvalidPoolTransactionError::ExceedsGasLimit(
-                reserved_gas,
-                block_gas_limit,
+            if tx.gas_limit > block_gas_limit {
+                return Err(InvalidPoolTransactionError::ExceedsGasLimit(
+                    reserved_gas,
+                    block_gas_limit,
+                ));
+            }
+            return Err(Self::eip8130_auth_error(
+                BaseTxPoolError::PAYER_AUTH_EXCEEDS_BLOCK_GAS_LIMIT,
             ));
         }
         if let Some(max_tx_gas_limit) = self.max_tx_gas_limit
