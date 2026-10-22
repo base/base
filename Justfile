@@ -238,6 +238,12 @@ bench-precompiles:
 bench-node-runner:
     cargo bench -p base-node-runner --bench fcu_unsafe
 
+# Compares Engine API round trips over the auth IPC socket and in memory. Replays Base mainnet
+# blocks from `mainnet_rpc`; pass an empty string to run only the synthetic mixes.
+fast-engine-api-bench mainnet_rpc="https://mainnet.base.org" iters="10":
+    RUST_LOG=error ENGINE_BENCH_MAINNET_RPC={{ quote(mainnet_rpc) }} ENGINE_BENCH_ITERS={{ iters }} \
+        cargo bench -p base-node-runner --bench engine_api_transport
+
 # Runs execution trie witness read benchmarks
 bench-execution-trie-witness-reads:
     cargo bench -p base-execution-trie --bench witness_reads
