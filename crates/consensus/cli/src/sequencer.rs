@@ -89,6 +89,13 @@ pub struct SequencerArgs {
     )]
     pub shadow_funding_amount: Option<U256>,
 
+    /// Trusted L2 EL RPC that serves blocks missed while the sequencer was down.
+    #[arg(
+        long = "sequencer.catchup-source-l2-rpc",
+        env = "BASE_NODE_SEQUENCER_CATCHUP_SOURCE_L2_RPC"
+    )]
+    pub catchup_source_l2_rpc: Option<Url>,
+
     /// Conductor service RPC endpoint. Providing this value enables the conductor service.
     #[arg(long = "conductor.rpc", env = "BASE_NODE_CONDUCTOR_RPC")]
     pub conductor_rpc: Option<Url>,
@@ -137,6 +144,7 @@ impl SequencerArgs {
             conductor_rpc_url: self.conductor_rpc.clone(),
             conductor_binary_commit: self.conductor_binary_commit,
             conductor_rpc_timeout: self.conductor_rpc_timeout,
+            catchup_source_l2_rpc_url: self.catchup_source_l2_rpc.clone(),
             l1_conf_delay: self.l1_confs,
             l1_rpc_timeout: self.l1_rpc_timeout,
             seal_offset: DEFAULT_SEAL_OFFSET,

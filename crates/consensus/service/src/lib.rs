@@ -36,7 +36,8 @@ pub use standalone_dev::{StandaloneDevChain, StandaloneDevError, StandaloneDevSt
 mod actors;
 pub use actors::{
     AlloyL1BlockFetcher, BlockStream, BuildOutcome, BuildPipelineState, BuildRequest,
-    CancellableContext, CanonicalReconciliationInputs, CanonicalUnsafeCatchup, CheckpointActor,
+    CancellableContext, CanonicalCatchupSource, CanonicalReconciliationInputs,
+    CanonicalUnsafeCatchup, CatchupFetchResult, CatchupGap, CatchupSourceError, CheckpointActor,
     CheckpointClient, CheckpointDB, CheckpointError, CheckpointRequest, CheckpointWriter,
     Conductor, ConductorClient, ConductorError, DelayedL1OriginSelectorProvider, DerivationActor,
     DerivationActorRequest, DerivationClientError, DerivationClientResult, DerivationEngineClient,
