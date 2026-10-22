@@ -46,6 +46,11 @@ impl RecentlySent {
         self.seen.get(hash).map(|sent| *sent + self.resend_after)
     }
 
+    /// Returns `true` if the hash was sent within the last two resend windows.
+    pub(super) fn was_sent(&self, hash: &B256) -> bool {
+        self.seen.contains_key(hash)
+    }
+
     /// Records a hash as sent at the current instant.
     pub(super) fn mark_sent(&mut self, hash: B256) {
         self.seen.insert(hash, Instant::now());
