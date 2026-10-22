@@ -30,7 +30,7 @@ NETWORK_RUN_RE = re.compile(
 RUN_PREFIX_RE = re.compile(r"^RUN\s+(?:--mount=\S+\s+)*", re.IGNORECASE)
 RUST_TOOLCHAIN_CMD_RE = re.compile(
     r"(?:^|&&|\|\||[;|(`]|\b(?:then|else|do)\b)\s*"
-    r"(?:[A-Za-z_][A-Za-z0-9_]*=(?:\"[^\"]*\"|'[^']*'|[^\s\"';|&()`]+)?\s+)*"
+    r"(?:[A-Za-z_][A-Za-z0-9_]*=(?:\"[^\"]*\"|'[^']*'|[^\s\"']+)?\s+)*"
     r"(?:/[\w./-]+/)?(?:cargo|rustc|rustup)(?=\s|[;&|)]|$)"
 )
 FROM_RE = re.compile(r"^FROM\s+(?:--\S+\s+)*(\S+)(?:\s+AS\s+(\S+))?", re.IGNORECASE)
@@ -269,6 +269,12 @@ def check_probes(errors: list[str]) -> None:
     check_dockerfiles_in_map({"etc/docker/Dockerfile.probe": probe_df}, probe_errs)
     if probe_errs:
         errors.append(f"probe: false positive on non-network cargo path RUNs: {probe_errs}")
+    for env_probe in ("RUN X=$(cmd) rustc -vV\n", "RUN A=b;c rustc -vV\n"):
+        env_probe_df = "FROM rust:1.96-trixie AS base\nCOPY rust-toolchain.toml ./\n" + env_probe
+        env_probe_errs: list[str] = []
+        check_dockerfiles_in_map({"etc/docker/Dockerfile.env-probe": env_probe_df}, env_probe_errs)
+        if not env_probe_errs:
+            errors.append(f"probe: unmounted `{env_probe.strip()}` in rust-toolchain stage was not flagged")
 
     rust_df = (REPO_ROOT / "etc/docker/Dockerfile.rust-services").read_text(encoding="utf-8")
     for label, pattern, repl in (
