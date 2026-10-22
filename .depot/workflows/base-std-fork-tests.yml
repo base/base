@@ -56,6 +56,7 @@ jobs:
               - 'crates/common/precompiles/**'
               - '.depot/actions/setup/**'
               - '.depot/workflows/base-std-fork-tests.yml'
+              - 'etc/scripts/ci/base_std_mock_only_skips.py'
   fork-tests:
     name: Base Std Interface Tests (${{ matrix.fork }})
     needs: changes
@@ -94,6 +95,9 @@ jobs:
       # Runs fork tests with forge's `base` upgrade set to the selected fork.
       # Figment maps FOUNDRY_BASE onto the `base` key.
       FOUNDRY_BASE: ${{ matrix.upgrade }}
+      # base-std refs before base/base-std#242 skip the unknown-selector dispatch test unless this
+      # is set, so the Beryl and Cobalt tags always need it. base/base has had the fix since #3421.
+      POLICY_DISPATCH_FIX: "true"
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -191,18 +195,26 @@ jobs:
 
           passed=$(grep -c '\[PASS\]' "$output" 2>/dev/null || true)
           failed=$(grep -c '\[FAIL' "$output" 2>/dev/null || true)
-          skipped=$(grep -c '\[SKIP\]' "$output" 2>/dev/null || true)
+          # Matches `[SKIP]` and `[SKIP: reason]`.
+          skipped=$(grep -c '\[SKIP' "$output" 2>/dev/null || true)
+          mock_only=0
+          if [ -f "$output" ] && ! mock_only=$(python3 \
+            "$GITHUB_WORKSPACE/etc/scripts/ci/base_std_mock_only_skips.py" "$output" "${BASE_STD_DIR:-}"); then
+            echo "::warning::Could not classify mock-only skips; reporting every skip as Skipped"
+            mock_only=0
+          fi
           passed=${passed:-0}
           failed=${failed:-0}
           skipped=${skipped:-0}
           total=$((passed + failed + skipped))
+          skipped=$((skipped - mock_only))
           status=failure
           if [ "$FORK_TEST_OUTCOME" = "success" ] && [ "$total" -gt 0 ] && [ "$failed" -eq 0 ]; then
             status=success
           fi
 
-          printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-            "$FORK_NAME" "$status" "$passed" "$failed" "$skipped" \
+          printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+            "$FORK_NAME" "$status" "$passed" "$failed" "$skipped" "$mock_only" \
             "${BASE_SHA:-unknown}" "${BASE_ANVIL_SHA:-$BASE_ANVIL_REF}" \
             "${BASE_STD_SHA:-$BASE_STD_REF}" \
             > "$result_dir/results/$FORK_KEY.tsv"
@@ -264,6 +276,7 @@ jobs:
           shopt -s nullglob
 
           result_files=("$RUNNER_TEMP"/fork-test-results/results/*.tsv)
+          mock_only_counts=()
           body="$RUNNER_TEMP/fork-test-comment.md"
           overall=success
 
@@ -280,7 +293,7 @@ jobs:
               echo '| unknown | failure: no results | 0 | 0 | 0 | unknown | unknown | unknown |'
             else
               for result_file in "${result_files[@]}"; do
-                IFS=$'\t' read -r fork status passed failed skipped base_sha base_anvil_sha base_std_sha < "$result_file"
+                IFS=$'\t' read -r fork status passed failed skipped mock_only base_sha base_anvil_sha base_std_sha < "$result_file"
                 if [ "$status" = "success" ]; then
                   display_status='pass'
                 else
@@ -291,9 +304,15 @@ jobs:
                 base_anvil_link="[\`${base_anvil_sha:0:8}\`](https://github.com/base/base-anvil/commit/${base_anvil_sha})"
                 base_std_link="[\`${base_std_sha:0:8}\`](https://github.com/base/base-std/commit/${base_std_sha})"
                 echo "| $fork | $display_status | $passed | $failed | $skipped | $base_link | $base_anvil_link | $base_std_link |"
+                mock_only_counts+=("$fork $mock_only")
               done
             fi
 
+            if [ ${#mock_only_counts[@]} -gt 0 ]; then
+              echo
+              joined=$(printf '%s, ' "${mock_only_counts[@]}")
+              echo "Skipped excludes tests that open with \`vm.skip(livePrecompiles)\` because they only run against base-std's Solidity mocks: ${joined%, }."
+            fi
             echo
             echo "[View run]($WORKFLOW_RUN_URL)"
           } > "$body"
