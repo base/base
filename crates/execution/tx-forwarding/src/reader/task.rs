@@ -258,8 +258,12 @@ where
             }
 
             let sequence = BestTransactionLane::for_transaction(&tx);
-            let arrived = tx.timestamp;
-            let priority = ordering.priority(&tx.transaction, base_fee);
+            // A resend ranks below every fresh transaction and ages from when it became due, so
+            // the resends a full read finds all at once cannot hold fresh ones back.
+            let (arrived, priority) = self.recently_sent.resend_due(tx.hash()).map_or_else(
+                || (tx.timestamp, ordering.priority(&tx.transaction, base_fee)),
+                |due| (due, Priority::None),
+            );
             lanes.push(tx, sequence, arrived, priority);
         }
 
@@ -450,6 +454,7 @@ mod tests {
     };
 
     use super::*;
+    use crate::reader::lanes::Lane;
 
     /// Start and end of one `best_transactions()` call.
     type SnapshotSpan = (Instant, Instant);
@@ -768,6 +773,35 @@ mod tests {
         time::timeout(Duration::from_secs(5), run).await.expect("reader exits").unwrap();
 
         assert_eq!(forwarded.tx_hash, *tx.hash());
+    }
+
+    /// The resends a full read finds rank below fresh transactions, so a burst of them cannot
+    /// hold a fresh transaction back, even when the resend entered the pool first.
+    #[test]
+    fn a_full_read_ranks_a_resend_below_a_fresh_transaction() {
+        let (resend, fresh) = (transaction(0), transaction(1));
+        let mut pool = MockReaderPool::new();
+        pool.expect_block_info().returning(BlockInfo::default);
+        let txs = vec![Arc::clone(&resend), Arc::clone(&fresh)];
+        pool.expect_best_transactions().returning(move || Box::new(txs.clone().into_iter()));
+        let (sender, _queue) = mpsc::channel(4);
+        let mut reader: DestinationReader<MockReaderPool> = DestinationReader::new(
+            pool,
+            ReaderConfig {
+                resend_after: Duration::ZERO,
+                channel_capacity: 4,
+                poll_interval: ReaderConfig::POLL_INTERVAL,
+                fifo_percent: 0,
+            },
+            sender,
+            CancellationToken::new(),
+            "http://builder.test".parse().unwrap(),
+        );
+        reader.recently_sent.mark_sent(*resend.hash());
+
+        let mut lanes = reader.take_snapshot().unwrap();
+
+        assert_eq!(lanes.pop(Lane::Priority).map(|tx| *tx.hash()), Some(*fresh.hash()));
     }
 
     /// Cancelling while the reader waits out the gap after an expensive snapshot must end the

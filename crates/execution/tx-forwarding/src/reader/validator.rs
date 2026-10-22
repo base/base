@@ -12,8 +12,9 @@ const PRUNE_INTERVAL: u64 = 1000;
 ///
 /// Tracks transaction hashes accepted by one destination's queue. A transaction
 /// whose hash appears in the map
-/// and whose entry is younger than `resend_after` will be skipped. Expired
-/// entries are pruned periodically (every [`PRUNE_INTERVAL`] lookups) to
+/// and whose entry is younger than `resend_after` will be skipped. Entries are
+/// kept for twice `resend_after`, so a transaction due for a resend can be told
+/// apart from one never sent, and are pruned periodically (every [`PRUNE_INTERVAL`] lookups) to
 /// bound memory.
 pub(super) struct RecentlySent {
     seen: HashMap<B256, Instant>,
@@ -39,6 +40,12 @@ impl RecentlySent {
         self.seen.get(hash).is_some_and(|instant| instant.elapsed() < self.resend_after)
     }
 
+    /// Returns when a transaction sent earlier became due for a resend, or `None` if it was not
+    /// sent within the last two resend windows.
+    pub(super) fn resend_due(&self, hash: &B256) -> Option<Instant> {
+        self.seen.get(hash).map(|sent| *sent + self.resend_after)
+    }
+
     /// Records a hash as sent at the current instant.
     pub(super) fn mark_sent(&mut self, hash: B256) {
         self.seen.insert(hash, Instant::now());
@@ -57,7 +64,8 @@ impl RecentlySent {
 
     fn prune_expired(&mut self) {
         let now = Instant::now();
-        self.seen.retain(|_, instant| now.duration_since(*instant) < self.resend_after);
+        let keep = self.resend_after * 2;
+        self.seen.retain(|_, instant| now.duration_since(*instant) < keep);
     }
 }
 
@@ -132,7 +140,7 @@ mod tests {
         }
         assert_eq!(tracker.len(), 5);
 
-        std::thread::sleep(Duration::from_millis(15));
+        std::thread::sleep(Duration::from_millis(25));
         tracker.prune_expired();
 
         assert_eq!(tracker.len(), 0);
