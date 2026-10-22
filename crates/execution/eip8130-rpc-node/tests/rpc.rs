@@ -30,7 +30,7 @@ use base_protocol::BaseTimeUpdateTx;
 use base_test_utils::{Account, build_test_genesis_cobalt, build_test_genesis_everest};
 use reth_rpc_eth_api::helpers::SpawnBlocking;
 use serde_json::json;
-use tokio::sync::Semaphore;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 /// Launches a harness with the standalone EIP-8130 override registered over the
 /// supplied genesis.
@@ -578,11 +578,10 @@ impl BaseNodeExtension for BlockingIoProbe {
 /// How long a request must stay pending while every blocking-IO permit is held.
 const PERMIT_WAIT: Duration = Duration::from_millis(500);
 
-/// EIP-8130 `eth_call` and `eth_estimateGas` wait for a blocking-IO permit like
-/// the standard `eth_call`, so they cannot run beyond the node's concurrency
-/// bound, and they complete once a permit is released.
-#[tokio::test]
-async fn eip8130_call_and_estimate_wait_for_a_blocking_io_permit() -> eyre::Result<()> {
+/// Launches an Everest harness with the standalone EIP-8130 override and returns
+/// it with every blocking-IO permit held.
+async fn setup_holding_every_blocking_io_permit()
+-> eyre::Result<(TestHarness, RpcClient, OwnedSemaphorePermit)> {
     let probe = BlockingIoProbe::default();
     let harness = TestHarness::builder()
         .with_chain_spec(Arc::new(BaseChainSpec::from_genesis(build_test_genesis_everest())))
@@ -593,7 +592,16 @@ async fn eip8130_call_and_estimate_wait_for_a_blocking_io_permit() -> eyre::Resu
     let client = harness.rpc_client()?;
     let semaphore = Arc::clone(probe.0.get().expect("the RPC hook captured the semaphore"));
     let all_permits = u32::try_from(semaphore.available_permits())?;
-    let held = Arc::clone(&semaphore).acquire_many_owned(all_permits).await?;
+    let held = semaphore.acquire_many_owned(all_permits).await?;
+    Ok((harness, client, held))
+}
+
+/// EIP-8130 `eth_call` and `eth_estimateGas` wait for a blocking-IO permit like
+/// the standard `eth_call`, so they cannot run beyond the node's concurrency
+/// bound, and they complete once a permit is released.
+#[tokio::test]
+async fn eip8130_call_and_estimate_wait_for_a_blocking_io_permit() -> eyre::Result<()> {
+    let (_harness, client, held) = setup_holding_every_blocking_io_permit().await?;
 
     let request = json!({ "from": Account::Alice.address(), "calls": [] });
     let call = tokio::spawn(
@@ -607,5 +615,52 @@ async fn eip8130_call_and_estimate_wait_for_a_blocking_io_permit() -> eyre::Resu
     drop(held);
     call.await??;
     assert!(estimate.await?? > U256::ZERO);
+    Ok(())
+}
+
+/// A standard `eth_call` waits for a blocking-IO permit, so Base's call
+/// override keeps the concurrency bound of reth's default.
+#[tokio::test]
+async fn standard_call_waits_for_a_blocking_io_permit() -> eyre::Result<()> {
+    let (_harness, client, held) = setup_holding_every_blocking_io_permit().await?;
+
+    let request = json!({ "from": Account::Alice.address(), "to": Account::Bob.address() });
+    let call =
+        tokio::spawn(client.request::<_, alloy_primitives::Bytes>("eth_call", (request, "latest")));
+    tokio::time::sleep(PERMIT_WAIT).await;
+    assert!(!call.is_finished(), "standard eth_call must wait for a blocking-IO permit");
+
+    drop(held);
+    call.await??;
+    Ok(())
+}
+
+/// The gas cap that admits a plain transfer and nothing more.
+const TRANSFER_GAS: u64 = 21_000;
+
+/// EIP-8130 `eth_call` and `eth_estimateGas` run within the operator's
+/// `--rpc.gascap`, like the standard ones: under a cap that only fits a plain
+/// transfer, the transfer still estimates but an EIP-8130 request cannot run.
+#[tokio::test]
+async fn eip8130_call_and_estimate_respect_the_rpc_gas_cap() -> eyre::Result<()> {
+    let harness = TestHarness::builder()
+        .with_chain_spec(Arc::new(BaseChainSpec::from_genesis(build_test_genesis_everest())))
+        .with_ext::<Eip8130RpcExtension>(Eip8130RpcMode::Register)
+        .with_rpc_gas_cap(TRANSFER_GAS)
+        .build()
+        .await?;
+    let client = harness.rpc_client()?;
+    let alice = Account::Alice.address();
+    let bob = Account::Bob.address();
+
+    let transfer = json!({ "from": alice, "to": bob, "value": "0x1" });
+    let gas: U256 = client.request("eth_estimateGas", (transfer, "latest")).await?;
+    assert_eq!(gas, U256::from(TRANSFER_GAS));
+
+    let request = json!({ "type": "0x79", "from": alice, "to": bob, "value": "0x1" });
+    let estimate = client.request::<_, U256>("eth_estimateGas", (&request, "latest")).await;
+    assert!(estimate.is_err(), "EIP-8130 eth_estimateGas must not exceed --rpc.gascap");
+    let call = client.request::<_, alloy_primitives::Bytes>("eth_call", (&request, "latest")).await;
+    assert!(call.is_err(), "EIP-8130 eth_call must not exceed --rpc.gascap");
     Ok(())
 }
