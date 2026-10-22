@@ -2174,7 +2174,7 @@
             "uid": "PBFA97CFB590B2093"
           },
           "editorMode": "code",
-          "expr": "max(reth_base_builder_total_block_built_duration{job=\"l2_builder\",quantile=\"0.5\"})",
+          "expr": "max(reth_base_builder_native_payload_build_duration{job=\"l2_builder\",quantile=\"0.5\"} or reth_base_builder_total_block_built_duration{job=\"l2_builder\",quantile=\"0.5\"})",
           "legendFormat": "p50",
           "range": true,
           "refId": "A"
@@ -2185,7 +2185,7 @@
             "uid": "PBFA97CFB590B2093"
           },
           "editorMode": "code",
-          "expr": "max(reth_base_builder_total_block_built_duration{job=\"l2_builder\",quantile=\"0.9\"})",
+          "expr": "max(reth_base_builder_native_payload_build_duration{job=\"l2_builder\",quantile=\"0.9\"} or reth_base_builder_total_block_built_duration{job=\"l2_builder\",quantile=\"0.9\"})",
           "legendFormat": "p90",
           "range": true,
           "refId": "B"
@@ -2196,7 +2196,7 @@
             "uid": "PBFA97CFB590B2093"
           },
           "editorMode": "code",
-          "expr": "max(reth_base_builder_total_block_built_duration{job=\"l2_builder\",quantile=\"0.99\"})",
+          "expr": "max(reth_base_builder_native_payload_build_duration{job=\"l2_builder\",quantile=\"0.99\"} or reth_base_builder_total_block_built_duration{job=\"l2_builder\",quantile=\"0.99\"})",
           "legendFormat": "p99",
           "range": true,
           "refId": "C"
@@ -2517,7 +2517,7 @@
             "uid": "PBFA97CFB590B2093"
           },
           "editorMode": "code",
-          "expr": "max(reth_base_builder_total_block_built_duration{job=\"l2_builder\",quantile=\"0.99\"})",
+          "expr": "max(reth_base_builder_native_payload_build_duration{job=\"l2_builder\",quantile=\"0.99\"} or reth_base_builder_total_block_built_duration{job=\"l2_builder\",quantile=\"0.99\"})",
           "legendFormat": "End-to-end build",
           "range": true,
           "refId": "A"
@@ -2528,7 +2528,7 @@
             "uid": "PBFA97CFB590B2093"
           },
           "editorMode": "code",
-          "expr": "max(reth_base_builder_state_root_calculation_duration{job=\"l2_builder\",quantile=\"0.99\"})",
+          "expr": "max(reth_base_builder_native_payload_state_root_duration{job=\"l2_builder\",quantile=\"0.99\"} or reth_base_builder_state_root_calculation_duration{job=\"l2_builder\",quantile=\"0.99\"})",
           "legendFormat": "State root",
           "range": true,
           "refId": "B"
