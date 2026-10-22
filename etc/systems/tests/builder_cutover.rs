@@ -112,7 +112,8 @@ async fn verify_cutover(zenith_activation_block: Option<u64>) -> Result<()> {
     verify_flashblocks_stop_at_denim(&system.l2_stack().builder().flashblocks_url()).await?;
 
     // Every pool transaction sent above is canonical, and only the selected builder records
-    // inclusion, so the builders' combined count must equal the transactions sent.
+    // inclusion, so the builders' combined count must equal the transactions sent. The metrics
+    // recorder is process-global, so this relies on nextest running each test in its own process.
     let metrics = reqwest::get(system.l2_stack().builder().metrics_url()?).await?.text().await?;
     let sent = if zenith_timestamp.is_some() { 3.0 } else { 2.0 };
     let standard_txs = r#"reth_base_builder_txs_included_per_block_sum{flow="standard"}"#;
