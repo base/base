@@ -18,10 +18,6 @@ on:
 permissions:
   contents: read
 
-# Temporary, owner-requested review of the introducing PR; reverted immediately after this push queues.
-env:
-  ONE_OFF_REVIEW: ${{ github.event_name == 'pull_request' && github.event.action == 'synchronize' && github.event.pull_request.number == 5642 }}
-
 jobs:
   # Decides whether a request may start a review, before it joins the review job's concurrency group. It has no
   # group of its own on purpose: GitHub keeps only one run waiting per group, so a request that is going to
@@ -36,8 +32,7 @@ jobs:
       contents: read
       pull-requests: read
     if: >-
-      (github.event_name == 'pull_request'
-        && (github.event.action != 'synchronize' || github.event.pull_request.number == 5642)
+      (github.event_name == 'pull_request' && github.event.action != 'synchronize'
         && github.event.pull_request.draft == false
         && github.event.pull_request.head.repo.full_name == github.repository)
       || (github.event_name == 'issue_comment'
@@ -75,7 +70,7 @@ jobs:
             # Opening a pull request or marking it ready reviews it once; a second ready event must not buy another.
             existing=$(gh api "repos/$REPO/issues/$NUMBER/comments" --paginate --jq \
               '.[] | select(.user.login == "github-actions[bot]" and .user.type == "Bot") | select(.body | startswith("<!-- CLAUDE_REVIEW_SUMMARY -->")) | .id' | wc -l)
-            if [ "$existing" -gt 0 ] && [ "$ONE_OFF_REVIEW" != true ]; then
+            if [ "$existing" -gt 0 ]; then
               echo "::notice::Not reviewing: this pull request already has a review. Comment /review for a new one."
               echo "allowed=false" >> "$GITHUB_OUTPUT"
               exit 0
@@ -163,7 +158,7 @@ jobs:
           if [ "$EVENT" = pull_request ]; then
             existing=$(gh api "repos/$REPO/issues/$NUMBER/comments" --paginate --jq \
               '.[] | select(.user.login == "github-actions[bot]" and .user.type == "Bot") | select(.body | startswith("<!-- CLAUDE_REVIEW_SUMMARY -->")) | .id' | wc -l)
-            if [ "$existing" -gt 0 ] && [ "$ONE_OFF_REVIEW" != true ]; then
+            if [ "$existing" -gt 0 ]; then
               echo "::notice::Not reviewing: this pull request already has a review. Comment /review for a new one."
               echo "ok=false" >> "$GITHUB_OUTPUT"
               exit 0
