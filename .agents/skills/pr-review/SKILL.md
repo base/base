@@ -42,7 +42,7 @@ snapshot ─► triage ─┬─► reviewers (in parallel) ──────�
 4. **decide** (`agents/decide.md`) runs once, after every reviewer and the council have finished. It gets all findings, the names of any stages that failed, and the existing threads. It turns findings into comments, drops the ones that are wrong or already covered, replies where an open thread already covers a problem, marks a thread whose problem is fixed as resolved, reopens a thread it marked resolved when the problem is back, and writes the overview.
 5. **post.** `review.py` validates the decider's actions against the diff and the thread list, then `render.py` formats them and the script posts them in one pass. Nothing is posted before the decider has finished.
 
-Models do not post to GitHub: each stage returns JSON, and only `review.py` writes. The script validates the final answer against the stage's schema in `schemas/` itself (Claude Code is not given `--json-schema`, to avoid CLI schema-repair requests); an answer that does not match fails that stage. It is not repaired and the stage is not run again.
+Models do not post to GitHub: each stage returns JSON, and only `review.py` writes. The script accepts bare JSON or exactly one fenced JSON block, ignoring prose outside that block, and validates it against the stage's schema in `schemas/` itself. Multiple blocks, malformed JSON, and schema violations fail the stage. Claude Code is not given `--json-schema`, to avoid CLI schema-repair requests; the answer is not repaired and the stage is not run again.
 
 ### Each stage
 
@@ -54,6 +54,8 @@ Models do not post to GitHub: each stage returns JSON, and only `review.py` writ
 - **No outer retry:** a stage that fails, times out, runs out of turns, or returns invalid JSON is reported as failed. The script does not restart it.
 
 CI pins Claude Code 2.1.293; use the same version locally, because the flags and environment settings above are written for it.
+
+With `--artifacts-dir`, a process failure also saves a bounded `<agent>.error.txt` diagnostic with the gateway key redacted. The user-facing message remains a plain-language diagnosis; the artifact retains the CLI's request-error details for debugging.
 
 ### Stages per run
 

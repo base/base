@@ -349,6 +349,9 @@ def run_agent(agent: Agent, user_prompt: str, cwd: Path, artifacts: Path, model_
             raw = run(cmd, input_text=user_prompt, cwd=cwd, env=env,
                       timeout=agent.timeout_seconds or MODEL_TIMEOUT_SECONDS)
         except ReviewError as exc:
+            # Keep the bounded CLI error for gateway debugging, without its credential.
+            details = str(exc).replace(env["ANTHROPIC_API_KEY"], "[redacted]")
+            (artifacts / f"{label}.error.txt").write_text(details)
             reason = explain_model_failure(str(exc)) or "Claude Code failed; no stage restart was attempted."
             raise ReviewError(f"{label}: {reason}") from exc
     if len(raw) > 4_000_000:
@@ -360,7 +363,16 @@ def run_agent(agent: Agent, user_prompt: str, cwd: Path, artifacts: Path, model_
             raise ReviewError(f"{label}: Claude Code did not return a completed answer")
         if envelope.get("stop_reason") not in (None, "end_turn", "stop_sequence"):
             raise ReviewError(f"{label}: Claude Code returned an incomplete or refused answer")
-        output = json.loads(envelope["result"])
+        answer = envelope["result"]
+        try:
+            output = json.loads(answer)
+        except json.JSONDecodeError:
+            # Some models include prose around a fenced answer. Accept exactly one JSON block, never
+            # guess between multiple answers or ask the model to repair it. The same schema still applies.
+            blocks = re.findall(r"^```(?:json)?[ \t]*\r?\n(.*?)^```[ \t]*\r?$", answer, re.MULTILINE | re.DOTALL)
+            if len(blocks) != 1:
+                raise
+            output = json.loads(blocks[0])
         validate_output(output, json.loads(schema_text))
     except (ValueError, TypeError, KeyError, RecursionError) as exc:
         raise ReviewError(f"{label}: invalid Claude Code JSON response; not retried") from exc
