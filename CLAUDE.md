@@ -165,7 +165,10 @@ this review to the requested change and its producers/consumers, not a repositor
 - Keep regression tests for supported observable contracts, not private helpers or
   incidental call order. In review-only work, report missing coverage without
   modifying files or exercising shared systems.
-- For each finding, give the file/line, interruption point, surviving work or lost
+- For automated reviews, the review workflow's output rules take precedence over
+  the reporting guidance below, including brevity and silence when there are no
+  actionable findings. The cancellation checks above still apply.
+- Otherwise, for each finding, give the file/line, interruption point, surviving work or lost
   state, failing event sequence, user-visible consequence, and smallest fix.
   Separate confirmed defects from assumptions about traffic or library semantics.
   If no defect is found, state the scope examined and untested paths; static
