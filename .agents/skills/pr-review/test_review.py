@@ -1849,8 +1849,24 @@ class AgentRunTests(unittest.TestCase):
                 for secret in SECRETS:
                     self.assertNotIn(secret, str(result))
 
+    def test_one_fenced_json_answer_is_validated_without_another_model_call(self) -> None:
+        for text in ('```json\n{"findings": []}\n```',
+                     'No issues found.\n\n```json\n{"findings": []}\n```\nFinished.',
+                     '```\n{"findings": []}\n```'):
+            with self.subTest(text=text):
+                result, fake, _, _ = self.call((0, envelope(text)))
+                self.assertEqual(result, {"findings": []})
+                self.assertEqual(len(fake.calls), 1)
+        for text in ('```json\n{"findings": []}\n```\n```json\n{"findings": []}\n```',
+                     '```json\n{"findings": [], "run": "touch unsafe"}\n```',
+                     '```json\n{"findings": []}\n', '```json\nnot json\n```'):
+            with self.subTest(text=text):
+                result, fake, _, _ = self.call((0, envelope(text)), (0, envelope({"findings": []})))
+                self.assertIsInstance(result, review.ReviewError)
+                self.assertEqual(len(fake.calls), 1)
+
     def test_a_known_model_service_failure_is_explained_without_its_raw_text(self) -> None:
-        result, fake, _, _ = self.call(
+        result, fake, _, written = self.call(
             (1, json.dumps({"type": "result", "subtype": "success", "is_error": True,
                             "result": "Invalid API key · sk-test-secret"}), ""),
             (0, envelope({"findings": []})))
@@ -1858,6 +1874,8 @@ class AgentRunTests(unittest.TestCase):
         self.assertEqual(len(fake.calls), 1)
         self.assertIn("rejected your credentials", str(result))
         self.assertNotIn("sk-test-secret", str(result))
+        self.assertIn("Invalid API key", written["a.error.txt"])
+        self.assertNotIn("sk-test-secret", written["a.error.txt"])
 
     def test_the_answer_is_checked_against_the_stage_schema(self) -> None:
         agent = self.agent(stage="triage", name="triage")
