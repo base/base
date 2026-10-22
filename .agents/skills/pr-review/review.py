@@ -158,7 +158,9 @@ def run(cmd: list[str], *, input_text: str | None = None, cwd: Path | None = Non
     On failure the full stdout and stderr go to `failure_log`, because the error message is cut short.
     """
     try:
-        result = subprocess.run(cmd, input=input_text, capture_output=True, text=True,
+        # Preserve Git's LF-only line boundaries, including literal CRs inside source lines.
+        result = subprocess.run(cmd, input=input_text.encode("utf-8") if input_text is not None else None,
+                                capture_output=True,
                                 cwd=cwd, timeout=timeout, env=env, check=False)
     except FileNotFoundError as exc:
         raise ReviewError(f"`{cmd[0]}` is not installed or not on PATH") from exc
@@ -166,6 +168,8 @@ def run(cmd: list[str], *, input_text: str | None = None, cwd: Path | None = Non
         raise ReviewError(f"`{cmd[0]}` timed out after {timeout}s") from exc
     except ValueError as exc:
         raise ReviewError(f"`{cmd[0]}` received an invalid argument") from exc
+    result.stdout = result.stdout.decode("utf-8")
+    result.stderr = result.stderr.decode("utf-8")
     if result.returncode:
         if failure_log:
             failure_log.write_text(f"exit {result.returncode}\n\n--- stdout ---\n{result.stdout}\n\n"
@@ -460,11 +464,14 @@ def collect_source_context(ctx: Context, cwd: Path) -> str:
             # Reject links in every component, including a tracked path whose parent was replaced locally.
             if not any(p.is_symlink() for p in (path, *path.parents) if p != root) and path.is_file():
                 try:
-                    with path.open(encoding="utf-8") as source:
+                    with path.open(encoding="utf-8", newline="") as source:
                         raw = source.read(min(MAX_SOURCE_FILE_CHARS, remaining) + 1)
                     if "\0" not in raw:
                         limit = min(MAX_SOURCE_FILE_CHARS, remaining)
-                        text = "\n".join(f"{n}: {line}" for n, line in enumerate(raw[:limit].splitlines(), 1))
+                        lines = raw[:limit].split("\n")
+                        if lines[-1] == "":
+                            lines.pop()
+                        text = "\n".join(f"{n}: {line}" for n, line in enumerate(lines, 1))
                         if len(raw) > limit or len(text) > limit:
                             text = text[:limit] + "\n[source file truncated]"
                 except (OSError, UnicodeError):
@@ -715,7 +722,7 @@ def diff_new_lines(diff: str) -> set[tuple[str, int]]:
     path: str | None = None
     line = 0
     in_hunk = False
-    for text in diff.splitlines():
+    for text in diff.split("\n"):
         if text.startswith("diff --git "):
             path, in_hunk = None, False
         elif not in_hunk and text.startswith("+++ "):

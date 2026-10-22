@@ -1044,6 +1044,18 @@ class SourceContextTests(unittest.TestCase):
         self.assertNotIn("UNRELATED-CODE", text)  # tracked, but neither changed nor under discussion
         self.assertEqual(text, self.collect(["src/a.rs"], thread_paths=("src/thread.rs",)))  # deterministic
 
+    def test_diff_anchors_and_snapshot_numbers_use_git_lf_line_boundaries(self) -> None:
+        for ending in ("", "\n"):
+            with self.subTest(ending=ending):
+                first = "one\fpart\x1cpart\x85part\rpart"
+                second = "two\u2028part\u2029part"
+                (self.root / "src" / "a.rs").write_bytes((first + "\n" + second + ending).encode("utf-8"))
+                diff = review.run(["git", "diff", "--", "src/a.rs"], cwd=self.root)
+                self.assertIn(first, diff)  # subprocess output must not normalize lone CRs either
+                self.assertEqual(review.diff_new_lines(diff), {("src/a.rs", 1), ("src/a.rs", 2)})
+                entry = self.collect(["src/a.rs"]).split("### src/a.rs\n", 1)[1].split("\n### ", 1)[0]
+                self.assertEqual(entry, f"1: {first}\n2: {second}\n")
+
     def test_long_docs_cannot_crowd_out_workflow_and_source_contents(self) -> None:
         (self.root / "AGENTS.md").write_text("guidance " * 200)
         (self.root / "docs" / "large.md").write_text("documentation " * 200)
@@ -1271,7 +1283,7 @@ class SetupFailureTests(unittest.TestCase):
         self.assertIn("rejected your token", found.summary)
 
     def test_a_failed_initial_pr_read_raises_the_explained_error(self) -> None:
-        done = subprocess.CompletedProcess([], 1, "", "HTTP 401: Bad credentials (https://api.github.com/graphql)")
+        done = subprocess.CompletedProcess([], 1, b"", b"HTTP 401: Bad credentials (https://api.github.com/graphql)")
         with mock.patch.object(review.subprocess, "run", return_value=done), self.assertRaises(review.SetupError) as caught:
             review.pr_context(1, "base/base")
         self.assertIn("rejected your token", str(caught.exception))
@@ -1279,7 +1291,7 @@ class SetupFailureTests(unittest.TestCase):
     def test_failed_github_writes_keep_the_actual_error(self) -> None:
         for method, reason in (("DELETE", "HTTP 404: Not Found"),
                                ("PATCH", "HTTP 403: Resource not accessible by integration")):
-            done = subprocess.CompletedProcess([], 1, "", reason)
+            done = subprocess.CompletedProcess([], 1, b"", reason.encode())
             with self.subTest(method=method), mock.patch.object(
                     review.subprocess, "run", return_value=done), self.assertRaises(review.ReviewError) as caught:
                 review.gh(["api", "-X", method, "repos/base/base/issues/comments/55"])
@@ -1289,7 +1301,7 @@ class SetupFailureTests(unittest.TestCase):
     def test_a_status_write_failure_does_not_claim_nothing_was_posted(self) -> None:
         body = render.render_summary(overview=None, new=[], outside=[], threads=[], reopened=set(), fixed=set(),
                                      failed=[], details="d", repo="base/base", head_sha="a" * 40)
-        done = subprocess.CompletedProcess([], 1, "", "HTTP 403: Resource not accessible by integration")
+        done = subprocess.CompletedProcess([], 1, b"", b"HTTP 403: Resource not accessible by integration")
         with mock.patch.object(review, "bot_summaries", return_value=[{"id": 55, "body": body}]), \
                 mock.patch.object(review, "status_line", return_value="updated status"), \
                 mock.patch.object(review.subprocess, "run", return_value=done), \
@@ -1301,7 +1313,7 @@ class SetupFailureTests(unittest.TestCase):
         self.assertNotIn("limiting your requests", message)
 
     def test_other_commands_keep_their_plain_error(self) -> None:
-        done = subprocess.CompletedProcess([], 1, "", "fatal: not a git repository")
+        done = subprocess.CompletedProcess([], 1, b"", b"fatal: not a git repository")
         with mock.patch.object(review.subprocess, "run", return_value=done), self.assertRaises(review.ReviewError) as caught:
             review.run(["git", "status"])
         self.assertNotIsInstance(caught.exception, review.SetupError)
@@ -1718,6 +1730,7 @@ class FakeClaude:
     def __call__(self, cmd, *, input=None, cwd=None, env=None, timeout=None, **kwargs):
         if cmd[0] != "claude":
             raise AssertionError(f"a review stage must only run Claude Code, not {cmd[0]}")
+        input = input.decode("utf-8") if input is not None else None
         home = Path(env["HOME"]) if env and "HOME" in env else None
         self.calls.append({"cmd": list(cmd), "input": input, "cwd": cwd, "env": dict(env or {}), "timeout": timeout,
                            "home_was_dir": bool(home and home.is_dir()),
@@ -1726,7 +1739,7 @@ class FakeClaude:
         if isinstance(outcome, BaseException):
             raise outcome
         returncode, stdout, *stderr = outcome
-        return subprocess.CompletedProcess(cmd, returncode, stdout, stderr[0] if stderr else "")
+        return subprocess.CompletedProcess(cmd, returncode, stdout.encode(), (stderr[0] if stderr else "").encode())
 
     @property
     def call(self) -> dict:
@@ -2118,7 +2131,7 @@ class ApplyPlanTests(unittest.TestCase):
                 return real_run(cmd, **kwargs)  # raises ValueError before starting a process
             started.append(cmd)
             out = json.dumps({"headRefOid": "abc"}) if cmd[1:3] == ["pr", "view"] else ""
-            return subprocess.CompletedProcess(cmd, 0, out, "")
+            return subprocess.CompletedProcess(cmd, 0, out.encode(), b"")
 
         with mock.patch.object(review.subprocess, "run", side_effect=fake_run), mock.patch.object(
                 review, "fetch_threads", return_value=self.live), mock.patch.object(review, "log"):
