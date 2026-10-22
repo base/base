@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -29,7 +30,7 @@ NETWORK_RUN_RE = re.compile(
 RUN_PREFIX_RE = re.compile(r"^RUN\s+(?:--mount=\S+\s+)*", re.IGNORECASE)
 RUST_TOOLCHAIN_CMD_RE = re.compile(
     r"(?:^|&&|\|\||[;|(`]|\b(?:then|else|do)\b)\s*"
-    r"(?:[A-Za-z_][A-Za-z0-9_]*=(?:\"[^\"]*\"|'[^']*'|\S*)\s+)*"
+    r"(?:[A-Za-z_][A-Za-z0-9_]*=(?:\"[^\"]*\"|'[^']*'|[^\s\"';|&()`]+)?\s+)*"
     r"(?:/[\w./-]+/)?(?:cargo|rustc|rustup)(?=\s|[;&|)]|$)"
 )
 FROM_RE = re.compile(r"^FROM\s+(?:--\S+\s+)*(\S+)(?:\s+AS\s+(\S+))?", re.IGNORECASE)
@@ -292,6 +293,13 @@ def check_probes(errors: list[str]) -> None:
         check_dockerfiles_in_map({"etc/docker/Dockerfile.rust-services": mutated}, mut_errs)
         if not mut_errs:
             errors.append(f"probe: stripping ca_bundle mount from {label} RUN in Dockerfile.rust-services did not fail")
+
+    redos_input = "(A=" + '"" A=' * 5000 + "!"
+    t0 = time.monotonic()
+    RUST_TOOLCHAIN_CMD_RE.search(redos_input)
+    elapsed = time.monotonic() - t0
+    if elapsed > 0.2:
+        errors.append(f"probe: RUST_TOOLCHAIN_CMD_RE took {elapsed:.3f}s on 5,000 repetitions (> 0.200s)")
 
 
 
