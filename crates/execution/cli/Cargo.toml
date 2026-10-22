@@ -79,7 +79,7 @@ alloy-consensus.workspace = true
 jsonrpsee = { workspace = true, features = ["server"] }
 clap = { workspace = true, features = ["derive", "env"] }
 reqwest = { workspace = true, features = ["json", "stream"] }
-tokio = { workspace = true, features = ["macros", "time", "sync"] }
+tokio = { workspace = true, features = ["macros", "time", "sync", "net"] }
 
 # reth test-vectors
 proptest = { workspace = true, optional = true }
