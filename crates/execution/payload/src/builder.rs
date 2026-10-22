@@ -1821,8 +1821,10 @@ mod tests {
 
         assert_ne!(state_root, B256::repeat_byte(0x42));
         let delay = stuck.saturating_sub(answered);
+        // Well under the 200 ms cap: the request, not the cap, ended the wait. The margin
+        // absorbs scheduler noise on a loaded test machine.
         assert!(
-            delay < NoopBuilder::STATE_ROOT_JOB_GRACE * 4,
+            delay < NoopBuilder::STATE_ROOT_JOB_TIMEOUT / 2,
             "a stuck job delayed sealing {delay:?}"
         );
     }
