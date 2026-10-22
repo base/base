@@ -34,6 +34,11 @@ fn env_vars_use_custom_prefix() {
             Some(expected_env),
             "env var for {long_name} should use custom prefix"
         );
+        assert_eq!(
+            arg.is_hide_env_values_set(),
+            long_name == "private-key",
+            "only the private key env value should be hidden from --help"
+        );
     }
 }
 
