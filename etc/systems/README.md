@@ -15,6 +15,11 @@ drop, rather than accumulating until process exit. TCP and UDP availability chec
 ports still bound during asynchronous socket cleanup. Explicit caller-supplied ports remain the
 caller's responsibility; services that bind port zero directly continue to use OS allocation.
 
+Consensus task owners request cooperative cancellation on drop, including startup failure.
+If the service has not exited after five seconds, its future is forcibly dropped so unresponsive
+startup or shutdown cannot retain its port claims indefinitely. Explicit follow-node shutdown
+waits for that cleanup rather than detaching the service when the grace period expires.
+
 System-test consensus nodes use fresh outbound TCP ports. libp2p's default listener-port reuse
 binds outbound sockets to a wildcard address, which conflicts with sandbox forwarding listeners
 on other local interfaces. Production consensus keeps listener-port reuse enabled.

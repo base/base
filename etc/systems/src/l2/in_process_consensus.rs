@@ -30,14 +30,12 @@ use base_upgrade_signal::{
 };
 use eyre::{Result, WrapErr};
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
-use tokio::{
-    task::JoinHandle,
-    time::{sleep, timeout},
-};
-use tokio_util::sync::{CancellationToken, DropGuard};
+use tokio::time::{sleep, timeout};
+use tokio_util::sync::CancellationToken;
 use tracing::info;
 use url::Url;
 
+use super::ConsensusTask;
 use crate::PortPool;
 
 const SEQUENCER_UNSAFE_HEAD_TIMEOUT: Duration = Duration::from_secs(60);
@@ -102,8 +100,7 @@ pub struct InProcessConsensus {
     rpc_client: HttpClient,
     p2p_tcp_port: u16,
     peer_id: String,
-    _handle: JoinHandle<()>,
-    _cancel_on_drop: DropGuard,
+    _task: ConsensusTask,
 }
 
 impl std::fmt::Debug for InProcessConsensus {
@@ -269,10 +266,9 @@ impl InProcessConsensus {
 
         let mode = config.mode;
         let cancellation = CancellationToken::new();
-        let cancel_on_drop = cancellation.clone().drop_guard();
         let (startup_tx, startup_rx) = tokio::sync::oneshot::channel();
-        let handle = tokio::spawn(async move {
-            // Retain claims until the node's actors finish, not just until abort is requested.
+        let task = ConsensusTask::spawn(cancellation.clone(), async move {
+            // Retain claims through graceful cleanup or forced cancellation of the service.
             let _ports = ports;
             let _checkpoint_dir = checkpoint_dir;
             info!(mode = %mode, rpc_port, "starting in-process consensus node");
@@ -298,14 +294,7 @@ impl InProcessConsensus {
             .build(format!("http://{rpc_addr}"))
             .wrap_err("Failed to build RPC client")?;
 
-        Ok(Self {
-            rpc_addr,
-            rpc_client,
-            p2p_tcp_port,
-            peer_id,
-            _handle: handle,
-            _cancel_on_drop: cancel_on_drop,
-        })
+        Ok(Self { rpc_addr, rpc_client, p2p_tcp_port, peer_id, _task: task })
     }
 
     /// Connects this node to a peer at the given libp2p multiaddr via the `opp2p_connectPeer` RPC.

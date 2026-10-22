@@ -25,11 +25,11 @@ use tokio::{
     task::JoinHandle,
     time::{MissedTickBehavior, interval},
 };
-use tokio_util::sync::{CancellationToken, DropGuard};
+use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 use url::Url;
 
-use super::in_process_consensus::wait_for_rpc;
+use super::{ConsensusTask, in_process_consensus::wait_for_rpc};
 use crate::PortPool;
 
 /// Configuration for starting an in-process follow-mode consensus node.
@@ -63,10 +63,8 @@ pub struct InProcessFollowConsensusConfig {
 pub struct InProcessFollowConsensus {
     rpc_addr: SocketAddr,
     rollup_config: Arc<RollupConfig>,
-    handle: Option<JoinHandle<()>>,
+    task: Option<ConsensusTask>,
     upgrade_signal_handle: Option<JoinHandle<()>>,
-    cancellation: CancellationToken,
-    _cancel_on_drop: DropGuard,
 }
 
 impl std::fmt::Debug for InProcessFollowConsensus {
@@ -154,10 +152,9 @@ impl InProcessFollowConsensus {
         });
 
         let cancellation = CancellationToken::new();
-        let cancel_on_drop = cancellation.clone().drop_guard();
         let node_cancellation = cancellation.clone();
         let (startup_tx, startup_rx) = tokio::sync::oneshot::channel();
-        let handle = tokio::spawn(async move {
+        let task = ConsensusTask::spawn(cancellation.clone(), async move {
             let _ports = ports;
             info!(rpc_port = rpc_port, "starting in-process follow consensus node");
             if let Err(e) = node.start_with_cancellation(node_cancellation).await {
@@ -188,14 +185,7 @@ impl InProcessFollowConsensus {
             })
             .transpose()?;
 
-        Ok(Self {
-            rpc_addr,
-            rollup_config,
-            handle: Some(handle),
-            upgrade_signal_handle,
-            cancellation,
-            _cancel_on_drop: cancel_on_drop,
-        })
+        Ok(Self { rpc_addr, rollup_config, task: Some(task), upgrade_signal_handle })
     }
 
     fn spawn_upgrade_signal_monitor(
@@ -260,19 +250,11 @@ impl InProcessFollowConsensus {
 
     /// Cancels the in-process follow consensus node and waits for its actors to stop.
     pub async fn shutdown(mut self) {
-        self.cancellation.cancel();
         if let Some(handle) = self.upgrade_signal_handle.take() {
             handle.abort();
         }
-        if let Some(mut handle) = self.handle.take() {
-            tokio::select! {
-                result = &mut handle => {
-                    let _ = result;
-                }
-                () = tokio::time::sleep(Duration::from_secs(5)) => {
-                    drop(handle);
-                }
-            }
+        if let Some(task) = self.task.take() {
+            task.shutdown().await;
         }
     }
 }
