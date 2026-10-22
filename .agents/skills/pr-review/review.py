@@ -168,8 +168,11 @@ def run(cmd: list[str], *, input_text: str | None = None, cwd: Path | None = Non
         raise ReviewError(f"`{cmd[0]}` timed out after {timeout}s") from exc
     except ValueError as exc:
         raise ReviewError(f"`{cmd[0]}` received an invalid argument") from exc
-    result.stdout = result.stdout.decode("utf-8")
-    result.stderr = result.stderr.decode("utf-8")
+    try:
+        result.stdout = result.stdout.decode("utf-8")
+        result.stderr = result.stderr.decode("utf-8")
+    except UnicodeError as exc:
+        raise ReviewError(f"`{cmd[0]}` returned output that is not UTF-8") from exc
     if result.returncode:
         if failure_log:
             failure_log.write_text(f"exit {result.returncode}\n\n--- stdout ---\n{result.stdout}\n\n"
