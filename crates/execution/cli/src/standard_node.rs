@@ -7,6 +7,7 @@ use base_builder_metering::{
     MeteringStoreExtension,
 };
 use base_execution_eip8130_rpc_node::{Eip8130RpcExtension, Eip8130RpcMode};
+use base_execution_payer_rpc::{PayerRpcConfig, PayerRpcExtension};
 use base_execution_payload_builder::{
     NoopMeteringProvider, REJECTION_CACHE_MAX_CAPACITY, REJECTION_CACHE_TTL, RejectionCache,
     ResourceMeteringConfig, SharedMeteringProvider,
@@ -373,6 +374,19 @@ pub struct RpcStandardNodeArgs {
     )]
     pub validity_max_expiry_secs: u64,
 
+    /// Serve `payer_getTerms` and `payer_sendTransaction`, forwarding them to the sequencer URL,
+    /// which routes them to the payer.
+    ///
+    /// Off by default, so a node relays wallet payer traffic only when its operator opts in.
+    /// Setting `--rollup.payer` also enables them.
+    #[arg(long = "rollup.payer-enabled")]
+    pub payer_enabled: bool,
+
+    /// Payer service URL for `payer_getTerms` and `payer_sendTransaction`, in place of the
+    /// sequencer URL. Enables those methods.
+    #[arg(long = "rollup.payer", value_name = "PAYER_URL")]
+    pub payer_url: Option<String>,
+
     /// Builder RPC endpoints for transaction forwarding (one forwarder per URL), used by mempool nodes
     #[arg(
         long = "builder-rpc-urls",
@@ -473,6 +487,28 @@ pub struct RpcStandardNodeArgs {
         requires = "enable_inline_simulation"
     )]
     pub inline_simulation_timeout_ms: u64,
+}
+
+impl RpcStandardNodeArgs {
+    /// Payer proxy target, or `None` unless `--rollup.payer-enabled` or `--rollup.payer` is set.
+    /// `--rollup.payer` wins; otherwise the sequencer URL is used when it is HTTP, since the
+    /// payer client cannot speak websocket. Sequencer headers are sent only to the sequencer.
+    fn payer_upstream(&self) -> Option<PayerRpcConfig> {
+        let sequencer = self.rollup_args.sequencer.clone();
+        let upstream_url = self.payer_url.clone().or_else(|| {
+            sequencer.clone().filter(|url| self.payer_enabled && Self::is_http_url(url))
+        })?;
+        let via_sequencer = self.payer_url.is_none() || self.payer_url == sequencer;
+        let upstream_headers =
+            if via_sequencer { self.rollup_args.sequencer_headers.clone() } else { Vec::new() };
+        Some(PayerRpcConfig { upstream_url, upstream_headers })
+    }
+
+    fn is_http_url(url: &str) -> bool {
+        url.split_once("://").is_some_and(|(scheme, _)| {
+            scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https")
+        })
+    }
 }
 
 impl From<RpcStandardNodeArgs> for StandardNodeArgs {
@@ -817,11 +853,18 @@ impl StandardBaseRethNode {
                         .sequencer
                         .clone()
                         .filter(|_| !args.rpc.enable_tx_forwarding),
-                    sequencer_headers: args.rpc.rollup_args.sequencer_headers,
+                    sequencer_headers: args.rpc.rollup_args.sequencer_headers.clone(),
                 },
             );
         }
         runner.install_ext::<TxForwardingExtension>(tx_forwarding_config);
+        if let Some(payer) = args.rpc.payer_upstream() {
+            runner.install_ext::<PayerRpcExtension>(payer);
+        } else if args.rpc.payer_enabled {
+            warn!(
+                "payer RPC proxy disabled: --rollup.payer-enabled needs an HTTP sequencer URL or --rollup.payer"
+            );
+        }
         runner.install_ext::<ProofsHistoryExtension>(rollup_args.clone());
         Self::install_upgrade_signal_runtime_extension(&mut runner, &rollup_args)?;
         let eip8130_rpc_mode = if flashblocks_config.is_some() {
@@ -1030,7 +1073,72 @@ mod tests {
             inline_simulation_workers: DEFAULT_INLINE_SIMULATION_WORKERS,
             inline_simulation_queue_capacity: DEFAULT_INLINE_SIMULATION_QUEUE_CAPACITY,
             inline_simulation_timeout_ms: DEFAULT_INLINE_SIMULATION_TIMEOUT_MS,
+            payer_enabled: false,
+            payer_url: None,
         }
+    }
+
+    #[test]
+    fn payer_methods_are_off_unless_enabled_or_given_a_payer() {
+        let mut args = default_rpc_standard_node_args();
+        args.rollup_args.sequencer = Some("http://sequencer".into());
+        assert!(args.payer_upstream().is_none());
+
+        args.payer_enabled = true;
+        assert_eq!(args.payer_upstream().expect("enabled").upstream_url, "http://sequencer");
+
+        args.payer_enabled = false;
+        args.payer_url = Some("http://payer".into());
+        assert_eq!(args.payer_upstream().expect("payer url").upstream_url, "http://payer");
+
+        let parse = |flags: &[&str]| {
+            CommandParser::<RpcStandardNodeArgs>::try_parse_from(
+                ["reth"].iter().chain(flags).copied(),
+            )
+            .map(|parsed| parsed.args.payer_enabled)
+        };
+        assert!(!parse(&[]).unwrap());
+        assert!(parse(&["--rollup.payer-enabled"]).unwrap());
+    }
+
+    #[test]
+    fn payer_upstream_sends_sequencer_headers_only_to_the_sequencer() {
+        let mut args = default_rpc_standard_node_args();
+        args.payer_enabled = true;
+        assert!(args.payer_upstream().is_none());
+
+        args.rollup_args.sequencer = Some("http://sequencer".into());
+        args.rollup_args.sequencer_headers = vec!["X-Demo=1".into()];
+        assert_eq!(
+            args.payer_upstream(),
+            Some(PayerRpcConfig {
+                upstream_url: "http://sequencer".into(),
+                upstream_headers: vec!["X-Demo=1".into()],
+            })
+        );
+
+        args.payer_url = Some("http://payer".into());
+        let upstream = args.payer_upstream().expect("payer url");
+        assert_eq!(upstream.upstream_url, "http://payer");
+        assert!(upstream.upstream_headers.is_empty());
+    }
+
+    #[test]
+    fn payer_upstream_skips_a_websocket_sequencer() {
+        let mut args = default_rpc_standard_node_args();
+        args.payer_enabled = true;
+        args.rollup_args.sequencer = Some("ws://sequencer:8546".into());
+        assert!(args.payer_upstream().is_none());
+
+        args.rollup_args.sequencer = Some("HTTPS://sequencer".into());
+        assert_eq!(
+            args.payer_upstream().expect("https sequencer").upstream_url,
+            "HTTPS://sequencer"
+        );
+
+        args.rollup_args.sequencer = Some("ws://sequencer:8546".into());
+        args.payer_url = Some("http://payer".into());
+        assert_eq!(args.payer_upstream().expect("payer url").upstream_url, "http://payer");
     }
 
     #[test]
