@@ -40,9 +40,12 @@ with the per-unit cost and the multiplier:
 - Heap allocation and cloning: `Vec`/`String`/`Map` construction, `clone()` of
   non-`Copy` data, `Arc` churn, boxing closures.
 - Observability done eagerly: events, logs, and metrics whose fields are built
-  before the level or enabled check, metrics labels allocated per call, or
-  per-unit metric handle lookups. Deferring to a background thread still pays the
-  allocation and moves the data; prefer not emitting per-candidate records.
+  before the level or enabled check, and metrics labels allocated per call.
+  Deferring to a background thread still pays the allocation and moves the data;
+  prefer not emitting per-candidate records.
+- Metric handle lookups per unit: a labeled `counter!`/`histogram!` call, or a
+  generated accessor such as `BuilderMetrics::foo_total(label)`, builds a key and
+  looks it up in the recorder on every call. Resolve handles once per loop.
 - Locks, channel sends, syscalls, file or network I/O.
 - Repeated work: recomputing per candidate what is fixed per flashblock or block,
   re-emitting identical records for the same transaction.
