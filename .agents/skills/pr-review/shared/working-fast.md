@@ -9,3 +9,4 @@ Your prompt holds the description, the changed-file list, the diff, and a source
 - Missing context is not evidence of a bug and not evidence that one is absent. Report a problem only when code you were given or read shows it.
 - A few findings the code supports are worth more than many guesses. If the riskiest changes check out, report no findings.
 - Keep your reasoning short and do not restate the diff.
+- Finish with the JSON object required by the system prompt, even when there are no findings. A promise to answer is not a submitted result. There is no repair turn after invalid output.

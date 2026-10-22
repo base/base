@@ -498,6 +498,41 @@ class CouncilTests(unittest.TestCase):
         self.assertIn("theirs", prompt)
         self.assertNotIn('"mine"', prompt)
 
+    def test_invalid_ballots_are_discarded_and_reported_to_the_chair(self) -> None:
+        agents = review.load_agents()
+        members = [a for a in agents if a.stage == "council"][:2]
+        chair = next(a for a in agents if a.stage == "chair")
+        ctx = review.Context(description="d", title="t", files=["a"], diff=DIFF)
+        finding = {"title": "t", "severity": "major", "category": "safety", "confidence": "high",
+                   "path": "a", "line": 1, "explanation": "e"}
+        # Member 1 reports F1; member 2 reports F2 and F3. Member 1 must vote once on F2 and F3.
+        for ids in ([], ["F2"], ["F2", "F2"], ["F2", "unknown"], ["F2", "F1"], ["F3", "F2"]):
+            with self.subTest(ids=ids):
+                chair_prompts = []
+
+                def fake(agent, prompt, *_args, schema=None, **_kwargs):
+                    if agent == chair:
+                        chair_prompts.append(prompt)
+                        return {"findings": []}
+                    if schema == "votes":
+                        return {"votes": [{"id": id_, "vote": "confirm", "reason": "checked"}
+                                          for id_ in (ids if agent == members[0] else ["F1"])]}
+                    return {"findings": [finding] * (1 if agent == members[0] else 2)}
+
+                with tempfile.TemporaryDirectory() as tmp, mock.patch.object(review, "run_agent", side_effect=fake):
+                    _, failed, chair_ran = review.run_council(ctx, {}, members, chair, Path(tmp), Path(tmp), None)
+                self.assertTrue(chair_ran)
+                prompt = chair_prompts[0]
+                votes = json.loads(prompt.split("<votes_by_member>\n", 1)[1].split("\n</votes_by_member>", 1)[0])
+                self.assertIn(members[1].name, votes)
+                if ids == ["F3", "F2"]:
+                    self.assertEqual(failed, {})
+                    self.assertEqual([v["id"] for v in votes[members[0].name]], ids)
+                else:
+                    self.assertEqual(list(failed), [f"{members[0].name}.vote"])
+                    self.assertNotIn(members[0].name, votes)
+                    self.assertIn(f"<council_members_that_failed>{members[0].name}.vote</", prompt)
+
     def test_run_parallel_keeps_job_order_and_collects_failures(self) -> None:
         def fail() -> None:
             raise review.ReviewError("boom")
@@ -1612,6 +1647,9 @@ class LimitTests(unittest.TestCase):
         if WORKFLOW is not None:
             self.assertIn(f"timeout-minutes: {JOB_LIMIT_SECONDS // 60}\n", WORKFLOW.read_text())
 
+    def test_five_sequential_stages_at_the_default_limit_fit_in_the_job(self) -> None:
+        self.assertLess(5 * review.MODEL_TIMEOUT_SECONDS, JOB_LIMIT_SECONDS)
+
     def test_gh_calls_are_bounded(self) -> None:
         with mock.patch.object(review, "run", return_value="") as run:
             review.gh(["api", "x"])
@@ -1758,7 +1796,7 @@ class AgentRunTests(unittest.TestCase):
         self.assertEqual(flag(cmd, "--output-format"), "json")
         self.assertEqual((flag(cmd, "--model"), flag(cmd, "--effort")), ("claude-opus-5-5", "medium"))
         # The prompt arrives on stdin; the system prompt carries the instructions, guide, and schema.
-        self.assertEqual(call["input"], "the user prompt")
+        self.assertTrue(call["input"].startswith("the user prompt\n"))
         self.assertNotIn("the user prompt", cmd)
         system = flag(cmd, "--system-prompt")
         self.assertIn("You are the reviewer prompt.", system)
@@ -2038,6 +2076,29 @@ class ApplyPlanTests(unittest.TestCase):
         self.assertEqual(len(deletes), 2)
         self.assertLess(comment_calls[0], min(deletes))
 
+    def test_a_reply_with_a_nul_fails_alone_and_the_rest_still_posts(self) -> None:
+        self.plan.replies[0]["body"] += "\0"
+        real_run = subprocess.run
+        started: list[list[str]] = []
+
+        def fake_run(cmd, **kwargs):
+            if any("\0" in arg for arg in cmd):
+                return real_run(cmd, **kwargs)  # raises ValueError before starting a process
+            started.append(cmd)
+            out = json.dumps({"headRefOid": "abc"}) if cmd[1:3] == ["pr", "view"] else ""
+            return subprocess.CompletedProcess(cmd, 0, out, "")
+
+        with mock.patch.object(review.subprocess, "run", side_effect=fake_run), mock.patch.object(
+                review, "fetch_threads", return_value=self.live), mock.patch.object(review, "log"):
+            problems = review.apply_plan(self.plan, self.ctx, lambda plan: "summary")
+        self.assertEqual(len(problems), 1)
+        self.assertTrue(problems[0].startswith("reply on open"), problems)
+        self.assertEqual(self.plan.replies, [])
+        joined = [" ".join(c) for c in started]
+        self.assertTrue(any("/reviews" in c for c in joined))
+        self.assertTrue(any(c.startswith("gh pr comment") for c in joined))
+        self.assertEqual(len(self.plan.resolves), 1)
+
     def test_resolving_edits_the_bots_own_comment_and_never_calls_the_resolve_mutation(self) -> None:
         gh = FakeGh()
         self.apply(gh)
@@ -2299,7 +2360,9 @@ class PipelineTests(unittest.TestCase):
         if agent.stage == "triage":
             return self.triage
         if schema == "votes":
-            return {"votes": []}
+            candidates = json.loads(prompt.split("<findings_from_other_council_members>\n", 1)[1]
+                                    .split("\n</findings_from_other_council_members>", 1)[0])
+            return {"votes": [{"id": c["id"], "vote": "confirm", "reason": "checked"} for c in candidates]}
         if agent.stage == "chair":
             return {"findings": [{**self.finding, "title": "chair merged", "support": "2 of 3"}]}
         if agent.stage == "decide":
