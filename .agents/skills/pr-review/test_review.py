@@ -1044,6 +1044,19 @@ class SourceContextTests(unittest.TestCase):
         self.assertNotIn("UNRELATED-CODE", text)  # tracked, but neither changed nor under discussion
         self.assertEqual(text, self.collect(["src/a.rs"], thread_paths=("src/thread.rs",)))  # deterministic
 
+    def test_long_docs_cannot_crowd_out_workflow_and_source_contents(self) -> None:
+        (self.root / "AGENTS.md").write_text("guidance " * 200)
+        (self.root / "docs" / "large.md").write_text("documentation " * 200)
+        (self.root / ".github" / "workflows").mkdir(parents=True)
+        (self.root / ".github" / "workflows" / "ci.yml").write_text("name: WORKFLOW-CONTENT\n")
+        git_in(self.root, "add", "docs/large.md", ".github/workflows/ci.yml")
+        with mock.patch.object(review, "MAX_SOURCE_CHARS", 300):
+            text = self.collect(["docs/large.md", "src/a.rs", ".github/workflows/ci.yml"])
+        self.assertIn("WORKFLOW-CONTENT", text)
+        self.assertIn("CHANGED-CODE", text)
+        self.assertLess(text.index("WORKFLOW-CONTENT"), text.index("CHANGED-CODE"))
+        self.assertIn("docs/large.md", text.split("source context truncated", 1)[1])
+
     def test_unsafe_or_unreadable_paths_are_marked_unavailable_and_never_read(self) -> None:
         unsafe = [".env", "src/new.rs", "../outside/secret.txt", "src/../../outside/secret.txt",
                   str(self.outside / "secret.txt"), "src/link.rs", "src/sub/file.rs", "src", "src/latin1.rs",
@@ -1090,6 +1103,12 @@ class SourceContextTests(unittest.TestCase):
         omitted = everything.split("source context truncated", 1)[1]
         for name in names[-2:]:
             self.assertIn(name, omitted)
+
+        # Many short lines can exceed the per-file cap through line-number prefixes alone.
+        (self.root / "src" / "a.rs").write_text("x\n" * 40)
+        with mock.patch.object(review, "MAX_SOURCE_FILE_CHARS", 100):
+            numbered = self.collect(["src/a.rs"]).split("### src/a.rs\n", 1)[1]
+        self.assertLessEqual(len(numbered.split("\n[source file truncated]", 1)[0]), 100)
 
 
 GATEWAY_ENV = {"LLM_GATEWAY_HOSTNAME": "gateway.example.com", "LLM_GATEWAY_API_KEY": "sk-test-secret"}

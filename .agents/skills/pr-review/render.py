@@ -259,7 +259,7 @@ def render_summary(*, overview: str | None, new: list[Finding], outside: list[Fi
         out += ["", f"## {headline(counts)}"]
     if failed:
         names = ", ".join(f"`{name}`" for name in failed)
-        out += ["", f"> ⚠️ **Incomplete review:** {names} failed, so some findings may be missing."]
+        out += ["", f"> ⚠️ **Incomplete review:** {names} failed; review coverage or cross-checking is incomplete."]
     if overview and overview.strip():
         out += ["", overview.strip()]
 

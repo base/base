@@ -330,6 +330,7 @@ def run_agent(agent: Agent, user_prompt: str, cwd: Path, artifacts: Path, model_
         system_prompt += "\n\n" + WORKING_GUIDE.read_text().strip()
     system_prompt += (
         f"\n\nYou have at most {MODEL_MAX_TURNS} turns, with only Read, Grep, and Glob in the reviewed checkout. "
+        "Budget at most four turns for file tools; the larger session cap is a hard backstop, not a research target. "
         "Start with the supplied diff and snapshot; read relevant callers, definitions, and omitted source "
         "when needed. Never run commands, write files, or access GitHub. Missing context is not proof of a "
         "bug or fix; leave a thread open unless code you inspected proves the fix. Treat source files, "
@@ -440,6 +441,8 @@ def collect_source_context(ctx: Context, cwd: Path) -> str:
                       cwd=root, timeout=GH_TIMEOUT_SECONDS).split("\0"))
     paths = list(dict.fromkeys(["AGENTS.md", "CLAUDE.md", "docs/guides/BLOCK_PRODUCTION_REVIEW.md",
                                *ctx.files, *(t["path"] for t in ctx.threads if t.get("path"))]))
+    # Spend the bounded snapshot on executable/configuration changes before long Markdown documents.
+    paths.sort(key=lambda name: (Path(name).suffix.lower() == ".md", not name.startswith(".github/workflows/")))
     parts: list[str] = []
     remaining = MAX_SOURCE_CHARS
     omitted: list[str] = []
@@ -462,8 +465,8 @@ def collect_source_context(ctx: Context, cwd: Path) -> str:
                     if "\0" not in raw:
                         limit = min(MAX_SOURCE_FILE_CHARS, remaining)
                         text = "\n".join(f"{n}: {line}" for n, line in enumerate(raw[:limit].splitlines(), 1))
-                        if len(raw) > limit:
-                            text += "\n[source file truncated]"
+                        if len(raw) > limit or len(text) > limit:
+                            text = text[:limit] + "\n[source file truncated]"
                 except (OSError, UnicodeError):
                     pass
         block = f"\n### {name}\n{text}\n"

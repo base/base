@@ -1,6 +1,6 @@
 ## Working from the snapshot
 
-Your prompt holds the description, the changed-file list, the diff, and a source snapshot that the script collected before any model ran. You can also use `Read`, `Grep`, and `Glob` in the reviewed checkout, within a small turn limit. Nobody will answer a question or run a command for you.
+Your prompt holds the description, the changed-file list, the diff, and a source snapshot that the script collected before any model ran. You can also use `Read`, `Grep`, and `Glob` in the reviewed checkout. Budget at most four turns for those tools, batching independent reads; the CLI's 12-turn session cap is a hard backstop, not a research target. Nobody will answer a question or run a command for you.
 
 - Start from the diff. Use the snapshot to check what the diff does not show: the rest of a changed function, a type definition, a caller in a changed file, the repository guides.
 - The snapshot has the changed files, the files earlier review threads point at, `AGENTS.md`, `CLAUDE.md`, and `docs/guides/BLOCK_PRODUCTION_REVIEW.md`, each bounded in size and with line numbers. A file marked unavailable, truncated, or cut off at the snapshot's size limit is incomplete there, and unchanged callers are not in it.
