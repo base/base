@@ -1,12 +1,19 @@
 //! Contains brotli decompression utilities.
 
 use alloc::{vec, vec::Vec};
+#[cfg(not(feature = "std"))]
 use core::ops;
 
+// Required only by the no_std allocator below.
+#[cfg(feature = "std")]
+use alloc_no_stdlib as _;
+#[cfg(not(feature = "std"))]
 use alloc_no_stdlib::{
     AllocatedStackMemory, Allocator, SliceWrapper, SliceWrapperMut, StackAllocator, bzero,
     declare_stack_allocator_struct, define_stack_allocator_traits, static_array,
 };
+#[cfg(feature = "std")]
+use brotli::HeapAlloc;
 use brotli::{BrotliResult, BrotliState, HuffmanCode};
 
 /// A brotli decompression error.
@@ -29,15 +36,29 @@ impl Brotli {
         data: &[u8],
         max_rlp_bytes_per_channel: usize,
     ) -> Result<Vec<u8>, BrotliDecompressionError> {
+        // Native decoders allocate only the memory the stream needs. Keep the bounded,
+        // recycling pools for proof targets: their global allocator may never free memory,
+        // so allocating fresh tables on every meta-block would accumulate indefinitely.
+        #[cfg(feature = "std")]
+        let mut brotli_state = BrotliState::new(
+            HeapAlloc::<u8>::default(),
+            HeapAlloc::<u32>::default(),
+            HeapAlloc::<HuffmanCode>::default(),
+        );
+        #[cfg(not(feature = "std"))]
         declare_stack_allocator_struct!(MemPool, 4096, stack);
-
+        #[cfg(not(feature = "std"))]
         let mut u8_buffer = vec![0; 32 * 1024 * 1024].into_boxed_slice();
+        #[cfg(not(feature = "std"))]
         let mut u32_buffer = vec![0; 1024 * 1024].into_boxed_slice();
+        #[cfg(not(feature = "std"))]
         let mut hc_buffer = vec![HuffmanCode::default(); 4 * 1024 * 1024].into_boxed_slice();
-        let u8_allocator = MemPool::<u8>::new_allocator(&mut u8_buffer, bzero);
-        let u32_allocator = MemPool::<u32>::new_allocator(&mut u32_buffer, bzero);
-        let hc_allocator = MemPool::<HuffmanCode>::new_allocator(&mut hc_buffer, bzero);
-        let mut brotli_state = BrotliState::new(u8_allocator, u32_allocator, hc_allocator);
+        #[cfg(not(feature = "std"))]
+        let mut brotli_state = BrotliState::new(
+            MemPool::<u8>::new_allocator(&mut u8_buffer, bzero),
+            MemPool::<u32>::new_allocator(&mut u32_buffer, bzero),
+            MemPool::<HuffmanCode>::new_allocator(&mut hc_buffer, bzero),
+        );
 
         // Setup the decompressor inputs and outputs.
         // Cap initial buffer at the limit to prevent over-allocation.
