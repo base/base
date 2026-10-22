@@ -5,8 +5,9 @@ use base_builder_core::test_utils::{
     BlockTransactionsExt, ChainDriverExt, TransactionBuilderExt, setup_test_instance,
 };
 
-/// This test ensures that the transaction size limit is respected.
-/// We will set limit to 1 byte and see that the builder will not include any transactions.
+/// This test ensures that the transaction size limit is respected and that a transaction
+/// rejected by it is kept for later blocks. We will set limit to 1 byte and see that the builder
+/// will not include any transactions, then lift the limit and see the same transaction included.
 #[tokio::test]
 async fn tx_size_limit() -> eyre::Result<()> {
     let rbuilder = setup_test_instance().await?;
@@ -24,6 +25,20 @@ async fn tx_size_limit() -> eyre::Result<()> {
 
     // tx should not be included because we set the tx_size_limit to 1
     assert!(!block.includes(unfit_tx.tx_hash()), "transaction should not be included in the block");
+
+    // The tx DA limit is a runtime throttle: once it is lifted, the transaction must still be
+    // in the pool and get included.
+    let call = driver
+        .provider()
+        .raw_request::<(i32, i32), bool>("miner_setMaxDASize".into(), (0, 0))
+        .await?;
+    assert!(call, "miner_setMaxDASize should be executed successfully");
+
+    let block = driver.build_new_block().await?;
+    assert!(
+        block.includes(unfit_tx.tx_hash()),
+        "transaction should be included once the tx DA limit is lifted"
+    );
 
     Ok(())
 }

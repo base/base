@@ -252,6 +252,9 @@ pub enum TxTypeConfig {
     /// Simple ETH transfer.
     Transfer,
 
+    /// EIP-8430 EOA self-pay ETH transfer (requires Everest activation).
+    Eip8430Transfer,
+
     /// ETH transfer with random calldata.
     Calldata {
         /// Maximum calldata size in bytes.
@@ -713,6 +716,7 @@ impl TestConfig {
     fn convert_tx_type(&self, weighted: &WeightedTxType) -> Result<TxConfig> {
         let tx_type = match &weighted.tx_type {
             TxTypeConfig::Transfer => TxType::Transfer,
+            TxTypeConfig::Eip8430Transfer => TxType::Eip8430Transfer,
             TxTypeConfig::Calldata { max_size, repeat_count } => {
                 TxType::Calldata { max_size: *max_size, repeat_count: *repeat_count }
             }
