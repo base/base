@@ -5,9 +5,10 @@ where `gh` may not be signed in. Those are setup problems, not bugs, and the raw
 111] Connection refused>", or just an HTTP status code) does not say what to do about them. This module turns a
 raw error into one short explanation with the next step. Edit the wording here.
 
-The review sends one HTTPS request per stage to `https://$LLM_GATEWAY_HOSTNAME/v1/messages` with the key in
-LLM_GATEWAY_API_KEY, and never retries. Some patterns below match errors the earlier `claude` CLI transport
-printed; they are kept so those messages, and logs that contain them, are still explained.
+Each stage runs one Claude Code (`claude -p`) process, pointed at `https://$LLM_GATEWAY_HOSTNAME` with the key
+in LLM_GATEWAY_API_KEY, limited to 12 turns and a wall-clock timeout, and never restarted. The raw error is the
+CLI's reported failure or the script's own timeout message, so patterns cover CLI wording as well as HTTP status
+codes and network errors that the CLI passes through.
 """
 
 from __future__ import annotations
@@ -44,11 +45,21 @@ class Diagnosis:
         return f"{self.summary.replace('{target}', target)}\n  {self.next_step}"
 
 
-# (pattern in the raw error, how to explain it). Order matters: the first match wins. The review passes a bare
-# HTTP status code ("401") for an HTTP error, and the text of the network error otherwise.
+# (pattern in the raw error, how to explain it). Order matters: the first match wins. The stage limits come first,
+# because a CLI failure can quote other text (a status code, "network") that would otherwise match a later rule.
 MODEL_RULES: tuple[tuple[re.Pattern[str], Diagnosis], ...] = tuple(
     (re.compile(pattern, re.IGNORECASE), diagnosis)
     for pattern, diagnosis in (
+        (r"error_max_turns|max(imum)?[ _-]turns",
+         Diagnosis("A review stage using {target} used all of its turns without giving a final answer.",
+                   "Each stage has at most 12 turns of Read, Grep, and Glob. The stage is not restarted; run the "
+                   "review again, or narrow the agent's prompt if it keeps exploring too long.",
+                   retryable=True)),
+        (r"`claude` timed out after",
+         Diagnosis("A review stage using {target} did not finish within its wall-clock limit.",
+                   "Each stage's Claude Code process is stopped after 600 s by default (`timeout_seconds` in the "
+                   "agent file). The stage is not restarted; run the review again, or lower `effort`.",
+                   retryable=True)),
         (r"not logged in|please run /login|missing api key|no api key|x-api-key header is required",
          Diagnosis("The request to {target} is not signed in: it carried no usable gateway key.",
                    MODEL_SETUP_HELP)),
@@ -82,23 +93,23 @@ MODEL_RULES: tuple[tuple[re.Pattern[str], Diagnosis], ...] = tuple(
                    "Check your internet connection, any VPN, and that LLM_GATEWAY_HOSTNAME is spelled correctly.")),
         (r"etimedout|timed out|timeout|econnreset|connection reset|socket hang up|remote end closed|network",
          Diagnosis("The connection to {target} timed out or was dropped.",
-                   "Check your connection, VPN or proxy. The socket timeout defaults to 600 s "
-                   "(`timeout_seconds` in the agent file). Requests are not retried; run the review again.",
+                   "Check your connection, VPN or proxy. The review does not restart the stage; run it again.",
                    retryable=True)),
         (r"certificate|ssl|tls|self.signed|unable to verify",
          Diagnosis("The connection to {target} failed a certificate check.",
-                   "If you are behind a corporate proxy, set SSL_CERT_FILE to a bundle that includes its "
+                   "If you are behind a corporate proxy, set NODE_EXTRA_CA_CERTS to a bundle that includes its "
                    "certificate.")),
         (r"\b429\b|rate limit|rate_limit|overloaded|\b529\b|\b50[0-4]\b|internal server error|server-side",
          Diagnosis("{target} is busy or having a problem on its side.",
-                   "This is usually temporary. The review does not retry; wait a minute and run it again.",
+                   "This is usually temporary. The review does not restart the stage; wait a minute and run it "
+                   "again.",
                    retryable=True)),
         (r"\b400\b|\b413\b|invalid_request_error|request_too_large|prompt is too long|context.length"
          r"|max_tokens|max_output_tokens",
          Diagnosis("{target} rejected a request as invalid for its model.",
                    "Usual causes: `max_output_tokens` above the model's limit (Gemini models are set to 32000), "
-                   "a prompt longer than the model's context window, or a model that does not accept `effort` "
-                   "or JSON-schema output. The prompt is kept as `<agent>.prompt.md` with `--artifacts-dir`.")),
+                   "a prompt longer than the model's context window, or a model that does not accept `effort`. "
+                   "The prompt is kept as `<agent>.prompt.md` with `--artifacts-dir`.")),
     )
 )
 

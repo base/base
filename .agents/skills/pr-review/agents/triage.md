@@ -22,7 +22,7 @@ Choose `deep` when the change is hard to get right, regardless of how many lines
 
 Choose `standard` for changes whose correctness can be judged from the diff alone: docs, tests only, dependency bumps, renames and moves, mechanical refactors, config plumbing, logging and metrics, and small contained fixes.
 
-When unsure, choose `deep`. A change you cannot judge because the diff or a file in the snapshot is marked truncated, excluded, or unavailable counts as unsure.
+When unsure, choose `deep`. A change you cannot judge because the diff or a file in the snapshot is marked truncated, excluded, or unavailable, and that a quick read does not settle, counts as unsure.
 
 ## Block-production sensitivity
 
@@ -30,4 +30,4 @@ Set `block_production_sensitive` when the change touches builder, execution, pre
 
 ## How to work
 
-Everything you can use is in the prompt: the description, the file list, the diff, and a snapshot of the changed files and repository guides. Read the description and file list, then the diff, and use the snapshot when the diff alone does not show what a change does. Keep `reasoning` to a few sentences that name the specific code that drove your choice. List up to five `focus_areas` that the review council should concentrate on, as short phrases that name a file, function, or invariant. Leave it empty for `standard`.
+The prompt holds the description, the file list, the diff, and a snapshot of the changed files and repository guides. Read the description and file list, then the diff, and use the snapshot when the diff alone does not show what a change does. You can read or search the checkout, but triage rarely needs to: do so only when a choice depends on code the prompt does not show, and keep it brief. Keep `reasoning` to a few sentences that name the specific code that drove your choice. List up to five `focus_areas` that the review council should concentrate on, as short phrases that name a file, function, or invariant. Leave it empty for `standard`.
