@@ -1668,11 +1668,20 @@ where
 
     fn map_tx_auth_error(error: TxAuthError) -> InvalidPoolTransactionError {
         tracing::debug!(error = ?error, "EIP-8130 actor authorization failed");
+        if matches!(error, TxAuthError::UnsupportedAccountChange) {
+            return InvalidTransactionError::TxTypeNotSupported.into();
+        }
         let from_auth = Self::is_auth_derived(&error);
-        let reason = match error {
-            TxAuthError::UnsupportedAccountChange => {
-                return InvalidTransactionError::TxTypeNotSupported.into();
-            }
+        let reason = Self::tx_auth_error_reason(error);
+        if from_auth { Self::eip8130_auth_error(reason) } else { Self::eip8130_error(reason) }
+    }
+
+    /// Names the pool-rejection reason for `error`. A
+    /// [`TxAuthError::ConfigChange`] reports its inner failure's reason.
+    fn tx_auth_error_reason(error: TxAuthError) -> &'static str {
+        match error {
+            TxAuthError::UnsupportedAccountChange => "unsupported account change type",
+            TxAuthError::ConfigChange(inner) => Self::tx_auth_error_reason(*inner),
             TxAuthError::UnsupportedAuthenticator => "unsupported authenticator",
             TxAuthError::Authorize(AuthorizeError::Authenticate(_)) => {
                 "actor authentication failed"
@@ -1706,8 +1715,7 @@ where
                 "secp256k1 signature does not recover to the named account"
             }
             TxAuthError::Apply(apply) => Self::map_apply_error(apply),
-        };
-        if from_auth { Self::eip8130_auth_error(reason) } else { Self::eip8130_error(reason) }
+        }
     }
 
     /// Whether `error` is decided by `sender_auth` or `payer_auth` (which
@@ -1718,7 +1726,9 @@ where
     /// [`TxAuthError::SenderRecovery`] is excluded: it only arises on the EOA
     /// path, where an unrecoverable `sender_auth` makes the transaction hash
     /// fall back to the encoded hash, so the rejection identifies these exact
-    /// bytes and stays a bad transaction.
+    /// bytes and stays a bad transaction. [`TxAuthError::ConfigChange`] is
+    /// excluded too: a config change's signature is in `account_changes`, which
+    /// the transaction hash covers.
     const fn is_auth_derived(error: &TxAuthError) -> bool {
         matches!(
             error,
@@ -4152,6 +4162,107 @@ mod tests {
                 "captured read must also be indexed for invalidation: {read:?}"
             );
         }
+    }
+
+    /// Builds a counterfactual `Create` followed by a `ConfigChange` signed by
+    /// `config_signer`, with `sender_auth` signed by `owner`. The create installs
+    /// `owner` as the unrestricted admin plus `extra_actors` (`(signer, scope)`).
+    fn create_then_config_change_fixture(
+        owner: &PrivateKeySigner,
+        config_signer: &PrivateKeySigner,
+        extra_actors: &[(&PrivateKeySigner, u16)],
+    ) -> (TestValidator, Eip8130Signed) {
+        let actor_id = |signer: &PrivateKeySigner| {
+            let mut id = [0u8; 32];
+            id[12..].copy_from_slice(signer.address().as_slice());
+            B256::from_slice(&id)
+        };
+        let mut initial_actors =
+            vec![InitialActor::owner(actor_id(owner), Eip8130Constants::K1_AUTHENTICATOR)];
+        for (signer, scope) in extra_actors {
+            initial_actors.push(InitialActor {
+                scope: *scope,
+                ..InitialActor::owner(actor_id(signer), Eip8130Constants::K1_AUTHENTICATOR)
+            });
+        }
+        initial_actors.sort_by_key(|actor| actor.actor_id);
+        let create = CreateEntry {
+            user_salt: B256::ZERO,
+            code: Bytes::from_static(&[0x60, 0x00]),
+            initial_actors: initial_actors.clone(),
+        };
+        let derived = AccountChangeApplier::compute_address(
+            create.user_salt,
+            create.code.as_ref(),
+            &initial_actors,
+        )
+        .expect("address derivation");
+
+        let mut config = SignedAccountChanges {
+            channel: AccountChangeChannel::Multichain,
+            sequence: 0,
+            changes: vec![make_authorize_change(B256::repeat_byte(0x01), ok_authenticator())],
+            signature: Bytes::new(),
+        };
+        let config_digest =
+            ConfigChangeAuthorizer::changes_digest(derived, test_chain_id(), &config);
+        config.signature = k1_auth_blob(config_signer, config_digest);
+
+        let tx = TxEip8130 {
+            chain_id: test_chain_id(),
+            sender: Some(derived),
+            nonce_key: U256::ZERO,
+            nonce_sequence: 0,
+            valid_after: 0,
+            valid_before: 0,
+            max_priority_fee_per_gas: 0,
+            max_fee_per_gas: 100,
+            gas_limit: 1_000_000,
+            account_changes: vec![
+                AccountChange::Create(create),
+                AccountChange::ConfigChange(config),
+            ],
+            calls: Vec::new(),
+            metadata: Bytes::new(),
+            payer: None,
+        };
+        let sender_auth = k1_auth_blob(owner, tx.sender_signature_hash());
+        let signed = Eip8130Signed::new(tx, sender_auth, Bytes::new());
+        let validator = build_test_validator_with_account_and_spec(
+            derived,
+            ExtendedAccount::new(0, U256::from(1_000_000_000_000_000_000u64)),
+            zenith_chain_spec(),
+        );
+        (validator, signed)
+    }
+
+    /// A config change's signature is part of the hashed body, so a forged one
+    /// marks the transaction hash bad even though it fails actor authentication.
+    #[test]
+    fn forged_config_change_signature_is_bad_transaction() {
+        let owner = PrivateKeySigner::random();
+        let attacker = PrivateKeySigner::random();
+        let (validator, signed) = create_then_config_change_fixture(&owner, &attacker, &[]);
+
+        assert_bad_validation_error(validator.validate_eip8130_full(&signed), "actor is not bound");
+    }
+
+    /// A config change signed by a bound actor without admin scope marks the
+    /// transaction hash bad: the signature is covered by the hash.
+    #[test]
+    fn under_scoped_config_change_signature_is_bad_transaction() {
+        let owner = PrivateKeySigner::random();
+        let operator = PrivateKeySigner::random();
+        let (validator, signed) = create_then_config_change_fixture(
+            &owner,
+            &operator,
+            &[(&operator, Eip8130Constants::SCOPE_OPERATOR)],
+        );
+
+        assert_bad_validation_error(
+            validator.validate_eip8130_full(&signed),
+            "actor scope insufficient",
+        );
     }
 
     #[test]
