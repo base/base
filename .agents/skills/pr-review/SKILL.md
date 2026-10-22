@@ -49,7 +49,7 @@ Models do not post to GitHub: each stage returns JSON, and only `review.py` writ
 `run_agent` in `review.py` starts one `claude -p` process per stage. The fixed policy, which no agent file can change:
 
 - **Tools:** only `Read`, `Grep`, and `Glob` (`--tools` and `--allowedTools`), with `--safe-mode --restricted`, an empty MCP configuration (`--strict-mcp-config`), no setting sources, hooks disabled, slash commands disabled, permission prompts off, and no session persistence. Restricted mode confines file tools to the reviewed checkout; this is a CLI permission boundary, not an OS sandbox. Bash, file-editing, web, and MCP tools are not enabled.
-- **Bounds:** at most 12 turns (`--max-turns`, `MODEL_MAX_TURNS`) and a 300-second wall-clock limit on the process (`MODEL_TIMEOUT_SECONDS`, or `timeout_seconds` in the agent file). The working directory is the reviewed checkout.
+- **Bounds:** every stage is prompted to spend at most four turns on file tools, batching independent reads and reserving time for the final JSON. The CLI enforces a separate hard cap of 12 total turns (`--max-turns`, `MODEL_MAX_TURNS`) and a 300-second wall-clock limit on the process (`MODEL_TIMEOUT_SECONDS`, or `timeout_seconds` in the agent file). The four-turn research budget is a prompt instruction, not a second enforced CLI limit. The working directory is the reviewed checkout.
 - **Environment:** `HOME` and `CLAUDE_CONFIG_DIR` point at a fresh temporary directory, so user settings, logins, and CLI state from your home directory are not loaded. The process gets only a short allowlist of runtime and proxy variables plus the gateway settings (`ANTHROPIC_BASE_URL`, `ANTHROPIC_API_KEY`), `CLAUDE_CODE_MAX_RETRIES=0`, and settings that turn off compaction, attachments, and nonessential traffic. `GH_TOKEN`, `GITHUB_TOKEN`, and other inherited variables are not passed.
 - **No outer retry:** a stage that fails, times out, runs out of turns, or returns invalid JSON is reported as failed. The script does not restart it.
 
@@ -75,11 +75,13 @@ A failed stage is reported, not restarted. If a reviewer or council member fails
 
 ### The source snapshot
 
-Every stage starts from the same initial context, collected deterministically before inference, so a stage need not use a tool when the snapshot is enough. The snapshot contains, in this order and without duplicates:
+Every stage starts from the same initial context, collected deterministically before inference, so a stage need not use a tool when the snapshot is enough. The snapshot draws from these paths without duplicates:
 
 - `AGENTS.md`, `CLAUDE.md`, and `docs/guides/BLOCK_PRODUCTION_REVIEW.md`;
 - every changed path;
 - every path an existing review thread points at.
+
+Non-Markdown files come first, with `.github/workflows/` ahead of other paths, so long documents cannot crowd executable code and workflow configuration out of the snapshot. The guides lead the Markdown group. Files beyond the total cap, including guides, are named in the omission list and remain available through the read-only tools.
 
 Only tracked, regular, UTF-8 text files are read, from the working tree being reviewed (the temporary worktree for `just review-pr`, your checkout for `just review`). A path that is absolute, contains `..`, or goes through a symbolic link is not read. Base's root `AGENTS.md` link to `CLAUDE.md` is identified as a guidance alias referencing the separate `CLAUDE.md` entry, without following the link. Each file is line-numbered and capped (`MAX_SOURCE_FILE_CHARS`), and the source content is capped (`MAX_SOURCE_CHARS`); the diff has its own cap (`MAX_DIFF_CHARS`), all in `review.py`. A deleted, untracked, binary, other linked, or non-UTF-8 file is marked unavailable. Truncation is explicit: a file cut at its cap is marked truncated, and a cut diff or snapshot lists the files whose contents are missing or incomplete. The snapshot's omission list is capped at 8,000 characters and says when that list itself is truncated.
 
