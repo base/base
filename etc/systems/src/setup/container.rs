@@ -128,11 +128,12 @@ impl SetupImage {
     }
     /// Resolves the optional host CA bundle file for the `ca_bundle` `BuildKit` secret.
     ///
-    /// Returns `Some` only when `ca_bundle_env` (`DOCKER_CA_BUNDLE`) is non-empty and
-    /// points to an existing regular file (`is_file()`).
+    /// Returns the canonicalized path (`Some`) only when `ca_bundle_env` (`DOCKER_CA_BUNDLE`)
+    /// is non-empty and points to an existing regular file (`is_file()`). Canonicalizing here
+    /// ensures relative paths stay valid when `docker build` runs with `current_dir(&repo_root)`.
     pub fn resolve_ca_bundle(ca_bundle_env: Option<&Path>) -> Option<PathBuf> {
         let candidate = ca_bundle_env.filter(|path| !path.as_os_str().is_empty())?;
-        candidate.is_file().then(|| candidate.to_path_buf())
+        candidate.canonicalize().ok().filter(|path| path.is_file())
     }
 
     /// Returns the `docker build` arguments for [`SetupImage`], passing `--secret id=ca_bundle,src=…`
@@ -495,6 +496,18 @@ mod tests {
         assert_eq!(SetupImage::resolve_ca_bundle(Some(Path::new(""))), None);
         assert_eq!(SetupImage::resolve_ca_bundle(Some(Path::new("/nonexistent.pem"))), None);
         assert_eq!(SetupImage::resolve_ca_bundle(Some(dir.path())), None);
-        assert_eq!(SetupImage::resolve_ca_bundle(Some(&bundle)), Some(bundle));
+        let rel_in_crate = Path::new("src/setup/container.rs");
+        assert!(rel_in_crate.is_file());
+        let repo_root = SetupImage::find_repo_root().expect("repo root");
+        assert!(!repo_root.join(rel_in_crate).exists());
+        let resolved =
+            SetupImage::resolve_ca_bundle(Some(rel_in_crate)).expect("resolve relative path");
+        assert!(resolved.is_absolute(), "expected absolute path, got {}", resolved.display());
+        assert!(repo_root.join(&resolved).is_file());
+        assert_eq!(resolved, fs::canonicalize(rel_in_crate).expect("canonicalize relative path"));
+        assert_eq!(
+            SetupImage::resolve_ca_bundle(Some(&bundle)),
+            Some(fs::canonicalize(&bundle).expect("canonicalize bundle"))
+        );
     }
 }

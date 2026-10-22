@@ -171,6 +171,9 @@ def check_justfiles(errors: list[str]) -> bool:
                 "--secret id=ca_bundle,src="
             ):
                 errors.append(f"{rel}: _ca_bundle_secret not populated when DOCKER_CA_BUNDLE names a regular file")
+        rel_eval = eval_just_var("crates/proof/tee/Justfile", "_ca_bundle", {**base_env, "DOCKER_CA_BUNDLE": "Justfile"})
+        if rel_eval != str((REPO_ROOT / "crates/proof/tee/Justfile").resolve()):
+            errors.append(f"crates/proof/tee/Justfile: relative DOCKER_CA_BUNDLE not canonicalized: {rel_eval!r}")
     return True
 
 
