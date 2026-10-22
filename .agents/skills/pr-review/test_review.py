@@ -1056,6 +1056,11 @@ class SourceContextTests(unittest.TestCase):
                 entry = self.collect(["src/a.rs"]).split("### src/a.rs\n", 1)[1].split("\n### ", 1)[0]
                 self.assertEqual(entry, f"1: {first}\n2: {second}\n")
 
+    def test_non_utf8_git_diff_is_a_reported_failure_not_an_uncaught_decode_error(self) -> None:
+        (self.root / "src" / "latin1.rs").write_bytes(b"caf\xe9 changed\n")
+        with self.assertRaisesRegex(review.ReviewError, "not UTF-8"):
+            review.run(["git", "diff", "--", "src/latin1.rs"], cwd=self.root)
+
     def test_long_docs_cannot_crowd_out_workflow_and_source_contents(self) -> None:
         (self.root / "AGENTS.md").write_text("guidance " * 200)
         (self.root / "docs" / "large.md").write_text("documentation " * 200)
