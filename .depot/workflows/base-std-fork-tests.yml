@@ -95,8 +95,8 @@ jobs:
       # Runs fork tests with forge's `base` upgrade set to the selected fork.
       # Figment maps FOUNDRY_BASE onto the `base` key.
       FOUNDRY_BASE: ${{ matrix.upgrade }}
-      # Opts into base-std's unknown-selector dispatch test, which it skips by default. The
-      # policy registry has classified calldata before its activation gate since base/base#3421.
+      # base-std refs before base/base-std#242 skip the unknown-selector dispatch test unless this
+      # is set, so the Beryl and Cobalt tags always need it. base/base has had the fix since #3421.
       POLICY_DISPATCH_FIX: "true"
     steps:
       - name: Harden the runner (Audit all outbound calls)
