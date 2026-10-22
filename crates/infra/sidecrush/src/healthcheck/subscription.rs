@@ -1,0 +1,542 @@
+//! Push-based block-production health check driven by `eth_subscribe("newHeads")`.
+//!
+//! The polling checker measures block age from `header.timestamp`, which is whole Unix
+//! seconds, so it cannot resolve stalls shorter than about one second. This checker records
+//! the local monotonic time at which each new head arrives and classifies health from the
+//! time elapsed since the last one. That works at any block time, including 200 ms blocks.
+
+use std::{
+    pin::Pin,
+    sync::{
+        Arc, Mutex, MutexGuard,
+        atomic::{AtomicU8, Ordering},
+    },
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
+
+use async_trait::async_trait;
+use futures::{Stream, StreamExt};
+use tokio::time::{Instant, MissedTickBehavior, interval, sleep, timeout};
+use tracing::{debug, error, info, warn};
+
+use super::{HeaderSummary, HealthState, HealthcheckConfig, Node};
+use crate::metrics::HealthcheckMetrics;
+
+/// Stream of new block headers produced by a [`HeadSubscriber`].
+pub type HeadStream = Pin<Box<dyn Stream<Item = HeaderSummary> + Send>>;
+
+/// Opens a new-heads subscription against an execution-layer node.
+#[async_trait]
+pub trait HeadSubscriber: Send + Sync {
+    /// Open a fresh subscription. The returned stream ends when the subscription is lost.
+    async fn subscribe(&self) -> Result<HeadStream, Box<dyn std::error::Error + Send + Sync>>;
+}
+
+/// Upper bound on connecting and issuing `eth_subscribe`.
+const SUBSCRIBE_TIMEOUT: Duration = Duration::from_secs(5);
+/// First reconnect delay after the subscription is lost or cannot be opened.
+const MIN_BACKOFF: Duration = Duration::from_millis(100);
+/// Maximum reconnect delay.
+const MAX_BACKOFF: Duration = Duration::from_secs(5);
+/// Resubscribe if no head arrives for this long, in case the subscription died silently.
+/// A real stall is still reported, because resubscribing does not refresh the last head time.
+const IDLE_RESUBSCRIBE: Duration = Duration::from_secs(10);
+
+/// New-head tracking state behind [`HeadSubscriptionHealthChecker`]: when heads arrived,
+/// whether a subscription is open, and the resulting [`HealthState`].
+#[derive(Debug)]
+pub struct HeadState {
+    /// Whether a subscription is currently open.
+    connected: bool,
+    /// When the first subscription was opened. Baseline for age until any head arrives; it is
+    /// never moved by later resubscribes, so a node that never produces a head stays stalled.
+    first_connected_at: Option<Instant>,
+    /// Highest block number seen on the current subscription.
+    last_number: Option<u64>,
+    /// When the last advancing head arrived.
+    last_seen: Option<Instant>,
+    /// Report healthy until the node first reaches the chain tip.
+    is_new_instance: bool,
+}
+
+impl HeadState {
+    /// Create a disconnected state with no heads seen.
+    pub const fn new(is_new_instance: bool) -> Self {
+        Self {
+            connected: false,
+            first_connected_at: None,
+            last_number: None,
+            last_seen: None,
+            is_new_instance,
+        }
+    }
+
+    /// Record that a subscription was opened at `now`.
+    pub const fn on_subscribed(&mut self, now: Instant) {
+        self.connected = true;
+        if self.first_connected_at.is_none() {
+            self.first_connected_at = Some(now);
+        }
+        // `newHeads` never replays old heads, so the first head on a new subscription is
+        // genuinely new even if its number is not above the pre-reconnect head (e.g. a reorg).
+        self.last_number = None;
+    }
+
+    /// Record that the subscription was lost or could not be opened.
+    pub const fn on_disconnected(&mut self) {
+        self.connected = false;
+    }
+
+    /// Record a head. Returns `true` if this head took the node out of new-instance mode.
+    ///
+    /// Heads that do not advance the block number (duplicates, reorg replays) do not refresh
+    /// the last-seen time. `header_lag_ms` is the head's timestamp lag behind wall-clock time
+    /// and is only used to decide when a new instance has caught up to the tip.
+    pub fn on_head(
+        &mut self,
+        number: u64,
+        header_lag_ms: u64,
+        grace_ms: u64,
+        now: Instant,
+    ) -> bool {
+        if self.last_number.is_some_and(|last| number <= last) {
+            return false;
+        }
+        self.last_number = Some(number);
+        self.last_seen = Some(now);
+        // Header timestamps are whole seconds, so allow one extra second of rounding.
+        if self.is_new_instance && header_lag_ms <= grace_ms.saturating_add(1_000) {
+            self.is_new_instance = false;
+            return true;
+        }
+        false
+    }
+
+    /// Time since the last advancing head, or since the first subscription if none arrived.
+    pub fn head_age(&self, now: Instant) -> Option<Duration> {
+        self.last_seen.or(self.first_connected_at).map(|t| now.saturating_duration_since(t))
+    }
+
+    /// Highest block number seen on the current subscription.
+    pub const fn last_number(&self) -> Option<u64> {
+        self.last_number
+    }
+
+    /// Whether the node is still treated as a new instance that has not reached the tip.
+    pub const fn is_new_instance(&self) -> bool {
+        self.is_new_instance
+    }
+
+    /// Classify health at `now` against the thresholds in `config`.
+    pub fn classify(&self, now: Instant, config: &HealthcheckConfig) -> HealthState {
+        if !self.connected {
+            return HealthState::Error;
+        }
+        if self.is_new_instance {
+            return HealthState::Healthy;
+        }
+        let Some(age) = self.head_age(now) else {
+            return HealthState::Healthy;
+        };
+        let age_ms = u64::try_from(age.as_millis()).unwrap_or(u64::MAX);
+        if age_ms >= config.unhealthy_node_threshold_ms {
+            HealthState::Unhealthy
+        } else if age_ms > config.grace_period_ms {
+            HealthState::Delayed
+        } else {
+            HealthState::Healthy
+        }
+    }
+}
+
+/// Block-production health checker driven by a new-heads subscription.
+///
+/// [`HealthcheckConfig::grace_period_ms`] and [`HealthcheckConfig::unhealthy_node_threshold_ms`]
+/// are measured against the time since the last new head arrived, so they must be larger than
+/// the chain's block time. [`HealthcheckConfig::poll_interval_ms`] is how often that age is
+/// re-evaluated.
+#[derive(Debug)]
+pub struct HeadSubscriptionHealthChecker<S: HeadSubscriber> {
+    /// Endpoint identifier for logs, without any URL credentials.
+    node_url: String,
+    subscriber: S,
+    config: HealthcheckConfig,
+    status_code: Arc<AtomicU8>,
+    metrics: HealthcheckMetrics,
+    state: Mutex<HeadState>,
+}
+
+impl<S: HeadSubscriber> HeadSubscriptionHealthChecker<S> {
+    /// Create a checker. The initial state is [`HealthState::Healthy`].
+    pub fn new(
+        node: Node,
+        subscriber: S,
+        config: HealthcheckConfig,
+        metrics: HealthcheckMetrics,
+    ) -> Self {
+        let is_new_instance = node.is_new_instance;
+        Self {
+            node_url: node.display_url,
+            subscriber,
+            config,
+            status_code: Arc::new(AtomicU8::new(HealthState::Healthy.code())),
+            metrics,
+            state: Mutex::new(HeadState::new(is_new_instance)),
+        }
+    }
+
+    /// Spawn a background task that publishes the current [`HealthState`] to `StatsD` every
+    /// `period_ms` milliseconds.
+    pub fn spawn_status_emitter(&self, period_ms: u64) -> tokio::task::JoinHandle<()> {
+        self.metrics.spawn_status_emitter(Arc::clone(&self.status_code), period_ms)
+    }
+
+    /// Current health state.
+    pub fn status(&self) -> HealthState {
+        HealthState::try_from(self.status_code.load(Ordering::Relaxed))
+            .unwrap_or(HealthState::Error)
+    }
+
+    /// Run the subscription and evaluation loops forever.
+    pub async fn run(&self) {
+        tokio::join!(self.subscription_loop(), self.evaluation_loop());
+    }
+
+    fn lock_state(&self) -> MutexGuard<'_, HeadState> {
+        self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn is_new_instance(&self) -> bool {
+        self.lock_state().is_new_instance()
+    }
+
+    /// Keep a subscription open, recording every head, and reconnect with backoff on loss.
+    async fn subscription_loop(&self) {
+        let url = &self.node_url;
+        let mut backoff = MIN_BACKOFF;
+        'subscribe: loop {
+            let mut advanced_since_subscribe = false;
+            match timeout(SUBSCRIBE_TIMEOUT, self.subscriber.subscribe()).await {
+                Ok(Ok(mut stream)) => {
+                    info!(sequencer = %url, "subscribed to newHeads");
+                    self.lock_state().on_subscribed(Instant::now());
+                    loop {
+                        match timeout(IDLE_RESUBSCRIBE, stream.next()).await {
+                            Ok(Some(header)) => {
+                                // The backoff only resets once the subscription has proven
+                                // itself by delivering an advancing head. Otherwise a node
+                                // that accepts `eth_subscribe` and immediately closes the
+                                // socket is retried at the minimum delay forever.
+                                if self.record_head(&header) && !advanced_since_subscribe {
+                                    backoff = MIN_BACKOFF;
+                                    advanced_since_subscribe = true;
+                                }
+                            }
+                            Ok(None) => {
+                                warn!(sequencer = %url, "newHeads subscription ended");
+                                break;
+                            }
+                            Err(_elapsed) => {
+                                warn!(
+                                    sequencer = %url,
+                                    idle_ms = IDLE_RESUBSCRIBE.as_millis(),
+                                    "no new heads received, resubscribing"
+                                );
+                                continue 'subscribe;
+                            }
+                        }
+                    }
+                }
+                Ok(Err(e)) => {
+                    if self.is_new_instance() {
+                        debug!(sequencer = %url, error = %e, "waiting for node to accept subscriptions");
+                    } else {
+                        error!(sequencer = %url, error = %e, "failed to subscribe to newHeads");
+                    }
+                }
+                Err(_elapsed) => {
+                    if self.is_new_instance() {
+                        debug!(sequencer = %url, "waiting for node to accept subscriptions (timeout)");
+                    } else {
+                        error!(sequencer = %url, "failed to subscribe to newHeads (timeout)");
+                    }
+                }
+            }
+            self.lock_state().on_disconnected();
+            sleep(backoff).await;
+            backoff = (backoff * 2).min(MAX_BACKOFF);
+        }
+    }
+
+    /// Record a head. Returns `true` if it advanced the block number past every earlier
+    /// head on the current subscription.
+    fn record_head(&self, header: &HeaderSummary) -> bool {
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+            .unwrap_or(0);
+        let header_lag_ms =
+            now_ms.saturating_sub(header.timestamp_unix_seconds.saturating_mul(1000));
+        let mut guard = self.lock_state();
+        let advanced = guard.last_number().is_none_or(|last| header.number > last);
+        let became_healthy = guard.on_head(
+            header.number,
+            header_lag_ms,
+            self.config.grace_period_ms,
+            Instant::now(),
+        );
+        drop(guard);
+        if became_healthy {
+            info!(block_number = header.number, sequencer = %self.node_url, "node becoming healthy");
+        }
+        debug!(block_number = header.number, sequencer = %self.node_url, "new head");
+        advanced
+    }
+
+    /// Re-classify every `poll_interval_ms` and log state transitions.
+    async fn evaluation_loop(&self) {
+        let mut ticker = interval(Duration::from_millis(self.config.poll_interval_ms));
+        ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
+        loop {
+            ticker.tick().await;
+            let now = Instant::now();
+            let (state, age, last_number) = {
+                let guard = self.lock_state();
+                (guard.classify(now, &self.config), guard.head_age(now), guard.last_number())
+            };
+            let previous = self.status_code.swap(state.code(), Ordering::Relaxed);
+            if previous == state.code() {
+                continue;
+            }
+            let age_ms = age.map(|a| u64::try_from(a.as_millis()).unwrap_or(u64::MAX));
+            let url = &self.node_url;
+            match state {
+                HealthState::Unhealthy => {
+                    error!(sequencer = %url, ?age_ms, ?last_number, "block production unhealthy");
+                }
+                HealthState::Delayed => {
+                    info!(sequencer = %url, ?age_ms, ?last_number, "delayed block production detected");
+                }
+                HealthState::Healthy => {
+                    info!(sequencer = %url, ?last_number, "block production healthy");
+                }
+                // Subscription failures are logged by the subscription loop.
+                HealthState::Error => {}
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{collections::VecDeque, net::UdpSocket, sync::atomic::AtomicUsize};
+
+    use cadence::{StatsdClient, UdpMetricSink};
+    use tokio::sync::mpsc;
+
+    use super::*;
+
+    /// Hands out one pre-made subscription per `subscribe` call; fails once they run out.
+    struct MockSubscriber {
+        streams: Mutex<VecDeque<mpsc::UnboundedReceiver<HeaderSummary>>>,
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl MockSubscriber {
+        fn new(count: usize) -> (Self, Vec<mpsc::UnboundedSender<HeaderSummary>>) {
+            let (senders, receivers): (Vec<_>, VecDeque<_>) =
+                (0..count).map(|_| mpsc::unbounded_channel()).unzip();
+            (Self { streams: Mutex::new(receivers), calls: Arc::new(AtomicUsize::new(0)) }, senders)
+        }
+    }
+
+    #[async_trait]
+    impl HeadSubscriber for MockSubscriber {
+        async fn subscribe(&self) -> Result<HeadStream, Box<dyn std::error::Error + Send + Sync>> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            let rx = self.streams.lock().unwrap().pop_front().ok_or("no more subscriptions")?;
+            Ok(Box::pin(futures::stream::unfold(rx, |mut rx| async move {
+                rx.recv().await.map(|h| (h, rx))
+            })))
+        }
+    }
+
+    fn mock_metrics() -> HealthcheckMetrics {
+        let socket = UdpSocket::bind("0.0.0.0:0").unwrap();
+        socket.set_nonblocking(true).unwrap();
+        let sink = UdpMetricSink::from("127.0.0.1:8125", socket).unwrap();
+        HealthcheckMetrics::new(StatsdClient::from_sink("test", sink))
+    }
+
+    fn now_secs() -> u64 {
+        SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
+    }
+
+    fn head(number: u64, timestamp_unix_seconds: u64) -> HeaderSummary {
+        HeaderSummary { number, timestamp_unix_seconds, transaction_count: 0 }
+    }
+
+    /// 200 ms blocks: delayed after 600 ms without a head, unhealthy after 1 s.
+    fn sub_second_config() -> HealthcheckConfig {
+        HealthcheckConfig::new(50, 600, 1_000)
+    }
+
+    fn start(
+        subscriber: MockSubscriber,
+        is_new_instance: bool,
+    ) -> Arc<HeadSubscriptionHealthChecker<MockSubscriber>> {
+        let checker = Arc::new(HeadSubscriptionHealthChecker::new(
+            Node::new("ws://localhost:8546", is_new_instance),
+            subscriber,
+            sub_second_config(),
+            mock_metrics(),
+        ));
+        let runner = Arc::clone(&checker);
+        tokio::spawn(async move { runner.run().await });
+        checker
+    }
+
+    #[test]
+    fn non_advancing_heads_do_not_refresh_last_seen() {
+        let t0 = Instant::now();
+        let mut state = HeadState::new(false);
+        state.on_subscribed(t0);
+        state.on_head(10, 0, 600, t0);
+        state.on_head(10, 0, 600, t0 + Duration::from_millis(500));
+        state.on_head(9, 0, 600, t0 + Duration::from_millis(700));
+        assert_eq!(state.last_seen, Some(t0));
+        assert_eq!(
+            state.classify(t0 + Duration::from_millis(800), &sub_second_config()),
+            HealthState::Delayed
+        );
+    }
+
+    #[test]
+    fn age_uses_subscription_time_before_first_head() {
+        let t0 = Instant::now();
+        let mut state = HeadState::new(false);
+        assert_eq!(state.classify(t0, &sub_second_config()), HealthState::Error);
+        state.on_subscribed(t0);
+        assert_eq!(state.classify(t0, &sub_second_config()), HealthState::Healthy);
+        assert_eq!(
+            state.classify(t0 + Duration::from_millis(1_000), &sub_second_config()),
+            HealthState::Unhealthy
+        );
+    }
+
+    #[test]
+    fn resubscribing_does_not_reset_age_without_heads() {
+        let t0 = Instant::now();
+        let mut state = HeadState::new(false);
+        state.on_subscribed(t0);
+        state.on_disconnected();
+        state.on_subscribed(t0 + Duration::from_secs(10));
+        assert_eq!(state.head_age(t0 + Duration::from_secs(11)), Some(Duration::from_secs(11)));
+        assert_eq!(
+            state.classify(t0 + Duration::from_secs(11), &sub_second_config()),
+            HealthState::Unhealthy
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn stall_without_heads_stays_unhealthy_across_idle_resubscribe() {
+        // Three subscriptions so the 10 s idle resubscribes have one to open. The senders are
+        // kept alive so the streams stay open without delivering heads.
+        let (subscriber, _senders) = MockSubscriber::new(3);
+        let checker = start(subscriber, false);
+
+        sleep(Duration::from_millis(1_100)).await;
+        assert_eq!(checker.status(), HealthState::Unhealthy);
+        for second in 2..=25 {
+            sleep(Duration::from_secs(1)).await;
+            assert_eq!(checker.status(), HealthState::Unhealthy, "at {second} s");
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn detects_sub_second_stall_and_recovery() {
+        let (subscriber, senders) = MockSubscriber::new(1);
+        let checker = start(subscriber, false);
+        let tx = &senders[0];
+
+        // Steady 200 ms blocks stay healthy.
+        for n in 1..=10 {
+            tx.send(head(n, now_secs())).unwrap();
+            sleep(Duration::from_millis(200)).await;
+            assert_eq!(checker.status(), HealthState::Healthy, "block {n}");
+        }
+
+        // Stall: delayed once past the 600 ms grace period, unhealthy at 1 s.
+        sleep(Duration::from_millis(500)).await;
+        assert_eq!(checker.status(), HealthState::Delayed);
+        sleep(Duration::from_millis(400)).await;
+        assert_eq!(checker.status(), HealthState::Unhealthy);
+
+        // Production resumes.
+        tx.send(head(11, now_secs())).unwrap();
+        sleep(Duration::from_millis(100)).await;
+        assert_eq!(checker.status(), HealthState::Healthy);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn lost_subscription_reports_error_then_resubscribes() {
+        let (subscriber, mut senders) = MockSubscriber::new(2);
+        let checker = start(subscriber, false);
+
+        let first = senders.remove(0);
+        first.send(head(1, now_secs())).unwrap();
+        sleep(Duration::from_millis(100)).await;
+        assert_eq!(checker.status(), HealthState::Healthy);
+
+        drop(first);
+        sleep(Duration::from_millis(60)).await;
+        assert_eq!(checker.status(), HealthState::Error);
+
+        // Reconnects after the first 100 ms backoff.
+        sleep(Duration::from_millis(100)).await;
+        senders[0].send(head(2, now_secs())).unwrap();
+        sleep(Duration::from_millis(100)).await;
+        assert_eq!(checker.status(), HealthState::Healthy);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn immediately_ended_subscriptions_do_not_reset_backoff() {
+        // Every subscription is accepted and then ends at once, as if the node closed the
+        // socket right after `eth_subscribe`.
+        let (subscriber, senders) = MockSubscriber::new(5);
+        let calls = Arc::clone(&subscriber.calls);
+        drop(senders);
+        let checker = start(subscriber, false);
+
+        // With the backoff left alone, five subscribe attempts span 100 + 200 + 400 + 800 +
+        // 1600 = 3100 ms. If the backoff reset as soon as `subscribe` succeeded, all five
+        // would happen within about 500 ms and keep repeating at that pace forever.
+        sleep(Duration::from_millis(1_000)).await;
+        assert_eq!(checker.status(), HealthState::Error);
+        assert!(
+            calls.load(Ordering::Relaxed) <= 6,
+            "subscribe was called {} times within 1 s; the backoff resets too early",
+            calls.load(Ordering::Relaxed)
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn new_instance_stays_healthy_until_caught_up() {
+        let (subscriber, senders) = MockSubscriber::new(1);
+        let checker = start(subscriber, true);
+        let tx = &senders[0];
+
+        // Syncing: heads arrive but are a minute behind the tip.
+        tx.send(head(1, now_secs() - 60)).unwrap();
+        sleep(Duration::from_millis(2_000)).await;
+        assert_eq!(checker.status(), HealthState::Healthy);
+        assert!(checker.is_new_instance());
+
+        // Caught up: from now on stalls are reported.
+        tx.send(head(2, now_secs())).unwrap();
+        sleep(Duration::from_millis(100)).await;
+        assert!(!checker.is_new_instance());
+        sleep(Duration::from_millis(1_000)).await;
+        assert_eq!(checker.status(), HealthState::Unhealthy);
+    }
+}
