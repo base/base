@@ -5,7 +5,7 @@ use std::{
 
 use alloy_primitives::B256;
 
-/// Number of [`RecentlySent::was_recently_sent`] calls between pruning sweeps.
+/// Fewest [`RecentlySent::was_recently_sent`] calls between pruning sweeps.
 const PRUNE_INTERVAL: u64 = 1000;
 
 /// Per-destination deduplication tracker with a configurable time-to-live.
@@ -13,8 +13,9 @@ const PRUNE_INTERVAL: u64 = 1000;
 /// Tracks transaction hashes accepted by one destination's queue. A transaction whose hash appears
 /// in the map and whose entry is younger than `resend_after` will be skipped. Entries are kept for
 /// at least twice `resend_after`, so a transaction due for a resend can be told apart from one
-/// never sent. Older entries are pruned every [`PRUNE_INTERVAL`] lookups to bound memory, so one
-/// can outlive twice `resend_after` until the next sweep.
+/// never sent. Older entries are pruned every [`PRUNE_INTERVAL`] lookups, or every entry-count
+/// lookups once the map is larger so a sweep costs a constant per lookup, to bound memory; one can
+/// outlive twice `resend_after` until the next sweep.
 ///
 /// Once the destination confirms it holds a transaction, its entry is dated ahead so the resend
 /// comes [`Self::DELIVERED_RESEND_AFTER`] after the confirmation: resending a transaction the
@@ -38,10 +39,12 @@ impl RecentlySent {
 
     /// Returns `true` if the hash was sent within the `resend_after` window.
     ///
-    /// Triggers a pruning sweep every [`PRUNE_INTERVAL`] calls.
+    /// Triggers a pruning sweep every [`PRUNE_INTERVAL`] calls, or every entry-count calls once
+    /// there are more entries.
     pub(super) fn was_recently_sent(&mut self, hash: &B256) -> bool {
         self.check_count += 1;
-        if self.check_count.is_multiple_of(PRUNE_INTERVAL) {
+        if self.check_count >= PRUNE_INTERVAL.max(self.seen.len() as u64) {
+            self.check_count = 0;
             self.prune_expired();
         }
 
