@@ -49,7 +49,6 @@ actions/
     ├── l1/
     │   ├── miner.rs            L1Miner, L1 blocks, signed txs, receipts, reorgs
     │   ├── provider.rs         SharedL1Chain, ActionL1ChainProvider
-    │   ├── block_fetcher.rs    ActionL1BlockFetcher
     │   └── blob.rs             ActionBlobProvider
     ├── sequencer/              L2Sequencer and its engine, origin and gossip actors
     ├── common/                 ActionL2Source, TestAccount, SharedBlockHashRegistry
