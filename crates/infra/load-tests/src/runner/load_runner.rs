@@ -259,6 +259,9 @@ impl LoadRunner {
 
         let accounts = self.accounts.accounts();
         let mut weighted_gas = 0u128;
+        // Calibration submits and confirms on the submission node, so its nonce comes from there
+        // too: a separate query node can lag behind the previous round's receipt.
+        let submission = RpcProviders::query(self.config.primary_submission_rpc().clone())?;
         // Each type is sent twice and only the second receipt counts: the first pays one-time
         // costs the run amortizes away, such as a recipient's first token balance write.
         let rounds =
@@ -284,8 +287,7 @@ impl LoadRunner {
             let account = &accounts[sender_index];
             let from = account.address;
             let to = accounts[recipient_index].address;
-            let nonce = self
-                .client
+            let nonce = submission
                 .get_transaction_count(from)
                 .pending()
                 .await
@@ -324,9 +326,7 @@ impl LoadRunner {
                         nonce,
                         Fees { max_fee, priority_fee },
                     )?;
-                    let native_provider =
-                        RpcProviders::query(self.config.primary_submission_rpc().clone())?;
-                    let receipt = native_provider
+                    let receipt = submission
                         .send_raw_transaction(&signed.raw)
                         .await
                         .rpc("submit native calibration transaction")?
@@ -576,6 +576,8 @@ mod tests {
     #[tokio::test]
     async fn calibration_excludes_first_storage_write() {
         let anvil = Anvil::new().spawn();
+        // A query node that never sees the calibration transactions, the worst case of a lagging one.
+        let query = Anvil::new().spawn();
         let provider: RootProvider = RootProvider::new_http(anvil.endpoint_url());
         let counter = Address::repeat_byte(0xc0);
         // slot0 += 1: the first call writes zero to nonzero (20,000 gas), later calls 2,900.
@@ -584,7 +586,7 @@ mod tests {
         let _: () = provider.raw_request("anvil_setCode".into(), (counter, code)).await.unwrap();
         let config = LoadConfig {
             transaction_submission_rpcs: vec![anvil.endpoint_url()],
-            query_rpc: anvil.endpoint_url(),
+            query_rpc: query.endpoint_url(),
             chain_id: anvil.chain_id(),
             account_count: 1,
             transactions: vec![TxConfig {
