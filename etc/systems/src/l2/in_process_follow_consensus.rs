@@ -11,6 +11,7 @@ use alloy_provider::RootProvider;
 use alloy_rpc_types_engine::JwtSecret;
 use base_common_genesis::RollupConfig;
 use base_common_network::Base;
+use base_consensus_engine::EngineEndpoint;
 use base_consensus_node::{
     EngineConfig, FollowNode, FollowNodeConfig, NodeOperatingMode, RemoteL2Client,
 };
@@ -109,7 +110,7 @@ impl InProcessFollowConsensus {
 
         let engine_config = EngineConfig {
             config: Arc::clone(&rollup_config),
-            l2_url: config.l2_engine_url,
+            l2_endpoint: EngineEndpoint::Url(config.l2_engine_url),
             l2_jwt_secret: config.jwt_secret,
             l1_url: l1_rpc_url.clone(),
             l1_rpc_timeout: base_consensus_providers::L1_RPC_TIMEOUT,

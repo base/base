@@ -31,7 +31,7 @@ use thiserror::Error;
 use tower::ServiceBuilder;
 use url::Url;
 
-use crate::{JwtWsConnect, Metrics, trace_layer::TraceContextLayer};
+use crate::{InMemoryTransport, JwtWsConnect, Metrics, trace_layer::TraceContextLayer};
 
 type L2RpcBlock = <Base as Network>::BlockResponse;
 
@@ -163,11 +163,33 @@ where
     }
 }
 
+/// Where the consensus node sends L2 Engine API requests.
+#[derive(Debug, Clone)]
+pub enum EngineEndpoint {
+    /// A separate execution node reached over HTTP, WebSocket, or IPC.
+    Url(Url),
+    /// An execution node embedded in the same process.
+    InMemory(InMemoryTransport),
+}
+
+impl EngineEndpoint {
+    /// Connects a provider to this endpoint. The JWT secret is only used by `Url` endpoints.
+    pub async fn connect<N: Network>(self, jwt: JwtSecret) -> TransportResult<RootProvider<N>> {
+        match self {
+            Self::Url(url) => {
+                BaseEngineClient::<RootProvider, RootProvider<Base>>::rpc_client::<N>(url, jwt)
+                    .await
+            }
+            Self::InMemory(transport) => Ok(RootProvider::new(RpcClient::new(transport, true))),
+        }
+    }
+}
+
 /// The builder for the [`BaseEngineClient`].
 #[derive(Debug, Clone)]
 pub struct EngineClientBuilder {
-    /// The L2 Engine API endpoint URL.
-    pub l2: Url,
+    /// The L2 Engine API endpoint.
+    pub l2: EngineEndpoint,
     /// The L2 JWT secret.
     pub l2_jwt: JwtSecret,
     /// The L1 RPC URL.
@@ -187,11 +209,7 @@ impl EngineClientBuilder {
     pub async fn build(
         self,
     ) -> TransportResult<BaseEngineClient<RootProvider, RootProvider<Base>>> {
-        let engine = BaseEngineClient::<RootProvider, RootProvider<Base>>::rpc_client::<Base>(
-            self.l2,
-            self.l2_jwt,
-        )
-        .await?;
+        let engine = self.l2.connect::<Base>(self.l2_jwt).await?;
 
         let l1_provider = L1RpcProvider::new_http_with_timeout(self.l1_rpc, self.l1_rpc_timeout);
 
@@ -507,7 +525,7 @@ mod tests {
         use base_common_genesis::RollupConfig;
 
         let builder = EngineClientBuilder {
-            l2: "http://127.0.0.1:8551".parse().unwrap(),
+            l2: EngineEndpoint::Url("http://127.0.0.1:8551".parse().unwrap()),
             l2_jwt: JwtSecret::random(),
             l1_rpc: "http://127.0.0.1:8545".parse().unwrap(),
             l1_rpc_timeout: L1_RPC_TIMEOUT,
@@ -528,7 +546,7 @@ mod tests {
         tokio::spawn(accept_one_ws(listener));
 
         let builder = EngineClientBuilder {
-            l2: format!("ws://127.0.0.1:{port}").parse().unwrap(),
+            l2: EngineEndpoint::Url(format!("ws://127.0.0.1:{port}").parse().unwrap()),
             l2_jwt: JwtSecret::random(),
             l1_rpc: "http://127.0.0.1:8545".parse().unwrap(),
             l1_rpc_timeout: L1_RPC_TIMEOUT,

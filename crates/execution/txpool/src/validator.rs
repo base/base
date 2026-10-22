@@ -717,6 +717,10 @@ pub struct BaseTransactionValidator<Client, Tx, Evm> {
     /// Operator-allowlisted payers: count-limited at their own cap and
     /// balance-bounded through a payer book.
     allowlisted_payers: Arc<AddressSet>,
+    /// Operator per-transaction gas cap (`--txpool.max-tx-gas-limit`). The inner
+    /// validator holds the same value but does not expose it, and EIP-8130
+    /// admission does not run the inner validator.
+    max_tx_gas_limit: Option<u64>,
     limit_class_cache: Arc<RwLock<LimitClassCache>>,
     limit_class_cache_generation: Arc<AtomicU64>,
 }
@@ -799,6 +803,15 @@ impl<Client, Tx, Evm> BaseTransactionValidator<Client, Tx, Evm> {
     #[must_use]
     pub fn with_allowlisted_payers(self, payers: impl IntoIterator<Item = Address>) -> Self {
         Self { allowlisted_payers: Arc::new(payers.into_iter().collect()), ..self }
+    }
+
+    /// Sets the operator per-transaction gas cap applied to EIP-8130 admission.
+    /// Must match the value given to the inner validator, which applies it to
+    /// every other transaction type.
+    #[must_use]
+    pub const fn with_max_tx_gas_limit(mut self, max_tx_gas_limit: Option<u64>) -> Self {
+        self.max_tx_gas_limit = max_tx_gas_limit;
+        self
     }
 
     /// Returns the cache generation used to close validation/invalidation races.
@@ -902,6 +915,7 @@ where
             trusted_delegation_targets: Arc::new(trusted_delegation_targets),
             trusted_proxy_code_hashes: Arc::new(trusted_proxy_code_hashes),
             allowlisted_payers: Arc::default(),
+            max_tx_gas_limit: None,
             limit_class_cache: Arc::default(),
             limit_class_cache_generation: Arc::default(),
         }
@@ -961,7 +975,8 @@ where
     /// addition applies Base-specific validity checks:
     /// - ensures tx is not eip4844
     /// - for eip8130 (account abstraction): rejects submissions before the Everest upgrade is
-    ///   active, runs structural checks, then runs EIP-8130-specific stateful validation for
+    ///   active, runs structural checks, applies the operator pool policies the inner validator
+    ///   applies to every other type, then runs EIP-8130-specific stateful validation for
     ///   actor authorization, nonce/replay state, intrinsic gas, create/delegation safety, and
     ///   payer funding instead of using the inner Eth validator
     /// - ensures that the account has enough balance to cover the L1 gas cost
@@ -995,6 +1010,9 @@ where
             let validation = {
                 let signed = transaction.as_eip8130().expect("checked above");
                 self.validate_eip8130_structural(signed)
+                    .and_then(|()| {
+                        self.validate_eip8130_pool_policy(origin, transaction.sender(), signed)
+                    })
                     .and_then(|()| self.validate_eip8130_full(signed))
             };
             let state = match validation {
@@ -1189,14 +1207,7 @@ where
             encoded.as_ref(),
             &IntrinsicGasInput::worst_case(sender, nonce_key_first_use, keystore),
         )
-        .map_err(|err| {
-            Self::eip8130_error(match err {
-                IntrinsicGasError::PayerAuthGasExceeded(_) => {
-                    "payer authentication gas exceeds MAX_AUTHENTICATION_GAS"
-                }
-                _ => "intrinsic gas computation failed",
-            })
-        })?;
+        .map_err(Self::map_intrinsic_gas_error)?;
         // EIP-7623 calldata floor: a `gas_limit` below the floor branch is
         // invalid. Sender-intrinsic gas is checked too, matching execution, so
         // a floor rate repriced below the standard data rate cannot admit an
@@ -1900,6 +1911,70 @@ where
                 InvalidTransactionError::TxTypeNotSupported.into()
             }
         }
+    }
+
+    /// Applies the operator pool policies that reth's `validate_stateless` enforces for every
+    /// other transaction type, with the same rejections: the block gas limit,
+    /// `--txpool.max-tx-gas-limit`, the RPC fee cap for local submissions, and
+    /// `--txpool.minimum-priority-fee`.
+    ///
+    /// Payer authentication is metered on top of `gas_limit`, so both gas limits bound
+    /// `gas_limit + payer_auth`, the amount execution reserves against the block, and the fee
+    /// cap bounds the payer's maximum gas charge.
+    fn validate_eip8130_pool_policy(
+        &self,
+        origin: TransactionOrigin,
+        sender: Address,
+        signed: &Eip8130Signed,
+    ) -> Result<(), InvalidPoolTransactionError> {
+        let tx = signed.tx();
+        let payer_auth =
+            IntrinsicGas::max_payer_auth_cost(signed).map_err(Self::map_intrinsic_gas_error)?;
+        let reserved_gas = FeeCheck::max_chargeable_gas(tx.gas_limit, payer_auth);
+
+        let block_gas_limit = self.inner.block_gas_limit();
+        if reserved_gas > block_gas_limit {
+            return Err(InvalidPoolTransactionError::ExceedsGasLimit(
+                reserved_gas,
+                block_gas_limit,
+            ));
+        }
+        if let Some(max_tx_gas_limit) = self.max_tx_gas_limit
+            && reserved_gas > max_tx_gas_limit
+        {
+            return Err(InvalidPoolTransactionError::MaxTxGasLimitExceeded(
+                reserved_gas,
+                max_tx_gas_limit,
+            ));
+        }
+        if let Some(tx_fee_cap_wei) = self.inner.tx_fee_cap().filter(|cap| *cap != 0)
+            && self.inner.local_transactions_config().is_local(origin, &sender)
+        {
+            let max_tx_fee = FeeCheck::max_fee_charge(tx.gas_limit, payer_auth, tx.max_fee_per_gas);
+            if max_tx_fee > U256::from(tx_fee_cap_wei) {
+                return Err(InvalidPoolTransactionError::ExceedsFeeCap {
+                    max_tx_fee_wei: max_tx_fee.saturating_to(),
+                    tx_fee_cap_wei,
+                });
+            }
+        }
+        if let Some(minimum_priority_fee) = *self.inner.minimum_priority_fee()
+            && tx.max_priority_fee_per_gas < minimum_priority_fee
+        {
+            return Err(InvalidPoolTransactionError::PriorityFeeBelowMinimum {
+                minimum_priority_fee,
+            });
+        }
+        Ok(())
+    }
+
+    fn map_intrinsic_gas_error(error: IntrinsicGasError) -> InvalidPoolTransactionError {
+        Self::eip8130_error(match error {
+            IntrinsicGasError::PayerAuthGasExceeded(_) => {
+                "payer authentication gas exceeds MAX_AUTHENTICATION_GAS"
+            }
+            _ => "intrinsic gas computation failed",
+        })
     }
 
     /// Performs the necessary Base-specific checks on top of the regular eth outcome: the DA

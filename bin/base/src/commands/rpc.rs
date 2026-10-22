@@ -1,18 +1,18 @@
 //! Integrated RPC node command.
 
-use std::{path::Path, sync::Arc};
+use std::sync::Arc;
 
 use base_consensus_cli::{
     CliMetrics, ConsensusNodeArgs, ConsensusNodeConfigArgs, ConsensusNodeOverrides,
     ConsensusNodeStartOptions, EmbeddedConsensusNodeConfigArgs,
 };
+use base_consensus_engine::{EngineEndpoint, InMemoryTransport};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_cli::{ExecutionNodeArgs, chainspec::chain_value_parser};
 use base_upgrade_signal::UpgradeSignalStartupMode;
 use clap::Args;
 use reth_cli_runner::CliRunner;
 use tokio_util::sync::CancellationToken;
-use url::Url;
 
 use crate::config::ResolvedChainConfig;
 
@@ -89,7 +89,6 @@ impl RpcCommand {
                 .into_launch_config(execution_chain)
                 .with_unified_auth_endpoint()
                 .with_upgrade_signal_startup_already_applied();
-            let l2_engine_rpc = engine_ipc_url(execution.auth_ipc_path())?;
             let task_executor = ctx.task_executor.clone();
             let launched = execution.launch_default(ctx).await?;
             // Execution launch installs the shared reth recorder. The standalone metrics flag
@@ -98,6 +97,8 @@ impl RpcCommand {
             let _upgrade_countdown_metrics =
                 CliMetrics::spawn_upgrade_countdown_recorder(rollup_config.clone());
 
+            let l2_engine =
+                EngineEndpoint::InMemory(InMemoryTransport { module: launched.auth_module });
             let handle = launched.handle;
             // Keep the execution node handle alive until both services have coordinated shutdown.
             let execution_node = handle.node;
@@ -107,7 +108,7 @@ impl RpcCommand {
             let consensus_exit = consensus_args.start_with_options(
                 ConsensusNodeStartOptions::new(rollup_config)
                     .with_overrides(ConsensusNodeOverrides::embedded_execution(
-                        l2_engine_rpc,
+                        l2_engine,
                         upgrade_signal_l1_rpc,
                     ))
                     .with_cancellation(consensus_cancellation.clone())
@@ -140,15 +141,6 @@ impl RpcCommand {
             result
         })
     }
-}
-
-pub(super) fn engine_ipc_url(path: &str) -> eyre::Result<Url> {
-    let path = Path::new(path);
-    let path =
-        if path.is_absolute() { path.to_path_buf() } else { std::env::current_dir()?.join(path) };
-    Url::from_file_path(&path).map_err(|()| {
-        eyre::eyre!("failed to convert auth IPC path to file URL: {}", path.display())
-    })
 }
 
 #[cfg(test)]

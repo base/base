@@ -273,6 +273,13 @@ impl L1BlockInfo {
         // account for additional cost of l1 fee and operator fee
         let enveloped_tx = tx.enveloped_tx()?;
         let gas_limit = U256::from(tx.gas_limit());
+        // Fill the per-transaction L1 cost cache first so a FastLZ size the transaction already
+        // carries is used instead of being recomputed by `tx_cost`.
+        self.calculate_tx_l1_cost_with_fastlz_size(
+            enveloped_tx,
+            tx.enveloped_tx_fastlz_size(),
+            spec,
+        );
         Some(self.tx_cost(enveloped_tx, gas_limit, spec))
     }
 
@@ -293,6 +300,18 @@ impl L1BlockInfo {
 
     /// Calculate the gas cost of a transaction based on L1 block data posted on L2, depending on the [`BaseSpecId`] passed.
     pub fn calculate_tx_l1_cost(&mut self, input: &[u8], spec_id: BaseSpecId) -> U256 {
+        self.calculate_tx_l1_cost_with_fastlz_size(input, None, spec_id)
+    }
+
+    /// [`Self::calculate_tx_l1_cost`], using `fastlz_size` as the `FastLZ` compressed size of
+    /// `input` post-Fjord instead of recomputing it. `fastlz_size` must equal
+    /// `flz_compress_len(input)`.
+    pub fn calculate_tx_l1_cost_with_fastlz_size(
+        &mut self,
+        input: &[u8],
+        fastlz_size: Option<u32>,
+        spec_id: BaseSpecId,
+    ) -> U256 {
         if let Some(tx_l1_cost) = self.tx_l1_cost {
             return tx_l1_cost;
         }
@@ -300,7 +319,10 @@ impl L1BlockInfo {
         let tx_l1_cost = if input.is_empty() || input.first() == Some(&0x7E) {
             return U256::ZERO;
         } else if spec_id.is_enabled_in(BaseUpgrade::Fjord) {
-            self.calculate_tx_l1_cost_fjord(input)
+            fastlz_size.map_or_else(
+                || self.calculate_tx_l1_cost_fjord(input),
+                |size| self.params().calculate_tx_l1_cost_fjord_with_fastlz_size(input, size),
+            )
         } else if spec_id.is_enabled_in(BaseUpgrade::Ecotone) {
             self.calculate_tx_l1_cost_ecotone(input, spec_id)
         } else {
@@ -344,9 +366,13 @@ impl L1BlockInfo {
 
 #[cfg(test)]
 mod tests {
-    use revm::primitives::{bytes, hex};
+    use revm::{
+        context::TxEnv,
+        primitives::{Bytes, bytes, hex},
+    };
 
     use super::*;
+    use crate::BaseTransaction;
 
     #[test]
     fn test_data_gas_non_zero_bytes() {
@@ -620,7 +646,16 @@ mod tests {
 
         let l1_fee = l1_block_info.calculate_tx_l1_cost_fjord(TX);
 
-        assert_eq!(l1_fee, expected_l1_fee)
+        assert_eq!(l1_fee, expected_l1_fee);
+
+        // A transaction carrying its precomputed FastLZ size is charged the same fee.
+        let mut tx = BaseTransaction::new(TxEnv::default());
+        tx.enveloped_tx = Some(Bytes::from_static(TX));
+        let fjord = BaseSpecId::new(BaseUpgrade::Fjord);
+        assert_eq!(l1_block_info.clone().tx_cost_with_tx(&tx, fjord), Some(expected_l1_fee));
+        tx.enveloped_tx_fastlz_size = Some(base_common_flz::flz_compress_len(TX));
+        let mut l1_block_info = l1_block_info;
+        assert_eq!(l1_block_info.tx_cost_with_tx(&tx, fjord), Some(expected_l1_fee));
     }
 
     #[test]

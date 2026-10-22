@@ -15,7 +15,7 @@ use alloy_rpc_types_engine::JwtSecret;
 use base_common_chains::BaseUpgradeExt;
 use base_common_consensus::REGOLITH_SYSTEM_TX_GAS;
 use base_common_genesis::{BaseUpgrade, RollupConfig, RuntimeUpgradeRegistry};
-use base_consensus_engine::{EngineClient, EngineClientError};
+use base_consensus_engine::{EngineClient, EngineClientError, EngineEndpoint};
 use base_protocol::{BaseBlockConversionError, BaseTimeUpdateTx, L2BlockMetadata};
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
@@ -115,7 +115,7 @@ impl StandaloneDevChain {
     /// Returns an error if the sequencer stops for any other reason.
     pub async fn run<E: std::fmt::Display>(
         self,
-        engine_url: Url,
+        engine_endpoint: EngineEndpoint,
         jwt_secret: JwtSecret,
         header_by_number: impl Fn(u64) -> Result<Option<Header>, E>,
         impersonation: StandaloneImpersonationQueue,
@@ -126,7 +126,7 @@ impl StandaloneDevChain {
             |field| StandaloneDevError::StateMismatch { path: self.state_path.clone(), field };
         let engine = EngineConfig {
             config: Arc::new(self.rollup_config.clone()),
-            l2_url: engine_url,
+            l2_endpoint: engine_endpoint,
             l2_jwt_secret: jwt_secret,
             // Standalone sequencing never issues an L1 request.
             l1_url: Url::parse("http://127.0.0.1:1").expect("valid unused L1 URL"),

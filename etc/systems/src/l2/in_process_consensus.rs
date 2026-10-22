@@ -17,6 +17,7 @@ use alloy_rpc_types_engine::JwtSecret;
 use alloy_signer_local::PrivateKeySigner;
 use base_common_genesis::RollupConfig;
 use base_consensus_disc::LocalNode;
+use base_consensus_engine::EngineEndpoint;
 use base_consensus_node::{
     EngineConfig, L1ConfigBuilder, NetworkConfig, NodeMode, RollupNodeBuilder, SequencerConfig,
     UpgradeSignalBuilderConfig,
@@ -210,7 +211,7 @@ impl InProcessConsensus {
 
         let engine_config = EngineConfig {
             config: Arc::new(rollup_config.clone()),
-            l2_url: config.l2_engine_url,
+            l2_endpoint: EngineEndpoint::Url(config.l2_engine_url),
             l2_jwt_secret: config.jwt_secret,
             l1_url: config.l1_rpc_url,
             l1_rpc_timeout: base_consensus_providers::L1_RPC_TIMEOUT,

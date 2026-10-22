@@ -10,6 +10,7 @@ use base_consensus_cli::{
     CliMetrics, ConsensusNodeArgs, ConsensusNodeConfigArgs, ConsensusNodeOverrides,
     ConsensusNodeStartOptions, EmbeddedSequencerConsensusNodeConfigArgs,
 };
+use base_consensus_engine::{EngineEndpoint, InMemoryTransport};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_cli::{
     ExecutionNodeConfigArgs, StandardBaseRethNode, chainspec::chain_value_parser,
@@ -25,7 +26,7 @@ use clap::Args;
 use reth_cli_runner::CliRunner;
 use tokio_util::sync::CancellationToken;
 
-use crate::{commands::rpc::engine_ipc_url, config::ResolvedChainConfig};
+use crate::config::ResolvedChainConfig;
 
 /// Arguments for `base sequencer`.
 #[derive(Args, Clone, Debug)]
@@ -99,7 +100,6 @@ impl SequencerCommand {
                 rollup_args.upgrade_signal_l1_rpc.upgrade_signal_l1_rpc.clone();
             let execution =
                 execution.into_runtime_config(execution_chain).with_unified_auth_endpoint();
-            let l2_engine_rpc = engine_ipc_url(execution.auth_ipc_path())?;
 
             let task_executor = ctx.task_executor.clone();
             let builder = execution.into_default_node_builder(ctx)?;
@@ -137,6 +137,8 @@ impl SequencerCommand {
             let _upgrade_countdown_metrics =
                 CliMetrics::spawn_upgrade_countdown_recorder(rollup_config.clone());
 
+            let l2_engine =
+                EngineEndpoint::InMemory(InMemoryTransport { module: launched.auth_module });
             let handle = launched.handle;
             // Keep the execution node handle alive until both services have coordinated shutdown.
             let execution_node = handle.node;
@@ -146,7 +148,7 @@ impl SequencerCommand {
             let consensus_exit = consensus_args.start_with_options(
                 ConsensusNodeStartOptions::new(rollup_config)
                     .with_overrides(ConsensusNodeOverrides::embedded_execution(
-                        l2_engine_rpc,
+                        l2_engine,
                         upgrade_signal_l1_rpc,
                     ))
                     .with_cancellation(consensus_cancellation.clone())
