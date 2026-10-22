@@ -19,7 +19,10 @@ use tracing::{info, trace};
 use url::Url;
 
 use super::{
-    LaneMix, LaneScheduler, config::ReaderConfig, metrics::Metrics, validator::RecentlySent,
+    LaneMix, LaneScheduler,
+    config::ReaderConfig,
+    metrics::{Metrics, SnapshotMetrics},
+    validator::RecentlySent,
 };
 use crate::forwarder::InsertValidatedTransaction;
 
@@ -160,6 +163,8 @@ where
             "starting transaction reader",
         );
 
+        // Registered once here, so timing a read neither registers nor allocates.
+        let snapshot_seconds = SnapshotMetrics::snapshot_seconds();
         // Subscribed before the first snapshot, so nothing that becomes pending after it is missed.
         let mut pending =
             Some(self.pool.pending_transactions_listener_for(TransactionListenerKind::All));
@@ -184,7 +189,8 @@ where
                 // Everything announced so far is in the pool, so the snapshot below covers it.
                 Self::drain_announcements(&mut pending);
                 let started = Instant::now();
-                let Some(lanes) = self.take_snapshot() else { break };
+                let Some((lanes, read)) = self.take_snapshot() else { break };
+                snapshot_seconds.record(read);
                 let taken_at = Instant::now();
                 snapshot = Some((taken_at, taken_at - started, lanes));
             }
@@ -202,15 +208,20 @@ where
     }
 
     /// Reads the pool into a fresh [`Snapshot`], skipping transactions this destination's queue
-    /// accepted recently. Returns `None` if the reader was cancelled while reading.
-    fn take_snapshot(&mut self) -> Option<Snapshot<P::Transaction>> {
+    /// accepted recently, with how long the pool read itself took. Returns `None` if the reader was
+    /// cancelled while reading.
+    fn take_snapshot(&mut self) -> Option<(Snapshot<P::Transaction>, Duration)> {
         let mut txs_read: u64 = 0;
         let mut txs_ignored: u64 = 0;
 
         let base_fee = self.pool.block_info().pending_basefee;
         let ordering = UnifiedTipOrdering::<P::Transaction>::default();
         let mut lanes = LaneScheduler::new();
-        for tx in self.pool.best_transactions() {
+        // The pool clones its pending set under its read lock inside this call; ranking follows.
+        let read_started = Instant::now();
+        let best = self.pool.best_transactions();
+        let read = read_started.elapsed();
+        for tx in best {
             if self.cancel.is_cancelled() {
                 info!("reader cancelled during iteration");
                 return None;
@@ -241,7 +252,7 @@ where
                 "reader snapshot taken",
             );
         }
-        Some(lanes)
+        Some((lanes, read))
     }
 
     /// Moves transactions from `lanes` into the destination queue until it is full or `lanes` is

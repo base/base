@@ -15,7 +15,7 @@ use url::Url;
 use crate::{
     TxForwardingConfig,
     forwarder::{DestinationForwarder, ForwardRequest},
-    reader::DestinationReader,
+    reader::{DestinationReader, SnapshotMetrics},
 };
 
 /// Why a forwarding destination could not be started.
@@ -119,6 +119,7 @@ impl TxForwardingService {
             })));
             info!(builder_url = %builder_url, "started transaction forwarding destination");
         }
+        SnapshotMetrics::destinations().set(reader_tasks.len() as f64);
 
         TxForwardingHandle {
             reader_cancel,

@@ -7,6 +7,7 @@ mod lanes;
 use lanes::{LaneMix, LaneScheduler};
 
 mod metrics;
+pub use metrics::SnapshotMetrics;
 
 mod validator;
 

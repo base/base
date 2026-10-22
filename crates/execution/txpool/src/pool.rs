@@ -1,6 +1,6 @@
 //! Base transaction-pool wrapper that combines the protocol pool with a 2D nonce sidecar.
 
-use std::{collections::HashMap, fmt, sync::Arc};
+use std::{collections::HashMap, fmt, sync::Arc, time::Instant};
 
 use alloy_eips::{
     eip4844::{BlobAndProofV1, BlobAndProofV2, BlobCellsAndProofsV1},
@@ -33,9 +33,9 @@ use tracing::debug;
 
 use crate::{
     Admission, BasePooledTx, BaseTransactionValidator, FlashblockExpiry, GuardLimits, GuardMetrics,
-    InvalidationCause, InvalidationKey, LimitRejection, MempoolGuard, ParkableBestTransactions,
-    ParkableTransactionPool, ParkedBestTransactions, PredicateContext, StateDiffInvalidation,
-    ValidityPoolMetrics,
+    InsertHistograms, InvalidationCause, InvalidationKey, LimitRejection, MempoolGuard,
+    ParkableBestTransactions, ParkableTransactionPool, ParkedBestTransactions, PredicateContext,
+    StateDiffInvalidation, ValidityPoolMetrics,
     best::MergeBestTransactions,
     two_d_nonce_pool::{InsertOutcome, LaneId, LaneUpdate, SidecarLimits, TwoDNoncePool},
 };
@@ -127,6 +127,8 @@ pub struct BaseTransactionPool<
     /// deadline eviction, so a same-nonce submission cannot race the sweep.
     /// Validation itself remains outside this lock.
     protocol_admission_lock: Arc<Mutex<()>>,
+    /// Insert-stage timings, registered once.
+    insert_histograms: InsertHistograms,
 }
 
 impl<Client, S, Evm, T, O> fmt::Debug for BaseTransactionPool<Client, S, Evm, T, O>
@@ -162,6 +164,7 @@ where
             block_expiry: Arc::clone(&self.block_expiry),
             published_flashblock: Arc::clone(&self.published_flashblock),
             protocol_admission_lock: Arc::clone(&self.protocol_admission_lock),
+            insert_histograms: self.insert_histograms.clone(),
         }
     }
 }
@@ -207,6 +210,7 @@ where
             block_expiry: Arc::new(RwLock::new(crate::BlockExpiryIndex::new())),
             published_flashblock: Arc::new(RwLock::new(None)),
             protocol_admission_lock: Arc::new(Mutex::new(())),
+            insert_histograms: InsertHistograms::default(),
         }
     }
 
@@ -705,7 +709,9 @@ where
         nonce: u64,
         validated: TransactionValidationOutcome<T>,
     ) -> PoolResult<AddedTransactionOutcome> {
+        let lock_requested = Instant::now();
         let _admission_guard = self.protocol_admission_lock.lock();
+        self.insert_histograms.admission_wait.record(lock_requested.elapsed());
         // Reject stale validation before reth can replace the currently pooled transaction.
         self.ensure_protocol_classification_current(hash, &validated)?;
         self.ensure_not_published_expired(hash, &validated)?;
@@ -720,8 +726,10 @@ where
         let block_expiry_bound = Self::validity_block_expiry_bound(&validated);
         let flashblock_expiry_bound = Self::validity_flashblock_expiry_bound(&validated);
         let is_validity = Self::has_validity_predicates(&validated);
+        let insert_started = Instant::now();
         let mut outcomes =
             self.protocol_pool.inner().add_transactions(origin, std::iter::once(validated));
+        self.insert_histograms.pool_insert.record(insert_started.elapsed());
         let outcome = match outcomes.pop() {
             Some(Ok(outcome)) => outcome,
             Some(Err(error)) => {
@@ -1142,8 +1150,12 @@ where
             let hash = *transaction.hash();
             let sender = transaction.sender();
             let nonce = transaction.nonce();
+            let validation_requested = Instant::now();
             let validated = self.validator().validate_transaction(origin, transaction).await;
+            self.insert_histograms.validation_call.record(validation_requested.elapsed());
+            let lock_requested = Instant::now();
             let _admission_guard = self.protocol_admission_lock.lock();
+            self.insert_histograms.admission_wait.record(lock_requested.elapsed());
             self.ensure_protocol_classification_current(hash, &validated)?;
             self.ensure_not_published_expired(hash, &validated)?;
             self.ensure_eip8130_fits_block_gas_limit(hash, &validated)?;
@@ -1154,16 +1166,19 @@ where
             let block_expiry_bound = Self::validity_block_expiry_bound(&validated);
             let flashblock_expiry_bound = Self::validity_flashblock_expiry_bound(&validated);
             let is_validity = Self::has_validity_predicates(&validated);
-            let events =
-                match self.protocol_pool.inner().add_transaction_and_subscribe(origin, validated) {
-                    Ok(events) => events,
-                    Err(error) => {
-                        if pre_admitted {
-                            self.guard.write().release(&hash);
-                        }
-                        return Err(error);
+            let insert_started = Instant::now();
+            let inserted =
+                self.protocol_pool.inner().add_transaction_and_subscribe(origin, validated);
+            self.insert_histograms.pool_insert.record(insert_started.elapsed());
+            let events = match inserted {
+                Ok(events) => events,
+                Err(error) => {
+                    if pre_admitted {
+                        self.guard.write().release(&hash);
                     }
-                };
+                    return Err(error);
+                }
+            };
             self.gate_protocol_admission(hash, replaced, pre_admitted)?;
             self.register_block_expiry(hash, block_expiry_bound, flashblock_expiry_bound, replaced);
             if is_validity {
@@ -1192,7 +1207,9 @@ where
             let hash = *transaction.hash();
             let sender = transaction.sender();
             let nonce = transaction.nonce();
+            let validation_requested = Instant::now();
             let validated = self.validator().validate_transaction(origin, transaction).await;
+            self.insert_histograms.validation_call.record(validation_requested.elapsed());
             self.add_validated_protocol_transaction(origin, hash, sender, nonce, validated)
         }
     }
@@ -1228,10 +1245,16 @@ where
             .iter()
             .map(|(origin, tx)| (*origin, *tx.hash(), tx.sender(), tx.nonce()))
             .collect();
+        let validation_requested = Instant::now();
         let validated = self.validator().validate_transactions(transactions).await;
+        // One await covers the whole batch, so each transaction records its even share and the
+        // histogram counts the same inserts as the other stages.
+        let share =
+            validation_requested.elapsed() / u32::try_from(keys.len()).unwrap_or(u32::MAX).max(1);
         keys.into_iter()
             .zip(validated)
             .map(|((origin, hash, sender, nonce), validated)| {
+                self.insert_histograms.validation_call.record(share);
                 self.add_validated_protocol_transaction(origin, hash, sender, nonce, validated)
             })
             .collect()
@@ -2822,6 +2845,80 @@ mod tests {
             assert!(result.is_ok(), "standard transaction {nonce} was guard-rejected: {result:?}");
         }
         assert!(pool.guard.read().is_empty());
+    }
+
+    /// An ordinary insert records how long it waited for validation, for the admission lock, and
+    /// for the inner pool insert.
+    #[tokio::test]
+    async fn insert_records_validation_admission_and_pool_insert_times() {
+        let recorder = metrics_util::debugging::DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        // Installed before the pool is built, as the node does, so the pool's handles record here.
+        // A current-thread test runtime keeps every record on this thread's local recorder.
+        let _guard = metrics::set_default_local_recorder(&recorder);
+        let (pool, client) = build_integration_pool();
+        let signer = signer();
+        fund(&client, signer.address());
+
+        pool.add_transaction(TransactionOrigin::External, signed_1559(&signer, 0)).await.unwrap();
+
+        let recorded: Vec<_> = snapshotter
+            .snapshot()
+            .into_vec()
+            .into_iter()
+            .filter_map(|(key, _, _, value)| match value {
+                metrics_util::debugging::DebugValue::Histogram(values) => {
+                    Some((key.key().name().to_string(), values.len()))
+                }
+                _ => None,
+            })
+            .collect();
+        for name in [
+            "txpool.insert.validation_call_seconds",
+            "txpool.insert.admission_wait_seconds",
+            "txpool.insert.pool_insert_seconds",
+        ] {
+            assert!(
+                recorded.contains(&(name.to_string(), 1)),
+                "{name} not recorded once: {recorded:?}"
+            );
+        }
+    }
+
+    /// A batch insert records the same three stage histograms once per transaction.
+    #[tokio::test]
+    async fn batch_insert_records_every_stage_per_transaction() {
+        let recorder = metrics_util::debugging::DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        let _guard = metrics::set_default_local_recorder(&recorder);
+        let (pool, client) = build_integration_pool();
+        let signer = signer();
+        fund(&client, signer.address());
+
+        let batch = (0..2).map(|nonce| signed_1559(&signer, nonce)).collect();
+        pool.add_transactions(TransactionOrigin::External, batch).await;
+
+        let recorded: Vec<_> = snapshotter
+            .snapshot()
+            .into_vec()
+            .into_iter()
+            .filter_map(|(key, _, _, value)| match value {
+                metrics_util::debugging::DebugValue::Histogram(values) => {
+                    Some((key.key().name().to_string(), values.len()))
+                }
+                _ => None,
+            })
+            .collect();
+        for name in [
+            "txpool.insert.validation_call_seconds",
+            "txpool.insert.admission_wait_seconds",
+            "txpool.insert.pool_insert_seconds",
+        ] {
+            assert!(
+                recorded.contains(&(name.to_string(), 2)),
+                "{name} not recorded per transaction: {recorded:?}"
+            );
+        }
     }
 
     #[tokio::test]

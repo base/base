@@ -18,3 +18,12 @@ base_metrics::define_metrics! {
     #[label(builder_url)]
     dedup_cache_size: gauge,
 }
+
+base_metrics::define_metrics! {
+    txpool.reader,
+    struct = SnapshotMetrics,
+    #[describe("Time one destination reader's pool read (best_transactions) takes, including the pool read-lock wait")]
+    snapshot_seconds: histogram,
+    #[describe("Forwarding destinations, each of which reads the pool independently")]
+    destinations: gauge,
+}
