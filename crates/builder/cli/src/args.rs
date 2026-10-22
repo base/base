@@ -15,7 +15,8 @@ use base_observability_events::{
     DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_FILES, DEFAULT_QUEUE_CAPACITY, TransactionEventProducer,
     TransactionEventWriterConfig,
 };
-use tracing::warn;
+use eyre::WrapErr;
+use tracing::{info, warn};
 
 /// Parameters for Flashblocks configuration.
 ///
@@ -182,8 +183,12 @@ pub struct Args {
     #[arg(long = "builder.extra-block-deadline-secs", default_value = "20")]
     pub extra_block_deadline_secs: u64,
 
-    /// Whether to enable TIPS resource metering and native payload
-    /// resource-metering schedule evaluation.
+    /// Enables both Flashblocks resource metering (`MeteringStore`) and native
+    /// payload resource-metering schedule evaluation.
+    ///
+    /// Disabling this flag turns off both paths; to disable only the native
+    /// schedule while keeping Flashblocks metering active, unset or remove
+    /// `--payload.resource-metering-schedule` (`PAYLOAD_RESOURCE_METERING_SCHEDULE`).
     #[arg(long = "builder.enable-resource-metering", default_value = "false")]
     pub enable_resource_metering: bool,
 
@@ -191,8 +196,10 @@ pub struct Args {
     ///
     /// The native payload builder throttles transactions against this schedule
     /// when `--builder.enable-resource-metering` is set and the file is
-    /// non-empty. Per-dimension `dryRun` observes a budget without excluding
-    /// transactions.
+    /// non-empty. Unsetting or removing this schedule path is the native-only
+    /// off switch (`--builder.enable-resource-metering` without a schedule path
+    /// leaves native schedule evaluation inactive). Per-dimension `dryRun`
+    /// observes a budget without excluding transactions.
     ///
     /// Uses the same `--payload.resource-metering-schedule` flag and
     /// `PAYLOAD_RESOURCE_METERING_SCHEDULE` environment variable as the
@@ -386,7 +393,22 @@ impl Args {
             self.enable_resource_metering,
             self.resource_metering_schedule.as_deref(),
             Arc::clone(&metering_provider),
-        )?;
+        )
+        .wrap_err_with(|| {
+            self.resource_metering_schedule.as_ref().map_or_else(
+                || "failed to configure resource metering".to_string(),
+                |path| format!("failed to load resource metering schedule from {}", path.display()),
+            )
+        })?;
+        if let Some(path) = self.resource_metering_schedule.as_deref()
+            && resource_metering.is_active()
+        {
+            info!(
+                path = %path.display(),
+                dimensions = resource_metering.schedule.dimensions.len(),
+                "native resource metering schedule loaded"
+            );
+        }
 
         let flashblocks_ws_addr = SocketAddr::new(
             self.flashblocks.flashblocks_addr.parse()?,
@@ -805,6 +827,19 @@ mod tests {
         assert!(enabled_without_schedule.resource_metering.enabled);
         assert!(enabled_without_schedule.resource_metering.schedule.is_empty());
         assert!(!enabled_without_schedule.resource_metering.is_active());
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let schedule_path = dir.path().join("schedule.json");
+        std::fs::write(&schedule_path, VALID_RESOURCE_METERING_SCHEDULE_JSON)
+            .expect("write schedule");
+        let disabled_with_schedule = convert(Args {
+            enable_resource_metering: false,
+            resource_metering_schedule: Some(schedule_path),
+            ..Default::default()
+        });
+        assert!(!disabled_with_schedule.resource_metering.enabled);
+        assert!(disabled_with_schedule.resource_metering.schedule.is_empty());
+        assert!(!disabled_with_schedule.resource_metering.is_active());
     }
 
     #[test]
@@ -835,29 +870,38 @@ mod tests {
     fn into_builder_config_rejects_invalid_or_missing_schedule_when_enabled() {
         let dir = tempfile::tempdir().expect("tempdir");
         let missing_path = dir.path().join("missing.json");
+        let missing_display = missing_path.display().to_string();
         let missing_args = Args {
             enable_resource_metering: true,
             resource_metering_schedule: Some(missing_path),
             ..Default::default()
         };
+        let missing_err = missing_args
+            .into_builder_config(Arc::new(NoopMeteringProvider))
+            .expect_err("missing schedule file should fail startup conversion");
         assert!(
-            missing_args.into_builder_config(Arc::new(NoopMeteringProvider)).is_err(),
-            "missing schedule file should fail startup conversion"
+            missing_err.to_string().contains(&missing_display),
+            "error should name the schedule path: {missing_err:#}"
         );
 
         let invalid_path = dir.path().join("invalid.json");
+        let invalid_display = invalid_path.display().to_string();
         std::fs::write(&invalid_path, "{ not valid json").expect("write invalid json");
         let invalid_args = Args {
             enable_resource_metering: true,
             resource_metering_schedule: Some(invalid_path),
             ..Default::default()
         };
+        let invalid_err = invalid_args
+            .into_builder_config(Arc::new(NoopMeteringProvider))
+            .expect_err("invalid schedule JSON should fail startup conversion");
         assert!(
-            invalid_args.into_builder_config(Arc::new(NoopMeteringProvider)).is_err(),
-            "invalid schedule JSON should fail startup conversion"
+            invalid_err.to_string().contains(&invalid_display),
+            "error should name the schedule path: {invalid_err:#}"
         );
 
         let empty_path = dir.path().join("empty.json");
+        let empty_display = empty_path.display().to_string();
         std::fs::write(&empty_path, r#"{"version": 1, "dimensions": []}"#)
             .expect("write empty schedule");
         let empty_args = Args {
@@ -865,9 +909,12 @@ mod tests {
             resource_metering_schedule: Some(empty_path),
             ..Default::default()
         };
+        let empty_err = empty_args
+            .into_builder_config(Arc::new(NoopMeteringProvider))
+            .expect_err("empty schedule dimensions should fail closed when metering is enabled");
         assert!(
-            empty_args.into_builder_config(Arc::new(NoopMeteringProvider)).is_err(),
-            "empty schedule dimensions should fail closed when metering is enabled"
+            empty_err.to_string().contains(&empty_display),
+            "error should name the schedule path: {empty_err:#}"
         );
     }
 }

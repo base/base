@@ -185,6 +185,8 @@ impl SequencerCommand {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use base_consensus_cli::ConsensusNodeConfigArgs;
     use clap::Parser;
 
@@ -276,15 +278,35 @@ mod tests {
 
     #[test]
     fn parses_resource_metering_schedule_in_sequencer_command() {
-        let cli = BaseCli::try_parse_from(sequencer_args(&[
+        let schedule_path = std::env::temp_dir()
+            .join(format!("base-sequencer-resource-metering-{}.json", std::process::id()));
+        std::fs::write(
+            &schedule_path,
+            r#"{
+                "version": 1,
+                "dimensions": [{
+                    "name": "builder_execution",
+                    "blockLimit": 40000000,
+                    "transactionLimit": 20000000,
+                    "baseGasWeight": 1,
+                    "operations": [{"name": "BLAKE2F", "gasUsedWeight": 6, "countCost": 188}],
+                    "dryRun": true
+                }]
+            }"#,
+        )
+        .expect("write temp schedule");
+
+        let schedule_path_str = schedule_path.to_str().expect("utf-8 schedule path");
+        let args = sequencer_args(&[
             "base",
             "sequencer",
             "--p2p.sequencer.key",
             SEQUENCER_KEY,
             "--builder.enable-resource-metering",
-            "--payload.resource-metering-schedule",
-            "/tmp/resource-metering-schedule.json",
-        ]))
+        ]);
+        let cli = BaseCli::try_parse_from(
+            args.into_iter().chain(["--payload.resource-metering-schedule", schedule_path_str]),
+        )
         .expect("sequencer command should accept --payload.resource-metering-schedule");
 
         let BaseCommand::Sequencer(sequencer) = cli.command else {
@@ -294,8 +316,20 @@ mod tests {
         assert!(sequencer.builder.enable_resource_metering);
         assert_eq!(
             sequencer.builder.resource_metering_schedule.as_deref(),
-            Some(std::path::Path::new("/tmp/resource-metering-schedule.json"))
+            Some(schedule_path.as_path())
         );
+
+        let metering_provider: base_builder_core::SharedMeteringProvider =
+            Arc::new(sequencer.builder.build_metering_store());
+        let builder_config = sequencer
+            .builder
+            .into_builder_config(Arc::clone(&metering_provider))
+            .expect("valid schedule should build active BuilderConfig");
+        let _ = std::fs::remove_file(&schedule_path);
+
+        assert!(builder_config.resource_metering.enabled);
+        assert!(builder_config.resource_metering.is_active());
+        assert_eq!(builder_config.resource_metering.schedule.dimensions.len(), 1);
     }
 
     #[test]

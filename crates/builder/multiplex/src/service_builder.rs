@@ -1,8 +1,6 @@
-use std::sync::Arc;
-
 use base_builder_core::{BuilderConfig, FlashblocksServiceBuilder, NodeBounds, PoolBounds};
 use base_execution_evm::BaseEvmConfig;
-use base_execution_payload_builder::{ResourceMeteringConfig, config::BaseBuilderConfig};
+use base_execution_payload_builder::config::BaseBuilderConfig;
 use base_node_core::{
     BaseConsensusBuilder, BaseEngineTypes, BaseExecutorBuilder, BaseNetworkBuilder,
     node::BasePoolBuilder,
@@ -73,10 +71,7 @@ impl MultiplexingServiceBuilder {
             predicate_bucket_ordered_threshold: self
                 .builder_config
                 .predicate_bucket_ordered_threshold,
-            resource_metering: ResourceMeteringConfig {
-                provider: Arc::clone(&self.builder_config.metering_provider),
-                ..self.builder_config.resource_metering.clone()
-            },
+            resource_metering: self.builder_config.resource_metering.clone(),
             rejection_cache: self.builder_config.rejection_cache.clone(),
             state_provider_metrics,
         }
@@ -207,8 +202,10 @@ impl BasePayloadServiceBuilder for MultiplexingServiceBuilder {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use alloy_primitives::TxHash;
-    use base_execution_payload_builder::ResourceMeteringSchedule;
+    use base_execution_payload_builder::{ResourceMeteringConfig, ResourceMeteringSchedule};
 
     use super::*;
 
@@ -221,6 +218,9 @@ mod tests {
 
         let native = MultiplexingServiceBuilder::new(builder_config).native_payload_config(false);
         assert!(native.rejection_cache.contains_key(&hash));
+        assert!(!native.resource_metering.enabled);
+        assert!(native.resource_metering.schedule.is_empty());
+        assert!(!native.resource_metering.is_active());
         assert!(Arc::ptr_eq(&native.resource_metering.provider, &provider));
     }
 
