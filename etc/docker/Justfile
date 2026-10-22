@@ -245,7 +245,7 @@ build-image target='base' profile='dev':
         esac
         ;;
     esac
-    DOCKER_CA_BUNDLE={{ quote(_ca_bundle) }} PROFILE="{{ profile }}" ZK_HOST_PROFILE=release BASE_SUCCINCT_ELF_REQUIRE="${elf_require}" docker buildx bake -f etc/docker/docker-bake.hcl "{{ target }}" --load
+    DOCKER_CA_BUNDLE={{ quote(_ca_bundle) }} PROFILE="{{ profile }}" ZK_HOST_PROFILE=release BASE_SUCCINCT_ELF_REQUIRE="${elf_require}" docker buildx bake {{ _ca_bundle_bake_allow }} -f etc/docker/docker-bake.hcl "{{ target }}" --load
 
 # Prepares Docker images needed for system tests
 pull-images:
@@ -283,7 +283,7 @@ _build-setup-image:
 
 [private]
 _build-profiling-tools-image:
-    DOCKER_CA_BUNDLE={{ quote(_ca_bundle) }} docker buildx bake -f etc/docker/docker-bake.hcl profiling-tools --load
+    DOCKER_CA_BUNDLE={{ quote(_ca_bundle) }} docker buildx bake {{ _ca_bundle_bake_allow }} -f etc/docker/docker-bake.hcl profiling-tools --load
 
 [private]
 _build-rust-images group profile='dev':
@@ -297,11 +297,11 @@ _build-rust-images group profile='dev':
         esac
         ;;
     esac
-    DOCKER_CA_BUNDLE={{ quote(_ca_bundle) }} PROFILE="{{ profile }}" ZK_HOST_PROFILE=release BASE_SUCCINCT_ELF_REQUIRE="${elf_require}" docker buildx bake -f etc/docker/docker-bake.hcl "{{ group }}" --load
+    DOCKER_CA_BUNDLE={{ quote(_ca_bundle) }} PROFILE="{{ profile }}" ZK_HOST_PROFILE=release BASE_SUCCINCT_ELF_REQUIRE="${elf_require}" docker buildx bake {{ _ca_bundle_bake_allow }} -f etc/docker/docker-bake.hcl "{{ group }}" --load
 
 [private]
 _build-nitro-images profile='dev':
-    DOCKER_CA_BUNDLE={{ quote(_ca_bundle) }} PROFILE="{{ profile }}" docker buildx bake -f etc/docker/docker-bake.hcl proposer prover-service nitro-host-local --load
+    DOCKER_CA_BUNDLE={{ quote(_ca_bundle) }} PROFILE="{{ profile }}" docker buildx bake {{ _ca_bundle_bake_allow }} -f etc/docker/docker-bake.hcl proposer prover-service nitro-host-local --load
 
 [private]
 _up-devnet compose_profile mode:

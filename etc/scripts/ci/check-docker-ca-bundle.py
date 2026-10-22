@@ -21,9 +21,14 @@ APT_RE = re.compile(r"(?<![/\w-])(?:apt-get|apt)(?=\s|$)")
 NETWORK_RUN_RE = re.compile(
     r"(?:(?<![/\w-])(?:apt-get|apt)(?=\s|$)"
     r"|\b(?:apk\s+add|git\s+(?:clone|fetch|submodule)"
-    r"|go\s+(?:install|build|mod\s+download)|cargo\s+(?:\+\S+\s+)?(?:install|chef\s+cook|build)"
-    r"|curl|wget|rustup-init|foundryup)\b)"
+    r"|go\s+(?:install|build|mod\s+download)"
+    r"|cargo\s+(?:\+\S+\s+)?(?:chef|install|build|fetch)"
+    r"|pip3?\s+install|(?:npm|yarn|pnpm)\s+(?:install|ci|add)"
+    r"|curl|wget|rustup(?:-init)?|foundryup)\b)"
 )
+RUST_TOOLCHAIN_CMD_RE = re.compile(r"\b(?:cargo|rustc|rustup)\b")
+FROM_RE = re.compile(r"^FROM\s+(?:--\S+\s+)*(\S+)(?:\s+AS\s+(\S+))?", re.IGNORECASE)
+COPY_RUST_TOOLCHAIN_RE = re.compile(r"^(?:COPY|ADD)\b.*rust-toolchain(?:\.toml)?\b", re.IGNORECASE)
 CONDITIONAL_SECRET_FILE_GUARD_RE = re.compile(
     r"(?:\[\s*-[fsr]\s+['\"]?/run/secrets/ca_bundle['\"]?\s*\]"
     r"|(?<!\!\s)\btest\s+-[fsr]\s+['\"]?/run/secrets/ca_bundle['\"]?)"
@@ -78,7 +83,24 @@ def check_dockerfiles_in_map(dockerfile_texts: dict[str, str], errors: list[str]
     for rel, text in sorted(dockerfile_texts.items()):
         if re.search(r"^\s*(?:COPY|ADD)\b.*ca[_-]bundle", text, re.MULTILINE):
             errors.append(f"{rel}: must not COPY/ADD custom CA into image layers")
+        stages_with_rust_toolchain: set[str] = set()
+        current_stage: str | None = None
+        current_has_rust_toolchain = False
+
         for line_no, instr in parse_logical_instructions(text):
+            from_match = FROM_RE.match(instr)
+            if from_match:
+                base_ref = from_match.group(1)
+                current_stage = from_match.group(2)
+                current_has_rust_toolchain = base_ref in stages_with_rust_toolchain
+                if current_stage and current_has_rust_toolchain:
+                    stages_with_rust_toolchain.add(current_stage)
+                continue
+            if COPY_RUST_TOOLCHAIN_RE.match(instr):
+                current_has_rust_toolchain = True
+                if current_stage:
+                    stages_with_rust_toolchain.add(current_stage)
+                continue
             if not instr.upper().startswith("RUN "):
                 continue
             mounts = [parse_mount(m) for m in MOUNT_RE.findall(instr)]
@@ -101,7 +123,10 @@ def check_dockerfiles_in_map(dockerfile_texts: dict[str, str], errors: list[str]
                     if "Acquire::https::CaInfo=/run/secrets/ca_bundle" not in instr:
                         errors.append(f"{rel}:{line_no}: apt RUN must pass Acquire::https::CaInfo=/run/secrets/ca_bundle")
 
-            if NETWORK_RUN_RE.search(instr) and not ca_mounts:
+            needs_ca = bool(NETWORK_RUN_RE.search(instr)) or (
+                current_has_rust_toolchain and bool(RUST_TOOLCHAIN_CMD_RE.search(instr))
+            )
+            if needs_ca and not ca_mounts:
                 errors.append(f"{rel}:{line_no}: network RUN missing optional ca_bundle secret mount: {instr[:120]}")
     return dockerfiles_with_mount
 
@@ -170,6 +195,9 @@ def check_justfiles(errors: list[str]) -> bool:
             res_unset = eval_just_var(rel, "_ca_bundle_secret", base_env)
             if res_unset.stdout != "" or res_unset.stderr != "":
                 errors.append(f"{rel}: unset DOCKER_CA_BUNDLE must yield empty stdout/stderr, got {res_unset.stdout!r} / {res_unset.stderr!r}")
+            res_allow_unset = eval_just_var(rel, "_ca_bundle_bake_allow", base_env)
+            if res_allow_unset.stdout != "" or res_allow_unset.stderr != "":
+                errors.append(f"{rel}: unset DOCKER_CA_BUNDLE must yield empty _ca_bundle_bake_allow, got {res_allow_unset.stdout!r}")
 
             res_empty = eval_just_var(rel, "_ca_bundle_secret", {**base_env, "DOCKER_CA_BUNDLE": ""})
             if res_empty.stdout != "" or res_empty.stderr != "":
@@ -186,6 +214,9 @@ def check_justfiles(errors: list[str]) -> bool:
             res_abs = eval_just_var(rel, "_ca_bundle_secret", {**base_env, "DOCKER_CA_BUNDLE": str(ca_file)})
             if not res_abs.stdout.startswith("--secret id=ca_bundle,src=") or res_abs.stderr != "":
                 errors.append(f"{rel}: regular-file DOCKER_CA_BUNDLE failed: {res_abs.stdout!r} / {res_abs.stderr!r}")
+            res_allow = eval_just_var(rel, "_ca_bundle_bake_allow", {**base_env, "DOCKER_CA_BUNDLE": str(ca_file)})
+            if not res_allow.stdout.startswith("--allow=fs.read=") or res_allow.stderr != "":
+                errors.append(f"{rel}: regular-file DOCKER_CA_BUNDLE _ca_bundle_bake_allow failed: {res_allow.stdout!r} / {res_allow.stderr!r}")
 
             res_rel = eval_just_var(rel, "_ca_bundle", {**base_env, "DOCKER_CA_BUNDLE": "rel-ca.pem"}, cwd=sub_dir)
             if res_rel.stdout != expected_sub_ca or res_rel.stderr != "":

@@ -69,7 +69,9 @@ COPY etc/tools ./etc/tools
 COPY etc/systems ./etc/systems
 
 FROM workspace-source AS planner
-RUN cargo chef prepare --recipe-path recipe.json
+RUN --mount=type=secret,id=ca_bundle,target=/run/secrets/ca_bundle,required=false \
+    if [ -f /run/secrets/ca_bundle ]; then export SSL_CERT_FILE=/run/secrets/ca_bundle CURL_CA_BUNDLE=/run/secrets/ca_bundle CARGO_HTTP_CAINFO=/run/secrets/ca_bundle GIT_SSL_CAINFO=/run/secrets/ca_bundle; fi && \
+    cargo chef prepare --recipe-path recipe.json
 
 FROM rust-builder-base AS rust-deps
 ARG PROFILE=release
