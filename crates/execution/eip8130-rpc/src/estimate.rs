@@ -155,9 +155,10 @@ impl Eip8130GasEstimator {
     /// rules pool admission applies, and runs it in `mode` at `block_id` with
     /// `overrides` on the blocking pool.
     ///
-    /// Holds a blocking-IO permit for the whole simulation, as the standard
-    /// `eth_call` does, so concurrent EIP-8130 simulations are bounded by the
-    /// same limit as every other EVM-executing request.
+    /// Holds a blocking-IO permit until the blocking simulation finishes, as the
+    /// standard `eth_call` does, so concurrent EIP-8130 simulations are bounded
+    /// by the same limit as every other EVM-executing request, even after the
+    /// client disconnects.
     async fn simulate<Eth>(
         eth_api: &Eth,
         request: BaseTransactionRequest,
@@ -175,17 +176,23 @@ impl Eip8130GasEstimator {
         EvmFactoryFor<Eth::Evm>: EvmFactory<BlockEnv = BlockEnv>,
         ErrorObjectOwned: From<Eth::Error>,
     {
-        let _permit = eth_api
+        let permit = eth_api
             .acquire_owned_blocking_io()
             .await
             .map_err(|_| Eth::Error::from_eth_err(EthApiError::InternalEthError))?;
         let (evm_env, at, forecast) = BasePendingForecast::evm_env_at(eth_api, block_id).await?;
         let chain_id = evm_env.cfg_env.chain_id;
         // Bound execution like standard `eth_estimateGas`: the request's `gas`,
-        // or the default when omitted, never exceeds the block gas limit or the
-        // EIP-7825 per-transaction cap. An unbounded `gas` would let one request
-        // run its calls (twice, if they fail) at any gas the caller picks.
-        let gas_cap = Block::gas_limit(&evm_env.block_env).min(evm_env.cfg_env.tx_gas_limit_cap());
+        // or the default when omitted, never exceeds the block gas limit, the
+        // EIP-7825 per-transaction cap, or the operator's `--rpc.gascap` (zero
+        // means uncapped). An unbounded `gas` would let one request run its
+        // calls (twice, if they fail) at any gas the caller picks.
+        let mut gas_cap =
+            Block::gas_limit(&evm_env.block_env).min(evm_env.cfg_env.tx_gas_limit_cap());
+        let rpc_gas_cap = eth_api.call_gas_limit();
+        if rpc_gas_cap != 0 {
+            gas_cap = gas_cap.min(rpc_gas_cap);
+        }
 
         let mut sim_tx = request.to_eip8130_simulation_tx(chain_id, gas_cap).map_err(|error| {
             ErrorObjectOwned::owned(
@@ -219,6 +226,7 @@ impl Eip8130GasEstimator {
 
         let result = eth_api
             .spawn_with_state_at_block(at, move |this, mut db| {
+                let _permit = permit;
                 let mut evm_env = evm_env;
                 // Block overrides first (mutating the block env), then state, so
                 // the simulation matches the standard call path's ordering.
