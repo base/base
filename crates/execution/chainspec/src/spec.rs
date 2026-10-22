@@ -109,6 +109,13 @@ pub struct BaseChainSpec {
     /// Legacy L2 block interval in seconds.
     #[deref(ignore)]
     pub block_time: Option<u64>,
+    /// Local snapshot schedule shared with an already-running execution node.
+    ///
+    /// The harness initializes this once, after boundary preflight and before sequencing.
+    /// Canonical genesis identity and production schedules remain unchanged.
+    #[cfg(feature = "std")]
+    #[deref(ignore)]
+    pub local_denim_timestamp_schedule: Option<Arc<std::sync::OnceLock<DenimTimestampSchedule>>>,
 }
 
 impl BaseChainSpec {
@@ -236,6 +243,8 @@ impl BaseChainSpec {
             },
             activation_admin_address,
             block_time,
+            #[cfg(feature = "std")]
+            local_denim_timestamp_schedule: None,
         })
     }
 
@@ -251,7 +260,13 @@ impl BaseChainSpec {
         )?;
         let block_time =
             value.genesis.config.extra_fields.get_deserialized("blockTime").transpose()?;
-        Ok(Self { inner: value, activation_admin_address, block_time })
+        Ok(Self {
+            inner: value,
+            activation_admin_address,
+            block_time,
+            #[cfg(feature = "std")]
+            local_denim_timestamp_schedule: None,
+        })
     }
 
     /// Returns the runtime-aware Denim timestamp schedule, or `Ok(None)` when unscheduled.
@@ -263,6 +278,10 @@ impl BaseChainSpec {
     pub fn denim_timestamp_schedule(
         &self,
     ) -> Result<Option<DenimTimestampSchedule>, BaseChainSpecError> {
+        #[cfg(feature = "std")]
+        if let Some(schedule) = self.local_denim_timestamp_schedule.as_ref().and_then(|s| s.get()) {
+            return Ok(Some(*schedule));
+        }
         let ForkCondition::Timestamp(denim_activation_timestamp) = self.fork(BaseUpgrade::Denim)
         else {
             return Ok(None);
@@ -620,6 +639,8 @@ impl TryFrom<&ChainConfig> for BaseChainSpec {
             },
             activation_admin_address,
             block_time: Some(cfg.block_time),
+            #[cfg(feature = "std")]
+            local_denim_timestamp_schedule: None,
         })
     }
 }
