@@ -6,7 +6,7 @@
 //!
 //! [EIP-8130]: https://eips.ethereum.org/EIPS/eip-8130
 
-use alloc::vec::Vec;
+use alloc::{vec, vec::Vec};
 use core::mem;
 
 use alloy_consensus::{InMemorySize, SignableTransaction, Transaction, Typed2718};
@@ -223,6 +223,42 @@ impl TxEip8130 {
         length_of_length(payload_len) + payload_len
     }
 
+    /// Decodes the `account_changes` list, accepting at most one entry, which
+    /// must be a delegation. Until the Keystore (Zenith) a single delegation is
+    /// the only account change a transaction can make, so any other entry is
+    /// rejected from its type byte before its body or nested lists are built.
+    /// Every decoder of an EIP-8130 `account_changes` field must use this so
+    /// all wire formats accept the same transactions.
+    pub fn decode_account_changes(buf: &mut &[u8]) -> alloy_rlp::Result<Vec<AccountChange>> {
+        let header = Header::decode(buf)?;
+        if !header.list {
+            return Err(alloy_rlp::Error::UnexpectedString);
+        }
+        if buf.len() < header.payload_length {
+            return Err(alloy_rlp::Error::InputTooShort);
+        }
+
+        let (mut payload, rest) = buf.split_at(header.payload_length);
+        let account_changes = if payload.is_empty() {
+            Vec::new()
+        } else {
+            let mut entry = payload;
+            if !Header::decode(&mut entry)?.list {
+                return Err(alloy_rlp::Error::UnexpectedString);
+            }
+            if u8::decode(&mut entry)? != Eip8130Constants::ACCOUNT_CHANGE_TYPE_DELEGATION {
+                return Err(alloy_rlp::Error::Custom("unsupported EIP-8130 account change type"));
+            }
+            let delegation = AccountChange::decode(&mut payload)?;
+            if !payload.is_empty() {
+                return Err(alloy_rlp::Error::Custom("too many EIP-8130 account changes"));
+            }
+            vec![delegation]
+        };
+        *buf = rest;
+        Ok(account_changes)
+    }
+
     /// Decodes the `calls` phase list, rejecting more than
     /// [`Eip8130Constants::MAX_CALL_PHASES_PER_TX`] phases before allocating
     /// the excess. Every decoder of an EIP-8130 `calls` field must use this so
@@ -306,7 +342,7 @@ impl TxEip8130 {
             max_priority_fee_per_gas: Decodable::decode(buf)?,
             max_fee_per_gas: Decodable::decode(buf)?,
             gas_limit: Decodable::decode(buf)?,
-            account_changes: Decodable::decode(buf)?,
+            account_changes: Self::decode_account_changes(buf)?,
             calls: Self::decode_calls(buf)?,
             metadata: Decodable::decode(buf)?,
             payer: Self::decode_payer(buf)?,
@@ -368,7 +404,7 @@ impl TxEip8130 {
         );
 
         let mut account_changes_buf = account_changes.as_ref();
-        let account_changes = Vec::<AccountChange>::decode(&mut account_changes_buf)
+        let account_changes = Self::decode_account_changes(&mut account_changes_buf)
             .unwrap_or_else(|err| {
                 panic!("invalid compact-encoded EIP-8130 account changes: {err}")
             });
@@ -778,6 +814,58 @@ mod tests {
     }
 
     #[test]
+    fn decode_account_changes_accepts_none_or_one_delegation() {
+        let delegation =
+            AccountChange::Delegation(Delegation { target: Address::repeat_byte(0x06) });
+        for changes in [Vec::new(), vec![delegation]] {
+            let encoded = alloy_rlp::encode(&changes);
+            let mut input = encoded.as_slice();
+
+            assert_eq!(TxEip8130::decode_account_changes(&mut input).unwrap(), changes);
+            assert!(input.is_empty());
+        }
+    }
+
+    #[test]
+    fn decode_account_changes_rejects_a_second_delegation() {
+        let delegation =
+            AccountChange::Delegation(Delegation { target: Address::repeat_byte(0x06) });
+        let encoded =
+            alloy_rlp::encode(vec![delegation; Eip8130Constants::MAX_DELEGATIONS_PER_TX + 1]);
+
+        let error = TxEip8130::decode_account_changes(&mut encoded.as_slice()).unwrap_err();
+
+        assert_eq!(error, alloy_rlp::Error::Custom("too many EIP-8130 account changes"));
+    }
+
+    #[test]
+    fn decode_account_changes_rejects_keystore_entries() {
+        use crate::transaction::eip8130::account_changes::{
+            AccountChangeChannel, CreateEntry, InitialActor, SignedAccountChanges,
+        };
+
+        let actor = InitialActor::owner(B256::ZERO, Address::ZERO);
+        let create = AccountChange::Create(CreateEntry {
+            user_salt: B256::ZERO,
+            code: bytes!("00"),
+            initial_actors: vec![actor; Eip8130Constants::MAX_ACTORS_PER_ENTRY + 1],
+        });
+        let config = AccountChange::ConfigChange(SignedAccountChanges {
+            channel: AccountChangeChannel::Local,
+            sequence: 0,
+            changes: Vec::new(),
+            signature: Bytes::new(),
+        });
+        for change in [create, config] {
+            let encoded = alloy_rlp::encode(vec![change]);
+
+            let error = TxEip8130::decode_account_changes(&mut encoded.as_slice()).unwrap_err();
+
+            assert_eq!(error, alloy_rlp::Error::Custom("unsupported EIP-8130 account change type"));
+        }
+    }
+
+    #[test]
     fn rlp_roundtrip_full() {
         let tx = sample_tx();
         let mut buf = Vec::new();
@@ -985,12 +1073,9 @@ mod tests {
     fn account_change_roundtrip_in_tx() {
         let tx = TxEip8130 {
             chain_id: 1,
-            account_changes: vec![
-                AccountChange::Delegation(Delegation { target: Address::ZERO }),
-                AccountChange::Delegation(Delegation {
-                    target: address!("0x00000000000000000000000000000000000000ee"),
-                }),
-            ],
+            account_changes: vec![AccountChange::Delegation(Delegation {
+                target: address!("0x00000000000000000000000000000000000000ee"),
+            })],
             ..Default::default()
         };
         let mut buf = Vec::new();

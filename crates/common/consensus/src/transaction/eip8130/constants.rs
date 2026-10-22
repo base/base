@@ -240,7 +240,15 @@ impl Eip8130Constants {
     ///
     /// Keep this value `<= MAX_CONFIG_CHANGES_PER_TX + 2` (one create + one
     /// delegation) if the intent is for the total cap to stay the binding limit.
+    ///
+    /// Until the Keystore (Zenith) the decoders accept at most
+    /// [`Self::MAX_DELEGATIONS_PER_TX`] delegation and no other entry, so this
+    /// cap only binds on transactions built in memory.
     pub const MAX_ACCOUNT_CHANGES_PER_TX: usize = 3;
+
+    /// Maximum number of `Delegation` entries in a single transaction's
+    /// `account_changes`.
+    pub const MAX_DELEGATIONS_PER_TX: usize = 1;
 
     /// Maximum validity-window span (in **milliseconds** beyond the current
     /// reference time, i.e. `valid_before - now`) the mempool accepts for
