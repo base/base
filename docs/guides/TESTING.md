@@ -2,7 +2,7 @@
 
 This guide explains the checks that run before code ships to Base: what runs on your machine,
 what runs in CI, and which `just` command maps to which check. It complements
-[CONTRIBUTING.md](../../CONTRIBUTING.md) (contribution workflow) and [CLAUDE.md](../../CLAUDE.md)
+[CONTRIBUTING.md](../../CONTRIBUTING.md) (contribution workflow) and [RUST.md](RUST.md)
 (code style and test conventions).
 
 
@@ -50,7 +50,7 @@ Each tier is described below.
 ### Unit Tests
 
 Unit tests live next to the code they test, inside a `#[cfg(test)] mod tests { ... }` block at the
-end of the file (see [CLAUDE.md](../../CLAUDE.md) for the exact convention). Run the full workspace
+end of the file (see [RUST.md](RUST.md#testing) for the exact convention). Run the full workspace
 suite with:
 
 ```sh
@@ -178,7 +178,7 @@ status check.
   logic, action tests for protocol-boundary behavior (batching, derivation, channel encoding),
   system tests only when you need the real L1/L2 stack end-to-end.
 - Keep unit tests colocated with implementation, in a trailing `#[cfg(test)] mod tests { ... }`
-  block — see [CLAUDE.md](../../CLAUDE.md).
+  block — see [RUST.md](RUST.md#testing).
 - Run `just pr` before pushing for fast feedback, and `just ci` before requesting review to match
   what the merge queue will enforce.
 
