@@ -36,6 +36,11 @@ impl NonceManagerSlots {
 
     /// Nonce key reserved for the protocol nonce, which is held in account state
     /// rather than by the nonce manager.
+    ///
+    /// Per [EIP-8430], key `0` is the sender's account nonce, shared with other
+    /// transaction types; inclusion increments it and no nonce-manager slot exists.
+    ///
+    /// [EIP-8430]: https://eips.ethereum.org/EIPS/eip-8430
     pub const PROTOCOL_NONCE_KEY: U256 = U256::ZERO;
 
     /// Returns the storage slot holding the 2D channel nonce for
