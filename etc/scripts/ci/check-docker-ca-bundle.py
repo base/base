@@ -26,7 +26,12 @@ NETWORK_RUN_RE = re.compile(
     r"|pip3?\s+install|(?:npm|yarn|pnpm)\s+(?:install|ci|add)"
     r"|curl|wget|rustup(?:-init)?|foundryup)\b)"
 )
-RUST_TOOLCHAIN_CMD_RE = re.compile(r"\b(?:cargo|rustc|rustup)\b")
+RUN_PREFIX_RE = re.compile(r"^RUN\s+(?:--mount=\S+\s+)*", re.IGNORECASE)
+RUST_TOOLCHAIN_CMD_RE = re.compile(
+    r"(?:^|&&|\|\||[;|(`]|\b(?:then|else|do)\b)\s*"
+    r"(?:[A-Za-z_][A-Za-z0-9_]*=(?:\"[^\"]*\"|'[^']*'|\S*)\s+)*"
+    r"(?:/[\w./-]+/)?(?:cargo|rustc|rustup)(?=\s|[;&|)]|$)"
+)
 FROM_RE = re.compile(r"^FROM\s+(?:--\S+\s+)*(\S+)(?:\s+AS\s+(\S+))?", re.IGNORECASE)
 COPY_RUST_TOOLCHAIN_RE = re.compile(r"^(?:COPY|ADD)\b.*rust-toolchain(?:\.toml)?\b", re.IGNORECASE)
 CONDITIONAL_SECRET_FILE_GUARD_RE = re.compile(
@@ -123,8 +128,9 @@ def check_dockerfiles_in_map(dockerfile_texts: dict[str, str], errors: list[str]
                     if "Acquire::https::CaInfo=/run/secrets/ca_bundle" not in instr:
                         errors.append(f"{rel}:{line_no}: apt RUN must pass Acquire::https::CaInfo=/run/secrets/ca_bundle")
 
-            needs_ca = bool(NETWORK_RUN_RE.search(instr)) or (
-                current_has_rust_toolchain and bool(RUST_TOOLCHAIN_CMD_RE.search(instr))
+            cmd_body = RUN_PREFIX_RE.sub("", instr, count=1)
+            needs_ca = bool(NETWORK_RUN_RE.search(cmd_body)) or (
+                current_has_rust_toolchain and bool(RUST_TOOLCHAIN_CMD_RE.search(cmd_body))
             )
             if needs_ca and not ca_mounts:
                 errors.append(f"{rel}:{line_no}: network RUN missing optional ca_bundle secret mount: {instr[:120]}")
@@ -179,8 +185,11 @@ def check_justfiles(errors: list[str]) -> bool:
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text("dummy", encoding="utf-8")
 
-        ca_file = Path(tmp_dir) / "ca.pem"
+        ca_dir = Path(tmp_dir) / "dir with space"
+        ca_dir.mkdir(parents=True, exist_ok=True)
+        ca_file = ca_dir / "custom ca.pem"
         ca_file.write_text("-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n", encoding="utf-8")
+        expected_ca_file = str(ca_file.resolve())
 
         base_env = {**os.environ, "HOME": str(tmp_home)}
         base_env.pop("DOCKER_CA_BUNDLE", None)
@@ -215,7 +224,7 @@ def check_justfiles(errors: list[str]) -> bool:
             if not res_abs.stdout.startswith("--secret id=ca_bundle,src=") or res_abs.stderr != "":
                 errors.append(f"{rel}: regular-file DOCKER_CA_BUNDLE failed: {res_abs.stdout!r} / {res_abs.stderr!r}")
             res_allow = eval_just_var(rel, "_ca_bundle_bake_allow", {**base_env, "DOCKER_CA_BUNDLE": str(ca_file)})
-            if not res_allow.stdout.startswith("--allow=fs.read=") or res_allow.stderr != "":
+            if res_allow.stdout != f"--allow=fs.read='{expected_ca_file}'" or res_allow.stderr != "":
                 errors.append(f"{rel}: regular-file DOCKER_CA_BUNDLE _ca_bundle_bake_allow failed: {res_allow.stdout!r} / {res_allow.stderr!r}")
 
             res_rel = eval_just_var(rel, "_ca_bundle", {**base_env, "DOCKER_CA_BUNDLE": "rel-ca.pem"}, cwd=sub_dir)
@@ -248,11 +257,50 @@ def check_bake_text(bake_text: str, dockerfiles_with_mount: set[str], errors: li
             )
 
 
+def check_probes(errors: list[str]) -> None:
+    probe_df = (
+        "FROM rust:1.96-trixie AS base\n"
+        "COPY rust-toolchain.toml ./\n"
+        "RUN --mount=type=cache,target=/usr/local/cargo/registry mkdir -p /app/out\n"
+        "RUN mkdir -p /app/cargo-cache && chmod 755 /usr/local/cargo/env\n"
+    )
+    probe_errs: list[str] = []
+    check_dockerfiles_in_map({"etc/docker/Dockerfile.probe": probe_df}, probe_errs)
+    if probe_errs:
+        errors.append(f"probe: false positive on non-network cargo path RUNs: {probe_errs}")
+
+    rust_df = (REPO_ROOT / "etc/docker/Dockerfile.rust-services").read_text(encoding="utf-8")
+    for label, pattern, repl in (
+        (
+            "planner",
+            r"FROM workspace-source AS planner\nRUN --mount=[^\n]+\n\s+if \[ -f /run/secrets/ca_bundle \];[^\n]+\n\s+cargo chef prepare --recipe-path recipe\.json",
+            "FROM workspace-source AS planner\nRUN cargo chef prepare --recipe-path recipe.json",
+        ),
+        (
+            "cook",
+            r"--mount=type=secret,id=ca_bundle,target=/run/secrets/ca_bundle,required=false \\\n\s+if \[ -f /run/secrets/ca_bundle \];[^\n]+\n\s+(cargo chef cook)",
+            r"\1",
+        ),
+        (
+            "install",
+            r"--mount=type=secret,id=ca_bundle,target=/run/secrets/ca_bundle,required=false \\\n\s+if \[ -f /run/secrets/ca_bundle \];[^\n]+\n\s+(cargo install cargo-chef)",
+            r"\1",
+        ),
+    ):
+        mutated = re.sub(pattern, repl, rust_df, count=1)
+        mut_errs: list[str] = []
+        check_dockerfiles_in_map({"etc/docker/Dockerfile.rust-services": mutated}, mut_errs)
+        if not mut_errs:
+            errors.append(f"probe: stripping ca_bundle mount from {label} RUN in Dockerfile.rust-services did not fail")
+
+
+
 def main() -> int:
     errors: list[str] = []
     dockerfiles_with_mount = check_dockerfiles(errors)
     just_evaluated = check_justfiles(errors)
     check_bake_text((REPO_ROOT / "etc/docker/docker-bake.hcl").read_text(encoding="utf-8"), dockerfiles_with_mount, errors)
+    check_probes(errors)
 
     if errors:
         print(f"FAILED ({len(errors)} errors):", file=sys.stderr)
