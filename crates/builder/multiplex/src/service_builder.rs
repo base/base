@@ -75,7 +75,7 @@ impl MultiplexingServiceBuilder {
                 .predicate_bucket_ordered_threshold,
             resource_metering: ResourceMeteringConfig {
                 provider: Arc::clone(&self.builder_config.metering_provider),
-                ..ResourceMeteringConfig::default()
+                ..self.builder_config.resource_metering.clone()
             },
             rejection_cache: self.builder_config.rejection_cache.clone(),
             state_provider_metrics,
@@ -208,6 +208,7 @@ impl BasePayloadServiceBuilder for MultiplexingServiceBuilder {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::TxHash;
+    use base_execution_payload_builder::ResourceMeteringSchedule;
 
     use super::*;
 
@@ -220,6 +221,39 @@ mod tests {
 
         let native = MultiplexingServiceBuilder::new(builder_config).native_payload_config(false);
         assert!(native.rejection_cache.contains_key(&hash));
+        assert!(Arc::ptr_eq(&native.resource_metering.provider, &provider));
+    }
+
+    #[test]
+    fn native_payload_config_propagates_configured_resource_metering_schedule() {
+        let schedule = ResourceMeteringSchedule::from_json(
+            r#"{
+                "version": 1,
+                "dimensions": [{
+                    "name": "builder_execution",
+                    "blockLimit": 40000000,
+                    "transactionLimit": 20000000,
+                    "baseGasWeight": 1,
+                    "operations": [{"name": "BLAKE2F", "gasUsedWeight": 6, "countCost": 188}],
+                    "dryRun": true
+                }]
+            }"#,
+        )
+        .expect("valid schedule");
+
+        let mut builder_config = BuilderConfig::default();
+        let provider = Arc::clone(&builder_config.metering_provider);
+        builder_config.resource_metering = ResourceMeteringConfig {
+            enabled: true,
+            schedule: Arc::new(schedule),
+            provider: Arc::clone(&provider),
+        };
+
+        let native = MultiplexingServiceBuilder::new(builder_config).native_payload_config(false);
+        assert!(native.resource_metering.enabled);
+        assert!(native.resource_metering.is_active());
+        assert_eq!(native.resource_metering.schedule.dimensions.len(), 1);
+        assert_eq!(native.resource_metering.schedule.dimensions[0].name, "builder_execution");
         assert!(Arc::ptr_eq(&native.resource_metering.provider, &provider));
     }
 }

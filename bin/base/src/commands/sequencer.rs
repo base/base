@@ -275,6 +275,30 @@ mod tests {
     }
 
     #[test]
+    fn parses_resource_metering_schedule_in_sequencer_command() {
+        let cli = BaseCli::try_parse_from(sequencer_args(&[
+            "base",
+            "sequencer",
+            "--p2p.sequencer.key",
+            SEQUENCER_KEY,
+            "--builder.enable-resource-metering",
+            "--payload.resource-metering-schedule",
+            "/tmp/resource-metering-schedule.json",
+        ]))
+        .expect("sequencer command should accept --payload.resource-metering-schedule");
+
+        let BaseCommand::Sequencer(sequencer) = cli.command else {
+            panic!("expected sequencer command");
+        };
+
+        assert!(sequencer.builder.enable_resource_metering);
+        assert_eq!(
+            sequencer.builder.resource_metering_schedule.as_deref(),
+            Some(std::path::Path::new("/tmp/resource-metering-schedule.json"))
+        );
+    }
+
+    #[test]
     fn shadow_indexer_defaults_to_disabled() {
         let cli = BaseCli::parse_from(sequencer_args(&[
             "base",
