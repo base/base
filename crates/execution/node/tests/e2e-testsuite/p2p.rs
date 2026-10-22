@@ -6,10 +6,6 @@ use base_node_core::utils::{advance_chain, setup};
 use futures::StreamExt;
 use tokio::sync::Mutex;
 
-// Ignored: reth's deferred_trie `wait_cloned` debug_assert fires when called from a Rayon
-// worker thread during proof computation in debug builds. This is a known upstream reth issue.
-// Run with `--include-ignored` once https://github.com/paradigmxyz/reth is fixed.
-#[ignore]
 #[tokio::test]
 async fn can_sync() -> eyre::Result<()> {
     reth_tracing::init_test_tracing();
@@ -21,7 +17,7 @@ async fn can_sync() -> eyre::Result<()> {
     let mut second_node = nodes.pop().unwrap();
     let mut first_node = nodes.pop().unwrap();
 
-    let tip: usize = 20;
+    let tip: usize = 90;
     let tip_index: usize = tip - 1;
     let reorg_depth = 2;
 
@@ -67,11 +63,11 @@ async fn can_sync() -> eyre::Result<()> {
     // By returning Valid here, the consensus node will finally return a finalized hash
     let _ = third_node.submit_payload(side_payload_chain[0].clone()).await;
 
-    // It will issue a pipeline reorg to 88a, and then make 89b canonical AND finalized.
+    // Reorgs the third node to 88a, then makes 89b canonical AND finalized.
     third_node.update_forkchoice(side_chain[0], side_chain[0]).await?;
 
-    // Make sure we have the updated block
-    third_node.wait_unwind((tip - reorg_depth) as u64).await?;
+    // Make sure we have the updated block. The Headers checkpoint is not asserted: persistence
+    // unwinds it to 88 and then advances it with 89b, so polling for 88 races.
     third_node
         .wait_block(
             side_payload_chain[0].block().number,
