@@ -15,6 +15,11 @@ const PRUNE_INTERVAL: u64 = 1000;
 /// at least twice `resend_after`, so a transaction due for a resend can be told apart from one
 /// never sent. Older entries are pruned every [`PRUNE_INTERVAL`] lookups to bound memory, so one
 /// can outlive twice `resend_after` until the next sweep.
+///
+/// Once the destination confirms it holds a transaction, its entry is dated ahead so the resend
+/// comes [`Self::DELIVERED_RESEND_AFTER`] after the confirmation: resending a transaction the
+/// destination holds only earns an `already imported` rejection, and a resting pool would
+/// otherwise be resent in full every `resend_after`.
 pub(super) struct RecentlySent {
     seen: HashMap<B256, Instant>,
     resend_after: Duration,
@@ -22,6 +27,10 @@ pub(super) struct RecentlySent {
 }
 
 impl RecentlySent {
+    /// How long after a confirmed delivery a still-pending transaction is resent, unless the
+    /// destination is lost first (see [`Self::forget_deliveries`]).
+    pub(super) const DELIVERED_RESEND_AFTER: Duration = Duration::from_secs(30);
+
     /// Creates a new tracker.
     pub(super) fn new(resend_after: Duration) -> Self {
         Self { seen: HashMap::new(), resend_after, check_count: 0 }
@@ -54,6 +63,25 @@ impl RecentlySent {
     /// Records a hash as sent at the current instant.
     pub(super) fn mark_sent(&mut self, hash: B256) {
         self.seen.insert(hash, Instant::now());
+    }
+
+    /// Records that the destination holds the transaction, deferring its resend to
+    /// [`Self::DELIVERED_RESEND_AFTER`] from now, or to `resend_after` if that is longer.
+    ///
+    /// The entry is dated in the future, `resend_after` before the resend is due.
+    pub(super) fn mark_delivered(&mut self, hash: B256) {
+        let deferral = Self::DELIVERED_RESEND_AFTER.saturating_sub(self.resend_after);
+        let dated = Instant::now() + deferral;
+        self.seen.entry(hash).and_modify(|at| *at = (*at).max(dated)).or_insert(dated);
+    }
+
+    /// Puts every confirmed transaction back on the regular resend schedule, from now.
+    ///
+    /// Called when the destination failed a send, as when it restarts: it may have lost the
+    /// transactions it confirmed before.
+    pub(super) fn forget_deliveries(&mut self) {
+        let now = Instant::now();
+        self.seen.values_mut().for_each(|at| *at = (*at).min(now));
     }
 
     /// Returns the current cache size.
@@ -120,6 +148,35 @@ mod tests {
         let hash = B256::random();
 
         tracker.mark_sent(hash);
+        std::thread::sleep(Duration::from_millis(15));
+        assert!(!tracker.was_recently_sent(&hash));
+    }
+
+    #[test]
+    fn delivered_hash_outlives_the_resend_window() {
+        let mut tracker = RecentlySent::new(Duration::from_millis(10));
+        let (delivered, undelivered) = (B256::random(), B256::random());
+
+        tracker.mark_sent(delivered);
+        tracker.mark_sent(undelivered);
+        tracker.mark_delivered(delivered);
+        std::thread::sleep(Duration::from_millis(15));
+        tracker.prune_expired();
+
+        assert!(tracker.was_recently_sent(&delivered));
+        assert!(!tracker.was_recently_sent(&undelivered));
+    }
+
+    #[test]
+    fn forgotten_delivery_is_resent_after_the_resend_window() {
+        let mut tracker = RecentlySent::new(Duration::from_millis(10));
+        let hash = B256::random();
+
+        tracker.mark_sent(hash);
+        tracker.mark_delivered(hash);
+        tracker.forget_deliveries();
+
+        assert!(tracker.was_recently_sent(&hash));
         std::thread::sleep(Duration::from_millis(15));
         assert!(!tracker.was_recently_sent(&hash));
     }

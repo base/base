@@ -1,7 +1,10 @@
 use std::{
     collections::HashMap,
     fmt,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -101,7 +104,8 @@ impl<P: TransactionPool> ReaderPool for P {
 /// Each pass waits until at least half of the destination queue is free, refreshes its lanes, and
 /// fills the free slots from two lanes: a configured percentage of picks goes to the oldest pending
 /// transaction and the rest to the highest tip-per-gas bid (see [`LaneMix`] and [`LaneScheduler`]).
-/// Transactions recently accepted by this destination's queue are skipped.
+/// Transactions recently accepted by this destination's queue are skipped, and so, for longer, are
+/// transactions the destination reported it holds (see [`RecentlySent`]).
 ///
 /// The lanes come from a full `best_transactions()` read about every [`Self::FULL_READ_INTERVAL`].
 /// In between, the reader looks up the transactions the pool announces as pending and adds them to
@@ -140,6 +144,10 @@ pub(crate) struct DestinationReader<P: ReaderPool, E = NoExtensions> {
     full_read_interval: Duration,
     lane_mix: LaneMix,
     sender: mpsc::Sender<InsertValidatedTransaction<E>>,
+    /// Hashes the destination reported it holds, from this destination's forwarder.
+    delivered: mpsc::Receiver<TxHash>,
+    /// Set by this destination's forwarder when the destination failed a send.
+    destination_lost: Arc<AtomicBool>,
     cancel: CancellationToken,
     builder_url: Url,
     url_label: Arc<str>,
@@ -197,10 +205,26 @@ where
             full_read_interval: Self::FULL_READ_INTERVAL,
             lane_mix,
             sender,
+            delivered: mpsc::channel(1).1,
+            destination_lost: Arc::default(),
             cancel,
             builder_url,
             url_label,
         }
+    }
+
+    /// Takes the hashes the destination confirmed it holds from `delivered`, deferring their
+    /// resends, until `lost` reports a failed send to the destination.
+    ///
+    /// The forwarder for the same destination feeds both, see its `with_delivery_receipts`.
+    pub(crate) fn with_delivery_receipts(
+        mut self,
+        delivered: mpsc::Receiver<TxHash>,
+        lost: Arc<AtomicBool>,
+    ) -> Self {
+        self.delivered = delivered;
+        self.destination_lost = lost;
+        self
     }
 
     /// Reader loop — runs until the [`CancellationToken`] is cancelled.
@@ -278,8 +302,16 @@ where
     }
 
     /// Reads the pool into a fresh [`Snapshot`], skipping transactions this destination's queue
-    /// accepted recently. Returns `None` if the reader was cancelled while reading.
+    /// accepted recently or that the destination confirmed it holds. Returns `None` if the reader was
+    /// cancelled while reading.
     fn take_snapshot(&mut self) -> Option<Snapshot<P::Transaction>> {
+        while let Ok(hash) = self.delivered.try_recv() {
+            self.recently_sent.mark_delivered(hash);
+        }
+        if self.destination_lost.swap(false, Ordering::Relaxed) {
+            self.recently_sent.forget_deliveries();
+        }
+
         let mut txs_read: u64 = 0;
         let mut txs_ignored: u64 = 0;
 
@@ -1001,5 +1033,56 @@ mod tests {
             .await
             .expect("reader exits well before the gap or another snapshot ends")
             .unwrap();
+    }
+
+    /// A transaction the destination confirmed it holds is not resent when the resend window
+    /// lapses, while one it never confirmed is.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn delivered_transactions_are_not_resent_with_the_undelivered() {
+        const RESEND_AFTER: Duration = Duration::from_millis(200);
+        let (delivered, undelivered) = (transaction(0), transaction(1));
+        let (_announce, announcements) = mpsc::channel(16);
+        let (snapshot_tx, _snapshots) = mpsc::unbounded_channel();
+        let (sender, mut queue) = mpsc::channel::<InsertValidatedTransaction>(64);
+        let (receipts, receipts_rx) = mpsc::channel(16);
+        let cancel = CancellationToken::new();
+        let mut reader = DestinationReader::new(
+            costly_pool(
+                Duration::ZERO,
+                vec![Arc::clone(&delivered), Arc::clone(&undelivered)],
+                announcements,
+                snapshot_tx,
+            ),
+            ReaderConfig {
+                resend_after: RESEND_AFTER,
+                channel_capacity: 64,
+                poll_interval: Duration::from_millis(1),
+                fifo_percent: 20,
+            },
+            sender,
+            cancel.clone(),
+            "http://builder.test".parse().unwrap(),
+        )
+        .with_delivery_receipts(receipts_rx, Arc::default());
+
+        let run = tokio::spawn(async move { reader.run().await });
+        let mut sends = HashMap::<TxHash, usize>::new();
+        // Waits for resends rather than a fixed time, so a slow machine only makes the test longer.
+        time::timeout(Duration::from_secs(5), async {
+            while sends.get(undelivered.hash()).copied().unwrap_or_default() < 3 {
+                let forwarded = queue.recv().await.expect("the reader keeps forwarding");
+                // Confirmed on its first send, as the forwarder would on the builder's response.
+                if forwarded.tx_hash == *delivered.hash() {
+                    receipts.send(forwarded.tx_hash).await.unwrap();
+                }
+                *sends.entry(forwarded.tx_hash).or_default() += 1;
+            }
+        })
+        .await
+        .expect("the undelivered transaction is resent");
+        cancel.cancel();
+        time::timeout(Duration::from_secs(5), run).await.expect("reader exits").unwrap();
+
+        assert_eq!(sends.get(delivered.hash()), Some(&1), "the delivered transaction is sent once");
     }
 }
