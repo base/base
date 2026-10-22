@@ -436,18 +436,22 @@ def collect_source_context(ctx: Context, cwd: Path) -> str:
     root = cwd.resolve()
     tracked = set(run(["git", "-c", "core.fsmonitor=false", "ls-files", "--cached", "-z"],
                       cwd=root, timeout=GH_TIMEOUT_SECONDS).split("\0"))
-    paths = dict.fromkeys(["AGENTS.md", "CLAUDE.md", "docs/guides/BLOCK_PRODUCTION_REVIEW.md",
-                          *ctx.files, *(t["path"] for t in ctx.threads if t.get("path"))])
+    paths = list(dict.fromkeys(["AGENTS.md", "CLAUDE.md", "docs/guides/BLOCK_PRODUCTION_REVIEW.md",
+                               *ctx.files, *(t["path"] for t in ctx.threads if t.get("path"))]))
     parts: list[str] = []
     remaining = MAX_SOURCE_CHARS
-    for name in paths:
+    omitted: list[str] = []
+    for index, name in enumerate(paths):
         if remaining <= 0:
-            parts.append("[source context truncated: remaining files unavailable]")
+            omitted = paths[index:]
             break
         relative = Path(name)
         path = root / relative
         text = "[unavailable: not a tracked regular text file]"
         if name in tracked and not relative.is_absolute() and ".." not in relative.parts:
+            # Base's root AGENTS.md aliases the separately snapshotted CLAUDE.md; do not follow the link.
+            if name == "AGENTS.md" and path.is_symlink() and os.readlink(path) == "CLAUDE.md":
+                text = "[guidance alias: see the CLAUDE.md entry below; this symlink is not followed]"
             # Reject links in every component, including a tracked path whose parent was replaced locally.
             if not any(p.is_symlink() for p in (path, *path.parents) if p != root) and path.is_file():
                 try:
@@ -464,7 +468,11 @@ def collect_source_context(ctx: Context, cwd: Path) -> str:
         parts.append(block[:remaining])
         remaining -= len(block)
         if remaining < 0:
-            parts.append("\n[source context truncated]")
+            omitted = paths[index:]
+            break
+    if omitted:
+        parts.append("\n[source context truncated: these files are missing or incomplete:\n"
+                     + clip("\n".join(omitted), 8000) + "]\n")
     return "".join(parts)
 
 
@@ -634,8 +642,8 @@ def pr_context(number: int, repo: str, post: bool = False,
                checkout: Callable[[str], Path] | None = None) -> Context:
     """Read a pull request.
 
-    `checkout(head_sha)` is called, for a run that does not post, when this checkout is not at the pull
-    request's head; it returns a directory with that commit for the agents to read.
+    `checkout(head_sha)` is called, for a run that does not post, when this checkout is dirty or not at
+    the pull request's head; it returns a directory with that commit for the agents to read.
     """
 
     # Read the metadata and the diff at one head commit, or comments could target the wrong lines.
@@ -676,11 +684,12 @@ def pr_context(number: int, repo: str, post: bool = False,
             log(f"warning: {message}; check out the PR head for line numbers to match")
         else:
             tree = checkout(info["headRefOid"])
-    if post and git(["status", "--porcelain", "--untracked-files=no"]).strip():
-        # The agents read the working tree, so edits that GitHub does not have would be reviewed
-        # and then posted as if they were in the pull request.
-        raise ReviewError("the working tree has uncommitted changes to tracked files; "
-                          "commit or stash them before posting")
+    if tree is None and git(["status", "--porcelain", "--untracked-files=no"]).strip():
+        # A PR snapshot must match GitHub's diff even when its verdict is only printed locally.
+        if post or checkout is None:
+            raise ReviewError("the working tree has uncommitted changes to tracked files; "
+                              "commit or stash them, or review the PR without --post or --no-worktree")
+        tree = checkout(info["headRefOid"])
     threads = fetch_threads(number, repo)
     return Context(
         description=info["body"] or "(no description)",

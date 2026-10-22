@@ -2,6 +2,7 @@
 """Unit tests for review.py and render.py. Run with `python3 .agents/skills/pr-review/test_review.py`."""
 
 import argparse
+import contextlib
 import http.server
 import json
 import os
@@ -815,6 +816,18 @@ class WorktreeTests(unittest.TestCase):
         self.assertEqual(git_in(self.mine, "rev-parse", "HEAD"), before)
         self.assertEqual(git_in(self.mine, "branch", "--show-current"), "main")
 
+    def test_a_dirty_checkout_at_the_pr_head_uses_committed_files_and_preserves_edits(self) -> None:
+        git_in(self.mine, "checkout", "-q", "--detach", self.head)
+        (self.mine / "a.txt").write_text("my unpushed fix\n")
+        gh_fn, _ = PrContextTests().scripted(head=self.head)
+        with self.remote_for("base/base"), mock.patch.object(review, "gh", gh_fn), contextlib.ExitStack() as stack:
+            ctx = review.pr_context(7, "base/base", checkout=lambda sha: stack.enter_context(
+                review.pr_worktree(7, "base/base", sha)))
+            self.assertIsNotNone(ctx.tree)
+            self.assertEqual((ctx.tree / "a.txt").read_text(), "the pull request's version\n")
+        self.assertEqual((self.mine / "a.txt").read_text(), "my unpushed fix\n")
+        self.assertEqual(git_in(self.mine, "rev-parse", "HEAD"), self.head)
+
     def test_the_worktree_is_removed_afterwards_even_when_the_run_fails(self) -> None:
         with self.remote_for("o/r"):
             try:
@@ -877,7 +890,7 @@ class WorktreeTests(unittest.TestCase):
             with self.subTest(checked_out=checked_out[:7]):
                 calls.clear()
                 with mock.patch.object(review, "gh", gh_fn), mock.patch.object(
-                        review, "git", return_value=checked_out + "\n"):
+                        review, "git", side_effect=lambda args: "" if args[0] == "status" else checked_out + "\n"):
                     ctx = review.pr_context(7, "base/base", checkout=checkout)
                 self.assertEqual(calls, [PrContextTests.HEAD] if expect_call else [])
                 self.assertEqual(ctx.tree, Path("/the/worktree") if expect_call else None)
@@ -989,6 +1002,23 @@ class SourceContextTests(unittest.TestCase):
         self.assertGreaterEqual(text.lower().count("unavailable"), len(unsafe))
         self.assertIn("AGENTS-GUIDE", text)  # the safe files are still there
 
+    def test_the_root_guidance_alias_names_the_separate_entry_without_following_other_links(self) -> None:
+        guide = self.root / "AGENTS.md"
+        guide.unlink()
+        guide.symlink_to("CLAUDE.md")
+        text = self.collect([])
+        agents_entry = text.split("### AGENTS.md\n", 1)[1].split("### CLAUDE.md", 1)[0]
+        self.assertIn("guidance alias", agents_entry)
+        self.assertIn("CLAUDE.md", agents_entry)
+        self.assertNotIn("unavailable", agents_entry)
+        self.assertEqual(text.count("CLAUDE-GUIDE"), 1)
+        guide.unlink()
+        guide.symlink_to(self.outside / "secret.txt")
+        text = self.collect([])
+        self.assertNotIn("OUTSIDE-SECRET", text)
+        self.assertNotIn("guidance alias", text)
+        self.assertIn("unavailable", text)
+
     def test_a_large_file_and_the_whole_snapshot_are_bounded_and_say_so(self) -> None:
         line = "x" * 79
         big = "\n".join([line] * (review.MAX_SOURCE_FILE_CHARS // 40)) + "\nTAIL-MARKER\n"
@@ -1003,6 +1033,10 @@ class SourceContextTests(unittest.TestCase):
         everything = self.collect(names)
         self.assertLessEqual(len(everything), review.MAX_SOURCE_CHARS + 500)
         self.assertIn("truncated", everything[-200:].lower())
+        self.assertEqual(everything.count("source context truncated"), 1)
+        omitted = everything.split("source context truncated", 1)[1]
+        for name in names[-2:]:
+            self.assertIn(name, omitted)
 
 
 GATEWAY_ENV = {"LLM_GATEWAY_HOSTNAME": "gateway.example.com", "LLM_GATEWAY_API_KEY": "sk-test-secret"}
@@ -1501,7 +1535,7 @@ class PrContextTests(unittest.TestCase):
 
     def context(self, gh_fn, checked_out: str | None = None, post: bool = False):
         with mock.patch.object(review, "gh", gh_fn), mock.patch.object(
-                review, "git", return_value=(checked_out or self.HEAD) + "\n"):
+                review, "git", side_effect=lambda args: "" if args[0] == "status" else (checked_out or self.HEAD) + "\n"):
             return review.pr_context(7, "base/base", post=post)
 
     def test_the_diff_is_rebuilt_from_the_files_api_when_gh_pr_diff_fails(self) -> None:
@@ -2066,19 +2100,16 @@ class ApplyPlanTests(unittest.TestCase):
         self.apply(FakeGh())
         self.assertEqual(self.plan.resolves, [])
 
-    def test_a_dirty_tree_is_refused_when_posting_but_not_locally(self) -> None:
+    def test_a_dirty_tree_is_refused_without_a_worktree_including_nonposting_pr_reviews(self) -> None:
         def fake_git(args):
             return " M review.py\n" if args[0] == "status" else "a" * 40 + "\n"
 
-        for post, refused in ((True, True), (False, False)):
+        for post in (True, False):
             with self.subTest(post=post):
                 gh_fn, _ = PrContextTests().scripted()
-                with mock.patch.object(review, "gh", gh_fn), mock.patch.object(review, "git", fake_git):
-                    if refused:
-                        with self.assertRaises(review.ReviewError):
-                            review.pr_context(7, "base/base", post=post)
-                    else:
-                        review.pr_context(7, "base/base", post=post)
+                with mock.patch.object(review, "gh", gh_fn), mock.patch.object(review, "git", fake_git), \
+                        self.assertRaisesRegex(review.ReviewError, "uncommitted changes"):
+                    review.pr_context(7, "base/base", post=post)
 
     def test_a_push_during_the_run_does_not_stop_the_findings_but_stops_claims_that_something_is_fixed(self) -> None:
         # Findings are about the commit that was read and are anchored to it. "Fixed" is a claim about the
