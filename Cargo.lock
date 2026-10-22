@@ -5071,6 +5071,7 @@ dependencies = [
  "alloy-sol-types",
  "async-trait",
  "base-cli-utils",
+ "base-common-consensus",
  "base-common-flashblocks",
  "base-common-network",
  "base-common-precompiles",

@@ -593,6 +593,7 @@ impl LocalBenchmarkArgs {
                     saw_swap = true;
                 }
                 TxTypeConfig::Transfer
+                | TxTypeConfig::Eip8430Transfer
                 | TxTypeConfig::Calldata { .. }
                 | TxTypeConfig::Erc20 { .. }
                 | TxTypeConfig::Storage { .. }
@@ -1599,12 +1600,14 @@ transaction_submission_rpcs: http://localhost:8545
 query_rpc: http://localhost:8545
 flashblocks_ws: ws://localhost:7111
 transactions:
-  - weight: 50
+  - weight: 40
     type: uniswap_v3
     fee: 500
-  - weight: 50
+  - weight: 40
     type: aerodrome_cl
     tick_spacing: 100
+  - weight: 20
+    type: eip8430_transfer
 real_token_setup:
   enabled: true
   weth_amount_per_sender: "50000000000000000"
@@ -1625,6 +1628,18 @@ real_token_setup:
 
         LocalBenchmarkArgs::apply_devnet_swap_harness(&mut config, harness).unwrap();
 
+        assert_eq!(config.transactions.len(), 3, "harness must retain all three workloads");
+        assert!(
+            matches!(
+                config.transactions[2].tx_type,
+                base_load_tests::TxTypeConfig::Eip8430Transfer
+            ),
+            "harness must preserve the native transfer type"
+        );
+        assert_eq!(
+            config.transactions[2].weight, 20,
+            "harness must preserve native transfer weight"
+        );
         let setup = config.real_token_setup.expect("setup should be configured");
         assert_eq!(setup.weth, Some("0x4200000000000000000000000000000000000006".parse().unwrap()));
         assert_eq!(setup.pair_token.token, Some(harness.usdc));
@@ -1657,7 +1672,8 @@ real_token_setup:
                         Some("0x4200000000000000000000000000000000000006".parse().unwrap())
                     );
                 }
-                _ => panic!("expected swap tx type"),
+                base_load_tests::TxTypeConfig::Eip8430Transfer => {}
+                _ => panic!("expected swap or native transfer tx type"),
             }
         }
     }

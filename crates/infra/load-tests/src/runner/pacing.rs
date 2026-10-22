@@ -14,6 +14,7 @@ use alloy_primitives::{Address, TxHash, U256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types::BlockNumberOrTag;
 use alloy_signer_local::PrivateKeySigner;
+use base_common_consensus::Eip8130Constants;
 use base_common_network::Base;
 use base_tx_manager::NonceManager;
 use futures::{StreamExt, TryStreamExt, stream};
@@ -1291,6 +1292,7 @@ impl LoadRunner {
                     config.validity_router.predicates_for(cohort, current_block, from, to_addr);
 
                 prepared_txs.push(PreparedTransaction {
+                    native: tx_request.transaction_type == Some(Eip8130Constants::EIP8130_TX_TYPE),
                     from,
                     to: to_addr,
                     value,
@@ -2201,6 +2203,65 @@ mod tests {
         },
     };
 
+    /// Native envelope selection and fresh-recipient values survive preparation.
+    #[tokio::test]
+    async fn eip8430_preparation_preserves_envelope_and_recipient() {
+        let config = crate::runner::LoadConfig {
+            account_count: 2,
+            fresh_recipient_ratio: 1.0,
+            transactions: vec![crate::runner::TxConfig {
+                weight: 100,
+                tx_type: crate::runner::TxType::Eip8430Transfer,
+            }],
+            ..crate::runner::LoadConfig::devnet()
+        };
+        let runner = LoadRunner::new(config.clone()).expect("native runner must initialize");
+        let addresses: Vec<_> = runner.accounts.accounts().iter().map(|a| a.address).collect();
+        let (_, rx) = tokio::sync::watch::channel(1);
+        let (signed_chunk_tx, _) = mpsc::channel(1);
+        let (_, nonce_reset_rx) = mpsc::channel(1);
+        let presign = super::PresignConfig {
+            sender_addresses: addresses.clone(),
+            sender_next_nonces: vec![7, 9],
+            sender_generations: vec![0, 0],
+            signers: Arc::clone(&runner.signers),
+            nonce_managers: Arc::clone(&runner.nonce_managers),
+            chain_id: config.chain_id,
+            base_fee_rx: rx,
+            max_gas_price: config.max_gas_price,
+            validity_priority_lead_multiplier: 1,
+            validity_priority_fee_divisor: 1,
+            estimated_gas: 50_000,
+            fresh_recipient_ratio: 1.0,
+            signed_chunk_tx,
+            nonce_reset_rx,
+            validity_router: crate::runner::ValidityRouter::new(&config),
+            query_client: runner.client.clone(),
+        };
+        let mut generator = runner.generator;
+        let mut keys = runner.recipient_keys;
+        let mut rng = crate::workload::SeededRng::new(42);
+        let jobs =
+            LoadRunner::build_sender_jobs(&mut generator, &mut keys, &mut rng, &presign, 1, 0)
+                .expect("native requests must prepare");
+        assert_eq!(jobs.len(), 2, "exactly one job per sender must be prepared");
+        for (i, job) in jobs.iter().enumerate() {
+            assert_eq!(job.start_nonce, [7, 9][i], "existing sender nonce must be retained");
+            assert_eq!(job.prepared_txs.len(), 1, "exactly one request per sender is requested");
+            let tx = &job.prepared_txs[0];
+            assert!(tx.native, "native marker must survive request preparation");
+            assert!(
+                !addresses.contains(&tx.to.expect("transfer recipient")),
+                "fresh recipient must not be a sender-pool address"
+            );
+            assert_eq!(tx.gas_limit, 200_000, "native gas ceiling must survive preparation");
+            assert_eq!(
+                tx.estimated_gas, 50_000,
+                "pacing must use calibrated gas rather than ceiling"
+            );
+        }
+    }
+
     #[test]
     fn mempool_target_rounds_up_and_clamps_to_capacity() {
         assert_eq!(LoadRunner::mempool_target_transactions(300, 70, 10).unwrap(), 5);
@@ -2573,7 +2634,7 @@ mod tests {
                         Instant::now(),
                     ),
                     fallback_block_gas_limit: 30_000_000,
-                    block_time: Duration::from_secs(2),
+                    block_time: Duration::from_millis(200),
                     presign_target_gas: 0,
                     max_in_flight_per_sender: 1,
                     max_total_in_flight: 1,
@@ -2602,7 +2663,9 @@ mod tests {
 
         let summary = collector.summarize(Duration::from_secs(1), None);
         assert_eq!(summary.pacing.canonical_cycles, 0);
-        assert!(summary.pacing.safety_cycles >= 2);
+        // The immediate refill and the interval's first tick both run at the start, so a third
+        // cycle means the periodic refill fired before the deadline.
+        assert!(summary.pacing.safety_cycles >= 3);
         assert!(!results_tracker.measurement_finished());
     }
 }

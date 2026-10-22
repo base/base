@@ -1,0 +1,17 @@
+# Synthetic EIP-8430 EOA self-pay native transfers; not an observed mainnet mix.
+# Requires a node/snapshot with Everest active and native transaction support.
+# Run through base-bench snapshot --load-test-config, which replaces RPC URLs.
+# Protocol nonce lane (key zero), one call per transaction, no payer sponsorship.
+transaction_submission_rpcs: ["http://127.0.0.1:7545"]
+query_rpc: "http://127.0.0.1:7545"
+chain_id: 8453
+sender_count: 100
+in_flight_per_sender: 64
+target_gps: null
+block_time: "2s"
+duration: null
+measurement_blocks: 500
+skip_drain: true
+funding_amount: "200000000000000000"
+transactions:
+  - {weight: 100, type: eip8430_transfer}
