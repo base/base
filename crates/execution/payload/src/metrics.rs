@@ -84,6 +84,18 @@ base_metrics::define_metrics! {
     #[label(name = "flow", default = ["standard", "validity"])]
     #[label(name = "bid", default = ["coinbase_tip", "priority_fee"])]
     tip_per_gas: histogram,
+    #[describe(
+        "Time to build one block from the transaction pool in the native payload builder in seconds"
+    )]
+    native_payload_build_duration: histogram,
+    #[describe(
+        "Time spent applying pre-execution changes and executing transactions in one native payload build in seconds"
+    )]
+    native_payload_execution_duration: histogram,
+    #[describe(
+        "Time from the end of transaction execution until the native payload is sealed, including the state root, in seconds"
+    )]
+    native_payload_state_root_duration: histogram,
 }
 
 impl ValidityMetrics {
@@ -148,6 +160,14 @@ impl BuilderMetrics {
         Self::base_fee_revenue_wei(FLOW_VALIDITY).record(tracker.validity.base_fees_f64());
         Self::coinbase_tip_revenue_wei(FLOW_STANDARD).record(tracker.standard.coinbase_tips_f64());
         Self::coinbase_tip_revenue_wei(FLOW_VALIDITY).record(tracker.validity.coinbase_tips_f64());
+    }
+
+    /// Records the execution and total duration of one native payload build.
+    pub fn record_native_build(execution: Duration, total: Duration) {
+        Self::native_payload_build_duration().record(total.as_secs_f64());
+        Self::native_payload_execution_duration().record(execution.as_secs_f64());
+        Self::native_payload_state_root_duration()
+            .record(total.saturating_sub(execution).as_secs_f64());
     }
 
     /// Records one included transaction's tip per gas by flow and bid mechanism.

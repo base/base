@@ -2335,7 +2335,7 @@
                 "uid": "PBFA97CFB590B2093"
               },
               "editorMode": "code",
-              "expr": "reth_base_builder_total_block_built_duration{job=\"l2_builder\",quantile=\"$quantile\"} / 0.2 * 100",
+              "expr": "(reth_base_builder_native_payload_build_duration{job=\"l2_builder\",quantile=\"$quantile\"} or reth_base_builder_total_block_built_duration{job=\"l2_builder\",quantile=\"$quantile\"}) / 0.2 * 100",
               "legendFormat": "budget used · p$quantile",
               "range": true,
               "refId": "A"
@@ -2489,7 +2489,7 @@
                 "uid": "PBFA97CFB590B2093"
               },
               "editorMode": "code",
-              "expr": "reth_base_builder_total_block_built_duration{job=\"l2_builder\",quantile=\"$quantile\"}",
+              "expr": "reth_base_builder_native_payload_build_duration{job=\"l2_builder\",quantile=\"$quantile\"} or reth_base_builder_total_block_built_duration{job=\"l2_builder\",quantile=\"$quantile\"}",
               "legendFormat": "total build · p$quantile",
               "range": true,
               "refId": "A"
@@ -2500,7 +2500,7 @@
                 "uid": "PBFA97CFB590B2093"
               },
               "editorMode": "code",
-              "expr": "reth_base_builder_state_root_calculation_duration{job=\"l2_builder\",quantile=\"$quantile\"}",
+              "expr": "reth_base_builder_native_payload_state_root_duration{job=\"l2_builder\",quantile=\"$quantile\"} or reth_base_builder_state_root_calculation_duration{job=\"l2_builder\",quantile=\"$quantile\"}",
               "legendFormat": "state root · p$quantile",
               "range": true,
               "refId": "B"

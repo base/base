@@ -245,6 +245,16 @@ series are identified by scenario and node role; `--run-id` is only the unique a
 defaults to `<benchmark-run>-<timestamp>` when omitted. Upload the metrics and artifact files before
 `metadata.json` when publishing to the report service because metadata is its completion signal.
 
+Which builder metrics describe the canonical blocks depends on cadence. At 2s the flashblocks
+builder produces them, so read `reth_base_builder_total_block_built_duration_avg` and the other
+flashblocks series. At 200ms the payload-builder cutover selects the native builder after Denim and
+sends the flashblocks builder a no-pool build of each block, so its series describe that discarded
+payload. Read `reth_base_builder_native_payload_{build,execution,state_root}_duration_avg` instead.
+`reth_base_builder_txs_included_per_block_flow_*_avg` and
+`reth_base_builder_tx_gas_used_per_block_flow_*_avg` count pool transactions, excluding sequencer
+transactions, in blocks from whichever builder was selected. Like every histogram average they span
+the scrape interval; `transactions/per_block` and `gas/per_block` are exact per block.
+
 For a saturated Blake2f comparison with equal 60-second measured windows, provide separate 2s and
 200ms YAMLs with 30 and 300 measured blocks, respectively. Both should issue one fixed
 50,000-round Blake2f call per transaction with identical sender, in-flight, batching, funding, and

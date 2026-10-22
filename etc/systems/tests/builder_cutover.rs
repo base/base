@@ -111,6 +111,20 @@ async fn verify_cutover(zenith_activation_block: Option<u64>) -> Result<()> {
     verify_chain_and_cadence(&builder, &client, last_verified_block).await?;
     verify_flashblocks_stop_at_denim(&system.l2_stack().builder().flashblocks_url()).await?;
 
+    // Every pool transaction sent above is canonical, and only the selected builder records
+    // inclusion, so the builders' combined count must equal the transactions sent.
+    let metrics = reqwest::get(system.l2_stack().builder().metrics_url()?).await?.text().await?;
+    let sent = if zenith_timestamp.is_some() { 3.0 } else { 2.0 };
+    let standard_txs = r#"reth_base_builder_txs_included_per_block_sum{flow="standard"}"#;
+    assert_eq!(metric_value(&metrics, standard_txs)?, sent);
+    for series in [
+        "reth_base_builder_native_payload_build_duration_sum",
+        "reth_base_builder_native_payload_execution_duration_sum",
+        "reth_base_builder_native_payload_state_root_duration_sum",
+    ] {
+        assert!(metric_value(&metrics, series)? > 0.0, "native builder recorded no {series}");
+    }
+
     Ok(())
 }
 
@@ -123,6 +137,15 @@ fn selected_build_count(metrics: &str, builder: &str) -> Result<u64> {
         .ok_or_else(|| eyre::eyre!("missing selected-build metric for {builder}"))?
         .parse()
         .wrap_err_with(|| format!("invalid selected-build metric for {builder}"))
+}
+
+fn metric_value(metrics: &str, series: &str) -> Result<f64> {
+    metrics
+        .lines()
+        .find_map(|line| line.strip_prefix(series)?.strip_prefix(' '))
+        .ok_or_else(|| eyre::eyre!("missing metric {series}"))?
+        .parse()
+        .wrap_err_with(|| format!("invalid metric {series}"))
 }
 
 async fn send_transaction(provider: &RootProvider<Base>, signer: &PrivateKeySigner) -> Result<u64> {
