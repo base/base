@@ -17,7 +17,6 @@ jobs:
   ci:
     uses: ./.depot/workflows/ci-core.yml
     with:
-      allow_registry_login: ${{ github.event.pull_request.head.repo.fork != true }}
       # The tested PR merge commit stores its exact base as the first parent.
       diff_base: HEAD^1
       clippy_command: >-
