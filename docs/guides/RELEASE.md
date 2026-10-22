@@ -45,8 +45,26 @@ Once you are satisfied with an RC, run the **Publish Release** workflow (`Action
 - Creates the final tag `vX.Y.Z` on the release branch
 - Builds the compatibility `node` image and the `base`, `base-reth-node`, `base-consensus`, `base-builder`, `basectl`, and `base-snapshotter` images for amd64 and arm64 (`PROFILE=maxperf`)
 - Tags every image as `vX.Y.Z`, `X.Y`, `X`, and `latest`
-- Creates a draft GitHub release with auto-generated changelog and uploads binaries
-- Review and publish the draft release on GitHub
+- Creates a draft GitHub release with an empty body and uploads binaries
+- Write the release notes in the draft from [`.github/RELEASE_TEMPLATE.md`](../../.github/RELEASE_TEMPLATE.md) (see [Release notes](#release-notes)), then publish it on GitHub. The body starts blank: paste the template, and fill "What's changed" with GitHub's **Generate release notes** button or `gh release edit vX.Y.Z --notes-file <file>`
+
+## Release notes
+
+Every release body starts from [`.github/RELEASE_TEMPLATE.md`](../../.github/RELEASE_TEMPLATE.md), so node operators and the tools that read releases find the same information in the same place every time.
+
+- **Operator action comes first.** It is a two-row table: Base Mainnet, then Base Sepolia, in that order on every release. Both rows are always present, even when only one network needs to act, and even when Sepolia has the nearer deadline. The Deadline column carries urgency; the fixed row order lets an operator go straight to their network.
+- **Action** is one of `Required`, `Recommended` or `Optional`:
+  - `Required`: the node stops following the chain, fails to start, or stays exposed to a security issue unless it runs this release (eg, a hardfork activation, or an urgent fix for a fork that is already active).
+  - `Recommended`: operators should upgrade, but nothing breaks if they wait (eg, a fix for a bug they can hit).
+  - `Optional`: safe to run, nothing changes for this network if they don't.
+- **Deadline** is one of:
+  - `YYYY-MM-DD HH:MM UTC` (eg, `2026-11-05 18:00 UTC`): the release must be running by then.
+  - `ASAP`: upgrade immediately; there is no future cutoff because the risk is already live. Use only with `Required`.
+  - `None`: no cutoff. Use with `Recommended` and `Optional`.
+- **Breaking changes** lists every removed flag, renamed flag and changed default, one bullet each, with the step the operator takes. Write `None.` when there are none rather than deleting the section.
+- **Replaces** names an earlier release operators should move off (eg, a patch that replaces a faulty release).
+- Anywhere else the notes name both networks, Base Mainnet comes first.
+- Link text names its target (eg, "Denim upgrade overview"), never "here".
 
 ## Auto-RC behavior
 
