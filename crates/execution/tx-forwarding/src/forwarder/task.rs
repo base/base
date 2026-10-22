@@ -1,4 +1,4 @@
-use std::{collections::VecDeque, sync::Arc, time::Instant};
+use std::{sync::Arc, time::Instant};
 
 use alloy_primitives::TxHash;
 use base_execution_txpool::MAX_VALIDATED_INSERT_BATCH;
@@ -23,51 +23,46 @@ use super::{config::ForwarderConfig, metrics::ForwarderMetrics, request::Forward
 /// Builder method that inserts a whole batch of validated transactions in one call.
 const INSERT_BATCH_METHOD: &str = "base_insertValidatedTransactions";
 
-/// Sliding window rate limiter that tracks request timestamps.
+/// Rate limiter (GCRA) that holds sends to `max_rps` on average.
 ///
-/// Maintains a bounded deque of send timestamps within a 1-second window.
-/// When the window is full (at `max_rps`), reports how long until the
-/// oldest entry expires so the caller can sleep precisely.
+/// Up to [`Self::BURST`] worth of sends (`max_rps` sends) may go out back to back after a quiet
+/// period, so a short spike is not delayed at all. Once that allowance is spent, sends are spaced
+/// one emission interval (`1s / max_rps`) apart, so a request never waits longer than that for a
+/// slot. A one-second sliding window instead lets the whole budget go in the first few
+/// milliseconds and then holds every send for the rest of the second, which delays requests by up
+/// to a second under sustained load.
 struct RateLimiter {
-    timestamps: VecDeque<Instant>,
-    max_rps: u32,
+    /// Time between sends at the sustained rate. `None` disables rate limiting.
+    interval: Option<std::time::Duration>,
+    /// How far ahead of the sustained schedule sends may run.
+    tolerance: std::time::Duration,
+    /// When the next send is due on the sustained schedule.
+    next: Option<Instant>,
 }
 
 impl RateLimiter {
-    fn new(max_rps: u32) -> Self {
-        Self { timestamps: VecDeque::with_capacity(max_rps as usize), max_rps }
-    }
+    /// How much sustained-rate send time may be spent back to back after a quiet period.
+    const BURST: std::time::Duration = std::time::Duration::from_secs(1);
 
-    fn prune(&mut self, now: Instant) {
-        let window = std::time::Duration::from_secs(1);
-        while self.timestamps.front().is_some_and(|front| now.duration_since(*front) >= window) {
-            self.timestamps.pop_front();
-        }
+    fn new(max_rps: u32) -> Self {
+        let interval = (max_rps > 0).then(|| std::time::Duration::from_secs(1) / max_rps);
+        let tolerance = interval
+            .map_or(std::time::Duration::ZERO, |interval| Self::BURST.saturating_sub(interval));
+        Self { interval, tolerance, next: None }
     }
 
     /// Returns `None` if a send is allowed now, or `Some(wait)` with the
     /// precise duration until the next slot opens. A `max_rps` of 0 disables
     /// rate limiting entirely.
-    fn check_rate_limit(&mut self) -> Option<std::time::Duration> {
-        if self.max_rps == 0 {
-            return None;
-        }
-
-        let now = Instant::now();
-        self.prune(now);
-
-        if (self.timestamps.len() as u32) < self.max_rps {
-            return None;
-        }
-
-        Some(std::time::Duration::from_secs(1).saturating_sub(
-            now.duration_since(*self.timestamps.front().expect("non-empty after prune")),
-        ))
+    fn check_rate_limit(&self) -> Option<std::time::Duration> {
+        let ahead = self.next?.checked_duration_since(Instant::now())?;
+        ahead.checked_sub(self.tolerance).filter(|wait| !wait.is_zero())
     }
 
     fn record_send(&mut self) {
-        if self.max_rps > 0 {
-            self.timestamps.push_back(Instant::now());
+        if let Some(interval) = self.interval {
+            let now = Instant::now();
+            self.next = Some(self.next.map_or(now, |next| next.max(now)) + interval);
         }
     }
 }
@@ -77,7 +72,7 @@ impl RateLimiter {
 ///
 /// Once one request is available, the forwarder drains all other immediately
 /// available requests into the same batch, capped at `max_batch_size`. This
-/// batches bursts without delaying an isolated request. If the sliding window
+/// batches bursts without delaying an isolated request. If the
 /// rate limit (`max_rps`) is hit, requests continue buffering until the window
 /// opens.
 ///
@@ -660,8 +655,6 @@ mod tests {
             assert!(limiter.check_rate_limit().is_none());
             limiter.record_send();
         }
-
-        assert!(limiter.timestamps.is_empty());
     }
 
     #[test]
@@ -674,6 +667,23 @@ mod tests {
         }
 
         assert!(limiter.check_rate_limit().is_some());
+    }
+
+    /// A spike may use a full second's budget at once, and once it is spent the next send waits at
+    /// most one emission interval rather than the remainder of a one-second window.
+    #[test]
+    fn rate_limiter_waits_at_most_one_interval_after_a_burst() {
+        let mut limiter = RateLimiter::new(200);
+        let mut sent = 0;
+        while limiter.check_rate_limit().is_none() {
+            limiter.record_send();
+            sent += 1;
+            assert!(sent <= 400, "burst must be bounded");
+        }
+
+        assert!(sent >= 200, "a spike of max_rps sends must not be delayed: {sent}");
+        let wait = limiter.check_rate_limit().expect("burst is spent");
+        assert!(wait <= Duration::from_millis(5), "waited {wait:?}");
     }
 
     #[tokio::test]
