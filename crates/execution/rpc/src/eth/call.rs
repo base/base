@@ -72,7 +72,8 @@ where
             return Err(EthApiError::InvalidParams(String::from("calls are empty.")).into());
         }
 
-        let _permit = self.acquire_owned_blocking_io().await;
+        let permit =
+            self.acquire_owned_blocking_io().await.map_err(|_| EthApiError::InternalEthError)?;
 
         let base_block = self
             .recovered_block(block)
@@ -82,6 +83,7 @@ where
         let max_simulate_blocks = self.max_simulate_blocks();
 
         self.spawn_with_state_at_block(block, move |this, db| {
+            let _permit = permit;
             let state_provider = db.database.0.0;
             let mut db = State::builder()
                 .with_database(StateProviderDatabase::new(
@@ -315,11 +317,14 @@ where
         at: BlockId,
         overrides: EvmOverrides,
     ) -> Result<ResultAndState<HaltReasonFor<Self::Evm>>, Self::Error> {
+        let permit =
+            self.acquire_owned_blocking_io().await.map_err(|_| EthApiError::InternalEthError)?;
         let guard = CancelOnDrop::default();
         let cancel = guard.clone();
         let (evm_env, at, forecast) = BasePendingForecast::evm_env_at(self, at).await?;
         let result = self
             .spawn_with_state_at_block(at, move |this, mut db| {
+                let _permit = permit;
                 if cancel.is_cancelled() {
                     return Err(EthApiError::InternalEthError.into());
                 }
