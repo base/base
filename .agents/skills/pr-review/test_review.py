@@ -3,6 +3,7 @@
 
 import argparse
 import contextlib
+import dataclasses
 import json
 import os
 import socket
@@ -2388,7 +2389,9 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("decide", summary)
 
     def test_a_failed_decision_makes_a_local_run_fail(self) -> None:
-        self.failing = {"decide"}
+        self.agents = [dataclasses.replace(a, name="final-check") if a.stage == "decide" else a
+                       for a in self.agents]
+        self.failing = {"final-check"}
         outcome = self.run_pipeline()
         ctx = self.ctx
         with mock.patch.object(review, "load_agents", return_value=self.agents), mock.patch.object(
@@ -2397,6 +2400,19 @@ class PipelineTests(unittest.TestCase):
                 review, "git", return_value="/tmp\n"), mock.patch.object(review, "status_for", return_value=None), \
                 tempfile.TemporaryDirectory() as tmp, mock.patch("builtins.print"):
             self.assertEqual(review.main(["--artifacts-dir", tmp]), 1)
+
+    def test_a_bad_status_response_does_not_undo_a_successfully_posted_review(self) -> None:
+        outcome = self.run_pipeline()
+        for error in (ValueError("invalid JSON"), KeyError("headRefOid")):
+            with self.subTest(error=error), mock.patch.object(review, "load_agents", return_value=self.agents), \
+                    mock.patch.object(review, "pr_context", return_value=self.ctx), mock.patch.object(
+                    review, "run_pipeline", return_value=outcome), mock.patch.object(
+                    review, "git", return_value="/tmp\n"), mock.patch.object(review, "status_for", return_value=None), \
+                    mock.patch.object(review, "post_summary", return_value=[]), mock.patch.object(
+                    review, "refresh_status", side_effect=error), tempfile.TemporaryDirectory() as tmp, \
+                    mock.patch("builtins.print"), mock.patch.object(review, "log") as log:
+                self.assertEqual(review.main(["--pr", "7", "--post", "--artifacts-dir", tmp]), 0)
+                self.assertTrue(any("could not refresh the status line" in str(c) for c in log.call_args_list))
 
     def test_triage_failure_runs_everything_and_says_so(self) -> None:
         self.failing = {"triage"}
