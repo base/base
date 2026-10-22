@@ -262,13 +262,17 @@ where
             config,
             cancel: block_cancel,
             publish_guard,
+            parent_span,
         } = args;
 
         // We log only every Nth block based on sampling ratio to reduce usage
         let block_number = config.parent_header.number + 1;
         let span = if config.parent_header.number.is_multiple_of(self.config.sampling_ratio) {
-            span!(Level::INFO, "build_payload", block_number)
+            span!(parent: &parent_span, Level::INFO, "build_payload", block_number)
         } else {
+            // Release the engine-request span handle so unsampled builds do not keep it open
+            // (and inflate its exported duration) for the whole build.
+            drop(parent_span);
             tracing::Span::none()
         };
         let _entered = span.enter();

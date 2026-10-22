@@ -17,7 +17,7 @@ use reth_revm::cached::CachedReads;
 use reth_tasks::Runtime;
 use tokio::{sync::watch, time::Sleep};
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, info, trace, warn};
+use tracing::{Span, debug, info, trace, warn};
 
 use crate::{PayloadBuilder, PayloadJobDeadline};
 
@@ -280,6 +280,8 @@ pub struct BuildArguments<Attributes, Payload: BuiltPayload> {
     pub cancel: CancellationToken,
     /// Mutex to synchronize cancellation with payload publishing.
     pub publish_guard: Arc<Mutex<()>>,
+    /// Span of the Engine API request that started this job, so builder spans stay in its trace.
+    pub parent_span: Span,
 }
 
 /// A [`PayloadJob`] is a future that's being polled by the `PayloadBuilderService`
@@ -301,6 +303,7 @@ where
         self.payload_rx = Some(watch_rx);
         let cached_reads = self.cached_reads.take().unwrap_or_default();
         let execution_cache = self.execution_cache.take();
+        let parent_span = Span::current();
         self.executor.spawn_blocking_task(Box::pin(async move {
             let args = BuildArguments {
                 cached_reads,
@@ -308,6 +311,7 @@ where
                 config: payload_config,
                 cancel,
                 publish_guard,
+                parent_span,
             };
             if let Err(e) = builder.try_build(args, &watch_tx).await {
                 warn!(error = %e, "Payload build task failed");
