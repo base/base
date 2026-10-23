@@ -241,16 +241,23 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
     /// Decodes an EIP-2718 transaction whose sender is already known, keeping `encoded` as its
     /// cached [`Self::encoded_2718`] instead of re-encoding the decoded transaction on first use.
     ///
-    /// The bytes are kept only when decoding consumed all of them, since strict RLP decoding
-    /// then guarantees they are the canonical encoding. Input with trailing bytes still decodes,
-    /// as before, but its cache is filled from the decoded transaction, so L1 fee and DA
-    /// accounting never charge for the trailing bytes.
+    /// The bytes are kept only when decoding consumed all of them and they are as long as the
+    /// transaction's canonical encoding. Consuming every byte is not a proof on its own: as
+    /// [`base_common_consensus::decode_2718_canonical`] notes, EIP-2718 decoders may accept a
+    /// legacy transaction with a `0x00` type byte or a typed body without its type byte. Strict
+    /// RLP decoding fixes every body byte, so such envelope variants are the remaining
+    /// non-canonical forms, and each differs from the canonical length. The length check costs
+    /// no encoding.
+    ///
+    /// Other input decodes, or fails to, exactly as before. When it decodes, the cache is filled
+    /// from the decoded transaction, so the L1 fee and DA size always use the canonical encoding
+    /// that sealed blocks carry.
     pub fn decode_2718_with_sender(encoded: Bytes, sender: Address) -> Eip2718Result<Self> {
         let mut buf = encoded.as_ref();
         let transaction = Cons::decode_2718(&mut buf)?;
-        let exact = buf.is_empty();
+        let canonical = buf.is_empty() && transaction.encode_2718_len() == encoded.len();
         let mut pooled = Self::new(Recovered::new_unchecked(transaction, sender), encoded.len());
-        if exact {
+        if canonical {
             debug_assert_eq!(
                 pooled.inner.transaction().encoded_2718(),
                 encoded.as_ref(),
@@ -759,9 +766,9 @@ where
 mod tests {
     use std::sync::Arc;
 
-    use alloy_consensus::{SignableTransaction, TxEip1559, transaction::Recovered};
+    use alloy_consensus::{SignableTransaction, TxEip1559, TxLegacy, transaction::Recovered};
     use alloy_eips::eip2718::Encodable2718;
-    use alloy_primitives::{Address, Bytes, TxKind, U256};
+    use alloy_primitives::{Address, Bytes, Signature, TxKind, U256};
     use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
     use base_bundles::{MeterBundleResponse, OpcodeGas, TransactionResult};
@@ -1103,6 +1110,35 @@ mod tests {
             <BasePooledTransaction>::decode_2718_with_sender(with_trailing.into(), sender).unwrap();
 
         assert_eq!(pooled.encoded_2718(), &encoded, "L1 fee and DA size use the canonical bytes");
+    }
+
+    /// Caching a non-canonical envelope would charge the L1 fee on bytes that sealed blocks do
+    /// not carry. Each such input must be rejected or cached as its canonical encoding.
+    #[test]
+    fn decode_2718_with_sender_never_caches_non_canonical_envelopes() {
+        let legacy: BaseTransactionSigned = TxLegacy {
+            chain_id: Some(ChainConfig::mainnet().chain_id),
+            nonce: 1,
+            gas_price: 2,
+            gas_limit: 21_000,
+            to: TxKind::Call(Address::ZERO),
+            ..Default::default()
+        }
+        .into_signed(Signature::test_signature())
+        .into();
+        let legacy = Bytes::from(legacy.encoded_2718());
+        let (typed, sender) = eip1559_encoded();
+        let tagged_legacy = Bytes::from([&[0x00][..], legacy.as_ref()].concat());
+        let untyped_body = typed.slice(1..);
+
+        for (case, input, canonical) in [
+            ("0x00-tagged legacy", tagged_legacy, legacy),
+            ("typed body without type byte", untyped_body, typed),
+        ] {
+            if let Ok(pooled) = <BasePooledTransaction>::decode_2718_with_sender(input, sender) {
+                assert_eq!(pooled.encoded_2718(), &canonical, "{case}");
+            }
+        }
     }
 
     #[test]
