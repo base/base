@@ -201,6 +201,8 @@ pub enum TxType {
     },
     /// Uniswap V3 style swap.
     UniswapV3 {
+        /// Batch approval and swap in a native EIP-8430 envelope.
+        native: bool,
         /// Router contract address.
         router: Address,
         /// Input token address.
@@ -370,14 +372,44 @@ impl LoadConfig {
     /// Validates the configuration, returning an error if invalid.
     pub fn validate(&self) -> Result<()> {
         if self.validity_ratio > 0.0
-            && self
-                .transactions
-                .iter()
-                .any(|tx| tx.weight > 0 && matches!(tx.tx_type, TxType::Eip8430Transfer))
+            && self.transactions.iter().any(|tx| {
+                tx.weight > 0
+                    && matches!(
+                        tx.tx_type,
+                        TxType::Eip8430Transfer | TxType::UniswapV3 { native: true, .. }
+                    )
+            })
         {
             return Err(BaselineError::Config(
-                "eip8430_transfer cannot be combined with validity submission".into(),
+                "native EIP-8430 workloads cannot be combined with validity submission".into(),
             ));
+        }
+        for tx in self.transactions.iter().filter(|tx| tx.weight > 0) {
+            if let TxType::UniswapV3 { native: true, router, token_in, token_out, .. } = &tx.tx_type
+            {
+                for other in self.transactions.iter().filter(|other| other.weight > 0) {
+                    let (other_router, other_in, other_out) = match &other.tx_type {
+                        TxType::UniswapV3 {
+                            native: false, router, token_in, token_out, ..
+                        }
+                        | TxType::AerodromeCl { router, token_in, token_out, .. } => {
+                            (router, token_in, token_out)
+                        }
+                        _ => continue,
+                    };
+                    // Both directions spend allowance, so either token can overlap.
+                    if router == other_router
+                        && [token_in, token_out]
+                            .iter()
+                            .any(|token| *token == other_in || *token == other_out)
+                    {
+                        return Err(BaselineError::Config(
+                            "native and ordinary swaps cannot share a router/token allowance"
+                                .into(),
+                        ));
+                    }
+                }
+            }
         }
         if self.account_count == 0 {
             return Err(BaselineError::Config("account_count must be > 0".into()));
