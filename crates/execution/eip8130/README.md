@@ -54,8 +54,10 @@ The crate keeps the protocol stages explicit while avoiding crate sprawl:
 - **Orchestration** composes the final sender/payer signatures with the
   transaction's ordered account-configuration changes — advancing each channel
   sequence per applied entry — into one authorization verdict (`TransactionAuthorizer`),
-  shared by mempool admission and block inclusion. It reads state but never
-  mutates it; nonce, gas, and fee/balance checks remain separate stages.
+  shared by mempool admission and block inclusion. It writes the account
+  changes through the storage provider it is given (the journal at inclusion, a
+  discarded overlay in the pool); nonce, gas, and fee/balance checks remain
+  separate stages.
 - **Protocol logs** inject `ActorAuthorized` / `ActorRevoked` / `AccountCreated`
   into the journal from the enshrined apply path
   (`AccountConfigurationEvents`), matching the `IAccountConfiguration` event ABIs

@@ -263,11 +263,10 @@ impl Eip8130Signed {
     /// Validates the validity-window admission rules for nonce-bearing and
     /// nonce-free transactions against a single caller-supplied `now` value.
     ///
-    /// `now` is a Unix timestamp in **milliseconds**; callers pass
-    /// `block.timestamp * 1000` (or an equivalent millisecond wall clock) so the
-    /// comparison matches the EIP's on-chain `block.timestamp * 1000` evaluation.
-    /// Txpool passes in one head-block snapshot so both branches see the same
-    /// value even if the tip updates concurrently.
+    /// `now` is the block's Unix timestamp in **milliseconds**: from Denim,
+    /// `block.timestamp * 1000` plus the `BaseTime` millisecond part, so it
+    /// matches the execution-path check. Txpool passes in one head-block snapshot
+    /// so both branches see the same value even if the tip updates concurrently.
     ///
     /// The transaction's `valid_after`/`valid_before` may be supplied in seconds
     /// or milliseconds; both are normalized to milliseconds here (via

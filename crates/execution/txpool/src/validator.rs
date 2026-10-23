@@ -1221,7 +1221,7 @@ where
         // metered on top of it is bounded by the per-transaction gas cap,
         // matching execution.
         if self.chain_spec().is_azul_active_at_timestamp(now)
-            && FeeCheck::max_chargeable_gas(signed.tx().gas_limit, intrinsic.payer_auth)
+            && FeeCheck::max_chargeable_gas(signed.tx().gas_limit, intrinsic.payer_floor)
                 > MAX_TX_GAS_LIMIT_OSAKA
         {
             return Err(InvalidTransactionError::GasLimitTooHigh.into());
@@ -1234,7 +1234,7 @@ where
         FeeCheck::validate_balance(
             payer_account.balance,
             signed.tx().gas_limit,
-            intrinsic.payer_auth,
+            intrinsic.payer_floor,
             signed.tx().max_fee_per_gas,
         )
         .map_err(|_| {
@@ -1243,7 +1243,7 @@ where
                     got: payer_account.balance,
                     expected: FeeCheck::max_fee_charge(
                         signed.tx().gas_limit,
-                        intrinsic.payer_auth,
+                        intrinsic.payer_floor,
                         signed.tx().max_fee_per_gas,
                     ),
                 }
@@ -1350,7 +1350,7 @@ where
 
         let gas_charge = FeeCheck::max_fee_charge(
             signed.tx().gas_limit,
-            intrinsic.payer_auth,
+            intrinsic.payer_floor,
             signed.tx().max_fee_per_gas,
         );
         let additional_fee = if self.requires_l1_data_gas_fee() {
@@ -1360,7 +1360,7 @@ where
                 &encoded,
                 U256::from(FeeCheck::max_chargeable_gas(
                     signed.tx().gas_limit,
-                    intrinsic.payer_auth,
+                    intrinsic.payer_floor,
                 )),
                 spec_id,
             )
@@ -1424,14 +1424,19 @@ where
     ///
     /// The boundary depends on the nonce mode, matching `validate_timestamp`:
     /// - **Nonce-bearing** (`nonce_free == false`): the upper bound is
-    ///   **inclusive** — valid while `block.timestamp * 1000 <= valid_before` — so
-    ///   the last includable second is `floor(valid_before / 1000)`.
+    ///   **inclusive** — valid while `now_ms <= valid_before` — so the last
+    ///   second containing an includable millisecond is `floor(valid_before / 1000)`.
     /// - **Nonce-free** (`nonce_free == true`): the nonce-manager replay ring
     ///   admits only a strictly-future `valid_before`, so the bound is
-    ///   **exclusive** — valid while `block.timestamp * 1000 < valid_before` — and
-    ///   the last includable second is `floor((valid_before - 1) / 1000)`. Without
-    ///   the `- 1` a `valid_before` that is an exact multiple of 1000 would linger
-    ///   one second past its on-chain expiry.
+    ///   **exclusive** — valid while `now_ms < valid_before` — and the last such
+    ///   second is `floor((valid_before - 1) / 1000)`. Without the `- 1` a
+    ///   `valid_before` that is an exact multiple of 1000 would linger one second
+    ///   past its on-chain expiry.
+    ///
+    /// Sub-second blocks later in that second may already reject the
+    /// transaction; execution enforces the exact millisecond bound, so eviction
+    /// at second granularity only lets an expired transaction linger for under a
+    /// second.
     const fn tx_valid_before_secs(valid_before: u64, nonce_free: bool) -> u64 {
         if valid_before == 0 {
             u64::MAX
