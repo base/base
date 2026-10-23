@@ -111,9 +111,10 @@ impl ValidityPredicateEvaluation {
 
 /// Predicate-parked transactions indexed by one currently unsatisfied state location.
 ///
-/// Buckets start as compact hash sets. Once a state bucket reaches `ordered_threshold`, it is
-/// converted for the rest of the build into an ordered representation. The latter wakes only
-/// false predicates whose comparison can become true for the observed old/new state transition.
+/// State buckets start as flat vectors. Once one reaches `ordered_threshold`, it is converted
+/// for the rest of the build into an ordered representation, which wakes only false predicates
+/// whose comparison can become true for the observed old/new state transition. Context buckets
+/// are never woken by state and stay hash sets.
 #[derive(Debug)]
 pub struct ParkedPredicateIndex<T> {
     blockers: HashMap<ValidityPredicateKey, PredicateBucket>,
