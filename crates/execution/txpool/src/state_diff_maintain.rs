@@ -14,7 +14,7 @@ use tracing::{debug, warn};
 
 use crate::AccountStateDiff;
 
-/// Why every guarded transaction was flushed in one shot. Both paths are
+/// Why every guarded transaction was flushed in one shot. Every path is
 /// fail-safe (the guard cannot prove any admission current), but they differ
 /// wildly in frequency, so they carry distinct metric labels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,6 +29,9 @@ pub enum InvalidationCause {
     /// dropped notifications). Uncommon, but more likely than a [`Self::Reorg`],
     /// and likewise a signal worth alerting on.
     FeedGap,
+    /// The head crossed the Zenith boundary, so admissions classified under the
+    /// previous fork (with or without the Keystore) are no longer current.
+    ForkTransition,
 }
 
 impl InvalidationCause {
@@ -38,6 +41,7 @@ impl InvalidationCause {
         match self {
             Self::Reorg => "reorg",
             Self::FeedGap => "feed_gap",
+            Self::ForkTransition => "fork_transition",
         }
     }
 }

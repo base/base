@@ -3762,6 +3762,82 @@ mod tests {
         assert!(reason.contains("does not recover to the named account"), "got {reason:?}");
     }
 
+    /// Before Zenith the native authorization gate does not reserve the Keystore
+    /// address against ordinary EVM execution. Synthetic code isolates the node
+    /// behavior; this does not assert that the real Keystore is deployed.
+    #[test]
+    fn pre_zenith_can_execute_code_and_write_storage_at_keystore_address() {
+        let key = signing_key(0x98);
+        let sender = eoa_address(&key);
+        let target = Eip8130Contracts::ACCOUNT_CONFIG;
+        let mut tx = base_tx();
+        tx.calls = vec![vec![Call { to: target, value: U256::ZERO, data: Bytes::new() }]];
+        let signed = eoa_signed(tx, &key);
+        // PUSH1 42; PUSH1 0; SSTORE; STOP.
+        let mut evm = evm_with_accounts(
+            U256::from(10u64).pow(U256::from(18u64)),
+            sender,
+            &[(target, bytes!("602a60005500"))],
+        );
+        assert_eq!(evm.ctx_mut().cfg.spec, BaseSpecId::new(BaseUpgrade::Everest));
+        let outcome = evm.transact_raw(into_base_tx(&signed)).expect("call is accepted");
+        assert!(outcome.result.is_success());
+        assert_eq!(outcome.state[&target].storage[&U256::ZERO].present_value, U256::from(42),);
+    }
+
+    /// A failing Keystore backend must not affect native Everest authorization
+    /// or simulation, including the permitted delegation change.
+    #[test]
+    fn pre_zenith_native_paths_do_not_read_keystore_storage() {
+        let key = signing_key(0x97);
+        let sender = eoa_address(&key);
+        for delegate in [false, true] {
+            for simulate in [false, true] {
+                let mut tx = base_tx();
+                if delegate {
+                    tx.account_changes
+                        .push(AccountChange::Delegation(Delegation { target: Address::ZERO }));
+                }
+                let signed = eoa_signed(tx, &key);
+                let mut inner = InMemoryDB::default();
+                inner.insert_account_info(
+                    sender,
+                    AccountInfo {
+                        balance: U256::from(10u64).pow(U256::from(18u64)),
+                        ..Default::default()
+                    },
+                );
+                let db = StorageFailDb { inner, fail_storage_at: Eip8130Contracts::ACCOUNT_CONFIG };
+                let mut evm = Context::base()
+                    .with_db(db)
+                    .with_cfg(
+                        CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Everest))
+                            .with_chain_id(CHAIN_ID),
+                    )
+                    .with_block(BlockEnv {
+                        number: U256::from(1u64),
+                        timestamp: U256::from(NOW),
+                        basefee: BASE_FEE,
+                        beneficiary: BENEFICIARY,
+                        ..Default::default()
+                    })
+                    .build_with_inspector(NoOpInspector);
+                if simulate {
+                    let mut tx = into_base_tx(&signed);
+                    tx.base.caller = sender;
+                    tx.eip8130.as_mut().unwrap().mode = Eip8130ExecutionMode::Simulate;
+                    evm.ctx_mut().tx = tx;
+                    Eip8130Executor::simulate(&mut evm).expect("no Keystore read in simulation");
+                } else {
+                    let result = evm
+                        .transact_raw(into_base_tx(&signed))
+                        .expect("no Keystore read in execution");
+                    assert!(result.result.is_success());
+                }
+            }
+        }
+    }
+
     /// Before Zenith, a non-secp256k1 authenticator and a `Create` are rejected
     /// as unsupported, in both execution and simulation.
     #[test]
