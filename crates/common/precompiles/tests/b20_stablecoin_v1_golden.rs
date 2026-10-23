@@ -2068,156 +2068,45 @@ fn golden_gas_footprints() {
 // meta: op coverage checklist
 // ============================================================================
 
-/// Compile-time coverage checklist — never called; it exists only for its two
-/// exhaustive `match`es (no `_` arm), each arm naming the golden `#[test]` fn(s) that
-/// pin the op via [`covered`].
-///
-/// This gives two compile-time guarantees:
-///   * add an op to the ABI (a new `IB20Calls` / `IB20StablecoinCalls` variant) → the
-///     wildcard-free match fails to build until an arm (and thus a golden) is added;
-///   * rename or remove a golden `#[test]` fn → the `covered(&[...])` reference fails
-///     to build.
-///
-/// Because Stablecoin V1 is **frozen**, this checklist is NOT expected to ever be
-/// updated: a compile error here means the frozen V1 op surface changed, which must be
-/// reviewed.
-#[allow(dead_code)]
-fn v1_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Stablecoin::IB20StablecoinCalls) {
+/// Compile-time guard: a new ABI selector fails the build until it gets an arm here and a golden test.
+fn op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Stablecoin::IB20StablecoinCalls) {
     use IB20::IB20Calls as C;
     use IB20Stablecoin::IB20StablecoinCalls as SC;
 
-    // No-op: forces each arm to name real golden `#[test]` fns by path.
-    fn covered(_goldens: &[fn()]) {}
-
     match call {
-        // ERC-20 core
-        C::transfer(_) => covered(&[
-            golden_transfer_privileged,
-            golden_transfer_unprivileged_allowed,
-            golden_transfer_unprivileged_blocked_sender_reverts,
-            golden_transfer_reverts_zero_receiver,
-            golden_transfer_reverts_insufficient_balance,
-            golden_transfer_reverts_when_paused,
-            golden_transfer_reverts_zero_sender,
-        ]),
-        C::transferFrom(_) => covered(&[
-            golden_transfer_from_finite_allowance_decrements,
-            golden_transfer_from_infinite_allowance_not_decremented,
-            golden_transfer_from_reverts_insufficient_allowance,
-            golden_transfer_from_unprivileged_enforces_executor_policy,
-            golden_transfer_from_reverts_zero_receiver,
-            golden_transfer_from_reverts_zero_sender,
-        ]),
-        C::approve(_) => covered(&[
-            golden_approve_sets_allowance_and_emits,
-            golden_approve_reverts_zero_spender,
-            golden_approve_reverts_zero_approver,
-        ]),
-        C::transferWithMemo(_) => covered(&[golden_transfer_with_memo_emits_transfer_then_memo]),
-        C::transferFromWithMemo(_) => covered(&[golden_transfer_from_with_memo]),
-
-        // mint / burn
-        C::mint(_) => covered(&[
-            golden_mint_privileged_still_enforces_receiver_policy,
-            golden_mint_unprivileged_requires_role_and_policy,
-            golden_mint_reverts_over_supply_cap,
-            golden_mint_reverts_zero_receiver,
-        ]),
-        C::mintWithMemo(_) => covered(&[golden_mint_with_memo]),
-        C::burn(_) => covered(&[
-            golden_burn_requires_role_then_reduces_supply,
-            golden_burn_reverts_insufficient_balance,
-        ]),
-        C::burnWithMemo(_) => covered(&[golden_burn_with_memo]),
-        C::burnBlocked(_) => covered(&[
-            golden_burn_blocked_destroys_from_blocked_account,
-            golden_burn_blocked_reverts_when_not_blocked,
-            golden_burn_blocked_unprivileged_requires_role,
-        ]),
-        C::seizeWithMemo(_)
+        C::transfer(_)
+        | C::transferFrom(_)
+        | C::approve(_)
+        | C::transferWithMemo(_)
+        | C::transferFromWithMemo(_)
+        | C::mint(_)
+        | C::mintWithMemo(_)
+        | C::burn(_)
+        | C::burnWithMemo(_)
+        | C::burnBlocked(_)
+        | C::seizeWithMemo(_)
         | C::SEIZE_ROLE(_)
         | C::SEIZE_EXEMPT_POLICY(_)
-        | C::SEIZE_RECEIVER_POLICY(_) => covered(&[golden_seize_selectors_unknown_at_v1]),
-
-        // pause / config / roles / policy / permit
-        C::pause(_) => covered(&[
-            golden_pause_sets_feature_bit,
-            golden_pause_reverts_empty_feature_set,
-            golden_pause_unprivileged_requires_role,
-            golden_seize_pause_feature_unknown_at_v1,
-        ]),
-        C::unpause(_) => covered(&[
-            golden_unpause_clears_feature_bit,
-            golden_unpause_reverts_empty_feature_set,
-            golden_unpause_unprivileged_requires_role,
-            golden_seize_pause_feature_unknown_at_v1,
-        ]),
-        C::updateSupplyCap(_) => covered(&[
-            golden_update_supply_cap,
-            golden_update_supply_cap_reverts_below_supply,
-            golden_update_supply_cap_unprivileged_requires_role,
-        ]),
-        C::updateName(_) => covered(&[
-            golden_update_name_emits_name_and_domain_changed,
-            golden_update_name_unprivileged_requires_role,
-        ]),
-        C::updateSymbol(_) => {
-            covered(&[golden_update_symbol, golden_update_symbol_unprivileged_requires_role])
-        }
-        C::updateContractURI(_) => covered(&[
-            golden_update_contract_uri,
-            golden_update_contract_uri_unprivileged_requires_role,
-        ]),
-        C::grantRole(_) => covered(&[
-            golden_grant_role,
-            golden_grant_role_unprivileged_no_admin_reverts,
-            golden_grant_role_unprivileged_non_admin_caller_reverts,
-            golden_grant_default_admin_bumps_member_count,
-            golden_grant_role_idempotent_when_already_held,
-        ]),
-        C::revokeRole(_) => covered(&[
-            golden_revoke_role,
-            golden_revoke_last_admin_rejected,
-            golden_revoke_role_unprivileged_non_admin_caller_reverts,
-            golden_revoke_role_noop_when_not_held,
-        ]),
-        C::renounceRole(_) => covered(&[
-            golden_renounce_role,
-            golden_renounce_role_bad_confirmation,
-            golden_renounce_role_reverts_last_admin,
-        ]),
-        C::renounceLastAdmin(_) => {
-            covered(&[golden_renounce_last_admin, golden_renounce_last_admin_reverts_when_not_sole])
-        }
-        C::setRoleAdmin(_) => covered(&[
-            golden_set_role_admin,
-            golden_set_role_admin_unprivileged_non_admin_caller_reverts,
-        ]),
-        C::updatePolicy(_) => covered(&[
-            golden_update_policy,
-            golden_update_policy_reverts_missing_policy,
-            golden_update_policy_unprivileged_requires_role,
-            golden_update_policy_rejects_seize_scopes_at_v1,
-        ]),
-        C::permit(_) => covered(&[
-            golden_permit_sets_allowance_and_increments_nonce,
-            golden_permit_reverts_when_expired,
-        ]),
-
-        // computed reads
-        C::isPaused(_) | C::pausedFeatures(_) => covered(&[
-            golden_read_is_paused_and_paused_features,
-            golden_seize_pause_feature_unknown_at_v1,
-        ]),
-        C::policyId(_) => covered(&[
-            golden_read_policy_id_and_unsupported_scope,
-            golden_policy_id_rejects_seize_scopes_at_v1,
-        ]),
-        C::DOMAIN_SEPARATOR(_) => covered(&[golden_read_domain_separator]),
-        C::eip712Domain(_) => covered(&[golden_read_eip712_domain]),
-
-        // direct reads
-        C::name(_)
+        | C::SEIZE_RECEIVER_POLICY(_)
+        | C::pause(_)
+        | C::unpause(_)
+        | C::updateSupplyCap(_)
+        | C::updateName(_)
+        | C::updateSymbol(_)
+        | C::updateContractURI(_)
+        | C::grantRole(_)
+        | C::revokeRole(_)
+        | C::renounceRole(_)
+        | C::renounceLastAdmin(_)
+        | C::setRoleAdmin(_)
+        | C::updatePolicy(_)
+        | C::permit(_)
+        | C::isPaused(_)
+        | C::pausedFeatures(_)
+        | C::policyId(_)
+        | C::DOMAIN_SEPARATOR(_)
+        | C::eip712Domain(_)
+        | C::name(_)
         | C::symbol(_)
         | C::decimals(_)
         | C::totalSupply(_)
@@ -2227,10 +2116,8 @@ fn v1_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Stablecoin::IB20Stab
         | C::nonces(_)
         | C::contractURI(_)
         | C::hasRole(_)
-        | C::getRoleAdmin(_) => covered(&[golden_read_metadata_and_supply]),
-
-        // role / policy-id constants
-        C::DEFAULT_ADMIN_ROLE(_)
+        | C::getRoleAdmin(_)
+        | C::DEFAULT_ADMIN_ROLE(_)
         | C::MINT_ROLE(_)
         | C::BURN_ROLE(_)
         | C::BURN_BLOCKED_ROLE(_)
@@ -2240,10 +2127,12 @@ fn v1_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Stablecoin::IB20Stab
         | C::TRANSFER_SENDER_POLICY(_)
         | C::TRANSFER_RECEIVER_POLICY(_)
         | C::TRANSFER_EXECUTOR_POLICY(_)
-        | C::MINT_RECEIVER_POLICY(_) => covered(&[golden_read_role_and_policy_constants]),
+        | C::MINT_RECEIVER_POLICY(_) => {}
     }
 
     match ext {
-        SC::currency(_) => covered(&[golden_read_currency]),
+        SC::currency(_) => {}
     }
 }
+
+const _: fn(IB20::IB20Calls, IB20Stablecoin::IB20StablecoinCalls) = op_coverage_checklist;

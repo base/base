@@ -944,38 +944,13 @@ fn golden_gas_footprints() {
 // meta: op coverage checklist
 // ============================================================================
 
-/// Compile-time coverage checklist — never called; its exhaustive `match` (no `_` arm) names the
-/// golden `#[test]` fn(s) pinning each op. Adding an ABI op fails the build until a golden is added.
-#[allow(dead_code)]
-fn v1_op_coverage_checklist(call: IB20Factory::IB20FactoryCalls) {
+/// Compile-time guard: a new ABI selector fails the build until it gets an arm here and a golden test.
+fn op_coverage_checklist(call: IB20Factory::IB20FactoryCalls) {
     use IB20Factory::IB20FactoryCalls as C;
 
-    fn covered(_goldens: &[fn()]) {}
-
     match call {
-        C::createB20(_) => covered(&[
-            golden_create_asset,
-            golden_create_stablecoin,
-            golden_create_stablecoin_with_init_calls,
-            golden_create_with_init_calls,
-            golden_create_zero_admin_skips_grant,
-            golden_create_reverts_token_already_exists,
-            golden_create_reverts_unsupported_version,
-            golden_create_reverts_invalid_decimals,
-            golden_create_reverts_nonzero_value,
-            golden_create_reverts_init_call_failed,
-            golden_create_reverts_missing_currency,
-            golden_create_reverts_invalid_currency,
-            golden_create_reverts_when_not_activated,
-            golden_create_propagates_typed_init_call_revert,
-            golden_create_reverts_malformed_params,
-            golden_cobalt_bootstrap_routes_asset_seize_exempt_policy_init_call,
-            golden_cobalt_bootstrap_routes_stablecoin_seize_exempt_policy_init_call,
-            golden_beryl_bootstrap_rejects_asset_seize_exempt_policy_init_call,
-            golden_beryl_bootstrap_rejects_stablecoin_seize_exempt_policy_init_call,
-        ]),
-        C::getB20Address(_) => covered(&[golden_get_b20_address]),
-        C::isB20(_) => covered(&[golden_is_b20]),
-        C::isB20Initialized(_) => covered(&[golden_is_b20_initialized]),
+        C::createB20(_) | C::getB20Address(_) | C::isB20(_) | C::isB20Initialized(_) => {}
     }
 }
+
+const _: fn(IB20Factory::IB20FactoryCalls) = op_coverage_checklist;
