@@ -43,6 +43,7 @@ impl PolicyRegistryPrecompile {
         let storage_features = UpgradeGatedStorageFeatures::from_upgrade(upgrade);
         base_precompile!(
             "PolicyRegistryPrecompile",
+            upgrade: upgrade,
             storage_features: storage_features,
             |ctx, calldata| {
             let observer = observer.clone();
