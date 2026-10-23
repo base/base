@@ -1,3 +1,5 @@
+use std::{fmt, ops::Deref, sync::Arc};
+
 use alloy_primitives::{B256, BlockHash, Bytes};
 use alloy_provider::Provider;
 use alloy_rpc_types_engine::{
@@ -196,6 +198,34 @@ pub trait BaseEngineApi {
         &self,
         capabilities: Vec<String>,
     ) -> TransportResult<Vec<String>>;
+}
+
+/// A cloneable, type-erased [`BaseEngineApi`] implementation.
+///
+/// Callers use this to pick an Engine API backend at runtime, for example a remote provider or
+/// an execution node's handler running in the same process.
+#[derive(Clone)]
+pub struct SharedEngineApi(pub Arc<dyn BaseEngineApi + Send + Sync>);
+
+impl SharedEngineApi {
+    /// Wraps an Engine API implementation.
+    pub fn new(api: impl BaseEngineApi + Send + Sync + 'static) -> Self {
+        Self(Arc::new(api))
+    }
+}
+
+impl Deref for SharedEngineApi {
+    type Target = dyn BaseEngineApi + Send + Sync;
+
+    fn deref(&self) -> &Self::Target {
+        self.0.as_ref()
+    }
+}
+
+impl fmt::Debug for SharedEngineApi {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SharedEngineApi").finish_non_exhaustive()
+    }
 }
 
 #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]

@@ -306,7 +306,7 @@ impl ConsensusFollowNodeArgs {
                 self.config.l2_client_args.resolve_jwt_secret_for_endpoint(url).await?
             }
             // The in-memory transport never sends the secret.
-            EngineEndpoint::InMemory(_) => JwtSecret::random(),
+            EngineEndpoint::InMemory { .. } => JwtSecret::random(),
         };
         let rollup_config = Arc::new(cfg.clone());
 

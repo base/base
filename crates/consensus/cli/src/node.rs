@@ -517,7 +517,7 @@ impl ConsensusNodeArgs {
                 self.config.l2_client_args.resolve_jwt_secret_for_endpoint(url).await?
             }
             // The in-memory transport never sends the secret.
-            (None, EngineEndpoint::InMemory(_)) => JwtSecret::random(),
+            (None, EngineEndpoint::InMemory { .. }) => JwtSecret::random(),
         };
 
         self.config.p2p_flags.check_ports()?;
