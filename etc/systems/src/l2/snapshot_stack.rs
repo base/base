@@ -1,7 +1,7 @@
 //! L1-free snapshot-backed L2 stack for development and benchmarking.
 
 use std::{
-    sync::Arc,
+    sync::{Arc, OnceLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -83,11 +83,13 @@ impl SnapshotL2Stack {
         let chain = config.snapshot.chain.resolve()?;
         let canonical_rollup_config = Arc::clone(&chain.rollup_config);
         let first_block_timestamp = Self::schedule_anchor(SystemTime::now())?;
-        let chain_spec = Arc::new(Self::chain_spec(
-            (*chain.chain_spec).clone(),
-            first_block_timestamp,
-            block_interval,
-        ));
+        let mut chain_spec =
+            Self::chain_spec((*chain.chain_spec).clone(), first_block_timestamp, block_interval);
+        let local_schedule = Arc::new(OnceLock::new());
+        if block_interval == DevnetBlockInterval::TwoHundredMilliseconds {
+            chain_spec.local_denim_timestamp_schedule = Some(Arc::clone(&local_schedule));
+        }
+        let chain_spec = Arc::new(chain_spec);
         let jwt_secret = JwtSecret::random();
 
         let builder = InProcessBuilder::start(InProcessBuilderConfig {
@@ -140,6 +142,10 @@ impl SnapshotL2Stack {
             first_block_timestamp,
             block_interval,
         )?);
+
+        if let Some(schedule) = rollup_config.denim_timestamp_schedule() {
+            local_schedule.set(schedule).expect("snapshot schedule is initialized only once");
+        }
 
         let builder_rpc_url = builder.rpc_url()?.to_string();
         let client_config = config.snapshot.client_datadir.map(|datadir| InProcessClientConfig {
@@ -595,6 +601,85 @@ mod tests {
         assert!(!chain_spec.is_denim_active_at_timestamp(activation - 1));
         assert!(chain_spec.is_denim_active_at_timestamp(activation));
         assert_eq!(chain_spec.fork(BaseUpgrade::Denim), ForkCondition::Timestamp(activation));
+    }
+
+    /// Both execution nodes must follow the CL anchor without changing snapshot identity.
+    #[test]
+    fn subsecond_cl_and_el_share_snapshot_schedule() {
+        let mut mainnet_rollup = ChainConfig::mainnet().rollup_config();
+        mainnet_rollup.clear_upgrade_activation_timestamp(BaseUpgrade::Denim);
+        let mut mainnet_spec = BaseChainSpec::mainnet();
+        mainnet_spec.set_fork(BaseUpgrade::Denim, ForkCondition::Never);
+        assert_eq!(
+            mainnet_rollup.denim_timestamp_schedule(),
+            None,
+            "mainnet-like CL fixture must leave Denim unset"
+        );
+        assert_eq!(
+            mainnet_spec.denim_timestamp_schedule().unwrap(),
+            None,
+            "mainnet-like EL fixture must leave Denim unset"
+        );
+        for (canonical, mut spec) in [
+            (ChainConfig::sepolia().rollup_config(), BaseChainSpec::sepolia()),
+            (mainnet_rollup, mainnet_spec),
+        ] {
+            let original = spec.clone();
+            let boundary = 48_526_665;
+            let activation = 2_000_000_001;
+            let local_schedule = std::sync::Arc::new(std::sync::OnceLock::new());
+            spec = SnapshotL2Stack::chain_spec(
+                spec,
+                activation,
+                DevnetBlockInterval::TwoHundredMilliseconds,
+            );
+            spec.local_denim_timestamp_schedule = Some(std::sync::Arc::clone(&local_schedule));
+            let builder_spec = std::sync::Arc::new(spec);
+            let client_spec = std::sync::Arc::clone(&builder_spec);
+            let rollup = SnapshotL2Stack::anchored_rollup_config(
+                canonical,
+                boundary,
+                activation,
+                DevnetBlockInterval::TwoHundredMilliseconds,
+            )
+            .expect("non-genesis snapshot must anchor successfully");
+            local_schedule
+                .set(rollup.denim_timestamp_schedule().expect("local Denim is scheduled"))
+                .expect("local schedule must initialize exactly once");
+            for spec in [builder_spec, client_spec] {
+                assert_eq!(
+                    spec.genesis_header, original.genesis_header,
+                    "canonical header and hash must remain unchanged"
+                );
+                assert_eq!(
+                    spec.genesis, original.genesis,
+                    "persisted genesis identity must remain unchanged"
+                );
+                let schedule = spec
+                    .denim_timestamp_schedule()
+                    .expect("valid schedule")
+                    .expect("Denim scheduled");
+                for (offset, expected) in [
+                    (1, (activation, 0)),
+                    (2, (activation, 200)),
+                    (5, (activation, 800)),
+                    (6, (activation + 1, 0)),
+                    (17, (activation + 3, 200)),
+                ] {
+                    let number = boundary + offset;
+                    assert_eq!(
+                        rollup.l2_block_timestamp_parts(number),
+                        expected,
+                        "CL timestamp at block {number}"
+                    );
+                    assert_eq!(
+                        schedule.block_timestamp_parts(number),
+                        expected,
+                        "EL timestamp at block {number}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

@@ -420,6 +420,48 @@ mod tests {
         }
     }
 
+    /// A validator launched before preflight must accept the shared local builder schedule.
+    #[test]
+    fn local_denim_schedule_accepts_snapshot_continuation_headers() {
+        for mut spec in [BaseChainSpec::sepolia(), BaseChainSpec::mainnet()] {
+            let canonical_header = spec.genesis_header.clone();
+            let local = Arc::new(std::sync::OnceLock::new());
+            spec.local_denim_timestamp_schedule = Some(Arc::clone(&local));
+            spec.set_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(1001));
+            let spec = Arc::new(spec);
+            let builder = BaseBeaconConsensus::new(Arc::clone(&spec));
+            let validator = BaseBeaconConsensus::new(Arc::clone(&spec));
+            local
+                .set(base_common_genesis::DenimTimestampSchedule {
+                    genesis_block_number: 0,
+                    genesis_timestamp: 1,
+                    legacy_block_interval: std::num::NonZeroU64::new(2).unwrap(),
+                    denim_activation_timestamp: 1001,
+                })
+                .expect("preflight must initialize the schedule once");
+            for (number, timestamp, millis) in
+                [(500, 1001, 0), (501, 1001, 200), (505, 1002, 0), (516, 1004, 200)]
+            {
+                let block = timestamp_schedule_block(number, timestamp, millis);
+                builder
+                    .validate_header(block.sealed_header())
+                    .expect("builder must accept the local scheduled header");
+                validator
+                    .validate_header(block.sealed_header())
+                    .expect("validator must accept the builder's scheduled header");
+            }
+            let invalid = timestamp_schedule_block(516, 1003, 200);
+            assert!(
+                validator.validate_header(invalid.sealed_header()).is_err(),
+                "timestamp validation must remain enforced"
+            );
+            assert_eq!(
+                spec.genesis_header, canonical_header,
+                "canonical genesis header and hash must remain unchanged"
+            );
+        }
+    }
+
     #[test]
     fn denim_timestamp_schedule_validates_header_seconds() {
         let consensus = timestamp_schedule_consensus();
