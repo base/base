@@ -24,7 +24,7 @@ impl ActorAuthorizer {
     /// Authenticate and authorize `auth` (`authenticator(20) || data`) for
     /// `account` against `hash`, returning the resolved actor's authorization
     /// surface. `now` is the timestamp used for expiry (block timestamp at
-    /// inclusion, wall-clock in the pool).
+    /// inclusion, the head block's timestamp in the pool).
     ///
     /// Mirrors `AccountConfiguration.authenticateActor`: the contract reverts on
     /// any failure; here that maps to an [`AuthorizeError`].

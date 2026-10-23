@@ -137,12 +137,12 @@ pub struct Eip8130Outcome {
     /// for the sender portion.
     pub sender_floor: u64,
     /// Payer-authentication gas with the `payer_auth` bytes at the EIP-7623
-    /// floor rate (`payer_floor`), metered on top of `gas_limit`. The ceiling
-    /// used for the pre-charge and the EIP-7825 cap.
-    pub payer_auth: u64,
-    /// Payer-authentication gas with the bytes at the standard rate
-    /// (`payer_auth_cost`), charged at settlement unless the floor binds.
-    pub payer_auth_standard: u64,
+    /// floor rate, metered on top of `gas_limit`. The ceiling used for the
+    /// pre-charge and the EIP-7825 cap.
+    pub payer_floor: u64,
+    /// Payer-authentication gas with the bytes at the standard rate, charged at
+    /// settlement unless the floor binds.
+    pub payer_auth_cost: u64,
     /// Gas available to `calls` (`gas_limit - sender_intrinsic`).
     pub execution_gas_available: u64,
     /// EIP-1559 effective gas price for the transaction.
@@ -155,10 +155,11 @@ pub struct Eip8130Outcome {
 }
 
 impl Eip8130Outcome {
-    /// Applies the EIP-7623 floor to the sender portion of metered gas.
+    /// Applies the EIP-7623 floor to the sender portion of metered gas alone.
     ///
-    /// Every path that reports or charges sender gas goes through this, so the
-    /// floor is applied the same way in estimation and settlement.
+    /// Estimation uses this and then adds the `payer_floor` ceiling on top.
+    /// Settlement floors the sender and payer portions together instead; see
+    /// [`Self::metered_gas`].
     #[must_use]
     pub const fn floored_sender_gas(&self, sender_gas: u64) -> u64 {
         if sender_gas < self.sender_floor { self.sender_floor } else { sender_gas }
@@ -172,8 +173,8 @@ impl Eip8130Outcome {
     /// ```
     #[must_use]
     pub const fn metered_gas(&self, sender_gas: u64) -> u64 {
-        let standard = sender_gas.saturating_add(self.payer_auth_standard);
-        let floor = self.sender_floor.saturating_add(self.payer_auth);
+        let standard = sender_gas.saturating_add(self.payer_auth_cost);
+        let floor = self.sender_floor.saturating_add(self.payer_floor);
         if standard < floor { floor } else { standard }
     }
 }
@@ -302,7 +303,6 @@ impl Eip8130Executor {
                 .map_err(EVMError::Database)?;
         let now_ms = BaseTime { timestamp_millis_part }.timestamp_ms(now);
         let base_fee: u128 = u128::from(ctx.block().basefee());
-        let beneficiary = ctx.block().beneficiary();
         let block_number = ctx.block().number();
         // Reuse the original wire bytes captured during `from_encoded_tx` instead
         // of re-encoding: this avoids an allocation and the assumption that
@@ -371,15 +371,7 @@ impl Eip8130Executor {
                 }
             };
 
-        let gas_used = match Self::settle_fees(
-            evm.ctx_mut(),
-            &outcome,
-            &calls,
-            prepay,
-            &encoded,
-            spec,
-            beneficiary,
-        ) {
+        let gas_used = match Self::settle_fees(evm.ctx_mut(), &outcome, &calls, prepay, &encoded) {
             Ok(gas_used) => gas_used,
             Err(err) => {
                 Self::end_inspection(
@@ -667,7 +659,7 @@ impl Eip8130Executor {
         // it is never rejected at admission (`gas_limit >= sender_floor`).
         let estimate_gas = outcome
             .floored_sender_gas(outcome.sender_intrinsic.saturating_add(feasible_pool))
-            .saturating_add(outcome.payer_auth);
+            .saturating_add(outcome.payer_floor);
         Self::end_inspection(
             evm,
             inspection,
@@ -1002,8 +994,8 @@ impl Eip8130Executor {
                 gas_limit,
                 sender_intrinsic: intrinsic.sender_intrinsic(),
                 sender_floor: intrinsic.sender_floor(),
-                payer_auth: intrinsic.payer_auth,
-                payer_auth_standard: intrinsic.payer_auth_standard,
+                payer_floor: intrinsic.payer_floor,
+                payer_auth_cost: intrinsic.payer_auth_cost,
                 execution_gas_available,
                 effective: FeeCheck::effective_gas_price(max_fee, max_priority, base_fee),
                 base_fee,
@@ -1170,7 +1162,7 @@ impl Eip8130Executor {
                         now_ms,
                     )
                     .map_err(BaseTransactionError::eip8130)?;
-                    let replay = NonceValidator::replay_hash(tx, sender);
+                    let replay = tx.replay_id(sender);
                     nonce_mgr
                         .check_and_mark_expiring_nonce(replay, valid_before, now_ms)
                         .map_err(BaseTransactionError::eip8130)?;
@@ -1210,7 +1202,7 @@ impl Eip8130Executor {
             // EIP-7825: the transaction may consume `gas_limit` plus the payer
             // authentication metered on top of it, and that total is bounded by
             // the per-transaction gas cap (from Azul).
-            if FeeCheck::max_chargeable_gas(gas_limit, intrinsic.payer_auth) > tx_gas_limit_cap {
+            if FeeCheck::max_chargeable_gas(gas_limit, intrinsic.payer_floor) > tx_gas_limit_cap {
                 return Err(BaseTransactionError::eip8130(
                     "transaction gas exceeds the EIP-7825 per-transaction cap",
                 ));
@@ -1222,7 +1214,7 @@ impl Eip8130Executor {
             let payer_balance = sctx
                 .with_account_info(payer, |info| Ok(info.balance))
                 .map_err(BaseTransactionError::eip8130)?;
-            FeeCheck::validate_balance(payer_balance, gas_limit, intrinsic.payer_auth, max_fee)
+            FeeCheck::validate_balance(payer_balance, gas_limit, intrinsic.payer_floor, max_fee)
                 .map_err(|error| match error {
                     FeeError::InsufficientBalance { balance, required } => {
                         Self::payer_cannot_pay(balance, required)
@@ -1245,8 +1237,8 @@ impl Eip8130Executor {
                 gas_limit,
                 sender_intrinsic: intrinsic.sender_intrinsic(),
                 sender_floor: intrinsic.sender_floor(),
-                payer_auth: intrinsic.payer_auth,
-                payer_auth_standard: intrinsic.payer_auth_standard,
+                payer_floor: intrinsic.payer_floor,
+                payer_auth_cost: intrinsic.payer_auth_cost,
                 execution_gas_available,
                 effective: FeeCheck::effective_gas_price(max_fee, max_priority, base_fee),
                 base_fee,
@@ -1300,7 +1292,7 @@ impl Eip8130Executor {
 
         // Worst-case chargeable gas: the full sender budget plus payer
         // authentication, both billed at the effective price.
-        let max_gas = FeeCheck::max_chargeable_gas(outcome.gas_limit, outcome.payer_auth);
+        let max_gas = FeeCheck::max_chargeable_gas(outcome.gas_limit, outcome.payer_floor);
         let gas_charge = U256::from(max_gas)
             .checked_mul(U256::from(outcome.effective))
             .ok_or_else(|| BaseTransactionError::eip8130("EIP-8130 gas pre-charge overflow"))?;
@@ -1799,15 +1791,12 @@ impl Eip8130Executor {
     /// computes the billable gas, refunds the surplus to the payer, and routes
     /// the base fee, priority tip, L1 cost, and operator fee to their vaults.
     /// Returns the gas used reported in the result.
-    #[allow(clippy::too_many_arguments)]
     fn settle_fees<DB>(
         ctx: &mut BaseContext<DB>,
         outcome: &Eip8130Outcome,
         calls: &CallsResult,
         prepay: U256,
         encoded: &[u8],
-        spec: BaseSpecId,
-        beneficiary: Address,
     ) -> Result<u64, EVMError<DB::Error, BaseTransactionError>>
     where
         DB: AlloyDatabase,
@@ -1827,6 +1816,7 @@ impl Eip8130Executor {
         let priority_amount = fee
             .checked_sub(base_fee_amount)
             .ok_or_else(|| BaseTransactionError::eip8130("EIP-8130 priority amount underflow"))?;
+        let spec = ctx.cfg().spec();
         let fastlz_size = ctx.tx.enveloped_tx_fastlz_size;
         let l1_cost =
             ctx.chain_mut().calculate_tx_l1_cost_with_fastlz_size(encoded, fastlz_size, spec);
@@ -1857,6 +1847,7 @@ impl Eip8130Executor {
             payer_acc.set_balance(balance);
         }
 
+        let beneficiary = ctx.block().beneficiary();
         for (recipient, amount) in [
             (Predeploys::BASE_FEE_VAULT, base_fee_amount),
             (beneficiary, priority_amount),
@@ -2265,8 +2256,8 @@ mod tests {
             gas_limit: 1_000_000,
             sender_intrinsic: 100_000,
             sender_floor: 130_000,
-            payer_auth: 7_000,
-            payer_auth_standard: 5_000,
+            payer_floor: 7_000,
+            payer_auth_cost: 5_000,
             execution_gas_available: 900_000,
             effective: u128::from(BASE_FEE),
             base_fee: u128::from(BASE_FEE),
@@ -2284,7 +2275,7 @@ mod tests {
         };
         assert_eq!(
             Eip8130Executor::billable_gas(&base, &cheap),
-            base.sender_floor + base.payer_auth,
+            base.sender_floor + base.payer_floor,
         );
 
         // Heavy execution: sender_intrinsic + call_gas_spent (600_000) clears the
@@ -2293,7 +2284,7 @@ mod tests {
         let heavy = CallsResult { call_gas_spent: 500_000, ..cheap };
         assert_eq!(
             Eip8130Executor::billable_gas(&base, &heavy),
-            base.sender_intrinsic + heavy.call_gas_spent + base.payer_auth_standard,
+            base.sender_intrinsic + heavy.call_gas_spent + base.payer_auth_cost,
         );
     }
 
@@ -3150,7 +3141,7 @@ mod tests {
         let intrinsic =
             IntrinsicGas::compute(&signed, &encoded, &IntrinsicGasInput::new(sender, true))
                 .expect("intrinsic gas");
-        assert!(intrinsic.payer_auth_standard < intrinsic.payer_auth);
+        assert!(intrinsic.payer_auth_cost < intrinsic.payer_floor);
 
         let initial = U256::from(10u64).pow(U256::from(18u64));
         let mut evm = evm_with_accounts(initial, payer, &[(loader, warmth_probe_loader_code())]);
@@ -3163,7 +3154,7 @@ mod tests {
             COLD_ACCOUNT_ACCESS_COST + WARMTH_PROBE_PAD_GAS + 3 + Eip8130GasSchedule::COLD_SLOAD;
         let sender_gas = intrinsic.sender_intrinsic() + call_gas;
         assert!(sender_gas > intrinsic.sender_floor(), "execution must clear the floor");
-        assert_eq!(outcome.result.tx_gas_used(), sender_gas + intrinsic.payer_auth_standard);
+        assert_eq!(outcome.result.tx_gas_used(), sender_gas + intrinsic.payer_auth_cost);
     }
 
     /// The sender estimates an open payer transaction before any payer has

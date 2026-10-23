@@ -60,9 +60,10 @@ pub trait Eip8130EthApiOverride {
     /// `valid_after`/`valid_before`, or metadata) is estimated via a single
     /// read-only EIP-8130
     /// simulation against the block state (gated on the Everest fork). The
-    /// EIP-8130 pipeline charges deterministic, signature-independent gas, so no
-    /// gas-limit binary search is needed. A plain request falls through to the
-    /// standard reth estimator unchanged.
+    /// EIP-8130 pipeline charges deterministic, signature-independent gas, so
+    /// only the call pool is searched inside the simulation, not the whole gas
+    /// limit. A plain request falls through to the standard reth estimator
+    /// unchanged.
     #[method(name = "estimateGas")]
     async fn estimate_gas(
         &self,
