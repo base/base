@@ -401,7 +401,10 @@ def check_probes(errors: list[str]) -> None:
             r"\1",
         ),
     ):
-        mutated = re.sub(pattern, repl, rust_df, count=1)
+        mutated, count = re.subn(pattern, repl, rust_df, count=1)
+        if count != 1:
+            errors.append(f"probe {label}: mutation pattern no longer matches Dockerfile.rust-services; update the probe")
+            continue
         mut_errs: list[str] = []
         check_dockerfiles_in_map({"etc/docker/Dockerfile.rust-services": mutated}, mut_errs)
         if not mut_errs:
@@ -425,17 +428,22 @@ def check_probes(errors: list[str]) -> None:
             f"FROM runtime-base AS {out_stage}\n{CANONICAL_CA_SHELL}\n",
             1,
         )
+        if mut_out == rust_df:
+            errors.append(f"probe {out_stage}: mutation pattern no longer matches Dockerfile.rust-services; update the probe")
+            continue
         out_errs: list[str] = []
         check_dockerfiles_in_map({"etc/docker/Dockerfile.rust-services": mut_out}, out_errs)
         if not out_errs:
             errors.append(f"probe: adding CA SHELL to output stage '{out_stage}' in Dockerfile.rust-services did not fail")
 
+    # Linear execution is ~1.2 ms at 5,000 repetitions, whereas exponential backtracking
+    # exceeds 2.7 s at just 24 repetitions; 2.0 s avoids false positives on loaded runners.
     redos_input = "(A=" + '"" A=' * 5000 + "!"
     t0 = time.monotonic()
     RUST_TOOLCHAIN_CMD_RE.search(redos_input)
     elapsed = time.monotonic() - t0
-    if elapsed > 0.2:
-        errors.append(f"probe: RUST_TOOLCHAIN_CMD_RE took {elapsed:.3f}s on 5,000 repetitions (> 0.200s)")
+    if elapsed > 2.0:
+        errors.append(f"probe: RUST_TOOLCHAIN_CMD_RE took {elapsed:.3f}s on 5,000 repetitions (> 2.000s)")
 
 
 
