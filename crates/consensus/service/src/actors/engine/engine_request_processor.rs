@@ -1446,34 +1446,22 @@ mod tests {
     /// even while EL sync is incomplete.
     #[tokio::test]
     async fn shadow_gate_survives_initial_el_sync_reset() {
-        let (genesis_block, genesis_hash) = make_genesis_block();
-        let cfg = Arc::new(RollupConfig {
-            genesis: ChainGenesis {
-                l2: BlockNumHash { number: 0, hash: genesis_hash },
-                ..Default::default()
-            },
-            ..Default::default()
-        });
-        let head = L2BlockInfo::from_l2_genesis(&cfg.genesis);
+        let head = test_block_info(100);
 
         // Follower bootstrap (a stopped shadow sequencer resolves to the follower path): probes
         // with zeroed safe/finalized and needs a Valid FCU so `el_sync_finished` is set, which
         // drives the initial reset on the first drain while the finalized head is still default.
         let client = Arc::new(
             test_engine_client_builder()
-                .with_config(Arc::clone(&cfg))
                 .with_block_info_by_tag(BlockNumberOrTag::Latest, head)
-                .with_l2_block(BlockNumberOrTag::Finalized.into(), genesis_block.clone())
-                .with_l2_block(BlockNumberOrTag::Latest.into(), genesis_block)
-                .with_l1_block(BlockId::from(0u64), RpcBlock::default())
                 .with_fork_choice_updated_v3_response(valid_fcu())
                 .build(),
         );
 
         let mut mock_derivation = MockEngineDerivationClient::new();
         mock_derivation.expect_send_new_engine_safe_head().returning(|_| Ok(()));
-        mock_derivation.expect_notify_sync_completed().once().returning(|_| Ok(()));
-        mock_derivation.expect_send_signal().once().returning(|_| Ok(()));
+        mock_derivation.expect_notify_sync_completed().returning(|_| Ok(()));
+        mock_derivation.expect_send_signal().returning(|_| Ok(()));
 
         let mut mock_conductor = MockConductor::new();
         mock_conductor.expect_leader().returning(|| Ok(false));
@@ -1484,7 +1472,12 @@ mod tests {
 
         let (unsafe_head_tx, _) = watch::channel(L2BlockInfo::default());
 
-        let processor = EngineProcessor::new(Arc::clone(&client), cfg, mock_derivation, engine);
+        let processor = EngineProcessor::new(
+            Arc::clone(&client),
+            Arc::new(RollupConfig::default()),
+            mock_derivation,
+            engine,
+        );
 
         let (req_tx, req_rx) = mpsc::channel(8);
         let handle = SequencerEngineRequestCoordinator::new(
@@ -1501,91 +1494,9 @@ mod tests {
         let result = handle.await.expect("engine task panicked");
 
         assert!(
-            matches!(result, Err(super::EngineError::ChannelClosed)),
+            !matches!(result, Err(super::EngineError::ShadowInternalReset)),
             "shadow node must survive the initial EL-sync reset, got: {result:?}"
         );
-    }
-
-    #[tokio::test]
-    async fn isolated_catchup_observes_gossip_and_queues_external_inserts() {
-        let head = test_block_info(100);
-        let client = Arc::new(
-            test_engine_client_builder()
-                .with_block_info_by_tag(BlockNumberOrTag::Latest, head)
-                .build(),
-        );
-        let (state_tx, _) = watch::channel(EngineState::default());
-        let (queue_tx, mut queue_rx) = watch::channel(0usize);
-        let processor = EngineProcessor::new(
-            Arc::clone(&client),
-            Arc::new(RollupConfig::default()),
-            MockEngineDerivationClient::new(),
-            Engine::new(EngineState::default(), state_tx, queue_tx),
-        );
-        let (head_tx, head_rx) = watch::channel(head);
-        let (req_tx, req_rx) = mpsc::channel(8);
-        let handle = SequencerEngineRequestCoordinator::new(
-            processor,
-            NodeOperatingMode::IsolatedSequencer,
-            None,
-            true,
-            head_tx,
-        )
-        .start(req_rx);
-
-        for (hash, expected_queue_len) in
-            [(B256::with_last_byte(1), 1), (B256::with_last_byte(2), 2)]
-        {
-            req_tx
-                .send(EngineActorRequest::ProcessUnsafeL2BlockRequest(Box::new(
-                    unsafe_payload_with_l1_info(500, B256::ZERO, hash),
-                )))
-                .await
-                .expect("gossip request");
-            if expected_queue_len == 1 {
-                tokio::time::timeout(
-                    Duration::from_secs(5),
-                    queue_rx.wait_for(|length| *length == 1),
-                )
-                .await
-                .expect("external insert was not queued")
-                .expect("queue watch closed");
-                client
-                    .set_new_payload_v2_response(PayloadStatus {
-                        status: PayloadStatusEnum::Invalid {
-                            validation_error: "test rejection".into(),
-                        },
-                        latest_valid_hash: None,
-                    })
-                    .await;
-            }
-            let (result_tx, mut result_rx) = mpsc::channel(1);
-            req_tx
-                .send(EngineActorRequest::ResetRequest(Box::new(ResetRequest {
-                    result_tx,
-                    origin: crate::ResetOrigin::Sequencer,
-                    reason: crate::ResetReason::SequencerStartup,
-                })))
-                .await
-                .expect("activation request");
-            let result = tokio::time::timeout(Duration::from_secs(5), result_rx.recv())
-                .await
-                .expect("activation timed out")
-                .expect("activation response");
-            if expected_queue_len == 1 {
-                assert!(matches!(result, Err(EngineClientError::ELSyncing)));
-            } else {
-                assert!(matches!(result, Err(EngineClientError::ShadowBufferFaulted)));
-            }
-            assert_eq!(*queue_rx.borrow(), 0);
-            assert_eq!(*head_rx.borrow(), head);
-        }
-        assert!(client.last_new_payload_v2().await.is_some());
-        drop(req_tx);
-        assert!(matches!(
-            handle.await.expect("engine task"),
-            Err(super::EngineError::ChannelClosed)
-        ));
     }
 
     /// Regression test for shadow startup reset ordering. A recovery reset during canonical

@@ -109,12 +109,11 @@ impl CanonicalUnsafeCatchup {
         }
     }
 
-    /// Discards payloads through `anchor` and returns the contiguous canonical suffix extending it.
-    pub fn contiguous_payloads(
-        &mut self,
-        anchor: L2BlockInfo,
-    ) -> Vec<BaseExecutionPayloadEnvelope> {
-        self.payloads.retain(|number, _| *number > anchor.block_info.number);
+    /// Returns the contiguous canonical suffix that can extend `anchor` now.
+    ///
+    /// Buffered payloads are kept until [`Self::commit`], so `anchor` may be a block that the
+    /// engine has not acknowledged yet.
+    pub fn contiguous_payloads(&self, anchor: L2BlockInfo) -> Vec<BaseExecutionPayloadEnvelope> {
         let mut number = anchor.block_info.number.saturating_add(1);
         let mut parent = anchor.block_info.hash;
         let mut payloads = Vec::new();
@@ -133,6 +132,14 @@ impl CanonicalUnsafeCatchup {
     pub fn is_at_latest_observed(&self, head: L2BlockInfo) -> bool {
         !self.faulted
             && self.highest_observed == Some((head.block_info.number, head.block_info.hash))
+    }
+
+    /// Removes payloads acknowledged by the execution engine.
+    ///
+    /// Recent observations remain bounded separately so conflicting gossip for an acknowledged
+    /// height still faults catch-up.
+    pub fn commit(&mut self, head: L2BlockInfo) {
+        self.payloads.retain(|number, _| *number > head.block_info.number);
     }
 
     /// Returns whether conflicting canonical observations have faulted catch-up.
@@ -417,7 +424,7 @@ mod tests {
         assert!(!catchup.is_complete(safe, safe));
 
         let canonical_head = head(12, B256::with_last_byte(12));
-        catchup.contiguous_payloads(canonical_head);
+        catchup.commit(canonical_head);
         assert!(catchup.is_complete(canonical_head, safe));
     }
 
@@ -455,7 +462,7 @@ mod tests {
         for number in 1..=CanonicalUnsafeCatchup::MAX_PAYLOADS as u64 {
             catchup.buffer_payload(payload(number, B256::ZERO, B256::from(U256::from(number))));
         }
-        catchup.contiguous_payloads(head(
+        catchup.commit(head(
             CanonicalUnsafeCatchup::MAX_PAYLOADS as u64,
             B256::from(U256::from(CanonicalUnsafeCatchup::MAX_PAYLOADS as u64)),
         ));
@@ -471,6 +478,7 @@ mod tests {
         catchup.buffer_payload(payload(11, B256::with_last_byte(10), B256::with_last_byte(11)));
         let safe = head(12, B256::with_last_byte(12));
         assert!(catchup.contiguous_payloads(safe).is_empty());
+        catchup.commit(safe);
 
         assert!(catchup.is_complete(safe, safe));
     }
@@ -490,7 +498,7 @@ mod tests {
         let mut catchup = CanonicalUnsafeCatchup::default();
         let original = head(11, B256::with_last_byte(11));
         catchup.buffer_payload(payload(11, B256::with_last_byte(10), original.block_info.hash));
-        catchup.contiguous_payloads(original);
+        catchup.commit(original);
         assert!(catchup.is_complete(original, L2BlockInfo::default()));
 
         catchup.buffer_payload(payload(11, B256::with_last_byte(10), B256::with_last_byte(99)));
