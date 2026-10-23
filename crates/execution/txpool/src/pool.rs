@@ -1212,27 +1212,38 @@ where
         &self,
         transactions: Vec<(TransactionOrigin, Self::Transaction)>,
     ) -> Vec<PoolResult<AddedTransactionOutcome>> {
-        if transactions.iter().any(|(_, transaction)| self.is_sidecar_transaction(transaction)) {
-            let mut results = Vec::with_capacity(transactions.len());
-            for (origin, transaction) in transactions {
-                results.push(self.add_transaction(origin, transaction).await);
-            }
-            return results;
-        }
-        // Protocol validation reads canonical state, never pool contents. Every
-        // transaction is validated against one snapshot taken when the batch
-        // job starts and admitted in order only after the whole batch is
-        // validated, so outcomes match per-transaction adds unless the
-        // canonical head or the pool changes concurrently in that window.
+        // Validation reads canonical state, never pool contents, for protocol
+        // and sidecar transactions alike. The whole batch runs as one
+        // validation job, and transactions are admitted in order only after the
+        // whole batch is validated, so outcomes match per-transaction adds
+        // unless the canonical head or the pool changes concurrently in that
+        // window. Protocol transactions share one account-info snapshot taken
+        // when the job starts; EIP-8130 transactions need storage and code reads,
+        // so each takes its own latest-state snapshot during validation. A
+        // sidecar transaction does not force the batch onto the per-transaction
+        // path: one cheap channel transaction per batch would otherwise cost
+        // every batch one validation job and state provider per protocol
+        // transaction.
+        //
+        // The sidecar balance epoch is read before validation starts, as
+        // `add_sidecar_transaction` does, so a balance update during the batch
+        // invalidates the snapshot balances it would otherwise record.
+        let balance_epoch = self.nonce_pool.read().balance_epoch();
         let keys: Vec<_> = transactions
             .iter()
-            .map(|(origin, tx)| (*origin, *tx.hash(), tx.sender(), tx.nonce()))
+            .map(|(origin, tx)| {
+                (*origin, *tx.hash(), tx.sender(), tx.nonce(), self.is_sidecar_transaction(tx))
+            })
             .collect();
         let validated = self.validator().validate_transactions(transactions).await;
         keys.into_iter()
             .zip(validated)
-            .map(|((origin, hash, sender, nonce), validated)| {
-                self.add_validated_protocol_transaction(origin, hash, sender, nonce, validated)
+            .map(|((origin, hash, sender, nonce, sidecar), validated)| {
+                if sidecar {
+                    self.add_validated_sidecar_transaction(validated, origin, balance_epoch)
+                } else {
+                    self.add_validated_protocol_transaction(origin, hash, sender, nonce, validated)
+                }
             })
             .collect()
     }
@@ -2726,6 +2737,43 @@ mod tests {
         let (batched, pool) = assert_batch_matches_sequential(batch, &[sender.address()]).await;
         assert!(batched.iter().all(Result::is_ok));
         assert!(pool.nonce_pool.read().contains(&sidecar_hash));
+    }
+
+    #[tokio::test]
+    async fn mixed_sidecar_batch_matches_sequential_add() {
+        let (sender, other, unfunded) = (signer(), signer(), signer());
+        let channel = U256::from(2);
+        let lane_head = self_paid_eoa_8130(&sender, channel, 0, 0, 1_000);
+        let nonce_free = self_paid_eoa_8130(
+            &other,
+            Eip8130Constants::NONCE_KEY_MAX,
+            0,
+            INTEGRATION_POOL_NOW_MS + Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW,
+            1_000,
+        );
+        let gapped = self_paid_eoa_8130(&other, U256::from(3), 5, 0, 1_000);
+        let (lane_head_hash, nonce_free_hash, gapped_hash) =
+            (*lane_head.hash(), *nonce_free.hash(), *gapped.hash());
+        let batch = vec![
+            (TransactionOrigin::Local, signed_1559(&sender, 0)),
+            (TransactionOrigin::External, lane_head.clone()),
+            (TransactionOrigin::Local, self_paid_eoa_8130(&sender, channel, 1, 0, 1_000)),
+            (TransactionOrigin::Local, nonce_free),
+            (TransactionOrigin::Local, self_paid_eoa_8130(&unfunded, channel, 0, 0, 1_000)),
+            (TransactionOrigin::Local, lane_head),
+            (TransactionOrigin::Local, gapped),
+            (TransactionOrigin::Local, signed_1559(&other, 0)),
+            (TransactionOrigin::Local, signed_1559(&sender, 1)),
+        ];
+        let (batched, pool) =
+            assert_batch_matches_sequential(batch, &[sender.address(), other.address()]).await;
+        let failed: Vec<_> = batched.iter().map(Result::is_err).collect();
+        assert_eq!(failed, [false, false, false, false, true, true, false, false, false]);
+        let nonce_pool = pool.nonce_pool.read();
+        for hash in [lane_head_hash, nonce_free_hash, gapped_hash] {
+            assert!(nonce_pool.contains(&hash));
+        }
+        assert_eq!(pool.get(&lane_head_hash).expect("pooled").origin, TransactionOrigin::External);
     }
 
     /// Adds `batch` one transaction at a time to one fresh pool and as one
