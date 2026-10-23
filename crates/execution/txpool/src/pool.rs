@@ -1213,14 +1213,17 @@ where
         transactions: Vec<(TransactionOrigin, Self::Transaction)>,
     ) -> Vec<PoolResult<AddedTransactionOutcome>> {
         // Validation reads canonical state, never pool contents, for protocol
-        // and sidecar transactions alike. Every transaction is validated
-        // against one snapshot taken when the batch job starts and admitted in
-        // order only after the whole batch is validated, so outcomes match
-        // per-transaction adds unless the canonical head or the pool changes
-        // concurrently in that window. A sidecar transaction does not force the
-        // batch onto the per-transaction path: one cheap channel transaction per
-        // batch would otherwise cost every batch one validation job and state
-        // provider per transaction.
+        // and sidecar transactions alike. The whole batch runs as one
+        // validation job, and transactions are admitted in order only after the
+        // whole batch is validated, so outcomes match per-transaction adds
+        // unless the canonical head or the pool changes concurrently in that
+        // window. Protocol transactions share one account-info snapshot taken
+        // when the job starts; EIP-8130 transactions need storage and code reads,
+        // so each takes its own latest-state snapshot during validation. A
+        // sidecar transaction does not force the batch onto the per-transaction
+        // path: one cheap channel transaction per batch would otherwise cost
+        // every batch one validation job and state provider per protocol
+        // transaction.
         //
         // The sidecar balance epoch is read before validation starts, as
         // `add_sidecar_transaction` does, so a balance update during the batch
