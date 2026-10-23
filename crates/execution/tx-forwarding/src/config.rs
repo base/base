@@ -37,8 +37,9 @@ pub struct TxForwardingConfig {
     pub resend_after_ms: u64,
     /// Maximum number of transactions per batch (0 = unlimited).
     pub max_batch_size: usize,
-    /// Average RPC requests per second per forwarder (0 = unlimited). After an idle second up to
-    /// this many go at once, so a one-second window can carry up to twice as many.
+    /// Average RPC requests per second per forwarder (0 = unlimited). After an idle second sends
+    /// go out with little spacing, which grows as the second's budget is spent, so a one-second
+    /// window can carry up to twice as many.
     pub max_rps: u32,
     /// Percentage of forwarding picks served oldest-first, from 0 to 100.
     ///
