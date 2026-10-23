@@ -4,7 +4,7 @@ use core::{net::SocketAddr, time::Duration};
 use std::{path::PathBuf, sync::Arc};
 
 use base_builder_core::{
-    BuilderApiExtensionConfig, BuilderConfig, DEFAULT_MAX_VALIDITY_PREDICATES,
+    BuilderApiExtensionConfig, BuilderConfig, BuilderMetrics, DEFAULT_MAX_VALIDITY_PREDICATES,
     ExecutionMeteringMode, RejectionCache, ResourceMeteringConfig, RestingPredicateMode,
     SharedMeteringProvider, ValiditySignatureMode,
 };
@@ -151,7 +151,8 @@ pub struct Args {
     #[arg(long = "builder.max_gas_per_txn")]
     pub max_gas_per_txn: Option<u64>,
 
-    /// Maximum execution time per transaction in microseconds (requires resource metering)
+    /// Legacy Flashblocks-only wall-clock execution-time ceiling per transaction in microseconds.
+    /// Retired after Mainnet Denim soaks; native payload resource metering uses `--payload.resource-metering-schedule`.
     #[arg(long = "builder.max-execution-time-per-tx-us")]
     pub max_execution_time_per_tx_us: Option<u128>,
 
@@ -175,7 +176,8 @@ pub struct Args {
     #[arg(long = "builder.state-root-gas-anchor-us", hide = true)]
     pub state_root_gas_anchor_us: Option<u128>,
 
-    /// Execution metering mode: off, dry-run, or enforce
+    /// Legacy Flashblocks-only wall-clock execution-metering mode (`off`, `dry-run`, or `enforce`), retired after Mainnet Denim soaks.
+    /// Native payload resource metering uses per-dimension `dryRun` in `--payload.resource-metering-schedule`.
     #[arg(long = "builder.execution-metering-mode", value_enum, default_value = "off")]
     pub execution_metering_mode: ExecutionMeteringMode,
 
@@ -183,23 +185,26 @@ pub struct Args {
     #[arg(long = "builder.extra-block-deadline-secs", default_value = "20")]
     pub extra_block_deadline_secs: u64,
 
-    /// Enables both Flashblocks resource metering (`MeteringStore`) and native
-    /// payload resource-metering schedule evaluation.
+    /// Enables builder resource metering across both the Flashblocks metering
+    /// store (`MeteringStore`) and native payload resource-metering schedule
+    /// evaluation (`--payload.resource-metering-schedule`).
     ///
-    /// Disabling this flag turns off both paths; to disable only the native
-    /// schedule while keeping Flashblocks metering active, unset or remove
-    /// `--payload.resource-metering-schedule` (`PAYLOAD_RESOURCE_METERING_SCHEDULE`).
-    #[arg(long = "builder.enable-resource-metering", default_value = "false")]
+    /// This is the single on/off switch for builder metering: when enabled,
+    /// native schedule evaluation and Flashblocks metering run on whichever
+    /// builder is live; when disabled, neither runs.
+    #[arg(
+        long = "builder.enable-resource-metering",
+        env = "BUILDER_ENABLE_RESOURCE_METERING",
+        default_value = "false"
+    )]
     pub enable_resource_metering: bool,
 
     /// JSON file containing the startup resource-metering schedule.
     ///
-    /// The native payload builder throttles transactions against this schedule
-    /// when `--builder.enable-resource-metering` is set and the file is
-    /// non-empty. Unsetting or removing this schedule path is the native-only
-    /// off switch (`--builder.enable-resource-metering` without a schedule path
-    /// leaves native schedule evaluation inactive). Per-dimension `dryRun`
-    /// observes a budget without excluding transactions.
+    /// Evaluated by the native payload builder when `--builder.enable-resource-metering`
+    /// (`BUILDER_ENABLE_RESOURCE_METERING`) is enabled. Each dimension in the
+    /// schedule must explicitly set `dryRun` (`true` to observe budgets without
+    /// excluding transactions, `false` to enforce).
     ///
     /// Uses the same `--payload.resource-metering-schedule` flag and
     /// `PAYLOAD_RESOURCE_METERING_SCHEDULE` environment variable as the
@@ -323,7 +328,7 @@ impl Args {
     /// Creates a [`MeteringStore`] from the CLI arguments.
     pub fn build_metering_store(&self) -> MeteringStore {
         MeteringStore::new(
-            self.enable_resource_metering || self.execution_metering_mode.is_enabled(),
+            self.enable_resource_metering,
             self.tx_data_store_buffer_size,
             Duration::from_secs(self.metering_store_ttl_secs),
         )
@@ -387,6 +392,19 @@ impl Args {
             || self.state_root_gas_anchor_us.is_some()
         {
             warn!("deprecated builder resource limit flags are ignored");
+        }
+        if !self.enable_resource_metering && self.execution_metering_mode.is_enabled() {
+            warn!(
+                execution_metering_mode = ?self.execution_metering_mode,
+                enable_resource_metering = self.enable_resource_metering,
+                "Flashblocks wall-clock execution limit is inert because builder resource metering is disabled"
+            );
+        }
+        if self.enable_resource_metering && self.resource_metering_schedule.is_none() {
+            BuilderMetrics::resource_metering_schedule_missing_total().increment(1);
+            warn!(
+                "--builder.enable-resource-metering (BUILDER_ENABLE_RESOURCE_METERING) is enabled without --payload.resource-metering-schedule (PAYLOAD_RESOURCE_METERING_SCHEDULE); native payload resource-metering schedule evaluation is inactive"
+            );
         }
 
         let resource_metering = ResourceMeteringConfig::from_parts(
@@ -776,13 +794,13 @@ mod tests {
     const VALID_RESOURCE_METERING_SCHEDULE_JSON: &str = r#"{
         "version": 1,
         "dimensions": [{
-            "name": "builder_execution",
-            "blockLimit": 40000000,
-            "transactionLimit": 20000000,
+            "name": "compute",
+            "blockLimit": 1000,
+            "transactionLimit": 500,
             "baseGasWeight": 1,
             "operations": [
-                {"name": "BLAKE2F", "gasUsedWeight": 6, "countCost": 188},
-                {"name": "STATE_CHANGED_STORAGE_SLOT", "countCost": 10000}
+                {"name": "SSTORE", "gasUsedWeight": 2, "countCost": 10},
+                {"name": "STATE_CHANGED_STORAGE_SLOT", "countCost": 25}
             ],
             "dryRun": true
         }]
@@ -862,7 +880,7 @@ mod tests {
         assert!(config.resource_metering.enabled);
         assert!(config.resource_metering.is_active());
         assert_eq!(config.resource_metering.schedule.dimensions.len(), 1);
-        assert_eq!(config.resource_metering.schedule.dimensions[0].name, "builder_execution");
+        assert_eq!(config.resource_metering.schedule.dimensions[0].name, "compute");
         assert!(Arc::ptr_eq(&config.resource_metering.provider, &provider));
     }
 
@@ -916,5 +934,82 @@ mod tests {
             empty_err.to_string().contains(&empty_display),
             "error should name the schedule path: {empty_err:#}"
         );
+    }
+
+    #[test]
+    fn enable_resource_metering_is_only_switch_and_supports_env() {
+        let cmd = CommandParser::command();
+        let enable_arg = cmd
+            .get_arguments()
+            .find(|arg| arg.get_long() == Some("builder.enable-resource-metering"))
+            .expect("enable-resource-metering argument should be registered");
+        assert_eq!(
+            enable_arg.get_env(),
+            Some(std::ffi::OsStr::new("BUILDER_ENABLE_RESOURCE_METERING"))
+        );
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let schedule_path = dir.path().join("schedule.json");
+        std::fs::write(&schedule_path, VALID_RESOURCE_METERING_SCHEDULE_JSON)
+            .expect("write schedule");
+
+        for mode in [
+            ExecutionMeteringMode::Off,
+            ExecutionMeteringMode::DryRun,
+            ExecutionMeteringMode::Enforce,
+        ] {
+            let off_args = Args {
+                enable_resource_metering: false,
+                execution_metering_mode: mode,
+                resource_metering_schedule: Some(schedule_path.clone()),
+                ..Default::default()
+            };
+            let store = off_args.build_metering_store();
+            assert!(
+                !store.is_enabled(),
+                "MeteringStore must stay disabled when --builder.enable-resource-metering is false (mode={mode:?})"
+            );
+            let config =
+                off_args.into_builder_config(Arc::new(store)).expect("conversion should succeed");
+            assert!(!config.resource_metering.enabled);
+            assert!(!config.resource_metering.is_active());
+        }
+        let on_args = Args {
+            enable_resource_metering: true,
+            resource_metering_schedule: Some(schedule_path),
+            ..Default::default()
+        };
+        let on_store = on_args.build_metering_store();
+        assert!(on_store.is_enabled());
+        let on_config =
+            on_args.into_builder_config(Arc::new(on_store)).expect("conversion should succeed");
+        assert!(on_config.resource_metering.enabled);
+        assert!(on_config.resource_metering.is_active());
+    }
+
+    #[test]
+    fn live_enabled_without_schedule_configs_boot_with_warning_metric() {
+        let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+
+        for mode in [ExecutionMeteringMode::DryRun, ExecutionMeteringMode::Enforce] {
+            let args = Args {
+                enable_resource_metering: true,
+                execution_metering_mode: mode,
+                resource_metering_schedule: None,
+                ..Default::default()
+            };
+            let store = args.build_metering_store();
+            assert!(store.is_enabled());
+            let provider: SharedMeteringProvider = Arc::new(store);
+            let config = metrics::with_local_recorder(&recorder, || {
+                args.into_builder_config(provider)
+                    .expect("live enabled-without-schedule config must boot without error")
+            });
+            assert!(config.resource_metering.enabled);
+            assert!(!config.resource_metering.is_active());
+        }
+        let rendered = handle.render();
+        assert!(rendered.contains("base_builder_resource_metering_schedule_missing_total 2"));
     }
 }

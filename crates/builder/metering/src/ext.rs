@@ -21,7 +21,10 @@ pub trait BaseApiExt {
         meter: MeterBundleResponse,
     ) -> RpcResult<()>;
 
-    /// Enables or disables resource metering.
+    /// Operator runtime override that enables or disables only the Flashblocks
+    /// [`MeteringStore`](crate::MeteringStore) (`base_setMeteringInformation`
+    /// and simulated bundle lookups, and the Flashblocks builder's use of stored metering data) in memory. Does not toggle the startup
+    /// native payload resource-metering schedule (`--builder.enable-resource-metering`).
     #[method(name = "setMeteringEnabled")]
     async fn set_metering_enabled(&self, enabled: bool) -> RpcResult<()>;
 

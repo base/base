@@ -106,11 +106,10 @@ pub struct ResourceMeteringArgs {
     ///
     /// On those nodes, the native payload builder throttles transactions
     /// against this schedule when `--enable-metering` is set and the file is
-    /// non-empty (`base-builder` and `base sequencer` gate the same flag on
-    /// `--builder.enable-resource-metering`). Unsetting or removing this
-    /// schedule path disables native schedule evaluation while keeping
-    /// `base_meterBundle` enabled. Per-dimension `dryRun` observes a budget
-    /// without excluding transactions.
+    /// non-empty (`base-builder` and `base sequencer` gate builder metering as a
+    /// whole on `--builder.enable-resource-metering`). Each dimension must
+    /// explicitly set `dryRun` (`true` to observe a budget without excluding
+    /// transactions, `false` to enforce).
     #[arg(long = "payload.resource-metering-schedule", env = "PAYLOAD_RESOURCE_METERING_SCHEDULE")]
     pub resource_metering_schedule: Option<PathBuf>,
 
@@ -1785,7 +1784,8 @@ mod tests {
                         {"name": "SSTORE", "countCost": 1},
                         {"name": "STATE_NEW_STORAGE_SLOT", "countCost": 1},
                         {"name": "NOT_AN_OPCODE", "countCost": 1}
-                    ]
+                    ],
+                    "dryRun": true
                 }]
             }"#,
         )

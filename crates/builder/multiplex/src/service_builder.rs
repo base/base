@@ -230,11 +230,11 @@ mod tests {
             r#"{
                 "version": 1,
                 "dimensions": [{
-                    "name": "builder_execution",
-                    "blockLimit": 40000000,
-                    "transactionLimit": 20000000,
+                    "name": "compute",
+                    "blockLimit": 1000,
+                    "transactionLimit": 500,
                     "baseGasWeight": 1,
-                    "operations": [{"name": "BLAKE2F", "gasUsedWeight": 6, "countCost": 188}],
+                    "operations": [{"name": "SSTORE", "gasUsedWeight": 2, "countCost": 10}],
                     "dryRun": true
                 }]
             }"#,
@@ -253,7 +253,7 @@ mod tests {
         assert!(native.resource_metering.enabled);
         assert!(native.resource_metering.is_active());
         assert_eq!(native.resource_metering.schedule.dimensions.len(), 1);
-        assert_eq!(native.resource_metering.schedule.dimensions[0].name, "builder_execution");
+        assert_eq!(native.resource_metering.schedule.dimensions[0].name, "compute");
         assert!(Arc::ptr_eq(&native.resource_metering.provider, &provider));
     }
 }
