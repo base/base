@@ -1035,54 +1035,66 @@ mod tests {
             .unwrap();
     }
 
-    /// A transaction the destination confirmed it holds is not resent when the resend window
-    /// lapses, while one it never confirmed is.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn delivered_transactions_are_not_resent_with_the_undelivered() {
-        const RESEND_AFTER: Duration = Duration::from_millis(200);
-        let (delivered, undelivered) = (transaction(0), transaction(1));
-        let (_announce, announcements) = mpsc::channel(16);
-        let (snapshot_tx, _snapshots) = mpsc::unbounded_channel();
-        let (sender, mut queue) = mpsc::channel::<InsertValidatedTransaction>(64);
-        let (receipts, receipts_rx) = mpsc::channel(16);
-        let cancel = CancellationToken::new();
-        let mut reader = DestinationReader::new(
-            costly_pool(
-                Duration::ZERO,
-                vec![Arc::clone(&delivered), Arc::clone(&undelivered)],
-                announcements,
-                snapshot_tx,
-            ),
+    /// The hashes a full read queues, in pick order.
+    fn snapshot_hashes(reader: &mut DestinationReader<MockReaderPool>) -> Vec<TxHash> {
+        let mut lanes = reader.take_snapshot().unwrap();
+        std::iter::from_fn(|| lanes.pop(Lane::Priority)).map(|tx| *tx.hash()).collect()
+    }
+
+    /// A reader over `txs` whose resends are all due at once, with its delivery receipt channel.
+    fn resending_reader(
+        txs: Vec<Arc<ValidPoolTransaction<BasePooledTransaction>>>,
+        lost: Arc<AtomicBool>,
+    ) -> (DestinationReader<MockReaderPool>, mpsc::Sender<TxHash>) {
+        let mut pool = MockReaderPool::new();
+        pool.expect_block_info().returning(BlockInfo::default);
+        pool.expect_best_transactions().returning(move || Box::new(txs.clone().into_iter()));
+        let (receipts, receipts_rx) = mpsc::channel(4);
+        let reader = DestinationReader::new(
+            pool,
             ReaderConfig {
-                resend_after: RESEND_AFTER,
-                channel_capacity: 64,
-                poll_interval: Duration::from_millis(1),
-                fifo_percent: 20,
+                resend_after: Duration::ZERO,
+                channel_capacity: 4,
+                poll_interval: ReaderConfig::POLL_INTERVAL,
+                fifo_percent: 0,
             },
-            sender,
-            cancel.clone(),
+            mpsc::channel(4).0,
+            CancellationToken::new(),
             "http://builder.test".parse().unwrap(),
         )
-        .with_delivery_receipts(receipts_rx, Arc::default());
+        .with_delivery_receipts(receipts_rx, lost);
+        (reader, receipts)
+    }
 
-        let run = tokio::spawn(async move { reader.run().await });
-        let mut sends = HashMap::<TxHash, usize>::new();
-        // Waits for resends rather than a fixed time, so a slow machine only makes the test longer.
-        time::timeout(Duration::from_secs(5), async {
-            while sends.get(undelivered.hash()).copied().unwrap_or_default() < 3 {
-                let forwarded = queue.recv().await.expect("the reader keeps forwarding");
-                // Confirmed on its first send, as the forwarder would on the builder's response.
-                if forwarded.tx_hash == *delivered.hash() {
-                    receipts.send(forwarded.tx_hash).await.unwrap();
-                }
-                *sends.entry(forwarded.tx_hash).or_default() += 1;
-            }
-        })
-        .await
-        .expect("the undelivered transaction is resent");
-        cancel.cancel();
-        time::timeout(Duration::from_secs(5), run).await.expect("reader exits").unwrap();
+    /// A transaction the destination confirmed it holds is left out of a full read that resends
+    /// one it never confirmed.
+    #[test]
+    fn a_full_read_skips_confirmed_transactions() {
+        let (delivered, undelivered) = (transaction(0), transaction(1));
+        let (mut reader, receipts) = resending_reader(
+            vec![Arc::clone(&delivered), Arc::clone(&undelivered)],
+            Arc::default(),
+        );
+        reader.recently_sent.mark_sent(*delivered.hash());
+        reader.recently_sent.mark_sent(*undelivered.hash());
+        receipts.try_send(*delivered.hash()).unwrap();
 
-        assert_eq!(sends.get(delivered.hash()), Some(&1), "the delivered transaction is sent once");
+        assert_eq!(snapshot_hashes(&mut reader), vec![*undelivered.hash()]);
+    }
+
+    /// Once the forwarder reports the destination lost, the transactions it confirmed are resent.
+    #[test]
+    fn a_lost_destination_gets_its_confirmed_transactions_again() {
+        let delivered = transaction(0);
+        let lost = Arc::new(AtomicBool::new(false));
+        let (mut reader, receipts) =
+            resending_reader(vec![Arc::clone(&delivered)], Arc::clone(&lost));
+        reader.recently_sent.mark_sent(*delivered.hash());
+        receipts.try_send(*delivered.hash()).unwrap();
+        assert!(snapshot_hashes(&mut reader).is_empty());
+
+        lost.store(true, Ordering::Relaxed);
+
+        assert_eq!(snapshot_hashes(&mut reader), vec![*delivered.hash()]);
     }
 }

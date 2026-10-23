@@ -115,7 +115,8 @@ pub(crate) struct DestinationForwarder<R> {
     buffer_limit: usize,
     /// Where to report transactions the destination confirmed it holds.
     delivery_receipts: Option<mpsc::Sender<TxHash>>,
-    /// Set when a batch is dropped after its retries, so the reader resends what it confirmed.
+    /// Set when a send fails in a way that may mean the destination restarted, so the reader
+    /// resends what it confirmed.
     destination_lost: Arc<AtomicBool>,
 }
 
@@ -146,8 +147,8 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
     }
 
     /// Reports each transaction the destination accepted, or rejected as already held, on
-    /// `receipts`, and sets `lost` when the destination fails a send after its retries, as it does
-    /// while restarting.
+    /// `receipts`, and sets `lost` when a send to the destination fails with a connection error or
+    /// timeout, as it does while restarting.
     ///
     /// Receipts are best effort: one that does not fit in `receipts` is dropped, which only
     /// leaves that transaction on its regular resend schedule.
@@ -315,6 +316,11 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
                 }
             }
             let result = self.send(&batch).await;
+            // A connection error or timeout may mean the destination restarted and lost the
+            // transactions it confirmed earlier, even if a retry then succeeds.
+            if result.as_ref().is_err_and(Self::is_retryable) {
+                self.destination_lost.store(true, Ordering::Relaxed);
+            }
 
             match result {
                 Ok(response) => {
@@ -408,7 +414,6 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
                         retryable = Self::is_retryable(&err),
                         "RPC send failed, dropping batch",
                     );
-                    self.destination_lost.store(true, Ordering::Relaxed);
                     ForwarderMetrics::rpc_errors(
                         Arc::clone(&self.url_label),
                         ForwarderMetrics::rpc_error_label(&err),
@@ -1083,6 +1088,62 @@ mod tests {
         forwarder.flush_buffer().await;
 
         assert!(lost.load(Ordering::Relaxed));
+        assert!(receipts_rx.try_recv().is_err());
+    }
+
+    /// A timeout marks the destination lost even when the retry then succeeds: the builder may
+    /// have restarted in between and dropped what it confirmed before.
+    #[tokio::test]
+    async fn a_timeout_marks_the_destination_lost_even_if_the_retry_succeeds() {
+        let mut module = RpcModule::new(std::sync::atomic::AtomicUsize::new(0));
+        module
+            .register_async_method(INSERT_METHOD, |_, calls, _| async move {
+                if calls.fetch_add(1, Ordering::Relaxed) == 0 {
+                    time::sleep(Duration::from_millis(500)).await;
+                }
+                Ok::<_, ErrorObjectOwned>(())
+            })
+            .unwrap();
+        let server = Server::builder().build(SocketAddr::from(([127, 0, 0, 1], 0))).await.unwrap();
+        let url = url::Url::parse(&format!("http://{}", server.local_addr().unwrap())).unwrap();
+        let _server = server.start(module);
+        let client = HttpClientBuilder::default()
+            .request_timeout(Duration::from_millis(100))
+            .build(url.as_str())
+            .unwrap();
+        let config = Arc::new(ForwarderConfig { max_retries: 1, ..(*config(0, 0)).clone() });
+        let (_sender, receiver) = mpsc::channel(1);
+        let (receipts, mut receipts_rx) = mpsc::channel(8);
+        let lost = Arc::new(AtomicBool::new(false));
+        let mut forwarder =
+            DestinationForwarder::<InsertValidatedTransaction>::new(url, client, receiver, config)
+                .with_delivery_receipts(receipts, Arc::clone(&lost));
+        assert!(!forwarder.handle_recv(Some(transaction(0))));
+
+        forwarder.flush_buffer().await;
+
+        assert_eq!(receipts_rx.try_recv().ok(), Some(B256::with_last_byte(0)), "the retry landed");
+        assert!(lost.load(Ordering::Relaxed));
+    }
+
+    /// Receipts that do not fit are dropped without holding up forwarding.
+    #[tokio::test]
+    async fn a_full_receipt_channel_drops_receipts_without_blocking() {
+        let (url, received, _server) = rpc_server().await;
+        let (_sender, receiver) = mpsc::channel(1);
+        let (receipts, mut receipts_rx) = mpsc::channel(1);
+        let mut forwarder = forwarder::<InsertValidatedTransaction>(url, receiver, config(0, 0))
+            .with_delivery_receipts(receipts, Arc::default());
+        for nonce in 0..3 {
+            assert!(!forwarder.handle_recv(Some(transaction(nonce))));
+        }
+
+        time::timeout(Duration::from_secs(5), forwarder.flush_buffer())
+            .await
+            .expect("forwarding does not wait for receipt capacity");
+
+        assert_eq!(nonces(&received), [0, 1, 2]);
+        assert_eq!(receipts_rx.try_recv().ok(), Some(B256::with_last_byte(0)));
         assert!(receipts_rx.try_recv().is_err());
     }
 }

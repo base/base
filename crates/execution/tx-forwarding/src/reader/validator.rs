@@ -20,10 +20,13 @@ const PRUNE_INTERVAL: u64 = 1000;
 /// Once the destination confirms it holds a transaction, its entry is dated ahead so the resend
 /// comes [`Self::DELIVERED_RESEND_AFTER`] after the confirmation: resending a transaction the
 /// destination holds only earns an `already imported` rejection, and a resting pool would
-/// otherwise be resent in full every `resend_after`.
+/// otherwise be resent in full every `resend_after`. The hold is also how long a transaction the
+/// destination drops without telling anyone, such as by evicting it from a full pool, waits to be
+/// sent again.
 pub(super) struct RecentlySent {
     seen: HashMap<B256, Instant>,
     resend_after: Duration,
+    delivered_resend_after: Duration,
     check_count: u64,
 }
 
@@ -34,7 +37,12 @@ impl RecentlySent {
 
     /// Creates a new tracker.
     pub(super) fn new(resend_after: Duration) -> Self {
-        Self { seen: HashMap::new(), resend_after, check_count: 0 }
+        Self {
+            seen: HashMap::new(),
+            resend_after,
+            delivered_resend_after: Self::DELIVERED_RESEND_AFTER,
+            check_count: 0,
+        }
     }
 
     /// Returns `true` if the hash was sent within the `resend_after` window.
@@ -48,7 +56,9 @@ impl RecentlySent {
             self.prune_expired();
         }
 
-        self.seen.get(hash).is_some_and(|instant| instant.elapsed() < self.resend_after)
+        // Compared as instants, not as elapsed time, so an entry dated ahead by
+        // `mark_delivered` holds even with a zero `resend_after`.
+        self.seen.get(hash).is_some_and(|sent| Instant::now() < *sent + self.resend_after)
     }
 
     /// Returns when a transaction sent earlier is or was due for a resend, or `None` if it has no
@@ -73,7 +83,7 @@ impl RecentlySent {
     ///
     /// The entry is dated in the future, `resend_after` before the resend is due.
     pub(super) fn mark_delivered(&mut self, hash: B256) {
-        let deferral = Self::DELIVERED_RESEND_AFTER.saturating_sub(self.resend_after);
+        let deferral = self.delivered_resend_after.saturating_sub(self.resend_after);
         let dated = Instant::now() + deferral;
         self.seen.entry(hash).and_modify(|at| *at = (*at).max(dated)).or_insert(dated);
     }
@@ -101,7 +111,7 @@ impl RecentlySent {
     fn prune_expired(&mut self) {
         let now = Instant::now();
         let keep = self.resend_after * 2;
-        self.seen.retain(|_, instant| now.duration_since(*instant) < keep);
+        self.seen.retain(|_, sent| now < *sent + keep);
     }
 }
 
@@ -179,8 +189,24 @@ mod tests {
         tracker.mark_delivered(hash);
         tracker.forget_deliveries();
 
-        assert!(tracker.was_recently_sent(&hash));
+        // Back on the regular schedule: due one resend window from now at the latest.
+        assert!(tracker.seen[&hash] <= Instant::now());
         std::thread::sleep(Duration::from_millis(15));
+        assert!(!tracker.was_recently_sent(&hash));
+    }
+
+    /// A destination that drops a confirmed transaction without a failed send, such as by evicting
+    /// it from a full pool, gets it again once the hold lapses.
+    #[test]
+    fn delivered_hash_is_resent_once_the_hold_lapses() {
+        let mut tracker = RecentlySent::new(Duration::from_millis(10));
+        tracker.delivered_resend_after = Duration::from_millis(30);
+        let hash = B256::random();
+
+        tracker.mark_sent(hash);
+        tracker.mark_delivered(hash);
+        std::thread::sleep(Duration::from_millis(50));
+
         assert!(!tracker.was_recently_sent(&hash));
     }
 
