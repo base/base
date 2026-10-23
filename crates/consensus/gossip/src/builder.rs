@@ -45,6 +45,8 @@ pub struct GossipDriverBuilder {
     max_identify_peerstore_peers: NonZeroUsize,
     /// Topic scoring. Disabled by default.
     topic_scoring: bool,
+    /// Whether outbound TCP connections may reuse the listener port.
+    reuse_listener_port: bool,
 }
 
 impl GossipDriverBuilder {
@@ -70,12 +72,21 @@ impl GossipDriverBuilder {
             max_identify_peerstore_peers: DEFAULT_MAX_IDENTIFY_PEERSTORE_PEERS,
             rollup_config,
             topic_scoring: false,
+            reuse_listener_port: true,
         }
     }
 
     /// Sets the configuration for the connection gater.
     pub const fn with_gater_config(mut self, config: GaterConfig) -> Self {
         self.gater_config = Some(config);
+        self
+    }
+
+    /// Sets whether outbound TCP connections may reuse the listener port (enabled by default).
+    /// Disable when another local interface has a listener on the same port, since libp2p
+    /// reuses ports by binding outbound sockets to the wildcard address.
+    pub const fn with_reuse_listener_port(mut self, reuse: bool) -> Self {
+        self.reuse_listener_port = reuse;
         self
     }
 
@@ -260,6 +271,7 @@ impl GossipDriverBuilder {
                     max_identify_peerstore_peers,
                     peer_monitoring: self.peer_monitoring,
                     connection_limits_config,
+                    reuse_listener_port: self.reuse_listener_port,
                 },
             ),
             signer_tx,

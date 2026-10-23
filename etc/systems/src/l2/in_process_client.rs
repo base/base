@@ -113,6 +113,8 @@ pub struct InProcessClient {
     _runtime: Runtime,
     data_dir: PathBuf,
     _temp_dir: Option<TempDir>,
+    // Retain claims through explicit shutdown and drop them after the runtime on plain drop.
+    _ports: PortPool,
 }
 
 impl std::fmt::Debug for InProcessClient {
@@ -136,6 +138,7 @@ impl InProcessClient {
         );
 
         let (data_dir, temp_dir) = Self::prepare_datadir(config.datadir.clone())?;
+        let mut ports = PortPool::default();
         let runtime = RuntimeBuilder::new(
             config
                 .runtime
@@ -229,7 +232,7 @@ impl InProcessClient {
         node_config.txpool.transactions_backup_path = None;
         let metrics_addr = SocketAddr::new(
             std::net::Ipv4Addr::LOCALHOST.into(),
-            config.metrics_port.unwrap_or_else(PortPool::claim),
+            config.metrics_port.unwrap_or_else(|| ports.claim()),
         );
         node_config.metrics = MetricArgs { prometheus: Some(metrics_addr), ..Default::default() };
         if config.http_port.is_none()
@@ -305,6 +308,7 @@ impl InProcessClient {
             _runtime: runtime,
             data_dir,
             _temp_dir: temp_dir,
+            _ports: ports,
         })
     }
 

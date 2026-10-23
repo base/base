@@ -66,7 +66,7 @@ pub use l1::{
 
 mod l2;
 pub use l2::{
-    ChainSpecSource, InProcessBatcher, InProcessBatcherConfig, InProcessBuilder,
+    ChainSpecSource, ConsensusTask, InProcessBatcher, InProcessBatcherConfig, InProcessBuilder,
     InProcessBuilderConfig, InProcessClient, InProcessClientConfig, InProcessConsensus,
     InProcessConsensusConfig, InProcessFollowConsensus, InProcessFollowConsensusConfig,
     InProcessNodeRuntime, InProcessStandaloneSequencer, InProcessStandaloneSequencerConfig,
