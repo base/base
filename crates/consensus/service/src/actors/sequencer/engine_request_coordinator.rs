@@ -187,20 +187,23 @@ where
         let complete = match self.sequencer_kind {
             // Admin start must not release shadow catch-up or reconciliation.
             SequencerKind::Shadow => return Ok(()),
-            SequencerKind::Regular => catchup.is_none_or(|catchup| {
-                !catchup.has_observations() || catchup.is_complete(head, sync_state.safe_head())
-            }),
+            SequencerKind::Regular => {
+                if !self.processor.engine_state().el_sync_finished {
+                    return Err(EngineClientError::ELSyncing);
+                }
+                catchup.is_none_or(|catchup| {
+                    !catchup.has_observations() || catchup.is_complete(head, sync_state.safe_head())
+                })
+            }
             SequencerKind::Isolated => {
-                catchup.is_none_or(|catchup| self.isolated_startup_ready(catchup))
+                self.is_isolated_active()
+                    || catchup.is_some_and(|catchup| self.isolated_startup_ready(catchup))
             }
         };
-        if !self.processor.engine_state().el_sync_finished {
-            return Err(EngineClientError::ELSyncing);
-        }
         if catchup.is_some_and(CanonicalUnsafeCatchup::is_faulted) {
             return Err(EngineClientError::ShadowBufferFaulted);
         }
-        if !complete {
+        if !self.processor.engine_state().el_sync_finished || !complete {
             return Err(EngineClientError::ELSyncing);
         }
 
@@ -405,11 +408,10 @@ where
 
     async fn advance_canonical_catchup(&mut self) -> Result<(), EngineError> {
         let anchor = self.processor.engine_state().sync_state.unsafe_head();
-        let SequencerEngineState::CatchingUp { catchup } = &mut self.sequencer_state else {
-            return Ok(());
+        let payloads = match &mut self.sequencer_state {
+            SequencerEngineState::CatchingUp { catchup } => catchup.contiguous_payloads(anchor),
+            _ => return Ok(()),
         };
-        catchup.commit(anchor);
-        let payloads = catchup.contiguous_payloads(anchor);
         if payloads.is_empty() {
             return Ok(());
         }
@@ -465,7 +467,22 @@ where
         mut request_channel: mpsc::Receiver<EngineActorRequest>,
     ) -> JoinHandle<Result<(), EngineError>> {
         tokio::spawn(async move {
-            // Bootstrap methods own the mode-specific reset and probe policy.
+            // Bootstrap: pre-populate the unsafe_head_tx watch channel so that external callers
+            // (admin_startSequencer, sync-status RPC) never observe a zero hash.
+            //
+            // We gate on whether reth's current head is at the rollup genesis:
+            //
+            //   • At genesis — reth has no snap-synced canonical chain, so engine.reset() is
+            //     safe: it FCUs to the genesis block and sets up derivation normally. The
+            //     el_sync_finished / el_sync_complete gate is preserved as before.
+            //
+            //   • Beyond genesis — reth already has a canonical chain (e.g. after snap sync).
+            //     Sending a FCU to the sync-start block would reorg reth below its state pivot,
+            //     causing every subsequent engine_newPayload to return Syncing and the node to
+            //     enter an infinite reset loop. Instead we seed the watch channel from reth's
+            //     current head directly; derivation will issue its own FCU once the first Reset
+            //     task arrives.
+            // Isolated sequencers use bootstrap_validator instead.
             let opt_head = self
                 .processor
                 .client()
@@ -492,18 +509,17 @@ where
                     }
                 };
             }
-            match (self.sequencer_kind, bootstrap_role) {
-                (SequencerKind::Isolated, _) => {
-                    self.processor.bootstrap_validator(opt_head).await;
+            if self.sequencer_kind == SequencerKind::Isolated {
+                self.processor.bootstrap_validator(opt_head).await;
+            } else {
+                match bootstrap_role {
+                    BootstrapRole::ConductorFollower => {
+                        self.processor.bootstrap_conductor_follower(opt_head).await
+                    }
+                    BootstrapRole::ActiveSequencer => {
+                        self.processor.bootstrap_active_sequencer(opt_head, at_genesis).await
+                    }
                 }
-                (
-                    SequencerKind::Regular | SequencerKind::Shadow,
-                    BootstrapRole::ConductorFollower,
-                ) => self.processor.bootstrap_conductor_follower(opt_head).await,
-                (
-                    SequencerKind::Regular | SequencerKind::Shadow,
-                    BootstrapRole::ActiveSequencer,
-                ) => self.processor.bootstrap_active_sequencer(opt_head, at_genesis).await,
             }
 
             let mut el_sync_probe_interval = time::interval_at(
@@ -558,17 +574,22 @@ where
                 let recv_wait_timer = base_metrics::timed!(
                     EngineMetrics::engine_processor_recv_wait_duration_seconds()
                 );
-                let el_sync_finished = self.processor.engine_state().el_sync_finished;
-                let recv_result = tokio::select! {
-                    request = request_channel.recv() => request,
-                    _ = el_sync_probe_interval.tick(), if !el_sync_finished && self.sequencer_kind != SequencerKind::Isolated => {
-                        drop(recv_wait_timer);
-                        let active_sequencer = self.resolve_bootstrap_role().await
-                            == BootstrapRole::ActiveSequencer;
-                        self.processor
-                            .probe_sequencer_el_sync(active_sequencer)
-                            .await;
-                        continue;
+                let recv_result = if self.processor.engine_state().el_sync_finished
+                    || self.sequencer_kind == SequencerKind::Isolated
+                {
+                    request_channel.recv().await
+                } else {
+                    tokio::select! {
+                        request = request_channel.recv() => request,
+                        _ = el_sync_probe_interval.tick() => {
+                            drop(recv_wait_timer);
+                            let active_sequencer = self.resolve_bootstrap_role().await
+                                == BootstrapRole::ActiveSequencer;
+                            self.processor
+                                .probe_sequencer_el_sync(active_sequencer)
+                                .await;
+                            continue;
+                        }
                     }
                 };
                 drop(recv_wait_timer);
@@ -1014,7 +1035,6 @@ mod tests {
             .await
             .expect("request barrier");
         result_rx.recv().await.expect("barrier response").expect("idempotent activation");
-        assert_eq!(client.storage().read().await.fork_choice_updated_v3_requests.len(), 2);
         assert_eq!(state_rx.borrow().sync_state.unsafe_head(), head);
         assert_eq!(*queue_rx.borrow(), 0);
         drop(request_tx);
@@ -1214,8 +1234,10 @@ mod tests {
     #[rstest]
     #[case::caught_up(&[(100, 100)], true)]
     #[case::gap(&[(102, 102)], false)]
+    #[case::no_gossip(&[], false)]
     #[case::wrong_hash(&[(100, 99)], false)]
     #[case::stale_gossip(&[(99, 99)], false)]
+    #[case::conflict(&[(100, 100), (100, 99)], false)]
     #[tokio::test]
     async fn isolated_activation_requires_el_synced_canonical_head(
         #[case] observations: &[(u64, u8)],
@@ -1252,10 +1274,15 @@ mod tests {
             true,
             head_tx,
         );
+        assert!(matches!(
+            coordinator.prepare_sequencer_start(head.block_info.hash),
+            Err(EngineClientError::ELSyncing)
+        ));
         let mut catchup = CanonicalUnsafeCatchup::default();
         for &(number, hash) in observations {
             catchup.observe_payload(&payload(number, hash));
         }
+        let faulted = catchup.is_faulted();
         *coordinator.sequencer_state_mut() = SequencerEngineState::CatchingUp { catchup };
 
         let accepted = accepted && el_synced;
@@ -1280,6 +1307,9 @@ mod tests {
             coordinator.prepare_sequencer_start(head.block_info.hash)
         };
         assert_eq!(result.is_ok(), accepted);
+        if faulted {
+            assert!(matches!(result, Err(EngineClientError::ShadowBufferFaulted)));
+        }
         assert_eq!(*queue_rx.borrow(), usize::from(!accepted));
         assert_eq!(coordinator.processor.engine_state().sync_state.unsafe_head(), head);
         assert_eq!(

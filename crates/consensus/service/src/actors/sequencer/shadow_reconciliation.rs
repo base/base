@@ -81,7 +81,7 @@ impl CanonicalUnsafeCatchup {
         if self.faulted || observed {
             return;
         }
-        self.payloads.entry(number).or_insert(envelope);
+        self.payloads.insert(number, envelope);
         while self.payloads.len() > Self::MAX_PAYLOADS {
             self.payloads.pop_first();
         }
@@ -110,10 +110,12 @@ impl CanonicalUnsafeCatchup {
     }
 
     /// Returns the contiguous canonical suffix that can extend `anchor` now.
-    ///
-    /// Buffered payloads are kept until [`Self::commit`], so `anchor` may be a block that the
-    /// engine has not acknowledged yet.
-    pub fn contiguous_payloads(&self, anchor: L2BlockInfo) -> Vec<BaseExecutionPayloadEnvelope> {
+    pub fn contiguous_payloads(
+        &mut self,
+        anchor: L2BlockInfo,
+    ) -> Vec<BaseExecutionPayloadEnvelope> {
+        self.payloads.retain(|number, _| *number > anchor.block_info.number);
+
         let mut number = anchor.block_info.number.saturating_add(1);
         let mut parent = anchor.block_info.hash;
         let mut payloads = Vec::new();
@@ -478,7 +480,6 @@ mod tests {
         catchup.buffer_payload(payload(11, B256::with_last_byte(10), B256::with_last_byte(11)));
         let safe = head(12, B256::with_last_byte(12));
         assert!(catchup.contiguous_payloads(safe).is_empty());
-        catchup.commit(safe);
 
         assert!(catchup.is_complete(safe, safe));
     }

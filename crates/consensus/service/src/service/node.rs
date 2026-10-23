@@ -267,14 +267,13 @@ impl RollupNode {
                 engine_processor,
             ))
         } else {
-            let coordinator = SequencerEngineRequestCoordinator::new(
+            ConfiguredEngineReceiver::Sequencer(SequencerEngineRequestCoordinator::new(
                 engine_processor,
                 node_mode,
                 conductor,
                 self.sequencer_config.sequencer_stopped,
                 unsafe_head_tx,
-            );
-            ConfiguredEngineReceiver::Sequencer(coordinator)
+            ))
         };
         let engine_actor = EngineActor::new(cancellation_token, engine_request_rx, engine_handler);
 
