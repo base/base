@@ -267,7 +267,7 @@ where
         };
         let kind = self.sequencer_kind;
         let faulted = catchup.is_faulted();
-        let complete = !faulted && self.startup_complete(catchup);
+        let complete = self.startup_complete(catchup);
 
         match (kind, faulted, complete) {
             (_, true, _) => {
@@ -496,7 +496,7 @@ where
             let bootstrap_role = self.resolve_bootstrap_role().await;
             if matches!(self.sequencer_state, SequencerEngineState::Regular) {
                 self.sequencer_state = match (self.sequencer_kind, bootstrap_role, at_genesis) {
-                    (SequencerKind::Shadow | SequencerKind::Isolated, _, _)
+                    (SequencerKind::Shadow, _, _)
                     | (_, BootstrapRole::ConductorFollower, false) => {
                         SequencerEngineState::CatchingUp {
                             catchup: CanonicalUnsafeCatchup::default(),
@@ -508,7 +508,8 @@ where
                 };
             }
             if self.sequencer_kind == SequencerKind::Isolated {
-                // Isolated sequencers use bootstrap_validator instead.
+                // Follow validator EL sync: a follower probe can declare sync at the local head
+                // before canonical gossip arrives.
                 self.processor.bootstrap_validator(opt_head).await;
             } else {
                 match bootstrap_role {
@@ -1213,29 +1214,6 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn isolated_sequencer_bootstraps_as_follower() {
-        let (state_tx, _) = watch::channel(EngineState::default());
-        let (queue_tx, _) = watch::channel(0usize);
-        let engine = Engine::new(EngineState::default(), state_tx, queue_tx);
-        let processor = EngineProcessor::new(
-            Arc::new(test_engine_client_builder().build()),
-            Arc::new(RollupConfig::default()),
-            MockEngineDerivationClient::new(),
-            engine,
-        );
-        let (unsafe_head_tx, _) = watch::channel(L2BlockInfo::default());
-        let coordinator = SequencerEngineRequestCoordinator::new(
-            processor,
-            NodeOperatingMode::IsolatedSequencer,
-            None,
-            false,
-            unsafe_head_tx,
-        );
-        assert!(matches!(coordinator.sequencer_state(), SequencerEngineState::CatchingUp { .. }));
-        assert_eq!(coordinator.resolve_bootstrap_role().await, BootstrapRole::ConductorFollower);
-    }
-
     #[rstest]
     #[case::caught_up(&[(100, 100)], true)]
     #[case::gap(&[(102, 102)], false)]
@@ -1279,12 +1257,13 @@ mod tests {
             true,
             head_tx,
         );
-        let mut catchup = CanonicalUnsafeCatchup::default();
+        let SequencerEngineState::CatchingUp { catchup } = coordinator.sequencer_state_mut() else {
+            panic!("isolated coordinator must start in catch-up");
+        };
         for &(number, hash) in observations {
             catchup.observe_payload(&payload(number, hash));
         }
         let faulted = catchup.is_faulted();
-        *coordinator.sequencer_state_mut() = SequencerEngineState::CatchingUp { catchup };
 
         let accepted = accepted && el_synced;
         let queue_rx = coordinator.processor.engine_mut().queue_length_subscribe();
