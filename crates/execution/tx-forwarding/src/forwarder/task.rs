@@ -11,7 +11,7 @@ use jsonrpsee::{
         client::{BatchResponse, ClientT},
         params::{ArrayParams, BatchRequestBuilder},
     },
-    http_client::HttpClient,
+    http_client::{HttpClient, transport::Error as TransportError},
     types::{ErrorObject, ErrorObjectOwned},
 };
 use serde_json::{Map, json, value::RawValue};
@@ -22,6 +22,9 @@ use super::{config::ForwarderConfig, metrics::ForwarderMetrics, request::Forward
 
 /// Builder method that inserts a whole batch of validated transactions in one call.
 const INSERT_BATCH_METHOD: &str = "base_insertValidatedTransactions";
+
+/// HTTP status a destination returns when a request body exceeds its limit.
+const PAYLOAD_TOO_LARGE_STATUS: u16 = 413;
 
 /// Sliding window rate limiter that tracks request timestamps.
 ///
@@ -81,6 +84,11 @@ impl RateLimiter {
 /// rate limit (`max_rps`) is hit, requests continue buffering until the window
 /// opens.
 ///
+/// `max_batch_size` counts requests, not bytes, so a batch of large requests can exceed the HTTP
+/// client's request body cap. Such a batch is split in half until every part fits, and a single
+/// request that cannot fit is dropped on its own without retrying. Each part is a send of its own
+/// under the rate limit; a part the destination refuses with `413` still counts against it.
+///
 /// Requests are relayed in the order the queue yields them, and a batch
 /// preserves that order, so a producer may rely on submission order between
 /// requests to the same destination.
@@ -94,6 +102,9 @@ pub(crate) struct DestinationForwarder<R> {
     limiter: RateLimiter,
     buffer: Vec<R>,
     buffer_limit: usize,
+    /// Parts of a batch split for being too large to send whole. They go out before anything in
+    /// `buffer`, last element first, which keeps submission order.
+    fragments: Vec<Vec<R>>,
 }
 
 impl<R: ForwardRequest> DestinationForwarder<R> {
@@ -108,7 +119,17 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
         let buffer_limit = config.batch_limit();
         let buffer = Vec::with_capacity(buffer_limit);
         let url_label: Arc<str> = builder_url.to_string().into();
-        Self { builder_url, url_label, client, receiver, config, limiter, buffer, buffer_limit }
+        Self {
+            builder_url,
+            url_label,
+            client,
+            receiver,
+            config,
+            limiter,
+            buffer,
+            buffer_limit,
+            fragments: Vec::new(),
+        }
     }
 
     /// Runs the forwarder loop until the destination queue closes.
@@ -121,7 +142,7 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
         );
 
         loop {
-            if self.buffer.is_empty() {
+            if self.buffer.is_empty() && self.fragments.is_empty() {
                 let request = self.receiver.recv().await;
                 if self.handle_recv(request) {
                     break;
@@ -204,12 +225,30 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
     }
 
     async fn flush_remaining(&mut self) {
-        while !self.buffer.is_empty() {
+        while !self.buffer.is_empty() || !self.fragments.is_empty() {
             self.flush_buffer().await;
         }
     }
 
+    /// Sends one batch: the next split fragment if any is pending, else the head of `buffer`.
     async fn flush_buffer(&mut self) {
+        let batch = match self.fragments.pop() {
+            Some(fragment) => fragment,
+            None => match self.take_batch() {
+                Some(batch) => batch,
+                None => return,
+            },
+        };
+
+        if let Some(mut oversized) = self.send_with_retries(batch).await {
+            let back = oversized.split_off(oversized.len() / 2);
+            self.fragments.push(back);
+            self.fragments.push(oversized);
+        }
+    }
+
+    /// Drains the next batch from `buffer`, or [`None`] when it is empty.
+    fn take_batch(&mut self) -> Option<Vec<R>> {
         let batch_size = if self.config.max_batch_size == 0 {
             self.buffer.len()
         } else {
@@ -219,7 +258,7 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
         ForwarderMetrics::buffer_size(Arc::clone(&self.url_label)).set(self.buffer.len() as f64);
 
         if batch.is_empty() {
-            return;
+            return None;
         }
 
         ForwarderMetrics::batch_size(Arc::clone(&self.url_label)).record(batch.len() as f64);
@@ -230,12 +269,17 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
             remaining = self.buffer.len(),
             "flushing batch",
         );
-
-        self.send_with_retries(batch).await;
-        self.limiter.record_send();
+        Some(batch)
     }
 
-    async fn send_with_retries(&self, batch: Vec<R>) {
+    /// Sends `batch`, retrying transient failures, and journals every outcome.
+    ///
+    /// Hands the batch back unsent when it holds more than one request and is too large for one
+    /// HTTP request, so the caller can split it. A single request that is too large is dropped.
+    ///
+    /// Records one send against the rate limit unless the client refused the request before it
+    /// left, so a destination's `413` is paid for like any other request.
+    async fn send_with_retries(&mut self, batch: Vec<R>) -> Option<Vec<R>> {
         // Shutdown waits for this in-flight retry loop to finish. With the default backoff and
         // retry count, a down endpoint can add up to 700ms before the forwarder observes channel
         // closure; the service-level shutdown timeout is much larger than that.
@@ -308,7 +352,20 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
                         ForwarderMetrics::num_tx_rejected_in_batch(Arc::clone(&self.url_label))
                             .increment(err_count);
                     }
-                    return;
+                    self.limiter.record_send();
+                    return None;
+                }
+                Err(err) if batch.len() > 1 && Self::is_too_large(&err) => {
+                    if !Self::is_refused_locally(&err) {
+                        self.limiter.record_send();
+                    }
+                    debug!(
+                        builder_url = %self.builder_url,
+                        txs = tx_count,
+                        error = %err,
+                        "batch too large for one request, splitting",
+                    );
+                    return Some(batch);
                 }
                 Err(err) if Self::is_retryable(&err) && attempt < self.config.max_retries => {
                     let backoff = self.config.retry_backoff * 2u32.saturating_pow(attempt);
@@ -352,10 +409,14 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
                         ForwarderMetrics::rpc_error_label(&err),
                     )
                     .increment(1);
-                    return;
+                    if !Self::is_refused_locally(&err) {
+                        self.limiter.record_send();
+                    }
+                    return None;
                 }
             }
         }
+        None
     }
 
     /// Sends `batch` and returns one result per request, in order.
@@ -420,11 +481,40 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
         self.client.batch_request(request).await
     }
 
-    const fn is_retryable(err: &ClientError) -> bool {
+    fn is_retryable(err: &ClientError) -> bool {
+        !Self::is_too_large(err)
+            && matches!(
+                err,
+                ClientError::Transport(_)
+                    | ClientError::RequestTimeout
+                    | ClientError::RestartNeeded(_)
+            )
+    }
+
+    /// Whether the request was refused for its size, either locally against the client's request
+    /// body cap or by the destination with `413 Payload Too Large`. Resending the same body fails
+    /// the same way, so this is never retryable.
+    fn is_too_large(err: &ClientError) -> bool {
         matches!(
-            err,
-            ClientError::Transport(_) | ClientError::RequestTimeout | ClientError::RestartNeeded(_)
+            Self::transport_error(err),
+            Some(
+                TransportError::RequestTooLarge
+                    | TransportError::Rejected { status_code: PAYLOAD_TOO_LARGE_STATUS }
+            )
         )
+    }
+
+    /// Whether the client refused the request against its own body cap, before it reached the
+    /// destination.
+    fn is_refused_locally(err: &ClientError) -> bool {
+        matches!(Self::transport_error(err), Some(TransportError::RequestTooLarge))
+    }
+
+    fn transport_error(err: &ClientError) -> Option<&TransportError> {
+        match err {
+            ClientError::Transport(err) => err.downcast_ref(),
+            _ => None,
+        }
     }
 
     fn emit_forward_event(
@@ -468,7 +558,11 @@ mod tests {
 
     use alloy_primitives::{Address, B256, Bytes};
     use base_execution_txpool::{NoExtensions, ValidatedTransaction};
-    use jsonrpsee::{RpcModule, http_client::HttpClientBuilder, server::Server};
+    use jsonrpsee::{
+        RpcModule,
+        http_client::HttpClientBuilder,
+        server::{Server, ServerConfig},
+    };
     use serde::{Deserialize, Serialize};
     use serde_json::Value;
 
@@ -576,9 +670,16 @@ mod tests {
         (url::Url::parse(&format!("http://{address}")).unwrap(), received, handle)
     }
 
-    /// A destination serving both insert methods. The batched method records each transaction
-    /// under its own name and rejects the one with nonce 1.
     async fn batch_rpc_server() -> (url::Url, Calls, jsonrpsee::server::ServerHandle) {
+        capped_batch_rpc_server(u32::MAX).await
+    }
+
+    /// A destination serving both insert methods that answers `413` to a body over
+    /// `max_request_body_size`. The batched method records each transaction under its own name and
+    /// rejects the one with nonce 1.
+    async fn capped_batch_rpc_server(
+        max_request_body_size: u32,
+    ) -> (url::Url, Calls, jsonrpsee::server::ServerHandle) {
         let received: Calls = Arc::default();
         let mut module = RpcModule::new(Arc::clone(&received));
         module
@@ -605,7 +706,13 @@ mod tests {
                 )
             })
             .unwrap();
-        let server = Server::builder().build(SocketAddr::from(([127, 0, 0, 1], 0))).await.unwrap();
+        let server = Server::builder()
+            .set_config(
+                ServerConfig::builder().max_request_body_size(max_request_body_size).build(),
+            )
+            .build(SocketAddr::from(([127, 0, 0, 1], 0)))
+            .await
+            .unwrap();
         let address = server.local_addr().unwrap();
         let handle = server.start(module);
         (url::Url::parse(&format!("http://{address}")).unwrap(), received, handle)
@@ -911,5 +1018,147 @@ mod tests {
         let mixed = [TestRequest::Insert(Box::new(transaction::<NoExtensions>(0).transaction))];
         mixed_forwarder.send(&mixed).await.unwrap();
         assert_eq!(methods(&received), [INSERT_METHOD]);
+    }
+
+    /// Request body cap for [`capped_forwarder`]: one [`large_transaction`] fits, two do not.
+    const CAPPED_REQUEST_BYTES: u32 = 3 * 1024;
+
+    /// Raw length of a [`large_transaction`], hex-encoded to about two thirds of
+    /// [`CAPPED_REQUEST_BYTES`].
+    const LARGE_RAW_BYTES: usize = 1024;
+
+    /// An insert whose encoding alone takes most of [`CAPPED_REQUEST_BYTES`], identified by its
+    /// sender byte because `raw` no longer encodes the nonce.
+    fn large_transaction(nonce: u8, raw_bytes: usize) -> InsertValidatedTransaction<NoExtensions> {
+        InsertValidatedTransaction {
+            transaction: ValidatedTransaction {
+                sender: Address::repeat_byte(nonce),
+                raw: Bytes::from(vec![nonce; raw_bytes]),
+                metering: None,
+                extensions: NoExtensions {},
+            },
+            tx_hash: B256::with_last_byte(nonce),
+        }
+    }
+
+    fn senders(received: &Calls) -> Vec<Address> {
+        payloads(received)
+            .iter()
+            .map(|params| serde_json::from_value(params["sender"].clone()).expect("sender"))
+            .collect()
+    }
+
+    fn capped_forwarder(
+        url: url::Url,
+        receiver: mpsc::Receiver<InsertValidatedTransaction<NoExtensions>>,
+        config: Arc<ForwarderConfig>,
+    ) -> DestinationForwarder<InsertValidatedTransaction<NoExtensions>> {
+        let client = HttpClientBuilder::default()
+            .max_request_size(CAPPED_REQUEST_BYTES)
+            .build(url.as_str())
+            .unwrap();
+        DestinationForwarder::new(url, client, receiver, config)
+    }
+
+    /// A batch whose body exceeds the client's request cap is split until each part fits, rather
+    /// than retried and dropped whole, and every transaction still arrives in submission order.
+    #[rstest::rstest]
+    #[case::single_calls(config(0, 100))]
+    #[case::batched_insert(batched(0, 100))]
+    #[tokio::test]
+    async fn an_oversized_batch_is_split_and_delivered_in_order(
+        #[case] config: Arc<ForwarderConfig>,
+    ) {
+        let (url, received, _server) = batch_rpc_server().await;
+        let (sender, receiver) = mpsc::channel(8);
+        for nonce in 1..=5 {
+            sender.send(large_transaction(nonce, LARGE_RAW_BYTES)).await.unwrap();
+        }
+        drop(sender);
+
+        capped_forwarder(url, receiver, config).run().await;
+
+        assert_eq!(senders(&received), (1..=5).map(Address::repeat_byte).collect::<Vec<_>>());
+    }
+
+    /// A single request too large to ever fit is dropped at once instead of retried, so it neither
+    /// stalls the queue for the retry backoff nor takes its batch neighbours down with it.
+    #[tokio::test]
+    async fn a_request_that_cannot_fit_is_dropped_alone_without_retrying() {
+        let (url, received, _server) = batch_rpc_server().await;
+        let (sender, receiver) = mpsc::channel(8);
+        sender.send(large_transaction(1, LARGE_RAW_BYTES)).await.unwrap();
+        sender.send(large_transaction(2, 2 * CAPPED_REQUEST_BYTES as usize)).await.unwrap();
+        sender.send(large_transaction(3, LARGE_RAW_BYTES)).await.unwrap();
+        drop(sender);
+
+        let config = Arc::new(ForwarderConfig {
+            max_retries: 3,
+            retry_backoff: Duration::from_secs(1),
+            ..(*config(0, 100)).clone()
+        });
+        tokio::time::timeout(
+            Duration::from_millis(500),
+            capped_forwarder(url, receiver, config).run(),
+        )
+        .await
+        .expect("an oversized request must not wait out the retry backoff");
+
+        assert_eq!(senders(&received), [Address::repeat_byte(1), Address::repeat_byte(3)]);
+    }
+
+    /// Waits until `count` transactions have been delivered.
+    async fn wait_for_deliveries(received: &Calls, count: usize, within: Duration) {
+        tokio::time::timeout(within, async {
+            while received.lock().unwrap().len() < count {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("{count} deliveries did not arrive within {within:?}"));
+    }
+
+    /// Each fragment of a batch split against the client's cap is a send of its own under the
+    /// rate limit. The producer stays open, so this is steady-state forwarding, not the shutdown
+    /// drain, which sends without waiting on the limit.
+    #[tokio::test]
+    async fn fragments_of_a_split_batch_each_wait_for_the_rate_limit() {
+        let (url, received, _server) = batch_rpc_server().await;
+        let (sender, receiver) = mpsc::channel(8);
+        for nonce in 1..=3 {
+            sender.send(large_transaction(nonce, LARGE_RAW_BYTES)).await.unwrap();
+        }
+        let task = tokio::spawn(capped_forwarder(url, receiver, config(1, 100)).run());
+
+        wait_for_deliveries(&received, 1, Duration::from_secs(1)).await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        assert_eq!(received.lock().unwrap().len(), 1, "a second fragment ignored the rate limit");
+
+        wait_for_deliveries(&received, 3, Duration::from_secs(4)).await;
+        assert_eq!(senders(&received), (1..=3).map(Address::repeat_byte).collect::<Vec<_>>());
+
+        drop(sender);
+        task.await.unwrap();
+    }
+
+    /// A `413` from the destination used a real request, so it counts against the rate limit
+    /// before the fragments of the refused batch are sent.
+    #[tokio::test]
+    async fn a_destination_size_refusal_counts_against_the_rate_limit() {
+        let (url, received, _server) = capped_batch_rpc_server(CAPPED_REQUEST_BYTES).await;
+        let (sender, receiver) = mpsc::channel(8);
+        for nonce in 1..=2 {
+            sender.send(large_transaction(nonce, LARGE_RAW_BYTES)).await.unwrap();
+        }
+        let task = tokio::spawn(forwarder(url, receiver, config(1, 100)).run());
+
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        assert!(received.lock().unwrap().is_empty(), "a fragment was sent right after the 413");
+
+        wait_for_deliveries(&received, 2, Duration::from_secs(4)).await;
+        assert_eq!(senders(&received), [Address::repeat_byte(1), Address::repeat_byte(2)]);
+
+        drop(sender);
+        task.await.unwrap();
     }
 }

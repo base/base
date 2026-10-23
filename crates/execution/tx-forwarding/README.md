@@ -40,6 +40,12 @@ for that destination into the same RPC batch up to the configured batch size. Wi
 with a result per transaction. It is off by default: deploy builders that serve the method first,
 then enable it on the forwarding nodes.
 
+The batch size counts transactions, not bytes. A batch too large for one HTTP request (10 MB on the
+client, or a `413` from the builder) is split in half until each part fits, in order. Each part is
+its own send under `--tx-forwarding-max-rps`, and a `413` counts against that limit too. A single
+transaction that cannot fit is dropped without retrying, so it cannot stall the queue or take the
+rest of its batch with it.
+
 ## Forwarding without the pool
 
 `TxForwardingService::spawn_requests` starts the same transport — batching, rate limiting, retries,
