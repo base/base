@@ -121,7 +121,7 @@ mod tests {
 
     use clap::Parser;
 
-    use super::{L1_RPC_TIMEOUT, L1ClientArgs};
+    use super::L1ClientArgs;
 
     #[derive(Parser)]
     struct Command {
@@ -129,9 +129,22 @@ mod tests {
         args: L1ClientArgs,
     }
 
+    /// op-conductor's hardcoded per-call deadline for its `optimism_syncStatus` health check.
+    const CONDUCTOR_HEALTH_CHECK_DEADLINE: Duration = Duration::from_secs(10);
+
     #[test]
-    fn defaults_l1_rpc_timeout_to_fifteen_seconds() {
-        assert_eq!(L1ClientArgs::default().l1_rpc_timeout, L1_RPC_TIMEOUT);
+    fn default_l1_rpc_timeout_fits_within_conductor_health_check_deadline() {
+        let args = Command::parse_from([
+            "base-consensus",
+            "--l1-eth-rpc",
+            "http://localhost:8545",
+            "--l1-beacon",
+            "http://localhost:5052",
+        ])
+        .args;
+
+        assert_eq!(args.l1_rpc_timeout, L1ClientArgs::default().l1_rpc_timeout);
+        assert!(args.l1_rpc_timeout < CONDUCTOR_HEALTH_CHECK_DEADLINE);
     }
 
     #[test]
