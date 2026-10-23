@@ -230,7 +230,7 @@ impl Eip8130Structure {
                 }
                 AccountChange::Delegation(_) => {
                     delegation_count += 1;
-                    if delegation_count > 1 {
+                    if delegation_count > Eip8130Constants::MAX_DELEGATIONS_PER_TX {
                         return Err(Eip8130StructuralError::MalformedAccountChange);
                     }
                     if create_count > 0 {

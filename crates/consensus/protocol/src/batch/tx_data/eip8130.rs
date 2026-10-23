@@ -220,7 +220,7 @@ impl Decodable for SpanBatchEip8130TransactionData {
             max_priority_fee_per_gas: Decodable::decode(buf)?,
             max_fee_per_gas: Decodable::decode(buf)?,
             payer: Self::decode_address_opt(buf)?,
-            account_changes: Decodable::decode(buf)?,
+            account_changes: TxEip8130::decode_account_changes(buf)?,
             calls: TxEip8130::decode_calls(buf)?,
             metadata: Decodable::decode(buf)?,
             sender_authenticator: Decodable::decode(buf)?,
