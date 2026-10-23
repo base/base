@@ -36,6 +36,7 @@ impl B20Factory {
         let storage_features = UpgradeGatedStorageFeatures::from_upgrade(upgrade);
         base_precompile!(
             "B20Factory",
+            upgrade: upgrade,
             storage_features: storage_features,
             |ctx, calldata| {
             let observer = observer.clone();
