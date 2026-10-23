@@ -82,13 +82,19 @@ impl RecentlySent {
         self.seen.insert(hash, Instant::now());
     }
 
-    /// Records that the destination holds the transaction, deferring its resend to
-    /// [`Self::DELIVERED_RESEND_AFTER`] from now, or to `resend_after` if that is longer.
+    /// Records that the destination confirmed at `acked_at` that it holds the transaction,
+    /// deferring its resend to [`Self::DELIVERED_RESEND_AFTER`] after `acked_at`, or to
+    /// `resend_after` after it if that is longer.
     ///
-    /// The entry is dated in the future, `resend_after` before the resend is due.
-    pub(super) fn mark_delivered(&mut self, hash: B256) {
-        let deferral = self.delivered_resend_after.saturating_sub(self.resend_after);
-        let dated = Instant::now() + deferral;
+    /// The deadline counts from the confirmation, not from when the reader takes the receipt, so a
+    /// receipt taken late defers the resend no further, and one taken after the deadline not at
+    /// all. The entry is dated `resend_after` before the deadline, in the future.
+    pub(super) fn mark_delivered(&mut self, hash: B256, acked_at: Instant) {
+        let due = acked_at + self.delivered_resend_after.max(self.resend_after);
+        if due <= Instant::now() {
+            return;
+        }
+        let dated = due - self.resend_after;
         self.seen.entry(hash).and_modify(|at| *at = (*at).max(dated)).or_insert(dated);
     }
 
@@ -176,7 +182,7 @@ mod tests {
 
         tracker.mark_sent(delivered);
         tracker.mark_sent(undelivered);
-        tracker.mark_delivered(delivered);
+        tracker.mark_delivered(delivered, Instant::now());
         std::thread::sleep(Duration::from_millis(15));
         tracker.prune_expired();
 
@@ -190,7 +196,7 @@ mod tests {
         let hash = B256::random();
 
         tracker.mark_sent(hash);
-        tracker.mark_delivered(hash);
+        tracker.mark_delivered(hash, Instant::now());
         tracker.forget_deliveries();
 
         // Back on the regular schedule: due one resend window from now at the latest.
@@ -208,10 +214,32 @@ mod tests {
         let hash = B256::random();
 
         tracker.mark_sent(hash);
-        tracker.mark_delivered(hash);
+        tracker.mark_delivered(hash, Instant::now());
         std::thread::sleep(Duration::from_millis(50));
 
         assert!(!tracker.was_recently_sent(&hash));
+    }
+
+    /// A receipt taken late defers the resend to the hold after the confirmation, not after the
+    /// receipt was taken, and one taken after the hold lapsed defers nothing.
+    #[test]
+    fn a_late_receipt_holds_only_until_the_hold_after_the_confirmation() {
+        let mut tracker = RecentlySent::new(Duration::from_secs(4));
+        let now = Instant::now();
+        let ago = |secs| now.checked_sub(Duration::from_secs(secs)).unwrap();
+        let (recent, lapsed) = (B256::random(), B256::random());
+        tracker.seen.insert(recent, ago(20));
+        tracker.seen.insert(lapsed, ago(20));
+
+        tracker.mark_delivered(recent, ago(11));
+        tracker.mark_delivered(lapsed, ago(13));
+
+        assert_eq!(
+            tracker.resend_due(&recent),
+            Some(ago(11) + RecentlySent::DELIVERED_RESEND_AFTER)
+        );
+        assert!(tracker.was_recently_sent(&recent));
+        assert!(!tracker.was_recently_sent(&lapsed));
     }
 
     #[test]

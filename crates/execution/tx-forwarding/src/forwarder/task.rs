@@ -114,7 +114,7 @@ pub(crate) struct DestinationForwarder<R> {
     buffer: Vec<R>,
     buffer_limit: usize,
     /// Where to report transactions the destination confirmed it holds.
-    delivery_receipts: Option<mpsc::Sender<TxHash>>,
+    delivery_receipts: Option<mpsc::Sender<(TxHash, Instant)>>,
     /// Set when a send fails in a way that may mean the destination restarted, so the reader
     /// resends what it confirmed.
     destination_lost: Arc<AtomicBool>,
@@ -154,7 +154,7 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
     /// leaves that transaction on its regular resend schedule.
     pub(crate) fn with_delivery_receipts(
         mut self,
-        receipts: mpsc::Sender<TxHash>,
+        receipts: mpsc::Sender<(TxHash, Instant)>,
         lost: Arc<AtomicBool>,
     ) -> Self {
         self.delivery_receipts = Some(receipts);
@@ -328,6 +328,9 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
                         .record(overall_start.elapsed().as_secs_f64());
                     ForwarderMetrics::batches_sent(Arc::clone(&self.url_label)).increment(1);
 
+                    // When the destination confirmed what it holds, which bounds how long a
+                    // receipt may defer a resend however late the reader takes it.
+                    let acked_at = Instant::now();
                     let mut ok_count = 0u64;
                     let mut err_count = 0u64;
                     for (idx, res) in response.into_iter().enumerate() {
@@ -340,7 +343,7 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
                             && let (Some(receipts), Some(tx_hash)) =
                                 (&self.delivery_receipts, tx_hash)
                         {
-                            let _ = receipts.try_send(tx_hash);
+                            let _ = receipts.try_send((tx_hash, acked_at));
                         }
                         match res {
                             // Delivery is journaled by the destination as
@@ -1079,6 +1082,7 @@ mod tests {
         forwarder.flush_buffer().await;
 
         let held: Vec<_> = std::iter::from_fn(|| receipts_rx.try_recv().ok()).collect();
+        let held: Vec<_> = held.into_iter().map(|(hash, _)| hash).collect();
         assert_eq!(held, vec![B256::with_last_byte(0), B256::with_last_byte(1)]);
         assert!(!lost.load(Ordering::Relaxed));
 
@@ -1122,7 +1126,11 @@ mod tests {
 
         forwarder.flush_buffer().await;
 
-        assert_eq!(receipts_rx.try_recv().ok(), Some(B256::with_last_byte(0)), "the retry landed");
+        assert_eq!(
+            receipts_rx.try_recv().ok().map(|(hash, _)| hash),
+            Some(B256::with_last_byte(0)),
+            "the retry landed"
+        );
         assert!(lost.load(Ordering::Relaxed));
     }
 
@@ -1143,7 +1151,10 @@ mod tests {
             .expect("forwarding does not wait for receipt capacity");
 
         assert_eq!(nonces(&received), [0, 1, 2]);
-        assert_eq!(receipts_rx.try_recv().ok(), Some(B256::with_last_byte(0)));
+        assert_eq!(
+            receipts_rx.try_recv().ok().map(|(hash, _)| hash),
+            Some(B256::with_last_byte(0))
+        );
         assert!(receipts_rx.try_recv().is_err());
     }
 }

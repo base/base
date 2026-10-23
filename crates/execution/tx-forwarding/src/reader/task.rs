@@ -145,7 +145,7 @@ pub(crate) struct DestinationReader<P: ReaderPool, E = NoExtensions> {
     lane_mix: LaneMix,
     sender: mpsc::Sender<InsertValidatedTransaction<E>>,
     /// Hashes the destination reported it holds, from this destination's forwarder.
-    delivered: mpsc::Receiver<TxHash>,
+    delivered: mpsc::Receiver<(TxHash, Instant)>,
     /// Set by this destination's forwarder when the destination failed a send.
     destination_lost: Arc<AtomicBool>,
     cancel: CancellationToken,
@@ -219,7 +219,7 @@ where
     /// The forwarder for the same destination feeds both, see its `with_delivery_receipts`.
     pub(crate) fn with_delivery_receipts(
         mut self,
-        delivered: mpsc::Receiver<TxHash>,
+        delivered: mpsc::Receiver<(TxHash, Instant)>,
         lost: Arc<AtomicBool>,
     ) -> Self {
         self.delivered = delivered;
@@ -305,8 +305,8 @@ where
     /// accepted recently or that the destination confirmed it holds. Returns `None` if the reader was
     /// cancelled while reading.
     fn take_snapshot(&mut self) -> Option<Snapshot<P::Transaction>> {
-        while let Ok(hash) = self.delivered.try_recv() {
-            self.recently_sent.mark_delivered(hash);
+        while let Ok((hash, acked_at)) = self.delivered.try_recv() {
+            self.recently_sent.mark_delivered(hash, acked_at);
         }
         if self.destination_lost.swap(false, Ordering::Relaxed) {
             self.recently_sent.forget_deliveries();
@@ -1045,7 +1045,7 @@ mod tests {
     fn resending_reader(
         txs: Vec<Arc<ValidPoolTransaction<BasePooledTransaction>>>,
         lost: Arc<AtomicBool>,
-    ) -> (DestinationReader<MockReaderPool>, mpsc::Sender<TxHash>) {
+    ) -> (DestinationReader<MockReaderPool>, mpsc::Sender<(TxHash, Instant)>) {
         let mut pool = MockReaderPool::new();
         pool.expect_block_info().returning(BlockInfo::default);
         pool.expect_best_transactions().returning(move || Box::new(txs.clone().into_iter()));
@@ -1077,7 +1077,7 @@ mod tests {
         );
         reader.recently_sent.mark_sent(*delivered.hash());
         reader.recently_sent.mark_sent(*undelivered.hash());
-        receipts.try_send(*delivered.hash()).unwrap();
+        receipts.try_send((*delivered.hash(), Instant::now())).unwrap();
 
         assert_eq!(snapshot_hashes(&mut reader), vec![*undelivered.hash()]);
     }
@@ -1090,7 +1090,7 @@ mod tests {
         let (mut reader, receipts) =
             resending_reader(vec![Arc::clone(&delivered)], Arc::clone(&lost));
         reader.recently_sent.mark_sent(*delivered.hash());
-        receipts.try_send(*delivered.hash()).unwrap();
+        receipts.try_send((*delivered.hash(), Instant::now())).unwrap();
         assert!(snapshot_hashes(&mut reader).is_empty());
 
         lost.store(true, Ordering::Relaxed);
