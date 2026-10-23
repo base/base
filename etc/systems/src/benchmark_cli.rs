@@ -189,6 +189,11 @@ pub struct SnapshotBenchmarkArgs {
     /// 1 Ggas for 200ms blocks.
     #[arg(long)]
     pub block_gas_limit: Option<NonZeroU64>,
+    /// Minimum time between Prometheus scrapes, in milliseconds. A scrape also waits for a new
+    /// canonical block, and its counter deltas are split evenly across the blocks since the
+    /// previous scrape.
+    #[arg(long, env = "BASE_BENCH_METRICS_SCRAPE_INTERVAL_MS", default_value = "1000")]
+    pub metrics_scrape_interval_ms: NonZeroU64,
     /// Maximum time to wait for graceful shutdown after writing results. Zero terminates the
     /// process immediately because snapshot datadirs are disposable.
     #[arg(long, default_value_t = 0)]
@@ -1092,9 +1097,13 @@ impl SnapshotBenchmarkArgs {
         let mut load_config = test_config.to_load_config(None)?;
         load_config.canonical_heads_ws = Some(stack.builder_ws_url()?);
         let funder_address = funder_key.address();
-        let sequencer_metrics =
-            PrometheusBlockCollector::start(builder_rpc.clone(), stack.builder_metrics_url()?)
-                .await?;
+        let scrape_interval = Duration::from_millis(self.metrics_scrape_interval_ms.get());
+        let sequencer_metrics = PrometheusBlockCollector::start(
+            builder_rpc.clone(),
+            stack.builder_metrics_url()?,
+            scrape_interval,
+        )
+        .await?;
         let load_result = LoadTestExecutor::run_prepared(
             test_config,
             load_config,
@@ -1119,9 +1128,12 @@ impl SnapshotBenchmarkArgs {
         stack.stop_sequencer().await?;
         let validator = if self.client_datadir.is_some() {
             let client_rpc = stack.client_rpc_url()?;
-            let validator_metrics =
-                PrometheusBlockCollector::start(client_rpc.clone(), stack.client_metrics_url()?)
-                    .await?;
+            let validator_metrics = PrometheusBlockCollector::start(
+                client_rpc.clone(),
+                stack.client_metrics_url()?,
+                scrape_interval,
+            )
+            .await?;
             stack.start_validator().await?;
             Some((client_rpc, validator_metrics.finish(measurement_end).await?))
         } else {
@@ -1310,6 +1322,7 @@ mod tests {
         assert!(args.run_id.is_none());
         assert!(args.client_version.is_none());
         assert!(args.block_gas_limit.is_none());
+        assert_eq!(args.metrics_scrape_interval_ms.get(), 1000);
         assert_eq!(args.shutdown_timeout_seconds, 0);
     }
 
@@ -1336,6 +1349,8 @@ mod tests {
             "30",
             "--block-gas-limit",
             "12000000000",
+            "--metrics-scrape-interval-ms",
+            "200",
         ]);
 
         let Some(BenchmarkCommand::Snapshot(args)) = cli.command else {
@@ -1344,6 +1359,7 @@ mod tests {
         assert_eq!(args.output_dir.to_string_lossy(), "result-dir");
         assert_eq!(args.run_id.as_deref(), Some("manual-run-id"));
         assert_eq!(args.block_gas_limit.map(NonZeroU64::get), Some(12_000_000_000));
+        assert_eq!(args.metrics_scrape_interval_ms.get(), 200);
         assert_eq!(args.shutdown_timeout_seconds, 30);
     }
 
