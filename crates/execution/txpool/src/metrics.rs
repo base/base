@@ -20,6 +20,7 @@ base_metrics::define_metrics! {
             "block_expiry",
             "reorg",
             "feed_gap",
+            "fork_transition",
             "reconcile"
         ]
     )]
