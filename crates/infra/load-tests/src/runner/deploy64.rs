@@ -1,18 +1,23 @@
 //! Independently paced 64 `KiB` deployments, excluded from ordinary-mix calibration and metrics.
 
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
-use alloy_network::{EthereumWallet, TransactionBuilder};
+use alloy_network::{Ethereum, EthereumWallet, TransactionBuilder};
 use alloy_primitives::{Address, B256, Bytes, U256, bytes};
-use alloy_provider::Provider;
+use alloy_provider::{PendingTransactionBuilder, Provider};
 use alloy_rpc_types::{BlockNumberOrTag, TransactionRequest};
 use alloy_signer_local::PrivateKeySigner;
+use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
+use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    BaselineError, Result,
-    rpc::{BaseFeeExt, RpcProviders, RpcResultExt, create_wallet_provider},
+    BaselineError, Fees, PreparedTransaction, Result, SignedTransaction, SubmissionPipeline,
+    SubmitCohort,
+    rpc::{
+        BaseFeeExt, RPC_TIMEOUT, RpcProviders, RpcResultExt, WalletProvider, create_wallet_provider,
+    },
 };
 
 /// EIP-7954's maximum deployed runtime size at Amsterdam.
@@ -25,6 +30,9 @@ const REGULAR_FLOOR: u64 = 4_219_200;
 const RECEIPT_GAS: u64 = 100_776_978;
 /// State plus the regular floor, with one percent rounded-up admission headroom.
 const GAS_LIMIT: u64 = (STATE_GAS + REGULAR_FLOOR) + (STATE_GAS + REGULAR_FLOOR).div_ceil(100);
+const RECEIPT_TIMEOUT: Duration = Duration::from_secs(60);
+// Allow submission, confirmation, and verification to drain, but never await a worker forever.
+const DRAIN_TIMEOUT: Duration = Duration::from_secs(100);
 
 /// Optional side workload; the ordinary mix and its gas/s target are unchanged.
 /// Enable at the top level of the existing workload YAML, not in `transactions`:
@@ -69,8 +77,11 @@ impl Deploy64Config {
 /// One deployment, reported separately from ordinary-mix offered/achieved gas.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Deploy64Result {
-    /// Submitted transaction hash, if accepted by the RPC.
+    /// Locally computed hash, retained even when the submission acknowledgement is lost.
     pub tx_hash: Option<B256>,
+    /// A broadcast may have reached the node, but canonical inclusion is still unknown.
+    #[serde(default)]
+    pub inclusion_uncertain: bool,
     /// Declared gas (admission reservation, not the gas offered as work).
     pub gas_limit: u64,
     /// Expected charged gas, counted only for accepted submissions.
@@ -139,15 +150,101 @@ fn check_capacity(block_limit: u64) -> Result<()> {
     Ok(())
 }
 
-/// Runs one in-flight CREATE at a time on the exclusive funder, not a presigned mix sender.
-/// Stop ends submissions, but an accepted transaction is allowed a bounded receipt drain.
-pub(super) async fn run(
+#[derive(Debug, Default)]
+struct DeploymentProgress {
+    completed: Vec<Deploy64Result>,
+    active: Option<Deploy64Result>,
+}
+
+/// Keeps a checkpoint outside the worker so a forced drain can return partial results.
+#[derive(Debug)]
+pub(super) struct DeploymentTask {
+    task: JoinHandle<Vec<Deploy64Result>>,
+    progress: Arc<Mutex<DeploymentProgress>>,
+}
+
+impl DeploymentTask {
+    pub(super) async fn finish(self) -> Vec<Deploy64Result> {
+        self.finish_with_timeout(DRAIN_TIMEOUT).await
+    }
+
+    async fn finish_with_timeout(mut self, timeout: Duration) -> Vec<Deploy64Result> {
+        let error = match tokio::time::timeout(timeout, &mut self.task).await {
+            Ok(Ok(results)) => return results,
+            Ok(Err(error)) => format!("deploy64 worker failed: {error}"),
+            Err(_) => {
+                self.task.abort();
+                format!(
+                    "deploy64 drain timed out after {}s; nonce will not be retried",
+                    timeout.as_secs()
+                )
+            }
+        };
+        let mut progress = self.progress.lock();
+        let mut active = progress
+            .active
+            .take()
+            .unwrap_or_else(|| Deploy64Result { gas_limit: GAS_LIMIT, ..Default::default() });
+        active.error = Some(error);
+        progress.completed.push(active);
+        progress.completed.clone()
+    }
+}
+
+pub(super) fn start(
     endpoint: url::Url,
     signer: PrivateKeySigner,
     chain_id: u64,
     config: Deploy64Config,
     max_gas_price: u128,
     stop: CancellationToken,
+) -> DeploymentTask {
+    let progress = Arc::new(Mutex::new(DeploymentProgress::default()));
+    let task = tokio::spawn(run_inner(
+        endpoint,
+        signer,
+        chain_id,
+        config,
+        max_gas_price,
+        stop,
+        Arc::clone(&progress),
+    ));
+    DeploymentTask { task, progress }
+}
+
+async fn broadcast(
+    wallet: &WalletProvider,
+    signed: &SignedTransaction,
+    stop: &CancellationToken,
+    result: &mut Deploy64Result,
+    progress: &Mutex<DeploymentProgress>,
+) -> Result<Option<PendingTransactionBuilder<Ethereum>>> {
+    if stop.is_cancelled() {
+        return Ok(None);
+    }
+    // Sign first so an uncertain send can always be identified without retrying its nonce.
+    result.tx_hash = Some(signed.tx_hash);
+    result.inclusion_uncertain = true;
+    progress.lock().active = Some(result.clone());
+    let pending = tokio::time::timeout(RPC_TIMEOUT, wallet.send_raw_transaction(&signed.raw))
+        .await
+        .map_err(|_| BaselineError::Rpc("deploy64 submission timed out after 10s; inclusion unknown; nonce will not be retried".into()))?
+        .rpc("submit deploy64 CREATE (on error, inclusion is uncertain; nonce will not be retried)")?;
+    result.offered_gas = RECEIPT_GAS;
+    progress.lock().active = Some(result.clone());
+    Ok(Some(pending))
+}
+
+/// Runs one in-flight CREATE at a time on the exclusive funder, not a presigned mix sender.
+/// Stop ends submissions, but an accepted transaction is allowed a bounded receipt drain.
+async fn run_inner(
+    endpoint: url::Url,
+    signer: PrivateKeySigner,
+    chain_id: u64,
+    config: Deploy64Config,
+    max_gas_price: u128,
+    stop: CancellationToken,
+    progress: Arc<Mutex<DeploymentProgress>>,
 ) -> Vec<Deploy64Result> {
     let provider = RpcProviders::query(endpoint.clone()).expect("validated endpoint");
     let wallet = create_wallet_provider(endpoint, EthereumWallet::from(signer.clone()));
@@ -160,7 +257,11 @@ pub(super) async fn run(
             () = stop.cancelled() => break,
             () = tokio::time::sleep(interval) => {}
         }
+        if stop.is_cancelled() {
+            break;
+        }
         let mut result = Deploy64Result { gas_limit: GAS_LIMIT, ..Default::default() };
+        progress.lock().active = Some(result.clone());
         let attempt: Result<()> = async {
             let block = provider
                 .get_block_by_number(BlockNumberOrTag::Latest)
@@ -190,19 +291,29 @@ pub(super) async fn run(
                 .pending()
                 .await
                 .rpc("read deploy64 nonce")?;
-            let request = TransactionRequest::default()
-                .with_deploy_code(initcode())
-                .with_from(signer.address())
-                .with_chain_id(chain_id)
-                .with_nonce(nonce)
-                .with_gas_limit(GAS_LIMIT)
-                .with_max_fee_per_gas(max_fee)
-                .with_max_priority_fee_per_gas(tip);
-            let pending = wallet.send_transaction(request).await.rpc("submit deploy64 CREATE")?;
-            result.tx_hash = Some(*pending.tx_hash());
-            result.offered_gas = RECEIPT_GAS;
+            let prepared = PreparedTransaction {
+                from: signer.address(),
+                to: None,
+                value: U256::ZERO,
+                data: initcode(),
+                gas_limit: GAS_LIMIT,
+                estimated_gas: RECEIPT_GAS,
+                validity: Vec::new(),
+                cohort: SubmitCohort::Plain,
+            };
+            let signed = SubmissionPipeline::sign_at_nonce(
+                &signer,
+                &prepared,
+                chain_id,
+                nonce,
+                Fees { max_fee, priority_fee: tip },
+            )?;
+            let Some(pending) = broadcast(&wallet, &signed, &stop, &mut result, &progress).await?
+            else {
+                return Ok(());
+            };
             let receipt = pending
-                .with_timeout(Some(Duration::from_secs(60)))
+                .with_timeout(Some(RECEIPT_TIMEOUT))
                 .get_receipt()
                 .await
                 .rpc("confirm deploy64 CREATE")?;
@@ -210,6 +321,8 @@ pub(super) async fn run(
             result.status = Some(receipt.status());
             result.gas_used = Some(receipt.gas_used);
             result.contract_address = receipt.contract_address;
+            result.inclusion_uncertain = false;
+            progress.lock().active = Some(result.clone());
             if !receipt.status() {
                 return Err(BaselineError::Transaction(
                     "deploy64 CREATE reverted or halted".into(),
@@ -227,6 +340,7 @@ pub(super) async fn run(
                 .await
                 .rpc("read deploy64 code")?;
             result.code_size = Some(code.len());
+            progress.lock().active = Some(result.clone());
             if code.len() != RUNTIME_SIZE {
                 return Err(BaselineError::Transaction(format!(
                     "deploy64 code has {} bytes, expected {RUNTIME_SIZE}",
@@ -247,11 +361,20 @@ pub(super) async fn run(
             Ok(())
         }
         .await;
+        if result.tx_hash.is_none() && stop.is_cancelled() && attempt.is_ok() {
+            progress.lock().active = None;
+            break;
+        }
         let failed = attempt.is_err();
         if let Err(error) = attempt {
             result.error = Some(error.to_string());
         }
         tracing::info!(?result, "deploy64 result (separate from ordinary mix)");
+        {
+            let mut progress = progress.lock();
+            progress.completed.push(result.clone());
+            progress.active = None;
+        }
         results.push(result);
         // Never retry a timed-out nonce or hide a node admission/verification failure.
         if failed {
@@ -264,6 +387,191 @@ pub(super) async fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn signed_for_test(signer: &PrivateKeySigner) -> SignedTransaction {
+        SubmissionPipeline::sign_at_nonce(
+            signer,
+            &PreparedTransaction {
+                from: signer.address(),
+                to: None,
+                value: U256::ZERO,
+                data: initcode(),
+                gas_limit: GAS_LIMIT,
+                estimated_gas: RECEIPT_GAS,
+                validity: Vec::new(),
+                cohort: SubmitCohort::Plain,
+            },
+            8453,
+            0,
+            Fees { max_fee: 1_000_000_002, priority_fee: 1_000_000_000 },
+        )
+        .expect("sign deployment fixture")
+    }
+
+    #[tokio::test]
+    async fn deploy64_hung_send_is_bounded_and_preserves_partial_results() {
+        use httpmock::prelude::*;
+        let server = MockServer::start();
+        let block: alloy_rpc_types::Block = Default::default();
+        let mut block = serde_json::to_value(block).expect("block JSON");
+        block["gasLimit"] = serde_json::json!("0x7270e00");
+        block["baseFeePerGas"] = serde_json::json!("0x1");
+        let _block = server.mock(|when, then| {
+            when.method(POST).body_includes("eth_getBlockByNumber");
+            then.json_body(serde_json::json!({"jsonrpc":"2.0","id":0,"result":block}));
+        });
+        let _balance = server.mock(|when, then| {
+            when.method(POST).body_includes("eth_getBalance");
+            then.json_body(
+                serde_json::json!({"jsonrpc":"2.0","id":0,"result":"0x8ac7230489e80000"}),
+            );
+        });
+        let _nonce = server.mock(|when, then| {
+            when.method(POST).body_includes("eth_getTransactionCount");
+            then.json_body(serde_json::json!({"jsonrpc":"2.0","id":0,"result":"0x0"}));
+        });
+        let signer = PrivateKeySigner::random();
+        let signed = signed_for_test(&signer);
+        let send = server.mock(|when, then| {
+            when.method(POST)
+                .body_includes("eth_sendRawTransaction")
+                .body_includes(signed.raw.to_string());
+            // No response arrives within the submission bound.
+            then.delay(Duration::from_secs(60))
+                .json_body(serde_json::json!({"jsonrpc":"2.0","id":0,"result":signed.tx_hash}));
+        });
+        let task = start(
+            server.url("/").parse().expect("mock URL"),
+            signer,
+            8453,
+            Deploy64Config { interval_secs: 1, ..Default::default() },
+            1_000_000_000_000,
+            CancellationToken::new(),
+        );
+        let results = tokio::time::timeout(Duration::from_secs(15), task.finish())
+            .await
+            .expect("lane must end after 1s interval plus 10s send bound");
+        assert_eq!(results.len(), 1, "one failed attempt, no nonce retry");
+        assert_eq!(
+            results[0].tx_hash,
+            Some(signed.tx_hash),
+            "locally computed hash survives lost acknowledgement"
+        );
+        assert!(results[0].inclusion_uncertain, "server may have accepted the transaction");
+        assert_eq!(results[0].status, None, "do not invent receipt status");
+        assert_eq!(results[0].offered_gas, 0, "unacknowledged work is not counted as accepted");
+        assert_eq!(
+            results[0].error.as_deref(),
+            Some(
+                "rpc error: deploy64 submission timed out after 10s; inclusion unknown; nonce will not be retried"
+            ),
+            "clear bounded-send error"
+        );
+        send.assert_calls(1);
+        let mut runner =
+            crate::LoadRunner::new(crate::LoadConfig::devnet()).expect("runner config");
+        let error = runner
+            .conclude_run(crate::MetricsSummary { deploy64: results, ..Default::default() }, None)
+            .expect_err("deployment error must fail the run");
+        assert_eq!(
+            error.to_string(),
+            "transaction failed: deploy64 workload failed: rpc error: deploy64 submission timed out after 10s; inclusion unknown; nonce will not be retried",
+            "run propagates lane failure"
+        );
+        let partial = runner.take_partial_summary().expect("partial results retained");
+        assert_eq!(partial.deploy64.len(), 1, "no loss of partial deployment results");
+        assert_eq!(
+            partial.deploy64[0].tx_hash,
+            Some(signed.tx_hash),
+            "partial result retains uncertain hash"
+        );
+        assert!(partial.error.is_some(), "partial summary surfaces run failure");
+    }
+
+    #[tokio::test]
+    async fn deploy64_stop_before_broadcast_does_not_submit() {
+        use httpmock::prelude::*;
+        let server = MockServer::start();
+        let send = server.mock(|when, then| {
+            when.method(POST);
+            then.status(500);
+        });
+        let signer = PrivateKeySigner::random();
+        let signed = signed_for_test(&signer);
+        let wallet = create_wallet_provider(
+            server.url("/").parse().expect("mock URL"),
+            EthereumWallet::from(signer),
+        );
+        let stop = CancellationToken::new();
+        // Simulate stop after pre-broadcast RPC work, immediately before sending.
+        stop.cancel();
+        let mut result = Deploy64Result::default();
+        let progress = Mutex::new(DeploymentProgress::default());
+        let pending = broadcast(&wallet, &signed, &stop, &mut result, &progress)
+            .await
+            .expect("stop is not a submission failure");
+        assert!(pending.is_none(), "stop must prevent submission");
+        assert_eq!(result.tx_hash, None, "no broadcast hash is recorded when sending never starts");
+        assert!(!result.inclusion_uncertain, "nothing was broadcast");
+        send.assert_calls(0);
+    }
+
+    #[tokio::test]
+    async fn deploy64_join_timeout_retains_completed_and_active_results() {
+        let completed_hash = B256::repeat_byte(1);
+        let active_hash = B256::repeat_byte(2);
+        let progress = Arc::new(Mutex::new(DeploymentProgress {
+            completed: vec![Deploy64Result {
+                tx_hash: Some(completed_hash),
+                status: Some(true),
+                ..Default::default()
+            }],
+            active: Some(Deploy64Result {
+                tx_hash: Some(active_hash),
+                inclusion_uncertain: true,
+                ..Default::default()
+            }),
+        }));
+        let task = DeploymentTask { task: tokio::spawn(std::future::pending()), progress };
+        let results = tokio::time::timeout(
+            Duration::from_secs(2),
+            task.finish_with_timeout(Duration::from_secs(1)),
+        )
+        .await
+        .expect("forced join must be bounded");
+        assert_eq!(results.len(), 2, "completed and active checkpoints survive timeout");
+        assert_eq!(results[0].tx_hash, Some(completed_hash), "completed result preserved");
+        assert_eq!(results[0].error, None, "completed success is not relabeled");
+        assert_eq!(results[1].tx_hash, Some(active_hash), "uncertain active hash preserved");
+        assert!(results[1].inclusion_uncertain, "timed-out active inclusion remains unknown");
+        assert_eq!(
+            results[1].error.as_deref(),
+            Some("deploy64 drain timed out after 1s; nonce will not be retried"),
+            "clear forced drain error"
+        );
+        assert_eq!(DRAIN_TIMEOUT, Duration::from_secs(100), "production final drain is bounded");
+    }
+
+    #[test]
+    fn deploy64_rejects_continuous_mode() {
+        let mut config = crate::LoadConfig {
+            deploy64: Some(Deploy64Config::default()),
+            ..crate::LoadConfig::devnet()
+        }
+        .with_continuous();
+        assert_eq!(
+            config.validate().expect_err("continuous deploy lane is unsupported").to_string(),
+            "configuration error: deploy64 requires a finite duration or measurement_blocks; continuous mode is not supported",
+            "reject before starting any worker"
+        );
+        config.measurement_blocks = Some(50);
+        assert!(config.validate().is_ok(), "finite measured-block jobs remain supported");
+        config.deploy64 = None;
+        assert!(
+            config.with_continuous().validate().is_ok(),
+            "ordinary continuous runs remain unchanged"
+        );
+    }
 
     #[tokio::test]
     async fn deploy64_wallet_sends_full_budget_without_estimation() {
@@ -353,7 +661,7 @@ mod tests {
         let stop = CancellationToken::new();
         stop.cancel();
         let signer = PrivateKeySigner::random();
-        let results = run(
+        let results = start(
             "http://localhost:1".parse().expect("valid unused endpoint"),
             signer,
             8453,
@@ -361,6 +669,7 @@ mod tests {
             1_000_000_000_000,
             stop,
         )
+        .finish()
         .await;
         assert!(
             results.is_empty(),

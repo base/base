@@ -427,6 +427,11 @@ impl LoadConfig {
         }
         if let Some(config) = &self.deploy64 {
             config.validate()?;
+            if self.duration.is_none() && self.measurement_blocks.is_none() {
+                return Err(BaselineError::Config(
+                    "deploy64 requires a finite duration or measurement_blocks; continuous mode is not supported".into(),
+                ));
+            }
         }
         if self.account_count == 0 {
             return Err(BaselineError::Config("account_count must be > 0".into()));
