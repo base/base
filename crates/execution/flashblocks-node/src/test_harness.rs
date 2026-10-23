@@ -218,7 +218,7 @@ impl FlashblocksHarness {
 
         let extension = FlashblocksTestExtension::new(process_canonical);
 
-        let node = LocalNode::new(vec![Box::new(extension.clone())], chain_spec).await?;
+        let node = LocalNode::new(vec![Box::new(extension.clone())], chain_spec, None).await?;
         let engine = node.engine_api()?;
 
         tokio::time::sleep(Duration::from_millis(NODE_STARTUP_DELAY_MS)).await;

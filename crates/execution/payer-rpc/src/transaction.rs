@@ -94,9 +94,12 @@ impl PayerTransaction {
 
     /// This transaction cut to its first call phase, as an EIP-8130 `eth_call` request.
     ///
-    /// It keeps the transaction's gas, fees, account changes, expiry, and payer, so the phase
-    /// runs as it would on chain. `valid_after` is dropped: the simulated block trails the wall
-    /// clock, so a window about to open would read as not yet valid. A transaction without calls
+    /// It keeps the transaction's fees, account changes, expiry, and payer, so the phase runs as
+    /// it would on chain. `gas_limit` is dropped, so the phase runs at the simulation's gas cap:
+    /// the simulation charges worst-case intrinsic gas, so a tight limit that covers real
+    /// execution could run out there, and gas sufficiency is left to the payer and the pool.
+    /// `valid_after` is dropped: the simulated block trails the wall clock, so a window about to
+    /// open would read as not yet valid. A transaction without calls
     /// yields a request without calls.
     ///
     /// Returns `None` when the signing actor is not known, since phase 0 would run under the
@@ -123,7 +126,6 @@ impl PayerTransaction {
             BaseTransactionRequest::default()
                 .from(self.sender)
                 .chain_id(tx.chain_id)
-                .gas_limit(tx.gas_limit)
                 .max_fee_per_gas(tx.max_fee_per_gas)
                 .max_priority_fee_per_gas(tx.max_priority_fee_per_gas)
                 .eip8130_fields(fields),
@@ -221,6 +223,7 @@ mod tests {
             PayerTransaction::decode(&raw, CHAIN_ID, false).unwrap().phase_zero_request().unwrap();
 
         assert_eq!(request.as_ref().from, Some(signer.address()));
+        assert_eq!(request.as_ref().gas, None);
         let fields = request.as_eip8130().unwrap();
         assert_eq!(fields.calls, Some(vec![vec![call(0x11)]]));
         assert_eq!(fields.payer, payer());

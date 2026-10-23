@@ -3,9 +3,11 @@
 use std::{num::ParseIntError, sync::Arc, time::Duration};
 
 use alloy_provider::{Provider, RootProvider};
+use alloy_rpc_types_engine::JwtSecret;
 use base_cli_utils::{LogConfig, RuntimeManager};
 use base_common_genesis::RollupConfig;
 use base_common_network::Base;
+use base_consensus_engine::EngineEndpoint;
 use base_consensus_node::{
     EngineConfig, FollowNode, FollowNodeConfig, L1Config, NodeOperatingMode, RemoteL2Client,
 };
@@ -27,15 +29,15 @@ use crate::{
 pub struct FollowNodeOverrides {
     /// Override for the L2 Engine API endpoint.
     ///
-    /// The unified binary sets this to the co-located execution node's IPC socket so the follow
-    /// node inserts payloads over IPC instead of a network engine endpoint.
-    pub l2_engine_rpc: Option<Url>,
+    /// The unified binary sets this to the co-located execution node's in-memory endpoint so the
+    /// follow node inserts payloads without a network engine endpoint.
+    pub l2_engine: Option<EngineEndpoint>,
 }
 
 impl FollowNodeOverrides {
     /// Creates overrides for a follow node embedded alongside an execution node.
-    pub const fn embedded_execution(l2_engine_rpc: Url) -> Self {
-        Self { l2_engine_rpc: Some(l2_engine_rpc) }
+    pub const fn embedded_execution(l2_engine: EngineEndpoint) -> Self {
+        Self { l2_engine: Some(l2_engine) }
     }
 }
 
@@ -180,7 +182,7 @@ pub struct ConsensusFollowNodeConfigArgs {
 /// Follow-node configuration arguments for embedded callers (the unified binary).
 ///
 /// Mirrors [`ConsensusFollowNodeConfigArgs`] but omits the `--l2-engine-rpc` argument: the L2
-/// engine endpoint is provided by the co-located execution node over IPC and supplied via
+/// engine endpoint is provided by the co-located execution node in memory and supplied via
 /// [`FollowNodeOverrides::embedded_execution`]. Follow mode reads canonical payloads from
 /// `--source-l2-rpc` rather than P2P gossip, so no P2P arguments are exposed.
 #[derive(Args, Clone, Debug)]
@@ -296,17 +298,21 @@ impl ConsensusFollowNodeArgs {
         local_l2_provider: RootProvider<Base>,
         overrides: &FollowNodeOverrides,
     ) -> eyre::Result<FollowNode> {
-        let l2_engine_rpc = overrides
-            .l2_engine_rpc
-            .clone()
-            .unwrap_or_else(|| self.config.l2_client_args.l2_engine_rpc.clone());
-        let jwt_secret =
-            self.config.l2_client_args.resolve_jwt_secret_for_endpoint(&l2_engine_rpc).await?;
+        let l2_endpoint = overrides.l2_engine.clone().unwrap_or_else(|| {
+            EngineEndpoint::Url(self.config.l2_client_args.l2_engine_rpc.clone())
+        });
+        let jwt_secret = match &l2_endpoint {
+            EngineEndpoint::Url(url) => {
+                self.config.l2_client_args.resolve_jwt_secret_for_endpoint(url).await?
+            }
+            // The in-memory transport never sends the secret.
+            EngineEndpoint::InMemory(_) => JwtSecret::random(),
+        };
         let rollup_config = Arc::new(cfg.clone());
 
         let engine_config = EngineConfig {
             config: Arc::clone(&rollup_config),
-            l2_url: l2_engine_rpc,
+            l2_endpoint,
             l2_jwt_secret: jwt_secret,
             l1_url: self.config.l1_rpc_args.l1_eth_rpc.clone(),
             l1_rpc_timeout: self.config.l1_rpc_args.l1_rpc_timeout,
@@ -342,7 +348,7 @@ impl ConsensusFollowNodeArgs {
     /// Starts a follow node with caller-supplied endpoint overrides and cancellation.
     ///
     /// The unified binary uses this to point the follow node at the embedded execution node's
-    /// engine IPC socket and to stop the follow runtime when execution exits.
+    /// in-memory engine endpoint and to stop the follow runtime when execution exits.
     pub async fn start_with_overrides(
         &self,
         overrides: FollowNodeOverrides,

@@ -234,7 +234,8 @@ macro_rules! define_tx_manager_cli {
 /// `CHALLENGER_PRIVATE_KEY`.
 ///
 /// The macro also generates:
-/// - Custom `Debug` impl that redacts `private_key`
+/// - Custom `Debug` impl that redacts `private_key` (`--help` likewise never
+///   prints the value of its env var)
 /// - `impl TryFrom<SignerCli> for SignerConfig` that validates and converts
 ///
 /// # Required downstream dependencies
@@ -269,6 +270,7 @@ macro_rules! define_signer_cli {
             #[arg(
                 long = "private-key",
                 env = concat!($prefix, "_", "PRIVATE_KEY"),
+                hide_env_values = true,
                 conflicts_with = "signer_endpoint",
             )]
             pub private_key: Option<String>,

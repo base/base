@@ -18,12 +18,19 @@ use url::Url;
 const VISUALIZER_METRICS: &[&str] = &[
     "reth_base_builder_flashblock_build_duration_avg",
     "reth_base_builder_flashblock_count",
+    "reth_base_builder_native_payload_build_duration_avg",
+    "reth_base_builder_native_payload_execution_duration_avg",
+    "reth_base_builder_native_payload_state_root_duration_avg",
     "reth_base_builder_payload_num_tx_gauge",
     "reth_base_builder_payload_transaction_simulation_duration_avg",
     "reth_base_builder_sequencer_tx_duration_avg",
     "reth_base_builder_state_root_calculation_duration_avg",
     "reth_base_builder_total_block_built_duration_avg",
     "reth_base_builder_tx_simulation_duration_avg",
+    "reth_base_builder_tx_gas_used_per_block_flow_standard_avg",
+    "reth_base_builder_tx_gas_used_per_block_flow_validity_avg",
+    "reth_base_builder_txs_included_per_block_flow_standard_avg",
+    "reth_base_builder_txs_included_per_block_flow_validity_avg",
     "reth_consensus_engine_beacon_backpressure_active",
     "reth_consensus_engine_beacon_block_insert_total_duration_avg",
     "reth_consensus_engine_beacon_new_payload_latency_avg",
@@ -422,5 +429,23 @@ build_duration_count{stage="execution"} 4
         assert!(!PrometheusBlockCollector::is_visualizer_metric(
             "reth_rpc_server_calls_started_total_method_eth_call"
         ));
+    }
+
+    #[test]
+    fn collects_native_payload_builder_metrics() {
+        let current = PrometheusSnapshot::parse(
+            r#"# TYPE reth_base_builder_native_payload_build_duration summary
+reth_base_builder_native_payload_build_duration{quantile="0.5"} 0.01
+reth_base_builder_native_payload_build_duration_sum 0.25
+reth_base_builder_native_payload_build_duration_count 5
+# TYPE reth_base_builder_txs_included_per_block summary
+reth_base_builder_txs_included_per_block_sum{flow="standard"} 650
+reth_base_builder_txs_included_per_block_count{flow="standard"} 5
+"#,
+        );
+        let mut delta = current.delta_for_blocks(&PrometheusSnapshot::default(), 5);
+        delta.retain(|name, _| PrometheusBlockCollector::is_visualizer_metric(name));
+        assert_eq!(delta["reth_base_builder_native_payload_build_duration_avg"], 0.05);
+        assert_eq!(delta["reth_base_builder_txs_included_per_block_flow_standard_avg"], 130.0);
     }
 }

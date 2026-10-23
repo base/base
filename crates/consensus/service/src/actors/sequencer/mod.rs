@@ -27,6 +27,11 @@ pub use shadow_cycle::{ShadowCycle, ShadowReconciliationTask};
 mod shadow_funding;
 pub use shadow_funding::ShadowFunding;
 
+mod catchup_source;
+pub use catchup_source::{
+    CanonicalCatchupSource, CatchupFetchResult, CatchupGap, CatchupSourceError,
+};
+
 mod engine_request_coordinator;
 pub use engine_request_coordinator::{ResetResponder, SequencerEngineRequestCoordinator};
 

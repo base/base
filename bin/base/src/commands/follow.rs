@@ -2,7 +2,7 @@
 //!
 //! Runs an execution node (reth) and a consensus follow node in a single process. The follow node
 //! reads canonical payloads from `--source-l2-rpc` and inserts them into the embedded execution
-//! node over its engine IPC socket, gating on Proofs `ExEx` progress when `--proofs` is set. This
+//! node's Engine API in memory, gating on Proofs `ExEx` progress when `--proofs` is set. This
 //! is the unified-binary equivalent of the standalone `base-consensus follow` command.
 
 use std::sync::Arc;
@@ -11,13 +11,14 @@ use base_consensus_cli::{
     CliMetrics, ConsensusFollowNodeArgs, ConsensusFollowNodeConfigArgs,
     EmbeddedConsensusFollowNodeConfigArgs, FollowNodeOverrides,
 };
+use base_consensus_engine::{EngineEndpoint, InMemoryTransport};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_cli::{ExecutionNodeArgs, chainspec::chain_value_parser};
 use clap::Args;
 use reth_cli_runner::CliRunner;
 use tokio_util::sync::CancellationToken;
 
-use crate::{commands::rpc::engine_ipc_url, config::ResolvedChainConfig};
+use crate::config::ResolvedChainConfig;
 
 /// Arguments for `base follow`.
 #[derive(Args, Clone, Debug)]
@@ -84,7 +85,6 @@ impl FollowCommand {
                 .into_launch_config(execution_chain)
                 .with_unified_auth_endpoint()
                 .with_upgrade_signal_startup_already_applied();
-            let l2_engine_rpc = engine_ipc_url(execution.auth_ipc_path())?;
             let task_executor = ctx.task_executor.clone();
             let launched = execution.launch_default(ctx).await?;
             // Execution launch installs the shared reth recorder. The standalone metrics flag
@@ -93,6 +93,8 @@ impl FollowCommand {
             let _upgrade_countdown_metrics =
                 CliMetrics::spawn_upgrade_countdown_recorder(rollup_config.clone());
 
+            let l2_engine =
+                EngineEndpoint::InMemory(InMemoryTransport { module: launched.auth_module });
             let handle = launched.handle;
             // Keep the execution node handle alive until both services have coordinated shutdown.
             let execution_node = handle.node;
@@ -100,7 +102,7 @@ impl FollowCommand {
 
             let follow_cancellation = CancellationToken::new();
             let follow_exit = follow_args.start_with_overrides(
-                FollowNodeOverrides::embedded_execution(l2_engine_rpc),
+                FollowNodeOverrides::embedded_execution(l2_engine),
                 follow_cancellation.clone(),
             );
             tokio::pin!(execution_exit);

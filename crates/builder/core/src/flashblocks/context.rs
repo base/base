@@ -19,7 +19,8 @@ use base_execution_eip8130::IntrinsicGas;
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
 use base_execution_payload_builder::{
     BasePayloadBuilderAttributes, BuilderMetrics as SharedBuilderMetrics, CoinbaseTipAffordability,
-    ValidityMetrics, error::BasePayloadBuilderError,
+    ValidityEvaluationCounters, ValidityEvaluationOutcome, ValidityMetrics,
+    error::BasePayloadBuilderError,
 };
 use base_execution_txpool::{
     BasePooledTx, GuardMetrics, PredicateContext, TimestampedTransaction,
@@ -742,9 +743,7 @@ impl BasePayloadBuilderCtx {
         best_txs: &mut impl PayloadTxsBounds,
         limits: &ResourceLimits,
     ) -> Result<FlashblockDiagnostics, PayloadBuilderError> {
-        let execute_txs_start_time = Instant::now();
         let mut num_txs_considered = 0;
-        let mut num_txs_simulated = 0;
         let mut num_txs_simulated_success = 0;
         let mut num_txs_simulated_fail = 0;
         let mut reverted_gas_used: u64 = 0;
@@ -780,6 +779,7 @@ impl BasePayloadBuilderCtx {
             ParkedPredicateIndex::new(self.builder_config.predicate_bucket_ordered_threshold);
         let predicate_context =
             PredicateContext { block_number, flashblock_index: self.flashblock_index() };
+        let mut evaluation_counters = ValidityEvaluationCounters::default();
 
         // Total validity-predicate evaluation time (inclusive of the state loads each
         // evaluation performs) across this flashblock build. `None` until the first
@@ -831,8 +831,7 @@ impl BasePayloadBuilderCtx {
                     tx_hash = ?tx_hash,
                     "deferring validity-gated transaction: predicate evaluation budget exhausted for this flashblock"
                 );
-                ValidityMetrics::validity_predicate_evaluations_total("budget_exhausted")
-                    .increment(1);
+                evaluation_counters.increment(ValidityEvaluationOutcome::BudgetExhausted, 1);
                 validity_candidates_deferred += 1;
                 predicate_eval_cutoff_hit = true;
                 self.defer_current(best_txs, &mut diag, deferrals, &cx, tx_hash, ordering_position);
@@ -879,14 +878,16 @@ impl BasePayloadBuilderCtx {
             };
             if has_validity_predicates {
                 let outcome = if predicate_read_failed {
-                    "read_error"
+                    ValidityEvaluationOutcome::ReadError
                 } else if blocking_predicate.is_some() {
-                    "not_satisfied"
+                    ValidityEvaluationOutcome::NotSatisfied
                 } else {
-                    "matched"
+                    ValidityEvaluationOutcome::Matched
                 };
-                ValidityMetrics::validity_predicate_evaluations_total(outcome).increment(1);
-                if outcome == "matched" && best_txs.is_resting(tx_hash, tx.validity_conditions()) {
+                evaluation_counters.increment(outcome, 1);
+                if outcome == ValidityEvaluationOutcome::Matched
+                    && best_txs.is_resting(tx_hash, tx.validity_conditions())
+                {
                     BuilderMetrics::resting_predicate_shadow_mismatches_total().increment(1);
                     debug!(
                         target: "payload_builder",
@@ -1315,7 +1316,6 @@ impl BasePayloadBuilderCtx {
             // this is not metering service simulation data from MeterBundleResponse.
             BuilderMetrics::tx_simulation_duration().record(execution_time);
             BuilderMetrics::tx_byte_size().record(tx.inner().size() as f64);
-            num_txs_simulated += 1;
 
             // Record state modification counts (trie work proxy)
             let accounts_modified = state.len();
@@ -1441,10 +1441,8 @@ impl BasePayloadBuilderCtx {
                 {
                     let remaining =
                         (state_change_effects.affected_transactions.len() - rescanned) as u64;
-                    ValidityMetrics::validity_predicate_evaluations_total(
-                        "rescan_budget_exhausted",
-                    )
-                    .increment(remaining);
+                    evaluation_counters
+                        .increment(ValidityEvaluationOutcome::RescanBudgetExhausted, remaining);
                     predicate_eval_cutoff_hit = true;
                     break;
                 }
@@ -1485,13 +1483,13 @@ impl BasePayloadBuilderCtx {
                         }
                     };
                 let outcome = if predicate_read_failed {
-                    "rescan_read_error"
+                    ValidityEvaluationOutcome::RescanReadError
                 } else if blocking_predicate.is_some() {
-                    "rescan_not_satisfied"
+                    ValidityEvaluationOutcome::RescanNotSatisfied
                 } else {
-                    "rescan_matched"
+                    ValidityEvaluationOutcome::RescanMatched
                 };
-                ValidityMetrics::validity_predicate_evaluations_total(outcome).increment(1);
+                evaluation_counters.increment(outcome, 1);
                 if predicate_read_failed {
                     predicate_index.remove(*parked_hash);
                     best_txs.discard_parked(*parked_hash);
@@ -1570,11 +1568,8 @@ impl BasePayloadBuilderCtx {
             predicate_eval_cutoff_hit,
         );
 
-        let payload_transaction_simulation_time = execute_txs_start_time.elapsed();
         BuilderMetrics::set_payload_builder_metrics(
-            payload_transaction_simulation_time.as_secs_f64(),
             num_txs_considered as f64,
-            num_txs_simulated as f64,
             num_txs_simulated_success as f64,
             num_txs_simulated_fail as f64,
             reverted_gas_used as f64,
@@ -1621,7 +1616,6 @@ impl BasePayloadBuilderCtx {
 
     /// Record metrics for a limit that requires execution data (enforcement is configurable).
     fn record_execution_metering_limit_exceeded(&self, limit: &ExecutionMeteringLimitExceeded) {
-        BuilderMetrics::resource_limit_would_reject_total().increment(1);
         match limit {
             ExecutionMeteringLimitExceeded::TransactionExecutionTime(_, _) => {
                 BuilderMetrics::tx_execution_time_exceeded_total().increment(1);
