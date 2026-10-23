@@ -84,7 +84,7 @@ up network:
       fi
     done
 
-    DOCKER_CA_BUNDLE={{ quote(_ca_bundle) }} PROFILE=dev ZK_HOST_PROFILE=release BASE_SUCCINCT_ELF_REQUIRE=1 \
+    PROFILE=dev ZK_HOST_PROFILE=release BASE_SUCCINCT_ELF_REQUIRE=1 \
       docker buildx bake {{ _ca_bundle_bake_allow }} -f etc/docker/docker-bake.hcl prover-service zk-host --load
 
     PROVER_NETWORK="$network" docker compose -p "base-prover-${network}" \

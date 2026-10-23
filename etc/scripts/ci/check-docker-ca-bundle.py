@@ -89,9 +89,13 @@ def check_dockerfiles_in_map(dockerfile_texts: dict[str, str], errors: list[str]
     for rel, text in sorted(dockerfile_texts.items()):
         if re.search(r"^\s*(?:COPY|ADD)\b.*ca[_-]bundle", text, re.MULTILINE):
             errors.append(f"{rel}: must not COPY/ADD custom CA into image layers")
+        if re.search(r"^\s*ENV\b.*/run/secrets/ca_bundle", text, re.MULTILINE):
+            errors.append(f"{rel}: must not set ENV referencing /run/secrets/ca_bundle")
         stages_with_rust_toolchain: set[str] = set()
+        stages_with_ca_shell: set[str] = set()
         current_stage: str | None = None
         current_has_rust_toolchain = False
+        current_has_ca_shell = False
 
         for line_no, instr in parse_logical_instructions(text):
             from_match = FROM_RE.match(instr)
@@ -99,8 +103,24 @@ def check_dockerfiles_in_map(dockerfile_texts: dict[str, str], errors: list[str]
                 base_ref = from_match.group(1)
                 current_stage = from_match.group(2)
                 current_has_rust_toolchain = base_ref in stages_with_rust_toolchain
+                current_has_ca_shell = base_ref in stages_with_ca_shell
                 if current_stage and current_has_rust_toolchain:
                     stages_with_rust_toolchain.add(current_stage)
+                if current_stage and current_has_ca_shell:
+                    stages_with_ca_shell.add(current_stage)
+                continue
+            if instr.upper().startswith("SHELL "):
+                if (
+                    CONDITIONAL_SECRET_FILE_GUARD_RE.search(instr)
+                    and not INVERTED_SECRET_FILE_GUARD_RE.search(instr)
+                    and "SSL_CERT_FILE=/run/secrets/ca_bundle" in instr
+                    and 'exec /bin/sh -c \\"$1\\"' in instr
+                ):
+                    if current_stage in ("runtime-base", "describe") or current_stage is None:
+                        errors.append(f"{rel}:{line_no}: runtime stage must not set a ca_bundle SHELL")
+                    current_has_ca_shell = True
+                    if current_stage:
+                        stages_with_ca_shell.add(current_stage)
                 continue
             if COPY_RUST_TOOLCHAIN_RE.match(instr):
                 current_has_rust_toolchain = True
@@ -119,15 +139,21 @@ def check_dockerfiles_in_map(dockerfile_texts: dict[str, str], errors: list[str]
                     errors.append(f"{rel}:{line_no}: ca_bundle mount must set required=false")
                 if m.get("target") != "/run/secrets/ca_bundle":
                     errors.append(f"{rel}:{line_no}: ca_bundle mount must set target=/run/secrets/ca_bundle")
-                if INVERTED_SECRET_FILE_GUARD_RE.search(instr) or not CONDITIONAL_SECRET_FILE_GUARD_RE.search(instr):
-                    errors.append(
-                        f"{rel}:{line_no}: RUN with ca_bundle mount must guard usage with a positive file test (e.g. `[ -f /run/secrets/ca_bundle ]`)"
-                    )
+                has_inline_guard = bool(CONDITIONAL_SECRET_FILE_GUARD_RE.search(instr))
+                has_inverted_guard = bool(INVERTED_SECRET_FILE_GUARD_RE.search(instr))
                 if APT_RE.search(instr):
+                    if has_inverted_guard or not has_inline_guard:
+                        errors.append(
+                            f"{rel}:{line_no}: apt RUN with ca_bundle mount must guard usage with a positive file test"
+                        )
                     if m.get("mode") not in ("0444", "444", "0644", "644"):
                         errors.append(f"{rel}:{line_no}: apt RUN ca_bundle mount must set mode=0444")
                     if "Acquire::https::CaInfo=/run/secrets/ca_bundle" not in instr:
                         errors.append(f"{rel}:{line_no}: apt RUN must pass Acquire::https::CaInfo=/run/secrets/ca_bundle")
+                elif has_inverted_guard or not (has_inline_guard or current_has_ca_shell):
+                    errors.append(
+                        f"{rel}:{line_no}: RUN with ca_bundle mount must guard usage with a positive file test or stage SHELL"
+                    )
 
             cmd_body = RUN_PREFIX_RE.sub("", instr, count=1)
             needs_ca = bool(NETWORK_RUN_RE.search(cmd_body)) or (
@@ -135,6 +161,8 @@ def check_dockerfiles_in_map(dockerfile_texts: dict[str, str], errors: list[str]
             )
             if needs_ca and not ca_mounts:
                 errors.append(f"{rel}:{line_no}: network RUN missing optional ca_bundle secret mount: {instr[:120]}")
+        if current_has_ca_shell:
+            errors.append(f"{rel}: final stage must not set or inherit a ca_bundle SHELL")
     return dockerfiles_with_mount
 
 
@@ -250,9 +278,25 @@ def iter_hcl_targets(bake_text: str) -> list[tuple[str, str]]:
 def check_bake_text(bake_text: str, dockerfiles_with_mount: set[str], errors: list[str]) -> None:
     if 'variable "DOCKER_CA_BUNDLE"' not in bake_text:
         errors.append('etc/docker/docker-bake.hcl: missing variable "DOCKER_CA_BUNDLE"')
-    for target_name, body in iter_hcl_targets(bake_text):
+    target_bodies = dict(iter_hcl_targets(bake_text))
+
+    def target_has_secret(name: str, seen: set[str] | None = None) -> bool:
+        visited = seen or set()
+        if name in visited or name not in target_bodies:
+            return False
+        visited.add(name)
+        body = target_bodies[name]
+        if BAKE_CONDITIONAL_SECRET_RE.search(body):
+            return True
+        inh_match = re.search(r"inherits\s*=\s*\[([^\]]*)\]", body)
+        if not inh_match:
+            return False
+        parents = re.findall(r'"([^"]+)"', inh_match.group(1))
+        return any(target_has_secret(parent, visited) for parent in parents)
+
+    for target_name, body in target_bodies.items():
         df_match = re.search(r'dockerfile\s*=\s*"([^"]+)"', body)
-        if df_match and df_match.group(1) in dockerfiles_with_mount and not BAKE_CONDITIONAL_SECRET_RE.search(body):
+        if df_match and df_match.group(1) in dockerfiles_with_mount and not target_has_secret(target_name):
             errors.append(
                 f"etc/docker/docker-bake.hcl: target '{target_name}' uses {df_match.group(1)} but lacks conditional DOCKER_CA_BUNDLE secret"
             )
@@ -279,18 +323,23 @@ def check_probes(errors: list[str]) -> None:
     rust_df = (REPO_ROOT / "etc/docker/Dockerfile.rust-services").read_text(encoding="utf-8")
     for label, pattern, repl in (
         (
+            "shell",
+            r'SHELL \["/bin/sh", "-c", "if \[ -f /run/secrets/ca_bundle \];[^\n]+\n',
+            "",
+        ),
+        (
             "planner",
-            r"FROM workspace-source AS planner\nRUN --mount=[^\n]+\n\s+if \[ -f /run/secrets/ca_bundle \];[^\n]+\n\s+cargo chef prepare --recipe-path recipe\.json",
+            r"FROM workspace-source AS planner\nRUN --mount=[^\n]+\n\s+cargo chef prepare --recipe-path recipe\.json",
             "FROM workspace-source AS planner\nRUN cargo chef prepare --recipe-path recipe.json",
         ),
         (
             "cook",
-            r"--mount=type=secret,id=ca_bundle,target=/run/secrets/ca_bundle,required=false \\\n\s+if \[ -f /run/secrets/ca_bundle \];[^\n]+\n\s+(cargo chef cook)",
+            r"--mount=type=secret,id=ca_bundle,target=/run/secrets/ca_bundle,required=false \\\n\s+(cargo chef cook)",
             r"\1",
         ),
         (
             "install",
-            r"--mount=type=secret,id=ca_bundle,target=/run/secrets/ca_bundle,required=false \\\n\s+if \[ -f /run/secrets/ca_bundle \];[^\n]+\n\s+(cargo install cargo-chef)",
+            r"--mount=type=secret,id=ca_bundle,target=/run/secrets/ca_bundle,required=false \\\n\s+(cargo install cargo-chef)",
             r"\1",
         ),
     ):

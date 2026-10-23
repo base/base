@@ -1,9 +1,11 @@
 # Optional ca_bundle secret mounts support custom CA bundles; see etc/docker/README.md.
-FROM public.ecr.aws/docker/library/golang:1.26-alpine AS builder
+FROM public.ecr.aws/docker/library/golang:1.26-alpine AS go-builder-base
+SHELL ["/bin/sh", "-c", "if [ -f /run/secrets/ca_bundle ]; then export SSL_CERT_FILE=/run/secrets/ca_bundle GIT_SSL_CAINFO=/run/secrets/ca_bundle; fi; exec /bin/sh -c \"$1\"", "--"]
+
+FROM go-builder-base AS builder
 
 # Install build dependencies for CGO (required for BLS library)
 RUN --mount=type=secret,id=ca_bundle,target=/run/secrets/ca_bundle,required=false \
-    if [ -f /run/secrets/ca_bundle ]; then export SSL_CERT_FILE=/run/secrets/ca_bundle; fi && \
     apk add --no-cache git make gcc g++ musl-dev linux-headers curl ca-certificates
 
 ARG ETH_BEACON_GENESIS_COMMIT=f57c0fb4606f9a28e5eecb61546efa9b658183b2
@@ -12,38 +14,32 @@ ARG ETH2_VAL_TOOLS_COMMIT=db4f5fa6b8a6096a5f22c0a60f6494bf489c407b
 # Build eth-beacon-genesis from source (has replace directives, can't use go install)
 WORKDIR /build
 RUN --mount=type=secret,id=ca_bundle,target=/run/secrets/ca_bundle,required=false \
-    if [ -f /run/secrets/ca_bundle ]; then export SSL_CERT_FILE=/run/secrets/ca_bundle GIT_SSL_CAINFO=/run/secrets/ca_bundle; fi && \
     git clone https://github.com/ethpandaops/eth-beacon-genesis.git . && \
     git checkout "${ETH_BEACON_GENESIS_COMMIT}" && \
     test "$(git rev-parse HEAD)" = "${ETH_BEACON_GENESIS_COMMIT}"
 ENV CGO_ENABLED=1
 RUN --mount=type=secret,id=ca_bundle,target=/run/secrets/ca_bundle,required=false \
-    if [ -f /run/secrets/ca_bundle ]; then export SSL_CERT_FILE=/run/secrets/ca_bundle GIT_SSL_CAINFO=/run/secrets/ca_bundle; fi && \
     go build -o /go/bin/eth-genesis-state-generator ./cmd/eth-genesis-state-generator
 
 # Build eth2-val-tools for validator keystore generation
 WORKDIR /build2
 RUN --mount=type=secret,id=ca_bundle,target=/run/secrets/ca_bundle,required=false \
-    if [ -f /run/secrets/ca_bundle ]; then export SSL_CERT_FILE=/run/secrets/ca_bundle GIT_SSL_CAINFO=/run/secrets/ca_bundle; fi && \
     git clone https://github.com/protolambda/eth2-val-tools.git --branch "${ETH2_VAL_TOOLS_TAG}" --single-branch . && \
     git switch -c "branch-${ETH2_VAL_TOOLS_TAG}" "${ETH2_VAL_TOOLS_COMMIT}" && \
     test "$(git rev-parse HEAD)" = "${ETH2_VAL_TOOLS_COMMIT}"
 RUN --mount=type=secret,id=ca_bundle,target=/run/secrets/ca_bundle,required=false \
-    if [ -f /run/secrets/ca_bundle ]; then export SSL_CERT_FILE=/run/secrets/ca_bundle GIT_SSL_CAINFO=/run/secrets/ca_bundle; fi && \
     go build -o /go/bin/eth2-val-tools .
 
 # Build the integrated offline setup from the Base-specific Optimism branch.
 # Pin the source revision so setup image builds are reproducible.
-FROM public.ecr.aws/docker/library/golang:1.26-alpine AS base-devnet-builder
+FROM go-builder-base AS base-devnet-builder
 RUN --mount=type=secret,id=ca_bundle,target=/run/secrets/ca_bundle,required=false \
-    if [ -f /run/secrets/ca_bundle ]; then export SSL_CERT_FILE=/run/secrets/ca_bundle; fi && \
     apk add --no-cache git ca-certificates
 ADD https://github.com/base/optimism.git#896142b334ea20220aa552e9478e5ec406716911 /op-deployer
 WORKDIR /op-deployer
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=secret,id=ca_bundle,target=/run/secrets/ca_bundle,required=false \
-    if [ -f /run/secrets/ca_bundle ]; then export SSL_CERT_FILE=/run/secrets/ca_bundle GIT_SSL_CAINFO=/run/secrets/ca_bundle; fi && \
     CGO_ENABLED=0 go build -o /out/op-deployer ./op-deployer/cmd/op-deployer && \
     CGO_ENABLED=0 go build -o /out/extract-artifacts ./op-deployer/cmd/extract-artifacts
 # Avoid unpacking contract artifacts on every fresh devnet startup.

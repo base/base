@@ -12,3 +12,4 @@ _ca_bundle := if _ca_bundle_raw != "" {
 }
 _ca_bundle_secret := if _ca_bundle != "" { "--secret id=ca_bundle,src=" + quote(_ca_bundle) } else { "" }
 _ca_bundle_bake_allow := if _ca_bundle != "" { "--allow=fs.read=" + quote(_ca_bundle) } else { "" }
+export DOCKER_CA_BUNDLE := _ca_bundle

@@ -7,6 +7,7 @@
 # --- Builder ---
 FROM --platform=linux/amd64 rust:1.95-trixie@sha256:443dd9a3260cf23c22fc05051dd5661dd7b4028d3d25dbaffab6563b63c3539c AS builder
 WORKDIR /app
+SHELL ["/bin/sh", "-c", "if [ -f /run/secrets/ca_bundle ]; then export SSL_CERT_FILE=/run/secrets/ca_bundle CARGO_HTTP_CAINFO=/run/secrets/ca_bundle GIT_SSL_CAINFO=/run/secrets/ca_bundle; fi; exec /bin/sh -c \"$1\"", "--"]
 
 RUN --mount=type=secret,id=ca_bundle,target=/run/secrets/ca_bundle,required=false,mode=0444 \
     if [ -f /run/secrets/ca_bundle ]; then apt_ca="-o Acquire::https::CaInfo=/run/secrets/ca_bundle"; else apt_ca=""; fi && \
@@ -23,7 +24,6 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,target=/app/target,id=prover-nitro-host-target,sharing=locked \
     --mount=type=secret,id=ca_bundle,target=/run/secrets/ca_bundle,required=false \
-    if [ -f /run/secrets/ca_bundle ]; then export SSL_CERT_FILE=/run/secrets/ca_bundle CARGO_HTTP_CAINFO=/run/secrets/ca_bundle GIT_SSL_CAINFO=/run/secrets/ca_bundle; fi && \
     cargo build --profile $PROFILE --locked --package base-prover-nitro-host --bin base-prover-nitro-host $CARGO_FEATURES && \
     cp target/$([ "$PROFILE" = "dev" ] && echo debug || echo $PROFILE)/base-prover-nitro-host ./base-prover-nitro-host
 
