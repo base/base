@@ -46,6 +46,16 @@ INVERTED_SECRET_FILE_GUARD_RE = re.compile(
 BAKE_CONDITIONAL_SECRET_RE = re.compile(
     r'secret\s*=\s*DOCKER_CA_BUNDLE\s*!=\s*""\s*\?\s*\[\s*"[^"]*id=ca_bundle,src=\$\{DOCKER_CA_BUNDLE\}[^"]*"\s*\]\s*:\s*\[\s*\]'
 )
+CANONICAL_CA_SHELL = (
+    'SHELL ["/bin/sh", "-c", '
+    '"if [ -f /run/secrets/ca_bundle ]; then '
+    "export SSL_CERT_FILE=/run/secrets/ca_bundle "
+    "CURL_CA_BUNDLE=/run/secrets/ca_bundle "
+    "CARGO_HTTP_CAINFO=/run/secrets/ca_bundle "
+    "GIT_SSL_CAINFO=/run/secrets/ca_bundle "
+    "NODE_EXTRA_CA_CERTS=/run/secrets/ca_bundle; "
+    'fi; exec /bin/sh -c \\"$1\\"", "--"]'
+)
 
 
 def parse_logical_instructions(dockerfile_text: str) -> list[tuple[int, str]]:
@@ -80,7 +90,55 @@ def parse_mount(spec: str) -> dict[str, str]:
     return opts
 
 
-def check_dockerfiles_in_map(dockerfile_texts: dict[str, str], errors: list[str]) -> set[str]:
+def collect_output_stages() -> dict[str, set[str]]:
+    output_stages: dict[str, set[str]] = {}
+    bake_path = REPO_ROOT / "etc/docker/docker-bake.hcl"
+    if bake_path.exists():
+        target_bodies = dict(iter_hcl_targets(bake_path.read_text(encoding="utf-8")))
+
+        def resolve_dockerfile(name: str, seen: set[str] | None = None) -> str | None:
+            visited = seen or set()
+            if name in visited or name not in target_bodies:
+                return None
+            visited.add(name)
+            body = target_bodies[name]
+            df_match = re.search(r'dockerfile\s*=\s*"([^"]+)"', body)
+            if df_match:
+                return df_match.group(1)
+            inh_match = re.search(r"inherits\s*=\s*\[([^\]]*)\]", body)
+            if not inh_match:
+                return None
+            for parent in re.findall(r'"([^"]+)"', inh_match.group(1)):
+                resolved = resolve_dockerfile(parent, visited)
+                if resolved:
+                    return resolved
+            return None
+
+        for target_name, body in target_bodies.items():
+            stage_match = re.search(r'target\s*=\s*"([^"]+)"', body)
+            dockerfile = resolve_dockerfile(target_name)
+            if stage_match and dockerfile:
+                output_stages.setdefault(dockerfile, set()).add(stage_match.group(1))
+
+    for jf_rel in ("Justfile", "etc/docker/Justfile", "etc/just/prover.just", "crates/proof/tee/Justfile"):
+        jf_path = REPO_ROOT / jf_rel
+        if not jf_path.exists():
+            continue
+        for line in jf_path.read_text(encoding="utf-8").splitlines():
+            df_m = re.search(r"-f\s+(etc/docker/Dockerfile\.\S+)", line)
+            tgt_m = re.search(r"--target(?:\s+|=)([A-Za-z0-9_.-]+)", line)
+            if df_m and tgt_m:
+                output_stages.setdefault(df_m.group(1), set()).add(tgt_m.group(1))
+
+    return output_stages
+
+
+def check_dockerfiles_in_map(
+    dockerfile_texts: dict[str, str],
+    errors: list[str],
+    output_stages_by_dockerfile: dict[str, set[str]] | None = None,
+) -> set[str]:
+    output_stages_map = output_stages_by_dockerfile if output_stages_by_dockerfile is not None else collect_output_stages()
     dockerfiles_with_mount: set[str] = set()
     if not dockerfile_texts:
         errors.append("No etc/docker/Dockerfile.* files found")
@@ -110,17 +168,14 @@ def check_dockerfiles_in_map(dockerfile_texts: dict[str, str], errors: list[str]
                     stages_with_ca_shell.add(current_stage)
                 continue
             if instr.upper().startswith("SHELL "):
-                if (
-                    CONDITIONAL_SECRET_FILE_GUARD_RE.search(instr)
-                    and not INVERTED_SECRET_FILE_GUARD_RE.search(instr)
-                    and "SSL_CERT_FILE=/run/secrets/ca_bundle" in instr
-                    and 'exec /bin/sh -c \\"$1\\"' in instr
-                ):
+                if instr == CANONICAL_CA_SHELL:
                     if current_stage in ("runtime-base", "describe") or current_stage is None:
                         errors.append(f"{rel}:{line_no}: runtime stage must not set a ca_bundle SHELL")
                     current_has_ca_shell = True
                     if current_stage:
                         stages_with_ca_shell.add(current_stage)
+                elif "ca_bundle" in instr:
+                    errors.append(f"{rel}:{line_no}: ca_bundle SHELL must match CANONICAL_CA_SHELL")
                 continue
             if COPY_RUST_TOOLCHAIN_RE.match(instr):
                 current_has_rust_toolchain = True
@@ -163,6 +218,9 @@ def check_dockerfiles_in_map(dockerfile_texts: dict[str, str], errors: list[str]
                 errors.append(f"{rel}:{line_no}: network RUN missing optional ca_bundle secret mount: {instr[:120]}")
         if current_has_ca_shell:
             errors.append(f"{rel}: final stage must not set or inherit a ca_bundle SHELL")
+        for out_stage in sorted(output_stages_map.get(rel, set())):
+            if out_stage in stages_with_ca_shell:
+                errors.append(f"{rel}: output stage '{out_stage}' must not set or inherit a ca_bundle SHELL")
     return dockerfiles_with_mount
 
 
@@ -348,6 +406,29 @@ def check_probes(errors: list[str]) -> None:
         check_dockerfiles_in_map({"etc/docker/Dockerfile.rust-services": mutated}, mut_errs)
         if not mut_errs:
             errors.append(f"probe: stripping ca_bundle mount from {label} RUN in Dockerfile.rust-services did not fail")
+    incomplete_shell_df = (
+        "FROM public.ecr.aws/docker/library/golang:1.23-alpine3.20 AS builder\n"
+        'SHELL ["/bin/sh", "-c", "if [ -f /run/secrets/ca_bundle ]; then export SSL_CERT_FILE=/run/secrets/ca_bundle GIT_SSL_CAINFO=/run/secrets/ca_bundle; fi; exec /bin/sh -c \\"$1\\"", "--"]\n'
+        "RUN --mount=type=secret,id=ca_bundle,target=/run/secrets/ca_bundle,required=false \\\n"
+        "    cargo install cargo-chef\n"
+        "FROM public.ecr.aws/docker/library/alpine:3.20\n"
+        "COPY --from=builder /bin/app /bin/app\n"
+    )
+    inc_errs: list[str] = []
+    check_dockerfiles_in_map({"etc/docker/Dockerfile.proxyd": incomplete_shell_df}, inc_errs)
+    if not inc_errs:
+        errors.append("probe: non-canonical CA SHELL missing CARGO_HTTP_CAINFO did not fail")
+
+    for out_stage in ("base", "execution"):
+        mut_out = rust_df.replace(
+            f"FROM runtime-base AS {out_stage}\n",
+            f"FROM runtime-base AS {out_stage}\n{CANONICAL_CA_SHELL}\n",
+            1,
+        )
+        out_errs: list[str] = []
+        check_dockerfiles_in_map({"etc/docker/Dockerfile.rust-services": mut_out}, out_errs)
+        if not out_errs:
+            errors.append(f"probe: adding CA SHELL to output stage '{out_stage}' in Dockerfile.rust-services did not fail")
 
     redos_input = "(A=" + '"" A=' * 5000 + "!"
     t0 = time.monotonic()

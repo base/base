@@ -1,6 +1,8 @@
 # Optional ca_bundle secret mounts support custom CA bundles; see etc/docker/README.md.
 FROM public.ecr.aws/docker/library/golang:1.23-alpine3.20 AS builder
-SHELL ["/bin/sh", "-c", "if [ -f /run/secrets/ca_bundle ]; then export SSL_CERT_FILE=/run/secrets/ca_bundle GIT_SSL_CAINFO=/run/secrets/ca_bundle; fi; exec /bin/sh -c \"$1\"", "--"]
+# Export CA bundle env vars only when /run/secrets/ca_bundle is mounted, then exec the RUN string.
+# The secret mount itself must still be declared on each network-fetching RUN.
+SHELL ["/bin/sh", "-c", "if [ -f /run/secrets/ca_bundle ]; then export SSL_CERT_FILE=/run/secrets/ca_bundle CURL_CA_BUNDLE=/run/secrets/ca_bundle CARGO_HTTP_CAINFO=/run/secrets/ca_bundle GIT_SSL_CAINFO=/run/secrets/ca_bundle NODE_EXTRA_CA_CERTS=/run/secrets/ca_bundle; fi; exec /bin/sh -c \"$1\"", "--"]
 RUN --mount=type=secret,id=ca_bundle,target=/run/secrets/ca_bundle,required=false \
     apk add --no-cache make git gcc musl-dev
 WORKDIR /app
