@@ -1,10 +1,12 @@
 //! Load test execution, rate limiting, and transaction confirmation.
 
 mod config;
+mod deploy64;
 pub use config::{
     BlockNumberBound, DEFAULT_MAX_GAS_PRICE, DEFAULT_MAX_IN_FLIGHT_PER_SENDER, LoadConfig,
     PredicateAddress, PredicateValue, SlotTemplate, TxConfig, TxType, ValidityPredicateTemplate,
 };
+pub use deploy64::{Deploy64Config, Deploy64Result};
 
 mod flashblock_watcher;
 pub use flashblock_watcher::FlashblockWatcher;
