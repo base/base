@@ -51,6 +51,7 @@ impl<'a> MetricsAggregator<'a> {
             block_range.block_time_duration(block_time).unwrap_or(wall_clock_duration);
 
         MetricsSummary {
+            deploy64: Vec::new(),
             config,
             error: None,
             measurement_start_block: None,
@@ -284,6 +285,9 @@ impl<'a> MetricsAggregator<'a> {
 /// Summary of all collected metrics over the full run.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MetricsSummary {
+    /// Independently paced deployment results, excluded from ordinary-mix throughput and calibration.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub deploy64: Vec<crate::runner::Deploy64Result>,
     /// Test configuration (excludes URLs and secrets).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub config: Option<ConfigSummary>,

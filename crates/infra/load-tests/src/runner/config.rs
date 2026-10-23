@@ -245,6 +245,8 @@ pub const DEFAULT_MAX_IN_FLIGHT_PER_SENDER: usize = 16;
 /// Configuration for a load test run.
 #[derive(Debug, Clone)]
 pub struct LoadConfig {
+    /// Optional separately paced full 64 `KiB` deployments; excluded from ordinary mix calibration.
+    pub deploy64: Option<super::deploy64::Deploy64Config>,
     /// HTTP JSON-RPC endpoints used for sharded transaction submission.
     pub transaction_submission_rpcs: Vec<Url>,
     /// HTTP JSON-RPC endpoint used for read/query operations.
@@ -330,6 +332,7 @@ impl LoadConfig {
             query_rpc: "http://localhost:8545".parse().expect("valid default query_rpc"),
             txpool_nodes: Vec::new(),
             chain_id: 84538453,
+            deploy64: None,
             account_count: 10,
             seed: 42,
             mnemonic: None,
@@ -367,6 +370,9 @@ impl LoadConfig {
 
     /// Validates the configuration, returning an error if invalid.
     pub fn validate(&self) -> Result<()> {
+        if let Some(config) = &self.deploy64 {
+            config.validate()?;
+        }
         if self.account_count == 0 {
             return Err(BaselineError::Config("account_count must be > 0".into()));
         }

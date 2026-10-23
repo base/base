@@ -41,6 +41,9 @@ impl LoadRunner {
         funding_key: PrivateKeySigner,
         amount_per_account: U256,
     ) -> Result<()> {
+        if self.config.deploy64.is_some() {
+            self.deployment_signer = Some(funding_key.clone());
+        }
         let total_accounts = self.accounts.len();
         let client = self.client.clone();
         let primary_submission_rpc = self.config.primary_submission_rpc().clone();

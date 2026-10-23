@@ -47,6 +47,8 @@ pub struct LoadRunner {
     pub(super) config_summary: Option<ConfigSummary>,
     pub(super) client: QueryProvider,
     pub(super) gas_estimator: Option<crate::rpc::GasEstimator>,
+    /// Exclusive funding signer reused only by the optional deployment lane during the run.
+    pub(super) deployment_signer: Option<PrivateKeySigner>,
     pub(super) accounts: AccountPool,
     pub(super) generator: WorkloadGenerator,
     pub(super) collector: MetricsCollector,
@@ -172,6 +174,7 @@ impl LoadRunner {
             config_summary: None,
             client,
             gas_estimator: None,
+            deployment_signer: None,
             accounts,
             generator,
             collector: MetricsCollector::new(),

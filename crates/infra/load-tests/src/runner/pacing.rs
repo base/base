@@ -422,6 +422,27 @@ impl LoadRunner {
                 Some(crate::rpc::GasEstimator::detect(self.client.clone(), sender).await?);
         }
 
+        if let Some(config) = &self.config.deploy64 {
+            let signer = self.deployment_signer.as_ref().ok_or_else(|| {
+                BaselineError::Config(
+                    "deploy64 requires fund_accounts to initialize its exclusive funding signer"
+                        .into(),
+                )
+            })?;
+            if self.signers.contains_key(&signer.address()) {
+                return Err(BaselineError::Config(
+                    "deploy64 funding signer must not be an ordinary mix sender".into(),
+                ));
+            }
+            super::deploy64::preflight(
+                self.config.primary_submission_rpc().clone(),
+                signer,
+                config,
+                self.config.max_gas_price,
+            )
+            .await?;
+        }
+
         if self.b20_run_salt.is_none()
             && self.config.transactions.iter().any(|t| matches!(t.tx_type, TxType::B20))
         {
@@ -794,6 +815,23 @@ impl LoadRunner {
             Self::publish_handshake(started_file.as_deref())?;
         }
 
+        let deployment_stop = CancellationToken::new();
+        let _deployment_guard = deployment_stop.clone().drop_guard();
+        let deployment_task = if prefill_result.is_ok() {
+            self.config.deploy64.clone().map(|config| {
+                tokio::spawn(super::deploy64::run(
+                    self.config.primary_submission_rpc().clone(),
+                    self.deployment_signer.clone().expect("validated deployment signer"),
+                    self.config.chain_id,
+                    config,
+                    self.config.max_gas_price,
+                    deployment_stop.clone(),
+                ))
+            })
+        } else {
+            None
+        };
+
         let enqueue_deadline = self.config.duration.map(|d| start + d);
         let enqueue_result = if let Err(err) = prefill_result {
             Err(err)
@@ -861,6 +899,7 @@ impl LoadRunner {
             )
             .await
         };
+        deployment_stop.cancel();
         self.collector.set_pacing_duration(start.elapsed());
 
         let finished_file = self.config.separate_setup.as_deref().map(|dir| dir.join("finished"));
@@ -1175,6 +1214,17 @@ impl LoadRunner {
             self.config_summary.clone(),
             self.fresh_recipient_count(),
         );
+        if let Some(task) = deployment_task {
+            summary.deploy64 = task.await.map_err(|error| {
+                BaselineError::Transaction(format!("deploy64 worker failed: {error}"))
+            })?;
+        }
+        if open_loop_enqueue_error.is_none()
+            && let Some(error) = summary.deploy64.iter().find_map(|result| result.error.as_ref())
+        {
+            open_loop_enqueue_error =
+                Some(BaselineError::Transaction(format!("deploy64 workload failed: {error}")));
+        }
         let measurement_window = results_tracker.measurement_window();
         summary.measurement_start_block = measurement_window.start_block;
         summary.measurement_end_block = measurement_window.end_block;
