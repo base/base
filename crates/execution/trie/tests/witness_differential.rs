@@ -154,17 +154,15 @@ where
     let hashed_factory = BaseProofsHashedAccountCursorFactory::new(storage, &tx, block_number);
     let nodes_sorted = input.nodes.into_sorted();
     let state_sorted = input.state.into_sorted();
-    TrieWitness::new(trie_factory.clone(), hashed_factory.clone())
-        .with_trie_cursor_factory(InMemoryTrieCursorFactory::new(trie_factory, &nodes_sorted))
-        .with_hashed_cursor_factory(HashedPostStateCursorFactory::new(
-            hashed_factory,
-            &state_sorted,
-        ))
-        .with_prefix_sets_mut(input.prefix_sets)
-        .always_include_root_node()
-        .with_execution_witness_mode(mode)
-        .compute(target)
-        .map_err(|error| error.to_string())
+    TrieWitness::new(
+        InMemoryTrieCursorFactory::new(trie_factory, &nodes_sorted),
+        HashedPostStateCursorFactory::new(hashed_factory, &state_sorted),
+    )
+    .with_prefix_sets_mut(input.prefix_sets)
+    .always_include_root_node()
+    .with_execution_witness_mode(mode)
+    .compute(target)
+    .map_err(|error| error.to_string())
 }
 
 fn check_backend<S>(open: impl Fn(&Path) -> S)

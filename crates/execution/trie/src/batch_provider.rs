@@ -22,6 +22,7 @@ use reth_trie::{
     hashed_cursor::{HashedCursor, HashedPostStateCursorFactory, zero_destroyed_account_storage},
     metrics::TrieRootMetrics,
     proof,
+    proof_v2::MultiProofCalculator,
     trie_cursor::InMemoryTrieCursorFactory,
     witness::TrieWitness,
 };
@@ -173,14 +174,14 @@ impl<S: BaseProofsBatchSession> StorageRootProvider for BaseProofsBatchStateProv
             HashMap::from_iter([(hashed_address, hashed_storage.into_sorted())]),
         );
         let (trie_factory, hashed_factory) = self.factories();
-        proof::StorageProof::new(trie_factory, hashed_factory.clone(), address)
-            .with_hashed_cursor_factory(HashedPostStateCursorFactory::new(
-                hashed_factory,
-                &state_sorted,
-            ))
-            .with_prefix_set_mut(prefix_set)
-            .storage_proof(slot)
-            .map_err(ProviderError::from)
+        proof::StorageProof::new(
+            trie_factory,
+            HashedPostStateCursorFactory::new(hashed_factory, &state_sorted),
+            address,
+        )
+        .with_prefix_set_mut(prefix_set)
+        .storage_proof(slot)
+        .map_err(ProviderError::from)
     }
 
     fn storage_multiproof(
@@ -197,14 +198,14 @@ impl<S: BaseProofsBatchSession> StorageRootProvider for BaseProofsBatchStateProv
             HashMap::from_iter([(hashed_address, hashed_storage.into_sorted())]),
         );
         let (trie_factory, hashed_factory) = self.factories();
-        proof::StorageProof::new(trie_factory, hashed_factory.clone(), address)
-            .with_hashed_cursor_factory(HashedPostStateCursorFactory::new(
-                hashed_factory,
-                &state_sorted,
-            ))
-            .with_prefix_set_mut(prefix_set)
-            .storage_multiproof(targets)
-            .map_err(ProviderError::from)
+        proof::StorageProof::new(
+            trie_factory,
+            HashedPostStateCursorFactory::new(hashed_factory, &state_sorted),
+            address,
+        )
+        .with_prefix_set_mut(prefix_set)
+        .storage_multiproof(targets)
+        .map_err(ProviderError::from)
     }
 }
 
@@ -218,15 +219,13 @@ impl<S: BaseProofsBatchSession> StateProofProvider for BaseProofsBatchStateProvi
         let nodes_sorted = input.nodes.into_sorted();
         let state_sorted = input.state.into_sorted();
         let (trie_factory, hashed_factory) = self.factories();
-        proof::Proof::new(trie_factory.clone(), hashed_factory.clone())
-            .with_trie_cursor_factory(InMemoryTrieCursorFactory::new(trie_factory, &nodes_sorted))
-            .with_hashed_cursor_factory(HashedPostStateCursorFactory::new(
-                hashed_factory,
-                &state_sorted,
-            ))
-            .with_prefix_sets_mut(input.prefix_sets)
-            .account_proof(address, slots)
-            .map_err(ProviderError::from)
+        proof::Proof::new(
+            InMemoryTrieCursorFactory::new(trie_factory, &nodes_sorted),
+            HashedPostStateCursorFactory::new(hashed_factory, &state_sorted),
+        )
+        .with_prefix_sets_mut(input.prefix_sets)
+        .account_proof(address, slots)
+        .map_err(ProviderError::from)
     }
 
     fn multiproof(
@@ -237,15 +236,13 @@ impl<S: BaseProofsBatchSession> StateProofProvider for BaseProofsBatchStateProvi
         let nodes_sorted = input.nodes.into_sorted();
         let state_sorted = input.state.into_sorted();
         let (trie_factory, hashed_factory) = self.factories();
-        proof::Proof::new(trie_factory.clone(), hashed_factory.clone())
-            .with_trie_cursor_factory(InMemoryTrieCursorFactory::new(trie_factory, &nodes_sorted))
-            .with_hashed_cursor_factory(HashedPostStateCursorFactory::new(
-                hashed_factory,
-                &state_sorted,
-            ))
-            .with_prefix_sets_mut(input.prefix_sets)
-            .multiproof(targets)
-            .map_err(ProviderError::from)
+        proof::Proof::new(
+            InMemoryTrieCursorFactory::new(trie_factory, &nodes_sorted),
+            HashedPostStateCursorFactory::new(hashed_factory, &state_sorted),
+        )
+        .with_prefix_sets_mut(input.prefix_sets)
+        .multiproof(targets)
+        .map_err(ProviderError::from)
     }
 
     fn witness(
@@ -257,36 +254,32 @@ impl<S: BaseProofsBatchSession> StateProofProvider for BaseProofsBatchStateProvi
         let nodes_sorted = input.nodes.into_sorted();
         let state_sorted = input.state.into_sorted();
         let (trie_factory, hashed_factory) = self.factories();
-        let result: B256Map<Bytes> = TrieWitness::new(trie_factory.clone(), hashed_factory.clone())
-            .with_trie_cursor_factory(InMemoryTrieCursorFactory::new(trie_factory, &nodes_sorted))
-            .with_hashed_cursor_factory(HashedPostStateCursorFactory::new(
-                hashed_factory,
-                &state_sorted,
-            ))
-            .with_prefix_sets_mut(input.prefix_sets)
-            .always_include_root_node()
-            .compute(target)
-            .map_err(ProviderError::from)?;
+        let result: B256Map<Bytes> = TrieWitness::new(
+            InMemoryTrieCursorFactory::new(trie_factory, &nodes_sorted),
+            HashedPostStateCursorFactory::new(hashed_factory, &state_sorted),
+        )
+        .with_prefix_sets_mut(input.prefix_sets)
+        .always_include_root_node()
+        .compute(target)
+        .map_err(ProviderError::from)?;
         Ok(result.into_values().collect())
     }
 
     fn multiproof_v2(
         &self,
-        input: TrieInput,
         targets: MultiProofTargetsV2,
+        _requires_masks: bool,
     ) -> ProviderResult<DecodedMultiProofV2> {
-        let nodes_sorted = input.nodes.into_sorted();
-        let state_sorted = input.state.into_sorted();
+        // The stored trie at `block_number` matches its hashed state, so masks are exact.
         let (trie_factory, hashed_factory) = self.factories();
-        proof::Proof::new(trie_factory.clone(), hashed_factory.clone())
-            .with_trie_cursor_factory(InMemoryTrieCursorFactory::new(trie_factory, &nodes_sorted))
-            .with_hashed_cursor_factory(HashedPostStateCursorFactory::new(
-                hashed_factory,
-                &state_sorted,
-            ))
-            .with_prefix_sets_mut(input.prefix_sets)
-            .multiproof_v2(targets)
-            .map_err(ProviderError::from)
+        MultiProofCalculator::new(
+            trie_factory,
+            hashed_factory,
+            Default::default(),
+            Default::default(),
+        )
+        .multiproof(targets)
+        .map_err(ProviderError::from)
     }
 }
 
