@@ -59,10 +59,12 @@ impl fmt::Debug for LocalNode {
 }
 
 impl LocalNode {
-    /// Launch a new local node with the provided extensions and chain spec.
+    /// Launch a new local node with the provided extensions and chain spec, and
+    /// `rpc_gas_cap` as its `--rpc.gascap` when set.
     pub async fn new(
         extensions: Vec<Box<dyn BaseNodeExtension>>,
         chain_spec: Arc<BaseChainSpec>,
+        rpc_gas_cap: Option<u64>,
     ) -> Result<Self> {
         let exec = Runtime::test();
 
@@ -81,6 +83,9 @@ impl LocalNode {
         let mut rpc_args =
             RpcServerArgs::default().with_unused_ports().with_http().with_auth_ipc().with_ws();
         rpc_args.auth_ipc_path = unique_ipc_path;
+        if let Some(rpc_gas_cap) = rpc_gas_cap {
+            rpc_args.rpc_gas_cap = rpc_gas_cap;
+        }
 
         let base_node = BaseNode::new(RollupArgs::default());
 

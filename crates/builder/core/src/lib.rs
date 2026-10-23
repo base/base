@@ -11,7 +11,7 @@ mod config;
 pub use config::BuilderConfig;
 
 mod metrics;
-pub use metrics::BuilderMetrics;
+pub use metrics::{BUILDER_EVENT_METRICS, BuilderEventMetrics, BuilderMetrics, CounterHandle};
 
 mod execution;
 pub use execution::{

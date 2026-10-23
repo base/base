@@ -383,6 +383,7 @@ impl<Txs> Builder<'_, Txs> {
         Attrs: Attributes<Transaction = N::SignedTx>,
     {
         let Self { best, evict_permanently_rejected } = self;
+        let build_start = Instant::now();
         debug!(target: "payload_builder", id=%ctx.payload_id(), parent_header = ?ctx.parent().hash(), parent_number = ctx.parent().number(), "building new payload");
 
         let mut db = State::builder().with_database(db).with_bundle_update().build();
@@ -439,6 +440,7 @@ impl<Txs> Builder<'_, Txs> {
                 return Ok(BuildOutcomeKind::Aborted { fees: info.total_fees });
             }
         }
+        let execution_duration = build_start.elapsed();
 
         let block_num = ctx.parent().number().saturating_add(1);
         let state_root = state_root_handle.and_then(|mut task| {
@@ -503,6 +505,7 @@ impl<Txs> Builder<'_, Txs> {
         // records its inclusion, matching flashblocks.
         if !no_tx_pool {
             BuilderMetrics::record_inclusion(&info.inclusion);
+            BuilderMetrics::record_native_build(execution_duration, build_start.elapsed());
         }
 
         if no_tx_pool || ctx.is_denim_active() {
@@ -1689,13 +1692,15 @@ mod tests {
 
     #[cfg(feature = "metrics")]
     #[test]
-    fn only_pool_builds_record_per_block_inclusion() {
+    fn only_pool_builds_record_per_block_inclusion_and_build_timings() {
         let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
         let handle = recorder.handle();
 
         metrics::with_local_recorder(&recorder, || {
             build_empty_payload(state_root_handle());
-            assert!(!handle.render().contains("txs_included_per_block"));
+            let rendered = handle.render();
+            assert!(!rendered.contains("txs_included_per_block"));
+            assert!(!rendered.contains("native_payload"));
 
             build_pool_payload(
                 pool_payload_context(DENIM_TIMESTAMP),
@@ -1708,6 +1713,11 @@ mod tests {
             rendered.contains(r#"base_builder_txs_included_per_block_count{flow="standard"} 1"#)
         );
         assert!(rendered.contains(r#"base_builder_txs_included_per_block_sum{flow="standard"} 1"#));
+        for stage in ["build", "execution", "state_root"] {
+            assert!(
+                rendered.contains(&format!("base_builder_native_payload_{stage}_duration_count 1"))
+            );
+        }
     }
 
     const DENIM_TIMESTAMP: u64 = 1;

@@ -11,10 +11,11 @@ use std::{
     time::{Duration, Instant},
 };
 
-use alloy_network::{Ethereum, EthereumWallet, TransactionBuilder};
+use alloy_network::{Ethereum, EthereumWallet, ReceiptResponse, TransactionBuilder};
 use alloy_primitives::{Address, B256, TxHash, U256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_signer_local::PrivateKeySigner;
+use base_common_consensus::Eip8130Constants;
 use base_tx_manager::NonceManager;
 use rand::Rng;
 use tokio_util::sync::CancellationToken;
@@ -22,9 +23,10 @@ use tracing::{debug, info, instrument};
 
 use super::{
     LoadConfig, LoadTestDisplay, LoadTestStage, SubmissionPipeline, TxType, ValidityRouter,
+    submission::{Fees, PreparedTransaction, SubmitCohort},
 };
 use crate::{
-    BaselineError, Result,
+    BaselineError, EIP8430_TRANSFER_GAS_LIMIT, Result,
     config::WorkloadConfig,
     metrics::{ConfigSummary, MetricsCollector, MetricsSummary},
     rpc::{
@@ -257,7 +259,16 @@ impl LoadRunner {
 
         let accounts = self.accounts.accounts();
         let mut weighted_gas = 0u128;
-        for (type_index, tx_config) in self.config.transactions.iter().enumerate() {
+        // Calibration submits and confirms on the submission node, so its nonce comes from there
+        // too: a separate query node can lag behind the previous round's receipt.
+        let submission = RpcProviders::query(self.config.primary_submission_rpc().clone())?;
+        // Each type is sent twice and only the second receipt counts: the first pays one-time
+        // costs the run amortizes away, such as a recipient's first token balance write.
+        let rounds =
+            self.config.transactions.iter().enumerate().flat_map(|(index, tx_config)| {
+                [(index, tx_config, false), (index, tx_config, true)]
+            });
+        for (type_index, tx_config, measured) in rounds {
             if tx_config.weight == 0 {
                 continue;
             }
@@ -276,8 +287,7 @@ impl LoadRunner {
             let account = &accounts[sender_index];
             let from = account.address;
             let to = accounts[recipient_index].address;
-            let nonce = self
-                .client
+            let nonce = submission
                 .get_transaction_count(from)
                 .pending()
                 .await
@@ -296,24 +306,61 @@ impl LoadRunner {
                 .with_chain_id(self.config.chain_id)
                 .with_max_fee_per_gas(max_fee)
                 .with_max_priority_fee_per_gas(priority_fee);
-            let provider = create_wallet_provider(
-                self.config.primary_submission_rpc().clone(),
-                EthereumWallet::from(account.signer.clone()),
-            );
-            let receipt = provider
-                .send_transaction(request)
-                .await
-                .rpc("submit calibration transaction")?
-                .get_receipt()
-                .await
-                .rpc("confirm calibration transaction")?;
-            if !receipt.status() {
+            let (success, average) =
+                if request.transaction_type == Some(Eip8130Constants::EIP8130_TX_TYPE) {
+                    let prepared = PreparedTransaction {
+                        native: true,
+                        from,
+                        to: request.to.and_then(|kind| kind.to().copied()),
+                        value: request.value.unwrap_or(U256::ZERO),
+                        data: request.input.input().cloned().unwrap_or_default(),
+                        gas_limit: request.gas.unwrap_or(EIP8430_TRANSFER_GAS_LIMIT),
+                        estimated_gas: 0,
+                        validity: Vec::new(),
+                        cohort: SubmitCohort::Plain,
+                    };
+                    let signed = SubmissionPipeline::sign_at_nonce(
+                        &account.signer,
+                        &prepared,
+                        self.config.chain_id,
+                        nonce,
+                        Fees { max_fee, priority_fee },
+                    )?;
+                    let receipt = submission
+                        .send_raw_transaction(&signed.raw)
+                        .await
+                        .rpc("submit native calibration transaction")?
+                        .with_timeout(Some(Duration::from_secs(60)))
+                        .get_receipt()
+                        .await
+                        .rpc("confirm native calibration transaction (requires Everest)")?;
+                    (
+                        receipt.status() && receipt.phase_statuses.as_deref() == Some(&[1]),
+                        receipt.gas_used(),
+                    )
+                } else {
+                    let provider = create_wallet_provider(
+                        self.config.primary_submission_rpc().clone(),
+                        EthereumWallet::from(account.signer.clone()),
+                    );
+                    let receipt = provider
+                        .send_transaction(request)
+                        .await
+                        .rpc("submit calibration transaction")?
+                        .get_receipt()
+                        .await
+                        .rpc("confirm calibration transaction")?;
+                    (receipt.status(), receipt.gas_used)
+                };
+            if !success {
                 return Err(BaselineError::Transaction(format!(
                     "calibration transaction type {type_index} ({:?}) reverted",
                     tx_config.tx_type
                 )));
             }
-            let average = receipt.gas_used;
+            if !measured {
+                continue;
+            }
             info!(
                 transaction_type_index = type_index,
                 weight = tx_config.weight,
@@ -519,8 +566,45 @@ impl std::fmt::Debug for LoadRunner {
 
 #[cfg(test)]
 mod tests {
+    use alloy_node_bindings::Anvil;
+    use alloy_primitives::{Address, Bytes, U256};
+    use alloy_provider::{Provider, RootProvider};
+
     use super::{LoadConfig, LoadRunner};
     use crate::runner::{TxConfig, TxType};
+
+    #[tokio::test]
+    async fn calibration_excludes_first_storage_write() {
+        let anvil = Anvil::new().spawn();
+        // A query node that never sees the calibration transactions, the worst case of a lagging one.
+        let query = Anvil::new().spawn();
+        let provider: RootProvider = RootProvider::new_http(anvil.endpoint_url());
+        let counter = Address::repeat_byte(0xc0);
+        // slot0 += 1: the first call writes zero to nonzero (20,000 gas), later calls 2,900.
+        let code =
+            Bytes::from_static(&[0x60, 0x00, 0x54, 0x60, 0x01, 0x01, 0x60, 0x00, 0x55, 0x00]);
+        let _: () = provider.raw_request("anvil_setCode".into(), (counter, code)).await.unwrap();
+        let config = LoadConfig {
+            transaction_submission_rpcs: vec![anvil.endpoint_url()],
+            query_rpc: query.endpoint_url(),
+            chain_id: anvil.chain_id(),
+            account_count: 1,
+            transactions: vec![TxConfig {
+                weight: 100,
+                tx_type: TxType::DoubleCounter { contract: counter },
+            }],
+            ..LoadConfig::devnet()
+        };
+        let runner = LoadRunner::new(config).expect("valid config");
+        let sender = runner.accounts.accounts()[0].address;
+        let _: () = provider
+            .raw_request("anvil_setBalance".into(), (sender, U256::from(10u128.pow(18))))
+            .await
+            .unwrap();
+
+        let gas = runner.calibrate_avg_gas().await.expect("calibration succeeds");
+        assert!(gas < 41_000, "calibrated {gas} gas includes the first-write cost");
+    }
 
     #[test]
     fn b20_odd_sender_count_adds_funded_partner() {

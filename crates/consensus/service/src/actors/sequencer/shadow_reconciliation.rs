@@ -7,6 +7,7 @@ use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use base_protocol::{AttributesWithParent, L2BlockInfo};
 use tracing::debug;
 
+use super::CatchupGap;
 use crate::{EngineClientError, NodeOperatingMode, SequencerConfig};
 
 /// The kind of sequencer a node runs as, fixed for the life of the process.
@@ -100,12 +101,10 @@ impl CanonicalUnsafeCatchup {
     }
 
     /// Returns the contiguous canonical suffix that can extend `anchor` now.
-    pub fn contiguous_payloads(
-        &mut self,
-        anchor: L2BlockInfo,
-    ) -> Vec<BaseExecutionPayloadEnvelope> {
-        self.payloads.retain(|number, _| *number > anchor.block_info.number);
-
+    ///
+    /// Buffered payloads are kept until [`Self::commit`], so `anchor` may be a block that the
+    /// engine has not acknowledged yet.
+    pub fn contiguous_payloads(&self, anchor: L2BlockInfo) -> Vec<BaseExecutionPayloadEnvelope> {
         let mut number = anchor.block_info.number.saturating_add(1);
         let mut parent = anchor.block_info.hash;
         let mut payloads = Vec::new();
@@ -118,6 +117,18 @@ impl CanonicalUnsafeCatchup {
             number = number.saturating_add(1);
         }
         payloads
+    }
+
+    /// Returns the blocks missing between `anchor` and the oldest buffered payload.
+    pub fn gap(&self, anchor: L2BlockInfo) -> Option<CatchupGap> {
+        let (&oldest, payload) =
+            self.payloads.range(anchor.block_info.number.saturating_add(1)..).next()?;
+        let first = anchor.block_info.number.saturating_add(1);
+        (oldest > first).then(|| CatchupGap {
+            first,
+            last: oldest - 1,
+            tip_hash: payload.execution_payload.parent_hash(),
+        })
     }
 
     /// Removes payloads acknowledged by the execution engine.
@@ -365,7 +376,7 @@ mod tests {
     use base_protocol::{BlockInfo, L2BlockInfo};
 
     use super::{CanonicalUnsafeCatchup, ShadowReconciliationGate};
-    use crate::EngineClientError;
+    use crate::{CatchupGap, EngineClientError};
 
     fn head(number: u64, hash: B256) -> L2BlockInfo {
         L2BlockInfo {
@@ -415,6 +426,23 @@ mod tests {
     }
 
     #[test]
+    fn catchup_gap_spans_head_to_oldest_buffered_payload() {
+        let anchor = head(10, B256::with_last_byte(10));
+        let mut catchup = CanonicalUnsafeCatchup::default();
+        assert_eq!(catchup.gap(anchor), None);
+
+        catchup.buffer_payload(payload(15, B256::with_last_byte(14), B256::with_last_byte(15)));
+        catchup.buffer_payload(payload(14, B256::with_last_byte(13), B256::with_last_byte(14)));
+
+        assert_eq!(
+            catchup.gap(anchor),
+            Some(CatchupGap { first: 11, last: 13, tip_hash: B256::with_last_byte(13) })
+        );
+        assert_eq!(catchup.gap(head(13, B256::with_last_byte(13))), None);
+        assert_eq!(catchup.gap(head(15, B256::with_last_byte(15))), None);
+    }
+
+    #[test]
     fn catchup_retains_rolling_latest_payload_window() {
         let mut catchup = CanonicalUnsafeCatchup::default();
         let mut parent = B256::ZERO;
@@ -454,6 +482,7 @@ mod tests {
         catchup.buffer_payload(payload(11, B256::with_last_byte(10), B256::with_last_byte(11)));
         let safe = head(12, B256::with_last_byte(12));
         assert!(catchup.contiguous_payloads(safe).is_empty());
+        catchup.commit(safe);
 
         assert!(catchup.is_complete(safe, safe));
     }

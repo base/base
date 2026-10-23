@@ -1,4 +1,10 @@
-use std::sync::Arc;
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicU8, Ordering},
+    },
+    time::Duration,
+};
 
 use cadence::{CountedExt, StatsdClient};
 
@@ -28,5 +34,24 @@ impl HealthcheckMetrics {
             HealthState::Error => "error",
         };
         let _ = self.client.incr(name);
+    }
+
+    /// Spawn a background task that publishes the [`HealthState`] stored in `status` every
+    /// `period_ms` milliseconds, independent of how often the state itself is refreshed.
+    /// Unknown status codes are reported as [`HealthState::Error`].
+    pub fn spawn_status_emitter(
+        &self,
+        status: Arc<AtomicU8>,
+        period_ms: u64,
+    ) -> tokio::task::JoinHandle<()> {
+        let metrics = self.clone();
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(Duration::from_millis(period_ms));
+            loop {
+                ticker.tick().await;
+                let code = status.load(Ordering::Relaxed);
+                metrics.increment_status(HealthState::try_from(code).unwrap_or(HealthState::Error));
+            }
+        })
     }
 }

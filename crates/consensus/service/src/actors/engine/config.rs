@@ -5,7 +5,7 @@ use alloy_rpc_types_engine::JwtSecret;
 use alloy_transport::TransportResult;
 use base_common_genesis::RollupConfig;
 use base_common_network::Base;
-use base_consensus_engine::{BaseEngineClient, EngineClientBuilder};
+use base_consensus_engine::{BaseEngineClient, EngineClientBuilder, EngineEndpoint};
 use url::Url;
 
 use crate::NodeOperatingMode;
@@ -16,8 +16,8 @@ pub struct EngineConfig {
     /// The [`RollupConfig`].
     pub config: Arc<RollupConfig>,
 
-    /// The engine rpc url.
-    pub l2_url: Url,
+    /// The engine endpoint.
+    pub l2_endpoint: EngineEndpoint,
     /// The engine jwt secret.
     pub l2_jwt_secret: JwtSecret,
 
@@ -38,11 +38,11 @@ impl EngineConfig {
         self,
     ) -> TransportResult<BaseEngineClient<RootProvider, RootProvider<Base>>> {
         EngineClientBuilder {
-            l2: self.l2_url.clone(),
+            l2: self.l2_endpoint,
             l2_jwt: self.l2_jwt_secret,
-            l1_rpc: self.l1_url.clone(),
+            l1_rpc: self.l1_url,
             l1_rpc_timeout: self.l1_rpc_timeout,
-            cfg: Arc::clone(&self.config),
+            cfg: self.config,
         }
         .build()
         .await

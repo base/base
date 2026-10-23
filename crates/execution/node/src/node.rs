@@ -923,6 +923,7 @@ where
                             additional_trusted_delegation_targets.clone(),
                         )
                         .with_allowlisted_payers(allowlisted_payers.iter().copied())
+                        .with_max_tx_gas_limit(ctx.config().txpool.max_tx_gas_limit)
                 });
 
         let mut final_pool_config = ctx.pool_config();

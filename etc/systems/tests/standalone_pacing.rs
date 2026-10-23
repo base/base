@@ -13,6 +13,7 @@ use base_common_consensus::{BaseBlock, BaseTxEnvelope};
 use base_common_genesis::{BaseUpgrade, ChainGenesis, RollupConfig, SystemConfig, UpgradeConfig};
 use base_common_network::{Base, BaseEngineApi};
 use base_consensus_derive::AttributesBuilder;
+use base_consensus_engine::EngineEndpoint;
 use base_consensus_node::{
     EngineConfig, NodeOperatingMode, StandaloneAttributesBuilder, StandaloneDenimSchedule,
 };
@@ -122,7 +123,7 @@ async fn standalone_sequencer_paces_historical_denim_activation() -> Result<()> 
     .await?;
     let engine = EngineConfig {
         config: Arc::new(canonical.clone()),
-        l2_url: engine_url.clone(),
+        l2_endpoint: EngineEndpoint::Url(engine_url.clone()),
         l2_jwt_secret: jwt_secret,
         l1_url: Url::parse("http://127.0.0.1:1")?,
         mode: NodeOperatingMode::Sequencer,

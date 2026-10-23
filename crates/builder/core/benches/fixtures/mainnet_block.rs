@@ -147,8 +147,8 @@ pub(crate) const MAINNET_FILLER_PER_FLASHBLOCK: usize = 17;
 pub(crate) const MAINNET_WAKES_PER_FLASHBLOCK: usize = 5;
 /// Candidates over the gas limit that stay in the pool and are rejected in every flashblock.
 pub(crate) const MAINNET_OVER_GAS_CANDIDATES: usize = 5;
-/// Candidates over the per-transaction DA limit that arrive in each flashblock. Their rejection
-/// is permanent, so the builder removes them from the pool afterwards.
+/// Candidates over the per-transaction DA limit that arrive in each flashblock and are rejected
+/// in it.
 pub(crate) const MAINNET_OVER_DA_PER_FLASHBLOCK: usize = 5;
 /// Parked validity transactions present in every flashblock build.
 pub(crate) const MAINNET_PARKED: usize = 2_840;
@@ -200,9 +200,9 @@ pub(crate) struct MainnetBlock {
     ctx: BasePayloadBuilderCtx,
     pre_state: InMemoryDB,
     /// Pending pool at the start of each flashblock: the parked validity transactions and the
-    /// over-gas candidates, plus that flashblock's arrivals. Earlier filler and over-DA
-    /// candidates are absent because the builder prunes committed and removes permanently
-    /// rejected transactions after each flashblock.
+    /// over-gas candidates, plus that flashblock's arrivals. Earlier filler is absent because
+    /// the builder prunes committed transactions after each flashblock. Earlier over-DA
+    /// candidates are left out so each flashblock rejects only its own arrivals.
     pools: Vec<Pool>,
     /// Number of parked transactions watching each bucket's address.
     bucket_depths: Vec<usize>,

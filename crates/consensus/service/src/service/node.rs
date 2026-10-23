@@ -27,16 +27,17 @@ use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    AlloyL1BlockFetcher, CheckpointActor, CheckpointClient, CheckpointDB, CheckpointWriter,
-    Conductor, ConductorClient, DelayedL1OriginSelectorProvider, DerivationActor, EngineActor,
-    EngineActorRequest, EngineConfig, EngineProcessor, EngineRequestReceiver, EngineRpcProcessor,
-    L1OriginSelector, L1WatcherActor, L1WatcherQueryExecutor, L1WatcherQueryProcessor,
-    NetworkActor, NetworkBuilder, NetworkConfig, NodeActor, NodeOperatingMode, PayloadBuilder,
-    PrefetchedChainProvider, PreparedL1Origin, QueuedDerivationEngineClient,
-    QueuedEngineDerivationClient, QueuedEngineRpcClient, QueuedL1WatcherDerivationClient,
-    QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient, QueuedSequencerEngineClient,
-    RecoveryModeGuard, RpcActor, RpcContext, SequencerActor, SequencerConfig,
-    SequencerEngineRequestCoordinator, UpgradeSignalNodeConfig, ValidatorEngineRequestHandler,
+    AlloyL1BlockFetcher, CanonicalCatchupSource, CheckpointActor, CheckpointClient, CheckpointDB,
+    CheckpointWriter, Conductor, ConductorClient, DelayedL1OriginSelectorProvider, DerivationActor,
+    EngineActor, EngineActorRequest, EngineConfig, EngineProcessor, EngineRequestReceiver,
+    EngineRpcProcessor, L1OriginSelector, L1WatcherActor, L1WatcherQueryExecutor,
+    L1WatcherQueryProcessor, NetworkActor, NetworkBuilder, NetworkConfig, NodeActor,
+    NodeOperatingMode, PayloadBuilder, PrefetchedChainProvider, PreparedL1Origin,
+    QueuedDerivationEngineClient, QueuedEngineDerivationClient, QueuedEngineRpcClient,
+    QueuedL1WatcherDerivationClient, QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient,
+    QueuedSequencerEngineClient, RecoveryModeGuard, RemoteL2Client, RpcActor, RpcContext,
+    SequencerActor, SequencerConfig, SequencerEngineRequestCoordinator, UpgradeSignalNodeConfig,
+    ValidatorEngineRequestHandler,
     actors::{BlockStream, NetworkInboundData, QueuedUnsafePayloadGossipClient},
 };
 
@@ -267,13 +268,22 @@ impl RollupNode {
                 engine_processor,
             ))
         } else {
-            ConfiguredEngineReceiver::Sequencer(SequencerEngineRequestCoordinator::new(
+            let coordinator = SequencerEngineRequestCoordinator::new(
                 engine_processor,
                 node_mode,
                 conductor,
                 self.sequencer_config.sequencer_stopped,
                 unsafe_head_tx,
-            ))
+            );
+            ConfiguredEngineReceiver::Sequencer(
+                match self.sequencer_config.catchup_source_l2_rpc_url.clone() {
+                    Some(url) => coordinator.with_catchup_source(CanonicalCatchupSource::new(
+                        Arc::new(RemoteL2Client::new(url)),
+                        Arc::clone(&self.config),
+                    )),
+                    None => coordinator,
+                },
+            )
         };
         let engine_actor = EngineActor::new(cancellation_token, engine_request_rx, engine_handler);
 

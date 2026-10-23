@@ -6,7 +6,12 @@ use backon::{ExponentialBuilder, Retryable};
 use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use base_consensus_gossip::{P2pRpcRequest, PeerDump, PeerInfo};
 use base_consensus_node::{NetworkActorError, NetworkInboundData};
+use base_consensus_rpc::{BaseP2PApiServer, P2pRpc};
 use discv5::Enr;
+use jsonrpsee::{
+    http_client::{HttpClient, HttpClientBuilder},
+    server::{Server, ServerHandle},
+};
 use tokio::{
     sync::{mpsc, oneshot},
     task::JoinHandle,
@@ -39,6 +44,8 @@ pub(crate) enum TestNetworkError {
     InvalidEnr(String),
     #[error("Peer not connected")]
     PeerNotConnected,
+    #[error("No loopback listen multiaddr available yet")]
+    MissingListenAddress,
 }
 
 impl TestNetwork {
@@ -100,5 +107,31 @@ impl TestNetwork {
 
     pub(super) async fn peer_id(&self) -> Result<String, TestNetworkError> {
         Ok(self.peer_info().await?.peer_id)
+    }
+
+    /// Returns the loopback gossip multiaddr, retrying until the swarm has started listening.
+    pub(super) async fn listen_multiaddr(&self) -> Result<String, TestNetworkError> {
+        (async || {
+            self.peer_info()
+                .await?
+                .addresses
+                .into_iter()
+                .find(|addr| addr.starts_with("/ip4/127.0.0.1/"))
+                .ok_or(TestNetworkError::MissingListenAddress)
+        })
+        .retry(ExponentialBuilder::default().with_total_delay(Some(Duration::from_secs(10))))
+        .when(|e| matches!(e, TestNetworkError::MissingListenAddress))
+        .await
+    }
+
+    /// Serves the `opp2p_*` JSON-RPC API for this network. The server stops when the returned
+    /// handle is dropped.
+    pub(super) async fn spawn_p2p_rpc(&self) -> anyhow::Result<(ServerHandle, HttpClient)> {
+        let server = Server::builder().build("127.0.0.1:0").await?;
+        let addr = server.local_addr()?;
+        let module = P2pRpc::new(self.inbound_data.p2p_rpc.clone()).into_rpc();
+        let handle = server.start(module);
+        let client = HttpClientBuilder::default().build(format!("http://{addr}"))?;
+        Ok((handle, client))
     }
 }
