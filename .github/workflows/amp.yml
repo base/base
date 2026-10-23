@@ -1,0 +1,302 @@
+# Runs the Amp coding agent on a pull request: an automatic review when a PR
+# is opened, and changes on request from a Base engineer.
+#
+# Security model (see the Amp security review):
+# - Amp only runs on PRs from branches pushed to this repo, which only
+#   employees with write access can push. Fork PRs are rejected.
+#   - Review mode: `pull_request_target` when a non-draft PR from a base org
+#     member (OWNER/MEMBER) is opened or marked ready. Amp reviews and
+#     comments; its app token has no contents write, so it can't push.
+#   - Change mode: `/amp <instructions>` comments from base org members, or
+#     `workflow_dispatch` (write access required) with an explicit PR and SHA.
+#   All three triggers run this file from the base or default branch, never
+#   the PR branch, so a PR can't change what runs. Amp checks out the exact
+#   head commit it authorized. `pull_request_target` is banned in every other
+#   workflow (see the policy check).
+# - Both secrets live in the `amp` GitHub Environment, which only the default
+#   branch can use, so workflows on other branches (and PRs that target other
+#   branches) can't read them.
+# - Nothing internal is available to Amp. The `amp` job runs only on Depot
+#   runners and has no Coinbase credentials. Amp gets two credentials:
+#   - the Amp CI bot user's access key (`AMP_API_KEY`), capped by its weekly quota
+#   - a 1-hour token for the Base Amp GitHub App, scoped to this repo with
+#     contents, pull requests and issues permissions only. The app has no
+#     `workflows` or admin permissions, and rulesets keep it off `main`,
+#     release branches and tags. Every merge still needs human approval.
+# - The app's private key never reaches Amp. sudo and containers are disabled
+#   before the token is minted, so Amp can't read the runner's memory.
+#
+# Changes to any workflow that uses AMP_API_KEY are checked by
+# .github/workflows/workflow-policy.yml. The run name records the PR so
+# .github/workflows/amp-independent-review.yml can find who requested changes
+# from Amp. Review runs are named differently because they can't push.
+
+name: Amp
+run-name: "${{ github.event_name == 'pull_request_target' && 'Amp review' || 'Amp' }}: PR #${{ github.event.pull_request.number || github.event.issue.number || inputs.pr_number }}"
+
+on:
+  pull_request_target:
+    types: [opened, ready_for_review]
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number
+        required: true
+        type: number
+      sha:
+        description: Full commit SHA you reviewed and approve Amp to run on (must be the PR head)
+        required: true
+        type: string
+      prompt:
+        description: Instructions for Amp
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  authorize:
+    name: Authorize request
+    # Review: non-draft, same-repo PRs opened by base org members.
+    # Comment trigger: only PR comments starting with /amp from base org members.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request_target' &&
+       !github.event.pull_request.draft &&
+       github.event.pull_request.head.repo.full_name == github.repository &&
+       contains(fromJSON('["OWNER", "MEMBER"]'), github.event.pull_request.author_association)) ||
+      (github.event.issue.pull_request &&
+       startsWith(github.event.comment.body, '/amp') &&
+       contains(fromJSON('["OWNER", "MEMBER"]'), github.event.comment.author_association))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      pr_number: ${{ steps.resolve.outputs.pr_number }}
+      sha: ${{ steps.resolve.outputs.sha }}
+      head_ref: ${{ steps.resolve.outputs.head_ref }}
+      mode: ${{ steps.resolve.outputs.mode }}
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Resolve PR and approved commit
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+          COMMENT_PR: ${{ github.event.issue.number }}
+          EVENT_PR: ${{ github.event.pull_request.number }}
+          INPUT_PR: ${{ inputs.pr_number }}
+          INPUT_SHA: ${{ inputs.sha }}
+          INPUT_PROMPT: ${{ inputs.prompt }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mode=change
+          if [[ "$EVENT_NAME" == "pull_request_target" ]]; then
+            mode=review
+            pr_number="$EVENT_PR"
+            approved_sha=""
+            prompt="Review this pull request. Look for bugs, security problems, missing tests and unclear code. Post one PR comment with your findings, most important first, with file and line references. If you find nothing worth raising, say so briefly."
+          elif [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            pr_number="$INPUT_PR"
+            approved_sha="$INPUT_SHA"
+            prompt="$INPUT_PROMPT"
+          else
+            pr_number="$COMMENT_PR"
+            # Format: /amp <instructions>
+            approved_sha=""
+            prompt="$(printf '%s' "${COMMENT_BODY#/amp}" | sed -e 's/^[[:space:]]*//')"
+          fi
+
+          if [[ -z "${prompt//[[:space:]]/}" ]]; then
+            echo "::error::No instructions given. Usage: /amp <instructions>"
+            exit 1
+          fi
+          if [[ -n "$approved_sha" && ! "$approved_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::The approved SHA must be a full 40-character commit SHA."
+            exit 1
+          fi
+
+          pr="$(gh api "repos/$GH_REPO/pulls/$pr_number")"
+          state="$(jq -r .state <<<"$pr")"
+          head_sha="$(jq -r .head.sha <<<"$pr")"
+          head_repo="$(jq -r .head.repo.full_name <<<"$pr")"
+          head_ref="$(jq -r .head.ref <<<"$pr")"
+
+          if [[ "$state" != "open" ]]; then
+            echo "::error::PR #$pr_number is not open."
+            exit 1
+          fi
+
+          # Only branches pushed to this repo. Fork PRs are never run.
+          if [[ "$head_repo" != "$GH_REPO" ]]; then
+            echo "::error::PR #$pr_number is from a fork. Amp only runs on branches pushed to $GH_REPO."
+            exit 1
+          fi
+          if [[ -n "$approved_sha" && "$approved_sha" != "$head_sha" ]]; then
+            echo "::error::Approved SHA $approved_sha is not the PR head ($head_sha). Review the new commits and approve the current head."
+            exit 1
+          fi
+
+          {
+            echo "pr_number=$pr_number"
+            echo "sha=$head_sha"
+            echo "head_ref=$head_ref"
+            echo "mode=$mode"
+          } >> "$GITHUB_OUTPUT"
+
+          mkdir -p "$RUNNER_TEMP/amp-request"
+          printf '%s\n' "$prompt" > "$RUNNER_TEMP/amp-request/prompt.txt"
+          echo "Amp approved for PR #$pr_number at $head_sha ($mode mode)"
+
+      - name: Upload request
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: amp-request
+          path: ${{ runner.temp }}/amp-request/
+          retention-days: 7
+
+  amp:
+    name: Run Amp
+    needs: authorize
+    # Depot runners only. Never self-hosted runners.
+    runs-on: depot-ubuntu-24.04-16
+    # Holds AMP_API_KEY and AMP_GITHUB_APP_PRIVATE_KEY. Limited to the default
+    # branch, so branch workflows can't read them.
+    environment: amp
+    timeout-minutes: 60
+    # Job-level so only authorized runs queue; one Amp run per PR at a time.
+    concurrency:
+      group: amp-${{ needs.authorize.outputs.pr_number }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+          # Keeps Amp from reading the GitHub App private key out of runner memory.
+          disable-sudo-and-containers: true
+
+      - name: Check out the approved commit
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ needs.authorize.outputs.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Download request
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: amp-request
+          path: ${{ runner.temp }}/amp-request
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+
+      - name: Install Amp CLI
+        id: install-amp
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --prefix "$RUNNER_TEMP/amp-cli" --no-save --no-package-lock --no-audit --no-fund @ampcode/cli@0.0.1792065649-g5a30fc
+          amp_path="$RUNNER_TEMP/amp-cli/node_modules/.bin/amp"
+          "$amp_path" --version
+          echo "amp_path=$amp_path" >> "$GITHUB_OUTPUT"
+
+      - name: Mint GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.AMP_GITHUB_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AMP_GITHUB_APP_PRIVATE_KEY }}
+          repositories: ${{ github.event.repository.name }}
+          # Review runs can't push.
+          permission-contents: ${{ needs.authorize.outputs.mode == 'change' && 'write' || 'read' }}
+          permission-pull-requests: write
+          permission-issues: write
+
+      - name: Configure git as the app
+        env:
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          bot_id="$(gh api "users/${APP_SLUG}%5Bbot%5D" --jq .id)"
+          git config --global user.name "${APP_SLUG}[bot]"
+          git config --global user.email "${bot_id}+${APP_SLUG}[bot]@users.noreply.github.com"
+          # Reads the token from the environment at push time; nothing is written to disk.
+          git config --global credential.https://github.com.helper \
+            '!f() { echo username=x-access-token; echo "password=${GH_TOKEN}"; }; f'
+
+      - name: Run Amp
+        env:
+          AMP_API_KEY: ${{ secrets.AMP_API_KEY }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          AMP_PATH: ${{ steps.install-amp.outputs.amp_path }}
+          PR_NUMBER: ${{ needs.authorize.outputs.pr_number }}
+          HEAD_REF: ${{ needs.authorize.outputs.head_ref }}
+          MODE: ${{ needs.authorize.outputs.mode }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Tools run without prompts.
+          settings="$RUNNER_TEMP/amp-settings.json"
+          printf '{"amp.dangerouslyAllowAll": true}\n' > "$settings"
+
+          {
+            echo "You are working on pull request #$PR_NUMBER in $REPOSITORY, checked out at the PR head (detached)."
+            echo "You can act on GitHub with git and the gh CLI. Your token is limited to this repo: contents, pull requests and issues."
+            if [[ "$MODE" == "change" ]]; then
+              echo "To change the PR, commit and push to its branch: git push origin HEAD:refs/heads/$HEAD_REF"
+              echo "Push only to that branch. Don't push other branches or open new PRs."
+              echo "Never push to main, release branches or tags, and don't change files under .github/."
+            else
+              echo "This is a review. Don't change files or push; your token can't push."
+            fi
+            echo "Don't approve or request changes on PRs, and don't delete or edit comments you didn't write."
+            echo "Mark every commit message and comment as AI-generated."
+            echo "When you finish, post a comment on PR #$PR_NUMBER summarizing what you did and anything a reviewer should check. Include this link: $RUN_URL"
+            echo
+            echo "Instructions from a Base engineer:"
+            cat "$RUNNER_TEMP/amp-request/prompt.txt"
+          } > "$RUNNER_TEMP/amp-prompt.txt"
+
+          # Start Amp with a minimal environment so runner variables are not
+          # passed to the agent. Its only credentials are AMP_API_KEY and the
+          # 1-hour app token.
+          env -i \
+            HOME="$HOME" PATH="$PATH" LANG=C.UTF-8 TERM=dumb \
+            AMP_API_KEY="$AMP_API_KEY" GH_TOKEN="$GH_TOKEN" \
+            AMP_SETTINGS_FILE="$settings" \
+            "$AMP_PATH" --visibility workspace --no-ide --no-notifications \
+              --title "base#$PR_NUMBER" \
+              -x "$(cat "$RUNNER_TEMP/amp-prompt.txt")"
+
+      - name: Report failure
+        if: ${{ failure() && steps.app-token.outputs.token != '' }}
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ needs.authorize.outputs.pr_number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        shell: bash
+        run: |
+          gh pr comment "$PR_NUMBER" --body "**Amp** (AI-generated) did not finish successfully. See the [workflow run]($RUN_URL)."
