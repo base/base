@@ -234,23 +234,34 @@ impl<'a> StorageCtx<'a> {
         CheckpointGuard { storage: *self, checkpoint: Some(checkpoint) }
     }
 
+    fn gas_output(&self, mut out: PrecompileOutput) -> PrecompileOutput {
+        let gas = self.with_storage(|s| s.gas_tracker());
+        out.gas_used = gas.limit().saturating_sub(gas.remaining());
+        out.gas_refunded = if out.is_success() { gas.refunded() } else { 0 };
+        out.state_gas_used = gas.state_gas_spent();
+        out.state_gas_spilled = gas.state_gas_spilled();
+        out.reservoir = gas.reservoir();
+        out
+    }
+
     /// Returns a success [`PrecompileOutput`] with the current gas used and accumulated refund.
     ///
     /// The `gas_refunded` field is populated so revm's frame handler can propagate it to the
     /// transaction-level refund counter, where the EIP-3529 cap (`gas_used / 5`) is applied.
     pub fn success_output(&self, output: Bytes) -> PrecompileOutput {
-        let mut out = PrecompileOutput::new(self.gas_used(), output, self.state_gas_used());
-        out.gas_refunded = self.gas_refunded();
-        out
+        self.gas_output(PrecompileOutput::new(0, output, 0))
     }
 
     /// Returns a [`PrecompileResult`] constructed from the given error.
     pub fn error_result(&self, error: impl Into<BasePrecompileError>) -> PrecompileResult {
-        error.into().into_precompile_result_with_features(
-            self.gas_used(),
-            self.state_gas_used(),
-            self.storage_features(),
-        )
+        error
+            .into()
+            .into_precompile_result_with_features(
+                self.gas_used(),
+                self.reservoir(),
+                self.storage_features(),
+            )
+            .map(|out| self.gas_output(out))
     }
 
     /// Converts a `Result<T>` into a [`PrecompileResult`], reading all gas accounting fields

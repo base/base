@@ -31,11 +31,12 @@ impl B20AssetPrecompile {
         let storage_features = UpgradeGatedStorageFeatures::from_upgrade(upgrade);
         base_precompile!(
             alloc::format!("B20AssetToken@{token_address}"),
+            upgrade: upgrade,
             storage_features: storage_features,
             |ctx, calldata| {
             let observer = observer.clone();
             let Some(version) = PolicyVersions::from_base_upgrade(upgrade) else {
-                return BasePrecompileError::Revert(Bytes::new()).into_precompile_result(0, 0);
+                return ctx.error_result(BasePrecompileError::Revert(Bytes::new()));
             };
             B20AssetToken::with_storage_and_policy(
                 B20AssetStorage::from_address(token_address, ctx),

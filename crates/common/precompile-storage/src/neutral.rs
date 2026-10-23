@@ -145,10 +145,8 @@ pub struct PrecompileOutput {
 impl PrecompileOutput {
     /// Returns a new successful precompile output.
     ///
-    /// `reservoir` is the EIP-8037 state-gas reservoir field; Base's call sites
-    /// (`StorageCtx::success_output`, `IntoPrecompileResult::into_precompile_result`)
-    /// pass the transaction's cumulative state gas here, matching the field the
-    /// engine's frame handler reads. The name mirrors the underlying engine type.
+    /// `reservoir` is the remaining EIP-8037 state-gas pool, not state gas spent.
+    /// [`crate::StorageCtx`] also propagates signed state usage, spill and refund.
     pub const fn new(gas_used: u64, bytes: Bytes, reservoir: u64) -> Self {
         Self {
             status: PrecompileStatus::Success,
