@@ -406,6 +406,29 @@ where
         Ok(())
     }
 
+    async fn probe_isolated_el_sync(&mut self) {
+        let SequencerEngineState::CatchingUp { catchup } = &self.sequencer_state else {
+            return;
+        };
+        if self.startup_complete(catchup) {
+            return;
+        }
+        let Some(head) = catchup.latest_observed_head() else { return };
+        let unsafe_head = self.processor.engine_state().sync_state.unsafe_head();
+        let same_head = head.block_info.number == unsafe_head.block_info.number
+            && head.block_info.hash == unsafe_head.block_info.hash;
+        if !same_head && head.block_info.number <= unsafe_head.block_info.number {
+            return;
+        }
+
+        let client = Arc::clone(self.processor.client());
+        let rollup = Arc::clone(self.processor.rollup());
+        let update = EngineSyncStateUpdate { unsafe_head: Some(head), ..Default::default() };
+        if let Err(err) = self.processor.engine_mut().probe_el_sync(client, rollup, update).await {
+            warn!(target: "engine", error = %err, "Isolated canonical EL sync probe failed; will retry");
+        }
+    }
+
     async fn advance_canonical_catchup(&mut self) -> Result<(), EngineError> {
         let anchor = self.processor.engine_state().sync_state.unsafe_head();
         let payloads = match &mut self.sequencer_state {
@@ -586,22 +609,7 @@ where
                         _ = el_sync_probe_interval.tick() => {
                             drop(recv_wait_timer);
                             if self.sequencer_kind == SequencerKind::Isolated {
-                                if let SequencerEngineState::CatchingUp { catchup } = &self.sequencer_state
-                                    && !self.startup_complete(catchup)
-                                    && let Some(head) = catchup.latest_observed_head()
-                                {
-                                    let client = Arc::clone(self.processor.client());
-                                    let rollup = Arc::clone(self.processor.rollup());
-                                    let update = EngineSyncStateUpdate {
-                                        unsafe_head: Some(head),
-                                        ..Default::default()
-                                    };
-                                    if let Err(err) = self.processor.engine_mut()
-                                        .probe_el_sync(client, rollup, update).await
-                                    {
-                                        warn!(target: "engine", error = %err, "Isolated canonical EL sync probe failed; will retry");
-                                    }
-                                }
+                                self.probe_isolated_el_sync().await;
                             } else {
                                 let active_sequencer = self.resolve_bootstrap_role().await
                                     == BootstrapRole::ActiveSequencer;
@@ -993,6 +1001,46 @@ mod tests {
     }
 
     #[rstest]
+    #[case::stale(99)]
+    #[case::same_height_different_hash(100)]
+    #[tokio::test(start_paused = true)]
+    async fn isolated_probe_never_rewinds_bootstrapped_head(#[case] number: u64) {
+        let mut coordinator = isolated_startup_coordinator();
+        let client = Arc::clone(coordinator.processor.client());
+        let state_rx = coordinator.processor.engine_mut().state_subscribe();
+        client
+            .set_fork_choice_updated_v3_response(ForkchoiceUpdated {
+                payload_status: PayloadStatus {
+                    status: PayloadStatusEnum::Valid,
+                    latest_valid_hash: None,
+                },
+                payload_id: None,
+            })
+            .await;
+        let mut gossip = payload(number, 1);
+        let block = gossip.execution_payload.clone().try_into_block::<BaseTxEnvelope>().unwrap();
+        gossip.execution_payload =
+            BaseExecutionPayload::from_block_unchecked(block.hash_slow(), &block).0;
+        let (request_tx, request_rx) = mpsc::channel(8);
+        let handle = coordinator.start(request_rx);
+        request_tx
+            .send(EngineActorRequest::ProcessUnsafeL2BlockRequest(Box::new(gossip)))
+            .await
+            .unwrap();
+        assert!(matches!(request_start(&request_tx).await, Err(EngineClientError::ELSyncing)));
+        let bootstrapped_head = state_rx.borrow().sync_state.unsafe_head();
+
+        tokio::time::sleep(Duration::from_secs(6)).await;
+        let activation = request_start(&request_tx).await;
+        drop(request_tx);
+        handle.await.unwrap().expect_err("closed request channel");
+
+        assert!(client.storage().read().await.fork_choice_updated_v3_requests.is_empty());
+        assert_eq!(state_rx.borrow().sync_state.unsafe_head(), bootstrapped_head);
+        assert!(matches!(activation, Err(EngineClientError::ELSyncing)));
+    }
+
+    #[rstest]
     #[case::already_at_tip(true)]
     #[case::sync_finishes_after_last_gossip(false)]
     #[tokio::test(start_paused = true)]
@@ -1022,7 +1070,6 @@ mod tests {
             .unwrap();
         assert!(matches!(request_start(&request_tx).await, Err(EngineClientError::ELSyncing)));
 
-        client.set_block_info_by_tag(BlockNumberOrTag::Latest, head).await;
         client
             .set_fork_choice_updated_v3_response(ForkchoiceUpdated {
                 payload_status: PayloadStatus {
@@ -1033,14 +1080,8 @@ mod tests {
             })
             .await;
         // Allow more than the five-second probe interval without sending further gossip.
-        let mut activation = Err(EngineClientError::ELSyncing);
-        for _ in 0..6 {
-            tokio::time::sleep(Duration::from_secs(1)).await;
-            activation = request_start(&request_tx).await;
-            if activation.is_ok() {
-                break;
-            }
-        }
+        tokio::time::sleep(Duration::from_secs(6)).await;
+        let activation = request_start(&request_tx).await;
         drop(request_tx);
         handle.await.unwrap().expect_err("closed request channel");
         activation.expect("EL has the observed canonical tip and should allow isolated startup");
@@ -1174,15 +1215,22 @@ mod tests {
         let mut block =
             gossip.execution_payload.clone().try_into_block::<BaseTxEnvelope>().unwrap();
         block.header.timestamp += 1;
-        // The newer block must need the probe, not the normal extending-payload path.
-        assert_ne!(
-            block.header.parent_hash,
-            state_rx.borrow().sync_state.unsafe_head().block_info.hash
-        );
+        if !conflicting {
+            block.header.parent_hash = state_rx.borrow().sync_state.unsafe_head().block_info.hash;
+        }
         gossip.execution_payload =
             BaseExecutionPayload::from_block_unchecked(block.hash_slow(), &block).0;
         let target_hash = gossip.execution_payload.block_hash();
         let fcu_count = client.storage().read().await.fork_choice_updated_v3_requests.len();
+        client
+            .set_fork_choice_updated_v3_response(ForkchoiceUpdated {
+                payload_status: PayloadStatus {
+                    status: PayloadStatusEnum::Syncing,
+                    latest_valid_hash: None,
+                },
+                payload_id: None,
+            })
+            .await;
         request_tx
             .send(EngineActorRequest::ProcessUnsafeL2BlockRequest(Box::new(gossip)))
             .await
@@ -1193,6 +1241,15 @@ mod tests {
         } else {
             assert!(matches!(activation, Err(EngineClientError::ELSyncing)));
         }
+        client
+            .set_fork_choice_updated_v3_response(ForkchoiceUpdated {
+                payload_status: PayloadStatus {
+                    status: PayloadStatusEnum::Valid,
+                    latest_valid_hash: None,
+                },
+                payload_id: None,
+            })
+            .await;
         tokio::time::sleep(Duration::from_secs(6)).await;
         let activation = request_start(&request_tx).await;
         drop(request_tx);
@@ -1209,34 +1266,59 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn isolated_startup_rejects_conflicting_gossip() {
-        let coordinator = isolated_startup_coordinator();
-        coordinator
-            .processor
-            .client()
-            .set_new_payload_v2_response(PayloadStatus {
-                status: PayloadStatusEnum::Invalid { validation_error: "test rejection".into() },
-                latest_valid_hash: None,
-            })
-            .await;
-        let (request_tx, request_rx) = mpsc::channel(8);
-        let handle = coordinator.start(request_rx);
+    #[rstest]
+    #[case::new_highest(501, false, false)]
+    #[case::duplicate(500, false, false)]
+    #[case::older(499, false, false)]
+    #[case::conflict(500, true, false)]
+    #[case::undecodable(501, false, true)]
+    fn isolated_target_tracks_accepted_observations(
+        #[case] number: u64,
+        #[case] conflicting: bool,
+        #[case] undecodable: bool,
+    ) {
+        let canonical_payload = |number, timestamp_offset| {
+            let mut block =
+                payload(number, 1).execution_payload.try_into_block::<BaseTxEnvelope>().unwrap();
+            block.header.timestamp += timestamp_offset;
+            let head =
+                L2BlockInfo::from_block_and_genesis(&block, &RollupConfig::default().genesis)
+                    .unwrap();
+            (
+                BaseExecutionPayloadEnvelope {
+                    execution_payload: BaseExecutionPayload::from_block_unchecked(
+                        block.hash_slow(),
+                        &block,
+                    )
+                    .0,
+                    parent_beacon_block_root: None,
+                },
+                head,
+            )
+        };
+        let mut catchup = CanonicalUnsafeCatchup::default();
+        let (initial, initial_head) = canonical_payload(500, 0);
+        catchup.observe_isolated_payload(&initial, &RollupConfig::default().genesis).unwrap();
+        assert_eq!(catchup.latest_observed_head(), Some(initial_head));
+        let (mut incoming, incoming_head) = canonical_payload(number, u64::from(conflicting));
+        if undecodable {
+            let BaseExecutionPayload::V1(raw) = &mut incoming.execution_payload else {
+                panic!("V1 fixture");
+            };
+            raw.transactions.clear();
+        }
 
-        request_tx
-            .send(EngineActorRequest::ProcessUnsafeL2BlockRequest(Box::new(payload(500, 1))))
-            .await
-            .expect("first gossip request");
-        request_tx
-            .send(EngineActorRequest::ProcessUnsafeL2BlockRequest(Box::new(payload(500, 2))))
-            .await
-            .expect("conflicting gossip request");
-        assert!(matches!(
-            request_start(&request_tx).await,
-            Err(EngineClientError::ShadowBufferFaulted)
-        ));
-        drop(request_tx);
-        handle.await.expect("engine task").expect_err("closed request channel");
+        let result = catchup.observe_isolated_payload(&incoming, &RollupConfig::default().genesis);
+
+        let expected = if conflicting {
+            None
+        } else if number > 500 && !undecodable {
+            Some(incoming_head)
+        } else {
+            Some(initial_head)
+        };
+        assert_eq!(result.is_err(), undecodable);
+        assert_eq!(catchup.latest_observed_head(), expected);
     }
 
     #[tokio::test]

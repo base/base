@@ -100,6 +100,7 @@ impl CanonicalUnsafeCatchup {
         if let Some(existing_hash) = self.observations.get(&number) {
             if *existing_hash != hash {
                 self.faulted = true;
+                self.latest_observed_head = None;
             }
             return;
         }
@@ -121,9 +122,9 @@ impl CanonicalUnsafeCatchup {
         envelope: &BaseExecutionPayloadEnvelope,
         genesis: &ChainGenesis,
     ) -> Result<(), FromBlockError> {
-        let previous_highest = self.highest_observed;
-        self.observe_payload(envelope);
-        if self.faulted || self.highest_observed == previous_highest {
+        let number = envelope.execution_payload.block_number();
+        if self.faulted || self.highest_observed.is_some_and(|(highest, _)| number <= highest) {
+            self.observe_payload(envelope);
             return Ok(());
         }
         let head = L2BlockInfo::from_payload_and_genesis(
@@ -131,7 +132,8 @@ impl CanonicalUnsafeCatchup {
             envelope.parent_beacon_block_root,
             genesis,
         )?;
-        self.latest_observed_head = self.is_at_latest_observed(head).then(|| Box::new(head));
+        self.observe_payload(envelope);
+        self.latest_observed_head = Some(Box::new(head));
         Ok(())
     }
 
@@ -410,11 +412,9 @@ impl ShadowReconciliationGate {
 mod tests {
     use alloy_primitives::{Address, B256, Bloom, U256};
     use alloy_rpc_types_engine::ExecutionPayloadV1;
-    use base_common_genesis::ChainGenesis;
     use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
     use base_consensus_engine::test_utils::TestAttributesBuilder;
     use base_protocol::{BlockInfo, L2BlockInfo};
-    use rstest::rstest;
 
     use super::{CanonicalUnsafeCatchup, ShadowReconciliationGate};
     use crate::EngineClientError;
@@ -474,30 +474,6 @@ mod tests {
         assert!(!catchup.is_at_latest_observed(head(500, B256::with_last_byte(99))));
         assert!(catchup.is_at_latest_observed(head(500, B256::with_last_byte(15))));
         assert!(catchup.payloads.is_empty());
-    }
-
-    #[rstest]
-    #[case::duplicate(500, 15, false, true)]
-    #[case::older(499, 14, false, true)]
-    #[case::conflict(500, 16, false, true)]
-    #[case::faulted(501, 17, true, true)]
-    #[case::new_highest(501, 17, false, false)]
-    fn isolated_observation_decodes_only_new_highest_payload(
-        #[case] number: u64,
-        #[case] hash: u8,
-        #[case] faulted: bool,
-        #[case] skips_decode: bool,
-    ) {
-        let mut catchup = CanonicalUnsafeCatchup::default();
-        catchup.observe_payload(&payload(500, B256::ZERO, B256::with_last_byte(15)));
-        if faulted {
-            catchup.observe_payload(&payload(500, B256::ZERO, B256::with_last_byte(16)));
-        }
-        let undecodable = payload(number, B256::ZERO, B256::with_last_byte(hash));
-
-        let result = catchup.observe_isolated_payload(&undecodable, &ChainGenesis::default());
-
-        assert_eq!(result.is_ok(), skips_decode);
     }
 
     #[test]
