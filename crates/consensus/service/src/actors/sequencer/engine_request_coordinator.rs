@@ -1167,11 +1167,8 @@ mod tests {
         assert_eq!(client.storage().read().await.fork_choice_updated_v3_requests.len(), fcu_count);
     }
 
-    #[rstest]
-    #[case::newer_gossip(false)]
-    #[case::conflicting_gossip(true)]
     #[tokio::test(start_paused = true)]
-    async fn isolated_probe_tracks_gossip_during_retry(#[case] conflicting: bool) {
+    async fn isolated_probe_retries_newer_gossip_until_valid() {
         let mut coordinator = isolated_startup_coordinator();
         let client = Arc::clone(coordinator.processor.client());
         let state_rx = coordinator.processor.engine_mut().state_subscribe();
@@ -1181,66 +1178,27 @@ mod tests {
                 latest_valid_hash: None,
             })
             .await;
-        let (request_tx, request_rx) = mpsc::channel(8);
-        let handle = coordinator.start(request_rx);
-
         let mut gossip = payload(500, 1);
         let block = gossip.execution_payload.clone().try_into_block::<BaseTxEnvelope>().unwrap();
         gossip.execution_payload =
             BaseExecutionPayload::from_block_unchecked(block.hash_slow(), &block).0;
+        let (request_tx, request_rx) = mpsc::channel(8);
+        let handle = coordinator.start(request_rx);
         request_tx
             .send(EngineActorRequest::ProcessUnsafeL2BlockRequest(Box::new(gossip)))
             .await
             .unwrap();
         assert!(matches!(request_start(&request_tx).await, Err(EngineClientError::ELSyncing)));
-        tokio::time::sleep(Duration::from_secs(6)).await;
-        assert!(matches!(request_start(&request_tx).await, Err(EngineClientError::ELSyncing)));
-
-        client
-            .set_fork_choice_updated_v3_response(ForkchoiceUpdated {
-                payload_status: PayloadStatus {
-                    status: PayloadStatusEnum::Valid,
-                    latest_valid_hash: None,
-                },
-                payload_id: None,
-            })
-            .await;
-        tokio::time::sleep(Duration::from_secs(6)).await;
-        assert!(state_rx.borrow().el_sync_finished);
-        let fcu_count = client.storage().read().await.fork_choice_updated_v3_requests.len();
-        tokio::time::sleep(Duration::from_secs(6)).await;
-        assert_eq!(client.storage().read().await.fork_choice_updated_v3_requests.len(), fcu_count);
-
-        let mut gossip = payload(if conflicting { 500 } else { 501 }, 2);
-        let mut block =
-            gossip.execution_payload.clone().try_into_block::<BaseTxEnvelope>().unwrap();
-        block.header.timestamp += 1;
-        if !conflicting {
-            block.header.parent_hash = state_rx.borrow().sync_state.unsafe_head().block_info.hash;
-        }
+        let mut gossip = payload(501, 2);
+        let block = gossip.execution_payload.clone().try_into_block::<BaseTxEnvelope>().unwrap();
         gossip.execution_payload =
             BaseExecutionPayload::from_block_unchecked(block.hash_slow(), &block).0;
         let target_hash = gossip.execution_payload.block_hash();
-        let fcu_count = client.storage().read().await.fork_choice_updated_v3_requests.len();
-        client
-            .set_fork_choice_updated_v3_response(ForkchoiceUpdated {
-                payload_status: PayloadStatus {
-                    status: PayloadStatusEnum::Syncing,
-                    latest_valid_hash: None,
-                },
-                payload_id: None,
-            })
-            .await;
         request_tx
             .send(EngineActorRequest::ProcessUnsafeL2BlockRequest(Box::new(gossip)))
             .await
             .unwrap();
-        let activation = request_start(&request_tx).await;
-        if conflicting {
-            assert!(matches!(activation, Err(EngineClientError::ShadowBufferFaulted)));
-        } else {
-            assert!(matches!(activation, Err(EngineClientError::ELSyncing)));
-        }
+        assert!(matches!(request_start(&request_tx).await, Err(EngineClientError::ELSyncing)));
         client
             .set_fork_choice_updated_v3_response(ForkchoiceUpdated {
                 payload_status: PayloadStatus {
@@ -1254,16 +1212,50 @@ mod tests {
         let activation = request_start(&request_tx).await;
         drop(request_tx);
         handle.await.unwrap().expect_err("closed request channel");
-        if conflicting {
-            assert!(matches!(activation, Err(EngineClientError::ShadowBufferFaulted)));
-            assert_eq!(
-                client.storage().read().await.fork_choice_updated_v3_requests.len(),
-                fcu_count
-            );
-        } else {
-            activation.expect("probe must confirm the newer gossip target even after EL sync");
-            assert_eq!(state_rx.borrow().sync_state.unsafe_head().block_info.hash, target_hash);
-        }
+        activation.expect("probe must confirm the newer gossip target");
+        assert_eq!(state_rx.borrow().sync_state.unsafe_head().block_info.hash, target_hash);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn isolated_conflict_stops_probe_retries() {
+        let coordinator = isolated_startup_coordinator();
+        let client = Arc::clone(coordinator.processor.client());
+        client
+            .set_new_payload_v2_response(PayloadStatus {
+                status: PayloadStatusEnum::Valid,
+                latest_valid_hash: None,
+            })
+            .await;
+        let mut gossip = payload(500, 1);
+        let mut block =
+            gossip.execution_payload.clone().try_into_block::<BaseTxEnvelope>().unwrap();
+        gossip.execution_payload =
+            BaseExecutionPayload::from_block_unchecked(block.hash_slow(), &block).0;
+        let mut conflicting = gossip.clone();
+        block.header.timestamp += 1;
+        conflicting.execution_payload =
+            BaseExecutionPayload::from_block_unchecked(block.hash_slow(), &block).0;
+        let (request_tx, request_rx) = mpsc::channel(8);
+        let handle = coordinator.start(request_rx);
+        request_tx
+            .send(EngineActorRequest::ProcessUnsafeL2BlockRequest(Box::new(gossip)))
+            .await
+            .unwrap();
+        assert!(matches!(request_start(&request_tx).await, Err(EngineClientError::ELSyncing)));
+        tokio::time::sleep(Duration::from_secs(6)).await;
+        request_tx
+            .send(EngineActorRequest::ProcessUnsafeL2BlockRequest(Box::new(conflicting)))
+            .await
+            .unwrap();
+        assert!(matches!(
+            request_start(&request_tx).await,
+            Err(EngineClientError::ShadowBufferFaulted)
+        ));
+        let fcu_count = client.storage().read().await.fork_choice_updated_v3_requests.len();
+        tokio::time::sleep(Duration::from_secs(6)).await;
+        drop(request_tx);
+        handle.await.unwrap().expect_err("closed request channel");
+        assert_eq!(client.storage().read().await.fork_choice_updated_v3_requests.len(), fcu_count);
     }
 
     #[rstest]

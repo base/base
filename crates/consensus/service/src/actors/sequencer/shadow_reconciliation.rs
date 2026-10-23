@@ -90,7 +90,7 @@ impl CanonicalUnsafeCatchup {
         }
     }
 
-    /// Records the canonical target without retaining payloads while the EL syncs from peers.
+    /// Records a canonical observation and faults on conflicting hashes at an observed height.
     pub fn observe_payload(&mut self, envelope: &BaseExecutionPayloadEnvelope) {
         let number = envelope.execution_payload.block_number();
         let hash = envelope.execution_payload.block_hash();
@@ -137,12 +137,9 @@ impl CanonicalUnsafeCatchup {
         Ok(())
     }
 
-    /// Returns the decoded probe target only while it matches the latest canonical observation.
+    /// Returns the latest decoded gossip head, cleared on conflicting observations.
     pub fn latest_observed_head(&self) -> Option<L2BlockInfo> {
-        self.latest_observed_head
-            .as_deref()
-            .copied()
-            .filter(|head| self.is_at_latest_observed(*head))
+        self.latest_observed_head.as_deref().copied()
     }
 
     /// Returns the contiguous canonical suffix that can extend `anchor` now.
