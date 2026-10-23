@@ -121,7 +121,11 @@ where
     ) -> Self {
         Self {
             processor,
-            sequencer_state: SequencerEngineState::Regular,
+            sequencer_state: if mode.is_isolated() {
+                SequencerEngineState::CatchingUp { catchup: CanonicalUnsafeCatchup::default() }
+            } else {
+                SequencerEngineState::Regular
+            },
             conductor,
             sequencer_stopped,
             sequencer_kind: mode.into(),
@@ -143,9 +147,18 @@ where
         &mut self.sequencer_state
     }
 
-    fn isolated_startup_ready(&self, catchup: &CanonicalUnsafeCatchup) -> bool {
+    fn startup_complete(&self, catchup: &CanonicalUnsafeCatchup) -> bool {
         let engine = self.processor.engine_state();
-        engine.el_sync_finished && catchup.is_at_latest_observed(engine.sync_state.unsafe_head())
+        match self.sequencer_kind {
+            SequencerKind::Regular | SequencerKind::Shadow => {
+                catchup.is_complete(engine.sync_state.unsafe_head(), engine.sync_state.safe_head())
+            }
+            SequencerKind::Isolated => {
+                // Equivocation leaves no single canonical parent; stall until reset/restart clears it.
+                engine.el_sync_finished
+                    && catchup.is_at_latest_observed(engine.sync_state.unsafe_head())
+            }
+        }
     }
 
     fn complete_startup(&mut self, head: base_protocol::L2BlockInfo) {
@@ -180,31 +193,24 @@ where
             )));
         }
 
-        let catchup = match &self.sequencer_state {
-            SequencerEngineState::CatchingUp { catchup } => Some(catchup),
-            _ => None,
-        };
-        let complete = match self.sequencer_kind {
-            // Admin start must not release shadow catch-up or reconciliation.
-            SequencerKind::Shadow => return Ok(()),
-            SequencerKind::Regular => {
-                if !self.processor.engine_state().el_sync_finished {
-                    return Err(EngineClientError::ELSyncing);
-                }
-                catchup.is_none_or(|catchup| {
-                    !catchup.has_observations() || catchup.is_complete(head, sync_state.safe_head())
-                })
-            }
-            SequencerKind::Isolated => {
-                self.is_isolated_active()
-                    || catchup.is_some_and(|catchup| self.isolated_startup_ready(catchup))
-            }
-        };
-        if catchup.is_some_and(CanonicalUnsafeCatchup::is_faulted) {
-            return Err(EngineClientError::ShadowBufferFaulted);
+        // Admin start must not release shadow catch-up or reconciliation.
+        if self.is_shadow_sequencer() {
+            return Ok(());
         }
-        if !self.processor.engine_state().el_sync_finished || !complete {
+        if self.sequencer_kind == SequencerKind::Regular
+            && !self.processor.engine_state().el_sync_finished
+        {
             return Err(EngineClientError::ELSyncing);
+        }
+        if let SequencerEngineState::CatchingUp { catchup } = &self.sequencer_state {
+            if catchup.is_faulted() {
+                return Err(EngineClientError::ShadowBufferFaulted);
+            }
+            let unobserved_follower =
+                self.sequencer_kind == SequencerKind::Regular && !catchup.has_observations();
+            if !unobserved_follower && !self.startup_complete(catchup) {
+                return Err(EngineClientError::ELSyncing);
+            }
         }
 
         if matches!(
@@ -256,19 +262,12 @@ where
         let sync_state = self.processor.engine_state().sync_state;
         let head = sync_state.unsafe_head();
 
-        let (kind, faulted, complete) = match &self.sequencer_state {
-            SequencerEngineState::CatchingUp { catchup } => (
-                self.sequencer_kind,
-                catchup.is_faulted(),
-                match self.sequencer_kind {
-                    SequencerKind::Regular | SequencerKind::Shadow => {
-                        catchup.is_complete(head, sync_state.safe_head())
-                    }
-                    SequencerKind::Isolated => self.isolated_startup_ready(catchup),
-                },
-            ),
-            _ => return Ok(false),
+        let SequencerEngineState::CatchingUp { catchup } = &self.sequencer_state else {
+            return Ok(false);
         };
+        let kind = self.sequencer_kind;
+        let faulted = catchup.is_faulted();
+        let complete = !faulted && self.startup_complete(catchup);
 
         match (kind, faulted, complete) {
             (_, true, _) => {
@@ -482,7 +481,6 @@ where
             //     enter an infinite reset loop. Instead we seed the watch channel from reth's
             //     current head directly; derivation will issue its own FCU once the first Reset
             //     task arrives.
-            // Isolated sequencers use bootstrap_validator instead.
             let opt_head = self
                 .processor
                 .client()
@@ -510,6 +508,7 @@ where
                 };
             }
             if self.sequencer_kind == SequencerKind::Isolated {
+                // Isolated sequencers use bootstrap_validator instead.
                 self.processor.bootstrap_validator(opt_head).await;
             } else {
                 match bootstrap_role {
@@ -1091,6 +1090,7 @@ mod tests {
         let mut conductor = MockConductor::new();
         conductor.expect_leader().never();
         let coordinator = coordinator(true, false, Some(Arc::new(conductor)));
+        assert!(matches!(coordinator.sequencer_state(), SequencerEngineState::Regular));
         assert_eq!(coordinator.resolve_bootstrap_role().await, BootstrapRole::ConductorFollower);
     }
 
@@ -1131,6 +1131,7 @@ mod tests {
     #[case::different_branch(100, true, &[(100, 99)], false, false)]
     #[case::private_tail(100, true, &[(99, 99)], false, false)]
     #[case::faulted(100, true, &[(100, 100), (100, 99)], false, false)]
+    #[case::faulted_and_el_syncing(100, false, &[(100, 100), (100, 99)], false, false)]
     #[case::shadow_catchup(100, true, &[], true, true)]
     #[case::shadow_caught_up(100, true, &[(100, 100)], true, true)]
     #[case::shadow_el_syncing(100, false, &[], true, true)]
@@ -1183,6 +1184,9 @@ mod tests {
 
         let result = coordinator.prepare_sequencer_start(B256::with_last_byte(requested_hash));
         assert_eq!(result.is_ok(), accepted, "{result:?}");
+        if !shadow && requested_hash == 100 && !el_synced {
+            assert!(matches!(result, Err(EngineClientError::ELSyncing)));
+        }
         assert_eq!(
             matches!(coordinator.sequencer_state(), SequencerEngineState::Regular),
             accepted && !shadow
@@ -1228,6 +1232,7 @@ mod tests {
             false,
             unsafe_head_tx,
         );
+        assert!(matches!(coordinator.sequencer_state(), SequencerEngineState::CatchingUp { .. }));
         assert_eq!(coordinator.resolve_bootstrap_role().await, BootstrapRole::ConductorFollower);
     }
 
@@ -1274,10 +1279,6 @@ mod tests {
             true,
             head_tx,
         );
-        assert!(matches!(
-            coordinator.prepare_sequencer_start(head.block_info.hash),
-            Err(EngineClientError::ELSyncing)
-        ));
         let mut catchup = CanonicalUnsafeCatchup::default();
         for &(number, hash) in observations {
             catchup.observe_payload(&payload(number, hash));
