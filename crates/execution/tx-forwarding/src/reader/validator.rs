@@ -33,7 +33,11 @@ pub(super) struct RecentlySent {
 impl RecentlySent {
     /// How long after a confirmed delivery a still-pending transaction is resent, unless the
     /// destination is lost first (see [`Self::forget_deliveries`]).
-    pub(super) const DELIVERED_RESEND_AFTER: Duration = Duration::from_secs(30);
+    ///
+    /// Six blocks: long enough to cover most of a resting validity bid's life, so it is not resent
+    /// while the builder holds it, and short enough that a transaction the builder evicted from a
+    /// full pool without telling anyone is back within a few blocks.
+    pub(super) const DELIVERED_RESEND_AFTER: Duration = Duration::from_secs(12);
 
     /// Creates a new tracker.
     pub(super) fn new(resend_after: Duration) -> Self {
