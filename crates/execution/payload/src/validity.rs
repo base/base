@@ -1,7 +1,7 @@
 //! Validity-predicate evaluation and indexing for payload transactions.
 
 use core::ops::Bound::{Excluded, Included};
-use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 
 use alloy_primitives::{
     Address, TxHash, U256,
@@ -130,13 +130,15 @@ struct ParkedTransaction<T> {
 
 #[derive(Debug)]
 enum PredicateBucket {
-    Flat(B256Set),
+    /// Hashes in insertion order. Bucket entries are unique and stay below the ordered
+    /// threshold, so a linear scan beats hashing.
+    Flat(Vec<TxHash>),
     Ordered(OrderedPredicateBucket),
 }
 
 #[derive(Debug, Default)]
 struct OrderedPredicateBucket {
-    thresholds: U256Map<BTreeMap<U256, B256Set>>,
+    thresholds: U256Map<BTreeSet<(U256, TxHash)>>,
     equal: U256Map<U256Map<B256Set>>,
     not_equal: U256Map<B256Set>,
     never: B256Set,
@@ -271,10 +273,8 @@ impl<T> ParkedPredicateIndex<T> {
         let entry = self.transactions.get(&hash).expect("inserted transaction must exist");
         let blocker = entry.blocker;
         let predicate = &entry.predicate;
-        let bucket = self
-            .blockers
-            .entry(blocker)
-            .or_insert_with(|| PredicateBucket::Flat(B256Set::default()));
+        let bucket =
+            self.blockers.entry(blocker).or_insert_with(|| PredicateBucket::Flat(Vec::new()));
         bucket.insert(hash, predicate);
         if bucket.is_flat() && blocker.is_state() && bucket.len() >= self.ordered_threshold {
             let hashes = bucket.take_flat().expect("bucket was checked as flat");
@@ -323,9 +323,7 @@ impl ValidityPredicateKey {
 impl PredicateBucket {
     fn insert(&mut self, hash: TxHash, predicate: &ValidityPredicate) {
         match self {
-            Self::Flat(hashes) => {
-                hashes.insert(hash);
-            }
+            Self::Flat(hashes) => hashes.push(hash),
             Self::Ordered(bucket) => bucket.insert(hash, predicate),
         }
     }
@@ -333,27 +331,29 @@ impl PredicateBucket {
     fn remove(&mut self, hash: TxHash, predicate: &ValidityPredicate) {
         match self {
             Self::Flat(hashes) => {
-                hashes.remove(&hash);
+                if let Some(position) = hashes.iter().position(|entry| *entry == hash) {
+                    hashes.swap_remove(position);
+                }
             }
             Self::Ordered(bucket) => bucket.remove(hash, predicate),
         }
     }
 
-    fn len(&self) -> usize {
+    const fn len(&self) -> usize {
         match self {
             Self::Flat(hashes) => hashes.len(),
             Self::Ordered(bucket) => bucket.len,
         }
     }
 
-    fn is_empty(&self) -> bool {
+    const fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
     const fn is_flat(&self) -> bool {
         matches!(self, Self::Flat(_))
     }
-    fn take_flat(&mut self) -> Option<B256Set> {
+    fn take_flat(&mut self) -> Option<Vec<TxHash>> {
         match self {
             Self::Flat(hashes) => Some(core::mem::take(hashes)),
             Self::Ordered(_) => None,
@@ -378,17 +378,17 @@ impl PredicateBucket {
 impl OrderedPredicateBucket {
     fn insert(&mut self, hash: TxHash, predicate: &ValidityPredicate) {
         let Some((mask, kind)) = ordered_predicate(predicate) else { return };
-        let hashes = match kind {
+        let inserted = match kind {
             OrderedPredicateKind::Threshold(value) => {
-                self.thresholds.entry(mask).or_default().entry(value).or_default()
+                self.thresholds.entry(mask).or_default().insert((value, hash))
             }
             OrderedPredicateKind::Equal(value) => {
-                self.equal.entry(mask).or_default().entry(value).or_default()
+                self.equal.entry(mask).or_default().entry(value).or_default().insert(hash)
             }
-            OrderedPredicateKind::NotEqual => self.not_equal.entry(mask).or_default(),
-            OrderedPredicateKind::Never => &mut self.never,
+            OrderedPredicateKind::NotEqual => self.not_equal.entry(mask).or_default().insert(hash),
+            OrderedPredicateKind::Never => self.never.insert(hash),
         };
-        self.len += usize::from(hashes.insert(hash));
+        self.len += usize::from(inserted);
     }
 
     fn remove(&mut self, hash: TxHash, predicate: &ValidityPredicate) {
@@ -407,11 +407,11 @@ impl OrderedPredicateBucket {
     }
 
     fn extend_all(&self, target: &mut Vec<TxHash>) {
+        target.extend(self.thresholds.values().flatten().map(|(_, hash)| *hash));
         target.extend(
-            self.thresholds
+            self.equal
                 .values()
-                .flat_map(BTreeMap::values)
-                .chain(self.equal.values().flat_map(U256Map::values))
+                .flat_map(U256Map::values)
                 .chain(self.not_equal.values())
                 .chain(core::iter::once(&self.never))
                 .flat_map(|hashes| hashes.iter().copied()),
@@ -424,11 +424,13 @@ impl OrderedPredicateBucket {
             let new = new & *mask;
             if old != new {
                 let (lower, upper) = if old < new { (old, new) } else { (new, old) };
-                for hashes in
-                    thresholds.range((Excluded(lower), Included(upper))).map(|(_, hashes)| hashes)
-                {
-                    target.extend(hashes.iter().copied());
-                }
+                // The maximum hash makes each bound cover every entry with that value.
+                let last = TxHash::repeat_byte(0xff);
+                target.extend(
+                    thresholds
+                        .range((Excluded((lower, last)), Included((upper, last))))
+                        .map(|(_, hash)| *hash),
+                );
             }
         }
         for (mask, equal) in &self.equal {
@@ -487,15 +489,9 @@ trait BucketMap {
     fn is_empty(&self) -> bool;
 }
 
-impl BucketMap for BTreeMap<U256, B256Set> {
+impl BucketMap for BTreeSet<(U256, TxHash)> {
     fn remove_hash(&mut self, value: Option<U256>, hash: TxHash) -> bool {
-        let value = value.expect("threshold index has a value");
-        let Some(hashes) = self.get_mut(&value) else { return false };
-        let removed = hashes.remove(&hash);
-        if hashes.is_empty() {
-            self.remove(&value);
-        }
-        removed
+        self.remove(&(value.expect("threshold index has a value"), hash))
     }
 
     fn is_empty(&self) -> bool {
