@@ -1,5 +1,9 @@
 # Agent Instructions
 
+When adding or reorganizing agent instructions, read
+[Organizing Agent Instructions](docs/guides/AGENT_GUIDANCE.md) to choose between
+this file, a separate document, and a skill.
+
 ## Repository Layout
 
 - `bin/`: thin binary crates (node, builder, consensus, basectl, proposer, challenger, prover services, and others).
@@ -100,3 +104,9 @@ let bal = wallet.account.balance();
 - Cost hot-path work at its production frequency, not per call. Hot paths and their rates are listed in [docs/guides/HOT_PATH_PERFORMANCE_REVIEW.md](docs/guides/HOT_PATH_PERFORMANCE_REVIEW.md). Keep allocation, cloning, serialization, I/O, and metric-handle lookups out of per-candidate work, and do not scan pool-sized collections per candidate or rejection.
 - Measure default-off features with the feature enabled, and benchmark production code when claiming performance gains.
 - Make async lifetimes explicit: bound waits, distinguish retryable from terminal errors, and clean up tasks on failure and shutdown.
+
+## Cancellation and Process Lifetimes
+
+When a change affects cancellation, timeouts, retries, task/process ownership, or
+shutdown, read and apply [Cancellation Review](docs/guides/CANCELLATION_REVIEW.md).
+This applies across languages; async code alone does not require this review.
