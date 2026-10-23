@@ -44,6 +44,7 @@ async fn node(genesis: Genesis, payer: &MockServer) -> eyre::Result<TestHarness>
         .with_ext::<PayerRpcExtension>(PayerRpcConfig {
             upstream_url: payer.base_url(),
             upstream_headers: Vec::new(),
+            cache_get_terms: false,
         })
         .build()
         .await

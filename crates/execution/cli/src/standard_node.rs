@@ -387,6 +387,14 @@ pub struct RpcStandardNodeArgs {
     #[arg(long = "rollup.payer", value_name = "PAYER_URL")]
     pub payer_url: Option<String>,
 
+    /// Serve `payer_getTerms` from one shared entry, refetched at most every 5 seconds.
+    ///
+    /// Defaults to on when the payer is reached through the sequencer URL, whose payer returns
+    /// the same terms for every request, and off for a separate `--rollup.payer`. Override with
+    /// `--rollup.payer-cache=true|false`.
+    #[arg(long = "rollup.payer-cache", value_name = "BOOL")]
+    pub payer_cache: Option<bool>,
+
     /// Builder RPC endpoints for transaction forwarding (one forwarder per URL), used by mempool nodes
     #[arg(
         long = "builder-rpc-urls",
@@ -492,7 +500,8 @@ pub struct RpcStandardNodeArgs {
 impl RpcStandardNodeArgs {
     /// Payer proxy target, or `None` unless `--rollup.payer-enabled` or `--rollup.payer` is set.
     /// `--rollup.payer` wins; otherwise the sequencer URL is used when it is HTTP, since the
-    /// payer client cannot speak websocket. Sequencer headers are sent only to the sequencer.
+    /// payer client cannot speak websocket. Sequencer headers are sent only to the sequencer,
+    /// and the `payer_getTerms` cache defaults to on only through it.
     fn payer_upstream(&self) -> Option<PayerRpcConfig> {
         let sequencer = self.rollup_args.sequencer.clone();
         let upstream_url = self.payer_url.clone().or_else(|| {
@@ -501,7 +510,8 @@ impl RpcStandardNodeArgs {
         let via_sequencer = self.payer_url.is_none() || self.payer_url == sequencer;
         let upstream_headers =
             if via_sequencer { self.rollup_args.sequencer_headers.clone() } else { Vec::new() };
-        Some(PayerRpcConfig { upstream_url, upstream_headers })
+        let cache_get_terms = self.payer_cache.unwrap_or(via_sequencer);
+        Some(PayerRpcConfig { upstream_url, upstream_headers, cache_get_terms })
     }
 
     fn is_http_url(url: &str) -> bool {
@@ -864,6 +874,10 @@ impl StandardBaseRethNode {
             warn!(
                 "payer RPC proxy disabled: --rollup.payer-enabled needs an HTTP sequencer URL or --rollup.payer"
             );
+        } else if args.rpc.payer_cache.is_some() {
+            warn!(
+                "--rollup.payer-cache has no effect without --rollup.payer-enabled or --rollup.payer"
+            );
         }
         runner.install_ext::<ProofsHistoryExtension>(rollup_args.clone());
         Self::install_upgrade_signal_runtime_extension(&mut runner, &rollup_args)?;
@@ -1075,6 +1089,7 @@ mod tests {
             inline_simulation_timeout_ms: DEFAULT_INLINE_SIMULATION_TIMEOUT_MS,
             payer_enabled: false,
             payer_url: None,
+            payer_cache: None,
         }
     }
 
@@ -1114,6 +1129,7 @@ mod tests {
             Some(PayerRpcConfig {
                 upstream_url: "http://sequencer".into(),
                 upstream_headers: vec!["X-Demo=1".into()],
+                cache_get_terms: true,
             })
         );
 
@@ -1121,6 +1137,37 @@ mod tests {
         let upstream = args.payer_upstream().expect("payer url");
         assert_eq!(upstream.upstream_url, "http://payer");
         assert!(upstream.upstream_headers.is_empty());
+    }
+
+    #[test]
+    fn payer_upstream_caches_by_default_only_through_the_sequencer() {
+        let mut args = default_rpc_standard_node_args();
+        args.payer_enabled = true;
+        args.rollup_args.sequencer = Some("http://sequencer".into());
+        assert!(args.payer_upstream().expect("sequencer").cache_get_terms);
+        args.payer_cache = Some(false);
+        assert!(!args.payer_upstream().expect("sequencer").cache_get_terms);
+
+        args.payer_cache = None;
+        args.payer_url = Some("http://payer".into());
+        assert!(!args.payer_upstream().expect("payer url").cache_get_terms);
+        args.payer_cache = Some(true);
+        assert!(args.payer_upstream().expect("payer url").cache_get_terms);
+    }
+
+    #[test]
+    fn payer_cache_flag_takes_an_explicit_value() {
+        let parse = |flags: &[&str]| {
+            CommandParser::<RpcStandardNodeArgs>::try_parse_from(
+                ["reth"].iter().chain(flags).copied(),
+            )
+            .map(|parsed| parsed.args.payer_cache)
+        };
+
+        assert_eq!(parse(&[]).unwrap(), None);
+        assert_eq!(parse(&["--rollup.payer-cache=false"]).unwrap(), Some(false));
+        assert_eq!(parse(&["--rollup.payer-cache", "true"]).unwrap(), Some(true));
+        assert!(parse(&["--rollup.payer-cache"]).is_err());
     }
 
     #[test]

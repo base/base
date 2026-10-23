@@ -10,6 +10,10 @@ Requests are rejected locally before the Everest network upgrade activates EIP-8
 
 Both methods answer `TEMPORARILY_UNAVAILABLE`, which wallets retry, when the node cannot serve them right now: the payer does not answer, or the node cannot read its latest block. A payer answers with `PAYER_REJECTED` (`-32000`) or a standard request error (`-32601`, `-32602`), and those pass through unchanged whatever the HTTP status of the reply. Any other error, or no response, means the payer did not answer: the upstream cannot be reached, or a gateway in front of the payer answered in its place. A payer may have submitted a transaction whose answer was lost; a retry resends the same signed transaction, so it cannot be included twice.
 
+The node serves `payer_getTerms` from one shared entry, refetched on demand at most every 5 seconds, with concurrent misses sharing one upstream call. Serving rates that old relies on the payer honoring any rate it quoted within the offer `ttl`. The node does not poll; with no requests it makes no upstream calls. Each served offer's `ttl` is reduced by the entry's age, and its `tokens` are reordered by the request's `preferredTokens`. A cache miss is forwarded without `preferredTokens`, so the shared entry keeps the payer's own token order. A `TEMPORARILY_UNAVAILABLE` rejection from `payer_sendTransaction`, or a `PAYMENT_INSUFFICIENT` without a `requote`, refetches the entry early, at most once per 5 seconds. A rejection with a `requote` leaves the entry, since the wallet re-signs from the requote without calling `payer_getTerms`. When the payer does not answer, the last entry is served while its `ttl` holds, after which requests answer `TEMPORARILY_UNAVAILABLE`, and requests that queued behind that refetch reuse its outcome instead of each waiting out the timeout; when the payer answers `payer_getTerms` with an error or no offers, the entry is dropped. `payer_sendTransaction` is never cached.
+
+The cache is on by default when the payer is reached through the sequencer URL, whose payer returns the same terms for every request, and off for a separate `--rollup.payer`. `--rollup.payer-cache=true|false` overrides the default; leave it off for a payer that quotes per request.
+
 ## Usage
 
 ```rust,ignore
@@ -18,6 +22,7 @@ use base_execution_payer_rpc::{PayerRpcConfig, PayerRpcExtension};
 runner.install_ext::<PayerRpcExtension>(PayerRpcConfig {
     upstream_url: sequencer_url,
     upstream_headers: sequencer_headers,
+    cache_get_terms: false,
 });
 ```
 
