@@ -22,6 +22,7 @@ impl TxContext {
         let storage_features = UpgradeGatedStorageFeatures::from_upgrade(upgrade);
         let precompile = base_precompile!(
             "TxContext",
+            upgrade: upgrade,
             storage_features: storage_features,
             |ctx, calldata| TxContextStorage::new(ctx).dispatch(ctx, &calldata),
         );

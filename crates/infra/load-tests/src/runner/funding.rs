@@ -41,6 +41,9 @@ impl LoadRunner {
         funding_key: PrivateKeySigner,
         amount_per_account: U256,
     ) -> Result<()> {
+        if self.config.deploy64.is_some() {
+            self.deployment_signer = Some(funding_key.clone());
+        }
         let total_accounts = self.accounts.len();
         let client = self.client.clone();
         let primary_submission_rpc = self.config.primary_submission_rpc().clone();
@@ -89,6 +92,8 @@ impl LoadRunner {
         }
 
         let funder_address = funding_key.address();
+        self.gas_estimator =
+            Some(crate::rpc::GasEstimator::detect(client.clone(), funder_address).await?);
         let wallet = EthereumWallet::from(funding_key);
         let funder_provider =
             Arc::new(create_wallet_provider(primary_submission_rpc.clone(), wallet));
@@ -201,6 +206,28 @@ impl LoadRunner {
             );
         }
 
+        // Use the same fork-correct maximum budget for affordability, broadcast
+        // and replacement. Fresh recipients must be estimated before funding.
+        let estimator = self.gas_estimator.as_ref().expect("initialized above");
+        let funding_gas_limit = stream::iter(accounts_to_fund.iter().map(|(to, value)| {
+            estimator.apply(
+                TransactionRequest::default()
+                    .with_to(*to)
+                    .with_value(*value)
+                    .with_gas_limit(21_000),
+                funder_address,
+            )
+        }))
+        .buffer_unordered(FUNDING_CONCURRENCY)
+        .collect::<Vec<_>>()
+        .await
+        .into_iter()
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .filter_map(|tx| tx.gas)
+        .max()
+        .unwrap_or(21_000);
+
         // Phase 2: Early balance validation — abort before sending any TXs if
         // the funder cannot cover the total cost, including cancellations for any
         // stale nonce tail longer than the set of accounts that need funding.
@@ -217,7 +244,8 @@ impl LoadRunner {
         // funding txs will declare (1 wei tip) so affordability matches broadcast fees.
         let base_fee = client.get_base_fee().await?;
         let fees = pricer.funding_fees_for(base_fee);
-        let mut gas_cost_per_tx = U256::from(21_000u64).saturating_mul(U256::from(fees.max_fee));
+        let mut gas_cost_per_tx =
+            U256::from(funding_gas_limit).saturating_mul(U256::from(fees.max_fee));
         let total_gas_cost = gas_cost_per_tx.saturating_mul(U256::from(funding_request_count));
         let total_needed = total_deficit.saturating_add(total_gas_cost);
 
@@ -271,7 +299,8 @@ impl LoadRunner {
         while !txs_remaining.is_empty() {
             let base_fee = client.get_base_fee().await?;
             let fees = pricer.funding_fees_for(base_fee);
-            gas_cost_per_tx = U256::from(21_000u64).saturating_mul(U256::from(fees.max_fee));
+            gas_cost_per_tx =
+                U256::from(funding_gas_limit).saturating_mul(U256::from(fees.max_fee));
             info!(
                 base_fee,
                 max_fee = fees.max_fee,
@@ -299,7 +328,7 @@ impl LoadRunner {
                         .with_value(deficit)
                         .with_nonce(nonce)
                         .with_chain_id(chain_id)
-                        .with_gas_limit(21_000)
+                        .with_gas_limit(funding_gas_limit)
                         .with_max_fee_per_gas(fees.max_fee)
                         .with_max_priority_fee_per_gas(fees.priority_fee);
                     let result = provider.send_transaction(tx).await;
@@ -395,7 +424,7 @@ impl LoadRunner {
                                 .with_value(deficit)
                                 .with_nonce(nonce)
                                 .with_chain_id(chain_id)
-                                .with_gas_limit(21_000)
+                                .with_gas_limit(funding_gas_limit)
                                 .with_max_fee_per_gas(replacement_fees.max_fee)
                                 .with_max_priority_fee_per_gas(replacement_fees.priority_fee);
 
@@ -810,9 +839,28 @@ impl LoadRunner {
         let base_fee = self.client.get_base_fee().await?;
         let fees = pricer.funding_fees_for(base_fee);
 
+        let token_gas_limit = stream::iter(transfers_needed.iter().map(|(token, sender)| {
+            self.estimate_gas(
+                TransactionRequest::default()
+                    .with_to(*token)
+                    .with_input(Self::encode_erc20_mint(*sender, amount_per_token))
+                    .with_gas_limit(65_000),
+                funder_address,
+            )
+        }))
+        .buffer_unordered(FUNDING_CONCURRENCY)
+        .collect::<Vec<_>>()
+        .await
+        .into_iter()
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .filter_map(|tx| tx.gas)
+        .max()
+        .unwrap_or(65_000);
+
         // Pre-flight balance check — abort before sending any TXs if the funder
         // cannot cover the total gas cost for needed token transfers.
-        let gas_cost_per_tx = U256::from(65_000u64).saturating_mul(U256::from(fees.max_fee));
+        let gas_cost_per_tx = U256::from(token_gas_limit).saturating_mul(U256::from(fees.max_fee));
         let total_gas_cost = gas_cost_per_tx.saturating_mul(U256::from(transfers_needed.len()));
         let funder_balance = self.client.get_balance(funder_address).await.rpc("get balance")?;
 
@@ -847,7 +895,7 @@ impl LoadRunner {
                     .with_input(mint_data)
                     .with_nonce(nonce)
                     .with_chain_id(chain_id)
-                    .with_gas_limit(65_000)
+                    .with_gas_limit(token_gas_limit)
                     .with_max_fee_per_gas(fees.max_fee)
                     .with_max_priority_fee_per_gas(fees.priority_fee);
                 nonce += 1;
@@ -957,6 +1005,22 @@ impl LoadRunner {
                             "skipping drain, balance too low to cover gas"
                         );
                         return Ok::<_, BaselineError>(None);
+                    }
+
+                    // Reserve the fork-correct declared cost before computing the sweep value.
+                    let budget = self
+                        .estimate_gas(
+                            TransactionRequest::default()
+                                .with_to(funder_address)
+                                .with_value(U256::from(1))
+                                .with_gas_limit(drain_gas_limit as u64),
+                            address,
+                        )
+                        .await?;
+                    let drain_gas_limit = u128::from(budget.gas.expect("drain request has gas"));
+                    let drain_gas_cost = U256::from(drain_gas_limit * fees.max_fee + l1_fee_buffer);
+                    if balance <= drain_gas_cost {
+                        return Ok(None);
                     }
 
                     let send_amount = balance.saturating_sub(drain_gas_cost);

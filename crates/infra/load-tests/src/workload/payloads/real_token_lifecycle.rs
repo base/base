@@ -176,6 +176,11 @@ pub(super) async fn prepare(ctx: &mut ChainPrepContext<'_>, setup: &RealTokenSet
                     }
                 }
 
+                let estimator = crate::rpc::GasEstimator::detect(client.clone(), sender).await?;
+                // Preserve the legacy aggregate preflight. Amsterdam requests must
+                // be estimated after their setup dependencies (deposit/approval)
+                // settle, then checked against their exact effective budget.
+                if !estimator.is_amsterdam() {
                 let mut setup_gas_limit = approvals
                     .len()
                     .saturating_mul(ERC20_APPROVE_GAS_LIMIT as usize)
@@ -204,6 +209,7 @@ pub(super) async fn prepare(ctx: &mut ChainPrepContext<'_>, setup: &RealTokenSet
                         format_ether(setup_gas_cost),
                     )));
                 }
+                }
 
                 let wallet = EthereumWallet::from(signer);
                 let provider = create_wallet_provider(primary_submission_rpc, wallet);
@@ -224,6 +230,10 @@ pub(super) async fn prepare(ctx: &mut ChainPrepContext<'_>, setup: &RealTokenSet
                         .with_gas_limit(WETH_DEPOSIT_GAS_LIMIT)
                         .with_max_fee_per_gas(max_fee)
                         .with_max_priority_fee_per_gas(max_priority_fee);
+                    let tx = estimator.apply(tx, sender).await?;
+                    if estimator.is_amsterdam() {
+                        ensure_setup_affordable(&client, sender, &tx).await?;
+                    }
                     let pending = provider.send_transaction(tx).await.rpc("send WETH deposit")?;
                     trace!(
                         sender = %sender,
@@ -250,6 +260,10 @@ pub(super) async fn prepare(ctx: &mut ChainPrepContext<'_>, setup: &RealTokenSet
                         .with_gas_limit(ERC20_APPROVE_GAS_LIMIT)
                         .with_max_fee_per_gas(max_fee)
                         .with_max_priority_fee_per_gas(max_priority_fee);
+                    let tx = estimator.apply(tx, sender).await?;
+                    if estimator.is_amsterdam() {
+                        ensure_setup_affordable(&client, sender, &tx).await?;
+                    }
                     let pending = provider.send_transaction(tx).await.rpc("send ERC20 approval")?;
                     trace!(
                         sender = %sender,
@@ -284,6 +298,10 @@ pub(super) async fn prepare(ctx: &mut ChainPrepContext<'_>, setup: &RealTokenSet
                         .with_gas_limit(SETUP_SWAP_GAS_LIMIT)
                         .with_max_fee_per_gas(max_fee)
                         .with_max_priority_fee_per_gas(max_priority_fee);
+                    let tx = estimator.apply(tx, sender).await?;
+                    if estimator.is_amsterdam() {
+                        ensure_setup_affordable(&client, sender, &tx).await?;
+                    }
                     let pending = provider.send_transaction(tx).await.rpc("send setup swap")?;
                     trace!(
                         sender = %sender,
@@ -422,6 +440,7 @@ pub async fn recover_real_tokens(
                             .with_gas_limit(ERC20_APPROVE_GAS_LIMIT)
                             .with_max_fee_per_gas(max_fee)
                             .with_max_priority_fee_per_gas(max_priority_fee);
+                        let tx = crate::rpc::GasEstimator::setup(&client, tx, sender).await?;
                         let pending =
                             provider.send_transaction(tx).await.rpc("send pair approval")?;
                         trace!(
@@ -455,6 +474,7 @@ pub async fn recover_real_tokens(
                         .with_gas_limit(SETUP_SWAP_GAS_LIMIT)
                         .with_max_fee_per_gas(max_fee)
                         .with_max_priority_fee_per_gas(max_priority_fee);
+                    let tx = crate::rpc::GasEstimator::setup(&client, tx, sender).await?;
                     let pending =
                         provider.send_transaction(tx).await.rpc("send pair-token recovery swap")?;
                     trace!(
@@ -486,6 +506,7 @@ pub async fn recover_real_tokens(
                         .with_gas_limit(WETH_WITHDRAW_GAS_LIMIT)
                         .with_max_fee_per_gas(max_fee)
                         .with_max_priority_fee_per_gas(max_priority_fee);
+                    let tx = crate::rpc::GasEstimator::setup(&client, tx, sender).await?;
                     let pending = provider.send_transaction(tx).await.rpc("send WETH withdraw")?;
                     trace!(
                         sender = %sender,
@@ -529,6 +550,36 @@ pub async fn recover_real_tokens(
         "real-token recovery complete"
     );
     Ok(summary)
+}
+
+fn setup_cost(tx: &TransactionRequest) -> Result<U256> {
+    let gas = tx.gas.ok_or_else(|| {
+        BaselineError::Config("setup request missing effective gas budget".into())
+    })?;
+    let fee = tx
+        .max_fee_per_gas
+        .ok_or_else(|| BaselineError::Config("setup request missing max fee".into()))?;
+    Ok(tx.value.unwrap_or_default().saturating_add(U256::from(gas).saturating_mul(U256::from(fee))))
+}
+
+async fn ensure_setup_affordable(
+    client: &QueryProvider,
+    sender: Address,
+    tx: &TransactionRequest,
+) -> Result<()> {
+    let required = setup_cost(tx)?;
+    let balance = client
+        .get_balance(sender)
+        .block_id(BlockNumberOrTag::Pending.into())
+        .await
+        .rpc("get pending balance for estimated real-token setup")?;
+    if balance < required {
+        return Err(BaselineError::Transaction(format!(
+            "sender {sender} has insufficient balance for estimated real-token setup: has {balance} wei, needs {required} wei (gas budget {})",
+            tx.gas.expect("validated effective budget"),
+        )));
+    }
+    Ok(())
 }
 
 async fn read_erc20_balance(
@@ -688,4 +739,70 @@ async fn await_erc20_allowances(
     }
 
     Ok(settled)
+}
+
+#[cfg(test)]
+mod gas_budget_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn amsterdam_gas_budget_real_token_affordability_rpc() {
+        use httpmock::prelude::*;
+        let server = MockServer::start();
+        let balance = server.mock(|when, then| {
+            when.method(POST).body_includes("eth_getBalance").body_includes("pending");
+            then.json_body(serde_json::json!({"jsonrpc":"2.0","id":0,"result":format!("0x{:x}", 200_000_000_000_000u64)}));
+        });
+        let client = crate::rpc::RpcProviders::query(server.url("/").parse().unwrap()).unwrap();
+        let request = TransactionRequest::default()
+            .with_gas_limit(178_865)
+            .with_max_fee_per_gas(2_000_000_000);
+        let error = ensure_setup_affordable(&client, Address::ZERO, &request).await.unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "transaction failed: sender {} has insufficient balance for estimated real-token setup: has 200000000000000 wei, needs 357730000000000 wei (gas budget 178865)",
+                Address::ZERO
+            ),
+            "a balance sufficient for the old 65k hint must fail the effective-budget preflight before broadcast"
+        );
+        balance.assert_calls(1);
+    }
+
+    #[test]
+    fn amsterdam_gas_budget_real_token_affordability() {
+        let request = TransactionRequest::default()
+            .with_value(U256::from(1_000_000))
+            .with_gas_limit(255_750)
+            .with_max_fee_per_gas(2_000_000_000);
+        assert_eq!(
+            setup_cost(&request).unwrap(),
+            U256::from(511_500_001_000_000u64),
+            "deposit value plus the effective 255,750-gas budget at 2 gwei, not the legacy 100k hint"
+        );
+        let approval = TransactionRequest::default()
+            .with_gas_limit(178_865)
+            .with_max_fee_per_gas(2_000_000_000);
+        assert_eq!(
+            setup_cost(&approval).unwrap(),
+            U256::from(357_730_000_000_000u64),
+            "approval preflight must use the estimated budget rather than 65k"
+        );
+        let swap = TransactionRequest::default()
+            .with_gas_limit(568_879)
+            .with_max_fee_per_gas(2_000_000_000);
+        assert_eq!(
+            setup_cost(&swap).unwrap(),
+            U256::from(1_137_758_000_000_000u64),
+            "swap preflight must use the estimated budget rather than 250k"
+        );
+        let legacy = TransactionRequest::default()
+            .with_gas_limit(65_000)
+            .with_max_fee_per_gas(2_000_000_000);
+        assert_eq!(
+            setup_cost(&legacy).unwrap(),
+            U256::from(130_000_000_000_000u64),
+            "legacy declared-budget arithmetic remains unchanged"
+        );
+    }
 }

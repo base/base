@@ -439,8 +439,8 @@ summary = "Behavioural e2e test of the challenger: forks L1 into Anvil, patches 
 digest = "a085a1e104"
 
 ["crates/infra/load-tests/README.md"]
-summary = "Load testing: devnet/sepolia profiles, YAML workloads, calibration, adaptive or proactive validity signing, resource pacing, benchmark/report tools, and rollout limitations."
-digest = "a5633d6f46"
+summary = "Load testing: YAML workloads, validity signing, pacing and reports, shared Amsterdam gas estimation/admission budgets, token setup/recovery, devnet profiles and deployment-workload limitations."
+digest = "4d3d2154ab"
 
 ["crates/infra/roxy/README.md"]
 summary = "Scaffold-only Rust JSON-RPC reverse proxy meant to replace the ProxyD fork; currently just a listen-address flag plus /healthz and /readyz probes, no proxying yet."
@@ -653,6 +653,10 @@ digest = "fd4c93a6fc"
 ["docs/guides/BLOCK_PRODUCTION_REVIEW.md"]
 summary = "Review guide for block-production-sensitive PRs: mandatory payload size-limit gate across I/O boundaries, taxonomy of halt/stall scenarios (precompiles, builder, flashblocks), and a checklist."
 digest = "393c4961d6"
+
+["docs/guides/GLAMSTERDAM_L1_BASELINE.md"]
+summary = "Pinned Amsterdam EIPs, L1 gas values and dual-budget block accounting, custom genesis activation, retained Base fee policy and scope gaps for Denim/Everest testing."
+digest = "53565c9746"
 
 ["docs/guides/P2P.md"]
 summary = "Explains the Base P2P stack for newcomers: consensus-layer discv5 and libp2p gossipsub versus execution-layer reth networking, how they interact via Engine API, key files, flags, and glossary."

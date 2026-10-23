@@ -40,7 +40,6 @@ pub struct EvmPrecompileStorageProvider<'a> {
     chain_id: u64,
     beneficiary: Address,
     origin: Address,
-    state_gas_used: u64,
     storage_features: StorageFeatures,
 }
 
@@ -48,7 +47,7 @@ impl<'a> EvmPrecompileStorageProvider<'a> {
     /// Consume a [`PrecompileInput`] and build the provider.
     ///
     /// `gas_params` drives all EIP-2929/2200/3529 cost calculations.
-    /// Pass [`GasParams::default`] when the active spec is unknown at call site.
+    /// The caller must select the active fork's gas parameters.
     pub fn new(input: PrecompileInput<'a>, gas_params: GasParams) -> Self {
         Self::new_with_storage_features(input, gas_params, StorageFeatures::Legacy)
     }
@@ -59,7 +58,7 @@ impl<'a> EvmPrecompileStorageProvider<'a> {
         gas_params: GasParams,
         storage_features: StorageFeatures,
     ) -> Self {
-        let PrecompileInput { gas, caller, value, is_static, internals, .. } = input;
+        let PrecompileInput { gas, reservoir, caller, value, is_static, internals, .. } = input;
 
         let block_number = internals.block_env().number().to::<u64>();
         let timestamp = internals.block_env().timestamp();
@@ -71,7 +70,7 @@ impl<'a> EvmPrecompileStorageProvider<'a> {
             internals,
             caller,
             call_value: value,
-            gas: Gas::new(gas),
+            gas: Gas::new_with_regular_gas_and_reservoir(gas, reservoir),
             gas_params,
             is_static,
             block_number,
@@ -79,7 +78,6 @@ impl<'a> EvmPrecompileStorageProvider<'a> {
             chain_id,
             beneficiary,
             origin,
-            state_gas_used: 0,
             storage_features,
         }
     }
@@ -113,8 +111,9 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
 
         let code_len = code.len();
 
-        // Yellow Paper G_codedeposit: 200 gas per byte of deployed bytecode.
+        // Code deposit is regular gas before Amsterdam, state gas thereafter.
         self.deduct_gas(self.gas_params.code_deposit_cost(code_len))?;
+        self.deduct_state_gas(self.gas_params.code_deposit_state_gas(code_len))?;
 
         // Charge CREATE equivalent costs whenever code is written to an account that had no code,
         // regardless of its balance. A prefunded account (balance > 0, no code) passes the
@@ -129,8 +128,9 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
         };
 
         if is_new_code {
-            // Yellow Paper G_create: base cost for creating a new contract account.
+            // CREATE access is regular gas; Amsterdam metadata creation is state gas.
             self.deduct_gas(self.gas_params.create_cost())?;
+            self.deduct_state_gas(self.gas_params.create_state_gas())?;
             // Yellow Paper G_sha3 + G_sha3word: cost of computing the stored code hash.
             let num_words = code_len.div_ceil(32) as u64;
             self.deduct_gas(KECCAK256.saturating_add(KECCAK256WORD.saturating_mul(num_words)))?;
@@ -255,6 +255,9 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
             self.deduct_gas(self.gas_params.sstore_static_gas())?;
             // EIP-2929 + EIP-2200: dynamic cost (cold penalty + net-metering)
             self.deduct_gas(self.gas_params.sstore_dynamic_gas(true, &s.data, s.is_cold))?;
+            // Match revm's SSTORE state charge and uncapped 0→x→0 refill.
+            self.deduct_state_gas(self.gas_params.sstore_state_gas(&s.data))?;
+            self.gas.refill_reservoir(self.gas_params.sstore_state_gas_refill(&s.data));
             // EIP-3529: net-metering refund
             self.refund_gas(self.gas_params.sstore_refund(true, &s.data));
 
@@ -298,9 +301,9 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
     }
 
     fn deduct_state_gas(&mut self, gas: u64) -> Result<()> {
-        // No separate reservoir in the precompile context; state gas is drawn from regular gas.
-        self.deduct_gas(gas)?;
-        self.state_gas_used = self.state_gas_used.saturating_add(gas);
+        if !self.gas.record_state_cost(gas) {
+            return Err(BasePrecompileError::OutOfGas);
+        }
         Ok(())
     }
 
@@ -317,7 +320,7 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
     }
 
     fn state_gas_used(&self) -> u64 {
-        self.state_gas_used
+        self.gas.tracker().state_gas_spent().max(0) as u64
     }
 
     fn gas_refunded(&self) -> i64 {
@@ -325,7 +328,11 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
     }
 
     fn reservoir(&self) -> u64 {
-        0
+        self.gas.reservoir()
+    }
+
+    fn gas_tracker(&self) -> revm::interpreter::gas::GasTracker {
+        *self.gas.tracker()
     }
 
     fn storage_features(&self) -> StorageFeatures {
@@ -393,6 +400,141 @@ mod tests {
         hashmap::HashMapStorageProvider,
         provider::{PrecompileStorageProvider, StorageFeatures},
     };
+
+    #[test]
+    fn native_amsterdam_slot_refill_restores_each_funding_pool() {
+        for reservoir in [0, 50_000, 200_000] {
+            let mut ctx = EthEvmContext::new(EmptyDB::default(), SpecId::AMSTERDAM);
+            let mut provider =
+                make_evm_provider(&mut ctx, GasParams::new_spec(SpecId::AMSTERDAM), 200_000, false);
+            provider.gas.tracker_mut().set_reservoir(reservoir);
+            provider.sstore(Address::ZERO, U256::ZERO, U256::ONE).unwrap();
+            let spill = 97_920u64.saturating_sub(reservoir);
+            assert_eq!(
+                provider.gas_used(),
+                12_100 + spill,
+                "fresh SSTORE charges regular access/write plus reservoir deficit"
+            );
+            assert_eq!(
+                provider.gas_tracker().state_gas_spent(),
+                97_920,
+                "fresh slot charges exactly 64 bytes at CPSB 1530"
+            );
+            assert_eq!(
+                provider.gas_tracker().state_gas_spilled(),
+                spill,
+                "only the unfunded state charge spills"
+            );
+            provider.sstore(Address::ZERO, U256::ZERO, U256::ZERO).unwrap();
+            let out = StorageCtx::enter(&mut provider, |ctx| ctx.success_output(Bytes::new()));
+            assert_eq!(
+                out.gas_used, 12_200,
+                "0→x→0 restores spilled state gas, not regular SSTORE charges"
+            );
+            assert_eq!(out.state_gas_used, 0, "restored slot has no net state charge");
+            assert_eq!(out.state_gas_spilled, 0, "restoration repays the regular pool first");
+            assert_eq!(
+                out.reservoir, reservoir,
+                "restoration returns the original reservoir in full"
+            );
+            assert_eq!(
+                out.gas_refunded, 10_000,
+                "regular restoration refund stays in the capped refund counter"
+            );
+        }
+    }
+
+    #[test]
+    fn native_amsterdam_cross_frame_refill_preserves_signed_state_gas() {
+        let mut ctx = EthEvmContext::new(EmptyDB::default(), SpecId::AMSTERDAM);
+        {
+            let mut parent =
+                make_evm_provider(&mut ctx, GasParams::new_spec(SpecId::AMSTERDAM), 200_000, false);
+            parent.sstore(Address::ZERO, U256::ZERO, U256::ONE).unwrap();
+        }
+        let mut child =
+            make_evm_provider(&mut ctx, GasParams::new_spec(SpecId::AMSTERDAM), 200_000, false);
+        child.sstore(Address::ZERO, U256::ZERO, U256::ZERO).unwrap();
+        let out = StorageCtx::enter(&mut child, |ctx| ctx.success_output(Bytes::new()));
+        assert_eq!(
+            out.state_gas_used, -97_920,
+            "a child can return state gas charged by its ancestor"
+        );
+        assert_eq!(out.state_gas_spilled, 0, "the child did not fund the ancestor's charge");
+        assert_eq!(
+            out.reservoir, 97_920,
+            "the ancestor reconciles the returned reservoir with its spill"
+        );
+    }
+
+    #[test]
+    fn native_amsterdam_revert_and_halt_restore_reservoir_and_spill() {
+        for halt in [false, true] {
+            let mut ctx = EthEvmContext::new(EmptyDB::default(), SpecId::AMSTERDAM);
+            let mut provider =
+                make_evm_provider(&mut ctx, GasParams::new_spec(SpecId::AMSTERDAM), 200_000, false);
+            provider.gas.tracker_mut().set_reservoir(50_000);
+            provider.sstore(Address::ZERO, U256::ZERO, U256::ONE).unwrap();
+            let output = StorageCtx::enter(&mut provider, |ctx| {
+                if halt {
+                    ctx.error_result(BasePrecompileError::OutOfGas).unwrap()
+                } else {
+                    ctx.revert_output(Bytes::new())
+                }
+            });
+            assert_eq!(
+                output.state_gas_used, 97_920,
+                "failure output must retain state charge for frame rollback"
+            );
+            assert_eq!(
+                output.state_gas_spilled, 47_920,
+                "failure output must retain spill for frame rollback"
+            );
+            let mut child =
+                revm::handler::precompile_output_to_interpreter_result(output.into(), 200_000);
+            let mut parent = revm::interpreter::gas::GasTracker::new(200_000, 0, 50_000);
+            revm::handler::handle_reservoir_remaining_gas(
+                child.result,
+                &mut parent,
+                child.gas.tracker_mut(),
+            );
+            assert_eq!(
+                parent.reservoir(),
+                50_000,
+                "both revert and halt restore the inherited reservoir"
+            );
+            assert_eq!(
+                parent.remaining(),
+                if halt { 0 } else { 187_900 },
+                "revert returns spill and unused regular gas; halt consumes regular gas"
+            );
+            assert_eq!(parent.state_gas_spent(), 0, "failed frame contributes no state gas");
+            assert_eq!(parent.state_gas_spilled(), 0, "failed frame contributes no spill");
+            assert_eq!(parent.refunded(), 0, "failed frame contributes no refund");
+        }
+    }
+
+    #[test]
+    fn native_amsterdam_code_creation_charges_account_and_bytes() {
+        let mut ctx = EthEvmContext::new(EmptyDB::default(), SpecId::AMSTERDAM);
+        let mut provider =
+            make_evm_provider(&mut ctx, GasParams::new_spec(SpecId::AMSTERDAM), 200_000, false);
+        provider.gas.tracker_mut().set_reservoir(200_000);
+        provider
+            .set_code(Address::ZERO, Bytecode::new_legacy(Bytes::from_static(&[0xef])))
+            .unwrap();
+        let out = StorageCtx::enter(&mut provider, |ctx| ctx.success_output(Bytes::new()));
+        assert_eq!(out.gas_used, 12_036, "CREATE access plus one-word keccak are regular gas");
+        assert_eq!(
+            out.state_gas_used, 185_130,
+            "new contract metadata and one code byte cost (120+1)×1530"
+        );
+        assert_eq!(
+            out.state_gas_spilled, 0,
+            "a sufficient reservoir funds all code/account state gas"
+        );
+        assert_eq!(out.reservoir, 14_870, "unused code/account reservoir must be returned");
+    }
 
     fn amsterdam_provider() -> HashMapStorageProvider {
         let mut provider = HashMapStorageProvider::new(1);

@@ -7,7 +7,7 @@ use alloy_evm::{
     block::{BlockExecutorFactory, StateDB},
 };
 use base_common_chains::{ChainUpgrades, Upgrades};
-use revm::Inspector;
+use revm::{Inspector, primitives::hardfork::SpecId};
 
 use crate::{
     AlloyReceiptBuilder, BaseBlockExecutionCtx, BaseBlockExecutor, BaseEvmFactory,
@@ -62,6 +62,7 @@ where
     EvmF: EvmFactory<
         Tx: FromRecoveredTx<R::Transaction> + FromTxWithEncoded<R::Transaction> + BaseTxEnv,
     >,
+    EvmF::Spec: Into<SpecId>,
     Self: 'static,
 {
     type EvmFactory = EvmF;
