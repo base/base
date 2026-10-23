@@ -10,12 +10,11 @@ const PRUNE_INTERVAL: u64 = 1000;
 
 /// Per-destination deduplication tracker with a configurable time-to-live.
 ///
-/// Tracks transaction hashes accepted by one destination's queue. A transaction
-/// whose hash appears in the map
-/// and whose entry is younger than `resend_after` will be skipped. Entries are
-/// kept for twice `resend_after`, so a transaction due for a resend can be told
-/// apart from one never sent, and are pruned periodically (every [`PRUNE_INTERVAL`] lookups) to
-/// bound memory.
+/// Tracks transaction hashes accepted by one destination's queue. A transaction whose hash appears
+/// in the map and whose entry is younger than `resend_after` will be skipped. Entries are kept for
+/// at least twice `resend_after`, so a transaction due for a resend can be told apart from one
+/// never sent. Older entries are pruned every [`PRUNE_INTERVAL`] lookups to bound memory, so one
+/// can outlive twice `resend_after` until the next sweep.
 pub(super) struct RecentlySent {
     seen: HashMap<B256, Instant>,
     resend_after: Duration,
@@ -40,13 +39,14 @@ impl RecentlySent {
         self.seen.get(hash).is_some_and(|instant| instant.elapsed() < self.resend_after)
     }
 
-    /// Returns when a transaction sent earlier became due for a resend, or `None` if it was not
-    /// sent within the last two resend windows.
+    /// Returns when a transaction sent earlier is or was due for a resend, or `None` if it has no
+    /// entry. An entry lasts at least two resend windows; see [`RecentlySent`].
     pub(super) fn resend_due(&self, hash: &B256) -> Option<Instant> {
         self.seen.get(hash).map(|sent| *sent + self.resend_after)
     }
 
-    /// Returns `true` if the hash was sent within the last two resend windows.
+    /// Returns `true` if the hash has an entry, which lasts at least two resend windows; see
+    /// [`RecentlySent`].
     pub(super) fn was_sent(&self, hash: &B256) -> bool {
         self.seen.contains_key(hash)
     }
