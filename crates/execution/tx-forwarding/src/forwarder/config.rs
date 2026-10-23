@@ -15,8 +15,8 @@ pub(crate) const UNLIMITED_BATCH_BUFFER_LIMIT: usize = 1024;
 /// transactions buffer and flush as a single batch when it is due.
 #[derive(Debug, Clone)]
 pub(crate) struct ForwarderConfig {
-    /// Maximum RPC requests per second per forwarder, on average; up to `max_rps` requests may
-    /// go out at once after an idle second. 0 = unlimited.
+    /// Maximum RPC requests per second per forwarder, on average; after an idle second requests
+    /// go out with little spacing, which grows as the budget is spent. 0 = unlimited.
     pub(crate) max_rps: u32,
     /// Maximum transactions per RPC request. 0 = unlimited.
     pub(crate) max_batch_size: usize,

@@ -400,8 +400,9 @@ pub struct RpcStandardNodeArgs {
     )]
     pub tx_forwarding_batch_size: usize,
 
-    /// Average RPC requests per second per forwarder (0 = unlimited). After an idle second up to
-    /// this many go at once, so a one-second window can carry up to twice as many.
+    /// Average RPC requests per second per forwarder (0 = unlimited). After an idle second sends
+    /// go out with little spacing, which grows as the second's budget is spent, so a one-second
+    /// window can carry up to twice as many.
     #[arg(
         long = "tx-forwarding-max-rps",
         value_name = "TX_FORWARDING_MAX_RPS",

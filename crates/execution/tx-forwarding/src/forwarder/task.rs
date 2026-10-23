@@ -26,10 +26,13 @@ use super::{config::ForwarderConfig, metrics::ForwarderMetrics, request::Forward
 /// Builder method that inserts a whole batch of validated transactions in one call.
 const INSERT_BATCH_METHOD: &str = "base_insertValidatedTransactions";
 
-/// Token-bucket rate limiter: up to `max_rps` sends at once, refilled at `max_rps` per second.
+/// Token-bucket rate limiter: a bucket of `max_rps` sends, refilled at `max_rps` per second.
 ///
-/// Once the bucket is empty, sends are paced `1 / max_rps` apart, so no send waits longer than
-/// one interval. A sliding window of `max_rps` sends per second instead let a run of small sends
+/// Each send waits after the previous one for a share of the interval `1 / max_rps` equal to the
+/// share of the bucket already spent: not at all when it is full, a whole interval when it is
+/// empty. So no send waits longer than one interval, and under a sustained stream of small
+/// requests sends coalesce into larger batches while the bucket drains, rather than spending it
+/// on single requests and then pacing every later send a full interval apart. A sliding window of `max_rps` sends per second instead let a run of small sends
 /// spend the whole second's budget at once and then stall the destination queue for the rest of
 /// the second, repeating every second after it.
 struct RateLimiter {
@@ -37,6 +40,8 @@ struct RateLimiter {
     interval: Option<Duration>,
     /// When the next send would be due if every send had been paced exactly.
     next_due: Option<Instant>,
+    /// When the previous send started.
+    last_send: Option<Instant>,
 }
 
 impl RateLimiter {
@@ -44,7 +49,7 @@ impl RateLimiter {
         // Above 1e9 sends per second the interval would truncate to zero and remove the cap.
         let interval =
             (max_rps > 0).then(|| (Duration::from_secs(1) / max_rps).max(Duration::from_nanos(1)));
-        Self { interval, next_due: None }
+        Self { interval, next_due: None, last_send: None }
     }
 
     /// Returns `None` if a send is allowed at `now`, or `Some(wait)` with the precise duration
@@ -54,6 +59,12 @@ impl RateLimiter {
         let (interval, next_due) = (self.interval?, self.next_due?);
         let ahead = Duration::from_secs(1).saturating_sub(interval);
         let allowed_at = next_due.checked_sub(ahead).unwrap_or(next_due);
+        // The emptier the bucket, the longer the gap after the previous send, up to one interval
+        // when it is empty. Sends then coalesce while the bucket drains, instead of running it dry
+        // with small sends and pacing every later one a full interval apart.
+        let used = next_due.saturating_duration_since(now).as_secs_f64().min(1.0);
+        let spaced = self.last_send.map(|last| last + interval.mul_f64(used));
+        let allowed_at = spaced.map_or(allowed_at, |spaced| spaced.max(allowed_at));
         let wait = allowed_at.saturating_duration_since(now);
         (!wait.is_zero()).then_some(wait)
     }
@@ -61,6 +72,7 @@ impl RateLimiter {
     /// Records a send starting at `now`.
     fn record_send(&mut self, now: Instant) {
         if let Some(interval) = self.interval {
+            self.last_send = Some(now);
             self.next_due = Some(self.next_due.map_or(now, |due| due.max(now)) + interval);
         }
     }
@@ -659,41 +671,61 @@ mod tests {
         assert!(limiter.next_due.is_none());
     }
 
+    /// Sends as fast as the limiter allows from `start`, returning each send's wait.
+    fn waits_when_saturated(
+        limiter: &mut RateLimiter,
+        start: Instant,
+        sends: usize,
+    ) -> Vec<Duration> {
+        let mut now = start;
+        (0..sends)
+            .map(|_| {
+                let wait = limiter.check_rate_limit(now).unwrap_or_default();
+                now += wait;
+                limiter.record_send(now);
+                wait
+            })
+            .collect()
+    }
+
     /// A run of small sends must not spend the whole second's budget and then hold every later
-    /// send back for the rest of the second: after a full bucket, sends continue one interval
-    /// apart. A sliding one-second window would hold the 201st send back for about a second.
+    /// send back for the rest of the second. A sliding one-second window would hold the 201st
+    /// send back for about a second.
     #[test]
     fn rate_limiter_never_holds_a_send_back_longer_than_one_interval() {
         let mut limiter = RateLimiter::new(200);
-        let start = Instant::now();
 
-        let mut sent = 0;
-        while limiter.check_rate_limit(start).is_none() {
-            limiter.record_send(start);
-            sent += 1;
-        }
+        let waits = waits_when_saturated(&mut limiter, Instant::now(), 2_000);
 
-        assert_eq!(sent, 200, "a full bucket of max_rps sends goes out at once");
-        assert_eq!(limiter.check_rate_limit(start), Some(Duration::from_millis(5)));
-        for step in 1..=400 {
-            let now = start + Duration::from_millis(5) * step;
-            assert_eq!(limiter.check_rate_limit(now), None, "send {step} after the burst");
-            limiter.record_send(now);
-        }
+        assert!(waits.iter().all(|wait| *wait <= Duration::from_millis(5)));
     }
 
+    /// Saturated, the limiter averages `max_rps` sends per second, on top of at most one bucket.
     #[test]
     fn rate_limiter_enforces_limit() {
-        let mut limiter = RateLimiter::new(2);
-        let start = Instant::now();
-        for _ in 0..2 {
-            assert!(limiter.check_rate_limit(start).is_none(), "a full bucket sends at once");
-            limiter.record_send(start);
-        }
+        let mut limiter = RateLimiter::new(200);
 
-        assert_eq!(limiter.check_rate_limit(start), Some(Duration::from_millis(500)));
-        let half_way = start + Duration::from_millis(250);
-        assert_eq!(limiter.check_rate_limit(half_way), Some(Duration::from_millis(250)));
+        let waits = waits_when_saturated(&mut limiter, Instant::now(), 2_000);
+
+        let elapsed: Duration = waits.iter().sum();
+        assert!(elapsed >= Duration::from_secs(9), "2000 sends took {elapsed:?}");
+    }
+
+    /// An isolated send goes out at once, and the gap after each send grows as the bucket drains.
+    #[test]
+    fn rate_limiter_spaces_sends_further_apart_as_the_bucket_drains() {
+        let mut limiter = RateLimiter::new(200);
+        let start = Instant::now();
+        assert_eq!(limiter.check_rate_limit(start), None);
+
+        let waits = waits_when_saturated(&mut limiter, start, 400);
+
+        assert!(waits.windows(2).all(|pair| pair[0] <= pair[1]));
+        assert!(waits[1] > Duration::ZERO && waits[1] < Duration::from_micros(100));
+        assert!(waits[199] > waits[1], "the first bucketful spreads out instead of going at once");
+        assert!(waits[399] > Duration::from_millis(4), "a draining bucket nears a full interval");
+        let idle = start + waits.iter().sum::<Duration>() + Duration::from_secs(1);
+        assert_eq!(limiter.check_rate_limit(idle), None, "a refilled bucket sends at once");
     }
 
     #[tokio::test]
