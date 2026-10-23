@@ -9,7 +9,10 @@ This crate provides:
 - **`TxForwardingService`**: Starts one reader and forwarder pipeline per destination
 - **`TxForwardingHandle`**: Gracefully stops readers and drains destination queues
 - **Per-destination delivery**: Each builder has an independent bounded queue and deduplication cache
-- **Resend logic**: Automatically resends transactions that haven't been included after a configurable window
+- **Resend logic**: Automatically resends transactions that haven't been included after a configurable window,
+  or after 12s for transactions the builder accepted or reported as already imported. A connection
+  error or timeout to the builder puts those back on the regular window, since a restarted builder
+  has lost them
 
 ## Forwarding order
 
