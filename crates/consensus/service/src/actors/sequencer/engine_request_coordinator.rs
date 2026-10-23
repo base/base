@@ -103,7 +103,6 @@ where
     conductor: Option<Arc<dyn Conductor>>,
     sequencer_stopped: bool,
     sequencer_kind: SequencerKind,
-    isolated_sync_target: Option<Box<base_protocol::L2BlockInfo>>,
     unsafe_head_tx: watch::Sender<base_protocol::L2BlockInfo>,
 }
 
@@ -131,7 +130,6 @@ where
             conductor,
             sequencer_stopped,
             sequencer_kind: mode.into(),
-            isolated_sync_target: None,
             unsafe_head_tx,
         }
     }
@@ -589,8 +587,8 @@ where
                             drop(recv_wait_timer);
                             if self.sequencer_kind == SequencerKind::Isolated {
                                 if let SequencerEngineState::CatchingUp { catchup } = &self.sequencer_state
-                                    && let Some(head) = self.isolated_sync_target.as_deref().copied()
-                                    && catchup.is_at_latest_observed(head)
+                                    && !self.startup_complete(catchup)
+                                    && let Some(head) = catchup.latest_observed_head()
                                 {
                                     let client = Arc::clone(self.processor.client());
                                     let rollup = Arc::clone(self.processor.rollup());
@@ -743,21 +741,11 @@ where
                                         catchup.buffer_payload(*envelope)
                                     }
                                     SequencerKind::Isolated => {
-                                        catchup.observe_payload(&envelope);
-                                        match base_protocol::L2BlockInfo::from_payload_and_genesis(
-                                            envelope.execution_payload.clone(),
-                                            envelope.parent_beacon_block_root,
+                                        if let Err(err) = catchup.observe_isolated_payload(
+                                            &envelope,
                                             &self.processor.rollup().genesis,
                                         ) {
-                                            Ok(head) => {
-                                                if catchup.is_at_latest_observed(head) {
-                                                    self.isolated_sync_target =
-                                                        Some(Box::new(head));
-                                                }
-                                            }
-                                            Err(err) => {
-                                                warn!(target: "engine", error = %err, "Failed to decode isolated canonical EL sync target");
-                                            }
+                                            warn!(target: "engine", error = %err, "Failed to decode isolated canonical EL sync target");
                                         }
                                         self.processor.handle_external_unsafe_l2_block(*envelope);
                                     }
@@ -1178,11 +1166,19 @@ mod tests {
             .await;
         tokio::time::sleep(Duration::from_secs(6)).await;
         assert!(state_rx.borrow().el_sync_finished);
+        let fcu_count = client.storage().read().await.fork_choice_updated_v3_requests.len();
+        tokio::time::sleep(Duration::from_secs(6)).await;
+        assert_eq!(client.storage().read().await.fork_choice_updated_v3_requests.len(), fcu_count);
 
         let mut gossip = payload(if conflicting { 500 } else { 501 }, 2);
         let mut block =
             gossip.execution_payload.clone().try_into_block::<BaseTxEnvelope>().unwrap();
         block.header.timestamp += 1;
+        // The newer block must need the probe, not the normal extending-payload path.
+        assert_ne!(
+            block.header.parent_hash,
+            state_rx.borrow().sync_state.unsafe_head().block_info.hash
+        );
         gossip.execution_payload =
             BaseExecutionPayload::from_block_unchecked(block.hash_slow(), &block).0;
         let target_hash = gossip.execution_payload.block_hash();
