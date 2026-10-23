@@ -7,7 +7,6 @@ use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use base_protocol::{AttributesWithParent, L2BlockInfo};
 use tracing::debug;
 
-use super::CatchupGap;
 use crate::{EngineClientError, NodeOperatingMode, SequencerConfig};
 
 /// The kind of sequencer a node runs as, fixed for the life of the process.
@@ -77,6 +76,20 @@ impl CanonicalUnsafeCatchup {
     /// Retains an authenticated canonical payload in the rolling recent window.
     pub fn buffer_payload(&mut self, envelope: BaseExecutionPayloadEnvelope) {
         let number = envelope.execution_payload.block_number();
+        let observed = self.observations.contains_key(&number);
+        self.observe_payload(&envelope);
+        if self.faulted || observed {
+            return;
+        }
+        self.payloads.entry(number).or_insert(envelope);
+        while self.payloads.len() > Self::MAX_PAYLOADS {
+            self.payloads.pop_first();
+        }
+    }
+
+    /// Records the canonical target without retaining payloads while the EL syncs from peers.
+    pub fn observe_payload(&mut self, envelope: &BaseExecutionPayloadEnvelope) {
+        let number = envelope.execution_payload.block_number();
         let hash = envelope.execution_payload.block_hash();
         if self.faulted {
             return;
@@ -90,10 +103,6 @@ impl CanonicalUnsafeCatchup {
         self.observations.insert(number, hash);
         if self.highest_observed.is_none_or(|(highest, _)| number > highest) {
             self.highest_observed = Some((number, hash));
-        }
-        self.payloads.insert(number, envelope);
-        while self.payloads.len() > Self::MAX_PAYLOADS {
-            self.payloads.pop_first();
         }
         while self.observations.len() > Self::MAX_PAYLOADS {
             self.observations.pop_first();
@@ -119,16 +128,10 @@ impl CanonicalUnsafeCatchup {
         payloads
     }
 
-    /// Returns the blocks missing between `anchor` and the oldest buffered payload.
-    pub fn gap(&self, anchor: L2BlockInfo) -> Option<CatchupGap> {
-        let (&oldest, payload) =
-            self.payloads.range(anchor.block_info.number.saturating_add(1)..).next()?;
-        let first = anchor.block_info.number.saturating_add(1);
-        (oldest > first).then(|| CatchupGap {
-            first,
-            last: oldest - 1,
-            tip_hash: payload.execution_payload.parent_hash(),
-        })
+    /// Requires an EL-confirmed head matching the latest canonical gossip before private sealing.
+    pub fn is_el_sync_complete(&self, head: L2BlockInfo) -> bool {
+        !self.faulted
+            && self.highest_observed == Some((head.block_info.number, head.block_info.hash))
     }
 
     /// Removes payloads acknowledged by the execution engine.
@@ -376,7 +379,7 @@ mod tests {
     use base_protocol::{BlockInfo, L2BlockInfo};
 
     use super::{CanonicalUnsafeCatchup, ShadowReconciliationGate};
-    use crate::{CatchupGap, EngineClientError};
+    use crate::EngineClientError;
 
     fn head(number: u64, hash: B256) -> L2BlockInfo {
         L2BlockInfo {
@@ -426,20 +429,13 @@ mod tests {
     }
 
     #[test]
-    fn catchup_gap_spans_head_to_oldest_buffered_payload() {
-        let anchor = head(10, B256::with_last_byte(10));
+    fn el_sync_completion_requires_latest_canonical_head_without_safe_derivation() {
         let mut catchup = CanonicalUnsafeCatchup::default();
-        assert_eq!(catchup.gap(anchor), None);
-
-        catchup.buffer_payload(payload(15, B256::with_last_byte(14), B256::with_last_byte(15)));
-        catchup.buffer_payload(payload(14, B256::with_last_byte(13), B256::with_last_byte(14)));
-
-        assert_eq!(
-            catchup.gap(anchor),
-            Some(CatchupGap { first: 11, last: 13, tip_hash: B256::with_last_byte(13) })
-        );
-        assert_eq!(catchup.gap(head(13, B256::with_last_byte(13))), None);
-        assert_eq!(catchup.gap(head(15, B256::with_last_byte(15))), None);
+        catchup.observe_payload(&payload(500, B256::with_last_byte(14), B256::with_last_byte(15)));
+        assert!(!catchup.is_el_sync_complete(head(10, B256::with_last_byte(10))));
+        assert!(!catchup.is_el_sync_complete(head(500, B256::with_last_byte(99))));
+        assert!(catchup.is_el_sync_complete(head(500, B256::with_last_byte(15))));
+        assert!(catchup.payloads.is_empty());
     }
 
     #[test]
