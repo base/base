@@ -819,14 +819,14 @@ impl LoadRunner {
         let _deployment_guard = deployment_stop.clone().drop_guard();
         let deployment_task = if prefill_result.is_ok() {
             self.config.deploy64.clone().map(|config| {
-                tokio::spawn(super::deploy64::run(
+                super::deploy64::start(
                     self.config.primary_submission_rpc().clone(),
                     self.deployment_signer.clone().expect("validated deployment signer"),
                     self.config.chain_id,
                     config,
                     self.config.max_gas_price,
                     deployment_stop.clone(),
-                ))
+                )
             })
         } else {
             None
@@ -1215,15 +1215,7 @@ impl LoadRunner {
             self.fresh_recipient_count(),
         );
         if let Some(task) = deployment_task {
-            summary.deploy64 = task.await.map_err(|error| {
-                BaselineError::Transaction(format!("deploy64 worker failed: {error}"))
-            })?;
-        }
-        if open_loop_enqueue_error.is_none()
-            && let Some(error) = summary.deploy64.iter().find_map(|result| result.error.as_ref())
-        {
-            open_loop_enqueue_error =
-                Some(BaselineError::Transaction(format!("deploy64 workload failed: {error}")));
+            summary.deploy64 = task.finish().await;
         }
         let measurement_window = results_tracker.measurement_window();
         summary.measurement_start_block = measurement_window.start_block;
@@ -1233,15 +1225,7 @@ impl LoadRunner {
             info!(fresh_recipient_count, "fresh recipient generation complete");
         }
 
-        if let Some(err) = open_loop_enqueue_error {
-            // Stash the real stats gathered so far (submitted/confirmed/failed counts, gas,
-            // latencies) so callers can present them alongside the error instead of an
-            // all-zero summary — plenty of transactions may have landed before the failure.
-            summary.error = Some(err.to_string());
-            self.partial_summary = Some(summary);
-            return Err(err);
-        }
-        Ok(summary)
+        self.conclude_run(summary, open_loop_enqueue_error)
     }
 
     async fn sender_start_nonces(&self, sender_addresses: &[Address]) -> Result<Vec<u64>> {
