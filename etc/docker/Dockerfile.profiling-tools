@@ -1,9 +1,12 @@
 # syntax=docker/dockerfile:1
+# Optional ca_bundle secret mounts support custom CA bundles; see etc/docker/README.md.
 FROM public.ecr.aws/docker/library/golang:1.24.13-trixie
 
 ARG TARGETARCH
 ARG PROFILECLI_VERSION=1.18.1
-RUN set -eux; \
+RUN --mount=type=secret,id=ca_bundle,target=/run/secrets/ca_bundle,required=false \
+    set -eux; \
+    if [ -f /run/secrets/ca_bundle ]; then export SSL_CERT_FILE=/run/secrets/ca_bundle CURL_CA_BUNDLE=/run/secrets/ca_bundle; fi; \
     case "$TARGETARCH" in \
       amd64) PROFILECLI_SHA256=22a3e6f8647768276f8d9ad3aeb0b7ba86151e19ce7b24d7f7fbe78f21941c72 ;; \
       arm64) PROFILECLI_SHA256=d01c90a819acf4ab853e5b92b36d7923989fcaea96f5cdab12cccae66374f680 ;; \
