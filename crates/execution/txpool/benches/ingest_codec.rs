@@ -11,6 +11,9 @@
 //! - `builder_reencode`: the EIP-2718 encoding builder validation computes for the L1 data fee.
 //! - `sender_recovery`: the signature recovery the builder skips by trusting the forwarded
 //!   sender, for scale.
+//! - `mempool_ingress`: a mempool node admitting an `eth_sendRawTransaction` payload: decoding and
+//!   recovering it with `PoolTransaction::recover_raw_transaction`, then reading the EIP-2718 bytes
+//!   and DA size its validation and forwarding use.
 //!
 //! ```sh
 //! cargo bench -p base-execution-txpool --bench ingest_codec
@@ -34,6 +37,10 @@ use reth_transaction_pool::PoolTransaction;
 
 /// A transfer (no calldata) and a contract call with swap-sized calldata.
 const CALLDATA_SIZES: [usize; 2] = [0, 1_024];
+
+/// Calldata sizes for `mempool_ingress`: a transfer, a typical mainnet transaction (~570 B
+/// encoded), a swap, and a calldata-heavy call.
+const INGRESS_CALLDATA_SIZES: [usize; 4] = [0, 450, 1_024, 16_384];
 
 fn signed(calldata: usize) -> (BaseTransactionSigned, Address) {
     let signer = PrivateKeySigner::random();
@@ -150,6 +157,24 @@ fn bench(c: &mut Criterion) {
             let decoded =
                 BaseTransactionSigned::decode_2718(&mut tx.raw.as_ref()).expect("decodes");
             b.iter(|| black_box(&decoded).recover_signer().expect("recovers"))
+        });
+    }
+    group.finish();
+
+    let mut group = c.benchmark_group("mempool_ingress");
+    for size in INGRESS_CALLDATA_SIZES {
+        let raw = wire(size, NoExtensions {}).raw;
+        group.bench_with_input(BenchmarkId::from_parameter(size), &raw, |b, raw| {
+            b.iter(|| {
+                let pooled =
+                    BasePooledTransaction::<BaseTransactionSigned>::recover_raw_transaction(
+                        black_box(raw),
+                    )
+                    .expect("recovers");
+                black_box(pooled.estimated_compressed_size());
+                black_box(BasePooledTx::encoded_2718(&pooled).len());
+                pooled
+            })
         });
     }
     group.finish();

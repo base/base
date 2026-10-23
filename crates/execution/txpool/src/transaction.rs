@@ -26,7 +26,7 @@ use c_kzg::KzgSettings;
 use reth_primitives_traits::{InMemorySize, SignedTransaction};
 use reth_transaction_pool::{
     EthBlobTransactionSidecar, EthPoolTransaction, EthPooledTransaction, PoolTransaction,
-    PriceBumpConfig,
+    PriceBumpConfig, RawPoolTransactionError,
 };
 
 use crate::estimated_da_size::DataAvailabilitySized;
@@ -237,6 +237,26 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
     pub fn encoded_2718(&self) -> &Bytes {
         self.encoded_2718.get_or_init(|| self.inner.transaction().encoded_2718().into())
     }
+
+    /// Keeps a copy of `encoded` as the cached [`Self::encoded_2718`], so its first use does not
+    /// re-encode the transaction.
+    ///
+    /// `encoded` must be the complete input this transaction was decoded from, as raw-transaction
+    /// decoding guarantees by rejecting trailing bytes. Strict RLP decoding then makes it the
+    /// canonical encoding. Bytes whose length differs from this transaction's encoding, as for a
+    /// pooled form that encodes differently from the consensus form, are not kept.
+    #[must_use]
+    pub fn with_raw_encoding(mut self, encoded: &[u8]) -> Self {
+        if encoded.len() == self.inner.transaction().encode_2718_len() {
+            debug_assert_eq!(
+                self.inner.transaction().encoded_2718(),
+                encoded,
+                "exactly decoded bytes must be the canonical EIP-2718 encoding"
+            );
+            self.encoded_2718 = OnceLock::from(Bytes::copy_from_slice(encoded));
+        }
+        self
+    }
 }
 
 impl<Cons: SignedTransaction, Pooled> DataAvailabilitySized
@@ -300,6 +320,24 @@ where
     fn from_pooled(tx: Recovered<Self::Pooled>) -> Self {
         let encoded_len = tx.encode_2718_len();
         Self::new(tx.convert(), encoded_len)
+    }
+
+    /// Keeps the received bytes as the cached EIP-2718 encoding, so mempool validation (DA size
+    /// and L1 fee) and builder forwarding do not re-encode the transaction.
+    fn recover_raw_transaction(data: &[u8]) -> Result<Self, RawPoolTransactionError> {
+        let transaction = Self::try_recover(Self::decode_raw_transaction(data)?)
+            .map_err(|_| RawPoolTransactionError::InvalidTransactionSignature)?;
+        Ok(transaction.with_raw_encoding(data))
+    }
+
+    /// [`Self::recover_raw_transaction`], recovering the sender through `cache`.
+    fn recover_raw_transaction_with_cache(
+        data: &[u8],
+        cache: &reth_evm::SenderRecoveryCache,
+    ) -> Result<Self, RawPoolTransactionError> {
+        let transaction = Self::try_recover_with_cache(Self::decode_raw_transaction(data)?, cache)
+            .map_err(|_| RawPoolTransactionError::InvalidTransactionSignature)?;
+        Ok(transaction.with_raw_encoding(data))
     }
 
     fn hash(&self) -> &TxHash {
@@ -752,8 +790,9 @@ mod tests {
     use reth_primitives_traits::InMemorySize;
     use reth_provider::test_utils::MockEthProvider;
     use reth_transaction_pool::{
-        PoolTransaction, PriceBumpConfig, TransactionOrigin, TransactionValidationOutcome,
-        blobstore::InMemoryBlobStore, validate::EthTransactionValidatorBuilder,
+        PoolTransaction, PriceBumpConfig, RawPoolTransactionError, TransactionOrigin,
+        TransactionValidationOutcome, blobstore::InMemoryBlobStore,
+        validate::EthTransactionValidatorBuilder,
     };
 
     use crate::{
@@ -1037,6 +1076,31 @@ mod tests {
         assert!(!transaction.encoded_2718().is_empty());
 
         assert_eq!(transaction.size(), size, "pooled size must not change while pooled");
+    }
+
+    #[test]
+    fn recover_raw_transaction_caches_the_received_encoding() {
+        for source in [eip1559_pooled_with_fees(1, 2), eip8130_pooled(U256::ZERO)] {
+            let raw = source.encoded_2718().clone();
+
+            let recovered = <BasePooledTransaction>::recover_raw_transaction(&raw).unwrap();
+
+            assert_eq!(recovered.hash(), source.hash());
+            assert_eq!(recovered.sender(), source.sender());
+            assert_eq!(recovered.encoded_length(), raw.len());
+            assert_eq!(recovered.encoded_2718(), &raw);
+        }
+    }
+
+    #[test]
+    fn recover_raw_transaction_still_rejects_trailing_bytes() {
+        let mut raw = eip1559_pooled_with_fees(1, 2).encoded_2718().to_vec();
+        raw.push(0);
+
+        assert!(matches!(
+            <BasePooledTransaction>::recover_raw_transaction(&raw),
+            Err(RawPoolTransactionError::FailedToDecodeSignedTransaction)
+        ));
     }
 
     #[test]
