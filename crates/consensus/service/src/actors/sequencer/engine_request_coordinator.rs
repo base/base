@@ -146,8 +146,8 @@ where
     /// Validates an authorized admin start against the serialized engine state.
     ///
     /// Conductor supplies its committed head to admin start even when it has no new payload to
-    /// post. That head can release an unobserved non-shadow catch-up, but cannot override known
-    /// gaps or conflicts. The caller must check conductor leadership before requesting activation.
+    /// post. That head can release a regular conductor follower's unobserved catch-up, but cannot
+    /// override known gaps or conflicts. The caller must check conductor leadership before activation.
     /// Shadow starts validate the head without changing catch-up or reconciliation state.
     pub fn prepare_sequencer_start(
         &mut self,
@@ -167,30 +167,27 @@ where
             )));
         }
 
-        // Shadow activation must not release its catch-up or reconciliation gate.
-        if self.is_shadow_sequencer() {
-            return Ok(());
-        }
-
-        if !self.processor.engine_state().el_sync_finished {
-            return Err(EngineClientError::ELSyncing);
-        }
-
-        if let SequencerEngineState::CatchingUp { catchup } = &self.sequencer_state {
-            if catchup.is_faulted() {
-                return Err(EngineClientError::ShadowBufferFaulted);
-            }
-
-            let complete = match self.sequencer_kind {
-                SequencerKind::Regular => {
-                    !catchup.has_observations() || catchup.is_complete(head, sync_state.safe_head())
+        match self.sequencer_kind {
+            // Admin start must not release shadow catch-up or reconciliation.
+            SequencerKind::Shadow => return Ok(()),
+            kind @ (SequencerKind::Regular | SequencerKind::Isolated) => {
+                if !self.processor.engine_state().el_sync_finished {
+                    return Err(EngineClientError::ELSyncing);
                 }
-                SequencerKind::Isolated | SequencerKind::Shadow => {
-                    catchup.is_el_sync_complete(head)
+                if let SequencerEngineState::CatchingUp { catchup } = &self.sequencer_state {
+                    if catchup.is_faulted() {
+                        return Err(EngineClientError::ShadowBufferFaulted);
+                    }
+                    let complete = if kind == SequencerKind::Isolated {
+                        catchup.is_at_latest_observed(head)
+                    } else {
+                        !catchup.has_observations()
+                            || catchup.is_complete(head, sync_state.safe_head())
+                    };
+                    if !complete {
+                        return Err(EngineClientError::ELSyncing);
+                    }
                 }
-            };
-            if !complete {
-                return Err(EngineClientError::ELSyncing);
             }
         }
 
@@ -198,6 +195,10 @@ where
             self.sequencer_state,
             SequencerEngineState::Regular | SequencerEngineState::CatchingUp { .. }
         ) {
+            if self.sequencer_kind == SequencerKind::Isolated {
+                // Deferred canonical tasks must not survive onto the private chain.
+                self.processor.engine_mut().clear();
+            }
             self.sequencer_state = self.sequencer_kind.completed_state(head);
         }
         Ok(())
@@ -248,10 +249,12 @@ where
                 self.sequencer_kind,
                 catchup.is_faulted(),
                 match self.sequencer_kind {
-                    SequencerKind::Regular => catchup.is_complete(head, sync_state.safe_head()),
-                    SequencerKind::Isolated | SequencerKind::Shadow => {
+                    SequencerKind::Regular | SequencerKind::Shadow => {
+                        catchup.is_complete(head, sync_state.safe_head())
+                    }
+                    SequencerKind::Isolated => {
                         self.processor.engine_state().el_sync_finished
-                            && catchup.is_el_sync_complete(head)
+                            && catchup.is_at_latest_observed(head)
                     }
                 },
             ),
@@ -270,7 +273,7 @@ where
                     .await;
             }
             (_, _, false) => {
-                warn!(target: "engine", "Deferring sequencer reset until canonical catch-up completes");
+                warn!(target: "engine", "Deferring sequencer reset until canonical startup completes");
                 responder
                     .finish(ResetRequestOutcome::Deferred, head, Err(EngineClientError::ELSyncing))
                     .await;
@@ -289,8 +292,11 @@ where
                     target: "engine",
                     canonical_head = head.block_info.number,
                     canonical_hash = %head.block_info.hash,
-                    "Private sequencer EL sync completed"
+                    "Private sequencer canonical startup completed"
                 );
+                if kind == SequencerKind::Isolated {
+                    self.processor.engine_mut().clear();
+                }
                 self.sequencer_state = kind.completed_state(head);
                 self.unsafe_head_tx.send_replace(head);
                 responder
@@ -350,14 +356,10 @@ where
             let anchor = self.processor.engine_state().sync_state.unsafe_head();
             match &mut self.sequencer_state {
                 SequencerEngineState::ShadowActive(gate) => gate.reanchor(anchor),
-                SequencerEngineState::CatchingUp { catchup }
-                    if self.sequencer_kind == SequencerKind::Regular =>
-                {
+                SequencerEngineState::CatchingUp { catchup } => {
                     *catchup = CanonicalUnsafeCatchup::default();
                 }
-                SequencerEngineState::Regular
-                | SequencerEngineState::IsolatedActive
-                | SequencerEngineState::CatchingUp { .. } => {}
+                SequencerEngineState::Regular | SequencerEngineState::IsolatedActive => {}
             }
             self.unsafe_head_tx.send_replace(anchor);
             if let Err(error) = self.processor.notify_derivation_of_reset(*safe_head).await {
@@ -399,14 +401,10 @@ where
     }
 
     async fn advance_canonical_catchup(&mut self) -> Result<(), EngineError> {
-        if self.sequencer_kind != SequencerKind::Regular {
-            return Ok(());
-        }
         let anchor = self.processor.engine_state().sync_state.unsafe_head();
         let SequencerEngineState::CatchingUp { catchup } = &mut self.sequencer_state else {
             return Ok(());
         };
-        catchup.commit(anchor);
         let payloads = catchup.contiguous_payloads(anchor);
         if payloads.is_empty() {
             return Ok(());
@@ -430,7 +428,7 @@ where
         {
             Ok(head) => {
                 if let SequencerEngineState::CatchingUp { catchup } = &mut self.sequencer_state {
-                    catchup.commit(head);
+                    catchup.contiguous_payloads(head);
                 }
             }
             Err(error) => {
@@ -505,15 +503,17 @@ where
                 };
             }
             match (self.sequencer_kind, bootstrap_role) {
-                (SequencerKind::Isolated | SequencerKind::Shadow, _) => {
+                (SequencerKind::Isolated, _) => {
                     self.processor.bootstrap_validator(opt_head).await;
                 }
-                (SequencerKind::Regular, BootstrapRole::ConductorFollower) => {
-                    self.processor.bootstrap_conductor_follower(opt_head).await
-                }
-                (SequencerKind::Regular, BootstrapRole::ActiveSequencer) => {
-                    self.processor.bootstrap_active_sequencer(opt_head, at_genesis).await
-                }
+                (
+                    SequencerKind::Regular | SequencerKind::Shadow,
+                    BootstrapRole::ConductorFollower,
+                ) => self.processor.bootstrap_conductor_follower(opt_head).await,
+                (
+                    SequencerKind::Regular | SequencerKind::Shadow,
+                    BootstrapRole::ActiveSequencer,
+                ) => self.processor.bootstrap_active_sequencer(opt_head, at_genesis).await,
             }
 
             let mut el_sync_probe_interval = time::interval_at(
@@ -546,9 +546,7 @@ where
                     if self.is_shadow_active() {
                         return Err(EngineError::ShadowInternalReset);
                     }
-                    if self.sequencer_kind == SequencerKind::Regular
-                        && let SequencerEngineState::CatchingUp { catchup } =
-                            &mut self.sequencer_state
+                    if let SequencerEngineState::CatchingUp { catchup } = &mut self.sequencer_state
                     {
                         *catchup = CanonicalUnsafeCatchup::default();
                     }
@@ -573,7 +571,7 @@ where
                 let el_sync_finished = self.processor.engine_state().el_sync_finished;
                 let recv_result = tokio::select! {
                     request = request_channel.recv() => request,
-                    _ = el_sync_probe_interval.tick(), if !el_sync_finished && self.sequencer_kind == SequencerKind::Regular => {
+                    _ = el_sync_probe_interval.tick(), if !el_sync_finished && self.sequencer_kind != SequencerKind::Isolated => {
                         drop(recv_wait_timer);
                         let active_sequencer = self.resolve_bootstrap_role().await
                             == BootstrapRole::ActiveSequencer;
@@ -707,8 +705,10 @@ where
                         match &mut self.sequencer_state {
                             SequencerEngineState::CatchingUp { catchup } => {
                                 match self.sequencer_kind {
-                                    SequencerKind::Regular => catchup.buffer_payload(*envelope),
-                                    SequencerKind::Isolated | SequencerKind::Shadow => {
+                                    SequencerKind::Regular | SequencerKind::Shadow => {
+                                        catchup.buffer_payload(*envelope)
+                                    }
+                                    SequencerKind::Isolated => {
                                         catchup.observe_payload(&envelope);
                                         self.processor.handle_external_unsafe_l2_block(*envelope);
                                     }
@@ -831,8 +831,11 @@ mod tests {
     use base_common_genesis::RollupConfig;
     use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
     use base_consensus_engine::{
-        Engine, EngineState,
-        test_utils::{MockEngineClient, TestEngineStateBuilder, test_engine_client_builder},
+        ConsolidateTask, Engine, EngineState, EngineTask,
+        test_utils::{
+            MockEngineClient, TestAttributesBuilder, TestEngineStateBuilder,
+            test_engine_client_builder,
+        },
     };
     use base_protocol::{BlockInfo, L2BlockInfo};
     use jsonrpsee::core::ClientError;
@@ -994,7 +997,7 @@ mod tests {
                 parent_beacon_block_root: None,
             });
         }
-        catchup.commit(head);
+        catchup.contiguous_payloads(head);
         *coordinator.sequencer_state_mut() = SequencerEngineState::CatchingUp { catchup };
 
         let result = coordinator.prepare_sequencer_start(B256::with_last_byte(requested_hash));
@@ -1092,7 +1095,7 @@ mod tests {
         );
         let mut catchup = CanonicalUnsafeCatchup::default();
         for &(number, hash) in observations {
-            catchup.buffer_payload(BaseExecutionPayloadEnvelope {
+            catchup.observe_payload(&BaseExecutionPayloadEnvelope {
                 execution_payload: BaseExecutionPayload::V1(ExecutionPayloadV1 {
                     block_number: number,
                     block_hash: B256::with_last_byte(hash),
@@ -1112,10 +1115,15 @@ mod tests {
                 parent_beacon_block_root: None,
             });
         }
-        catchup.commit(head);
         *coordinator.sequencer_state_mut() = SequencerEngineState::CatchingUp { catchup };
 
         let accepted = accepted && el_synced;
+        let queue_rx = coordinator.processor.engine_mut().queue_length_subscribe();
+        coordinator.processor.enqueue(EngineTask::Consolidate(Box::new(ConsolidateTask::new(
+            Arc::clone(coordinator.processor.client()),
+            Arc::clone(coordinator.processor.rollup()),
+            TestAttributesBuilder::new().with_parent(head).build(),
+        ))));
         let result = if startup_reset {
             let (result_tx, mut result_rx) = mpsc::channel(1);
             coordinator
@@ -1131,6 +1139,7 @@ mod tests {
             coordinator.prepare_sequencer_start(head.block_info.hash)
         };
         assert_eq!(result.is_ok(), accepted);
+        assert_eq!(*queue_rx.borrow(), usize::from(!accepted));
         assert_eq!(coordinator.processor.engine_state().sync_state.unsafe_head(), head);
         assert_eq!(
             matches!(coordinator.sequencer_state(), SequencerEngineState::IsolatedActive),

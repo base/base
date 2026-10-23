@@ -14,7 +14,7 @@ use crate::{EngineClientError, NodeOperatingMode, SequencerConfig};
 pub enum SequencerKind {
     /// Sequences on the canonical chain.
     Regular,
-    /// Stops following canonical inputs after startup catch-up and produces a private chain.
+    /// Syncs through the EL, then drops canonical inputs and produces a private chain.
     Isolated,
     /// Produces private blocks and reconciles them with the canonical chain.
     Shadow,
@@ -31,7 +31,7 @@ impl From<NodeOperatingMode> for SequencerKind {
 }
 
 impl SequencerKind {
-    /// Returns the engine state entered once catch-up completes at the canonical `head`.
+    /// Returns the engine state entered once canonical startup completes at `head`.
     pub fn completed_state(self, head: L2BlockInfo) -> SequencerEngineState {
         match self {
             Self::Regular => SequencerEngineState::Regular,
@@ -48,19 +48,19 @@ impl SequencerKind {
 pub enum SequencerEngineState {
     /// No canonical catch-up or shadow reconciliation routing is active.
     Regular,
-    /// The sequencer is following canonical safe derivation and unsafe gossip.
+    /// The sequencer is following canonical inputs before private block production.
     CatchingUp {
-        /// Rolling canonical unsafe payload buffer shared by follower sequencers.
+        /// Canonical observations, with payloads retained by regular followers and shadows.
         catchup: CanonicalUnsafeCatchup,
     },
     /// Private block production is active and canonical inputs are buffered for reconciliation.
     ShadowActive(Box<ShadowReconciliationGate>),
-    /// An isolated sequencer finished startup catch-up and now drops all canonical inputs so
+    /// An isolated sequencer finished EL sync and now drops all canonical inputs so
     /// they cannot reorg its private chain.
     IsolatedActive,
 }
 
-/// Rolling canonical unsafe payloads retained while safe derivation catches up.
+/// Canonical gossip observations, optionally retaining payloads for ordered catch-up.
 #[derive(Debug, Default)]
 pub struct CanonicalUnsafeCatchup {
     payloads: BTreeMap<u64, BaseExecutionPayloadEnvelope>,
@@ -109,11 +109,12 @@ impl CanonicalUnsafeCatchup {
         }
     }
 
-    /// Returns the contiguous canonical suffix that can extend `anchor` now.
-    ///
-    /// Buffered payloads are kept until [`Self::commit`], so `anchor` may be a block that the
-    /// engine has not acknowledged yet.
-    pub fn contiguous_payloads(&self, anchor: L2BlockInfo) -> Vec<BaseExecutionPayloadEnvelope> {
+    /// Discards payloads through `anchor` and returns the contiguous canonical suffix extending it.
+    pub fn contiguous_payloads(
+        &mut self,
+        anchor: L2BlockInfo,
+    ) -> Vec<BaseExecutionPayloadEnvelope> {
+        self.payloads.retain(|number, _| *number > anchor.block_info.number);
         let mut number = anchor.block_info.number.saturating_add(1);
         let mut parent = anchor.block_info.hash;
         let mut payloads = Vec::new();
@@ -128,18 +129,10 @@ impl CanonicalUnsafeCatchup {
         payloads
     }
 
-    /// Requires an EL-confirmed head matching the latest canonical gossip before private sealing.
-    pub fn is_el_sync_complete(&self, head: L2BlockInfo) -> bool {
+    /// Returns whether `head` matches the latest canonical gossip by number and hash.
+    pub fn is_at_latest_observed(&self, head: L2BlockInfo) -> bool {
         !self.faulted
             && self.highest_observed == Some((head.block_info.number, head.block_info.hash))
-    }
-
-    /// Removes payloads acknowledged by the execution engine.
-    ///
-    /// Recent observations remain bounded separately so conflicting gossip for an acknowledged
-    /// height still faults catch-up.
-    pub fn commit(&mut self, head: L2BlockInfo) {
-        self.payloads.retain(|number, _| *number > head.block_info.number);
     }
 
     /// Returns whether conflicting canonical observations have faulted catch-up.
@@ -424,17 +417,17 @@ mod tests {
         assert!(!catchup.is_complete(safe, safe));
 
         let canonical_head = head(12, B256::with_last_byte(12));
-        catchup.commit(canonical_head);
+        catchup.contiguous_payloads(canonical_head);
         assert!(catchup.is_complete(canonical_head, safe));
     }
 
     #[test]
-    fn el_sync_completion_requires_latest_canonical_head_without_safe_derivation() {
+    fn latest_observed_requires_exact_canonical_head_without_safe_derivation() {
         let mut catchup = CanonicalUnsafeCatchup::default();
         catchup.observe_payload(&payload(500, B256::with_last_byte(14), B256::with_last_byte(15)));
-        assert!(!catchup.is_el_sync_complete(head(10, B256::with_last_byte(10))));
-        assert!(!catchup.is_el_sync_complete(head(500, B256::with_last_byte(99))));
-        assert!(catchup.is_el_sync_complete(head(500, B256::with_last_byte(15))));
+        assert!(!catchup.is_at_latest_observed(head(10, B256::with_last_byte(10))));
+        assert!(!catchup.is_at_latest_observed(head(500, B256::with_last_byte(99))));
+        assert!(catchup.is_at_latest_observed(head(500, B256::with_last_byte(15))));
         assert!(catchup.payloads.is_empty());
     }
 
@@ -462,7 +455,7 @@ mod tests {
         for number in 1..=CanonicalUnsafeCatchup::MAX_PAYLOADS as u64 {
             catchup.buffer_payload(payload(number, B256::ZERO, B256::from(U256::from(number))));
         }
-        catchup.commit(head(
+        catchup.contiguous_payloads(head(
             CanonicalUnsafeCatchup::MAX_PAYLOADS as u64,
             B256::from(U256::from(CanonicalUnsafeCatchup::MAX_PAYLOADS as u64)),
         ));
@@ -478,7 +471,6 @@ mod tests {
         catchup.buffer_payload(payload(11, B256::with_last_byte(10), B256::with_last_byte(11)));
         let safe = head(12, B256::with_last_byte(12));
         assert!(catchup.contiguous_payloads(safe).is_empty());
-        catchup.commit(safe);
 
         assert!(catchup.is_complete(safe, safe));
     }
@@ -498,7 +490,7 @@ mod tests {
         let mut catchup = CanonicalUnsafeCatchup::default();
         let original = head(11, B256::with_last_byte(11));
         catchup.buffer_payload(payload(11, B256::with_last_byte(10), original.block_info.hash));
-        catchup.commit(original);
+        catchup.contiguous_payloads(original);
         assert!(catchup.is_complete(original, L2BlockInfo::default()));
 
         catchup.buffer_payload(payload(11, B256::with_last_byte(10), B256::with_last_byte(99)));
