@@ -57,9 +57,9 @@ use crate::{
     Attributes, BasePayloadBuilderAttributes, BlockDeferrals, BuilderMetrics,
     CoinbaseTipAffordability, InclusionTracker, MeteringProvider, ParkableBestPayloadTransactions,
     ParkablePayloadTransactions, ParkedPredicateIndex, PayloadPrimitives, PredicateLoadTracker,
-    PredicateReadRecorder, RejectionCacheMetrics, StateChangeEffects, ValidityMetrics,
-    ValidityPredicateEvaluation, config::BaseBuilderConfig, error::BasePayloadBuilderError,
-    payload::BaseBuiltPayload,
+    PredicateReadRecorder, RejectionCacheMetrics, StateChangeEffects, ValidityEvaluationCounters,
+    ValidityEvaluationOutcome, ValidityMetrics, ValidityPredicateEvaluation,
+    config::BaseBuilderConfig, error::BasePayloadBuilderError, payload::BaseBuiltPayload,
 };
 
 macro_rules! emit_native_validity_event {
@@ -923,6 +923,7 @@ where
         let mut predicate_index =
             ParkedPredicateIndex::new(self.builder_config.predicate_bucket_ordered_threshold);
         let mut predicate_loads = PredicateLoadTracker::default();
+        let mut evaluation_counters = ValidityEvaluationCounters::default();
         let mut predicate_eval_duration = None;
         let mut predicate_bucket_wakeups = 0;
         let mut validity_consideration_index = 0_u64;
@@ -977,7 +978,7 @@ where
                 validity_consideration_index += 1;
             }
             if tx.validity_conditions().flashblock().is_present() {
-                ValidityMetrics::validity_predicate_evaluations_total("unsupported").increment(1);
+                evaluation_counters.increment(ValidityEvaluationOutcome::Unsupported, 1);
                 emit_native_validity_event!(
                     self,
                     TransactionEventType::BuilderRejected,
@@ -1004,8 +1005,7 @@ where
                     duration >= self.builder_config.predicate_eval_hard_cutoff
                 })
             {
-                ValidityMetrics::validity_predicate_evaluations_total("budget_exhausted")
-                    .increment(1);
+                evaluation_counters.increment(ValidityEvaluationOutcome::BudgetExhausted, 1);
                 validity_candidates_deferred += 1;
                 predicate_eval_cutoff_hit = true;
                 trace!(
@@ -1047,12 +1047,10 @@ where
                     evaluation_start.elapsed();
                 match evaluation {
                     Ok(ValidityPredicateEvaluation::Matched) => {
-                        ValidityMetrics::validity_predicate_evaluations_total("matched")
-                            .increment(1);
+                        evaluation_counters.increment(ValidityEvaluationOutcome::Matched, 1);
                     }
                     Ok(ValidityPredicateEvaluation::Unsatisfied { expired: true, .. }) => {
-                        ValidityMetrics::validity_predicate_evaluations_total("expired")
-                            .increment(1);
+                        evaluation_counters.increment(ValidityEvaluationOutcome::Expired, 1);
                         emit_native_validity_event!(
                             self,
                             TransactionEventType::BuilderExpired,
@@ -1081,8 +1079,7 @@ where
                         predicate,
                         expired: false,
                     }) => {
-                        ValidityMetrics::validity_predicate_evaluations_total("not_satisfied")
-                            .increment(1);
+                        evaluation_counters.increment(ValidityEvaluationOutcome::NotSatisfied, 1);
                         trace!(
                             target: "payload_builder",
                             tx_hash = ?tx_hash,
@@ -1106,8 +1103,7 @@ where
                         continue;
                     }
                     Err(error) => {
-                        ValidityMetrics::validity_predicate_evaluations_total("read_error")
-                            .increment(1);
+                        evaluation_counters.increment(ValidityEvaluationOutcome::ReadError, 1);
                         emit_native_validity_event!(
                             self,
                             TransactionEventType::BuilderRejected,
@@ -1418,10 +1414,10 @@ where
                     duration >= self.builder_config.predicate_eval_hard_cutoff
                 }) {
                     let remaining = state_change_effects.affected_transactions.len() - rescanned;
-                    ValidityMetrics::validity_predicate_evaluations_total(
-                        "rescan_budget_exhausted",
-                    )
-                    .increment(remaining as u64);
+                    evaluation_counters.increment(
+                        ValidityEvaluationOutcome::RescanBudgetExhausted,
+                        remaining as u64,
+                    );
                     predicate_eval_cutoff_hit = true;
                     break;
                 }
@@ -1444,21 +1440,18 @@ where
                     evaluation_start.elapsed();
                 match evaluation {
                     Ok(ValidityPredicateEvaluation::Matched) => {
-                        ValidityMetrics::validity_predicate_evaluations_total("rescan_matched")
-                            .increment(1);
+                        evaluation_counters.increment(ValidityEvaluationOutcome::RescanMatched, 1);
                         predicate_index.remove(parked_hash);
                         best_txs.promote(parked_hash);
                     }
                     Ok(ValidityPredicateEvaluation::Unsatisfied { predicate, .. }) => {
-                        ValidityMetrics::validity_predicate_evaluations_total(
-                            "rescan_not_satisfied",
-                        )
-                        .increment(1);
+                        evaluation_counters
+                            .increment(ValidityEvaluationOutcome::RescanNotSatisfied, 1);
                         predicate_index.reindex(parked_hash, predicate);
                     }
                     Err(error) => {
-                        ValidityMetrics::validity_predicate_evaluations_total("rescan_read_error")
-                            .increment(1);
+                        evaluation_counters
+                            .increment(ValidityEvaluationOutcome::RescanReadError, 1);
                         warn!(
                             target: "payload_builder",
                             tx_hash = ?parked_hash,
@@ -2266,8 +2259,9 @@ mod tests {
         assert_eq!(included_hashes, vec![trigger_hash, gated_hash]);
     }
 
-    #[test]
-    fn native_builder_bounds_initial_and_rescan_predicate_evaluation() {
+    /// Builds a gated transaction, a predicate-matching transaction, and a trigger that wakes the
+    /// gated one, with a 1 ns evaluation budget. Returns the trigger hash and the included hashes.
+    fn build_with_exhausted_predicate_budget() -> (TxHash, Vec<TxHash>) {
         let watched_address = Address::repeat_byte(0x44);
         let gated = pool_transaction_to(0, Address::repeat_byte(0x55), U256::ZERO)
             .with_validity_predicates(vec![ValidityPredicate::Balance {
@@ -2299,9 +2293,35 @@ mod tests {
             .body()
             .transactions
             .iter()
-            .map(|transaction| *transaction.tx_hash())
+            .map(|transaction| transaction.tx_hash())
             .collect::<Vec<_>>();
+        (trigger_hash, included_hashes)
+    }
+
+    #[test]
+    fn native_builder_bounds_initial_and_rescan_predicate_evaluation() {
+        let (trigger_hash, included_hashes) = build_with_exhausted_predicate_budget();
         assert_eq!(included_hashes, vec![trigger_hash]);
+    }
+
+    #[cfg(feature = "metrics")]
+    #[test]
+    fn native_builder_counts_validity_evaluation_outcomes() {
+        let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+
+        metrics::with_local_recorder(&recorder, build_with_exhausted_predicate_budget);
+
+        let rendered = handle.render();
+        for outcome in ["not_satisfied", "budget_exhausted", "rescan_budget_exhausted"] {
+            assert!(
+                rendered.contains(&format!(
+                    r#"validity_predicate_evaluations_total{{outcome="{outcome}"}} 1"#
+                )),
+                "{outcome} missing from:\n{rendered}"
+            );
+        }
+        assert!(!rendered.contains(r#"outcome="matched""#));
     }
 
     #[test]
