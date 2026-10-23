@@ -420,11 +420,9 @@ pub struct RpcStandardNodeArgs {
     )]
     pub tx_forwarding_queue_capacity: Option<usize>,
 
-    /// Send each forwarding batch as one `base_insertValidatedTransactions` call.
-    ///
-    /// The builder admits the batch as one pool batch instead of one call per transaction. Every
-    /// builder in `--builder-rpc-urls` must serve that method before this is enabled.
-    #[arg(long = "tx-forwarding-batched-insert", requires = "enable_tx_forwarding")]
+    /// Deprecated and ignored: forwarding batches always use `base_insertValidatedTransactions`.
+    /// Kept so older deployment configurations remain accepted.
+    #[arg(long = "tx-forwarding-batched-insert", requires = "enable_tx_forwarding", hide = true)]
     pub tx_forwarding_batched_insert: bool,
 }
 
@@ -560,7 +558,6 @@ impl From<&StandardNodeArgs> for TxForwardingConfig {
             .with_max_rps(args.rpc.tx_forwarding_max_rps)
             .with_fifo_percent(args.rpc.tx_forwarding_fifo_percent)
             .with_queue_capacity(args.rpc.tx_forwarding_queue_capacity)
-            .with_batched_insert(args.rpc.tx_forwarding_batched_insert)
     }
 }
 
@@ -736,6 +733,12 @@ impl StandardBaseRethNode {
             || args.metering.metering_da_bytes.is_some()
         {
             warn!("deprecated metering resource limit flags are ignored");
+        }
+
+        if args.rpc.tx_forwarding_batched_insert {
+            warn!(
+                "deprecated --tx-forwarding-batched-insert is ignored; batched inserts are always on"
+            );
         }
 
         let metering_config = if args.metering.enable_metering {
@@ -1184,17 +1187,32 @@ mod tests {
                 "35",
                 "--tx-forwarding-queue-capacity",
                 "64",
-                "--tx-forwarding-batched-insert",
             ])
             .args,
         );
 
         assert_eq!(defaults.fifo_percent, DEFAULT_FIFO_PERCENT);
         assert_eq!(defaults.queue_capacity, None);
-        assert!(!defaults.batched_insert);
         assert_eq!(configured.fifo_percent, 35);
         assert_eq!(configured.queue_capacity, Some(64));
-        assert!(configured.batched_insert);
+    }
+
+    #[test]
+    fn deprecated_batched_insert_flag_remains_accepted() {
+        let args = CommandParser::<StandardNodeArgs>::parse_from([
+            "base-reth",
+            "--enable-tx-forwarding",
+            "--builder-rpc-urls",
+            "http://localhost:8545",
+            "--tx-forwarding-batched-insert",
+        ])
+        .args;
+
+        assert!(args.rpc.tx_forwarding_batched_insert);
+        assert_eq!(
+            TxForwardingConfig::from(&args).builder_urls,
+            vec![Url::parse("http://localhost:8545").unwrap()]
+        );
     }
 
     #[test]
