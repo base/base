@@ -1258,61 +1258,6 @@ mod tests {
         assert_eq!(client.storage().read().await.fork_choice_updated_v3_requests.len(), fcu_count);
     }
 
-    #[rstest]
-    #[case::new_highest(501, false, false)]
-    #[case::duplicate(500, false, false)]
-    #[case::older(499, false, false)]
-    #[case::conflict(500, true, false)]
-    #[case::undecodable(501, false, true)]
-    fn isolated_target_tracks_accepted_observations(
-        #[case] number: u64,
-        #[case] conflicting: bool,
-        #[case] undecodable: bool,
-    ) {
-        let canonical_payload = |number, timestamp_offset| {
-            let mut block =
-                payload(number, 1).execution_payload.try_into_block::<BaseTxEnvelope>().unwrap();
-            block.header.timestamp += timestamp_offset;
-            let head =
-                L2BlockInfo::from_block_and_genesis(&block, &RollupConfig::default().genesis)
-                    .unwrap();
-            (
-                BaseExecutionPayloadEnvelope {
-                    execution_payload: BaseExecutionPayload::from_block_unchecked(
-                        block.hash_slow(),
-                        &block,
-                    )
-                    .0,
-                    parent_beacon_block_root: None,
-                },
-                head,
-            )
-        };
-        let mut catchup = CanonicalUnsafeCatchup::default();
-        let (initial, initial_head) = canonical_payload(500, 0);
-        catchup.observe_isolated_payload(&initial, &RollupConfig::default().genesis).unwrap();
-        assert_eq!(catchup.latest_observed_head(), Some(initial_head));
-        let (mut incoming, incoming_head) = canonical_payload(number, u64::from(conflicting));
-        if undecodable {
-            let BaseExecutionPayload::V1(raw) = &mut incoming.execution_payload else {
-                panic!("V1 fixture");
-            };
-            raw.transactions.clear();
-        }
-
-        let result = catchup.observe_isolated_payload(&incoming, &RollupConfig::default().genesis);
-
-        let expected = if conflicting {
-            None
-        } else if number > 500 && !undecodable {
-            Some(incoming_head)
-        } else {
-            Some(initial_head)
-        };
-        assert_eq!(result.is_err(), undecodable);
-        assert_eq!(catchup.latest_observed_head(), expected);
-    }
-
     #[tokio::test]
     async fn active_sequencer_without_conductor_starts_regular() {
         let coordinator = coordinator(false, false, None);

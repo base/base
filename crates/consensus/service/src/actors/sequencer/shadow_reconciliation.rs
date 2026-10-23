@@ -409,9 +409,12 @@ impl ShadowReconciliationGate {
 mod tests {
     use alloy_primitives::{Address, B256, Bloom, U256};
     use alloy_rpc_types_engine::ExecutionPayloadV1;
+    use base_common_consensus::BaseTxEnvelope;
+    use base_common_genesis::RollupConfig;
     use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
-    use base_consensus_engine::test_utils::TestAttributesBuilder;
-    use base_protocol::{BlockInfo, L2BlockInfo};
+    use base_consensus_engine::test_utils::{TestAttributesBuilder, encoded_l1_info_deposit_tx};
+    use base_protocol::{BlockInfo, L1BlockInfoBedrock, L2BlockInfo};
+    use rstest::rstest;
 
     use super::{CanonicalUnsafeCatchup, ShadowReconciliationGate};
     use crate::EngineClientError;
@@ -471,6 +474,70 @@ mod tests {
         assert!(!catchup.is_at_latest_observed(head(500, B256::with_last_byte(99))));
         assert!(catchup.is_at_latest_observed(head(500, B256::with_last_byte(15))));
         assert!(catchup.payloads.is_empty());
+    }
+
+    enum ExpectedObservedHead {
+        Incoming,
+        Initial,
+    }
+
+    #[rstest]
+    #[case::new_highest(501, false, false, Some(ExpectedObservedHead::Incoming))]
+    #[case::duplicate(500, false, false, Some(ExpectedObservedHead::Initial))]
+    #[case::older(499, false, false, Some(ExpectedObservedHead::Initial))]
+    #[case::conflict(500, true, false, None)]
+    #[case::undecodable(501, false, true, Some(ExpectedObservedHead::Initial))]
+    fn isolated_target_tracks_accepted_observations(
+        #[case] number: u64,
+        #[case] conflicting: bool,
+        #[case] undecodable: bool,
+        #[case] expected: Option<ExpectedObservedHead>,
+    ) {
+        let canonical_payload = |number, timestamp_offset| {
+            let BaseExecutionPayload::V1(mut raw) =
+                payload(number, B256::ZERO, B256::ZERO).execution_payload
+            else {
+                panic!("V1 fixture");
+            };
+            raw.transactions = vec![encoded_l1_info_deposit_tx(L1BlockInfoBedrock::default())];
+            let mut block =
+                BaseExecutionPayload::V1(raw).try_into_block::<BaseTxEnvelope>().unwrap();
+            block.header.timestamp += timestamp_offset;
+            let head =
+                L2BlockInfo::from_block_and_genesis(&block, &RollupConfig::default().genesis)
+                    .unwrap();
+            (
+                BaseExecutionPayloadEnvelope {
+                    execution_payload: BaseExecutionPayload::from_block_unchecked(
+                        block.hash_slow(),
+                        &block,
+                    )
+                    .0,
+                    parent_beacon_block_root: None,
+                },
+                head,
+            )
+        };
+        let mut catchup = CanonicalUnsafeCatchup::default();
+        let (initial, initial_head) = canonical_payload(500, 0);
+        catchup.observe_isolated_payload(&initial, &RollupConfig::default().genesis).unwrap();
+        assert_eq!(catchup.latest_observed_head(), Some(initial_head));
+        let (mut incoming, incoming_head) = canonical_payload(number, u64::from(conflicting));
+        if undecodable {
+            let BaseExecutionPayload::V1(raw) = &mut incoming.execution_payload else {
+                panic!("V1 fixture");
+            };
+            raw.transactions.clear();
+        }
+
+        let result = catchup.observe_isolated_payload(&incoming, &RollupConfig::default().genesis);
+
+        let expected = expected.map(|head| match head {
+            ExpectedObservedHead::Incoming => incoming_head,
+            ExpectedObservedHead::Initial => initial_head,
+        });
+        assert_eq!(result.is_err(), undecodable);
+        assert_eq!(catchup.latest_observed_head(), expected);
     }
 
     #[test]
