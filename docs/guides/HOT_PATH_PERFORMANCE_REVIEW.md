@@ -76,7 +76,10 @@ enabled path when the cost is unclear: `crates/builder/core/benches/build_loop.r
 drives `execute_best_transactions` over a mainnet-shaped block, and
 `BUILD_LOOP_PROFILE=production` turns on the observability production enables.
 `crates/builder/core/benches/tx_selection.rs` covers iteration, parking, and the
-predicate index.
+predicate index. Both drive the flashblocks builder only. For the native builder,
+`crates/execution/payload/benches/resource_metering.rs` covers the per-transaction
+resource-metering checks; the native `execute_best_transactions` loop has no
+end-to-end benchmark yet.
 
 ## What not to flag
 
