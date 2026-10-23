@@ -1,7 +1,7 @@
 //! Base payload builder implementation.
 use std::{
     marker::PhantomData,
-    sync::Arc,
+    sync::{Arc, mpsc::RecvTimeoutError},
     time::{Duration, Instant},
 };
 
@@ -49,7 +49,10 @@ use reth_transaction_pool::{
     BestTransactionsAttributes, PoolTransaction, TransactionPool, ValidPoolTransaction,
 };
 use reth_trie_common::ExecutionWitnessMode;
-use reth_trie_parallel::state_root_task::PayloadStateRootHandle;
+use reth_trie_parallel::{
+    error::StateRootTaskError,
+    state_root_task::{PayloadStateRootHandle, StateRootComputeOutcome},
+};
 use revm::context::{Block, BlockEnv};
 use tracing::{debug, debug_span, info, instrument, trace, warn};
 
@@ -362,6 +365,60 @@ impl<'a, Txs> Builder<'a, Txs> {
 }
 
 impl<Txs> Builder<'_, Txs> {
+    /// How long sealing still waits for the parallel state-root job once `getPayload` has asked
+    /// for the payload, before computing the root synchronously. Post-Denim the sequencer asks
+    /// 150 ms into a 200 ms slot, so a stuck job must leave most of the remaining 50 ms for the
+    /// synchronous root and the block's import.
+    pub const STATE_ROOT_JOB_GRACE: Duration = Duration::from_millis(10);
+
+    /// How long sealing waits for the parallel state-root job when nobody asks for the payload,
+    /// such as before Denim: one post-Denim block interval.
+    pub const STATE_ROOT_JOB_TIMEOUT: Duration = Duration::from_millis(200);
+
+    /// How often a wait for the state-root job checks whether the payload was requested or the
+    /// job was cancelled.
+    pub const STATE_ROOT_JOB_POLL: Duration = Duration::from_millis(1);
+
+    /// Waits for the parallel state-root job's outcome. A job that never answers, such as one
+    /// whose proof worker panicked, must not hang or delay the block: once the payload is
+    /// requested the job gets [`Self::STATE_ROOT_JOB_GRACE`], and at most
+    /// [`Self::STATE_ROOT_JOB_TIMEOUT`] overall.
+    ///
+    /// Returns `None` if the payload job was cancelled, and an error if the state-root job
+    /// dropped its result or did not answer in time; the caller then computes the root
+    /// synchronously. Dropping `task` afterwards releases its cancellation guard, which stops
+    /// the backing job.
+    pub fn wait_for_state_root(
+        task: &mut PayloadStateRootHandle,
+        cancel: &CancelOnDrop,
+    ) -> Option<Result<StateRootComputeOutcome, StateRootTaskError>> {
+        let rx = task.take_state_root_rx();
+        let mut deadline = Instant::now() + Self::STATE_ROOT_JOB_TIMEOUT;
+        let mut requested = false;
+        loop {
+            if cancel.is_cancelled() {
+                return None;
+            }
+            if !requested && cancel.is_finalization_requested() {
+                requested = true;
+                deadline = deadline.min(Instant::now() + Self::STATE_ROOT_JOB_GRACE);
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            match rx.recv_timeout(remaining.min(Self::STATE_ROOT_JOB_POLL)) {
+                Ok(result) => return Some(result),
+                Err(RecvTimeoutError::Disconnected) => {
+                    return Some(Err(StateRootTaskError::Other("state root job dropped".into())));
+                }
+                Err(RecvTimeoutError::Timeout) if remaining.is_zero() => {
+                    return Some(Err(StateRootTaskError::Other(format!(
+                        "no state root in time (payload requested: {requested})"
+                    ))));
+                }
+                Err(RecvTimeoutError::Timeout) => {}
+            }
+        }
+    }
+
     /// Builds the payload on top of the state.
     pub fn build<Evm, ChainSpec, N, Attrs>(
         self,
@@ -443,10 +500,15 @@ impl<Txs> Builder<'_, Txs> {
         let execution_duration = build_start.elapsed();
 
         let block_num = ctx.parent().number().saturating_add(1);
-        let state_root = state_root_handle.and_then(|mut task| {
+        let mut state_root = None;
+        if let Some(mut task) = state_root_handle {
             // Dropping the hook closes the update stream so the parallel task can finish.
             builder.evm_mut().db_mut().set_state_hook(None);
-            match task.state_root() {
+            // Dropping the handle on fallback cancels the job.
+            let Some(result) = Self::wait_for_state_root(&mut task, &ctx.cancel) else {
+                return Ok(BuildOutcomeKind::Cancelled);
+            };
+            state_root = match result {
                 Ok(outcome) => {
                     debug!(
                         target: "payload_builder",
@@ -466,8 +528,8 @@ impl<Txs> Builder<'_, Txs> {
                     );
                     None
                 }
-            }
-        });
+            };
+        }
         let BlockBuilderOutcome {
             execution_result,
             hashed_state,
@@ -1550,13 +1612,13 @@ mod tests {
         time::{Duration, Instant},
     };
 
-    use alloy_consensus::{Header, SignableTransaction, Transaction, TxEip1559};
+    use alloy_consensus::{Header, Sealed, SignableTransaction, Transaction, TxEip1559};
     use alloy_eips::eip2718::Encodable2718;
     use alloy_evm::Evm;
     use alloy_primitives::{Address, B256, Signature, StorageKey, TxHash, TxKind, U256};
     use base_bundles::{MeterBundleResponse, OpcodeGas, TransactionResult};
     use base_common_chains::BaseUpgrade;
-    use base_common_consensus::{BasePrimitives, BaseTxEnvelope, Predeploys};
+    use base_common_consensus::{BaseBlock, BasePrimitives, BaseTxEnvelope, Predeploys, TxDeposit};
     use base_common_evm::BaseTime;
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_execution_evm::BaseEvmConfig;
@@ -1564,12 +1626,22 @@ mod tests {
     use base_observability_events::{TransactionEventCapture, TransactionEventType};
     use reth_basic_payload_builder::{BuildOutcomeKind, PayloadConfig};
     use reth_chainspec::ChainSpec;
+    use reth_db_common::init::init_genesis;
     use reth_ethereum_forks::ForkCondition;
-    use reth_evm::execute::BlockBuilder;
+    use reth_evm::{
+        ConfigureEvm,
+        execute::{BlockBuilder, Executor},
+    };
     use reth_payload_builder::PayloadId;
     use reth_payload_util::{NoopPayloadTransactions, PayloadTransactions};
-    use reth_primitives_traits::{Account, SealedHeader, SignedTransaction, WithEncoded};
-    use reth_provider::noop::NoopProvider;
+    use reth_primitives_traits::{
+        Account, SealedBlock, SealedHeader, SignedTransaction, WithEncoded,
+    };
+    use reth_provider::{
+        HashedPostStateProvider, ProviderFactory, StateRootProvider,
+        noop::NoopProvider,
+        test_utils::{MockNodeTypesWithDB, create_test_provider_factory_with_chain_spec},
+    };
     use reth_revm::{database::StateProviderDatabase, db::State, test_utils::StateProviderTest};
     use reth_storage_api::StateProvider;
     use reth_tasks::CancelOnDrop;
@@ -1580,7 +1652,8 @@ mod tests {
     use reth_trie_parallel::{
         error::StateRootTaskError,
         state_root_task::{
-            PayloadStateRootHandle, StateRootComputeOutcome, StateRootSink, StateRootUpdateStream,
+            PayloadStateRootHandle, StateRootComputeOutcome, StateRootHandle, StateRootMessage,
+            StateRootSink, StateRootTaskCancelGuard, StateRootUpdateStream,
         },
     };
     use revm::{Database, state::EvmState};
@@ -1620,7 +1693,25 @@ mod tests {
     }
 
     fn build_empty_payload(state_root_handle: PayloadStateRootHandle) -> B256 {
+        build_empty_payload_with(Some(state_root_handle), CancelOnDrop::default())
+    }
+
+    fn build_empty_payload_with(
+        state_root_handle: Option<PayloadStateRootHandle>,
+        cancel: CancelOnDrop,
+    ) -> B256 {
         let chain_spec = Arc::new(BaseChainSpec::from(ChainSpec::default()));
+        build_block(&NoopProvider::default(), chain_spec, Vec::new(), state_root_handle, cancel)
+            .state_root
+    }
+
+    fn build_block(
+        provider: &dyn StateProvider,
+        chain_spec: Arc<BaseChainSpec>,
+        transactions: Vec<WithEncoded<BaseTxEnvelope>>,
+        state_root_handle: Option<PayloadStateRootHandle>,
+        cancel: CancelOnDrop,
+    ) -> SealedBlock<BaseBlock> {
         let parent = Arc::new(SealedHeader::seal_slow(Header {
             gas_limit: 30_000_000,
             ..Default::default()
@@ -1634,6 +1725,7 @@ mod tests {
                 parent_beacon_block_root: Some(B256::ZERO),
                 ..Default::default()
             },
+            transactions,
             no_tx_pool: true,
             gas_limit: Some(parent.gas_limit),
             ..Default::default()
@@ -1643,23 +1735,22 @@ mod tests {
             builder_config: BaseBuilderConfig::default(),
             chain_spec,
             config: PayloadConfig::new(parent, attributes, payload_id),
-            cancel: Default::default(),
+            cancel,
             best_payload: None,
         };
-        let provider = NoopProvider::default();
         let builder = Builder::new(|_| NoopPayloadTransactions::<PooledCandidate>::default());
         let outcome = builder
             .build(
-                StateProviderDatabase::new((&provider).into_evm_state_provider()),
-                &provider,
-                Some(state_root_handle),
+                StateProviderDatabase::new(provider.into_evm_state_provider()),
+                provider,
+                state_root_handle,
                 ctx,
             )
             .expect("empty payload must build");
         let BuildOutcomeKind::Freeze(payload) = outcome else {
             panic!("no-tx-pool payload must freeze")
         };
-        payload.block().state_root
+        payload.block().clone()
     }
 
     /// The block gas reservation must include EIP-8130 `payer_auth` on top of the
@@ -1681,6 +1772,278 @@ mod tests {
     #[test]
     fn parallel_state_root_is_used() {
         assert_eq!(build_empty_payload(state_root_handle()), B256::repeat_byte(0x42));
+    }
+
+    #[derive(Debug)]
+    struct SilentStateRootSink;
+
+    impl StateRootSink for SilentStateRootSink {
+        fn on_state_update(&self, _state: EvmState) {}
+
+        fn on_hashed_state_update(&self, _state: HashedPostState) {}
+
+        fn on_updates_finished(&self) {}
+    }
+
+    type NoopBuilder<'a> = Builder<'a, NoopPayloadTransactions<PooledCandidate>>;
+
+    fn silent_state_root_handle() -> (
+        std::sync::mpsc::Sender<Result<StateRootComputeOutcome, StateRootTaskError>>,
+        PayloadStateRootHandle,
+    ) {
+        let (result_tx, result_rx) = std::sync::mpsc::channel();
+        let hook = StateRootUpdateStream::new(Arc::new(SilentStateRootSink)).into_state_hook();
+        (result_tx, PayloadStateRootHandle::new("test", Some(hook), result_rx, None))
+    }
+
+    /// A state-root job that never answers, as when its proof worker panics, gets only a short
+    /// grace once `getPayload` asks for the payload, so the block still seals with the
+    /// synchronous root well inside the rest of the slot.
+    #[test]
+    fn requested_payload_falls_back_to_the_synchronous_root_within_the_slot() {
+        let requested = || {
+            let cancel = CancelOnDrop::default();
+            cancel.request_finalization();
+            cancel
+        };
+        let start = std::time::Instant::now();
+        build_empty_payload_with(Some(state_root_handle()), requested());
+        let answered = start.elapsed();
+
+        let (_result_tx, handle) = silent_state_root_handle();
+        let start = std::time::Instant::now();
+        let state_root = build_empty_payload_with(Some(handle), requested());
+        let stuck = start.elapsed();
+
+        assert_ne!(state_root, B256::repeat_byte(0x42));
+        let delay = stuck.saturating_sub(answered);
+        // Well under the 200 ms cap: the request, not the cap, ended the wait. The margin
+        // absorbs scheduler noise on a loaded test machine.
+        assert!(
+            delay < NoopBuilder::STATE_ROOT_JOB_TIMEOUT / 2,
+            "a stuck job delayed sealing {delay:?}"
+        );
+    }
+
+    /// When nobody asks for the payload, a job that never answers still cannot hang the build.
+    #[test]
+    fn unanswered_state_root_job_falls_back_to_the_synchronous_root() {
+        let (_result_tx, handle) = silent_state_root_handle();
+
+        let start = std::time::Instant::now();
+        let state_root = build_empty_payload(handle);
+
+        assert_ne!(state_root, B256::repeat_byte(0x42));
+        let elapsed = start.elapsed();
+        assert!(elapsed < NoopBuilder::STATE_ROOT_JOB_TIMEOUT * 2, "sealed after {elapsed:?}");
+    }
+
+    /// How a scripted state-root job ends once execution finishes its update stream.
+    #[derive(Debug, Clone, Copy)]
+    enum JobEnd {
+        /// Answers with this root.
+        Answer(B256),
+        /// Never answers but stays alive, as a job whose proof worker hangs.
+        Stall,
+        /// Drops its result sender, as a job whose proof worker panicked.
+        Drop,
+    }
+
+    /// A state-root job behind reth's real guarded payload handle
+    /// ([`StateRootHandle::into_payload_state_root_handle`]): updates arrive over reth's sparse-trie
+    /// sink and the handle owns a real [`StateRootTaskCancelGuard`]. Only the job loop is scripted,
+    /// because stock reth has no hook to fault its proof workers.
+    struct GuardedJob {
+        handle: PayloadStateRootHandle,
+        /// Signals that the builder finished the update stream and is about to wait.
+        updates_finished: std::sync::mpsc::Receiver<()>,
+        /// Yields whether the job saw its cancellation guard released.
+        job: std::thread::JoinHandle<bool>,
+    }
+
+    impl GuardedJob {
+        fn spawn(end: JobEnd) -> Self {
+            let (updates_tx, updates_rx) = crossbeam_channel::unbounded();
+            let (cancel_guard, cancelled) = StateRootTaskCancelGuard::channel();
+            let (result_tx, result_rx) = std::sync::mpsc::channel();
+            let (hashed_tx, hashed_rx) = std::sync::mpsc::channel();
+            let (finished_tx, updates_finished) = std::sync::mpsc::channel();
+            let handle =
+                StateRootHandle::new(B256::ZERO, updates_tx, cancel_guard, result_rx, hashed_rx)
+                    .into_payload_state_root_handle();
+            let job = std::thread::spawn(move || {
+                let _hashed_tx = hashed_tx;
+                for message in &updates_rx {
+                    if matches!(message, StateRootMessage::FinishedStateUpdates) {
+                        break;
+                    }
+                }
+                _ = finished_tx.send(());
+                let _result_tx = match end {
+                    JobEnd::Answer(state_root) => {
+                        _ = result_tx.send(Ok(StateRootComputeOutcome {
+                            state_root,
+                            trie_updates: Arc::new(TrieUpdates::default()),
+                            hashed_state: Arc::new(HashedPostState::default()),
+                        }));
+                        Some(result_tx)
+                    }
+                    JobEnd::Stall => Some(result_tx),
+                    JobEnd::Drop => None,
+                };
+                // Like reth's job, run until the consumer releases the guard.
+                matches!(
+                    cancelled.recv_timeout(Duration::from_secs(5)),
+                    Err(crossbeam_channel::RecvTimeoutError::Disconnected)
+                )
+            });
+            Self { handle, updates_finished, job }
+        }
+
+        /// Builds with this job, requesting the payload once the builder is waiting for the root.
+        /// Returns the block and how long sealing took after the request.
+        fn build_with_payload_request(
+            self,
+            build: impl FnOnce(PayloadStateRootHandle, CancelOnDrop) -> SealedBlock<BaseBlock>,
+        ) -> (SealedBlock<BaseBlock>, Duration, bool) {
+            let cancel = CancelOnDrop::default();
+            // The requester's clone must not cancel the build when it goes away.
+            let requester = ManuallyDrop::new(cancel.clone());
+            let updates_finished = self.updates_finished;
+            let request = std::thread::spawn(move || {
+                updates_finished.recv().expect("builder finishes the update stream");
+                std::thread::sleep(Duration::from_millis(2));
+                requester.request_finalization();
+                Instant::now()
+            });
+            let block = build(self.handle, cancel);
+            let sealed = Instant::now();
+            let requested = request.join().expect("requester");
+            let released = self.job.join().expect("job");
+            (block, sealed.saturating_duration_since(requested), released)
+        }
+    }
+
+    /// A chain on a real MDBX database whose genesis funds an account, so roots are computed
+    /// from real trie tables.
+    struct TestChain {
+        chain_spec: Arc<BaseChainSpec>,
+        factory: ProviderFactory<MockNodeTypesWithDB>,
+    }
+
+    impl TestChain {
+        fn new() -> Self {
+            let genesis = alloy_genesis::Genesis::default().extend_accounts([(
+                Address::repeat_byte(0x11),
+                alloy_genesis::GenesisAccount::default()
+                    .with_balance(U256::from(10).pow(U256::from(20))),
+            )]);
+            let spec = Arc::new(ChainSpec::from(genesis));
+            let factory = create_test_provider_factory_with_chain_spec(Arc::clone(&spec));
+            init_genesis(&factory).expect("genesis");
+            Self { chain_spec: Arc::new(BaseChainSpec::from(Arc::unwrap_or_clone(spec))), factory }
+        }
+
+        /// A deposit that mints ether and moves part of it to a fresh account.
+        fn deposit() -> WithEncoded<BaseTxEnvelope> {
+            let deposit = BaseTxEnvelope::Deposit(Sealed::new(TxDeposit {
+                source_hash: B256::repeat_byte(0x01),
+                from: Address::repeat_byte(0x22),
+                to: TxKind::Call(Address::repeat_byte(0x33)),
+                mint: 10u128.pow(18),
+                value: U256::from(10u128.pow(17)),
+                gas_limit: 100_000,
+                is_system_transaction: false,
+                input: Default::default(),
+            }));
+            WithEncoded::new(deposit.encoded_2718().into(), deposit)
+        }
+
+        fn build(
+            &self,
+            handle: Option<PayloadStateRootHandle>,
+            cancel: CancelOnDrop,
+        ) -> SealedBlock<BaseBlock> {
+            let provider = self.factory.latest().expect("latest state");
+            build_block(
+                provider.as_ref(),
+                Arc::clone(&self.chain_spec),
+                vec![Self::deposit()],
+                handle,
+                cancel,
+            )
+        }
+
+        /// Imports `block` as a node would: re-executes it on the parent state and checks the
+        /// header against the result.
+        fn import(&self, block: &SealedBlock<BaseBlock>) {
+            let provider = self.factory.latest().expect("latest state");
+            let db = State::builder()
+                .with_database(StateProviderDatabase::new(
+                    provider.as_ref().into_evm_state_provider(),
+                ))
+                .with_bundle_update()
+                .build();
+            let recovered = block.clone().try_recover().expect("recoverable block");
+            let output = BaseEvmConfig::<_, BasePrimitives>::base(Arc::clone(&self.chain_spec))
+                .executor(db)
+                .execute(&recovered)
+                .expect("block executes");
+            assert_eq!(output.result.gas_used, block.gas_used, "imported gas used");
+            let state_root = provider
+                .state_root(provider.hashed_post_state(&output.state).expect("hashed state"))
+                .expect("state root");
+            assert_eq!(state_root, block.state_root, "imported state root");
+            assert_eq!(
+                block.hash(),
+                block.clone_sealed_header().unseal().hash_slow(),
+                "block hash"
+            );
+        }
+    }
+
+    /// A guarded state-root job that fails while the builder waits on it after `getPayload`
+    /// falls back to the serial root soon after the request, releases the job, and leaves the
+    /// next block's job working: that block imports with a matching state root and hash.
+    #[test]
+    fn failed_guarded_state_root_job_recovers_for_the_next_block() {
+        let chain = TestChain::new();
+        let serial = chain.build(None, CancelOnDrop::default());
+        assert_eq!(serial.body().transactions.len(), 1, "the deposit is included");
+        let genesis_root = chain.factory.latest().unwrap().state_root(Default::default()).unwrap();
+        assert_ne!(serial.state_root, genesis_root, "the deposit changes state");
+        chain.import(&serial);
+        for end in [JobEnd::Stall, JobEnd::Drop] {
+            let (block, after_request, released) = GuardedJob::spawn(end)
+                .build_with_payload_request(|handle, cancel| chain.build(Some(handle), cancel));
+            assert_eq!(
+                block.state_root, serial.state_root,
+                "{end:?} job must fall back to the serial root"
+            );
+            // Well under the 200 ms cap: the request, not the cap, ended the wait. The margin
+            // absorbs the serial root on a loaded test machine.
+            assert!(
+                after_request < NoopBuilder::STATE_ROOT_JOB_TIMEOUT / 2,
+                "{end:?} job delayed sealing {after_request:?} after the payload request"
+            );
+            assert!(released, "{end:?} job must see its cancellation guard released");
+            chain.import(&block);
+
+            // The next block's job answers with the root it computed.
+            let (next, _, released) = GuardedJob::spawn(JobEnd::Answer(serial.state_root))
+                .build_with_payload_request(|handle, cancel| chain.build(Some(handle), cancel));
+            assert!(released, "next block's job must be released after answering");
+            assert_eq!(next.hash(), serial.hash(), "next block after a {end:?} job");
+            chain.import(&next);
+        }
+
+        // A wrong answer would fail import, so the check above is not vacuous.
+        let (wrong, _, _) = GuardedJob::spawn(JobEnd::Answer(B256::repeat_byte(0x42)))
+            .build_with_payload_request(|handle, cancel| chain.build(Some(handle), cancel));
+        assert_eq!(wrong.state_root, B256::repeat_byte(0x42), "the job's answer is used");
+        let import =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| chain.import(&wrong)));
+        assert!(import.is_err(), "a block with a wrong root must not import");
     }
 
     #[cfg(feature = "metrics")]
