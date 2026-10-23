@@ -8,8 +8,9 @@ use std::{
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::B256;
 use base_consensus_engine::{
-    ConsolidateTask, EngineClient, EngineTask, EngineTaskError, EngineTaskErrorSeverity,
-    EngineTaskErrors, FinalizeTask, Metrics as EngineMetrics, SealTaskError,
+    ConsolidateTask, EngineClient, EngineSyncStateUpdate, EngineTask, EngineTaskError,
+    EngineTaskErrorSeverity, EngineTaskErrors, FinalizeTask, Metrics as EngineMetrics,
+    SealTaskError,
 };
 use opentelemetry::context::FutureExt as OtelFutureExt;
 use tokio::{
@@ -102,6 +103,7 @@ where
     conductor: Option<Arc<dyn Conductor>>,
     sequencer_stopped: bool,
     sequencer_kind: SequencerKind,
+    isolated_sync_target: Option<Box<base_protocol::L2BlockInfo>>,
     unsafe_head_tx: watch::Sender<base_protocol::L2BlockInfo>,
 }
 
@@ -129,6 +131,7 @@ where
             conductor,
             sequencer_stopped,
             sequencer_kind: mode.into(),
+            isolated_sync_target: None,
             unsafe_head_tx,
         }
     }
@@ -574,8 +577,9 @@ where
                 let recv_wait_timer = base_metrics::timed!(
                     EngineMetrics::engine_processor_recv_wait_duration_seconds()
                 );
-                let recv_result = if self.processor.engine_state().el_sync_finished
-                    || self.sequencer_kind == SequencerKind::Isolated
+                let recv_result = if (self.processor.engine_state().el_sync_finished
+                    && self.sequencer_kind != SequencerKind::Isolated)
+                    || self.is_isolated_active()
                 {
                     request_channel.recv().await
                 } else {
@@ -583,11 +587,30 @@ where
                         request = request_channel.recv() => request,
                         _ = el_sync_probe_interval.tick() => {
                             drop(recv_wait_timer);
-                            let active_sequencer = self.resolve_bootstrap_role().await
-                                == BootstrapRole::ActiveSequencer;
-                            self.processor
-                                .probe_sequencer_el_sync(active_sequencer)
-                                .await;
+                            if self.sequencer_kind == SequencerKind::Isolated {
+                                if let SequencerEngineState::CatchingUp { catchup } = &self.sequencer_state
+                                    && let Some(head) = self.isolated_sync_target.as_deref().copied()
+                                    && catchup.is_at_latest_observed(head)
+                                {
+                                    let client = Arc::clone(self.processor.client());
+                                    let rollup = Arc::clone(self.processor.rollup());
+                                    let update = EngineSyncStateUpdate {
+                                        unsafe_head: Some(head),
+                                        ..Default::default()
+                                    };
+                                    if let Err(err) = self.processor.engine_mut()
+                                        .probe_el_sync(client, rollup, update).await
+                                    {
+                                        warn!(target: "engine", error = %err, "Isolated canonical EL sync probe failed; will retry");
+                                    }
+                                }
+                            } else {
+                                let active_sequencer = self.resolve_bootstrap_role().await
+                                    == BootstrapRole::ActiveSequencer;
+                                self.processor
+                                    .probe_sequencer_el_sync(active_sequencer)
+                                    .await;
+                            }
                             continue;
                         }
                     }
@@ -721,6 +744,21 @@ where
                                     }
                                     SequencerKind::Isolated => {
                                         catchup.observe_payload(&envelope);
+                                        match base_protocol::L2BlockInfo::from_payload_and_genesis(
+                                            envelope.execution_payload.clone(),
+                                            envelope.parent_beacon_block_root,
+                                            &self.processor.rollup().genesis,
+                                        ) {
+                                            Ok(head) => {
+                                                if catchup.is_at_latest_observed(head) {
+                                                    self.isolated_sync_target =
+                                                        Some(Box::new(head));
+                                                }
+                                            }
+                                            Err(err) => {
+                                                warn!(target: "engine", error = %err, "Failed to decode isolated canonical EL sync target");
+                                            }
+                                        }
                                         self.processor.handle_external_unsafe_l2_block(*envelope);
                                     }
                                 }
@@ -966,7 +1004,61 @@ mod tests {
             .expect("startup response")
     }
 
-    #[tokio::test]
+    #[rstest]
+    #[case::already_at_tip(true)]
+    #[case::sync_finishes_after_last_gossip(false)]
+    #[tokio::test(start_paused = true)]
+    async fn isolated_activates_without_further_gossip(#[case] already_at_tip: bool) {
+        let coordinator = isolated_startup_coordinator();
+        let client = Arc::clone(coordinator.processor.client());
+        let mut gossip = payload(500, 1);
+        let block = gossip.execution_payload.clone().try_into_block::<BaseTxEnvelope>().unwrap();
+        gossip.execution_payload =
+            BaseExecutionPayload::from_block_unchecked(block.hash_slow(), &block).0;
+        let head =
+            L2BlockInfo::from_block_and_genesis(&block, &RollupConfig::default().genesis).unwrap();
+        if already_at_tip {
+            client.set_block_info_by_tag(BlockNumberOrTag::Latest, head).await;
+        }
+        client
+            .set_new_payload_v2_response(PayloadStatus {
+                status: PayloadStatusEnum::Valid,
+                latest_valid_hash: None,
+            })
+            .await;
+        let (request_tx, request_rx) = mpsc::channel(8);
+        let handle = coordinator.start(request_rx);
+        request_tx
+            .send(EngineActorRequest::ProcessUnsafeL2BlockRequest(Box::new(gossip)))
+            .await
+            .unwrap();
+        assert!(matches!(request_start(&request_tx).await, Err(EngineClientError::ELSyncing)));
+
+        client.set_block_info_by_tag(BlockNumberOrTag::Latest, head).await;
+        client
+            .set_fork_choice_updated_v3_response(ForkchoiceUpdated {
+                payload_status: PayloadStatus {
+                    status: PayloadStatusEnum::Valid,
+                    latest_valid_hash: None,
+                },
+                payload_id: None,
+            })
+            .await;
+        // Allow more than the five-second probe interval without sending further gossip.
+        let mut activation = Err(EngineClientError::ELSyncing);
+        for _ in 0..6 {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            activation = request_start(&request_tx).await;
+            if activation.is_ok() {
+                break;
+            }
+        }
+        drop(request_tx);
+        handle.await.unwrap().expect_err("closed request channel");
+        activation.expect("EL has the observed canonical tip and should allow isolated startup");
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn isolated_startup_inserts_gossip_and_defers_until_el_synced_head() {
         let mut coordinator = isolated_startup_coordinator();
         let client = Arc::clone(coordinator.processor.client());
@@ -979,6 +1071,8 @@ mod tests {
         let (request_tx, request_rx) = mpsc::channel(8);
         let handle = coordinator.start(request_rx);
 
+        assert!(matches!(request_start(&request_tx).await, Err(EngineClientError::ELSyncing)));
+        tokio::time::sleep(Duration::from_secs(6)).await;
         assert!(matches!(request_start(&request_tx).await, Err(EngineClientError::ELSyncing)));
         assert!(!state_rx.borrow().el_sync_finished);
         assert!(client.storage().read().await.fork_choice_updated_v3_requests.is_empty());
@@ -1037,8 +1131,86 @@ mod tests {
         result_rx.recv().await.expect("barrier response").expect("idempotent activation");
         assert_eq!(state_rx.borrow().sync_state.unsafe_head(), head);
         assert_eq!(*queue_rx.borrow(), 0);
+        let fcu_count = client.storage().read().await.fork_choice_updated_v3_requests.len();
+        tokio::time::sleep(Duration::from_secs(6)).await;
         drop(request_tx);
         handle.await.expect("engine task").expect_err("closed request channel");
+        assert_eq!(client.storage().read().await.fork_choice_updated_v3_requests.len(), fcu_count);
+    }
+
+    #[rstest]
+    #[case::newer_gossip(false)]
+    #[case::conflicting_gossip(true)]
+    #[tokio::test(start_paused = true)]
+    async fn isolated_probe_tracks_gossip_during_retry(#[case] conflicting: bool) {
+        let mut coordinator = isolated_startup_coordinator();
+        let client = Arc::clone(coordinator.processor.client());
+        let state_rx = coordinator.processor.engine_mut().state_subscribe();
+        client
+            .set_new_payload_v2_response(PayloadStatus {
+                status: PayloadStatusEnum::Valid,
+                latest_valid_hash: None,
+            })
+            .await;
+        let (request_tx, request_rx) = mpsc::channel(8);
+        let handle = coordinator.start(request_rx);
+
+        let mut gossip = payload(500, 1);
+        let block = gossip.execution_payload.clone().try_into_block::<BaseTxEnvelope>().unwrap();
+        gossip.execution_payload =
+            BaseExecutionPayload::from_block_unchecked(block.hash_slow(), &block).0;
+        request_tx
+            .send(EngineActorRequest::ProcessUnsafeL2BlockRequest(Box::new(gossip)))
+            .await
+            .unwrap();
+        assert!(matches!(request_start(&request_tx).await, Err(EngineClientError::ELSyncing)));
+        tokio::time::sleep(Duration::from_secs(6)).await;
+        assert!(matches!(request_start(&request_tx).await, Err(EngineClientError::ELSyncing)));
+
+        client
+            .set_fork_choice_updated_v3_response(ForkchoiceUpdated {
+                payload_status: PayloadStatus {
+                    status: PayloadStatusEnum::Valid,
+                    latest_valid_hash: None,
+                },
+                payload_id: None,
+            })
+            .await;
+        tokio::time::sleep(Duration::from_secs(6)).await;
+        assert!(state_rx.borrow().el_sync_finished);
+
+        let mut gossip = payload(if conflicting { 500 } else { 501 }, 2);
+        let mut block =
+            gossip.execution_payload.clone().try_into_block::<BaseTxEnvelope>().unwrap();
+        block.header.timestamp += 1;
+        gossip.execution_payload =
+            BaseExecutionPayload::from_block_unchecked(block.hash_slow(), &block).0;
+        let target_hash = gossip.execution_payload.block_hash();
+        let fcu_count = client.storage().read().await.fork_choice_updated_v3_requests.len();
+        request_tx
+            .send(EngineActorRequest::ProcessUnsafeL2BlockRequest(Box::new(gossip)))
+            .await
+            .unwrap();
+        let activation = request_start(&request_tx).await;
+        if conflicting {
+            assert!(matches!(activation, Err(EngineClientError::ShadowBufferFaulted)));
+        } else {
+            assert!(matches!(activation, Err(EngineClientError::ELSyncing)));
+        }
+        tokio::time::sleep(Duration::from_secs(6)).await;
+        let activation = request_start(&request_tx).await;
+        drop(request_tx);
+        handle.await.unwrap().expect_err("closed request channel");
+        if conflicting {
+            assert!(matches!(activation, Err(EngineClientError::ShadowBufferFaulted)));
+            assert_eq!(
+                client.storage().read().await.fork_choice_updated_v3_requests.len(),
+                fcu_count
+            );
+        } else {
+            activation.expect("probe must confirm the newer gossip target even after EL sync");
+            assert_eq!(state_rx.borrow().sync_state.unsafe_head().block_info.hash, target_hash);
+        }
     }
 
     #[tokio::test]
