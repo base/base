@@ -1418,6 +1418,29 @@ mod tests {
     };
     use crate::{BatchRpcClient, ResultsTracker, config::ValiditySigningMode};
 
+    /// Pool pressure remains retryable with bounded exponential RPC backoff.
+    #[test]
+    fn pool_pressure_retains_bounded_retry_backoff() {
+        let message = "RPC error -32011: transaction pool is full".to_string();
+        assert_eq!(
+            SubmissionPipeline::classify_batch_error(message.clone()),
+            BatchTxError::RetryableRejected(message),
+            "pool pressure must retain work for retry"
+        );
+        let delays: Vec<_> =
+            (1..super::SUBMIT_MAX_ATTEMPTS).map(SubmissionPipeline::submit_retry_delay).collect();
+        assert_eq!(
+            delays,
+            vec![
+                Duration::from_millis(100),
+                Duration::from_millis(200),
+                Duration::from_millis(400),
+                Duration::from_millis(800)
+            ],
+            "all permitted retry delays must remain bounded and exponential"
+        );
+    }
+
     #[test]
     fn batch_error_classification_identifies_retryable_transport_gaps() {
         assert_eq!(
