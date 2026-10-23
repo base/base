@@ -90,7 +90,9 @@ where
     ///
     /// A state read that fails, a phase 0 whose signing actor is not known, or a transaction
     /// queued behind an earlier nonce of its sender, whose phase 0 may depend on a transaction
-    /// not yet mined, passes the transaction on, since the payer checks it too.
+    /// not yet mined, passes the transaction on, since the payer checks it too. A nonce that
+    /// cannot be read leaves it unknown whether the transaction is queued, so it passes on
+    /// without a simulation.
     async fn check_transaction(&self, raw: &[u8], timestamp: u64) -> RpcResult<()> {
         let keystore = self.provider.chain_spec().is_zenith_active_at_timestamp(timestamp);
         let transaction =
@@ -111,6 +113,7 @@ where
                 }
                 Err(error) => {
                     warn!(error = %error, "payer_sendTransaction nonce could not be read");
+                    return Ok(());
                 }
             }
         }
@@ -470,16 +473,32 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn forwards_a_transaction_whose_state_cannot_be_read() {
+    async fn forwards_a_transaction_whose_nonce_cannot_be_read_without_simulating_it() {
         let sequencer = MockServer::start();
         let mock = sequencer.mock(|when, then| {
             when.method(POST).body_includes("payer_sendTransaction");
             rpc_result(then, json!({ "transactionHash": format!("0x{}", "11".repeat(32)) }));
         });
-        let unavailable = || state_error(ErrorCode::InternalError.code(), "state unavailable");
         let mut state = MockPayerChainState::new();
-        state.expect_nonce().returning(move |_, _| Err(unavailable()));
-        state.expect_simulate().returning(move |_| Err(unavailable()));
+        state.expect_nonce().returning(|_, _| {
+            Err(state_error(ErrorCode::InternalError.code(), "state unavailable"))
+        });
+        state.expect_simulate().never();
+        let api = PayerApiImpl::new(everest_provider(), client(&sequencer), state);
+
+        api.send_transaction(send_request()).await.unwrap();
+
+        mock.assert_calls(1);
+    }
+
+    #[tokio::test]
+    async fn forwards_a_transaction_whose_simulation_cannot_run() {
+        let sequencer = MockServer::start();
+        let mock = sequencer.mock(|when, then| {
+            when.method(POST).body_includes("payer_sendTransaction");
+            rpc_result(then, json!({ "transactionHash": format!("0x{}", "11".repeat(32)) }));
+        });
+        let state = failing_simulation(ErrorCode::InternalError.code(), "state unavailable");
         let api = PayerApiImpl::new(everest_provider(), client(&sequencer), state);
 
         api.send_transaction(send_request()).await.unwrap();
