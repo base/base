@@ -11,7 +11,7 @@ use alloy_consensus::{
     BlobTransactionValidationError, Transaction, Typed2718, transaction::Recovered,
 };
 use alloy_eips::{
-    eip2718::{Encodable2718, WithEncoded},
+    eip2718::{Eip2718Result, Encodable2718, WithEncoded},
     eip2930::AccessList,
     eip7594::BlobTransactionSidecarVariant,
     eip7702::SignedAuthorization,
@@ -236,6 +236,29 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
     /// Returns lazily computed EIP-2718 encoded bytes of the transaction.
     pub fn encoded_2718(&self) -> &Bytes {
         self.encoded_2718.get_or_init(|| self.inner.transaction().encoded_2718().into())
+    }
+
+    /// Decodes an EIP-2718 transaction whose sender is already known, keeping `encoded` as its
+    /// cached [`Self::encoded_2718`] instead of re-encoding the decoded transaction on first use.
+    ///
+    /// The bytes are kept only when decoding consumed all of them, since strict RLP decoding
+    /// then guarantees they are the canonical encoding. Input with trailing bytes still decodes,
+    /// as before, but its cache is filled from the decoded transaction, so L1 fee and DA
+    /// accounting never charge for the trailing bytes.
+    pub fn decode_2718_with_sender(encoded: Bytes, sender: Address) -> Eip2718Result<Self> {
+        let mut buf = encoded.as_ref();
+        let transaction = Cons::decode_2718(&mut buf)?;
+        let exact = buf.is_empty();
+        let mut pooled = Self::new(Recovered::new_unchecked(transaction, sender), encoded.len());
+        if exact {
+            debug_assert_eq!(
+                pooled.inner.transaction().encoded_2718(),
+                encoded.as_ref(),
+                "exactly decoded bytes must be the canonical EIP-2718 encoding"
+            );
+            pooled.encoded_2718 = OnceLock::from(encoded);
+        }
+        Ok(pooled)
     }
 }
 
@@ -1037,6 +1060,58 @@ mod tests {
         assert!(!transaction.encoded_2718().is_empty());
 
         assert_eq!(transaction.size(), size, "pooled size must not change while pooled");
+    }
+
+    fn eip1559_encoded() -> (Bytes, Address) {
+        let signer = signer();
+        let tx = TxEip1559 {
+            chain_id: ChainConfig::mainnet().chain_id,
+            gas_limit: 21_000,
+            to: TxKind::Call(Address::ZERO),
+            input: Bytes::from(vec![0xAB; 64]),
+            ..Default::default()
+        };
+        let signature = signer.sign_hash_sync(&tx.signature_hash()).unwrap();
+        let signed: BaseTransactionSigned = tx.into_signed(signature).into();
+        (signed.encoded_2718().into(), signer.address())
+    }
+
+    #[test]
+    fn decode_2718_with_sender_reuses_the_received_encoding() {
+        let (encoded, sender) = eip1559_encoded();
+
+        let pooled =
+            <BasePooledTransaction>::decode_2718_with_sender(encoded.clone(), sender).unwrap();
+
+        assert_eq!(pooled.sender(), sender);
+        assert_eq!(pooled.encoded_length(), encoded.len());
+        assert_eq!(pooled.encoded_2718(), &encoded);
+        assert_eq!(
+            pooled.encoded_2718().as_ptr(),
+            encoded.as_ptr(),
+            "the cache shares the received bytes instead of re-encoding them"
+        );
+    }
+
+    #[test]
+    fn decode_2718_with_sender_excludes_trailing_bytes_from_the_encoding() {
+        let (encoded, sender) = eip1559_encoded();
+        let mut with_trailing = encoded.to_vec();
+        with_trailing.extend_from_slice(&[0xFF; 8]);
+
+        let pooled =
+            <BasePooledTransaction>::decode_2718_with_sender(with_trailing.into(), sender).unwrap();
+
+        assert_eq!(pooled.encoded_2718(), &encoded, "L1 fee and DA size use the canonical bytes");
+    }
+
+    #[test]
+    fn decode_2718_with_sender_rejects_malformed_bytes() {
+        let (encoded, sender) = eip1559_encoded();
+
+        let truncated = encoded.slice(..encoded.len() - 1);
+
+        assert!(<BasePooledTransaction>::decode_2718_with_sender(truncated, sender).is_err());
     }
 
     #[test]
