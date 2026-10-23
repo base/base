@@ -130,10 +130,12 @@ struct ParkedTransaction<T> {
 
 #[derive(Debug)]
 enum PredicateBucket {
-    /// Hashes in insertion order. Bucket entries are unique and stay below the ordered
-    /// threshold, so a linear scan beats hashing.
+    /// State-key hashes in insertion order. Entries are unique and the bucket becomes ordered
+    /// at the threshold, so a linear scan beats hashing.
     Flat(Vec<TxHash>),
     Ordered(OrderedPredicateBucket),
+    /// Context-key hashes. Context buckets never become ordered and can grow without bound.
+    Context(B256Set),
 }
 
 #[derive(Debug, Default)]
@@ -273,10 +275,15 @@ impl<T> ParkedPredicateIndex<T> {
         let entry = self.transactions.get(&hash).expect("inserted transaction must exist");
         let blocker = entry.blocker;
         let predicate = &entry.predicate;
-        let bucket =
-            self.blockers.entry(blocker).or_insert_with(|| PredicateBucket::Flat(Vec::new()));
+        let bucket = self.blockers.entry(blocker).or_insert_with(|| {
+            if blocker.is_state() {
+                PredicateBucket::Flat(Vec::new())
+            } else {
+                PredicateBucket::Context(B256Set::default())
+            }
+        });
         bucket.insert(hash, predicate);
-        if bucket.is_flat() && blocker.is_state() && bucket.len() >= self.ordered_threshold {
+        if bucket.is_flat() && bucket.len() >= self.ordered_threshold {
             let hashes = bucket.take_flat().expect("bucket was checked as flat");
             let mut ordered = OrderedPredicateBucket::default();
             for hash in hashes {
@@ -325,6 +332,9 @@ impl PredicateBucket {
         match self {
             Self::Flat(hashes) => hashes.push(hash),
             Self::Ordered(bucket) => bucket.insert(hash, predicate),
+            Self::Context(hashes) => {
+                hashes.insert(hash);
+            }
         }
     }
 
@@ -336,17 +346,21 @@ impl PredicateBucket {
                 }
             }
             Self::Ordered(bucket) => bucket.remove(hash, predicate),
+            Self::Context(hashes) => {
+                hashes.remove(&hash);
+            }
         }
     }
 
-    const fn len(&self) -> usize {
+    fn len(&self) -> usize {
         match self {
             Self::Flat(hashes) => hashes.len(),
             Self::Ordered(bucket) => bucket.len,
+            Self::Context(hashes) => hashes.len(),
         }
     }
 
-    const fn is_empty(&self) -> bool {
+    fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
@@ -356,7 +370,7 @@ impl PredicateBucket {
     fn take_flat(&mut self) -> Option<Vec<TxHash>> {
         match self {
             Self::Flat(hashes) => Some(core::mem::take(hashes)),
-            Self::Ordered(_) => None,
+            Self::Ordered(_) | Self::Context(_) => None,
         }
     }
 
@@ -364,6 +378,7 @@ impl PredicateBucket {
         match self {
             Self::Flat(hashes) => target.extend(hashes.iter().copied()),
             Self::Ordered(bucket) => bucket.extend_all(target),
+            Self::Context(hashes) => target.extend(hashes.iter().copied()),
         }
     }
 
@@ -371,6 +386,7 @@ impl PredicateBucket {
         match self {
             Self::Flat(hashes) => target.extend(hashes.iter().copied()),
             Self::Ordered(bucket) => bucket.extend_affected(old, new, target),
+            Self::Context(hashes) => target.extend(hashes.iter().copied()),
         }
     }
 }
