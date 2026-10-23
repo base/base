@@ -306,17 +306,18 @@ pub struct InjectPlan {
     pub desired_gas: u128,
     /// Current submitted-but-unconfirmed gas.
     pub depth_gas: u128,
-    /// One-block gas floor.
+    /// One-block gas floor, extended by canonical confirmation latency for rate targets.
     pub floor_gas: u128,
-    /// Two-block gas ceiling.
+    /// Twice-floor gas ceiling, subject to the separate sender capacity limit.
     pub ceiling_gas: u128,
     /// Constraint that determined the plan.
     pub limited_by: InjectLimit,
 }
 
-/// Pure controller that keeps one to two blocks of gas in the mempool.
+/// Pure controller that keeps a bounded gas inventory sized for canonical confirmation latency.
 #[derive(Debug, Clone, Copy)]
 pub struct MempoolDepthController {
+    confirmation_latency: Duration,
     target_gps: Option<u64>,
     block_time: Duration,
     capacity_gas: u128,
@@ -331,7 +332,19 @@ impl MempoolDepthController {
         capacity_gas: u128,
         measurement_started_at: Instant,
     ) -> Self {
-        Self { target_gps, block_time, capacity_gas, measurement_started_at }
+        Self {
+            target_gps,
+            block_time,
+            capacity_gas,
+            measurement_started_at,
+            confirmation_latency: Duration::ZERO,
+        }
+    }
+
+    /// Uses canonical confirmation latency to budget a bounded in-flight window.
+    pub const fn with_confirmation_latency(mut self, latency: Duration) -> Self {
+        self.confirmation_latency = latency;
+        self
     }
 
     /// Computes the gas to inject without performing I/O or reading a clock.
@@ -352,6 +365,19 @@ impl MempoolDepthController {
                     .min(u128::from(block_gas_limit))
             },
         );
+        // Canonical observation can lag multiple short blocks. Reserve one extra block of
+        // margin, but never grow the latency allowance beyond ten seconds of target load.
+        let floor_gas = self.target_gps.map_or(floor_gas, |target_gps| {
+            let horizon = self
+                .confirmation_latency
+                .saturating_add(self.block_time)
+                .min(Duration::from_secs(10));
+            floor_gas.max(
+                u128::from(target_gps)
+                    .saturating_mul(horizon.as_nanos())
+                    .div_ceil(Duration::from_secs(1).as_nanos()),
+            )
+        });
         let ceiling_gas = floor_gas.saturating_mul(2);
         let catchup = self.target_gps.map_or(floor_gas, |target_gps| {
             let cumulative_target = u128::from(target_gps)
@@ -1711,7 +1737,8 @@ impl LoadRunner {
     ) {
         let plan_started = Instant::now();
         let depth_gas = drain_state.mempool_depth_gas();
-        let plan = config.controller.plan(
+        let (_, canonical_p99) = drain_state.collector.rolling_p50_p99();
+        let plan = config.controller.with_confirmation_latency(canonical_p99).plan(
             canonical.observed_at,
             canonical.gas_limit,
             depth_gas,
@@ -1811,7 +1838,8 @@ impl LoadRunner {
         let plan_started = Instant::now();
         let depth_gas = drain_state.mempool_depth_gas();
         let block_gas_limit = canonical.map_or(fallback_block_gas_limit, |block| block.gas_limit);
-        let plan = config.controller.plan(
+        let (_, canonical_p99) = drain_state.collector.rolling_p50_p99();
+        let plan = config.controller.with_confirmation_latency(canonical_p99).plan(
             cycle_started,
             block_gas_limit,
             depth_gas,
@@ -2370,6 +2398,142 @@ mod tests {
         assert!(enqueue_result.is_err(), "enqueue should fail after queue is closed");
         assert_eq!(queued_per_sender.get(&sender).copied(), Some(0));
         assert_eq!(collector.submitted_count(), 1);
+    }
+
+    /// The latency allowance is independent of short blocks and remains bounded.
+    #[test]
+    fn canonical_latency_window_is_bounded() {
+        let started = Instant::now();
+        let controller = MempoolDepthController::new(
+            Some(375_000_000),
+            Duration::from_millis(200),
+            4_000_000_000,
+            started,
+        );
+        let plan = controller.with_confirmation_latency(Duration::from_millis(1200)).plan(
+            started + Duration::from_secs(2),
+            150_000_000,
+            0,
+            0,
+            0,
+        );
+        assert_eq!(
+            plan.floor_gas, 525_000_000,
+            "p99 plus one block must reserve 1.4 seconds of target gas"
+        );
+        assert_eq!(
+            plan.ceiling_gas, 1_050_000_000,
+            "catchup window must be bounded at twice the floor"
+        );
+        let capped = controller.with_confirmation_latency(Duration::from_secs(60)).plan(
+            started + Duration::from_secs(60),
+            150_000_000,
+            0,
+            0,
+            0,
+        );
+        assert_eq!(
+            capped.ceiling_gas, 7_500_000_000,
+            "latency must cap at ten seconds before the catchup margin"
+        );
+        assert_eq!(capped.inject_gas, 4_000_000_000, "sender capacity remains the tighter bound");
+    }
+
+    /// Simulates delayed canonical acknowledgements without any flashblock pulses.
+    fn canonical_simulation(block_time: Duration, adaptive: bool, rpc_stall: bool) -> (u128, u128) {
+        let started = Instant::now();
+        let controller =
+            MempoolDepthController::new(Some(375_000_000), block_time, 4_000_000_000, started);
+        let mut pending = Vec::new();
+        let mut offered = 0;
+        let mut confirmed = 0;
+        let mut peak = 0;
+        let mut samples = Vec::new();
+        for tick in 1..=1200u64 {
+            let elapsed = Duration::from_millis(tick * 50);
+            pending.retain(|&(sent, due, gas)| {
+                if due <= tick {
+                    confirmed += gas;
+                    samples.push((tick, Duration::from_millis((tick - sent) * 50)));
+                    false
+                } else {
+                    true
+                }
+            });
+            let depth = offered - confirmed;
+            // Advance the existing estimator's ten-second sample window on simulated time.
+            samples.retain(|&(observed_tick, _)| observed_tick + 200 >= tick);
+            let mut observed = crate::metrics::RollingWindow::new();
+            for &(_, latency) in &samples {
+                observed.push_latency(latency, Instant::now());
+            }
+            let latency = if adaptive { observed.p50_p99().1 } else { Duration::ZERO };
+            let plan = controller.with_confirmation_latency(latency).plan(
+                started + elapsed,
+                1_000_000_000,
+                depth,
+                confirmed,
+                offered,
+            );
+            assert!(
+                plan.inject_gas <= plan.ceiling_gas.saturating_sub(depth),
+                "refill must respect latency ceiling"
+            );
+            assert!(
+                depth + plan.inject_gas <= 4_000_000_000,
+                "refill must respect sender capacity"
+            );
+            if plan.inject_gas > 0 {
+                offered += plan.inject_gas;
+                // Half the submissions confirm in 700ms, with a 1.2s tail. An RPC
+                // rejection retains queued work during retry backoff rather than releasing it.
+                let delay = if rpc_stall && tick >= 400 {
+                    1200
+                } else if tick % 100 >= 98 {
+                    24
+                } else if tick % 100 < 50 {
+                    14
+                } else {
+                    18
+                };
+                // Batch inclusion into actual block intervals before observation delay.
+                let block_ticks =
+                    u64::try_from(block_time.as_millis() / 50).expect("block ticks fit u64");
+                let due = tick.div_ceil(block_ticks) * block_ticks + delay;
+                pending.push((tick, due, plan.inject_gas));
+            }
+            peak = peak.max(offered - confirmed);
+        }
+        (offered, peak)
+    }
+
+    /// Canonical-only feedback sustains short-block targets and bounds RPC retry backlog.
+    #[test]
+    fn canonical_only_pacing_simulation() {
+        let before = canonical_simulation(Duration::from_millis(200), false, false);
+        let after = canonical_simulation(Duration::from_millis(200), true, false);
+        let stalled = canonical_simulation(Duration::from_millis(200), true, true);
+        let legacy = canonical_simulation(Duration::from_secs(2), true, false);
+        assert_eq!(
+            before,
+            (9_975_000_000, 150_000_000),
+            "old window must reproduce the exact canonical-only inventory bottleneck"
+        );
+        assert_eq!(
+            after,
+            (22_500_000_000, 468_750_000),
+            "latency window must sustain 375M gas/s with bounded peak inventory"
+        );
+        assert_eq!(
+            stalled,
+            (8_606_250_000, 1_125_000_000),
+            "stalled feedback must stop offers at the bounded inventory window"
+        );
+        assert_eq!(
+            legacy,
+            (22_500_000_000, 1_050_000_000),
+            "2s canonical batching must retain full target rate and bounded inventory"
+        );
     }
 
     #[test]

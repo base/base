@@ -84,6 +84,18 @@ base_metrics::define_metrics! {
     #[label(name = "flow", default = ["standard", "validity"])]
     #[label(name = "bid", default = ["coinbase_tip", "priority_fee"])]
     tip_per_gas: histogram,
+    #[describe(
+        "Time to build one block from the transaction pool in the native payload builder in seconds"
+    )]
+    native_payload_build_duration: histogram,
+    #[describe(
+        "Time spent applying pre-execution changes and executing transactions in one native payload build in seconds"
+    )]
+    native_payload_execution_duration: histogram,
+    #[describe(
+        "Time from the end of transaction execution until the native payload is sealed, including the state root, in seconds"
+    )]
+    native_payload_state_root_duration: histogram,
 }
 
 impl ValidityMetrics {
@@ -137,8 +149,8 @@ type CounterHandle = metrics::Counter;
 #[cfg(not(feature = "metrics"))]
 type CounterHandle = base_metrics::NoopMetric;
 
-/// `outcome` label of `validity_predicate_evaluations_total` recorded by the flashblocks build
-/// loop.
+/// `outcome` label of `validity_predicate_evaluations_total` recorded by the flashblocks and
+/// native build loops.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ValidityEvaluationOutcome {
     /// Primary scan: every predicate held.
@@ -149,6 +161,10 @@ pub enum ValidityEvaluationOutcome {
     ReadError,
     /// Primary scan: deferred unevaluated because the evaluation budget was exhausted.
     BudgetExhausted,
+    /// Primary scan: a predicate can no longer be satisfied (native builder).
+    Expired,
+    /// Primary scan: rejected unevaluated because of an unsupported predicate (native builder).
+    Unsupported,
     /// Rescan: every predicate held.
     RescanMatched,
     /// Rescan: a predicate did not hold.
@@ -161,11 +177,13 @@ pub enum ValidityEvaluationOutcome {
 
 impl ValidityEvaluationOutcome {
     /// Every variant in declaration order; its length sizes [`ValidityEvaluationCounters`].
-    const ALL: [Self; 8] = [
+    const ALL: [Self; 10] = [
         Self::Matched,
         Self::NotSatisfied,
         Self::ReadError,
         Self::BudgetExhausted,
+        Self::Expired,
+        Self::Unsupported,
         Self::RescanMatched,
         Self::RescanNotSatisfied,
         Self::RescanReadError,
@@ -180,6 +198,8 @@ impl ValidityEvaluationOutcome {
             Self::NotSatisfied => "not_satisfied",
             Self::ReadError => "read_error",
             Self::BudgetExhausted => "budget_exhausted",
+            Self::Expired => "expired",
+            Self::Unsupported => "unsupported",
             Self::RescanMatched => "rescan_matched",
             Self::RescanNotSatisfied => "rescan_not_satisfied",
             Self::RescanReadError => "rescan_read_error",
@@ -226,6 +246,14 @@ impl BuilderMetrics {
         Self::base_fee_revenue_wei(FLOW_VALIDITY).record(tracker.validity.base_fees_f64());
         Self::coinbase_tip_revenue_wei(FLOW_STANDARD).record(tracker.standard.coinbase_tips_f64());
         Self::coinbase_tip_revenue_wei(FLOW_VALIDITY).record(tracker.validity.coinbase_tips_f64());
+    }
+
+    /// Records the execution and total duration of one native payload build.
+    pub fn record_native_build(execution: Duration, total: Duration) {
+        Self::native_payload_build_duration().record(total.as_secs_f64());
+        Self::native_payload_execution_duration().record(execution.as_secs_f64());
+        Self::native_payload_state_root_duration()
+            .record(total.saturating_sub(execution).as_secs_f64());
     }
 
     /// Records one included transaction's tip per gas by flow and bid mechanism.

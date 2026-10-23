@@ -580,7 +580,8 @@ fn encode_weth_withdraw(amount: U256) -> Bytes {
     Bytes::from(withdrawCall { wad: amount }.abi_encode())
 }
 
-fn encode_erc20_approve(spender: Address, amount: U256) -> Bytes {
+/// Encodes an ERC20 approval for setup or a native batched swap.
+pub fn encode_erc20_approve(spender: Address, amount: U256) -> Bytes {
     sol! {
         function approve(address spender, uint256 amount) external returns (bool);
     }
