@@ -32,9 +32,15 @@ const INSERT_BATCH_METHOD: &str = "base_insertValidatedTransactions";
 /// share of the bucket already spent: not at all when it is full, a whole interval when it is
 /// empty. So no send waits longer than one interval, and under a sustained stream of small
 /// requests sends coalesce into larger batches while the bucket drains, rather than spending it
-/// on single requests and then pacing every later send a full interval apart. A sliding window of `max_rps` sends per second instead let a run of small sends
-/// spend the whole second's budget at once and then stall the destination queue for the rest of
-/// the second, repeating every second after it.
+/// on single requests and then pacing every later send a full interval apart. A sliding window of
+/// `max_rps` sends per second instead let a run of small sends spend the whole second's budget at
+/// once and then stall the destination queue for the rest of the second, repeating every second
+/// after it.
+///
+/// Waits are slept on tokio's timer, which rounds a deadline up to the next millisecond. Once a
+/// send has spent any of the bucket, the next one waits at least until then, unless the previous
+/// RPC took longer. Against a builder that answers in under a millisecond, a busy destination
+/// therefore sends at most about 1000 batches per second, however high `max_rps` is set.
 struct RateLimiter {
     /// Spacing between sends at the limit; `None` when rate limiting is disabled.
     interval: Option<Duration>,

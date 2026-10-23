@@ -10,7 +10,7 @@ use crate::{forwarder::ForwarderConfig, reader::ReaderConfig};
 pub const DEFAULT_RESEND_AFTER_MS: u64 = 4000;
 /// Default maximum number of transactions per RPC batch.
 pub const DEFAULT_MAX_BATCH_SIZE: usize = 100;
-/// Default maximum RPC requests per second per forwarder.
+/// Default average RPC requests per second per forwarder; see [`TxForwardingConfig::max_rps`].
 pub const DEFAULT_MAX_RPS: u32 = 200;
 /// Default percentage of forwarding picks served oldest-first; the rest go to the highest bid.
 pub const DEFAULT_FIFO_PERCENT: u8 = 20;
@@ -39,7 +39,8 @@ pub struct TxForwardingConfig {
     pub max_batch_size: usize,
     /// Average RPC requests per second per forwarder (0 = unlimited). After an idle second sends
     /// go out with little spacing, which grows as the second's budget is spent, so a one-second
-    /// window can carry up to twice as many.
+    /// window can carry up to twice as many. Against a builder that answers in under a
+    /// millisecond, values above about 1000 do not raise a busy destination's send rate.
     pub max_rps: u32,
     /// Percentage of forwarding picks served oldest-first, from 0 to 100.
     ///
@@ -111,7 +112,7 @@ impl TxForwardingConfig {
         self
     }
 
-    /// Sets the maximum RPC requests per second.
+    /// Sets the average RPC requests per second per forwarder; see [`Self::max_rps`].
     pub const fn with_max_rps(mut self, rps: u32) -> Self {
         self.max_rps = rps;
         self

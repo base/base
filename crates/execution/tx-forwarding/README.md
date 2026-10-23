@@ -28,16 +28,18 @@ Picks are interleaved, so at 20% every fifth transaction in a batch comes from t
 
 A transaction's position is fixed once it enters the queue. The queue defaults to two batches
 (`--tx-forwarding-queue-capacity`), so the order is decided about one round trip before the send.
-Under a deep backlog the reader reuses a pool snapshot for up to 10ms rather than re-reading the
-pool for every free slot, so a new transaction can wait that long before it is considered.
+Under a deep backlog the reader keeps filling the queue from its current lanes for up to 10ms, or
+as long as the last full read took if that was longer, rather than refreshing them for every free
+slot. A new transaction can wait that long before it is considered.
 
-The reader reads the whole pool at most every 100ms. In between, it looks up each newly pending
-transaction the pool announces and adds it to the current snapshot, so forwarding a new
-transaction does not cost a pass over every pending one. The periodic full read sends transactions
-due for a resend, anything whose announcement was dropped, and announced transactions that could
-not be placed in nonce order (a successor whose predecessor is pooled but unsent, or a replacement
-behind later nonces). 100ms is the normal repair cadence, not a delivery ceiling: a full read
-still waits for queue capacity.
+The reader reads the whole pool about every 100ms, and no more often while the pool's
+announcement listener is open. In between, it looks up each newly pending transaction the pool
+announces and adds it to the current lanes, so forwarding a new transaction does not cost a pass
+over every pending one. The periodic full read sends transactions due for a resend, anything whose
+announcement was dropped, and announced transactions that could not be placed in nonce order (a
+successor whose predecessor is pooled but unsent, or a replacement behind later nonces). 100ms is
+the normal repair cadence, not a delivery ceiling: a full read can come a few milliseconds late,
+and it still waits for queue capacity.
 
 A slow builder backpressures only its own reader. Transactions are marked as recently sent only
 after that builder's queue accepts them, so another destination cannot suppress their delivery.
@@ -89,7 +91,7 @@ than a logged skip, so a caller never silently forwards to fewer destinations th
 | `--builder-rpc-urls` | Vec<Url> | Required | Builder RPC endpoints (one forwarder per URL) |
 | `--tx-forwarding-resend-after-ms` | u64 | 4000 | Resend-after window in ms (default: 2 blocks) |
 | `--tx-forwarding-batch-size` | usize | 100 | Forwarder batch size |
-| `--tx-forwarding-max-rps` | u32 | 200 | Maximum RPC requests per second per forwarder |
+| `--tx-forwarding-max-rps` | u32 | 200 | Average RPC requests per second per forwarder; bursts allow up to twice as many in one second |
 | `--tx-forwarding-fifo-percent` | u8 | 20 | Percentage of picks taken oldest-first; the rest by highest tip (100 = pure FIFO) |
 | `--tx-forwarding-queue-capacity` | usize | 2x batch size | Per-builder queue capacity |
 | `--tx-forwarding-batched-insert` | bool | false | Send each batch as one `base_insertValidatedTransactions` call; every builder must serve it |

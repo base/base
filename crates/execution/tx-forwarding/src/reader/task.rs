@@ -98,29 +98,33 @@ impl<P: TransactionPool> ReaderPool for P {
 
 /// Background reader that drains the pool for one destination.
 ///
-/// Each pass waits until at least half of the destination queue is free, takes a
-/// `best_transactions()` snapshot (reusing the previous one for up to
-/// [`Self::SNAPSHOT_MAX_AGE`]), and fills the free slots from two lanes: a configured percentage
-/// of picks goes to the oldest pending transaction and the rest to the highest tip-per-gas bid (see
-/// [`LaneMix`] and [`LaneScheduler`]). Transactions recently accepted by this destination's queue
-/// are skipped.
+/// Each pass waits until at least half of the destination queue is free, refreshes its lanes, and
+/// fills the free slots from two lanes: a configured percentage of picks goes to the oldest pending
+/// transaction and the rest to the highest tip-per-gas bid (see [`LaneMix`] and [`LaneScheduler`]).
+/// Transactions recently accepted by this destination's queue are skipped.
+///
+/// The lanes come from a full `best_transactions()` read about every [`Self::FULL_READ_INTERVAL`].
+/// In between, the reader looks up the transactions the pool announces as pending and adds them to
+/// the current lanes, so forwarding a new transaction does not cost a pass over every pending one.
+/// Lanes that still hold transactions are reused for up to [`Self::SNAPSHOT_MAX_AGE`] before the
+/// reader refreshes them.
 ///
 /// The order is decided here, when a transaction is queued, and is fixed from then on. Keeping the
 /// queue shallow is what lets a high bid that arrives during a burst overtake transactions that
 /// are still in the pool.
 ///
 /// A pass that finds nothing to send waits for the pool to announce a new pending transaction,
-/// or for [`ReaderConfig::poll_interval`] so that transactions due for a resend are picked up.
-/// Waking on the announcement rather than on the interval alone is what keeps an isolated
-/// transaction from waiting out the rest of an idle sleep before it is forwarded.
+/// or for [`ReaderConfig::poll_interval`]. Waking on the announcement rather than on the interval
+/// alone is what keeps an isolated transaction from waiting out the rest of an idle sleep before it
+/// is forwarded. Transactions due for a resend, and any whose announcement was dropped, are picked
+/// up only by the next full read.
 ///
-/// After each snapshot the reader waits at least as long as that snapshot took before reading
-/// the pool again. A snapshot costs a pass over every pending transaction, so without this gap a
-/// continuous stream of announcements over a deep pool would keep the reader thread snapshotting
-/// nonstop; with it, snapshotting uses at most about half of the thread. While the previous
-/// snapshot still holds transactions the reader keeps filling the queue from it during the gap,
-/// so the gap only idles the thread once that snapshot is used up. With a small pool the gap is
-/// microseconds, so an isolated transaction is not delayed.
+/// After each full read the reader waits at least as long as that read took before reading the
+/// pool again, so full reads use at most about half of the thread even when a deep pool makes
+/// them slower than [`Self::FULL_READ_INTERVAL`]. While the lanes still hold transactions the
+/// reader keeps filling the queue from them during the gap, so the gap only idles the thread once
+/// they are used up. With a small pool the gap is microseconds, so an isolated transaction is not
+/// delayed.
 ///
 /// Conversion to the builder-RPC wire form happens here rather than in the
 /// forwarder: this is the component that holds a [`ValidPoolTransaction`], and
@@ -132,7 +136,7 @@ pub(crate) struct DestinationReader<P: ReaderPool, E = NoExtensions> {
     recently_sent: RecentlySent,
     /// Highest nonce of each sequence added to the current lanes since the last full read.
     queued: HashMap<BestTransactionLane, u64>,
-    /// See [`Self::FULL_SNAPSHOT_INTERVAL`]; a field so tests can pin it.
+    /// See [`Self::FULL_READ_INTERVAL`]; a field so tests can pin it.
     full_read_interval: Duration,
     lane_mix: LaneMix,
     sender: mpsc::Sender<InsertValidatedTransaction<E>>,
@@ -150,25 +154,29 @@ where
     /// Wait between checks for free queue capacity.
     const CAPACITY_POLL_INTERVAL: Duration = Duration::from_millis(1);
 
-    /// Longest a snapshot is reused before the pool is read again.
+    /// Longest lanes that still hold transactions are reused before the reader refreshes them.
     ///
-    /// Reading the pool costs a pass over every pending transaction, so under a deep backlog the
-    /// reader refills the queue from the previous snapshot instead of re-reading for every free
-    /// chunk. A transaction that arrives in the meantime waits up to this long, plus the pacing gap
-    /// before the next snapshot, to be considered. That gap is as long as the previous snapshot
-    /// took, so it has no fixed ceiling: it grows with the pool.
+    /// Under a deep backlog the reader refills the queue from the current lanes instead of
+    /// refreshing them for every free chunk. A transaction that arrives in the meantime waits up to
+    /// this long to be considered, or as long as the last full read took if that was longer. A
+    /// refresh within [`Self::FULL_READ_INTERVAL`] of the last full read adds only the announced
+    /// transactions; after it, the refresh is a full read.
     const SNAPSHOT_MAX_AGE: Duration = Duration::from_millis(10);
 
-    /// Longest the reader goes between full pool reads while it serves announcements one by one.
+    /// Shortest time between full pool reads while the reader serves announcements one by one.
     ///
     /// Within this window a wake caused by announcements looks the announced transactions up
-    /// individually and adds them to the current snapshot instead of re-reading every pending
-    /// transaction to find the few new ones. The next full read picks up whatever announcements
-    /// missed (the listener drops them when its channel is full) and transactions due for a
-    /// resend. It also adds announced transactions that could not be placed in nonce order (see
-    /// [`Self::in_nonce_order`]). This is the normal repair cadence rather than a delivery
-    /// ceiling: a full read waits for queue capacity like any other pass.
-    const FULL_SNAPSHOT_INTERVAL: Duration = Duration::from_millis(100);
+    /// individually and adds them to the current lanes instead of re-reading every pending
+    /// transaction to find the few new ones. The first refresh after the window is a full read,
+    /// which picks up whatever announcements missed (the listener drops them when its channel is
+    /// full) and transactions due for a resend. It also adds announced transactions that could not
+    /// be placed in nonce order (see [`Self::in_nonce_order`]).
+    ///
+    /// This is the normal repair cadence rather than a delivery ceiling: the full read can come
+    /// later by up to [`Self::SNAPSHOT_MAX_AGE`] or [`ReaderConfig::poll_interval`], plus however
+    /// long the reader waits for queue capacity. Once the pool closes the announcement listener,
+    /// every refresh is a full read.
+    const FULL_READ_INTERVAL: Duration = Duration::from_millis(100);
 
     /// Creates a reader for one destination.
     pub(crate) fn new(
@@ -186,7 +194,7 @@ where
             config,
             recently_sent,
             queued: HashMap::new(),
-            full_read_interval: Self::FULL_SNAPSHOT_INTERVAL,
+            full_read_interval: Self::FULL_READ_INTERVAL,
             lane_mix,
             sender,
             cancel,
@@ -292,8 +300,10 @@ where
             }
 
             let sequence = BestTransactionLane::for_transaction(&tx);
-            // A resend ranks below every fresh transaction and ages from when it became due, so
-            // the resends a full read finds all at once cannot hold fresh ones back.
+            // A resend ranks below every fresh transaction in the priority lane. In the FIFO lane
+            // it ages from when it became due rather than from its old pool timestamp, so it goes
+            // after transactions that were already waiting then, and ahead of later arrivals. The
+            // resends a full read finds all at once therefore cannot jump the existing backlog.
             let (arrived, priority) = self.recently_sent.resend_due(tx.hash()).map_or_else(
                 || (tx.timestamp, ordering.priority(&tx.transaction, base_fee)),
                 |due| (due, Priority::None),
@@ -432,8 +442,9 @@ where
     /// Waits until the pool announces a pending transaction, the poll interval elapses, or the
     /// reader is cancelled, whichever comes first. Returns the announced hash, if any.
     ///
-    /// An announcement may concern a transaction the last snapshot already covered; such a
-    /// spurious wake costs one lookup.
+    /// An announcement may concern a transaction the last full read already covered. Within
+    /// [`Self::FULL_READ_INTERVAL`] of that read such a spurious wake costs one lookup; after it,
+    /// the wake triggers the full read that is due anyway.
     async fn wait_for_pending(
         &self,
         pending: &mut Option<mpsc::Receiver<TxHash>>,
