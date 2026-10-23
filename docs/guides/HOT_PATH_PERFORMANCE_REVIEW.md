@@ -1,7 +1,8 @@
 # Hot-Path Performance Review
 
 This guide covers performance on Base hot paths: the loops that run per candidate
-transaction, per submitted transaction, per flashblock, or per block. Authors use
+transaction, per submitted transaction, per flashblock, or per block, before and
+after the Denim network upgrade. Authors use
 it when changing that code, and reviewers (human and LLM) apply it to PRs that
 touch it. A diff rarely shows how often the changed code runs, so establish the
 call frequency before judging cost.
@@ -9,24 +10,33 @@ call frequency before judging cost.
 ## Hot-path registry
 
 Frequencies are mainnet orders of magnitude. Candidates far outnumber included
-transactions: the builder re-evaluates pooled transactions on every flashblock,
-and rejected, deferred, and parked transactions are revisited.
+transactions: the builder re-evaluates pooled transactions on every build, and
+rejected, deferred, and parked transactions are revisited.
+
+Denim replaces flashblocks with native 200 ms blocks built by the native payload
+builder. Code that only the flashblocks builder runs stops mattering at Denim.
+The native builder, block execution, and per-block work run about 10 times as
+often as they do today. Review native builder changes at their post-Denim rate,
+even while mainnet still runs flashblocks.
 
 | Path | Entry point | Runs per | Mainnet rate |
 |---|---|---|---|
-| Flashblock transaction selection and execution | `crates/builder/core/src/flashblocks/context.rs` `execute_best_transactions` loop body, plus everything it calls | candidate transaction, per flashblock | ~10^9 candidates/day vs ~10^7 included |
-| Native builder selection | `crates/execution/payload/src/builder.rs` best-transaction loop | candidate transaction | same order as above |
-| Best-transaction iteration and parking | `crates/builder/core` parkable iterators, `crates/execution/txpool` ordering and validity predicates | candidate transaction | same order as above |
+| Native builder selection and execution (production after Denim) | `crates/execution/payload/src/builder.rs` `execute_best_transactions` loop body, plus everything it calls, including resource metering and validity predicates | candidate transaction, per 200 ms block | ~10^9 candidates/day vs ~10^7 included |
+| Native block assembly | `crates/execution/payload/src/builder.rs` `build_payload`/`try_build`, sealing, state root, `crates/builder/multiplex` block stream | block | ~4×10^5/day after Denim |
+| Flashblock transaction selection and execution (until Denim) | `crates/builder/core/src/flashblocks/context.rs` `execute_best_transactions` loop body, plus everything it calls | candidate transaction, per flashblock | ~10^9 candidates/day vs ~10^7 included |
+| Best-transaction iteration and parking (both builders) | `crates/execution/payload/src/parkable.rs`, `crates/builder/core` parkable iterators, `crates/execution/txpool` ordering and validity predicates | candidate transaction | same order as above |
 | Transaction pool admission | `crates/execution/txpool` validation, RPC `eth_sendRawTransaction` | submitted transaction | ~10^8/day |
-| Flashblock publish | `crates/builder/publish` | flashblock (10 per block) | ~4×10^5/day |
-| Block execution and state root | `crates/execution/*` executor, trie | block and touched account/slot | ~4×10^4 blocks/day |
+| Flashblock publish (until Denim) | `crates/builder/publish` | flashblock (10 per block) | ~4×10^5/day |
+| Block execution and state root | `crates/execution/*` executor, trie | block and touched account/slot | ~4×10^4 blocks/day, ~4×10^5 after Denim |
 
 Code is on a hot path when it runs inside one of these loops, including through
 closures, trait impls, `Drop`, metrics recorders, and tracing layers.
 
 ## Cost model
 
-Mainnet builds each flashblock in a ~200 ms window. Per-candidate work multiplies:
+Mainnet builds each flashblock in a ~200 ms window. After Denim the sequencer
+requests each native block about 150 ms into its 200 ms slot, and the state root
+and import must fit in what remains. Per-candidate work multiplies:
 1 µs per candidate at 10^9 candidates/day is ~17 CPU-minutes per day spent inside
 the latency-critical build loop and directly steals transactions from blocks.
 
@@ -54,7 +64,8 @@ with the per-unit cost and the multiplier:
 
 **Evaluate default-off features as enabled.** Production enables features that
 default off in tests, benchmarks, and devnet (for example
-`--builder.transaction-events.enabled`). An early return when a feature is
+`--builder.transaction-events.enabled`, or the native builder's resource metering
+schedule, `--payload.resource-metering-schedule`). An early return when a feature is
 disabled hides the cost from every pre-production measurement. Review the
 enabled branch at production frequency.
 
@@ -69,5 +80,6 @@ predicate index.
 
 ## What not to flag
 
-Cold paths (startup, config, per-block work that is O(1) relative to execution),
+Cold paths (startup, config, per-block work that is O(1) relative to execution;
+remember that blocks are 10 times as frequent after Denim),
 micro-optimizations without a hot-path multiplier, and style.
