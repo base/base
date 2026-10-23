@@ -18,7 +18,6 @@ jobs:
   ci:
     uses: ./.depot/workflows/ci-core.yml
     with:
-      allow_registry_login: true
       clippy_command: just check::clippy-ci
       run_system_tests: true
       run_sigsegv: false
