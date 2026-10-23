@@ -23,6 +23,8 @@ use crate::{
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TestConfig {
+    /// Optional full 64 `KiB` CREATE side workload, reported separately from the normal mix.
+    pub deploy64: Option<crate::runner::Deploy64Config>,
     /// HTTP JSON-RPC endpoints used for transaction submission.
     ///
     /// The first URL is also used for setup transactions such as funding, token distribution, and
@@ -162,6 +164,7 @@ pub struct TestConfig {
 impl Default for TestConfig {
     fn default() -> Self {
         Self {
+            deploy64: None,
             transaction_submission_rpcs: vec![
                 Url::parse("http://localhost:8545").expect("valid URL"),
             ],
@@ -731,6 +734,7 @@ impl TestConfig {
         };
 
         Ok(crate::runner::LoadConfig {
+            deploy64: self.deploy64.clone(),
             transaction_submission_rpcs,
             query_rpc,
             txpool_nodes: self.txpool_nodes.clone(),

@@ -5049,6 +5049,7 @@ version = "0.0.0"
 dependencies = [
  "alloy-consensus 2.5.0",
  "alloy-eips 2.5.0",
+ "alloy-evm",
  "alloy-network 2.5.0",
  "alloy-node-bindings",
  "alloy-primitives",
@@ -5060,6 +5061,7 @@ dependencies = [
  "async-trait",
  "base-cli-utils",
  "base-common-consensus",
+ "base-common-evm",
  "base-common-flashblocks",
  "base-common-network",
  "base-common-precompiles",
