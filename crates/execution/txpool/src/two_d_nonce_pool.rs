@@ -21,10 +21,16 @@ use reth_transaction_pool::{
     pool::{AddedTransactionState, QueuedReason},
 };
 
-use crate::{BasePooledTx, BestTransactionPriority};
+use crate::{BasePooledTx, BestTransactionLane, BestTransactionPriority};
 
-/// A finite channel: `(sender, nonce_key)`.
+/// A sequential lane: `(sender, nonce_key)`, with key zero for the protocol nonce.
 pub(crate) type LaneId = (Address, U256);
+
+/// Returns the sequential lane of a transaction, or `None` for a nonce-free one.
+fn lane_id<T: BasePooledTx>(transaction: &T) -> Option<LaneId> {
+    BestTransactionLane::for_pooled_transaction(transaction)
+        .map(|lane| (lane.sender, lane.nonce_key))
+}
 
 #[derive(Debug)]
 struct NonceLane<T: BasePooledTx> {
@@ -611,12 +617,14 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             });
         }
 
-        let sender = transaction.sender();
-        let nonce_key = transaction.transaction.eip8130_nonce_channel_key().ok_or_else(|| {
-            PoolError::other(hash, "2D nonce pool only accepts channelized EIP-8130 transactions")
-        })?;
-
-        let lane_id = (sender, nonce_key);
+        let lane_id = lane_id(&transaction.transaction)
+            .filter(|(_, nonce_key)| !nonce_key.is_zero())
+            .ok_or_else(|| {
+                PoolError::other(
+                    hash,
+                    "2D nonce pool only accepts channelized EIP-8130 transactions",
+                )
+            })?;
         let nonce = transaction.nonce();
         let existing_lane = self.lanes.get(&lane_id).filter(|lane| !lane.transactions.is_empty());
         let is_replacement =
@@ -793,10 +801,9 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             let Some(transaction) = self.hashes.get(hash) else {
                 continue;
             };
-            let Some(nonce_key) = transaction.transaction.eip8130_nonce_channel_key() else {
+            let Some(lane_id) = lane_id(&transaction.transaction) else {
                 continue;
             };
-            let lane_id = (transaction.sender(), nonce_key);
             let nonce = transaction.nonce();
             let Some(lane) = self.lanes.get(&lane_id) else {
                 continue;
@@ -829,8 +836,8 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             .iter()
             .filter_map(|hash| {
                 let transaction = self.hashes.get(hash)?;
-                let nonce_key = transaction.transaction.eip8130_nonce_channel_key()?;
-                Some((transaction.sender(), nonce_key, transaction.nonce(), *hash))
+                let (sender, nonce_key) = lane_id(&transaction.transaction)?;
+                Some((sender, nonce_key, transaction.nonce(), *hash))
             })
             .collect();
         ordered_hashes.sort_unstable();
@@ -965,8 +972,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             return Some(transaction);
         }
         let transaction = self.hashes.get(&hash)?;
-        let nonce_key = transaction.transaction.eip8130_nonce_channel_key()?;
-        let lane_id = (transaction.sender(), nonce_key);
+        let lane_id = lane_id(&transaction.transaction)?;
         let nonce = transaction.nonce();
         let transaction = self.lanes.get_mut(&lane_id)?.transactions.remove(&nonce)?;
 
@@ -1110,8 +1116,8 @@ where
     O: TransactionOrdering<Transaction = T>,
 {
     fn mark_invalid(&mut self, transaction: &Self::Item, _kind: InvalidPoolTransactionError) {
-        let index = if let Some(nonce_key) = transaction.transaction.eip8130_nonce_channel_key() {
-            self.lane_indexes.get(&(transaction.sender(), nonce_key)).copied()
+        let index = if let Some(lane_id) = lane_id(&transaction.transaction) {
+            self.lane_indexes.get(&lane_id).copied()
         } else {
             self.nonce_free_indexes.get(transaction.hash()).copied()
         };

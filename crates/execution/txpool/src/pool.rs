@@ -1388,6 +1388,7 @@ where
         Box::new(MergeBestTransactions::new(
             self.protocol_pool.best_transactions_with_attributes(best_transactions_attributes),
             Box::new(self.nonce_pool.read().best_transactions(self.ordering.clone(), base_fee)),
+            T::is_eip8130_sidecar_transaction,
             self.ordering.clone(),
             base_fee,
         ))
@@ -1401,6 +1402,7 @@ where
         Box::new(MergeBestTransactions::new(
             self.protocol_pool.best_transactions_with_attributes(best_transactions_attributes),
             Box::new(self.nonce_pool.read().best_transactions(self.ordering.clone(), base_fee)),
+            T::is_eip8130_sidecar_transaction,
             self.ordering.clone(),
             base_fee,
         ))
@@ -1770,6 +1772,7 @@ where
         let merged = MergeBestTransactions::new(
             self.protocol_pool.best_transactions_with_attributes(attributes),
             Box::new(self.nonce_pool.read().best_transactions(self.ordering.clone(), base_fee)),
+            T::is_eip8130_sidecar_transaction,
             self.ordering.clone(),
             base_fee,
         );

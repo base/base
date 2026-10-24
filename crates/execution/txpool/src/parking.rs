@@ -45,8 +45,18 @@ impl BestTransactionLane {
     where
         T: BasePooledTx,
     {
-        let nonce_key = transaction.transaction.eip8130_nonce_channel_key();
-        if nonce_key.is_none() && transaction.transaction.is_eip8130_nonce_free() {
+        Self::for_pooled_transaction(&transaction.transaction)
+    }
+
+    /// Returns the sequential lane for a pooled transaction: its finite EIP-8130 nonce channel,
+    /// key zero for a protocol-nonce transaction, or `None` for an independent nonce-free
+    /// EIP-8130 transaction.
+    pub fn for_pooled_transaction<T>(transaction: &T) -> Option<Self>
+    where
+        T: BasePooledTx,
+    {
+        let nonce_key = transaction.eip8130_nonce_channel_key();
+        if nonce_key.is_none() && transaction.is_eip8130_nonce_free() {
             return None;
         }
         Some(Self { sender: transaction.sender(), nonce_key: nonce_key.unwrap_or_default() })

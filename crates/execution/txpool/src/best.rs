@@ -1,4 +1,4 @@
-//! Merged best-transaction iteration across the protocol pool and 2D nonce sidecar.
+//! Merged best-transaction iteration across two transaction stores.
 
 use std::sync::Arc;
 
@@ -8,55 +8,70 @@ use reth_transaction_pool::{
 
 use crate::{BasePooledTx, BestTransactionPriority};
 
-/// Merges best-transaction iterators from the protocol pool and the 2D nonce sidecar.
+/// Merges best-transaction iterators from two stores by complete priority.
+///
+/// Each yielded transaction belongs to exactly one source, decided by `secondary_owns`.
+/// Invalidations are routed only to the owning source, so a source-local sender id is never
+/// invalidated in the other store.
 pub(crate) struct MergeBestTransactions<T: BasePooledTx, O>
 where
     O: TransactionOrdering<Transaction = T>,
 {
-    protocol: Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction<T>>>>,
-    sidecar: Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction<T>>>>,
+    primary: Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction<T>>>>,
+    secondary: Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction<T>>>>,
+    secondary_owns: fn(&T) -> bool,
     ordering: O,
     base_fee: u64,
-    next_protocol: Option<Arc<ValidPoolTransaction<T>>>,
-    next_sidecar: Option<Arc<ValidPoolTransaction<T>>>,
+    next_primary: Option<Arc<ValidPoolTransaction<T>>>,
+    next_secondary: Option<Arc<ValidPoolTransaction<T>>>,
 }
 
 impl<T: BasePooledTx, O> MergeBestTransactions<T, O>
 where
     O: TransactionOrdering<Transaction = T>,
 {
-    /// Creates a merged iterator from the protocol pool and 2D nonce sidecar.
+    /// Creates a merged iterator. `secondary_owns` returns whether a transaction was yielded by
+    /// `secondary`; every other transaction belongs to `primary`. The primary source wins ties.
     pub(crate) fn new(
-        protocol: Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction<T>>>>,
-        sidecar: Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction<T>>>>,
+        primary: Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction<T>>>>,
+        secondary: Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction<T>>>>,
+        secondary_owns: fn(&T) -> bool,
         ordering: O,
         base_fee: u64,
     ) -> Self {
-        Self { protocol, sidecar, ordering, base_fee, next_protocol: None, next_sidecar: None }
+        Self {
+            primary,
+            secondary,
+            secondary_owns,
+            ordering,
+            base_fee,
+            next_primary: None,
+            next_secondary: None,
+        }
     }
 
-    fn protocol_is_better(
+    fn primary_is_better(
         &self,
-        protocol: &Arc<ValidPoolTransaction<T>>,
-        sidecar: &Arc<ValidPoolTransaction<T>>,
+        primary: &Arc<ValidPoolTransaction<T>>,
+        secondary: &Arc<ValidPoolTransaction<T>>,
     ) -> bool {
-        let protocol_priority =
-            BestTransactionPriority::new(&self.ordering, protocol, self.base_fee);
-        let sidecar_priority = BestTransactionPriority::new(&self.ordering, sidecar, self.base_fee);
-        protocol_priority >= sidecar_priority
+        let primary_priority = BestTransactionPriority::new(&self.ordering, primary, self.base_fee);
+        let secondary_priority =
+            BestTransactionPriority::new(&self.ordering, secondary, self.base_fee);
+        primary_priority >= secondary_priority
     }
 
     fn pop_best(&mut self) -> Option<Arc<ValidPoolTransaction<T>>> {
-        match (&self.next_protocol, &self.next_sidecar) {
-            (Some(protocol), Some(sidecar)) => {
-                if self.protocol_is_better(protocol, sidecar) {
-                    self.next_protocol.take()
+        match (&self.next_primary, &self.next_secondary) {
+            (Some(primary), Some(secondary)) => {
+                if self.primary_is_better(primary, secondary) {
+                    self.next_primary.take()
                 } else {
-                    self.next_sidecar.take()
+                    self.next_secondary.take()
                 }
             }
-            (Some(_), None) => self.next_protocol.take(),
-            (None, Some(_)) => self.next_sidecar.take(),
+            (Some(_), None) => self.next_primary.take(),
+            (None, Some(_)) => self.next_secondary.take(),
             (None, None) => None,
         }
     }
@@ -79,11 +94,11 @@ where
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            if self.next_protocol.is_none() {
-                self.next_protocol = self.protocol.next();
+            if self.next_primary.is_none() {
+                self.next_primary = self.primary.next();
             }
-            if self.next_sidecar.is_none() {
-                self.next_sidecar = self.sidecar.next();
+            if self.next_secondary.is_none() {
+                self.next_secondary = self.secondary.next();
             }
 
             let transaction = self.pop_best()?;
@@ -101,23 +116,23 @@ where
     O: TransactionOrdering<Transaction = T>,
 {
     fn mark_invalid(&mut self, transaction: &Self::Item, kind: InvalidPoolTransactionError) {
-        if transaction.transaction.is_eip8130_sidecar_transaction() {
-            self.next_sidecar = None;
-            self.sidecar.mark_invalid(transaction, kind);
+        if (self.secondary_owns)(&transaction.transaction) {
+            self.next_secondary = None;
+            self.secondary.mark_invalid(transaction, kind);
         } else {
-            self.next_protocol = None;
-            self.protocol.mark_invalid(transaction, kind);
+            self.next_primary = None;
+            self.primary.mark_invalid(transaction, kind);
         }
     }
 
     fn no_updates(&mut self) {
-        self.protocol.no_updates();
-        self.sidecar.no_updates();
+        self.primary.no_updates();
+        self.secondary.no_updates();
     }
 
     fn set_skip_blobs(&mut self, skip_blobs: bool) {
-        self.protocol.set_skip_blobs(skip_blobs);
-        self.sidecar.set_skip_blobs(skip_blobs);
+        self.primary.set_skip_blobs(skip_blobs);
+        self.secondary.set_skip_blobs(skip_blobs);
     }
 }
 
@@ -265,6 +280,7 @@ mod tests {
         let mut merged = MergeBestTransactions::new(
             Box::new(StaticBestTransactions::new(vec![protocol])),
             Box::new(StaticBestTransactions::new(vec![sidecar])),
+            BasePooledTransaction::is_eip8130_sidecar_transaction,
             BaseOrdering::coinbase_tip(),
             10,
         );
@@ -279,6 +295,7 @@ mod tests {
         let mut merged = MergeBestTransactions::new(
             Box::new(StaticBestTransactions::new(Vec::new())),
             Box::new(StaticBestTransactions::new(vec![sidecar])),
+            BasePooledTransaction::is_eip8130_sidecar_transaction,
             BaseOrdering::coinbase_tip(),
             10,
         );
@@ -302,6 +319,7 @@ mod tests {
         let mut merged = MergeBestTransactions::new(
             Box::new(StaticBestTransactions::new(vec![Arc::clone(&older_protocol)])),
             Box::new(StaticBestTransactions::new(vec![newer_sidecar])),
+            BasePooledTransaction::is_eip8130_sidecar_transaction,
             BaseOrdering::timestamp(),
             10,
         );
@@ -324,6 +342,7 @@ mod tests {
         let mut merged = MergeBestTransactions::new(
             Box::new(StaticBestTransactions::new(vec![older_protocol])),
             Box::new(StaticBestTransactions::new(vec![newer_sidecar])),
+            BasePooledTransaction::is_eip8130_sidecar_transaction,
             BaseOrdering::coinbase_tip(),
             10,
         );
@@ -344,6 +363,7 @@ mod tests {
         let mut merged = MergeBestTransactions::new(
             Box::new(StaticBestTransactions::new(protocol)),
             Box::new(StaticBestTransactions::new(sidecar)),
+            BasePooledTransaction::is_eip8130_sidecar_transaction,
             BaseOrdering::coinbase_tip(),
             0,
         );
