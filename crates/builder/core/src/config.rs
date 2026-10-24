@@ -12,8 +12,8 @@ use base_execution_payload_builder::{
 };
 
 use crate::{
-    ExecutionMeteringMode, NoopMeteringProvider, RejectionCache, ResourceMeteringConfig,
-    RestingPredicateMode, SharedMeteringProvider,
+    BuilderMetrics, ExecutionMeteringMode, NoopMeteringProvider, RejectionCache,
+    ResourceMeteringConfig, RestingPredicateMode, SharedMeteringProvider,
 };
 
 /// Configuration values for the flashblocks builder.
@@ -165,6 +165,16 @@ impl Default for BuilderConfig {
             rejection_cache: RejectionCache::default(),
             manifest_precheck_enabled: true,
             state_provider_metrics: false,
+        }
+    }
+}
+
+impl BuilderConfig {
+    /// Records startup resource-metering configuration metrics once the node's
+    /// Prometheus recorder is installed.
+    pub fn record_startup_metrics(&self) {
+        if self.resource_metering.enabled && self.resource_metering.schedule.is_empty() {
+            BuilderMetrics::resource_metering_schedule_missing_total().increment(1);
         }
     }
 }

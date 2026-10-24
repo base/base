@@ -4,7 +4,7 @@ use core::{net::SocketAddr, time::Duration};
 use std::{path::PathBuf, sync::Arc};
 
 use base_builder_core::{
-    BuilderApiExtensionConfig, BuilderConfig, BuilderMetrics, DEFAULT_MAX_VALIDITY_PREDICATES,
+    BuilderApiExtensionConfig, BuilderConfig, DEFAULT_MAX_VALIDITY_PREDICATES,
     ExecutionMeteringMode, RejectionCache, ResourceMeteringConfig, RestingPredicateMode,
     SharedMeteringProvider, ValiditySignatureMode,
 };
@@ -401,7 +401,6 @@ impl Args {
             );
         }
         if self.enable_resource_metering && self.resource_metering_schedule.is_none() {
-            BuilderMetrics::resource_metering_schedule_missing_total().increment(1);
             warn!(
                 "--builder.enable-resource-metering (BUILDER_ENABLE_RESOURCE_METERING) is enabled without --payload.resource-metering-schedule (PAYLOAD_RESOURCE_METERING_SCHEDULE); native payload resource-metering schedule evaluation is inactive"
             );
@@ -1002,9 +1001,14 @@ mod tests {
             let store = args.build_metering_store();
             assert!(store.is_enabled());
             let provider: SharedMeteringProvider = Arc::new(store);
-            let config = metrics::with_local_recorder(&recorder, || {
-                args.into_builder_config(provider)
-                    .expect("live enabled-without-schedule config must boot without error")
+            // `into_builder_config` runs before Reth installs its Prometheus recorder on both
+            // `base-builder` and `base sequencer`; the counter must be recorded by the post-install
+            // startup hook rather than lost to the pre-launch no-op recorder.
+            let config = args
+                .into_builder_config(provider)
+                .expect("live enabled-without-schedule config must boot without error");
+            metrics::with_local_recorder(&recorder, || {
+                config.record_startup_metrics();
             });
             assert!(config.resource_metering.enabled);
             assert!(!config.resource_metering.is_active());

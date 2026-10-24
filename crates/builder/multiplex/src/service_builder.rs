@@ -93,6 +93,7 @@ where
             !(self.routing_config.cutover_enabled && self.basic_only),
             "payload builder cutover and basic-only modes are mutually exclusive"
         );
+        self.builder_config.record_startup_metrics();
 
         // Reth's own flag drives build-loop state-read timing, so the builder and the engine's
         // validation path are instrumented by the same switch.
